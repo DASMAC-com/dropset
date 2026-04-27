@@ -20,9 +20,9 @@ runs:
     name: 'Install anchor-cli v2'
     run: |
       cargo install \
-        --git https://github.com/solana-foundation/anchor.git \
-        --rev ${{ inputs.revision }} \
-        anchor-cli --locked --force
+      --git https://github.com/solana-foundation/anchor.git \
+      --rev ${{ inputs.revision }} \
+      anchor-cli --locked --force
     shell: 'sh'
   - if: 'steps.cache-anchor.outputs.cache-hit != ''true'''
     name: 'Save anchor-cli cache'

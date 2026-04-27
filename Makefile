@@ -30,4 +30,3 @@ program: check-anchor-v2
 
 test: program
 	cargo test
-
