@@ -1,5 +1,5 @@
 .PHONY: all
-.PHONY: check-anchor-v2
+.PHONY: check-toolchain
 .PHONY: clean
 .PHONY: install-anchor-v2
 .PHONY: lint
@@ -8,9 +8,11 @@
 all: lint
 clean:
 
-check-anchor-v2:
+check-toolchain:
 	@anchor --version | grep -q " 2\." \
 		|| { echo "anchor-cli 2.x required"; exit 1; }
+	@command -v cargo-build-sbf >/dev/null \
+		|| { echo "cargo build-sbf not found (install Solana toolchain)"; exit 1; }
 
 debugger: program
 	anchor debugger
@@ -25,7 +27,7 @@ install-anchor-v2:
 lint:
 	pre-commit run --config cfg/pre-commit-lint.yml --all-files
 
-program: check-anchor-v2
+program: check-toolchain
 	anchor keys sync && anchor build
 
 test: program

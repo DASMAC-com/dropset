@@ -1,6 +1,7 @@
 ---
 env:
   ANCHOR_REV: '304dda8c568ffffc01d02d87578dc062109eb257'
+  SOLANA_VERSION: 'v3.1.9'
 jobs:
   test:
     name: 'Tests'
@@ -12,9 +13,10 @@ jobs:
       with:
         cache-on-failure: true
         shared-key: 'rust-test-${{ runner.os }}'
-    - uses: './.github/actions/install-anchor-v2'
+    - uses: './.github/actions/install-toolchain'
       with:
-        revision: '${{ env.ANCHOR_REV }}'
+        anchor-revision: '${{ env.ANCHOR_REV }}'
+        solana-version: '${{ env.SOLANA_VERSION }}'
     - name: 'Run tests'
       run: 'make test'
 name: 'Tests'
