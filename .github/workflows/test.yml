@@ -17,7 +17,8 @@ jobs:
       uses: 'actions/cache@v5'
       with:
         key: 'cargo-test-${{ runner.os }}-${{ runner.arch }}-solana-${{
-              env.SOLANA_VERSION }}-${{ hashFiles(''Cargo.lock'') }}'
+              env.SOLANA_VERSION }}-anchor-${{ env.ANCHOR_REV }}-${{
+              hashFiles(''Cargo.lock'') }}'
         path: |
           ~/.cargo/git/db
           ~/.cargo/registry/cache
