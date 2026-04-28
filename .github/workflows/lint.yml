@@ -1,5 +1,3 @@
-# cspell:word dtolnay
-# cspell:word swatinem
 ---
 env:
   NODE_VERSION: '25'

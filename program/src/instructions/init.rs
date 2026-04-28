@@ -55,6 +55,7 @@ impl Init {
             return Err(DropsetError::InvalidUpgradeAuthority.into());
         }
 
+        // Init registry values.
         let registry = &mut self.registry;
         registry.max_seats_per_market = DEFAULT_MAX_SEATS_PER_MARKET;
         registry.bump = bump;

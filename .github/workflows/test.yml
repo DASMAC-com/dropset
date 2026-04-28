@@ -1,0 +1,32 @@
+---
+env:
+  ANCHOR_REV: '304dda8c568ffffc01d02d87578dc062109eb257'
+  SOLANA_VERSION: 'v3.1.9'
+jobs:
+  test:
+    name: 'Tests'
+    runs-on: 'ubuntu-latest'
+    steps:
+    - uses: 'actions/checkout@v6'
+    - uses: 'dtolnay/rust-toolchain@stable'
+    - uses: './.github/actions/install-toolchain'
+      with:
+        anchor-revision: '${{ env.ANCHOR_REV }}'
+        solana-version: '${{ env.SOLANA_VERSION }}'
+    - name: 'Cache cargo dependencies'
+      uses: 'actions/cache@v5'
+      with:
+        key: 'cargo-test-${{ runner.os }}-${{ runner.arch }}-solana-${{
+              env.SOLANA_VERSION }}-anchor-${{ env.ANCHOR_REV }}-${{
+              hashFiles(''Cargo.lock'') }}'
+        path: |
+          ~/.cargo/git/db
+          ~/.cargo/registry/cache
+          ~/.cargo/registry/index
+          target
+    - name: 'Run tests'
+      run: 'make test'
+name: 'Tests'
+'on':
+  pull_request: null
+...

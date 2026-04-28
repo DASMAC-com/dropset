@@ -1,0 +1,41 @@
+---
+description: 'Install Solana toolchain and anchor-cli v2'
+inputs:
+  anchor-revision:
+    description: 'anchor-cli revision (git commit hash) to install'
+    required: true
+  solana-version:
+    description: 'Solana CLI version to install (e.g. v3.1.9)'
+    required: true
+name: 'Install toolchain'
+runs:
+  steps:
+  - env:
+      RUNNER_ARCH: '${{ runner.arch }}'
+      RUNNER_OS: '${{ runner.os }}'
+    name: 'Set path variables'
+    run: '${{ github.action_path }}/scripts/set-path-vars.sh'
+    shell: 'sh'
+  - id: 'cache-toolchain'
+    name: 'Cache toolchain components'
+    uses: 'actions/cache@v5'
+    with:
+      key: 'toolchain-solana-${{ inputs.solana-version }}-anchor-${{
+            inputs.anchor-revision }}-${{ env.PLATFORM }}'
+      path: |
+        ~/.cache/solana
+        ~/.cargo/bin/anchor
+        ~/.local/share/solana
+  - if: 'steps.cache-toolchain.outputs.cache-hit != ''true'''
+    name: 'Install tools'
+    run: >-
+      ${{ github.action_path }}/scripts/install-tools.sh
+      "${{ inputs.solana-version }}"
+      "${{ inputs.anchor-revision }}"
+    shell: 'sh'
+  # Assumes the caller has checked out a tree containing the Makefile.
+  - name: 'Verify toolchain'
+    run: 'make check-toolchain'
+    shell: 'sh'
+  using: 'composite'
+...

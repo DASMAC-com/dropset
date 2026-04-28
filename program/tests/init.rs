@@ -1,9 +1,11 @@
 mod common;
 
-use anchor_lang_v2::{programs::System, Id, InstructionData};
+use anchor_lang_v2::{bytemuck::Zeroable, programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, Signer};
-use common::{deploy_with_authority, send_ixn, PROGRAM_ID, SIGNER_FUNDING_LAMPORTS};
-use dropset_gamma::instruction::Init as InitInstruction;
+use common::{
+    assert_anchor_account_eq, deploy_with_authority, send_ixn, PROGRAM_ID, SIGNER_FUNDING_LAMPORTS,
+};
+use dropset_gamma::{instruction::Init as InitInstruction, Registry, DEFAULT_MAX_SEATS_PER_MARKET};
 use solana_instruction::{AccountMeta, Instruction};
 use solana_loader_v3_interface::get_program_data_address;
 use solana_pubkey::Pubkey;
@@ -73,15 +75,21 @@ fn init_rejects_non_upgrade_authority() {
 fn init_succeeds_for_upgrade_authority() {
     let authority = Keypair::new();
     let mut svm = deploy_with_authority(&authority);
+    let genesis_admin = Pubkey::new_unique();
+    let (registry_pda, registry_bump) = Pubkey::find_program_address(&[b"registry"], &PROGRAM_ID);
 
     send_ixn(
         &mut svm,
         &authority,
-        canonical_init_ixn(authority.pubkey(), Pubkey::new_unique()),
+        canonical_init_ixn(authority.pubkey(), genesis_admin),
     )
     .expect("init should succeed");
 
-    assert!(svm
-        .get_account(&registry_address())
-        .is_some_and(|a| a.owner == PROGRAM_ID));
+    // Verify registry fields.
+    let mut expected = Registry::zeroed();
+    expected.max_seats_per_market = DEFAULT_MAX_SEATS_PER_MARKET;
+    expected.bump = registry_bump;
+    expected.admins.push(genesis_admin);
+    let account = svm.get_account(&registry_pda).expect("registry created");
+    assert_anchor_account_eq(&account.data, &account.owner, &expected);
 }

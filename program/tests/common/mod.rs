@@ -1,9 +1,11 @@
+use anchor_lang_v2::{bytemuck, Discriminator};
 use anchor_v2_testing::{
     Keypair, LiteSVM, Message, Signer, VersionedMessage, VersionedTransaction,
 };
 use solana_instruction::Instruction;
 use solana_loader_v3_interface::{instruction as loader_v3, state::UpgradeableLoaderState};
 use solana_native_token::LAMPORTS_PER_SOL;
+use solana_pubkey::Pubkey;
 
 pub use dropset_gamma::ID as PROGRAM_ID;
 
@@ -89,6 +91,27 @@ pub fn send_ixn(svm: &mut LiteSVM, signer: &Keypair, ixn: Instruction) -> Result
     svm.send_transaction(txn)
         .map(|_| ())
         .map_err(|e| format!("{:?}", e.err))
+}
+
+/// Assert an anchor `#[account]` buffer matches `expected` exactly: owned
+/// by the program, prefixed with `T`'s discriminator, body bytes
+/// bytemuck-equal to `expected`, total length equal to
+/// `disc.len() + size_of::<T>()` (catches any padding / trailing bytes the
+/// framework might inject).
+pub fn assert_anchor_account_eq<T>(data: &[u8], owner: &Pubkey, expected: &T)
+where
+    T: Discriminator + bytemuck::Pod,
+{
+    let disc_len = T::DISCRIMINATOR.len();
+    assert_eq!(owner, &PROGRAM_ID, "account not owned by program");
+    assert_eq!(
+        data.len(),
+        disc_len + core::mem::size_of::<T>(),
+        "account length != disc + size_of::<T>()"
+    );
+    let (disc, body) = data.split_at(disc_len);
+    assert_eq!(disc, T::DISCRIMINATOR, "discriminator mismatch");
+    assert_eq!(body, bytemuck::bytes_of(expected), "body bytes mismatch");
 }
 
 fn send_signed(svm: &mut LiteSVM, signers: &[&Keypair], instructions: &[Instruction]) {
