@@ -5,14 +5,15 @@
 .PHONY: lint
 .PHONY: test
 
-all: lint
+all: lint test
 clean:
 
 check-toolchain:
 	@anchor --version | grep -q " 2\." \
 		|| { echo "anchor-cli 2.x required"; exit 1; }
 	@command -v cargo-build-sbf >/dev/null \
-		|| { echo "cargo build-sbf not found (install Solana toolchain)"; exit 1; }
+		|| { echo "cargo build-sbf not found (install Solana toolchain)"; \
+			exit 1; }
 
 debugger: program
 	anchor debugger
