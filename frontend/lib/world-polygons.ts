@@ -1,33 +1,23 @@
 import { feature } from "topojson-client";
 import topology from "world-atlas/countries-110m.json";
 import countries from "world-countries";
+import { type IsoCurrencyCode, SUPPORTED } from "./currencies";
 
-// 5-color palette (4-color theorem is a guarantee for planar graphs;
-// greedy assignment occasionally needs a 5th color and that's fine here).
-const PALETTE = ["#5b9bd5", "#ed7d31", "#70ad47", "#ffc000", "#7030a0"];
+const supportedSet = new Set<string>(SUPPORTED);
 
-const idToCca3 = new Map<string, string>();
-const adjacency = new Map<string, Set<string>>();
+const idToCountryInfo = new Map<
+  string,
+  { cca3: string; currencies: IsoCurrencyCode[] }
+>();
 for (const c of countries) {
+  const supported = Object.keys(c.currencies ?? {}).filter((k) =>
+    supportedSet.has(k),
+  ) as IsoCurrencyCode[];
   // TopoJSON ids in countries-110m are unpadded decimal strings.
-  idToCca3.set(String(Number.parseInt(c.ccn3, 10)), c.cca3);
-  adjacency.set(c.cca3, new Set(c.borders ?? []));
-}
-
-// Greedy graph coloring, Welsh-Powell order (descending degree).
-const colorByCca3 = new Map<string, number>();
-const sortedByDegree = [...countries].sort(
-  (a, b) => (b.borders?.length ?? 0) - (a.borders?.length ?? 0),
-);
-for (const c of sortedByDegree) {
-  const used = new Set<number>();
-  for (const n of adjacency.get(c.cca3) ?? []) {
-    const ci = colorByCca3.get(n);
-    if (ci !== undefined) used.add(ci);
-  }
-  let pick = 0;
-  while (used.has(pick)) pick++;
-  colorByCca3.set(c.cca3, pick);
+  idToCountryInfo.set(String(Number.parseInt(c.ccn3, 10)), {
+    cca3: c.cca3,
+    currencies: supported,
+  });
 }
 
 // topojson-client typings narrow on the second arg; cast through `any` so the
@@ -40,7 +30,11 @@ const fc = feature(topo, topo.objects.countries) as any;
 export type CountryFeature = {
   type: "Feature";
   geometry: GeoJSON.Geometry;
-  properties: { name: string; cca3: string; fillColor: string };
+  properties: {
+    name: string;
+    cca3: string;
+    currencies: IsoCurrencyCode[];
+  };
   id?: string | number;
 };
 
@@ -52,16 +46,15 @@ export const WORLD_POLYGONS: CountryFeature[] = (
   }>
 ).map((f) => {
   const id = f.id;
-  const cca3 = idToCca3.get(String(id)) ?? "";
-  const ci = colorByCca3.get(cca3) ?? 0;
+  const info = idToCountryInfo.get(String(id));
   return {
     type: "Feature",
     geometry: f.geometry,
     id,
     properties: {
       name: f.properties?.name ?? "",
-      cca3,
-      fillColor: PALETTE[ci % PALETTE.length],
+      cca3: info?.cca3 ?? "",
+      currencies: info?.currencies ?? [],
     },
   };
 });

@@ -2,6 +2,7 @@
   "USD": {
     "name": "United States Dollar",
     "flag": "🇺🇸",
+    "anchorCca2": "US",
     "stablecoins": [
       {
         "symbol": "USDC",
@@ -44,6 +45,7 @@
   "EUR": {
     "name": "Euro",
     "flag": "🇪🇺",
+    "anchorCca2": "BE",
     "stablecoins": [
       {
         "symbol": "EURC",
@@ -59,9 +61,23 @@
       }
     ]
   },
+  "GBP": {
+    "name": "British Pound",
+    "flag": "🇬🇧",
+    "anchorCca2": "GB",
+    "stablecoins": [
+      {
+        "symbol": "tGBP",
+        "name": "tGBP",
+        "mint": "2zMqyX4AYCk6mgy5UZ2S7zUaLxwERhK5WjqDzkPPbSpW",
+        "icon": "https://raw.githubusercontent.com/superset-finance/token-metadata/main/tGBP/logo.png"
+      }
+    ]
+  },
   "CHF": {
     "name": "Swiss Franc",
     "flag": "🇨🇭",
+    "anchorCca2": "CH",
     "stablecoins": [
       {
         "symbol": "VCHF",
@@ -74,6 +90,7 @@
   "BRL": {
     "name": "Brazilian Real",
     "flag": "🇧🇷",
+    "anchorCca2": "BR",
     "stablecoins": [
       {
         "symbol": "BRZ",
@@ -86,6 +103,7 @@
   "JPY": {
     "name": "Japanese Yen",
     "flag": "🇯🇵",
+    "anchorCca2": "JP",
     "stablecoins": [
       {
         "symbol": "GYEN",
@@ -98,6 +116,7 @@
   "AUD": {
     "name": "Australian Dollar",
     "flag": "🇦🇺",
+    "anchorCca2": "AU",
     "stablecoins": [
       {
         "symbol": "AUDD",
@@ -110,6 +129,7 @@
   "MXN": {
     "name": "Mexican Peso",
     "flag": "🇲🇽",
+    "anchorCca2": "MX",
     "stablecoins": [
       {
         "symbol": "MXNE",

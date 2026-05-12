@@ -3,7 +3,6 @@
 import * as Popover from "@radix-ui/react-popover";
 import { Check, ChevronDown, ExternalLink, Search } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { defaultAnchorCca2 } from "@/lib/countries";
 import {
   CURRENCIES,
   currencyFlag,
@@ -62,7 +61,7 @@ export function TokenPicker({ side }: { side: Side }) {
   })).filter((g) => g.stables.length > 0);
 
   const select = (code: IsoCurrencyCode, sym: string) => {
-    setToken(side, code, sym, defaultAnchorCca2(code));
+    setToken(side, code, sym);
     setOpen(false);
   };
 

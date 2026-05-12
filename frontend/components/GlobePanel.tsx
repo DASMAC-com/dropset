@@ -24,11 +24,17 @@ const Globe = dynamic(() => import("react-globe.gl"), {
   ),
 });
 
-const FROM_COLOR = "#ffffff";
-const TO_COLOR = "#0f172a";
-const IDLE_COLOR = "#64748b";
-const ARC_COLOR = "#facc15";
+// Theme tokens
+const SELL_TINT = "#f97316"; // orange-500
+const BUY_TINT = "#3b82f6"; // blue-500
+const LAND_UNSUPPORTED = "#475569"; // slate-600
 const OCEAN_COLOR = 0x0b1726;
+const ARC_COLOR = "#facc15"; // yellow-400
+
+// Pin colors
+const PIN_SELL_ANCHOR = "#fed7aa"; // orange-200, bright on warm
+const PIN_BUY_ANCHOR = "#bfdbfe"; // blue-200, bright on cool
+const PIN_OTHER_SUPPORTED = "#cbd5e1"; // slate-300, dim
 
 type GlobeHandle = {
   controls: () => { autoRotate: boolean; autoRotateSpeed: number };
@@ -109,15 +115,60 @@ function GlobeInner() {
     ];
   }, [from.cca2, to.cca2]);
 
-  const colorFor = (pin: CountryPin) => {
-    if (pin.currency === from.currency) return FROM_COLOR;
-    if (pin.currency === to.currency) return TO_COLOR;
-    return IDLE_COLOR;
+  // Polygon coloring: Sell wins over Buy where a country supports both.
+  const polygonCapColor = (d: object) => {
+    const f = d as CountryFeature;
+    const supports = f.properties.currencies;
+    if (supports.includes(from.currency)) return SELL_TINT;
+    if (supports.includes(to.currency)) return BUY_TINT;
+    return LAND_UNSUPPORTED;
   };
 
-  const altitudeFor = (pin: CountryPin) => {
-    if (pin.cca2 === from.cca2 || pin.cca2 === to.cca2) return 0.08;
-    return 0.04;
+  const polygonAltitude = (d: object) => {
+    const f = d as CountryFeature;
+    const supports = f.properties.currencies;
+    if (supports.includes(from.currency) || supports.includes(to.currency)) {
+      return 0.012;
+    }
+    return 0.004;
+  };
+
+  // Pins: only render pins for countries supporting the active Sell or Buy
+  // currency. The active anchor pin (from.cca2 / to.cca2) is rendered bigger
+  // and brighter; other supported-country pins are smaller and dimmer.
+  const activePins = useMemo(
+    () =>
+      COUNTRY_PINS.filter(
+        (p) => p.currency === from.currency || p.currency === to.currency,
+      ),
+    [from.currency, to.currency],
+  );
+
+  const pinKind = (pin: CountryPin): "fromAnchor" | "toAnchor" | "other" => {
+    if (pin.cca2 === from.cca2 && pin.currency === from.currency) {
+      return "fromAnchor";
+    }
+    if (pin.cca2 === to.cca2 && pin.currency === to.currency) {
+      return "toAnchor";
+    }
+    return "other";
+  };
+
+  const pinColor = (pin: CountryPin) => {
+    const k = pinKind(pin);
+    if (k === "fromAnchor") return PIN_SELL_ANCHOR;
+    if (k === "toAnchor") return PIN_BUY_ANCHOR;
+    return PIN_OTHER_SUPPORTED;
+  };
+
+  const pinAltitude = (pin: CountryPin) => {
+    const k = pinKind(pin);
+    return k === "other" ? 0.04 : 0.1;
+  };
+
+  const pinRadius = (pin: CountryPin) => {
+    const k = pinKind(pin);
+    return k === "other" ? 0.28 : 0.55;
   };
 
   return (
@@ -136,21 +187,19 @@ function GlobeInner() {
         atmosphereAltitude={0.18}
         onGlobeReady={handleGlobeReady}
         polygonsData={WORLD_POLYGONS}
-        polygonAltitude={0.006}
-        polygonCapColor={(d: object) =>
-          (d as CountryFeature).properties.fillColor
-        }
+        polygonAltitude={polygonAltitude}
+        polygonCapColor={polygonCapColor}
         polygonSideColor={() => "rgba(0,0,0,0.2)"}
-        polygonStrokeColor={() => "rgba(255,255,255,0.25)"}
+        polygonStrokeColor={() => "rgba(255,255,255,0.18)"}
         polygonLabel={(d: object) =>
           `<div style="font-family: var(--font-geist-sans); font-size: 12px; padding: 4px 8px; background: rgba(0,0,0,0.7); border-radius: 4px; color: white;">${(d as CountryFeature).properties.name}</div>`
         }
-        pointsData={COUNTRY_PINS}
+        pointsData={activePins}
         pointLat={(d: object) => (d as CountryPin).lat}
         pointLng={(d: object) => (d as CountryPin).lng}
-        pointColor={(d: object) => colorFor(d as CountryPin)}
-        pointAltitude={(d: object) => altitudeFor(d as CountryPin)}
-        pointRadius={0.45}
+        pointColor={(d: object) => pinColor(d as CountryPin)}
+        pointAltitude={(d: object) => pinAltitude(d as CountryPin)}
+        pointRadius={(d: object) => pinRadius(d as CountryPin)}
         pointLabel={(d: object) => {
           const p = d as CountryPin;
           return `<div style="font-family: var(--font-geist-sans); font-size: 12px; padding: 4px 8px; background: rgba(0,0,0,0.7); border-radius: 4px; color: white;">${p.name} · ${p.currency}</div>`;

@@ -2,7 +2,7 @@
 
 import { create } from "zustand";
 import { type CountryPin, defaultAnchorCca2 } from "./countries";
-import { CURRENCIES, type IsoCurrencyCode } from "./currencies";
+import { CURRENCIES, currencyAnchor, type IsoCurrencyCode } from "./currencies";
 
 export type Side = "from" | "to";
 
@@ -39,34 +39,32 @@ const shouldOpenPicker = (
   return usable.length > 1;
 };
 
+const anchorFor = (currency: IsoCurrencyCode): string =>
+  currencyAnchor(currency) || defaultAnchorCca2(currency);
+
 type Store = {
   from: SideState;
   to: SideState;
   activeSide: Side;
   openStablecoinPickerFor: Side | null;
   setActiveSide: (side: Side) => void;
-  setToken: (
-    side: Side,
-    currency: IsoCurrencyCode,
-    stablecoin: string,
-    cca2: string,
-  ) => void;
+  setToken: (side: Side, currency: IsoCurrencyCode, stablecoin: string) => void;
   setPinClicked: (pin: CountryPin) => void;
   swapSides: () => void;
   clearStablecoinPickerSignal: () => void;
 };
 
 export const useSwapStore = create<Store>((set) => ({
-  from: { currency: "USD", stablecoin: "USDC", cca2: defaultAnchorCca2("USD") },
-  to: { currency: "EUR", stablecoin: "EURC", cca2: defaultAnchorCca2("EUR") },
+  from: { currency: "USD", stablecoin: "USDC", cca2: anchorFor("USD") },
+  to: { currency: "EUR", stablecoin: "EURC", cca2: anchorFor("EUR") },
   activeSide: "from",
   openStablecoinPickerFor: null,
 
   setActiveSide: (side) => set({ activeSide: side }),
 
-  setToken: (side, currency, stablecoin, cca2) =>
+  setToken: (side, currency, stablecoin) =>
     set({
-      [side]: { currency, stablecoin, cca2 },
+      [side]: { currency, stablecoin, cca2: anchorFor(currency) },
       activeSide: side,
       openStablecoinPickerFor: null,
     }),
