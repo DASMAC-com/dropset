@@ -106,5 +106,17 @@
         "icon": "https://assets.coingecko.com/coins/images/33263/standard/AUDD-Logo-Blue_512.png"
       }
     ]
+  },
+  "MXN": {
+    "name": "Mexican Peso",
+    "flag": "🇲🇽",
+    "stablecoins": [
+      {
+        "symbol": "MXNE",
+        "name": "Real MXN",
+        "mint": "6zYgzrT7X2wi9a9NeMtUvUWLLmf2a8vBsbYkocYdB9wa",
+        "icon": "https://brale.xyz/assets/stablecoins/mxne-logo.png"
+      }
+    ]
   }
 }
