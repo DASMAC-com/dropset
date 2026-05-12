@@ -25,20 +25,11 @@ export function TokenPicker({ side }: { side: Side }) {
   );
   const setToken = useSwapStore((s) => s.setToken);
   const setActiveSide = useSwapStore((s) => s.setActiveSide);
-  const openSignal = useSwapStore((s) => s.openStablecoinPickerFor);
-  const clearSignal = useSwapStore((s) => s.clearStablecoinPickerSignal);
 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [copiedSymbol, setCopiedSymbol] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (openSignal === side) {
-      setOpen(true);
-      clearSignal();
-    }
-  }, [openSignal, side, clearSignal]);
 
   useEffect(() => {
     if (!open) setQuery("");
@@ -77,6 +68,73 @@ export function TokenPicker({ side }: { side: Side }) {
       // clipboard API unavailable — silently ignore
     }
   };
+
+  const renderStableRow = (code: IsoCurrencyCode, s: Stablecoin) => {
+    const blocked = isBlocked(code, s.symbol);
+    const selected = code === currency && s.symbol === stablecoin;
+    const copied = copiedSymbol === s.symbol;
+    return (
+      <div
+        className={`flex w-full items-center rounded-md text-sm ${
+          selected ? "bg-muted text-foreground" : "text-muted-fg"
+        }`}
+      >
+        <button
+          type="button"
+          disabled={blocked}
+          onClick={() => select(code, s.symbol)}
+          title={blocked ? "Already selected on the other side" : undefined}
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-fg"
+        >
+          {/* biome-ignore lint/performance/noImgElement: small static icon, no optimization needed */}
+          <img
+            src={tokenIconUrl(s.symbol)}
+            alt=""
+            aria-hidden
+            width={20}
+            height={20}
+            className="h-5 w-5 shrink-0 rounded-full"
+          />
+          <span className="flex min-w-0 flex-col">
+            <span className="font-mono">{s.symbol}</span>
+            {s.name !== s.symbol && (
+              <span className="truncate text-muted-fg text-xs">{s.name}</span>
+            )}
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => copyMint(s.symbol, s.mint)}
+          title={copied ? "Copied!" : "Copy mint address"}
+          className="flex shrink-0 items-center gap-1 rounded px-1.5 py-1 font-mono text-muted-fg text-xs hover:bg-muted hover:text-accent"
+        >
+          {copied ? (
+            <>
+              <Check size={10} />
+              copied
+            </>
+          ) : (
+            <>
+              {s.mint.slice(0, 4)}…{s.mint.slice(-4)}
+            </>
+          )}
+        </button>
+        <a
+          href={explorerUrl(s.mint)}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={`View ${s.symbol} on Solana Explorer`}
+          className="mr-1 flex shrink-0 items-center rounded p-1 text-muted-fg hover:bg-muted hover:text-accent"
+        >
+          <ExternalLink size={12} />
+        </a>
+      </div>
+    );
+  };
+
+  const activeStable = CURRENCIES[currency].stablecoins.find(
+    (s) => s.symbol === stablecoin,
+  );
 
   return (
     <Popover.Root
@@ -120,6 +178,11 @@ export function TokenPicker({ side }: { side: Side }) {
               className="w-full bg-transparent text-foreground text-sm outline-none placeholder:text-muted-fg"
             />
           </div>
+          {activeStable && (
+            <div className="border-border border-b p-1">
+              {renderStableRow(currency, activeStable)}
+            </div>
+          )}
           <div className="flex-1 overflow-y-auto p-1">
             {grouped.length === 0 ? (
               <div className="px-3 py-4 text-center text-muted-fg text-sm">
@@ -136,78 +199,11 @@ export function TokenPicker({ side }: { side: Side }) {
                     <span className="text-muted-fg">·</span>
                     <span>{currencyName(code)}</span>
                   </div>
-                  {stables.map((s) => {
-                    const blocked = isBlocked(code, s.symbol);
-                    const selected =
-                      code === currency && s.symbol === stablecoin;
-                    const copied = copiedSymbol === s.symbol;
-                    return (
-                      <div
-                        key={`${code}-${s.symbol}`}
-                        className={`flex w-full items-center rounded-md text-sm ${
-                          selected
-                            ? "bg-muted text-foreground"
-                            : "text-muted-fg"
-                        }`}
-                      >
-                        <button
-                          type="button"
-                          disabled={blocked}
-                          onClick={() => select(code, s.symbol)}
-                          title={
-                            blocked
-                              ? "Already selected on the other side"
-                              : undefined
-                          }
-                          className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-fg"
-                        >
-                          {/* biome-ignore lint/performance/noImgElement: small static icon, no optimization needed */}
-                          <img
-                            src={tokenIconUrl(s.symbol)}
-                            alt=""
-                            aria-hidden
-                            width={20}
-                            height={20}
-                            className="h-5 w-5 shrink-0 rounded-full"
-                          />
-                          <span className="flex min-w-0 flex-col">
-                            <span className="font-mono">{s.symbol}</span>
-                            {s.name !== s.symbol && (
-                              <span className="truncate text-muted-fg text-xs">
-                                {s.name}
-                              </span>
-                            )}
-                          </span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => copyMint(s.symbol, s.mint)}
-                          title={copied ? "Copied!" : "Copy mint address"}
-                          className="flex shrink-0 items-center gap-1 rounded px-1.5 py-1 font-mono text-muted-fg text-xs hover:bg-muted hover:text-accent"
-                        >
-                          {copied ? (
-                            <>
-                              <Check size={10} />
-                              copied
-                            </>
-                          ) : (
-                            <>
-                              {s.mint.slice(0, 4)}…{s.mint.slice(-4)}
-                            </>
-                          )}
-                        </button>
-                        <a
-                          href={explorerUrl(s.mint)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          title={`View ${s.symbol} on Solana Explorer`}
-                          className="mr-1 flex shrink-0 items-center rounded p-1 text-muted-fg hover:bg-muted hover:text-accent"
-                        >
-                          <ExternalLink size={12} />
-                        </a>
-                      </div>
-                    );
-                  })}
+                  {stables.map((s) => (
+                    <div key={`${code}-${s.symbol}`}>
+                      {renderStableRow(code, s)}
+                    </div>
+                  ))}
                 </div>
               ))
             )}

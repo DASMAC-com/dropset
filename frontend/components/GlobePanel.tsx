@@ -1,5 +1,6 @@
 "use client";
 
+import { Compass, Crosshair } from "lucide-react";
 import dynamic from "next/dynamic";
 import {
   Component,
@@ -12,6 +13,11 @@ import {
 } from "react";
 import { MeshBasicMaterial } from "three";
 import { COUNTRY_PINS, type CountryPin, findPin } from "@/lib/countries";
+import {
+  CURRENCIES,
+  type IsoCurrencyCode,
+  tokenIconUrl,
+} from "@/lib/currencies";
 import { useSwapStore } from "@/lib/store";
 import { type CountryFeature, WORLD_POLYGONS } from "@/lib/world-polygons";
 
@@ -24,20 +30,33 @@ const Globe = dynamic(() => import("react-globe.gl"), {
   ),
 });
 
-// Theme tokens
-const SELL_TINT = "#f97316"; // orange-500
-const BUY_TINT = "#3b82f6"; // blue-500
-const LAND_UNSUPPORTED = "#475569"; // slate-600
+// Land tints — Sell = platform blue accent, Buy = emerald green.
+const SELL_TINT = "#3b82f6"; // blue-500 (matches --accent)
+const BUY_TINT = "#10b981"; // emerald-500
+const LAND_COVERED = "#64748b"; // slate-500 — supports a stablecoin currency
+const LAND_UNCOVERED = "#1e293b"; // slate-800 — no supported currency
 const OCEAN_COLOR = 0x0b1726;
-const ARC_COLOR = "#facc15"; // yellow-400
+const ARC_COLOR = "#a7f3d0"; // emerald-200 — bright, ties the cool palette together
 
-// Pin colors
-const PIN_SELL_ANCHOR = "#fed7aa"; // orange-200, bright on warm
-const PIN_BUY_ANCHOR = "#bfdbfe"; // blue-200, bright on cool
-const PIN_OTHER_SUPPORTED = "#cbd5e1"; // slate-300, dim
+const POPOVER_WIDTH = 256;
+const POPOVER_MAX_HEIGHT = 260;
+
+const DEFAULT_POV = { lat: 20, lng: -10, altitude: 2.5 };
 
 type GlobeHandle = {
   controls: () => { autoRotate: boolean; autoRotateSpeed: number };
+  pointOfView: (
+    pov: { lat: number; lng: number; altitude: number },
+    durationMs?: number,
+  ) => void;
+};
+
+type ClickContext = {
+  countryName: string;
+  cca2: string;
+  currencies: IsoCurrencyCode[];
+  x: number;
+  y: number;
 };
 
 class GlobeErrorBoundary extends Component<
@@ -70,10 +89,12 @@ function GlobeInner() {
   const globeRef = useRef<GlobeHandle | null>(null);
   const from = useSwapStore((s) => s.from);
   const to = useSwapStore((s) => s.to);
-  const setPinClicked = useSwapStore((s) => s.setPinClicked);
+  const setToken = useSwapStore((s) => s.setToken);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 480, height: 480 });
+  const [clickContext, setClickContext] = useState<ClickContext | null>(null);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -88,6 +109,26 @@ function GlobeInner() {
     return () => ro.disconnect();
   }, []);
 
+  useEffect(() => {
+    if (!clickContext) return;
+    const onDown = (e: MouseEvent) => {
+      if (popoverRef.current?.contains(e.target as Node)) return;
+      setClickContext(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setClickContext(null);
+    };
+    const t = setTimeout(() => {
+      document.addEventListener("mousedown", onDown);
+      document.addEventListener("keydown", onKey);
+    }, 0);
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [clickContext]);
+
   const oceanMaterial = useMemo(
     () => new MeshBasicMaterial({ color: OCEAN_COLOR }),
     [],
@@ -99,7 +140,44 @@ function GlobeInner() {
     const controls = g.controls();
     controls.autoRotate = true;
     controls.autoRotateSpeed = 0.4;
+    g.pointOfView(DEFAULT_POV, 0);
   }, []);
+
+  const resetView = () => {
+    globeRef.current?.pointOfView(DEFAULT_POV, 800);
+  };
+
+  const focusOnArc = () => {
+    const start = findPin(from.cca2);
+    const end = findPin(to.cca2);
+    if (!start || !end || !globeRef.current) return;
+    const toRad = (d: number) => (d * Math.PI) / 180;
+    const toDeg = (r: number) => (r * 180) / Math.PI;
+    const phi1 = toRad(start.lat);
+    const phi2 = toRad(end.lat);
+    const lam1 = toRad(start.lng);
+    const lam2 = toRad(end.lng);
+    const Bx = Math.cos(phi2) * Math.cos(lam2 - lam1);
+    const By = Math.cos(phi2) * Math.sin(lam2 - lam1);
+    const midPhi = Math.atan2(
+      Math.sin(phi1) + Math.sin(phi2),
+      Math.sqrt((Math.cos(phi1) + Bx) ** 2 + By ** 2),
+    );
+    const midLam = lam1 + Math.atan2(By, Math.cos(phi1) + Bx);
+    // Great-circle angular distance (haversine) — used to pick an altitude
+    // that keeps both endpoints comfortably in frame.
+    const dPhi = phi2 - phi1;
+    const dLam = lam2 - lam1;
+    const a =
+      Math.sin(dPhi / 2) ** 2 +
+      Math.cos(phi1) * Math.cos(phi2) * Math.sin(dLam / 2) ** 2;
+    const angular = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const altitude = Math.max(1.4, Math.min(3.0, 1.2 + angular * 0.9));
+    globeRef.current.pointOfView(
+      { lat: toDeg(midPhi), lng: toDeg(midLam), altitude },
+      800,
+    );
+  };
 
   const arcs = useMemo(() => {
     const start = findPin(from.cca2);
@@ -115,66 +193,76 @@ function GlobeInner() {
     ];
   }, [from.cca2, to.cca2]);
 
-  // Polygon coloring: Sell wins over Buy where a country supports both.
   const polygonCapColor = (d: object) => {
     const f = d as CountryFeature;
     const supports = f.properties.currencies;
+    if (supports.length === 0) return LAND_UNCOVERED;
     if (supports.includes(from.currency)) return SELL_TINT;
     if (supports.includes(to.currency)) return BUY_TINT;
-    return LAND_UNSUPPORTED;
+    return LAND_COVERED;
   };
 
   const polygonAltitude = (d: object) => {
     const f = d as CountryFeature;
     const supports = f.properties.currencies;
+    if (supports.length === 0) return 0.004;
     if (supports.includes(from.currency) || supports.includes(to.currency)) {
-      return 0.012;
+      return 0.014;
     }
-    return 0.004;
+    return 0.008;
   };
 
-  // Pins: only render pins for countries supporting the active Sell or Buy
-  // currency. The active anchor pin (from.cca2 / to.cca2) is rendered bigger
-  // and brighter; other supported-country pins are smaller and dimmer.
-  const activePins = useMemo(
-    () =>
-      COUNTRY_PINS.filter(
-        (p) => p.currency === from.currency || p.currency === to.currency,
-      ),
-    [from.currency, to.currency],
+  const openPickerAt = useCallback(
+    (
+      name: string,
+      cca2: string,
+      currencies: IsoCurrencyCode[],
+      clientX: number,
+      clientY: number,
+    ) => {
+      if (currencies.length === 0 || !cca2) {
+        setClickContext(null);
+        return;
+      }
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const localX = clientX - rect.left;
+      const localY = clientY - rect.top;
+      const x = Math.min(Math.max(8, localX), rect.width - POPOVER_WIDTH - 8);
+      const y = Math.min(
+        Math.max(8, localY + 8),
+        rect.height - POPOVER_MAX_HEIGHT - 8,
+      );
+      setClickContext({ countryName: name, cca2, currencies, x, y });
+    },
+    [],
   );
 
-  const pinKind = (pin: CountryPin): "fromAnchor" | "toAnchor" | "other" => {
-    if (pin.cca2 === from.cca2 && pin.currency === from.currency) {
-      return "fromAnchor";
-    }
-    if (pin.cca2 === to.cca2 && pin.currency === to.currency) {
-      return "toAnchor";
-    }
-    return "other";
+  const onPolygonClick = (poly: object, event: MouseEvent) => {
+    const f = poly as CountryFeature;
+    openPickerAt(
+      f.properties.name,
+      f.properties.cca2,
+      f.properties.currencies,
+      event.clientX,
+      event.clientY,
+    );
   };
 
-  const pinColor = (pin: CountryPin) => {
-    const k = pinKind(pin);
-    if (k === "fromAnchor") return PIN_SELL_ANCHOR;
-    if (k === "toAnchor") return PIN_BUY_ANCHOR;
-    return PIN_OTHER_SUPPORTED;
-  };
-
-  const pinAltitude = (pin: CountryPin) => {
-    const k = pinKind(pin);
-    return k === "other" ? 0.04 : 0.1;
-  };
-
-  const pinRadius = (pin: CountryPin) => {
-    const k = pinKind(pin);
-    return k === "other" ? 0.28 : 0.55;
+  const applyToSide = (
+    side: "from" | "to",
+    currency: IsoCurrencyCode,
+    symbol: string,
+    cca2: string,
+  ) => {
+    setToken(side, currency, symbol, cca2);
+    setClickContext(null);
   };
 
   return (
     <div
       ref={containerRef}
-      className="w-full overflow-hidden rounded-xl border border-border bg-muted"
+      className="relative w-full overflow-hidden rounded-xl border border-border bg-muted"
     >
       <Globe
         ref={globeRef as never}
@@ -194,17 +282,15 @@ function GlobeInner() {
         polygonLabel={(d: object) =>
           `<div style="font-family: var(--font-geist-sans); font-size: 12px; padding: 4px 8px; background: rgba(0,0,0,0.7); border-radius: 4px; color: white;">${(d as CountryFeature).properties.name}</div>`
         }
-        pointsData={activePins}
-        pointLat={(d: object) => (d as CountryPin).lat}
-        pointLng={(d: object) => (d as CountryPin).lng}
-        pointColor={(d: object) => pinColor(d as CountryPin)}
-        pointAltitude={(d: object) => pinAltitude(d as CountryPin)}
-        pointRadius={(d: object) => pinRadius(d as CountryPin)}
-        pointLabel={(d: object) => {
-          const p = d as CountryPin;
-          return `<div style="font-family: var(--font-geist-sans); font-size: 12px; padding: 4px 8px; background: rgba(0,0,0,0.7); border-radius: 4px; color: white;">${p.name} · ${p.currency}</div>`;
-        }}
-        onPointClick={(pt: object) => setPinClicked(pt as CountryPin)}
+        onPolygonClick={onPolygonClick}
+        ringsData={COUNTRY_PINS}
+        ringLat={(d: object) => (d as CountryPin).lat}
+        ringLng={(d: object) => (d as CountryPin).lng}
+        ringColor={() => "rgba(167, 243, 208, 0.45)"}
+        ringMaxRadius={1.6}
+        ringPropagationSpeed={0.7}
+        ringRepeatPeriod={2200}
+        ringAltitude={0.015}
         arcsData={arcs}
         arcStartLat={(d: object) => (d as { startLat: number }).startLat}
         arcStartLng={(d: object) => (d as { startLng: number }).startLng}
@@ -217,6 +303,120 @@ function GlobeInner() {
         arcDashAnimateTime={2000}
         arcAltitude={0.3}
       />
+
+      <div className="absolute top-3 right-3 z-20 flex flex-col gap-2">
+        <button
+          type="button"
+          onClick={focusOnArc}
+          title="Focus on flight path"
+          className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background/80 text-muted-fg shadow-sm backdrop-blur transition-colors hover:border-accent hover:text-accent"
+          aria-label="Focus globe on flight path"
+        >
+          <Crosshair size={16} />
+        </button>
+        <button
+          type="button"
+          onClick={resetView}
+          title="Reset view"
+          className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background/80 text-muted-fg shadow-sm backdrop-blur transition-colors hover:border-accent hover:text-accent"
+          aria-label="Reset globe orientation"
+        >
+          <Compass size={16} />
+        </button>
+      </div>
+
+      {clickContext && (
+        <div
+          ref={popoverRef}
+          className="absolute z-30 flex flex-col overflow-hidden rounded-xl border border-border bg-background shadow-lg"
+          style={{
+            left: clickContext.x,
+            top: clickContext.y,
+            width: POPOVER_WIDTH,
+            maxHeight: POPOVER_MAX_HEIGHT,
+          }}
+        >
+          <div className="border-border border-b px-3 py-2 text-xs">
+            <span className="truncate font-medium text-foreground">
+              {clickContext.countryName}
+            </span>
+          </div>
+          <div className="flex-1 overflow-y-auto p-1">
+            {clickContext.currencies.flatMap((cur) =>
+              CURRENCIES[cur].stablecoins.map((s) => {
+                const isFromHere =
+                  cur === from.currency && s.symbol === from.stablecoin;
+                const isToHere =
+                  cur === to.currency && s.symbol === to.stablecoin;
+                return (
+                  <div
+                    key={`${cur}-${s.symbol}`}
+                    className="flex w-full items-center gap-1 rounded-md px-2 py-1.5"
+                  >
+                    {/* biome-ignore lint/performance/noImgElement: small static icon, no optimization needed */}
+                    <img
+                      src={tokenIconUrl(s.symbol)}
+                      alt=""
+                      aria-hidden
+                      width={20}
+                      height={20}
+                      className="h-5 w-5 shrink-0 rounded-full"
+                    />
+                    <span className="flex min-w-0 flex-1 flex-col text-sm">
+                      <span className="font-mono text-foreground">
+                        {s.symbol}
+                      </span>
+                      {s.name !== s.symbol && (
+                        <span className="truncate text-muted-fg text-xs">
+                          {s.name}
+                        </span>
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={isToHere}
+                      onClick={() =>
+                        applyToSide("from", cur, s.symbol, clickContext.cca2)
+                      }
+                      title={
+                        isToHere
+                          ? "Already selected as Buy"
+                          : `Sell ${s.symbol} from ${clickContext.countryName}`
+                      }
+                      className={`rounded px-2 py-1 font-medium text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                        isFromHere
+                          ? "bg-[#3b82f6] text-white"
+                          : "border border-border text-muted-fg hover:border-[#3b82f6] hover:text-[#3b82f6]"
+                      }`}
+                    >
+                      Sell
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isFromHere}
+                      onClick={() =>
+                        applyToSide("to", cur, s.symbol, clickContext.cca2)
+                      }
+                      title={
+                        isFromHere
+                          ? "Already selected as Sell"
+                          : `Buy ${s.symbol} into ${clickContext.countryName}`
+                      }
+                      className={`rounded px-2 py-1 font-medium text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                        isToHere
+                          ? "bg-[#10b981] text-white"
+                          : "border border-border text-muted-fg hover:border-[#10b981] hover:text-[#10b981]"
+                      }`}
+                    >
+                      Buy
+                    </button>
+                  </div>
+                );
+              }),
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

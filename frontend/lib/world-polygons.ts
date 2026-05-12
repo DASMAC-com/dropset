@@ -7,7 +7,7 @@ const supportedSet = new Set<string>(SUPPORTED);
 
 const idToCountryInfo = new Map<
   string,
-  { cca3: string; currencies: IsoCurrencyCode[] }
+  { cca2: string; cca3: string; currencies: IsoCurrencyCode[] }
 >();
 for (const c of countries) {
   const supported = Object.keys(c.currencies ?? {}).filter((k) =>
@@ -15,6 +15,7 @@ for (const c of countries) {
   ) as IsoCurrencyCode[];
   // TopoJSON ids in countries-110m are unpadded decimal strings.
   idToCountryInfo.set(String(Number.parseInt(c.ccn3, 10)), {
+    cca2: c.cca2,
     cca3: c.cca3,
     currencies: supported,
   });
@@ -32,6 +33,7 @@ export type CountryFeature = {
   geometry: GeoJSON.Geometry;
   properties: {
     name: string;
+    cca2: string;
     cca3: string;
     currencies: IsoCurrencyCode[];
   };
@@ -53,6 +55,7 @@ export const WORLD_POLYGONS: CountryFeature[] = (
     id,
     properties: {
       name: f.properties?.name ?? "",
+      cca2: info?.cca2 ?? "",
       cca3: info?.cca3 ?? "",
       currencies: info?.currencies ?? [],
     },
