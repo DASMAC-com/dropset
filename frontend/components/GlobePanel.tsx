@@ -180,6 +180,7 @@ function GlobeInner() {
   const [clickContext, setClickContext] = useState<ClickContext | null>(null);
   const [spinning, setSpinning] = useState(true);
   const [altitude, setAltitude] = useState(DEFAULT_POV.altitude);
+  const [globeReady, setGlobeReady] = useState(false);
 
   // Three-bucket label size. The labels layer only rebuilds when crossing
   // a bucket boundary (a couple of times across a full zoom, not per
@@ -229,10 +230,23 @@ function GlobeInner() {
     [],
   );
 
-  const starsAdded = useRef(false);
+  // Drive init from an effect rather than from onGlobeReady directly:
+  // react-kapsule fires onGlobeReady from its mount layoutEffect, which can
+  // run *before* the parent's useImperativeHandle commits globeRef. Doing the
+  // work in an effect keyed on `globeReady` guarantees the ref is populated.
   const handleGlobeReady = useCallback(() => {
+    console.log("[GlobePanel] onGlobeReady fired, ref present?", !!globeRef.current);
+    setGlobeReady(true);
+  }, []);
+
+  useEffect(() => {
+    console.log("[GlobePanel] init effect, globeReady=", globeReady, "ref present?", !!globeRef.current);
+    if (!globeReady) return;
     const g = globeRef.current;
-    if (!g) return;
+    if (!g) {
+      console.warn("[GlobePanel] init effect: globeRef still null after globeReady");
+      return;
+    }
     const controls = g.controls() as {
       autoRotate: boolean;
       autoRotateSpeed: number;
@@ -249,19 +263,22 @@ function GlobeInner() {
     controls.maxDistance = 600;
     g.pointOfView(DEFAULT_POV, 0);
 
-    if (!starsAdded.current) {
-      const scene = g.scene();
-      // Two layers — a dense bed of faint pinpricks plus a sparser layer of
-      // brighter beacons — gives a natural twinkle-free starfield density.
-      scene.add(
-        makeStarLayer({ count: 2500, radius: 700, size: 1.1, opacity: 0.55 }),
-      );
-      scene.add(
-        makeStarLayer({ count: 280, radius: 700, size: 2.2, opacity: 1 }),
-      );
-      starsAdded.current = true;
-    }
-  }, []);
+    const scene = g.scene();
+    // Two layers — a dense bed of faint pinpricks plus a sparser layer of
+    // brighter beacons — gives a natural twinkle-free starfield density.
+    const layers = [
+      makeStarLayer({ count: 2500, radius: 700, size: 1.1, opacity: 0.55 }),
+      makeStarLayer({ count: 280, radius: 700, size: 2.2, opacity: 1 }),
+    ];
+    for (const layer of layers) scene.add(layer);
+    return () => {
+      for (const layer of layers) {
+        scene.remove(layer);
+        layer.geometry.dispose();
+        (layer.material as PointsMaterial).dispose();
+      }
+    };
+  }, [globeReady]);
 
   const resetView = () => {
     globeRef.current?.pointOfView(DEFAULT_POV, 800);
