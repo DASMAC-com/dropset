@@ -149,7 +149,7 @@ function GlobeInner() {
   // enough to risk dense-region label collision (Caribbean, Eurozone
   // microstates). One threshold means at most one labels-layer rebuild
   // during a zoom motion.
-  const labelSize = useMemo(() => (altitude < 0.5 ? 0.08 : 0.42), [altitude]);
+  const labelSize = useMemo(() => (altitude < 0.5 ? 0.08 : 0.75), [altitude]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -409,7 +409,10 @@ function GlobeInner() {
         arcDashLength={0.4}
         arcDashGap={0.2}
         arcDashAnimateTime={2000}
-        arcAltitude={0.32}
+        // Fixed apex height: the arc always bows to the same altitude above
+        // the globe surface so the flight path reads as a direct pin-to-pin
+        // hop, regardless of how far apart the endpoints are.
+        arcAltitude={0.18}
         labelsData={altitude < LABEL_VISIBILITY_ALTITUDE ? COUNTRY_PINS : []}
         labelLat={(d: object) => (d as CountryPin).lat}
         labelLng={(d: object) => (d as CountryPin).lng}
