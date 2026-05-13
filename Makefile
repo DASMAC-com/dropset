@@ -23,8 +23,8 @@ debugger: program
 frontend:
 	cd frontend && pnpm install
 	@( until nc -z localhost 3000 2>/dev/null; do sleep 0.2; done; \
-		command -v open >/dev/null 2>&1 && open http://localhost:3000 \
-		|| command -v xdg-open >/dev/null 2>&1 && xdg-open http://localhost:3000 ) &
+		opener=$$(command -v open || command -v xdg-open) \
+			&& $$opener http://localhost:3000 ) &
 	cd frontend && pnpm dev
 
 # https://github.com/solana-foundation/anchor/tree/anchor-next/lang-v2
