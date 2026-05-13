@@ -1,5 +1,6 @@
 "use client";
 
+import { Compass, Crosshair, Minus, Pause, Play, Plus } from "lucide-react";
 import dynamic from "next/dynamic";
 import {
   Component,
@@ -26,7 +27,6 @@ import {
 } from "@/lib/currencies";
 import { useSwapStore } from "@/lib/store";
 import { type CountryFeature, WORLD_POLYGONS } from "@/lib/world-polygons";
-import { Compass, Crosshair, Minus, Pause, Play, Plus } from "./Icons";
 
 const Globe = dynamic(() => import("react-globe.gl"), {
   ssr: false,

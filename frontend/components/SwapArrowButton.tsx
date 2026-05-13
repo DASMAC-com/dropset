@@ -1,9 +1,9 @@
 "use client";
 
+import { ArrowUpDown } from "lucide-react";
 import { motion } from "motion/react";
 import { useState } from "react";
 import { useSwapStore } from "@/lib/store";
-import { ArrowUpDown } from "./Icons";
 
 export function SwapArrowButton() {
   const [hovering, setHovering] = useState(false);
