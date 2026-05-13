@@ -22,13 +22,12 @@ import {
 import { COUNTRY_PINS, type CountryPin, findPin } from "@/lib/countries";
 import {
   CURRENCIES,
-  currencyFlag,
-  currencyName,
   type IsoCurrencyCode,
   tokenIconUrl,
 } from "@/lib/currencies";
 import { useSwapStore } from "@/lib/store";
 import { type CountryFeature, WORLD_POLYGONS } from "@/lib/world-polygons";
+import { CurrencyGroupHeader } from "./CurrencyGroupHeader";
 
 const Globe = dynamic(() => import("react-globe.gl"), {
   ssr: false,
@@ -578,14 +577,7 @@ function GlobeInner() {
           <div className="flex-1 overflow-y-auto p-1">
             {clickContext.currencies.map((cur) => (
               <div key={cur} className="py-1">
-                <div className="mx-2 mb-1 flex items-center gap-1.5 border-border border-b px-0 py-1 text-muted-fg text-xs uppercase tracking-wide">
-                  <span aria-hidden className="text-sm leading-none">
-                    {currencyFlag(cur)}
-                  </span>
-                  <span className="font-medium">{cur}</span>
-                  <span className="text-muted-fg">·</span>
-                  <span>{currencyName(cur)}</span>
-                </div>
+                <CurrencyGroupHeader code={cur} />
                 {CURRENCIES[cur].stablecoins.map((s) => {
                   const isFromHere =
                     cur === from.currency && s.symbol === from.stablecoin;
