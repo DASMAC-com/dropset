@@ -1,6 +1,7 @@
 .PHONY: all
 .PHONY: check-toolchain
 .PHONY: clean
+.PHONY: frontend
 .PHONY: install-anchor-v2
 .PHONY: lint
 .PHONY: test
@@ -17,6 +18,9 @@ check-toolchain:
 
 debugger: program
 	anchor debugger
+
+frontend:
+	cd frontend && pnpm install && pnpm dev
 
 # https://github.com/solana-foundation/anchor/tree/anchor-next/lang-v2
 install-anchor-v2:
