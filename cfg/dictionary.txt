@@ -15,6 +15,7 @@ eurc
 eurozone
 gyen
 helvetiker
+kapsule
 keypair
 lamports
 lemy

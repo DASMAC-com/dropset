@@ -240,7 +240,6 @@ function GlobeInner() {
     [],
   );
 
-  // cspell:word kapsule
   // Drive init from an effect that depends on BOTH onGlobeReady having fired
   // and the imperative handle being committed. react-kapsule fires
   // onGlobeReady from its mount layoutEffect, which can run before
