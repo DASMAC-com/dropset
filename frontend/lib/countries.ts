@@ -1,3 +1,4 @@
+// cspell:word latlng
 import countries from "world-countries";
 import { type IsoCurrencyCode, SUPPORTED } from "./currencies";
 

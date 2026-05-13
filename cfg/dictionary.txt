@@ -1,6 +1,8 @@
 airdrop
 anza
 audd
+barthelemy
+barthélemy
 blockhash
 bpf
 cfgs
@@ -10,9 +12,12 @@ cngn
 dropset
 dtolnay
 eurc
+eurozone
 gyen
+helvetiker
 keypair
 lamports
+lemy
 litesvm
 localnet
 mxne
@@ -23,8 +28,10 @@ sbpf
 solana
 stablecoins
 swatinem
+topojson
 usdg
 vchf
+vercel
 veur
 wincode
 zarp

@@ -1,3 +1,5 @@
+// cspell:word topojson
+// cspell:word topo
 import { feature } from "topojson-client";
 import topology from "world-atlas/countries-110m.json";
 import countries from "world-countries";
