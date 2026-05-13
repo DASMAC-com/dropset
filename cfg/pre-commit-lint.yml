@@ -51,16 +51,10 @@ repos:
   - files: 'cfg/dictionary.txt'
     id: 'file-contents-sorter'
   - id: 'mixed-line-ending'
-  - alias: 'pretty-format-currencies'
-    args:
-    - '--autofix'
-    - '--no-ensure-ascii'
-    - '--no-sort-keys'
-    files: '^frontend/lib/currencies\.json$'
-    id: 'pretty-format-json'
+  # JSON under frontend/ is handled by biome.
   - args:
     - '--autofix'
-    exclude: '(package-lock\.json|^frontend/lib/currencies\.json$)'
+    exclude: '(^frontend/|package-lock\.json)'
     id: 'pretty-format-json'
   repo: 'https://github.com/pre-commit/pre-commit-hooks'
   rev: 'v6.0.0'
@@ -89,5 +83,24 @@ repos:
     pass_filenames: false
     types:
     - 'rust'
+  - entry: 'pnpm -C frontend exec biome check --write'
+    id: 'biome'
+    language: 'system'
+    name: 'biome'
+    pass_filenames: false
+    types_or:
+    - 'css'
+    - 'javascript'
+    - 'jsx'
+    - 'ts'
+    - 'tsx'
+  - entry: 'pnpm -C frontend exec tsc --noEmit'
+    id: 'tsc'
+    language: 'system'
+    name: 'tsc'
+    pass_filenames: false
+    types_or:
+    - 'ts'
+    - 'tsx'
   repo: 'local'
 ...
