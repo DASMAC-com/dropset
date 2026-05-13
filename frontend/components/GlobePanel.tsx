@@ -170,6 +170,16 @@ class GlobeErrorBoundary extends Component<
 
 function GlobeInner() {
   const globeRef = useRef<GlobeHandle | null>(null);
+  // Mirror the imperative-handle ref into state so the init effect can react
+  // to it. react-kapsule fires onGlobeReady from its mount layoutEffect, which
+  // can run *before* useImperativeHandle commits the parent ref — depending
+  // only on globeReady would then run the effect once with a null ref and
+  // never retry once the ref shows up.
+  const [globeHandle, setGlobeHandle] = useState<GlobeHandle | null>(null);
+  const setGlobeRef = useCallback((handle: GlobeHandle | null) => {
+    globeRef.current = handle;
+    setGlobeHandle(handle);
+  }, []);
   const from = useSwapStore((s) => s.from);
   const to = useSwapStore((s) => s.to);
   const setToken = useSwapStore((s) => s.setToken);
@@ -230,24 +240,18 @@ function GlobeInner() {
     [],
   );
 
-  // Drive init from an effect rather than from onGlobeReady directly:
-  // react-kapsule fires onGlobeReady from its mount layoutEffect, which can
-  // run *before* the parent's useImperativeHandle commits globeRef. Doing the
-  // work in an effect keyed on `globeReady` guarantees the ref is populated.
-  const handleGlobeReady = useCallback(() => {
-    console.log("[GlobePanel] onGlobeReady fired, ref present?", !!globeRef.current);
-    setGlobeReady(true);
-  }, []);
+  // cspell:word kapsule
+  // Drive init from an effect that depends on BOTH onGlobeReady having fired
+  // and the imperative handle being committed. react-kapsule fires
+  // onGlobeReady from its mount layoutEffect, which can run before
+  // useImperativeHandle commits the parent ref. If we only keyed on
+  // globeReady, the effect could run once with a null handle and never
+  // retry once the handle showed up.
+  const handleGlobeReady = useCallback(() => setGlobeReady(true), []);
 
   useEffect(() => {
-    console.log("[GlobePanel] init effect, globeReady=", globeReady, "ref present?", !!globeRef.current);
-    if (!globeReady) return;
-    const g = globeRef.current;
-    if (!g) {
-      console.warn("[GlobePanel] init effect: globeRef still null after globeReady");
-      return;
-    }
-    const controls = g.controls() as {
+    if (!globeReady || !globeHandle) return;
+    const controls = globeHandle.controls() as {
       autoRotate: boolean;
       autoRotateSpeed: number;
       minDistance?: number;
@@ -261,9 +265,9 @@ function GlobeInner() {
     // become separable.
     controls.minDistance = 101;
     controls.maxDistance = 600;
-    g.pointOfView(DEFAULT_POV, 0);
+    globeHandle.pointOfView(DEFAULT_POV, 0);
 
-    const scene = g.scene();
+    const scene = globeHandle.scene();
     // Two layers — a dense bed of faint pinpricks plus a sparser layer of
     // brighter beacons — gives a natural twinkle-free starfield density.
     const layers = [
@@ -278,7 +282,7 @@ function GlobeInner() {
         (layer.material as PointsMaterial).dispose();
       }
     };
-  }, [globeReady]);
+  }, [globeReady, globeHandle]);
 
   const resetView = () => {
     globeRef.current?.pointOfView(DEFAULT_POV, 800);
@@ -430,7 +434,7 @@ function GlobeInner() {
       className="relative w-full overflow-hidden rounded-xl border border-border bg-[#020617]"
     >
       <Globe
-        ref={globeRef as never}
+        ref={setGlobeRef as never}
         width={size.width}
         height={size.height}
         backgroundColor="#020617"
