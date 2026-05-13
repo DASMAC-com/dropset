@@ -19,8 +19,13 @@ check-toolchain:
 debugger: program
 	anchor debugger
 
+# Run next dev and open the browser once it's accepting connections.
 frontend:
-	cd frontend && pnpm install && pnpm dev
+	cd frontend && pnpm install
+	@( until nc -z localhost 3000 2>/dev/null; do sleep 0.2; done; \
+		command -v open >/dev/null 2>&1 && open http://localhost:3000 \
+		|| command -v xdg-open >/dev/null 2>&1 && xdg-open http://localhost:3000 ) &
+	cd frontend && pnpm dev
 
 # https://github.com/solana-foundation/anchor/tree/anchor-next/lang-v2
 install-anchor-v2:
