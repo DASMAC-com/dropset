@@ -138,5 +138,18 @@
         "icon": "https://brale.xyz/assets/stablecoins/mxne-logo.png"
       }
     ]
+  },
+  "ZAR": {
+    "name": "South African Rand",
+    "flag": "🇿🇦",
+    "anchorCca2": "ZA",
+    "stablecoins": [
+      {
+        "symbol": "ZARP",
+        "name": "ZARP Stablecoin",
+        "mint": "dngKhBQM3BGvsDHKhrLnjvRKfY5Q7gEnYGToj9Lk8rk",
+        "icon": "https://raw.githubusercontent.com/venox-digital-assets/zarp.contract/main/public/zarp_coin.png"
+      }
+    ]
   }
 }

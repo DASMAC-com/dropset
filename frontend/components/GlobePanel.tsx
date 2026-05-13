@@ -442,8 +442,10 @@ function GlobeInner() {
         arcsData={arcs}
         arcStartLat={(d: object) => (d as { startLat: number }).startLat}
         arcStartLng={(d: object) => (d as { startLng: number }).startLng}
+        arcStartAltitude={0.012}
         arcEndLat={(d: object) => (d as { endLat: number }).endLat}
         arcEndLng={(d: object) => (d as { endLng: number }).endLng}
+        arcEndAltitude={0.012}
         arcColor={() => ARC_COLOR}
         arcStroke={0.8}
         arcDashLength={0.4}
