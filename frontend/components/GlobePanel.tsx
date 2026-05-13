@@ -255,7 +255,6 @@ function GlobeInner() {
       minDistance?: number;
       maxDistance?: number;
     };
-    controls.autoRotate = true;
     // Negative speed rotates the camera eastward, so starting over the US
     // gradually pans across the Atlantic to reveal Europe (USD → EUR).
     controls.autoRotateSpeed = -0.7;
@@ -282,16 +281,17 @@ function GlobeInner() {
     };
   }, [globeReady, globeHandle]);
 
+  useEffect(() => {
+    if (!globeReady || !globeHandle) return;
+    const ctrl = globeHandle.controls();
+    ctrl.autoRotate = spinning;
+  }, [globeReady, globeHandle, spinning]);
+
   const resetView = () => {
     globeRef.current?.pointOfView(DEFAULT_POV, 800);
   };
 
-  const toggleSpin = () => {
-    const next = !spinning;
-    setSpinning(next);
-    const ctrl = globeRef.current?.controls();
-    if (ctrl) ctrl.autoRotate = next;
-  };
+  const toggleSpin = () => setSpinning((s) => !s);
 
   const ZOOM_STEP = 1.3;
   const MIN_ALT = 0.05;
@@ -401,6 +401,7 @@ function GlobeInner() {
   );
 
   const onPolygonClick = (poly: object, event: MouseEvent) => {
+    setSpinning(false);
     const f = poly as CountryFeature;
     openPickerAt(
       f.properties.name,
@@ -412,8 +413,31 @@ function GlobeInner() {
   };
 
   const onLabelClick = (label: object, event: MouseEvent) => {
+    setSpinning(false);
     const p = label as CountryPin;
     openPickerAt(p.name, p.cca2, [p.currency], event.clientX, event.clientY);
+  };
+
+  const onGlobeClick = () => setSpinning(false);
+
+  // Pause on drag (rotate) but not on wheel/pinch zoom.
+  //   - Mouse: pointermove with primary button held === dragging.
+  //   - Touch: pointermove with exactly one active pointer === single-finger
+  //     rotate; two pointers === pinch, which we want to ignore.
+  //   - Wheel: doesn't fire pointer events, so it's naturally exempt.
+  const activePointers = useRef<Set<number>>(new Set());
+  const onPointerDown = (e: React.PointerEvent) => {
+    activePointers.current.add(e.pointerId);
+  };
+  const onPointerUp = (e: React.PointerEvent) => {
+    activePointers.current.delete(e.pointerId);
+  };
+  const onPointerMove = (e: React.PointerEvent) => {
+    if (e.pointerType === "mouse") {
+      if (e.buttons & 1) setSpinning(false);
+      return;
+    }
+    if (activePointers.current.size === 1) setSpinning(false);
   };
 
   const applyToSide = (
@@ -429,6 +453,10 @@ function GlobeInner() {
   return (
     <div
       ref={containerRef}
+      onPointerDown={onPointerDown}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+      onPointerMove={onPointerMove}
       className="relative w-full overflow-hidden rounded-xl border border-border bg-[#020617]"
     >
       <Globe
@@ -450,6 +478,7 @@ function GlobeInner() {
           `<div style="font-family: var(--font-geist-sans); font-size: 12px; padding: 4px 8px; background: rgba(0,0,0,0.7); border-radius: 4px; color: white;">${(d as CountryFeature).properties.name}</div>`
         }
         onPolygonClick={onPolygonClick}
+        onGlobeClick={onGlobeClick}
         ringsData={COUNTRY_PINS}
         ringLat={(d: object) => (d as CountryPin).lat}
         ringLng={(d: object) => (d as CountryPin).lng}
