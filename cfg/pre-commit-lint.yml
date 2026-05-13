@@ -51,9 +51,16 @@ repos:
   - files: 'cfg/dictionary.txt'
     id: 'file-contents-sorter'
   - id: 'mixed-line-ending'
+  - alias: 'pretty-format-currencies'
+    args:
+    - '--autofix'
+    - '--no-ensure-ascii'
+    - '--no-sort-keys'
+    files: '^frontend/lib/currencies\.json$'
+    id: 'pretty-format-json'
   - args:
     - '--autofix'
-    exclude: 'package-lock.json'
+    exclude: '(package-lock\.json|^frontend/lib/currencies\.json$)'
     id: 'pretty-format-json'
   repo: 'https://github.com/pre-commit/pre-commit-hooks'
   rev: 'v6.0.0'
