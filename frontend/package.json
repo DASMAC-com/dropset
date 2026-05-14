@@ -34,7 +34,9 @@
   "name": "dropset-gamma-frontend",
   "packageManager": "pnpm@10.30.3",
   "pnpm": {
-    "onlyBuiltDependencies": ["sharp"]
+    "onlyBuiltDependencies": [
+      "sharp"
+    ]
   },
   "private": true,
   "scripts": {
