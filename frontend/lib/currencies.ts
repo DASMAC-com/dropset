@@ -49,3 +49,6 @@ export const tokenIconUrl = (symbol: string): string =>
 
 export const stablecoinDecimals = (symbol: string): number =>
   STABLE_BY_SYMBOL[symbol]?.decimals ?? 0;
+
+export const stablecoinMint = (symbol: string): string =>
+  STABLE_BY_SYMBOL[symbol]?.mint ?? "";

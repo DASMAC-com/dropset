@@ -8,6 +8,7 @@ import {
 } from "@/lib/currencies";
 import { useAppEvent } from "@/lib/events";
 import { type Side, useSwapStore } from "@/lib/store";
+import { FromBalanceButtons } from "./FromBalanceButtons";
 import { TokenPicker } from "./TokenPicker";
 
 const sanitizeAmount = (raw: string, decimals: number): string => {
@@ -93,6 +94,7 @@ export function TokenRow({ side, label }: { side: Side; label: string }) {
             {currencyName(currency)} ({currency})
           </span>
         </span>
+        {side === "from" && <FromBalanceButtons />}
       </div>
       <div className="flex items-center gap-2">
         <TokenPicker side={side} />

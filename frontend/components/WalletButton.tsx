@@ -130,7 +130,7 @@ export function WalletButton() {
       <Popover.Trigger asChild>
         <button
           type="button"
-          className="inline-flex h-9 items-center gap-2 rounded-md border border-border bg-muted px-3 font-medium text-foreground text-sm transition-colors hover:bg-border"
+          className="inline-flex h-9 items-center gap-2 rounded-md border border-muted-fg/50 bg-foreground/10 px-3 font-medium text-foreground text-sm transition-colors hover:border-muted-fg hover:bg-foreground/15"
         >
           {currentConnector?.icon && (
             <Image
