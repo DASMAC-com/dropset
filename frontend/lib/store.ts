@@ -20,6 +20,7 @@ const anchorFor = (currency: IsoCurrencyCode): string =>
 type Store = {
   from: SideState;
   to: SideState;
+  amount: string;
   activeSide: Side;
   setActiveSide: (side: Side) => void;
   setToken: (
@@ -28,12 +29,14 @@ type Store = {
     stablecoin: string,
     cca2?: string,
   ) => void;
+  setAmount: (amount: string) => void;
   swapSides: () => void;
 };
 
 export const useSwapStore = create<Store>((set) => ({
   from: { currency: "USD", stablecoin: "USDC", cca2: anchorFor("USD") },
   to: { currency: "EUR", stablecoin: "EURC", cca2: anchorFor("EUR") },
+  amount: "",
   activeSide: "from",
 
   setActiveSide: (side) => set({ activeSide: side }),
@@ -47,6 +50,8 @@ export const useSwapStore = create<Store>((set) => ({
       },
       activeSide: side,
     }),
+
+  setAmount: (amount) => set({ amount }),
 
   swapSides: () =>
     set((s) => ({

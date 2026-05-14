@@ -5,6 +5,7 @@ export type Stablecoin = {
   symbol: string;
   name: string;
   mint: string;
+  decimals: number;
   icon: string;
 };
 export type CurrencyEntry = {
@@ -40,3 +41,6 @@ export const currencyAnchor = (code: IsoCurrencyCode): string =>
 
 export const tokenIconUrl = (symbol: string): string =>
   STABLE_BY_SYMBOL[symbol]?.icon ?? "";
+
+export const stablecoinDecimals = (symbol: string): number =>
+  STABLE_BY_SYMBOL[symbol]?.decimals ?? 0;
