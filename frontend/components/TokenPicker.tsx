@@ -1,18 +1,18 @@
 "use client";
 
 import * as Popover from "@radix-ui/react-popover";
-import { Check, ChevronDown, ExternalLink, Search } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import {
   CURRENCIES,
-  currencyFlag,
-  currencyName,
   type IsoCurrencyCode,
   type Stablecoin,
   SUPPORTED,
   tokenIconUrl,
 } from "@/lib/currencies";
+import { useAppEvent } from "@/lib/events";
 import { type Side, useSwapStore } from "@/lib/store";
+import { CurrencyGroupHeader } from "./CurrencyGroupHeader";
+import { Check, ChevronDown, ExternalLink, Search } from "./icons";
 
 const explorerUrl = (mint: string) =>
   `https://explorer.solana.com/address/${mint}`;
@@ -29,11 +29,17 @@ export function TokenPicker({ side }: { side: Side }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [copiedSymbol, setCopiedSymbol] = useState<string | null>(null);
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
   const searchRef = useRef<HTMLInputElement>(null);
+  const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   useEffect(() => {
     if (!open) setQuery("");
   }, [open]);
+
+  useAppEvent("openPicker", (which) => {
+    if (which === side) setOpen(true);
+  });
 
   const isBlocked = (cur: IsoCurrencyCode, sym: string) =>
     cur === otherSideState.currency && sym === otherSideState.stablecoin;
@@ -43,6 +49,7 @@ export function TokenPicker({ side }: { side: Side }) {
     !q ||
     s.symbol.toLowerCase().includes(q) ||
     s.name.toLowerCase().includes(q) ||
+    s.mint.toLowerCase().includes(q) ||
     code.toLowerCase().includes(q) ||
     CURRENCIES[code].name.toLowerCase().includes(q);
 
@@ -51,9 +58,59 @@ export function TokenPicker({ side }: { side: Side }) {
     stables: CURRENCIES[code].stablecoins.filter((s) => matches(s, code)),
   })).filter((g) => g.stables.length > 0);
 
+  let runningIdx = 0;
+  const indexedGroups = grouped.map(({ code, stables }) => ({
+    code,
+    stables: stables.map((s) => ({ s, index: runningIdx++ })),
+  }));
+  const items: { code: IsoCurrencyCode; s: Stablecoin; blocked: boolean }[] =
+    [];
+  for (const { code, stables } of grouped) {
+    for (const s of stables) {
+      items.push({ code, s, blocked: isBlocked(code, s.symbol) });
+    }
+  }
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset highlight when filter or blocked set changes
+  useEffect(() => {
+    const idx = items.findIndex((it) => !it.blocked);
+    setHighlightedIndex(idx === -1 ? 0 : idx);
+  }, [query, otherSideState.currency, otherSideState.stablecoin]);
+
+  useEffect(() => {
+    itemRefs.current[highlightedIndex]?.scrollIntoView({ block: "nearest" });
+  }, [highlightedIndex]);
+
   const select = (code: IsoCurrencyCode, sym: string) => {
     setToken(side, code, sym);
     setOpen(false);
+  };
+
+  const onSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (items.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlightedIndex((i) => {
+        for (let step = 1; step <= items.length; step++) {
+          const next = (i + step) % items.length;
+          if (!items[next].blocked) return next;
+        }
+        return i;
+      });
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlightedIndex((i) => {
+        for (let step = 1; step <= items.length; step++) {
+          const prev = (i - step + items.length) % items.length;
+          if (!items[prev].blocked) return prev;
+        }
+        return i;
+      });
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const item = items[highlightedIndex];
+      if (item && !item.blocked) select(item.code, item.s.symbol);
+    }
   };
 
   const copyMint = async (sym: string, mint: string) => {
@@ -69,14 +126,19 @@ export function TokenPicker({ side }: { side: Side }) {
     }
   };
 
-  const renderStableRow = (code: IsoCurrencyCode, s: Stablecoin) => {
+  const renderStableRow = (
+    code: IsoCurrencyCode,
+    s: Stablecoin,
+    highlighted = false,
+  ) => {
     const blocked = isBlocked(code, s.symbol);
     const selected = code === currency && s.symbol === stablecoin;
     const copied = copiedSymbol === s.symbol;
+    const active = selected || highlighted;
     return (
       <div
         className={`flex w-full items-center rounded-md text-sm ${
-          selected ? "bg-muted text-foreground" : "text-muted-fg"
+          active ? "bg-muted text-foreground" : "text-muted-fg"
         }`}
       >
         <button
@@ -132,9 +194,13 @@ export function TokenPicker({ side }: { side: Side }) {
     );
   };
 
-  const activeStable = CURRENCIES[currency].stablecoins.find(
+  const activeStableRaw = CURRENCIES[currency].stablecoins.find(
     (s) => s.symbol === stablecoin,
   );
+  const activeStable =
+    activeStableRaw && matches(activeStableRaw, currency)
+      ? activeStableRaw
+      : null;
 
   return (
     <Popover.Root
@@ -174,6 +240,7 @@ export function TokenPicker({ side }: { side: Side }) {
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={onSearchKeyDown}
               placeholder="Search tokens…"
               className="w-full bg-transparent text-foreground text-sm outline-none placeholder:text-muted-fg"
             />
@@ -189,19 +256,17 @@ export function TokenPicker({ side }: { side: Side }) {
                 No tokens match
               </div>
             ) : (
-              grouped.map(({ code, stables }) => (
+              indexedGroups.map(({ code, stables }) => (
                 <div key={code} className="py-1">
-                  <div className="mx-2 mb-1 flex items-center gap-1.5 border-border border-b px-0 py-1 text-muted-fg text-xs uppercase tracking-wide">
-                    <span aria-hidden className="text-sm leading-none">
-                      {currencyFlag(code)}
-                    </span>
-                    <span className="font-medium">{code}</span>
-                    <span className="text-muted-fg">·</span>
-                    <span>{currencyName(code)}</span>
-                  </div>
-                  {stables.map((s) => (
-                    <div key={`${code}-${s.symbol}`}>
-                      {renderStableRow(code, s)}
+                  <CurrencyGroupHeader code={code} />
+                  {stables.map(({ s, index }) => (
+                    <div
+                      key={`${code}-${s.symbol}`}
+                      ref={(el) => {
+                        itemRefs.current[index] = el;
+                      }}
+                    >
+                      {renderStableRow(code, s, index === highlightedIndex)}
                     </div>
                   ))}
                 </div>

@@ -1,6 +1,5 @@
 "use client";
 
-import { Compass, Crosshair, Minus, Pause, Play, Plus } from "lucide-react";
 import dynamic from "next/dynamic";
 import {
   Component,
@@ -14,21 +13,25 @@ import {
 import {
   BufferAttribute,
   BufferGeometry,
+  Mesh,
   MeshBasicMaterial,
+  type Object3D,
   Points,
   PointsMaterial,
   type Scene,
+  TorusGeometry,
 } from "three";
 import { COUNTRY_PINS, type CountryPin, findPin } from "@/lib/countries";
 import {
   CURRENCIES,
-  currencyFlag,
-  currencyName,
   type IsoCurrencyCode,
   tokenIconUrl,
 } from "@/lib/currencies";
+import { useAppEvent } from "@/lib/events";
 import { useSwapStore } from "@/lib/store";
 import { type CountryFeature, WORLD_POLYGONS } from "@/lib/world-polygons";
+import { CurrencyGroupHeader } from "./CurrencyGroupHeader";
+import { Compass, Crosshair, Flag, Minus, Pause, Play, Plus } from "./icons";
 
 const Globe = dynamic(() => import("react-globe.gl"), {
   ssr: false,
@@ -50,12 +53,33 @@ const ARC_COLOR = "#a7f3d0"; // emerald-200 — bright, ties the cool palette to
 const POPOVER_WIDTH = 256;
 const POPOVER_MAX_HEIGHT = 260;
 
+// Height of the "same-country" pillar (a vertical cylinder over the shared
+// anchor) and the spinning ring that sits on top of it.
+const PILLAR_ALTITUDE = 0.18;
+// three-globe's default sphere radius. react-globe.gl's typings don't expose
+// the runtime globeRadius arg in customThreeObject callbacks, but it equals
+// this constant unless overridden — which we don't.
+const GLOBE_RADIUS = 100;
+
 // Start the view centered roughly over the eastern US so the auto-rotation
 // reveals the Atlantic and then Europe — the canonical USD → EUR path.
 const DEFAULT_POV = { lat: 30, lng: -75, altitude: 1.9 };
 
 // Below this altitude, country-name labels become visible.
 const LABEL_VISIBILITY_ALTITUDE = 2.6;
+
+// Build a flag emoji from a 2-letter country code by mapping each letter to
+// its Regional Indicator Symbol (🇺 + 🇸 → 🇺🇸). Pure data transform — works
+// for any valid ISO 3166-1 alpha-2 code that the OS has emoji glyphs for.
+const cca2ToFlag = (cca2: string): string => {
+  const A = "A".charCodeAt(0);
+  const RI = 0x1f1e6;
+  return cca2
+    .toUpperCase()
+    .split("")
+    .map((c) => String.fromCodePoint(RI + c.charCodeAt(0) - A))
+    .join("");
+};
 
 type Pov = { lat: number; lng: number; altitude: number };
 type GlobeHandle = {
@@ -189,8 +213,44 @@ function GlobeInner() {
   const [size, setSize] = useState({ width: 480, height: 480 });
   const [clickContext, setClickContext] = useState<ClickContext | null>(null);
   const [spinning, setSpinning] = useState(true);
+  const [showFlags, setShowFlags] = useState(false);
   const [altitude, setAltitude] = useState(DEFAULT_POV.altitude);
   const [globeReady, setGlobeReady] = useState(false);
+  // Ref to the spinning-ring mesh so a RAF loop can mutate its rotation
+  // each frame without going through React state.
+  const ringRef = useRef<Mesh | null>(null);
+  const [flashOn, setFlashOn] = useState(false);
+
+  const sameCca2 = from.cca2 === to.cca2;
+  const sameToken =
+    from.currency === to.currency && from.stablecoin === to.stablecoin;
+
+  // 500ms polygon-cap flash for the fully-degenerate sameToken case to
+  // mirror the disabled Swap button. Same-country / different-stable swaps
+  // get the spinning ring on top of the pillar instead (see customLayer).
+  useEffect(() => {
+    if (!sameToken) {
+      setFlashOn(false);
+      return;
+    }
+    const id = setInterval(() => setFlashOn((v) => !v), 500);
+    return () => clearInterval(id);
+  }, [sameToken]);
+
+  // Spin the ring continuously while it's visible by directly mutating the
+  // mesh's rotation in a RAF loop — avoids re-rendering React state each
+  // frame just to update three.js scene transforms.
+  useEffect(() => {
+    if (!sameCca2 || sameToken) return;
+    let raf = 0;
+    const tick = () => {
+      const m = ringRef.current;
+      if (m) m.rotateZ(0.03);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [sameCca2, sameToken]);
 
   // Three-bucket label size. The labels layer only rebuilds when crossing
   // a bucket boundary (a couple of times across a full zoom, not per
@@ -200,6 +260,14 @@ function GlobeInner() {
     if (altitude < 0.3) return 0.08;
     if (altitude < 0.8) return 0.32;
     return 1.4;
+  }, [altitude]);
+
+  // Mirrors the labelSize buckets so flag emoji scale roughly in step with
+  // the text labels they replace.
+  const flagFontPx = useMemo(() => {
+    if (altitude < 0.3) return 14;
+    if (altitude < 0.8) return 20;
+    return 28;
   }, [altitude]);
 
   useEffect(() => {
@@ -256,7 +324,6 @@ function GlobeInner() {
       minDistance?: number;
       maxDistance?: number;
     };
-    controls.autoRotate = true;
     // Negative speed rotates the camera eastward, so starting over the US
     // gradually pans across the Atlantic to reveal Europe (USD → EUR).
     controls.autoRotateSpeed = -0.7;
@@ -283,16 +350,21 @@ function GlobeInner() {
     };
   }, [globeReady, globeHandle]);
 
+  useEffect(() => {
+    if (!globeReady || !globeHandle) return;
+    const ctrl = globeHandle.controls();
+    ctrl.autoRotate = spinning;
+  }, [globeReady, globeHandle, spinning]);
+
   const resetView = () => {
     globeRef.current?.pointOfView(DEFAULT_POV, 800);
   };
 
-  const toggleSpin = () => {
-    const next = !spinning;
-    setSpinning(next);
-    const ctrl = globeRef.current?.controls();
-    if (ctrl) ctrl.autoRotate = next;
-  };
+  useAppEvent("resetGlobe", () => resetView());
+  useAppEvent("toggleSpin", () => setSpinning((v) => !v));
+  useAppEvent("toggleFlags", () => setShowFlags((v) => !v));
+
+  const toggleSpin = () => setSpinning((s) => !s);
 
   const ZOOM_STEP = 1.3;
   const MIN_ALT = 0.05;
@@ -309,6 +381,26 @@ function GlobeInner() {
   };
   const zoomIn = () => zoom(1 / ZOOM_STEP);
   const zoomOut = () => zoom(ZOOM_STEP);
+
+  useAppEvent("zoomIn", () => zoomIn());
+  useAppEvent("zoomOut", () => zoomOut());
+
+  // Arrow-key panning. Step shrinks with altitude so fine adjustments are
+  // possible when zoomed in. Lat is clamped to ±85° to avoid the
+  // OrbitControls polar-flip near the poles.
+  useAppEvent("pan", (dir) => {
+    const g = globeRef.current;
+    if (!g) return;
+    const cur = g.pointOfView();
+    const step = Math.max(2, Math.min(20, cur.altitude * 10));
+    const next: Pov = { ...cur };
+    if (dir === "up") next.lat = Math.min(85, cur.lat + step);
+    else if (dir === "down") next.lat = Math.max(-85, cur.lat - step);
+    else if (dir === "left") next.lng = cur.lng - step;
+    else if (dir === "right") next.lng = cur.lng + step;
+    g.pointOfView(next, 250);
+    setSpinning(false);
+  });
 
   const focusOnArc = () => {
     const start = findPin(from.cca2);
@@ -342,24 +434,55 @@ function GlobeInner() {
     );
   };
 
+  useAppEvent("focusRoute", () => focusOnArc());
+
   const arcs = useMemo(() => {
+    // Hide the arc whenever both anchors collide — the polygon flash (same
+    // token) or the pillar (same country, different stable) takes over.
+    if (sameCca2) return [];
     const start = findPin(from.cca2);
     const end = findPin(to.cca2);
     if (!start || !end) return [];
+    // Scale apex altitude with great-circle distance so widely-separated
+    // (especially near-antipodal) pairs like JPY ↔ BRL arch high enough to
+    // clear the globe instead of clipping through it.
+    const toRad = (d: number) => (d * Math.PI) / 180;
+    const phi1 = toRad(start.lat);
+    const phi2 = toRad(end.lat);
+    const dPhi = phi2 - phi1;
+    const dLam = toRad(end.lng - start.lng);
+    const h =
+      Math.sin(dPhi / 2) ** 2 +
+      Math.cos(phi1) * Math.cos(phi2) * Math.sin(dLam / 2) ** 2;
+    const angular = 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+    const altitude = 0.15 + (angular / Math.PI) * 0.4;
     return [
       {
         startLat: start.lat,
         startLng: start.lng,
         endLat: end.lat,
         endLng: end.lng,
+        altitude,
       },
     ];
-  }, [from.cca2, to.cca2]);
+  }, [from.cca2, to.cca2, sameCca2]);
+
+  // Pillar that flashes over the shared anchor when both sides share a
+  // country but use different stables (a valid swap that's just visually
+  // confusing with a regular arc).
+  const pillarPins = useMemo(() => {
+    if (!sameCca2 || sameToken) return [];
+    const pin = findPin(from.cca2);
+    return pin ? [pin] : [];
+  }, [sameCca2, sameToken, from.cca2]);
 
   const polygonCapColor = (d: object) => {
     const f = d as CountryFeature;
     const supports = f.properties.currencies;
     if (supports.length === 0) return LAND_UNCOVERED;
+    if (sameToken && f.properties.cca2 === from.cca2) {
+      return flashOn ? BUY_TINT : SELL_TINT;
+    }
     if (supports.includes(from.currency)) return SELL_TINT;
     if (supports.includes(to.currency)) return BUY_TINT;
     return LAND_COVERED;
@@ -368,11 +491,14 @@ function GlobeInner() {
   const polygonAltitude = (d: object) => {
     const f = d as CountryFeature;
     const supports = f.properties.currencies;
-    if (supports.length === 0) return 0.003;
+    // Large polygons (Greenland, Antarctica) still flicker near the globe
+    // shell at very low altitude — keep everything well above the atmosphere
+    // shader. Overlay layers (rings/labels/arcs) sit above at 0.018.
+    if (supports.length === 0) return 0.008;
     if (supports.includes(from.currency) || supports.includes(to.currency)) {
-      return 0.008;
+      return 0.013;
     }
-    return 0.005;
+    return 0.011;
   };
 
   const openPickerAt = useCallback(
@@ -402,6 +528,7 @@ function GlobeInner() {
   );
 
   const onPolygonClick = (poly: object, event: MouseEvent) => {
+    setSpinning(false);
     const f = poly as CountryFeature;
     openPickerAt(
       f.properties.name,
@@ -413,8 +540,31 @@ function GlobeInner() {
   };
 
   const onLabelClick = (label: object, event: MouseEvent) => {
+    setSpinning(false);
     const p = label as CountryPin;
     openPickerAt(p.name, p.cca2, [p.currency], event.clientX, event.clientY);
+  };
+
+  const onGlobeClick = () => setSpinning(false);
+
+  // Pause on drag (rotate) but not on wheel/pinch zoom.
+  //   - Mouse: pointermove with primary button held === dragging.
+  //   - Touch: pointermove with exactly one active pointer === single-finger
+  //     rotate; two pointers === pinch, which we want to ignore.
+  //   - Wheel: doesn't fire pointer events, so it's naturally exempt.
+  const activePointers = useRef<Set<number>>(new Set());
+  const onPointerDown = (e: React.PointerEvent) => {
+    activePointers.current.add(e.pointerId);
+  };
+  const onPointerUp = (e: React.PointerEvent) => {
+    activePointers.current.delete(e.pointerId);
+  };
+  const onPointerMove = (e: React.PointerEvent) => {
+    if (e.pointerType === "mouse") {
+      if (e.buttons & 1) setSpinning(false);
+      return;
+    }
+    if (activePointers.current.size === 1) setSpinning(false);
   };
 
   const applyToSide = (
@@ -430,6 +580,10 @@ function GlobeInner() {
   return (
     <div
       ref={containerRef}
+      onPointerDown={onPointerDown}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+      onPointerMove={onPointerMove}
       className="relative w-full overflow-hidden rounded-xl border border-border bg-[#020617]"
     >
       <Globe
@@ -451,6 +605,7 @@ function GlobeInner() {
           `<div style="font-family: var(--font-geist-sans); font-size: 12px; padding: 4px 8px; background: rgba(0,0,0,0.7); border-radius: 4px; color: white;">${(d as CountryFeature).properties.name}</div>`
         }
         onPolygonClick={onPolygonClick}
+        onGlobeClick={onGlobeClick}
         ringsData={COUNTRY_PINS}
         ringLat={(d: object) => (d as CountryPin).lat}
         ringLng={(d: object) => (d as CountryPin).lng}
@@ -458,25 +613,63 @@ function GlobeInner() {
         ringMaxRadius={1.6}
         ringPropagationSpeed={0.7}
         ringRepeatPeriod={2200}
-        ringAltitude={0.012}
+        ringAltitude={0.018}
+        pointsData={pillarPins}
+        pointLat={(d: object) => (d as CountryPin).lat}
+        pointLng={(d: object) => (d as CountryPin).lng}
+        pointAltitude={PILLAR_ALTITUDE}
+        pointRadius={0.35}
+        pointResolution={12}
+        pointColor={() => BUY_TINT}
+        customLayerData={pillarPins}
+        customThreeObject={() => {
+          // Partial torus (3/4 of a full ring) so the spin is visibly
+          // rotational instead of a uniform disc.
+          const geom = new TorusGeometry(
+            GLOBE_RADIUS * 0.04,
+            GLOBE_RADIUS * 0.006,
+            8,
+            48,
+            Math.PI * 1.5,
+          );
+          const mat = new MeshBasicMaterial({ color: BUY_TINT });
+          const mesh = new Mesh(geom, mat);
+          ringRef.current = mesh;
+          return mesh;
+        }}
+        customThreeObjectUpdate={(obj: Object3D, d: object) => {
+          // Place the ring at the pillar's tip and orient its plane tangent
+          // to the globe surface (TorusGeometry's ring axis is +Z by default;
+          // lookAt(origin) makes +Z point outward, so the ring lies flat).
+          const pin = d as CountryPin;
+          const phi = ((90 - pin.lat) * Math.PI) / 180;
+          const theta = ((pin.lng + 90) * Math.PI) / 180;
+          const r = GLOBE_RADIUS * (1 + PILLAR_ALTITUDE);
+          obj.position.set(
+            -r * Math.sin(phi) * Math.cos(theta),
+            r * Math.cos(phi),
+            r * Math.sin(phi) * Math.sin(theta),
+          );
+          obj.lookAt(0, 0, 0);
+        }}
         arcsData={arcs}
         arcStartLat={(d: object) => (d as { startLat: number }).startLat}
         arcStartLng={(d: object) => (d as { startLng: number }).startLng}
-        arcStartAltitude={0.012}
+        arcStartAltitude={0.018}
         arcEndLat={(d: object) => (d as { endLat: number }).endLat}
         arcEndLng={(d: object) => (d as { endLng: number }).endLng}
-        arcEndAltitude={0.012}
+        arcEndAltitude={0.018}
         arcColor={() => ARC_COLOR}
         arcStroke={0.8}
         arcDashLength={0.4}
         arcDashGap={0.2}
         arcDashAnimateTime={2000}
-        // Fixed apex height: the arc always bows to the same altitude above
-        // the globe surface so the flight path reads as a direct pin-to-pin
-        // hop, regardless of how far apart the endpoints are.
-        arcAltitude={0.18}
+        // Apex altitude scales with great-circle distance (see useMemo above):
+        // close pairs get a low bow, near-antipodal pairs arch high enough to
+        // clear the globe surface instead of clipping through it.
+        arcAltitude={(d: object) => (d as { altitude: number }).altitude}
         labelsData={
-          altitude >= LABEL_VISIBILITY_ALTITUDE
+          showFlags || altitude >= LABEL_VISIBILITY_ALTITUDE
             ? []
             : altitude < 0.8
               ? COUNTRY_PINS
@@ -495,11 +688,42 @@ function GlobeInner() {
         }
         labelSize={labelSize}
         labelDotRadius={labelSize * 0.36}
-        labelAltitude={0.012}
+        labelAltitude={0.018}
         labelColor={() => "rgba(241, 245, 249, 0.95)"}
         labelResolution={2}
         labelIncludeDot={true}
         onLabelClick={onLabelClick}
+        htmlElementsData={
+          showFlags && altitude < LABEL_VISIBILITY_ALTITUDE
+            ? altitude < 0.8
+              ? COUNTRY_PINS
+              : FAR_ZOOM_PINS
+            : []
+        }
+        htmlLat={(d: object) => (d as CountryPin).lat}
+        htmlLng={(d: object) => (d as CountryPin).lng}
+        htmlAltitude={0.018}
+        htmlElement={(d: object) => {
+          const pin = d as CountryPin;
+          const el = document.createElement("div");
+          el.textContent = cca2ToFlag(pin.cca2);
+          el.style.fontSize = `${flagFontPx}px`;
+          el.style.lineHeight = "1";
+          el.style.cursor = "pointer";
+          el.style.userSelect = "none";
+          el.style.transform = "translate(-50%, -50%)";
+          // globe.gl's HTML overlay container sets pointer-events: none so
+          // canvas interactions (rotate/zoom) still work through it; each
+          // child has to opt back in to receive its own click.
+          el.style.pointerEvents = "auto";
+          // Keep flags below the country popover (z-40) when both are visible.
+          el.style.zIndex = "1";
+          el.title = pin.name;
+          el.addEventListener("click", (e) => {
+            onLabelClick(pin, e);
+          });
+          return el;
+        }}
         onZoom={(pov: { altitude: number }) => setAltitude(pov.altitude)}
       />
 
@@ -512,6 +736,33 @@ function GlobeInner() {
           aria-label="Reset globe orientation"
         >
           <Compass size={16} />
+        </button>
+        <button
+          type="button"
+          onClick={focusOnArc}
+          title="Focus on swap route"
+          className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background/80 text-muted-fg shadow-sm backdrop-blur transition-colors hover:border-accent hover:text-accent"
+          aria-label="Focus globe on swap route"
+        >
+          <Crosshair size={16} />
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowFlags((v) => !v)}
+          title={showFlags ? "Show country names" : "Show flag emojis"}
+          className={`flex h-9 w-9 items-center justify-center rounded-full border bg-background/80 shadow-sm backdrop-blur transition-colors hover:border-accent hover:text-accent ${
+            showFlags
+              ? "border-accent text-accent"
+              : "border-border text-muted-fg"
+          }`}
+          aria-label={
+            showFlags
+              ? "Switch globe labels to country names"
+              : "Switch globe labels to flag emojis"
+          }
+          aria-pressed={showFlags}
+        >
+          <Flag size={16} />
         </button>
         <button
           type="button"
@@ -548,21 +799,12 @@ function GlobeInner() {
         >
           <Minus size={16} />
         </button>
-        <button
-          type="button"
-          onClick={focusOnArc}
-          title="Focus on flight path"
-          className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background/80 text-muted-fg shadow-sm backdrop-blur transition-colors hover:border-accent hover:text-accent"
-          aria-label="Focus globe on flight path"
-        >
-          <Crosshair size={16} />
-        </button>
       </div>
 
       {clickContext && (
         <div
           ref={popoverRef}
-          className="absolute z-30 flex flex-col overflow-hidden rounded-xl border border-border bg-background shadow-lg"
+          className="absolute z-40 flex flex-col overflow-hidden rounded-xl border border-border bg-background shadow-lg"
           style={{
             left: clickContext.x,
             top: clickContext.y,
@@ -578,14 +820,7 @@ function GlobeInner() {
           <div className="flex-1 overflow-y-auto p-1">
             {clickContext.currencies.map((cur) => (
               <div key={cur} className="py-1">
-                <div className="mx-2 mb-1 flex items-center gap-1.5 border-border border-b px-0 py-1 text-muted-fg text-xs uppercase tracking-wide">
-                  <span aria-hidden className="text-sm leading-none">
-                    {currencyFlag(cur)}
-                  </span>
-                  <span className="font-medium">{cur}</span>
-                  <span className="text-muted-fg">·</span>
-                  <span>{currencyName(cur)}</span>
-                </div>
+                <CurrencyGroupHeader code={cur} />
                 {CURRENCIES[cur].stablecoins.map((s) => {
                   const isFromHere =
                     cur === from.currency && s.symbol === from.stablecoin;

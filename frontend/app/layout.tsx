@@ -1,3 +1,4 @@
+// cspell:word darkreader
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Header } from "@/components/Header";
@@ -16,6 +17,12 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "dropset",
   description: "dropset gamma prototype",
+  // darkreader-lock: tells the Dark Reader extension to skip color
+  // transforms on this page. The app is already dark-themed, and Dark
+  // Reader's SVG attribute injection causes hydration mismatches.
+  other: {
+    "darkreader-lock": "",
+  },
 };
 
 export default function RootLayout({
