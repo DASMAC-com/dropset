@@ -14,6 +14,7 @@ export type AppEvents = {
   focusRoute: undefined;
   toggleSpin: undefined;
   toggleFlags: undefined;
+  toggleHelp: undefined;
 };
 
 type Handler<K extends keyof AppEvents> = (payload: AppEvents[K]) => void;

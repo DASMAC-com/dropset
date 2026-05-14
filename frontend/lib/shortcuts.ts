@@ -12,7 +12,7 @@ export type ShortcutSpec = {
   run: () => void;
 };
 
-const SHORTCUTS: ShortcutSpec[] = [
+export const SHORTCUTS: ShortcutSpec[] = [
   {
     key: "f",
     description: "Open the From picker",
@@ -42,6 +42,11 @@ const SHORTCUTS: ShortcutSpec[] = [
     key: "e",
     description: "Toggle flag emojis on the map",
     run: () => emit("toggleFlags"),
+  },
+  {
+    key: "/",
+    description: "Show this shortcuts list",
+    run: () => emit("toggleHelp"),
   },
 ];
 
