@@ -14,6 +14,7 @@ export type AppEvents = {
   openPicker: Side;
   resetGlobe: undefined;
   focusRoute: undefined;
+  swapSides: undefined;
   toggleSpin: undefined;
   toggleFlags: undefined;
   toggleHelp: undefined;

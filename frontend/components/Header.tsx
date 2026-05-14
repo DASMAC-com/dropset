@@ -9,7 +9,14 @@ export function Header() {
           href="/"
           className="flex shrink-0 items-center gap-2 font-semibold text-base text-foreground no-underline"
         >
-          <Image src="/favicon.png" alt="" width={36} height={36} priority />
+          <Image
+            src="/favicon.png"
+            alt=""
+            width={36}
+            height={36}
+            priority
+            suppressHydrationWarning
+          />
           Dropset
         </Link>
         <nav className="flex items-center gap-2">
