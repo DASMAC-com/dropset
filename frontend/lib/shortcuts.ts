@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { emit } from "./events";
+import { useSwapStore } from "./store";
 
 // Single source of truth for app-wide keyboard shortcuts. Each entry maps a
 // case-insensitive key to a side effect. Add new shortcuts here; nothing else
@@ -26,6 +27,11 @@ export const SHORTCUTS: ShortcutSpec[] = [
     key: "t",
     description: "Open the To picker",
     run: () => emit("openPicker", "to"),
+  },
+  {
+    key: "d",
+    description: "Swap From and To direction",
+    run: () => useSwapStore.getState().swapSides(),
   },
   {
     key: "r",
