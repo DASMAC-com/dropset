@@ -33,12 +33,6 @@
         "name": "World Liberty Financial USD",
         "mint": "USD1ttGY1N17NEEHLmELoaybftRBUSErhqYiQzvEmuB",
         "icon": "https://raw.githubusercontent.com/worldliberty/usd1-metadata/refs/heads/main/logo.png"
-      },
-      {
-        "symbol": "USX",
-        "name": "USX",
-        "mint": "6FrrzDk5mQARGc1TDYoyVnSyRdds1t4PbtohCD6p3tgG",
-        "icon": "https://raw.githubusercontent.com/Thomas-Solstice/usx-metadata/refs/heads/main/usx.png"
       }
     ]
   },
