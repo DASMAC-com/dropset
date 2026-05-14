@@ -205,6 +205,19 @@ function GlobeInner() {
   const [showFlags, setShowFlags] = useState(false);
   const [altitude, setAltitude] = useState(DEFAULT_POV.altitude);
   const [globeReady, setGlobeReady] = useState(false);
+  const [flashOn, setFlashOn] = useState(false);
+
+  // When from and to point at the same country, flash the polygon cap back
+  // and forth between SELL_TINT and BUY_TINT.
+  const sameCountry = from.cca2 === to.cca2;
+  useEffect(() => {
+    if (!sameCountry) {
+      setFlashOn(false);
+      return;
+    }
+    const id = setInterval(() => setFlashOn((v) => !v), 500);
+    return () => clearInterval(id);
+  }, [sameCountry]);
 
   // Three-bucket label size. The labels layer only rebuilds when crossing
   // a bucket boundary (a couple of times across a full zoom, not per
@@ -336,6 +349,9 @@ function GlobeInner() {
   const zoomIn = () => zoom(1 / ZOOM_STEP);
   const zoomOut = () => zoom(ZOOM_STEP);
 
+  useAppEvent("zoomIn", () => zoomIn());
+  useAppEvent("zoomOut", () => zoomOut());
+
   const focusOnArc = () => {
     const start = findPin(from.cca2);
     const end = findPin(to.cca2);
@@ -371,6 +387,9 @@ function GlobeInner() {
   useAppEvent("focusRoute", () => focusOnArc());
 
   const arcs = useMemo(() => {
+    // No flight path when both sides point at the same country — the pulsing
+    // polygon cap already conveys the "same endpoints" state.
+    if (from.cca2 === to.cca2) return [];
     const start = findPin(from.cca2);
     const end = findPin(to.cca2);
     if (!start || !end) return [];
@@ -402,6 +421,9 @@ function GlobeInner() {
     const f = d as CountryFeature;
     const supports = f.properties.currencies;
     if (supports.length === 0) return LAND_UNCOVERED;
+    if (sameCountry && f.properties.cca2 === from.cca2) {
+      return flashOn ? BUY_TINT : SELL_TINT;
+    }
     if (supports.includes(from.currency)) return SELL_TINT;
     if (supports.includes(to.currency)) return BUY_TINT;
     return LAND_COVERED;
@@ -410,11 +432,13 @@ function GlobeInner() {
   const polygonAltitude = (d: object) => {
     const f = d as CountryFeature;
     const supports = f.properties.currencies;
-    if (supports.length === 0) return 0.003;
+    // Bumped above 0.005 to keep the cap off the globe shell — at 0.003 the
+    // depth buffer flickers near the atmosphere shader.
+    if (supports.length === 0) return 0.005;
     if (supports.includes(from.currency) || supports.includes(to.currency)) {
-      return 0.008;
+      return 0.01;
     }
-    return 0.005;
+    return 0.007;
   };
 
   const openPickerAt = useCallback(

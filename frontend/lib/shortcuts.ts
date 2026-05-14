@@ -34,14 +34,24 @@ export const SHORTCUTS: ShortcutSpec[] = [
     run: () => emit("focusRoute"),
   },
   {
+    key: "e",
+    description: "Toggle flag emojis on the map",
+    run: () => emit("toggleFlags"),
+  },
+  {
     key: "p",
     description: "Toggle globe play/pause",
     run: () => emit("toggleSpin"),
   },
   {
-    key: "e",
-    description: "Toggle flag emojis on the map",
-    run: () => emit("toggleFlags"),
+    key: "j",
+    description: "Zoom in",
+    run: () => emit("zoomIn"),
+  },
+  {
+    key: "k",
+    description: "Zoom out",
+    run: () => emit("zoomOut"),
   },
   {
     key: "/",
