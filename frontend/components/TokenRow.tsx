@@ -1,10 +1,12 @@
 "use client";
 
+import { useRef } from "react";
 import {
   currencyFlag,
   currencyName,
   stablecoinDecimals,
 } from "@/lib/currencies";
+import { useAppEvent } from "@/lib/events";
 import { type Side, useSwapStore } from "@/lib/store";
 import { TokenPicker } from "./TokenPicker";
 
@@ -26,6 +28,13 @@ export function TokenRow({ side, label }: { side: Side; label: string }) {
   const amount = useSwapStore((s) => s.amount);
   const setAmount = useSwapStore((s) => s.setAmount);
   const setActiveSide = useSwapStore((s) => s.setActiveSide);
+
+  const inputRef = useRef<HTMLInputElement>(null);
+  useAppEvent("focusFromAmount", () => {
+    if (side !== "from") return;
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  });
 
   const active = activeSide === side;
   const activeBorder = side === "to" ? "border-accent-buy" : "border-accent";
@@ -54,6 +63,7 @@ export function TokenRow({ side, label }: { side: Side; label: string }) {
         <TokenPicker side={side} />
         {side === "from" ? (
           <input
+            ref={inputRef}
             type="text"
             inputMode="decimal"
             value={amount}

@@ -53,9 +53,9 @@ export function ShortcutsHelp() {
           </button>
         </div>
         <ul className="flex flex-col gap-2">
-          {SHORTCUTS.map(({ key, displayKey, description }) => (
+          {SHORTCUTS.map(({ key, shift, displayKey, description }) => (
             <li
-              key={key}
+              key={`${key}${shift ? "+shift" : ""}`}
               className="flex items-center justify-between gap-3 text-sm"
             >
               <span className="text-muted-fg">{description}</span>

@@ -11,7 +11,7 @@ export type Stablecoin = {
 export type CurrencyEntry = {
   name: string;
   flag?: string;
-  anchorCca2: string;
+  anchorCca2?: string;
   stablecoins: Stablecoin[];
 };
 
@@ -42,7 +42,7 @@ export const currencyFlag = (code: IsoCurrencyCode): string =>
   CURRENCIES[code].flag ?? deriveFlag(code);
 
 export const currencyAnchor = (code: IsoCurrencyCode): string =>
-  CURRENCIES[code].anchorCca2;
+  CURRENCIES[code].anchorCca2 ?? code.slice(0, 2);
 
 export const tokenIconUrl = (symbol: string): string =>
   STABLE_BY_SYMBOL[symbol]?.icon ?? "";

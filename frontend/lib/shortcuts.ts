@@ -11,6 +11,10 @@ export type ShortcutSpec = {
   // `ArrowUp` / `ArrowDown` etc.; the help dialog uses `displayKey` when
   // present so the listing can show a glyph instead of a verbose name.
   key: string;
+  // When true, requires Shift to be held. When false/undefined, requires Shift
+  // to NOT be held — so a shifted entry and an unshifted entry for the same
+  // letter can coexist without colliding.
+  shift?: boolean;
   displayKey?: string;
   description: string;
   run: () => void;
@@ -26,6 +30,13 @@ export const SHORTCUTS: ShortcutSpec[] = [
     key: "f",
     description: "Open the From picker",
     run: () => emit("openPicker", "from"),
+  },
+  {
+    key: "f",
+    shift: true,
+    displayKey: "⇧F",
+    description: "Focus the From amount input",
+    run: () => emit("focusFromAmount"),
   },
   {
     key: "t",
@@ -99,14 +110,36 @@ const isTextEditable = (target: EventTarget | null): boolean =>
   target instanceof HTMLTextAreaElement ||
   (target instanceof HTMLElement && target.isContentEditable);
 
+// Inputs marked with `data-shortcut-passthrough` let non-printable keys
+// (Backspace, arrows, etc.) and digits/period reach the field, but route any
+// other single-character key to the global shortcut handler so the user can
+// trigger shortcuts without having to blur first.
+const isPassthroughInput = (target: EventTarget | null): boolean =>
+  target instanceof HTMLElement &&
+  target.dataset.shortcutPassthrough === "true";
+
 export function useKeyboardShortcuts(): void {
   useEffect(() => {
-    const byKey = new Map(SHORTCUTS.map((s) => [s.key.toLowerCase(), s]));
     const onKey = (e: KeyboardEvent) => {
-      if (isTextEditable(e.target)) return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
-      const spec = byKey.get(e.key.toLowerCase());
-      if (!spec) return;
+      const passthrough = isPassthroughInput(e.target);
+      if (isTextEditable(e.target) && !passthrough) return;
+      if (passthrough) {
+        // Editing/navigation keys (Backspace, ArrowLeft, Tab, …) report
+        // multi-char names — let them reach the input untouched.
+        if (e.key.length !== 1) return;
+        if (/[0-9.]/.test(e.key)) return;
+      }
+      const k = e.key.toLowerCase();
+      const spec = SHORTCUTS.find(
+        (s) => s.key.toLowerCase() === k && (s.shift ?? false) === e.shiftKey,
+      );
+      if (!spec) {
+        // In passthrough mode, swallow stray characters so they don't land in
+        // the amount field even when they match no shortcut.
+        if (passthrough) e.preventDefault();
+        return;
+      }
       e.preventDefault();
       spec.run();
     };

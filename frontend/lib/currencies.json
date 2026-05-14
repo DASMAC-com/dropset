@@ -1,7 +1,6 @@
 {
   "USD": {
     "name": "United States Dollar",
-    "anchorCca2": "US",
     "stablecoins": [
       {
         "symbol": "USDC",
@@ -62,7 +61,6 @@
   },
   "GBP": {
     "name": "British Pound",
-    "anchorCca2": "GB",
     "stablecoins": [
       {
         "symbol": "tGBP",
@@ -75,7 +73,6 @@
   },
   "CHF": {
     "name": "Swiss Franc",
-    "anchorCca2": "CH",
     "stablecoins": [
       {
         "symbol": "VCHF",
@@ -88,7 +85,6 @@
   },
   "BRL": {
     "name": "Brazilian Real",
-    "anchorCca2": "BR",
     "stablecoins": [
       {
         "symbol": "BRZ",
@@ -101,7 +97,6 @@
   },
   "JPY": {
     "name": "Japanese Yen",
-    "anchorCca2": "JP",
     "stablecoins": [
       {
         "symbol": "GYEN",
@@ -114,7 +109,6 @@
   },
   "AUD": {
     "name": "Australian Dollar",
-    "anchorCca2": "AU",
     "stablecoins": [
       {
         "symbol": "AUDD",
@@ -127,7 +121,6 @@
   },
   "MXN": {
     "name": "Mexican Peso",
-    "anchorCca2": "MX",
     "stablecoins": [
       {
         "symbol": "MXNe",
@@ -140,7 +133,6 @@
   },
   "NGN": {
     "name": "Nigerian Naira",
-    "anchorCca2": "NG",
     "stablecoins": [
       {
         "symbol": "cNGN",
@@ -153,7 +145,6 @@
   },
   "ZAR": {
     "name": "South African Rand",
-    "anchorCca2": "ZA",
     "stablecoins": [
       {
         "symbol": "ZARP",
