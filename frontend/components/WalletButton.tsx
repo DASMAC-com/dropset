@@ -142,7 +142,9 @@ export function WalletButton() {
               unoptimized
             />
           )}
-          <span className="font-mono tabular-nums">{short}</span>
+          <span className="font-mono tabular-nums [font-variant-ligatures:none]">
+            {short}
+          </span>
           <ChevronDown size={14} className="text-muted-fg" />
         </button>
       </Popover.Trigger>
