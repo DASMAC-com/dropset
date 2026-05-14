@@ -16,6 +16,7 @@ export function Footer() {
             alt="DASMAC"
             width={80}
             height={20}
+            suppressHydrationWarning
           />
         </a>
       </div>

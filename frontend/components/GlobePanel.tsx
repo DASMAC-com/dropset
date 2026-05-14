@@ -727,7 +727,7 @@ function GlobeInner() {
         onZoom={(pov: { altitude: number }) => setAltitude(pov.altitude)}
       />
 
-      <div className="absolute top-3 right-3 z-20 flex flex-col gap-2">
+      <div className="absolute top-3 left-3 z-20 flex flex-col gap-2">
         <button
           type="button"
           onClick={resetView}
@@ -764,6 +764,9 @@ function GlobeInner() {
         >
           <Flag size={16} />
         </button>
+      </div>
+
+      <div className="absolute top-3 right-3 z-20 flex flex-col gap-2">
         <button
           type="button"
           onClick={toggleSpin}

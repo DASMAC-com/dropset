@@ -28,6 +28,11 @@ export const SHORTCUTS: ShortcutSpec[] = [
     run: () => emit("openPicker", "to"),
   },
   {
+    key: "d",
+    description: "Swap From and To direction",
+    run: () => emit("swapSides"),
+  },
+  {
     key: "r",
     description: "Reset the globe view",
     run: () => emit("resetGlobe"),

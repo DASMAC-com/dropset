@@ -8,10 +8,7 @@ export function SwapPanel() {
   const sameToken = useSameToken();
 
   return (
-    <fieldset className="relative rounded-xl border border-border p-4">
-      <legend className="px-2 font-semibold text-foreground text-sm">
-        Swap
-      </legend>
+    <div className="relative rounded-xl border border-border p-4">
       <div className="relative flex flex-col gap-2">
         <TokenRow side="from" label="From" />
         <TokenRow side="to" label="To" />
@@ -28,6 +25,6 @@ export function SwapPanel() {
       >
         {sameToken ? "Pick a different token" : "Swap"}
       </button>
-    </fieldset>
+    </div>
   );
 }
