@@ -138,7 +138,7 @@
     "anchorCca2": "MX",
     "stablecoins": [
       {
-        "symbol": "MXNE",
+        "symbol": "MXNe",
         "name": "Real MXN",
         "mint": "6zYgzrT7X2wi9a9NeMtUvUWLLmf2a8vBsbYkocYdB9wa",
         "decimals": 9,
@@ -152,7 +152,7 @@
     "anchorCca2": "NG",
     "stablecoins": [
       {
-        "symbol": "CNGN",
+        "symbol": "cNGN",
         "name": "CNGN",
         "mint": "3jiqwBQVRC5zRwHyqvnkQurebJ5RNxg3F5fXMwaxgkv8",
         "decimals": 6,
