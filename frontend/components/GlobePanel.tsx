@@ -33,6 +33,7 @@ import {
   type IsoCurrencyCode,
   tokenIconUrl,
 } from "@/lib/currencies";
+import { useAppEvent } from "@/lib/events";
 import { useSwapStore } from "@/lib/store";
 import { type CountryFeature, WORLD_POLYGONS } from "@/lib/world-polygons";
 import { CurrencyGroupHeader } from "./CurrencyGroupHeader";
@@ -321,6 +322,10 @@ function GlobeInner() {
     globeRef.current?.pointOfView(DEFAULT_POV, 800);
   };
 
+  useAppEvent("resetGlobe", () => resetView());
+  useAppEvent("toggleSpin", () => setSpinning((v) => !v));
+  useAppEvent("toggleFlags", () => setShowFlags((v) => !v));
+
   const toggleSpin = () => setSpinning((s) => !s);
 
   const ZOOM_STEP = 1.3;
@@ -370,6 +375,8 @@ function GlobeInner() {
       800,
     );
   };
+
+  useAppEvent("focusRoute", () => focusOnArc());
 
   const arcs = useMemo(() => {
     const start = findPin(from.cca2);
@@ -613,9 +620,9 @@ function GlobeInner() {
         <button
           type="button"
           onClick={focusOnArc}
-          title="Focus on flight path"
+          title="Focus on swap route"
           className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background/80 text-muted-fg shadow-sm backdrop-blur transition-colors hover:border-accent hover:text-accent"
-          aria-label="Focus globe on flight path"
+          aria-label="Focus globe on swap route"
         >
           <Crosshair size={16} />
         </button>

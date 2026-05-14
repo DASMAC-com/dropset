@@ -1,39 +1,11 @@
 "use client";
 
-import { useEffect } from "react";
-import { useSameToken, useSwapStore } from "@/lib/store";
+import { useSameToken } from "@/lib/store";
 import { SwapArrowButton } from "./SwapArrowButton";
 import { TokenRow } from "./TokenRow";
 
 export function SwapPanel() {
   const sameToken = useSameToken();
-  const requestOpenPicker = useSwapStore((s) => s.requestOpenPicker);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      // Don't hijack keys while the user is typing in an input/textarea or
-      // contenteditable surface (e.g., the amount field or the picker's own
-      // search box).
-      const t = e.target as HTMLElement | null;
-      if (
-        t instanceof HTMLInputElement ||
-        t instanceof HTMLTextAreaElement ||
-        t?.isContentEditable
-      ) {
-        return;
-      }
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-      if (e.key === "f" || e.key === "F") {
-        e.preventDefault();
-        requestOpenPicker("from");
-      } else if (e.key === "t" || e.key === "T") {
-        e.preventDefault();
-        requestOpenPicker("to");
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [requestOpenPicker]);
 
   return (
     <fieldset className="relative rounded-xl border border-border p-4">

@@ -10,6 +10,7 @@ import {
   SUPPORTED,
   tokenIconUrl,
 } from "@/lib/currencies";
+import { useAppEvent } from "@/lib/events";
 import { type Side, useSwapStore } from "@/lib/store";
 import { CurrencyGroupHeader } from "./CurrencyGroupHeader";
 
@@ -24,7 +25,6 @@ export function TokenPicker({ side }: { side: Side }) {
   );
   const setToken = useSwapStore((s) => s.setToken);
   const setActiveSide = useSwapStore((s) => s.setActiveSide);
-  const openPickerRequest = useSwapStore((s) => s.openPickerRequest);
 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -37,9 +37,9 @@ export function TokenPicker({ side }: { side: Side }) {
     if (!open) setQuery("");
   }, [open]);
 
-  useEffect(() => {
-    if (openPickerRequest?.side === side) setOpen(true);
-  }, [openPickerRequest, side]);
+  useAppEvent("openPicker", (which) => {
+    if (which === side) setOpen(true);
+  });
 
   const isBlocked = (cur: IsoCurrencyCode, sym: string) =>
     cur === otherSideState.currency && sym === otherSideState.stablecoin;
