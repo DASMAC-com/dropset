@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import {
   currencyFlag,
   currencyName,
@@ -21,6 +21,15 @@ const sanitizeAmount = (raw: string, decimals: number): string => {
   return v;
 };
 
+const formatAmount = (raw: string): string => {
+  if (!raw) return "";
+  const dot = raw.indexOf(".");
+  const intPart = dot === -1 ? raw : raw.slice(0, dot);
+  const rest = dot === -1 ? "" : raw.slice(dot);
+  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return grouped + rest;
+};
+
 export function TokenRow({ side, label }: { side: Side; label: string }) {
   const activeSide = useSwapStore((s) => s.activeSide);
   const currency = useSwapStore((s) => s[side].currency);
@@ -30,15 +39,41 @@ export function TokenRow({ side, label }: { side: Side; label: string }) {
   const setActiveSide = useSwapStore((s) => s.setActiveSide);
 
   const inputRef = useRef<HTMLInputElement>(null);
+  const caretRef = useRef<number | null>(null);
   useAppEvent("focusFromAmount", () => {
     if (side !== "from") return;
     inputRef.current?.focus();
     inputRef.current?.select();
   });
 
+  useLayoutEffect(() => {
+    if (caretRef.current === null || !inputRef.current) return;
+    inputRef.current.setSelectionRange(caretRef.current, caretRef.current);
+    caretRef.current = null;
+  });
+
   const active = activeSide === side;
   const activeBorder = side === "to" ? "border-accent-buy" : "border-accent";
   const decimals = stablecoinDecimals(stablecoin);
+  const formattedAmount = formatAmount(amount);
+
+  const onAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = e.target.value;
+    const caret = e.target.selectionStart ?? raw.length;
+    const digitsBeforeCaret = raw
+      .slice(0, caret)
+      .replace(/[^0-9.]/g, "").length;
+    const next = sanitizeAmount(raw.replace(/,/g, ""), decimals);
+    const formatted = formatAmount(next);
+    let pos = 0;
+    let count = 0;
+    while (pos < formatted.length && count < digitsBeforeCaret) {
+      if (/[0-9.]/.test(formatted[pos])) count++;
+      pos++;
+    }
+    caretRef.current = pos;
+    setAmount(next);
+  };
 
   return (
     <div
@@ -66,10 +101,11 @@ export function TokenRow({ side, label }: { side: Side; label: string }) {
             ref={inputRef}
             type="text"
             inputMode="decimal"
-            value={amount}
+            value={formattedAmount}
             placeholder="0.0"
+            data-shortcut-passthrough="true"
             onFocus={() => setActiveSide("from")}
-            onChange={(e) => setAmount(sanitizeAmount(e.target.value, decimals))}
+            onChange={onAmountChange}
             className="min-w-0 flex-1 bg-transparent text-right font-mono text-2xl text-foreground outline-none placeholder:text-muted-fg"
           />
         ) : (
