@@ -11,7 +11,8 @@ export function Header() {
       <div className="mx-auto flex h-14 max-w-6xl items-center gap-2 px-6">
         <Link
           href="/"
-          className="flex shrink-0 items-center gap-2 font-semibold text-base text-foreground no-underline"
+          aria-label="Dropset"
+          className="flex shrink-0 items-center no-underline"
         >
           <Image
             src="/favicon.png"
@@ -21,7 +22,6 @@ export function Header() {
             priority
             suppressHydrationWarning
           />
-          Dropset
         </Link>
         <nav className="flex items-center gap-2">
           <span className="rounded-md bg-muted px-3 py-1.5 text-sm text-foreground">
