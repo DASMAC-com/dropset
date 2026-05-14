@@ -13,10 +13,13 @@ import {
 import {
   BufferAttribute,
   BufferGeometry,
+  Mesh,
   MeshBasicMaterial,
+  type Object3D,
   Points,
   PointsMaterial,
   type Scene,
+  TorusGeometry,
 } from "three";
 import { COUNTRY_PINS, type CountryPin, findPin } from "@/lib/countries";
 import {
@@ -49,6 +52,14 @@ const ARC_COLOR = "#a7f3d0"; // emerald-200 — bright, ties the cool palette to
 
 const POPOVER_WIDTH = 256;
 const POPOVER_MAX_HEIGHT = 260;
+
+// Height of the "same-country" pillar (a vertical cylinder over the shared
+// anchor) and the spinning ring that sits on top of it.
+const PILLAR_ALTITUDE = 0.18;
+// three-globe's default sphere radius. react-globe.gl's typings don't expose
+// the runtime globeRadius arg in customThreeObject callbacks, but it equals
+// this constant unless overridden — which we don't.
+const GLOBE_RADIUS = 100;
 
 // Start the view centered roughly over the eastern US so the auto-rotation
 // reveals the Atlantic and then Europe — the canonical USD → EUR path.
@@ -205,19 +216,41 @@ function GlobeInner() {
   const [showFlags, setShowFlags] = useState(false);
   const [altitude, setAltitude] = useState(DEFAULT_POV.altitude);
   const [globeReady, setGlobeReady] = useState(false);
+  // Ref to the spinning-ring mesh so a RAF loop can mutate its rotation
+  // each frame without going through React state.
+  const ringRef = useRef<Mesh | null>(null);
   const [flashOn, setFlashOn] = useState(false);
 
-  // When from and to point at the same country, flash the polygon cap back
-  // and forth between SELL_TINT and BUY_TINT.
-  const sameCountry = from.cca2 === to.cca2;
+  const sameCca2 = from.cca2 === to.cca2;
+  const sameToken =
+    from.currency === to.currency && from.stablecoin === to.stablecoin;
+
+  // 500ms polygon-cap flash for the fully-degenerate sameToken case to
+  // mirror the disabled Swap button. Same-country / different-stable swaps
+  // get the spinning ring on top of the pillar instead (see customLayer).
   useEffect(() => {
-    if (!sameCountry) {
+    if (!sameToken) {
       setFlashOn(false);
       return;
     }
     const id = setInterval(() => setFlashOn((v) => !v), 500);
     return () => clearInterval(id);
-  }, [sameCountry]);
+  }, [sameToken]);
+
+  // Spin the ring continuously while it's visible by directly mutating the
+  // mesh's rotation in a RAF loop — avoids re-rendering React state each
+  // frame just to update three.js scene transforms.
+  useEffect(() => {
+    if (!sameCca2 || sameToken) return;
+    let raf = 0;
+    const tick = () => {
+      const m = ringRef.current;
+      if (m) m.rotateZ(0.03);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [sameCca2, sameToken]);
 
   // Three-bucket label size. The labels layer only rebuilds when crossing
   // a bucket boundary (a couple of times across a full zoom, not per
@@ -404,9 +437,9 @@ function GlobeInner() {
   useAppEvent("focusRoute", () => focusOnArc());
 
   const arcs = useMemo(() => {
-    // No flight path when both sides point at the same country — the pulsing
-    // polygon cap already conveys the "same endpoints" state.
-    if (from.cca2 === to.cca2) return [];
+    // Hide the arc whenever both anchors collide — the polygon flash (same
+    // token) or the pillar (same country, different stable) takes over.
+    if (sameCca2) return [];
     const start = findPin(from.cca2);
     const end = findPin(to.cca2);
     if (!start || !end) return [];
@@ -432,13 +465,22 @@ function GlobeInner() {
         altitude,
       },
     ];
-  }, [from.cca2, to.cca2]);
+  }, [from.cca2, to.cca2, sameCca2]);
+
+  // Pillar that flashes over the shared anchor when both sides share a
+  // country but use different stables (a valid swap that's just visually
+  // confusing with a regular arc).
+  const pillarPins = useMemo(() => {
+    if (!sameCca2 || sameToken) return [];
+    const pin = findPin(from.cca2);
+    return pin ? [pin] : [];
+  }, [sameCca2, sameToken, from.cca2]);
 
   const polygonCapColor = (d: object) => {
     const f = d as CountryFeature;
     const supports = f.properties.currencies;
     if (supports.length === 0) return LAND_UNCOVERED;
-    if (sameCountry && f.properties.cca2 === from.cca2) {
+    if (sameToken && f.properties.cca2 === from.cca2) {
       return flashOn ? BUY_TINT : SELL_TINT;
     }
     if (supports.includes(from.currency)) return SELL_TINT;
@@ -571,6 +613,44 @@ function GlobeInner() {
         ringPropagationSpeed={0.7}
         ringRepeatPeriod={2200}
         ringAltitude={0.012}
+        pointsData={pillarPins}
+        pointLat={(d: object) => (d as CountryPin).lat}
+        pointLng={(d: object) => (d as CountryPin).lng}
+        pointAltitude={PILLAR_ALTITUDE}
+        pointRadius={0.35}
+        pointResolution={12}
+        pointColor={() => BUY_TINT}
+        customLayerData={pillarPins}
+        customThreeObject={() => {
+          // Partial torus (3/4 of a full ring) so the spin is visibly
+          // rotational instead of a uniform disc.
+          const geom = new TorusGeometry(
+            GLOBE_RADIUS * 0.04,
+            GLOBE_RADIUS * 0.006,
+            8,
+            48,
+            Math.PI * 1.5,
+          );
+          const mat = new MeshBasicMaterial({ color: BUY_TINT });
+          const mesh = new Mesh(geom, mat);
+          ringRef.current = mesh;
+          return mesh;
+        }}
+        customThreeObjectUpdate={(obj: Object3D, d: object) => {
+          // Place the ring at the pillar's tip and orient its plane tangent
+          // to the globe surface (TorusGeometry's ring axis is +Z by default;
+          // lookAt(origin) makes +Z point outward, so the ring lies flat).
+          const pin = d as CountryPin;
+          const phi = ((90 - pin.lat) * Math.PI) / 180;
+          const theta = ((pin.lng + 90) * Math.PI) / 180;
+          const r = GLOBE_RADIUS * (1 + PILLAR_ALTITUDE);
+          obj.position.set(
+            -r * Math.sin(phi) * Math.cos(theta),
+            r * Math.cos(phi),
+            r * Math.sin(phi) * Math.sin(theta),
+          );
+          obj.lookAt(0, 0, 0);
+        }}
         arcsData={arcs}
         arcStartLat={(d: object) => (d as { startLat: number }).startLat}
         arcStartLng={(d: object) => (d as { startLng: number }).startLng}
