@@ -491,13 +491,14 @@ function GlobeInner() {
   const polygonAltitude = (d: object) => {
     const f = d as CountryFeature;
     const supports = f.properties.currencies;
-    // Bumped above 0.005 to keep the cap off the globe shell — at 0.003 the
-    // depth buffer flickers near the atmosphere shader.
-    if (supports.length === 0) return 0.005;
+    // Large polygons (Greenland, Antarctica) still flicker near the globe
+    // shell at very low altitude — keep everything well above the atmosphere
+    // shader. Overlay layers (rings/labels/arcs) sit above at 0.018.
+    if (supports.length === 0) return 0.008;
     if (supports.includes(from.currency) || supports.includes(to.currency)) {
-      return 0.01;
+      return 0.013;
     }
-    return 0.007;
+    return 0.011;
   };
 
   const openPickerAt = useCallback(
@@ -612,7 +613,7 @@ function GlobeInner() {
         ringMaxRadius={1.6}
         ringPropagationSpeed={0.7}
         ringRepeatPeriod={2200}
-        ringAltitude={0.012}
+        ringAltitude={0.018}
         pointsData={pillarPins}
         pointLat={(d: object) => (d as CountryPin).lat}
         pointLng={(d: object) => (d as CountryPin).lng}
@@ -654,10 +655,10 @@ function GlobeInner() {
         arcsData={arcs}
         arcStartLat={(d: object) => (d as { startLat: number }).startLat}
         arcStartLng={(d: object) => (d as { startLng: number }).startLng}
-        arcStartAltitude={0.012}
+        arcStartAltitude={0.018}
         arcEndLat={(d: object) => (d as { endLat: number }).endLat}
         arcEndLng={(d: object) => (d as { endLng: number }).endLng}
-        arcEndAltitude={0.012}
+        arcEndAltitude={0.018}
         arcColor={() => ARC_COLOR}
         arcStroke={0.8}
         arcDashLength={0.4}
@@ -687,7 +688,7 @@ function GlobeInner() {
         }
         labelSize={labelSize}
         labelDotRadius={labelSize * 0.36}
-        labelAltitude={0.012}
+        labelAltitude={0.018}
         labelColor={() => "rgba(241, 245, 249, 0.95)"}
         labelResolution={2}
         labelIncludeDot={true}
@@ -701,7 +702,7 @@ function GlobeInner() {
         }
         htmlLat={(d: object) => (d as CountryPin).lat}
         htmlLng={(d: object) => (d as CountryPin).lng}
-        htmlAltitude={0.012}
+        htmlAltitude={0.018}
         htmlElement={(d: object) => {
           const pin = d as CountryPin;
           const el = document.createElement("div");
