@@ -19,6 +19,9 @@ export function WalletButton() {
   // so we route external "open the picker" requests through the event bus into
   // this single hook instance.
   useAppEvent("openWalletModal", () => modal.open());
+  useAppEvent("toggleWallet", () =>
+    connected ? modal.disconnect() : modal.open(),
+  );
 
   if (!modal.isReady) {
     return <div className="h-9 w-32 animate-pulse rounded-md bg-muted" />;

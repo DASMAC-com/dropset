@@ -18,6 +18,11 @@ export type ShortcutSpec = {
 
 export const SHORTCUTS: ShortcutSpec[] = [
   {
+    key: "w",
+    description: "Connect or disconnect wallet",
+    run: () => emit("toggleWallet"),
+  },
+  {
     key: "f",
     description: "Open the From picker",
     run: () => emit("openPicker", "from"),

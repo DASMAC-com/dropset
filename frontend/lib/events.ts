@@ -19,6 +19,7 @@ export type AppEvents = {
   toggleFlags: undefined;
   toggleHelp: undefined;
   openWalletModal: undefined;
+  toggleWallet: undefined;
   zoomIn: undefined;
   zoomOut: undefined;
   pan: PanDirection;
