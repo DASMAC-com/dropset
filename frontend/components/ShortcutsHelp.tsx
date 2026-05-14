@@ -1,9 +1,9 @@
 "use client";
 
+import { Keyboard, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { emit, useAppEvent } from "@/lib/events";
 import { SHORTCUTS } from "@/lib/shortcuts";
-import { Keyboard, X } from "./icons";
 
 export function ShortcutsHelp() {
   const [open, setOpen] = useState(false);
