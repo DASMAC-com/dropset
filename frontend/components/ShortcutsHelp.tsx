@@ -63,14 +63,14 @@ export function ShortcutsHelp() {
               </button>
             </div>
             <ul className="flex flex-col gap-2">
-              {SHORTCUTS.map(({ key, description }) => (
+              {SHORTCUTS.map(({ key, displayKey, description }) => (
                 <li
                   key={key}
                   className="flex items-center justify-between gap-3 text-sm"
                 >
                   <span className="text-muted-fg">{description}</span>
                   <kbd className="shrink-0 rounded border border-border bg-muted px-2 py-0.5 font-mono text-foreground text-xs">
-                    {key}
+                    {displayKey ?? key}
                   </kbd>
                 </li>
               ))}

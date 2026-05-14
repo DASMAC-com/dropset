@@ -7,7 +7,11 @@ import { emit } from "./events";
 // case-insensitive key to a side effect. Add new shortcuts here; nothing else
 // needs to change.
 export type ShortcutSpec = {
+  // The KeyboardEvent.key value to match (lowercased). For arrow keys this is
+  // `ArrowUp` / `ArrowDown` etc.; the help dialog uses `displayKey` when
+  // present so the listing can show a glyph instead of a verbose name.
   key: string;
+  displayKey?: string;
   description: string;
   run: () => void;
 };
@@ -44,14 +48,34 @@ export const SHORTCUTS: ShortcutSpec[] = [
     run: () => emit("toggleSpin"),
   },
   {
-    key: "j",
+    key: "=",
     description: "Zoom in",
     run: () => emit("zoomIn"),
   },
   {
-    key: "k",
+    key: "-",
     description: "Zoom out",
     run: () => emit("zoomOut"),
+  },
+  {
+    key: "i",
+    description: "Pan north",
+    run: () => emit("pan", "up"),
+  },
+  {
+    key: "j",
+    description: "Pan west",
+    run: () => emit("pan", "left"),
+  },
+  {
+    key: "k",
+    description: "Pan south",
+    run: () => emit("pan", "down"),
+  },
+  {
+    key: "l",
+    description: "Pan east",
+    run: () => emit("pan", "right"),
   },
   {
     key: "/",

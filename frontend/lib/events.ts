@@ -8,6 +8,8 @@ import type { Side } from "./store";
 // signals in the store when there's no actual state to persist — just an
 // action to fan out. Adding a new event = one line in `AppEvents` and one
 // `useAppEvent` call in the consumer.
+export type PanDirection = "up" | "down" | "left" | "right";
+
 export type AppEvents = {
   openPicker: Side;
   resetGlobe: undefined;
@@ -17,6 +19,7 @@ export type AppEvents = {
   toggleHelp: undefined;
   zoomIn: undefined;
   zoomOut: undefined;
+  pan: PanDirection;
 };
 
 type Handler<K extends keyof AppEvents> = (payload: AppEvents[K]) => void;

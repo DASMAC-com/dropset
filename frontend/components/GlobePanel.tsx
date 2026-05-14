@@ -352,6 +352,23 @@ function GlobeInner() {
   useAppEvent("zoomIn", () => zoomIn());
   useAppEvent("zoomOut", () => zoomOut());
 
+  // Arrow-key panning. Step shrinks with altitude so fine adjustments are
+  // possible when zoomed in. Lat is clamped to ±85° to avoid the
+  // OrbitControls polar-flip near the poles.
+  useAppEvent("pan", (dir) => {
+    const g = globeRef.current;
+    if (!g) return;
+    const cur = g.pointOfView();
+    const step = Math.max(2, Math.min(20, cur.altitude * 10));
+    const next: Pov = { ...cur };
+    if (dir === "up") next.lat = Math.min(85, cur.lat + step);
+    else if (dir === "down") next.lat = Math.max(-85, cur.lat - step);
+    else if (dir === "left") next.lng = cur.lng - step;
+    else if (dir === "right") next.lng = cur.lng + step;
+    g.pointOfView(next, 250);
+    setSpinning(false);
+  });
+
   const focusOnArc = () => {
     const start = findPin(from.cca2);
     const end = findPin(to.cca2);
