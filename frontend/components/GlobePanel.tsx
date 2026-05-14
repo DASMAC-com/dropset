@@ -590,6 +590,10 @@ function GlobeInner() {
           el.style.cursor = "pointer";
           el.style.userSelect = "none";
           el.style.transform = "translate(-50%, -50%)";
+          // globe.gl's HTML overlay container sets pointer-events: none so
+          // canvas interactions (rotate/zoom) still work through it; each
+          // child has to opt back in to receive its own click.
+          el.style.pointerEvents = "auto";
           el.title = pin.name;
           el.addEventListener("click", (e) => {
             onLabelClick(pin, e);
