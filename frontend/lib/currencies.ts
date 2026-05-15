@@ -2,12 +2,19 @@ import countries from "world-countries";
 import data from "./currencies.json";
 
 export type IsoCurrencyCode = keyof typeof data;
+export type Issuer = {
+  name: string;
+  url: string;
+  socials?: { x?: string };
+};
 export type Stablecoin = {
   symbol: string;
   name: string;
   mint: string;
+  mintSourceUrl?: string;
   decimals: number;
   icon: string;
+  issuer: Issuer;
 };
 export type CurrencyEntry = {
   flag?: string;

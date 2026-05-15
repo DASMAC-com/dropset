@@ -5,36 +5,66 @@
         "symbol": "USDC",
         "name": "USD Coin",
         "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "mintSourceUrl": "https://developers.circle.com/stablecoins/usdc-contract-addresses",
         "decimals": 6,
-        "icon": "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png"
+        "icon": "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png",
+        "issuer": {
+          "name": "Circle",
+          "url": "https://www.circle.com/usdc",
+          "socials": { "x": "USDC" }
+        }
       },
       {
         "symbol": "USDT",
         "name": "USDT",
         "mint": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+        "mintSourceUrl": "https://tether.to/en/supported-protocols/",
         "decimals": 6,
-        "icon": "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB/logo.svg"
+        "icon": "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB/logo.svg",
+        "issuer": {
+          "name": "Tether",
+          "url": "https://tether.to/transparency/",
+          "socials": { "x": "tether" }
+        }
       },
       {
         "symbol": "USDG",
         "name": "Global Dollar",
         "mint": "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH",
+        "mintSourceUrl": "https://docs.paxos.com/guides/stablecoin/usdg/mainnet",
         "decimals": 6,
-        "icon": "https://424565.fs1.hubspotusercontent-na1.net/hubfs/424565/GDN-USDG-Token-512x512.png"
+        "icon": "https://424565.fs1.hubspotusercontent-na1.net/hubfs/424565/GDN-USDG-Token-512x512.png",
+        "issuer": {
+          "name": "Paxos Digital Singapore / Global Dollar Network",
+          "url": "https://globaldollar.com/about-usdg",
+          "socials": { "x": "global_dollar" }
+        }
       },
       {
         "symbol": "PYUSD",
         "name": "PayPal USD",
         "mint": "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo",
+        "mintSourceUrl": "https://docs.paxos.com/guides/stablecoin/pyusd/mainnet",
         "decimals": 6,
-        "icon": "https://424565.fs1.hubspotusercontent-na1.net/hubfs/424565/PYUSDLOGO.png"
+        "icon": "https://424565.fs1.hubspotusercontent-na1.net/hubfs/424565/PYUSDLOGO.png",
+        "issuer": {
+          "name": "Paxos Trust Company / PayPal",
+          "url": "https://www.paxos.com/pyusd",
+          "socials": { "x": "PayPal" }
+        }
       },
       {
         "symbol": "USD1",
         "name": "World Liberty Financial USD",
         "mint": "USD1ttGY1N17NEEHLmELoaybftRBUSErhqYiQzvEmuB",
+        "mintSourceUrl": "https://docs.worldlibertyfinancial.com/usd1-token/contract-addresses",
         "decimals": 6,
-        "icon": "https://raw.githubusercontent.com/worldliberty/usd1-metadata/refs/heads/main/logo.png"
+        "icon": "https://raw.githubusercontent.com/worldliberty/usd1-metadata/refs/heads/main/logo.png",
+        "issuer": {
+          "name": "World Liberty Financial / BitGo",
+          "url": "https://worldlibertyfinancial.com/usd1",
+          "socials": { "x": "worldlibertyfi" }
+        }
       }
     ]
   },
@@ -45,15 +75,26 @@
         "symbol": "EURC",
         "name": "EURC",
         "mint": "HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr",
+        "mintSourceUrl": "https://developers.circle.com/stablecoins/eurc-contract-addresses",
         "decimals": 6,
-        "icon": "https://6778953.fs1.hubspotusercontent-na1.net/hubfs/6778953/Brand/EURC/EURC-icon_128x128.png"
+        "icon": "https://6778953.fs1.hubspotusercontent-na1.net/hubfs/6778953/Brand/EURC/EURC-icon_128x128.png",
+        "issuer": {
+          "name": "Circle",
+          "url": "https://www.circle.com/eurc",
+          "socials": { "x": "circle" }
+        }
       },
       {
         "symbol": "VEUR",
         "name": "VNX Euro",
         "mint": "C4Kkr9NZU3VbyedcgutU6LKmi6MKz81sx6gRmk5pX519",
         "decimals": 9,
-        "icon": "https://vnx.li/wp-content/uploads/2025/04/VEUR-256x256-1.png"
+        "icon": "https://vnx.li/wp-content/uploads/2025/04/VEUR-256x256-1.png",
+        "issuer": {
+          "name": "VNX Commodities AG",
+          "url": "https://vnx.li/",
+          "socials": { "x": "VNX_Platform" }
+        }
       }
     ]
   },
@@ -63,8 +104,14 @@
         "symbol": "AUDD",
         "name": "AUDD",
         "mint": "AUDDttiEpCydTm7joUMbYddm72jAWXZnCpPZtDoxqBSw",
+        "mintSourceUrl": "https://devhub.audd.digital/docs/supported-blockchains",
         "decimals": 6,
-        "icon": "https://assets.coingecko.com/coins/images/33263/standard/AUDD-Logo-Blue_512.png"
+        "icon": "https://assets.coingecko.com/coins/images/33263/standard/AUDD-Logo-Blue_512.png",
+        "issuer": {
+          "name": "AUDC Pty Ltd / AUDD Digital",
+          "url": "https://www.audd.digital/",
+          "socials": { "x": "AUDD_digital" }
+        }
       }
     ]
   },
@@ -75,7 +122,12 @@
         "name": "BRZ Token",
         "mint": "BRZbFNQDcWLfcdHmAkqEVnLHCAWKTRf6eHyEaWdZp3JN",
         "decimals": 6,
-        "icon": "https://transferotokensconfig.blob.core.windows.net/stablesimages/BRZ/ico/ico_BRZ_750x750.png"
+        "icon": "https://transferotokensconfig.blob.core.windows.net/stablesimages/BRZ/ico/ico_BRZ_750x750.png",
+        "issuer": {
+          "name": "Transfero",
+          "url": "https://transfero.com/stablecoins/brz/",
+          "socials": { "x": "BrzToken" }
+        }
       }
     ]
   },
@@ -86,7 +138,12 @@
         "name": "VNX Swiss Franc",
         "mint": "AhhdRu5YZdjVkKR3wbnUDaymVQL2ucjMQ63sZ3LFHsch",
         "decimals": 9,
-        "icon": "https://vnx.li/wp-content/uploads/2025/04/VCHF-256x256-1.png"
+        "icon": "https://vnx.li/wp-content/uploads/2025/04/VCHF-256x256-1.png",
+        "issuer": {
+          "name": "VNX Commodities AG",
+          "url": "https://vnx.li/",
+          "socials": { "x": "VNX_Platform" }
+        }
       }
     ]
   },
@@ -97,7 +154,24 @@
         "name": "tGBP",
         "mint": "2zMqyX4AYCk6mgy5UZ2S7zUaLxwERhK5WjqDzkPPbSpW",
         "decimals": 9,
-        "icon": "https://raw.githubusercontent.com/superset-finance/token-metadata/main/tGBP/logo.png"
+        "icon": "https://raw.githubusercontent.com/superset-finance/token-metadata/main/tGBP/logo.png",
+        "issuer": {
+          "name": "Tokenised GBP / BCP Technologies",
+          "url": "https://www.tokenisedgbp.com/",
+          "socials": { "x": "tokenGBP" }
+        }
+      },
+      {
+        "symbol": "VGBP",
+        "name": "VNX British Pound",
+        "mint": "5H4voZhzySsVvwVYDAKku8MZGuYBC7cXaBKDPW4YHWW1",
+        "decimals": 9,
+        "icon": "https://vnx.li/wp-content/uploads/2025/04/VGBP-256x256-1.png",
+        "issuer": {
+          "name": "VNX Commodities AG",
+          "url": "https://vnx.li/",
+          "socials": { "x": "VNX_Platform" }
+        }
       }
     ]
   },
@@ -107,8 +181,14 @@
         "symbol": "GYEN",
         "name": "GMO JPY",
         "mint": "Crn4x1Y2HUKko7ox2EZMT6N2t2ZyH7eKtwkBGVnhEq1g",
+        "mintSourceUrl": "https://support.stablecoin.z.com/hc/en-us/articles/360053460793-What-are-the-contract-addresses-for-GYEN-and-ZUSD",
         "decimals": 6,
-        "icon": "https://stablecoin.z.com/assets/images/token/icon_gyen_300_300.png"
+        "icon": "https://stablecoin.z.com/assets/images/token/icon_gyen_300_300.png",
+        "issuer": {
+          "name": "GMO-Z.com Trust Company",
+          "url": "https://stablecoin.z.com/lp/solana/",
+          "socials": { "x": "GMOTrust" }
+        }
       }
     ]
   },
@@ -119,7 +199,12 @@
         "name": "Real MXN",
         "mint": "6zYgzrT7X2wi9a9NeMtUvUWLLmf2a8vBsbYkocYdB9wa",
         "decimals": 9,
-        "icon": "https://brale.xyz/assets/stablecoins/mxne-logo.png"
+        "icon": "https://brale.xyz/assets/stablecoins/mxne-logo.png",
+        "issuer": {
+          "name": "Brale, in partnership with Etherfuse",
+          "url": "https://brale.xyz/stablecoins/MXNe",
+          "socials": { "x": "etherfuse" }
+        }
       }
     ]
   },
@@ -129,8 +214,31 @@
         "symbol": "cNGN",
         "name": "CNGN",
         "mint": "3jiqwBQVRC5zRwHyqvnkQurebJ5RNxg3F5fXMwaxgkv8",
+        "mintSourceUrl": "https://github.com/wrappedcbdc/stablecoin-cngn",
         "decimals": 6,
-        "icon": "https://black-elaborate-wildcat-667.mypinata.cloud/ipfs/bafkreihl3tm6zdwmcyiaurafzfmblu5olk7ozpelftop7ydbvaalm2vooi"
+        "icon": "https://black-elaborate-wildcat-667.mypinata.cloud/ipfs/bafkreihl3tm6zdwmcyiaurafzfmblu5olk7ozpelftop7ydbvaalm2vooi",
+        "issuer": {
+          "name": "WrappedCBDC Ltd / cNGN",
+          "url": "https://cngn.co/",
+          "socials": { "x": "cngn_co" }
+        }
+      }
+    ]
+  },
+  "SGD": {
+    "stablecoins": [
+      {
+        "symbol": "XSGD",
+        "name": "StraitsX SGD",
+        "mint": "71S9cppWipeUEQDFngYwxjoxB6Sz1MUqX72byLsVYJqy",
+        "mintSourceUrl": "https://support.straitsx.com/support/solutions/articles/157000365664-how-do-i-add-the-xsgd-token-to-my-eth-polygon-avalanche-arbitrum-zilliqa-xrp-ledger-hedera-sol",
+        "decimals": 6,
+        "icon": "https://assets.coingecko.com/coins/images/12832/standard/xsgd.png",
+        "issuer": {
+          "name": "StraitsX",
+          "url": "https://www.straitsx.com/xsgd",
+          "socials": { "x": "straitsx" }
+        }
       }
     ]
   },
@@ -140,8 +248,14 @@
         "symbol": "ZARP",
         "name": "ZARP Stablecoin",
         "mint": "dngKhBQM3BGvsDHKhrLnjvRKfY5Q7gEnYGToj9Lk8rk",
+        "mintSourceUrl": "https://www.zarpstablecoin.com/transparency/",
         "decimals": 6,
-        "icon": "https://raw.githubusercontent.com/venox-digital-assets/zarp.contract/main/public/zarp_coin.png"
+        "icon": "https://raw.githubusercontent.com/venox-digital-assets/zarp.contract/main/public/zarp_coin.png",
+        "issuer": {
+          "name": "ZARP Stablecoin (Pty) Ltd",
+          "url": "https://www.zarpstablecoin.com/",
+          "socials": { "x": "ZARP_Stablecoin" }
+        }
       }
     ]
   }
