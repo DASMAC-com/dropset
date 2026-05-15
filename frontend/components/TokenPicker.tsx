@@ -211,7 +211,7 @@ export function TokenPicker({ side }: { side: Side }) {
       }}
     >
       <Dialog.Trigger
-        className={`flex w-fit items-center gap-2 self-start rounded-lg border border-border bg-background px-3 py-2 text-base text-foreground ${
+        className={`mt-2 flex w-fit items-center gap-2 self-end rounded-lg border border-border bg-background px-4 py-2.5 text-xl text-foreground ${
           side === "to"
             ? "hover:border-accent-buy hover:text-accent-buy"
             : "hover:border-accent hover:text-accent"
@@ -222,12 +222,12 @@ export function TokenPicker({ side }: { side: Side }) {
           src={tokenIconUrl(stablecoin)}
           alt=""
           aria-hidden
-          width={20}
-          height={20}
-          className="h-5 w-5 shrink-0 rounded-full"
+          width={24}
+          height={24}
+          className="h-6 w-6 shrink-0 rounded-full"
         />
         <span className="font-mono font-medium">{stablecoin}</span>
-        <ChevronDown size={18} />
+        <ChevronDown size={20} />
       </Dialog.Trigger>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-background/80 backdrop-blur-lg" />

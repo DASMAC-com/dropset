@@ -93,7 +93,7 @@ export function TokenRow({ side, label }: { side: Side; label: string }) {
     // biome-ignore lint/a11y/noStaticElementInteractions: ambient click-to-focus; keyboard users have the f/t shortcuts and the inner input/picker still work
     <div
       onPointerDown={() => setActiveSide(side)}
-      className={`flex w-full flex-col gap-1 rounded-lg border bg-muted px-5 pt-1.5 pb-2 text-left transition-colors ${
+      className={`flex w-full flex-col gap-0 rounded-lg border bg-muted px-5 pt-1.5 pb-1 text-left transition-colors ${
         active ? activeBorder : "border-border"
       }`}
     >

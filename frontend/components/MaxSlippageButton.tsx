@@ -3,7 +3,7 @@
 import * as Popover from "@radix-ui/react-popover";
 import { useState } from "react";
 import { type Slippage, useSwapStore } from "@/lib/store";
-import { Check, ChevronDown } from "./icons";
+import { Check, Settings2 } from "./icons";
 
 const PRESETS: { label: string; percent: number }[] = [
   { label: "0.3%", percent: 0.3 },
@@ -64,10 +64,11 @@ export function MaxSlippageButton() {
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger
         type="button"
-        className="mt-1.5 ml-auto flex shrink-0 items-center gap-1 rounded border border-border bg-background px-2 py-1 font-medium text-muted-fg text-sm transition-colors hover:border-accent-buy hover:text-accent-buy"
+        title={`Max slippage: ${summary(slippage)}`}
+        className="mt-1.5 ml-auto flex shrink-0 items-center gap-1.5 rounded border border-border bg-background px-2 py-1 font-medium text-muted-fg text-sm transition-colors hover:border-accent-buy hover:text-accent-buy"
       >
-        <span>Max slippage: {summary(slippage)}</span>
-        <ChevronDown size={14} />
+        <Settings2 size={14} />
+        <span>{summary(slippage)}</span>
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Content
