@@ -207,6 +207,9 @@ function StablecoinRow({
           <CopyButton value={s.symbol} label="token symbol" />
         </div>
       </td>
+      <td className="px-3 py-2 align-top">
+        <SwapPickerCell code={code} symbol={s.symbol} />
+      </td>
       <td className="max-w-[120px] px-3 py-2 align-top">
         <a
           href={s.issuer.url}
@@ -220,7 +223,7 @@ function StablecoinRow({
       </td>
       <td className="px-3 py-2 align-top">
         <div className="flex items-start gap-1">
-          <span className="break-all font-mono text-muted-fg text-xs">
+          <span className="whitespace-nowrap font-mono text-muted-fg text-xs">
             {s.mint}
           </span>
           <CopyButton value={s.mint} label="mint address" />
@@ -276,9 +279,6 @@ function StablecoinRow({
           ))}
         </div>
       </td>
-      <td className="px-3 py-2 align-top">
-        <SwapPickerCell code={code} symbol={s.symbol} />
-      </td>
     </tr>
   );
 }
@@ -286,6 +286,7 @@ function StablecoinRow({
 function CurrenciesInner() {
   const searchParams = useSearchParams();
   const [query, setQuery] = useState(searchParams.get("q") ?? "");
+  const [focused, setFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useAppEvent("focusCurrenciesSearch", () => {
@@ -334,7 +335,11 @@ function CurrenciesInner() {
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            onBlur={() => commitQueryToUrl(query)}
+            onFocus={() => setFocused(true)}
+            onBlur={() => {
+              setFocused(false);
+              commitQueryToUrl(query);
+            }}
             onKeyDown={(e) => {
               if (e.key === "Escape") {
                 e.preventDefault();
@@ -348,6 +353,15 @@ function CurrenciesInner() {
             placeholder="Search currencies…"
             className="min-w-0 flex-1 bg-transparent text-foreground text-sm outline-none placeholder:text-muted-fg"
           />
+          <kbd
+            aria-hidden
+            title={
+              focused ? "Press Esc to exit search" : "Press / to focus search"
+            }
+            className="hidden shrink-0 rounded border border-border bg-background px-1.5 py-0.5 font-mono text-[10px] text-muted-fg sm:inline-block"
+          >
+            {focused ? "Esc" : "/"}
+          </kbd>
           {query && (
             <button
               type="button"
@@ -379,6 +393,9 @@ function CurrenciesInner() {
                 Token
               </th>
               <th className="sticky top-14 z-20 bg-muted px-3 py-2 font-medium">
+                Swap
+              </th>
+              <th className="sticky top-14 z-20 bg-muted px-3 py-2 font-medium">
                 Name
               </th>
               <th className="sticky top-14 z-20 bg-muted px-3 py-2 font-medium">
@@ -389,9 +406,6 @@ function CurrenciesInner() {
               </th>
               <th className="sticky top-14 z-20 bg-muted px-3 py-2 font-medium">
                 Issuer(s)
-              </th>
-              <th className="sticky top-14 z-20 bg-muted px-3 py-2 font-medium">
-                Swap
               </th>
             </tr>
           </thead>

@@ -33,6 +33,8 @@ import { useSwapStore } from "@/lib/store";
 import { type CountryFeature, WORLD_POLYGONS } from "@/lib/world-polygons";
 import { CurrencyGroupHeader } from "./CurrencyGroupHeader";
 import { Compass, Crosshair, Flag, Minus, Pause, Play, Plus, X } from "./icons";
+import { TokenInfoLink } from "./TokenInfoLink";
+import { TokenMintActions } from "./TokenMintActions";
 
 const Globe = dynamic(() => import("react-globe.gl"), {
   ssr: false,
@@ -769,7 +771,7 @@ function GlobeInner() {
           <Dialog.Overlay className="fixed inset-0 z-[60] bg-background/80 backdrop-blur-2xl" />
           <Dialog.Content
             aria-describedby={undefined}
-            className="-translate-x-1/2 fixed top-6 left-1/2 z-[70] flex max-h-[calc(100vh-3rem)] w-[min(420px,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-border bg-background shadow-lg"
+            className="-translate-x-1/2 -translate-y-1/2 fixed top-1/2 left-1/2 z-[70] flex max-h-[calc(100vh-3rem)] w-[min(420px,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-border bg-background shadow-lg"
           >
             <div className="flex items-center gap-2 border-border border-b px-3 py-2">
               <Dialog.Title className="min-w-0 flex-1 truncate text-foreground text-sm">
@@ -861,6 +863,8 @@ function GlobeInner() {
                         >
                           To
                         </button>
+                        <TokenMintActions symbol={s.symbol} mint={s.mint} />
+                        <TokenInfoLink symbol={s.symbol} />
                       </div>
                     );
                   })}

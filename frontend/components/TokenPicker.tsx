@@ -11,17 +11,11 @@ import {
   tokenIconUrl,
 } from "@/lib/currencies";
 import { useAppEvent } from "@/lib/events";
-import { explorerAddressUrl } from "@/lib/explorer";
 import { type Side, useSwapStore } from "@/lib/store";
 import { CurrencyGroupHeader } from "./CurrencyGroupHeader";
-import {
-  Check,
-  ChevronDown,
-  ExternalLink,
-  HelpCircle,
-  Search,
-  X,
-} from "./icons";
+import { ChevronDown, Search, X } from "./icons";
+import { TokenInfoLink } from "./TokenInfoLink";
+import { TokenMintActions } from "./TokenMintActions";
 
 export function TokenPicker({ side }: { side: Side }) {
   const currency = useSwapStore((s) => s[side].currency);
@@ -34,7 +28,6 @@ export function TokenPicker({ side }: { side: Side }) {
 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [copiedSymbol, setCopiedSymbol] = useState<string | null>(null);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const searchRef = useRef<HTMLInputElement>(null);
   const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -121,19 +114,6 @@ export function TokenPicker({ side }: { side: Side }) {
     }
   };
 
-  const copyMint = async (sym: string, mint: string) => {
-    try {
-      await navigator.clipboard.writeText(mint);
-      setCopiedSymbol(sym);
-      setTimeout(
-        () => setCopiedSymbol((cur) => (cur === sym ? null : cur)),
-        1500,
-      );
-    } catch {
-      // clipboard API unavailable — silently ignore
-    }
-  };
-
   const renderStableRow = (
     code: IsoCurrencyCode,
     s: Stablecoin,
@@ -141,7 +121,6 @@ export function TokenPicker({ side }: { side: Side }) {
   ) => {
     const blocked = isBlocked(code, s.symbol);
     const selected = code === currency && s.symbol === stablecoin;
-    const copied = copiedSymbol === s.symbol;
     const active = selected || highlighted;
     return (
       <div
@@ -172,39 +151,8 @@ export function TokenPicker({ side }: { side: Side }) {
             )}
           </span>
         </button>
-        <button
-          type="button"
-          onClick={() => copyMint(s.symbol, s.mint)}
-          title={copied ? "Copied!" : "Copy mint address"}
-          className="flex shrink-0 items-center gap-1 rounded px-1.5 py-1 font-mono text-muted-fg text-xs hover:bg-muted hover:text-accent"
-        >
-          {copied ? (
-            <>
-              <Check size={10} />
-              copied
-            </>
-          ) : (
-            <>
-              {s.mint.slice(0, 4)}…{s.mint.slice(-4)}
-            </>
-          )}
-        </button>
-        <a
-          href={explorerAddressUrl(s.mint)}
-          target="_blank"
-          rel="noopener noreferrer"
-          title={`View ${s.symbol} on Solana Explorer`}
-          className="flex shrink-0 items-center rounded p-1 text-muted-fg hover:bg-muted hover:text-accent"
-        >
-          <ExternalLink size={12} />
-        </a>
-        <a
-          href={`/currencies?q=${encodeURIComponent(s.symbol)}`}
-          title={`More info about ${s.symbol}`}
-          className="mr-1 flex shrink-0 items-center rounded p-1 text-muted-fg hover:bg-muted hover:text-accent"
-        >
-          <HelpCircle size={12} />
-        </a>
+        <TokenMintActions symbol={s.symbol} mint={s.mint} />
+        <TokenInfoLink symbol={s.symbol} className="mr-1" />
       </div>
     );
   };
