@@ -14,7 +14,14 @@ import { useAppEvent } from "@/lib/events";
 import { explorerAddressUrl } from "@/lib/explorer";
 import { type Side, useSwapStore } from "@/lib/store";
 import { CurrencyGroupHeader } from "./CurrencyGroupHeader";
-import { Check, ChevronDown, ExternalLink, HelpCircle, Search, X } from "./icons";
+import {
+  Check,
+  ChevronDown,
+  ExternalLink,
+  HelpCircle,
+  Search,
+  X,
+} from "./icons";
 
 export function TokenPicker({ side }: { side: Side }) {
   const currency = useSwapStore((s) => s[side].currency);

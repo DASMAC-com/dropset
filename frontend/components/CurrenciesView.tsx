@@ -9,8 +9,8 @@ import {
   currencyFlag,
   currencyName,
   type IsoCurrencyCode,
-  SUPPORTED,
   type Stablecoin,
+  SUPPORTED,
 } from "@/lib/currencies";
 import { explorerAddressUrl } from "@/lib/explorer";
 
@@ -90,7 +90,7 @@ function StablecoinRow({ s }: { s: Stablecoin }) {
           <CopyButton value={s.symbol} label="token symbol" />
         </div>
       </td>
-      <td className="max-w-[180px] px-3 py-2 align-top">
+      <td className="max-w-[120px] px-3 py-2 align-top">
         <a
           href={s.issuer.url}
           target="_blank"
@@ -176,7 +176,9 @@ function CurrenciesInner() {
     () =>
       SUPPORTED.map((code) => ({
         code,
-        stables: CURRENCIES[code].stablecoins.filter((s) => matches(s, code, q)),
+        stables: CURRENCIES[code].stablecoins.filter((s) =>
+          matches(s, code, q),
+        ),
       })).filter((g) => g.stables.length > 0),
     [q],
   );

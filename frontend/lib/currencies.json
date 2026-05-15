@@ -35,7 +35,7 @@
         "decimals": 6,
         "icon": "https://424565.fs1.hubspotusercontent-na1.net/hubfs/424565/GDN-USDG-Token-512x512.png",
         "issuer": {
-          "name": ["Paxos Digital Singapore", "Global Dollar Network"],
+          "name": ["Global Dollar Network", "Paxos Digital Singapore"],
           "url": "https://globaldollar.com/about-usdg",
           "socials": { "x": "global_dollar" }
         }
@@ -48,7 +48,7 @@
         "decimals": 6,
         "icon": "https://424565.fs1.hubspotusercontent-na1.net/hubfs/424565/PYUSDLOGO.png",
         "issuer": {
-          "name": ["Paxos Trust Company", "PayPal"],
+          "name": ["PayPal", "Paxos Trust Company"],
           "url": "https://www.paxos.com/pyusd",
           "socials": { "x": "PayPal" }
         }
@@ -204,7 +204,7 @@
         "issuer": {
           "name": ["Brale", "Etherfuse"],
           "url": "https://brale.xyz/stablecoins/MXNe",
-          "socials": { "x": "etherfuse" }
+          "socials": { "x": "Brale_xyz" }
         }
       }
     ]
