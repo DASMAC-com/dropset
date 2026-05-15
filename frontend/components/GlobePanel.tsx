@@ -321,9 +321,22 @@ function GlobeInner() {
     controls.minDistance = 101;
     controls.maxDistance = 600;
     globeHandle.pointOfView(DEFAULT_POV, 0);
-    // Reveal on the next frame so the POV snap has committed to canvas before
-    // the user sees anything.
-    const revealRaf = requestAnimationFrame(() => setRevealed(true));
+    // react-globe.gl's pointOfView still runs an internal d3 transition even
+    // with duration=0, so the camera glides into DEFAULT_POV.lat over a few
+    // frames. Keep the canvas hidden until the latitude has actually settled
+    // there, with a hard fallback so a stuck poll doesn't leave it invisible.
+    // (lng isn't compared — autoRotate is already moving it.)
+    let revealRaf = 0;
+    const checkSettled = () => {
+      const pov = globeHandle.pointOfView();
+      if (Math.abs(pov.lat - DEFAULT_POV.lat) < 0.5) {
+        setRevealed(true);
+        return;
+      }
+      revealRaf = requestAnimationFrame(checkSettled);
+    };
+    revealRaf = requestAnimationFrame(checkSettled);
+    const revealFallback = window.setTimeout(() => setRevealed(true), 1500);
 
     const scene = globeHandle.scene();
     // Two layers — a dense bed of faint pinpricks plus a sparser layer of
@@ -335,6 +348,7 @@ function GlobeInner() {
     for (const layer of layers) scene.add(layer);
     return () => {
       cancelAnimationFrame(revealRaf);
+      window.clearTimeout(revealFallback);
       for (const layer of layers) {
         scene.remove(layer);
         layer.geometry.dispose();
