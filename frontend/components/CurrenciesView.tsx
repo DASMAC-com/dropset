@@ -191,7 +191,7 @@ function CurrenciesInner() {
       <p className="mb-2 text-muted-fg text-xs">
         <span className="text-foreground">{stats.represented}</span> of{" "}
         <span className="text-foreground">{stats.total}</span> currencies
-        represented ·{" "}
+        represented on Solana ·{" "}
         <span className="text-foreground">{stats.missing}</span> not yet listed
       </p>
       <div className="mb-2 flex items-center gap-2 rounded-lg border border-border bg-muted px-3 py-2">
