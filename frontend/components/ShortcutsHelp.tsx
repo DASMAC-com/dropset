@@ -25,7 +25,7 @@ export function ShortcutsHelp() {
     // biome-ignore lint/a11y/noStaticElementInteractions: backdrop click dismiss; Escape and the close button cover keyboard paths
     // biome-ignore lint/a11y/useKeyWithClickEvents: same — keyboard dismissal handled by Escape and the close button
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-background/70 px-4 pt-6 pb-4 backdrop-blur-sm"
       onClick={() => setOpen(false)}
     >
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation only — keyboard interaction happens inside the dialog content */}
@@ -53,14 +53,14 @@ export function ShortcutsHelp() {
           </button>
         </div>
         <ul className="flex flex-col gap-2">
-          {SHORTCUTS.map(({ key, displayKey, description }) => (
+          {SHORTCUTS.map(({ key, description }) => (
             <li
               key={key}
               className="flex items-center justify-between gap-3 text-sm"
             >
               <span className="text-muted-fg">{description}</span>
               <kbd className="shrink-0 rounded border border-border bg-muted px-2 py-0.5 font-mono text-foreground text-xs">
-                {displayKey ?? key}
+                {key}
               </kbd>
             </li>
           ))}

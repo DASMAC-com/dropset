@@ -1,6 +1,6 @@
 "use client";
 
-import * as Popover from "@radix-ui/react-popover";
+import * as Dialog from "@radix-ui/react-dialog";
 import { useEffect, useRef, useState } from "react";
 import {
   CURRENCIES,
@@ -13,7 +13,7 @@ import { useAppEvent } from "@/lib/events";
 import { explorerAddressUrl } from "@/lib/explorer";
 import { type Side, useSwapStore } from "@/lib/store";
 import { CurrencyGroupHeader } from "./CurrencyGroupHeader";
-import { Check, ChevronDown, ExternalLink, Search } from "./icons";
+import { Check, ChevronDown, ExternalLink, Search, X } from "./icons";
 
 export function TokenPicker({ side }: { side: Side }) {
   const currency = useSwapStore((s) => s[side].currency);
@@ -203,15 +203,15 @@ export function TokenPicker({ side }: { side: Side }) {
       : null;
 
   return (
-    <Popover.Root
+    <Dialog.Root
       open={open}
       onOpenChange={(o) => {
         setOpen(o);
         if (o) setActiveSide(side);
       }}
     >
-      <Popover.Trigger
-        className={`flex w-fit items-center gap-2 self-start rounded-lg border border-border bg-background px-3 py-2 text-base text-foreground ${
+      <Dialog.Trigger
+        className={`flex w-fit items-center gap-2 self-center rounded-lg border border-border bg-background px-4 py-2.5 text-xl text-foreground ${
           side === "to"
             ? "hover:border-accent-buy hover:text-accent-buy"
             : "hover:border-accent hover:text-accent"
@@ -222,23 +222,26 @@ export function TokenPicker({ side }: { side: Side }) {
           src={tokenIconUrl(stablecoin)}
           alt=""
           aria-hidden
-          width={20}
-          height={20}
-          className="h-5 w-5 shrink-0 rounded-full"
+          width={24}
+          height={24}
+          className="h-6 w-6 shrink-0 rounded-full"
         />
         <span className="font-mono font-medium">{stablecoin}</span>
-        <ChevronDown size={18} />
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content
-          align="start"
-          sideOffset={6}
+        <ChevronDown size={20} />
+      </Dialog.Trigger>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-[60] bg-background/80 backdrop-blur-2xl" />
+        <Dialog.Content
           onOpenAutoFocus={(e) => {
             e.preventDefault();
             searchRef.current?.focus();
           }}
-          className="z-50 flex max-h-[60vh] w-80 flex-col overflow-hidden rounded-xl border border-border bg-background shadow-lg"
+          aria-describedby={undefined}
+          className="-translate-x-1/2 fixed top-6 left-1/2 z-[70] flex max-h-[calc(100vh-3rem)] w-[min(420px,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-border bg-background shadow-lg"
         >
+          <Dialog.Title className="sr-only">
+            Select {side === "from" ? "From" : "To"} token
+          </Dialog.Title>
           <div className="flex items-center gap-2 border-border border-b px-3 py-2">
             <Search size={14} className="shrink-0 text-muted-fg" />
             <input
@@ -248,8 +251,17 @@ export function TokenPicker({ side }: { side: Side }) {
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={onSearchKeyDown}
               placeholder="Search tokens…"
-              className="w-full bg-transparent text-foreground text-sm outline-none placeholder:text-muted-fg"
+              className="min-w-0 flex-1 bg-transparent text-foreground text-sm outline-none placeholder:text-muted-fg"
             />
+            <kbd className="hidden shrink-0 rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-fg sm:inline-block">
+              Esc
+            </kbd>
+            <Dialog.Close
+              aria-label="Close"
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-fg hover:bg-muted hover:text-foreground"
+            >
+              <X size={14} />
+            </Dialog.Close>
           </div>
           {activeStable && (
             <div className="border-border border-b p-1">
@@ -279,8 +291,8 @@ export function TokenPicker({ side }: { side: Side }) {
               ))
             )}
           </div>
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }

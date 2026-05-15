@@ -1,5 +1,6 @@
 "use client";
 
+import * as Dialog from "@radix-ui/react-dialog";
 import dynamic from "next/dynamic";
 import {
   Component,
@@ -31,12 +32,12 @@ import { useAppEvent } from "@/lib/events";
 import { useSwapStore } from "@/lib/store";
 import { type CountryFeature, WORLD_POLYGONS } from "@/lib/world-polygons";
 import { CurrencyGroupHeader } from "./CurrencyGroupHeader";
-import { Compass, Crosshair, Flag, Minus, Pause, Play, Plus } from "./icons";
+import { Compass, Crosshair, Flag, Minus, Pause, Play, Plus, X } from "./icons";
 
 const Globe = dynamic(() => import("react-globe.gl"), {
   ssr: false,
   loading: () => (
-    <div className="flex h-[480px] w-full items-center justify-center text-muted-fg text-sm">
+    <div className="flex h-[400px] w-full items-center justify-center text-muted-fg text-sm">
       Loading globe…
     </div>
   ),
@@ -50,9 +51,6 @@ const LAND_UNCOVERED = "#1e293b"; // slate-800 — no supported currency
 const OCEAN_COLOR = 0x0b1726;
 const ARC_COLOR = "#a7f3d0"; // emerald-200 — bright, ties the cool palette together
 
-const POPOVER_WIDTH = 256;
-const POPOVER_MAX_HEIGHT = 260;
-
 // Height of the "same-country" pillar (a vertical cylinder over the shared
 // anchor) and the spinning ring that sits on top of it.
 const PILLAR_ALTITUDE = 0.18;
@@ -63,7 +61,7 @@ const GLOBE_RADIUS = 100;
 
 // Start the view centered roughly over the eastern US so the auto-rotation
 // reveals the Atlantic and then Europe — the canonical USD → EUR path.
-const DEFAULT_POV = { lat: 30, lng: -75, altitude: 1.9 };
+const DEFAULT_POV = { lat: 30, lng: -75, altitude: 1.5 };
 
 // Below this altitude, country-name labels become visible.
 const LABEL_VISIBILITY_ALTITUDE = 2.6;
@@ -128,8 +126,6 @@ type ClickContext = {
   countryName: string;
   cca2: string;
   currencies: IsoCurrencyCode[];
-  x: number;
-  y: number;
 };
 
 // Pre-clustered subset of COUNTRY_PINS for use at the most zoomed-out
@@ -180,7 +176,7 @@ class GlobeErrorBoundary extends Component<
   render() {
     if (this.state.error) {
       return (
-        <div className="flex h-[480px] w-full flex-col items-center justify-center gap-2 p-4 text-center text-muted-fg text-sm">
+        <div className="flex h-[400px] w-full flex-col items-center justify-center gap-2 p-4 text-center text-muted-fg text-sm">
           <span className="font-medium">Globe failed to load.</span>
           <code className="max-w-full overflow-auto rounded bg-background px-2 py-1 font-mono text-xs">
             {String(this.state.error?.message ?? this.state.error)}
@@ -209,7 +205,6 @@ function GlobeInner() {
   const setToken = useSwapStore((s) => s.setToken);
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const popoverRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 480, height: 480 });
   const [clickContext, setClickContext] = useState<ClickContext | null>(null);
   const [spinning, setSpinning] = useState(true);
@@ -275,33 +270,13 @@ function GlobeInner() {
     if (!el) return;
     const measure = () => {
       const w = el.clientWidth || 480;
-      setSize({ width: w, height: Math.min(Math.max(w, 360), 560) });
+      setSize({ width: w, height: Math.min(Math.max(w * 0.85, 320), 480) });
     };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-
-  useEffect(() => {
-    if (!clickContext) return;
-    const onDown = (e: MouseEvent) => {
-      if (popoverRef.current?.contains(e.target as Node)) return;
-      setClickContext(null);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setClickContext(null);
-    };
-    const t = setTimeout(() => {
-      document.addEventListener("mousedown", onDown);
-      document.addEventListener("keydown", onKey);
-    }, 0);
-    return () => {
-      clearTimeout(t);
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [clickContext]);
 
   const oceanMaterial = useMemo(
     () => new MeshBasicMaterial({ color: OCEAN_COLOR }),
@@ -501,48 +476,32 @@ function GlobeInner() {
     return 0.011;
   };
 
+  const closePicker = useCallback(() => {
+    setClickContext(null);
+    setSpinning(true);
+  }, []);
+
   const openPickerAt = useCallback(
-    (
-      name: string,
-      cca2: string,
-      currencies: IsoCurrencyCode[],
-      clientX: number,
-      clientY: number,
-    ) => {
+    (name: string, cca2: string, currencies: IsoCurrencyCode[]) => {
       if (currencies.length === 0 || !cca2) {
-        setClickContext(null);
+        closePicker();
         return;
       }
-      const rect = containerRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      const localX = clientX - rect.left;
-      const localY = clientY - rect.top;
-      const x = Math.min(Math.max(8, localX), rect.width - POPOVER_WIDTH - 8);
-      const y = Math.min(
-        Math.max(8, localY + 8),
-        rect.height - POPOVER_MAX_HEIGHT - 8,
-      );
-      setClickContext({ countryName: name, cca2, currencies, x, y });
+      setClickContext({ countryName: name, cca2, currencies });
     },
-    [],
+    [closePicker],
   );
 
-  const onPolygonClick = (poly: object, event: MouseEvent) => {
+  const onPolygonClick = (poly: object) => {
     setSpinning(false);
     const f = poly as CountryFeature;
-    openPickerAt(
-      f.properties.name,
-      f.properties.cca2,
-      f.properties.currencies,
-      event.clientX,
-      event.clientY,
-    );
+    openPickerAt(f.properties.name, f.properties.cca2, f.properties.currencies);
   };
 
-  const onLabelClick = (label: object, event: MouseEvent) => {
+  const onLabelClick = (label: object) => {
     setSpinning(false);
     const p = label as CountryPin;
-    openPickerAt(p.name, p.cca2, [p.currency], event.clientX, event.clientY);
+    openPickerAt(p.name, p.cca2, [p.currency]);
   };
 
   const onGlobeClick = () => setSpinning(false);
@@ -574,7 +533,7 @@ function GlobeInner() {
     cca2: string,
   ) => {
     setToken(side, currency, symbol, cca2);
-    setClickContext(null);
+    closePicker();
   };
 
   return (
@@ -694,11 +653,7 @@ function GlobeInner() {
         labelIncludeDot={true}
         onLabelClick={onLabelClick}
         htmlElementsData={
-          showFlags && altitude < LABEL_VISIBILITY_ALTITUDE
-            ? altitude < 0.8
-              ? COUNTRY_PINS
-              : FAR_ZOOM_PINS
-            : []
+          showFlags ? (altitude < 0.8 ? COUNTRY_PINS : FAR_ZOOM_PINS) : []
         }
         htmlLat={(d: object) => (d as CountryPin).lat}
         htmlLng={(d: object) => (d as CountryPin).lng}
@@ -719,8 +674,8 @@ function GlobeInner() {
           // Keep flags below the country popover (z-40) when both are visible.
           el.style.zIndex = "1";
           el.title = pin.name;
-          el.addEventListener("click", (e) => {
-            onLabelClick(pin, e);
+          el.addEventListener("click", () => {
+            onLabelClick(pin);
           });
           return el;
         }}
@@ -804,101 +759,117 @@ function GlobeInner() {
         </button>
       </div>
 
-      {clickContext && (
-        <div
-          ref={popoverRef}
-          className="absolute z-40 flex flex-col overflow-hidden rounded-xl border border-border bg-background shadow-lg"
-          style={{
-            left: clickContext.x,
-            top: clickContext.y,
-            width: POPOVER_WIDTH,
-            maxHeight: POPOVER_MAX_HEIGHT,
-          }}
-        >
-          <div className="border-border border-b px-3 py-2 text-xs">
-            <span className="truncate font-medium text-foreground">
-              {clickContext.countryName}
-            </span>
-          </div>
-          <div className="flex-1 overflow-y-auto p-1">
-            {clickContext.currencies.map((cur) => (
-              <div key={cur} className="py-1">
-                <CurrencyGroupHeader code={cur} />
-                {CURRENCIES[cur].stablecoins.map((s) => {
-                  const isFromHere =
-                    cur === from.currency && s.symbol === from.stablecoin;
-                  const isToHere =
-                    cur === to.currency && s.symbol === to.stablecoin;
-                  return (
-                    <div
-                      key={`${cur}-${s.symbol}`}
-                      className="flex w-full items-center gap-1 rounded-md px-2 py-1.5"
-                    >
-                      {/* biome-ignore lint/performance/noImgElement: small static icon, no optimization needed */}
-                      <img
-                        src={tokenIconUrl(s.symbol)}
-                        alt=""
-                        aria-hidden
-                        width={20}
-                        height={20}
-                        className="h-5 w-5 shrink-0 rounded-full"
-                      />
-                      <span className="flex min-w-0 flex-1 flex-col text-sm">
-                        <span className="font-mono text-foreground">
-                          {s.symbol}
-                        </span>
-                        {s.name !== s.symbol && (
-                          <span className="truncate text-muted-fg text-xs">
-                            {s.name}
+      <Dialog.Root
+        open={clickContext !== null}
+        onOpenChange={(o) => {
+          if (!o) closePicker();
+        }}
+      >
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-[60] bg-background/80 backdrop-blur-2xl" />
+          <Dialog.Content
+            aria-describedby={undefined}
+            className="-translate-x-1/2 fixed top-6 left-1/2 z-[70] flex max-h-[calc(100vh-3rem)] w-[min(420px,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-border bg-background shadow-lg"
+          >
+            <div className="flex items-center gap-2 border-border border-b px-3 py-2">
+              <Dialog.Title className="min-w-0 flex-1 truncate text-foreground text-sm">
+                {clickContext?.countryName ?? ""}
+              </Dialog.Title>
+              <kbd className="hidden shrink-0 rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-fg sm:inline-block">
+                Esc
+              </kbd>
+              <Dialog.Close
+                aria-label="Close"
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-fg hover:bg-muted hover:text-foreground"
+              >
+                <X size={14} />
+              </Dialog.Close>
+            </div>
+            <div className="flex-1 overflow-y-auto p-1">
+              {clickContext?.currencies.map((cur) => (
+                <div key={cur} className="py-1">
+                  <CurrencyGroupHeader code={cur} />
+                  {CURRENCIES[cur].stablecoins.map((s) => {
+                    const isFromHere =
+                      cur === from.currency && s.symbol === from.stablecoin;
+                    const isToHere =
+                      cur === to.currency && s.symbol === to.stablecoin;
+                    return (
+                      <div
+                        key={`${cur}-${s.symbol}`}
+                        className="flex w-full items-center gap-1 rounded-md px-2 py-1.5"
+                      >
+                        {/* biome-ignore lint/performance/noImgElement: small static icon, no optimization needed */}
+                        <img
+                          src={tokenIconUrl(s.symbol)}
+                          alt=""
+                          aria-hidden
+                          width={20}
+                          height={20}
+                          className="h-5 w-5 shrink-0 rounded-full"
+                        />
+                        <span className="flex min-w-0 flex-1 flex-col text-sm">
+                          <span className="font-mono text-foreground">
+                            {s.symbol}
                           </span>
-                        )}
-                      </span>
-                      <button
-                        type="button"
-                        disabled={isToHere}
-                        onClick={() =>
-                          applyToSide("from", cur, s.symbol, clickContext.cca2)
-                        }
-                        title={
-                          isToHere
-                            ? "Already selected as To"
-                            : `Swap from ${s.symbol} (${clickContext.countryName})`
-                        }
-                        className={`w-14 shrink-0 rounded px-2 py-1 text-center font-medium text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-                          isFromHere
-                            ? "bg-[#3b82f6] text-white"
-                            : "border border-border text-muted-fg hover:border-[#3b82f6] hover:text-[#3b82f6]"
-                        }`}
-                      >
-                        From
-                      </button>
-                      <button
-                        type="button"
-                        disabled={isFromHere}
-                        onClick={() =>
-                          applyToSide("to", cur, s.symbol, clickContext.cca2)
-                        }
-                        title={
-                          isFromHere
-                            ? "Already selected as From"
-                            : `Swap to ${s.symbol} (${clickContext.countryName})`
-                        }
-                        className={`w-14 shrink-0 rounded px-2 py-1 text-center font-medium text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-                          isToHere
-                            ? "bg-[#10b981] text-white"
-                            : "border border-border text-muted-fg hover:border-[#10b981] hover:text-[#10b981]"
-                        }`}
-                      >
-                        To
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+                          {s.name !== s.symbol && (
+                            <span className="truncate text-muted-fg text-xs">
+                              {s.name}
+                            </span>
+                          )}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={isToHere}
+                          onClick={() =>
+                            applyToSide(
+                              "from",
+                              cur,
+                              s.symbol,
+                              clickContext.cca2,
+                            )
+                          }
+                          title={
+                            isToHere
+                              ? "Already selected as To"
+                              : `Swap from ${s.symbol} (${clickContext.countryName})`
+                          }
+                          className={`w-14 shrink-0 rounded px-2 py-1 text-center font-medium text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                            isFromHere
+                              ? "bg-[#3b82f6] text-white"
+                              : "border border-border text-muted-fg hover:border-[#3b82f6] hover:text-[#3b82f6]"
+                          }`}
+                        >
+                          From
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isFromHere}
+                          onClick={() =>
+                            applyToSide("to", cur, s.symbol, clickContext.cca2)
+                          }
+                          title={
+                            isFromHere
+                              ? "Already selected as From"
+                              : `Swap to ${s.symbol} (${clickContext.countryName})`
+                          }
+                          className={`w-14 shrink-0 rounded px-2 py-1 text-center font-medium text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                            isToHere
+                              ? "bg-[#10b981] text-white"
+                              : "border border-border text-muted-fg hover:border-[#10b981] hover:text-[#10b981]"
+                          }`}
+                        >
+                          To
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </div>
   );
 }

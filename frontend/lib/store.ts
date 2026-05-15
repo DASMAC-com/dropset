@@ -17,9 +17,13 @@ const otherSide = (s: Side): Side => (s === "from" ? "to" : "from");
 const anchorFor = (currency: IsoCurrencyCode): string =>
   currencyAnchor(currency) || defaultAnchorCca2(currency);
 
+export type Slippage = { mode: "auto" } | { mode: "fixed"; percent: number };
+
 type Store = {
   from: SideState;
   to: SideState;
+  amount: string;
+  slippage: Slippage;
   activeSide: Side;
   setActiveSide: (side: Side) => void;
   setToken: (
@@ -28,12 +32,29 @@ type Store = {
     stablecoin: string,
     cca2?: string,
   ) => void;
+  setAmount: (amount: string) => void;
+  setSlippage: (slippage: Slippage) => void;
   swapSides: () => void;
 };
 
+export const DEFAULT_FROM_CURRENCY: IsoCurrencyCode = "USD";
+export const DEFAULT_FROM_STABLECOIN = "USDC";
+export const DEFAULT_TO_CURRENCY: IsoCurrencyCode = "EUR";
+export const DEFAULT_TO_STABLECOIN = "EURC";
+
 export const useSwapStore = create<Store>((set) => ({
-  from: { currency: "USD", stablecoin: "USDC", cca2: anchorFor("USD") },
-  to: { currency: "EUR", stablecoin: "EURC", cca2: anchorFor("EUR") },
+  from: {
+    currency: DEFAULT_FROM_CURRENCY,
+    stablecoin: DEFAULT_FROM_STABLECOIN,
+    cca2: anchorFor(DEFAULT_FROM_CURRENCY),
+  },
+  to: {
+    currency: DEFAULT_TO_CURRENCY,
+    stablecoin: DEFAULT_TO_STABLECOIN,
+    cca2: anchorFor(DEFAULT_TO_CURRENCY),
+  },
+  amount: "",
+  slippage: { mode: "auto" },
   activeSide: "from",
 
   setActiveSide: (side) => set({ activeSide: side }),
@@ -47,6 +68,10 @@ export const useSwapStore = create<Store>((set) => ({
       },
       activeSide: side,
     }),
+
+  setAmount: (amount) => set({ amount }),
+
+  setSlippage: (slippage) => set({ slippage }),
 
   swapSides: () =>
     set((s) => ({

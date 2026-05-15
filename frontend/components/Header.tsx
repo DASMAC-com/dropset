@@ -11,9 +11,9 @@ export function Header() {
     <header className="sticky top-0 z-50 border-border border-b bg-background">
       <div className="mx-auto flex h-14 max-w-6xl items-center gap-2 px-6">
         <Link
-          href="/"
+          href="/swap"
           aria-label="Dropset"
-          className="flex shrink-0 items-center no-underline"
+          className="mr-4 flex shrink-0 items-center no-underline"
         >
           <Image
             src="/favicon.png"
@@ -25,7 +25,7 @@ export function Header() {
           />
         </Link>
         <nav className="flex items-center gap-2">
-          <span className="rounded-md bg-muted px-3 py-1.5 text-sm text-foreground">
+          <span className="inline-flex h-9 items-center rounded-md border border-muted-fg/40 bg-foreground/[0.07] px-3 font-medium text-foreground text-sm">
             Swap
           </span>
         </nav>

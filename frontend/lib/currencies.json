@@ -1,160 +1,156 @@
 {
   "USD": {
     "name": "United States Dollar",
-    "flag": "🇺🇸",
-    "anchorCca2": "US",
     "stablecoins": [
       {
         "symbol": "USDC",
         "name": "USD Coin",
         "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "decimals": 6,
         "icon": "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png"
       },
       {
         "symbol": "USDT",
         "name": "USDT",
         "mint": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+        "decimals": 6,
         "icon": "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB/logo.svg"
       },
       {
         "symbol": "USDG",
         "name": "Global Dollar",
         "mint": "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH",
+        "decimals": 6,
         "icon": "https://424565.fs1.hubspotusercontent-na1.net/hubfs/424565/GDN-USDG-Token-512x512.png"
       },
       {
         "symbol": "PYUSD",
         "name": "PayPal USD",
         "mint": "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo",
+        "decimals": 6,
         "icon": "https://424565.fs1.hubspotusercontent-na1.net/hubfs/424565/PYUSDLOGO.png"
       },
       {
         "symbol": "USD1",
         "name": "World Liberty Financial USD",
         "mint": "USD1ttGY1N17NEEHLmELoaybftRBUSErhqYiQzvEmuB",
+        "decimals": 6,
         "icon": "https://raw.githubusercontent.com/worldliberty/usd1-metadata/refs/heads/main/logo.png"
       }
     ]
   },
   "EUR": {
     "name": "Euro",
-    "flag": "🇪🇺",
     "anchorCca2": "BE",
     "stablecoins": [
       {
         "symbol": "EURC",
         "name": "EURC",
         "mint": "HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr",
+        "decimals": 6,
         "icon": "https://6778953.fs1.hubspotusercontent-na1.net/hubfs/6778953/Brand/EURC/EURC-icon_128x128.png"
       },
       {
         "symbol": "VEUR",
         "name": "VNX Euro",
         "mint": "C4Kkr9NZU3VbyedcgutU6LKmi6MKz81sx6gRmk5pX519",
+        "decimals": 9,
         "icon": "https://vnx.li/wp-content/uploads/2025/04/VEUR-256x256-1.png"
       }
     ]
   },
   "GBP": {
     "name": "British Pound",
-    "flag": "🇬🇧",
-    "anchorCca2": "GB",
     "stablecoins": [
       {
         "symbol": "tGBP",
         "name": "tGBP",
         "mint": "2zMqyX4AYCk6mgy5UZ2S7zUaLxwERhK5WjqDzkPPbSpW",
+        "decimals": 9,
         "icon": "https://raw.githubusercontent.com/superset-finance/token-metadata/main/tGBP/logo.png"
       }
     ]
   },
   "CHF": {
     "name": "Swiss Franc",
-    "flag": "🇨🇭",
-    "anchorCca2": "CH",
     "stablecoins": [
       {
         "symbol": "VCHF",
         "name": "VNX Swiss Franc",
         "mint": "AhhdRu5YZdjVkKR3wbnUDaymVQL2ucjMQ63sZ3LFHsch",
+        "decimals": 9,
         "icon": "https://vnx.li/wp-content/uploads/2025/04/VCHF-256x256-1.png"
       }
     ]
   },
   "BRL": {
     "name": "Brazilian Real",
-    "flag": "🇧🇷",
-    "anchorCca2": "BR",
     "stablecoins": [
       {
         "symbol": "BRZ",
         "name": "BRZ Token",
         "mint": "BRZbFNQDcWLfcdHmAkqEVnLHCAWKTRf6eHyEaWdZp3JN",
+        "decimals": 6,
         "icon": "https://transferotokensconfig.blob.core.windows.net/stablesimages/BRZ/ico/ico_BRZ_750x750.png"
       }
     ]
   },
   "JPY": {
     "name": "Japanese Yen",
-    "flag": "🇯🇵",
-    "anchorCca2": "JP",
     "stablecoins": [
       {
         "symbol": "GYEN",
         "name": "GMO JPY",
         "mint": "Crn4x1Y2HUKko7ox2EZMT6N2t2ZyH7eKtwkBGVnhEq1g",
+        "decimals": 6,
         "icon": "https://stablecoin.z.com/assets/images/token/icon_gyen_300_300.png"
       }
     ]
   },
   "AUD": {
     "name": "Australian Dollar",
-    "flag": "🇦🇺",
-    "anchorCca2": "AU",
     "stablecoins": [
       {
         "symbol": "AUDD",
         "name": "AUDD",
         "mint": "AUDDttiEpCydTm7joUMbYddm72jAWXZnCpPZtDoxqBSw",
+        "decimals": 6,
         "icon": "https://assets.coingecko.com/coins/images/33263/standard/AUDD-Logo-Blue_512.png"
       }
     ]
   },
   "MXN": {
     "name": "Mexican Peso",
-    "flag": "🇲🇽",
-    "anchorCca2": "MX",
     "stablecoins": [
       {
-        "symbol": "MXNE",
+        "symbol": "MXNe",
         "name": "Real MXN",
         "mint": "6zYgzrT7X2wi9a9NeMtUvUWLLmf2a8vBsbYkocYdB9wa",
+        "decimals": 9,
         "icon": "https://brale.xyz/assets/stablecoins/mxne-logo.png"
       }
     ]
   },
   "NGN": {
     "name": "Nigerian Naira",
-    "flag": "🇳🇬",
-    "anchorCca2": "NG",
     "stablecoins": [
       {
-        "symbol": "CNGN",
+        "symbol": "cNGN",
         "name": "CNGN",
         "mint": "3jiqwBQVRC5zRwHyqvnkQurebJ5RNxg3F5fXMwaxgkv8",
+        "decimals": 6,
         "icon": "https://black-elaborate-wildcat-667.mypinata.cloud/ipfs/bafkreihl3tm6zdwmcyiaurafzfmblu5olk7ozpelftop7ydbvaalm2vooi"
       }
     ]
   },
   "ZAR": {
     "name": "South African Rand",
-    "flag": "🇿🇦",
-    "anchorCca2": "ZA",
     "stablecoins": [
       {
         "symbol": "ZARP",
         "name": "ZARP Stablecoin",
         "mint": "dngKhBQM3BGvsDHKhrLnjvRKfY5Q7gEnYGToj9Lk8rk",
+        "decimals": 6,
         "icon": "https://raw.githubusercontent.com/venox-digital-assets/zarp.contract/main/public/zarp_coin.png"
       }
     ]

@@ -27,8 +27,8 @@ export function SwapPanel() {
   }
 
   return (
-    <div className="relative rounded-xl border border-border p-4">
-      <div className="relative flex flex-col gap-4">
+    <div className="relative rounded-xl border border-border p-3">
+      <div className="relative flex flex-col gap-[14px]">
         <TokenRow side="from" label="From" />
         <TokenRow side="to" label="To" />
         <div className="absolute inset-x-0 top-1/2 z-10 flex -translate-y-1/2 items-center justify-center">
@@ -40,7 +40,7 @@ export function SwapPanel() {
         onClick={onClick}
         disabled={disabled}
         title={sameToken ? "Pick a different token on one side" : undefined}
-        className="mt-4 w-full rounded-lg bg-accent-buy px-4 py-2.5 font-medium text-background text-sm transition-colors hover:bg-accent-buy-hover disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-fg disabled:hover:bg-muted"
+        className="mt-[14px] w-full rounded-lg bg-accent-buy px-4 py-2.5 font-medium text-background text-sm transition-colors hover:bg-accent-buy-hover disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-fg disabled:hover:bg-muted"
       >
         {label}
       </button>

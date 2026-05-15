@@ -17,6 +17,7 @@ import {
   Play as RawPlay,
   Plus as RawPlus,
   Search as RawSearch,
+  Settings2 as RawSettings2,
   X as RawX,
 } from "lucide-react";
 
@@ -47,4 +48,5 @@ export const Pause = safe(RawPause);
 export const Play = safe(RawPlay);
 export const Plus = safe(RawPlus);
 export const Search = safe(RawSearch);
+export const Settings2 = safe(RawSettings2);
 export const X = safe(RawX);
