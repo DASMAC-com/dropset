@@ -231,7 +231,7 @@
         "symbol": "XSGD",
         "name": "StraitsX SGD",
         "mint": "71S9cppWipeUEQDFngYwxjoxB6Sz1MUqX72byLsVYJqy",
-        "mintSourceUrl": "https://support.straitsx.com/support/solutions/articles/157000365664-how-do-i-add-the-xsgd-token-to-my-eth-polygon-avalanche-arbitrum-zilliqa-xrp-ledger-hedera-sol",
+        "mintSourceUrl": "https://support.straitsx.com/support/solutions/articles/157000365664",
         "decimals": 6,
         "icon": "https://assets.coingecko.com/coins/images/12832/standard/xsgd.png",
         "issuer": {
