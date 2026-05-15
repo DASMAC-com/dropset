@@ -1,5 +1,4 @@
 import { Suspense } from "react";
-import { GlobePanel } from "@/components/GlobePanel";
 import { SwapPanel } from "@/components/SwapPanel";
 import { UrlSync } from "@/components/UrlSync";
 
@@ -10,7 +9,11 @@ export default function SwapPage() {
         <UrlSync />
       </Suspense>
       <SwapPanel />
-      <GlobePanel />
+      {/* Reserved space for the persistent globe (mounted once in layout). */}
+      <div
+        id="globe-slot"
+        className="aspect-[1/0.85] max-h-[480px] min-h-[320px] w-full"
+      />
     </div>
   );
 }

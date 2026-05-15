@@ -4,6 +4,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { Footer } from "@/components/Footer";
 import { Header } from "@/components/Header";
 import { KeyboardShortcuts } from "@/components/KeyboardShortcuts";
+import { PersistedGlobe } from "@/components/PersistedGlobe";
 import { ShortcutsHelp } from "@/components/ShortcutsHelp";
 import { TermsOfUseGate } from "@/components/TermsOfUseGate";
 import { Providers } from "@/lib/providers";
@@ -119,6 +120,7 @@ export default function RootLayout({
           <ShortcutsHelp />
           <Header />
           <main className="flex-1">{children}</main>
+          <PersistedGlobe />
           <Footer />
           <TermsOfUseGate />
         </Providers>

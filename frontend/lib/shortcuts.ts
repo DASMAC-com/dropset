@@ -124,6 +124,16 @@ export const SHORTCUTS_BY_CONTEXT: Record<ShortcutContext, ShortcutSpec[]> = {
       description: "Focus the search input",
       run: () => emit("focusCurrenciesSearch"),
     },
+    {
+      key: "f",
+      description: "Use the lone search result as From",
+      run: () => emit("pickCurrencyOnlyResult", "from"),
+    },
+    {
+      key: "t",
+      description: "Use the lone search result as To",
+      run: () => emit("pickCurrencyOnlyResult", "to"),
+    },
   ],
 };
 

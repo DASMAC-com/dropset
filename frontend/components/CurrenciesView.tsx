@@ -123,6 +123,30 @@ function CurrencyHeaderRow({ code }: { code: IsoCurrencyCode }) {
   );
 }
 
+// Returns a function that assigns (code, symbol) to the given side of the swap
+// store and navigates to /swap. If the token is already on the opposite side,
+// swap the two sides instead of duplicating; if already on the requested side,
+// just navigate.
+function usePickToken(): (
+  side: Side,
+  code: IsoCurrencyCode,
+  symbol: string,
+) => void {
+  const router = useRouter();
+  const setToken = useSwapStore((s) => s.setToken);
+  const swapSides = useSwapStore((s) => s.swapSides);
+  return (side, code, symbol) => {
+    const { from, to } = useSwapStore.getState();
+    const isFrom = code === from.currency && symbol === from.stablecoin;
+    const isTo = code === to.currency && symbol === to.stablecoin;
+    const alreadyOnSide = side === "from" ? isFrom : isTo;
+    const alreadyOnOther = side === "from" ? isTo : isFrom;
+    if (alreadyOnOther) swapSides();
+    else if (!alreadyOnSide) setToken(side, code, symbol);
+    router.push("/swap");
+  };
+}
+
 function SwapPickerCell({
   code,
   symbol,
@@ -130,40 +154,14 @@ function SwapPickerCell({
   code: IsoCurrencyCode;
   symbol: string;
 }) {
-  const router = useRouter();
-  const fromCurrency = useSwapStore((s) => s.from.currency);
-  const fromStablecoin = useSwapStore((s) => s.from.stablecoin);
-  const toCurrency = useSwapStore((s) => s.to.currency);
-  const toStablecoin = useSwapStore((s) => s.to.stablecoin);
-  const setToken = useSwapStore((s) => s.setToken);
-  const swapSides = useSwapStore((s) => s.swapSides);
+  const pickToken = usePickToken();
 
-  const isFrom = code === fromCurrency && symbol === fromStablecoin;
-  const isTo = code === toCurrency && symbol === toStablecoin;
-
-  const pick = (side: Side) => {
-    const alreadyOnSide = side === "from" ? isFrom : isTo;
-    const alreadyOnOther = side === "from" ? isTo : isFrom;
-    if (alreadyOnOther) swapSides();
-    else if (!alreadyOnSide) setToken(side, code, symbol);
-    router.push("/swap");
-  };
-
-  const btn = (side: Side, label: string, active: boolean) => (
+  const btn = (side: Side, label: string) => (
     <button
       type="button"
-      onClick={() => pick(side)}
-      aria-pressed={active}
-      title={
-        active
-          ? `${symbol} is already your ${label.toLowerCase()} token`
-          : `Use ${symbol} as your ${label.toLowerCase()} token`
-      }
-      className={
-        active
-          ? "rounded border border-accent bg-accent/10 px-2 py-1 font-medium text-accent text-xs"
-          : "rounded border border-border bg-background px-2 py-1 font-medium text-muted-fg text-xs transition-colors hover:border-accent hover:text-accent"
-      }
+      onClick={() => pickToken(side, code, symbol)}
+      title={`Use ${symbol} as your ${label.toLowerCase()} token`}
+      className="rounded border border-border bg-background px-2 py-1 font-medium text-muted-fg text-xs transition-colors hover:border-accent hover:text-accent"
     >
       {label}
     </button>
@@ -171,8 +169,8 @@ function SwapPickerCell({
 
   return (
     <div className="flex items-center gap-1">
-      {btn("from", "From", isFrom)}
-      {btn("to", "To", isTo)}
+      {btn("from", "From")}
+      {btn("to", "To")}
     </div>
   );
 }
@@ -295,6 +293,15 @@ function CurrenciesInner() {
     inputRef.current?.select();
   });
 
+  const commitQueryToUrl = (value: string) => {
+    const params = new URLSearchParams(window.location.search);
+    if (value) params.set("q", value);
+    else params.delete("q");
+    const search = params.toString();
+    const next = `${window.location.pathname}${search ? `?${search}` : ""}${window.location.hash}`;
+    window.history.replaceState(null, "", next);
+  };
+
   const q = query.trim().toLowerCase();
   const grouped = useMemo(
     () =>
@@ -306,6 +313,14 @@ function CurrenciesInner() {
       })).filter((g) => g.stables.length > 0),
     [q],
   );
+
+  const pickToken = usePickToken();
+  useAppEvent("pickCurrencyOnlyResult", (side) => {
+    if (grouped.length !== 1 || grouped[0].stables.length !== 1) return;
+    const { code } = grouped[0];
+    const { symbol } = grouped[0].stables[0];
+    pickToken(side, code, symbol);
+  });
 
   const stats = currencyStats();
 
@@ -319,9 +334,14 @@ function CurrenciesInner() {
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onBlur={() => commitQueryToUrl(query)}
             onKeyDown={(e) => {
               if (e.key === "Escape") {
                 e.preventDefault();
+                inputRef.current?.blur();
+              } else if (e.key === "Enter") {
+                e.preventDefault();
+                commitQueryToUrl(query);
                 inputRef.current?.blur();
               }
             }}
