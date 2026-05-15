@@ -1,3 +1,4 @@
+import countries from "world-countries";
 import data from "./currencies.json";
 
 export type IsoCurrencyCode = keyof typeof data;
@@ -9,13 +10,19 @@ export type Stablecoin = {
   icon: string;
 };
 export type CurrencyEntry = {
-  name: string;
   flag?: string;
   anchorCca2?: string;
   stablecoins: Stablecoin[];
 };
 
 export const CURRENCIES = data as Record<IsoCurrencyCode, CurrencyEntry>;
+
+const NAME_BY_CODE: Record<string, string> = {};
+for (const c of countries) {
+  for (const [code, info] of Object.entries(c.currencies ?? {})) {
+    if (!NAME_BY_CODE[code]) NAME_BY_CODE[code] = info.name;
+  }
+}
 
 export const SUPPORTED: IsoCurrencyCode[] = Object.keys(
   CURRENCIES,
@@ -45,7 +52,7 @@ export const defaultStablecoin = (code: IsoCurrencyCode): string =>
   CURRENCIES[code].stablecoins[0].symbol;
 
 export const currencyName = (code: IsoCurrencyCode): string =>
-  CURRENCIES[code].name;
+  NAME_BY_CODE[code] ?? code;
 
 const deriveFlag = (code: string): string =>
   String.fromCodePoint(
