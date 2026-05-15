@@ -211,7 +211,7 @@ export function TokenPicker({ side }: { side: Side }) {
       }}
     >
       <Dialog.Trigger
-        className={`mt-2 flex w-fit items-center gap-2 self-end rounded-lg border border-border bg-background px-4 py-2.5 text-xl text-foreground ${
+        className={`flex w-fit items-center gap-2 self-center rounded-lg border border-border bg-background px-4 py-2.5 text-xl text-foreground ${
           side === "to"
             ? "hover:border-accent-buy hover:text-accent-buy"
             : "hover:border-accent hover:text-accent"
