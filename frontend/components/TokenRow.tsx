@@ -93,7 +93,7 @@ export function TokenRow({ side, label }: { side: Side; label: string }) {
     // biome-ignore lint/a11y/noStaticElementInteractions: ambient click-to-focus; keyboard users have the f/t shortcuts and the inner input/picker still work
     <div
       onPointerDown={() => setActiveSide(side)}
-      className={`flex w-full flex-col gap-3 rounded-lg border bg-muted px-5 pt-1.5 pb-2 text-left transition-colors ${
+      className={`flex w-full flex-col gap-1 rounded-lg border bg-muted px-5 pt-1.5 pb-2 text-left transition-colors ${
         active ? activeBorder : "border-border"
       }`}
     >
@@ -124,11 +124,11 @@ export function TokenRow({ side, label }: { side: Side; label: string }) {
               data-shortcut-passthrough="true"
               onFocus={() => setActiveSide("from")}
               onChange={onAmountChange}
-              className="min-w-0 flex-1 bg-transparent text-right font-mono text-2xl text-foreground outline-none placeholder:text-muted-fg"
+              className="min-w-0 flex-1 bg-transparent text-right font-mono text-3xl text-foreground outline-none placeholder:text-muted-fg"
             />
           ) : (
             <span
-              className={`min-w-0 flex-1 truncate text-right font-mono text-2xl ${
+              className={`min-w-0 flex-1 truncate text-right font-mono text-3xl ${
                 toNum > 0 ? "text-foreground" : "text-muted-fg"
               }`}
             >
@@ -136,7 +136,7 @@ export function TokenRow({ side, label }: { side: Side; label: string }) {
             </span>
           )}
         </div>
-        <div className="-mt-0.5 text-right font-mono text-muted-fg text-sm tabular-nums">
+        <div className="mt-1 text-right font-mono text-muted-fg text-sm tabular-nums">
           {quoteDisplay}
         </div>
       </div>
