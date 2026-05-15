@@ -31,6 +31,32 @@ for (const c of countries) {
   }
 }
 
+// A currency is treated as "domestic" if its 3-letter ISO 4217 code begins
+// with a real ISO 3166-1 alpha-2 country code (USD → US, GBP → GB). This
+// filters out supranational currencies like EUR, XAF, XOF, XCD, XPF, etc.
+const COUNTRY_CCA2S = new Set(countries.map((c) => c.cca2));
+const DOMESTIC_CURRENCY_CODES = (() => {
+  const set = new Set<string>();
+  for (const c of countries) {
+    for (const code of Object.keys(c.currencies ?? {})) {
+      if (COUNTRY_CCA2S.has(code.slice(0, 2))) set.add(code);
+    }
+  }
+  return set;
+})();
+
+export const domesticCurrencyStats = (): {
+  represented: number;
+  total: number;
+  missing: number;
+} => {
+  const represented = SUPPORTED.filter((c) =>
+    DOMESTIC_CURRENCY_CODES.has(c),
+  ).length;
+  const total = DOMESTIC_CURRENCY_CODES.size;
+  return { represented, total, missing: total - represented };
+};
+
 export const SUPPORTED: IsoCurrencyCode[] = Object.keys(
   CURRENCIES,
 ) as IsoCurrencyCode[];
