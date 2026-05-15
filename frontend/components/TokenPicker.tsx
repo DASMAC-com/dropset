@@ -4,6 +4,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { useEffect, useRef, useState } from "react";
 import {
   CURRENCIES,
+  currencyName,
   type IsoCurrencyCode,
   type Stablecoin,
   SUPPORTED,
@@ -51,7 +52,7 @@ export function TokenPicker({ side }: { side: Side }) {
     s.name.toLowerCase().includes(q) ||
     s.mint.toLowerCase().includes(q) ||
     code.toLowerCase().includes(q) ||
-    CURRENCIES[code].name.toLowerCase().includes(q);
+    currencyName(code).toLowerCase().includes(q);
 
   const grouped = SUPPORTED.map((code) => ({
     code,
@@ -211,10 +212,10 @@ export function TokenPicker({ side }: { side: Side }) {
       }}
     >
       <Dialog.Trigger
-        className={`flex w-fit items-center gap-2 self-center rounded-lg border border-border bg-background px-4 py-2.5 text-xl text-foreground ${
+        className={`flex w-fit items-center gap-2 self-center rounded-lg border border-border bg-background px-4 py-2.5 text-xl text-foreground outline-none ${
           side === "to"
-            ? "hover:border-accent-buy hover:text-accent-buy"
-            : "hover:border-accent hover:text-accent"
+            ? "hover:border-accent-buy hover:text-accent-buy focus-visible:border-accent-buy focus-visible:text-accent-buy"
+            : "hover:border-accent hover:text-accent focus-visible:border-accent focus-visible:text-accent"
         }`}
       >
         {/* biome-ignore lint/performance/noImgElement: small static icon, no optimization needed */}
