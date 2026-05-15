@@ -101,31 +101,40 @@ function CurrencyHeaderRow({ code }: { code: IsoCurrencyCode }) {
     <tr className="bg-background">
       <td
         colSpan={COLSPAN}
-        className="border-b border-border px-3 pt-6 pb-2"
+        className="border-border border-b-2 px-3 pt-8 pb-3"
         style={borderStyle}
       >
-        <div className="flex items-center gap-2 text-muted-fg text-xs uppercase tracking-wide">
+        <div className="flex items-center gap-3">
           <span
             aria-hidden
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted text-2xl leading-none"
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-muted text-4xl leading-none"
             style={chipStyle}
           >
             {flag}
           </span>
-          <span className="font-semibold text-foreground text-sm">{code}</span>
+          <span className="font-semibold text-foreground text-xl">{code}</span>
           <span className="text-muted-fg">·</span>
-          <span>{currencyName(code)}</span>
+          <span className="text-muted-fg text-base">{currencyName(code)}</span>
         </div>
       </td>
     </tr>
   );
 }
 
-function StablecoinRow({ s }: { s: Stablecoin }) {
+function StablecoinRow({
+  s,
+  rowIndex,
+  groupSize,
+}: {
+  s: Stablecoin;
+  rowIndex: number;
+  groupSize: number;
+}) {
+  const striped = groupSize >= 2 && rowIndex % 2 === 1;
   return (
     <tr
       id={s.symbol.toLowerCase()}
-      className="scroll-mt-24 border-border border-t"
+      className={`scroll-mt-24 border-border border-t ${striped ? "bg-muted/30" : ""}`}
     >
       <td className="px-3 py-2 align-top">
         <div className="flex items-center gap-2">
@@ -299,7 +308,14 @@ function CurrenciesInner() {
             ) : (
               grouped.flatMap(({ code, stables }) => [
                 <CurrencyHeaderRow key={`h-${code}`} code={code} />,
-                ...stables.map((s) => <StablecoinRow key={s.symbol} s={s} />),
+                ...stables.map((s, i) => (
+                  <StablecoinRow
+                    key={s.symbol}
+                    s={s}
+                    rowIndex={i}
+                    groupSize={stables.length}
+                  />
+                )),
               ])
             )}
           </tbody>
