@@ -59,27 +59,15 @@
       }
     ]
   },
-  "GBP": {
-    "name": "British Pound",
+  "AUD": {
+    "name": "Australian Dollar",
     "stablecoins": [
       {
-        "symbol": "tGBP",
-        "name": "tGBP",
-        "mint": "2zMqyX4AYCk6mgy5UZ2S7zUaLxwERhK5WjqDzkPPbSpW",
-        "decimals": 9,
-        "icon": "https://raw.githubusercontent.com/superset-finance/token-metadata/main/tGBP/logo.png"
-      }
-    ]
-  },
-  "CHF": {
-    "name": "Swiss Franc",
-    "stablecoins": [
-      {
-        "symbol": "VCHF",
-        "name": "VNX Swiss Franc",
-        "mint": "AhhdRu5YZdjVkKR3wbnUDaymVQL2ucjMQ63sZ3LFHsch",
-        "decimals": 9,
-        "icon": "https://vnx.li/wp-content/uploads/2025/04/VCHF-256x256-1.png"
+        "symbol": "AUDD",
+        "name": "AUDD",
+        "mint": "AUDDttiEpCydTm7joUMbYddm72jAWXZnCpPZtDoxqBSw",
+        "decimals": 6,
+        "icon": "https://assets.coingecko.com/coins/images/33263/standard/AUDD-Logo-Blue_512.png"
       }
     ]
   },
@@ -95,6 +83,30 @@
       }
     ]
   },
+  "CHF": {
+    "name": "Swiss Franc",
+    "stablecoins": [
+      {
+        "symbol": "VCHF",
+        "name": "VNX Swiss Franc",
+        "mint": "AhhdRu5YZdjVkKR3wbnUDaymVQL2ucjMQ63sZ3LFHsch",
+        "decimals": 9,
+        "icon": "https://vnx.li/wp-content/uploads/2025/04/VCHF-256x256-1.png"
+      }
+    ]
+  },
+  "GBP": {
+    "name": "British Pound",
+    "stablecoins": [
+      {
+        "symbol": "tGBP",
+        "name": "tGBP",
+        "mint": "2zMqyX4AYCk6mgy5UZ2S7zUaLxwERhK5WjqDzkPPbSpW",
+        "decimals": 9,
+        "icon": "https://raw.githubusercontent.com/superset-finance/token-metadata/main/tGBP/logo.png"
+      }
+    ]
+  },
   "JPY": {
     "name": "Japanese Yen",
     "stablecoins": [
@@ -104,18 +116,6 @@
         "mint": "Crn4x1Y2HUKko7ox2EZMT6N2t2ZyH7eKtwkBGVnhEq1g",
         "decimals": 6,
         "icon": "https://stablecoin.z.com/assets/images/token/icon_gyen_300_300.png"
-      }
-    ]
-  },
-  "AUD": {
-    "name": "Australian Dollar",
-    "stablecoins": [
-      {
-        "symbol": "AUDD",
-        "name": "AUDD",
-        "mint": "AUDDttiEpCydTm7joUMbYddm72jAWXZnCpPZtDoxqBSw",
-        "decimals": 6,
-        "icon": "https://assets.coingecko.com/coins/images/33263/standard/AUDD-Logo-Blue_512.png"
       }
     ]
   },
