@@ -8,7 +8,7 @@ import {
   CURRENCIES,
   currencyFlag,
   currencyName,
-  domesticCurrencyStats,
+  currencyStats,
   type IsoCurrencyCode,
   type Stablecoin,
   SUPPORTED,
@@ -184,14 +184,14 @@ function CurrenciesInner() {
     [q],
   );
 
-  const stats = domesticCurrencyStats();
+  const stats = currencyStats();
 
   return (
     <div className="mx-auto max-w-6xl px-6 pt-3 pb-16">
       <p className="mb-2 text-muted-fg text-xs">
         <span className="text-foreground">{stats.represented}</span> of{" "}
-        <span className="text-foreground">{stats.total}</span> domestic
-        currencies represented ·{" "}
+        <span className="text-foreground">{stats.total}</span> currencies
+        represented ·{" "}
         <span className="text-foreground">{stats.missing}</span> not yet listed
       </p>
       <div className="mb-2 flex items-center gap-2 rounded-lg border border-border bg-muted px-3 py-2">
