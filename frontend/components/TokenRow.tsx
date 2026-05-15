@@ -59,6 +59,18 @@ export function TokenRow({ side, label }: { side: Side; label: string }) {
   const decimals = stablecoinDecimals(stablecoin);
   const formattedAmount = formatAmount(amount);
 
+  // Prototype quote stub: to-side amount = from / 2; USD quote per side mirrors
+  // its own amount. Replace with real aggregator output later.
+  const fromNum = Number.parseFloat(amount);
+  const safeFrom = Number.isFinite(fromNum) ? fromNum : 0;
+  const toNum = safeFrom / 2;
+  const sideNum = side === "from" ? safeFrom : toNum;
+  const toDisplay = formatAmount(toNum.toFixed(decimals));
+  const quoteDisplay = `$${sideNum.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+
   const onAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value;
     const caret = e.target.selectionStart ?? raw.length;
@@ -78,8 +90,10 @@ export function TokenRow({ side, label }: { side: Side; label: string }) {
   };
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: ambient click-to-focus; keyboard users have the f/t shortcuts and the inner input/picker still work
     <div
-      className={`flex w-full flex-col gap-2 rounded-lg border bg-muted p-4 text-left transition-colors ${
+      onPointerDown={() => setActiveSide(side)}
+      className={`flex w-full flex-col gap-3 rounded-lg border bg-muted px-5 pt-1.5 pb-2 text-left transition-colors ${
         active ? activeBorder : "border-border"
       }`}
     >
@@ -97,25 +111,34 @@ export function TokenRow({ side, label }: { side: Side; label: string }) {
         </span>
         {side === "from" ? <FromBalanceButtons /> : <MaxSlippageButton />}
       </div>
-      <div className="flex items-center gap-2">
-        <TokenPicker side={side} />
-        {side === "from" ? (
-          <input
-            ref={inputRef}
-            type="text"
-            inputMode="decimal"
-            value={formattedAmount}
-            placeholder="0.0"
-            data-shortcut-passthrough="true"
-            onFocus={() => setActiveSide("from")}
-            onChange={onAmountChange}
-            className="min-w-0 flex-1 bg-transparent text-right font-mono text-2xl text-foreground outline-none placeholder:text-muted-fg"
-          />
-        ) : (
-          <span className="min-w-0 flex-1 truncate text-right font-mono text-2xl text-muted-fg">
-            0.0
-          </span>
-        )}
+      <div className="flex flex-col">
+        <div className="flex items-center gap-2">
+          <TokenPicker side={side} />
+          {side === "from" ? (
+            <input
+              ref={inputRef}
+              type="text"
+              inputMode="decimal"
+              value={formattedAmount}
+              placeholder="0.0"
+              data-shortcut-passthrough="true"
+              onFocus={() => setActiveSide("from")}
+              onChange={onAmountChange}
+              className="min-w-0 flex-1 bg-transparent text-right font-mono text-2xl text-foreground outline-none placeholder:text-muted-fg"
+            />
+          ) : (
+            <span
+              className={`min-w-0 flex-1 truncate text-right font-mono text-2xl ${
+                toNum > 0 ? "text-foreground" : "text-muted-fg"
+              }`}
+            >
+              {toDisplay}
+            </span>
+          )}
+        </div>
+        <div className="-mt-0.5 text-right font-mono text-muted-fg text-sm tabular-nums">
+          {quoteDisplay}
+        </div>
       </div>
     </div>
   );

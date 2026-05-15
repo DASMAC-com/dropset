@@ -37,7 +37,7 @@ import { Compass, Crosshair, Flag, Minus, Pause, Play, Plus, X } from "./icons";
 const Globe = dynamic(() => import("react-globe.gl"), {
   ssr: false,
   loading: () => (
-    <div className="flex h-[480px] w-full items-center justify-center text-muted-fg text-sm">
+    <div className="flex h-[400px] w-full items-center justify-center text-muted-fg text-sm">
       Loading globe…
     </div>
   ),
@@ -62,7 +62,7 @@ const GLOBE_RADIUS = 100;
 
 // Start the view centered roughly over the eastern US so the auto-rotation
 // reveals the Atlantic and then Europe — the canonical USD → EUR path.
-const DEFAULT_POV = { lat: 30, lng: -75, altitude: 1.9 };
+const DEFAULT_POV = { lat: 30, lng: -75, altitude: 1.5 };
 
 // Below this altitude, country-name labels become visible.
 const LABEL_VISIBILITY_ALTITUDE = 2.6;
@@ -177,7 +177,7 @@ class GlobeErrorBoundary extends Component<
   render() {
     if (this.state.error) {
       return (
-        <div className="flex h-[480px] w-full flex-col items-center justify-center gap-2 p-4 text-center text-muted-fg text-sm">
+        <div className="flex h-[400px] w-full flex-col items-center justify-center gap-2 p-4 text-center text-muted-fg text-sm">
           <span className="font-medium">Globe failed to load.</span>
           <code className="max-w-full overflow-auto rounded bg-background px-2 py-1 font-mono text-xs">
             {String(this.state.error?.message ?? this.state.error)}
@@ -271,7 +271,7 @@ function GlobeInner() {
     if (!el) return;
     const measure = () => {
       const w = el.clientWidth || 480;
-      setSize({ width: w, height: Math.min(Math.max(w, 360), 560) });
+      setSize({ width: w, height: Math.min(Math.max(w * 0.85, 320), 480) });
     };
     measure();
     const ro = new ResizeObserver(measure);
@@ -766,10 +766,10 @@ function GlobeInner() {
         }}
       >
         <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-40 bg-background/70 backdrop-blur-sm" />
+          <Dialog.Overlay className="fixed inset-0 z-40 bg-background/80 backdrop-blur-lg" />
           <Dialog.Content
             aria-describedby={undefined}
-            className="-translate-x-1/2 fixed top-[8vh] left-1/2 z-50 flex max-h-[84vh] w-[min(420px,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-border bg-background shadow-lg"
+            className="-translate-x-1/2 fixed top-0 left-1/2 z-50 flex max-h-[calc(100vh-1rem)] w-[min(420px,calc(100vw-2rem))] flex-col overflow-hidden rounded-b-xl border border-border border-t-0 bg-background shadow-lg"
           >
             <div className="flex items-center gap-2 border-border border-b px-3 py-2">
               <Dialog.Title className="min-w-0 flex-1 truncate text-foreground text-sm">

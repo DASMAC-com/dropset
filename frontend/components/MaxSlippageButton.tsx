@@ -64,10 +64,10 @@ export function MaxSlippageButton() {
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger
         type="button"
-        className="ml-auto flex shrink-0 items-center gap-1 rounded border border-border bg-background px-2 py-0.5 font-medium text-muted-fg text-xs transition-colors hover:border-accent-buy hover:text-accent-buy"
+        className="mt-1.5 ml-auto flex shrink-0 items-center gap-1 rounded border border-border bg-background px-2 py-1 font-medium text-muted-fg text-sm transition-colors hover:border-accent-buy hover:text-accent-buy"
       >
         <span>Max slippage: {summary(slippage)}</span>
-        <ChevronDown size={12} />
+        <ChevronDown size={14} />
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Content

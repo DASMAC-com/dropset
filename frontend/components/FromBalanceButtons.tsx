@@ -39,7 +39,7 @@ export function FromBalanceButtons() {
   };
 
   return (
-    <div className="ml-auto flex shrink-0 items-center gap-1">
+    <div className="mt-1.5 ml-auto flex shrink-0 items-center gap-1">
       {FRACTIONS.map(({ label, divisor }) => (
         <button
           key={label}
@@ -51,7 +51,7 @@ export function FromBalanceButtons() {
               ? `Use ${label} of your ${stablecoin} balance`
               : "Connect wallet to use balance"
           }
-          className="rounded border border-border bg-background px-1.5 py-0.5 font-medium text-muted-fg text-xs transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-border disabled:hover:text-muted-fg"
+          className="rounded border border-border bg-background px-2 py-1 font-medium text-muted-fg text-sm transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-border disabled:hover:text-muted-fg"
         >
           {label}
         </button>

@@ -230,14 +230,14 @@ export function TokenPicker({ side }: { side: Side }) {
         <ChevronDown size={18} />
       </Dialog.Trigger>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-40 bg-background/70 backdrop-blur-sm" />
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-background/80 backdrop-blur-lg" />
         <Dialog.Content
           onOpenAutoFocus={(e) => {
             e.preventDefault();
             searchRef.current?.focus();
           }}
           aria-describedby={undefined}
-          className="-translate-x-1/2 fixed top-[8vh] left-1/2 z-50 flex max-h-[84vh] w-[min(420px,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-border bg-background shadow-lg"
+          className="-translate-x-1/2 fixed top-0 left-1/2 z-50 flex max-h-[calc(100vh-1rem)] w-[min(420px,calc(100vw-2rem))] flex-col overflow-hidden rounded-b-xl border border-border border-t-0 bg-background shadow-lg"
         >
           <Dialog.Title className="sr-only">
             Select {side === "from" ? "From" : "To"} token
