@@ -3,6 +3,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Footer } from "@/components/Footer";
 import { Header } from "@/components/Header";
+import { TermsOfUseGate } from "@/components/TermsOfUseGate";
 import { Providers } from "@/lib/providers";
 import "./globals.css";
 
@@ -16,9 +17,9 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-const title = "Dropset | Currency Exchange on Solana";
+const title = "Dropset | Forex on Solana";
 const description =
-  "Open and efficient national currency exchange through the power of blockchain";
+  "Open and efficient national currency exchange through the power of blockchain. Forex at the speed of Solana.";
 const imageUrl = "/dropset-meta-main.png";
 const imageAlt = "Dropset — Currency Exchange on Solana";
 const images = [{ url: imageUrl, alt: imageAlt, width: 1200, height: 630 }];
@@ -115,6 +116,7 @@ export default function RootLayout({
           <Header />
           <main className="flex-1">{children}</main>
           <Footer />
+          <TermsOfUseGate />
         </Providers>
       </body>
     </html>

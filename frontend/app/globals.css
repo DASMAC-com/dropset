@@ -35,3 +35,23 @@ body {
   color: var(--foreground);
   font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
 }
+
+/* Force a persistent, non-overlay scrollbar so users see there is more
+ * content to read. Without this, macOS hides the bar until scrolling. */
+.scrollbar-always {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.scrollbar-always::-webkit-scrollbar {
+  width: 8px;
+}
+.scrollbar-always::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-always::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+  border-radius: 4px;
+}
+.scrollbar-always::-webkit-scrollbar-thumb:hover {
+  background-color: var(--muted-fg);
+}
