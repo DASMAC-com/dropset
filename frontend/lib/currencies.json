@@ -150,7 +150,7 @@
   "GBP": {
     "stablecoins": [
       {
-        "symbol": "tGBP",
+        "symbol": "TGBP",
         "name": "tGBP",
         "mint": "2zMqyX4AYCk6mgy5UZ2S7zUaLxwERhK5WjqDzkPPbSpW",
         "decimals": 9,

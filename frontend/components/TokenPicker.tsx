@@ -192,9 +192,9 @@ export function TokenPicker({ side }: { side: Side }) {
           <ExternalLink size={12} />
         </a>
         <a
-          href={`/currencies#${s.symbol.toLowerCase()}`}
-          target="_blank"
-          rel="noopener noreferrer"
+          href={`/currencies?q=${encodeURIComponent(s.symbol)}`}
+          target="dropset-currencies"
+          rel="noopener"
           title={`More info about ${s.symbol}`}
           className="mr-1 flex shrink-0 items-center rounded p-1 text-muted-fg hover:bg-muted hover:text-accent"
         >
