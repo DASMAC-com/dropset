@@ -39,7 +39,7 @@ export function FromBalanceButtons() {
   };
 
   return (
-    <div className="mt-1.5 ml-auto flex shrink-0 items-center gap-1">
+    <div className="ml-auto flex shrink-0 items-center gap-1">
       {FRACTIONS.map(({ label, divisor }) => (
         <button
           key={label}

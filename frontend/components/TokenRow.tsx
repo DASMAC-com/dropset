@@ -97,7 +97,7 @@ export function TokenRow({ side, label }: { side: Side; label: string }) {
         active ? activeBorder : "border-border"
       }`}
     >
-      <div className="flex min-w-0 items-center gap-2">
+      <div className="flex h-[30px] min-w-0 items-center gap-2">
         <span className="shrink-0 font-medium text-muted-fg text-sm">
           {label}
         </span>

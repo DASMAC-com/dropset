@@ -65,7 +65,7 @@ export function MaxSlippageButton() {
       <Popover.Trigger
         type="button"
         title={`Max slippage: ${summary(slippage)}`}
-        className="mt-1.5 ml-auto flex shrink-0 items-center gap-1.5 rounded border border-border bg-background px-2 py-1 font-medium text-muted-fg text-sm transition-colors hover:border-accent-buy hover:text-accent-buy"
+        className="ml-auto flex shrink-0 items-center gap-1.5 rounded border border-border bg-background px-2 py-1 font-medium text-muted-fg text-sm transition-colors hover:border-accent-buy hover:text-accent-buy"
       >
         <Settings2 size={14} />
         <span>{summary(slippage)}</span>
