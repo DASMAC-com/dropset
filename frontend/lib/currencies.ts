@@ -1,3 +1,4 @@
+// cspell:word segoe
 import countries from "world-countries";
 import data from "./currencies.json";
 
