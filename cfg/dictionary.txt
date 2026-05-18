@@ -12,6 +12,7 @@ clippy
 clob
 cngn
 dasmac
+discordapp
 dropset
 dtolnay
 etherfuse
@@ -35,6 +36,7 @@ prebuild
 predev
 programdata
 pubkeys
+réunion
 sbpf
 solana
 stablecoins

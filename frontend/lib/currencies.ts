@@ -83,7 +83,7 @@ export const currencyName = (code: IsoCurrencyCode): string =>
 // scripts/copy-flags.mjs (1:1 viewBox, rounded-square glyph). Twemoji has
 // distinct artwork for territories whose ISO-official flag is just the
 // parent country's tricolor (PM, YT, RE, GP, MF, BL, MF, WF…) — the
-// emoji-style unofficial regional designs people recognise. We bundle
+// emoji-style unofficial regional designs people recognize. We bundle
 // Twemoji SVGs because Windows' default emoji font (Segoe UI Emoji)
 // renders regional-indicator pairs as plain letter pairs ("US", "GB")
 // rather than as flags.

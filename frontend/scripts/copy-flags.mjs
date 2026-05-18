@@ -1,7 +1,7 @@
 // Mirror Twemoji's country-flag SVGs into public/flag-icons, renamed by ISO
 // 3166-1 alpha-2. Run via pnpm predev / prebuild. We use Twemoji rather than
 // flag-icons because Twemoji ships the unofficial regional designs people
-// recognise from emoji (Mayotte's seahorse, Saint-Pierre's ship-in-canton,
+// recognize from emoji (Mayotte's seahorse, Saint-Pierre's ship-in-canton,
 // Réunion's regional banner) where flag-icons follows ISO and renders those
 // territories as the bare French tricolor.
 //
