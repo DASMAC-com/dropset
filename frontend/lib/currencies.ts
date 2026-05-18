@@ -17,7 +17,6 @@ export type Stablecoin = {
   issuer: Issuer;
 };
 export type CurrencyEntry = {
-  flag?: string;
   anchorCca2?: string;
   stablecoins: Stablecoin[];
 };
@@ -79,13 +78,17 @@ export const defaultStablecoin = (code: IsoCurrencyCode): string =>
 export const currencyName = (code: IsoCurrencyCode): string =>
   NAME_BY_CODE[code] ?? code;
 
-const deriveFlag = (code: string): string =>
-  String.fromCodePoint(
-    ...[...code.slice(0, 2)].map((c) => 0x1f1e6 + c.charCodeAt(0) - 65),
-  );
+// Path to a 4:3 flag SVG mirrored from flag-icons into public/flag-icons by
+// scripts/copy-flags.mjs. We use SVGs instead of Unicode flag emoji because
+// Windows' default emoji font (Segoe UI Emoji) renders regional-indicator
+// pairs as plain letter pairs ("US", "GB") rather than as flags.
+export const flagUrl = (cca2: string): string =>
+  `/flag-icons/${cca2.toLowerCase()}.svg`;
 
-export const currencyFlag = (code: IsoCurrencyCode): string =>
-  CURRENCIES[code].flag ?? deriveFlag(code);
+// ISO 4217 currency codes are conventionally country-code + currency initial,
+// so the first two letters give a usable cca2 (USD→US, EUR→EU, GBP→GB…).
+export const currencyFlagUrl = (code: IsoCurrencyCode): string =>
+  flagUrl(code.slice(0, 2));
 
 export const currencyAnchor = (code: IsoCurrencyCode): string =>
   CURRENCIES[code].anchorCca2 ?? code.slice(0, 2);

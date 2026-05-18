@@ -6,7 +6,7 @@ import { CopyButton } from "@/components/CopyButton";
 import { ExternalLink, HelpCircle, Search, X } from "@/components/icons";
 import {
   CURRENCIES,
-  currencyFlag,
+  currencyFlagUrl,
   currencyName,
   currencyStats,
   type IsoCurrencyCode,
@@ -19,23 +19,15 @@ import { type Side, useSwapStore } from "@/lib/store";
 
 const COLSPAN = 6;
 
-// Cache of dominant color (RGB triplet) computed from a flag emoji rendered to
+// Cache of dominant color (RGB triplet) computed from a flag SVG rasterized to
 // a canvas. Module-level so it persists across re-renders / search filters.
 type Rgb = [number, number, number];
 const flagColorCache = new Map<string, Rgb | null>();
 
-const computeFlagColor = (emoji: string): Rgb | null => {
-  if (typeof document === "undefined") return null;
-  const size = 24;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  if (!ctx) return null;
-  ctx.clearRect(0, 0, size, size);
-  ctx.font = `${size}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
-  ctx.textBaseline = "top";
-  ctx.fillText(emoji, 0, 0);
+const sampleDominantColor = (
+  ctx: CanvasRenderingContext2D,
+  size: number,
+): Rgb | null => {
   let r = 0;
   let g = 0;
   let b = 0;
@@ -63,16 +55,42 @@ const computeFlagColor = (emoji: string): Rgb | null => {
   return [(r / n) | 0, (g / n) | 0, (b / n) | 0];
 };
 
-const useFlagColor = (code: IsoCurrencyCode, emoji: string): Rgb | null => {
+const computeFlagColor = (url: string): Promise<Rgb | null> => {
+  if (typeof document === "undefined") return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const size = 24;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      if (!ctx) return resolve(null);
+      ctx.clearRect(0, 0, size, size);
+      ctx.drawImage(img, 0, 0, size, size);
+      resolve(sampleDominantColor(ctx, size));
+    };
+    img.onerror = () => resolve(null);
+    img.src = url;
+  });
+};
+
+const useFlagColor = (code: IsoCurrencyCode, url: string): Rgb | null => {
   const [color, setColor] = useState<Rgb | null>(() =>
     flagColorCache.has(code) ? (flagColorCache.get(code) ?? null) : null,
   );
   useEffect(() => {
     if (flagColorCache.has(code)) return;
-    const c = computeFlagColor(emoji);
-    flagColorCache.set(code, c);
-    setColor(c);
-  }, [code, emoji]);
+    let cancelled = false;
+    computeFlagColor(url).then((c) => {
+      if (cancelled) return;
+      flagColorCache.set(code, c);
+      setColor(c);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [code, url]);
   return color;
 };
 
@@ -91,8 +109,8 @@ const matches = (s: Stablecoin, code: IsoCurrencyCode, q: string): boolean => {
 };
 
 function CurrencyHeaderRow({ code }: { code: IsoCurrencyCode }) {
-  const flag = currencyFlag(code);
-  const color = useFlagColor(code, flag);
+  const url = currencyFlagUrl(code);
+  const color = useFlagColor(code, url);
   const borderStyle = color
     ? { borderBottomColor: `rgb(${color[0]} ${color[1]} ${color[2]} / 0.6)` }
     : undefined;
@@ -109,10 +127,18 @@ function CurrencyHeaderRow({ code }: { code: IsoCurrencyCode }) {
         <div className="flex items-center gap-3">
           <span
             aria-hidden
-            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-muted text-4xl leading-none"
+            className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-muted"
             style={chipStyle}
           >
-            {flag}
+            {/* biome-ignore lint/performance/noImgElement: tiny static SVG, no optimization needed */}
+            <img
+              src={url}
+              alt=""
+              aria-hidden
+              width={40}
+              height={30}
+              className="rounded-sm shadow-sm"
+            />
           </span>
           <span className="font-semibold text-foreground text-xl">{code}</span>
           <span className="text-muted-fg">·</span>
@@ -125,8 +151,8 @@ function CurrencyHeaderRow({ code }: { code: IsoCurrencyCode }) {
 
 // Returns a function that assigns (code, symbol) to the given side of the swap
 // store and navigates to /swap. If the token is already on the opposite side,
-// swap the two sides instead of duplicating; if already on the requested side,
-// just navigate.
+// flip the swap direction instead of duplicating; if already on the requested
+// side, just navigate.
 function usePickToken(): (
   side: Side,
   code: IsoCurrencyCode,
@@ -137,11 +163,11 @@ function usePickToken(): (
   const swapSides = useSwapStore((s) => s.swapSides);
   return (side, code, symbol) => {
     const { from, to } = useSwapStore.getState();
-    const isFrom = code === from.currency && symbol === from.stablecoin;
-    const isTo = code === to.currency && symbol === to.stablecoin;
-    const alreadyOnSide = side === "from" ? isFrom : isTo;
-    const alreadyOnOther = side === "from" ? isTo : isFrom;
-    if (alreadyOnOther) swapSides();
+    const onFrom = code === from.currency && symbol === from.stablecoin;
+    const onTo = code === to.currency && symbol === to.stablecoin;
+    const alreadyOnSide = side === "from" ? onFrom : onTo;
+    const onOther = side === "from" ? onTo : onFrom;
+    if (onOther) swapSides();
     else if (!alreadyOnSide) setToken(side, code, symbol);
     router.push("/swap");
   };
@@ -155,17 +181,33 @@ function SwapPickerCell({
   symbol: string;
 }) {
   const pickToken = usePickToken();
-
-  const btn = (side: Side, label: string) => (
-    <button
-      type="button"
-      onClick={() => pickToken(side, code, symbol)}
-      title={`Use ${symbol} as your ${label.toLowerCase()} token`}
-      className="rounded border border-border bg-background px-2 py-1 font-medium text-foreground text-xs transition-colors hover:border-accent hover:text-accent"
-    >
-      {label}
-    </button>
+  const onFrom = useSwapStore(
+    (s) => s.from.currency === code && s.from.stablecoin === symbol,
   );
+  const onTo = useSwapStore(
+    (s) => s.to.currency === code && s.to.stablecoin === symbol,
+  );
+
+  const btn = (side: Side, label: string) => {
+    const alreadyOnSide = side === "from" ? onFrom : onTo;
+    const onOther = side === "from" ? onTo : onFrom;
+    const title = alreadyOnSide
+      ? `${symbol} is already your ${label.toLowerCase()} token`
+      : onOther
+        ? `Flip the swap direction so ${symbol} becomes your ${label.toLowerCase()} token`
+        : `Use ${symbol} as your ${label.toLowerCase()} token`;
+    return (
+      <button
+        type="button"
+        onClick={() => pickToken(side, code, symbol)}
+        disabled={alreadyOnSide}
+        title={title}
+        className="rounded border border-border bg-background px-2 py-1 font-medium text-foreground text-xs transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-fg disabled:hover:border-border disabled:hover:text-muted-fg"
+      >
+        {label}
+      </button>
+    );
+  };
 
   return (
     <div className="flex items-center gap-1">

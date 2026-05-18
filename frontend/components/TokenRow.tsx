@@ -2,7 +2,7 @@
 
 import { useLayoutEffect, useRef } from "react";
 import {
-  currencyFlag,
+  currencyFlagUrl,
   currencyName,
   stablecoinDecimals,
 } from "@/lib/currencies";
@@ -101,9 +101,15 @@ export function TokenRow({ side, label }: { side: Side; label: string }) {
           {label}
         </span>
         <span className="flex min-w-0 items-center gap-2 truncate text-base text-muted-fg">
-          <span aria-hidden className="text-xl leading-none">
-            {currencyFlag(currency)}
-          </span>
+          {/* biome-ignore lint/performance/noImgElement: tiny static SVG, no optimization needed */}
+          <img
+            src={currencyFlagUrl(currency)}
+            alt=""
+            aria-hidden
+            width={24}
+            height={18}
+            className="shrink-0 rounded-sm shadow-sm"
+          />
           <span className="truncate">
             {currencyName(currency)} ({currency})
           </span>

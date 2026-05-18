@@ -25,6 +25,7 @@ import {
 import { COUNTRY_PINS, type CountryPin, findPin } from "@/lib/countries";
 import {
   CURRENCIES,
+  flagUrl,
   type IsoCurrencyCode,
   tokenIconUrl,
 } from "@/lib/currencies";
@@ -67,19 +68,6 @@ const DEFAULT_POV = { lat: 30, lng: -75, altitude: 1.5 };
 
 // Below this altitude, country-name labels become visible.
 const LABEL_VISIBILITY_ALTITUDE = 2.6;
-
-// Build a flag emoji from a 2-letter country code by mapping each letter to
-// its Regional Indicator Symbol (🇺 + 🇸 → 🇺🇸). Pure data transform — works
-// for any valid ISO 3166-1 alpha-2 code that the OS has emoji glyphs for.
-const cca2ToFlag = (cca2: string): string => {
-  const A = "A".charCodeAt(0);
-  const RI = 0x1f1e6;
-  return cca2
-    .toUpperCase()
-    .split("")
-    .map((c) => String.fromCodePoint(RI + c.charCodeAt(0) - A))
-    .join("");
-};
 
 type Pov = { lat: number; lng: number; altitude: number };
 type GlobeHandle = {
@@ -695,13 +683,20 @@ function GlobeInner() {
           htmlAltitude={0.018}
           htmlElement={(d: object) => {
             const pin = d as CountryPin;
-            const el = document.createElement("div");
-            el.textContent = cca2ToFlag(pin.cca2);
-            el.style.fontSize = `${flagFontPx}px`;
-            el.style.lineHeight = "1";
+            const el = document.createElement("img");
+            el.src = flagUrl(pin.cca2);
+            el.alt = pin.name;
+            // flag-icons ships 4:3 SVGs — scale width off the font-size bucket
+            // so flag pins remain in step with the country-name label sizes
+            // they replace.
+            el.width = Math.round((flagFontPx * 4) / 3);
+            el.height = flagFontPx;
+            el.draggable = false;
             el.style.cursor = "pointer";
             el.style.userSelect = "none";
             el.style.transform = "translate(-50%, -50%)";
+            el.style.borderRadius = "2px";
+            el.style.boxShadow = "0 0 0 1px rgba(0,0,0,0.4)";
             // globe.gl's HTML overlay container sets pointer-events: none so
             // canvas interactions (rotate/zoom) still work through it; each
             // child has to opt back in to receive its own click.
