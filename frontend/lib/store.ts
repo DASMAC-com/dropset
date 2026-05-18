@@ -35,6 +35,21 @@ type Store = {
   setAmount: (amount: string) => void;
   setSlippage: (slippage: Slippage) => void;
   swapSides: () => void;
+  // Atomic combination of swapSides / setToken / setActiveSide. Reads the
+  // current state, decides which mutation matches the click intent, and writes
+  // the result in a single `set` call so subscribers never observe a transient
+  // `from === to` state. Refuses to produce a sameToken result (callers should
+  // disable the corresponding button, but this is also a defensive guard).
+  pickSide: (side: Side, currency: IsoCurrencyCode, stablecoin: string) => void;
+  // Atomic from/to write used by URL hydration. Computes cca2 anchors and
+  // writes both sides in a single `set` so the GlobePanel never observes a
+  // transient sameToken state between two sequential `setToken` calls.
+  // activeSide is intentionally left alone so it survives the writer-effect
+  // re-fire that follows replaceState.
+  setSides: (
+    from: { currency: IsoCurrencyCode; stablecoin: string },
+    to: { currency: IsoCurrencyCode; stablecoin: string },
+  ) => void;
 };
 
 export const DEFAULT_FROM_CURRENCY: IsoCurrencyCode = "USD";
@@ -79,6 +94,46 @@ export const useSwapStore = create<Store>((set) => ({
       to: s.from,
       activeSide: otherSide(s.activeSide),
     })),
+
+  setSides: (from, to) =>
+    set({
+      from: {
+        currency: from.currency,
+        stablecoin: from.stablecoin,
+        cca2: anchorFor(from.currency),
+      },
+      to: {
+        currency: to.currency,
+        stablecoin: to.stablecoin,
+        cca2: anchorFor(to.currency),
+      },
+    }),
+
+  pickSide: (side, currency, stablecoin) =>
+    set((s) => {
+      const onFrom =
+        currency === s.from.currency && stablecoin === s.from.stablecoin;
+      const onTo = currency === s.to.currency && stablecoin === s.to.stablecoin;
+      // Token already on the requested side — only refresh activeSide so the
+      // swap page highlights the matching row, but leave the pair untouched.
+      if (side === "from" ? onFrom : onTo) return { activeSide: side };
+      // Token on the opposite side — flip the pair atomically so we never
+      // observe a transient sameToken between two sequential `set`s.
+      if (side === "from" ? onTo : onFrom) {
+        return { from: s.to, to: s.from, activeSide: side };
+      }
+      // Refuse to write a sameToken pair. Only reachable if a caller bypasses
+      // the disabled-button state (e.g. a stale event fires during nav).
+      const otherStable = side === "from" ? s.to.stablecoin : s.from.stablecoin;
+      const otherCurrency = side === "from" ? s.to.currency : s.from.currency;
+      if (stablecoin === otherStable && currency === otherCurrency) {
+        return { activeSide: side };
+      }
+      return {
+        [side]: { currency, stablecoin, cca2: anchorFor(currency) },
+        activeSide: side,
+      };
+    }),
 }));
 
 export const useSameToken = (): boolean =>
