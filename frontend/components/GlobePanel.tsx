@@ -262,9 +262,9 @@ function GlobeInner() {
   // Mirrors the labelSize buckets so flag emoji scale roughly in step with
   // the text labels they replace.
   const flagFontPx = useMemo(() => {
-    if (altitude < 0.3) return 14;
-    if (altitude < 0.8) return 20;
-    return 28;
+    if (altitude < 0.3) return 18;
+    if (altitude < 0.8) return 26;
+    return 36;
   }, [altitude]);
 
   useEffect(() => {

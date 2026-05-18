@@ -27,15 +27,15 @@ export function CurrencyGroupHeader({ code }: { code: IsoCurrencyCode }) {
     >
       <span
         aria-hidden
-        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${tint.chip}`}
+        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${tint.chip}`}
       >
         {/* biome-ignore lint/performance/noImgElement: tiny static SVG, no optimization needed */}
         <img
           src={currencyFlagUrl(code)}
           alt=""
           aria-hidden
-          width={26}
-          height={26}
+          width={34}
+          height={34}
         />
       </span>
       <span className="font-semibold text-foreground text-sm">{code}</span>

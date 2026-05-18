@@ -127,11 +127,11 @@ function CurrencyHeaderRow({ code }: { code: IsoCurrencyCode }) {
         <div className="flex items-center gap-3">
           <span
             aria-hidden
-            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-muted"
+            className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-muted"
             style={chipStyle}
           >
             {/* biome-ignore lint/performance/noImgElement: tiny static SVG, no optimization needed */}
-            <img src={url} alt="" aria-hidden width={40} height={40} />
+            <img src={url} alt="" aria-hidden width={48} height={48} />
           </span>
           <span className="font-semibold text-foreground text-xl">{code}</span>
           <span className="text-muted-fg">·</span>
@@ -238,9 +238,9 @@ function StablecoinRow({
             src={s.icon}
             alt=""
             aria-hidden
-            width={20}
-            height={20}
-            className="h-5 w-5 shrink-0 rounded-full"
+            width={28}
+            height={28}
+            className="h-7 w-7 shrink-0 rounded-full"
           />
           <span className="font-mono text-foreground">{s.symbol}</span>
           <CopyButton value={s.symbol} label="token symbol" />
