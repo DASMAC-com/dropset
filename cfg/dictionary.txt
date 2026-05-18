@@ -21,8 +21,8 @@ eurcv
 eurozone
 exfiltration
 forex
-générale
 gyen
+générale
 helvetiker
 idrx
 kapsule
