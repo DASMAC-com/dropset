@@ -127,18 +127,11 @@ function CurrencyHeaderRow({ code }: { code: IsoCurrencyCode }) {
         <div className="flex items-center gap-3">
           <span
             aria-hidden
-            className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-muted"
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-muted"
             style={chipStyle}
           >
             {/* biome-ignore lint/performance/noImgElement: tiny static SVG, no optimization needed */}
-            <img
-              src={url}
-              alt=""
-              aria-hidden
-              width={40}
-              height={30}
-              className="rounded-sm shadow-sm"
-            />
+            <img src={url} alt="" aria-hidden width={40} height={40} />
           </span>
           <span className="font-semibold text-foreground text-xl">{code}</span>
           <span className="text-muted-fg">·</span>

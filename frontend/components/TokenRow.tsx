@@ -107,8 +107,8 @@ export function TokenRow({ side, label }: { side: Side; label: string }) {
             alt=""
             aria-hidden
             width={24}
-            height={18}
-            className="shrink-0 rounded-sm shadow-sm"
+            height={24}
+            className="shrink-0"
           />
           <span className="truncate">
             {currencyName(currency)} ({currency})

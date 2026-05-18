@@ -79,10 +79,14 @@ export const defaultStablecoin = (code: IsoCurrencyCode): string =>
 export const currencyName = (code: IsoCurrencyCode): string =>
   NAME_BY_CODE[code] ?? code;
 
-// Path to a 4:3 flag SVG mirrored from flag-icons into public/flag-icons by
-// scripts/copy-flags.mjs. We use SVGs instead of Unicode flag emoji because
-// Windows' default emoji font (Segoe UI Emoji) renders regional-indicator
-// pairs as plain letter pairs ("US", "GB") rather than as flags.
+// Path to a Twemoji flag SVG mirrored into public/flag-icons by
+// scripts/copy-flags.mjs (1:1 viewBox, rounded-square glyph). Twemoji has
+// distinct artwork for territories whose ISO-official flag is just the
+// parent country's tricolor (PM, YT, RE, GP, MF, BL, MF, WF…) — the
+// emoji-style unofficial regional designs people recognise. We bundle
+// Twemoji SVGs because Windows' default emoji font (Segoe UI Emoji)
+// renders regional-indicator pairs as plain letter pairs ("US", "GB")
+// rather than as flags.
 export const flagUrl = (cca2: string): string =>
   `/flag-icons/${cca2.toLowerCase()}.svg`;
 
