@@ -1,5 +1,5 @@
 import {
-  currencyFlag,
+  currencyFlagUrl,
   currencyName,
   type IsoCurrencyCode,
 } from "@/lib/currencies";
@@ -27,9 +27,17 @@ export function CurrencyGroupHeader({ code }: { code: IsoCurrencyCode }) {
     >
       <span
         aria-hidden
-        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-2xl leading-none ${tint.chip}`}
+        className={`flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg ${tint.chip}`}
       >
-        {currencyFlag(code)}
+        {/* biome-ignore lint/performance/noImgElement: tiny static SVG, no optimization needed */}
+        <img
+          src={currencyFlagUrl(code)}
+          alt=""
+          aria-hidden
+          width={24}
+          height={18}
+          className="rounded-sm shadow-sm"
+        />
       </span>
       <span className="font-semibold text-foreground text-sm">{code}</span>
       <span className="text-muted-fg">·</span>

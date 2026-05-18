@@ -7,6 +7,7 @@
     "@solana/kit": "^6.9.0",
     "@solana/react-hooks": "^1.4.1",
     "@solana/rpc-types": "^6.9.0",
+    "flag-icons": "^7.5.0",
     "lucide-react": "^1.14.0",
     "motion": "^12.38.0",
     "next": "16.2.6",
@@ -42,10 +43,13 @@
   "scripts": {
     "build": "next build",
     "check": "tsc --noEmit",
+    "copy-flags": "node scripts/copy-flags.mjs",
     "dev": "next dev",
     "format": "biome format --write",
     "lint": "biome check",
     "lint:fix": "biome check --write",
+    "prebuild": "pnpm run copy-flags",
+    "predev": "pnpm run copy-flags",
     "start": "next start"
   },
   "version": "0.1.0"
