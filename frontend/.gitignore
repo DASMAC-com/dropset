@@ -9,7 +9,6 @@
 
 /build
 
-# Mirrored from @discordapp/twemoji by scripts/copy-flags.mjs (predev/prebuild).
 /public/flag-icons
 
 .DS_Store
