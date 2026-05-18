@@ -31,8 +31,8 @@ luhansk
 mxne
 navigations
 permissionless
-predev
 prebuild
+predev
 programdata
 pubkeys
 sbpf
