@@ -111,19 +111,22 @@ const matches = (s: Stablecoin, code: IsoCurrencyCode, q: string): boolean => {
 function CurrencyHeaderRow({ code }: { code: IsoCurrencyCode }) {
   const url = currencyFlagUrl(code);
   const color = useFlagColor(code, url);
-  const borderStyle = color
-    ? { borderBottomColor: `rgb(${color[0]} ${color[1]} ${color[2]} / 0.6)` }
+  // Render the tinted "open" bar via an inset box-shadow rather than a real
+  // border. Real borders on this colspanned cell collapse with the `border-r`
+  // separators in the row below, and the vertical lines visibly punch through
+  // the colored bar at the corners. Box-shadow doesn't participate in
+  // border-collapse, so the bar reads as a continuous unbroken line.
+  const tdStyle = color
+    ? {
+        boxShadow: `inset 0 -2px 0 rgb(${color[0]} ${color[1]} ${color[2]} / 0.6)`,
+      }
     : undefined;
   const chipStyle = color
     ? { backgroundColor: `rgb(${color[0]} ${color[1]} ${color[2]} / 0.15)` }
     : undefined;
   return (
     <tr className="bg-background">
-      <td
-        colSpan={COLSPAN}
-        className="border-border border-b-2 px-3 pt-8 pb-3"
-        style={borderStyle}
-      >
+      <td colSpan={COLSPAN} className="px-3 pt-8 pb-3" style={tdStyle}>
         <div className="flex items-center gap-3">
           <span
             aria-hidden
@@ -226,12 +229,13 @@ function StablecoinRow({
   groupSize: number;
 }) {
   const striped = groupSize >= 2 && rowIndex % 2 === 1;
+  const isLastInGroup = rowIndex === groupSize - 1;
   return (
     <tr
       id={s.symbol.toLowerCase()}
-      className={`scroll-mt-24 border-border border-t ${striped ? "bg-muted/70" : ""}`}
+      className={`scroll-mt-24 border-border border-t ${isLastInGroup ? "border-b" : ""} ${striped ? "bg-muted/70" : ""}`}
     >
-      <td className="px-3 py-2 align-top">
+      <td className="border-border border-r px-3 py-2 align-top last:border-r-0">
         <div className="flex items-center gap-2">
           {/* biome-ignore lint/performance/noImgElement: small static icon, no optimization needed */}
           <img
@@ -246,10 +250,10 @@ function StablecoinRow({
           <CopyButton value={s.symbol} label="token symbol" />
         </div>
       </td>
-      <td className="px-3 py-2 align-top">
+      <td className="border-border border-r px-3 py-2 align-top last:border-r-0">
         <SwapPickerCell code={code} symbol={s.symbol} />
       </td>
-      <td className="max-w-[120px] px-3 py-2 align-top">
+      <td className="max-w-[120px] border-border border-r px-3 py-2 align-top last:border-r-0">
         <a
           href={s.issuer.url}
           target="_blank"
@@ -260,7 +264,7 @@ function StablecoinRow({
           <ExternalLink size={10} className="mt-1.5 shrink-0" />
         </a>
       </td>
-      <td className="px-3 py-2 align-top">
+      <td className="border-border border-r px-3 py-2 align-top last:border-r-0">
         <div className="flex items-start gap-1">
           <span className="whitespace-nowrap font-mono text-foreground text-xs">
             {s.mint}
@@ -288,7 +292,7 @@ function StablecoinRow({
           )}
         </div>
       </td>
-      <td className="px-3 py-2 align-top">
+      <td className="border-border border-r px-3 py-2 align-top last:border-r-0">
         {s.issuer.socials?.x ? (
           <div className="flex items-start gap-1">
             <a
@@ -306,7 +310,7 @@ function StablecoinRow({
           ""
         )}
       </td>
-      <td className="px-3 py-2 align-top">
+      <td className="border-border border-r px-3 py-2 align-top last:border-r-0">
         <div className="flex flex-col">
           {s.issuer.name.map((n, i) => (
             <span
@@ -428,22 +432,22 @@ function CurrenciesInner() {
         <table className="w-full min-w-[720px] text-left text-sm">
           <thead className="text-muted-fg text-xs uppercase">
             <tr>
-              <th className="sticky top-14 z-20 bg-muted px-3 py-2 font-medium">
+              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
                 Token
               </th>
-              <th className="sticky top-14 z-20 bg-muted px-3 py-2 font-medium">
+              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
                 Swap
               </th>
-              <th className="sticky top-14 z-20 bg-muted px-3 py-2 font-medium">
+              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
                 Name
               </th>
-              <th className="sticky top-14 z-20 bg-muted px-3 py-2 font-medium">
+              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
                 Mint Address
               </th>
-              <th className="sticky top-14 z-20 bg-muted px-3 py-2 font-medium">
-                X
+              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
+                X handle
               </th>
-              <th className="sticky top-14 z-20 bg-muted px-3 py-2 font-medium">
+              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
                 Issuer(s)
               </th>
             </tr>
