@@ -2,7 +2,7 @@
 
 import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect } from "react";
-import { resolveTokenSlug } from "@/lib/currencies";
+import { type IsoCurrencyCode, resolveTokenSlug } from "@/lib/currencies";
 import {
   DEFAULT_FROM_CURRENCY,
   DEFAULT_FROM_STABLECOIN,
@@ -30,13 +30,26 @@ export function UrlSync() {
   // applying slugs, resolve any same-token state by replacing the side the
   // user did NOT specify with a non-conflicting default — this handles both
   // `?from=X&to=X` and the subtler `?to=X` where the default `from` is also X.
+  // Each setToken call is gated on the resolved slug actually differing from
+  // the current store, so the writer effect's re-fire doesn't clobber the
+  // active side picked by upstream entry points (e.g. the currencies-page
+  // pickers, which assert activeSide before navigating here).
   useEffect(() => {
     if (pathname !== "/swap") return;
     const f = resolveTokenSlug(searchParams.get("from"));
     const t = resolveTokenSlug(searchParams.get("to"));
     const slugConflict = !!(f && t && f.stablecoin === t.stablecoin);
-    if (f) setToken("from", f.currency, f.stablecoin);
-    if (t && !slugConflict) setToken("to", t.currency, t.stablecoin);
+    const apply = (
+      side: "from" | "to",
+      v: { currency: IsoCurrencyCode; stablecoin: string },
+    ) => {
+      const cur = useSwapStore.getState()[side];
+      if (cur.currency === v.currency && cur.stablecoin === v.stablecoin)
+        return;
+      setToken(side, v.currency, v.stablecoin);
+    };
+    if (f) apply("from", f);
+    if (t && !slugConflict) apply("to", t);
 
     const cur = useSwapStore.getState();
     if (cur.from.stablecoin !== cur.to.stablecoin) return;
@@ -47,13 +60,8 @@ export function UrlSync() {
             stablecoin: DEFAULT_FROM_STABLECOIN,
           }
         : { currency: DEFAULT_TO_CURRENCY, stablecoin: DEFAULT_TO_STABLECOIN };
-    if (f) {
-      const fb = fallback(cur.from.stablecoin);
-      setToken("to", fb.currency, fb.stablecoin);
-    } else if (t) {
-      const fb = fallback(cur.to.stablecoin);
-      setToken("from", fb.currency, fb.stablecoin);
-    }
+    if (f) apply("to", fallback(cur.from.stablecoin));
+    else if (t) apply("from", fallback(cur.to.stablecoin));
   }, [pathname, searchParams, setToken]);
 
   // Always write current selection to URL while on /swap, including on first

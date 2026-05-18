@@ -152,7 +152,9 @@ function CurrencyHeaderRow({ code }: { code: IsoCurrencyCode }) {
 // Returns a function that assigns (code, symbol) to the given side of the swap
 // store and navigates to /swap. If the token is already on the opposite side,
 // flip the swap direction instead of duplicating; if already on the requested
-// side, just navigate.
+// side, just navigate. Always marks the clicked side as active so the swap
+// page highlights the matching token row on arrival, regardless of which
+// branch ran.
 function usePickToken(): (
   side: Side,
   code: IsoCurrencyCode,
@@ -161,6 +163,7 @@ function usePickToken(): (
   const router = useRouter();
   const setToken = useSwapStore((s) => s.setToken);
   const swapSides = useSwapStore((s) => s.swapSides);
+  const setActiveSide = useSwapStore((s) => s.setActiveSide);
   return (side, code, symbol) => {
     const { from, to } = useSwapStore.getState();
     const onFrom = code === from.currency && symbol === from.stablecoin;
@@ -169,6 +172,7 @@ function usePickToken(): (
     const onOther = side === "from" ? onTo : onFrom;
     if (onOther) swapSides();
     else if (!alreadyOnSide) setToken(side, code, symbol);
+    setActiveSide(side);
     router.push("/swap");
   };
 }
