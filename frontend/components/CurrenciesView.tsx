@@ -147,30 +147,22 @@ function CurrencyHeaderRow({ code }: { code: IsoCurrencyCode }) {
 }
 
 // Returns a function that assigns (code, symbol) to the given side of the swap
-// store and navigates to /swap. If the token is already on the opposite side,
-// flip the swap direction instead of duplicating; if already on the requested
-// side, just navigate. Always marks the clicked side as active so the swap
-// page highlights the matching token row on arrival, regardless of which
-// branch ran.
+// store and navigates to /swap. Delegates the actual mutation to the store's
+// atomic `pickSide` action — a single `set` call that handles flip / set-new /
+// no-op without ever passing through a transient sameToken state. Navigation
+// is deferred to the next microtask so React commits the store update (and
+// any subscribed components re-render with the final pair) before the swap
+// page mounts and starts running its own URL-sync effects.
 function usePickToken(): (
   side: Side,
   code: IsoCurrencyCode,
   symbol: string,
 ) => void {
   const router = useRouter();
-  const setToken = useSwapStore((s) => s.setToken);
-  const swapSides = useSwapStore((s) => s.swapSides);
-  const setActiveSide = useSwapStore((s) => s.setActiveSide);
+  const pickSide = useSwapStore((s) => s.pickSide);
   return (side, code, symbol) => {
-    const { from, to } = useSwapStore.getState();
-    const onFrom = code === from.currency && symbol === from.stablecoin;
-    const onTo = code === to.currency && symbol === to.stablecoin;
-    const alreadyOnSide = side === "from" ? onFrom : onTo;
-    const onOther = side === "from" ? onTo : onFrom;
-    if (onOther) swapSides();
-    else if (!alreadyOnSide) setToken(side, code, symbol);
-    setActiveSide(side);
-    router.push("/swap");
+    pickSide(side, code, symbol);
+    queueMicrotask(() => router.push("/swap"));
   };
 }
 
