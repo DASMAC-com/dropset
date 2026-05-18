@@ -1,3 +1,4 @@
+// cspell:word colspanned
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
@@ -111,34 +112,30 @@ const matches = (s: Stablecoin, code: IsoCurrencyCode, q: string): boolean => {
 function CurrencyHeaderRow({ code }: { code: IsoCurrencyCode }) {
   const url = currencyFlagUrl(code);
   const color = useFlagColor(code, url);
-  const borderStyle = color
-    ? { borderBottomColor: `rgb(${color[0]} ${color[1]} ${color[2]} / 0.6)` }
+  // Render the tinted "open" bar via an inset box-shadow rather than a real
+  // border. Real borders on this colspanned cell collapse with the `border-r`
+  // separators in the row below, and the vertical lines visibly punch through
+  // the colored bar at the corners. Box-shadow doesn't participate in
+  // border-collapse, so the bar reads as a continuous unbroken line.
+  const tdStyle = color
+    ? {
+        boxShadow: `inset 0 -2px 0 rgb(${color[0]} ${color[1]} ${color[2]} / 0.6)`,
+      }
     : undefined;
   const chipStyle = color
     ? { backgroundColor: `rgb(${color[0]} ${color[1]} ${color[2]} / 0.15)` }
     : undefined;
   return (
     <tr className="bg-background">
-      <td
-        colSpan={COLSPAN}
-        className="border-border border-b-2 px-3 pt-8 pb-3"
-        style={borderStyle}
-      >
+      <td colSpan={COLSPAN} className="px-3 pt-8 pb-3" style={tdStyle}>
         <div className="flex items-center gap-3">
           <span
             aria-hidden
-            className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-muted"
+            className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-muted"
             style={chipStyle}
           >
             {/* biome-ignore lint/performance/noImgElement: tiny static SVG, no optimization needed */}
-            <img
-              src={url}
-              alt=""
-              aria-hidden
-              width={40}
-              height={30}
-              className="rounded-sm shadow-sm"
-            />
+            <img src={url} alt="" aria-hidden width={48} height={48} />
           </span>
           <span className="font-semibold text-foreground text-xl">{code}</span>
           <span className="text-muted-fg">·</span>
@@ -233,30 +230,31 @@ function StablecoinRow({
   groupSize: number;
 }) {
   const striped = groupSize >= 2 && rowIndex % 2 === 1;
+  const isLastInGroup = rowIndex === groupSize - 1;
   return (
     <tr
       id={s.symbol.toLowerCase()}
-      className={`scroll-mt-24 border-border border-t ${striped ? "bg-muted/70" : ""}`}
+      className={`scroll-mt-24 border-border border-t ${isLastInGroup ? "border-b" : ""} ${striped ? "bg-muted/70" : ""}`}
     >
-      <td className="px-3 py-2 align-top">
+      <td className="border-border border-r px-3 py-2 align-top last:border-r-0">
         <div className="flex items-center gap-2">
           {/* biome-ignore lint/performance/noImgElement: small static icon, no optimization needed */}
           <img
             src={s.icon}
             alt=""
             aria-hidden
-            width={20}
-            height={20}
-            className="h-5 w-5 shrink-0 rounded-full"
+            width={28}
+            height={28}
+            className="h-7 w-7 shrink-0 rounded-full"
           />
           <span className="font-mono text-foreground">{s.symbol}</span>
           <CopyButton value={s.symbol} label="token symbol" />
         </div>
       </td>
-      <td className="px-3 py-2 align-top">
+      <td className="border-border border-r px-3 py-2 align-top last:border-r-0">
         <SwapPickerCell code={code} symbol={s.symbol} />
       </td>
-      <td className="max-w-[120px] px-3 py-2 align-top">
+      <td className="max-w-[120px] border-border border-r px-3 py-2 align-top last:border-r-0">
         <a
           href={s.issuer.url}
           target="_blank"
@@ -267,7 +265,7 @@ function StablecoinRow({
           <ExternalLink size={10} className="mt-1.5 shrink-0" />
         </a>
       </td>
-      <td className="px-3 py-2 align-top">
+      <td className="border-border border-r px-3 py-2 align-top last:border-r-0">
         <div className="flex items-start gap-1">
           <span className="whitespace-nowrap font-mono text-foreground text-xs">
             {s.mint}
@@ -295,7 +293,7 @@ function StablecoinRow({
           )}
         </div>
       </td>
-      <td className="px-3 py-2 align-top">
+      <td className="border-border border-r px-3 py-2 align-top last:border-r-0">
         {s.issuer.socials?.x ? (
           <div className="flex items-start gap-1">
             <a
@@ -313,7 +311,7 @@ function StablecoinRow({
           ""
         )}
       </td>
-      <td className="px-3 py-2 align-top">
+      <td className="border-border border-r px-3 py-2 align-top last:border-r-0">
         <div className="flex flex-col">
           {s.issuer.name.map((n, i) => (
             <span
@@ -435,22 +433,22 @@ function CurrenciesInner() {
         <table className="w-full min-w-[720px] text-left text-sm">
           <thead className="text-muted-fg text-xs uppercase">
             <tr>
-              <th className="sticky top-14 z-20 bg-muted px-3 py-2 font-medium">
+              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
                 Token
               </th>
-              <th className="sticky top-14 z-20 bg-muted px-3 py-2 font-medium">
+              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
                 Swap
               </th>
-              <th className="sticky top-14 z-20 bg-muted px-3 py-2 font-medium">
+              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
                 Name
               </th>
-              <th className="sticky top-14 z-20 bg-muted px-3 py-2 font-medium">
+              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
                 Mint Address
               </th>
-              <th className="sticky top-14 z-20 bg-muted px-3 py-2 font-medium">
-                X
+              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
+                X handle
               </th>
-              <th className="sticky top-14 z-20 bg-muted px-3 py-2 font-medium">
+              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
                 Issuer(s)
               </th>
             </tr>

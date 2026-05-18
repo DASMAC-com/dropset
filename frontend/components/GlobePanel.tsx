@@ -262,9 +262,9 @@ function GlobeInner() {
   // Mirrors the labelSize buckets so flag emoji scale roughly in step with
   // the text labels they replace.
   const flagFontPx = useMemo(() => {
-    if (altitude < 0.3) return 14;
-    if (altitude < 0.8) return 20;
-    return 28;
+    if (altitude < 0.3) return 18;
+    if (altitude < 0.8) return 26;
+    return 36;
   }, [altitude]);
 
   useEffect(() => {
@@ -686,17 +686,19 @@ function GlobeInner() {
             const el = document.createElement("img");
             el.src = flagUrl(pin.cca2);
             el.alt = pin.name;
-            // flag-icons ships 4:3 SVGs — scale width off the font-size bucket
-            // so flag pins remain in step with the country-name label sizes
-            // they replace.
-            el.width = Math.round((flagFontPx * 4) / 3);
+            // Twemoji SVGs are square — pin size tracks the label-size bucket
+            // so flag pins remain in step with the country-name labels they
+            // replace.
+            el.width = flagFontPx;
             el.height = flagFontPx;
             el.draggable = false;
             el.style.cursor = "pointer";
             el.style.userSelect = "none";
             el.style.transform = "translate(-50%, -50%)";
-            el.style.borderRadius = "2px";
-            el.style.boxShadow = "0 0 0 1px rgba(0,0,0,0.4)";
+            // Lift the glyph off bright ocean/land without boxing the
+            // bounding square — drop-shadow respects the rounded-rect shape
+            // of Twemoji's flag artwork.
+            el.style.filter = "drop-shadow(0 1px 1px rgba(0,0,0,0.5))";
             // globe.gl's HTML overlay container sets pointer-events: none so
             // canvas interactions (rotate/zoom) still work through it; each
             // child has to opt back in to receive its own click.

@@ -106,9 +106,9 @@ export function TokenRow({ side, label }: { side: Side; label: string }) {
             src={currencyFlagUrl(currency)}
             alt=""
             aria-hidden
-            width={24}
-            height={18}
-            className="shrink-0 rounded-sm shadow-sm"
+            width={28}
+            height={28}
+            className="shrink-0"
           />
           <span className="truncate">
             {currencyName(currency)} ({currency})
