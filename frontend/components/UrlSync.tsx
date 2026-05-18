@@ -69,18 +69,20 @@ export function UrlSync() {
   // navigation that strips our params (e.g. clicking the favicon Link, which
   // points at bare /swap). Reading from searchParams in the body — rather than
   // window.location.search — ties this effect to Next.js' router updates so it
-  // re-fires when nav changes the params underneath us.
+  // re-fires when nav changes the params underneath us. Params are rebuilt
+  // from scratch so `from` always precedes `to` in the address bar, even if
+  // the inbound URL had them reversed (URLSearchParams.set updates in place).
   useEffect(() => {
     if (pathname !== "/swap") return;
-    if (
-      searchParams.get("from") === fromSym &&
-      searchParams.get("to") === toSym
-    )
-      return;
-    const params = new URLSearchParams(searchParams.toString());
+    const params = new URLSearchParams();
     params.set("from", fromSym);
     params.set("to", toSym);
-    const next = `${window.location.pathname}?${params.toString()}${window.location.hash}`;
+    searchParams.forEach((value, key) => {
+      if (key !== "from" && key !== "to") params.append(key, value);
+    });
+    const nextSearch = params.toString();
+    if (searchParams.toString() === nextSearch) return;
+    const next = `${window.location.pathname}?${nextSearch}${window.location.hash}`;
     window.history.replaceState(null, "", next);
   }, [pathname, fromSym, toSym, searchParams]);
 
