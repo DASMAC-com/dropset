@@ -353,6 +353,9 @@ function StablecoinRow({
           </a>
         </div>
       </td>
+      <td className="border-border border-r px-3 py-2 align-top last:border-r-0">
+        <SwapPickerCell code={code} symbol={s.symbol} />
+      </td>
       <td className="border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums last:border-r-0">
         {formatPrice(info?.usdPrice)}
       </td>
@@ -372,9 +375,6 @@ function StablecoinRow({
       </td>
       <td className="border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums last:border-r-0">
         {formatCompactCount(info?.holderCount)}
-      </td>
-      <td className="border-border border-r px-3 py-2 align-top last:border-r-0">
-        <SwapPickerCell code={code} symbol={s.symbol} />
       </td>
       <td className="border-border border-r px-3 py-2 align-top last:border-r-0">
         <div className="flex items-center gap-1">
@@ -527,11 +527,14 @@ function CurrenciesInner() {
               <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
                 Token
               </th>
+              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
+                Swap
+              </th>
               <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0">
                 Price
               </th>
               <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0">
-                24h
+                24h Δ
               </th>
               <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0">
                 24h Vol
@@ -544,9 +547,6 @@ function CurrenciesInner() {
               </th>
               <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0">
                 Holders
-              </th>
-              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
-                Swap
               </th>
               <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
                 Mint Address
