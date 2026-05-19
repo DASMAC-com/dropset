@@ -402,36 +402,6 @@ function StablecoinRow({
       <td className="border-border border-r px-3 py-2 align-top last:border-r-0">
         <SwapPickerCell code={code} symbol={s.symbol} />
       </td>
-      <td
-        className={`border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums transition-colors duration-300 last:border-r-0 ${flashBg(priceFlash)}`}
-      >
-        {formatPrice(info?.usdPrice)}
-      </td>
-      <td
-        className={`border-border border-r px-3 py-2 text-right align-top font-mono tabular-nums transition-colors duration-300 last:border-r-0 ${changeTone} ${flashBg(changeFlash)}`}
-      >
-        {formatPercent(change)}
-      </td>
-      <td
-        className={`border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums transition-colors duration-300 last:border-r-0 ${flashBg(volumeFlash)}`}
-      >
-        {formatCompactUsd(info?.volume24h)}
-      </td>
-      <td
-        className={`border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums transition-colors duration-300 last:border-r-0 ${flashBg(mcapFlash)}`}
-      >
-        {formatCompactUsd(info?.mcap)}
-      </td>
-      <td
-        className={`border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums transition-colors duration-300 last:border-r-0 ${flashBg(liquidityFlash)}`}
-      >
-        {formatCompactUsd(info?.liquidity)}
-      </td>
-      <td
-        className={`border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums transition-colors duration-300 last:border-r-0 ${flashBg(holdersFlash)}`}
-      >
-        {formatCompactCount(info?.holderCount)}
-      </td>
       <td className="border-border border-r px-3 py-2 align-top last:border-r-0">
         <div className="flex items-center gap-1">
           <span
@@ -462,6 +432,36 @@ function StablecoinRow({
             </a>
           )}
         </div>
+      </td>
+      <td
+        className={`border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums transition-colors duration-300 last:border-r-0 ${flashBg(priceFlash)}`}
+      >
+        {formatPrice(info?.usdPrice)}
+      </td>
+      <td
+        className={`border-border border-r px-3 py-2 text-right align-top font-mono tabular-nums transition-colors duration-300 last:border-r-0 ${changeTone} ${flashBg(changeFlash)}`}
+      >
+        {formatPercent(change)}
+      </td>
+      <td
+        className={`border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums transition-colors duration-300 last:border-r-0 ${flashBg(volumeFlash)}`}
+      >
+        {formatCompactUsd(info?.volume24h)}
+      </td>
+      <td
+        className={`border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums transition-colors duration-300 last:border-r-0 ${flashBg(mcapFlash)}`}
+      >
+        {formatCompactUsd(info?.mcap)}
+      </td>
+      <td
+        className={`border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums transition-colors duration-300 last:border-r-0 ${flashBg(liquidityFlash)}`}
+      >
+        {formatCompactUsd(info?.liquidity)}
+      </td>
+      <td
+        className={`border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums transition-colors duration-300 last:border-r-0 ${flashBg(holdersFlash)}`}
+      >
+        {formatCompactCount(info?.holderCount)}
       </td>
     </tr>
   );
@@ -592,6 +592,9 @@ function CurrenciesInner() {
               <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
                 Swap
               </th>
+              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
+                Mint Address
+              </th>
               <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0">
                 Price
               </th>
@@ -609,9 +612,6 @@ function CurrenciesInner() {
               </th>
               <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0">
                 Holders
-              </th>
-              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
-                Mint Address
               </th>
             </tr>
           </thead>
