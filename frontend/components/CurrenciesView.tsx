@@ -60,7 +60,7 @@ const formatPercent = (n: number | null | undefined): string => {
   return `${sign}${n.toFixed(2)}%`;
 };
 
-// Collapse a base58 mint to "abcd…efgh" so the column reads at a glance;
+// Collapse a base58 mint to "abcd…abcd" so the column reads at a glance;
 // the CopyButton next to it still copies the full address.
 const shortenMint = (mint: string): string =>
   mint.length <= 11 ? mint : `${mint.slice(0, 4)}…${mint.slice(-4)}`;
