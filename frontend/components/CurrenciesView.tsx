@@ -5,7 +5,16 @@ import * as Popover from "@radix-ui/react-popover";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { CopyButton } from "@/components/CopyButton";
-import { ExternalLink, HelpCircle, Info, Search, X } from "@/components/icons";
+import {
+  ArrowUpDown,
+  ChevronDown,
+  ChevronUp,
+  ExternalLink,
+  HelpCircle,
+  Info,
+  Search,
+  X,
+} from "@/components/icons";
 import {
   ALL_STABLECOIN_MINTS,
   CURRENCIES,
@@ -23,6 +32,7 @@ import {
   prefetchAllTokenInfo,
   REFRESH_INTERVAL_MS,
   sortByVolumeDesc,
+  type TokenInfo,
   useInfoLookup,
   useTokenInfo,
 } from "@/lib/useUsdQuote";
@@ -70,6 +80,43 @@ const formatPercent = (n: number | null | undefined): string => {
 // the CopyButton next to it still copies the full address.
 const shortenMint = (mint: string): string =>
   mint.length <= 11 ? mint : `${mint.slice(0, 4)}…${mint.slice(-4)}`;
+
+type SortKey = "volume24h" | "mcap" | "liquidity" | "holderCount";
+type SortDir = "asc" | "desc";
+type SortState = { key: SortKey; direction: SortDir } | null;
+
+// Sort a stablecoin list by a numeric `TokenInfo` field. Tokens with no
+// reported value sink to the bottom and retain their input order (Array.sort
+// is stable in ES2019+), so the upstream JSON order is the implicit fallback
+// for ties and nulls.
+const sortStablesByMetric = <T extends { mint: string }>(
+  list: T[],
+  key: SortKey,
+  direction: SortDir,
+  lookup: (mint: string) => TokenInfo | null,
+): T[] =>
+  list.slice().sort((a, b) => {
+    const va = lookup(a.mint)?.[key] ?? -1;
+    const vb = lookup(b.mint)?.[key] ?? -1;
+    return direction === "desc" ? vb - va : va - vb;
+  });
+
+// A currency group's rank is taken from its highest-ranked stablecoin on the
+// active metric — so USD floats to the top when sorting by volume because
+// USDC dominates, even if some EUR stable would individually outrank a long
+// PYUSD-style tail. Groups with no data on this metric stay at the bottom.
+const groupScore = <T extends { mint: string }>(
+  stables: T[],
+  key: SortKey,
+  lookup: (mint: string) => TokenInfo | null,
+): number => {
+  let max = Number.NEGATIVE_INFINITY;
+  for (const s of stables) {
+    const v = lookup(s.mint)?.[key];
+    if (typeof v === "number" && v > max) max = v;
+  }
+  return Number.isFinite(max) ? max : -1;
+};
 
 // Track value changes across renders and briefly mark the cell as "just
 // updated" so the user can see what the Jupiter refresh touched. Direction
@@ -184,6 +231,37 @@ const matches = (s: Stablecoin, code: IsoCurrencyCode, q: string): boolean => {
     s.issuer.name.some((n) => n.toLowerCase().includes(q))
   );
 };
+
+function SortableHeader({
+  sortKey,
+  label,
+  sort,
+  onToggle,
+}: {
+  sortKey: SortKey;
+  label: string;
+  sort: SortState;
+  onToggle: (key: SortKey) => void;
+}) {
+  const active = sort?.key === sortKey;
+  const Icon = !active
+    ? ArrowUpDown
+    : sort.direction === "desc"
+      ? ChevronDown
+      : ChevronUp;
+  return (
+    <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0">
+      <button
+        type="button"
+        onClick={() => onToggle(sortKey)}
+        className={`ml-auto inline-flex items-center gap-1 ${active ? "text-foreground" : "hover:text-foreground"}`}
+      >
+        {label}
+        <Icon size={12} />
+      </button>
+    </th>
+  );
+}
 
 function CurrencyHeaderRow({ code }: { code: IsoCurrencyCode }) {
   const url = currencyFlagUrl(code);
@@ -499,6 +577,13 @@ function CurrenciesInner() {
 
   const q = query.trim().toLowerCase();
   const lookup = useInfoLookup();
+  const [sort, setSort] = useState<SortState>(null);
+  const toggleSort = (key: SortKey) =>
+    setSort((prev) => {
+      if (!prev || prev.key !== key) return { key, direction: "desc" };
+      if (prev.direction === "desc") return { key, direction: "asc" };
+      return null;
+    });
   const filtered = useMemo(
     () =>
       SUPPORTED.map((code) => ({
@@ -512,11 +597,29 @@ function CurrenciesInner() {
   // Re-sort outside the useMemo: `lookup` reads from the shared cache, which
   // mutates every 10 s on the refresh interval. Keeping sort out of the memo
   // means each cache notify re-renders with freshly ranked stables without
-  // having to thread version counters through deps.
-  const grouped = filtered.map(({ code, stables }) => ({
-    code,
-    stables: sortByVolumeDesc(stables, lookup),
-  }));
+  // having to thread version counters through deps. When no column is
+  // actively sorted, fall back to volume-desc within group + JSON order
+  // across groups (the default ranking that's been in place since ENG-359).
+  const grouped =
+    sort === null
+      ? filtered.map(({ code, stables }) => ({
+          code,
+          stables: sortByVolumeDesc(stables, lookup),
+        }))
+      : filtered
+          .map(({ code, stables }) => ({
+            code,
+            stables: sortStablesByMetric(
+              stables,
+              sort.key,
+              sort.direction,
+              lookup,
+            ),
+            score: groupScore(stables, sort.key, lookup),
+          }))
+          .sort((a, b) =>
+            sort.direction === "desc" ? b.score - a.score : a.score - b.score,
+          );
 
   const pickToken = usePickToken();
   useAppEvent("pickCurrencyOnlyResult", (side) => {
@@ -607,18 +710,30 @@ function CurrenciesInner() {
               <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0">
                 24h Δ
               </th>
-              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0">
-                24h Vol
-              </th>
-              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0">
-                Market Cap
-              </th>
-              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0">
-                Liquidity
-              </th>
-              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0">
-                Holders
-              </th>
+              <SortableHeader
+                sortKey="volume24h"
+                label="24h Vol"
+                sort={sort}
+                onToggle={toggleSort}
+              />
+              <SortableHeader
+                sortKey="mcap"
+                label="Market Cap"
+                sort={sort}
+                onToggle={toggleSort}
+              />
+              <SortableHeader
+                sortKey="liquidity"
+                label="Liquidity"
+                sort={sort}
+                onToggle={toggleSort}
+              />
+              <SortableHeader
+                sortKey="holderCount"
+                label="Holders"
+                sort={sort}
+                onToggle={toggleSort}
+              />
             </tr>
           </thead>
           <tbody>
