@@ -134,6 +134,11 @@ export const SHORTCUTS_BY_CONTEXT: Record<ShortcutContext, ShortcutSpec[]> = {
       description: "Use the lone search result as To",
       run: () => emit("pickCurrencyOnlyResult", "to"),
     },
+    {
+      key: "g",
+      description: "Toggle Group by currency",
+      run: () => emit("toggleGroupByCurrency"),
+    },
   ],
 };
 

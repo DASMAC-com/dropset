@@ -602,6 +602,8 @@ function CurrenciesInner() {
   const q = query.trim().toLowerCase();
   const lookup = useInfoLookup();
   const [sort, setSort] = useState<SortState>(null);
+  const [groupByCurrency, setGroupByCurrency] = useState(true);
+  useAppEvent("toggleGroupByCurrency", () => setGroupByCurrency((g) => !g));
   const toggleSort = (key: SortKey) =>
     setSort((prev) => {
       if (!prev || prev.key !== key) return { key, direction: "desc" };
@@ -645,6 +647,24 @@ function CurrenciesInner() {
             sort.direction === "desc" ? b.score - a.score : a.score - b.score,
           );
 
+  // Flat (un-grouped) view: pool every filtered stable across currencies and
+  // sort by the active column. Default to 24 h volume desc when no header is
+  // selected, mirroring the user-visible "Group by currency" off behavior.
+  const flatKey: SortKey = sort?.key ?? "volume24h";
+  const flatDirection: SortDir = sort?.direction ?? "desc";
+  // What the column headers should *show* as active. In flat mode with no
+  // explicit sort, surface the implicit "24h Vol desc" so the chevron makes
+  // it obvious which column is driving the order.
+  const headerSort: SortState =
+    sort ?? (!groupByCurrency ? { key: "volume24h", direction: "desc" } : null);
+  const flatStables = filtered
+    .flatMap(({ code, stables }) => stables.map((s) => ({ code, s })))
+    .sort((a, b) => {
+      const va = lookup(a.s.mint)?.[flatKey] ?? -1;
+      const vb = lookup(b.s.mint)?.[flatKey] ?? -1;
+      return flatDirection === "desc" ? vb - va : va - vb;
+    });
+
   const pickToken = usePickToken();
   useAppEvent("pickCurrencyOnlyResult", (side) => {
     if (grouped.length !== 1 || grouped[0].stables.length !== 1) return;
@@ -658,50 +678,61 @@ function CurrenciesInner() {
   return (
     <div className="mx-auto max-w-6xl px-6 pt-3 pb-16">
       <div className="mb-3 flex items-center justify-between gap-3">
-        <div className="flex h-9 w-56 items-center gap-2 rounded-md border border-border bg-muted px-3">
-          <Search size={14} className="shrink-0 text-muted-fg" />
-          <input
-            ref={inputRef}
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onFocus={() => setFocused(true)}
-            onBlur={() => {
-              setFocused(false);
-              commitQueryToUrl(query);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") {
-                e.preventDefault();
-                inputRef.current?.blur();
-              } else if (e.key === "Enter") {
-                e.preventDefault();
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-56 items-center gap-2 rounded-md border border-border bg-muted px-3">
+            <Search size={14} className="shrink-0 text-muted-fg" />
+            <input
+              ref={inputRef}
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onFocus={() => setFocused(true)}
+              onBlur={() => {
+                setFocused(false);
                 commitQueryToUrl(query);
-                inputRef.current?.blur();
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  inputRef.current?.blur();
+                } else if (e.key === "Enter") {
+                  e.preventDefault();
+                  commitQueryToUrl(query);
+                  inputRef.current?.blur();
+                }
+              }}
+              placeholder="Search currencies…"
+              className="min-w-0 flex-1 bg-transparent text-foreground text-sm outline-none placeholder:text-muted-fg"
+            />
+            <kbd
+              aria-hidden
+              title={
+                focused ? "Press Esc to exit search" : "Press / to focus search"
               }
-            }}
-            placeholder="Search currencies…"
-            className="min-w-0 flex-1 bg-transparent text-foreground text-sm outline-none placeholder:text-muted-fg"
-          />
-          <kbd
-            aria-hidden
-            title={
-              focused ? "Press Esc to exit search" : "Press / to focus search"
-            }
-            className="hidden shrink-0 rounded border border-border bg-background px-1.5 py-0.5 font-mono text-[10px] text-muted-fg sm:inline-block"
-          >
-            {focused ? "Esc" : "/"}
-          </kbd>
-          {query && (
-            <button
-              type="button"
-              onClick={() => setQuery("")}
-              aria-label="Clear search"
-              className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-fg hover:bg-background hover:text-foreground"
+              className="hidden shrink-0 rounded border border-border bg-background px-1.5 py-0.5 font-mono text-[10px] text-muted-fg sm:inline-block"
             >
-              <X size={14} />
-            </button>
-          )}
+              {focused ? "Esc" : "/"}
+            </kbd>
+            {query && (
+              <button
+                type="button"
+                onClick={() => setQuery("")}
+                aria-label="Clear search"
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-fg hover:bg-background hover:text-foreground"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+          <label className="flex select-none items-center gap-2 text-muted-fg text-xs hover:text-foreground">
+            <input
+              type="checkbox"
+              checked={groupByCurrency}
+              onChange={(e) => setGroupByCurrency(e.target.checked)}
+              className="h-3.5 w-3.5 cursor-pointer accent-accent"
+            />
+            Group by currency
+          </label>
         </div>
         <div className="flex flex-col text-right text-muted-fg text-xs">
           <p>
@@ -737,25 +768,25 @@ function CurrenciesInner() {
               <SortableHeader
                 sortKey="volume24h"
                 label="24h Vol"
-                sort={sort}
+                sort={headerSort}
                 onToggle={toggleSort}
               />
               <SortableHeader
                 sortKey="mcap"
                 label="Market Cap"
-                sort={sort}
+                sort={headerSort}
                 onToggle={toggleSort}
               />
               <SortableHeader
                 sortKey="liquidity"
                 label="Liquidity"
-                sort={sort}
+                sort={headerSort}
                 onToggle={toggleSort}
               />
               <SortableHeader
                 sortKey="holderCount"
                 label="Holders"
-                sort={sort}
+                sort={headerSort}
                 onToggle={toggleSort}
               />
             </tr>
@@ -770,7 +801,7 @@ function CurrenciesInner() {
                   No tokens match
                 </td>
               </tr>
-            ) : (
+            ) : groupByCurrency ? (
               grouped.flatMap(({ code, stables }) => [
                 <CurrencyHeaderRow key={`h-${code}`} code={code} />,
                 ...stables.map((s, i) => (
@@ -783,6 +814,16 @@ function CurrenciesInner() {
                   />
                 )),
               ])
+            ) : (
+              flatStables.map(({ code, s }, i) => (
+                <StablecoinRow
+                  key={s.symbol}
+                  code={code}
+                  s={s}
+                  rowIndex={i}
+                  groupSize={flatStables.length}
+                />
+              ))
             )}
           </tbody>
         </table>

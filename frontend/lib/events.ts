@@ -26,6 +26,7 @@ export type AppEvents = {
   pan: PanDirection;
   focusCurrenciesSearch: undefined;
   pickCurrencyOnlyResult: Side;
+  toggleGroupByCurrency: undefined;
 };
 
 type Handler<K extends keyof AppEvents> = (payload: AppEvents[K]) => void;
