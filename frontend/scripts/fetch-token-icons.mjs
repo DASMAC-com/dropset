@@ -55,7 +55,9 @@ for (let i = 0; i < results.length; i++) {
 
 writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 
-console.log(`Mirrored ${Object.keys(manifest).length}/${tokens.length} token icons → public/token-icons`);
+console.log(
+  `Mirrored ${Object.keys(manifest).length}/${tokens.length} token icons → public/token-icons`,
+);
 if (failures.length) {
   console.warn(`  ${failures.length} failed (will fall back to remote URLs):`);
   for (const f of failures) console.warn(`  - ${f}`);
