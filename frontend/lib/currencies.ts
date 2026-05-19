@@ -71,6 +71,10 @@ const STABLE_BY_SYMBOL: Record<string, Stablecoin> = Object.fromEntries(
   ),
 );
 
+export const ALL_STABLECOIN_MINTS: string[] = Object.values(
+  STABLE_BY_SYMBOL,
+).map((s) => s.mint);
+
 // Case-insensitive lookup that yields the canonical-cased symbol (e.g. the
 // JSON's `tGBP` rather than `TGBP`). Used by URL slug resolution.
 const SYMBOL_BY_UPPER: Record<string, string> = Object.fromEntries(

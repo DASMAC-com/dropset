@@ -14,6 +14,7 @@ import { useAppEvent } from "@/lib/events";
 import { type Side, useSwapStore } from "@/lib/store";
 import { CurrencyGroupHeader } from "./CurrencyGroupHeader";
 import { ChevronDown, Search, X } from "./icons";
+import { StableTokenIdentity } from "./StableTokenIdentity";
 import { TokenInfoLink } from "./TokenInfoLink";
 import { TokenMintActions } from "./TokenMintActions";
 
@@ -135,21 +136,7 @@ export function TokenPicker({ side }: { side: Side }) {
           title={blocked ? "Already selected on the other side" : undefined}
           className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-fg"
         >
-          {/* biome-ignore lint/performance/noImgElement: small static icon, no optimization needed */}
-          <img
-            src={tokenIconUrl(s.symbol)}
-            alt=""
-            aria-hidden
-            width={20}
-            height={20}
-            className="h-5 w-5 shrink-0 rounded-full"
-          />
-          <span className="flex min-w-0 flex-col">
-            <span className="font-mono">{s.symbol}</span>
-            {s.name !== s.symbol && (
-              <span className="truncate text-muted-fg text-xs">{s.name}</span>
-            )}
-          </span>
+          <StableTokenIdentity s={s} />
         </button>
         <TokenMintActions symbol={s.symbol} mint={s.mint} />
         <TokenInfoLink symbol={s.symbol} className="mr-1" />

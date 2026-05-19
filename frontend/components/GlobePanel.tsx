@@ -23,17 +23,13 @@ import {
   TorusGeometry,
 } from "three";
 import { COUNTRY_PINS, type CountryPin, findPin } from "@/lib/countries";
-import {
-  CURRENCIES,
-  flagUrl,
-  type IsoCurrencyCode,
-  tokenIconUrl,
-} from "@/lib/currencies";
+import { CURRENCIES, flagUrl, type IsoCurrencyCode } from "@/lib/currencies";
 import { useAppEvent } from "@/lib/events";
 import { useSwapStore } from "@/lib/store";
 import { type CountryFeature, WORLD_POLYGONS } from "@/lib/world-polygons";
 import { CurrencyGroupHeader } from "./CurrencyGroupHeader";
 import { Compass, Crosshair, Flag, Minus, Pause, Play, Plus, X } from "./icons";
+import { StableTokenIdentity } from "./StableTokenIdentity";
 import { TokenInfoLink } from "./TokenInfoLink";
 import { TokenMintActions } from "./TokenMintActions";
 
@@ -844,25 +840,10 @@ function GlobeInner() {
                         key={`${cur}-${s.symbol}`}
                         className="flex w-full items-center gap-1 rounded-md px-2 py-1.5"
                       >
-                        {/* biome-ignore lint/performance/noImgElement: small static icon, no optimization needed */}
-                        <img
-                          src={tokenIconUrl(s.symbol)}
-                          alt=""
-                          aria-hidden
-                          width={20}
-                          height={20}
-                          className="h-5 w-5 shrink-0 rounded-full"
+                        <StableTokenIdentity
+                          s={s}
+                          symbolClassName="text-foreground"
                         />
-                        <span className="flex min-w-0 flex-1 flex-col text-sm">
-                          <span className="font-mono text-foreground">
-                            {s.symbol}
-                          </span>
-                          {s.name !== s.symbol && (
-                            <span className="truncate text-muted-fg text-xs">
-                              {s.name}
-                            </span>
-                          )}
-                        </span>
                         <button
                           type="button"
                           disabled={isToHere}

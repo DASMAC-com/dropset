@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { stablecoinMint } from "./currencies";
 
 // Jupiter's keyless Price API endpoint. Hit directly from the browser so each
@@ -14,6 +14,22 @@ type CacheEntry = { price: number | null; fetchedAt: number };
 const cache = new Map<string, CacheEntry>();
 const inflight = new Map<string, Promise<number | null>>();
 
+// Bump on every cache mutation so React consumers wired through
+// `useSyncExternalStore` re-render when prices resolve.
+let cacheVersion = 0;
+const listeners = new Set<() => void>();
+const notify = () => {
+  cacheVersion++;
+  for (const l of listeners) l();
+};
+const subscribe = (l: () => void) => {
+  listeners.add(l);
+  return () => {
+    listeners.delete(l);
+  };
+};
+const getVersion = () => cacheVersion;
+
 const fetchPrice = (mint: string): Promise<number | null> => {
   const existing = inflight.get(mint);
   if (existing) return existing;
@@ -22,8 +38,11 @@ const fetchPrice = (mint: string): Promise<number | null> => {
       const res = await fetch(`${JUP_PRICE_URL}?ids=${mint}`);
       if (!res.ok) return null;
       const data = (await res.json()) as Record<string, { usdPrice?: number }>;
-      const price = data[mint]?.usdPrice;
-      return typeof price === "number" ? price : null;
+      const usd = data[mint]?.usdPrice;
+      const price = typeof usd === "number" ? usd : null;
+      cache.set(mint, { price, fetchedAt: Date.now() });
+      notify();
+      return price;
     } catch {
       return null;
     } finally {
@@ -32,6 +51,46 @@ const fetchPrice = (mint: string): Promise<number | null> => {
   })();
   inflight.set(mint, p);
   return p;
+};
+
+// Warm the cache for a list of mints in a single batched call so the swap UI
+// has prices ready before the user opens the picker. Skips mints that are
+// already fresh or already in flight, and dedupes parallel `useUsdQuote` calls
+// onto the same network request via the inflight map.
+export const prefetchAllPrices = (mints: string[]): Promise<void> => {
+  const now = Date.now();
+  const need = mints.filter((m) => {
+    const hit = cache.get(m);
+    if (hit && now - hit.fetchedAt < CACHE_TTL_MS) return false;
+    return !inflight.has(m);
+  });
+  if (need.length === 0) return Promise.resolve();
+  const batch = (async () => {
+    try {
+      const res = await fetch(`${JUP_PRICE_URL}?ids=${need.join(",")}`);
+      if (!res.ok) return;
+      const data = (await res.json()) as Record<string, { usdPrice?: number }>;
+      const at = Date.now();
+      for (const mint of need) {
+        const usd = data[mint]?.usdPrice;
+        cache.set(mint, {
+          price: typeof usd === "number" ? usd : null,
+          fetchedAt: at,
+        });
+      }
+      notify();
+    } catch {
+      // Leave cache as-is; on-demand `fetchPrice` will retry per-mint.
+    }
+  })();
+  for (const mint of need) {
+    const p = batch.then(() => cache.get(mint)?.price ?? null);
+    inflight.set(mint, p);
+    p.finally(() => {
+      if (inflight.get(mint) === p) inflight.delete(mint);
+    });
+  }
+  return batch;
 };
 
 export type UsdQuote = { value: number | null; loading: boolean };
@@ -62,7 +121,6 @@ export function useUsdQuote(stablecoin: string, amount: string): UsdQuote {
     setLoading(true);
     let cancelled = false;
     fetchPrice(mint).then((p) => {
-      cache.set(mint, { price: p, fetchedAt: Date.now() });
       if (cancelled) return;
       setPrice(p);
       setLoading(false);
@@ -78,3 +136,20 @@ export function useUsdQuote(stablecoin: string, amount: string): UsdQuote {
   if (price === null) return { value: null, loading };
   return { value: safeAmt * price, loading: false };
 }
+
+export type Liquidity = "unknown" | "illiquid" | "liquid";
+
+// Returns a lookup function for the current price cache. Subscribes once at
+// the component level via `useSyncExternalStore`, so the consumer re-renders
+// when prices resolve. The returned function classifies each mint as:
+//   - "unknown"  → no cache entry yet (prefetch hasn't completed)
+//   - "illiquid" → Jupiter responded but had no usable price for this mint
+//   - "liquid"   → Jupiter returned a numeric price
+export const useLiquidityLookup = (): ((mint: string) => Liquidity) => {
+  useSyncExternalStore(subscribe, getVersion, getVersion);
+  return (mint: string) => {
+    const hit = cache.get(mint);
+    if (!hit) return "unknown";
+    return hit.price === null ? "illiquid" : "liquid";
+  };
+};
