@@ -8,9 +8,16 @@ import {
 } from "@/lib/currencies";
 import { useAppEvent } from "@/lib/events";
 import { type Side, useSwapStore } from "@/lib/store";
+import { useUsdQuote } from "@/lib/useUsdQuote";
 import { FromBalanceButtons } from "./FromBalanceButtons";
 import { MaxSlippageButton } from "./MaxSlippageButton";
 import { TokenPicker } from "./TokenPicker";
+
+const formatUsd = (n: number): string =>
+  `$${n.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 
 const sanitizeAmount = (raw: string, decimals: number): string => {
   let v = raw.replace(/[^0-9.]/g, "");
@@ -59,17 +66,25 @@ export function TokenRow({ side, label }: { side: Side; label: string }) {
   const decimals = stablecoinDecimals(stablecoin);
   const formattedAmount = formatAmount(amount);
 
-  // Prototype quote stub: to-side amount = from / 2; USD quote per side mirrors
-  // its own amount. Replace with real aggregator output later.
+  // Prototype to-side stub: to amount = from / 2. Replace with real
+  // aggregator output later.
   const fromNum = Number.parseFloat(amount);
   const safeFrom = Number.isFinite(fromNum) ? fromNum : 0;
   const toNum = safeFrom / 2;
-  const sideNum = side === "from" ? safeFrom : toNum;
   const toDisplay = formatAmount(toNum.toFixed(decimals));
-  const quoteDisplay = `$${sideNum.toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+
+  const fromUsd = useUsdQuote(
+    side === "from" ? stablecoin : "",
+    side === "from" ? amount : "",
+  );
+  let quoteDisplay: string;
+  if (side === "from") {
+    quoteDisplay = fromUsd.value === null ? "$—" : formatUsd(fromUsd.value);
+  } else {
+    // To-side $ printout still mirrors the to-amount — placeholder until the
+    // real from→to quote is wired up.
+    quoteDisplay = formatUsd(toNum);
+  }
 
   const onAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value;
