@@ -10,6 +10,8 @@
 /build
 
 /public/flag-icons
+/public/token-icons
+/lib/icon-manifest.gen.json
 
 .DS_Store
 *.pem

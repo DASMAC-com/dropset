@@ -95,6 +95,18 @@
           "url": "https://vnx.li/",
           "socials": { "x": "VNX_Platform" }
         }
+      },
+      {
+        "symbol": "EURCV",
+        "name": "EUR CoinVertible",
+        "mint": "DghpMkatCiUsofbTmid3M3kAbDTPqDwKiYHnudXeGG52",
+        "decimals": 2,
+        "icon": "https://www.sgforge.com/wp-content/uploads/2025/03/EURCV-Solana.png",
+        "issuer": {
+          "name": ["Société Générale-FORGE"],
+          "url": "https://www.sgforge.com",
+          "socials": { "x": "SG_Forge" }
+        }
       }
     ]
   },
@@ -175,6 +187,23 @@
       }
     ]
   },
+  "IDR": {
+    "stablecoins": [
+      {
+        "symbol": "IDRX",
+        "name": "IDRX",
+        "mint": "idrxZcP8xiKkYk6XGD4uz1dxEYCWSgKDHqgjsBbwDur",
+        "mintSourceUrl": "https://docs.idrx.co/introduction/supported-chain-and-contract-address",
+        "decimals": 2,
+        "icon": "https://home.idrx.co/favicon.svg",
+        "issuer": {
+          "name": ["IDRX"],
+          "url": "https://home.idrx.co/",
+          "socials": { "x": "idrx_co" }
+        }
+      }
+    ]
+  },
   "JPY": {
     "stablecoins": [
       {
@@ -239,6 +268,22 @@
           "name": ["StraitsX"],
           "url": "https://www.straitsx.com/xsgd",
           "socials": { "x": "straitsx" }
+        }
+      }
+    ]
+  },
+  "TRY": {
+    "stablecoins": [
+      {
+        "symbol": "TRYB",
+        "name": "BiLira",
+        "mint": "A94X2fRy3wydNShU4dRaDyap2UuoeWJGWyATtyp61WZf",
+        "decimals": 6,
+        "icon": "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/A94X2fRy3wydNShU4dRaDyap2UuoeWJGWyATtyp61WZf/logo.png",
+        "issuer": {
+          "name": ["BiLira"],
+          "url": "https://www.bilira.co/en/product/tryb-stablecoin",
+          "socials": { "x": "BiLira_Kripto" }
         }
       }
     ]

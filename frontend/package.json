@@ -45,11 +45,13 @@
     "check": "tsc --noEmit",
     "copy-flags": "node scripts/copy-flags.mjs",
     "dev": "next dev",
+    "fetch-token-icons": "node scripts/fetch-token-icons.mjs",
     "format": "biome format --write",
     "lint": "biome check",
     "lint:fix": "biome check --write",
-    "prebuild": "pnpm run copy-flags",
-    "predev": "pnpm run copy-flags",
+    "postinstall": "pnpm run fetch-token-icons",
+    "prebuild": "pnpm run copy-flags && pnpm run fetch-token-icons",
+    "predev": "pnpm run copy-flags && pnpm run fetch-token-icons",
     "start": "next start"
   },
   "version": "0.1.0"

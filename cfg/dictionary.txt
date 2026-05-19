@@ -17,13 +17,17 @@ dropset
 dtolnay
 etherfuse
 eurc
+eurcv
 eurozone
 exfiltration
 forex
 gyen
+générale
 helvetiker
+idrx
 kapsule
 keypair
+kripto
 lamports
 lemy
 litesvm
@@ -38,6 +42,7 @@ programdata
 pubkeys
 réunion
 sbpf
+société
 solana
 stablecoins
 straitsx
@@ -46,9 +51,11 @@ tgbp
 tokenised
 topojson
 transfero
+tryb
 usdg
 vchf
 vercel
+vertible
 veur
 vgbp
 wincode
