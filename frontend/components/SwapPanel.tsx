@@ -54,7 +54,7 @@ export function SwapPanel() {
         onClick={onClick}
         disabled={disabled}
         title={sameToken ? "Pick a different token on one side" : undefined}
-        className="mt-[14px] w-full rounded-lg bg-accent-buy px-4 py-2.5 font-medium text-background text-sm transition-colors hover:bg-accent-buy-hover disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-fg disabled:hover:bg-muted"
+        className="mt-[14px] w-full rounded-lg bg-accent-buy px-4 py-3.5 font-medium text-background text-lg transition-colors hover:bg-accent-buy-hover disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-fg disabled:hover:bg-muted"
       >
         {label}
       </button>
