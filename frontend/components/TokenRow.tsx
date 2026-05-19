@@ -1,6 +1,7 @@
 "use client";
 
-import { useLayoutEffect, useRef } from "react";
+import NumberFlow, { type Format } from "@number-flow/react";
+import { useLayoutEffect, useMemo, useRef } from "react";
 import {
   currencyFlagUrl,
   currencyName,
@@ -8,19 +9,23 @@ import {
 } from "@/lib/currencies";
 import { useAppEvent } from "@/lib/events";
 import { type Side, useSwapStore } from "@/lib/store";
-import { type DflowQuote, formatAtomic } from "@/lib/useDflowQuote";
-import { flashBg, useFlashOnChange } from "@/lib/useFlashOnChange";
+import type { DflowQuote } from "@/lib/useDflowQuote";
 import { useUsdQuote } from "@/lib/useUsdQuote";
 import { FromBalanceButtons } from "./FromBalanceButtons";
 import { MaxSlippageButton } from "./MaxSlippageButton";
 import { TokenPicker } from "./TokenPicker";
 import { WalletBalance } from "./WalletBalance";
 
-const formatUsd = (n: number): string =>
-  `$${n.toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+// Intl format objects passed to <NumberFlow> for each readout. Hoisted so
+// the same reference is reused across renders — NumberFlow uses identity
+// to detect format changes and resets the animation when it sees a new
+// object, which would otherwise happen on every render.
+const usdFormat: Format = {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+};
 
 const sanitizeAmount = (raw: string, decimals: number): string => {
   let v = raw.replace(/[^0-9.]/g, "");
@@ -79,48 +84,41 @@ export function TokenRow({
   const decimals = stablecoinDecimals(stablecoin);
   const formattedAmount = formatAmount(amount);
 
-  // To-side display reflects DFlow's quote when we have one. While a fetch
-  // is in flight after a prior resolve we keep the last good number on
-  // screen (dimmed) so the UI doesn't blink. "—" / "0" cover the cases
-  // where a quote isn't available or wasn't requested.
-  let toDisplay = "0";
-  let toIsLive = false;
-  if (side === "to" && quote) {
-    if (quote.outAmount !== null) {
-      toDisplay = formatAmount(formatAtomic(quote.outAmount, decimals));
-      toIsLive = quote.status === "ok";
-    } else if (quote.status === "loading") {
-      toDisplay = "…";
-    } else if (quote.status === "error" || quote.status === "rateLimited") {
-      toDisplay = "—";
-    }
-  }
-
-  // Flash the to-side number whenever the quote resolves to a new value
-  // (debounced fetch after typing, 2 s refresh, token switch, etc.).
-  // Same pattern as the /currencies table. We key on the bigint outAmount
-  // directly so initial nulls don't trigger a flash, and an unchanged
-  // refresh (price didn't move) stays silent.
-  const toAmountFlash = useFlashOnChange(
-    side === "to" ? (quote?.outAmount ?? null) : null,
+  // To-side numeric value for <NumberFlow>. Null when there's no quote
+  // (loading first time, error, sameToken, zero input) — in those cases
+  // the panel renders a static placeholder string instead of an animated
+  // number. `Number(bigint) / 10**decimals` is lossless within JS's safe
+  // integer range, which covers every realistic stablecoin amount.
+  const toAmountNumber =
+    side === "to" && quote?.outAmount !== undefined && quote.outAmount !== null
+      ? Number(quote.outAmount) / 10 ** decimals
+      : null;
+  // Maximum precision shown — defer to NumberFlow's grouping/decimal
+  // handling rather than our own formatAmount() so the rolling digits
+  // animate as a single unit.
+  // Memoized so identity is stable across renders — NumberFlow uses
+  // identity to detect format changes and would otherwise reset its
+  // animation every render.
+  const toAmountFormat = useMemo<Format>(
+    () => ({ maximumFractionDigits: decimals }),
+    [decimals],
   );
+  let toPlaceholder = "0";
+  if (side === "to" && quote) {
+    if (quote.status === "loading" && quote.outAmount === null)
+      toPlaceholder = "…";
+    else if (quote.status === "error" || quote.status === "rateLimited")
+      toPlaceholder = "—";
+  }
+  const toIsLive = side === "to" && quote?.status === "ok";
 
   // For USD on the to-side, route the quote's outAmount through Jupiter's
   // price feed so the dollar readout tracks the real expected output, not
-  // the typed input. Falls back to "0" when there's no quote yet.
+  // the typed input. Falls back to "$—" when there's no quote yet.
   const toAmountDecimal =
-    side === "to" && quote?.outAmount !== null && quote?.outAmount !== undefined
-      ? formatAtomic(quote.outAmount, decimals)
-      : "0";
+    toAmountNumber !== null ? toAmountNumber.toString() : "0";
   const sideAmount = side === "from" ? amount : toAmountDecimal;
   const usd = useUsdQuote(stablecoin, sideAmount);
-  const quoteDisplay = usd.value === null ? "$—" : formatUsd(usd.value);
-
-  // Flash the to-side USD on updates too, matching the amount flash.
-  // From-side USD changes on every keystroke, which would strobe the row
-  // while typing — keep the from-side silent and let the input itself
-  // be the user's feedback for "yes, that landed".
-  const usdFlash = useFlashOnChange(side === "to" ? usd.value : null);
 
   const onAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value;
@@ -184,26 +182,26 @@ export function TokenRow({
             />
           ) : (
             <span
-              className={`min-w-0 flex-1 truncate text-right font-mono text-3xl ${
+              className={`flex min-w-0 flex-1 justify-end truncate text-right font-mono text-3xl ${
                 toIsLive ? "text-foreground" : "text-muted-fg"
               }`}
             >
-              {/* Inner span sizes to the text so the flash background
-                  hugs the number rather than spanning the whole flex slot. */}
-              <span
-                className={`rounded px-1 transition-colors duration-300 ${flashBg(toAmountFlash)}`}
-              >
-                {toDisplay}
-              </span>
+              {toAmountNumber !== null ? (
+                <NumberFlow value={toAmountNumber} format={toAmountFormat} />
+              ) : (
+                toPlaceholder
+              )}
             </span>
           )}
         </div>
         <div className="mt-2 flex items-center justify-between gap-2 font-mono text-muted-fg text-sm tabular-nums">
           <WalletBalance stablecoin={stablecoin} />
-          <span
-            className={`ml-auto rounded px-1 transition-colors duration-300 ${flashBg(usdFlash)}`}
-          >
-            {quoteDisplay}
+          <span className="ml-auto">
+            {usd.value !== null ? (
+              <NumberFlow value={usd.value} format={usdFormat} />
+            ) : (
+              "$—"
+            )}
           </span>
         </div>
       </div>
