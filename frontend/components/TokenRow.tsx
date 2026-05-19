@@ -73,18 +73,9 @@ export function TokenRow({ side, label }: { side: Side; label: string }) {
   const toNum = safeFrom / 2;
   const toDisplay = formatAmount(toNum.toFixed(decimals));
 
-  const fromUsd = useUsdQuote(
-    side === "from" ? stablecoin : "",
-    side === "from" ? amount : "",
-  );
-  let quoteDisplay: string;
-  if (side === "from") {
-    quoteDisplay = fromUsd.value === null ? "$—" : formatUsd(fromUsd.value);
-  } else {
-    // To-side $ printout still mirrors the to-amount — placeholder until the
-    // real from→to quote is wired up.
-    quoteDisplay = formatUsd(toNum);
-  }
+  const sideAmount = side === "from" ? amount : toNum.toString();
+  const usd = useUsdQuote(stablecoin, sideAmount);
+  const quoteDisplay = usd.value === null ? "$—" : formatUsd(usd.value);
 
   const onAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value;
