@@ -225,3 +225,26 @@ export const useTokenInfo = (mint: string): TokenInfo | null => {
   }, [mint]);
   return cache.get(mint)?.info ?? null;
 };
+
+// Bulk lookup variant for renders that need info for many mints in the same
+// pass (sorting a list, lighting up a grid, etc.). Subscribes once at the
+// component level via `useSyncExternalStore`, then returns a synchronous
+// reader function that any number of mints can be queried against.
+export const useInfoLookup = (): ((mint: string) => TokenInfo | null) => {
+  useSyncExternalStore(subscribe, getVersion, getVersion);
+  return (mint: string) => cache.get(mint)?.info ?? null;
+};
+
+// Sort a list of stablecoins by 24 h USD volume descending. Tokens with no
+// reported volume sink to the bottom and retain their input order — JS sort
+// is stable in ES2019+, so the JSON ordering is preserved as the implicit
+// fallback for both null-volume tokens and exact ties.
+export const sortByVolumeDesc = <T extends { mint: string }>(
+  list: T[],
+  lookup: (mint: string) => TokenInfo | null,
+): T[] =>
+  list.slice().sort((a, b) => {
+    const va = lookup(a.mint)?.volume24h ?? -1;
+    const vb = lookup(b.mint)?.volume24h ?? -1;
+    return vb - va;
+  });

@@ -12,6 +12,7 @@ import {
 } from "@/lib/currencies";
 import { useAppEvent } from "@/lib/events";
 import { type Side, useSwapStore } from "@/lib/store";
+import { sortByVolumeDesc, useInfoLookup } from "@/lib/useUsdQuote";
 import { CurrencyGroupHeader } from "./CurrencyGroupHeader";
 import { ChevronDown, Search, X } from "./icons";
 import { StableTokenIdentity } from "./StableTokenIdentity";
@@ -55,9 +56,13 @@ export function TokenPicker({ side }: { side: Side }) {
     code.toLowerCase().includes(q) ||
     currencyName(code).toLowerCase().includes(q);
 
+  const lookup = useInfoLookup();
   const grouped = SUPPORTED.map((code) => ({
     code,
-    stables: CURRENCIES[code].stablecoins.filter((s) => matches(s, code)),
+    stables: sortByVolumeDesc(
+      CURRENCIES[code].stablecoins.filter((s) => matches(s, code)),
+      lookup,
+    ),
   })).filter((g) => g.stables.length > 0);
 
   let runningIdx = 0;

@@ -41,19 +41,6 @@
         }
       },
       {
-        "symbol": "PYUSD",
-        "name": "PayPal USD",
-        "mint": "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo",
-        "mintSourceUrl": "https://docs.paxos.com/guides/stablecoin/pyusd/mainnet",
-        "decimals": 6,
-        "icon": "https://424565.fs1.hubspotusercontent-na1.net/hubfs/424565/PYUSDLOGO.png",
-        "issuer": {
-          "name": ["PayPal", "Paxos Trust Company"],
-          "url": "https://www.paxos.com/pyusd",
-          "socials": { "x": "PayPal" }
-        }
-      },
-      {
         "symbol": "USD1",
         "name": "World Liberty Financial USD",
         "mint": "USD1ttGY1N17NEEHLmELoaybftRBUSErhqYiQzvEmuB",
@@ -64,6 +51,19 @@
           "name": ["World Liberty Financial", "BitGo"],
           "url": "https://worldlibertyfinancial.com/usd1",
           "socials": { "x": "worldlibertyfi" }
+        }
+      },
+      {
+        "symbol": "PYUSD",
+        "name": "PayPal USD",
+        "mint": "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo",
+        "mintSourceUrl": "https://docs.paxos.com/guides/stablecoin/pyusd/mainnet",
+        "decimals": 6,
+        "icon": "https://424565.fs1.hubspotusercontent-na1.net/hubfs/424565/PYUSDLOGO.png",
+        "issuer": {
+          "name": ["PayPal", "Paxos Trust Company"],
+          "url": "https://www.paxos.com/pyusd",
+          "socials": { "x": "PayPal" }
         }
       }
     ]

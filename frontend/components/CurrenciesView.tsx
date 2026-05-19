@@ -22,6 +22,8 @@ import { type Side, useSwapStore } from "@/lib/store";
 import {
   prefetchAllTokenInfo,
   REFRESH_INTERVAL_MS,
+  sortByVolumeDesc,
+  useInfoLookup,
   useTokenInfo,
 } from "@/lib/useUsdQuote";
 
@@ -69,41 +71,30 @@ const formatPercent = (n: number | null | undefined): string => {
 const shortenMint = (mint: string): string =>
   mint.length <= 11 ? mint : `${mint.slice(0, 4)}…${mint.slice(-4)}`;
 
-type FlashDirection = "up" | "down" | "neutral" | null;
-
-// Track value changes across renders and surface a short-lived direction tag
-// so cells can flash green/red/muted when the Jupiter refresh delivers a new
-// number. The first populated value is recorded silently — we only flash
-// genuine post-load updates, not the initial cache-warming transition.
-const useFlashOnChange = (value: number | null | undefined): FlashDirection => {
+// Track value changes across renders and briefly mark the cell as "just
+// updated" so the user can see what the Jupiter refresh touched. Direction
+// is intentionally not encoded — the 24h Δ column already conveys up/down
+// semantically, and a neutral flash on the data cells avoids stacking green
+// and red signals on top of each other. The first populated value is
+// recorded silently; we only flash genuine post-load updates.
+const useFlashOnChange = (value: number | null | undefined): boolean => {
   const prev = useRef<number | null | undefined>(value);
-  const [flash, setFlash] = useState<FlashDirection>(null);
+  const [flashing, setFlashing] = useState(false);
   useEffect(() => {
     if (Object.is(value, prev.current)) return;
     if (prev.current == null) {
       prev.current = value;
       return;
     }
-    let direction: FlashDirection = "neutral";
-    if (typeof value === "number" && typeof prev.current === "number") {
-      const diff = value - prev.current;
-      if (diff > 0) direction = "up";
-      else if (diff < 0) direction = "down";
-    }
     prev.current = value;
-    setFlash(direction);
-    const t = window.setTimeout(() => setFlash(null), 1000);
+    setFlashing(true);
+    const t = window.setTimeout(() => setFlashing(false), 1000);
     return () => window.clearTimeout(t);
   }, [value]);
-  return flash;
+  return flashing;
 };
 
-const flashBg = (f: FlashDirection): string => {
-  if (f === "up") return "bg-accent-buy/15";
-  if (f === "down") return "bg-accent-sell/15";
-  if (f === "neutral") return "bg-muted-fg/15";
-  return "";
-};
+const flashBg = (on: boolean): string => (on ? "bg-muted-fg/15" : "");
 
 // Cache of dominant color (RGB triplet) computed from a flag SVG rasterized to
 // a canvas. Module-level so it persists across re-renders / search filters.
@@ -501,7 +492,8 @@ function CurrenciesInner() {
   };
 
   const q = query.trim().toLowerCase();
-  const grouped = useMemo(
+  const lookup = useInfoLookup();
+  const filtered = useMemo(
     () =>
       SUPPORTED.map((code) => ({
         code,
@@ -511,6 +503,14 @@ function CurrenciesInner() {
       })).filter((g) => g.stables.length > 0),
     [q],
   );
+  // Re-sort outside the useMemo: `lookup` reads from the shared cache, which
+  // mutates every 10 s on the refresh interval. Keeping sort out of the memo
+  // means each cache notify re-renders with freshly ranked stables without
+  // having to thread version counters through deps.
+  const grouped = filtered.map(({ code, stables }) => ({
+    code,
+    stables: sortByVolumeDesc(stables, lookup),
+  }));
 
   const pickToken = usePickToken();
   useAppEvent("pickCurrencyOnlyResult", (side) => {
