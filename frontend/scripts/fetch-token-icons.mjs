@@ -1,6 +1,6 @@
 // Mirror stablecoin icons into public/token-icons at build time, so the
 // browser hits our origin once instead of ~13 third-party CDNs per page load.
-// Writes lib/icon-manifest.gen.json (mint → /token-icons/<file>) which
+// Writes lib/icon-manifest.gen.json (symbol → /token-icons/<file>) which
 // currencies.ts overlays onto the canonical remote URLs in currencies.json.
 // Manifest is always written (even if empty / all fetches failed) so the
 // static TS import in currencies.ts never breaks.
@@ -36,10 +36,10 @@ const results = await Promise.allSettled(
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const ct = res.headers.get("content-type")?.split(";")[0]?.trim() ?? "";
     const ext = EXT_BY_CT[ct] ?? ct.split("/")[1] ?? "bin";
-    const filename = `${s.mint}.${ext}`;
+    const filename = `${s.symbol}.${ext}`;
     const buf = Buffer.from(await res.arrayBuffer());
     writeFileSync(resolve(dst, filename), buf);
-    return { mint: s.mint, filename };
+    return { symbol: s.symbol, filename };
   }),
 );
 
@@ -47,7 +47,7 @@ for (let i = 0; i < results.length; i++) {
   const r = results[i];
   const s = tokens[i];
   if (r.status === "fulfilled") {
-    manifest[r.value.mint] = `/token-icons/${r.value.filename}`;
+    manifest[r.value.symbol] = `/token-icons/${r.value.filename}`;
   } else {
     failures.push(`${s.symbol} (${s.mint}): ${r.reason.message}`);
   }
