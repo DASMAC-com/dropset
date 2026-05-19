@@ -122,22 +122,43 @@ const groupScore = <T extends { mint: string }>(
 // updated" so the user can see what the Jupiter refresh touched. Direction
 // is intentionally not encoded — the 24h Δ column already conveys up/down
 // semantically, and a neutral flash on the data cells avoids stacking green
-// and red signals on top of each other. The first populated value is
-// recorded silently; we only flash genuine post-load updates.
+// and red signals on top of each other.
+//
+// The dismiss timer lives in a ref instead of being scheduled in the effect's
+// cleanup closure: if the effect re-runs (e.g. an unrelated parent re-render
+// shows the row a transient `null` value, or React Strict Mode double-invokes
+// in dev), the closure-based version had its cleanup clear the timer while
+// the next effect run fell into the "first populated value" branch and never
+// scheduled a replacement — leaving the cell permanently highlighted. The
+// ref-backed timer survives re-runs and is only cleared on unmount.
 const useFlashOnChange = (value: number | null | undefined): boolean => {
   const prev = useRef<number | null | undefined>(value);
+  const initialized = useRef(value != null);
+  const timer = useRef<number | null>(null);
   const [flashing, setFlashing] = useState(false);
+
   useEffect(() => {
     if (Object.is(value, prev.current)) return;
-    if (prev.current == null) {
-      prev.current = value;
+    prev.current = value;
+    if (!initialized.current) {
+      if (value != null) initialized.current = true;
       return;
     }
-    prev.current = value;
+    if (timer.current !== null) window.clearTimeout(timer.current);
     setFlashing(true);
-    const t = window.setTimeout(() => setFlashing(false), 1000);
-    return () => window.clearTimeout(t);
+    timer.current = window.setTimeout(() => {
+      setFlashing(false);
+      timer.current = null;
+    }, 1000);
   }, [value]);
+
+  useEffect(
+    () => () => {
+      if (timer.current !== null) window.clearTimeout(timer.current);
+    },
+    [],
+  );
+
   return flashing;
 };
 
