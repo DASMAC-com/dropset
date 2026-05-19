@@ -124,18 +124,20 @@ const groupScore = <T extends { mint: string }>(
 // semantically, and a neutral flash on the data cells avoids stacking green
 // and red signals on top of each other.
 //
-// The dismiss timer lives in a ref instead of being scheduled in the effect's
-// cleanup closure: if the effect re-runs (e.g. an unrelated parent re-render
-// shows the row a transient `null` value, or React Strict Mode double-invokes
-// in dev), the closure-based version had its cleanup clear the timer while
-// the next effect run fell into the "first populated value" branch and never
-// scheduled a replacement — leaving the cell permanently highlighted. The
-// ref-backed timer survives re-runs and is only cleared on unmount.
+// The visual state is derived from a `flashUntil` timestamp instead of a
+// boolean useState, so any re-render (including the row reorder triggered by
+// sorting a column) recomputes `flashing` from the wall clock. Earlier
+// boolean-state versions could get wedged on `true`: if `setFlashing(false)`
+// happened to be queued in the same React tick as a `setSort` that reordered
+// the row, the boolean update could be missed and the cell stayed
+// highlighted. The timer here just exists to force one extra re-render at
+// the dismiss boundary; the truth is always `Date.now() < flashUntil`.
 const useFlashOnChange = (value: number | null | undefined): boolean => {
   const prev = useRef<number | null | undefined>(value);
   const initialized = useRef(value != null);
+  const flashUntil = useRef(0);
   const timer = useRef<number | null>(null);
-  const [flashing, setFlashing] = useState(false);
+  const [, force] = useState(0);
 
   useEffect(() => {
     if (Object.is(value, prev.current)) return;
@@ -144,12 +146,13 @@ const useFlashOnChange = (value: number | null | undefined): boolean => {
       if (value != null) initialized.current = true;
       return;
     }
+    flashUntil.current = Date.now() + 1000;
     if (timer.current !== null) window.clearTimeout(timer.current);
-    setFlashing(true);
     timer.current = window.setTimeout(() => {
-      setFlashing(false);
       timer.current = null;
+      force((x) => x + 1);
     }, 1000);
+    force((x) => x + 1);
   }, [value]);
 
   useEffect(
@@ -159,7 +162,7 @@ const useFlashOnChange = (value: number | null | undefined): boolean => {
     [],
   );
 
-  return flashing;
+  return Date.now() < flashUntil.current;
 };
 
 const flashBg = (on: boolean): string => (on ? "bg-muted-fg/15" : "");
