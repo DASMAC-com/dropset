@@ -5,7 +5,16 @@ import * as Popover from "@radix-ui/react-popover";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { CopyButton } from "@/components/CopyButton";
-import { ExternalLink, HelpCircle, Info, Search, X } from "@/components/icons";
+import {
+  ArrowUpDown,
+  ChevronDown,
+  ChevronUp,
+  ExternalLink,
+  HelpCircle,
+  Info,
+  Search,
+  X,
+} from "@/components/icons";
 import {
   ALL_STABLECOIN_MINTS,
   CURRENCIES,
@@ -19,7 +28,14 @@ import {
 import { useAppEvent } from "@/lib/events";
 import { explorerAddressUrl } from "@/lib/explorer";
 import { type Side, useSwapStore } from "@/lib/store";
-import { prefetchAllTokenInfo, useTokenInfo } from "@/lib/useUsdQuote";
+import {
+  prefetchAllTokenInfo,
+  REFRESH_INTERVAL_MS,
+  sortByVolumeDesc,
+  type TokenInfo,
+  useInfoLookup,
+  useTokenInfo,
+} from "@/lib/useUsdQuote";
 
 const COLSPAN = 9;
 
@@ -64,6 +80,92 @@ const formatPercent = (n: number | null | undefined): string => {
 // the CopyButton next to it still copies the full address.
 const shortenMint = (mint: string): string =>
   mint.length <= 11 ? mint : `${mint.slice(0, 4)}…${mint.slice(-4)}`;
+
+type SortKey = "volume24h" | "mcap" | "liquidity" | "holderCount";
+type SortDir = "asc" | "desc";
+type SortState = { key: SortKey; direction: SortDir } | null;
+
+// Sort a stablecoin list by a numeric `TokenInfo` field. Tokens with no
+// reported value sink to the bottom and retain their input order (Array.sort
+// is stable in ES2019+), so the upstream JSON order is the implicit fallback
+// for ties and nulls.
+const sortStablesByMetric = <T extends { mint: string }>(
+  list: T[],
+  key: SortKey,
+  direction: SortDir,
+  lookup: (mint: string) => TokenInfo | null,
+): T[] =>
+  list.slice().sort((a, b) => {
+    const va = lookup(a.mint)?.[key] ?? -1;
+    const vb = lookup(b.mint)?.[key] ?? -1;
+    return direction === "desc" ? vb - va : va - vb;
+  });
+
+// A currency group's rank is taken from its highest-ranked stablecoin on the
+// active metric — so USD floats to the top when sorting by volume because
+// USDC dominates, even if some EUR stable would individually outrank a long
+// PYUSD-style tail. Groups with no data on this metric stay at the bottom.
+const groupScore = <T extends { mint: string }>(
+  stables: T[],
+  key: SortKey,
+  lookup: (mint: string) => TokenInfo | null,
+): number => {
+  let max = Number.NEGATIVE_INFINITY;
+  for (const s of stables) {
+    const v = lookup(s.mint)?.[key];
+    if (typeof v === "number" && v > max) max = v;
+  }
+  return Number.isFinite(max) ? max : -1;
+};
+
+// Track value changes across renders and briefly mark the cell as "just
+// updated" so the user can see what the Jupiter refresh touched. Direction
+// is intentionally not encoded — the 24h Δ column already conveys up/down
+// semantically, and a neutral flash on the data cells avoids stacking green
+// and red signals on top of each other.
+//
+// The visual state is derived from a `flashUntil` timestamp instead of a
+// boolean useState, so any re-render (including the row reorder triggered by
+// sorting a column) recomputes `flashing` from the wall clock. Earlier
+// boolean-state versions could get wedged on `true`: if `setFlashing(false)`
+// happened to be queued in the same React tick as a `setSort` that reordered
+// the row, the boolean update could be missed and the cell stayed
+// highlighted. The timer here just exists to force one extra re-render at
+// the dismiss boundary; the truth is always `Date.now() < flashUntil`.
+const useFlashOnChange = (value: number | null | undefined): boolean => {
+  const prev = useRef<number | null | undefined>(value);
+  const initialized = useRef(value != null);
+  const flashUntil = useRef(0);
+  const timer = useRef<number | null>(null);
+  const [, force] = useState(0);
+
+  useEffect(() => {
+    if (Object.is(value, prev.current)) return;
+    prev.current = value;
+    if (!initialized.current) {
+      if (value != null) initialized.current = true;
+      return;
+    }
+    flashUntil.current = Date.now() + 1000;
+    if (timer.current !== null) window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => {
+      timer.current = null;
+      force((x) => x + 1);
+    }, 1000);
+    force((x) => x + 1);
+  }, [value]);
+
+  useEffect(
+    () => () => {
+      if (timer.current !== null) window.clearTimeout(timer.current);
+    },
+    [],
+  );
+
+  return Date.now() < flashUntil.current;
+};
+
+const flashBg = (on: boolean): string => (on ? "bg-muted-fg/15" : "");
 
 // Cache of dominant color (RGB triplet) computed from a flag SVG rasterized to
 // a canvas. Module-level so it persists across re-renders / search filters.
@@ -153,6 +255,37 @@ const matches = (s: Stablecoin, code: IsoCurrencyCode, q: string): boolean => {
     s.issuer.name.some((n) => n.toLowerCase().includes(q))
   );
 };
+
+function SortableHeader({
+  sortKey,
+  label,
+  sort,
+  onToggle,
+}: {
+  sortKey: SortKey;
+  label: string;
+  sort: SortState;
+  onToggle: (key: SortKey) => void;
+}) {
+  const active = sort?.key === sortKey;
+  const Icon = !active
+    ? ArrowUpDown
+    : sort.direction === "desc"
+      ? ChevronDown
+      : ChevronUp;
+  return (
+    <th className="sticky top-14 z-20 border-border border-r bg-muted p-0 last:border-r-0">
+      <button
+        type="button"
+        onClick={() => onToggle(sortKey)}
+        className={`flex w-full cursor-pointer select-none items-center justify-end gap-1 px-3 py-2 text-right font-medium outline-none transition-colors focus:outline-none focus-visible:outline-none ${active ? "text-foreground" : "text-muted-fg hover:text-foreground"}`}
+      >
+        {label}
+        <Icon size={12} />
+      </button>
+    </th>
+  );
+}
 
 function CurrencyHeaderRow({ code }: { code: IsoCurrencyCode }) {
   const url = currencyFlagUrl(code);
@@ -278,6 +411,12 @@ function StablecoinRow({
         : change < 0
           ? "text-accent-sell"
           : "text-muted-fg";
+  const priceFlash = useFlashOnChange(info?.usdPrice);
+  const changeFlash = useFlashOnChange(change);
+  const volumeFlash = useFlashOnChange(info?.volume24h);
+  const mcapFlash = useFlashOnChange(info?.mcap);
+  const liquidityFlash = useFlashOnChange(info?.liquidity);
+  const holdersFlash = useFlashOnChange(info?.holderCount);
   return (
     <tr
       id={s.symbol.toLowerCase()}
@@ -315,16 +454,22 @@ function StablecoinRow({
                 )}
                 {s.issuer.socials?.x && (
                   <div className="flex items-center gap-1">
+                    <span className="font-mono text-foreground">
+                      @{s.issuer.socials.x}
+                    </span>
+                    <CopyButton
+                      value={`@${s.issuer.socials.x}`}
+                      label="X handle"
+                    />
                     <a
                       href={xHref(s.issuer.socials.x)}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-foreground hover:text-accent"
+                      title={`Open @${s.issuer.socials.x} on X`}
+                      className="inline-flex shrink-0 items-center rounded p-1 text-muted-fg hover:bg-muted hover:text-accent"
                     >
-                      @{s.issuer.socials.x}
-                      <ExternalLink size={10} />
+                      <ExternalLink size={12} />
                     </a>
-                    <CopyButton value={s.issuer.socials.x} label="X handle" />
                   </div>
                 )}
                 <div className="flex flex-col gap-0.5 border-border border-t pt-1.5">
@@ -355,26 +500,6 @@ function StablecoinRow({
       </td>
       <td className="border-border border-r px-3 py-2 align-top last:border-r-0">
         <SwapPickerCell code={code} symbol={s.symbol} />
-      </td>
-      <td className="border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums last:border-r-0">
-        {formatPrice(info?.usdPrice)}
-      </td>
-      <td
-        className={`border-border border-r px-3 py-2 text-right align-top font-mono tabular-nums last:border-r-0 ${changeTone}`}
-      >
-        {formatPercent(change)}
-      </td>
-      <td className="border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums last:border-r-0">
-        {formatCompactUsd(info?.volume24h)}
-      </td>
-      <td className="border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums last:border-r-0">
-        {formatCompactUsd(info?.mcap)}
-      </td>
-      <td className="border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums last:border-r-0">
-        {formatCompactUsd(info?.liquidity)}
-      </td>
-      <td className="border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums last:border-r-0">
-        {formatCompactCount(info?.holderCount)}
       </td>
       <td className="border-border border-r px-3 py-2 align-top last:border-r-0">
         <div className="flex items-center gap-1">
@@ -407,6 +532,36 @@ function StablecoinRow({
           )}
         </div>
       </td>
+      <td
+        className={`border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums transition-colors duration-300 last:border-r-0 ${flashBg(priceFlash)}`}
+      >
+        {formatPrice(info?.usdPrice)}
+      </td>
+      <td
+        className={`border-border border-r px-3 py-2 text-right align-top font-mono tabular-nums transition-colors duration-300 last:border-r-0 ${changeTone} ${flashBg(changeFlash)}`}
+      >
+        {formatPercent(change)}
+      </td>
+      <td
+        className={`border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums transition-colors duration-300 last:border-r-0 ${flashBg(volumeFlash)}`}
+      >
+        {formatCompactUsd(info?.volume24h)}
+      </td>
+      <td
+        className={`border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums transition-colors duration-300 last:border-r-0 ${flashBg(mcapFlash)}`}
+      >
+        {formatCompactUsd(info?.mcap)}
+      </td>
+      <td
+        className={`border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums transition-colors duration-300 last:border-r-0 ${flashBg(liquidityFlash)}`}
+      >
+        {formatCompactUsd(info?.liquidity)}
+      </td>
+      <td
+        className={`border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums transition-colors duration-300 last:border-r-0 ${flashBg(holdersFlash)}`}
+      >
+        {formatCompactCount(info?.holderCount)}
+      </td>
     </tr>
   );
 }
@@ -422,11 +577,17 @@ function CurrenciesInner() {
     inputRef.current?.select();
   });
 
-  // Warm the Jupiter token-info cache on first mount so price, 24h Δ, 24h
-  // volume, market cap, liquidity, and holder columns can render from a single
-  // batched browser-direct call. Cache TTL dedupes with the swap page.
+  // Warm the Jupiter token-info cache on mount, then refresh every 10 s so
+  // price / 24h Δ / volume / mcap / liquidity / holders stay live while the
+  // page is open. Cache writes call notify(), which re-renders every row via
+  // `useSyncExternalStore`; `useFlashOnChange` flashes cells whose values
+  // actually changed.
   useEffect(() => {
     prefetchAllTokenInfo(ALL_STABLECOIN_MINTS);
+    const id = window.setInterval(() => {
+      prefetchAllTokenInfo(ALL_STABLECOIN_MINTS);
+    }, REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(id);
   }, []);
 
   const commitQueryToUrl = (value: string) => {
@@ -439,7 +600,18 @@ function CurrenciesInner() {
   };
 
   const q = query.trim().toLowerCase();
-  const grouped = useMemo(
+  const lookup = useInfoLookup();
+  const [sort, setSort] = useState<SortState>(null);
+  const [groupByCurrency, setGroupByCurrency] = useState(true);
+  useAppEvent("toggleGroupByCurrency", () => setGroupByCurrency((g) => !g));
+  useAppEvent("currenciesSort", (key) => toggleSort(key));
+  const toggleSort = (key: SortKey) =>
+    setSort((prev) => {
+      if (!prev || prev.key !== key) return { key, direction: "desc" };
+      if (prev.direction === "desc") return { key, direction: "asc" };
+      return null;
+    });
+  const filtered = useMemo(
     () =>
       SUPPORTED.map((code) => ({
         code,
@@ -449,6 +621,50 @@ function CurrenciesInner() {
       })).filter((g) => g.stables.length > 0),
     [q],
   );
+  // Re-sort outside the useMemo: `lookup` reads from the shared cache, which
+  // mutates every 10 s on the refresh interval. Keeping sort out of the memo
+  // means each cache notify re-renders with freshly ranked stables without
+  // having to thread version counters through deps. When no column is
+  // actively sorted, fall back to volume-desc within group + JSON order
+  // across groups (the default ranking that's been in place since ENG-359).
+  const grouped =
+    sort === null
+      ? filtered.map(({ code, stables }) => ({
+          code,
+          stables: sortByVolumeDesc(stables, lookup),
+        }))
+      : filtered
+          .map(({ code, stables }) => ({
+            code,
+            stables: sortStablesByMetric(
+              stables,
+              sort.key,
+              sort.direction,
+              lookup,
+            ),
+            score: groupScore(stables, sort.key, lookup),
+          }))
+          .sort((a, b) =>
+            sort.direction === "desc" ? b.score - a.score : a.score - b.score,
+          );
+
+  // Flat (un-grouped) view: pool every filtered stable across currencies and
+  // sort by the active column. Default to 24 h volume desc when no header is
+  // selected, mirroring the user-visible "Group by currency" off behavior.
+  const flatKey: SortKey = sort?.key ?? "volume24h";
+  const flatDirection: SortDir = sort?.direction ?? "desc";
+  // What the column headers should *show* as active. In flat mode with no
+  // explicit sort, surface the implicit "24h Vol desc" so the chevron makes
+  // it obvious which column is driving the order.
+  const headerSort: SortState =
+    sort ?? (!groupByCurrency ? { key: "volume24h", direction: "desc" } : null);
+  const flatStables = filtered
+    .flatMap(({ code, stables }) => stables.map((s) => ({ code, s })))
+    .sort((a, b) => {
+      const va = lookup(a.s.mint)?.[flatKey] ?? -1;
+      const vb = lookup(b.s.mint)?.[flatKey] ?? -1;
+      return flatDirection === "desc" ? vb - va : va - vb;
+    });
 
   const pickToken = usePickToken();
   useAppEvent("pickCurrencyOnlyResult", (side) => {
@@ -463,50 +679,61 @@ function CurrenciesInner() {
   return (
     <div className="mx-auto max-w-6xl px-6 pt-3 pb-16">
       <div className="mb-3 flex items-center justify-between gap-3">
-        <div className="flex h-9 w-56 items-center gap-2 rounded-md border border-border bg-muted px-3">
-          <Search size={14} className="shrink-0 text-muted-fg" />
-          <input
-            ref={inputRef}
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onFocus={() => setFocused(true)}
-            onBlur={() => {
-              setFocused(false);
-              commitQueryToUrl(query);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") {
-                e.preventDefault();
-                inputRef.current?.blur();
-              } else if (e.key === "Enter") {
-                e.preventDefault();
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-56 items-center gap-2 rounded-md border border-border bg-muted px-3">
+            <Search size={14} className="shrink-0 text-muted-fg" />
+            <input
+              ref={inputRef}
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onFocus={() => setFocused(true)}
+              onBlur={() => {
+                setFocused(false);
                 commitQueryToUrl(query);
-                inputRef.current?.blur();
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  inputRef.current?.blur();
+                } else if (e.key === "Enter") {
+                  e.preventDefault();
+                  commitQueryToUrl(query);
+                  inputRef.current?.blur();
+                }
+              }}
+              placeholder="Search currencies…"
+              className="min-w-0 flex-1 bg-transparent text-foreground text-sm outline-none placeholder:text-muted-fg"
+            />
+            <kbd
+              aria-hidden
+              title={
+                focused ? "Press Esc to exit search" : "Press / to focus search"
               }
-            }}
-            placeholder="Search currencies…"
-            className="min-w-0 flex-1 bg-transparent text-foreground text-sm outline-none placeholder:text-muted-fg"
-          />
-          <kbd
-            aria-hidden
-            title={
-              focused ? "Press Esc to exit search" : "Press / to focus search"
-            }
-            className="hidden shrink-0 rounded border border-border bg-background px-1.5 py-0.5 font-mono text-[10px] text-muted-fg sm:inline-block"
-          >
-            {focused ? "Esc" : "/"}
-          </kbd>
-          {query && (
-            <button
-              type="button"
-              onClick={() => setQuery("")}
-              aria-label="Clear search"
-              className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-fg hover:bg-background hover:text-foreground"
+              className="hidden shrink-0 rounded border border-border bg-background px-1.5 py-0.5 font-mono text-[10px] text-muted-fg sm:inline-block"
             >
-              <X size={14} />
-            </button>
-          )}
+              {focused ? "Esc" : "/"}
+            </kbd>
+            {query && (
+              <button
+                type="button"
+                onClick={() => setQuery("")}
+                aria-label="Clear search"
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-fg hover:bg-background hover:text-foreground"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+          <label className="flex select-none items-center gap-2 text-muted-fg text-xs hover:text-foreground">
+            <input
+              type="checkbox"
+              checked={groupByCurrency}
+              onChange={(e) => setGroupByCurrency(e.target.checked)}
+              className="h-3.5 w-3.5 cursor-pointer accent-accent"
+            />
+            Group by currency
+          </label>
         </div>
         <div className="flex flex-col text-right text-muted-fg text-xs">
           <p>
@@ -530,27 +757,39 @@ function CurrenciesInner() {
               <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
                 Swap
               </th>
+              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
+                Mint Address
+              </th>
               <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0">
                 Price
               </th>
               <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0">
                 24h Δ
               </th>
-              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0">
-                24h Vol
-              </th>
-              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0">
-                Market Cap
-              </th>
-              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0">
-                Liquidity
-              </th>
-              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0">
-                Holders
-              </th>
-              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
-                Mint Address
-              </th>
+              <SortableHeader
+                sortKey="volume24h"
+                label="24h Vol"
+                sort={headerSort}
+                onToggle={toggleSort}
+              />
+              <SortableHeader
+                sortKey="mcap"
+                label="Market Cap"
+                sort={headerSort}
+                onToggle={toggleSort}
+              />
+              <SortableHeader
+                sortKey="liquidity"
+                label="Liquidity"
+                sort={headerSort}
+                onToggle={toggleSort}
+              />
+              <SortableHeader
+                sortKey="holderCount"
+                label="Holders"
+                sort={headerSort}
+                onToggle={toggleSort}
+              />
             </tr>
           </thead>
           <tbody>
@@ -563,7 +802,7 @@ function CurrenciesInner() {
                   No tokens match
                 </td>
               </tr>
-            ) : (
+            ) : groupByCurrency ? (
               grouped.flatMap(({ code, stables }) => [
                 <CurrencyHeaderRow key={`h-${code}`} code={code} />,
                 ...stables.map((s, i) => (
@@ -576,6 +815,16 @@ function CurrenciesInner() {
                   />
                 )),
               ])
+            ) : (
+              flatStables.map(({ code, s }, i) => (
+                <StablecoinRow
+                  key={s.symbol}
+                  code={code}
+                  s={s}
+                  rowIndex={i}
+                  groupSize={flatStables.length}
+                />
+              ))
             )}
           </tbody>
         </table>

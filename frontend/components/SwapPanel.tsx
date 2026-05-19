@@ -5,7 +5,7 @@ import { useEffect } from "react";
 import { ALL_STABLECOIN_MINTS } from "@/lib/currencies";
 import { emit } from "@/lib/events";
 import { useSameToken } from "@/lib/store";
-import { prefetchAllTokenInfo } from "@/lib/useUsdQuote";
+import { prefetchAllTokenInfo, REFRESH_INTERVAL_MS } from "@/lib/useUsdQuote";
 import { SwapArrowButton } from "./SwapArrowButton";
 import { TokenRow } from "./TokenRow";
 
@@ -14,9 +14,14 @@ export function SwapPanel() {
   const { connected, status } = useWalletConnection();
 
   // One batched Jupiter call on mount warms every stablecoin's USD price so
-  // switching tokens doesn't flash "$—" while a per-mint fetch resolves.
+  // switching tokens doesn't flash "$—" while a per-mint fetch resolves, then
+  // a 10 s interval keeps prices fresh while the page is open.
   useEffect(() => {
     prefetchAllTokenInfo(ALL_STABLECOIN_MINTS);
+    const id = window.setInterval(() => {
+      prefetchAllTokenInfo(ALL_STABLECOIN_MINTS);
+    }, REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(id);
   }, []);
 
   const isConnecting = status === "connecting";

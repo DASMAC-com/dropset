@@ -10,7 +10,11 @@ import { stablecoinMint } from "./currencies";
 // single batched call for up to 100 mints, which we use to power both the
 // swap UI's USD readouts and the /currencies market-data columns.
 const JUP_SEARCH_URL = "https://lite-api.jup.ag/tokens/v2/search";
-const CACHE_TTL_MS = 30_000;
+// 10 s refresh cadence. Page mounts and the polling interval both call
+// `prefetchAllTokenInfo`; the TTL gates redundant calls but is short enough
+// that the interval's request is never skipped.
+const CACHE_TTL_MS = 5_000;
+export const REFRESH_INTERVAL_MS = 10_000;
 
 // Trimmed projection of Jupiter's /tokens/v2/search row. We keep only the
 // fields the UI renders so the cache footprint stays small (~80 bytes/mint
@@ -221,3 +225,26 @@ export const useTokenInfo = (mint: string): TokenInfo | null => {
   }, [mint]);
   return cache.get(mint)?.info ?? null;
 };
+
+// Bulk lookup variant for renders that need info for many mints in the same
+// pass (sorting a list, lighting up a grid, etc.). Subscribes once at the
+// component level via `useSyncExternalStore`, then returns a synchronous
+// reader function that any number of mints can be queried against.
+export const useInfoLookup = (): ((mint: string) => TokenInfo | null) => {
+  useSyncExternalStore(subscribe, getVersion, getVersion);
+  return (mint: string) => cache.get(mint)?.info ?? null;
+};
+
+// Sort a list of stablecoins by 24 h USD volume descending. Tokens with no
+// reported volume sink to the bottom and retain their input order — JS sort
+// is stable in ES2019+, so the JSON ordering is preserved as the implicit
+// fallback for both null-volume tokens and exact ties.
+export const sortByVolumeDesc = <T extends { mint: string }>(
+  list: T[],
+  lookup: (mint: string) => TokenInfo | null,
+): T[] =>
+  list.slice().sort((a, b) => {
+    const va = lookup(a.mint)?.volume24h ?? -1;
+    const vb = lookup(b.mint)?.volume24h ?? -1;
+    return vb - va;
+  });
