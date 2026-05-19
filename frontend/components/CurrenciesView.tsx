@@ -21,7 +21,7 @@ import { explorerAddressUrl } from "@/lib/explorer";
 import { type Side, useSwapStore } from "@/lib/store";
 import { prefetchAllTokenInfo, useTokenInfo } from "@/lib/useUsdQuote";
 
-const COLSPAN = 11;
+const COLSPAN = 9;
 
 const compactUsdFormatter = new Intl.NumberFormat("en-US", {
   notation: "compact",
@@ -296,26 +296,52 @@ function StablecoinRow({
           />
           <span className="font-mono text-foreground">{s.symbol}</span>
           <CopyButton value={s.symbol} label="token symbol" />
-          {s.name !== s.symbol && (
-            <Popover.Root>
-              <Popover.Trigger
-                type="button"
-                aria-label={`Show full name for ${s.symbol}`}
-                className="inline-flex shrink-0 items-center rounded p-0.5 text-muted-fg hover:text-foreground"
+          <Popover.Root>
+            <Popover.Trigger
+              type="button"
+              aria-label={`Show details for ${s.symbol}`}
+              className="inline-flex shrink-0 items-center rounded p-0.5 text-muted-fg hover:text-foreground"
+            >
+              <Info size={12} />
+            </Popover.Trigger>
+            <Popover.Portal>
+              <Popover.Content
+                side="top"
+                sideOffset={4}
+                className="z-50 flex flex-col gap-1.5 rounded-md border border-border bg-background px-3 py-2 text-xs shadow-lg"
               >
-                <Info size={12} />
-              </Popover.Trigger>
-              <Popover.Portal>
-                <Popover.Content
-                  side="top"
-                  sideOffset={4}
-                  className="z-50 rounded-md border border-border bg-background px-2.5 py-1.5 text-foreground text-xs shadow-lg"
-                >
-                  {s.name}
-                </Popover.Content>
-              </Popover.Portal>
-            </Popover.Root>
-          )}
+                {s.name !== s.symbol && (
+                  <div className="font-medium text-foreground">{s.name}</div>
+                )}
+                {s.issuer.socials?.x && (
+                  <div className="flex items-center gap-1">
+                    <a
+                      href={xHref(s.issuer.socials.x)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-foreground hover:text-accent"
+                    >
+                      @{s.issuer.socials.x}
+                      <ExternalLink size={10} />
+                    </a>
+                    <CopyButton value={s.issuer.socials.x} label="X handle" />
+                  </div>
+                )}
+                <div className="flex flex-col gap-0.5 border-border border-t pt-1.5">
+                  <div className="text-[10px] text-muted-fg uppercase tracking-wide">
+                    {s.issuer.name.length === 1 ? "Issuer:" : "Issuers:"}
+                  </div>
+                  <ul className="list-disc pl-4 marker:text-muted-fg">
+                    {s.issuer.name.map((n) => (
+                      <li key={n} className="text-foreground">
+                        {n}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </Popover.Content>
+            </Popover.Portal>
+          </Popover.Root>
           <a
             href={s.issuer.url}
             target="_blank"
@@ -379,36 +405,6 @@ function StablecoinRow({
               <HelpCircle size={12} />
             </a>
           )}
-        </div>
-      </td>
-      <td className="border-border border-r px-3 py-2 align-top last:border-r-0">
-        {s.issuer.socials?.x ? (
-          <div className="flex items-start gap-1">
-            <a
-              href={xHref(s.issuer.socials.x)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-foreground hover:text-accent"
-            >
-              @{s.issuer.socials.x}
-              <ExternalLink size={10} />
-            </a>
-            <CopyButton value={s.issuer.socials.x} label="X handle" />
-          </div>
-        ) : (
-          ""
-        )}
-      </td>
-      <td className="border-border border-r px-3 py-2 align-top last:border-r-0">
-        <div className="flex flex-col">
-          {s.issuer.name.map((n, i) => (
-            <span
-              key={n}
-              className={i === 0 ? "text-foreground" : "text-muted-fg"}
-            >
-              {n}
-            </span>
-          ))}
         </div>
       </td>
     </tr>
@@ -554,12 +550,6 @@ function CurrenciesInner() {
               </th>
               <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
                 Mint Address
-              </th>
-              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
-                X handle
-              </th>
-              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
-                Issuer(s)
               </th>
             </tr>
           </thead>
