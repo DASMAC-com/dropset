@@ -14,6 +14,8 @@
   --accent-hover: #93bbfd;
   --accent-buy: #10b981;
   --accent-buy-hover: #34d399;
+  --accent-sell: #ef4444;
+  --accent-sell-hover: #f87171;
 }
 
 @theme inline {
@@ -26,6 +28,8 @@
   --color-accent-hover: var(--accent-hover);
   --color-accent-buy: var(--accent-buy);
   --color-accent-buy-hover: var(--accent-buy-hover);
+  --color-accent-sell: var(--accent-sell);
+  --color-accent-sell-hover: var(--accent-sell-hover);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
