@@ -250,11 +250,11 @@ function SortableHeader({
       ? ChevronDown
       : ChevronUp;
   return (
-    <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0">
+    <th className="sticky top-14 z-20 border-border border-r bg-muted p-0 last:border-r-0">
       <button
         type="button"
         onClick={() => onToggle(sortKey)}
-        className={`ml-auto inline-flex items-center gap-1 ${active ? "text-foreground" : "hover:text-foreground"}`}
+        className={`flex w-full cursor-pointer select-none items-center justify-end gap-1 px-3 py-2 text-right font-medium transition-colors ${active ? "text-foreground" : "text-muted-fg hover:text-foreground"}`}
       >
         {label}
         <Icon size={12} />

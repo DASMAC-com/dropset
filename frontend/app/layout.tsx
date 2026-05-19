@@ -67,8 +67,8 @@ export const metadata: Metadata = {
   applicationName: "Dropset",
   appleWebApp: { title: "Dropset" },
   icons: {
-    icon: "/favicon-dark-background.png",
-    apple: "/favicon-dark-background.png",
+    icon: "/favicon.png",
+    apple: "/favicon.png",
   },
   openGraph: {
     type: "website",
