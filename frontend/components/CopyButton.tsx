@@ -42,7 +42,7 @@ export function CopyButton({
           side="top"
           sideOffset={4}
           onOpenAutoFocus={(e) => e.preventDefault()}
-          className="z-[60] rounded-md border border-border bg-background px-2 py-1 text-foreground text-xs shadow-lg"
+          className="z-[100] rounded-md border border-border bg-background px-2 py-1 text-foreground text-xs shadow-lg"
         >
           Copied:{" "}
           <span className="break-all font-mono text-foreground">{value}</span>
