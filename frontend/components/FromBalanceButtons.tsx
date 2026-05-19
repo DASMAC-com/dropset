@@ -3,7 +3,7 @@
 import * as Popover from "@radix-ui/react-popover";
 import { useSplToken, useWalletConnection } from "@solana/react-hooks";
 import { useRef, useState } from "react";
-import { formatBaseAmount } from "@/lib/balance";
+import { formatBaseAmount, parseAmountToBase } from "@/lib/balance";
 import { stablecoinDecimals, stablecoinMint } from "@/lib/currencies";
 import { emit, useAppEvent } from "@/lib/events";
 import { useSwapStore } from "@/lib/store";
@@ -28,23 +28,6 @@ const portionForPercent = (base: bigint, percent: number): bigint => {
   if (percent >= 100) return base;
   const scaled = BigInt(Math.round(percent * 100));
   return (base * scaled) / 10000n;
-};
-
-// Parse a normalized decimal string (no thousand separators — store form) back
-// to base units for the given decimals so we can compare amount to balance.
-const parseAmountToBase = (amountStr: string, decimals: number): bigint => {
-  if (!amountStr) return 0n;
-  const [intRaw, fracRaw] = amountStr.split(".");
-  const intPart = intRaw || "0";
-  const fracPart = fracRaw || "";
-  const padded = (fracPart + "0".repeat(decimals)).slice(0, decimals);
-  try {
-    return (
-      BigInt(intPart) * 10n ** BigInt(decimals) + BigInt(padded || "0")
-    );
-  } catch {
-    return 0n;
-  }
 };
 
 // bps is 0..10000 (basis points × 100; i.e. percent with 2 decimal places).

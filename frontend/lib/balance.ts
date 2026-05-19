@@ -17,3 +17,21 @@ export const groupThousands = (s: string): string => {
   const rest = dot === -1 ? "" : s.slice(dot);
   return intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",") + rest;
 };
+
+// Parse a normalized decimal string (no thousand separators — store form) back
+// to base units for the given `decimals`. Returns 0n for empty/invalid input.
+export const parseAmountToBase = (
+  amountStr: string,
+  decimals: number,
+): bigint => {
+  if (!amountStr) return 0n;
+  const [intRaw, fracRaw] = amountStr.split(".");
+  const intPart = intRaw || "0";
+  const fracPart = fracRaw || "";
+  const padded = (fracPart + "0".repeat(decimals)).slice(0, decimals);
+  try {
+    return BigInt(intPart) * 10n ** BigInt(decimals) + BigInt(padded || "0");
+  } catch {
+    return 0n;
+  }
+};

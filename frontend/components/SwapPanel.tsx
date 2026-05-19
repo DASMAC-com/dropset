@@ -1,7 +1,8 @@
 "use client";
 
-import { useWalletConnection } from "@solana/react-hooks";
+import { useSplToken, useWalletConnection } from "@solana/react-hooks";
 import { useEffect } from "react";
+import { parseAmountToBase } from "@/lib/balance";
 import {
   ALL_STABLECOIN_MINTS,
   stablecoinDecimals,
@@ -45,6 +46,19 @@ export function SwapPanel() {
   const isConnecting = status === "connecting";
   const hasAmount = Number(amount) > 0;
   const needsAmount = !sameToken && connected && !isConnecting && !hasAmount;
+  const fromBalance = useSplToken(fromMint);
+  const fromBalanceBase = fromBalance.balance?.exists
+    ? fromBalance.balance.amount
+    : 0n;
+  const amountBase = parseAmountToBase(amount, fromDecimals);
+  const insufficient =
+    !sameToken &&
+    connected &&
+    !isConnecting &&
+    hasAmount &&
+    fromBalance.status === "ready" &&
+    amountBase > fromBalanceBase;
+  const dimmed = needsAmount || insufficient;
   const disabled = sameToken || isConnecting;
 
   let label: string;
@@ -57,6 +71,9 @@ export function SwapPanel() {
     onClick = () => emit("openWalletModal");
   } else if (needsAmount) {
     label = "Enter an amount";
+    onClick = () => emit("focusFromAmount");
+  } else if (insufficient) {
+    label = `Insufficient ${fromStablecoin}`;
     onClick = () => emit("focusFromAmount");
   } else {
     label = "Swap";
@@ -79,7 +96,7 @@ export function SwapPanel() {
           disabled={disabled}
           title={sameToken ? "Pick a different token on one side" : undefined}
           className={`mt-[14px] w-full rounded-lg bg-accent-buy px-4 py-3.5 font-medium text-background text-lg transition-colors hover:bg-accent-buy-hover disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-fg disabled:hover:bg-muted ${
-            needsAmount ? "opacity-60 hover:opacity-80" : ""
+            dimmed ? "opacity-60 hover:opacity-80" : ""
           }`}
         >
           {label}
