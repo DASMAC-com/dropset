@@ -8,10 +8,13 @@ import {
 } from "@/lib/currencies";
 import { useAppEvent } from "@/lib/events";
 import { type Side, useSwapStore } from "@/lib/store";
+import { type DflowQuote, formatAtomic } from "@/lib/useDflowQuote";
+import { flashBg, useFlashOnChange } from "@/lib/useFlashOnChange";
 import { useUsdQuote } from "@/lib/useUsdQuote";
 import { FromBalanceButtons } from "./FromBalanceButtons";
 import { MaxSlippageButton } from "./MaxSlippageButton";
 import { TokenPicker } from "./TokenPicker";
+import { WalletBalance } from "./WalletBalance";
 
 const formatUsd = (n: number): string =>
   `$${n.toLocaleString("en-US", {
@@ -39,7 +42,17 @@ const formatAmount = (raw: string): string => {
   return grouped + rest;
 };
 
-export function TokenRow({ side, label }: { side: Side; label: string }) {
+export function TokenRow({
+  side,
+  label,
+  quote,
+}: {
+  side: Side;
+  label: string;
+  // DFlow quote driving the to-side display. Always passed by SwapPanel
+  // (which owns the single hook call); the from-side ignores it.
+  quote?: DflowQuote;
+}) {
   const activeSide = useSwapStore((s) => s.activeSide);
   const currency = useSwapStore((s) => s[side].currency);
   const stablecoin = useSwapStore((s) => s[side].stablecoin);
@@ -66,16 +79,48 @@ export function TokenRow({ side, label }: { side: Side; label: string }) {
   const decimals = stablecoinDecimals(stablecoin);
   const formattedAmount = formatAmount(amount);
 
-  // Prototype to-side stub: to amount = from / 2. Replace with real
-  // aggregator output later.
-  const fromNum = Number.parseFloat(amount);
-  const safeFrom = Number.isFinite(fromNum) ? fromNum : 0;
-  const toNum = safeFrom / 2;
-  const toDisplay = formatAmount(toNum.toFixed(decimals));
+  // To-side display reflects DFlow's quote when we have one. While a fetch
+  // is in flight after a prior resolve we keep the last good number on
+  // screen (dimmed) so the UI doesn't blink. "—" / "0" cover the cases
+  // where a quote isn't available or wasn't requested.
+  let toDisplay = "0";
+  let toIsLive = false;
+  if (side === "to" && quote) {
+    if (quote.outAmount !== null) {
+      toDisplay = formatAmount(formatAtomic(quote.outAmount, decimals));
+      toIsLive = quote.status === "ok";
+    } else if (quote.status === "loading") {
+      toDisplay = "…";
+    } else if (quote.status === "error" || quote.status === "rateLimited") {
+      toDisplay = "—";
+    }
+  }
 
-  const sideAmount = side === "from" ? amount : toNum.toString();
+  // Flash the to-side number whenever the quote resolves to a new value
+  // (debounced fetch after typing, 2 s refresh, token switch, etc.).
+  // Same pattern as the /currencies table. We key on the bigint outAmount
+  // directly so initial nulls don't trigger a flash, and an unchanged
+  // refresh (price didn't move) stays silent.
+  const toAmountFlash = useFlashOnChange(
+    side === "to" ? (quote?.outAmount ?? null) : null,
+  );
+
+  // For USD on the to-side, route the quote's outAmount through Jupiter's
+  // price feed so the dollar readout tracks the real expected output, not
+  // the typed input. Falls back to "0" when there's no quote yet.
+  const toAmountDecimal =
+    side === "to" && quote?.outAmount !== null && quote?.outAmount !== undefined
+      ? formatAtomic(quote.outAmount, decimals)
+      : "0";
+  const sideAmount = side === "from" ? amount : toAmountDecimal;
   const usd = useUsdQuote(stablecoin, sideAmount);
   const quoteDisplay = usd.value === null ? "$—" : formatUsd(usd.value);
+
+  // Flash the to-side USD on updates too, matching the amount flash.
+  // From-side USD changes on every keystroke, which would strobe the row
+  // while typing — keep the from-side silent and let the input itself
+  // be the user's feedback for "yes, that landed".
+  const usdFlash = useFlashOnChange(side === "to" ? usd.value : null);
 
   const onAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value;
@@ -98,7 +143,7 @@ export function TokenRow({ side, label }: { side: Side; label: string }) {
   return (
     <div
       onPointerDown={() => setActiveSide(side)}
-      className={`flex w-full flex-col gap-1.5 rounded-lg border bg-muted px-3 pt-1.5 pb-3 text-left transition-colors ${
+      className={`flex w-full flex-col gap-1.5 rounded-lg border bg-muted p-3 text-left transition-colors ${
         active ? activeBorder : "border-border"
       }`}
     >
@@ -140,15 +185,26 @@ export function TokenRow({ side, label }: { side: Side; label: string }) {
           ) : (
             <span
               className={`min-w-0 flex-1 truncate text-right font-mono text-3xl ${
-                toNum > 0 ? "text-foreground" : "text-muted-fg"
+                toIsLive ? "text-foreground" : "text-muted-fg"
               }`}
             >
-              {toDisplay}
+              {/* Inner span sizes to the text so the flash background
+                  hugs the number rather than spanning the whole flex slot. */}
+              <span
+                className={`rounded px-1 transition-colors duration-300 ${flashBg(toAmountFlash)}`}
+              >
+                {toDisplay}
+              </span>
             </span>
           )}
         </div>
-        <div className="text-right font-mono text-muted-fg text-sm tabular-nums">
-          {quoteDisplay}
+        <div className="mt-2 flex items-center justify-between gap-2 font-mono text-muted-fg text-sm tabular-nums">
+          <WalletBalance stablecoin={stablecoin} />
+          <span
+            className={`ml-auto rounded px-1 transition-colors duration-300 ${flashBg(usdFlash)}`}
+          >
+            {quoteDisplay}
+          </span>
         </div>
       </div>
     </div>

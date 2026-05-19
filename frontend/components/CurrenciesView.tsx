@@ -28,6 +28,7 @@ import {
 import { useAppEvent } from "@/lib/events";
 import { explorerAddressUrl } from "@/lib/explorer";
 import { type Side, useSwapStore } from "@/lib/store";
+import { flashBg, useFlashOnChange } from "@/lib/useFlashOnChange";
 import {
   prefetchAllTokenInfo,
   REFRESH_INTERVAL_MS,
@@ -117,55 +118,6 @@ const groupScore = <T extends { mint: string }>(
   }
   return Number.isFinite(max) ? max : -1;
 };
-
-// Track value changes across renders and briefly mark the cell as "just
-// updated" so the user can see what the Jupiter refresh touched. Direction
-// is intentionally not encoded — the 24h Δ column already conveys up/down
-// semantically, and a neutral flash on the data cells avoids stacking green
-// and red signals on top of each other.
-//
-// The visual state is derived from a `flashUntil` timestamp instead of a
-// boolean useState, so any re-render (including the row reorder triggered by
-// sorting a column) recomputes `flashing` from the wall clock. Earlier
-// boolean-state versions could get wedged on `true`: if `setFlashing(false)`
-// happened to be queued in the same React tick as a `setSort` that reordered
-// the row, the boolean update could be missed and the cell stayed
-// highlighted. The timer here just exists to force one extra re-render at
-// the dismiss boundary; the truth is always `Date.now() < flashUntil`.
-const useFlashOnChange = (value: number | null | undefined): boolean => {
-  const prev = useRef<number | null | undefined>(value);
-  const initialized = useRef(value != null);
-  const flashUntil = useRef(0);
-  const timer = useRef<number | null>(null);
-  const [, force] = useState(0);
-
-  useEffect(() => {
-    if (Object.is(value, prev.current)) return;
-    prev.current = value;
-    if (!initialized.current) {
-      if (value != null) initialized.current = true;
-      return;
-    }
-    flashUntil.current = Date.now() + 1000;
-    if (timer.current !== null) window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => {
-      timer.current = null;
-      force((x) => x + 1);
-    }, 1000);
-    force((x) => x + 1);
-  }, [value]);
-
-  useEffect(
-    () => () => {
-      if (timer.current !== null) window.clearTimeout(timer.current);
-    },
-    [],
-  );
-
-  return Date.now() < flashUntil.current;
-};
-
-const flashBg = (on: boolean): string => (on ? "bg-muted-fg/15" : "");
 
 // Cache of dominant color (RGB triplet) computed from a flag SVG rasterized to
 // a canvas. Module-level so it persists across re-renders / search filters.

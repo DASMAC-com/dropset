@@ -53,6 +53,16 @@ export const SHORTCUTS_BY_CONTEXT: Record<ShortcutContext, ShortcutSpec[]> = {
       run: () => emit("focusFromAmount"),
     },
     {
+      key: "m",
+      description: "Use your full From balance (Max)",
+      run: () => emit("applyMaxBalance"),
+    },
+    {
+      key: "%",
+      description: "Open the From balance % picker",
+      run: () => emit("openBalancePercent"),
+    },
+    {
       key: "t",
       description: "Open the To picker",
       run: () => emit("openPicker", "to"),

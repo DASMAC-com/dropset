@@ -12,6 +12,7 @@ clippy
 clob
 cngn
 dasmac
+dflow
 discordapp
 dropset
 dtolnay

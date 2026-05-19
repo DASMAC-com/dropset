@@ -21,6 +21,7 @@ import {
   Plus as RawPlus,
   Search as RawSearch,
   Settings2 as RawSettings2,
+  Wallet as RawWallet,
   X as RawX,
 } from "lucide-react";
 
@@ -55,4 +56,5 @@ export const Play = safe(RawPlay);
 export const Plus = safe(RawPlus);
 export const Search = safe(RawSearch);
 export const Settings2 = safe(RawSettings2);
+export const Wallet = safe(RawWallet);
 export const X = safe(RawX);

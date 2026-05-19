@@ -13,6 +13,8 @@ export type PanDirection = "up" | "down" | "left" | "right";
 export type AppEvents = {
   openPicker: Side;
   focusFromAmount: undefined;
+  applyMaxBalance: undefined;
+  openBalancePercent: undefined;
   resetGlobe: undefined;
   focusRoute: undefined;
   swapSides: undefined;
