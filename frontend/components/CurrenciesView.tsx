@@ -352,16 +352,22 @@ function StablecoinRow({
                 )}
                 {s.issuer.socials?.x && (
                   <div className="flex items-center gap-1">
+                    <span className="font-mono text-foreground">
+                      @{s.issuer.socials.x}
+                    </span>
+                    <CopyButton
+                      value={`@${s.issuer.socials.x}`}
+                      label="X handle"
+                    />
                     <a
                       href={xHref(s.issuer.socials.x)}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-foreground hover:text-accent"
+                      title={`Open @${s.issuer.socials.x} on X`}
+                      className="inline-flex shrink-0 items-center rounded p-1 text-muted-fg hover:bg-muted hover:text-accent"
                     >
-                      @{s.issuer.socials.x}
-                      <ExternalLink size={10} />
+                      <ExternalLink size={12} />
                     </a>
-                    <CopyButton value={s.issuer.socials.x} label="X handle" />
                   </div>
                 )}
                 <div className="flex flex-col gap-0.5 border-border border-t pt-1.5">
