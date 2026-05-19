@@ -6,6 +6,7 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { CopyButton } from "@/components/CopyButton";
 import { ExternalLink, HelpCircle, Search, X } from "@/components/icons";
 import {
+  ALL_STABLECOIN_MINTS,
   CURRENCIES,
   currencyFlagUrl,
   currencyName,
@@ -17,8 +18,51 @@ import {
 import { useAppEvent } from "@/lib/events";
 import { explorerAddressUrl } from "@/lib/explorer";
 import { type Side, useSwapStore } from "@/lib/store";
+import { prefetchAllTokenInfo, useTokenInfo } from "@/lib/useUsdQuote";
 
-const COLSPAN = 6;
+const COLSPAN = 12;
+
+const compactUsdFormatter = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  style: "currency",
+  currency: "USD",
+  maximumFractionDigits: 2,
+});
+const compactNumberFormatter = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
+const formatCompactUsd = (n: number | null | undefined): string =>
+  typeof n === "number" && Number.isFinite(n)
+    ? compactUsdFormatter.format(n)
+    : "—";
+
+const formatCompactCount = (n: number | null | undefined): string =>
+  typeof n === "number" && Number.isFinite(n)
+    ? compactNumberFormatter.format(n)
+    : "—";
+
+const formatPrice = (n: number | null | undefined): string => {
+  if (typeof n !== "number" || !Number.isFinite(n)) return "—";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: Math.abs(n) >= 1 ? 4 : 6,
+  }).format(n);
+};
+
+const formatPercent = (n: number | null | undefined): string => {
+  if (typeof n !== "number" || !Number.isFinite(n)) return "—";
+  const sign = n > 0 ? "+" : "";
+  return `${sign}${n.toFixed(2)}%`;
+};
+
+// Collapse a base58 mint to "abcd…efgh" so the column reads at a glance;
+// the CopyButton next to it still copies the full address.
+const shortenMint = (mint: string): string =>
+  mint.length <= 11 ? mint : `${mint.slice(0, 4)}…${mint.slice(-4)}`;
 
 // Cache of dominant color (RGB triplet) computed from a flag SVG rasterized to
 // a canvas. Module-level so it persists across re-renders / search filters.
@@ -223,6 +267,16 @@ function StablecoinRow({
 }) {
   const striped = groupSize >= 2 && rowIndex % 2 === 1;
   const isLastInGroup = rowIndex === groupSize - 1;
+  const info = useTokenInfo(s.mint);
+  const change = info?.priceChange24h;
+  const changeTone =
+    typeof change !== "number"
+      ? "text-muted-fg"
+      : change > 0
+        ? "text-accent-buy"
+        : change < 0
+          ? "text-accent-sell"
+          : "text-muted-fg";
   return (
     <tr
       id={s.symbol.toLowerCase()}
@@ -243,6 +297,26 @@ function StablecoinRow({
           <CopyButton value={s.symbol} label="token symbol" />
         </div>
       </td>
+      <td className="border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums last:border-r-0">
+        {formatPrice(info?.usdPrice)}
+      </td>
+      <td
+        className={`border-border border-r px-3 py-2 text-right align-top font-mono tabular-nums last:border-r-0 ${changeTone}`}
+      >
+        {formatPercent(change)}
+      </td>
+      <td className="border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums last:border-r-0">
+        {formatCompactUsd(info?.volume24h)}
+      </td>
+      <td className="border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums last:border-r-0">
+        {formatCompactUsd(info?.mcap)}
+      </td>
+      <td className="border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums last:border-r-0">
+        {formatCompactUsd(info?.liquidity)}
+      </td>
+      <td className="border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums last:border-r-0">
+        {formatCompactCount(info?.holderCount)}
+      </td>
       <td className="border-border border-r px-3 py-2 align-top last:border-r-0">
         <SwapPickerCell code={code} symbol={s.symbol} />
       </td>
@@ -258,9 +332,12 @@ function StablecoinRow({
         </a>
       </td>
       <td className="border-border border-r px-3 py-2 align-top last:border-r-0">
-        <div className="flex items-start gap-1">
-          <span className="whitespace-nowrap font-mono text-foreground text-xs">
-            {s.mint}
+        <div className="flex items-center gap-1">
+          <span
+            className="whitespace-nowrap font-mono text-foreground text-xs"
+            title={s.mint}
+          >
+            {shortenMint(s.mint)}
           </span>
           <CopyButton value={s.mint} label="mint address" />
           <a
@@ -329,6 +406,13 @@ function CurrenciesInner() {
     inputRef.current?.focus();
     inputRef.current?.select();
   });
+
+  // Warm the Jupiter token-info cache on first mount so price, 24h Δ, 24h
+  // volume, market cap, liquidity, and holder columns can render from a single
+  // batched browser-direct call. Cache TTL dedupes with the swap page.
+  useEffect(() => {
+    prefetchAllTokenInfo(ALL_STABLECOIN_MINTS);
+  }, []);
 
   const commitQueryToUrl = (value: string) => {
     const params = new URLSearchParams(window.location.search);
@@ -427,6 +511,24 @@ function CurrenciesInner() {
             <tr>
               <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
                 Token
+              </th>
+              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0">
+                Price
+              </th>
+              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0">
+                24h
+              </th>
+              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0">
+                24h Vol
+              </th>
+              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0">
+                Market Cap
+              </th>
+              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0">
+                Liquidity
+              </th>
+              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0">
+                Holders
               </th>
               <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
                 Swap

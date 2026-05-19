@@ -3,19 +3,69 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { stablecoinMint } from "./currencies";
 
-// Jupiter's keyless Price API endpoint. Hit directly from the browser so each
-// user's IP gets its own rate-limit bucket (1 RPS keyless) instead of every
-// session funneling through our server's single IP. CORS is enabled here, and
-// no API key is required.
-const JUP_PRICE_URL = "https://lite-api.jup.ag/price/v3";
+// Jupiter's keyless Tokens API endpoint. Hit directly from the browser so
+// each user's IP gets its own rate-limit bucket (1 RPS keyless) instead of
+// every session funneling through our server's single IP. CORS is enabled,
+// no API key required. /tokens/v2/search returns price + market data in a
+// single batched call for up to 100 mints, which we use to power both the
+// swap UI's USD readouts and the /currencies market-data columns.
+const JUP_SEARCH_URL = "https://lite-api.jup.ag/tokens/v2/search";
 const CACHE_TTL_MS = 30_000;
 
-type CacheEntry = { price: number | null; fetchedAt: number };
+// Trimmed projection of Jupiter's /tokens/v2/search row. We keep only the
+// fields the UI renders so the cache footprint stays small (~80 bytes/mint
+// vs ~3 KB for the raw payload).
+export type TokenInfo = {
+  usdPrice: number;
+  priceChange24h: number | null;
+  volume24h: number | null;
+  mcap: number | null;
+  liquidity: number | null;
+  holderCount: number | null;
+};
+
+type RawJupRow = {
+  id: string;
+  usdPrice?: number;
+  priceChange24h?: number;
+  mcap?: number;
+  liquidity?: number;
+  holderCount?: number;
+  stats24h?: {
+    priceChange?: number;
+    buyVolume?: number;
+    sellVolume?: number;
+  };
+};
+
+const project = (raw: RawJupRow): TokenInfo | null => {
+  if (typeof raw.usdPrice !== "number") return null;
+  const change =
+    typeof raw.priceChange24h === "number"
+      ? raw.priceChange24h
+      : typeof raw.stats24h?.priceChange === "number"
+        ? raw.stats24h.priceChange
+        : null;
+  const buy = raw.stats24h?.buyVolume;
+  const sell = raw.stats24h?.sellVolume;
+  const volume24h =
+    typeof buy === "number" && typeof sell === "number" ? buy + sell : null;
+  return {
+    usdPrice: raw.usdPrice,
+    priceChange24h: change,
+    volume24h,
+    mcap: typeof raw.mcap === "number" ? raw.mcap : null,
+    liquidity: typeof raw.liquidity === "number" ? raw.liquidity : null,
+    holderCount: typeof raw.holderCount === "number" ? raw.holderCount : null,
+  };
+};
+
+type CacheEntry = { info: TokenInfo | null; fetchedAt: number };
 const cache = new Map<string, CacheEntry>();
-const inflight = new Map<string, Promise<number | null>>();
+const inflight = new Map<string, Promise<TokenInfo | null>>();
 
 // Bump on every cache mutation so React consumers wired through
-// `useSyncExternalStore` re-render when prices resolve.
+// `useSyncExternalStore` re-render when info resolves.
 let cacheVersion = 0;
 const listeners = new Set<() => void>();
 const notify = () => {
@@ -30,19 +80,19 @@ const subscribe = (l: () => void) => {
 };
 const getVersion = () => cacheVersion;
 
-const fetchPrice = (mint: string): Promise<number | null> => {
+const fetchInfo = (mint: string): Promise<TokenInfo | null> => {
   const existing = inflight.get(mint);
   if (existing) return existing;
   const p = (async () => {
     try {
-      const res = await fetch(`${JUP_PRICE_URL}?ids=${mint}`);
+      const res = await fetch(`${JUP_SEARCH_URL}?query=${mint}`);
       if (!res.ok) return null;
-      const data = (await res.json()) as Record<string, { usdPrice?: number }>;
-      const usd = data[mint]?.usdPrice;
-      const price = typeof usd === "number" ? usd : null;
-      cache.set(mint, { price, fetchedAt: Date.now() });
+      const rows = (await res.json()) as RawJupRow[];
+      const row = rows.find((r) => r.id === mint);
+      const info = row ? project(row) : null;
+      cache.set(mint, { info, fetchedAt: Date.now() });
       notify();
-      return price;
+      return info;
     } catch {
       return null;
     } finally {
@@ -53,11 +103,12 @@ const fetchPrice = (mint: string): Promise<number | null> => {
   return p;
 };
 
-// Warm the cache for a list of mints in a single batched call so the swap UI
-// has prices ready before the user opens the picker. Skips mints that are
-// already fresh or already in flight, and dedupes parallel `useUsdQuote` calls
-// onto the same network request via the inflight map.
-export const prefetchAllPrices = (mints: string[]): Promise<void> => {
+// Warm the cache for a list of mints in a single batched call so the UI has
+// prices + market data ready before the user opens the picker or browses
+// /currencies. Skips mints that are already fresh or already in flight, and
+// dedupes parallel per-mint fetches onto the same network request via the
+// inflight map.
+export const prefetchAllTokenInfo = (mints: string[]): Promise<void> => {
   const now = Date.now();
   const need = mints.filter((m) => {
     const hit = cache.get(m);
@@ -67,24 +118,26 @@ export const prefetchAllPrices = (mints: string[]): Promise<void> => {
   if (need.length === 0) return Promise.resolve();
   const batch = (async () => {
     try {
-      const res = await fetch(`${JUP_PRICE_URL}?ids=${need.join(",")}`);
+      const res = await fetch(`${JUP_SEARCH_URL}?query=${need.join(",")}`);
       if (!res.ok) return;
-      const data = (await res.json()) as Record<string, { usdPrice?: number }>;
+      const rows = (await res.json()) as RawJupRow[];
+      const byId = new Map<string, RawJupRow>();
+      for (const r of rows) byId.set(r.id, r);
       const at = Date.now();
       for (const mint of need) {
-        const usd = data[mint]?.usdPrice;
+        const row = byId.get(mint);
         cache.set(mint, {
-          price: typeof usd === "number" ? usd : null,
+          info: row ? project(row) : null,
           fetchedAt: at,
         });
       }
       notify();
     } catch {
-      // Leave cache as-is; on-demand `fetchPrice` will retry per-mint.
+      // Leave cache as-is; on-demand `fetchInfo` will retry per-mint.
     }
   })();
   for (const mint of need) {
-    const p = batch.then(() => cache.get(mint)?.price ?? null);
+    const p = batch.then(() => cache.get(mint)?.info ?? null);
     inflight.set(mint, p);
     p.finally(() => {
       if (inflight.get(mint) === p) inflight.delete(mint);
@@ -99,7 +152,8 @@ export function useUsdQuote(stablecoin: string, amount: string): UsdQuote {
   const mint = stablecoinMint(stablecoin);
   const [price, setPrice] = useState<number | null>(() => {
     const hit = cache.get(mint);
-    return hit && Date.now() - hit.fetchedAt < CACHE_TTL_MS ? hit.price : null;
+    if (!hit || Date.now() - hit.fetchedAt >= CACHE_TTL_MS) return null;
+    return hit.info?.usdPrice ?? null;
   });
   const [loading, setLoading] = useState(false);
 
@@ -111,7 +165,7 @@ export function useUsdQuote(stablecoin: string, amount: string): UsdQuote {
     }
     const hit = cache.get(mint);
     if (hit && Date.now() - hit.fetchedAt < CACHE_TTL_MS) {
-      setPrice(hit.price);
+      setPrice(hit.info?.usdPrice ?? null);
       setLoading(false);
       return;
     }
@@ -120,9 +174,9 @@ export function useUsdQuote(stablecoin: string, amount: string): UsdQuote {
     setPrice(null);
     setLoading(true);
     let cancelled = false;
-    fetchPrice(mint).then((p) => {
+    fetchInfo(mint).then((info) => {
       if (cancelled) return;
-      setPrice(p);
+      setPrice(info?.usdPrice ?? null);
       setLoading(false);
     });
     return () => {
@@ -139,9 +193,9 @@ export function useUsdQuote(stablecoin: string, amount: string): UsdQuote {
 
 export type Liquidity = "unknown" | "illiquid" | "liquid";
 
-// Returns a lookup function for the current price cache. Subscribes once at
-// the component level via `useSyncExternalStore`, so the consumer re-renders
-// when prices resolve. The returned function classifies each mint as:
+// Returns a lookup function for the current cache. Subscribes once at the
+// component level via `useSyncExternalStore`, so the consumer re-renders when
+// info resolves. Classifies each mint as:
 //   - "unknown"  → no cache entry yet (prefetch hasn't completed)
 //   - "illiquid" → Jupiter responded but had no usable price for this mint
 //   - "liquid"   → Jupiter returned a numeric price
@@ -150,6 +204,20 @@ export const useLiquidityLookup = (): ((mint: string) => Liquidity) => {
   return (mint: string) => {
     const hit = cache.get(mint);
     if (!hit) return "unknown";
-    return hit.price === null ? "illiquid" : "liquid";
+    return hit.info === null ? "illiquid" : "liquid";
   };
+};
+
+// Single-mint accessor for pages that want the full market record. Returns
+// `null` until the prefetch (or an on-demand fetch) resolves; thereafter,
+// either the projected `TokenInfo` or `null` if Jupiter has no data.
+export const useTokenInfo = (mint: string): TokenInfo | null => {
+  useSyncExternalStore(subscribe, getVersion, getVersion);
+  useEffect(() => {
+    if (!mint) return;
+    const hit = cache.get(mint);
+    if (hit && Date.now() - hit.fetchedAt < CACHE_TTL_MS) return;
+    fetchInfo(mint);
+  }, [mint]);
+  return cache.get(mint)?.info ?? null;
 };
