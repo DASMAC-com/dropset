@@ -3,10 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 
 // Track value changes across renders and briefly mark a cell as "just
-// updated" so the user can see what a refresh touched. Direction is
-// intentionally not encoded — neutral flashes compose with whatever tone
-// the surrounding cell already uses (up/down columns, status colors,
-// etc.) instead of stacking signals.
+// updated" so the user can see what a refresh touched. Layered alongside
+// <NumberFlow> to give two cues: digit-roll animation + a brief
+// background flash. Direction is intentionally not encoded — neutral
+// flashes compose with whatever tone the surrounding cell already uses
+// (up/down columns, status colors, etc.) instead of stacking signals.
 //
 // The visual state is derived from a `flashUntil` timestamp instead of a
 // boolean useState, so any re-render (including a parent reorder)

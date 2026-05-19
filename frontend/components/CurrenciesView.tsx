@@ -1,6 +1,7 @@
 // cspell:word colspanned
 "use client";
 
+import NumberFlow, { type Format } from "@number-flow/react";
 import * as Popover from "@radix-ui/react-popover";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
@@ -40,42 +41,40 @@ import {
 
 const COLSPAN = 9;
 
-const compactUsdFormatter = new Intl.NumberFormat("en-US", {
+// <NumberFlow> format objects, hoisted to module scope so the same
+// reference is reused across every row render. NumberFlow compares format
+// by identity to decide whether to reset its animation, so passing a
+// fresh object each render would kill the rolling-digit effect.
+//
+// Price uses max 6 decimals so sub-$1 stablecoin drift (e.g. $0.9987)
+// stays legible while $1.00 still renders as "$1.00" (min 2). Trailing
+// zeros above the minimum are trimmed by Intl.
+const priceFormat: Format = {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 6,
+};
+const changeFormat: Format = {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+  // "+1.20" for gains, "-1.20" for losses, "0.00" for flat. Matches the
+  // legacy formatPercent which prepended an explicit "+" sign.
+  signDisplay: "exceptZero",
+};
+const compactUsdFormat: Format = {
   notation: "compact",
   style: "currency",
   currency: "USD",
   maximumFractionDigits: 2,
-});
-const compactNumberFormatter = new Intl.NumberFormat("en-US", {
+};
+const compactCountFormat: Format = {
   notation: "compact",
   maximumFractionDigits: 1,
-});
-
-const formatCompactUsd = (n: number | null | undefined): string =>
-  typeof n === "number" && Number.isFinite(n)
-    ? compactUsdFormatter.format(n)
-    : "—";
-
-const formatCompactCount = (n: number | null | undefined): string =>
-  typeof n === "number" && Number.isFinite(n)
-    ? compactNumberFormatter.format(n)
-    : "—";
-
-const formatPrice = (n: number | null | undefined): string => {
-  if (typeof n !== "number" || !Number.isFinite(n)) return "—";
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: Math.abs(n) >= 1 ? 4 : 6,
-  }).format(n);
 };
 
-const formatPercent = (n: number | null | undefined): string => {
-  if (typeof n !== "number" || !Number.isFinite(n)) return "—";
-  const sign = n > 0 ? "+" : "";
-  return `${sign}${n.toFixed(2)}%`;
-};
+const isFiniteNumber = (n: unknown): n is number =>
+  typeof n === "number" && Number.isFinite(n);
 
 // Collapse a base58 mint to "abcd…abcd" so the column reads at a glance;
 // the CopyButton next to it still copies the full address.
@@ -363,6 +362,9 @@ function StablecoinRow({
         : change < 0
           ? "text-accent-sell"
           : "text-muted-fg";
+  // Layered with NumberFlow below: rolling digits convey *which* value
+  // moved at the digit level, the bg flash adds a brief whole-cell cue
+  // that draws the eye on each Jupiter refresh.
   const priceFlash = useFlashOnChange(info?.usdPrice);
   const changeFlash = useFlashOnChange(change);
   const volumeFlash = useFlashOnChange(info?.volume24h);
@@ -484,35 +486,73 @@ function StablecoinRow({
           )}
         </div>
       </td>
-      <td
-        className={`border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums transition-colors duration-300 last:border-r-0 ${flashBg(priceFlash)}`}
-      >
-        {formatPrice(info?.usdPrice)}
+      <td className="border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums last:border-r-0">
+        <span
+          className={`rounded px-1 transition-colors duration-300 ${flashBg(priceFlash)}`}
+        >
+          {isFiniteNumber(info?.usdPrice) ? (
+            <NumberFlow value={info.usdPrice} format={priceFormat} />
+          ) : (
+            "—"
+          )}
+        </span>
       </td>
       <td
-        className={`border-border border-r px-3 py-2 text-right align-top font-mono tabular-nums transition-colors duration-300 last:border-r-0 ${changeTone} ${flashBg(changeFlash)}`}
+        className={`border-border border-r px-3 py-2 text-right align-top font-mono tabular-nums last:border-r-0 ${changeTone}`}
       >
-        {formatPercent(change)}
+        <span
+          className={`rounded px-1 transition-colors duration-300 ${flashBg(changeFlash)}`}
+        >
+          {isFiniteNumber(change) ? (
+            <NumberFlow value={change} format={changeFormat} suffix="%" />
+          ) : (
+            "—"
+          )}
+        </span>
       </td>
-      <td
-        className={`border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums transition-colors duration-300 last:border-r-0 ${flashBg(volumeFlash)}`}
-      >
-        {formatCompactUsd(info?.volume24h)}
+      <td className="border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums last:border-r-0">
+        <span
+          className={`rounded px-1 transition-colors duration-300 ${flashBg(volumeFlash)}`}
+        >
+          {isFiniteNumber(info?.volume24h) ? (
+            <NumberFlow value={info.volume24h} format={compactUsdFormat} />
+          ) : (
+            "—"
+          )}
+        </span>
       </td>
-      <td
-        className={`border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums transition-colors duration-300 last:border-r-0 ${flashBg(mcapFlash)}`}
-      >
-        {formatCompactUsd(info?.mcap)}
+      <td className="border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums last:border-r-0">
+        <span
+          className={`rounded px-1 transition-colors duration-300 ${flashBg(mcapFlash)}`}
+        >
+          {isFiniteNumber(info?.mcap) ? (
+            <NumberFlow value={info.mcap} format={compactUsdFormat} />
+          ) : (
+            "—"
+          )}
+        </span>
       </td>
-      <td
-        className={`border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums transition-colors duration-300 last:border-r-0 ${flashBg(liquidityFlash)}`}
-      >
-        {formatCompactUsd(info?.liquidity)}
+      <td className="border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums last:border-r-0">
+        <span
+          className={`rounded px-1 transition-colors duration-300 ${flashBg(liquidityFlash)}`}
+        >
+          {isFiniteNumber(info?.liquidity) ? (
+            <NumberFlow value={info.liquidity} format={compactUsdFormat} />
+          ) : (
+            "—"
+          )}
+        </span>
       </td>
-      <td
-        className={`border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums transition-colors duration-300 last:border-r-0 ${flashBg(holdersFlash)}`}
-      >
-        {formatCompactCount(info?.holderCount)}
+      <td className="border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums last:border-r-0">
+        <span
+          className={`rounded px-1 transition-colors duration-300 ${flashBg(holdersFlash)}`}
+        >
+          {isFiniteNumber(info?.holderCount) ? (
+            <NumberFlow value={info.holderCount} format={compactCountFormat} />
+          ) : (
+            "—"
+          )}
+        </span>
       </td>
     </tr>
   );
@@ -532,8 +572,8 @@ function CurrenciesInner() {
   // Warm the Jupiter token-info cache on mount, then refresh every 10 s so
   // price / 24h Δ / volume / mcap / liquidity / holders stay live while the
   // page is open. Cache writes call notify(), which re-renders every row via
-  // `useSyncExternalStore`; `useFlashOnChange` flashes cells whose values
-  // actually changed.
+  // `useSyncExternalStore`; <NumberFlow> animates the digits that actually
+  // changed.
   useEffect(() => {
     prefetchAllTokenInfo(ALL_STABLECOIN_MINTS);
     const id = window.setInterval(() => {
