@@ -27,7 +27,14 @@ export type AppEvents = {
   focusCurrenciesSearch: undefined;
   pickCurrencyOnlyResult: Side;
   toggleGroupByCurrency: undefined;
+  currenciesSort: CurrenciesSortKey;
 };
+
+export type CurrenciesSortKey =
+  | "volume24h"
+  | "mcap"
+  | "liquidity"
+  | "holderCount";
 
 type Handler<K extends keyof AppEvents> = (payload: AppEvents[K]) => void;
 

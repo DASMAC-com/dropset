@@ -278,7 +278,7 @@ function SortableHeader({
       <button
         type="button"
         onClick={() => onToggle(sortKey)}
-        className={`flex w-full cursor-pointer select-none items-center justify-end gap-1 px-3 py-2 text-right font-medium transition-colors ${active ? "text-foreground" : "text-muted-fg hover:text-foreground"}`}
+        className={`flex w-full cursor-pointer select-none items-center justify-end gap-1 px-3 py-2 text-right font-medium outline-none transition-colors focus:outline-none focus-visible:outline-none ${active ? "text-foreground" : "text-muted-fg hover:text-foreground"}`}
       >
         {label}
         <Icon size={12} />
@@ -604,6 +604,7 @@ function CurrenciesInner() {
   const [sort, setSort] = useState<SortState>(null);
   const [groupByCurrency, setGroupByCurrency] = useState(true);
   useAppEvent("toggleGroupByCurrency", () => setGroupByCurrency((g) => !g));
+  useAppEvent("currenciesSort", (key) => toggleSort(key));
   const toggleSort = (key: SortKey) =>
     setSort((prev) => {
       if (!prev || prev.key !== key) return { key, direction: "desc" };

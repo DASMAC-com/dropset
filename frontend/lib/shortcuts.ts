@@ -139,6 +139,26 @@ export const SHORTCUTS_BY_CONTEXT: Record<ShortcutContext, ShortcutSpec[]> = {
       description: "Toggle Group by currency",
       run: () => emit("toggleGroupByCurrency"),
     },
+    {
+      key: "v",
+      description: "Sort by 24h volume",
+      run: () => emit("currenciesSort", "volume24h"),
+    },
+    {
+      key: "m",
+      description: "Sort by market cap",
+      run: () => emit("currenciesSort", "mcap"),
+    },
+    {
+      key: "l",
+      description: "Sort by liquidity",
+      run: () => emit("currenciesSort", "liquidity"),
+    },
+    {
+      key: "h",
+      description: "Sort by holders",
+      run: () => emit("currenciesSort", "holderCount"),
+    },
   ],
 };
 
