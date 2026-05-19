@@ -19,7 +19,11 @@ import {
 import { useAppEvent } from "@/lib/events";
 import { explorerAddressUrl } from "@/lib/explorer";
 import { type Side, useSwapStore } from "@/lib/store";
-import { prefetchAllTokenInfo, useTokenInfo } from "@/lib/useUsdQuote";
+import {
+  prefetchAllTokenInfo,
+  REFRESH_INTERVAL_MS,
+  useTokenInfo,
+} from "@/lib/useUsdQuote";
 
 const COLSPAN = 9;
 
@@ -64,6 +68,42 @@ const formatPercent = (n: number | null | undefined): string => {
 // the CopyButton next to it still copies the full address.
 const shortenMint = (mint: string): string =>
   mint.length <= 11 ? mint : `${mint.slice(0, 4)}…${mint.slice(-4)}`;
+
+type FlashDirection = "up" | "down" | "neutral" | null;
+
+// Track value changes across renders and surface a short-lived direction tag
+// so cells can flash green/red/muted when the Jupiter refresh delivers a new
+// number. The first populated value is recorded silently — we only flash
+// genuine post-load updates, not the initial cache-warming transition.
+const useFlashOnChange = (value: number | null | undefined): FlashDirection => {
+  const prev = useRef<number | null | undefined>(value);
+  const [flash, setFlash] = useState<FlashDirection>(null);
+  useEffect(() => {
+    if (Object.is(value, prev.current)) return;
+    if (prev.current == null) {
+      prev.current = value;
+      return;
+    }
+    let direction: FlashDirection = "neutral";
+    if (typeof value === "number" && typeof prev.current === "number") {
+      const diff = value - prev.current;
+      if (diff > 0) direction = "up";
+      else if (diff < 0) direction = "down";
+    }
+    prev.current = value;
+    setFlash(direction);
+    const t = window.setTimeout(() => setFlash(null), 1000);
+    return () => window.clearTimeout(t);
+  }, [value]);
+  return flash;
+};
+
+const flashBg = (f: FlashDirection): string => {
+  if (f === "up") return "bg-accent-buy/15";
+  if (f === "down") return "bg-accent-sell/15";
+  if (f === "neutral") return "bg-muted-fg/15";
+  return "";
+};
 
 // Cache of dominant color (RGB triplet) computed from a flag SVG rasterized to
 // a canvas. Module-level so it persists across re-renders / search filters.
@@ -278,6 +318,12 @@ function StablecoinRow({
         : change < 0
           ? "text-accent-sell"
           : "text-muted-fg";
+  const priceFlash = useFlashOnChange(info?.usdPrice);
+  const changeFlash = useFlashOnChange(change);
+  const volumeFlash = useFlashOnChange(info?.volume24h);
+  const mcapFlash = useFlashOnChange(info?.mcap);
+  const liquidityFlash = useFlashOnChange(info?.liquidity);
+  const holdersFlash = useFlashOnChange(info?.holderCount);
   return (
     <tr
       id={s.symbol.toLowerCase()}
@@ -356,24 +402,34 @@ function StablecoinRow({
       <td className="border-border border-r px-3 py-2 align-top last:border-r-0">
         <SwapPickerCell code={code} symbol={s.symbol} />
       </td>
-      <td className="border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums last:border-r-0">
+      <td
+        className={`border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums transition-colors duration-300 last:border-r-0 ${flashBg(priceFlash)}`}
+      >
         {formatPrice(info?.usdPrice)}
       </td>
       <td
-        className={`border-border border-r px-3 py-2 text-right align-top font-mono tabular-nums last:border-r-0 ${changeTone}`}
+        className={`border-border border-r px-3 py-2 text-right align-top font-mono tabular-nums transition-colors duration-300 last:border-r-0 ${changeTone} ${flashBg(changeFlash)}`}
       >
         {formatPercent(change)}
       </td>
-      <td className="border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums last:border-r-0">
+      <td
+        className={`border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums transition-colors duration-300 last:border-r-0 ${flashBg(volumeFlash)}`}
+      >
         {formatCompactUsd(info?.volume24h)}
       </td>
-      <td className="border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums last:border-r-0">
+      <td
+        className={`border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums transition-colors duration-300 last:border-r-0 ${flashBg(mcapFlash)}`}
+      >
         {formatCompactUsd(info?.mcap)}
       </td>
-      <td className="border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums last:border-r-0">
+      <td
+        className={`border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums transition-colors duration-300 last:border-r-0 ${flashBg(liquidityFlash)}`}
+      >
         {formatCompactUsd(info?.liquidity)}
       </td>
-      <td className="border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums last:border-r-0">
+      <td
+        className={`border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums transition-colors duration-300 last:border-r-0 ${flashBg(holdersFlash)}`}
+      >
         {formatCompactCount(info?.holderCount)}
       </td>
       <td className="border-border border-r px-3 py-2 align-top last:border-r-0">
@@ -422,11 +478,17 @@ function CurrenciesInner() {
     inputRef.current?.select();
   });
 
-  // Warm the Jupiter token-info cache on first mount so price, 24h Δ, 24h
-  // volume, market cap, liquidity, and holder columns can render from a single
-  // batched browser-direct call. Cache TTL dedupes with the swap page.
+  // Warm the Jupiter token-info cache on mount, then refresh every 10 s so
+  // price / 24h Δ / volume / mcap / liquidity / holders stay live while the
+  // page is open. Cache writes call notify(), which re-renders every row via
+  // `useSyncExternalStore`; `useFlashOnChange` flashes cells whose values
+  // actually changed.
   useEffect(() => {
     prefetchAllTokenInfo(ALL_STABLECOIN_MINTS);
+    const id = window.setInterval(() => {
+      prefetchAllTokenInfo(ALL_STABLECOIN_MINTS);
+    }, REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(id);
   }, []);
 
   const commitQueryToUrl = (value: string) => {

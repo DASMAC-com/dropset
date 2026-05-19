@@ -10,7 +10,11 @@ import { stablecoinMint } from "./currencies";
 // single batched call for up to 100 mints, which we use to power both the
 // swap UI's USD readouts and the /currencies market-data columns.
 const JUP_SEARCH_URL = "https://lite-api.jup.ag/tokens/v2/search";
-const CACHE_TTL_MS = 30_000;
+// 10 s refresh cadence. Page mounts and the polling interval both call
+// `prefetchAllTokenInfo`; the TTL gates redundant calls but is short enough
+// that the interval's request is never skipped.
+const CACHE_TTL_MS = 5_000;
+export const REFRESH_INTERVAL_MS = 10_000;
 
 // Trimmed projection of Jupiter's /tokens/v2/search row. We keep only the
 // fields the UI renders so the cache footprint stays small (~80 bytes/mint
