@@ -1,10 +1,11 @@
 // cspell:word colspanned
 "use client";
 
+import * as Popover from "@radix-ui/react-popover";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { CopyButton } from "@/components/CopyButton";
-import { ExternalLink, HelpCircle, Search, X } from "@/components/icons";
+import { ExternalLink, HelpCircle, Info, Search, X } from "@/components/icons";
 import {
   ALL_STABLECOIN_MINTS,
   CURRENCIES,
@@ -20,7 +21,7 @@ import { explorerAddressUrl } from "@/lib/explorer";
 import { type Side, useSwapStore } from "@/lib/store";
 import { prefetchAllTokenInfo, useTokenInfo } from "@/lib/useUsdQuote";
 
-const COLSPAN = 12;
+const COLSPAN = 11;
 
 const compactUsdFormatter = new Intl.NumberFormat("en-US", {
   notation: "compact",
@@ -295,6 +296,35 @@ function StablecoinRow({
           />
           <span className="font-mono text-foreground">{s.symbol}</span>
           <CopyButton value={s.symbol} label="token symbol" />
+          {s.name !== s.symbol && (
+            <Popover.Root>
+              <Popover.Trigger
+                type="button"
+                aria-label={`Show full name for ${s.symbol}`}
+                className="inline-flex shrink-0 items-center rounded p-0.5 text-muted-fg hover:text-foreground"
+              >
+                <Info size={12} />
+              </Popover.Trigger>
+              <Popover.Portal>
+                <Popover.Content
+                  side="top"
+                  sideOffset={4}
+                  className="z-50 rounded-md border border-border bg-background px-2.5 py-1.5 text-foreground text-xs shadow-lg"
+                >
+                  {s.name}
+                </Popover.Content>
+              </Popover.Portal>
+            </Popover.Root>
+          )}
+          <a
+            href={s.issuer.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={`${s.symbol} issuer website`}
+            className="inline-flex shrink-0 items-center rounded p-1 text-muted-fg hover:bg-muted hover:text-accent"
+          >
+            <ExternalLink size={12} />
+          </a>
         </div>
       </td>
       <td className="border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums last:border-r-0">
@@ -319,17 +349,6 @@ function StablecoinRow({
       </td>
       <td className="border-border border-r px-3 py-2 align-top last:border-r-0">
         <SwapPickerCell code={code} symbol={s.symbol} />
-      </td>
-      <td className="max-w-[120px] border-border border-r px-3 py-2 align-top last:border-r-0">
-        <a
-          href={s.issuer.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-start gap-1 text-foreground hover:text-accent"
-        >
-          <span>{s.name}</span>
-          <ExternalLink size={10} className="mt-1.5 shrink-0" />
-        </a>
       </td>
       <td className="border-border border-r px-3 py-2 align-top last:border-r-0">
         <div className="flex items-center gap-1">
@@ -532,9 +551,6 @@ function CurrenciesInner() {
               </th>
               <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
                 Swap
-              </th>
-              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
-                Name
               </th>
               <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
                 Mint Address
