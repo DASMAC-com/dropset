@@ -141,25 +141,19 @@ export function FromBalanceButtons() {
               e.preventDefault();
               emit("focusFromAmount");
             }}
-            className="z-50 flex w-56 flex-col gap-2 rounded-xl border border-border bg-background p-3 shadow-lg"
+            className="z-50 flex items-center gap-1 rounded-xl border border-border bg-background p-1.5 shadow-lg"
           >
-            <div className="font-medium text-foreground text-xs">
-              Use % of balance
-            </div>
-            <div className="flex gap-1">
-              {PRESET_PERCENTS.map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  onClick={() => selectPreset(p)}
-                  className="flex-1 rounded border border-border px-2 py-1 font-medium text-muted-fg text-xs transition-colors hover:border-accent hover:text-accent"
-                >
-                  {p}%
-                </button>
-              ))}
-            </div>
-            <label className="flex items-center gap-2 rounded border border-border px-2 py-1 text-xs focus-within:border-accent">
-              <span className="text-muted-fg">Custom</span>
+            {PRESET_PERCENTS.map((p) => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => selectPreset(p)}
+                className="rounded border border-border px-2 py-1 font-medium text-muted-fg text-xs transition-colors hover:border-accent hover:text-accent"
+              >
+                {p}%
+              </button>
+            ))}
+            <label className="flex w-16 items-center gap-1 rounded border border-border px-2 py-1 text-xs focus-within:border-accent">
               <input
                 ref={customRef}
                 type="text"
