@@ -7,6 +7,7 @@ import { KeyboardShortcuts } from "@/components/KeyboardShortcuts";
 import { ShortcutsHelp } from "@/components/ShortcutsHelp";
 import { TermsOfUseGate } from "@/components/TermsOfUseGate";
 import { Providers } from "@/lib/providers";
+import { SwapStoreProvider } from "@/lib/store";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -67,8 +68,15 @@ export const metadata: Metadata = {
   applicationName: "Dropset",
   appleWebApp: { title: "Dropset" },
   icons: {
-    icon: "/favicon.png",
-    apple: "/favicon.png",
+    // Use the stroked variant for browser tab icons. Safari runs an
+    // undocumented contrast heuristic on favicons and adds a white "chip"
+    // backdrop behind icons it deems low-contrast — our brand blue
+    // (#0044FF) fails that check. Brightening the color or adding a thin
+    // outline both clear the chip; we chose the outline so the in-app
+    // wordmark (Header) can keep the exact brand color. See:
+    // https://paco.me/writing/safari-favicon-showing-white-background
+    icon: { url: "/favicon-with-stroke.png", type: "image/png" },
+    apple: "/favicon-with-stroke.png",
   },
   openGraph: {
     type: "website",
@@ -115,12 +123,14 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
         />
         <Providers>
-          <KeyboardShortcuts />
-          <ShortcutsHelp />
-          <Header />
-          <main className="flex-1">{children}</main>
-          <Footer />
-          <TermsOfUseGate />
+          <SwapStoreProvider>
+            <KeyboardShortcuts />
+            <ShortcutsHelp />
+            <Header />
+            <main className="flex-1">{children}</main>
+            <Footer />
+            <TermsOfUseGate />
+          </SwapStoreProvider>
         </Providers>
       </body>
     </html>
