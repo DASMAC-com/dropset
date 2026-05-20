@@ -15,6 +15,7 @@ export type AppEvents = {
   focusFromAmount: undefined;
   applyMaxBalance: undefined;
   openBalancePercent: undefined;
+  swapSucceeded: undefined;
   openSlippage: undefined;
   resetGlobe: undefined;
   focusRoute: undefined;

@@ -9,6 +9,7 @@ import {
   type DflowSwapResult,
   executeDflowSwap,
 } from "./dflowSwap";
+import { emit } from "./events";
 import { type Slippage, useSwapStore } from "./store";
 
 export type SwapStatus =
@@ -91,6 +92,9 @@ export function useDflowSwap(): UseDflowSwap {
       });
       setResult(res);
       setStatus("success");
+      // Tell components subscribed via useSplToken to refetch — the swap
+      // mutated balances for both the from- and to-mints.
+      emit("swapSucceeded");
     } catch (e) {
       const err =
         e instanceof DflowSwapError

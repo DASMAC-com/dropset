@@ -8,7 +8,7 @@ import {
   stablecoinDecimals,
   stablecoinMint,
 } from "@/lib/currencies";
-import { emit } from "@/lib/events";
+import { emit, useAppEvent } from "@/lib/events";
 import { useSameToken, useSwapStore } from "@/lib/store";
 import { useDflowQuote } from "@/lib/useDflowQuote";
 import { useDflowSwap } from "@/lib/useDflowSwap";
@@ -49,6 +49,9 @@ export function SwapPanel() {
   const hasAmount = Number(amount) > 0;
   const needsAmount = !sameToken && connected && !isConnecting && !hasAmount;
   const fromBalance = useSplToken(fromMint);
+  useAppEvent("swapSucceeded", () => {
+    void fromBalance.refresh();
+  });
   const fromBalanceBase = fromBalance.balance?.exists
     ? fromBalance.balance.amount
     : 0n;

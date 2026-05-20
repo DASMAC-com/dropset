@@ -47,7 +47,7 @@ export function FromBalanceButtons() {
   const { connected } = useWalletConnection();
   const mint = stablecoinMint(stablecoin);
   const decimals = stablecoinDecimals(stablecoin);
-  const { balance, status } = useSplToken(mint);
+  const { balance, status, refresh } = useSplToken(mint);
 
   const [open, setOpen] = useState(false);
   const [custom, setCustom] = useState("");
@@ -63,6 +63,9 @@ export function FromBalanceButtons() {
   useAppEvent("openBalancePercent", () => {
     if (disabled) return;
     setOpen(true);
+  });
+  useAppEvent("swapSucceeded", () => {
+    void refresh();
   });
 
   // Derive the trigger label from amount/balance so picking a preset, typing
