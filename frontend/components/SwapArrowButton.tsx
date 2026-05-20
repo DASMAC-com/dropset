@@ -2,22 +2,20 @@
 
 import { motion } from "motion/react";
 import { useState } from "react";
-import { useAppEvent } from "@/lib/events";
-import { useSwapStore } from "@/lib/store";
+import { emit, useAppEvent } from "@/lib/events";
 import { ArrowUpDown } from "./icons";
 
 export function SwapArrowButton() {
   const [hovering, setHovering] = useState(false);
   const [eventSpins, setEventSpins] = useState(0);
-  const swapSides = useSwapStore((s) => s.swapSides);
-  useAppEvent("swapSides", () => {
-    swapSides();
-    setEventSpins((n) => n + 1);
-  });
+  // The actual swap is handled by SwapPanel's swapSides listener (which has
+  // access to the quote and can promote the output amount). This component
+  // only emits the event and animates the spin.
+  useAppEvent("swapSides", () => setEventSpins((n) => n + 1));
   return (
     <motion.button
       type="button"
-      onClick={swapSides}
+      onClick={() => emit("swapSides")}
       onHoverStart={() => setHovering(true)}
       onHoverEnd={() => setHovering(false)}
       animate={{ rotate: eventSpins * 540 + (hovering ? 540 : 0) }}

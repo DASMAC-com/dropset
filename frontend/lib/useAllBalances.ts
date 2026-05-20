@@ -23,6 +23,12 @@ let fetchedForOwner: string | null = null;
 // Monotonic counter so concurrent fetches don't race a stale write into the
 // cache. Each fetch reads `++counter`; only the latest one writes.
 let requestCounter = 0;
+// In-flight dedupe keyed by owner address. Multiple consumers (the swap
+// panel, picker rows, etc.) all subscribe via useAllBalances on mount and
+// each fire their own `useEffect → fetchBalances` — without this, that
+// fans out into N parallel RPCs for the same data. `swapSucceeded` calls
+// pass `force: true` so a stale in-flight fetch can't satisfy them.
+const inFlightByOwner = new Map<string, Promise<void>>();
 const listeners = new Set<() => void>();
 let version = 0;
 const bump = () => {
@@ -64,37 +70,55 @@ type JsonParsedData = {
   parsed?: { info?: ParsedTokenInfo };
 };
 
-async function fetchBalances(
+function fetchBalances(
   rpc: ReturnType<typeof useSolanaClient>["runtime"]["rpc"],
   ownerStr: string,
+  opts: { force?: boolean } = {},
 ): Promise<void> {
-  const my = ++requestCounter;
-  const owner = address(ownerStr);
-  const atas = await deriveAtas(owner);
-  const res = await rpc
-    .getMultipleAccounts(atas, {
-      encoding: "jsonParsed",
-      commitment: "confirmed",
-    })
-    .send();
-  // Stale guard: a newer fetch (e.g. post-swap refresh) already started — let
-  // that one win to avoid clobbering the cache with pre-swap state.
-  if (my !== requestCounter) return;
+  // Non-force callers attach to a same-owner fetch already in flight so
+  // initial-mount fan-out collapses to one RPC round-trip. Force callers
+  // (e.g. swap-success refresh) always start a new request and overwrite
+  // the entry; the requestCounter stale-guard below stops the older fetch
+  // from clobbering the cache once the force fetch lands.
+  if (!opts.force) {
+    const existing = inFlightByOwner.get(ownerStr);
+    if (existing) return existing;
+  }
 
-  res.value.forEach((account, i) => {
-    const mint = ALL_STABLECOINS[i].mint;
-    if (!account) {
-      balances.set(mint, null);
-      return;
+  const promise = (async () => {
+    const my = ++requestCounter;
+    const owner = address(ownerStr);
+    const atas = await deriveAtas(owner);
+    const res = await rpc
+      .getMultipleAccounts(atas, {
+        encoding: "jsonParsed",
+        commitment: "confirmed",
+      })
+      .send();
+    if (my !== requestCounter) return;
+
+    res.value.forEach((account, i) => {
+      const mint = ALL_STABLECOINS[i].mint;
+      if (!account) {
+        balances.set(mint, null);
+        return;
+      }
+      // jsonParsed gives us `data.parsed.info.tokenAmount.amount` as a
+      // stringified bigint when the RPC recognized this as a token-account.
+      const parsed = (account.data as JsonParsedData)?.parsed?.info;
+      const amount = parsed?.tokenAmount?.amount;
+      balances.set(mint, amount != null ? BigInt(amount) : 0n);
+    });
+    fetchedForOwner = ownerStr;
+    bump();
+  })().finally(() => {
+    // Only clear if a newer (force) fetch hasn't replaced our entry already.
+    if (inFlightByOwner.get(ownerStr) === promise) {
+      inFlightByOwner.delete(ownerStr);
     }
-    // jsonParsed gives us `data.parsed.info.tokenAmount.amount` as a stringified
-    // bigint when the RPC recognized the account as a token-account.
-    const parsed = (account.data as JsonParsedData)?.parsed?.info;
-    const amount = parsed?.tokenAmount?.amount;
-    balances.set(mint, amount != null ? BigInt(amount) : 0n);
   });
-  fetchedForOwner = ownerStr;
-  bump();
+  inFlightByOwner.set(ownerStr, promise);
+  return promise;
 }
 
 export type UseAllBalances = {
@@ -142,9 +166,9 @@ export function useAllBalances(): UseAllBalances {
   useAppEvent("swapSucceeded", () => {
     const owner = ownerStr;
     if (!owner) return;
-    void fetchBalances(client.runtime.rpc, owner);
+    void fetchBalances(client.runtime.rpc, owner, { force: true });
     window.setTimeout(() => {
-      void fetchBalances(client.runtime.rpc, owner);
+      void fetchBalances(client.runtime.rpc, owner, { force: true });
     }, 1500);
   });
 

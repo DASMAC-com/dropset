@@ -8,10 +8,10 @@ import {
   stablecoinDecimals,
   stablecoinMint,
 } from "@/lib/currencies";
-import { emit } from "@/lib/events";
+import { emit, useAppEvent } from "@/lib/events";
 import { useSameToken, useSwapStore } from "@/lib/store";
 import { useAllBalances } from "@/lib/useAllBalances";
-import { useDflowQuote } from "@/lib/useDflowQuote";
+import { formatAtomic, useDflowQuote } from "@/lib/useDflowQuote";
 import { useDflowSwap } from "@/lib/useDflowSwap";
 import {
   prefetchAllTokenInfo,
@@ -37,10 +37,24 @@ export function SwapPanel() {
   const fromStablecoin = useSwapStore((s) => s.from.stablecoin);
   const toStablecoin = useSwapStore((s) => s.to.stablecoin);
   const amount = useSwapStore((s) => s.amount);
+  const swapSides = useSwapStore((s) => s.swapSides);
   const fromMint = stablecoinMint(fromStablecoin);
   const toMint = stablecoinMint(toStablecoin);
   const fromDecimals = stablecoinDecimals(fromStablecoin);
+  const toDecimals = stablecoinDecimals(toStablecoin);
   const quote = useDflowQuote(fromMint, toMint, fromDecimals, amount);
+
+  // Toggling direction promotes the current quote's output amount into the
+  // new input. With no live quote (zero amount, sameToken, first load) the
+  // existing input is kept — the quote hook will refire against the flipped
+  // pair either way.
+  useAppEvent("swapSides", () => {
+    const next =
+      quote.outAmount !== null && quote.outAmount > 0n
+        ? formatAtomic(quote.outAmount, toDecimals)
+        : undefined;
+    swapSides(next);
+  });
 
   // One batched Jupiter call on mount warms every stablecoin's USD price so
   // switching tokens doesn't flash "$—" while a per-mint fetch resolves, then

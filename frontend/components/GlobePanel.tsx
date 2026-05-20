@@ -29,6 +29,7 @@ import { useSwapStore } from "@/lib/store";
 import { type CountryFeature, WORLD_POLYGONS } from "@/lib/world-polygons";
 import { CurrencyGroupHeader } from "./CurrencyGroupHeader";
 import { Compass, Crosshair, Flag, Minus, Pause, Play, Plus, X } from "./icons";
+import { PickerBalanceCell } from "./PickerBalanceCell";
 import { StableTokenIdentity } from "./StableTokenIdentity";
 import { TokenInfoLink } from "./TokenInfoLink";
 import { TokenMintActions } from "./TokenMintActions";
@@ -843,6 +844,10 @@ function GlobeInner() {
                         <StableTokenIdentity
                           s={s}
                           symbolClassName="text-foreground"
+                        />
+                        <PickerBalanceCell
+                          mint={s.mint}
+                          decimals={s.decimals}
                         />
                         <button
                           type="button"
