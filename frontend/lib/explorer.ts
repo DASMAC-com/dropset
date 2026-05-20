@@ -8,4 +8,5 @@ export const explorerAddressUrl = (address: string) =>
 
 export const explorerTokenUrl = (mint: string) => `${SOLSCAN}/token/${mint}`;
 
-export const explorerTxUrl = (signature: string) => `${SOLSCAN}/tx/${signature}`;
+export const explorerTxUrl = (signature: string) =>
+  `${SOLSCAN}/tx/${signature}`;

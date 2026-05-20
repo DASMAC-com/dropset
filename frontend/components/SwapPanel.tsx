@@ -9,8 +9,8 @@ import {
   stablecoinMint,
 } from "@/lib/currencies";
 import { emit, useAppEvent } from "@/lib/events";
-import { useSameToken, useSwapStore } from "@/lib/store";
 import { AUTO_DETECT_TOKEN_PROGRAM } from "@/lib/splTokenOptions";
+import { useSameToken, useSwapStore } from "@/lib/store";
 import { useDflowQuote } from "@/lib/useDflowQuote";
 import { useDflowSwap } from "@/lib/useDflowSwap";
 import {

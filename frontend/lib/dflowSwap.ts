@@ -154,7 +154,7 @@ export async function executeDflowSwap(
 }
 
 // Wallet `sendTransaction` returns after submission, not after the chain has
-// confirmed the tx — so balance refetches fired immediately after see stale
+// confirmed the tx — so balance re-fetches fired immediately after see stale
 // data. Poll `getSignatureStatuses` until the signature reaches `confirmed`
 // (or `finalized`) and bail with an error on revert or timeout.
 export async function waitForSwapConfirmation(
