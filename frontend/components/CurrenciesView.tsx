@@ -191,8 +191,18 @@ const useFlagColor = (code: IsoCurrencyCode, url: string): Rgb | null => {
 
 const xHref = (handle: string) => `https://x.com/${handle}`;
 
-const matches = (s: Stablecoin, code: IsoCurrencyCode, q: string): boolean => {
+// Strict mode (driven by `?symbol=<SYM>` from the picker's `?` link) matches
+// only on exact symbol equality so EURC doesn't surface EURCV alongside it.
+// Fuzzy mode (the default) keeps the existing substring search across symbol,
+// name, mint, currency code, and issuer.
+const matches = (
+  s: Stablecoin,
+  code: IsoCurrencyCode,
+  q: string,
+  strict: boolean,
+): boolean => {
   if (!q) return true;
+  if (strict) return s.symbol.toLowerCase() === q;
   return (
     s.symbol.toLowerCase().includes(q) ||
     s.name.toLowerCase().includes(q) ||
@@ -556,7 +566,16 @@ function StablecoinRow({
 
 function CurrenciesInner() {
   const searchParams = useSearchParams();
-  const [query, setQuery] = useState(searchParams.get("q") ?? "");
+  // `?symbol=<SYM>` (from the picker's `?` link) lands here in strict mode —
+  // filter by exact symbol equality so EURC doesn't also surface EURCV. Any
+  // user edit to the search input drops strict mode and switches back to the
+  // fuzzy `?q=` URL form so the URL stays a copy-paste-able representation
+  // of what the user is seeing.
+  const initialSymbol = searchParams.get("symbol");
+  const [query, setQuery] = useState(
+    initialSymbol ?? searchParams.get("q") ?? "",
+  );
+  const [strict, setStrict] = useState(initialSymbol !== null);
   const [focused, setFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -578,10 +597,15 @@ function CurrenciesInner() {
     return () => window.clearInterval(id);
   }, []);
 
-  const commitQueryToUrl = (value: string) => {
+  // Mirror the current search into the URL — fuzzy mode writes `q`, strict
+  // mode (set only by an initial `?symbol=` from the picker) writes `symbol`.
+  // We always clear the other param so refreshes can't end up with both.
+  const commitQueryToUrl = (value: string, isStrict: boolean) => {
     const params = new URLSearchParams(window.location.search);
-    if (value) params.set("q", value);
-    else params.delete("q");
+    params.delete(isStrict ? "q" : "symbol");
+    const key = isStrict ? "symbol" : "q";
+    if (value) params.set(key, value);
+    else params.delete(key);
     const search = params.toString();
     const next = `${window.location.pathname}${search ? `?${search}` : ""}${window.location.hash}`;
     window.history.replaceState(null, "", next);
@@ -604,10 +628,10 @@ function CurrenciesInner() {
       SUPPORTED.map((code) => ({
         code,
         stables: CURRENCIES[code].stablecoins.filter((s) =>
-          matches(s, code, q),
+          matches(s, code, q, strict),
         ),
       })).filter((g) => g.stables.length > 0),
-    [q],
+    [q, strict],
   );
   // Re-sort outside the useMemo: `lookup` reads from the shared cache, which
   // mutates every 10 s on the refresh interval. Keeping sort out of the memo
@@ -674,11 +698,18 @@ function CurrenciesInner() {
               ref={inputRef}
               type="text"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                // Any user edit relaxes strict mode (the picker `?` link
+                // boots the page in strict so EURC doesn't match EURCV; once
+                // the user touches the box they've signaled they want the
+                // ordinary substring search).
+                if (strict) setStrict(false);
+              }}
               onFocus={() => setFocused(true)}
               onBlur={() => {
                 setFocused(false);
-                commitQueryToUrl(query);
+                commitQueryToUrl(query, strict);
               }}
               onKeyDown={(e) => {
                 if (e.key === "Escape") {
@@ -686,7 +717,7 @@ function CurrenciesInner() {
                   inputRef.current?.blur();
                 } else if (e.key === "Enter") {
                   e.preventDefault();
-                  commitQueryToUrl(query);
+                  commitQueryToUrl(query, strict);
                   inputRef.current?.blur();
                 }
               }}
@@ -705,7 +736,11 @@ function CurrenciesInner() {
             {query && (
               <button
                 type="button"
-                onClick={() => setQuery("")}
+                onClick={() => {
+                  setQuery("");
+                  if (strict) setStrict(false);
+                  commitQueryToUrl("", false);
+                }}
                 aria-label="Clear search"
                 className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-fg hover:bg-background hover:text-foreground"
               >

@@ -15,7 +15,7 @@ export function TokenInfoLink({
 }) {
   return (
     <a
-      href={`/currencies?q=${encodeURIComponent(symbol)}`}
+      href={`/currencies?symbol=${encodeURIComponent(symbol)}`}
       title={`More info about ${symbol}`}
       onClick={(e) => e.stopPropagation()}
       className={`flex shrink-0 items-center rounded p-0.5 text-muted-fg hover:bg-muted hover:text-accent ${className}`}

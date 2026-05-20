@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  createContext,
-  type ReactNode,
-  useContext,
-  useRef,
-  useState,
-} from "react";
+import { createContext, type ReactNode, useContext, useRef } from "react";
 import { useStore } from "zustand";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { defaultAnchorCca2 } from "./countries";
@@ -118,9 +112,10 @@ export const resolveInitialSides = (
 // for the lifetime of the page. Callers may pass an initial from/to pair to
 // seed the store before its first read (e.g. URL-derived state from the page
 // server component); otherwise the store comes up on defaults.
-export const createSwapStore = (
-  initial?: { from: SideState; to: SideState },
-): StoreApi<Store> =>
+export const createSwapStore = (initial?: {
+  from: SideState;
+  to: SideState;
+}): StoreApi<Store> =>
   createStore<Store>((set) => ({
     from: initial?.from ?? defaultFrom(),
     to: initial?.to ?? defaultTo(),
@@ -184,8 +179,7 @@ export const createSwapStore = (
         // the disabled-button state (e.g. a stale event fires during nav).
         const otherStable =
           side === "from" ? s.to.stablecoin : s.from.stablecoin;
-        const otherCurrency =
-          side === "from" ? s.to.currency : s.from.currency;
+        const otherCurrency = side === "from" ? s.to.currency : s.from.currency;
         if (stablecoin === otherStable && currency === otherCurrency) {
           return { activeSide: side };
         }
@@ -231,23 +225,6 @@ export function useSwapStore<T>(selector: (state: Store) => T): T {
 // outside a selector (e.g. UrlSync's effects, which need to read the current
 // pair at fire-time rather than via render-phase closure bindings).
 export const useSwapStoreApi = useStoreApi;
-
-// Apply a URL-derived initial pair to the store ONCE per mount of this hook,
-// via useState's lazy initializer. Running through a lazy init guarantees the
-// store mutation happens synchronously during render — before any subscribing
-// child reads the store — on both the SSR pass and client hydration. Repeated
-// renders are no-ops; navigation that remounts the page re-seeds with the new
-// URL pair.
-export function useSeedSwapStore(initial: {
-  from: SideState;
-  to: SideState;
-}): void {
-  const api = useStoreApi();
-  useState(() => {
-    api.setState({ from: initial.from, to: initial.to });
-    return null;
-  });
-}
 
 export const useSameToken = (): boolean =>
   useSwapStore(

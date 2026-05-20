@@ -7,6 +7,7 @@ import { KeyboardShortcuts } from "@/components/KeyboardShortcuts";
 import { ShortcutsHelp } from "@/components/ShortcutsHelp";
 import { TermsOfUseGate } from "@/components/TermsOfUseGate";
 import { Providers } from "@/lib/providers";
+import { SwapStoreProvider } from "@/lib/store";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -115,12 +116,14 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
         />
         <Providers>
-          <KeyboardShortcuts />
-          <ShortcutsHelp />
-          <Header />
-          <main className="flex-1">{children}</main>
-          <Footer />
-          <TermsOfUseGate />
+          <SwapStoreProvider>
+            <KeyboardShortcuts />
+            <ShortcutsHelp />
+            <Header />
+            <main className="flex-1">{children}</main>
+            <Footer />
+            <TermsOfUseGate />
+          </SwapStoreProvider>
         </Providers>
       </body>
     </html>
