@@ -26,6 +26,7 @@ gyen
 générale
 helvetiker
 idrx
+jito
 kapsule
 keypair
 kripto

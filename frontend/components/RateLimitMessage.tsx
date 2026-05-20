@@ -10,7 +10,7 @@ import { DFLOW_QUOTE, useRateLimit } from "@/lib/rateLimitBudget";
 //
 // We don't try to differentiate "too many tabs" from "shared NAT" from
 // "extension noise" — the user-facing copy lists the most common cause
-// without overclaiming it as the only one.
+// without over-claiming it as the only one.
 export function RateLimitMessage() {
   const snapshot = useRateLimit(DFLOW_QUOTE);
   const [now, setNow] = useState(() => Date.now());

@@ -66,7 +66,7 @@ type OrderErrorBody = {
   msg?: string;
 };
 
-const CANCEL_PATTERN = /user reject|user cancel|denied|cancell?ed/i;
+const CANCEL_PATTERN = /user reject|user cancel|denied|cancel/i;
 
 // Execute a swap end-to-end:
 //   1. GET /order with `allowAsyncExec=false` so DFlow returns a sync single

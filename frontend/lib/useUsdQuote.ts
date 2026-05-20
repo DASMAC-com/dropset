@@ -14,7 +14,7 @@ const JUP_SEARCH_URL = "https://lite-api.jup.ag/tokens/v2/search";
 // update rate for /tokens/v2/search. Polling faster doesn't surface
 // fresher data (every other request returns identical numbers), so 10 s
 // hits the sweet spot. The TTL is kept at half the interval so the
-// boundary tick is never skipped by the dedup check. Keyless limit is
+// boundary tick is never skipped by the dedupe check. Keyless limit is
 // 60 req/min/IP, leaving plenty of headroom with /swap + /currencies
 // both open.
 const CACHE_TTL_MS = 5_000;
