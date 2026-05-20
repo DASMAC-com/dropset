@@ -46,6 +46,7 @@ réunion
 sbpf
 société
 solana
+solscan
 stablecoins
 straitsx
 swatinem

@@ -1,6 +1,6 @@
 "use client";
 
-import { useWallet } from "@solana/react-hooks";
+import { useSolanaClient, useWallet } from "@solana/react-hooks";
 import { useCallback, useRef, useState } from "react";
 import { parseAmountToBase } from "./balance";
 import { stablecoinDecimals, stablecoinMint } from "./currencies";
@@ -8,6 +8,7 @@ import {
   DflowSwapError,
   type DflowSwapResult,
   executeDflowSwap,
+  waitForSwapConfirmation,
 } from "./dflowSwap";
 import { emit } from "./events";
 import { type Slippage, useSwapStore } from "./store";
@@ -15,13 +16,23 @@ import { type Slippage, useSwapStore } from "./store";
 export type SwapStatus =
   | "idle"
   | "preparing" // GET /order in flight
-  | "signing" // tx handed to wallet (signs + sends + waits for confirm)
+  | "signing" // tx handed to wallet for signing + submission
+  | "confirming" // signature received, polling RPC for on-chain confirmation
   | "success"
   | "error";
 
+// Augment the bare DFlow result with the from/to symbols captured at the
+// moment of execution. Pinning these here (rather than reading from the
+// live store in the result banner) means flipping sides after a swap
+// can't rewrite history on the success/error chrome.
+export type CompletedSwap = DflowSwapResult & {
+  fromStablecoin: string;
+  toStablecoin: string;
+};
+
 export type UseDflowSwap = {
   status: SwapStatus;
-  result: DflowSwapResult | null;
+  result: CompletedSwap | null;
   error: DflowSwapError | null;
   execute: () => Promise<void>;
   reset: () => void;
@@ -32,13 +43,14 @@ const slippageBpsParam = (slip: Slippage): string =>
 
 export function useDflowSwap(): UseDflowSwap {
   const wallet = useWallet();
+  const client = useSolanaClient();
   const fromStablecoin = useSwapStore((s) => s.from.stablecoin);
   const toStablecoin = useSwapStore((s) => s.to.stablecoin);
   const amount = useSwapStore((s) => s.amount);
   const slippage = useSwapStore((s) => s.slippage);
 
   const [status, setStatus] = useState<SwapStatus>("idle");
-  const [result, setResult] = useState<DflowSwapResult | null>(null);
+  const [result, setResult] = useState<CompletedSwap | null>(null);
   const [error, setError] = useState<DflowSwapError | null>(null);
 
   // Track whether a swap is in flight so multiple clicks don't queue.
@@ -79,7 +91,12 @@ export function useDflowSwap(): UseDflowSwap {
         userPublicKey: wallet.session.account.address.toString(),
         walletSession: wallet.session,
       });
-      setResult(res);
+      // Wallet `sendTransaction` resolves at submission — wait for on-chain
+      // confirmation before declaring success, otherwise the balance refetch
+      // we fire next sees stale state.
+      setStatus("confirming");
+      await waitForSwapConfirmation(client.runtime.rpc, res.signature);
+      setResult({ ...res, fromStablecoin, toStablecoin });
       setStatus("success");
       // Tell components subscribed via useSplToken to refetch — the swap
       // mutated balances for both the from- and to-mints.
@@ -97,7 +114,7 @@ export function useDflowSwap(): UseDflowSwap {
     } finally {
       inFlight.current = false;
     }
-  }, [wallet, fromStablecoin, toStablecoin, amount, slippage]);
+  }, [wallet, client, fromStablecoin, toStablecoin, amount, slippage]);
 
   return { status, result, error, execute, reset };
 }

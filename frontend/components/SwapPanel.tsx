@@ -9,15 +9,23 @@ import {
   stablecoinMint,
 } from "@/lib/currencies";
 import { emit, useAppEvent } from "@/lib/events";
+import { AUTO_DETECT_TOKEN_PROGRAM } from "@/lib/splTokenOptions";
 import { useSameToken, useSwapStore } from "@/lib/store";
 import { useDflowQuote } from "@/lib/useDflowQuote";
 import { useDflowSwap } from "@/lib/useDflowSwap";
-import { prefetchAllTokenInfo, REFRESH_INTERVAL_MS } from "@/lib/useUsdQuote";
+import {
+  prefetchAllTokenInfo,
+  REFRESH_INTERVAL_MS,
+  useUsdQuote,
+} from "@/lib/useUsdQuote";
 import { QuoteError } from "./QuoteError";
 import { RateLimitMessage } from "./RateLimitMessage";
 import { SwapArrowButton } from "./SwapArrowButton";
 import { SwapResult } from "./SwapResult";
 import { TokenRow } from "./TokenRow";
+
+// Per-swap USD cap while the app is in private beta.
+const BETA_USD_LIMIT = 5;
 
 export function SwapPanel() {
   const sameToken = useSameToken();
@@ -48,9 +56,12 @@ export function SwapPanel() {
   const isConnecting = status === "connecting";
   const hasAmount = Number(amount) > 0;
   const needsAmount = !sameToken && connected && !isConnecting && !hasAmount;
-  const fromBalance = useSplToken(fromMint);
+  const fromBalance = useSplToken(fromMint, AUTO_DETECT_TOKEN_PROGRAM);
   useAppEvent("swapSucceeded", () => {
     void fromBalance.refresh();
+    window.setTimeout(() => {
+      void fromBalance.refresh();
+    }, 1500);
   });
   const fromBalanceBase = fromBalance.balance?.exists
     ? fromBalance.balance.amount
@@ -63,9 +74,18 @@ export function SwapPanel() {
     hasAmount &&
     fromBalance.status === "ready" &&
     amountBase > fromBalanceBase;
+  const fromUsd = useUsdQuote(fromStablecoin, amount);
+  const exceedsBetaLimit =
+    !sameToken &&
+    hasAmount &&
+    fromUsd.value !== null &&
+    fromUsd.value > BETA_USD_LIMIT;
   const swap = useDflowSwap();
-  const swapInFlight = swap.status === "preparing" || swap.status === "signing";
-  const dimmed = needsAmount || insufficient;
+  const swapInFlight =
+    swap.status === "preparing" ||
+    swap.status === "signing" ||
+    swap.status === "confirming";
+  const dimmed = needsAmount || insufficient || exceedsBetaLimit;
   const disabled = sameToken || isConnecting || swapInFlight;
 
   let label: string;
@@ -82,11 +102,17 @@ export function SwapPanel() {
   } else if (insufficient) {
     label = `Insufficient ${fromStablecoin}`;
     onClick = () => emit("focusFromAmount");
+  } else if (exceedsBetaLimit) {
+    label = `Private beta: $${BETA_USD_LIMIT} max per swap`;
+    onClick = () => emit("focusFromAmount");
   } else if (swap.status === "preparing") {
     label = "Preparing swap…";
     onClick = () => {};
   } else if (swap.status === "signing") {
     label = "Sign in wallet…";
+    onClick = () => {};
+  } else if (swap.status === "confirming") {
+    label = "Confirming…";
     onClick = () => {};
   } else {
     label = "Swap";

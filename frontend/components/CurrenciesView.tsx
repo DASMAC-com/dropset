@@ -27,7 +27,7 @@ import {
   SUPPORTED,
 } from "@/lib/currencies";
 import { useAppEvent } from "@/lib/events";
-import { explorerAddressUrl } from "@/lib/explorer";
+import { explorerTokenUrl } from "@/lib/explorer";
 import { type Side, useSwapStore } from "@/lib/store";
 import { flashBg, useFlashOnChange } from "@/lib/useFlashOnChange";
 import {
@@ -465,10 +465,10 @@ function StablecoinRow({
           </span>
           <CopyButton value={s.mint} label="mint address" />
           <a
-            href={explorerAddressUrl(s.mint)}
+            href={explorerTokenUrl(s.mint)}
             target="_blank"
             rel="noopener noreferrer"
-            title={`View ${s.symbol} on Solana Explorer`}
+            title={`View ${s.symbol} on Solscan`}
             className="inline-flex shrink-0 items-center rounded p-1 text-muted-fg hover:bg-muted hover:text-accent"
           >
             <ExternalLink size={12} />
