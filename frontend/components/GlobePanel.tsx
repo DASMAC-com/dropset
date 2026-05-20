@@ -29,9 +29,8 @@ import { useSwapStore } from "@/lib/store";
 import { type CountryFeature, WORLD_POLYGONS } from "@/lib/world-polygons";
 import { CurrencyGroupHeader } from "./CurrencyGroupHeader";
 import { Compass, Crosshair, Flag, Minus, Pause, Play, Plus, X } from "./icons";
+import { PickerBalanceCell } from "./PickerBalanceCell";
 import { StableTokenIdentity } from "./StableTokenIdentity";
-import { TokenInfoLink } from "./TokenInfoLink";
-import { TokenMintActions } from "./TokenMintActions";
 
 const Globe = dynamic(() => import("react-globe.gl"), {
   ssr: false,
@@ -806,7 +805,7 @@ function GlobeInner() {
                   }
                 : undefined
             }
-            className={`-translate-x-1/2 fixed left-1/2 z-[70] flex w-[min(420px,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-border bg-background shadow-lg ${
+            className={`-translate-x-1/2 fixed left-1/2 z-[70] flex w-fit max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border border-border bg-background shadow-lg ${
               pickerTop === null
                 ? "-translate-y-1/2 top-1/2 max-h-[calc(100vh-3rem)]"
                 : ""
@@ -844,6 +843,11 @@ function GlobeInner() {
                           s={s}
                           symbolClassName="text-foreground"
                         />
+                        <PickerBalanceCell
+                          mint={s.mint}
+                          decimals={s.decimals}
+                          symbol={s.symbol}
+                        />
                         <button
                           type="button"
                           disabled={isToHere}
@@ -860,7 +864,7 @@ function GlobeInner() {
                               ? "Already selected as To"
                               : `Swap from ${s.symbol} (${clickContext.countryName})`
                           }
-                          className={`w-14 shrink-0 rounded px-2 py-1 text-center font-medium text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                          className={`shrink-0 rounded px-2 py-1 text-center font-medium text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
                             isFromHere
                               ? "bg-[#3b82f6] text-white"
                               : "border border-border text-muted-fg hover:border-[#3b82f6] hover:text-[#3b82f6]"
@@ -879,7 +883,7 @@ function GlobeInner() {
                               ? "Already selected as From"
                               : `Swap to ${s.symbol} (${clickContext.countryName})`
                           }
-                          className={`w-14 shrink-0 rounded px-2 py-1 text-center font-medium text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                          className={`shrink-0 rounded px-2 py-1 text-center font-medium text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
                             isToHere
                               ? "bg-[#10b981] text-white"
                               : "border border-border text-muted-fg hover:border-[#10b981] hover:text-[#10b981]"
@@ -887,8 +891,6 @@ function GlobeInner() {
                         >
                           To
                         </button>
-                        <TokenMintActions symbol={s.symbol} mint={s.mint} />
-                        <TokenInfoLink symbol={s.symbol} />
                       </div>
                     );
                   })}

@@ -34,7 +34,12 @@ type Store = {
   ) => void;
   setAmount: (amount: string) => void;
   setSlippage: (slippage: Slippage) => void;
-  swapSides: () => void;
+  // Flip from/to. When `amount` is passed, it replaces the input amount in
+  // the same `set` call so subscribers (notably the quote hook) never see a
+  // transient state where sides have flipped but amount is still the pre-swap
+  // value. Callers use this to promote the previous output amount into the
+  // new input when toggling direction.
+  swapSides: (amount?: string) => void;
   // Atomic combination of swapSides / setToken / setActiveSide. Reads the
   // current state, decides which mutation matches the click intent, and writes
   // the result in a single `set` call so subscribers never observe a transient
@@ -88,11 +93,12 @@ export const useSwapStore = create<Store>((set) => ({
 
   setSlippage: (slippage) => set({ slippage }),
 
-  swapSides: () =>
+  swapSides: (amount) =>
     set((s) => ({
       from: s.to,
       to: s.from,
       activeSide: otherSide(s.activeSide),
+      ...(amount !== undefined ? { amount } : {}),
     })),
 
   setSides: (from, to) =>

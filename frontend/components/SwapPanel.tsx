@@ -1,6 +1,6 @@
 "use client";
 
-import { useSplToken, useWalletConnection } from "@solana/react-hooks";
+import { useWalletConnection } from "@solana/react-hooks";
 import { useEffect } from "react";
 import { parseAmountToBase } from "@/lib/balance";
 import {
@@ -9,9 +9,9 @@ import {
   stablecoinMint,
 } from "@/lib/currencies";
 import { emit, useAppEvent } from "@/lib/events";
-import { AUTO_DETECT_TOKEN_PROGRAM } from "@/lib/splTokenOptions";
 import { useSameToken, useSwapStore } from "@/lib/store";
-import { useDflowQuote } from "@/lib/useDflowQuote";
+import { useAllBalances } from "@/lib/useAllBalances";
+import { formatAtomic, useDflowQuote } from "@/lib/useDflowQuote";
 import { useDflowSwap } from "@/lib/useDflowSwap";
 import {
   prefetchAllTokenInfo,
@@ -37,10 +37,24 @@ export function SwapPanel() {
   const fromStablecoin = useSwapStore((s) => s.from.stablecoin);
   const toStablecoin = useSwapStore((s) => s.to.stablecoin);
   const amount = useSwapStore((s) => s.amount);
+  const swapSides = useSwapStore((s) => s.swapSides);
   const fromMint = stablecoinMint(fromStablecoin);
   const toMint = stablecoinMint(toStablecoin);
   const fromDecimals = stablecoinDecimals(fromStablecoin);
+  const toDecimals = stablecoinDecimals(toStablecoin);
   const quote = useDflowQuote(fromMint, toMint, fromDecimals, amount);
+
+  // Toggling direction promotes the current quote's output amount into the
+  // new input. With no live quote (zero amount, sameToken, first load) the
+  // existing input is kept — the quote hook will refire against the flipped
+  // pair either way.
+  useAppEvent("swapSides", () => {
+    const next =
+      quote.outAmount !== null && quote.outAmount > 0n
+        ? formatAtomic(quote.outAmount, toDecimals)
+        : undefined;
+    swapSides(next);
+  });
 
   // One batched Jupiter call on mount warms every stablecoin's USD price so
   // switching tokens doesn't flash "$—" while a per-mint fetch resolves, then
@@ -56,23 +70,17 @@ export function SwapPanel() {
   const isConnecting = status === "connecting";
   const hasAmount = Number(amount) > 0;
   const needsAmount = !sameToken && connected && !isConnecting && !hasAmount;
-  const fromBalance = useSplToken(fromMint, AUTO_DETECT_TOKEN_PROGRAM);
-  useAppEvent("swapSucceeded", () => {
-    void fromBalance.refresh();
-    window.setTimeout(() => {
-      void fromBalance.refresh();
-    }, 1500);
-  });
-  const fromBalanceBase = fromBalance.balance?.exists
-    ? fromBalance.balance.amount
-    : 0n;
+  const { balanceFor, isReady: balancesReady } = useAllBalances();
+  // null (no ATA) is just zero balance for the purposes of the insufficient
+  // check — there's nothing to spend.
+  const fromBalanceBase = balanceFor(fromMint) ?? 0n;
   const amountBase = parseAmountToBase(amount, fromDecimals);
   const insufficient =
     !sameToken &&
     connected &&
     !isConnecting &&
     hasAmount &&
-    fromBalance.status === "ready" &&
+    balancesReady &&
     amountBase > fromBalanceBase;
   const fromUsd = useUsdQuote(fromStablecoin, amount);
   const exceedsBetaLimit =

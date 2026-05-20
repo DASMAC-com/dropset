@@ -10,6 +10,18 @@ import { emit } from "./events";
 // duplicate keys — see assertNoCollisions below.
 export type ShortcutContext = "swap" | "currencies";
 
+// Section headings shown in the help dialog. Order shortcuts within each
+// context so groups cluster together — the help dialog renders groups in
+// first-appearance order.
+export type ShortcutGroup =
+  | "General"
+  | "Tokens"
+  | "Trade"
+  | "Map"
+  | "Globe navigation"
+  | "Search"
+  | "Sort & display";
+
 type Router = ReturnType<typeof useRouter>;
 
 export type ShortcutRunContext = {
@@ -19,6 +31,7 @@ export type ShortcutRunContext = {
 export type ShortcutSpec = {
   key: string;
   description: string;
+  group: ShortcutGroup;
   run: (ctx: ShortcutRunContext) => void;
 };
 
@@ -26,11 +39,13 @@ export const GLOBAL_SHORTCUTS: ShortcutSpec[] = [
   {
     key: "?",
     description: "Show this shortcuts list",
+    group: "General",
     run: () => emit("toggleHelp"),
   },
   {
     key: "w",
     description: "Connect or disconnect wallet",
+    group: "General",
     run: () => emit("toggleWallet"),
   },
 ];
@@ -40,91 +55,109 @@ export const SHORTCUTS_BY_CONTEXT: Record<ShortcutContext, ShortcutSpec[]> = {
     {
       key: "c",
       description: "Go to Currencies",
+      group: "General",
       run: ({ router }) => router.push("/currencies"),
     },
     {
       key: "f",
       description: "Open the From picker",
+      group: "Tokens",
       run: () => emit("openPicker", "from"),
-    },
-    {
-      key: "a",
-      description: "Focus the From amount input",
-      run: () => emit("focusFromAmount"),
-    },
-    {
-      key: "m",
-      description: "Use max From amount",
-      run: () => emit("applyMaxBalance"),
-    },
-    {
-      key: "%",
-      description: "Open the From balance % picker",
-      run: () => emit("openBalancePercent"),
     },
     {
       key: "t",
       description: "Open the To picker",
+      group: "Tokens",
       run: () => emit("openPicker", "to"),
     },
     {
       key: "d",
       description: "Swap From and To direction",
+      group: "Tokens",
       run: () => emit("swapSides"),
+    },
+    {
+      key: "a",
+      description: "Focus the From amount input",
+      group: "Trade",
+      run: () => emit("focusFromAmount"),
+    },
+    {
+      key: "m",
+      description: "Use max From amount",
+      group: "Trade",
+      run: () => emit("applyMaxBalance"),
+    },
+    {
+      key: "%",
+      description: "Open the From balance % picker",
+      group: "Trade",
+      run: () => emit("openBalancePercent"),
+    },
+    {
+      key: "s",
+      description: "Open slippage settings",
+      group: "Trade",
+      run: () => emit("openSlippage"),
     },
     {
       key: "r",
       description: "Reset the globe view",
+      group: "Map",
       run: () => emit("resetGlobe"),
     },
     {
       key: "b",
       description: "Bird's-eye view of swap route",
+      group: "Map",
       run: () => emit("focusRoute"),
-    },
-    {
-      key: "s",
-      description: "Open slippage settings",
-      run: () => emit("openSlippage"),
     },
     {
       key: "e",
       description: "Toggle flag emojis on the map",
+      group: "Map",
       run: () => emit("toggleFlags"),
     },
     {
       key: "p",
       description: "Toggle globe play/pause",
+      group: "Map",
       run: () => emit("toggleSpin"),
     },
     {
       key: "=",
       description: "Zoom in",
+      group: "Globe navigation",
       run: () => emit("zoomIn"),
     },
     {
       key: "-",
       description: "Zoom out",
+      group: "Globe navigation",
       run: () => emit("zoomOut"),
     },
     {
       key: "i",
       description: "Pan north",
+      group: "Globe navigation",
       run: () => emit("pan", "up"),
     },
     {
       key: "j",
       description: "Pan west",
+      group: "Globe navigation",
       run: () => emit("pan", "left"),
     },
     {
       key: "k",
       description: "Pan south",
+      group: "Globe navigation",
       run: () => emit("pan", "down"),
     },
     {
       key: "l",
       description: "Pan east",
+      group: "Globe navigation",
       run: () => emit("pan", "right"),
     },
   ],
@@ -132,46 +165,55 @@ export const SHORTCUTS_BY_CONTEXT: Record<ShortcutContext, ShortcutSpec[]> = {
     {
       key: "s",
       description: "Go to Swap",
+      group: "General",
       run: ({ router }) => router.push("/swap"),
     },
     {
       key: "/",
       description: "Focus the search input",
+      group: "Search",
       run: () => emit("focusCurrenciesSearch"),
     },
     {
       key: "f",
       description: "Use the lone search result as From",
+      group: "Search",
       run: () => emit("pickCurrencyOnlyResult", "from"),
     },
     {
       key: "t",
       description: "Use the lone search result as To",
+      group: "Search",
       run: () => emit("pickCurrencyOnlyResult", "to"),
     },
     {
       key: "g",
       description: "Toggle Group by currency",
+      group: "Sort & display",
       run: () => emit("toggleGroupByCurrency"),
     },
     {
       key: "v",
       description: "Sort by 24h volume",
+      group: "Sort & display",
       run: () => emit("currenciesSort", "volume24h"),
     },
     {
       key: "m",
       description: "Sort by market cap",
+      group: "Sort & display",
       run: () => emit("currenciesSort", "mcap"),
     },
     {
       key: "l",
       description: "Sort by liquidity",
+      group: "Sort & display",
       run: () => emit("currenciesSort", "liquidity"),
     },
     {
       key: "h",
       description: "Sort by holders",
+      group: "Sort & display",
       run: () => emit("currenciesSort", "holderCount"),
     },
   ],
@@ -194,6 +236,9 @@ const assertNoCollisions = (): void => {
 };
 assertNoCollisions();
 
+// Page-specific specs come first so the page's nav-to-other-page shortcut
+// (tagged "General") leads the General section, with the global wallet/help
+// keys following inside the same group.
 export const shortcutsForPath = (pathname: string): ShortcutSpec[] => {
   const specific =
     pathname === "/swap"
@@ -201,7 +246,7 @@ export const shortcutsForPath = (pathname: string): ShortcutSpec[] => {
       : pathname === "/currencies"
         ? SHORTCUTS_BY_CONTEXT.currencies
         : [];
-  return [...GLOBAL_SHORTCUTS, ...specific];
+  return [...specific, ...GLOBAL_SHORTCUTS];
 };
 
 const isTextEditable = (target: EventTarget | null): boolean =>

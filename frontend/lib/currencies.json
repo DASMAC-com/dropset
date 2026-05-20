@@ -7,6 +7,7 @@
         "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "mintSourceUrl": "https://developers.circle.com/stablecoins/usdc-contract-addresses",
         "decimals": 6,
+        "tokenProgram": "classic",
         "icon": "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png",
         "issuer": {
           "name": ["Circle"],
@@ -20,6 +21,7 @@
         "mint": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
         "mintSourceUrl": "https://tether.to/en/supported-protocols/",
         "decimals": 6,
+        "tokenProgram": "classic",
         "icon": "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB/logo.svg",
         "issuer": {
           "name": ["Tether"],
@@ -33,6 +35,7 @@
         "mint": "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH",
         "mintSourceUrl": "https://docs.paxos.com/guides/stablecoin/usdg/mainnet",
         "decimals": 6,
+        "tokenProgram": "token2022",
         "icon": "https://424565.fs1.hubspotusercontent-na1.net/hubfs/424565/GDN-USDG-Token-512x512.png",
         "issuer": {
           "name": ["Global Dollar Network", "Paxos Digital Singapore"],
@@ -46,6 +49,7 @@
         "mint": "USD1ttGY1N17NEEHLmELoaybftRBUSErhqYiQzvEmuB",
         "mintSourceUrl": "https://docs.worldlibertyfinancial.com/usd1-token/contract-addresses",
         "decimals": 6,
+        "tokenProgram": "classic",
         "icon": "https://raw.githubusercontent.com/worldliberty/usd1-metadata/refs/heads/main/logo.png",
         "issuer": {
           "name": ["World Liberty Financial", "BitGo"],
@@ -59,6 +63,7 @@
         "mint": "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo",
         "mintSourceUrl": "https://docs.paxos.com/guides/stablecoin/pyusd/mainnet",
         "decimals": 6,
+        "tokenProgram": "token2022",
         "icon": "https://424565.fs1.hubspotusercontent-na1.net/hubfs/424565/PYUSDLOGO.png",
         "issuer": {
           "name": ["PayPal", "Paxos Trust Company"],
@@ -77,6 +82,7 @@
         "mint": "HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr",
         "mintSourceUrl": "https://developers.circle.com/stablecoins/eurc-contract-addresses",
         "decimals": 6,
+        "tokenProgram": "classic",
         "icon": "https://6778953.fs1.hubspotusercontent-na1.net/hubfs/6778953/Brand/EURC/EURC-icon_128x128.png",
         "issuer": {
           "name": ["Circle"],
@@ -89,6 +95,7 @@
         "name": "VNX Euro",
         "mint": "C4Kkr9NZU3VbyedcgutU6LKmi6MKz81sx6gRmk5pX519",
         "decimals": 9,
+        "tokenProgram": "classic",
         "icon": "https://vnx.li/wp-content/uploads/2025/04/VEUR-256x256-1.png",
         "issuer": {
           "name": ["VNX Commodities AG"],
@@ -101,6 +108,7 @@
         "name": "EUR CoinVertible",
         "mint": "DghpMkatCiUsofbTmid3M3kAbDTPqDwKiYHnudXeGG52",
         "decimals": 2,
+        "tokenProgram": "token2022",
         "icon": "https://www.sgforge.com/wp-content/uploads/2025/03/EURCV-Solana.png",
         "issuer": {
           "name": ["Société Générale-FORGE"],
@@ -118,6 +126,7 @@
         "mint": "AUDDttiEpCydTm7joUMbYddm72jAWXZnCpPZtDoxqBSw",
         "mintSourceUrl": "https://devhub.audd.digital/docs/supported-blockchains",
         "decimals": 6,
+        "tokenProgram": "classic",
         "icon": "https://assets.coingecko.com/coins/images/33263/standard/AUDD-Logo-Blue_512.png",
         "issuer": {
           "name": ["AUDC"],
@@ -134,6 +143,7 @@
         "name": "BRZ Token",
         "mint": "BRZbFNQDcWLfcdHmAkqEVnLHCAWKTRf6eHyEaWdZp3JN",
         "decimals": 6,
+        "tokenProgram": "token2022",
         "icon": "https://transferotokensconfig.blob.core.windows.net/stablesimages/BRZ/ico/ico_BRZ_750x750.png",
         "issuer": {
           "name": ["Transfero"],
@@ -150,6 +160,7 @@
         "name": "VNX Swiss Franc",
         "mint": "AhhdRu5YZdjVkKR3wbnUDaymVQL2ucjMQ63sZ3LFHsch",
         "decimals": 9,
+        "tokenProgram": "classic",
         "icon": "https://vnx.li/wp-content/uploads/2025/04/VCHF-256x256-1.png",
         "issuer": {
           "name": ["VNX Commodities AG"],
@@ -166,6 +177,7 @@
         "name": "tGBP",
         "mint": "2zMqyX4AYCk6mgy5UZ2S7zUaLxwERhK5WjqDzkPPbSpW",
         "decimals": 9,
+        "tokenProgram": "classic",
         "icon": "https://raw.githubusercontent.com/superset-finance/token-metadata/main/tGBP/logo.png",
         "issuer": {
           "name": ["Tokenised GBP", "BCP Technologies"],
@@ -178,6 +190,7 @@
         "name": "VNX British Pound",
         "mint": "5H4voZhzySsVvwVYDAKku8MZGuYBC7cXaBKDPW4YHWW1",
         "decimals": 9,
+        "tokenProgram": "classic",
         "icon": "https://vnx.li/wp-content/uploads/2025/04/VGBP-256x256-1.png",
         "issuer": {
           "name": ["VNX Commodities AG"],
@@ -195,6 +208,7 @@
         "mint": "idrxZcP8xiKkYk6XGD4uz1dxEYCWSgKDHqgjsBbwDur",
         "mintSourceUrl": "https://docs.idrx.co/introduction/supported-chain-and-contract-address",
         "decimals": 2,
+        "tokenProgram": "classic",
         "icon": "https://home.idrx.co/favicon.svg",
         "issuer": {
           "name": ["IDRX"],
@@ -212,6 +226,7 @@
         "mint": "Crn4x1Y2HUKko7ox2EZMT6N2t2ZyH7eKtwkBGVnhEq1g",
         "mintSourceUrl": "https://support.stablecoin.z.com/hc/en-us/articles/360053460793-What-are-the-contract-addresses-for-GYEN-and-ZUSD",
         "decimals": 6,
+        "tokenProgram": "token2022",
         "icon": "https://stablecoin.z.com/assets/images/token/icon_gyen_300_300.png",
         "issuer": {
           "name": ["GMO-Z.com Trust Company"],
@@ -229,6 +244,7 @@
         "mint": "6zYgzrT7X2wi9a9NeMtUvUWLLmf2a8vBsbYkocYdB9wa",
         "mintSourceUrl": "https://brale.xyz/stablecoins/MXNe",
         "decimals": 9,
+        "tokenProgram": "classic",
         "icon": "https://brale.xyz/assets/stablecoins/mxne-logo.png",
         "issuer": {
           "name": ["Brale", "Etherfuse"],
@@ -246,6 +262,7 @@
         "mint": "3jiqwBQVRC5zRwHyqvnkQurebJ5RNxg3F5fXMwaxgkv8",
         "mintSourceUrl": "https://github.com/wrappedcbdc/stablecoin-cngn",
         "decimals": 6,
+        "tokenProgram": "token2022",
         "icon": "https://black-elaborate-wildcat-667.mypinata.cloud/ipfs/bafkreihl3tm6zdwmcyiaurafzfmblu5olk7ozpelftop7ydbvaalm2vooi",
         "issuer": {
           "name": ["WrappedCBDC Ltd"],
@@ -263,6 +280,7 @@
         "mint": "71S9cppWipeUEQDFngYwxjoxB6Sz1MUqX72byLsVYJqy",
         "mintSourceUrl": "https://support.straitsx.com/support/solutions/articles/157000365664",
         "decimals": 6,
+        "tokenProgram": "classic",
         "icon": "https://s2.coinmarketcap.com/static/img/coins/200x200/8489.png",
         "issuer": {
           "name": ["StraitsX"],
@@ -279,6 +297,7 @@
         "name": "BiLira",
         "mint": "A94X2fRy3wydNShU4dRaDyap2UuoeWJGWyATtyp61WZf",
         "decimals": 6,
+        "tokenProgram": "classic",
         "icon": "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/A94X2fRy3wydNShU4dRaDyap2UuoeWJGWyATtyp61WZf/logo.png",
         "issuer": {
           "name": ["BiLira"],
@@ -296,6 +315,7 @@
         "mint": "dngKhBQM3BGvsDHKhrLnjvRKfY5Q7gEnYGToj9Lk8rk",
         "mintSourceUrl": "https://www.zarpstablecoin.com/transparency/",
         "decimals": 6,
+        "tokenProgram": "token2022",
         "icon": "https://raw.githubusercontent.com/venox-digital-assets/zarp.contract/main/public/zarp_coin.png",
         "issuer": {
           "name": ["ZARP Stablecoin (Pty) Ltd"],
