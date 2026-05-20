@@ -18,7 +18,6 @@ import { ChevronDown, Search, X } from "./icons";
 import { PickerBalanceCell } from "./PickerBalanceCell";
 import { StableTokenIdentity } from "./StableTokenIdentity";
 import { TokenInfoLink } from "./TokenInfoLink";
-import { TokenMintActions } from "./TokenMintActions";
 
 export function TokenPicker({ side }: { side: Side }) {
   const currency = useSwapStore((s) => s[side].currency);
@@ -143,9 +142,12 @@ export function TokenPicker({ side }: { side: Side }) {
           className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-fg"
         >
           <StableTokenIdentity s={s} />
-          <PickerBalanceCell mint={s.mint} decimals={s.decimals} />
+          <PickerBalanceCell
+            mint={s.mint}
+            decimals={s.decimals}
+            symbol={s.symbol}
+          />
         </button>
-        <TokenMintActions symbol={s.symbol} mint={s.mint} />
         <TokenInfoLink symbol={s.symbol} className="mr-1" />
       </div>
     );

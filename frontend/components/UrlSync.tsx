@@ -86,11 +86,25 @@ export function UrlSync() {
   // re-fires when nav changes the params underneath us. Params are rebuilt
   // from scratch so `from` always precedes `to` in the address bar, even if
   // the inbound URL had them reversed (URLSearchParams.set updates in place).
+  //
+  // The from/to values are read via useSwapStore.getState() at fire-time
+  // rather than from the fromSym/toSym render-phase bindings. The reader
+  // effect above fires first in this same commit and may have just called
+  // setSides() to reconcile the store with the URL — but the writer's
+  // closure was captured BEFORE setSides ran, so using fromSym/toSym here
+  // would overwrite the URL with the values the reader just replaced. The
+  // next reader pass would then re-apply the URL's (now-stale) values to
+  // the store, and the two effects would ping-pong at ~40 Hz, tripping
+  // Chromium's history-flooding throttle. Reading getState() makes the
+  // writer always see the latest store snapshot — when the reader wins,
+  // the bail-out below fires and the loop dies. fromSym/toSym stay in the
+  // dep array so the effect still re-runs when the store changes.
   useEffect(() => {
     if (pathname !== "/swap") return;
+    const { from, to } = useSwapStore.getState();
     const params = new URLSearchParams();
-    params.set("from", fromSym);
-    params.set("to", toSym);
+    params.set("from", from.stablecoin);
+    params.set("to", to.stablecoin);
     searchParams.forEach((value, key) => {
       if (key !== "from" && key !== "to") params.append(key, value);
     });

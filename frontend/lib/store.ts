@@ -2,7 +2,11 @@
 
 import { create } from "zustand";
 import { defaultAnchorCca2 } from "./countries";
-import { currencyAnchor, type IsoCurrencyCode } from "./currencies";
+import {
+  currencyAnchor,
+  type IsoCurrencyCode,
+  resolveTokenSlug,
+} from "./currencies";
 
 export type Side = "from" | "to";
 
@@ -62,17 +66,50 @@ export const DEFAULT_FROM_STABLECOIN = "USDC";
 export const DEFAULT_TO_CURRENCY: IsoCurrencyCode = "EUR";
 export const DEFAULT_TO_STABLECOIN = "EURC";
 
+const sideFor = (currency: IsoCurrencyCode, stablecoin: string): SideState => ({
+  currency,
+  stablecoin,
+  cca2: anchorFor(currency),
+});
+const defaultFrom = (): SideState =>
+  sideFor(DEFAULT_FROM_CURRENCY, DEFAULT_FROM_STABLECOIN);
+const defaultTo = (): SideState =>
+  sideFor(DEFAULT_TO_CURRENCY, DEFAULT_TO_STABLECOIN);
+
+// Resolve the initial from/to pair from ?from=/?to= slugs on the URL, falling
+// back to defaults whenever a slug is missing or unresolvable. Mirrors the
+// conflict-resolution rules in UrlSync's reader effect (slugConflict, sameToken
+// fallback) so a deep-link land matches what the reader would have produced
+// post-hydration — without the visible "stitch" from defaults to URL values
+// that an effect-driven hydration produced. Returns defaults on the server
+// (`typeof window === "undefined"`), so SSR is deterministic and the per-process
+// Zustand singleton is never mutated by a request's URL. On the client this
+// runs once at module load, before any subscribing component renders.
+const initialSides = (): { from: SideState; to: SideState } => {
+  if (typeof window === "undefined") {
+    return { from: defaultFrom(), to: defaultTo() };
+  }
+  const params = new URLSearchParams(window.location.search);
+  const f = resolveTokenSlug(params.get("from"));
+  const t = resolveTokenSlug(params.get("to"));
+  if (!f && !t) return { from: defaultFrom(), to: defaultTo() };
+  const slugConflict = !!(f && t && f.stablecoin === t.stablecoin);
+  let from = f ? sideFor(f.currency, f.stablecoin) : defaultFrom();
+  let to = t && !slugConflict ? sideFor(t.currency, t.stablecoin) : defaultTo();
+  if (from.stablecoin === to.stablecoin) {
+    const fallback = (avoid: string): SideState =>
+      avoid === DEFAULT_TO_STABLECOIN ? defaultFrom() : defaultTo();
+    if (f) to = fallback(from.stablecoin);
+    else if (t) from = fallback(to.stablecoin);
+  }
+  return { from, to };
+};
+
+const initial = initialSides();
+
 export const useSwapStore = create<Store>((set) => ({
-  from: {
-    currency: DEFAULT_FROM_CURRENCY,
-    stablecoin: DEFAULT_FROM_STABLECOIN,
-    cca2: anchorFor(DEFAULT_FROM_CURRENCY),
-  },
-  to: {
-    currency: DEFAULT_TO_CURRENCY,
-    stablecoin: DEFAULT_TO_STABLECOIN,
-    cca2: anchorFor(DEFAULT_TO_CURRENCY),
-  },
+  from: initial.from,
+  to: initial.to,
   amount: "",
   slippage: { mode: "auto" },
   activeSide: "from",

@@ -25,6 +25,7 @@ import {
   type IsoCurrencyCode,
   type Stablecoin,
   SUPPORTED,
+  shortenMint,
 } from "@/lib/currencies";
 import { useAppEvent } from "@/lib/events";
 import { explorerTokenUrl } from "@/lib/explorer";
@@ -75,11 +76,6 @@ const compactCountFormat: Format = {
 
 const isFiniteNumber = (n: unknown): n is number =>
   typeof n === "number" && Number.isFinite(n);
-
-// Collapse a base58 mint to "abcd…abcd" so the column reads at a glance;
-// the CopyButton next to it still copies the full address.
-const shortenMint = (mint: string): string =>
-  mint.length <= 11 ? mint : `${mint.slice(0, 4)}…${mint.slice(-4)}`;
 
 type SortKey = "volume24h" | "mcap" | "liquidity" | "holderCount";
 type SortDir = "asc" | "desc";

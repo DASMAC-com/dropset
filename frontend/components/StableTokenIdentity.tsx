@@ -1,6 +1,12 @@
 "use client";
 
-import { type Stablecoin, tokenIconUrl } from "@/lib/currencies";
+import {
+  type Stablecoin,
+  shortenMint,
+  tokenIconUrl,
+  truncateTokenName,
+} from "@/lib/currencies";
+import { explorerTokenUrl } from "@/lib/explorer";
 import { useLiquidityLookup } from "@/lib/useUsdQuote";
 
 // Shared stablecoin-row identity block used by the dropdown TokenPicker and
@@ -42,9 +48,30 @@ export function StableTokenIdentity({
             </span>
           )}
         </span>
-        {s.name !== s.symbol && (
-          <span className="truncate text-muted-fg text-xs">{s.name}</span>
-        )}
+        {/* Secondary line: truncating name + always-visible Solscan link on
+            the shortened mint. Layout uses a nested flex with `min-w-0
+            truncate` on the name and `shrink-0` on the bullet + mint so long
+            names (e.g. "World Liberty Financial USD") collapse with an
+            ellipsis while the mint stays fully readable. The mint link
+            stopPropagation-s so clicking it in the dropdown picker (where
+            this component is wrapped in a row-select button) doesn't also
+            trigger the row select. Nesting `<a>` in `<button>` is technically
+            invalid HTML but works in every major browser and is much smaller
+            than restructuring the picker row. */}
+        <span className="flex min-w-0 items-baseline gap-1 text-muted-fg text-xs">
+          <span className="min-w-0 truncate">{truncateTokenName(s.name)}</span>
+          <span className="shrink-0">·</span>
+          <a
+            href={explorerTokenUrl(s.mint)}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            title={`View ${s.symbol} on Solscan`}
+            className="shrink-0 font-mono hover:text-foreground hover:underline"
+          >
+            {shortenMint(s.mint)}
+          </a>
+        </span>
       </span>
     </>
   );
