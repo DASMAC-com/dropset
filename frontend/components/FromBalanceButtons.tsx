@@ -1,13 +1,13 @@
 "use client";
 
 import * as Popover from "@radix-ui/react-popover";
-import { useSplToken, useWalletConnection } from "@solana/react-hooks";
+import { useWalletConnection } from "@solana/react-hooks";
 import { useRef, useState } from "react";
 import { formatBaseAmount, parseAmountToBase } from "@/lib/balance";
 import { stablecoinDecimals, stablecoinMint } from "@/lib/currencies";
 import { emit, useAppEvent } from "@/lib/events";
-import { AUTO_DETECT_TOKEN_PROGRAM } from "@/lib/splTokenOptions";
 import { useSwapStore } from "@/lib/store";
+import { useAllBalances } from "@/lib/useAllBalances";
 
 const PRESET_PERCENTS = [10, 25, 50];
 
@@ -48,17 +48,16 @@ export function FromBalanceButtons() {
   const { connected } = useWalletConnection();
   const mint = stablecoinMint(stablecoin);
   const decimals = stablecoinDecimals(stablecoin);
-  const { balance, status, refresh } = useSplToken(
-    mint,
-    AUTO_DETECT_TOKEN_PROGRAM,
-  );
+  const { balanceFor, isReady } = useAllBalances();
 
   const [open, setOpen] = useState(false);
   const [custom, setCustom] = useState("");
   const customRef = useRef<HTMLInputElement>(null);
 
-  const base = balance?.exists ? balance.amount : 0n;
-  const disabled = !connected || status !== "ready" || base === 0n;
+  // `balanceFor(mint)` returns null when there's no ATA — treat it as 0 for
+  // the purpose of the percent math (the buttons stay disabled either way).
+  const base = balanceFor(mint) ?? 0n;
+  const disabled = !connected || !isReady || base === 0n;
 
   useAppEvent("applyMaxBalance", () => {
     if (disabled) return;
@@ -67,14 +66,6 @@ export function FromBalanceButtons() {
   useAppEvent("openBalancePercent", () => {
     if (disabled) return;
     setOpen(true);
-  });
-  // Double refresh: immediate + delayed. RPC account state can lag tx
-  // confirmation by a slot; the second pass catches stragglers.
-  useAppEvent("swapSucceeded", () => {
-    void refresh();
-    window.setTimeout(() => {
-      void refresh();
-    }, 1500);
   });
 
   // Derive the trigger label from amount/balance so picking a preset, typing

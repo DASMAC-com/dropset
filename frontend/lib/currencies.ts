@@ -20,12 +20,14 @@ export type Issuer = {
   url: string;
   socials?: { x?: string };
 };
+export type TokenProgramKind = "classic" | "token2022";
 export type Stablecoin = {
   symbol: string;
   name: string;
   mint: string;
   mintSourceUrl?: string;
   decimals: number;
+  tokenProgram: TokenProgramKind;
   icon: string;
   issuer: Issuer;
 };
@@ -122,6 +124,13 @@ export const stablecoinDecimals = (symbol: string): number =>
 
 export const stablecoinMint = (symbol: string): string =>
   STABLE_BY_SYMBOL[symbol]?.mint ?? "";
+
+export const stablecoinTokenProgram = (
+  symbol: string,
+): TokenProgramKind | undefined => STABLE_BY_SYMBOL[symbol]?.tokenProgram;
+
+export const ALL_STABLECOINS: readonly Stablecoin[] =
+  Object.values(STABLE_BY_SYMBOL);
 
 export const currencyForStablecoin = (
   symbol: string,

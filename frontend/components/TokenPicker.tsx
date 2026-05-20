@@ -2,6 +2,7 @@
 
 import * as Dialog from "@radix-ui/react-dialog";
 import { useEffect, useRef, useState } from "react";
+import { formatBaseAmount, groupThousands } from "@/lib/balance";
 import {
   CURRENCIES,
   currencyName,
@@ -12,12 +13,26 @@ import {
 } from "@/lib/currencies";
 import { useAppEvent } from "@/lib/events";
 import { type Side, useSwapStore } from "@/lib/store";
+import { useAllBalances } from "@/lib/useAllBalances";
 import { sortByVolumeDesc, useInfoLookup } from "@/lib/useUsdQuote";
 import { CurrencyGroupHeader } from "./CurrencyGroupHeader";
 import { ChevronDown, Search, X } from "./icons";
 import { StableTokenIdentity } from "./StableTokenIdentity";
 import { TokenInfoLink } from "./TokenInfoLink";
 import { TokenMintActions } from "./TokenMintActions";
+
+// Render a stablecoin's balance for the picker row: "—" when the wallet has
+// no ATA for that mint, the formatted number otherwise (with "0" for empty
+// accounts). `undefined` means we haven't fetched yet or the wallet's
+// disconnected — render nothing then to avoid flashing a fake "—".
+const formatPickerBalance = (
+  raw: bigint | null | undefined,
+  decimals: number,
+): string | null => {
+  if (raw === undefined) return null;
+  if (raw === null) return "—";
+  return groupThousands(formatBaseAmount(raw, decimals));
+};
 
 export function TokenPicker({ side }: { side: Side }) {
   const currency = useSwapStore((s) => s[side].currency);
@@ -27,6 +42,7 @@ export function TokenPicker({ side }: { side: Side }) {
   );
   const setToken = useSwapStore((s) => s.setToken);
   const setActiveSide = useSwapStore((s) => s.setActiveSide);
+  const { balanceFor } = useAllBalances();
 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -128,6 +144,7 @@ export function TokenPicker({ side }: { side: Side }) {
     const blocked = isBlocked(code, s.symbol);
     const selected = code === currency && s.symbol === stablecoin;
     const active = selected || highlighted;
+    const balanceText = formatPickerBalance(balanceFor(s.mint), s.decimals);
     return (
       <div
         className={`flex w-full items-center rounded-md text-sm ${
@@ -142,6 +159,11 @@ export function TokenPicker({ side }: { side: Side }) {
           className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-fg"
         >
           <StableTokenIdentity s={s} />
+          {balanceText !== null && (
+            <span className="ml-auto shrink-0 pl-2 text-muted-fg text-xs tabular-nums">
+              {balanceText}
+            </span>
+          )}
         </button>
         <TokenMintActions symbol={s.symbol} mint={s.mint} />
         <TokenInfoLink symbol={s.symbol} className="mr-1" />

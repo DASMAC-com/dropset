@@ -1,6 +1,6 @@
 "use client";
 
-import { useSplToken, useWalletConnection } from "@solana/react-hooks";
+import { useWalletConnection } from "@solana/react-hooks";
 import { useEffect } from "react";
 import { parseAmountToBase } from "@/lib/balance";
 import {
@@ -8,9 +8,9 @@ import {
   stablecoinDecimals,
   stablecoinMint,
 } from "@/lib/currencies";
-import { emit, useAppEvent } from "@/lib/events";
-import { AUTO_DETECT_TOKEN_PROGRAM } from "@/lib/splTokenOptions";
+import { emit } from "@/lib/events";
 import { useSameToken, useSwapStore } from "@/lib/store";
+import { useAllBalances } from "@/lib/useAllBalances";
 import { useDflowQuote } from "@/lib/useDflowQuote";
 import { useDflowSwap } from "@/lib/useDflowSwap";
 import {
@@ -56,23 +56,17 @@ export function SwapPanel() {
   const isConnecting = status === "connecting";
   const hasAmount = Number(amount) > 0;
   const needsAmount = !sameToken && connected && !isConnecting && !hasAmount;
-  const fromBalance = useSplToken(fromMint, AUTO_DETECT_TOKEN_PROGRAM);
-  useAppEvent("swapSucceeded", () => {
-    void fromBalance.refresh();
-    window.setTimeout(() => {
-      void fromBalance.refresh();
-    }, 1500);
-  });
-  const fromBalanceBase = fromBalance.balance?.exists
-    ? fromBalance.balance.amount
-    : 0n;
+  const { balanceFor, isReady: balancesReady } = useAllBalances();
+  // null (no ATA) is just zero balance for the purposes of the insufficient
+  // check — there's nothing to spend.
+  const fromBalanceBase = balanceFor(fromMint) ?? 0n;
   const amountBase = parseAmountToBase(amount, fromDecimals);
   const insufficient =
     !sameToken &&
     connected &&
     !isConnecting &&
     hasAmount &&
-    fromBalance.status === "ready" &&
+    balancesReady &&
     amountBase > fromBalanceBase;
   const fromUsd = useUsdQuote(fromStablecoin, amount);
   const exceedsBetaLimit =
