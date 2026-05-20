@@ -724,9 +724,9 @@ function GlobeInner() {
         <button
           type="button"
           onClick={focusOnArc}
-          title="Focus on swap route"
+          title="Bird's-eye view of swap route"
           className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background/80 text-muted-fg shadow-sm backdrop-blur transition-colors hover:border-accent hover:text-accent"
-          aria-label="Focus globe on swap route"
+          aria-label="Bird's-eye view of swap route"
         >
           <Crosshair size={16} />
         </button>

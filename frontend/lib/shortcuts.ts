@@ -54,7 +54,7 @@ export const SHORTCUTS_BY_CONTEXT: Record<ShortcutContext, ShortcutSpec[]> = {
     },
     {
       key: "m",
-      description: "Use your full From balance (Max)",
+      description: "Use max From amount",
       run: () => emit("applyMaxBalance"),
     },
     {
@@ -78,9 +78,14 @@ export const SHORTCUTS_BY_CONTEXT: Record<ShortcutContext, ShortcutSpec[]> = {
       run: () => emit("resetGlobe"),
     },
     {
-      key: "s",
-      description: "Focus on swap route",
+      key: "b",
+      description: "Bird's-eye view of swap route",
       run: () => emit("focusRoute"),
+    },
+    {
+      key: "s",
+      description: "Open slippage settings",
+      run: () => emit("openSlippage"),
     },
     {
       key: "e",

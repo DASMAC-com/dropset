@@ -104,7 +104,7 @@ export function FromBalanceButtons() {
         onClick={() => applyPercent(100)}
         title={
           connected
-            ? `Use your full ${stablecoin} balance`
+            ? `Use max ${stablecoin} amount`
             : "Connect wallet to use balance"
         }
         className={sharedButtonClass}

@@ -11,10 +11,12 @@ import {
 import { emit } from "@/lib/events";
 import { useSameToken, useSwapStore } from "@/lib/store";
 import { useDflowQuote } from "@/lib/useDflowQuote";
+import { useDflowSwap } from "@/lib/useDflowSwap";
 import { prefetchAllTokenInfo, REFRESH_INTERVAL_MS } from "@/lib/useUsdQuote";
 import { QuoteError } from "./QuoteError";
 import { RateLimitMessage } from "./RateLimitMessage";
 import { SwapArrowButton } from "./SwapArrowButton";
+import { SwapResult } from "./SwapResult";
 import { TokenRow } from "./TokenRow";
 
 export function SwapPanel() {
@@ -58,8 +60,10 @@ export function SwapPanel() {
     hasAmount &&
     fromBalance.status === "ready" &&
     amountBase > fromBalanceBase;
+  const swap = useDflowSwap();
+  const swapInFlight = swap.status === "preparing" || swap.status === "signing";
   const dimmed = needsAmount || insufficient;
-  const disabled = sameToken || isConnecting;
+  const disabled = sameToken || isConnecting || swapInFlight;
 
   let label: string;
   let onClick: () => void;
@@ -75,9 +79,17 @@ export function SwapPanel() {
   } else if (insufficient) {
     label = `Insufficient ${fromStablecoin}`;
     onClick = () => emit("focusFromAmount");
+  } else if (swap.status === "preparing") {
+    label = "Preparing swap…";
+    onClick = () => {};
+  } else if (swap.status === "signing") {
+    label = "Sign in wallet…";
+    onClick = () => {};
   } else {
     label = "Swap";
-    onClick = () => {};
+    onClick = () => {
+      void swap.execute();
+    };
   }
 
   return (
@@ -104,6 +116,11 @@ export function SwapPanel() {
       </div>
       <RateLimitMessage />
       <QuoteError quote={quote} />
+      <SwapResult
+        status={swap.status}
+        result={swap.result}
+        error={swap.error}
+      />
     </>
   );
 }
