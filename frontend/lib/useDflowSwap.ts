@@ -19,9 +19,18 @@ export type SwapStatus =
   | "success"
   | "error";
 
+// Augment the bare DFlow result with the from/to symbols captured at the
+// moment of execution. Pinning these here (rather than reading from the
+// live store in the result banner) means flipping sides after a swap
+// can't rewrite history on the success/error chrome.
+export type CompletedSwap = DflowSwapResult & {
+  fromStablecoin: string;
+  toStablecoin: string;
+};
+
 export type UseDflowSwap = {
   status: SwapStatus;
-  result: DflowSwapResult | null;
+  result: CompletedSwap | null;
   error: DflowSwapError | null;
   execute: () => Promise<void>;
   reset: () => void;
@@ -38,7 +47,7 @@ export function useDflowSwap(): UseDflowSwap {
   const slippage = useSwapStore((s) => s.slippage);
 
   const [status, setStatus] = useState<SwapStatus>("idle");
-  const [result, setResult] = useState<DflowSwapResult | null>(null);
+  const [result, setResult] = useState<CompletedSwap | null>(null);
   const [error, setError] = useState<DflowSwapError | null>(null);
 
   // Track whether a swap is in flight so multiple clicks don't queue.
@@ -79,7 +88,7 @@ export function useDflowSwap(): UseDflowSwap {
         userPublicKey: wallet.session.account.address.toString(),
         walletSession: wallet.session,
       });
-      setResult(res);
+      setResult({ ...res, fromStablecoin, toStablecoin });
       setStatus("success");
       // Tell components subscribed via useSplToken to refetch — the swap
       // mutated balances for both the from- and to-mints.

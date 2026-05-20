@@ -2,9 +2,8 @@
 
 import { formatBaseAmount, groupThousands } from "@/lib/balance";
 import { stablecoinDecimals } from "@/lib/currencies";
-import type { DflowSwapError, DflowSwapResult } from "@/lib/dflowSwap";
-import { useSwapStore } from "@/lib/store";
-import type { SwapStatus } from "@/lib/useDflowSwap";
+import type { DflowSwapError } from "@/lib/dflowSwap";
+import type { CompletedSwap, SwapStatus } from "@/lib/useDflowSwap";
 import { CircleAlert, CircleCheck, ExternalLink, X } from "./icons";
 
 const explorerTxUrl = (sig: string) => `https://explorer.solana.com/tx/${sig}`;
@@ -16,16 +15,13 @@ export function SwapResult({
   onClose,
 }: {
   status: SwapStatus;
-  result: DflowSwapResult | null;
+  result: CompletedSwap | null;
   error: DflowSwapError | null;
   onClose: () => void;
 }) {
-  const fromStablecoin = useSwapStore((s) => s.from.stablecoin);
-  const toStablecoin = useSwapStore((s) => s.to.stablecoin);
-
   if (status === "success" && result) {
-    const inDec = stablecoinDecimals(fromStablecoin);
-    const outDec = stablecoinDecimals(toStablecoin);
+    const inDec = stablecoinDecimals(result.fromStablecoin);
+    const outDec = stablecoinDecimals(result.toStablecoin);
     const inStr = groupThousands(formatBaseAmount(result.inAmount, inDec));
     const outStr = groupThousands(formatBaseAmount(result.outAmount, outDec));
     return (
@@ -43,7 +39,7 @@ export function SwapResult({
           className="inline-flex min-w-0 items-center gap-1 truncate text-muted-fg transition-colors hover:text-foreground"
         >
           <span className="truncate">
-            {inStr} {fromStablecoin} → {outStr} {toStablecoin}
+            {inStr} {result.fromStablecoin} → {outStr} {result.toStablecoin}
           </span>
           <ExternalLink size={12} className="shrink-0" />
         </a>
