@@ -1,11 +1,21 @@
 // Convert a raw base-unit bigint into a normalized decimal string respecting
 // the token's `decimals`. Trailing zeros are stripped; "0.0" collapses to "0".
-export const formatBaseAmount = (base: bigint, decimals: number): string => {
+// Pass `minFractionDigits` (default 0) to require at least that many decimal
+// places — e.g. 2 turns "0" into "0.00" and "1.5" into "1.50" for the user-
+// facing balance displays, while "1.234567" stays as-is.
+export const formatBaseAmount = (
+  base: bigint,
+  decimals: number,
+  minFractionDigits = 0,
+): string => {
   const s = base.toString();
   if (decimals === 0) return s;
   const padded = s.padStart(decimals + 1, "0");
   const intPart = padded.slice(0, -decimals).replace(/^0+(?=\d)/, "");
-  const fracPart = padded.slice(-decimals).replace(/0+$/, "");
+  let fracPart = padded.slice(-decimals).replace(/0+$/, "");
+  if (fracPart.length < minFractionDigits) {
+    fracPart = fracPart.padEnd(minFractionDigits, "0");
+  }
   return fracPart ? `${intPart}.${fracPart}` : intPart;
 };
 

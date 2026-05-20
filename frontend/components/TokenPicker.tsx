@@ -31,7 +31,7 @@ const formatPickerBalance = (
 ): string | null => {
   if (raw === undefined) return null;
   if (raw === null) return "—";
-  return groupThousands(formatBaseAmount(raw, decimals));
+  return groupThousands(formatBaseAmount(raw, decimals, 2));
 };
 
 export function TokenPicker({ side }: { side: Side }) {

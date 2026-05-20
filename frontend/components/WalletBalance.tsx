@@ -20,7 +20,9 @@ export function WalletBalance({ stablecoin }: { stablecoin: string }) {
   // null → no associated token account (display "—"). 0n → ATA exists with
   // zero balance (display "0"). Positive bigint → formatted number.
   const display =
-    raw === null ? "—" : groupThousands(formatBaseAmount(raw ?? 0n, decimals));
+    raw === null
+      ? "—"
+      : groupThousands(formatBaseAmount(raw ?? 0n, decimals, 2));
 
   return (
     <span
