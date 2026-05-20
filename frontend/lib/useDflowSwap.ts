@@ -1,6 +1,6 @@
 "use client";
 
-import { useWallet } from "@solana/react-hooks";
+import { useSolanaClient, useWallet } from "@solana/react-hooks";
 import { useCallback, useRef, useState } from "react";
 import { parseAmountToBase } from "./balance";
 import { stablecoinDecimals, stablecoinMint } from "./currencies";
@@ -8,6 +8,7 @@ import {
   DflowSwapError,
   type DflowSwapResult,
   executeDflowSwap,
+  waitForSwapConfirmation,
 } from "./dflowSwap";
 import { emit } from "./events";
 import { type Slippage, useSwapStore } from "./store";
@@ -15,7 +16,8 @@ import { type Slippage, useSwapStore } from "./store";
 export type SwapStatus =
   | "idle"
   | "preparing" // GET /order in flight
-  | "signing" // tx handed to wallet (signs + sends + waits for confirm)
+  | "signing" // tx handed to wallet for signing + submission
+  | "confirming" // signature received, polling RPC for on-chain confirmation
   | "success"
   | "error";
 
@@ -41,6 +43,7 @@ const slippageBpsParam = (slip: Slippage): string =>
 
 export function useDflowSwap(): UseDflowSwap {
   const wallet = useWallet();
+  const client = useSolanaClient();
   const fromStablecoin = useSwapStore((s) => s.from.stablecoin);
   const toStablecoin = useSwapStore((s) => s.to.stablecoin);
   const amount = useSwapStore((s) => s.amount);
@@ -88,6 +91,11 @@ export function useDflowSwap(): UseDflowSwap {
         userPublicKey: wallet.session.account.address.toString(),
         walletSession: wallet.session,
       });
+      // Wallet `sendTransaction` resolves at submission — wait for on-chain
+      // confirmation before declaring success, otherwise the balance refetch
+      // we fire next sees stale state.
+      setStatus("confirming");
+      await waitForSwapConfirmation(client.runtime.rpc, res.signature);
       setResult({ ...res, fromStablecoin, toStablecoin });
       setStatus("success");
       // Tell components subscribed via useSplToken to refetch — the swap
@@ -106,7 +114,7 @@ export function useDflowSwap(): UseDflowSwap {
     } finally {
       inFlight.current = false;
     }
-  }, [wallet, fromStablecoin, toStablecoin, amount, slippage]);
+  }, [wallet, client, fromStablecoin, toStablecoin, amount, slippage]);
 
   return { status, result, error, execute, reset };
 }

@@ -6,6 +6,7 @@ import { useRef, useState } from "react";
 import { formatBaseAmount, parseAmountToBase } from "@/lib/balance";
 import { stablecoinDecimals, stablecoinMint } from "@/lib/currencies";
 import { emit, useAppEvent } from "@/lib/events";
+import { AUTO_DETECT_TOKEN_PROGRAM } from "@/lib/splTokenOptions";
 import { useSwapStore } from "@/lib/store";
 
 const PRESET_PERCENTS = [10, 25, 50];
@@ -47,7 +48,10 @@ export function FromBalanceButtons() {
   const { connected } = useWalletConnection();
   const mint = stablecoinMint(stablecoin);
   const decimals = stablecoinDecimals(stablecoin);
-  const { balance, status, refresh } = useSplToken(mint);
+  const { balance, status, refresh } = useSplToken(
+    mint,
+    AUTO_DETECT_TOKEN_PROGRAM,
+  );
 
   const [open, setOpen] = useState(false);
   const [custom, setCustom] = useState("");
@@ -64,8 +68,13 @@ export function FromBalanceButtons() {
     if (disabled) return;
     setOpen(true);
   });
+  // Double refresh: immediate + delayed. RPC account state can lag tx
+  // confirmation by a slot; the second pass catches stragglers.
   useAppEvent("swapSucceeded", () => {
     void refresh();
+    window.setTimeout(() => {
+      void refresh();
+    }, 1500);
   });
 
   // Derive the trigger label from amount/balance so picking a preset, typing

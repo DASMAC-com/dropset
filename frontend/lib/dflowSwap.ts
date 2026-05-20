@@ -1,6 +1,6 @@
 "use client";
 
-import type { WalletSession } from "@solana/client";
+import type { SolanaClientRuntime, WalletSession } from "@solana/client";
 import {
   getBase64Encoder,
   getTransactionDecoder,
@@ -151,4 +151,30 @@ export async function executeDflowSwap(
     inAmount: BigInt(order.inAmount),
     outAmount: BigInt(order.outAmount),
   };
+}
+
+// Wallet `sendTransaction` returns after submission, not after the chain has
+// confirmed the tx — so balance refetches fired immediately after see stale
+// data. Poll `getSignatureStatuses` until the signature reaches `confirmed`
+// (or `finalized`) and bail with an error on revert or timeout.
+export async function waitForSwapConfirmation(
+  rpc: SolanaClientRuntime["rpc"],
+  signature: Signature,
+  { timeoutMs = 60_000, pollIntervalMs = 500 } = {},
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const { value } = await rpc.getSignatureStatuses([signature]).send();
+    const status = value[0];
+    if (status?.err) {
+      throw new DflowSwapError(
+        `Transaction reverted on-chain: ${JSON.stringify(status.err)}`,
+        "wallet",
+      );
+    }
+    const cs = status?.confirmationStatus;
+    if (cs === "confirmed" || cs === "finalized") return;
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
+  }
+  throw new DflowSwapError("Timed out waiting for swap confirmation", "wallet");
 }
