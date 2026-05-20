@@ -3,10 +3,9 @@
 import { formatBaseAmount, groupThousands } from "@/lib/balance";
 import { stablecoinDecimals } from "@/lib/currencies";
 import type { DflowSwapError } from "@/lib/dflowSwap";
+import { explorerTxUrl } from "@/lib/explorer";
 import type { CompletedSwap, SwapStatus } from "@/lib/useDflowSwap";
 import { CircleAlert, CircleCheck, ExternalLink, X } from "./icons";
-
-const explorerTxUrl = (sig: string) => `https://explorer.solana.com/tx/${sig}`;
 
 export function SwapResult({
   status,

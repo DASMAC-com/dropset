@@ -173,7 +173,7 @@ export function WalletButton() {
             className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-foreground text-sm no-underline transition-colors hover:bg-muted"
           >
             <ExternalLink size={14} />
-            Open on Explorer
+            Open on Solscan
           </a>
           <button
             type="button"
