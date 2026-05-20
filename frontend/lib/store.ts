@@ -1,6 +1,14 @@
 "use client";
 
-import { create } from "zustand";
+import {
+  createContext,
+  type ReactNode,
+  useContext,
+  useRef,
+  useState,
+} from "react";
+import { useStore } from "zustand";
+import { createStore, type StoreApi } from "zustand/vanilla";
 import { defaultAnchorCca2 } from "./countries";
 import {
   currencyAnchor,
@@ -76,22 +84,21 @@ const defaultFrom = (): SideState =>
 const defaultTo = (): SideState =>
   sideFor(DEFAULT_TO_CURRENCY, DEFAULT_TO_STABLECOIN);
 
-// Resolve the initial from/to pair from ?from=/?to= slugs on the URL, falling
-// back to defaults whenever a slug is missing or unresolvable. Mirrors the
-// conflict-resolution rules in UrlSync's reader effect (slugConflict, sameToken
-// fallback) so a deep-link land matches what the reader would have produced
-// post-hydration — without the visible "stitch" from defaults to URL values
-// that an effect-driven hydration produced. Returns defaults on the server
-// (`typeof window === "undefined"`), so SSR is deterministic and the per-process
-// Zustand singleton is never mutated by a request's URL. On the client this
-// runs once at module load, before any subscribing component renders.
-const initialSides = (): { from: SideState; to: SideState } => {
-  if (typeof window === "undefined") {
-    return { from: defaultFrom(), to: defaultTo() };
-  }
-  const params = new URLSearchParams(window.location.search);
-  const f = resolveTokenSlug(params.get("from"));
-  const t = resolveTokenSlug(params.get("to"));
+// Resolve raw ?from=/?to= slug strings into a canonical (from, to) pair using
+// the same conflict-resolution rules UrlSync's reader applies: slugConflict
+// (both resolve to the same stable), sameToken fallback (the unspecified side
+// is replaced with a non-conflicting default), and absent/unresolvable slugs
+// fall back to USDC/EURC. Pure — no React, no DOM — so it runs identically on
+// the server (where the page resolves searchParams) and on the client (where
+// SwapStateInitializer applies the result). Keeping this here, alongside the
+// store schema, means the conflict semantics are defined once and referenced
+// by both the seeder and the live URL-sync reader.
+export const resolveInitialSides = (
+  fromSlug: string | null | undefined,
+  toSlug: string | null | undefined,
+): { from: SideState; to: SideState } => {
+  const f = resolveTokenSlug(fromSlug);
+  const t = resolveTokenSlug(toSlug);
   if (!f && !t) return { from: defaultFrom(), to: defaultTo() };
   const slugConflict = !!(f && t && f.stablecoin === t.stablecoin);
   let from = f ? sideFor(f.currency, f.stablecoin) : defaultFrom();
@@ -105,79 +112,142 @@ const initialSides = (): { from: SideState; to: SideState } => {
   return { from, to };
 };
 
-const initial = initialSides();
+// Factory for a fresh Zustand store instance, used by SwapStoreProvider. One
+// store per render tree, so each request on the server gets its own (no
+// cross-request bleed of the module-level singleton) and the client gets one
+// for the lifetime of the page. Callers may pass an initial from/to pair to
+// seed the store before its first read (e.g. URL-derived state from the page
+// server component); otherwise the store comes up on defaults.
+export const createSwapStore = (
+  initial?: { from: SideState; to: SideState },
+): StoreApi<Store> =>
+  createStore<Store>((set) => ({
+    from: initial?.from ?? defaultFrom(),
+    to: initial?.to ?? defaultTo(),
+    amount: "",
+    slippage: { mode: "auto" },
+    activeSide: "from",
 
-export const useSwapStore = create<Store>((set) => ({
-  from: initial.from,
-  to: initial.to,
-  amount: "",
-  slippage: { mode: "auto" },
-  activeSide: "from",
+    setActiveSide: (side) => set({ activeSide: side }),
 
-  setActiveSide: (side) => set({ activeSide: side }),
-
-  setToken: (side, currency, stablecoin, cca2) =>
-    set({
-      [side]: {
-        currency,
-        stablecoin,
-        cca2: cca2 ?? anchorFor(currency),
-      },
-      activeSide: side,
-    }),
-
-  setAmount: (amount) => set({ amount }),
-
-  setSlippage: (slippage) => set({ slippage }),
-
-  swapSides: (amount) =>
-    set((s) => ({
-      from: s.to,
-      to: s.from,
-      activeSide: otherSide(s.activeSide),
-      ...(amount !== undefined ? { amount } : {}),
-    })),
-
-  setSides: (from, to) =>
-    set({
-      from: {
-        currency: from.currency,
-        stablecoin: from.stablecoin,
-        cca2: anchorFor(from.currency),
-      },
-      to: {
-        currency: to.currency,
-        stablecoin: to.stablecoin,
-        cca2: anchorFor(to.currency),
-      },
-    }),
-
-  pickSide: (side, currency, stablecoin) =>
-    set((s) => {
-      const onFrom =
-        currency === s.from.currency && stablecoin === s.from.stablecoin;
-      const onTo = currency === s.to.currency && stablecoin === s.to.stablecoin;
-      // Token already on the requested side — only refresh activeSide so the
-      // swap page highlights the matching row, but leave the pair untouched.
-      if (side === "from" ? onFrom : onTo) return { activeSide: side };
-      // Token on the opposite side — flip the pair atomically so we never
-      // observe a transient sameToken between two sequential `set`s.
-      if (side === "from" ? onTo : onFrom) {
-        return { from: s.to, to: s.from, activeSide: side };
-      }
-      // Refuse to write a sameToken pair. Only reachable if a caller bypasses
-      // the disabled-button state (e.g. a stale event fires during nav).
-      const otherStable = side === "from" ? s.to.stablecoin : s.from.stablecoin;
-      const otherCurrency = side === "from" ? s.to.currency : s.from.currency;
-      if (stablecoin === otherStable && currency === otherCurrency) {
-        return { activeSide: side };
-      }
-      return {
-        [side]: { currency, stablecoin, cca2: anchorFor(currency) },
+    setToken: (side, currency, stablecoin, cca2) =>
+      set({
+        [side]: {
+          currency,
+          stablecoin,
+          cca2: cca2 ?? anchorFor(currency),
+        },
         activeSide: side,
-      };
-    }),
-}));
+      }),
+
+    setAmount: (amount) => set({ amount }),
+
+    setSlippage: (slippage) => set({ slippage }),
+
+    swapSides: (amount) =>
+      set((s) => ({
+        from: s.to,
+        to: s.from,
+        activeSide: otherSide(s.activeSide),
+        ...(amount !== undefined ? { amount } : {}),
+      })),
+
+    setSides: (from, to) =>
+      set({
+        from: {
+          currency: from.currency,
+          stablecoin: from.stablecoin,
+          cca2: anchorFor(from.currency),
+        },
+        to: {
+          currency: to.currency,
+          stablecoin: to.stablecoin,
+          cca2: anchorFor(to.currency),
+        },
+      }),
+
+    pickSide: (side, currency, stablecoin) =>
+      set((s) => {
+        const onFrom =
+          currency === s.from.currency && stablecoin === s.from.stablecoin;
+        const onTo =
+          currency === s.to.currency && stablecoin === s.to.stablecoin;
+        // Token already on the requested side — only refresh activeSide so the
+        // swap page highlights the matching row, but leave the pair untouched.
+        if (side === "from" ? onFrom : onTo) return { activeSide: side };
+        // Token on the opposite side — flip the pair atomically so we never
+        // observe a transient sameToken between two sequential `set`s.
+        if (side === "from" ? onTo : onFrom) {
+          return { from: s.to, to: s.from, activeSide: side };
+        }
+        // Refuse to write a sameToken pair. Only reachable if a caller bypasses
+        // the disabled-button state (e.g. a stale event fires during nav).
+        const otherStable =
+          side === "from" ? s.to.stablecoin : s.from.stablecoin;
+        const otherCurrency =
+          side === "from" ? s.to.currency : s.from.currency;
+        if (stablecoin === otherStable && currency === otherCurrency) {
+          return { activeSide: side };
+        }
+        return {
+          [side]: { currency, stablecoin, cca2: anchorFor(currency) },
+          activeSide: side,
+        };
+      }),
+  }));
+
+const SwapStoreContext = createContext<StoreApi<Store> | null>(null);
+
+// Holds a per-render-tree Zustand store instance via useRef. Mounting this in
+// the root layout means /swap and /currencies share the same store across
+// client-side navigation (token picks on /currencies are visible on /swap),
+// while each server request gets its own instance — no module-level singleton
+// to bleed state across users.
+export function SwapStoreProvider({ children }: { children: ReactNode }) {
+  const ref = useRef<StoreApi<Store> | null>(null);
+  if (ref.current === null) ref.current = createSwapStore();
+  return (
+    <SwapStoreContext.Provider value={ref.current}>
+      {children}
+    </SwapStoreContext.Provider>
+  );
+}
+
+const useStoreApi = (): StoreApi<Store> => {
+  const store = useContext(SwapStoreContext);
+  if (store === null) {
+    throw new Error("Swap store accessed outside of <SwapStoreProvider>");
+  }
+  return store;
+};
+
+// Selector hook — drop-in replacement for the prior `useSwapStore(selector)`
+// API; subscribes the component to the slice the selector returns.
+export function useSwapStore<T>(selector: (state: Store) => T): T {
+  return useStore(useStoreApi(), selector);
+}
+
+// Raw store handle for code that needs imperative .getState/.setState access
+// outside a selector (e.g. UrlSync's effects, which need to read the current
+// pair at fire-time rather than via render-phase closure bindings).
+export const useSwapStoreApi = useStoreApi;
+
+// Apply a URL-derived initial pair to the store ONCE per mount of this hook,
+// via useState's lazy initializer. Running through a lazy init guarantees the
+// store mutation happens synchronously during render — before any subscribing
+// child reads the store — on both the SSR pass and client hydration. Repeated
+// renders are no-ops; navigation that remounts the page re-seeds with the new
+// URL pair.
+export function useSeedSwapStore(initial: {
+  from: SideState;
+  to: SideState;
+}): void {
+  const api = useStoreApi();
+  useState(() => {
+    api.setState({ from: initial.from, to: initial.to });
+    return null;
+  });
+}
 
 export const useSameToken = (): boolean =>
   useSwapStore(

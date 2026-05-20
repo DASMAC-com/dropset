@@ -17,7 +17,6 @@ import { CurrencyGroupHeader } from "./CurrencyGroupHeader";
 import { ChevronDown, Search, X } from "./icons";
 import { PickerBalanceCell } from "./PickerBalanceCell";
 import { StableTokenIdentity } from "./StableTokenIdentity";
-import { TokenInfoLink } from "./TokenInfoLink";
 
 export function TokenPicker({ side }: { side: Side }) {
   const currency = useSwapStore((s) => s[side].currency);
@@ -148,7 +147,6 @@ export function TokenPicker({ side }: { side: Side }) {
             symbol={s.symbol}
           />
         </button>
-        <TokenInfoLink symbol={s.symbol} className="mr-1" />
       </div>
     );
   };

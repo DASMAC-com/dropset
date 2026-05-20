@@ -31,7 +31,6 @@ import { CurrencyGroupHeader } from "./CurrencyGroupHeader";
 import { Compass, Crosshair, Flag, Minus, Pause, Play, Plus, X } from "./icons";
 import { PickerBalanceCell } from "./PickerBalanceCell";
 import { StableTokenIdentity } from "./StableTokenIdentity";
-import { TokenInfoLink } from "./TokenInfoLink";
 
 const Globe = dynamic(() => import("react-globe.gl"), {
   ssr: false,
@@ -844,6 +843,11 @@ function GlobeInner() {
                           s={s}
                           symbolClassName="text-foreground"
                         />
+                        <PickerBalanceCell
+                          mint={s.mint}
+                          decimals={s.decimals}
+                          symbol={s.symbol}
+                        />
                         <button
                           type="button"
                           disabled={isToHere}
@@ -887,12 +891,6 @@ function GlobeInner() {
                         >
                           To
                         </button>
-                        <PickerBalanceCell
-                          mint={s.mint}
-                          decimals={s.decimals}
-                          symbol={s.symbol}
-                        />
-                        <TokenInfoLink symbol={s.symbol} />
                       </div>
                     );
                   })}

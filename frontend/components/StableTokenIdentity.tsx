@@ -8,6 +8,7 @@ import {
 } from "@/lib/currencies";
 import { explorerTokenUrl } from "@/lib/explorer";
 import { useLiquidityLookup } from "@/lib/useUsdQuote";
+import { TokenInfoLink } from "./TokenInfoLink";
 
 // Shared stablecoin-row identity block used by the dropdown TokenPicker and
 // the globe's country-anchored picker. Renders icon + symbol (with optional
@@ -71,6 +72,7 @@ export function StableTokenIdentity({
           >
             {shortenMint(s.mint)}
           </a>
+          <TokenInfoLink symbol={s.symbol} />
         </span>
       </span>
     </>
