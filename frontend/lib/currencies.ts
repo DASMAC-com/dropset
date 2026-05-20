@@ -129,7 +129,7 @@ export const stablecoinTokenProgram = (
   symbol: string,
 ): TokenProgramKind | undefined => STABLE_BY_SYMBOL[symbol]?.tokenProgram;
 
-// Collapse a base58 mint to "abcd…wxyz" for at-a-glance display; copy and
+// Collapse a base58 mint to "abcd…abcd" for at-a-glance display; copy and
 // explorer surfaces should keep the full address.
 export const shortenMint = (mint: string): string =>
   mint.length <= 11 ? mint : `${mint.slice(0, 4)}…${mint.slice(-4)}`;
@@ -137,7 +137,7 @@ export const shortenMint = (mint: string): string =>
 // Cap a long token name at ~18 chars so outliers don't blow up the picker
 // row. The CSS `truncate` on the surrounding span still handles narrow
 // containers; this hard cap exists to clamp the row at a consistent width
-// across all viewports for any one unusually long name that would otherwise
+// across all view ports for any one unusually long name that would otherwise
 // dominate the layout. Tune by inspecting name-length distribution in
 // `currencies.json` — pick a value just above the long tail.
 const MAX_TOKEN_NAME_LEN = 18;

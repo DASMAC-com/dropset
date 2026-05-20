@@ -1,3 +1,4 @@
+// cspell:word atas
 "use client";
 
 import { type Address, address } from "@solana/kit";
