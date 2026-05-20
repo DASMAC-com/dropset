@@ -1,7 +1,8 @@
 "use client";
 
 import * as Popover from "@radix-ui/react-popover";
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { useAppEvent } from "@/lib/events";
 import { type Slippage, useSwapStore } from "@/lib/store";
 import { Check, Settings2 } from "./icons";
 
@@ -38,6 +39,13 @@ export function MaxSlippageButton() {
       ? String(slippage.percent)
       : "",
   );
+  const customRef = useRef<HTMLInputElement>(null);
+
+  // Open + focus the custom input when the `s` shortcut fires. The
+  // popover's `onOpenAutoFocus` handles the focus once it's mounted.
+  useAppEvent("openSlippage", () => {
+    setOpen(true);
+  });
 
   const selectPreset = (percent: number) => {
     setSlippage({ mode: "fixed", percent });
@@ -74,12 +82,32 @@ export function MaxSlippageButton() {
         <Popover.Content
           align="end"
           sideOffset={6}
-          className="z-50 flex w-56 flex-col gap-2 rounded-xl border border-border bg-background p-3 shadow-lg"
+          onOpenAutoFocus={(e) => {
+            // Send focus into the custom input on open so the user can
+            // type a value immediately. Radix would otherwise focus the
+            // popover container.
+            e.preventDefault();
+            customRef.current?.focus();
+            customRef.current?.select();
+          }}
+          className="z-50 flex flex-col gap-1.5 rounded-xl border border-border bg-background p-1.5 shadow-lg"
         >
-          <div className="font-medium text-foreground text-xs">
+          <div className="px-1 pt-0.5 font-medium text-foreground text-xs">
             Max slippage
           </div>
-          <div className="flex gap-1">
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={selectAuto}
+              className={`flex items-center justify-center gap-1 rounded border px-2 py-1 font-medium text-xs transition-colors ${
+                slippage.mode === "auto"
+                  ? "border-accent-buy text-accent-buy"
+                  : "border-border text-muted-fg hover:border-accent-buy hover:text-accent-buy"
+              }`}
+            >
+              {slippage.mode === "auto" && <Check size={10} />}
+              Auto
+            </button>
             {PRESETS.map((p) => {
               const active = isPresetActive(slippage, p.percent);
               return (
@@ -87,7 +115,7 @@ export function MaxSlippageButton() {
                   key={p.label}
                   type="button"
                   onClick={() => selectPreset(p.percent)}
-                  className={`flex-1 rounded border px-2 py-1 font-medium text-xs transition-colors ${
+                  className={`rounded border px-2 py-1 font-medium text-xs transition-colors ${
                     active
                       ? "border-accent-buy text-accent-buy"
                       : "border-border text-muted-fg hover:border-accent-buy hover:text-accent-buy"
@@ -97,36 +125,38 @@ export function MaxSlippageButton() {
                 </button>
               );
             })}
-            <button
-              type="button"
-              onClick={selectAuto}
-              className={`flex flex-1 items-center justify-center gap-1 rounded border px-2 py-1 font-medium text-xs transition-colors ${
-                slippage.mode === "auto"
-                  ? "border-accent-buy text-accent-buy"
-                  : "border-border text-muted-fg hover:border-accent-buy hover:text-accent-buy"
-              }`}
-            >
-              {slippage.mode === "auto" && <Check size={10} />}
-              Auto
-            </button>
+            <label className="flex w-16 items-center gap-1 rounded border border-border px-2 py-1 text-xs focus-within:border-accent-buy">
+              <input
+                ref={customRef}
+                type="text"
+                inputMode="decimal"
+                value={custom}
+                placeholder="0.00"
+                onFocus={() => {
+                  if (isCustomActive(slippage) && slippage.mode === "fixed") {
+                    setCustom(String(slippage.percent));
+                  }
+                }}
+                onChange={(e) => applyCustom(e.target.value)}
+                onKeyDown={(e) => {
+                  // "a" shortcut: jump back to Auto without leaving the
+                  // popover via the Auto button. Helpful when the user
+                  // started typing a custom value then changed their mind.
+                  if (e.key === "a" || e.key === "A") {
+                    e.preventDefault();
+                    selectAuto();
+                    return;
+                  }
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    setOpen(false);
+                  }
+                }}
+                className="min-w-0 flex-1 bg-transparent text-right font-mono text-foreground outline-none placeholder:text-muted-fg"
+              />
+              <span className="text-muted-fg">%</span>
+            </label>
           </div>
-          <label className="flex items-center gap-2 rounded border border-border px-2 py-1 text-xs focus-within:border-accent-buy">
-            <span className="text-muted-fg">Custom</span>
-            <input
-              type="text"
-              inputMode="decimal"
-              value={custom}
-              placeholder="0.00"
-              onFocus={() => {
-                if (isCustomActive(slippage) && slippage.mode === "fixed") {
-                  setCustom(String(slippage.percent));
-                }
-              }}
-              onChange={(e) => applyCustom(e.target.value)}
-              className="min-w-0 flex-1 bg-transparent text-right font-mono text-foreground outline-none placeholder:text-muted-fg"
-            />
-            <span className="text-muted-fg">%</span>
-          </label>
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>

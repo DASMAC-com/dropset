@@ -1,6 +1,7 @@
 "use client";
 
-import { useLayoutEffect, useRef } from "react";
+import NumberFlow, { type Format } from "@number-flow/react";
+import { useLayoutEffect, useMemo, useRef } from "react";
 import {
   currencyFlagUrl,
   currencyName,
@@ -8,16 +9,23 @@ import {
 } from "@/lib/currencies";
 import { useAppEvent } from "@/lib/events";
 import { type Side, useSwapStore } from "@/lib/store";
+import type { DflowQuote } from "@/lib/useDflowQuote";
 import { useUsdQuote } from "@/lib/useUsdQuote";
 import { FromBalanceButtons } from "./FromBalanceButtons";
 import { MaxSlippageButton } from "./MaxSlippageButton";
 import { TokenPicker } from "./TokenPicker";
+import { WalletBalance } from "./WalletBalance";
 
-const formatUsd = (n: number): string =>
-  `$${n.toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+// Intl format objects passed to <NumberFlow> for each readout. Hoisted so
+// the same reference is reused across renders — NumberFlow uses identity
+// to detect format changes and resets the animation when it sees a new
+// object, which would otherwise happen on every render.
+const usdFormat: Format = {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+};
 
 const sanitizeAmount = (raw: string, decimals: number): string => {
   let v = raw.replace(/[^0-9.]/g, "");
@@ -39,7 +47,17 @@ const formatAmount = (raw: string): string => {
   return grouped + rest;
 };
 
-export function TokenRow({ side, label }: { side: Side; label: string }) {
+export function TokenRow({
+  side,
+  label,
+  quote,
+}: {
+  side: Side;
+  label: string;
+  // DFlow quote driving the to-side display. Always passed by SwapPanel
+  // (which owns the single hook call); the from-side ignores it.
+  quote?: DflowQuote;
+}) {
   const activeSide = useSwapStore((s) => s.activeSide);
   const currency = useSwapStore((s) => s[side].currency);
   const stablecoin = useSwapStore((s) => s[side].stablecoin);
@@ -66,16 +84,41 @@ export function TokenRow({ side, label }: { side: Side; label: string }) {
   const decimals = stablecoinDecimals(stablecoin);
   const formattedAmount = formatAmount(amount);
 
-  // Prototype to-side stub: to amount = from / 2. Replace with real
-  // aggregator output later.
-  const fromNum = Number.parseFloat(amount);
-  const safeFrom = Number.isFinite(fromNum) ? fromNum : 0;
-  const toNum = safeFrom / 2;
-  const toDisplay = formatAmount(toNum.toFixed(decimals));
+  // To-side numeric value for <NumberFlow>. Null when there's no quote
+  // (loading first time, error, sameToken, zero input) — in those cases
+  // the panel renders a static placeholder string instead of an animated
+  // number. `Number(bigint) / 10**decimals` is lossless within JS's safe
+  // integer range, which covers every realistic stablecoin amount.
+  const toAmountNumber =
+    side === "to" && quote?.outAmount !== undefined && quote.outAmount !== null
+      ? Number(quote.outAmount) / 10 ** decimals
+      : null;
+  // Maximum precision shown — defer to NumberFlow's grouping/decimal
+  // handling rather than our own formatAmount() so the rolling digits
+  // animate as a single unit.
+  // Memoized so identity is stable across renders — NumberFlow uses
+  // identity to detect format changes and would otherwise reset its
+  // animation every render.
+  const toAmountFormat = useMemo<Format>(
+    () => ({ maximumFractionDigits: decimals }),
+    [decimals],
+  );
+  let toPlaceholder = "0";
+  if (side === "to" && quote) {
+    if (quote.status === "loading" && quote.outAmount === null)
+      toPlaceholder = "…";
+    else if (quote.status === "error" || quote.status === "rateLimited")
+      toPlaceholder = "—";
+  }
+  const toIsLive = side === "to" && quote?.status === "ok";
 
-  const sideAmount = side === "from" ? amount : toNum.toString();
+  // For USD on the to-side, route the quote's outAmount through Jupiter's
+  // price feed so the dollar readout tracks the real expected output, not
+  // the typed input. Falls back to "$—" when there's no quote yet.
+  const toAmountDecimal =
+    toAmountNumber !== null ? toAmountNumber.toString() : "0";
+  const sideAmount = side === "from" ? amount : toAmountDecimal;
   const usd = useUsdQuote(stablecoin, sideAmount);
-  const quoteDisplay = usd.value === null ? "$—" : formatUsd(usd.value);
 
   const onAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value;
@@ -98,7 +141,7 @@ export function TokenRow({ side, label }: { side: Side; label: string }) {
   return (
     <div
       onPointerDown={() => setActiveSide(side)}
-      className={`flex w-full flex-col gap-1.5 rounded-lg border bg-muted px-3 pt-1.5 pb-3 text-left transition-colors ${
+      className={`flex w-full flex-col gap-1.5 rounded-lg border bg-muted p-3 text-left transition-colors ${
         active ? activeBorder : "border-border"
       }`}
     >
@@ -139,16 +182,27 @@ export function TokenRow({ side, label }: { side: Side; label: string }) {
             />
           ) : (
             <span
-              className={`min-w-0 flex-1 truncate text-right font-mono text-3xl ${
-                toNum > 0 ? "text-foreground" : "text-muted-fg"
+              className={`flex min-w-0 flex-1 justify-end truncate text-right font-mono text-3xl ${
+                toIsLive ? "text-foreground" : "text-muted-fg"
               }`}
             >
-              {toDisplay}
+              {toAmountNumber !== null ? (
+                <NumberFlow value={toAmountNumber} format={toAmountFormat} />
+              ) : (
+                toPlaceholder
+              )}
             </span>
           )}
         </div>
-        <div className="text-right font-mono text-muted-fg text-sm tabular-nums">
-          {quoteDisplay}
+        <div className="mt-2 flex items-center justify-between gap-2 font-mono text-muted-fg text-sm tabular-nums">
+          <WalletBalance stablecoin={stablecoin} />
+          <span className="ml-auto">
+            {usd.value !== null ? (
+              <NumberFlow value={usd.value} format={usdFormat} />
+            ) : (
+              "$—"
+            )}
+          </span>
         </div>
       </div>
     </div>

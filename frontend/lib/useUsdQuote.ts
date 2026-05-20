@@ -10,9 +10,13 @@ import { stablecoinMint } from "./currencies";
 // single batched call for up to 100 mints, which we use to power both the
 // swap UI's USD readouts and the /currencies market-data columns.
 const JUP_SEARCH_URL = "https://lite-api.jup.ag/tokens/v2/search";
-// 10 s refresh cadence. Page mounts and the polling interval both call
-// `prefetchAllTokenInfo`; the TTL gates redundant calls but is short enough
-// that the interval's request is never skipped.
+// 10 s refresh cadence — empirically matches Jupiter's own server-side
+// update rate for /tokens/v2/search. Polling faster doesn't surface
+// fresher data (every other request returns identical numbers), so 10 s
+// hits the sweet spot. The TTL is kept at half the interval so the
+// boundary tick is never skipped by the dedupe check. Keyless limit is
+// 60 req/min/IP, leaving plenty of headroom with /swap + /currencies
+// both open.
 const CACHE_TTL_MS = 5_000;
 export const REFRESH_INTERVAL_MS = 10_000;
 

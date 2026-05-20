@@ -53,6 +53,16 @@ export const SHORTCUTS_BY_CONTEXT: Record<ShortcutContext, ShortcutSpec[]> = {
       run: () => emit("focusFromAmount"),
     },
     {
+      key: "m",
+      description: "Use max From amount",
+      run: () => emit("applyMaxBalance"),
+    },
+    {
+      key: "%",
+      description: "Open the From balance % picker",
+      run: () => emit("openBalancePercent"),
+    },
+    {
       key: "t",
       description: "Open the To picker",
       run: () => emit("openPicker", "to"),
@@ -68,9 +78,14 @@ export const SHORTCUTS_BY_CONTEXT: Record<ShortcutContext, ShortcutSpec[]> = {
       run: () => emit("resetGlobe"),
     },
     {
-      key: "s",
-      description: "Focus on swap route",
+      key: "b",
+      description: "Bird's-eye view of swap route",
       run: () => emit("focusRoute"),
+    },
+    {
+      key: "s",
+      description: "Open slippage settings",
+      run: () => emit("openSlippage"),
     },
     {
       key: "e",

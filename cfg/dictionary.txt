@@ -12,6 +12,7 @@ clippy
 clob
 cngn
 dasmac
+dflow
 discordapp
 dropset
 dtolnay
@@ -25,6 +26,7 @@ gyen
 générale
 helvetiker
 idrx
+jito
 kapsule
 keypair
 kripto
