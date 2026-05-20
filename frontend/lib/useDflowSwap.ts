@@ -1,7 +1,7 @@
 "use client";
 
 import { useWallet } from "@solana/react-hooks";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { parseAmountToBase } from "./balance";
 import { stablecoinDecimals, stablecoinMint } from "./currencies";
 import {
@@ -49,17 +49,6 @@ export function useDflowSwap(): UseDflowSwap {
     setResult(null);
     setError(null);
   }, []);
-
-  // Reset back to idle whenever the user changes the swap inputs after a
-  // success or error — they're starting fresh, so stale result/error chrome
-  // would be misleading. The deps aren't read inside; they're change triggers,
-  // hence the suppression.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: deps are reset triggers
-  useEffect(() => {
-    setResult(null);
-    setError(null);
-    setStatus((s) => (s === "success" || s === "error" ? "idle" : s));
-  }, [fromStablecoin, toStablecoin, amount]);
 
   const execute = useCallback(async () => {
     if (inFlight.current) return;

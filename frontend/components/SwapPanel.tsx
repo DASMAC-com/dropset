@@ -123,6 +123,7 @@ export function SwapPanel() {
         status={swap.status}
         result={swap.result}
         error={swap.error}
+        onClose={swap.reset}
       />
     </>
   );

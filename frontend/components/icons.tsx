@@ -7,6 +7,8 @@ import {
   Check as RawCheck,
   ChevronDown as RawChevronDown,
   ChevronUp as RawChevronUp,
+  CircleAlert as RawCircleAlert,
+  CircleCheck as RawCircleCheck,
   Compass as RawCompass,
   Copy as RawCopy,
   Crosshair as RawCrosshair,
@@ -41,6 +43,8 @@ const safe = (Icon: LucideIcon): LucideIcon => {
 export const ArrowUpDown = safe(RawArrowUpDown);
 export const Check = safe(RawCheck);
 export const ChevronDown = safe(RawChevronDown);
+export const CircleAlert = safe(RawCircleAlert);
+export const CircleCheck = safe(RawCircleCheck);
 export const ChevronUp = safe(RawChevronUp);
 export const Compass = safe(RawCompass);
 export const Copy = safe(RawCopy);

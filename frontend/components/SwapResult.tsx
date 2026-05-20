@@ -5,7 +5,7 @@ import { stablecoinDecimals } from "@/lib/currencies";
 import type { DflowSwapError, DflowSwapResult } from "@/lib/dflowSwap";
 import { useSwapStore } from "@/lib/store";
 import type { SwapStatus } from "@/lib/useDflowSwap";
-import { ExternalLink } from "./icons";
+import { CircleAlert, CircleCheck, ExternalLink, X } from "./icons";
 
 const explorerTxUrl = (sig: string) => `https://explorer.solana.com/tx/${sig}`;
 
@@ -13,10 +13,12 @@ export function SwapResult({
   status,
   result,
   error,
+  onClose,
 }: {
   status: SwapStatus;
   result: DflowSwapResult | null;
   error: DflowSwapError | null;
+  onClose: () => void;
 }) {
   const fromStablecoin = useSwapStore((s) => s.from.stablecoin);
   const toStablecoin = useSwapStore((s) => s.to.stablecoin);
@@ -27,26 +29,63 @@ export function SwapResult({
     const inStr = groupThousands(formatBaseAmount(result.inAmount, inDec));
     const outStr = groupThousands(formatBaseAmount(result.outAmount, outDec));
     return (
-      <a
-        href={explorerTxUrl(result.signature.toString())}
-        target="_blank"
-        rel="noreferrer"
-        className="flex items-center justify-between gap-2 rounded-lg border border-accent-buy/40 bg-accent-buy/10 px-3 py-2 text-accent-buy text-sm transition-colors hover:bg-accent-buy/15"
-      >
-        <span className="truncate">
-          Swapped {inStr} {fromStablecoin} → {outStr} {toStablecoin}
-        </span>
-        <ExternalLink size={14} className="shrink-0" />
-      </a>
+      <div className="flex items-center gap-2 rounded-xl border border-border bg-muted px-3 py-2 text-sm">
+        <CircleCheck
+          size={18}
+          className="shrink-0 text-accent-buy"
+          aria-hidden
+        />
+        <span className="font-medium text-accent-buy">Order Succeeded</span>
+        <a
+          href={explorerTxUrl(result.signature.toString())}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex min-w-0 items-center gap-1 truncate text-muted-fg transition-colors hover:text-foreground"
+        >
+          <span className="truncate">
+            {inStr} {fromStablecoin} → {outStr} {toStablecoin}
+          </span>
+          <ExternalLink size={12} className="shrink-0" />
+        </a>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Dismiss"
+          className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-fg hover:bg-background hover:text-foreground"
+        >
+          <X size={14} />
+        </button>
+      </div>
     );
   }
 
   if (status === "error" && error) {
+    const isCancel = error.kind === "rejected";
     return (
-      <div className="rounded-lg border border-accent-sell/40 bg-accent-sell/10 px-3 py-2 text-accent-sell text-sm">
-        {error.kind === "rejected"
-          ? "Swap cancelled."
-          : `Swap failed: ${error.message}`}
+      <div className="flex items-center gap-2 rounded-xl border border-border bg-muted px-3 py-2 text-sm">
+        <CircleAlert
+          size={18}
+          className={`shrink-0 ${isCancel ? "text-muted-fg" : "text-accent-sell"}`}
+          aria-hidden
+        />
+        <span
+          className={`font-medium ${isCancel ? "text-foreground" : "text-accent-sell"}`}
+        >
+          {isCancel ? "Swap Cancelled" : "Swap Failed"}
+        </span>
+        {!isCancel && (
+          <span className="min-w-0 truncate text-muted-fg">
+            {error.message}
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Dismiss"
+          className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-fg hover:bg-background hover:text-foreground"
+        >
+          <X size={14} />
+        </button>
       </div>
     );
   }
