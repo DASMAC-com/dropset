@@ -9,6 +9,7 @@ import {
   DEFAULT_TO_CURRENCY,
   DEFAULT_TO_STABLECOIN,
   useSwapStore,
+  useSwapStoreApi,
 } from "@/lib/store";
 
 // Headless component that binds the swap store's from/to selection to the URL.
@@ -23,6 +24,10 @@ export function UrlSync() {
   const setSides = useSwapStore((s) => s.setSides);
   const fromSym = useSwapStore((s) => s.from.stablecoin);
   const toSym = useSwapStore((s) => s.to.stablecoin);
+  // Imperative handle for the per-tree Zustand instance — used inside the
+  // effects below to read the current pair at fire-time. The selector hook
+  // (useSwapStore) is for subscription; this is for `.getState()`.
+  const store = useSwapStoreApi();
 
   // Hydrate from URL whenever we arrive on /swap (handles deep links and
   // back/forward nav). Computes the target from/to pair from the inbound
@@ -40,7 +45,7 @@ export function UrlSync() {
     if (!f && !t) return;
     const slugConflict = !!(f && t && f.stablecoin === t.stablecoin);
 
-    const cur = useSwapStore.getState();
+    const cur = store.getState();
     let nextFrom: { currency: IsoCurrencyCode; stablecoin: string } = {
       currency: cur.from.currency,
       stablecoin: cur.from.stablecoin,
@@ -76,7 +81,7 @@ export function UrlSync() {
       return;
     }
     setSides(nextFrom, nextTo);
-  }, [pathname, searchParams, setSides]);
+  }, [pathname, searchParams, setSides, store]);
 
   // Always write current selection to URL while on /swap, including on first
   // arrival with defaults, after any picker change, and after a router-level
@@ -87,7 +92,7 @@ export function UrlSync() {
   // from scratch so `from` always precedes `to` in the address bar, even if
   // the inbound URL had them reversed (URLSearchParams.set updates in place).
   //
-  // The from/to values are read via useSwapStore.getState() at fire-time
+  // The from/to values are read via store.getState() at fire-time
   // rather than from the fromSym/toSym render-phase bindings. The reader
   // effect above fires first in this same commit and may have just called
   // setSides() to reconcile the store with the URL — but the writer's
@@ -99,10 +104,10 @@ export function UrlSync() {
   // writer always see the latest store snapshot — when the reader wins,
   // the bail-out below fires and the loop dies. fromSym/toSym stay in the
   // dep array so the effect still re-runs when the store changes.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: fromSym/toSym are subscription signals that re-fire this effect when the store mutates — intentionally in deps even though the body reads useSwapStore.getState()
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fromSym/toSym are subscription signals that re-fire this effect when the store mutates — intentionally in deps even though the body reads store.getState()
   useEffect(() => {
     if (pathname !== "/swap") return;
-    const { from, to } = useSwapStore.getState();
+    const { from, to } = store.getState();
     const params = new URLSearchParams();
     params.set("from", from.stablecoin);
     params.set("to", to.stablecoin);
@@ -113,7 +118,7 @@ export function UrlSync() {
     if (searchParams.toString() === nextSearch) return;
     const next = `${window.location.pathname}?${nextSearch}${window.location.hash}`;
     window.history.replaceState(null, "", next);
-  }, [pathname, fromSym, toSym, searchParams]);
+  }, [pathname, fromSym, toSym, searchParams, store]);
 
   return null;
 }
