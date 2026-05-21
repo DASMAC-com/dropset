@@ -31,6 +31,7 @@ export function PlatformFee({
   toSymbol,
   fromDecimals,
   toDecimals,
+  fresh,
 }: {
   // null disables the fee dropdown: the rate header still renders, but no
   // chevron or platform-fee row is shown. Callers should pass null when
@@ -42,6 +43,11 @@ export function PlatformFee({
   toSymbol: string;
   fromDecimals: number;
   toDecimals: number;
+  // False during the debounce window after a swap-sides or token-pick,
+  // when the cached quote still represents the previous pair. We keep the
+  // panel mounted (so the layout doesn't pop) but show "—" instead of a
+  // wildly-wrong derived rate.
+  fresh: boolean;
 }) {
   const [inverted, setInverted] = useState(false);
   // Cumulative angle (not modulo 360) so every click is a fresh 180° spin
@@ -75,7 +81,7 @@ export function PlatformFee({
         <span className="flex items-center gap-1.5">
           <span className="text-muted-fg">Rate</span>
           <span className="font-semibold tabular-nums text-foreground">
-            1 {base} ≈ {formatRate(rate)} {quote}
+            {fresh ? `1 ${base} ≈ ${formatRate(rate)} ${quote}` : "—"}
           </span>
           <button
             type="button"

@@ -63,6 +63,7 @@ export function TokenRow({
   label,
   quote,
   fromUsd,
+  quoteFresh,
 }: {
   side: Side;
   label: string;
@@ -72,6 +73,12 @@ export function TokenRow({
   // From-side USD value, passed in on the to-side so we can show the
   // slippage % against the input. Ignored on the from-side.
   fromUsd?: UsdQuote;
+  // True iff the quote was fetched for the current store mints. When
+  // false, the cached `outAmount` is in the previous pair's units — we
+  // suppress the derived to-amount and slippage to avoid flashing 1000×
+  // wrong values during the debounce window after a swap-sides or
+  // token-pick.
+  quoteFresh?: boolean;
 }) {
   const activeSide = useSwapStore((s) => s.activeSide);
   const currency = useSwapStore((s) => s[side].currency);
@@ -112,10 +119,16 @@ export function TokenRow({
   // To-side numeric value for <NumberFlow>. Null when there's no quote
   // (loading first time, error, sameToken, zero input) — in those cases
   // the panel renders a static placeholder string instead of an animated
-  // number. `Number(bigint) / 10**decimals` is lossless within JS's safe
-  // integer range, which covers every realistic stablecoin amount.
+  // number. Also null when the cached quote is for a stale mint pair,
+  // since interpreting old atomic units with new decimals could produce
+  // values that are off by 1000× or more. `Number(bigint) / 10**decimals`
+  // is lossless within JS's safe integer range, which covers every
+  // realistic stablecoin amount.
   const toAmountNumber =
-    side === "to" && quote?.outAmount !== undefined && quote.outAmount !== null
+    side === "to" &&
+    quoteFresh &&
+    quote?.outAmount !== undefined &&
+    quote.outAmount !== null
       ? Number(quote.outAmount) / 10 ** decimals
       : null;
   // Maximum precision shown — defer to NumberFlow's grouping/decimal
@@ -130,12 +143,15 @@ export function TokenRow({
   );
   let toPlaceholder = "0";
   if (side === "to" && quote) {
-    if (quote.status === "loading" && quote.outAmount === null)
+    if (
+      (quote.status === "loading" && quote.outAmount === null) ||
+      (!quoteFresh && quote.hasQuote)
+    )
       toPlaceholder = "…";
     else if (quote.status === "error" || quote.status === "rateLimited")
       toPlaceholder = "—";
   }
-  const toIsLive = side === "to" && quote?.status === "ok";
+  const toIsLive = side === "to" && quote?.status === "ok" && quoteFresh;
 
   // For USD on the to-side, route the quote's outAmount through Jupiter's
   // price feed so the dollar readout tracks the real expected output, not
@@ -148,10 +164,13 @@ export function TokenRow({
   // Slippage % between the input USD value and the live to-side output USD
   // value. Negative for the typical case (you give up a little to the spread
   // + fees), positive if the route happens to favor you. Gated on a live
-  // quote + non-zero input USD so we don't divide by zero or flash a stale
-  // percent while the quote is loading.
+  // quote whose mints still match the store (otherwise the to-USD comes
+  // from interpreting old atomic units with new decimals and flashes wildly
+  // wrong percents during the post-swap debounce) plus non-zero input USD
+  // so we don't divide by zero.
   const slippagePercent =
     side === "to" &&
+    quoteFresh &&
     quote?.status === "ok" &&
     fromUsd?.value != null &&
     fromUsd.value > 0 &&

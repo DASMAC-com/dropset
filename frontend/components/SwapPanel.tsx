@@ -132,6 +132,14 @@ export function SwapPanel() {
     onClick();
   });
 
+  // Freshness check — the quote hook holds the previous result during
+  // its debounce/refetch window, so right after a swap-sides or token-pick
+  // the cached `outAmount` is in the OLD mints' units. Consumers must gate
+  // any derivation (rate, slippage, to-side amount) on this to avoid
+  // briefly displaying 1000× wrong numbers when decimals differ.
+  const quoteFresh =
+    quote.inputMint === fromMint && quote.outputMint === toMint;
+
   // Two-stage visibility for the rate/fee panel:
   //   - `routeFound` gates the whole section. No two-sided quote = no
   //     route = nothing to display.
@@ -153,7 +161,13 @@ export function SwapPanel() {
       <div className="relative rounded-xl border border-border p-3">
         <div className="relative flex flex-col gap-[14px]">
           <TokenRow side="from" label="From" />
-          <TokenRow side="to" label="To" quote={quote} fromUsd={quoteFromUsd} />
+          <TokenRow
+            side="to"
+            label="To"
+            quote={quote}
+            fromUsd={quoteFromUsd}
+            quoteFresh={quoteFresh}
+          />
           <div className="absolute inset-x-0 top-1/2 z-10 flex -translate-y-1/2 items-center justify-center">
             <SwapArrowButton />
           </div>
@@ -178,6 +192,7 @@ export function SwapPanel() {
             toSymbol={toStablecoin}
             fromDecimals={fromDecimals}
             toDecimals={toDecimals}
+            fresh={quoteFresh}
           />
         ) : null}
       </div>
