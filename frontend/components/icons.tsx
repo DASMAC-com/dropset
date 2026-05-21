@@ -3,6 +3,7 @@
 import {
   type LucideIcon,
   type LucideProps,
+  ArrowRightLeft as RawArrowRightLeft,
   ArrowUpDown as RawArrowUpDown,
   Check as RawCheck,
   ChevronDown as RawChevronDown,
@@ -40,6 +41,7 @@ const safe = (Icon: LucideIcon): LucideIcon => {
   return Wrapped as unknown as LucideIcon;
 };
 
+export const ArrowRightLeft = safe(RawArrowRightLeft);
 export const ArrowUpDown = safe(RawArrowUpDown);
 export const Check = safe(RawCheck);
 export const ChevronDown = safe(RawChevronDown);

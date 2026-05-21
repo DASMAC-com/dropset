@@ -101,6 +101,12 @@ export const SHORTCUTS_BY_CONTEXT: Record<ShortcutContext, ShortcutSpec[]> = {
       run: () => emit("openSlippage"),
     },
     {
+      key: "x",
+      description: "Execute swap",
+      group: "Trade",
+      run: () => emit("executeSwap"),
+    },
+    {
       key: "r",
       description: "Reset the globe view",
       group: "Map",

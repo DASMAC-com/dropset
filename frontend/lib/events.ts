@@ -20,6 +20,7 @@ export type AppEvents = {
   resetGlobe: undefined;
   focusRoute: undefined;
   swapSides: undefined;
+  executeSwap: undefined;
   toggleSpin: undefined;
   toggleFlags: undefined;
   toggleHelp: undefined;

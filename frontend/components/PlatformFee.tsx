@@ -1,0 +1,105 @@
+"use client";
+
+import { useState } from "react";
+import { ArrowRightLeft, ChevronDown, ChevronUp } from "./icons";
+
+// Sticky preference: once the user collapses the fee panel, keep it
+// collapsed across reloads. Re-expanding is also persisted, so the stored
+// value tracks the user's last explicit choice rather than being strictly
+// one-way. Default (no entry) is expanded.
+const EXPANDED_STORAGE_KEY = "platform-fee-expanded";
+
+// Render the per-unit rate with 6 significant digits. The double Number()
+// roundtrip strips trailing zeros that toPrecision leaves behind
+// (0.011286 → "0.0112860" → "0.011286", 88.6 → "88.6000" → "88.6").
+function formatRate(rate: number): string {
+  if (!Number.isFinite(rate) || rate === 0) return "—";
+  return Number(rate.toPrecision(6)).toString();
+}
+
+function readInitialExpanded(): boolean {
+  if (typeof window === "undefined") return true;
+  const v = window.localStorage.getItem(EXPANDED_STORAGE_KEY);
+  return v === null ? true : v === "1";
+}
+
+export function PlatformFee({
+  bps,
+  inAmount,
+  outAmount,
+  fromSymbol,
+  toSymbol,
+  fromDecimals,
+  toDecimals,
+}: {
+  // null disables the fee dropdown: the rate header still renders, but no
+  // chevron or platform-fee row is shown. Callers should pass null when
+  // the swap button isn't actionable (or when no fee is configured).
+  bps: number | null;
+  inAmount: bigint;
+  outAmount: bigint;
+  fromSymbol: string;
+  toSymbol: string;
+  fromDecimals: number;
+  toDecimals: number;
+}) {
+  const [inverted, setInverted] = useState(false);
+  const [expanded, setExpanded] = useState<boolean>(readInitialExpanded);
+
+  const toggleExpanded = () => {
+    setExpanded((v) => {
+      const next = !v;
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(EXPANDED_STORAGE_KEY, next ? "1" : "0");
+      }
+      return next;
+    });
+  };
+
+  const inDecimal = Number(inAmount) / 10 ** fromDecimals;
+  const outDecimal = Number(outAmount) / 10 ** toDecimals;
+  const { base, quote, rate } = inverted
+    ? { base: toSymbol, quote: fromSymbol, rate: inDecimal / outDecimal }
+    : { base: fromSymbol, quote: toSymbol, rate: outDecimal / inDecimal };
+
+  const showFeeDropdown = bps !== null;
+  const Chevron = expanded ? ChevronUp : ChevronDown;
+
+  return (
+    <div className="mt-2">
+      <div className="flex items-center justify-between gap-2 px-1 py-1 text-xs">
+        <span className="flex items-center gap-1.5">
+          <span className="text-muted-fg">Rate</span>
+          <span className="font-semibold tabular-nums text-foreground">
+            1 {base} ≈ {formatRate(rate)} {quote}
+          </span>
+          <button
+            type="button"
+            onClick={() => setInverted((v) => !v)}
+            aria-label="Invert rate"
+            className="shrink-0 rounded p-0.5 text-muted-fg transition-colors hover:text-foreground"
+          >
+            <ArrowRightLeft size={12} aria-hidden />
+          </button>
+        </span>
+        {showFeeDropdown ? (
+          <button
+            type="button"
+            onClick={toggleExpanded}
+            aria-expanded={expanded}
+            aria-label={expanded ? "Hide fees" : "Show fees"}
+            className="shrink-0 rounded p-0.5 text-muted-fg transition-colors hover:text-foreground"
+          >
+            <Chevron size={14} aria-hidden />
+          </button>
+        ) : null}
+      </div>
+      {showFeeDropdown && expanded ? (
+        <div className="flex items-center justify-between px-1 pb-1 text-xs">
+          <span className="text-muted-fg">Platform fee</span>
+          <span className="tabular-nums text-foreground">{bps / 100}%</span>
+        </div>
+      ) : null}
+    </div>
+  );
+}

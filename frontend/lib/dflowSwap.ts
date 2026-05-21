@@ -2,12 +2,45 @@
 
 import type { SolanaClientRuntime, WalletSession } from "@solana/client";
 import {
+  type Address,
+  address,
   getBase64Encoder,
   getTransactionDecoder,
   type SendableTransaction,
   type Signature,
   type Transaction,
 } from "@solana/kit";
+import {
+  findAssociatedTokenPda,
+  TOKEN_PROGRAM_ADDRESS,
+} from "@solana-program/token";
+import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
+import { stablecoinByMint, type TokenProgramKind } from "./currencies";
+import { PLATFORM_FEE } from "./env";
+
+const PROGRAM_FOR_KIND: Record<TokenProgramKind, Address> = {
+  classic: TOKEN_PROGRAM_ADDRESS,
+  token2022: TOKEN_2022_PROGRAM_ADDRESS,
+};
+
+// Derive the fee ATA for the output mint, owned by the configured platform
+// fee wallet. DFlow defaults to `platformFeeMode=outputMint`, so the fee
+// account must hold the output token. Returns null when no fee is configured
+// or when the output mint isn't in currencies.json (long-tail tokens that
+// don't have a pre-created ATA).
+async function platformFeeParams(
+  outputMint: string,
+): Promise<{ bps: number; feeAccount: string } | null> {
+  if (!PLATFORM_FEE) return null;
+  const stable = stablecoinByMint(outputMint);
+  if (!stable) return null;
+  const [feeAccount] = await findAssociatedTokenPda({
+    owner: PLATFORM_FEE.wallet,
+    mint: address(outputMint),
+    tokenProgram: PROGRAM_FOR_KIND[stable.tokenProgram],
+  });
+  return { bps: PLATFORM_FEE.bps, feeAccount };
+}
 
 // DFlow's developer endpoint. No API key, rate-limited per-IP, CORS-enabled
 // today. Swap path uses `/order` (the unified imperative endpoint) because it
@@ -94,6 +127,15 @@ export async function executeDflowSwap(
   url.searchParams.set("userPublicKey", userPublicKey);
   url.searchParams.set("allowAsyncExec", "false");
   url.searchParams.set("dynamicComputeUnitLimit", "true");
+
+  // Skip fee params entirely when no fee is configured or no fee ATA exists
+  // for this output mint. DFlow factors a declared fee into slippage budget
+  // even if uncollected, so a missing-ATA mint must not advertise the fee.
+  const fee = await platformFeeParams(outputMint);
+  if (fee) {
+    url.searchParams.set("platformFeeBps", String(fee.bps));
+    url.searchParams.set("feeAccount", fee.feeAccount);
+  }
 
   let res: Response;
   try {
