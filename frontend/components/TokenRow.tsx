@@ -12,8 +12,8 @@ import { useAppEvent } from "@/lib/events";
 import { type Side, useSwapStore } from "@/lib/store";
 import type { DflowQuote } from "@/lib/useDflowQuote";
 import {
-  useLiquidityLookup,
   type UsdQuote,
+  useLiquidityLookup,
   useUsdQuote,
 } from "@/lib/useUsdQuote";
 import { FromBalanceButtons } from "./FromBalanceButtons";
