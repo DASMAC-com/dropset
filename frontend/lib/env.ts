@@ -1,8 +1,8 @@
 import { type Address, address } from "@solana/kit";
 import { mainnet } from "@solana/rpc-types";
 
-const DEFAULT_RPC = "https://api.mainnet-beta.solana.com";
-const DEFAULT_WS = "wss://api.mainnet-beta.solana.com";
+const DEFAULT_RPC = "https://solana-rpc.publicnode.com";
+const DEFAULT_WS = "wss://solana-rpc.publicnode.com";
 
 export const PUBLIC_RPC_URL = mainnet(
   process.env.NEXT_PUBLIC_RPC_URL ?? DEFAULT_RPC,
