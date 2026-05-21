@@ -88,6 +88,14 @@ export function SwapPanel() {
     hasAmount &&
     fromUsd.value !== null &&
     fromUsd.value > BETA_USD_LIMIT;
+  // From-side USD value of *the current quote's input*, not the live input
+  // field. Used for the to-side slippage display: pairing this against the
+  // to-side USD (which derives from quote.outAmount) keeps both sides of the
+  // ratio in sync with the same quote, so adding a digit doesn't briefly
+  // flash a huge negative slippage while the new quote is in flight.
+  const quoteInDecimal =
+    quote.inAmount !== null ? formatAtomic(quote.inAmount, fromDecimals) : "0";
+  const quoteFromUsd = useUsdQuote(fromStablecoin, quoteInDecimal);
   const swap = useDflowSwap();
   const swapInFlight =
     swap.status === "preparing" ||
@@ -134,7 +142,7 @@ export function SwapPanel() {
       <div className="relative rounded-xl border border-border p-3">
         <div className="relative flex flex-col gap-[14px]">
           <TokenRow side="from" label="From" />
-          <TokenRow side="to" label="To" quote={quote} />
+          <TokenRow side="to" label="To" quote={quote} fromUsd={quoteFromUsd} />
           <div className="absolute inset-x-0 top-1/2 z-10 flex -translate-y-1/2 items-center justify-center">
             <SwapArrowButton />
           </div>
