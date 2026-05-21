@@ -5,6 +5,7 @@ import NumberFlow, { type Format } from "@number-flow/react";
 import * as Popover from "@radix-ui/react-popover";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { CopyButton } from "@/components/CopyButton";
 import {
   ArrowUpDown,
@@ -284,10 +285,15 @@ function CurrencyHeaderRow({ code }: { code: IsoCurrencyCode }) {
 // Returns a function that assigns (code, symbol) to the given side of the swap
 // store and navigates to /swap. Delegates the actual mutation to the store's
 // atomic `pickSide` action — a single `set` call that handles flip / set-new /
-// no-op without ever passing through a transient sameToken state. Navigation
-// is deferred to the next microtask so React commits the store update (and
-// any subscribed components re-render with the final pair) before the swap
-// page mounts and starts running its own URL-sync effects.
+// no-op without ever passing through a transient sameToken state.
+//
+// `flushSync` wraps the `pickSide` call so React commits every Zustand
+// subscriber re-render before `router.push` runs. Without it, the navigation
+// transition (a `startTransition` internally) could begin before the store
+// update is observed by React's scheduler, leaving the /swap mount to read
+// the prior pair in production — particularly when Next.js has prefetched
+// the route with the prior store state baked in. flushSync forces the
+// commit synchronously, removing that race.
 function usePickToken(): (
   side: Side,
   code: IsoCurrencyCode,
@@ -296,8 +302,8 @@ function usePickToken(): (
   const router = useRouter();
   const pickSide = useSwapStore((s) => s.pickSide);
   return (side, code, symbol) => {
-    pickSide(side, code, symbol);
-    queueMicrotask(() => router.push("/swap"));
+    flushSync(() => pickSide(side, code, symbol));
+    router.push("/swap");
   };
 }
 
