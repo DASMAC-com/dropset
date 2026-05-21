@@ -55,7 +55,7 @@ const RPC_URL =
   "https://api.mainnet-beta.solana.com";
 const DRY_RUN = process.env.DRY_RUN === "1";
 
-// Conservative cap. ATA-create takes ~4 unique accounts after dedup; 8 ix per
+// Conservative cap. ATA-create takes ~4 unique accounts after de-dupe; 8 ix per
 // tx keeps us well clear of the ~64-account static-key limit and the 1232-byte
 // tx-size ceiling, with no need for an Address Lookup Table.
 const ATAS_PER_TX = 8;
