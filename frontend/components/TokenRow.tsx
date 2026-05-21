@@ -70,7 +70,7 @@ export function TokenRow({
   // Jupiter-derived liquidity signal for the current stablecoin. "illiquid"
   // means Jupiter returned no usable USD reference price — typically because
   // the token has thin or no on-chain depth. This is independent from DFlow's
-  // routability check (handled separately by QuoteError); we surface it here
+  // routable check (handled separately by QuoteError); we surface it here
   // as a per-token preventive warning so users see it before they attempt to
   // swap. "unknown" (prefetch not yet completed) suppresses the icon to avoid
   // flashing a warning that resolves to "liquid" a moment later.

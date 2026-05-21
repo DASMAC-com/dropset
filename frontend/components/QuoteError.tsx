@@ -8,7 +8,7 @@ import { useLiquidityLookup } from "@/lib/useUsdQuote";
 // meanings that DFlow itself doesn't differentiate:
 //   1. Amount-too-large — the pair is fine, the requested size exceeds what
 //      DFlow's routers can fill in one transaction (e.g., 10M USDC→USDT).
-//   2. Pair unroutable — one or both tokens lack the liquidity to be routed
+//   2. Pair un-routable — one or both tokens lack the liquidity to be routed
 //      at any amount (e.g., VEUR → EURCV).
 // We disambiguate using Jupiter's per-token data: if both tokens have a
 // usable USD reference price (`useLiquidityLookup` → "liquid"), DFlow's
