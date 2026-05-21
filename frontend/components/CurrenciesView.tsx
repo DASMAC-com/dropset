@@ -4,7 +4,7 @@
 
 import NumberFlow, { type Format } from "@number-flow/react";
 import * as Popover from "@radix-ui/react-popover";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { CopyButton } from "@/components/CopyButton";
 import {
@@ -283,30 +283,36 @@ function CurrencyHeaderRow({ code }: { code: IsoCurrencyCode }) {
 }
 
 // Returns a function that assigns (code, symbol) to the given side of the
-// swap store and navigates to /swap with the resolved pair encoded in the
-// URL. Delegates the actual mutation to the store's atomic `pickSide` action,
-// then reads the post-mutation pair off the store and pushes
-// `/swap?from=X&to=Y` explicitly — never bare `/swap`.
+// swap store and navigates to `/swap` with the resolved pair encoded in the
+// URL. Delegates the actual mutation to the store's atomic `pickSide`
+// action, then reads the post-mutation pair off the store and navigates via
+// direct `history.pushState` + a synthetic `popstate` event instead of
+// `router.push`.
 //
-// The explicit URL is load-bearing in production: Next.js's App Router cache
-// will restore the previously-visited URL for a route when push is called
-// with a bare path. Concretely, if the user first lands on `/swap?to=usd`
-// (UrlSync canonicalizes that to `/swap?from=EURC&to=USDC`), then navigates
-// to /currencies, then triggers `router.push("/swap")` from a pickToken
-// click — the router can replay the *original* `/swap?to=usd` URL onto the
-// new push. UrlSync's reader then sees `?to=usd`, resolves the sameToken
-// conflict back to `from=EURC, to=USDC`, and overwrites the just-set store.
-// Pushing the resolved pair directly defeats that: the URL itself is the
-// source of truth, so even if the store's mutation is briefly out of sync
-// with the navigation, the reader on /swap will sync from URL to store with
-// the right values. Reading `getState()` after `pickSide` gives the
-// post-flip pair because Zustand's `set` is synchronous.
+// Bypassing the router is load-bearing in production. Next.js's App Router
+// cache associates a URL with each visited route segment. Concretely, if
+// the user first lands on `/swap?to=usd` (UrlSync canonicalizes that to
+// `/swap?from=EURC&to=USDC`), then navigates to /currencies, then triggers
+// `router.push("/swap?from=USDC&to=EURC")` — the router replays the cached
+// `/swap?to=usd` URL onto history instead of the explicit one we passed.
+// UrlSync's reader then sees `?to=usd`, resolves the sameToken conflict
+// back to `from=EURC, to=USDC`, and overwrites the just-set store.
+// (Verified with a `history.pushState` wrap in production: the captured
+// push was `/swap?to=usd`, not `/swap?from=USDC&to=EURC`.)
+//
+// `history.pushState` is what `router.push` calls under the hood, but going
+// through `router.push` triggers the cache-driven URL replacement. Calling
+// `history.pushState` directly with our explicit URL puts the right URL in
+// the address bar; the synthetic `popstate` event then tells Next.js's
+// router to handle the URL change like a normal navigation (popstate is
+// what fires on browser back/forward, and Next.js's listener routes to
+// whatever window.location currently is). Net effect: smooth client-side
+// transition with the exact URL we wanted.
 function usePickToken(): (
   side: Side,
   code: IsoCurrencyCode,
   symbol: string,
 ) => void {
-  const router = useRouter();
   const store = useSwapStoreApi();
   return (side, code, symbol) => {
     store.getState().pickSide(side, code, symbol);
@@ -315,7 +321,9 @@ function usePickToken(): (
       from: from.stablecoin,
       to: to.stablecoin,
     });
-    router.push(`/swap?${params.toString()}` as never);
+    const url = `/swap?${params.toString()}`;
+    window.history.pushState(null, "", url);
+    window.dispatchEvent(new PopStateEvent("popstate"));
   };
 }
 
