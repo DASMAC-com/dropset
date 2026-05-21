@@ -71,11 +71,23 @@ export function FromBalanceButtons() {
   // Derive the trigger label from amount/balance so picking a preset, typing
   // custom, OR typing directly in the amount input all stay consistent. Uses
   // rounded bigint division to avoid 25% rendering as 24.99% after truncation.
+  //
+  // `amountBase === base` is the exact-max case and is the only path that
+  // renders "100%". Any other value — including amounts that would round up
+  // to 10000 bps (e.g., balance dust left from a prior swap) — gets capped at
+  // 9999 bps so the label reads "99.99%". Without the cap, a one-atomic
+  // shortfall after a from/to flip would silently display "100%" even though
+  // the user isn't actually spending their entire balance.
   const amountBase = parseAmountToBase(amount, decimals);
   let percentLabel = "%";
   if (base > 0n && amountBase > 0n && amountBase <= base) {
-    const bps = (amountBase * 10000n + base / 2n) / base;
-    if (bps > 0n) percentLabel = formatPercentFromBps(bps);
+    if (amountBase === base) {
+      percentLabel = "100%";
+    } else {
+      const raw = (amountBase * 10000n + base / 2n) / base;
+      const bps = raw >= 10000n ? 9999n : raw;
+      if (bps > 0n) percentLabel = formatPercentFromBps(bps);
+    }
   }
 
   const applyPercent = (percent: number) => {
