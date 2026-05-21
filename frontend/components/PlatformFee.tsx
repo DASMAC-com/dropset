@@ -1,5 +1,6 @@
 "use client";
 
+import NumberFlow, { type Format } from "@number-flow/react";
 import { useState } from "react";
 import { ArrowRightLeft, ChevronDown, ChevronUp } from "./icons";
 
@@ -9,13 +10,14 @@ import { ArrowRightLeft, ChevronDown, ChevronUp } from "./icons";
 // one-way. Default (no entry) is expanded.
 const EXPANDED_STORAGE_KEY = "platform-fee-expanded";
 
-// Render the per-unit rate with 6 significant digits. The double Number()
-// roundtrip strips trailing zeros that toPrecision leaves behind
-// (0.011286 → "0.0112860" → "0.011286", 88.6 → "88.6000" → "88.6").
-function formatRate(rate: number): string {
-  if (!Number.isFinite(rate) || rate === 0) return "—";
-  return Number(rate.toPrecision(6)).toString();
-}
+// Significant-digits formatting handles both small (0.011286) and larger
+// (88.6) rates without a fixed decimal-place rule. Hoisted so NumberFlow's
+// identity check on `format` doesn't reset the odometer animation each
+// render.
+const RATE_FORMAT: Format = {
+  maximumSignificantDigits: 6,
+  useGrouping: false,
+};
 
 function readInitialExpanded(): boolean {
   if (typeof window === "undefined") return true;
@@ -81,7 +83,14 @@ export function PlatformFee({
         <span className="flex items-center gap-1.5">
           <span className="text-muted-fg">Rate</span>
           <span className="font-semibold tabular-nums text-foreground">
-            {fresh ? `1 ${base} ≈ ${formatRate(rate)} ${quote}` : "—"}
+            {fresh && Number.isFinite(rate) && rate > 0 ? (
+              <>
+                1 {base} ≈ <NumberFlow value={rate} format={RATE_FORMAT} />{" "}
+                {quote}
+              </>
+            ) : (
+              "—"
+            )}
           </span>
           <button
             type="button"
