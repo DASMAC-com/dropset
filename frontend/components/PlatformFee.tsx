@@ -44,6 +44,10 @@ export function PlatformFee({
   toDecimals: number;
 }) {
   const [inverted, setInverted] = useState(false);
+  // Cumulative angle (not modulo 360) so every click is a fresh 180° spin
+  // in the same direction — otherwise the icon would alternate clockwise
+  // and counter-clockwise as the boolean toggled back and forth.
+  const [invertRotation, setInvertRotation] = useState(0);
   const [expanded, setExpanded] = useState<boolean>(readInitialExpanded);
 
   const toggleExpanded = () => {
@@ -75,11 +79,19 @@ export function PlatformFee({
           </span>
           <button
             type="button"
-            onClick={() => setInverted((v) => !v)}
+            onClick={() => {
+              setInverted((v) => !v);
+              setInvertRotation((r) => r + 180);
+            }}
             aria-label="Invert rate"
             className="shrink-0 rounded p-0.5 text-muted-fg transition-colors hover:text-foreground"
           >
-            <ArrowRightLeft size={12} aria-hidden />
+            <ArrowRightLeft
+              size={12}
+              aria-hidden
+              className="transition-transform duration-300 ease-out"
+              style={{ transform: `rotate(${invertRotation}deg)` }}
+            />
           </button>
         </span>
         {showFeeDropdown ? (
