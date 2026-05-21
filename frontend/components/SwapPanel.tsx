@@ -152,7 +152,7 @@ export function SwapPanel() {
         </button>
       </div>
       <RateLimitMessage />
-      <QuoteError quote={quote} />
+      <QuoteError quote={quote} fromMint={fromMint} toMint={toMint} />
       <SwapResult
         status={swap.status}
         result={swap.result}

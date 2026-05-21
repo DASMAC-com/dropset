@@ -43,7 +43,7 @@ export function StableTokenIdentity({
           {illiquid && (
             <span
               className="rounded border border-border bg-background px-1.5 py-0.5 text-[10px] text-muted-fg uppercase tracking-wide"
-              title="No reliable USD price from Jupiter — token may be illiquid or low-volume."
+              title={`Market data unavailable for ${s.symbol}`}
             >
               Illiquid
             </span>

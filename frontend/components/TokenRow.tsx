@@ -6,12 +6,14 @@ import {
   currencyFlagUrl,
   currencyName,
   stablecoinDecimals,
+  stablecoinMint,
 } from "@/lib/currencies";
 import { useAppEvent } from "@/lib/events";
 import { type Side, useSwapStore } from "@/lib/store";
 import type { DflowQuote } from "@/lib/useDflowQuote";
-import { useUsdQuote } from "@/lib/useUsdQuote";
+import { useLiquidityLookup, useUsdQuote } from "@/lib/useUsdQuote";
 import { FromBalanceButtons } from "./FromBalanceButtons";
+import { CircleAlert } from "./icons";
 import { MaxSlippageButton } from "./MaxSlippageButton";
 import { TokenPicker } from "./TokenPicker";
 import { WalletBalance } from "./WalletBalance";
@@ -64,6 +66,16 @@ export function TokenRow({
   const amount = useSwapStore((s) => s.amount);
   const setAmount = useSwapStore((s) => s.setAmount);
   const setActiveSide = useSwapStore((s) => s.setActiveSide);
+
+  // Jupiter-derived liquidity signal for the current stablecoin. "illiquid"
+  // means Jupiter returned no usable USD reference price — typically because
+  // the token has thin or no on-chain depth. This is independent from DFlow's
+  // routability check (handled separately by QuoteError); we surface it here
+  // as a per-token preventive warning so users see it before they attempt to
+  // swap. "unknown" (prefetch not yet completed) suppresses the icon to avoid
+  // flashing a warning that resolves to "liquid" a moment later.
+  const liquidity = useLiquidityLookup()(stablecoinMint(stablecoin));
+  const lowLiquidity = liquidity === "illiquid";
 
   const inputRef = useRef<HTMLInputElement>(null);
   const caretRef = useRef<number | null>(null);
@@ -163,6 +175,14 @@ export function TokenRow({
             {currencyName(currency)} ({currency})
           </span>
         </span>
+        {lowLiquidity && (
+          <span
+            className="flex shrink-0 items-center text-amber-400"
+            title={`Market data unavailable for ${stablecoin}`}
+          >
+            <CircleAlert size={14} />
+          </span>
+        )}
         {side === "from" ? <FromBalanceButtons /> : <MaxSlippageButton />}
       </div>
       <div className="flex flex-col">
