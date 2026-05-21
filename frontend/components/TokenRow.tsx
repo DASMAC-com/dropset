@@ -11,7 +11,11 @@ import {
 import { useAppEvent } from "@/lib/events";
 import { type Side, useSwapStore } from "@/lib/store";
 import type { DflowQuote } from "@/lib/useDflowQuote";
-import { useLiquidityLookup, useUsdQuote } from "@/lib/useUsdQuote";
+import {
+  useLiquidityLookup,
+  type UsdQuote,
+  useUsdQuote,
+} from "@/lib/useUsdQuote";
 import { FromBalanceButtons } from "./FromBalanceButtons";
 import { CircleAlert } from "./icons";
 import { MaxSlippageButton } from "./MaxSlippageButton";
@@ -27,6 +31,11 @@ const usdFormat: Format = {
   currency: "USD",
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
+};
+const slippageFormat: Format = {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+  signDisplay: "exceptZero",
 };
 
 const sanitizeAmount = (raw: string, decimals: number): string => {
@@ -53,12 +62,16 @@ export function TokenRow({
   side,
   label,
   quote,
+  fromUsd,
 }: {
   side: Side;
   label: string;
   // DFlow quote driving the to-side display. Always passed by SwapPanel
   // (which owns the single hook call); the from-side ignores it.
   quote?: DflowQuote;
+  // From-side USD value, passed in on the to-side so we can show the
+  // slippage % against the input. Ignored on the from-side.
+  fromUsd?: UsdQuote;
 }) {
   const activeSide = useSwapStore((s) => s.activeSide);
   const currency = useSwapStore((s) => s[side].currency);
@@ -131,6 +144,20 @@ export function TokenRow({
     toAmountNumber !== null ? toAmountNumber.toString() : "0";
   const sideAmount = side === "from" ? amount : toAmountDecimal;
   const usd = useUsdQuote(stablecoin, sideAmount);
+
+  // Slippage % between the input USD value and the live to-side output USD
+  // value. Negative for the typical case (you give up a little to the spread
+  // + fees), positive if the route happens to favor you. Gated on a live
+  // quote + non-zero input USD so we don't divide by zero or flash a stale
+  // percent while the quote is loading.
+  const slippagePercent =
+    side === "to" &&
+    quote?.status === "ok" &&
+    fromUsd?.value != null &&
+    fromUsd.value > 0 &&
+    usd.value !== null
+      ? ((usd.value - fromUsd.value) / fromUsd.value) * 100
+      : null;
 
   const onAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value;
@@ -216,11 +243,21 @@ export function TokenRow({
         </div>
         <div className="mt-2 flex items-center justify-between gap-2 font-mono text-muted-fg text-sm tabular-nums">
           <WalletBalance stablecoin={stablecoin} />
-          <span className="ml-auto">
-            {usd.value !== null ? (
-              <NumberFlow value={usd.value} format={usdFormat} />
-            ) : (
-              "$—"
+          <span className="ml-auto flex items-baseline gap-1">
+            <span>
+              {usd.value !== null ? (
+                <NumberFlow value={usd.value} format={usdFormat} />
+              ) : (
+                "$—"
+              )}
+            </span>
+            {slippagePercent !== null && (
+              <NumberFlow
+                value={slippagePercent}
+                format={slippageFormat}
+                prefix="("
+                suffix="%)"
+              />
             )}
           </span>
         </div>
