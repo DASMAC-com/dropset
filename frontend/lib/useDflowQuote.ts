@@ -47,6 +47,13 @@ export type DflowQuote = {
   status: QuoteStatus;
   outAmount: bigint | null;
   inAmount: bigint | null;
+  // The mints this quote was fetched for. Consumers should compare these
+  // against the *current* store mints to detect a stale cached quote — the
+  // hook holds the previous result during the debounce/refetch window, so
+  // a naive `quote.outAmount` read after the user swaps sides or picks a
+  // new token would interpret old atomic units with new decimals.
+  inputMint: string | null;
+  outputMint: string | null;
   priceImpactPct: string | null;
   slippageBps: number | null;
   hasQuote: boolean;
@@ -57,6 +64,8 @@ const INITIAL: DflowQuote = {
   status: "idle",
   outAmount: null,
   inAmount: null,
+  inputMint: null,
+  outputMint: null,
   priceImpactPct: null,
   slippageBps: null,
   hasQuote: false,
@@ -203,6 +212,8 @@ export const useDflowQuote = (
           status: "ok",
           outAmount: BigInt(data.outAmount),
           inAmount: BigInt(data.inAmount),
+          inputMint,
+          outputMint,
           priceImpactPct: data.priceImpactPct ?? null,
           slippageBps: data.slippageBps ?? null,
           hasQuote: true,

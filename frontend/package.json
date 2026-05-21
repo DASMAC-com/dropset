@@ -55,6 +55,7 @@
     "postinstall": "pnpm run fetch-token-icons",
     "prebuild": "pnpm run copy-flags && pnpm run fetch-token-icons",
     "predev": "pnpm run copy-flags && pnpm run fetch-token-icons",
+    "setup-fee-atas": "node scripts/setup-fee-atas.mjs",
     "start": "next start"
   },
   "version": "0.1.0"

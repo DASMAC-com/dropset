@@ -8,6 +8,7 @@ import {
   stablecoinDecimals,
   stablecoinMint,
 } from "@/lib/currencies";
+import { PLATFORM_FEE } from "@/lib/env";
 import { emit, useAppEvent } from "@/lib/events";
 import { useSameToken, useSwapStore } from "@/lib/store";
 import { useAllBalances } from "@/lib/useAllBalances";
@@ -18,14 +19,12 @@ import {
   REFRESH_INTERVAL_MS,
   useUsdQuote,
 } from "@/lib/useUsdQuote";
+import { PlatformFee } from "./PlatformFee";
 import { QuoteError } from "./QuoteError";
 import { RateLimitMessage } from "./RateLimitMessage";
 import { SwapArrowButton } from "./SwapArrowButton";
 import { SwapResult } from "./SwapResult";
 import { TokenRow } from "./TokenRow";
-
-// Per-swap USD cap while the app is in private beta.
-const BETA_USD_LIMIT = 5;
 
 export function SwapPanel() {
   const sameToken = useSameToken();
@@ -82,12 +81,6 @@ export function SwapPanel() {
     hasAmount &&
     balancesReady &&
     amountBase > fromBalanceBase;
-  const fromUsd = useUsdQuote(fromStablecoin, amount);
-  const exceedsBetaLimit =
-    !sameToken &&
-    hasAmount &&
-    fromUsd.value !== null &&
-    fromUsd.value > BETA_USD_LIMIT;
   // From-side USD value of *the current quote's input*, not the live input
   // field. Used for the to-side slippage display: pairing this against the
   // to-side USD (which derives from quote.outAmount) keeps both sides of the
@@ -101,7 +94,7 @@ export function SwapPanel() {
     swap.status === "preparing" ||
     swap.status === "signing" ||
     swap.status === "confirming";
-  const dimmed = needsAmount || insufficient || exceedsBetaLimit;
+  const dimmed = needsAmount || insufficient;
   const disabled = sameToken || isConnecting || swapInFlight;
 
   let label: string;
@@ -117,9 +110,6 @@ export function SwapPanel() {
     onClick = () => emit("focusFromAmount");
   } else if (insufficient) {
     label = `Insufficient ${fromStablecoin}`;
-    onClick = () => emit("focusFromAmount");
-  } else if (exceedsBetaLimit) {
-    label = `Private beta: $${BETA_USD_LIMIT} max per swap`;
     onClick = () => emit("focusFromAmount");
   } else if (swap.status === "preparing") {
     label = "Preparing swap…";
@@ -137,12 +127,47 @@ export function SwapPanel() {
     };
   }
 
+  useAppEvent("executeSwap", () => {
+    if (disabled) return;
+    onClick();
+  });
+
+  // Freshness check — the quote hook holds the previous result during
+  // its debounce/refetch window, so right after a swap-sides or token-pick
+  // the cached `outAmount` is in the OLD mints' units. Consumers must gate
+  // any derivation (rate, slippage, to-side amount) on this to avoid
+  // briefly displaying 1000× wrong numbers when decimals differ.
+  const quoteFresh =
+    quote.inputMint === fromMint && quote.outputMint === toMint;
+
+  // Two-stage visibility for the rate/fee panel:
+  //   - `routeFound` gates the whole section. No two-sided quote = no
+  //     route = nothing to display.
+  //   - `canSwap` gates the fee dropdown (chevron + platform-fee row)
+  //     within an already-visible section. We only advertise the fee at
+  //     the moment the user could actually click Swap — earlier states
+  //     (needsAmount, insufficient, in-flight) still
+  //     show the rate, just without the fee dropdown.
+  // The bigint gates also narrow nullable quote fields for the JSX.
+  const routeFound =
+    quote.inAmount !== null &&
+    quote.inAmount > 0n &&
+    quote.outAmount !== null &&
+    quote.outAmount > 0n;
+  const canSwap = label === "Swap" && !disabled && !dimmed;
+
   return (
     <>
       <div className="relative rounded-xl border border-border p-3">
         <div className="relative flex flex-col gap-[14px]">
           <TokenRow side="from" label="From" />
-          <TokenRow side="to" label="To" quote={quote} fromUsd={quoteFromUsd} />
+          <TokenRow
+            side="to"
+            label="To"
+            quote={quote}
+            fromUsd={quoteFromUsd}
+            quoteFresh={quoteFresh}
+          />
           <div className="absolute inset-x-0 top-1/2 z-10 flex -translate-y-1/2 items-center justify-center">
             <SwapArrowButton />
           </div>
@@ -158,6 +183,18 @@ export function SwapPanel() {
         >
           {label}
         </button>
+        {routeFound && quote.inAmount !== null && quote.outAmount !== null ? (
+          <PlatformFee
+            bps={canSwap && PLATFORM_FEE ? PLATFORM_FEE.bps : null}
+            inAmount={quote.inAmount}
+            outAmount={quote.outAmount}
+            fromSymbol={fromStablecoin}
+            toSymbol={toStablecoin}
+            fromDecimals={fromDecimals}
+            toDecimals={toDecimals}
+            fresh={quoteFresh}
+          />
+        ) : null}
       </div>
       <RateLimitMessage />
       <QuoteError quote={quote} fromMint={fromMint} toMint={toMint} />
