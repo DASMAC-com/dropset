@@ -264,7 +264,16 @@ export function TokenRow({
           <WalletBalance stablecoin={stablecoin} />
           <span className="ml-auto flex items-baseline gap-1">
             <span>
-              {usd.value !== null ? (
+              {/*
+                On the to-side, drop the USD readout entirely when the
+                quote is stale (post-swap debounce). Without this the
+                NumberFlow would animate down to $0 — because the cached
+                outAmount got zeroed out for staleness — and then back up
+                once the new quote lands. Unmounting matches the rate
+                display's "go away, come back" behavior.
+              */}
+              {usd.value !== null &&
+              (side === "from" || toAmountNumber !== null) ? (
                 <NumberFlow value={usd.value} format={usdFormat} />
               ) : (
                 "$—"
