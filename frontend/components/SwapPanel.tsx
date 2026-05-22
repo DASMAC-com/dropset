@@ -104,8 +104,7 @@ export function SwapPanel() {
     swap.status === "signing" ||
     swap.status === "confirming";
   const dimmed = needsAmount || insufficient || balanceUnknown;
-  const disabled =
-    sameToken || isConnecting || swapInFlight || balanceUnknown;
+  const disabled = sameToken || isConnecting || swapInFlight || balanceUnknown;
 
   let label: string;
   let onClick: () => void;
