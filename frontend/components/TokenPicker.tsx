@@ -11,7 +11,8 @@ import {
   tokenIconUrl,
 } from "@/lib/currencies";
 import { useAppEvent } from "@/lib/events";
-import { type Side, useSwapStore } from "@/lib/store";
+import { type Side, useSwapStore, useSwapStoreApi } from "@/lib/store";
+import { useSwapNav } from "@/lib/swapUrl";
 import { sortByVolumeDesc, useInfoLookup } from "@/lib/useUsdQuote";
 import { CurrencyGroupHeader } from "./CurrencyGroupHeader";
 import { ChevronDown, Search, X } from "./icons";
@@ -24,8 +25,9 @@ export function TokenPicker({ side }: { side: Side }) {
   const otherSideState = useSwapStore(
     (s) => s[side === "from" ? "to" : "from"],
   );
-  const setToken = useSwapStore((s) => s.setToken);
+  const store = useSwapStoreApi();
   const setActiveSide = useSwapStore((s) => s.setActiveSide);
+  const gotoSwap = useSwapNav();
 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -88,7 +90,9 @@ export function TokenPicker({ side }: { side: Side }) {
   }, [highlightedIndex]);
 
   const select = (code: IsoCurrencyCode, sym: string) => {
-    setToken(side, code, sym);
+    store.getState().setToken(side, code, sym);
+    const { from, to } = store.getState();
+    gotoSwap(from.stablecoin, to.stablecoin);
     setOpen(false);
   };
 

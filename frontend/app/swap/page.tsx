@@ -1,7 +1,6 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { Suspense } from "react";
 import { GlobePanel } from "@/components/GlobePanel";
 import { UrlSync } from "@/components/UrlSync";
 
@@ -21,9 +20,7 @@ const SwapPanel = dynamic(
 export default function SwapPage() {
   return (
     <div className="mx-auto flex max-w-[575px] flex-col gap-3 px-6 pt-3 pb-10">
-      <Suspense fallback={null}>
-        <UrlSync />
-      </Suspense>
+      <UrlSync />
       <SwapPanel />
       <GlobePanel />
     </div>

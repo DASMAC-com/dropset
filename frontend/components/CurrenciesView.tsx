@@ -4,7 +4,7 @@
 
 import NumberFlow, { type Format } from "@number-flow/react";
 import * as Popover from "@radix-ui/react-popover";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { CopyButton } from "@/components/CopyButton";
 import {
@@ -31,6 +31,7 @@ import {
 import { useAppEvent } from "@/lib/events";
 import { explorerTokenUrl } from "@/lib/explorer";
 import { type Side, useSwapStore, useSwapStoreApi } from "@/lib/store";
+import { useSwapNav } from "@/lib/swapUrl";
 import { flashBg, useFlashOnChange } from "@/lib/useFlashOnChange";
 import {
   prefetchAllTokenInfo,
@@ -282,40 +283,21 @@ function CurrencyHeaderRow({ code }: { code: IsoCurrencyCode }) {
   );
 }
 
-// Returns a function that assigns (code, symbol) to the given side of the
-// swap store and navigates to /swap with the resolved pair encoded in the
-// URL. Delegates the actual mutation to the store's atomic `pickSide` action,
-// then reads the post-mutation pair off the store and pushes
-// `/swap?from=X&to=Y` explicitly — never bare `/swap`.
-//
-// The explicit URL is load-bearing in production: Next.js's App Router cache
-// will restore the previously-visited URL for a route when push is called
-// with a bare path. Concretely, if the user first lands on `/swap?to=usd`
-// (UrlSync canonicalizes that to `/swap?from=EURC&to=USDC`), then navigates
-// to /currencies, then triggers `router.push("/swap")` from a pickToken
-// click — the router can replay the *original* `/swap?to=usd` URL onto the
-// new push. UrlSync's reader then sees `?to=usd`, resolves the sameToken
-// conflict back to `from=EURC, to=USDC`, and overwrites the just-set store.
-// Pushing the resolved pair directly defeats that: the URL itself is the
-// source of truth, so even if the store's mutation is briefly out of sync
-// with the navigation, the reader on /swap will sync from URL to store with
-// the right values. Reading `getState()` after `pickSide` gives the
-// post-flip pair because Zustand's `set` is synchronous.
+// Assigns (code, symbol) to the given side via the store's atomic setToken,
+// then pushes the resolved pair into the URL so /swap mounts with canonical
+// params. Reads state after setToken because Zustand's set is synchronous —
+// the store reflects the post-flip pair by the time we navigate.
 function usePickToken(): (
   side: Side,
   code: IsoCurrencyCode,
   symbol: string,
 ) => void {
-  const router = useRouter();
   const store = useSwapStoreApi();
+  const gotoSwap = useSwapNav();
   return (side, code, symbol) => {
-    store.getState().pickSide(side, code, symbol);
+    store.getState().setToken(side, code, symbol);
     const { from, to } = store.getState();
-    const params = new URLSearchParams({
-      from: from.stablecoin,
-      to: to.stablecoin,
-    });
-    router.push(`/swap?${params.toString()}` as never);
+    gotoSwap(from.stablecoin, to.stablecoin);
   };
 }
 

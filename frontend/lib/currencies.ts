@@ -67,11 +67,20 @@ export const SUPPORTED: IsoCurrencyCode[] = Object.keys(
   CURRENCIES,
 ) as IsoCurrencyCode[];
 
-const STABLE_BY_SYMBOL: Record<string, Stablecoin> = Object.fromEntries(
-  SUPPORTED.flatMap((code) =>
-    CURRENCIES[code].stablecoins.map((s) => [s.symbol, s]),
-  ),
-);
+const STABLE_BY_SYMBOL: Record<string, Stablecoin> = (() => {
+  const map: Record<string, Stablecoin> = {};
+  for (const code of SUPPORTED) {
+    for (const s of CURRENCIES[code].stablecoins) {
+      if (map[s.symbol]) {
+        throw new Error(
+          `Duplicate stablecoin symbol "${s.symbol}" in currencies.json — symbols must be globally unique to safely populate slug → pair lookup tables.`,
+        );
+      }
+      map[s.symbol] = s;
+    }
+  }
+  return map;
+})();
 
 export const ALL_STABLECOIN_MINTS: string[] = Object.values(
   STABLE_BY_SYMBOL,
@@ -173,9 +182,51 @@ export const resolveTokenSlug = (
   if (canonical) {
     return { currency: CURRENCY_BY_SYMBOL[canonical], stablecoin: canonical };
   }
-  if ((CURRENCIES as Record<string, unknown>)[upper]) {
+  if (upper in CURRENCIES) {
     const cc = upper as IsoCurrencyCode;
     return { currency: cc, stablecoin: defaultStablecoin(cc) };
   }
   return null;
+};
+
+export type TokenSide = { currency: IsoCurrencyCode; stablecoin: string };
+export type SidePair = { from: TokenSide; to: TokenSide };
+
+export const DEFAULT_FROM: TokenSide = {
+  currency: "USD" as IsoCurrencyCode,
+  stablecoin: "USDC",
+};
+export const DEFAULT_TO: TokenSide = {
+  currency: "EUR" as IsoCurrencyCode,
+  stablecoin: "EURC",
+};
+
+// Canonical slug → pair resolver used by both the store factory (initial
+// seed from window.location) and UrlSync (reconciliation from URL). Single
+// source of truth so the conflict-resolution rule cannot drift between sites.
+//
+// Rules:
+//   - Both slugs missing → defaults.
+//   - Both present and resolve to the same stablecoin → keep the user's
+//     explicit `from`, replace `to` with a non-conflicting default.
+//   - Only one slug → resolve it; pick a default for the other side that
+//     doesn't collide.
+//   - Unknown slugs are treated as missing.
+export const resolvePair = (
+  fromSlug: string | null | undefined,
+  toSlug: string | null | undefined,
+): SidePair => {
+  const f = resolveTokenSlug(fromSlug);
+  const t = resolveTokenSlug(toSlug);
+  if (!f && !t) return { from: DEFAULT_FROM, to: DEFAULT_TO };
+  const slugConflict = !!(f && t && f.stablecoin === t.stablecoin);
+  let from: TokenSide = f ?? DEFAULT_FROM;
+  let to: TokenSide = t && !slugConflict ? t : DEFAULT_TO;
+  if (from.stablecoin === to.stablecoin) {
+    const fallback = (avoid: string): TokenSide =>
+      avoid === DEFAULT_TO.stablecoin ? DEFAULT_FROM : DEFAULT_TO;
+    if (f) to = fallback(from.stablecoin);
+    else if (t) from = fallback(to.stablecoin);
+  }
+  return { from, to };
 };

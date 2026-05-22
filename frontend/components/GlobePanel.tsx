@@ -25,7 +25,8 @@ import {
 import { COUNTRY_PINS, type CountryPin, findPin } from "@/lib/countries";
 import { CURRENCIES, flagUrl, type IsoCurrencyCode } from "@/lib/currencies";
 import { useAppEvent } from "@/lib/events";
-import { useSwapStore } from "@/lib/store";
+import { useSwapStore, useSwapStoreApi } from "@/lib/store";
+import { useSwapNav } from "@/lib/swapUrl";
 import { type CountryFeature, WORLD_POLYGONS } from "@/lib/world-polygons";
 import { CurrencyGroupHeader } from "./CurrencyGroupHeader";
 import { Compass, Crosshair, Flag, Minus, Pause, Play, Plus, X } from "./icons";
@@ -187,7 +188,8 @@ function GlobeInner() {
   }, []);
   const from = useSwapStore((s) => s.from);
   const to = useSwapStore((s) => s.to);
-  const setToken = useSwapStore((s) => s.setToken);
+  const store = useSwapStoreApi();
+  const gotoSwap = useSwapNav();
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 480, height: 480 });
@@ -547,7 +549,9 @@ function GlobeInner() {
     symbol: string,
     cca2: string,
   ) => {
-    setToken(side, currency, symbol, cca2);
+    store.getState().setToken(side, currency, symbol, cca2);
+    const { from, to } = store.getState();
+    gotoSwap(from.stablecoin, to.stablecoin);
     closePicker();
   };
 

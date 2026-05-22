@@ -10,7 +10,8 @@ import {
 } from "@/lib/currencies";
 import { PLATFORM_FEE } from "@/lib/env";
 import { emit, useAppEvent } from "@/lib/events";
-import { useSameToken, useSwapStore } from "@/lib/store";
+import { useSameToken, useSwapStore, useSwapStoreApi } from "@/lib/store";
+import { useSwapNav } from "@/lib/swapUrl";
 import { useAllBalances } from "@/lib/useAllBalances";
 import { formatAtomic, useDflowQuote } from "@/lib/useDflowQuote";
 import { useDflowSwap } from "@/lib/useDflowSwap";
@@ -36,7 +37,8 @@ export function SwapPanel() {
   const fromStablecoin = useSwapStore((s) => s.from.stablecoin);
   const toStablecoin = useSwapStore((s) => s.to.stablecoin);
   const amount = useSwapStore((s) => s.amount);
-  const swapSides = useSwapStore((s) => s.swapSides);
+  const store = useSwapStoreApi();
+  const gotoSwap = useSwapNav();
   const fromMint = stablecoinMint(fromStablecoin);
   const toMint = stablecoinMint(toStablecoin);
   const fromDecimals = stablecoinDecimals(fromStablecoin);
@@ -46,13 +48,16 @@ export function SwapPanel() {
   // Toggling direction promotes the current quote's output amount into the
   // new input. With no live quote (zero amount, sameToken, first load) the
   // existing input is kept — the quote hook will refire against the flipped
-  // pair either way.
+  // pair either way. URL is canonicalized in the same beat so the address
+  // bar matches the new pair without waiting for any sync effect.
   useAppEvent("swapSides", () => {
     const next =
       quote.outAmount !== null && quote.outAmount > 0n
         ? formatAtomic(quote.outAmount, toDecimals)
         : undefined;
-    swapSides(next);
+    store.getState().swapSides(next);
+    const { from, to } = store.getState();
+    gotoSwap(from.stablecoin, to.stablecoin);
   });
 
   // One batched Jupiter call on mount warms every stablecoin's USD price so
