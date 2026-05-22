@@ -3,6 +3,7 @@
 import * as Popover from "@radix-ui/react-popover";
 import { useRef, useState } from "react";
 import { useAppEvent } from "@/lib/events";
+import { sanitizeSlippagePercent } from "@/lib/input";
 import { type Slippage, useSwapStore } from "@/lib/store";
 import { Check, Settings2 } from "./icons";
 
@@ -10,16 +11,6 @@ const PRESETS: { label: string; percent: number }[] = [
   { label: "0.3%", percent: 0.3 },
   { label: "0.5%", percent: 0.5 },
 ];
-
-const sanitizePercent = (raw: string): string => {
-  let v = raw.replace(/[^0-9.]/g, "");
-  const firstDot = v.indexOf(".");
-  if (firstDot !== -1) {
-    v = v.slice(0, firstDot + 1) + v.slice(firstDot + 1).replace(/\./g, "");
-    v = v.slice(0, firstDot + 1 + 2); // cap at 2 decimal places
-  }
-  return v;
-};
 
 const summary = (s: Slippage): string =>
   s.mode === "auto" ? "Auto" : `${s.percent}%`;
@@ -60,7 +51,7 @@ export function MaxSlippageButton() {
   };
 
   const applyCustom = (raw: string) => {
-    const cleaned = sanitizePercent(raw);
+    const cleaned = sanitizeSlippagePercent(raw);
     setCustom(cleaned);
     const num = Number.parseFloat(cleaned);
     if (Number.isFinite(num) && num > 0) {

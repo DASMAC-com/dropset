@@ -6,40 +6,16 @@ import { useRef, useState } from "react";
 import { formatBaseAmount, parseAmountToBase } from "@/lib/balance";
 import { stablecoinDecimals, stablecoinMint } from "@/lib/currencies";
 import { emit, useAppEvent } from "@/lib/events";
+import { sanitizePercent } from "@/lib/input";
+import {
+  formatPercentFromBps,
+  MAX_BELOW_FULL_BPS,
+  portionForPercent,
+} from "@/lib/percent";
 import { useSwapStore } from "@/lib/store";
 import { useAllBalances } from "@/lib/useAllBalances";
 
 const PRESET_PERCENTS = [10, 25, 50];
-
-const sanitizePercent = (raw: string): string => {
-  let v = raw.replace(/[^0-9.]/g, "");
-  const firstDot = v.indexOf(".");
-  if (firstDot !== -1) {
-    v = v.slice(0, firstDot + 1) + v.slice(firstDot + 1).replace(/\./g, "");
-    v = v.slice(0, firstDot + 1 + 2);
-  }
-  if (Number.parseFloat(v) > 100) v = "100";
-  return v;
-};
-
-// Take a percentage (with up to 2 decimal places) of a base-unit balance using
-// scaled bigint math so we avoid float precision loss for large balances.
-const portionForPercent = (base: bigint, percent: number): bigint => {
-  if (percent <= 0) return 0n;
-  if (percent >= 100) return base;
-  const scaled = BigInt(Math.round(percent * 100));
-  return (base * scaled) / 10000n;
-};
-
-// bps is 0..10000 (basis points × 100; i.e. percent with 2 decimal places).
-// Trims trailing fractional zeros so 25.00% renders as "25%".
-const formatPercentFromBps = (bps: bigint): string => {
-  const intPart = bps / 100n;
-  const fracBps = bps % 100n;
-  if (fracBps === 0n) return `${intPart}%`;
-  const fracStr = fracBps.toString().padStart(2, "0").replace(/0+$/, "");
-  return fracStr ? `${intPart}.${fracStr}%` : `${intPart}%`;
-};
 
 export function FromBalanceButtons() {
   const stablecoin = useSwapStore((s) => s.from.stablecoin);
@@ -85,7 +61,7 @@ export function FromBalanceButtons() {
       percentLabel = "100%";
     } else {
       const raw = (amountBase * 10000n + base / 2n) / base;
-      const bps = raw >= 10000n ? 9999n : raw;
+      const bps = raw > MAX_BELOW_FULL_BPS ? MAX_BELOW_FULL_BPS : raw;
       if (bps > 0n) percentLabel = formatPercentFromBps(bps);
     }
   }

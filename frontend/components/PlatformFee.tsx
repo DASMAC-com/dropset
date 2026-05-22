@@ -1,7 +1,8 @@
 "use client";
 
-import NumberFlow, { type Format } from "@number-flow/react";
+import NumberFlow from "@number-flow/react";
 import { useState } from "react";
+import { FORMATS } from "@/lib/formats";
 import { ArrowRightLeft, ChevronDown, ChevronUp } from "./icons";
 
 // Sticky preference: once the user collapses the fee panel, keep it
@@ -9,15 +10,6 @@ import { ArrowRightLeft, ChevronDown, ChevronUp } from "./icons";
 // value tracks the user's last explicit choice rather than being strictly
 // one-way. Default (no entry) is expanded.
 const EXPANDED_STORAGE_KEY = "platform-fee-expanded";
-
-// Significant-digits formatting handles both small (0.011286) and larger
-// (88.6) rates without a fixed decimal-place rule. Hoisted so NumberFlow's
-// identity check on `format` doesn't reset the odometer animation each
-// render.
-const RATE_FORMAT: Format = {
-  maximumSignificantDigits: 6,
-  useGrouping: false,
-};
 
 function readInitialExpanded(): boolean {
   if (typeof window === "undefined") return true;
@@ -85,7 +77,7 @@ export function PlatformFee({
           <span className="font-semibold tabular-nums text-foreground">
             {fresh && Number.isFinite(rate) && rate > 0 ? (
               <>
-                1 {base} ≈ <NumberFlow value={rate} format={RATE_FORMAT} />{" "}
+                1 {base} ≈ <NumberFlow value={rate} format={FORMATS.rate} />{" "}
                 {quote}
               </>
             ) : (

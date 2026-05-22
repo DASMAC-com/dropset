@@ -9,6 +9,8 @@ import {
   stablecoinMint,
 } from "@/lib/currencies";
 import { useAppEvent } from "@/lib/events";
+import { FORMATS } from "@/lib/formats";
+import { groupThousands, sanitizeAmount } from "@/lib/input";
 import { type Side, useSwapStore } from "@/lib/store";
 import type { DflowQuote } from "@/lib/useDflowQuote";
 import {
@@ -21,42 +23,6 @@ import { CircleAlert } from "./icons";
 import { MaxSlippageButton } from "./MaxSlippageButton";
 import { TokenPicker } from "./TokenPicker";
 import { WalletBalance } from "./WalletBalance";
-
-// Intl format objects passed to <NumberFlow> for each readout. Hoisted so
-// the same reference is reused across renders — NumberFlow uses identity
-// to detect format changes and resets the animation when it sees a new
-// object, which would otherwise happen on every render.
-const usdFormat: Format = {
-  style: "currency",
-  currency: "USD",
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-};
-const slippageFormat: Format = {
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-  signDisplay: "exceptZero",
-};
-
-const sanitizeAmount = (raw: string, decimals: number): string => {
-  let v = raw.replace(/[^0-9.]/g, "");
-  const firstDot = v.indexOf(".");
-  if (firstDot !== -1) {
-    v = v.slice(0, firstDot + 1) + v.slice(firstDot + 1).replace(/\./g, "");
-    if (decimals === 0) v = v.slice(0, firstDot);
-    else v = v.slice(0, firstDot + 1 + decimals);
-  }
-  return v;
-};
-
-const formatAmount = (raw: string): string => {
-  if (!raw) return "";
-  const dot = raw.indexOf(".");
-  const intPart = dot === -1 ? raw : raw.slice(0, dot);
-  const rest = dot === -1 ? "" : raw.slice(dot);
-  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  return grouped + rest;
-};
 
 export function TokenRow({
   side,
@@ -114,7 +80,7 @@ export function TokenRow({
   const active = activeSide === side;
   const activeBorder = side === "to" ? "border-accent-buy" : "border-accent";
   const decimals = stablecoinDecimals(stablecoin);
-  const formattedAmount = formatAmount(amount);
+  const formattedAmount = groupThousands(amount);
 
   // To-side numeric value for <NumberFlow>. Null when there's no quote
   // (loading first time, error, sameToken, zero input) — in those cases
@@ -132,7 +98,7 @@ export function TokenRow({
       ? Number(quote.outAmount) / 10 ** decimals
       : null;
   // Maximum precision shown — defer to NumberFlow's grouping/decimal
-  // handling rather than our own formatAmount() so the rolling digits
+  // handling rather than our own groupThousands() so the rolling digits
   // animate as a single unit.
   // Memoized so identity is stable across renders — NumberFlow uses
   // identity to detect format changes and would otherwise reset its
@@ -185,7 +151,7 @@ export function TokenRow({
       .slice(0, caret)
       .replace(/[^0-9.]/g, "").length;
     const next = sanitizeAmount(raw.replace(/,/g, ""), decimals);
-    const formatted = formatAmount(next);
+    const formatted = groupThousands(next);
     let pos = 0;
     let count = 0;
     while (pos < formatted.length && count < digitsBeforeCaret) {
@@ -276,7 +242,7 @@ export function TokenRow({
               */}
               {usd.value !== null &&
               (side === "from" || toAmountNumber !== null) ? (
-                <NumberFlow value={usd.value} format={usdFormat} />
+                <NumberFlow value={usd.value} format={FORMATS.usd} />
               ) : (
                 "$—"
               )}
@@ -284,7 +250,7 @@ export function TokenRow({
             {slippagePercent !== null && (
               <NumberFlow
                 value={slippagePercent}
-                format={slippageFormat}
+                format={FORMATS.signedPercent}
                 prefix="("
                 suffix="%)"
               />

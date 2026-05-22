@@ -2,7 +2,7 @@
 // cspell:word EURC
 "use client";
 
-import NumberFlow, { type Format } from "@number-flow/react";
+import NumberFlow from "@number-flow/react";
 import * as Popover from "@radix-ui/react-popover";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
@@ -30,6 +30,9 @@ import {
 } from "@/lib/currencies";
 import { useAppEvent } from "@/lib/events";
 import { explorerTokenUrl } from "@/lib/explorer";
+import { useFlagColor } from "@/lib/flagColor";
+import { FORMATS } from "@/lib/formats";
+import { isFiniteNumber } from "@/lib/guards";
 import { type Side, useSwapStore, useSwapStoreApi } from "@/lib/store";
 import { useSwapNav } from "@/lib/swapUrl";
 import { flashBg, useFlashOnChange } from "@/lib/useFlashOnChange";
@@ -43,41 +46,6 @@ import {
 } from "@/lib/useUsdQuote";
 
 const COLSPAN = 9;
-
-// <NumberFlow> format objects, hoisted to module scope so the same
-// reference is reused across every row render. NumberFlow compares format
-// by identity to decide whether to reset its animation, so passing a
-// fresh object each render would kill the rolling-digit effect.
-//
-// Price uses max 6 decimals so sub-$1 stablecoin drift (e.g. $0.9987)
-// stays legible while $1.00 still renders as "$1.00" (min 2). Trailing
-// zeros above the minimum are trimmed by Intl.
-const priceFormat: Format = {
-  style: "currency",
-  currency: "USD",
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 6,
-};
-const changeFormat: Format = {
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-  // "+1.20" for gains, "-1.20" for losses, "0.00" for flat. Matches the
-  // legacy formatPercent which prepended an explicit "+" sign.
-  signDisplay: "exceptZero",
-};
-const compactUsdFormat: Format = {
-  notation: "compact",
-  style: "currency",
-  currency: "USD",
-  maximumFractionDigits: 2,
-};
-const compactCountFormat: Format = {
-  notation: "compact",
-  maximumFractionDigits: 1,
-};
-
-const isFiniteNumber = (n: unknown): n is number =>
-  typeof n === "number" && Number.isFinite(n);
 
 type SortKey = "volume24h" | "mcap" | "liquidity" | "holderCount";
 type SortDir = "asc" | "desc";
@@ -114,81 +82,6 @@ const groupScore = <T extends { mint: string }>(
     if (typeof v === "number" && v > max) max = v;
   }
   return Number.isFinite(max) ? max : -1;
-};
-
-// Cache of dominant color (RGB triplet) computed from a flag SVG rasterized to
-// a canvas. Module-level so it persists across re-renders / search filters.
-type Rgb = [number, number, number];
-const flagColorCache = new Map<string, Rgb | null>();
-
-const sampleDominantColor = (
-  ctx: CanvasRenderingContext2D,
-  size: number,
-): Rgb | null => {
-  let r = 0;
-  let g = 0;
-  let b = 0;
-  let n = 0;
-  const { data } = ctx.getImageData(0, 0, size, size);
-  for (let i = 0; i < data.length; i += 4) {
-    const pa = data[i + 3];
-    if (pa < 200) continue;
-    const pr = data[i];
-    const pg = data[i + 1];
-    const pb = data[i + 2];
-    const max = Math.max(pr, pg, pb);
-    const min = Math.min(pr, pg, pb);
-    const sat = max === 0 ? 0 : (max - min) / max;
-    // Drop near-grey, very dark, and very bright pixels — keeps the
-    // saturated brand color and avoids skewing toward white/black/grey bands.
-    if (sat < 0.3) continue;
-    if (max < 60 || max > 245) continue;
-    r += pr;
-    g += pg;
-    b += pb;
-    n++;
-  }
-  if (n === 0) return null;
-  return [(r / n) | 0, (g / n) | 0, (b / n) | 0];
-};
-
-const computeFlagColor = (url: string): Promise<Rgb | null> => {
-  if (typeof document === "undefined") return Promise.resolve(null);
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      const size = 24;
-      const canvas = document.createElement("canvas");
-      canvas.width = size;
-      canvas.height = size;
-      const ctx = canvas.getContext("2d", { willReadFrequently: true });
-      if (!ctx) return resolve(null);
-      ctx.clearRect(0, 0, size, size);
-      ctx.drawImage(img, 0, 0, size, size);
-      resolve(sampleDominantColor(ctx, size));
-    };
-    img.onerror = () => resolve(null);
-    img.src = url;
-  });
-};
-
-const useFlagColor = (code: IsoCurrencyCode, url: string): Rgb | null => {
-  const [color, setColor] = useState<Rgb | null>(() =>
-    flagColorCache.has(code) ? (flagColorCache.get(code) ?? null) : null,
-  );
-  useEffect(() => {
-    if (flagColorCache.has(code)) return;
-    let cancelled = false;
-    computeFlagColor(url).then((c) => {
-      if (cancelled) return;
-      flagColorCache.set(code, c);
-      setColor(c);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [code, url]);
-  return color;
 };
 
 const xHref = (handle: string) => `https://x.com/${handle}`;
@@ -500,7 +393,7 @@ function StablecoinRow({
           className={`rounded px-1 transition-colors duration-300 ${flashBg(priceFlash)}`}
         >
           {isFiniteNumber(info?.usdPrice) ? (
-            <NumberFlow value={info.usdPrice} format={priceFormat} />
+            <NumberFlow value={info.usdPrice} format={FORMATS.usdPrice} />
           ) : (
             "—"
           )}
@@ -513,7 +406,11 @@ function StablecoinRow({
           className={`rounded px-1 transition-colors duration-300 ${flashBg(changeFlash)}`}
         >
           {isFiniteNumber(change) ? (
-            <NumberFlow value={change} format={changeFormat} suffix="%" />
+            <NumberFlow
+              value={change}
+              format={FORMATS.signedPercent}
+              suffix="%"
+            />
           ) : (
             "—"
           )}
@@ -524,7 +421,7 @@ function StablecoinRow({
           className={`rounded px-1 transition-colors duration-300 ${flashBg(volumeFlash)}`}
         >
           {isFiniteNumber(info?.volume24h) ? (
-            <NumberFlow value={info.volume24h} format={compactUsdFormat} />
+            <NumberFlow value={info.volume24h} format={FORMATS.usdCompact} />
           ) : (
             "—"
           )}
@@ -535,7 +432,7 @@ function StablecoinRow({
           className={`rounded px-1 transition-colors duration-300 ${flashBg(mcapFlash)}`}
         >
           {isFiniteNumber(info?.mcap) ? (
-            <NumberFlow value={info.mcap} format={compactUsdFormat} />
+            <NumberFlow value={info.mcap} format={FORMATS.usdCompact} />
           ) : (
             "—"
           )}
@@ -546,7 +443,7 @@ function StablecoinRow({
           className={`rounded px-1 transition-colors duration-300 ${flashBg(liquidityFlash)}`}
         >
           {isFiniteNumber(info?.liquidity) ? (
-            <NumberFlow value={info.liquidity} format={compactUsdFormat} />
+            <NumberFlow value={info.liquidity} format={FORMATS.usdCompact} />
           ) : (
             "—"
           )}
@@ -557,7 +454,10 @@ function StablecoinRow({
           className={`rounded px-1 transition-colors duration-300 ${flashBg(holdersFlash)}`}
         >
           {isFiniteNumber(info?.holderCount) ? (
-            <NumberFlow value={info.holderCount} format={compactCountFormat} />
+            <NumberFlow
+              value={info.holderCount}
+              format={FORMATS.countCompact}
+            />
           ) : (
             "—"
           )}
