@@ -33,7 +33,11 @@ export function RateLimitMessage() {
   );
 
   return (
-    <div className="rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-accent text-sm">
+    <div
+      role="status"
+      aria-live="polite"
+      className="rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-accent text-sm"
+    >
       <div className="font-medium">Quote refresh paused</div>
       <div className="text-foreground/80">
         Your network hit DFlow&apos;s rate limit. Retrying in{" "}

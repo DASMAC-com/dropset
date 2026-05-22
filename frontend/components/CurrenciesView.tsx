@@ -233,7 +233,10 @@ function SortableHeader({
       ? ChevronDown
       : ChevronUp;
   return (
-    <th className="sticky top-14 z-20 border-border border-r bg-muted p-0 last:border-r-0">
+    <th
+      scope="col"
+      className="sticky top-14 z-20 border-border border-r bg-muted p-0 last:border-r-0"
+    >
       <button
         type="button"
         onClick={() => onToggle(sortKey)}
@@ -774,19 +777,34 @@ function CurrenciesInner() {
         <table className="w-full min-w-[720px] text-left text-sm">
           <thead className="text-muted-fg text-xs uppercase">
             <tr>
-              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
+              <th
+                scope="col"
+                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0"
+              >
                 Token
               </th>
-              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
+              <th
+                scope="col"
+                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0"
+              >
                 Swap
               </th>
-              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
+              <th
+                scope="col"
+                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0"
+              >
                 Mint Address
               </th>
-              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0">
+              <th
+                scope="col"
+                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0"
+              >
                 Price
               </th>
-              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0">
+              <th
+                scope="col"
+                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0"
+              >
                 24h Δ
               </th>
               <SortableHeader

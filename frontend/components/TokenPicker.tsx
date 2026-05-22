@@ -212,6 +212,7 @@ export function TokenPicker({ side }: { side: Side }) {
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={onSearchKeyDown}
               placeholder="Search tokens…"
+              aria-label="Search tokens by symbol, name, or mint"
               className="min-w-0 flex-1 bg-transparent text-foreground text-sm outline-none placeholder:text-muted-fg"
             />
             <kbd className="hidden shrink-0 rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-fg sm:inline-block">

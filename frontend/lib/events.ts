@@ -55,7 +55,15 @@ export function emit<K extends keyof AppEvents>(
   const set = listeners[name];
   if (!set) return;
   const payload = args[0];
-  for (const h of set) h(payload);
+  // Each handler is wrapped so a thrower in one subscriber doesn't prevent
+  // the remaining handlers from running.
+  for (const h of set) {
+    try {
+      h(payload);
+    } catch (e) {
+      console.error(`[events] handler for "${String(name)}" threw:`, e);
+    }
+  }
 }
 
 // Subscribe to an event for the lifetime of the component. The handler is

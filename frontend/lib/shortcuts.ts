@@ -260,13 +260,21 @@ const isTextEditable = (target: EventTarget | null): boolean =>
   target instanceof HTMLTextAreaElement ||
   (target instanceof HTMLElement && target.isContentEditable);
 
-// Inputs marked with `data-shortcut-passthrough` let non-printable keys
-// (Backspace, arrows, etc.) and digits/period reach the field, but route any
-// other single-character key to the global shortcut handler so the user can
-// trigger shortcuts without having to blur first.
-const isPassthroughInput = (target: EventTarget | null): boolean =>
-  target instanceof HTMLElement &&
-  target.dataset.shortcutPassthrough === "true";
+// Symbol keys that require Shift to produce (US keyboard). For these, a
+// Shift modifier is expected and not a sign that the user meant a Shift+
+// chord; for any other key we treat Shift as "this is a different chord"
+// and refuse to match — so Shift+w doesn't fire the wallet shortcut.
+const SHIFT_PRODUCED_SYMBOLS = new Set([
+  "?",
+  "%",
+  "+",
+  "/",
+  ":",
+  "@",
+  "~",
+  "<",
+  ">",
+]);
 
 export function useKeyboardShortcuts(): void {
   const router = useRouter();
@@ -275,18 +283,14 @@ export function useKeyboardShortcuts(): void {
     const active = shortcutsForPath(pathname);
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
-      const passthrough = isPassthroughInput(e.target);
-      if (isTextEditable(e.target) && !passthrough) return;
-      if (passthrough) {
-        if (e.key.length !== 1) return;
-        if (/[0-9.]/.test(e.key)) return;
-      }
-      const k = e.key.toLowerCase();
-      const spec = active.find((s) => s.key === k);
-      if (!spec) {
-        if (passthrough) e.preventDefault();
-        return;
-      }
+      // Any text-editable target (including passthrough inputs) consumes
+      // every key. Shortcuts only fire when nothing editable is focused.
+      if (isTextEditable(e.target)) return;
+      if (e.shiftKey && !SHIFT_PRODUCED_SYMBOLS.has(e.key)) return;
+      // Match the key literally — no lowercase. Shift+letter would
+      // produce a capital that won't match any registered shortcut.
+      const spec = active.find((s) => s.key === e.key);
+      if (!spec) return;
       e.preventDefault();
       spec.run({ router });
     };

@@ -241,13 +241,15 @@ export function TokenRow({
               inputMode="decimal"
               value={formattedAmount}
               placeholder="0.0"
-              data-shortcut-passthrough="true"
+              aria-label="Amount to swap"
               onFocus={() => setActiveSide("from")}
               onChange={onAmountChange}
               className="min-w-0 flex-1 bg-transparent text-right font-mono text-3xl text-foreground outline-none placeholder:text-muted-fg"
             />
           ) : (
-            <span
+            <output
+              aria-live="polite"
+              aria-label="You will receive"
               className={`flex min-w-0 flex-1 justify-end truncate text-right font-mono text-3xl ${
                 toIsLive ? "text-foreground" : "text-muted-fg"
               }`}
@@ -257,7 +259,7 @@ export function TokenRow({
               ) : (
                 toPlaceholder
               )}
-            </span>
+            </output>
           )}
         </div>
         <div className="mt-2 flex items-center justify-between gap-2 font-mono text-muted-fg text-sm tabular-nums">

@@ -46,7 +46,12 @@ export function TermsOfUseGate() {
             Terms of Use
           </h2>
         </div>
-        <div className="scrollbar-always h-56 space-y-3 overflow-y-scroll px-5 py-3 text-muted-fg text-xs leading-relaxed">
+        <section
+          aria-label="Terms text — scroll to read in full"
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: WCAG 2.1.1 — a scrollable region must be reachable by keyboard so pointer-less users can scroll the terms.
+          tabIndex={0}
+          className="scrollbar-always h-56 space-y-3 overflow-y-scroll px-5 py-3 text-muted-fg text-xs leading-relaxed focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+        >
           <p>
             This website-hosted user interface (this &ldquo;Interface&rdquo;) is
             an open source frontend software portal to the Dropset protocol, a
@@ -91,7 +96,7 @@ export function TermsOfUseGate() {
             United States&rsquo; Department of Treasury&rsquo;s Office of
             Foreign Assets Control.
           </p>
-        </div>
+        </section>
         <div className="border-border border-t px-5 py-3">
           <label className="flex cursor-pointer items-center gap-2 text-foreground text-sm">
             <input
