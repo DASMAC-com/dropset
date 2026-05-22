@@ -95,7 +95,7 @@ Optional (always ask if not provided):
 
 1. Write the consolidated findings to:
 
-   ```
+   ```txt
    .audits/<YYYY-MM-DD>-<scope-slug>.md
    ```
 
@@ -112,8 +112,8 @@ Optional (always ask if not provided):
    extra focus areas, and date.
 
 1. Print the path to the audit document and a
-   short tally (e.g. `7 high, 12 medium, 4 low
-   — saved to .audits/2026-05-22-swap-flow.md`).
+   short tally (e.g. "7 high, 12 medium, 4 low —
+   saved to .audits/2026-05-22-swap-flow.md").
 
 ## Notes
 
