@@ -209,8 +209,16 @@ export async function waitForSwapConfirmation(
     const { value } = await rpc.getSignatureStatuses([signature]).send();
     const status = value[0];
     if (status?.err) {
+      // `@solana/kit` parses RPC integer fields as BigInt, so a stock
+      // JSON.stringify on a TransactionError (e.g. `{ InstructionError:
+      // [0, { Custom: 6005 }] }`) throws "Do not know how to serialize a
+      // BigInt" and masks the real revert. Coerce BigInts to strings so
+      // the on-chain error survives intact.
+      const errStr = JSON.stringify(status.err, (_, v) =>
+        typeof v === "bigint" ? v.toString() : v,
+      );
       throw new DflowSwapError(
-        `Transaction reverted on-chain: ${JSON.stringify(status.err)}`,
+        `Transaction reverted on-chain: ${errStr}`,
         "wallet",
       );
     }
