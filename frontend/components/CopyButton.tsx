@@ -2,6 +2,7 @@
 
 import * as Popover from "@radix-ui/react-popover";
 import { type SyntheticEvent, useState } from "react";
+import { COPY_FEEDBACK_DURATION_MS } from "@/lib/timings";
 import { Check, Copy } from "./icons";
 
 // Small inline copy button. After a click, the value is placed on the
@@ -31,7 +32,7 @@ export function CopyButton({
     try {
       await navigator.clipboard.writeText(value);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      setTimeout(() => setCopied(false), COPY_FEEDBACK_DURATION_MS);
     } catch {
       // clipboard API unavailable — silently ignore
     }

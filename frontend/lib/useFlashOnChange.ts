@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { FLASH_DURATION_MS } from "./timings";
 
 // Track value changes across renders and briefly mark a cell as "just
 // updated" so the user can see what a refresh touched. Layered alongside
@@ -35,12 +36,12 @@ export const useFlashOnChange = (value: unknown): boolean => {
       if (value != null) initialized.current = true;
       return;
     }
-    flashUntil.current = Date.now() + 1000;
+    flashUntil.current = Date.now() + FLASH_DURATION_MS;
     if (timer.current !== null) window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => {
       timer.current = null;
       force((x) => x + 1);
-    }, 1000);
+    }, FLASH_DURATION_MS);
     force((x) => x + 1);
   }, [value]);
 
@@ -85,13 +86,13 @@ export const useFlashOnChanges = <T extends readonly unknown[]>(
         if (v != null) initialized.current[i] = true;
         continue;
       }
-      flashUntil.current[i] = Date.now() + 1000;
+      flashUntil.current[i] = Date.now() + FLASH_DURATION_MS;
       const existing = timers.current[i];
       if (existing !== null) window.clearTimeout(existing);
       timers.current[i] = window.setTimeout(() => {
         timers.current[i] = null;
         force((x) => x + 1);
-      }, 1000);
+      }, FLASH_DURATION_MS);
     }
     if (anyChange) force((x) => x + 1);
   }, [values]);

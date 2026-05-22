@@ -1,6 +1,7 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
+import { DFLOW_BUCKET_CAPACITY, DFLOW_REFILL_PER_SEC } from "./timings";
 
 // Tracks per-service rate-limit budgets driven by `x-ratelimit-limit` and
 // `x-ratelimit-remaining` response headers. DFlow's developer endpoint uses
@@ -22,12 +23,6 @@ export type BudgetSnapshot = {
   // until `Date.now() >= exhaustedUntil`. Null means not rate-limited.
   exhaustedUntil: number | null;
 };
-
-// Token-bucket refill rate, in tokens per second. Calibrated empirically
-// against `dev-quote-api.dflow.net` (~1/sec). If we ever onboard another
-// service with a different refill rate, promote this to a per-service
-// config.
-const REFILL_PER_SEC = 1;
 
 const state = new Map<string, BudgetSnapshot>();
 const listeners = new Set<() => void>();
@@ -86,7 +81,7 @@ export const recordResponse = (service: string, res: Response): void => {
 export const markExhausted = (service: string, untilMs: number): void => {
   const prev = state.get(service);
   const base: BudgetSnapshot = prev ?? {
-    limit: 60,
+    limit: DFLOW_BUCKET_CAPACITY,
     remaining: 0,
     updatedAt: Date.now(),
     exhaustedUntil: null,
@@ -105,7 +100,7 @@ export const projectedRemaining = (
   const s = state.get(service);
   if (!s) return null;
   const elapsedSec = Math.max(0, (now - s.updatedAt) / 1000);
-  const refilled = s.remaining + elapsedSec * REFILL_PER_SEC;
+  const refilled = s.remaining + elapsedSec * DFLOW_REFILL_PER_SEC;
   return Math.max(0, Math.min(s.limit, Math.floor(refilled)));
 };
 

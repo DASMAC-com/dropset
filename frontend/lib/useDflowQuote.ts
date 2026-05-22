@@ -8,6 +8,12 @@ import {
   recordResponse,
 } from "./rateLimitBudget";
 import {
+  MIN_TOKENS_TO_FETCH,
+  QUOTE_DEBOUNCE_MS,
+  QUOTE_REFRESH_MS,
+  RECOVERY_TOKEN_TARGET,
+} from "./timings";
+import {
   type ParsedDflowQuote,
   parseDflowQuote,
   ValidationError,
@@ -19,22 +25,6 @@ import {
 // we outgrow that we'll proxy through a Next.js route handler — the hook
 // signature stays the same, only the base URL changes.
 const DFLOW_QUOTE_URL = "https://dev-quote-api.dflow.net/quote";
-
-// Idle window after an input change before the fetch fires. Keeps typing
-// from emitting one request per keystroke.
-const DEBOUNCE_MS = 500;
-
-// Auto-refresh cadence after a successful fetch. 2 s gives a fresh route
-// view while leaving plenty of bucket headroom for typing bursts.
-const REFRESH_MS = 2_000;
-
-// Defensive floor for projected `remaining`. Drop below this and the
-// timer defers another cycle rather than risk a 429.
-const MIN_TOKENS_TO_FETCH = 3;
-
-// When the budget is exhausted, hold off until projected remaining reaches
-// this many tokens.
-const RECOVERY_TOKEN_TARGET = 10;
 
 // Slippage flag sent to the API. "auto" lets DFlow size it from current
 // liquidity; we render the returned `slippageBps` for transparency.
@@ -96,8 +86,8 @@ const toAtomic = (raw: string, decimals: number): bigint => {
 // React hook: returns the current DFlow quote for the given inputs. A
 // single self-rescheduling timer drives the whole lifecycle:
 //   - On any input change the previous timer is cancelled and a new one
-//     is scheduled DEBOUNCE_MS out. Holding down a key restarts the timer.
-//   - After a successful fetch the next tick is scheduled REFRESH_MS out,
+//     is scheduled QUOTE_DEBOUNCE_MS out. Holding down a key restarts the timer.
+//   - After a successful fetch the next tick is scheduled QUOTE_REFRESH_MS out,
 //     keeping the quote fresh while the user just stares at the panel.
 //   - 429s pause the chain for RECOVERY_TOKEN_TARGET seconds.
 //   - 4xx errors and zero-amount/sameToken/missing-mint inputs stop the
@@ -131,7 +121,7 @@ export const useDflowQuote = (
       // Pause-on-hidden: don't fetch when the tab isn't visible, but keep
       // the chain alive so we resume on visibility. Re-checked each tick.
       if (document.visibilityState !== "visible") {
-        schedule(REFRESH_MS);
+        schedule(QUOTE_REFRESH_MS);
         return;
       }
 
@@ -161,7 +151,7 @@ export const useDflowQuote = (
       // explicitly. Until then we rely on DFlow itself returning 429.
       const projected = projectedRemaining(DFLOW_QUOTE);
       if (projected !== null && projected < MIN_TOKENS_TO_FETCH) {
-        schedule(REFRESH_MS);
+        schedule(QUOTE_REFRESH_MS);
         return;
       }
 
@@ -242,7 +232,7 @@ export const useDflowQuote = (
           error: null,
         });
         // Successful fetch — keep the chain going.
-        schedule(REFRESH_MS);
+        schedule(QUOTE_REFRESH_MS);
       } catch (err) {
         if (cancelled || controller.signal.aborted) return;
         // Distinguish AbortError (timeout/visibility) from real fetch
@@ -263,10 +253,10 @@ export const useDflowQuote = (
 
     // Initial fire is debounced, so a rapid-fire input change just resets
     // the timer rather than emitting one request per keystroke.
-    schedule(DEBOUNCE_MS);
+    schedule(QUOTE_DEBOUNCE_MS);
 
     // Resume immediately on tab focus rather than waiting for the next
-    // scheduled tick (which could be up to REFRESH_MS away).
+    // scheduled tick (which could be up to QUOTE_REFRESH_MS away).
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
       if (timer !== undefined) window.clearTimeout(timer);

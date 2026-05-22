@@ -12,6 +12,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import { ALL_STABLECOINS, type TokenProgramKind } from "./currencies";
 import { GET_MULTIPLE_ACCOUNTS_BATCH_SIZE } from "./env";
 import { useAppEvent } from "./events";
+import { BALANCE_REFETCH_DELAY_MS } from "./timings";
 import { parseTokenAccountAmount } from "./validate";
 
 // One shared map per page load, keyed by mint string. Semantics:
@@ -221,7 +222,7 @@ export function useAllBalances(): UseAllBalances {
     void fetchBalances(client.runtime.rpc, owner, { force: true });
     window.setTimeout(() => {
       void fetchBalances(client.runtime.rpc, owner, { force: true });
-    }, 1500);
+    }, BALANCE_REFETCH_DELAY_MS);
   });
 
   return {

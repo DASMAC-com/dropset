@@ -18,6 +18,11 @@ import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import { stablecoinByMint, type TokenProgramKind } from "./currencies";
 import { PLATFORM_FEE } from "./env";
 import {
+  SWAP_CONFIRM_MAX_UNKNOWN_POLLS,
+  SWAP_CONFIRMATION_POLL_MS,
+  SWAP_CONFIRMATION_TIMEOUT_MS,
+} from "./timings";
+import {
   type ParsedDflowOrder,
   parseDflowOrder,
   ValidationError,
@@ -222,13 +227,6 @@ export async function executeDflowSwap(
 // confirmed the tx — so balance re-fetches fired immediately after see stale
 // data. Poll `getSignatureStatuses` until the signature reaches `confirmed`
 // (or `finalized`) and bail with an error on revert or timeout.
-const SWAP_CONFIRMATION_TIMEOUT_MS = 60_000;
-const SWAP_CONFIRMATION_POLL_MS = 500;
-// How many consecutive nulls (RPC has never seen the signature) we tolerate
-// before erroring out instead of polling to timeout. ~5s of unknown is enough
-// to distinguish a dropped tx from one that's just propagating slowly.
-const MAX_UNKNOWN_POLLS = 10;
-
 export async function waitForSwapConfirmation(
   rpc: SolanaClientRuntime["rpc"],
   signature: Signature,
@@ -244,7 +242,7 @@ export async function waitForSwapConfirmation(
     const status = value[0];
     if (status === null) {
       unknownPolls++;
-      if (unknownPolls >= MAX_UNKNOWN_POLLS) {
+      if (unknownPolls >= SWAP_CONFIRM_MAX_UNKNOWN_POLLS) {
         throw new DflowSwapError(
           "RPC has no record of the submitted signature — the transaction was likely dropped before reaching a leader.",
           "wallet",

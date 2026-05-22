@@ -7,6 +7,7 @@ import Image from "next/image";
 import { useState } from "react";
 import { useAppEvent } from "@/lib/events";
 import { explorerAddressUrl } from "@/lib/explorer";
+import { COPY_FEEDBACK_DURATION_MS } from "@/lib/timings";
 import { Check, ChevronDown, Copy, ExternalLink, X } from "./icons";
 
 export function WalletButton() {
@@ -119,7 +120,7 @@ export function WalletButton() {
     try {
       await navigator.clipboard.writeText(addr);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      setTimeout(() => setCopied(false), COPY_FEEDBACK_DURATION_MS);
     } catch {
       // clipboard blocked (e.g. insecure context); silently ignore
     }
