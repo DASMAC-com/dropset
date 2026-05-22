@@ -10,6 +10,7 @@ import {
 import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import { useEffect, useSyncExternalStore } from "react";
 import { ALL_STABLECOINS, type TokenProgramKind } from "./currencies";
+import { GET_MULTIPLE_ACCOUNTS_BATCH_SIZE } from "./env";
 import { useAppEvent } from "./events";
 
 // One shared map per page load, keyed by mint string. Semantics:
@@ -21,6 +22,7 @@ type MaybeBalance = bigint | null | undefined;
 
 const balances = new Map<string, bigint | null>();
 let fetchedForOwner: string | null = null;
+let lastFetchError: string | null = null;
 // Monotonic counter so concurrent fetches don't race a stale write into the
 // cache. Each fetch reads `++counter`; only the latest one writes.
 let requestCounter = 0;
@@ -90,28 +92,62 @@ function fetchBalances(
     const my = ++requestCounter;
     const owner = address(ownerStr);
     const atas = await deriveAtas(owner);
-    const res = await rpc
-      .getMultipleAccounts(atas, {
-        encoding: "jsonParsed",
-        commitment: "confirmed",
-      })
-      .send();
-    if (my !== requestCounter) return;
-
-    res.value.forEach((account, i) => {
-      const mint = ALL_STABLECOINS[i].mint;
-      if (!account) {
-        balances.set(mint, null);
-        return;
+    // Chunked because many RPC providers cap getMultipleAccounts at a
+    // small array size (e.g. PublicNode rejects >10 with 403). Batch size
+    // of 0 = no chunking (single call).
+    const size = GET_MULTIPLE_ACCOUNTS_BATCH_SIZE || atas.length;
+    const chunks: Address[][] = [];
+    for (let i = 0; i < atas.length; i += size) {
+      chunks.push(atas.slice(i, i + size));
+    }
+    try {
+      const responses = await Promise.all(
+        chunks.map((chunk) =>
+          rpc
+            .getMultipleAccounts(chunk, {
+              encoding: "jsonParsed",
+              commitment: "confirmed",
+            })
+            .send(),
+        ),
+      );
+      if (my !== requestCounter) return;
+      lastFetchError = null;
+      const accounts = responses.flatMap((r) => r.value);
+      accounts.forEach((account, i) => {
+        const mint = ALL_STABLECOINS[i].mint;
+        if (!account) {
+          balances.set(mint, null);
+          return;
+        }
+        // jsonParsed gives us `data.parsed.info.tokenAmount.amount` as a
+        // stringified bigint when the RPC recognized this as a token-account.
+        const parsed = (account.data as JsonParsedData)?.parsed?.info;
+        const amount = parsed?.tokenAmount?.amount;
+        balances.set(mint, amount != null ? BigInt(amount) : 0n);
+      });
+      fetchedForOwner = ownerStr;
+      bump();
+    } catch (e) {
+      if (my !== requestCounter) return;
+      const msg = e instanceof Error ? e.message : String(e);
+      // PublicNode (and likely other Cloudflare-fronted RPCs) returns 403
+      // with this exact substring when the params array exceeds their
+      // per-call cap. Surface a concrete fix instead of a generic error.
+      if (/blocked parameter: params\.0/i.test(msg)) {
+        console.error(
+          `Balance fetch failed: RPC rejected getMultipleAccounts batch of ${size} accounts. ` +
+            `Lower NEXT_PUBLIC_GET_MULTIPLE_ACCOUNTS_BATCH_SIZE in your env. Raw: ${msg}`,
+        );
+      } else {
+        console.error("Balance fetch failed:", e);
       }
-      // jsonParsed gives us `data.parsed.info.tokenAmount.amount` as a
-      // stringified bigint when the RPC recognized this as a token-account.
-      const parsed = (account.data as JsonParsedData)?.parsed?.info;
-      const amount = parsed?.tokenAmount?.amount;
-      balances.set(mint, amount != null ? BigInt(amount) : 0n);
-    });
-    fetchedForOwner = ownerStr;
-    bump();
+      lastFetchError = msg;
+      // Don't set fetchedForOwner — leaving isReady=false keeps callers
+      // that hide on loading from displaying misleading zero balances.
+      // Consumers that want to surface the failure should read `error`.
+      bump();
+    }
   })().finally(() => {
     // Only clear if a newer (force) fetch hasn't replaced our entry already.
     if (inFlightByOwner.get(ownerStr) === promise) {
@@ -126,6 +162,8 @@ export type UseAllBalances = {
   // null → no ATA, 0n → empty account, > 0n → balance, undefined → loading
   balanceFor: (mint: string) => MaybeBalance;
   isReady: boolean;
+  // Non-null when the most recent fetch failed; cleared on next success.
+  error: string | null;
   refresh: () => void;
 };
 
@@ -148,6 +186,7 @@ export function useAllBalances(): UseAllBalances {
       if (fetchedForOwner !== null) {
         balances.clear();
         fetchedForOwner = null;
+        lastFetchError = null;
         // Bumping `requestCounter` cancels any in-flight fetch from the prior
         // owner so its stale write can't land after the clear.
         requestCounter++;
@@ -177,6 +216,7 @@ export function useAllBalances(): UseAllBalances {
     balanceFor: (mint: string): MaybeBalance =>
       ownerStr === null ? undefined : balances.get(mint),
     isReady: ownerStr !== null && fetchedForOwner === ownerStr,
+    error: ownerStr === null ? null : lastFetchError,
     refresh: () => {
       if (ownerStr) void fetchBalances(client.runtime.rpc, ownerStr);
     },
