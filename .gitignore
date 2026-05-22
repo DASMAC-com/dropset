@@ -6,3 +6,6 @@ target/
 !/target/deploy/
 /target/deploy/*
 !/target/deploy/dropset_gamma-keypair.json
+
+# Local audit findings (see .claude/skills/audit-codebase).
+.audits/
