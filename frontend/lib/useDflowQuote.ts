@@ -265,10 +265,20 @@ export const useDflowQuote = (
     // the timer rather than emitting one request per keystroke.
     schedule(DEBOUNCE_MS);
 
+    // Resume immediately on tab focus rather than waiting for the next
+    // scheduled tick (which could be up to REFRESH_MS away).
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      if (timer !== undefined) window.clearTimeout(timer);
+      schedule(0);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
     return () => {
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
       controller.abort();
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [inputMint, outputMint, inputDecimals, inputAmountDecimal]);
 

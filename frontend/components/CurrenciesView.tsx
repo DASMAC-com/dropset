@@ -5,7 +5,7 @@
 import NumberFlow from "@number-flow/react";
 import * as Popover from "@radix-ui/react-popover";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { memo, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { CopyButton } from "@/components/CopyButton";
 import {
   ArrowUpDown,
@@ -35,7 +35,7 @@ import { FORMATS } from "@/lib/formats";
 import { isFiniteNumber } from "@/lib/guards";
 import { type Side, useSwapStore, useSwapStoreApi } from "@/lib/store";
 import { useSwapNav } from "@/lib/swapUrl";
-import { flashBg, useFlashOnChange } from "@/lib/useFlashOnChange";
+import { flashBg, useFlashOnChanges } from "@/lib/useFlashOnChange";
 import {
   prefetchAllTokenInfo,
   REFRESH_INTERVAL_MS,
@@ -241,7 +241,7 @@ function SwapPickerCell({
   );
 }
 
-function StablecoinRow({
+const StablecoinRow = memo(function StablecoinRow({
   code,
   s,
   rowIndex,
@@ -267,12 +267,26 @@ function StablecoinRow({
   // Layered with NumberFlow below: rolling digits convey *which* value
   // moved at the digit level, the bg flash adds a brief whole-cell cue
   // that draws the eye on each Jupiter refresh.
-  const priceFlash = useFlashOnChange(info?.usdPrice);
-  const changeFlash = useFlashOnChange(change);
-  const volumeFlash = useFlashOnChange(info?.volume24h);
-  const mcapFlash = useFlashOnChange(info?.mcap);
-  const liquidityFlash = useFlashOnChange(info?.liquidity);
-  const holdersFlash = useFlashOnChange(info?.holderCount);
+  const flashValues = useMemo(
+    () =>
+      [
+        info?.usdPrice,
+        change,
+        info?.volume24h,
+        info?.mcap,
+        info?.liquidity,
+        info?.holderCount,
+      ] as const,
+    [info, change],
+  );
+  const [
+    priceFlash,
+    changeFlash,
+    volumeFlash,
+    mcapFlash,
+    liquidityFlash,
+    holdersFlash,
+  ] = useFlashOnChanges(flashValues);
   return (
     <tr
       id={s.symbol.toLowerCase()}
@@ -465,7 +479,7 @@ function StablecoinRow({
       </td>
     </tr>
   );
-}
+});
 
 function CurrenciesInner() {
   const searchParams = useSearchParams();

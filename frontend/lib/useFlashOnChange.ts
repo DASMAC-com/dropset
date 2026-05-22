@@ -55,3 +55,58 @@ export const useFlashOnChange = (value: unknown): boolean => {
 };
 
 export const flashBg = (on: boolean): string => (on ? "bg-muted-fg/15" : "");
+
+// Bulk variant for rows that need to flash multiple cells from a single
+// data source. Tracks each value independently against its previous tick
+// and returns a tuple of booleans in the same order. Saves N hook calls
+// per row (and N timers) when a card or table row exposes many flashing
+// cells off the same fetch.
+export const useFlashOnChanges = <T extends readonly unknown[]>(
+  values: T,
+): { [K in keyof T]: boolean } => {
+  const prev = useRef<T>(values);
+  const initialized = useRef<boolean[]>(values.map((v) => v != null));
+  const flashUntil = useRef<number[]>(values.map(() => 0));
+  const timers = useRef<(number | null)[]>(values.map(() => null));
+  const [, force] = useState(0);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: each tuple
+  //   slot is compared via Object.is below; tracking individual scalars in
+  //   the deps would require a stable tuple-key string here that this
+  //   effect computes itself.
+  useEffect(() => {
+    let anyChange = false;
+    for (let i = 0; i < values.length; i++) {
+      const v = values[i];
+      if (Object.is(v, prev.current[i])) continue;
+      anyChange = true;
+      (prev.current as unknown as unknown[])[i] = v;
+      if (!initialized.current[i]) {
+        if (v != null) initialized.current[i] = true;
+        continue;
+      }
+      flashUntil.current[i] = Date.now() + 1000;
+      const existing = timers.current[i];
+      if (existing !== null) window.clearTimeout(existing);
+      timers.current[i] = window.setTimeout(() => {
+        timers.current[i] = null;
+        force((x) => x + 1);
+      }, 1000);
+    }
+    if (anyChange) force((x) => x + 1);
+  }, [values]);
+
+  useEffect(
+    () => () => {
+      for (const t of timers.current) {
+        if (t !== null) window.clearTimeout(t);
+      }
+    },
+    [],
+  );
+
+  const now = Date.now();
+  return values.map((_, i) => now < flashUntil.current[i]) as {
+    [K in keyof T]: boolean;
+  };
+};

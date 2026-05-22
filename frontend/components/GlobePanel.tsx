@@ -125,6 +125,11 @@ type GlobeHandle = {
   scene: () => Scene;
 };
 
+// Empty pin array reused whenever labels or flags are hidden — keeps
+// react-globe.gl from seeing a fresh `[]` reference per render and
+// rebuilding its label/HTML layers unnecessarily.
+const EMPTY_PINS: CountryPin[] = [];
+
 // Pre-clustered subset of COUNTRY_PINS for the most zoomed-out
 // label-visible altitude band: greedy area-weighted clustering drops the
 // smaller pins inside any FAR_ZOOM_PROXIMITY_DEG-radius cluster so dense
@@ -189,8 +194,16 @@ function GlobeInner() {
     globeRef.current = handle;
     setGlobeHandle(handle);
   }, []);
-  const from = useSwapStore((s) => s.from);
-  const to = useSwapStore((s) => s.to);
+  // Subscribe to primitive fields rather than `s.from` / `s.to` whole
+  // SideState objects. Selector identity drives re-renders; returning a
+  // fresh object each notification would re-render this panel on every
+  // unrelated store mutation (amount typing, slippage toggle, etc.).
+  const fromCca2 = useSwapStore((s) => s.from.cca2);
+  const fromCurrency = useSwapStore((s) => s.from.currency);
+  const fromStablecoin = useSwapStore((s) => s.from.stablecoin);
+  const toCca2 = useSwapStore((s) => s.to.cca2);
+  const toCurrency = useSwapStore((s) => s.to.currency);
+  const toStablecoin = useSwapStore((s) => s.to.stablecoin);
   const store = useSwapStoreApi();
   const gotoSwap = useSwapNav();
 
@@ -217,9 +230,9 @@ function GlobeInner() {
   const ringRef = useRef<Mesh | null>(null);
   const [flashOn, setFlashOn] = useState(false);
 
-  const sameCca2 = from.cca2 === to.cca2;
+  const sameCca2 = fromCca2 === toCca2;
   const sameToken =
-    from.currency === to.currency && from.stablecoin === to.stablecoin;
+    fromCurrency === toCurrency && fromStablecoin === toStablecoin;
 
   // 500ms polygon-cap flash for the fully-degenerate sameToken case to
   // mirror the disabled Swap button. Same-country / different-stable swaps
@@ -381,8 +394,8 @@ function GlobeInner() {
   });
 
   const focusOnArc = () => {
-    const start = findPin(from.cca2);
-    const end = findPin(to.cca2);
+    const start = findPin(fromCca2);
+    const end = findPin(toCca2);
     if (!start || !end || !globeRef.current) return;
     const { lat, lng, angular } = greatCircleMidpoint(start, end);
     globeRef.current.pointOfView(
@@ -397,8 +410,8 @@ function GlobeInner() {
     // Hide the arc whenever both anchors collide — the polygon flash (same
     // token) or the pillar (same country, different stable) takes over.
     if (sameCca2) return [];
-    const start = findPin(from.cca2);
-    const end = findPin(to.cca2);
+    const start = findPin(fromCca2);
+    const end = findPin(toCca2);
     if (!start || !end) return [];
     const angular = angularDistanceRad(start.lat, start.lng, end.lat, end.lng);
     return [
@@ -410,23 +423,23 @@ function GlobeInner() {
         altitude: arcApexAltitude(angular),
       },
     ];
-  }, [from.cca2, to.cca2, sameCca2]);
+  }, [fromCca2, toCca2, sameCca2]);
 
   const pillarPins = useMemo(() => {
     if (!sameCca2 || sameToken) return [];
-    const pin = findPin(from.cca2);
+    const pin = findPin(fromCca2);
     return pin ? [pin] : [];
-  }, [sameCca2, sameToken, from.cca2]);
+  }, [sameCca2, sameToken, fromCca2]);
 
   const polygonCapColor = (d: object) => {
     const f = d as CountryFeature;
     const supports = f.properties.currencies;
     if (supports.length === 0) return LAND_UNCOVERED;
-    if (sameToken && f.properties.cca2 === from.cca2) {
+    if (sameToken && f.properties.cca2 === fromCca2) {
       return flashOn ? BUY_TINT : SELL_TINT;
     }
-    if (supports.includes(from.currency)) return SELL_TINT;
-    if (supports.includes(to.currency)) return BUY_TINT;
+    if (supports.includes(fromCurrency)) return SELL_TINT;
+    if (supports.includes(toCurrency)) return BUY_TINT;
     return LAND_COVERED;
   };
 
@@ -434,11 +447,38 @@ function GlobeInner() {
     const f = d as CountryFeature;
     const supports = f.properties.currencies;
     if (supports.length === 0) return POLY_ALT_UNSUPPORTED;
-    if (supports.includes(from.currency) || supports.includes(to.currency)) {
+    if (supports.includes(fromCurrency) || supports.includes(toCurrency)) {
       return POLY_ALT_HIGHLIGHTED;
     }
     return POLY_ALT_DEFAULT;
   };
+
+  // Bucket the altitude into discrete tiers so the label / flag arrays
+  // only change identity when the user crosses a meaningful threshold
+  // (every couple of zooms), not on every onZoom tick. react-globe.gl
+  // diffs these arrays by reference and rebuilds the layer when it
+  // changes, so a memo that depends on the raw altitude would force a
+  // rebuild on every frame of the d3 zoom transition.
+  const labelBucket: "hidden" | "close" | "far" = showFlags
+    ? "hidden"
+    : altitude >= LABEL_VISIBILITY_ALTITUDE
+      ? "hidden"
+      : altitude < FAR_ZOOM_ALTITUDE_THRESHOLD
+        ? "close"
+        : "far";
+  const flagBucket: "hidden" | "close" | "far" = !showFlags
+    ? "hidden"
+    : altitude < FAR_ZOOM_ALTITUDE_THRESHOLD
+      ? "close"
+      : "far";
+  const labelsData = useMemo(() => {
+    if (labelBucket === "hidden") return EMPTY_PINS;
+    return labelBucket === "close" ? COUNTRY_PINS : FAR_ZOOM_PINS;
+  }, [labelBucket]);
+  const htmlElementsData = useMemo(() => {
+    if (flagBucket === "hidden") return EMPTY_PINS;
+    return flagBucket === "close" ? COUNTRY_PINS : FAR_ZOOM_PINS;
+  }, [flagBucket]);
 
   const closePicker = useCallback(() => {
     setClickContext(null);
@@ -588,13 +628,7 @@ function GlobeInner() {
           arcDashGap={ARC_DASH_GAP}
           arcDashAnimateTime={ARC_DASH_ANIM_MS}
           arcAltitude={(d: object) => (d as { altitude: number }).altitude}
-          labelsData={
-            showFlags || altitude >= LABEL_VISIBILITY_ALTITUDE
-              ? []
-              : altitude < FAR_ZOOM_ALTITUDE_THRESHOLD
-                ? COUNTRY_PINS
-                : FAR_ZOOM_PINS
-          }
+          labelsData={labelsData}
           labelLat={(d: object) => (d as CountryPin).lat}
           labelLng={(d: object) => (d as CountryPin).lng}
           labelText={(d: object) =>
@@ -613,13 +647,7 @@ function GlobeInner() {
           labelResolution={LABEL_RESOLUTION}
           labelIncludeDot={true}
           onLabelClick={onLabelClick}
-          htmlElementsData={
-            showFlags
-              ? altitude < FAR_ZOOM_ALTITUDE_THRESHOLD
-                ? COUNTRY_PINS
-                : FAR_ZOOM_PINS
-              : []
-          }
+          htmlElementsData={htmlElementsData}
           htmlLat={(d: object) => (d as CountryPin).lat}
           htmlLng={(d: object) => (d as CountryPin).lng}
           htmlAltitude={OVERLAY_ALTITUDE}
