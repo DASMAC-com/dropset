@@ -63,5 +63,15 @@ working tree — those must be left alone.
    git commit -m "<message>"
    ```
 
-1. Print the resulting commit hash and short
-   summary so the user can verify.
+1. Push the new commit to the current branch's
+   upstream. If the branch has no upstream yet,
+   set it on push:
+
+   ```sh
+   git push 2>/dev/null || \
+     git push -u origin "$(git branch --show-current)"
+   ```
+
+1. Print the resulting commit hash, short
+   summary, and the push result so the user can
+   verify.
