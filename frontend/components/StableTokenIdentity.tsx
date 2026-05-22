@@ -8,6 +8,7 @@ import {
 } from "@/lib/currencies";
 import { explorerTokenUrl } from "@/lib/explorer";
 import { useLiquidityLookup } from "@/lib/useUsdQuote";
+import { CopyButton } from "./CopyButton";
 import { TokenInfoLink } from "./TokenInfoLink";
 
 // Shared stablecoin-row identity block used by the dropdown TokenPicker and
@@ -72,6 +73,7 @@ export function StableTokenIdentity({
           >
             {shortenMint(s.mint)}
           </a>
+          <CopyButton value={s.mint} label="mint address" />
           <TokenInfoLink symbol={s.symbol} />
         </span>
       </span>
