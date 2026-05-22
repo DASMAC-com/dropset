@@ -69,7 +69,16 @@ export function SwapPanel() {
   const isConnecting = status === "connecting";
   const hasAmount = Number(amount) > 0;
   const needsAmount = !sameToken && connected && !isConnecting && !hasAmount;
-  const { balanceFor, isReady: balancesReady } = useAllBalances();
+  const {
+    balanceFor,
+    isReady: balancesReady,
+    error: balancesError,
+  } = useAllBalances();
+  // Balance fetch failed (e.g. RPC rejected the request). Without a known
+  // balance, we can't safely run the insufficient-funds check — block the
+  // swap entirely rather than let an under-funded tx fail at simulation.
+  const balanceUnknown =
+    !sameToken && connected && !isConnecting && balancesError !== null;
   // null (no ATA) is just zero balance for the purposes of the insufficient
   // check — there's nothing to spend.
   const fromBalanceBase = balanceFor(fromMint) ?? 0n;
@@ -94,8 +103,9 @@ export function SwapPanel() {
     swap.status === "preparing" ||
     swap.status === "signing" ||
     swap.status === "confirming";
-  const dimmed = needsAmount || insufficient;
-  const disabled = sameToken || isConnecting || swapInFlight;
+  const dimmed = needsAmount || insufficient || balanceUnknown;
+  const disabled =
+    sameToken || isConnecting || swapInFlight || balanceUnknown;
 
   let label: string;
   let onClick: () => void;
@@ -105,6 +115,9 @@ export function SwapPanel() {
   } else if (!connected) {
     label = isConnecting ? "Connecting…" : "Connect Wallet";
     onClick = () => emit("openWalletModal");
+  } else if (balanceUnknown) {
+    label = "Balance unavailable";
+    onClick = () => {};
   } else if (needsAmount) {
     label = "Enter an amount";
     onClick = () => emit("focusFromAmount");

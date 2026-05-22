@@ -22,6 +22,7 @@ type MaybeBalance = bigint | null | undefined;
 
 const balances = new Map<string, bigint | null>();
 let fetchedForOwner: string | null = null;
+let lastFetchError: string | null = null;
 // Monotonic counter so concurrent fetches don't race a stale write into the
 // cache. Each fetch reads `++counter`; only the latest one writes.
 let requestCounter = 0;
@@ -99,17 +100,41 @@ function fetchBalances(
     for (let i = 0; i < atas.length; i += size) {
       chunks.push(atas.slice(i, i + size));
     }
-    const responses = await Promise.all(
-      chunks.map((chunk) =>
-        rpc
-          .getMultipleAccounts(chunk, {
-            encoding: "jsonParsed",
-            commitment: "confirmed",
-          })
-          .send(),
-      ),
-    );
+    let responses;
+    try {
+      responses = await Promise.all(
+        chunks.map((chunk) =>
+          rpc
+            .getMultipleAccounts(chunk, {
+              encoding: "jsonParsed",
+              commitment: "confirmed",
+            })
+            .send(),
+        ),
+      );
+    } catch (e) {
+      if (my !== requestCounter) return;
+      const msg = e instanceof Error ? e.message : String(e);
+      // PublicNode (and likely other Cloudflare-fronted RPCs) returns 403
+      // with this exact substring when the params array exceeds their
+      // per-call cap. Surface a concrete fix instead of a generic error.
+      if (/blocked parameter: params\.0/i.test(msg)) {
+        console.error(
+          `Balance fetch failed: RPC rejected getMultipleAccounts batch of ${size} accounts. ` +
+            `Lower NEXT_PUBLIC_GET_MULTIPLE_ACCOUNTS_BATCH_SIZE in your env. Raw: ${msg}`,
+        );
+      } else {
+        console.error("Balance fetch failed:", e);
+      }
+      lastFetchError = msg;
+      // Don't set fetchedForOwner — leaving isReady=false keeps callers
+      // that hide on loading from displaying misleading zero balances.
+      // Consumers that want to surface the failure should read `error`.
+      bump();
+      return;
+    }
     if (my !== requestCounter) return;
+    lastFetchError = null;
     const accounts = responses.flatMap((r) => r.value);
 
     accounts.forEach((account, i) => {
@@ -140,6 +165,8 @@ export type UseAllBalances = {
   // null → no ATA, 0n → empty account, > 0n → balance, undefined → loading
   balanceFor: (mint: string) => MaybeBalance;
   isReady: boolean;
+  // Non-null when the most recent fetch failed; cleared on next success.
+  error: string | null;
   refresh: () => void;
 };
 
@@ -162,6 +189,7 @@ export function useAllBalances(): UseAllBalances {
       if (fetchedForOwner !== null) {
         balances.clear();
         fetchedForOwner = null;
+        lastFetchError = null;
         // Bumping `requestCounter` cancels any in-flight fetch from the prior
         // owner so its stale write can't land after the clear.
         requestCounter++;
@@ -191,6 +219,7 @@ export function useAllBalances(): UseAllBalances {
     balanceFor: (mint: string): MaybeBalance =>
       ownerStr === null ? undefined : balances.get(mint),
     isReady: ownerStr !== null && fetchedForOwner === ownerStr,
+    error: ownerStr === null ? null : lastFetchError,
     refresh: () => {
       if (ownerStr) void fetchBalances(client.runtime.rpc, ownerStr);
     },
