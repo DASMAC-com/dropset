@@ -1,13 +1,38 @@
 import { type Address, address } from "@solana/kit";
 import { mainnet } from "@solana/rpc-types";
 
-const DEFAULT_RPC = "https://solana-rpc.publicnode.com";
-const DEFAULT_WS = "wss://solana-rpc.publicnode.com";
+function required(name: string, value: string | undefined): string {
+  if (!value) {
+    throw new Error(
+      `Missing ${name}. Set it in .env.local (dev) or your hosting env (prod).`,
+    );
+  }
+  return value;
+}
 
 export const PUBLIC_RPC_URL = mainnet(
-  process.env.NEXT_PUBLIC_RPC_URL ?? DEFAULT_RPC,
+  required("NEXT_PUBLIC_RPC_URL", process.env.NEXT_PUBLIC_RPC_URL),
 );
-export const PUBLIC_WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? DEFAULT_WS;
+export const PUBLIC_WS_URL = required(
+  "NEXT_PUBLIC_WS_URL",
+  process.env.NEXT_PUBLIC_WS_URL,
+);
+
+// Max accounts per `getMultipleAccounts` call. Required, provider-specific
+// (PublicNode caps at 10 on their free tier).
+const parsedBatchSize = Number.parseInt(
+  required(
+    "NEXT_PUBLIC_GET_MULTIPLE_ACCOUNTS_BATCH_SIZE",
+    process.env.NEXT_PUBLIC_GET_MULTIPLE_ACCOUNTS_BATCH_SIZE,
+  ),
+  10,
+);
+if (!Number.isFinite(parsedBatchSize) || parsedBatchSize < 0) {
+  throw new Error(
+    "NEXT_PUBLIC_GET_MULTIPLE_ACCOUNTS_BATCH_SIZE must be a non-negative integer (0 = no chunking, send all in one call)",
+  );
+}
+export const GET_MULTIPLE_ACCOUNTS_BATCH_SIZE = parsedBatchSize;
 
 // DFlow platform fee. Resolves to null when either side is missing/blank or
 // the bps value isn't a positive integer — callers should gate on

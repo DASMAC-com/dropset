@@ -10,6 +10,7 @@ import {
 import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import { useEffect, useSyncExternalStore } from "react";
 import { ALL_STABLECOINS, type TokenProgramKind } from "./currencies";
+import { GET_MULTIPLE_ACCOUNTS_BATCH_SIZE } from "./env";
 import { useAppEvent } from "./events";
 
 // One shared map per page load, keyed by mint string. Semantics:
@@ -90,15 +91,28 @@ function fetchBalances(
     const my = ++requestCounter;
     const owner = address(ownerStr);
     const atas = await deriveAtas(owner);
-    const res = await rpc
-      .getMultipleAccounts(atas, {
-        encoding: "jsonParsed",
-        commitment: "confirmed",
-      })
-      .send();
+    // Chunked because many RPC providers cap getMultipleAccounts at a
+    // small array size (e.g. PublicNode rejects >10 with 403). Batch size
+    // of 0 = no chunking (single call).
+    const size = GET_MULTIPLE_ACCOUNTS_BATCH_SIZE || atas.length;
+    const chunks: Address[][] = [];
+    for (let i = 0; i < atas.length; i += size) {
+      chunks.push(atas.slice(i, i + size));
+    }
+    const responses = await Promise.all(
+      chunks.map((chunk) =>
+        rpc
+          .getMultipleAccounts(chunk, {
+            encoding: "jsonParsed",
+            commitment: "confirmed",
+          })
+          .send(),
+      ),
+    );
     if (my !== requestCounter) return;
+    const accounts = responses.flatMap((r) => r.value);
 
-    res.value.forEach((account, i) => {
+    accounts.forEach((account, i) => {
       const mint = ALL_STABLECOINS[i].mint;
       if (!account) {
         balances.set(mint, null);
