@@ -39,8 +39,8 @@ Optional (always ask if not provided):
 
    - The exact paths/modules in scope.
    - The default checks (magic numbers, stale
-     or wrong comments, modularity /
-     extensibility).
+     or wrong comments, DRY / duplication,
+     modularity / extensibility).
    - Any user-specified extra focus areas.
    - The sub-agents that will run in parallel
      and what each is responsible for.
@@ -67,9 +67,20 @@ Optional (always ask if not provided):
      configured.
    - **Comments** — comments that lie about,
      contradict, or no longer match the code.
+   - **DRY / duplication** — repeated logic,
+     parallel branches that should share a
+     helper, copy-pasted constants or shapes,
+     and missing abstractions where the same
+     idea is open-coded in multiple places.
+     Flag the opposite too: premature or
+     speculative abstractions that only have
+     one caller and add indirection without
+     payoff.
    - **Modularity / extensibility** — coupling,
-     duplication, abstractions in the wrong
-     place, hidden dependencies.
+     abstractions in the wrong place or at the
+     wrong layer, hidden dependencies, and
+     seams that make the code hard to extend
+     without editing many files.
    - **One sub-agent per user-specified extra
      focus area.**
 
