@@ -1,44 +1,57 @@
 ---
 name: init-pr
-description: Create a placeholder PR from the current branch to warm CI caches.
+description: Create a placeholder PR from a fresh branch to warm CI caches.
 disable-model-invocation: true
 user-invocable: true
 ---
 
 # `init-pr`
 
-Create a placeholder PR on the current branch so CI
+Create a placeholder PR on a new branch so CI
 caches start warming while work continues.
+
+## Input
+
+Requires a Linear tag like `eng-123` as the
+argument. If not provided, stop and ask the
+user for it.
 
 ## Steps
 
-1. Get the current branch name:
+1. Validate the input matches the pattern
+   `eng-###` (case-insensitive). If not, stop
+   and ask the user for a valid Linear tag.
+
+1. If the current branch is not `main`, check
+   out `main` and pull the latest:
 
    ```sh
-   git branch --show-current
+   git checkout main
+   git pull
    ```
 
-1. Extract the ticket ID from the branch name.
-   The branch name follows the pattern `ENG-###`
-   (possibly with a suffix). Use the `ENG-###`
-   portion as the placeholder title.
-
-1. Confirm there is no existing PR for this branch:
+1. Create and check out a new branch using the
+   Linear tag as the branch name:
 
    ```sh
-   gh pr list --head <branch> --json number
+   git checkout -b <eng-###>
    ```
 
-   If a PR already exists, print its URL and stop.
-
-1. Push the branch if it has not been pushed yet:
+1. Create an empty commit so there is something
+   to push:
 
    ```sh
-   git push -u origin <branch>
+   git commit --allow-empty -m "<ENG-###>"
    ```
 
-1. Create a draft PR with the placeholder title
-   and an empty body:
+1. Push the branch:
+
+   ```sh
+   git push -u origin <eng-###>
+   ```
+
+1. Create a draft PR with the Linear tag as the
+   title and an empty body:
 
    ```sh
    gh pr create --draft \
