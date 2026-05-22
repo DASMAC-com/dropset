@@ -100,9 +100,8 @@ function fetchBalances(
     for (let i = 0; i < atas.length; i += size) {
       chunks.push(atas.slice(i, i + size));
     }
-    let responses;
     try {
-      responses = await Promise.all(
+      const responses = await Promise.all(
         chunks.map((chunk) =>
           rpc
             .getMultipleAccounts(chunk, {
@@ -112,6 +111,23 @@ function fetchBalances(
             .send(),
         ),
       );
+      if (my !== requestCounter) return;
+      lastFetchError = null;
+      const accounts = responses.flatMap((r) => r.value);
+      accounts.forEach((account, i) => {
+        const mint = ALL_STABLECOINS[i].mint;
+        if (!account) {
+          balances.set(mint, null);
+          return;
+        }
+        // jsonParsed gives us `data.parsed.info.tokenAmount.amount` as a
+        // stringified bigint when the RPC recognized this as a token-account.
+        const parsed = (account.data as JsonParsedData)?.parsed?.info;
+        const amount = parsed?.tokenAmount?.amount;
+        balances.set(mint, amount != null ? BigInt(amount) : 0n);
+      });
+      fetchedForOwner = ownerStr;
+      bump();
     } catch (e) {
       if (my !== requestCounter) return;
       const msg = e instanceof Error ? e.message : String(e);
@@ -131,26 +147,7 @@ function fetchBalances(
       // that hide on loading from displaying misleading zero balances.
       // Consumers that want to surface the failure should read `error`.
       bump();
-      return;
     }
-    if (my !== requestCounter) return;
-    lastFetchError = null;
-    const accounts = responses.flatMap((r) => r.value);
-
-    accounts.forEach((account, i) => {
-      const mint = ALL_STABLECOINS[i].mint;
-      if (!account) {
-        balances.set(mint, null);
-        return;
-      }
-      // jsonParsed gives us `data.parsed.info.tokenAmount.amount` as a
-      // stringified bigint when the RPC recognized this as a token-account.
-      const parsed = (account.data as JsonParsedData)?.parsed?.info;
-      const amount = parsed?.tokenAmount?.amount;
-      balances.set(mint, amount != null ? BigInt(amount) : 0n);
-    });
-    fetchedForOwner = ownerStr;
-    bump();
   })().finally(() => {
     // Only clear if a newer (force) fetch hasn't replaced our entry already.
     if (inFlightByOwner.get(ownerStr) === promise) {
