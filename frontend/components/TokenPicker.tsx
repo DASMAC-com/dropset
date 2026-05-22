@@ -13,6 +13,7 @@ import {
 import { useAppEvent } from "@/lib/events";
 import { type Side, useSwapStore, useSwapStoreApi } from "@/lib/store";
 import { useSwapNav } from "@/lib/swapUrl";
+import { isOnSide as predicateIsOnSide } from "@/lib/tokenSelection";
 import { sortByVolumeDesc, useInfoLookup } from "@/lib/useUsdQuote";
 import { CurrencyGroupHeader } from "./CurrencyGroupHeader";
 import { ChevronDown, Search, X } from "./icons";
@@ -45,8 +46,23 @@ export function TokenPicker({ side }: { side: Side }) {
     setActiveSide(side);
   });
 
+  // A picker row is blocked if the token is already on the OTHER side
+  // (selecting it would be a direction flip, which this picker doesn't
+  // do — callers use the swap-arrow button for that).
+  const otherSide: Side = side === "from" ? "to" : "from";
   const isBlocked = (cur: IsoCurrencyCode, sym: string) =>
-    cur === otherSideState.currency && sym === otherSideState.stablecoin;
+    predicateIsOnSide(
+      {
+        fromCurrency: side === "from" ? currency : otherSideState.currency,
+        fromStablecoin:
+          side === "from" ? stablecoin : otherSideState.stablecoin,
+        toCurrency: side === "from" ? otherSideState.currency : currency,
+        toStablecoin: side === "from" ? otherSideState.stablecoin : stablecoin,
+      },
+      otherSide,
+      cur,
+      sym,
+    );
 
   const q = query.trim().toLowerCase();
   const matches = (s: Stablecoin, code: IsoCurrencyCode): boolean =>
@@ -103,7 +119,8 @@ export function TokenPicker({ side }: { side: Side }) {
       setHighlightedIndex((i) => {
         for (let step = 1; step <= items.length; step++) {
           const next = (i + step) % items.length;
-          if (!items[next].blocked) return next;
+          const item = items[next];
+          if (item && !item.blocked) return next;
         }
         return i;
       });
@@ -112,7 +129,8 @@ export function TokenPicker({ side }: { side: Side }) {
       setHighlightedIndex((i) => {
         for (let step = 1; step <= items.length; step++) {
           const prev = (i - step + items.length) % items.length;
-          if (!items[prev].blocked) return prev;
+          const item = items[prev];
+          if (item && !item.blocked) return prev;
         }
         return i;
       });

@@ -107,8 +107,15 @@ const CURRENCY_BY_SYMBOL: Record<string, IsoCurrencyCode> = Object.fromEntries(
   ),
 );
 
-export const defaultStablecoin = (code: IsoCurrencyCode): string =>
-  CURRENCIES[code].stablecoins[0].symbol;
+export const defaultStablecoin = (code: IsoCurrencyCode): string => {
+  const first = CURRENCIES[code].stablecoins[0];
+  if (!first) {
+    throw new Error(
+      `Currency "${code}" has zero stablecoins in currencies.json — defaultStablecoin can't return one.`,
+    );
+  }
+  return first.symbol;
+};
 
 export const currencyName = (code: IsoCurrencyCode): string =>
   NAME_BY_CODE[code] ?? code;
@@ -180,7 +187,10 @@ export const resolveTokenSlug = (
   const upper = raw.toUpperCase();
   const canonical = SYMBOL_BY_UPPER[upper];
   if (canonical) {
-    return { currency: CURRENCY_BY_SYMBOL[canonical], stablecoin: canonical };
+    // CURRENCY_BY_SYMBOL is built from the same source as SYMBOL_BY_UPPER,
+    // so every canonical symbol has a currency entry by construction.
+    const currency = CURRENCY_BY_SYMBOL[canonical];
+    if (currency) return { currency, stablecoin: canonical };
   }
   if (upper in CURRENCIES) {
     const cc = upper as IsoCurrencyCode;

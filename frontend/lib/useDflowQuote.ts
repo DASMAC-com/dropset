@@ -38,15 +38,20 @@ export type QuoteStatus =
   | "rateLimited"
   | "skipped";
 
+// Flat shape (not a discriminated union) on purpose: outAmount/inAmount
+// persist across status transitions so the to-side keeps the previous
+// quote visible while a new fetch is in flight. A strict
+// { status: "loading"; outAmount: null } | { status: "ok"; outAmount: bigint }
+// union would force consumers to either hide the prior amount during
+// every refetch (flicker) or duplicate it onto the loading variant
+// (bookkeeping). The mint-pair fields plus `hasQuote` are what consumers
+// use to detect a stale-but-still-shown previous result.
 export type DflowQuote = {
   status: QuoteStatus;
   outAmount: bigint | null;
   inAmount: bigint | null;
   // The mints this quote was fetched for. Consumers should compare these
-  // against the *current* store mints to detect a stale cached quote — the
-  // hook holds the previous result during the debounce/refetch window, so
-  // a naive `quote.outAmount` read after the user swaps sides or picks a
-  // new token would interpret old atomic units with new decimals.
+  // against the *current* store mints to detect a stale cached quote.
   inputMint: string | null;
   outputMint: string | null;
   priceImpactPct: string | null;

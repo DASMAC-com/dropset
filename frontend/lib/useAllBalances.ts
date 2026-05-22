@@ -119,7 +119,10 @@ function fetchBalances(
         );
       }
       accounts.forEach((account, i) => {
-        const mint = ALL_STABLECOINS[i].mint;
+        // Length-guarded above (accounts.length === ALL_STABLECOINS.length).
+        const stable = ALL_STABLECOINS[i];
+        if (!stable) return;
+        const mint = stable.mint;
         if (!account) {
           balances.set(mint, null);
           return;

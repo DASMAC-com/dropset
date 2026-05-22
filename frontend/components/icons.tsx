@@ -33,12 +33,15 @@ import {
 // hydration mismatches. Wrapping each Lucide icon so the rendered <svg>
 // always has suppressHydrationWarning silences those warnings — the prop
 // passes through Lucide's prop spread to the underlying svg element.
-const safe = (Icon: LucideIcon): LucideIcon => {
-  const Wrapped = (props: LucideProps) => (
+type IconFC = ((props: LucideProps) => React.ReactElement) & {
+  displayName?: string;
+};
+const safe = (Icon: LucideIcon): IconFC => {
+  const Wrapped: IconFC = (props) => (
     <Icon {...props} suppressHydrationWarning />
   );
   Wrapped.displayName = `Safe(${Icon.displayName ?? "Icon"})`;
-  return Wrapped as unknown as LucideIcon;
+  return Wrapped;
 };
 
 export const ArrowRightLeft = safe(RawArrowRightLeft);

@@ -107,7 +107,7 @@ export const useFlashOnChanges = <T extends readonly unknown[]>(
   );
 
   const now = Date.now();
-  return values.map((_, i) => now < flashUntil.current[i]) as {
+  return values.map((_, i) => now < (flashUntil.current[i] ?? 0)) as {
     [K in keyof T]: boolean;
   };
 };

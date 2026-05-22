@@ -24,12 +24,24 @@ for (const c of countries) {
   });
 }
 
-// topojson-client typings narrow on the second arg; cast through `any` so the
-// GeometryCollection → FeatureCollection overload is selected.
-// biome-ignore lint/suspicious/noExplicitAny: see comment above
-const topo = topology as any;
-// biome-ignore lint/suspicious/noExplicitAny: see comment above
-const fc = feature(topo, topo.objects.countries) as any;
+// Minimal shape of the world-atlas topojson we use. Casts replace the
+// previous `as any` lattice — the surface area stays narrow enough that
+// downstream `fc.features.map(...)` still gets the right element type.
+type RawTopology = {
+  objects: { countries: unknown };
+};
+type RawFeatureCollection = {
+  features: Array<{
+    geometry: GeoJSON.Geometry;
+    id?: string | number;
+    properties?: { name?: string } | null;
+  }>;
+};
+const topo = topology as unknown as RawTopology;
+const fc = feature(
+  topo as unknown as Parameters<typeof feature>[0],
+  topo.objects.countries as unknown as Parameters<typeof feature>[1],
+) as unknown as RawFeatureCollection;
 
 export type CountryFeature = {
   type: "Feature";
@@ -43,13 +55,7 @@ export type CountryFeature = {
   id?: string | number;
 };
 
-export const WORLD_POLYGONS: CountryFeature[] = (
-  fc.features as Array<{
-    geometry: GeoJSON.Geometry;
-    id?: string | number;
-    properties?: { name?: string } | null;
-  }>
-).map((f) => {
+export const WORLD_POLYGONS: CountryFeature[] = fc.features.map((f) => {
   const id = f.id;
   const info = idToCountryInfo.get(String(id));
   return {

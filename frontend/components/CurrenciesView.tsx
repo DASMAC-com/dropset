@@ -597,10 +597,13 @@ function CurrenciesInner() {
 
   const pickToken = usePickToken();
   useAppEvent("pickCurrencyOnlyResult", (side) => {
-    if (grouped.length !== 1 || grouped[0].stables.length !== 1) return;
-    const { code } = grouped[0];
-    const { symbol } = grouped[0].stables[0];
-    pickToken(side, code, symbol);
+    const onlyGroup = grouped[0];
+    if (grouped.length !== 1 || !onlyGroup || onlyGroup.stables.length !== 1) {
+      return;
+    }
+    const onlyStable = onlyGroup.stables[0];
+    if (!onlyStable) return;
+    pickToken(side, onlyGroup.code, onlyStable.symbol);
   });
 
   const stats = currencyStats();

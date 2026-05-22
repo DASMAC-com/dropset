@@ -155,7 +155,8 @@ export function TokenRow({
     let pos = 0;
     let count = 0;
     while (pos < formatted.length && count < digitsBeforeCaret) {
-      if (/[0-9.]/.test(formatted[pos])) count++;
+      const ch = formatted[pos];
+      if (ch !== undefined && /[0-9.]/.test(ch)) count++;
       pos++;
     }
     caretRef.current = pos;

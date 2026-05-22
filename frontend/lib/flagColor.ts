@@ -28,12 +28,15 @@ const sampleDominantColor = (
   let b = 0;
   let n = 0;
   const { data } = ctx.getImageData(0, 0, size, size);
-  for (let i = 0; i < data.length; i += 4) {
-    const pa = data[i + 3];
+  // RGBA pixel stride; we always read four entries per iteration and the
+  // loop guard guarantees they're in-bounds, but tsc with
+  // noUncheckedIndexedAccess can't narrow that on its own.
+  for (let i = 0; i + 3 < data.length; i += 4) {
+    const pr = data[i] as number;
+    const pg = data[i + 1] as number;
+    const pb = data[i + 2] as number;
+    const pa = data[i + 3] as number;
     if (pa < MIN_ALPHA) continue;
-    const pr = data[i];
-    const pg = data[i + 1];
-    const pb = data[i + 2];
     const max = Math.max(pr, pg, pb);
     const min = Math.min(pr, pg, pb);
     const sat = max === 0 ? 0 : (max - min) / max;
