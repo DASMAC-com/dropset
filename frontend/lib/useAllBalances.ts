@@ -12,6 +12,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import { ALL_STABLECOINS, type TokenProgramKind } from "./currencies";
 import { GET_MULTIPLE_ACCOUNTS_BATCH_SIZE } from "./env";
 import { useAppEvent } from "./events";
+import { parseTokenAccountAmount } from "./validate";
 
 // One shared map per page load, keyed by mint string. Semantics:
 //   undefined → not yet fetched / disconnected
@@ -66,13 +67,6 @@ async function deriveAtas(owner: Address): Promise<Address[]> {
   );
 }
 
-type ParsedTokenInfo = {
-  tokenAmount?: { amount?: string };
-};
-type JsonParsedData = {
-  parsed?: { info?: ParsedTokenInfo };
-};
-
 function fetchBalances(
   rpc: ReturnType<typeof useSolanaClient>["runtime"]["rpc"],
   ownerStr: string,
@@ -114,6 +108,15 @@ function fetchBalances(
       if (my !== requestCounter) return;
       lastFetchError = null;
       const accounts = responses.flatMap((r) => r.value);
+      if (accounts.length !== ALL_STABLECOINS.length) {
+        // Index-alignment guard: the chunked RPC results must come back in
+        // the same order and count as the input ATAs, or balances would be
+        // assigned to the wrong mints. Surface this distinctly so the cause
+        // can be traced.
+        throw new Error(
+          `RPC returned ${accounts.length} accounts for ${ALL_STABLECOINS.length} ATAs — chunked getMultipleAccounts is out of alignment`,
+        );
+      }
       accounts.forEach((account, i) => {
         const mint = ALL_STABLECOINS[i].mint;
         if (!account) {
@@ -121,10 +124,19 @@ function fetchBalances(
           return;
         }
         // jsonParsed gives us `data.parsed.info.tokenAmount.amount` as a
-        // stringified bigint when the RPC recognized this as a token-account.
-        const parsed = (account.data as JsonParsedData)?.parsed?.info;
-        const amount = parsed?.tokenAmount?.amount;
-        balances.set(mint, amount != null ? BigInt(amount) : 0n);
+        // stringified bigint when the RPC recognized this as a token account.
+        // If the shape is something else (raw binary, malformed parsed),
+        // treat as zero rather than crashing the whole batch, but log so
+        // the misclassification is visible.
+        const amount = parseTokenAccountAmount(account.data);
+        if (amount === null) {
+          console.warn(
+            `Balance fetch: RPC returned an account for ${mint} that wasn't a recognizable jsonParsed token account — falling back to 0n`,
+          );
+          balances.set(mint, 0n);
+        } else {
+          balances.set(mint, amount);
+        }
       });
       fetchedForOwner = ownerStr;
       bump();

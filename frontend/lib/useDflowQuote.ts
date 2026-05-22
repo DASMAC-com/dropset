@@ -7,6 +7,11 @@ import {
   projectedRemaining,
   recordResponse,
 } from "./rateLimitBudget";
+import {
+  type ParsedDflowQuote,
+  parseDflowQuote,
+  ValidationError,
+} from "./validate";
 
 // DFlow developer trade API. No API key required and CORS open
 // (`access-control-allow-origin: *`), so we call directly from the browser
@@ -86,13 +91,6 @@ const toAtomic = (raw: string, decimals: number): bigint => {
   } catch {
     return 0n;
   }
-};
-
-type RawQuote = {
-  inAmount: string;
-  outAmount: string;
-  priceImpactPct?: string;
-  slippageBps?: number;
 };
 
 // React hook: returns the current DFlow quote for the given inputs. A
@@ -192,30 +190,54 @@ export const useDflowQuote = (
         }
 
         if (!res.ok) {
-          const body = (await res.json().catch(() => null)) as {
-            msg?: string;
-          } | null;
-          // Clear outAmount so the to-side falls back to "—" rather than
-          // leaving a stale number from the previous good quote. We also
-          // stop the chain — the next input change retries.
-          setQuote({
-            ...INITIAL,
-            status: "error",
-            error: body?.msg ?? `HTTP ${res.status}`,
-          });
+          // Distinguish "non-2xx with a parseable JSON error envelope" from
+          // "non-2xx with malformed body" so the user can tell a real API
+          // error apart from upstream corruption / outage.
+          let bodyText: string | null = null;
+          try {
+            bodyText = await res.text();
+          } catch {
+            bodyText = null;
+          }
+          let reason = `HTTP ${res.status}`;
+          if (bodyText) {
+            try {
+              const body = JSON.parse(bodyText) as { msg?: unknown };
+              if (typeof body?.msg === "string" && body.msg.length > 0) {
+                reason = body.msg;
+              } else {
+                reason = `HTTP ${res.status}: ${bodyText.slice(0, 200)}`;
+              }
+            } catch {
+              reason = `HTTP ${res.status} with malformed body`;
+            }
+          }
+          setQuote({ ...INITIAL, status: "error", error: reason });
           return;
         }
 
-        const data = (await res.json()) as RawQuote;
+        let parsed: ParsedDflowQuote;
+        try {
+          const data: unknown = await res.json();
+          parsed = parseDflowQuote(data);
+        } catch (e) {
+          if (cancelled) return;
+          const reason =
+            e instanceof ValidationError
+              ? `Invalid quote response: ${e.message}`
+              : "Quote response could not be parsed";
+          setQuote({ ...INITIAL, status: "error", error: reason });
+          return;
+        }
         if (cancelled) return;
         setQuote({
           status: "ok",
-          outAmount: BigInt(data.outAmount),
-          inAmount: BigInt(data.inAmount),
+          outAmount: parsed.outAmount,
+          inAmount: parsed.inAmount,
           inputMint,
           outputMint,
-          priceImpactPct: data.priceImpactPct ?? null,
-          slippageBps: data.slippageBps ?? null,
+          priceImpactPct: parsed.priceImpactPct,
+          slippageBps: parsed.slippageBps,
           hasQuote: true,
           error: null,
         });
@@ -223,7 +245,18 @@ export const useDflowQuote = (
         schedule(REFRESH_MS);
       } catch (err) {
         if (cancelled || controller.signal.aborted) return;
-        const message = err instanceof Error ? err.message : "Network error";
+        // Distinguish AbortError (timeout/visibility) from real fetch
+        // failures (offline, DNS, CORS) so the user can tell why.
+        let message: string;
+        if (err instanceof Error) {
+          if (err.name === "AbortError") return;
+          message =
+            err.name === "TypeError"
+              ? `Network unreachable: ${err.message}`
+              : err.message;
+        } else {
+          message = "Network error";
+        }
         setQuote({ ...INITIAL, status: "error", error: message });
       }
     };

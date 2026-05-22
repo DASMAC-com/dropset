@@ -94,14 +94,25 @@ const fetchInfo = (mint: string): Promise<TokenInfo | null> => {
   const p = (async () => {
     try {
       const res = await fetch(`${JUP_SEARCH_URL}?query=${mint}`);
-      if (!res.ok) return null;
-      const rows = (await res.json()) as RawJupRow[];
+      if (!res.ok) {
+        console.warn(`Jupiter token info HTTP ${res.status} for ${mint}`);
+        return null;
+      }
+      const body: unknown = await res.json();
+      if (!Array.isArray(body)) {
+        console.warn(`Jupiter token info returned non-array for ${mint}`);
+        return null;
+      }
+      const rows = body as RawJupRow[];
       const row = rows.find((r) => r.id === mint);
       const info = row ? project(row) : null;
       cache.set(mint, { info, fetchedAt: Date.now() });
       notify();
       return info;
-    } catch {
+    } catch (e) {
+      console.warn(
+        `Jupiter token info fetch failed for ${mint}: ${e instanceof Error ? e.message : String(e)}`,
+      );
       return null;
     } finally {
       inflight.delete(mint);
@@ -127,8 +138,20 @@ export const prefetchAllTokenInfo = (mints: string[]): Promise<void> => {
   const batch = (async () => {
     try {
       const res = await fetch(`${JUP_SEARCH_URL}?query=${need.join(",")}`);
-      if (!res.ok) return;
-      const rows = (await res.json()) as RawJupRow[];
+      if (!res.ok) {
+        console.warn(
+          `Jupiter prefetch HTTP ${res.status} for ${need.length} mints — per-mint fetchInfo will retry on demand`,
+        );
+        return;
+      }
+      const body: unknown = await res.json();
+      if (!Array.isArray(body)) {
+        console.warn(
+          "Jupiter prefetch returned non-array — per-mint fetchInfo will retry",
+        );
+        return;
+      }
+      const rows = body as RawJupRow[];
       const byId = new Map<string, RawJupRow>();
       for (const r of rows) byId.set(r.id, r);
       const at = Date.now();
@@ -140,8 +163,10 @@ export const prefetchAllTokenInfo = (mints: string[]): Promise<void> => {
         });
       }
       notify();
-    } catch {
-      // Leave cache as-is; on-demand `fetchInfo` will retry per-mint.
+    } catch (e) {
+      console.warn(
+        `Jupiter prefetch failed: ${e instanceof Error ? e.message : String(e)} — per-mint fetchInfo will retry`,
+      );
     }
   })();
   for (const mint of need) {

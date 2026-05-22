@@ -17,6 +17,11 @@ import {
 import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import { stablecoinByMint, type TokenProgramKind } from "./currencies";
 import { PLATFORM_FEE } from "./env";
+import {
+  type ParsedDflowOrder,
+  parseDflowOrder,
+  ValidationError,
+} from "./validate";
 
 const PROGRAM_FOR_KIND: Record<TokenProgramKind, Address> = {
   classic: TOKEN_PROGRAM_ADDRESS,
@@ -88,12 +93,6 @@ export class DflowSwapError extends Error {
   }
 }
 
-type OrderResponse = {
-  transaction: string;
-  inAmount: string;
-  outAmount: string;
-};
-
 type OrderErrorBody = {
   code?: string;
   msg?: string;
@@ -154,13 +153,37 @@ export async function executeDflowSwap(
     );
   }
 
-  const order = (await res.json()) as OrderResponse;
-  if (!order.transaction) {
-    throw new DflowSwapError("Order response missing transaction", "api");
+  let order: ParsedDflowOrder;
+  try {
+    const raw: unknown = await res.json();
+    order = parseDflowOrder(raw);
+  } catch (e) {
+    if (e instanceof ValidationError) {
+      throw new DflowSwapError(
+        `DFlow returned an invalid order: ${e.message}`,
+        "api",
+        res.status,
+      );
+    }
+    throw new DflowSwapError(
+      "DFlow order response could not be parsed",
+      "api",
+      res.status,
+    );
   }
 
-  const txBytes = getBase64Encoder().encode(order.transaction);
-  const tx = getTransactionDecoder().decode(txBytes);
+  let tx: ReturnType<ReturnType<typeof getTransactionDecoder>["decode"]>;
+  try {
+    const txBytes = getBase64Encoder().encode(order.transaction);
+    tx = getTransactionDecoder().decode(txBytes);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new DflowSwapError(
+      `DFlow returned an undecodable transaction: ${msg}`,
+      "api",
+      res.status,
+    );
+  }
 
   if (!walletSession.sendTransaction) {
     throw new DflowSwapError(
@@ -190,8 +213,8 @@ export async function executeDflowSwap(
 
   return {
     signature,
-    inAmount: BigInt(order.inAmount),
-    outAmount: BigInt(order.outAmount),
+    inAmount: order.inAmount,
+    outAmount: order.outAmount,
   };
 }
 
@@ -199,15 +222,37 @@ export async function executeDflowSwap(
 // confirmed the tx — so balance re-fetches fired immediately after see stale
 // data. Poll `getSignatureStatuses` until the signature reaches `confirmed`
 // (or `finalized`) and bail with an error on revert or timeout.
+const SWAP_CONFIRMATION_TIMEOUT_MS = 60_000;
+const SWAP_CONFIRMATION_POLL_MS = 500;
+// How many consecutive nulls (RPC has never seen the signature) we tolerate
+// before erroring out instead of polling to timeout. ~5s of unknown is enough
+// to distinguish a dropped tx from one that's just propagating slowly.
+const MAX_UNKNOWN_POLLS = 10;
+
 export async function waitForSwapConfirmation(
   rpc: SolanaClientRuntime["rpc"],
   signature: Signature,
-  { timeoutMs = 60_000, pollIntervalMs = 500 } = {},
+  {
+    timeoutMs = SWAP_CONFIRMATION_TIMEOUT_MS,
+    pollIntervalMs = SWAP_CONFIRMATION_POLL_MS,
+  } = {},
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
+  let unknownPolls = 0;
   while (Date.now() < deadline) {
     const { value } = await rpc.getSignatureStatuses([signature]).send();
     const status = value[0];
+    if (status === null) {
+      unknownPolls++;
+      if (unknownPolls >= MAX_UNKNOWN_POLLS) {
+        throw new DflowSwapError(
+          "RPC has no record of the submitted signature — the transaction was likely dropped before reaching a leader.",
+          "wallet",
+        );
+      }
+      await new Promise((r) => setTimeout(r, pollIntervalMs));
+      continue;
+    }
     if (status?.err) {
       // `@solana/kit` parses RPC integer fields as BigInt, so a stock
       // JSON.stringify on a TransactionError (e.g. `{ InstructionError:
