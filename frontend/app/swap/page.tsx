@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { Suspense } from "react";
 import { GlobePanel } from "@/components/GlobePanel";
 import { UrlSync } from "@/components/UrlSync";
 
@@ -17,10 +18,15 @@ const SwapPanel = dynamic(
   { ssr: false },
 );
 
+// UrlSync uses useSearchParams as a re-render signal for same-path
+// different-query navigation, which Next.js requires be wrapped in a
+// Suspense boundary so the static prerender can stream around it.
 export default function SwapPage() {
   return (
     <div className="mx-auto flex max-w-[575px] flex-col gap-3 px-6 pt-3 pb-10">
-      <UrlSync />
+      <Suspense fallback={null}>
+        <UrlSync />
+      </Suspense>
       <SwapPanel />
       <GlobePanel />
     </div>

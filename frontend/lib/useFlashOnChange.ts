@@ -71,10 +71,6 @@ export const useFlashOnChanges = <T extends readonly unknown[]>(
   const timers = useRef<(number | null)[]>(values.map(() => null));
   const [, force] = useState(0);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: each tuple
-  //   slot is compared via Object.is below; tracking individual scalars in
-  //   the deps would require a stable tuple-key string here that this
-  //   effect computes itself.
   useEffect(() => {
     let anyChange = false;
     for (let i = 0; i < values.length; i++) {
