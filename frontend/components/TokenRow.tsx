@@ -209,6 +209,7 @@ export function TokenRow({
               value={formattedAmount}
               placeholder="0.0"
               aria-label="Amount to swap"
+              data-shortcut-passthrough="true"
               onFocus={() => setActiveSide("from")}
               onChange={onAmountChange}
               className="min-w-0 flex-1 bg-transparent text-right font-mono text-3xl text-foreground outline-none placeholder:text-muted-fg"

@@ -276,6 +276,16 @@ const SHIFT_PRODUCED_SYMBOLS = new Set([
   ">",
 ]);
 
+// Inputs marked with `data-shortcut-passthrough` are amount/percent fields
+// that only accept digits, period, and minus — every other key is fair
+// game for shortcut matching. This lets the user hit `m` for Max or `d`
+// for direction-swap without first blurring the field with Escape.
+// Non-printable keys (Escape, Tab, Backspace, arrows) reach the field so
+// editing still works, and digit/decimal keys are explicitly held back.
+const isPassthroughInput = (target: EventTarget | null): boolean =>
+  target instanceof HTMLElement &&
+  target.dataset.shortcutPassthrough === "true";
+
 export function useKeyboardShortcuts(): void {
   const router = useRouter();
   const pathname = usePathname();
@@ -283,14 +293,27 @@ export function useKeyboardShortcuts(): void {
     const active = shortcutsForPath(pathname);
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
-      // Any text-editable target (including passthrough inputs) consumes
-      // every key. Shortcuts only fire when nothing editable is focused.
-      if (isTextEditable(e.target)) return;
+      const passthrough = isPassthroughInput(e.target);
+      // Editable target without passthrough consumes every key.
+      if (isTextEditable(e.target) && !passthrough) return;
+      if (passthrough) {
+        // Non-printable keys (Tab, Escape, Backspace, arrows…) belong to
+        // the input — let it handle them.
+        if (e.key.length !== 1) return;
+        // Numeric input characters belong to the input too.
+        if (/[0-9.,-]/.test(e.key)) return;
+      }
       if (e.shiftKey && !SHIFT_PRODUCED_SYMBOLS.has(e.key)) return;
       // Match the key literally — no lowercase. Shift+letter would
       // produce a capital that won't match any registered shortcut.
       const spec = active.find((s) => s.key === e.key);
-      if (!spec) return;
+      if (!spec) {
+        // While focused on a passthrough input, swallow any non-numeric
+        // key that didn't match a shortcut so it doesn't slip through
+        // and get inserted into the field anyway.
+        if (passthrough) e.preventDefault();
+        return;
+      }
       e.preventDefault();
       spec.run({ router });
     };

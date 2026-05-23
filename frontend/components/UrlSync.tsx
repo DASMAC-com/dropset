@@ -32,9 +32,32 @@ export function UrlSync() {
       const sp = new URLSearchParams(window.location.search);
       const fromSlug = sp.get("from");
       const toSlug = sp.get("to");
-      const pair = resolvePair(fromSlug, toSlug);
-
       const cur = store.getState();
+
+      // No slugs in the URL → arrived on /swap via a bare push (keyboard
+      // shortcut from /currencies, header logo click, etc.). The store
+      // already holds the user's selection from before they navigated
+      // away; canonicalize the URL from the store rather than from
+      // resolvePair(null, null) which would yank the user back to
+      // USDC → EURC and wipe their work.
+      if (!fromSlug && !toSlug) {
+        const canonical = swapHref(cur.from.stablecoin, cur.to.stablecoin);
+        const canonicalSearch = canonical.slice(canonical.indexOf("?"));
+        if (window.location.search !== canonicalSearch) {
+          const hash = window.location.hash;
+          window.history.replaceState(
+            null,
+            "",
+            `/swap${canonicalSearch}${hash}`,
+          );
+        }
+        return;
+      }
+
+      // At least one slug is present → URL is authoritative. Resolve the
+      // pair (applying sameToken-conflict rules) and reconcile both
+      // store and URL to the canonical result.
+      const pair = resolvePair(fromSlug, toSlug);
       const storeMatches =
         pair.from.currency === cur.from.currency &&
         pair.from.stablecoin === cur.from.stablecoin &&
@@ -44,8 +67,7 @@ export function UrlSync() {
 
       const canonical = swapHref(pair.from.stablecoin, pair.to.stablecoin);
       const canonicalSearch = canonical.slice(canonical.indexOf("?"));
-      const currentSearch = window.location.search;
-      if (currentSearch !== canonicalSearch) {
+      if (window.location.search !== canonicalSearch) {
         const hash = window.location.hash;
         window.history.replaceState(null, "", `/swap${canonicalSearch}${hash}`);
       }
