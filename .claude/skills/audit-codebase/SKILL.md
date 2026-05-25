@@ -40,7 +40,8 @@ Optional (always ask if not provided):
    - The exact paths/modules in scope.
    - The default checks (magic numbers, stale
      or wrong comments, DRY / duplication,
-     modularity / extensibility).
+     modularity / extensibility, hierarchical
+     organization).
    - Any user-specified extra focus areas.
    - The sub-agents that will run in parallel
      and what each is responsible for.
@@ -81,6 +82,28 @@ Optional (always ask if not provided):
      wrong layer, hidden dependencies, and
      seams that make the code hard to extend
      without editing many files.
+   - **Hierarchical organization** — for every
+     directory in scope, count the immediate
+     children (files + folders). If a single
+     directory has, say, more than ~15 files
+     and no subdirectories, that's a strong
+     signal it should be broken up. Look for
+     groupings the existing names already
+     suggest:
+       - by-feature (`swap/`, `currencies/`,
+         `globe/`, `wallet/`)
+       - by-layer (`ui/` vs `features/`,
+         `hooks/` vs `helpers/`)
+       - by-shape (a `globe*.ts` cluster, an
+         `*useX.ts` cluster of hooks, an `*.gen.*`
+         cluster of generated files)
+     Flag each oversized directory with a
+     concrete proposed split — not just "split
+     it" but the actual subdirectory names and
+     which existing files would land where.
+     This check applies even to directories
+     that aren't growing rapidly, so long as
+     the natural groupings are visible.
    - **One sub-agent per user-specified extra
      focus area.**
 
