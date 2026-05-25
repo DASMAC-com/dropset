@@ -190,3 +190,9 @@ an audit:
   topic commit; the local-only rule applies to
   the whole follow-up sequence, not just the
   final one.
+- **Sign every commit** with `git commit -S …`.
+  Branch protection on this repo requires
+  verified signatures, and re-signing after the
+  fact forces a rebase that re-stamps every
+  descendant commit (one yubikey/passphrase tap
+  per commit). Always sign at commit time.

@@ -57,11 +57,18 @@ working tree — those must be left alone.
      any other attribution. The commit must
      look like a regular hand-authored commit.
 
-1. Commit:
+1. Commit, **signed**:
 
    ```sh
-   git commit -m "<message>"
+   git commit -S -m "<message>"
    ```
+
+   The `-S` is mandatory — branch protection on
+   this repo requires every commit to have a
+   verified signature. Re-signing after the fact
+   forces a rebase that re-stamps every
+   descendant commit (16+ touches), so always
+   sign at commit time.
 
 1. Push the new commit to the current branch's
    upstream. If the branch has no upstream yet,

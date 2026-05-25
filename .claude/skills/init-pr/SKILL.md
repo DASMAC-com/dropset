@@ -37,12 +37,22 @@ user for it.
    git checkout -b <eng-###>
    ```
 
-1. Create an empty commit so there is something
-   to push:
+1. Create an empty, **signed** commit so there
+   is something to push:
 
    ```sh
-   git commit --allow-empty -m "<ENG-###>"
+   git commit --allow-empty -S -m "<ENG-###>"
    ```
+
+   The `-S` is mandatory: branch protection on
+   this repo requires every commit to have a
+   verified signature, and the empty cache-warm
+   commit is the most painful one to retroactively
+   sign — amending it without `--allow-empty`
+   fails (no tree change), and re-signing it
+   later forces a re-sign of every child commit
+   (changes its SHA, which re-parents all
+   descendants). Sign it from the start.
 
 1. Push the branch:
 
