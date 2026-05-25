@@ -46,16 +46,12 @@ export function SwapPanel() {
   const quote = useDflowQuote(fromMint, toMint, fromDecimals, amount);
 
   // Toggling direction promotes the current quote's output amount into the
-  // new input. With no live quote (zero amount, sameToken, first load) the
-  // existing input is kept — the quote hook will refire against the flipped
-  // pair either way. URL is canonicalized in the same beat so the address
-  // bar matches the new pair without waiting for any sync effect.
+  // new input. The promotion logic lives in the store action — it reads
+  // `lastFormattedOutAmount` (which this component keeps in sync via the
+  // effect below). With no live quote the existing input is kept; the
+  // quote hook refires against the flipped pair either way.
   useAppEvent("swapSides", () => {
-    const next =
-      quote.outAmount !== null && quote.outAmount > 0n
-        ? formatAtomic(quote.outAmount, toDecimals)
-        : undefined;
-    store.getState().swapSides(next);
+    store.getState().swapSides();
     const { from, to } = store.getState();
     gotoSwap(from.stablecoin, to.stablecoin);
   });
@@ -156,6 +152,21 @@ export function SwapPanel() {
   // briefly displaying 1000× wrong numbers when decimals differ.
   const quoteFresh =
     quote.inputMint === fromMint && quote.outputMint === toMint;
+
+  // Mirror the live to-side amount (as a decimal string in the to-side's
+  // units) into the store so picker/swap actions on other pages can
+  // promote it on a direction flip — see store.setToken / store.swapSides.
+  // Cleared whenever there's no fresh, positive quote so a stale value
+  // can't get promoted after the user wipes the amount.
+  useEffect(() => {
+    if (quoteFresh && quote.outAmount !== null && quote.outAmount > 0n) {
+      store
+        .getState()
+        .setLastFormattedOutAmount(formatAtomic(quote.outAmount, toDecimals));
+    } else {
+      store.getState().setLastFormattedOutAmount("");
+    }
+  }, [quoteFresh, quote.outAmount, toDecimals, store]);
 
   // Two-stage visibility for the rate/fee panel:
   //   - `routeFound` gates the whole section. No two-sided quote = no

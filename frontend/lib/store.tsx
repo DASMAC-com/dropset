@@ -52,12 +52,27 @@ type Store = {
   from: SideState;
   to: SideState;
   amount: string;
+  // Latest formatted to-side decimal string from the live quote (in
+  // to-decimals' units). Kept here — not in component state — so that
+  // mutation actions can read it without the caller having to know the
+  // quote. Empty string when no live quote is available.
+  //
+  // Crucially this persists across cross-route navigation: a picker
+  // click on /currencies (where the quote hook isn't mounted) can still
+  // read the value the quote produced just before the user navigated
+  // away, and use it as the promoted from-amount on a direction flip.
+  lastFormattedOutAmount: string;
   slippage: Slippage;
   activeSide: Side;
   setActiveSide: (side: Side) => void;
-  // Assign `currency`/`stablecoin` to `side`. Refuses to write a sameToken
-  // pair: if the requested token is already on the opposite side, atomically
-  // flips the pair instead. Callers don't need to guard for this.
+  // Assign `currency`/`stablecoin` to `side`. Three branches:
+  //   * Token already on requested side → no-op (just refresh activeSide).
+  //   * Token already on the *opposite* side → atomically flip the pair
+  //     and promote `lastFormattedOutAmount` into `amount` so the
+  //     previous to-side value becomes the new from-side input. If no
+  //     live quote, the existing amount is left alone.
+  //   * Otherwise → set the side's currency/stablecoin and clear
+  //     `amount` so the user starts a fresh input for the new token.
   setToken: (
     side: Side,
     currency: IsoCurrencyCode,
@@ -66,15 +81,17 @@ type Store = {
   ) => void;
   setAmount: (amount: string) => void;
   setSlippage: (slippage: Slippage) => void;
-  // Flip from/to. When `amount` is passed, it replaces the input amount in
-  // the same `set` call so subscribers (notably the quote hook) never see a
-  // transient state where sides have flipped but amount is still the pre-swap
-  // value. Callers use this to promote the previous output amount into the
-  // new input when toggling direction.
-  swapSides: (amount?: string) => void;
+  setLastFormattedOutAmount: (formatted: string) => void;
+  // Flip from/to. Reads `lastFormattedOutAmount` from the store and
+  // promotes it into `amount` in the same `set` call so subscribers
+  // (notably the quote hook) never see a transient state where sides
+  // have flipped but amount is still the pre-swap value. If no live
+  // quote is available, leaves the existing amount alone.
+  swapSides: () => void;
   // Atomic from/to write used by URL reconciliation. Computes cca2 anchors
-  // and writes both sides in a single `set`. activeSide is intentionally left
-  // alone so the side asserted by a prior picker click survives this write.
+  // and writes both sides in a single `set`. activeSide and amount are
+  // intentionally left alone so the side asserted by a prior picker click
+  // (and the user's typed amount) survive this write.
   setSides: (
     from: { currency: IsoCurrencyCode; stablecoin: string },
     to: { currency: IsoCurrencyCode; stablecoin: string },
@@ -94,6 +111,7 @@ export const createSwapStore = (initial?: {
       sideStateFor(DEFAULT_FROM.currency, DEFAULT_FROM.stablecoin),
     to: initial?.to ?? sideStateFor(DEFAULT_TO.currency, DEFAULT_TO.stablecoin),
     amount: "",
+    lastFormattedOutAmount: "",
     slippage: { mode: "auto" },
     activeSide: "from",
 
@@ -110,12 +128,30 @@ export const createSwapStore = (initial?: {
         if (side === "from" ? onFrom : onTo) return { activeSide: side };
         // Token is on the opposite side — flip the pair atomically so we
         // never observe a transient sameToken between two sequential `set`s.
+        // The previous to-side displayed amount (lastFormattedOutAmount) is
+        // already in to-decimals' units, which is exactly the new from-side's
+        // unit basis after the flip — so promote it into `amount`.
         if (side === "from" ? onTo : onFrom) {
-          return { from: s.to, to: s.from, activeSide: side };
+          return {
+            from: s.to,
+            to: s.from,
+            activeSide: side,
+            ...(s.lastFormattedOutAmount
+              ? { amount: s.lastFormattedOutAmount }
+              : {}),
+            // Reset the cached out-amount; it was for the pre-flip pair
+            // and now it's been consumed (or there's nothing to consume).
+            lastFormattedOutAmount: "",
+          };
         }
+        // New token replaces this side — the prior amount is in the OLD
+        // token's units, which doesn't match the new one. Clear so the
+        // user starts a fresh input.
         return {
           [side]: sideStateFor(currency, stablecoin, cca2),
           activeSide: side,
+          amount: "",
+          lastFormattedOutAmount: "",
         };
       }),
 
@@ -123,12 +159,18 @@ export const createSwapStore = (initial?: {
 
     setSlippage: (slippage) => set({ slippage }),
 
-    swapSides: (amount) =>
+    setLastFormattedOutAmount: (formatted) =>
+      set({ lastFormattedOutAmount: formatted }),
+
+    swapSides: () =>
       set((s) => ({
         from: s.to,
         to: s.from,
         activeSide: otherSide(s.activeSide),
-        ...(amount !== undefined ? { amount } : {}),
+        ...(s.lastFormattedOutAmount
+          ? { amount: s.lastFormattedOutAmount }
+          : {}),
+        lastFormattedOutAmount: "",
       })),
 
     setSides: (from, to) =>
