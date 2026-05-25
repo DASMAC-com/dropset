@@ -1,3 +1,4 @@
+// cspell:word Fron
 "use client";
 
 import { useEffect, useRef } from "react";

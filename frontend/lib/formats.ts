@@ -31,7 +31,7 @@ export const FORMATS = {
     maximumFractionDigits: 2,
   } satisfies Format,
 
-  // Compact unitless count ("1.2K") for holder counts and similar.
+  // Compact unit-less count ("1.2K") for holder counts and similar.
   countCompact: {
     notation: "compact",
     maximumFractionDigits: 1,

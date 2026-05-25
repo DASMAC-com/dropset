@@ -43,7 +43,7 @@ export const MAX_ALTITUDE = 4.5;
 
 // ───────────────────────── Camera defaults ──────────────────────
 
-// Start centered roughly over the eastern US so autorotate reveals the
+// Start centered roughly over the eastern US so auto-rotate reveals the
 // Atlantic and then Europe — the canonical USD → EUR path.
 export const DEFAULT_POV = { lat: 30, lng: -75, altitude: 1.5 };
 

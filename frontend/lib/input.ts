@@ -18,7 +18,7 @@ export const sanitizeAmount = (raw: string, decimals: number): string => {
 };
 
 // Same as sanitizeAmount but additionally clamps the value to [0, 100]
-// (after sanitisation) for percent fields and caps at 2 decimal places.
+// (after sanitization) for percent fields and caps at 2 decimal places.
 export const sanitizePercent = (raw: string): string => {
   let v = raw.replace(/[^0-9.]/g, "");
   const firstDot = v.indexOf(".");
