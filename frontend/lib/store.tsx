@@ -65,14 +65,18 @@ type Store = {
   slippage: Slippage;
   activeSide: Side;
   setActiveSide: (side: Side) => void;
-  // Assign `currency`/`stablecoin` to `side`. Three branches:
+  // Assign `currency`/`stablecoin` to `side`. Four branches:
   //   * Token already on requested side → no-op (just refresh activeSide).
   //   * Token already on the *opposite* side → atomically flip the pair
   //     and promote `lastFormattedOutAmount` into `amount` so the
   //     previous to-side value becomes the new from-side input. If no
   //     live quote, the existing amount is left alone.
-  //   * Otherwise → set the side's currency/stablecoin and clear
-  //     `amount` so the user starts a fresh input for the new token.
+  //   * Otherwise, picking a new **from** token → set the side and clear
+  //     `amount` (the prior value was in the old from-token's units and
+  //     would be misinterpreted under the new from-decimals).
+  //   * Otherwise, picking a new **to** token → set the side and leave
+  //     `amount` alone (the from-side hasn't changed, so the typed
+  //     amount is still meaningful).
   setToken: (
     side: Side,
     currency: IsoCurrencyCode,
@@ -144,13 +148,15 @@ export const createSwapStore = (initial?: {
             lastFormattedOutAmount: "",
           };
         }
-        // New token replaces this side — the prior amount is in the OLD
-        // token's units, which doesn't match the new one. Clear so the
-        // user starts a fresh input.
+        // New token replaces this side. When that side is `from`, the
+        // existing `amount` was in the OLD from-token's units and is
+        // now meaningless — clear it. When it's `to`, the from-side
+        // hasn't changed and the user's typed amount is still valid;
+        // keep it so swapping the destination doesn't make them retype.
         return {
           [side]: sideStateFor(currency, stablecoin, cca2),
           activeSide: side,
-          amount: "",
+          ...(side === "from" ? { amount: "" } : {}),
           lastFormattedOutAmount: "",
         };
       }),

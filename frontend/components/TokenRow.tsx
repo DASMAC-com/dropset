@@ -107,7 +107,10 @@ export function TokenRow({
     () => ({ maximumFractionDigits: decimals }),
     [decimals],
   );
-  let toPlaceholder = "0";
+  // No value to show on the to-side → render the same em-dash placeholder
+  // the error / rateLimited states use. Previously rendered "0" / "0.0",
+  // which looked like a real (zero) quote — the dash is unambiguous.
+  let toPlaceholder = "—";
   if (side === "to" && quote) {
     if (
       (quote.status === "loading" && quote.outAmount === null) ||
