@@ -90,20 +90,20 @@ Optional (always ask if not provided):
      signal it should be broken up. Look for
      groupings the existing names already
      suggest:
-       - by-feature (`swap/`, `currencies/`,
-         `globe/`, `wallet/`)
-       - by-layer (`ui/` vs `features/`,
-         `hooks/` vs `helpers/`)
-       - by-shape (a `globe*.ts` cluster, an
-         `*useX.ts` cluster of hooks, an `*.gen.*`
-         cluster of generated files)
-     Flag each oversized directory with a
-     concrete proposed split — not just "split
-     it" but the actual subdirectory names and
-     which existing files would land where.
-     This check applies even to directories
-     that aren't growing rapidly, so long as
-     the natural groupings are visible.
+     - by-feature (`swap/`, `currencies/`,
+       `globe/`, `wallet/`)
+     - by-layer (`ui/` vs `features/`,
+       `hooks/` vs `helpers/`)
+     - by-shape (a `globe*.ts` cluster, an
+       `*useX.ts` cluster of hooks, an `*.gen.*`
+       cluster of generated files)
+       Flag each oversized directory with a
+       concrete proposed split — not just "split
+       it" but the actual subdirectory names and
+       which existing files would land where.
+       This check applies even to directories
+       that aren't growing rapidly, so long as
+       the natural groupings are visible.
    - **One sub-agent per user-specified extra
      focus area.**
 
