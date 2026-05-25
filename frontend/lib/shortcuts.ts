@@ -260,10 +260,28 @@ const isTextEditable = (target: EventTarget | null): boolean =>
   target instanceof HTMLTextAreaElement ||
   (target instanceof HTMLElement && target.isContentEditable);
 
-// Inputs marked with `data-shortcut-passthrough` let non-printable keys
-// (Backspace, arrows, etc.) and digits/period reach the field, but route any
-// other single-character key to the global shortcut handler so the user can
-// trigger shortcuts without having to blur first.
+// Symbol keys that require Shift to produce (US keyboard). For these, a
+// Shift modifier is expected and not a sign that the user meant a Shift+
+// chord; for any other key we treat Shift as "this is a different chord"
+// and refuse to match — so Shift+w doesn't fire the wallet shortcut.
+const SHIFT_PRODUCED_SYMBOLS = new Set([
+  "?",
+  "%",
+  "+",
+  "/",
+  ":",
+  "@",
+  "~",
+  "<",
+  ">",
+]);
+
+// Inputs marked with `data-shortcut-passthrough` are amount/percent fields
+// that only accept digits, period, and minus — every other key is fair
+// game for shortcut matching. This lets the user hit `m` for Max or `d`
+// for direction-swap without first blurring the field with Escape.
+// Non-printable keys (Escape, Tab, Backspace, arrows) reach the field so
+// editing still works, and digit/decimal keys are explicitly held back.
 const isPassthroughInput = (target: EventTarget | null): boolean =>
   target instanceof HTMLElement &&
   target.dataset.shortcutPassthrough === "true";
@@ -276,14 +294,23 @@ export function useKeyboardShortcuts(): void {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const passthrough = isPassthroughInput(e.target);
+      // Editable target without passthrough consumes every key.
       if (isTextEditable(e.target) && !passthrough) return;
       if (passthrough) {
+        // Non-printable keys (Tab, Escape, Backspace, arrows…) belong to
+        // the input — let it handle them.
         if (e.key.length !== 1) return;
-        if (/[0-9.]/.test(e.key)) return;
+        // Numeric input characters belong to the input too.
+        if (/[0-9.,-]/.test(e.key)) return;
       }
-      const k = e.key.toLowerCase();
-      const spec = active.find((s) => s.key === k);
+      if (e.shiftKey && !SHIFT_PRODUCED_SYMBOLS.has(e.key)) return;
+      // Match the key literally — no lowercase. Shift+letter would
+      // produce a capital that won't match any registered shortcut.
+      const spec = active.find((s) => s.key === e.key);
       if (!spec) {
+        // While focused on a passthrough input, swallow any non-numeric
+        // key that didn't match a shortcut so it doesn't slip through
+        // and get inserted into the field anyway.
         if (passthrough) e.preventDefault();
         return;
       }

@@ -11,7 +11,9 @@ import {
   tokenIconUrl,
 } from "@/lib/currencies";
 import { useAppEvent } from "@/lib/events";
-import { type Side, useSwapStore } from "@/lib/store";
+import { type Side, useSwapStore, useSwapStoreApi } from "@/lib/store";
+import { useSwapNav } from "@/lib/swapUrl";
+import { isOnSide as predicateIsOnSide } from "@/lib/tokenSelection";
 import { sortByVolumeDesc, useInfoLookup } from "@/lib/useUsdQuote";
 import { CurrencyGroupHeader } from "./CurrencyGroupHeader";
 import { ChevronDown, Search, X } from "./icons";
@@ -24,8 +26,9 @@ export function TokenPicker({ side }: { side: Side }) {
   const otherSideState = useSwapStore(
     (s) => s[side === "from" ? "to" : "from"],
   );
-  const setToken = useSwapStore((s) => s.setToken);
+  const store = useSwapStoreApi();
   const setActiveSide = useSwapStore((s) => s.setActiveSide);
+  const gotoSwap = useSwapNav();
 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -43,8 +46,23 @@ export function TokenPicker({ side }: { side: Side }) {
     setActiveSide(side);
   });
 
+  // A picker row is blocked if the token is already on the OTHER side
+  // (selecting it would be a direction flip, which this picker doesn't
+  // do — callers use the swap-arrow button for that).
+  const otherSide: Side = side === "from" ? "to" : "from";
   const isBlocked = (cur: IsoCurrencyCode, sym: string) =>
-    cur === otherSideState.currency && sym === otherSideState.stablecoin;
+    predicateIsOnSide(
+      {
+        fromCurrency: side === "from" ? currency : otherSideState.currency,
+        fromStablecoin:
+          side === "from" ? stablecoin : otherSideState.stablecoin,
+        toCurrency: side === "from" ? otherSideState.currency : currency,
+        toStablecoin: side === "from" ? otherSideState.stablecoin : stablecoin,
+      },
+      otherSide,
+      cur,
+      sym,
+    );
 
   const q = query.trim().toLowerCase();
   const matches = (s: Stablecoin, code: IsoCurrencyCode): boolean =>
@@ -88,7 +106,9 @@ export function TokenPicker({ side }: { side: Side }) {
   }, [highlightedIndex]);
 
   const select = (code: IsoCurrencyCode, sym: string) => {
-    setToken(side, code, sym);
+    store.getState().setToken(side, code, sym);
+    const { from, to } = store.getState();
+    gotoSwap(from.stablecoin, to.stablecoin);
     setOpen(false);
   };
 
@@ -99,7 +119,8 @@ export function TokenPicker({ side }: { side: Side }) {
       setHighlightedIndex((i) => {
         for (let step = 1; step <= items.length; step++) {
           const next = (i + step) % items.length;
-          if (!items[next].blocked) return next;
+          const item = items[next];
+          if (item && !item.blocked) return next;
         }
         return i;
       });
@@ -108,7 +129,8 @@ export function TokenPicker({ side }: { side: Side }) {
       setHighlightedIndex((i) => {
         for (let step = 1; step <= items.length; step++) {
           const prev = (i - step + items.length) % items.length;
-          if (!items[prev].blocked) return prev;
+          const item = items[prev];
+          if (item && !item.blocked) return prev;
         }
         return i;
       });
@@ -208,6 +230,7 @@ export function TokenPicker({ side }: { side: Side }) {
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={onSearchKeyDown}
               placeholder="Search tokens…"
+              aria-label="Search tokens by symbol, name, or mint"
               className="min-w-0 flex-1 bg-transparent text-foreground text-sm outline-none placeholder:text-muted-fg"
             />
             <kbd className="hidden shrink-0 rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-fg sm:inline-block">

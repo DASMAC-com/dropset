@@ -24,7 +24,11 @@ export function SwapResult({
     const inStr = groupThousands(formatBaseAmount(result.inAmount, inDec));
     const outStr = groupThousands(formatBaseAmount(result.outAmount, outDec));
     return (
-      <div className="flex items-center gap-2 rounded-xl border border-border bg-muted px-3 py-2 text-sm">
+      <div
+        role="status"
+        aria-live="polite"
+        className="flex items-center gap-2 rounded-xl border border-border bg-muted px-3 py-2 text-sm"
+      >
         <CircleCheck
           size={18}
           className="shrink-0 text-accent-buy"
@@ -57,7 +61,11 @@ export function SwapResult({
   if (status === "error" && error) {
     const isCancel = error.kind === "rejected";
     return (
-      <div className="flex items-center gap-2 rounded-xl border border-border bg-muted px-3 py-2 text-sm">
+      <div
+        role="alert"
+        aria-live="assertive"
+        className="flex items-center gap-2 rounded-xl border border-border bg-muted px-3 py-2 text-sm"
+      >
         <CircleAlert
           size={18}
           className={`shrink-0 ${isCancel ? "text-muted-fg" : "text-accent-sell"}`}

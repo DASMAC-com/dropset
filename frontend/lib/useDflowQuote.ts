@@ -7,6 +7,17 @@ import {
   projectedRemaining,
   recordResponse,
 } from "./rateLimitBudget";
+import {
+  MIN_TOKENS_TO_FETCH,
+  QUOTE_DEBOUNCE_MS,
+  QUOTE_REFRESH_MS,
+  RECOVERY_TOKEN_TARGET,
+} from "./timings";
+import {
+  type ParsedDflowQuote,
+  parseDflowQuote,
+  ValidationError,
+} from "./validate";
 
 // DFlow developer trade API. No API key required and CORS open
 // (`access-control-allow-origin: *`), so we call directly from the browser
@@ -14,22 +25,6 @@ import {
 // we outgrow that we'll proxy through a Next.js route handler — the hook
 // signature stays the same, only the base URL changes.
 const DFLOW_QUOTE_URL = "https://dev-quote-api.dflow.net/quote";
-
-// Idle window after an input change before the fetch fires. Keeps typing
-// from emitting one request per keystroke.
-const DEBOUNCE_MS = 500;
-
-// Auto-refresh cadence after a successful fetch. 2 s gives a fresh route
-// view while leaving plenty of bucket headroom for typing bursts.
-const REFRESH_MS = 2_000;
-
-// Defensive floor for projected `remaining`. Drop below this and the
-// timer defers another cycle rather than risk a 429.
-const MIN_TOKENS_TO_FETCH = 3;
-
-// When the budget is exhausted, hold off until projected remaining reaches
-// this many tokens.
-const RECOVERY_TOKEN_TARGET = 10;
 
 // Slippage flag sent to the API. "auto" lets DFlow size it from current
 // liquidity; we render the returned `slippageBps` for transparency.
@@ -43,15 +38,20 @@ export type QuoteStatus =
   | "rateLimited"
   | "skipped";
 
+// Flat shape (not a discriminated union) on purpose: outAmount/inAmount
+// persist across status transitions so the to-side keeps the previous
+// quote visible while a new fetch is in flight. A strict
+// { status: "loading"; outAmount: null } | { status: "ok"; outAmount: bigint }
+// union would force consumers to either hide the prior amount during
+// every refetch (flicker) or duplicate it onto the loading variant
+// (bookkeeping). The mint-pair fields plus `hasQuote` are what consumers
+// use to detect a stale-but-still-shown previous result.
 export type DflowQuote = {
   status: QuoteStatus;
   outAmount: bigint | null;
   inAmount: bigint | null;
   // The mints this quote was fetched for. Consumers should compare these
-  // against the *current* store mints to detect a stale cached quote — the
-  // hook holds the previous result during the debounce/refetch window, so
-  // a naive `quote.outAmount` read after the user swaps sides or picks a
-  // new token would interpret old atomic units with new decimals.
+  // against the *current* store mints to detect a stale cached quote.
   inputMint: string | null;
   outputMint: string | null;
   priceImpactPct: string | null;
@@ -88,18 +88,11 @@ const toAtomic = (raw: string, decimals: number): bigint => {
   }
 };
 
-type RawQuote = {
-  inAmount: string;
-  outAmount: string;
-  priceImpactPct?: string;
-  slippageBps?: number;
-};
-
 // React hook: returns the current DFlow quote for the given inputs. A
 // single self-rescheduling timer drives the whole lifecycle:
 //   - On any input change the previous timer is cancelled and a new one
-//     is scheduled DEBOUNCE_MS out. Holding down a key restarts the timer.
-//   - After a successful fetch the next tick is scheduled REFRESH_MS out,
+//     is scheduled QUOTE_DEBOUNCE_MS out. Holding down a key restarts the timer.
+//   - After a successful fetch the next tick is scheduled QUOTE_REFRESH_MS out,
 //     keeping the quote fresh while the user just stares at the panel.
 //   - 429s pause the chain for RECOVERY_TOKEN_TARGET seconds.
 //   - 4xx errors and zero-amount/sameToken/missing-mint inputs stop the
@@ -133,7 +126,7 @@ export const useDflowQuote = (
       // Pause-on-hidden: don't fetch when the tab isn't visible, but keep
       // the chain alive so we resume on visibility. Re-checked each tick.
       if (document.visibilityState !== "visible") {
-        schedule(REFRESH_MS);
+        schedule(QUOTE_REFRESH_MS);
         return;
       }
 
@@ -163,7 +156,7 @@ export const useDflowQuote = (
       // explicitly. Until then we rely on DFlow itself returning 429.
       const projected = projectedRemaining(DFLOW_QUOTE);
       if (projected !== null && projected < MIN_TOKENS_TO_FETCH) {
-        schedule(REFRESH_MS);
+        schedule(QUOTE_REFRESH_MS);
         return;
       }
 
@@ -192,50 +185,95 @@ export const useDflowQuote = (
         }
 
         if (!res.ok) {
-          const body = (await res.json().catch(() => null)) as {
-            msg?: string;
-          } | null;
-          // Clear outAmount so the to-side falls back to "—" rather than
-          // leaving a stale number from the previous good quote. We also
-          // stop the chain — the next input change retries.
-          setQuote({
-            ...INITIAL,
-            status: "error",
-            error: body?.msg ?? `HTTP ${res.status}`,
-          });
+          // Distinguish "non-2xx with a parseable JSON error envelope" from
+          // "non-2xx with malformed body" so the user can tell a real API
+          // error apart from upstream corruption / outage.
+          let bodyText: string | null = null;
+          try {
+            bodyText = await res.text();
+          } catch {
+            bodyText = null;
+          }
+          let reason = `HTTP ${res.status}`;
+          if (bodyText) {
+            try {
+              const body = JSON.parse(bodyText) as { msg?: unknown };
+              if (typeof body?.msg === "string" && body.msg.length > 0) {
+                reason = body.msg;
+              } else {
+                reason = `HTTP ${res.status}: ${bodyText.slice(0, 200)}`;
+              }
+            } catch {
+              reason = `HTTP ${res.status} with malformed body`;
+            }
+          }
+          setQuote({ ...INITIAL, status: "error", error: reason });
           return;
         }
 
-        const data = (await res.json()) as RawQuote;
+        let parsed: ParsedDflowQuote;
+        try {
+          const data: unknown = await res.json();
+          parsed = parseDflowQuote(data);
+        } catch (e) {
+          if (cancelled) return;
+          const reason =
+            e instanceof ValidationError
+              ? `Invalid quote response: ${e.message}`
+              : "Quote response could not be parsed";
+          setQuote({ ...INITIAL, status: "error", error: reason });
+          return;
+        }
         if (cancelled) return;
         setQuote({
           status: "ok",
-          outAmount: BigInt(data.outAmount),
-          inAmount: BigInt(data.inAmount),
+          outAmount: parsed.outAmount,
+          inAmount: parsed.inAmount,
           inputMint,
           outputMint,
-          priceImpactPct: data.priceImpactPct ?? null,
-          slippageBps: data.slippageBps ?? null,
+          priceImpactPct: parsed.priceImpactPct,
+          slippageBps: parsed.slippageBps,
           hasQuote: true,
           error: null,
         });
         // Successful fetch — keep the chain going.
-        schedule(REFRESH_MS);
+        schedule(QUOTE_REFRESH_MS);
       } catch (err) {
         if (cancelled || controller.signal.aborted) return;
-        const message = err instanceof Error ? err.message : "Network error";
+        // Distinguish AbortError (timeout/visibility) from real fetch
+        // failures (offline, DNS, CORS) so the user can tell why.
+        let message: string;
+        if (err instanceof Error) {
+          if (err.name === "AbortError") return;
+          message =
+            err.name === "TypeError"
+              ? `Network unreachable: ${err.message}`
+              : err.message;
+        } else {
+          message = "Network error";
+        }
         setQuote({ ...INITIAL, status: "error", error: message });
       }
     };
 
     // Initial fire is debounced, so a rapid-fire input change just resets
     // the timer rather than emitting one request per keystroke.
-    schedule(DEBOUNCE_MS);
+    schedule(QUOTE_DEBOUNCE_MS);
+
+    // Resume immediately on tab focus rather than waiting for the next
+    // scheduled tick (which could be up to QUOTE_REFRESH_MS away).
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      if (timer !== undefined) window.clearTimeout(timer);
+      schedule(0);
+    };
+    document.addEventListener("visibilitychange", onVisible);
 
     return () => {
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
       controller.abort();
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [inputMint, outputMint, inputDecimals, inputAmountDecimal]);
 

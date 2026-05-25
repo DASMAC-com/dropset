@@ -40,7 +40,11 @@ export function QuoteError({
         : "Amount too large to route in one swap — try a smaller size.";
   }
   return (
-    <div className="rounded-lg border border-border bg-muted px-3 py-2 text-muted-fg text-sm">
+    <div
+      role="alert"
+      aria-live="polite"
+      className="rounded-lg border border-border bg-muted px-3 py-2 text-muted-fg text-sm"
+    >
       {friendly}
     </div>
   );

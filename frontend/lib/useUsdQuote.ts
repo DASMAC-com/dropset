@@ -2,6 +2,11 @@
 
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { stablecoinMint } from "./currencies";
+import { TOKEN_INFO_REFRESH_MS, TOKEN_INFO_TTL_MS } from "./timings";
+
+// Re-export so existing import sites (SwapPanel, CurrenciesView) keep
+// working — the canonical definition lives in lib/timings.ts.
+export const REFRESH_INTERVAL_MS = TOKEN_INFO_REFRESH_MS;
 
 // Jupiter's keyless Tokens API endpoint. Hit directly from the browser so
 // each user's IP gets its own rate-limit bucket (1 RPS keyless) instead of
@@ -10,15 +15,9 @@ import { stablecoinMint } from "./currencies";
 // single batched call for up to 100 mints, which we use to power both the
 // swap UI's USD readouts and the /currencies market-data columns.
 const JUP_SEARCH_URL = "https://lite-api.jup.ag/tokens/v2/search";
-// 10 s refresh cadence — empirically matches Jupiter's own server-side
-// update rate for /tokens/v2/search. Polling faster doesn't surface
-// fresher data (every other request returns identical numbers), so 10 s
-// hits the sweet spot. The TTL is kept at half the interval so the
-// boundary tick is never skipped by the dedupe check. Keyless limit is
-// 60 req/min/IP, leaving plenty of headroom with /swap + /currencies
-// both open.
-const CACHE_TTL_MS = 5_000;
-export const REFRESH_INTERVAL_MS = 10_000;
+// Alias kept for grep-ability in this file; canonical name and rationale
+// live in lib/timings.ts (TOKEN_INFO_TTL_MS).
+const CACHE_TTL_MS = TOKEN_INFO_TTL_MS;
 
 // Trimmed projection of Jupiter's /tokens/v2/search row. We keep only the
 // fields the UI renders so the cache footprint stays small (~80 bytes/mint
@@ -94,14 +93,25 @@ const fetchInfo = (mint: string): Promise<TokenInfo | null> => {
   const p = (async () => {
     try {
       const res = await fetch(`${JUP_SEARCH_URL}?query=${mint}`);
-      if (!res.ok) return null;
-      const rows = (await res.json()) as RawJupRow[];
+      if (!res.ok) {
+        console.warn(`Jupiter token info HTTP ${res.status} for ${mint}`);
+        return null;
+      }
+      const body: unknown = await res.json();
+      if (!Array.isArray(body)) {
+        console.warn(`Jupiter token info returned non-array for ${mint}`);
+        return null;
+      }
+      const rows = body as RawJupRow[];
       const row = rows.find((r) => r.id === mint);
       const info = row ? project(row) : null;
       cache.set(mint, { info, fetchedAt: Date.now() });
       notify();
       return info;
-    } catch {
+    } catch (e) {
+      console.warn(
+        `Jupiter token info fetch failed for ${mint}: ${e instanceof Error ? e.message : String(e)}`,
+      );
       return null;
     } finally {
       inflight.delete(mint);
@@ -127,8 +137,20 @@ export const prefetchAllTokenInfo = (mints: string[]): Promise<void> => {
   const batch = (async () => {
     try {
       const res = await fetch(`${JUP_SEARCH_URL}?query=${need.join(",")}`);
-      if (!res.ok) return;
-      const rows = (await res.json()) as RawJupRow[];
+      if (!res.ok) {
+        console.warn(
+          `Jupiter prefetch HTTP ${res.status} for ${need.length} mints — per-mint fetchInfo will retry on demand`,
+        );
+        return;
+      }
+      const body: unknown = await res.json();
+      if (!Array.isArray(body)) {
+        console.warn(
+          "Jupiter prefetch returned non-array — per-mint fetchInfo will retry",
+        );
+        return;
+      }
+      const rows = body as RawJupRow[];
       const byId = new Map<string, RawJupRow>();
       for (const r of rows) byId.set(r.id, r);
       const at = Date.now();
@@ -140,8 +162,10 @@ export const prefetchAllTokenInfo = (mints: string[]): Promise<void> => {
         });
       }
       notify();
-    } catch {
-      // Leave cache as-is; on-demand `fetchInfo` will retry per-mint.
+    } catch (e) {
+      console.warn(
+        `Jupiter prefetch failed: ${e instanceof Error ? e.message : String(e)} — per-mint fetchInfo will retry`,
+      );
     }
   })();
   for (const mint of need) {

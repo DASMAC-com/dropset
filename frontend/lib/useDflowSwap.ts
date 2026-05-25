@@ -30,6 +30,13 @@ export type CompletedSwap = DflowSwapResult & {
   toStablecoin: string;
 };
 
+// Flat shape (not a discriminated union) on purpose: SwapResult reads
+// both `status` and `result` to render the success banner with a link to
+// the explorer, and the success → idle transition (via reset()) should
+// not require re-typing `result`. A strict union would also force the
+// confirming → success transition to atomically swap status + result,
+// which is harder to reason about than letting React set both in the
+// same effect tick.
 export type UseDflowSwap = {
   status: SwapStatus;
   result: CompletedSwap | null;

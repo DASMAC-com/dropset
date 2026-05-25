@@ -10,7 +10,8 @@ import {
 } from "@/lib/currencies";
 import { PLATFORM_FEE } from "@/lib/env";
 import { emit, useAppEvent } from "@/lib/events";
-import { useSameToken, useSwapStore } from "@/lib/store";
+import { useSameToken, useSwapStore, useSwapStoreApi } from "@/lib/store";
+import { useSwapNav } from "@/lib/swapUrl";
 import { useAllBalances } from "@/lib/useAllBalances";
 import { formatAtomic, useDflowQuote } from "@/lib/useDflowQuote";
 import { useDflowSwap } from "@/lib/useDflowSwap";
@@ -36,7 +37,8 @@ export function SwapPanel() {
   const fromStablecoin = useSwapStore((s) => s.from.stablecoin);
   const toStablecoin = useSwapStore((s) => s.to.stablecoin);
   const amount = useSwapStore((s) => s.amount);
-  const swapSides = useSwapStore((s) => s.swapSides);
+  const store = useSwapStoreApi();
+  const gotoSwap = useSwapNav();
   const fromMint = stablecoinMint(fromStablecoin);
   const toMint = stablecoinMint(toStablecoin);
   const fromDecimals = stablecoinDecimals(fromStablecoin);
@@ -44,15 +46,14 @@ export function SwapPanel() {
   const quote = useDflowQuote(fromMint, toMint, fromDecimals, amount);
 
   // Toggling direction promotes the current quote's output amount into the
-  // new input. With no live quote (zero amount, sameToken, first load) the
-  // existing input is kept — the quote hook will refire against the flipped
-  // pair either way.
+  // new input. The promotion logic lives in the store action — it reads
+  // `lastFormattedOutAmount` (which this component keeps in sync via the
+  // effect below). With no live quote the existing input is kept; the
+  // quote hook refires against the flipped pair either way.
   useAppEvent("swapSides", () => {
-    const next =
-      quote.outAmount !== null && quote.outAmount > 0n
-        ? formatAtomic(quote.outAmount, toDecimals)
-        : undefined;
-    swapSides(next);
+    store.getState().swapSides();
+    const { from, to } = store.getState();
+    gotoSwap(from.stablecoin, to.stablecoin);
   });
 
   // One batched Jupiter call on mount warms every stablecoin's USD price so
@@ -151,6 +152,21 @@ export function SwapPanel() {
   // briefly displaying 1000× wrong numbers when decimals differ.
   const quoteFresh =
     quote.inputMint === fromMint && quote.outputMint === toMint;
+
+  // Mirror the live to-side amount (as a decimal string in the to-side's
+  // units) into the store so picker/swap actions on other pages can
+  // promote it on a direction flip — see store.setToken / store.swapSides.
+  // Cleared whenever there's no fresh, positive quote so a stale value
+  // can't get promoted after the user wipes the amount.
+  useEffect(() => {
+    if (quoteFresh && quote.outAmount !== null && quote.outAmount > 0n) {
+      store
+        .getState()
+        .setLastFormattedOutAmount(formatAtomic(quote.outAmount, toDecimals));
+    } else {
+      store.getState().setLastFormattedOutAmount("");
+    }
+  }, [quoteFresh, quote.outAmount, toDecimals, store]);
 
   // Two-stage visibility for the rate/fee panel:
   //   - `routeFound` gates the whole section. No two-sided quote = no

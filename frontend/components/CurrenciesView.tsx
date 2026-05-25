@@ -2,10 +2,10 @@
 // cspell:word EURC
 "use client";
 
-import NumberFlow, { type Format } from "@number-flow/react";
+import NumberFlow from "@number-flow/react";
 import * as Popover from "@radix-ui/react-popover";
-import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { memo, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { CopyButton } from "@/components/CopyButton";
 import {
   ArrowUpDown,
@@ -30,8 +30,12 @@ import {
 } from "@/lib/currencies";
 import { useAppEvent } from "@/lib/events";
 import { explorerTokenUrl } from "@/lib/explorer";
+import { useFlagColor } from "@/lib/flagColor";
+import { FORMATS } from "@/lib/formats";
+import { isFiniteNumber } from "@/lib/guards";
 import { type Side, useSwapStore, useSwapStoreApi } from "@/lib/store";
-import { flashBg, useFlashOnChange } from "@/lib/useFlashOnChange";
+import { useSwapNav } from "@/lib/swapUrl";
+import { flashBg, useFlashOnChanges } from "@/lib/useFlashOnChange";
 import {
   prefetchAllTokenInfo,
   REFRESH_INTERVAL_MS,
@@ -42,41 +46,6 @@ import {
 } from "@/lib/useUsdQuote";
 
 const COLSPAN = 9;
-
-// <NumberFlow> format objects, hoisted to module scope so the same
-// reference is reused across every row render. NumberFlow compares format
-// by identity to decide whether to reset its animation, so passing a
-// fresh object each render would kill the rolling-digit effect.
-//
-// Price uses max 6 decimals so sub-$1 stablecoin drift (e.g. $0.9987)
-// stays legible while $1.00 still renders as "$1.00" (min 2). Trailing
-// zeros above the minimum are trimmed by Intl.
-const priceFormat: Format = {
-  style: "currency",
-  currency: "USD",
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 6,
-};
-const changeFormat: Format = {
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-  // "+1.20" for gains, "-1.20" for losses, "0.00" for flat. Matches the
-  // legacy formatPercent which prepended an explicit "+" sign.
-  signDisplay: "exceptZero",
-};
-const compactUsdFormat: Format = {
-  notation: "compact",
-  style: "currency",
-  currency: "USD",
-  maximumFractionDigits: 2,
-};
-const compactCountFormat: Format = {
-  notation: "compact",
-  maximumFractionDigits: 1,
-};
-
-const isFiniteNumber = (n: unknown): n is number =>
-  typeof n === "number" && Number.isFinite(n);
 
 type SortKey = "volume24h" | "mcap" | "liquidity" | "holderCount";
 type SortDir = "asc" | "desc";
@@ -113,81 +82,6 @@ const groupScore = <T extends { mint: string }>(
     if (typeof v === "number" && v > max) max = v;
   }
   return Number.isFinite(max) ? max : -1;
-};
-
-// Cache of dominant color (RGB triplet) computed from a flag SVG rasterized to
-// a canvas. Module-level so it persists across re-renders / search filters.
-type Rgb = [number, number, number];
-const flagColorCache = new Map<string, Rgb | null>();
-
-const sampleDominantColor = (
-  ctx: CanvasRenderingContext2D,
-  size: number,
-): Rgb | null => {
-  let r = 0;
-  let g = 0;
-  let b = 0;
-  let n = 0;
-  const { data } = ctx.getImageData(0, 0, size, size);
-  for (let i = 0; i < data.length; i += 4) {
-    const pa = data[i + 3];
-    if (pa < 200) continue;
-    const pr = data[i];
-    const pg = data[i + 1];
-    const pb = data[i + 2];
-    const max = Math.max(pr, pg, pb);
-    const min = Math.min(pr, pg, pb);
-    const sat = max === 0 ? 0 : (max - min) / max;
-    // Drop near-grey, very dark, and very bright pixels — keeps the
-    // saturated brand color and avoids skewing toward white/black/grey bands.
-    if (sat < 0.3) continue;
-    if (max < 60 || max > 245) continue;
-    r += pr;
-    g += pg;
-    b += pb;
-    n++;
-  }
-  if (n === 0) return null;
-  return [(r / n) | 0, (g / n) | 0, (b / n) | 0];
-};
-
-const computeFlagColor = (url: string): Promise<Rgb | null> => {
-  if (typeof document === "undefined") return Promise.resolve(null);
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      const size = 24;
-      const canvas = document.createElement("canvas");
-      canvas.width = size;
-      canvas.height = size;
-      const ctx = canvas.getContext("2d", { willReadFrequently: true });
-      if (!ctx) return resolve(null);
-      ctx.clearRect(0, 0, size, size);
-      ctx.drawImage(img, 0, 0, size, size);
-      resolve(sampleDominantColor(ctx, size));
-    };
-    img.onerror = () => resolve(null);
-    img.src = url;
-  });
-};
-
-const useFlagColor = (code: IsoCurrencyCode, url: string): Rgb | null => {
-  const [color, setColor] = useState<Rgb | null>(() =>
-    flagColorCache.has(code) ? (flagColorCache.get(code) ?? null) : null,
-  );
-  useEffect(() => {
-    if (flagColorCache.has(code)) return;
-    let cancelled = false;
-    computeFlagColor(url).then((c) => {
-      if (cancelled) return;
-      flagColorCache.set(code, c);
-      setColor(c);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [code, url]);
-  return color;
 };
 
 const xHref = (handle: string) => `https://x.com/${handle}`;
@@ -232,7 +126,10 @@ function SortableHeader({
       ? ChevronDown
       : ChevronUp;
   return (
-    <th className="sticky top-14 z-20 border-border border-r bg-muted p-0 last:border-r-0">
+    <th
+      scope="col"
+      className="sticky top-14 z-20 border-border border-r bg-muted p-0 last:border-r-0"
+    >
       <button
         type="button"
         onClick={() => onToggle(sortKey)}
@@ -282,40 +179,21 @@ function CurrencyHeaderRow({ code }: { code: IsoCurrencyCode }) {
   );
 }
 
-// Returns a function that assigns (code, symbol) to the given side of the
-// swap store and navigates to /swap with the resolved pair encoded in the
-// URL. Delegates the actual mutation to the store's atomic `pickSide` action,
-// then reads the post-mutation pair off the store and pushes
-// `/swap?from=X&to=Y` explicitly — never bare `/swap`.
-//
-// The explicit URL is load-bearing in production: Next.js's App Router cache
-// will restore the previously-visited URL for a route when push is called
-// with a bare path. Concretely, if the user first lands on `/swap?to=usd`
-// (UrlSync canonicalizes that to `/swap?from=EURC&to=USDC`), then navigates
-// to /currencies, then triggers `router.push("/swap")` from a pickToken
-// click — the router can replay the *original* `/swap?to=usd` URL onto the
-// new push. UrlSync's reader then sees `?to=usd`, resolves the sameToken
-// conflict back to `from=EURC, to=USDC`, and overwrites the just-set store.
-// Pushing the resolved pair directly defeats that: the URL itself is the
-// source of truth, so even if the store's mutation is briefly out of sync
-// with the navigation, the reader on /swap will sync from URL to store with
-// the right values. Reading `getState()` after `pickSide` gives the
-// post-flip pair because Zustand's `set` is synchronous.
+// Assigns (code, symbol) to the given side via the store's atomic setToken,
+// then pushes the resolved pair into the URL so /swap mounts with canonical
+// params. Reads state after setToken because Zustand's set is synchronous —
+// the store reflects the post-flip pair by the time we navigate.
 function usePickToken(): (
   side: Side,
   code: IsoCurrencyCode,
   symbol: string,
 ) => void {
-  const router = useRouter();
   const store = useSwapStoreApi();
+  const gotoSwap = useSwapNav();
   return (side, code, symbol) => {
-    store.getState().pickSide(side, code, symbol);
+    store.getState().setToken(side, code, symbol);
     const { from, to } = store.getState();
-    const params = new URLSearchParams({
-      from: from.stablecoin,
-      to: to.stablecoin,
-    });
-    router.push(`/swap?${params.toString()}` as never);
+    gotoSwap(from.stablecoin, to.stablecoin);
   };
 }
 
@@ -363,7 +241,7 @@ function SwapPickerCell({
   );
 }
 
-function StablecoinRow({
+const StablecoinRow = memo(function StablecoinRow({
   code,
   s,
   rowIndex,
@@ -389,12 +267,26 @@ function StablecoinRow({
   // Layered with NumberFlow below: rolling digits convey *which* value
   // moved at the digit level, the bg flash adds a brief whole-cell cue
   // that draws the eye on each Jupiter refresh.
-  const priceFlash = useFlashOnChange(info?.usdPrice);
-  const changeFlash = useFlashOnChange(change);
-  const volumeFlash = useFlashOnChange(info?.volume24h);
-  const mcapFlash = useFlashOnChange(info?.mcap);
-  const liquidityFlash = useFlashOnChange(info?.liquidity);
-  const holdersFlash = useFlashOnChange(info?.holderCount);
+  const flashValues = useMemo(
+    () =>
+      [
+        info?.usdPrice,
+        change,
+        info?.volume24h,
+        info?.mcap,
+        info?.liquidity,
+        info?.holderCount,
+      ] as const,
+    [info, change],
+  );
+  const [
+    priceFlash,
+    changeFlash,
+    volumeFlash,
+    mcapFlash,
+    liquidityFlash,
+    holdersFlash,
+  ] = useFlashOnChanges(flashValues);
   return (
     <tr
       id={s.symbol.toLowerCase()}
@@ -515,7 +407,7 @@ function StablecoinRow({
           className={`rounded px-1 transition-colors duration-300 ${flashBg(priceFlash)}`}
         >
           {isFiniteNumber(info?.usdPrice) ? (
-            <NumberFlow value={info.usdPrice} format={priceFormat} />
+            <NumberFlow value={info.usdPrice} format={FORMATS.usdPrice} />
           ) : (
             "—"
           )}
@@ -528,7 +420,11 @@ function StablecoinRow({
           className={`rounded px-1 transition-colors duration-300 ${flashBg(changeFlash)}`}
         >
           {isFiniteNumber(change) ? (
-            <NumberFlow value={change} format={changeFormat} suffix="%" />
+            <NumberFlow
+              value={change}
+              format={FORMATS.signedPercent}
+              suffix="%"
+            />
           ) : (
             "—"
           )}
@@ -539,7 +435,7 @@ function StablecoinRow({
           className={`rounded px-1 transition-colors duration-300 ${flashBg(volumeFlash)}`}
         >
           {isFiniteNumber(info?.volume24h) ? (
-            <NumberFlow value={info.volume24h} format={compactUsdFormat} />
+            <NumberFlow value={info.volume24h} format={FORMATS.usdCompact} />
           ) : (
             "—"
           )}
@@ -550,7 +446,7 @@ function StablecoinRow({
           className={`rounded px-1 transition-colors duration-300 ${flashBg(mcapFlash)}`}
         >
           {isFiniteNumber(info?.mcap) ? (
-            <NumberFlow value={info.mcap} format={compactUsdFormat} />
+            <NumberFlow value={info.mcap} format={FORMATS.usdCompact} />
           ) : (
             "—"
           )}
@@ -561,7 +457,7 @@ function StablecoinRow({
           className={`rounded px-1 transition-colors duration-300 ${flashBg(liquidityFlash)}`}
         >
           {isFiniteNumber(info?.liquidity) ? (
-            <NumberFlow value={info.liquidity} format={compactUsdFormat} />
+            <NumberFlow value={info.liquidity} format={FORMATS.usdCompact} />
           ) : (
             "—"
           )}
@@ -572,7 +468,10 @@ function StablecoinRow({
           className={`rounded px-1 transition-colors duration-300 ${flashBg(holdersFlash)}`}
         >
           {isFiniteNumber(info?.holderCount) ? (
-            <NumberFlow value={info.holderCount} format={compactCountFormat} />
+            <NumberFlow
+              value={info.holderCount}
+              format={FORMATS.countCompact}
+            />
           ) : (
             "—"
           )}
@@ -580,7 +479,7 @@ function StablecoinRow({
       </td>
     </tr>
   );
-}
+});
 
 function CurrenciesInner() {
   const searchParams = useSearchParams();
@@ -698,10 +597,13 @@ function CurrenciesInner() {
 
   const pickToken = usePickToken();
   useAppEvent("pickCurrencyOnlyResult", (side) => {
-    if (grouped.length !== 1 || grouped[0].stables.length !== 1) return;
-    const { code } = grouped[0];
-    const { symbol } = grouped[0].stables[0];
-    pickToken(side, code, symbol);
+    const onlyGroup = grouped[0];
+    if (grouped.length !== 1 || !onlyGroup || onlyGroup.stables.length !== 1) {
+      return;
+    }
+    const onlyStable = onlyGroup.stables[0];
+    if (!onlyStable) return;
+    pickToken(side, onlyGroup.code, onlyStable.symbol);
   });
 
   const stats = currencyStats();
@@ -792,19 +694,34 @@ function CurrenciesInner() {
         <table className="w-full min-w-[720px] text-left text-sm">
           <thead className="text-muted-fg text-xs uppercase">
             <tr>
-              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
+              <th
+                scope="col"
+                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0"
+              >
                 Token
               </th>
-              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
+              <th
+                scope="col"
+                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0"
+              >
                 Swap
               </th>
-              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0">
+              <th
+                scope="col"
+                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0"
+              >
                 Mint Address
               </th>
-              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0">
+              <th
+                scope="col"
+                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0"
+              >
                 Price
               </th>
-              <th className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0">
+              <th
+                scope="col"
+                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0"
+              >
                 24h Δ
               </th>
               <SortableHeader
