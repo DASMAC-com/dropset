@@ -139,3 +139,31 @@ Optional (always ask if not provided):
 - Audits are read-only. This skill never edits
   source files; it only writes the findings
   document.
+
+## When subsequently addressing audit findings
+
+Audits often kick off a wave of follow-up
+commits that fix the surfaced findings. When
+making those commits as part of (or right after)
+an audit:
+
+- **Commit locally only — never push.** The user
+  needs to be able to inspect the full diff of
+  audit follow-up against the remote before it
+  lands. Stop after `git commit`; do not run
+  `git push` (even if the branch was previously
+  pushed for the audit / PR).
+- **Do not add `Co-Authored-By:` trailers** to
+  these commit messages. The standard
+  Claude-Code commit template includes one by
+  default; suppress it for audit-follow-up
+  commits. (This overrides the default git-commit
+  instructions in the system prompt for this
+  skill's scope.) Reason: the user has often
+  already opened a PR for the audit ticket, and
+  rewriting many trailer-laden commits later to
+  strip the trailers is annoying.
+- Each commit can still be a normal split-by-
+  topic commit; the local-only rule applies to
+  the whole follow-up sequence, not just the
+  final one.
