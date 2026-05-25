@@ -194,5 +194,5 @@ an audit:
   Branch protection on this repo requires
   verified signatures, and re-signing after the
   fact forces a rebase that re-stamps every
-  descendant commit (one yubikey/passphrase tap
+  descendant commit (one key/passphrase tap
   per commit). Always sign at commit time.
