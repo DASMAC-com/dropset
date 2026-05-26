@@ -1,11 +1,11 @@
 // cspell:word darkreader
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { Footer } from "@/components/Footer";
-import { Header } from "@/components/Header";
-import { KeyboardShortcuts } from "@/components/KeyboardShortcuts";
-import { ShortcutsHelp } from "@/components/ShortcutsHelp";
-import { TermsOfUseGate } from "@/components/TermsOfUseGate";
+import { Footer } from "@/components/chrome/Footer";
+import { Header } from "@/components/chrome/Header";
+import { KeyboardShortcuts } from "@/components/chrome/KeyboardShortcuts";
+import { ShortcutsHelp } from "@/components/chrome/ShortcutsHelp";
+import { TermsOfUseGate } from "@/components/chrome/TermsOfUseGate";
 import { Providers } from "@/lib/providers";
 import { SwapStoreProvider } from "@/lib/store";
 import "./globals.css";

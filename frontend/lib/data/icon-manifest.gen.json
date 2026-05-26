@@ -1,0 +1,22 @@
+{
+  "USDC": "/token-icons/USDC.png",
+  "USDT": "/token-icons/USDT.svg",
+  "USDG": "/token-icons/USDG.png",
+  "USD1": "/token-icons/USD1.png",
+  "PYUSD": "/token-icons/PYUSD.png",
+  "EURC": "/token-icons/EURC.png",
+  "VEUR": "/token-icons/VEUR.png",
+  "EURCV": "/token-icons/EURCV.png",
+  "AUDD": "/token-icons/AUDD.png",
+  "BRZ": "/token-icons/BRZ.png",
+  "VCHF": "/token-icons/VCHF.png",
+  "TGBP": "/token-icons/TGBP.png",
+  "VGBP": "/token-icons/VGBP.png",
+  "IDRX": "/token-icons/IDRX.svg",
+  "GYEN": "/token-icons/GYEN.png",
+  "MXNe": "/token-icons/MXNe.png",
+  "cNGN": "/token-icons/cNGN.svg",
+  "XSGD": "/token-icons/XSGD.png",
+  "TRYB": "/token-icons/TRYB.png",
+  "ZARP": "/token-icons/ZARP.png"
+}
