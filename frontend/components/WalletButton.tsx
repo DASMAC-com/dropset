@@ -10,6 +10,11 @@ import { explorerAddressUrl } from "@/lib/explorer";
 import { COPY_FEEDBACK_DURATION_MS } from "@/lib/timings";
 import { Check, ChevronDown, Copy, ExternalLink, X } from "./icons";
 
+// 4 + 4 hex characters out of 64 is enough to disambiguate two wallets at
+// a glance without taking up real estate in the header. Matches the
+// convention Phantom / Backpack use in their own UIs.
+const ADDR_ABBREV_LEN = 4;
+
 export function WalletButton() {
   const { connected, wallet, status, currentConnector } = useWalletConnection();
   const modal = useWalletModalState({ closeOnConnect: true });
@@ -114,7 +119,7 @@ export function WalletButton() {
   }
 
   const addr = wallet.account.address;
-  const short = `${addr.slice(0, 4)}...${addr.slice(-4)}`;
+  const short = `${addr.slice(0, ADDR_ABBREV_LEN)}...${addr.slice(-ADDR_ABBREV_LEN)}`;
 
   const handleCopy = async () => {
     try {
