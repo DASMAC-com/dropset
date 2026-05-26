@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { extractDflowApiError } from "./dflowSwap";
+import { DFLOW_QUOTE_URL } from "./env";
 import {
   DFLOW_QUOTE,
   markExhausted,
@@ -20,12 +21,12 @@ import {
   ValidationError,
 } from "./validate";
 
-// DFlow developer trade API. No API key required and CORS open
-// (`access-control-allow-origin: *`), so we call directly from the browser
-// and each user's IP gets its own 60-token bucket (refills ~1/sec). When
-// we outgrow that we'll proxy through a Next.js route handler — the hook
-// signature stays the same, only the base URL changes.
-const DFLOW_QUOTE_URL = "https://dev-quote-api.dflow.net/quote";
+// DFlow developer trade API URL lives in lib/env.ts (DFLOW_QUOTE_URL). No
+// API key required and CORS open today (`access-control-allow-origin: *`),
+// so we call directly from the browser and each user's IP gets its own
+// 60-token bucket. When we outgrow that, override
+// NEXT_PUBLIC_DFLOW_QUOTE_URL to point at a proxy route handler — this
+// hook stays unchanged.
 
 // Slippage flag sent to the API. "auto" lets DFlow size it from current
 // liquidity; we render the returned `slippageBps` for transparency.

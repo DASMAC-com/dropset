@@ -16,7 +16,7 @@ import {
 } from "@solana-program/token";
 import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import { stablecoinByMint, type TokenProgramKind } from "./currencies";
-import { PLATFORM_FEE } from "./env";
+import { DFLOW_ORDER_URL, PLATFORM_FEE } from "./env";
 import { getErrorMessage } from "./guards";
 import {
   DFLOW_ORDER_TIMEOUT_MS,
@@ -54,10 +54,11 @@ async function platformFeeParams(
   return { bps: PLATFORM_FEE.bps, feeAccount };
 }
 
-// DFlow's developer endpoint. No API key, rate-limited per-IP, CORS-enabled
-// today. Swap path uses `/order` (the unified imperative endpoint) because it
-// supports both classic SPL and Token-2022 mints — `/intent` doesn't.
-const DFLOW_ORDER_URL = "https://dev-quote-api.dflow.net/order";
+// DFlow's developer endpoint. URL lives in lib/env.ts (DFLOW_ORDER_URL) so
+// dev/prod (or a proxy route handler) can diverge without editing this
+// module. Swap path uses `/order` (the unified imperative endpoint)
+// because it supports both classic SPL and Token-2022 mints — `/intent`
+// doesn't.
 
 export type DflowSwapInput = {
   inputMint: string;

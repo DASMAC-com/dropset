@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { stablecoinMint } from "./currencies";
+import { JUPITER_SEARCH_URL } from "./env";
 import { getErrorMessage } from "./guards";
 import {
   JUPITER_FETCH_TIMEOUT_MS,
@@ -13,13 +14,14 @@ import {
 // working — the canonical definition lives in lib/timings.ts.
 export const REFRESH_INTERVAL_MS = TOKEN_INFO_REFRESH_MS;
 
-// Jupiter's keyless Tokens API endpoint. Hit directly from the browser so
-// each user's IP gets its own rate-limit bucket (1 RPS keyless) instead of
-// every session funneling through our server's single IP. CORS is enabled,
-// no API key required. /tokens/v2/search returns price + market data in a
-// single batched call for up to 100 mints, which we use to power both the
-// swap UI's USD readouts and the /currencies market-data columns.
-const JUP_SEARCH_URL = "https://lite-api.jup.ag/tokens/v2/search";
+// Jupiter's keyless Tokens API endpoint lives in lib/env.ts
+// (JUPITER_SEARCH_URL). Hit directly from the browser so each user's IP
+// gets its own rate-limit bucket (1 RPS keyless) instead of every session
+// funneling through our server's single IP. CORS is enabled, no API key
+// required. /tokens/v2/search returns price + market data in a single
+// batched call for up to 100 mints, which we use to power both the swap
+// UI's USD readouts and the /currencies market-data columns.
+
 // Alias kept for grep-ability in this file; canonical name and rationale
 // live in lib/timings.ts (TOKEN_INFO_TTL_MS).
 const CACHE_TTL_MS = TOKEN_INFO_TTL_MS;
@@ -97,7 +99,7 @@ const fetchInfo = (mint: string): Promise<TokenInfo | null> => {
   if (existing) return existing;
   const p = (async () => {
     try {
-      const res = await fetch(`${JUP_SEARCH_URL}?query=${mint}`, {
+      const res = await fetch(`${JUPITER_SEARCH_URL}?query=${mint}`, {
         signal: AbortSignal.timeout(JUPITER_FETCH_TIMEOUT_MS),
       });
       if (!res.ok) {
@@ -143,7 +145,7 @@ export const prefetchAllTokenInfo = (mints: string[]): Promise<void> => {
   if (need.length === 0) return Promise.resolve();
   const batch = (async () => {
     try {
-      const res = await fetch(`${JUP_SEARCH_URL}?query=${need.join(",")}`, {
+      const res = await fetch(`${JUPITER_SEARCH_URL}?query=${need.join(",")}`, {
         signal: AbortSignal.timeout(JUPITER_FETCH_TIMEOUT_MS),
       });
       if (!res.ok) {
