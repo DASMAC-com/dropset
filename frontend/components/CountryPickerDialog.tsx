@@ -40,8 +40,15 @@ export function CountryPickerDialog({
     cca2: string,
   ) => void;
 }) {
-  const from = useSwapStore((s) => s.from);
-  const to = useSwapStore((s) => s.to);
+  // Narrow selectors: the previous `s.from` / `s.to` returned whole side
+  // objects, so every store mutation (amount, slippage, activeSide) churned
+  // the selector identity and re-rendered the dialog. Only the four
+  // (currency, stablecoin) pairs actually drive the From/To button states
+  // below, so subscribe to those exactly.
+  const fromCurrency = useSwapStore((s) => s.from.currency);
+  const fromStablecoin = useSwapStore((s) => s.from.stablecoin);
+  const toCurrency = useSwapStore((s) => s.to.currency);
+  const toStablecoin = useSwapStore((s) => s.to.stablecoin);
 
   return (
     <Dialog.Root
@@ -85,9 +92,9 @@ export function CountryPickerDialog({
                 <CurrencyGroupHeader code={cur} />
                 {CURRENCIES[cur].stablecoins.map((s) => {
                   const isFromHere =
-                    cur === from.currency && s.symbol === from.stablecoin;
+                    cur === fromCurrency && s.symbol === fromStablecoin;
                   const isToHere =
-                    cur === to.currency && s.symbol === to.stablecoin;
+                    cur === toCurrency && s.symbol === toStablecoin;
                   return (
                     <div
                       key={`${cur}-${s.symbol}`}
