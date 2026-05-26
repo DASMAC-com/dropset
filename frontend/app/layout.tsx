@@ -75,8 +75,8 @@ export const metadata: Metadata = {
     // outline both clear the chip; we chose the outline so the in-app
     // wordmark (Header) can keep the exact brand color. See:
     // https://paco.me/writing/safari-favicon-showing-white-background
-    icon: { url: "/favicon-with-stroke.png", type: "image/png" },
-    apple: "/favicon-with-stroke.png",
+    icon: { url: "/favicon-with-stroke.svg", type: "image/svg+xml" },
+    apple: "/favicon-with-stroke.svg",
   },
   openGraph: {
     type: "website",
