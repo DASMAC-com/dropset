@@ -2,6 +2,7 @@
 
 import NumberFlow from "@number-flow/react";
 import { useState } from "react";
+import { stablecoinDecimals } from "@/lib/currencies";
 import { FORMATS } from "@/lib/formats";
 import { bpsToPercent } from "@/lib/percent";
 import { ArrowRightLeft, ChevronDown, ChevronUp } from "./icons";
@@ -24,8 +25,6 @@ export function PlatformFee({
   outAmount,
   fromSymbol,
   toSymbol,
-  fromDecimals,
-  toDecimals,
   fresh,
 }: {
   // null disables the fee dropdown: the rate header still renders, but no
@@ -36,14 +35,17 @@ export function PlatformFee({
   outAmount: bigint;
   fromSymbol: string;
   toSymbol: string;
-  fromDecimals: number;
-  toDecimals: number;
   // False during the debounce window after a swap-sides or token-pick,
   // when the cached quote still represents the previous pair. We keep the
   // panel mounted (so the layout doesn't pop) but show "—" instead of a
   // wildly-wrong derived rate.
   fresh: boolean;
 }) {
+  // Decimals are a function of the symbol — look them up here rather than
+  // making every caller pass redundant fields. stablecoinDecimals throws
+  // on an unknown symbol so we don't paper over bad data.
+  const fromDecimals = stablecoinDecimals(fromSymbol);
+  const toDecimals = stablecoinDecimals(toSymbol);
   const [inverted, setInverted] = useState(false);
   // Cumulative angle (not modulo 360) so every click is a fresh 180° spin
   // in the same direction — otherwise the icon would alternate clockwise

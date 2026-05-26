@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { stablecoinMint } from "./currencies";
+import { ALL_STABLECOIN_MINTS, stablecoinMint } from "./currencies";
 import { JUPITER_SEARCH_URL } from "./env";
 import { getErrorMessage } from "./guards";
 import {
@@ -271,3 +271,17 @@ export const sortByVolumeDesc = <T extends { mint: string }>(
     const vb = lookup(b.mint)?.volume24h ?? -1;
     return vb - va;
   });
+
+// Warm and keep-warm the Jupiter token-info cache for every supported
+// stablecoin. Mounts of /swap and /currencies both rely on this — keeping
+// the warm-on-mount + setInterval pattern in one place means a future
+// change (e.g. cancel on tab hidden) lands once, not at every consumer.
+export const useTokenInfoRefresh = (): void => {
+  useEffect(() => {
+    prefetchAllTokenInfo(ALL_STABLECOIN_MINTS);
+    const id = window.setInterval(() => {
+      prefetchAllTokenInfo(ALL_STABLECOIN_MINTS);
+    }, TOKEN_INFO_REFRESH_MS);
+    return () => window.clearInterval(id);
+  }, []);
+};

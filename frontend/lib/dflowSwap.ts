@@ -192,10 +192,7 @@ export async function executeDflowSwap(
     res = await fetch(url.toString(), { signal: timeout });
   } catch (e) {
     if (e instanceof DOMException && e.name === "TimeoutError") {
-      throw new DflowSwapError(
-        "DFlow /order timed out — try again",
-        "network",
-      );
+      throw new DflowSwapError("DFlow /order timed out — try again", "network");
     }
     throw new DflowSwapError("Network error reaching DFlow", "network");
   }

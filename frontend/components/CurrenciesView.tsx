@@ -5,7 +5,7 @@
 import NumberFlow from "@number-flow/react";
 import * as Popover from "@radix-ui/react-popover";
 import { useSearchParams } from "next/navigation";
-import { memo, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { memo, Suspense, useMemo, useRef, useState } from "react";
 import { CopyButton } from "@/components/CopyButton";
 import {
   ArrowUpDown,
@@ -18,7 +18,6 @@ import {
   X,
 } from "@/components/icons";
 import {
-  ALL_STABLECOIN_MINTS,
   CURRENCIES,
   currencyFlagUrl,
   currencyName,
@@ -37,12 +36,11 @@ import { type Side, useSwapStore, useSwapStoreApi } from "@/lib/store";
 import { useSwapNav } from "@/lib/swapUrl";
 import { flashBg, useFlashOnChanges } from "@/lib/useFlashOnChange";
 import {
-  prefetchAllTokenInfo,
-  REFRESH_INTERVAL_MS,
   sortByVolumeDesc,
   type TokenInfo,
   useInfoLookup,
   useTokenInfo,
+  useTokenInfoRefresh,
 } from "@/lib/useUsdQuote";
 
 const COLSPAN = 9;
@@ -506,13 +504,7 @@ function CurrenciesInner() {
   // page is open. Cache writes call notify(), which re-renders every row via
   // `useSyncExternalStore`; <NumberFlow> animates the digits that actually
   // changed.
-  useEffect(() => {
-    prefetchAllTokenInfo(ALL_STABLECOIN_MINTS);
-    const id = window.setInterval(() => {
-      prefetchAllTokenInfo(ALL_STABLECOIN_MINTS);
-    }, REFRESH_INTERVAL_MS);
-    return () => window.clearInterval(id);
-  }, []);
+  useTokenInfoRefresh();
 
   // Mirror the current search into the URL — fuzzy mode writes `q`, strict
   // mode (set only by an initial `?symbol=` from the picker) writes `symbol`.

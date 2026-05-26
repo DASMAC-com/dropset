@@ -3,11 +3,7 @@
 import { useWalletConnection } from "@solana/react-hooks";
 import { useEffect } from "react";
 import { parseAmountToBase } from "@/lib/balance";
-import {
-  ALL_STABLECOIN_MINTS,
-  stablecoinDecimals,
-  stablecoinMint,
-} from "@/lib/currencies";
+import { stablecoinDecimals, stablecoinMint } from "@/lib/currencies";
 import { PLATFORM_FEE } from "@/lib/env";
 import { emit, useAppEvent } from "@/lib/events";
 import { useSameToken, useSwapStore, useSwapStoreApi } from "@/lib/store";
@@ -15,11 +11,7 @@ import { useSwapNav } from "@/lib/swapUrl";
 import { useAllBalances } from "@/lib/useAllBalances";
 import { formatAtomic, useDflowQuote } from "@/lib/useDflowQuote";
 import { useDflowSwap } from "@/lib/useDflowSwap";
-import {
-  prefetchAllTokenInfo,
-  REFRESH_INTERVAL_MS,
-  useUsdQuote,
-} from "@/lib/useUsdQuote";
+import { useTokenInfoRefresh, useUsdQuote } from "@/lib/useUsdQuote";
 import { PlatformFee } from "./PlatformFee";
 import { QuoteError } from "./QuoteError";
 import { RateLimitMessage } from "./RateLimitMessage";
@@ -59,13 +51,7 @@ export function SwapPanel() {
   // One batched Jupiter call on mount warms every stablecoin's USD price so
   // switching tokens doesn't flash "$—" while a per-mint fetch resolves, then
   // a 10 s interval keeps prices fresh while the page is open.
-  useEffect(() => {
-    prefetchAllTokenInfo(ALL_STABLECOIN_MINTS);
-    const id = window.setInterval(() => {
-      prefetchAllTokenInfo(ALL_STABLECOIN_MINTS);
-    }, REFRESH_INTERVAL_MS);
-    return () => window.clearInterval(id);
-  }, []);
+  useTokenInfoRefresh();
 
   const isConnecting = status === "connecting";
   const hasAmount = Number(amount) > 0;
@@ -218,8 +204,6 @@ export function SwapPanel() {
             outAmount={quote.outAmount}
             fromSymbol={fromStablecoin}
             toSymbol={toStablecoin}
-            fromDecimals={fromDecimals}
-            toDecimals={toDecimals}
             fresh={quoteFresh}
           />
         ) : null}
