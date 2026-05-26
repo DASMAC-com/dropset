@@ -15,6 +15,7 @@ import {
   recordResponse,
 } from "../dflow/rateLimitBudget";
 import { DFLOW_QUOTE_URL } from "../env";
+import { stripThousands } from "../format/input";
 import {
   type ParsedDflowQuote,
   parseDflowQuote,
@@ -78,7 +79,7 @@ const INITIAL: DflowQuote = {
 // 0n for empty / whitespace / "." / NaN inputs so the caller can use a
 // single `=== 0n` check to gate the fetch.
 const toAtomic = (raw: string, decimals: number): bigint => {
-  const s = raw.replace(/,/g, "").trim();
+  const s = stripThousands(raw).trim();
   if (!s || s === ".") return 0n;
   const [intPart = "0", fracRaw = ""] = s.split(".");
   if (!/^\d*$/.test(intPart) || !/^\d*$/.test(fracRaw)) return 0n;

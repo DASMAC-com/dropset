@@ -8,6 +8,7 @@ import {
   TOKEN_INFO_TTL_MS,
 } from "../data/timings";
 import { JUPITER_SEARCH_URL } from "../env";
+import { stripThousands } from "../format/input";
 import { getErrorMessage } from "../guards";
 import { type ParsedJupiterRow, parseJupiterSearchResponse } from "../validate";
 
@@ -211,7 +212,7 @@ export function useUsdQuote(stablecoin: string, amount: string): UsdQuote {
     };
   }, [mint]);
 
-  const num = Number.parseFloat(amount.replace(/,/g, ""));
+  const num = Number.parseFloat(stripThousands(amount));
   const safeAmt = Number.isFinite(num) ? num : 0;
   if (safeAmt === 0) return { value: 0, loading: false };
   if (price === null) return { value: null, loading };

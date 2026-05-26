@@ -45,3 +45,9 @@ export const sanitizeSlippagePercent = (raw: string): string =>
 // the consumer's POV — the implementation stays in lib/balance.ts where the
 // related bigint helpers live.
 export { groupThousands } from "./balance";
+
+// Strip thousand-separator commas before numeric parsing. Inverse of
+// `groupThousands`; used by hooks that read user-displayed amount strings
+// (which may still carry render-time grouping) and need to parseFloat /
+// parseInt / BigInt them.
+export const stripThousands = (s: string): string => s.replace(/,/g, "");

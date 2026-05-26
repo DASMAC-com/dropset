@@ -17,14 +17,20 @@ export const isNumber = (v: unknown): v is number =>
 // non-integer input (including scientific notation, decimal points, trailing
 // whitespace mixed with characters); we surface those as a single typed
 // reason rather than letting them propagate as a raw TypeError.
+//
+// We trim before BigInt() because a whitespace-padded numeric (`" 123"`) from
+// a non-strict upstream is a parseable integer in spirit but BigInt rejects
+// it. The error message also doesn't echo the raw value — a malformed
+// upstream response could include sensitive-looking data we don't want
+// surfaced to the user; the field name is enough to diagnose.
 export const parseBigIntString = (value: unknown, field: string): bigint => {
   if (!isString(value)) {
     throw new ValidationError(`${field} missing or not a string`);
   }
   try {
-    return BigInt(value);
+    return BigInt(value.trim());
   } catch {
-    throw new ValidationError(`${field} is not a valid integer: ${value}`);
+    throw new ValidationError(`${field} is not a valid integer`);
   }
 };
 
