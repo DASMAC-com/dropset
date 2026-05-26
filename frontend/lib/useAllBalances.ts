@@ -25,6 +25,12 @@ type MaybeBalance = bigint | null | undefined;
 
 const balances = new Map<string, bigint | null>();
 let fetchedForOwner: string | null = null;
+// Tracks the wallet currently visible to consumers. Updated by the effect
+// below on connect/disconnect/wallet-swap so the swapSucceeded delayed
+// refetch can drop if the wallet has changed since the timer was scheduled
+// (otherwise the stale-owner write would land into the cache for whoever's
+// connected now).
+let activeOwner: string | null = null;
 let lastFetchError: string | null = null;
 // Monotonic counter so concurrent fetches don't race a stale write into the
 // cache. Each fetch reads `++counter`; only the latest one writes.
@@ -199,6 +205,7 @@ export function useAllBalances(): UseAllBalances {
   // a reconnect to a different wallet doesn't briefly show the prior owner's
   // balances.
   useEffect(() => {
+    activeOwner = ownerStr;
     if (!ownerStr) {
       if (fetchedForOwner !== null) {
         balances.clear();
@@ -218,13 +225,15 @@ export function useAllBalances(): UseAllBalances {
 
   // After a swap lands, re-fetch — once now and once ~1.5 s later to absorb
   // RPC propagation lag between confirmation status and account state.
-  // Snapshot `ownerStr` so the delayed call still targets the right wallet
-  // even if the user has disconnected by then (no-op rather than crash).
+  // Snapshot `ownerStr` and re-check `activeOwner` at fire time so a
+  // wallet swap between the swap-success event and the delayed refetch
+  // doesn't write the old owner's balances into the new owner's cache.
   useAppEvent("swapSucceeded", () => {
     const owner = ownerStr;
     if (!owner) return;
     void fetchBalances(client.runtime.rpc, owner, { force: true });
     window.setTimeout(() => {
+      if (activeOwner !== owner) return;
       void fetchBalances(client.runtime.rpc, owner, { force: true });
     }, BALANCE_REFETCH_DELAY_MS);
   });

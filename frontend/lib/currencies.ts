@@ -142,8 +142,21 @@ export const currencyAnchor = (code: IsoCurrencyCode): string =>
 export const tokenIconUrl = (symbol: string): string =>
   STABLE_BY_SYMBOL[symbol]?.icon ?? "";
 
-export const stablecoinDecimals = (symbol: string): number =>
-  STABLE_BY_SYMBOL[symbol]?.decimals ?? 0;
+// Look up a stablecoin's decimals by symbol. Throws on unknown symbols
+// because the previous silent fallback to 0 produced ~10^6× wrong-scale
+// quotes when an invalid symbol slipped through (e.g. URL tampering, or
+// a stale tab after a stablecoin was removed from currencies.json). In
+// the normal path every symbol the store can hold has come through
+// resolveTokenSlug / setToken, both of which only emit canonical entries.
+export const stablecoinDecimals = (symbol: string): number => {
+  const decimals = STABLE_BY_SYMBOL[symbol]?.decimals;
+  if (decimals === undefined) {
+    throw new Error(
+      `Unknown stablecoin symbol "${symbol}" — not present in currencies.json.`,
+    );
+  }
+  return decimals;
+};
 
 export const stablecoinMint = (symbol: string): string =>
   STABLE_BY_SYMBOL[symbol]?.mint ?? "";
