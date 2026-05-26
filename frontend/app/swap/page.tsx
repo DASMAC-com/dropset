@@ -2,8 +2,8 @@
 
 import dynamic from "next/dynamic";
 import { Suspense } from "react";
-import { GlobePanel } from "@/components/GlobePanel";
-import { UrlSync } from "@/components/UrlSync";
+import { GlobePanel } from "@/components/globe/GlobePanel";
+import { UrlSync } from "@/components/swap/UrlSync";
 
 // SwapPanel is loaded client-only via next/dynamic so its store-derived
 // content (token symbols, currency names, flag images) is never SSR-rendered
@@ -14,7 +14,9 @@ import { UrlSync } from "@/components/UrlSync";
 // — same pattern GlobePanel already uses for its three.js dependency.
 const SwapPanel = dynamic(
   () =>
-    import("@/components/SwapPanel").then((m) => ({ default: m.SwapPanel })),
+    import("@/components/swap/SwapPanel").then((m) => ({
+      default: m.SwapPanel,
+    })),
   { ssr: false },
 );
 

@@ -1,11 +1,11 @@
 // cspell:word darkreader
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { Footer } from "@/components/Footer";
-import { Header } from "@/components/Header";
-import { KeyboardShortcuts } from "@/components/KeyboardShortcuts";
-import { ShortcutsHelp } from "@/components/ShortcutsHelp";
-import { TermsOfUseGate } from "@/components/TermsOfUseGate";
+import { Footer } from "@/components/chrome/Footer";
+import { Header } from "@/components/chrome/Header";
+import { KeyboardShortcuts } from "@/components/chrome/KeyboardShortcuts";
+import { ShortcutsHelp } from "@/components/chrome/ShortcutsHelp";
+import { TermsOfUseGate } from "@/components/chrome/TermsOfUseGate";
 import { Providers } from "@/lib/providers";
 import { SwapStoreProvider } from "@/lib/store";
 import "./globals.css";
@@ -75,8 +75,8 @@ export const metadata: Metadata = {
     // outline both clear the chip; we chose the outline so the in-app
     // wordmark (Header) can keep the exact brand color. See:
     // https://paco.me/writing/safari-favicon-showing-white-background
-    icon: { url: "/favicon-with-stroke.png", type: "image/png" },
-    apple: "/favicon-with-stroke.png",
+    icon: { url: "/favicon-with-stroke.svg", type: "image/svg+xml" },
+    apple: "/favicon-with-stroke.svg",
   },
   openGraph: {
     type: "website",

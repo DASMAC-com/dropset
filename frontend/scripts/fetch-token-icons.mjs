@@ -1,19 +1,19 @@
 // Mirror stablecoin icons into public/token-icons at build time, so the
 // browser hits our origin once instead of ~13 third-party CDNs per page load.
-// Writes lib/icon-manifest.gen.json (symbol → /token-icons/<file>) which
-// currencies.ts overlays onto the canonical remote URLs in currencies.json.
-// Manifest is always written (even if empty / all fetches failed) so the
-// static TS import in currencies.ts never breaks.
+// Writes lib/data/icon-manifest.gen.json (symbol → /token-icons/<file>)
+// which currencies.ts overlays onto the canonical remote URLs in
+// currencies.json. Manifest is always written (even if empty / all
+// fetches failed) so the static TS import in currencies.ts never breaks.
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const data = JSON.parse(
-  readFileSync(resolve(here, "../lib/currencies.json"), "utf8"),
+  readFileSync(resolve(here, "../lib/data/currencies.json"), "utf8"),
 );
 const dst = resolve(here, "../public/token-icons");
-const manifestPath = resolve(here, "../lib/icon-manifest.gen.json");
+const manifestPath = resolve(here, "../lib/data/icon-manifest.gen.json");
 
 const EXT_BY_CT = {
   "image/png": "png",

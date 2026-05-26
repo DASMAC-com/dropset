@@ -17,14 +17,20 @@ export const isNumber = (v: unknown): v is number =>
 // non-integer input (including scientific notation, decimal points, trailing
 // whitespace mixed with characters); we surface those as a single typed
 // reason rather than letting them propagate as a raw TypeError.
+//
+// We trim before BigInt() because a whitespace-padded numeric (`" 123"`) from
+// a non-strict upstream is a parseable integer in spirit but BigInt rejects
+// it. The error message also doesn't echo the raw value — a malformed
+// upstream response could include sensitive-looking data we don't want
+// surfaced to the user; the field name is enough to diagnose.
 export const parseBigIntString = (value: unknown, field: string): bigint => {
   if (!isString(value)) {
     throw new ValidationError(`${field} missing or not a string`);
   }
   try {
-    return BigInt(value);
+    return BigInt(value.trim());
   } catch {
-    throw new ValidationError(`${field} is not a valid integer: ${value}`);
+    throw new ValidationError(`${field} is not a valid integer`);
   }
 };
 
@@ -72,6 +78,63 @@ export const parseDflowOrder = (raw: unknown): ParsedDflowOrder => {
     inAmount: parseBigIntString(raw.inAmount, "order.inAmount"),
     outAmount: parseBigIntString(raw.outAmount, "order.outAmount"),
   };
+};
+
+// Jupiter `/tokens/v2/search` row. Only the fields the UI actually reads
+// are checked at this boundary; the rest pass through as-is for callers
+// that want to project additional fields later. Returns null when the
+// row's `id` is missing or non-string — those rows are skipped by
+// callers rather than included with bogus data.
+export type ParsedJupiterRow = {
+  id: string;
+  usdPrice: number | null;
+  priceChange24h: number | null;
+  mcap: number | null;
+  liquidity: number | null;
+  holderCount: number | null;
+  stats24h: {
+    priceChange: number | null;
+    buyVolume: number | null;
+    sellVolume: number | null;
+  };
+};
+
+const nullableNumber = (v: unknown): number | null =>
+  typeof v === "number" && Number.isFinite(v) ? v : null;
+
+const parseJupiterRow = (raw: unknown): ParsedJupiterRow | null => {
+  if (!isObject(raw)) return null;
+  if (!isString(raw.id)) return null;
+  const stats = isObject(raw.stats24h) ? raw.stats24h : {};
+  return {
+    id: raw.id,
+    usdPrice: nullableNumber(raw.usdPrice),
+    priceChange24h: nullableNumber(raw.priceChange24h),
+    mcap: nullableNumber(raw.mcap),
+    liquidity: nullableNumber(raw.liquidity),
+    holderCount: nullableNumber(raw.holderCount),
+    stats24h: {
+      priceChange: nullableNumber(stats.priceChange),
+      buyVolume: nullableNumber(stats.buyVolume),
+      sellVolume: nullableNumber(stats.sellVolume),
+    },
+  };
+};
+
+// Validate a Jupiter /tokens/v2/search response: the body must be an array
+// (we already check that at the boundary), and each row must have at
+// minimum a string `id`. Rows that fail the per-row check are dropped
+// rather than failing the whole batch — partial usable data beats none.
+export const parseJupiterSearchResponse = (
+  raw: unknown,
+): ParsedJupiterRow[] | null => {
+  if (!Array.isArray(raw)) return null;
+  const out: ParsedJupiterRow[] = [];
+  for (const row of raw) {
+    const parsed = parseJupiterRow(row);
+    if (parsed !== null) out.push(parsed);
+  }
+  return out;
 };
 
 // jsonParsed token account: `data.parsed.info.tokenAmount.amount` is a

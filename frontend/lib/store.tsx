@@ -3,7 +3,7 @@
 import { createContext, type ReactNode, useContext, useRef } from "react";
 import { useStore } from "zustand";
 import { createStore, type StoreApi } from "zustand/vanilla";
-import { defaultAnchorCca2 } from "./countries";
+import { defaultAnchorCca2 } from "./data/countries";
 import {
   currencyAnchor,
   DEFAULT_FROM,
@@ -11,7 +11,7 @@ import {
   type IsoCurrencyCode,
   resolvePair,
   type SidePair,
-} from "./currencies";
+} from "./data/currencies";
 
 export type Side = "from" | "to";
 

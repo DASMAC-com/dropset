@@ -18,6 +18,19 @@ export const PUBLIC_WS_URL = required(
   process.env.NEXT_PUBLIC_WS_URL,
 );
 
+// External APIs. Defaults point at the dev/public endpoints we use today;
+// override to swap in a staging server, a proxy route handler, or an
+// alternative provider without editing hook code.
+export const DFLOW_QUOTE_URL =
+  process.env.NEXT_PUBLIC_DFLOW_QUOTE_URL?.trim() ||
+  "https://dev-quote-api.dflow.net/quote";
+export const DFLOW_ORDER_URL =
+  process.env.NEXT_PUBLIC_DFLOW_ORDER_URL?.trim() ||
+  "https://dev-quote-api.dflow.net/order";
+export const JUPITER_SEARCH_URL =
+  process.env.NEXT_PUBLIC_JUPITER_SEARCH_URL?.trim() ||
+  "https://lite-api.jup.ag/tokens/v2/search";
+
 // Max accounts per `getMultipleAccounts` call. Required, provider-specific
 // (PublicNode caps at 10 on their free tier).
 const parsedBatchSize = Number.parseInt(

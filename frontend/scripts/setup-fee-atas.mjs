@@ -43,7 +43,7 @@ import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const currencies = JSON.parse(
-  readFileSync(resolve(here, "../lib/currencies.json"), "utf8"),
+  readFileSync(resolve(here, "../lib/data/currencies.json"), "utf8"),
 );
 
 const KEYPAIR_PATH = (
