@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { extractDflowApiError } from "./dflowSwap";
 import {
   DFLOW_QUOTE,
   markExhausted,
@@ -185,29 +186,12 @@ export const useDflowQuote = (
         }
 
         if (!res.ok) {
-          // Distinguish "non-2xx with a parseable JSON error envelope" from
-          // "non-2xx with malformed body" so the user can tell a real API
-          // error apart from upstream corruption / outage.
-          let bodyText: string | null = null;
-          try {
-            bodyText = await res.text();
-          } catch {
-            bodyText = null;
-          }
-          let reason = `HTTP ${res.status}`;
-          if (bodyText) {
-            try {
-              const body = JSON.parse(bodyText) as { msg?: unknown };
-              if (typeof body?.msg === "string" && body.msg.length > 0) {
-                reason = body.msg;
-              } else {
-                reason = `HTTP ${res.status}: ${bodyText.slice(0, 200)}`;
-              }
-            } catch {
-              reason = `HTTP ${res.status} with malformed body`;
-            }
-          }
-          setQuote({ ...INITIAL, status: "error", error: reason });
+          // Shared with dflowSwap.ts — distinguish JSON error envelope from
+          // malformed body so the user can tell an API error apart from an
+          // upstream outage.
+          const info = await extractDflowApiError(res);
+          if (cancelled) return;
+          setQuote({ ...INITIAL, status: "error", error: info.message });
           return;
         }
 

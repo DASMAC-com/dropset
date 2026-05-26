@@ -12,6 +12,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import { ALL_STABLECOINS, type TokenProgramKind } from "./currencies";
 import { GET_MULTIPLE_ACCOUNTS_BATCH_SIZE } from "./env";
 import { useAppEvent } from "./events";
+import { getErrorMessage } from "./guards";
 import { BALANCE_REFETCH_DELAY_MS } from "./timings";
 import { parseTokenAccountAmount } from "./validate";
 
@@ -146,7 +147,7 @@ function fetchBalances(
       bump();
     } catch (e) {
       if (my !== requestCounter) return;
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = getErrorMessage(e);
       // PublicNode (and likely other Cloudflare-fronted RPCs) returns 403
       // with this exact substring when the params array exceeds their
       // per-call cap. Surface a concrete fix instead of a generic error.

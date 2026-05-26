@@ -2,7 +2,12 @@
 
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { stablecoinMint } from "./currencies";
-import { TOKEN_INFO_REFRESH_MS, TOKEN_INFO_TTL_MS } from "./timings";
+import { getErrorMessage } from "./guards";
+import {
+  JUPITER_FETCH_TIMEOUT_MS,
+  TOKEN_INFO_REFRESH_MS,
+  TOKEN_INFO_TTL_MS,
+} from "./timings";
 
 // Re-export so existing import sites (SwapPanel, CurrenciesView) keep
 // working — the canonical definition lives in lib/timings.ts.
@@ -92,7 +97,9 @@ const fetchInfo = (mint: string): Promise<TokenInfo | null> => {
   if (existing) return existing;
   const p = (async () => {
     try {
-      const res = await fetch(`${JUP_SEARCH_URL}?query=${mint}`);
+      const res = await fetch(`${JUP_SEARCH_URL}?query=${mint}`, {
+        signal: AbortSignal.timeout(JUPITER_FETCH_TIMEOUT_MS),
+      });
       if (!res.ok) {
         console.warn(`Jupiter token info HTTP ${res.status} for ${mint}`);
         return null;
@@ -110,7 +117,7 @@ const fetchInfo = (mint: string): Promise<TokenInfo | null> => {
       return info;
     } catch (e) {
       console.warn(
-        `Jupiter token info fetch failed for ${mint}: ${e instanceof Error ? e.message : String(e)}`,
+        `Jupiter token info fetch failed for ${mint}: ${getErrorMessage(e)}`,
       );
       return null;
     } finally {
@@ -136,7 +143,9 @@ export const prefetchAllTokenInfo = (mints: string[]): Promise<void> => {
   if (need.length === 0) return Promise.resolve();
   const batch = (async () => {
     try {
-      const res = await fetch(`${JUP_SEARCH_URL}?query=${need.join(",")}`);
+      const res = await fetch(`${JUP_SEARCH_URL}?query=${need.join(",")}`, {
+        signal: AbortSignal.timeout(JUPITER_FETCH_TIMEOUT_MS),
+      });
       if (!res.ok) {
         console.warn(
           `Jupiter prefetch HTTP ${res.status} for ${need.length} mints — per-mint fetchInfo will retry on demand`,
@@ -164,7 +173,7 @@ export const prefetchAllTokenInfo = (mints: string[]): Promise<void> => {
       notify();
     } catch (e) {
       console.warn(
-        `Jupiter prefetch failed: ${e instanceof Error ? e.message : String(e)} — per-mint fetchInfo will retry`,
+        `Jupiter prefetch failed: ${getErrorMessage(e)} — per-mint fetchInfo will retry`,
       );
     }
   })();

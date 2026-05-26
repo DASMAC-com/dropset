@@ -17,7 +17,9 @@ import {
 import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import { stablecoinByMint, type TokenProgramKind } from "./currencies";
 import { PLATFORM_FEE } from "./env";
+import { getErrorMessage } from "./guards";
 import {
+  DFLOW_ORDER_TIMEOUT_MS,
   SWAP_CONFIRM_MAX_UNKNOWN_POLLS,
   SWAP_CONFIRMATION_POLL_MS,
   SWAP_CONFIRMATION_TIMEOUT_MS,
@@ -103,7 +105,49 @@ type OrderErrorBody = {
   msg?: string;
 };
 
-const CANCEL_PATTERN = /user reject|user cancel|denied|cancel/i;
+// Extract a human-readable message from a non-2xx DFlow response. Both
+// /quote (handled directly) and /order (handled here) wrap errors as
+// `{ msg, code }`. Falls back to a status + truncated raw body so a
+// transient HTML 502 page surfaces as "HTTP 502: <!DOCTYPE…" rather
+// than the generic "HTTP 502" the previous open-coded paths produced.
+export type DflowApiErrorInfo = { message: string; code: string | null };
+export async function extractDflowApiError(
+  res: Response,
+): Promise<DflowApiErrorInfo> {
+  let bodyText: string | null = null;
+  try {
+    bodyText = await res.text();
+  } catch {
+    return { message: `HTTP ${res.status}`, code: null };
+  }
+  if (!bodyText) return { message: `HTTP ${res.status}`, code: null };
+  try {
+    const body = JSON.parse(bodyText) as OrderErrorBody;
+    if (typeof body?.msg === "string" && body.msg.length > 0) {
+      return {
+        message: body.msg,
+        code: typeof body.code === "string" ? body.code : null,
+      };
+    }
+    if (typeof body?.code === "string" && body.code.length > 0) {
+      return { message: `${body.code} (HTTP ${res.status})`, code: body.code };
+    }
+    return {
+      message: `HTTP ${res.status}: ${bodyText.slice(0, MAX_RAW_BODY_PREVIEW)}`,
+      code: null,
+    };
+  } catch {
+    return { message: `HTTP ${res.status} with malformed body`, code: null };
+  }
+}
+const MAX_RAW_BODY_PREVIEW = 200;
+
+// Phantom, Backpack, Solflare and Glow each surface user-rejection with a
+// slightly different message. Match conservatively — we'd rather classify
+// a true wallet failure as "rejected" (and prompt the user to retry) than
+// classify a real cancel as a generic wallet error.
+const CANCEL_PATTERN =
+  /user (?:reject|cancel|denied|declined)|reject(?:ed)?(?: by user| the request)|cancelled in wallet|approval denied|transaction (?:was )?(?:declined|cancelled|rejected)/i;
 
 // Execute a swap end-to-end:
 //   1. GET /order with `allowAsyncExec=false` so DFlow returns a sync single
@@ -141,20 +185,27 @@ export async function executeDflowSwap(
     url.searchParams.set("feeAccount", fee.feeAccount);
   }
 
+  const timeout = AbortSignal.timeout(DFLOW_ORDER_TIMEOUT_MS);
   let res: Response;
   try {
-    res = await fetch(url.toString());
-  } catch {
+    res = await fetch(url.toString(), { signal: timeout });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "TimeoutError") {
+      throw new DflowSwapError(
+        "DFlow /order timed out — try again",
+        "network",
+      );
+    }
     throw new DflowSwapError("Network error reaching DFlow", "network");
   }
 
   if (!res.ok) {
-    const body = (await res.json().catch(() => null)) as OrderErrorBody | null;
+    const info = await extractDflowApiError(res);
     throw new DflowSwapError(
-      body?.msg ?? body?.code ?? `Order failed (HTTP ${res.status})`,
+      info.message,
       "api",
       res.status,
-      body?.code,
+      info.code ?? undefined,
     );
   }
 
@@ -182,9 +233,8 @@ export async function executeDflowSwap(
     const txBytes = getBase64Encoder().encode(order.transaction);
     tx = getTransactionDecoder().decode(txBytes);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
     throw new DflowSwapError(
-      `DFlow returned an undecodable transaction: ${msg}`,
+      `DFlow returned an undecodable transaction: ${getErrorMessage(e)}`,
       "api",
       res.status,
     );
@@ -208,7 +258,7 @@ export async function executeDflowSwap(
       { commitment: "confirmed" },
     );
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
+    const msg = getErrorMessage(e);
     const cancelled = CANCEL_PATTERN.test(msg);
     throw new DflowSwapError(
       cancelled ? "Cancelled in wallet" : msg,

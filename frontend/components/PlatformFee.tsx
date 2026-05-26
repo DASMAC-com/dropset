@@ -3,6 +3,7 @@
 import NumberFlow from "@number-flow/react";
 import { useState } from "react";
 import { FORMATS } from "@/lib/formats";
+import { bpsToPercent } from "@/lib/percent";
 import { ArrowRightLeft, ChevronDown, ChevronUp } from "./icons";
 
 // Sticky preference: once the user collapses the fee panel, keep it
@@ -116,7 +117,9 @@ export function PlatformFee({
       {showFeeDropdown && expanded ? (
         <div className="flex items-center justify-between px-1 pb-1 text-xs">
           <span className="text-muted-fg">Platform fee</span>
-          <span className="tabular-nums text-foreground">{bps / 100}%</span>
+          <span className="tabular-nums text-foreground">
+            {bpsToPercent(bps)}%
+          </span>
         </div>
       ) : null}
     </div>

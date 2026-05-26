@@ -30,6 +30,11 @@ export const SWAP_CONFIRMATION_POLL_MS = 500;
 // declaring the tx dropped instead of polling to timeout.
 export const SWAP_CONFIRM_MAX_UNKNOWN_POLLS = 10;
 
+// Outer-edge timeout for the /order fetch. Long enough to absorb a slow
+// quote-time route build, short enough that a hung endpoint surfaces as a
+// retriable error rather than sticking the UI in "Preparing swap…".
+export const DFLOW_ORDER_TIMEOUT_MS = 20_000;
+
 // ───────────── Jupiter / pricing ─────────────
 
 // 10 s refresh cadence — empirically matches Jupiter's own server-side
@@ -38,6 +43,10 @@ export const TOKEN_INFO_REFRESH_MS = 10_000;
 // TTL is kept at half the refresh interval so the boundary tick is
 // never skipped by the dedupe check.
 export const TOKEN_INFO_TTL_MS = 5_000;
+// Hard cap on every Jupiter token-info fetch. Long enough to ride out an
+// occasional slow response, short enough that a hung endpoint can't pin
+// the in-flight cache slot for the lifetime of the page.
+export const JUPITER_FETCH_TIMEOUT_MS = 10_000;
 
 // ───────────── Balances ─────────────
 

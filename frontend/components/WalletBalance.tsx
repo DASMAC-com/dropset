@@ -1,7 +1,7 @@
 "use client";
 
 import { useWalletConnection } from "@solana/react-hooks";
-import { formatBaseAmount, groupThousands } from "@/lib/balance";
+import { formatBalanceDisplay } from "@/lib/balance";
 import { stablecoinDecimals, stablecoinMint } from "@/lib/currencies";
 import { useAllBalances } from "@/lib/useAllBalances";
 import { Wallet } from "./icons";
@@ -32,11 +32,11 @@ export function WalletBalance({ stablecoin }: { stablecoin: string }) {
   if (!isReady) return null;
 
   // null → no associated token account (display "—"). 0n → ATA exists with
-  // zero balance (display "0"). Positive bigint → formatted number.
+  // zero balance (display "0"). Positive bigint → formatted number. The
+  // ?? 0n covers undefined (still loading), but that case is unreachable
+  // here because `isReady` is true above.
   const display =
-    raw === null
-      ? "—"
-      : groupThousands(formatBaseAmount(raw ?? 0n, decimals, 2));
+    raw === null ? "—" : formatBalanceDisplay(raw ?? 0n, decimals);
 
   return (
     <span

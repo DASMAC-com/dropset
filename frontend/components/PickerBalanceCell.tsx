@@ -1,6 +1,6 @@
 "use client";
 
-import { formatBaseAmount, groupThousands } from "@/lib/balance";
+import { formatBalanceDisplay } from "@/lib/balance";
 import { useAllBalances } from "@/lib/useAllBalances";
 import { useInfoLookup } from "@/lib/useUsdQuote";
 
@@ -45,7 +45,7 @@ export function PickerBalanceCell({
     );
   }
 
-  const balanceText = groupThousands(formatBaseAmount(raw, decimals, 2));
+  const balanceText = formatBalanceDisplay(raw, decimals);
   const price = lookup(mint)?.usdPrice;
   // Convert atomic bigint → float for the USD math. Stablecoin balances
   // never approach Number.MAX_SAFE_INTEGER in practice, so plain Number()

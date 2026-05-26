@@ -29,3 +29,16 @@ const BASIS_POINTS_DIVISOR = 10_000n;
 // Highest representable two-decimal-place percent below 100% — used when
 // the caller wants to display "99.99%" instead of rounding up to 100%.
 export const MAX_BELOW_FULL_BPS = 9_999n;
+
+// Number-domain conversions for fee/slippage UI. Kept as plain `number`
+// because both inputs are bounded small (bps in [0, 10000], percent in
+// [0, 100]) — bigint math here would force every display site to convert
+// back to Number for rendering.
+export const bpsToPercent = (bps: number): number =>
+  bps / BASIS_POINTS_PER_PERCENT;
+export const percentToBps = (percent: number): number =>
+  Math.round(percent * BASIS_POINTS_PER_PERCENT);
+
+// Scale factor used when projecting an atomic balance onto a 0-10000 bps
+// ratio (e.g. "how close to full balance is the typed amount?").
+export const BPS_SCALE = BASIS_POINTS_DIVISOR;

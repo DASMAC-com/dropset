@@ -11,6 +11,8 @@ import {
   waitForSwapConfirmation,
 } from "./dflowSwap";
 import { emit } from "./events";
+import { getErrorMessage } from "./guards";
+import { percentToBps } from "./percent";
 import { type Slippage, useSwapStore } from "./store";
 
 export type SwapStatus =
@@ -46,7 +48,7 @@ export type UseDflowSwap = {
 };
 
 const slippageBpsParam = (slip: Slippage): string =>
-  slip.mode === "auto" ? "auto" : Math.round(slip.percent * 100).toString();
+  slip.mode === "auto" ? "auto" : percentToBps(slip.percent).toString();
 
 export function useDflowSwap(): UseDflowSwap {
   const wallet = useWallet();
@@ -90,6 +92,15 @@ export function useDflowSwap(): UseDflowSwap {
 
     try {
       setStatus("signing");
+      // Re-check wallet status right before handing off to the order +
+      // signing path. The initial check above is racy: between then and
+      // now we've awaited nothing, but useCallback could be re-invoked
+      // after a disconnect dispatched during the same tick. Catching it
+      // here keeps the failure mode "Wallet not connected" instead of a
+      // confusing wallet-adapter error during sendTransaction.
+      if (wallet.status !== "connected") {
+        throw new DflowSwapError("Wallet not connected", "wallet");
+      }
       const res = await executeDflowSwap({
         inputMint: fromMint,
         outputMint: toMint,
@@ -112,10 +123,7 @@ export function useDflowSwap(): UseDflowSwap {
       const err =
         e instanceof DflowSwapError
           ? e
-          : new DflowSwapError(
-              e instanceof Error ? e.message : String(e),
-              "wallet",
-            );
+          : new DflowSwapError(getErrorMessage(e), "wallet");
       setError(err);
       setStatus("error");
     } finally {

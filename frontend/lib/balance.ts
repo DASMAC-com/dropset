@@ -28,6 +28,12 @@ export const groupThousands = (s: string): string => {
   return intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",") + rest;
 };
 
+// Wallet-balance display formatting: base units → grouped decimal string with
+// at least 2 fractional digits. Composes formatBaseAmount + groupThousands,
+// which were previously called in tandem at every balance display site.
+export const formatBalanceDisplay = (base: bigint, decimals: number): string =>
+  groupThousands(formatBaseAmount(base, decimals, 2));
+
 // Parse a normalized decimal string (no thousand separators — store form) back
 // to base units for the given `decimals`. Returns 0n for empty/invalid input.
 export const parseAmountToBase = (
