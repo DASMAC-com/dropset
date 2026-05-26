@@ -32,7 +32,7 @@ export const SWAP_CONFIRM_MAX_UNKNOWN_POLLS = 10;
 
 // Outer-edge timeout for the /order fetch. Long enough to absorb a slow
 // quote-time route build, short enough that a hung endpoint surfaces as a
-// retriable error rather than sticking the UI in "Preparing swap…".
+// retryable error rather than sticking the UI in "Preparing swap…".
 export const DFLOW_ORDER_TIMEOUT_MS = 20_000;
 
 // ───────────── Jupiter / pricing ─────────────

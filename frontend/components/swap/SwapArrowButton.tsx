@@ -11,7 +11,7 @@ import { emit, useAppEvent } from "@/lib/events";
 const SPIN_DEGREES = 540;
 // Stiff/fast spring tuned to settle inside the user's eye-track window —
 // looser values let the arrow keep wobbling after the from/to swap has
-// already finished re-rendering, which reads as laggy UI.
+// already finished re-rendering, which reads as UI lag.
 const SPIN_SPRING = { type: "spring", stiffness: 800, damping: 70 } as const;
 
 export function SwapArrowButton() {

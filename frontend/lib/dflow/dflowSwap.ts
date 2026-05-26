@@ -143,10 +143,10 @@ export async function extractDflowApiError(
 }
 const MAX_RAW_BODY_PREVIEW = 200;
 
-// Phantom, Backpack, Solflare and Glow each surface user-rejection with a
-// slightly different message. Match conservatively — we'd rather classify
-// a true wallet failure as "rejected" (and prompt the user to retry) than
-// classify a real cancel as a generic wallet error.
+// Common wallets each surface user-rejection with a slightly different
+// message. Match conservatively — we'd rather classify a true wallet
+// failure as "rejected" (and prompt the user to retry) than classify a
+// real cancel as a generic wallet error.
 const CANCEL_PATTERN =
   /user (?:reject|cancel|denied|declined)|reject(?:ed)?(?: by user| the request)|cancelled in wallet|approval denied|transaction (?:was )?(?:declined|cancelled|rejected)/i;
 
