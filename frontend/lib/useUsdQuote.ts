@@ -9,6 +9,7 @@ import {
   TOKEN_INFO_REFRESH_MS,
   TOKEN_INFO_TTL_MS,
 } from "./timings";
+import { type ParsedJupiterRow, parseJupiterSearchResponse } from "./validate";
 
 // Re-export so existing import sites (SwapPanel, CurrenciesView) keep
 // working — the canonical definition lives in lib/timings.ts.
@@ -38,39 +39,22 @@ export type TokenInfo = {
   holderCount: number | null;
 };
 
-type RawJupRow = {
-  id: string;
-  usdPrice?: number;
-  priceChange24h?: number;
-  mcap?: number;
-  liquidity?: number;
-  holderCount?: number;
-  stats24h?: {
-    priceChange?: number;
-    buyVolume?: number;
-    sellVolume?: number;
-  };
-};
-
-const project = (raw: RawJupRow): TokenInfo | null => {
-  if (typeof raw.usdPrice !== "number") return null;
-  const change =
-    typeof raw.priceChange24h === "number"
-      ? raw.priceChange24h
-      : typeof raw.stats24h?.priceChange === "number"
-        ? raw.stats24h.priceChange
-        : null;
-  const buy = raw.stats24h?.buyVolume;
-  const sell = raw.stats24h?.sellVolume;
+// Rows arrive pre-validated from parseJupiterSearchResponse (every field
+// is a normalized `number | null`), so projection is a straight extraction
+// with no per-field typeof guards.
+const project = (raw: ParsedJupiterRow): TokenInfo | null => {
+  if (raw.usdPrice === null) return null;
+  const change = raw.priceChange24h ?? raw.stats24h.priceChange;
+  const { buyVolume, sellVolume } = raw.stats24h;
   const volume24h =
-    typeof buy === "number" && typeof sell === "number" ? buy + sell : null;
+    buyVolume !== null && sellVolume !== null ? buyVolume + sellVolume : null;
   return {
     usdPrice: raw.usdPrice,
     priceChange24h: change,
     volume24h,
-    mcap: typeof raw.mcap === "number" ? raw.mcap : null,
-    liquidity: typeof raw.liquidity === "number" ? raw.liquidity : null,
-    holderCount: typeof raw.holderCount === "number" ? raw.holderCount : null,
+    mcap: raw.mcap,
+    liquidity: raw.liquidity,
+    holderCount: raw.holderCount,
   };
 };
 
@@ -107,11 +91,11 @@ const fetchInfo = (mint: string): Promise<TokenInfo | null> => {
         return null;
       }
       const body: unknown = await res.json();
-      if (!Array.isArray(body)) {
+      const rows = parseJupiterSearchResponse(body);
+      if (rows === null) {
         console.warn(`Jupiter token info returned non-array for ${mint}`);
         return null;
       }
-      const rows = body as RawJupRow[];
       const row = rows.find((r) => r.id === mint);
       const info = row ? project(row) : null;
       cache.set(mint, { info, fetchedAt: Date.now() });
@@ -155,14 +139,14 @@ export const prefetchAllTokenInfo = (mints: string[]): Promise<void> => {
         return;
       }
       const body: unknown = await res.json();
-      if (!Array.isArray(body)) {
+      const rows = parseJupiterSearchResponse(body);
+      if (rows === null) {
         console.warn(
           "Jupiter prefetch returned non-array — per-mint fetchInfo will retry",
         );
         return;
       }
-      const rows = body as RawJupRow[];
-      const byId = new Map<string, RawJupRow>();
+      const byId = new Map<string, ParsedJupiterRow>();
       for (const r of rows) byId.set(r.id, r);
       const at = Date.now();
       for (const mint of need) {
