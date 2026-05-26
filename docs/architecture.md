@@ -56,10 +56,11 @@ path. Vaults live contiguously inside a shared market account (see
 `MarketHeader` below).
 
 The leader is the vault's active manager — they alone set the `BookProfile`
-and `ReferencePrice`. Outside depositors are passive participants who share
-in the spread the leader captures. Per-depositor records live in separate
-`Position` accounts (see below), so the vault sector's fixed size is
-unaffected by depositor count.
+and `ReferencePrice` (or their delegated `quote_authority`). Outside
+depositors are passive participants who share in the spread the leader
+captures. Outside shares are SPL tokens held in standard ATAs (see
+**Shares** below); the leader's stake is non-SPL bookkeeping. Neither
+imposes any per-depositor storage on the vault sector itself.
 
 Leader-supplied prices are **not** validated on write — takers range-check
 at match time, so a nonsense reference price just renders that vault
@@ -76,6 +77,17 @@ slot.
 ```rust
 struct Vault {
     leader: Pubkey,
+    /// Authority for quote-mutating ix (`SetReferencePrice`,
+    /// `SetBookProfile`). Always populated — at `OpenVault` time
+    /// the caller may pass `Some(pubkey)`; if `None`, the protocol
+    /// stamps `leader`. Hot-path auth check is a single compare.
+    /// Rotated via `SetQuoteAuthority` (leader-only).
+    quote_authority: Pubkey,
+    /// SPL mint for outside-depositor shares. Mint authority is a
+    /// vault-owned PDA. Leader's own stake is tracked in
+    /// `leader_shares` and is **not** minted as SPL tokens.
+    /// Invariant: `leader_shares + share_mint.supply == total_shares`.
+    share_mint: Pubkey,
     /// Packed `(stamp, price, expiry)`. Hot path —
     /// overwritten as two aligned u64 stores.
     reference_price: ReferencePrice,
@@ -85,9 +97,12 @@ struct Vault {
     /// Quote tokens (atoms) backing this vault's bids. Pooled
     /// inventory across the leader and outside depositors.
     quote_atoms: u64,
-    /// Total vault shares outstanding.
+    /// Total vault shares outstanding (= leader_shares +
+    /// share_mint.supply).
     total_shares: u64,
-    /// Shares held by the leader themselves. Used to enforce
+    /// Leader's stake. Non-SPL, protocol-tracked. Increments on
+    /// leader `Deposit` and on `Realize` perf-fee accrual;
+    /// decrements on leader `Withdraw`. Used to enforce
     /// `leader_shares / total_shares >= registry.min_leader_share`
     /// at `Deposit` and leader `Withdraw` (against active vaults).
     leader_shares: u64,
@@ -100,11 +115,16 @@ struct Vault {
     /// time and capped by `registry.max_perf_fee_rate`.
     perf_fee_rate: u16,
     /// Set to 1 when an admin freezes the vault. Frozen vaults
-    /// reject all leader quote-mutating instructions; depositors
-    /// can still `Withdraw` (the `min_leader_share` floor is
-    /// bypassed for the leader so they can exit alongside
+    /// reject all quote-mutating instructions; depositors and the
+    /// leader can still `Withdraw` (the `min_leader_share` floor
+    /// is bypassed for the leader so they can exit alongside
     /// everyone else). See `FreezeVault`.
     frozen: u8,
+    /// Set to 1 if outside depositors are permitted. When 0, only
+    /// the leader may `Deposit`; existing outside SPL share holders
+    /// (from before the flag was flipped) can still `Withdraw`.
+    /// Mutable by the leader via `SetAllowOutsideDepositors`.
+    allow_outside_depositors: u8,
     /// Next vault in the active DLL, or next free sector when
     /// this vault is on the free list.
     next: *mut Vault,
@@ -178,13 +198,14 @@ Q32.32 fixed-point `u64`. It **never decreases** — prior losses must
 be fully recovered (VPS back above HWM) before the leader earns again.
 
 Performance fee accrues to the leader as **newly-minted shares**, not
-token withdrawals: no forced liquidation, auto-compounding. On
-crystallization, if `VPS_new > hwm`:
+token withdrawals: no forced liquidation, auto-compounding. The shares
+land in `Vault.leader_shares` (the leader's stake is non-SPL, so no
+SPL minting is involved). On `Realize`, if `VPS_new > hwm`:
 
 - Existing depositors retain `(1 − f) × (VPS_new − hwm)` per share
   of the excess.
-- The leader is minted `m` shares capturing `f × (VPS_new − hwm)` per
-  existing share, where:
+- The leader accrues `m` shares to `leader_shares`, capturing
+  `f × (VPS_new − hwm)` per existing share, where:
 
 ```
 m = f × s × (L − hwm × s) / ((1 − f) × L + f × hwm × s)
@@ -192,7 +213,8 @@ m = f × s × (L − hwm × s) / ((1 − f) × L + f × hwm × s)
 
 `s` is `total_shares` before the mint; `f` is the vault's
 `perf_fee_rate` (basis points / 10000); `L` is the vault's current
-value. After minting, `hwm := L / (s + m)`.
+value. After accrual, `total_shares` and `leader_shares` both grow
+by `m`, and `hwm := L / (s + m)`.
 
 `Vault.perf_fee_rate` is set at `OpenVault` time, capped by
 `registry.max_perf_fee_rate`, and immutable thereafter.
@@ -209,10 +231,15 @@ natural choke points:
   is rejected if it would push the ratio below `min_leader_share`.
 
 Neither `SetReferencePrice` nor the taker hot path is touched. The
-deposit gate creates a clean implicit cap on outside capital: once the
-vault reaches `leader_shares / min_leader_share`, new outside deposits
-fail until the leader tops up. With a 5% floor, that caps outside
-capital at 19× the leader's stake.
+check uses on-vault numbers only (`leader_shares` and `total_shares`)
+— no SPL mint or ATA load required, and the leader cannot evade the
+floor by transferring shares to an alt wallet (their stake is
+non-SPL by construction).
+
+The deposit gate creates a clean implicit cap on outside capital:
+once the vault reaches `leader_shares / min_leader_share`, new outside
+deposits fail until the leader tops up. With a 5% floor, that caps
+outside capital at 19× the leader's stake.
 
 The floor is **bypassed for leader withdrawals from frozen vaults** —
 frozen vaults are winding down, and the leader is treated as any other
@@ -351,13 +378,19 @@ The `Registry` is a global singleton account that holds protocol-wide
 governance parameters and the admin allowlist.
 
 Vault creation is **permissionless**: any pubkey may call `OpenVault`
-by paying `vault_open_fee` to the protocol treasury. Admins may call
-the same instruction without paying — including on behalf of others
-(useful for protocol-onboarded market makers). The per-market cap on
-vault count (`max_vaults_per_market`) is set by the cost to reconstruct
-the ephemeral order book during each take (detailed below) and can be
-tuned across the protocol's lifecycle as CU budgets and runtime
-performance evolve.
+by paying `vault_open_fee.atoms` of `vault_open_fee.mint` to the
+Registry's fee ATA — derived as
+`get_associated_token_address(registry_pda, vault_open_fee.mint)` —
+no storage needed on the Registry itself. Admins may call the same
+instruction without paying, including on behalf of others (useful for
+protocol-onboarded market makers). If admins later change
+`vault_open_fee.mint`, a fresh ATA is used going forward and prior
+fees stay in the old ATA; admins sweep both.
+
+The per-market cap on vault count (`max_vaults_per_market`) is set by
+the cost to reconstruct the ephemeral order book during each take
+(detailed below) and can be tuned across the protocol's lifecycle as
+CU budgets and runtime performance evolve.
 
 ```rust
 struct FeeConfig {
@@ -398,29 +431,22 @@ protocol does not maintain one. Admin power is exercised per-vault via
 `FreezeVault` (see **Leader operations**), and the `vault_open_fee`
 acts as the only material gate on fresh entry.
 
-## Position
+## Shares
 
-A `Position` is a per-(vault, depositor) PDA holding the depositor's
-share balance. Allocated on the depositor's first `Deposit`, closed
-when `shares` drops to zero.
+Outside depositors hold their stake as **SPL tokens** minted from
+`Vault.share_mint` (one dedicated mint per vault, address recorded on
+the Vault, mint authority a vault-owned PDA). Tokens live in standard
+ATAs and are transferable, composable with the rest of the Solana
+ecosystem (collateral in lending markets, listed on aggregators, etc.).
 
-```rust
-struct Position {
-    /// Vault this position is against.
-    vault: Pubkey,
-    /// Depositor who owns this position.
-    owner: Pubkey,
-    /// Shares held in `vault`.
-    shares: u64,
-}
-```
+The leader's stake is **not** an SPL token. It's tracked as
+`Vault.leader_shares`, a protocol-controlled `u64` that increments on
+leader `Deposit` and on `Realize` perf-fee accrual, and decrements on
+leader `Withdraw`. This guarantees the skin-in-the-game floor cannot
+be evaded by transferring shares to an alt wallet, and avoids any
+need to load the leader's ATA at check time.
 
-Seeds: `[b"position", vault.as_ref(), owner.as_ref()]`.
-
-Per-depositor records living in separate accounts (rather than inside
-the vault sector) preserves the fixed-size, contiguous sector layout
-described under `MarketHeader`. Depositor count is therefore not
-bounded by per-vault storage.
+Invariant: `leader_shares + share_mint.supply == total_shares`.
 
 ## Leader operations
 
@@ -445,11 +471,13 @@ Before mutating the vault, the program performs three checks:
 1. **Alignment.** `(ptr - vaults_start) % size_of::<Vault>() == 0` —
    guarantees the pointer lands on a real vault boundary, so the
    cast to `&mut Vault` is well-formed.
-1. **Authority.** `vault.leader == signer && !vault.frozen` for
-   quote-mutating ix (`SetReferencePrice`, `SetBookProfile`);
-   `vault.leader == signer` (frozen bit ignored) for `Withdraw`,
-   which remains available on frozen vaults so the leader can wind
-   down alongside depositors.
+1. **Authority.** `vault.quote_authority == signer && !vault.frozen`
+   for quote-mutating ix (`SetReferencePrice`, `SetBookProfile`) —
+   single compare on the hot path, no branching for the unset case.
+   Inventory ix (`Deposit`, `Withdraw`, `Realize`,
+   `SetQuoteAuthority`, `SetAllowOutsideDepositors`) require
+   `vault.leader == signer`. Leader `Withdraw` remains available on
+   frozen vaults so the leader can wind down alongside depositors.
 
 No discriminant tag is needed: the vault region is homogeneous, so
 (1) + (2) fully determine that `ptr` refers to a valid `Vault`. The
@@ -479,16 +507,31 @@ Simplified input buffer schematic:
 ### OpenVault
 
 Called by anyone to allocate a vault sector and become its leader.
-The caller pays `registry.vault_open_fee` to the protocol treasury
-PDA unless the signer is an admin (in which case the fee is waived;
+The caller transfers `registry.vault_open_fee.atoms` of the fee mint
+to the Registry's fee ATA — `get_associated_token_address(registry_pda,
+vault_open_fee.mint)` — unless the signer is an admin (fee waived;
 admins may also pass a separate `leader: Pubkey` argument to open a
-vault on someone else's behalf — that pubkey becomes
-`Vault.leader`). The caller passes their desired `perf_fee_rate`
-(capped at `registry.max_perf_fee_rate`), which is stamped onto the
-vault and immutable thereafter. The vault is initialized empty
+vault on someone else's behalf — that pubkey becomes `Vault.leader`).
+
+Caller arguments stamped onto the vault:
+
+- `perf_fee_rate: u16` — capped at `registry.max_perf_fee_rate`,
+  immutable thereafter.
+- `quote_authority: Option<Pubkey>` — if `None`, the protocol stamps
+  `Vault.leader`. Rotatable post-open via `SetQuoteAuthority`.
+- `allow_outside_depositors: bool` — toggleable post-open via
+  `SetAllowOutsideDepositors`.
+
+Side effect: the instruction creates a new SPL mint for outside-share
+tokens (mint authority a vault-owned PDA) and records its address as
+`Vault.share_mint`. The vault is otherwise initialized empty
 (`base_atoms`, `quote_atoms`, `total_shares`, `leader_shares`, `hwm`,
 `frozen` all zero); the leader seeds inventory with their first
 `Deposit` (see **Depositor operations** below).
+
+If the fee mint on `Registry` changes after this vault was opened,
+old fees remain in the prior fee ATA and admins sweep both — the
+vault itself is unaffected.
 
 Two sector-allocation paths, tried in order:
 
@@ -520,9 +563,28 @@ Hot path. Reads `market.nonce`, writes `Vault.reference_price`
 as `stamp`, one packing `(price, expiry)`), and increments
 `market.nonce`. Setting `FLUSH_BIT` on `stamp` arms a pending
 refill of `Vault.remaining`, deferred to the next taker — so the
-leader write stays at two stores regardless of `N_LEVELS`. No
-vault iteration, no reallocations, no profile touch — asm-optimized,
+write stays at two stores regardless of `N_LEVELS`. No vault
+iteration, no reallocations, no profile touch — asm-optimized,
 analogous to a propAMM reference-price update.
+
+Authority is `vault.quote_authority`, not `vault.leader`. This is a
+single compare on the hot path; the unset-authority case is avoided
+by guaranteeing `quote_authority` is always populated (default copied
+from `leader` at `OpenVault`).
+
+### SetQuoteAuthority
+
+Leader-only. Writes `Vault.quote_authority = new`, where `new` may be
+any pubkey including the leader's own (effectively revoking
+delegation). Useful for rotating a hot wallet, delegating to a
+third-party MM firm, or moving quoting authority while keeping
+custody of inventory.
+
+### SetAllowOutsideDepositors
+
+Leader-only. Writes `Vault.allow_outside_depositors = flag`. Flipping
+to `false` blocks **new** outside `Deposit` ix but does not affect
+existing SPL share holders, who can continue to `Withdraw` normally.
 
 ### FreezeVault
 
@@ -544,21 +606,26 @@ re-enter, they pay `vault_open_fee` again and start a new vault.
 
 ## Depositor operations
 
-Depositor instructions pass a pointer to the vault (validated by the
-same bounds/alignment scheme described under **Authority & pointer
-validation**, minus the leader-signer check) and the caller's
-`Position` PDA.
+`Deposit`, `Withdraw`, and `Realize` use the same bounds/alignment
+pointer validation as leader ix (minus the leader-signer check), and
+the same instruction discriminants for both the leader and outside
+depositors. The path splits internally on `signer == vault.leader`:
+the leader updates `Vault.leader_shares` directly, while outside
+depositors mint or burn SPL tokens against `Vault.share_mint`. SPL
+mint and depositor-ATA accounts are required for the outside path,
+**optional for the leader path** — leaders can omit them.
 
-Every depositor instruction begins by **crystallizing** the vault:
-if `VPS_now > hwm`, mint the leader's accrued perf-fee shares and
-reset `hwm`. This guarantees shares mint or burn at a post-fee VPS,
-so flows never transfer leader-owed fee value to or from the caller.
+Every `Deposit` and `Withdraw` begins by **realizing** the vault:
+if `VPS_now > hwm`, accrue the leader's perf-fee shares to
+`leader_shares` and reset `hwm`. This guarantees outside shares mint
+or burn at a post-fee VPS, so flows never transfer leader-owed fee
+value to or from the caller.
 
 ### Deposit
 
 Caller specifies a target `shares_out` and a max basket
-`(max_base_in, max_quote_in)` for slippage protection. The
-instruction computes the basket required at the current vault ratio:
+`(max_base_in, max_quote_in)` for slippage protection. The basket
+required at the current vault ratio is:
 
 ```
 base_in  = ceil(shares_out × base_atoms  / total_shares)
@@ -567,18 +634,26 @@ quote_in = ceil(shares_out × quote_atoms / total_shares)
 
 Rounding up keeps any dust on the depositor's side, preserving VPS
 for existing shareholders. The basket is transferred from the
-depositor to the treasuries; `Position.shares` and
-`Vault.total_shares` are incremented (and `Vault.leader_shares` too,
-if the depositor is the leader).
+depositor to the treasuries, then:
 
-**Skin-in-the-game check.** After mint, if the caller is not the
+- **Leader path** (`signer == vault.leader`): increment
+  `Vault.leader_shares` by `shares_out`. No SPL tokens minted.
+- **Outside path** (`signer != vault.leader`): mint `shares_out`
+  SPL tokens to the caller's ATA on `Vault.share_mint`. Requires
+  `Vault.allow_outside_depositors == 1`.
+
+`Vault.total_shares` is incremented in both paths.
+
+**Skin-in-the-game check.** After update, if the caller is not the
 leader and `leader_shares × 10000 < min_leader_share × total_shares`,
-the instruction reverts.
+the instruction reverts. The check uses on-vault numbers only — no
+ATA load needed.
 
 **Seeding (first deposit).** If `total_shares == 0`, the vault has
 never been seeded. The first depositor **must** be the leader; the
 instruction sets `total_shares := isqrt(base_in × quote_in)`,
-`leader_shares := total_shares`, and `hwm := Q32.32(1.0)`.
+`leader_shares := total_shares`, and `hwm := Q32.32(1.0)`. No SPL
+tokens are minted on seeding (leader stake is non-SPL).
 
 Deposits against frozen vaults are rejected.
 
@@ -593,23 +668,30 @@ quote_out = floor(shares_in × quote_atoms / total_shares)
 ```
 
 Rounding down keeps any dust in the vault for the benefit of
-remaining shareholders. `Position.shares` and `Vault.total_shares`
-are decremented (and `Vault.leader_shares` too, if the withdrawer is
-the leader); the basket is transferred from the treasuries to the
-caller.
+remaining shareholders. Then:
+
+- **Leader path** (`signer == vault.leader`): decrement
+  `Vault.leader_shares` by `shares_in`. No SPL burn.
+- **Outside path** (`signer != vault.leader`): burn `shares_in`
+  SPL tokens from the caller's ATA on `Vault.share_mint`.
+
+`Vault.total_shares` is decremented in both paths; the basket is
+transferred from the treasuries to the caller.
 
 If the caller is the leader against an **active** vault, the
 post-burn ratio must remain at or above `min_leader_share`. This
 check is **bypassed for frozen vaults**, allowing the leader to wind
-down alongside depositors. `Position` accounts are closed when
-`shares` drops to zero.
+down alongside depositors.
 
-### Crystallize
+### Realize
 
-Folds VPS gains above `hwm` into newly-minted leader shares and
-resets `hwm`. Permissionless (the leader has the strongest
-incentive), and runs implicitly at the start of every `Deposit` and
-`Withdraw`. **Never runs on the taker hot path.**
+Folds VPS gains above `hwm` into the leader's stake — increments
+`Vault.leader_shares` (and `Vault.total_shares` by the same amount)
+and updates `hwm := L / total_shares_after`. Permissionless (the
+leader has the strongest incentive), and runs implicitly at the start
+of every `Deposit` and `Withdraw`. **Never runs on the taker hot
+path.** Touches no SPL accounts — perf fee accrual is purely on-vault
+bookkeeping.
 
 ## Order matching
 
