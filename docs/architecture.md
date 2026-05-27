@@ -197,25 +197,40 @@ struct LevelLive {
 
 ### Value-per-share and the L invariant
 
-Vault value is tracked via a dimensionless invariant borrowed from
+Vault value is tracked via a dimensionless metric borrowed from
 constant-product AMMs:
 
 ```
 L = isqrt(base_atoms × quote_atoms)
 ```
 
+**L is a measure, not a curve constraint.** The matching engine does
+not constrain trades to preserve any invariant — leaders quote
+freely, and `L` is just a function of the post-trade inventory used
+for share accounting and perf-fee calculation.
+
 Three properties make this the right metric for an actively-quoted
 two-asset vault:
 
-- **No oracle, no numeraire.** L lives in units of √(base × quote);
-  it is only ever compared against itself at the same vault.
+- **No oracle, no external unit of account.** L lives in units of
+  √(base × quote); it is only ever compared against itself at the
+  same vault.
 - **Deposits and withdrawals at the current ratio leave `L / total_shares`
-  invariant.** Both legs scale proportionally, so value-per-share (VPS)
-  does not tick on basket flows.
-- **Fills move L meaningfully.** Buying base cheap (favorable fill)
-  grows L; selling base cheap (adverse selection) shrinks it. VPS
-  captures both spread captured and adverse-selection PnL in a single
-  number, independent of any directional move in the underlying pair.
+  invariant.** Both legs scale proportionally, so value-per-share
+  (VPS) does not tick on basket flows.
+- **L tracks performance against a passive constant-product hold.**
+  For a sell of `dx` base at price P, new L² ≈ old L² + dx·(b·P − q).
+  So L grows when the leader sells above the AMM-implied price `q/b`
+  (spread captured) and shrinks when they sell below (adversely
+  selected). Directional moves of the underlying pair with no fills
+  leave inventory and L unchanged — directional exposure flows
+  through to depositors via the basket, not through VPS.
+
+Unlike a Uniswap-v2 LP share — where L grows monotonically because
+fees stay in the pool — **L in Dropset can shrink**. A leader who
+quotes badly is observably losing value-per-share. This is why HWM
+does real work in the next section: it prevents perf fee from
+accruing on the way back up from drawdowns.
 
 ### High-water mark and performance fee
 
@@ -279,23 +294,56 @@ pair. A price move with no trading leaves token counts (and therefore
 L and VPS) unchanged; only spread capture or adverse selection move
 VPS.
 
-| Event                              | L         | VPS / APR | Basket numeraire value |
+| Event                              | L         | VPS / APR | Basket quote value     |
 |------------------------------------|-----------|-----------|------------------------|
 | Underlying pair moves, no fills    | unchanged | flat      | up or down (direction) |
 | Leader captures spread on flow     | grows     | positive  | up                     |
 | Leader adversely selected          | shrinks   | negative  | down                   |
 
-The depositor's total numeraire-denominated return decomposes cleanly
+The depositor's total quote-denominated return decomposes cleanly
 into **APR (MM skill) × basket price move (directional)**; the two
 are separately attributable. The protocol math is oracle-free. UIs
-that want to display a numeraire-converted total return can layer in
-a price feed (Pyth, Switchboard) for display only — no on-chain
+that want to display a quote-converted total return can layer in a
+price feed (Pyth, Switchboard) for display only — no on-chain
 dependency.
 
 APR can go **negative** when the leader is consistently adversely
 selected. That is the same metric working in both directions, and it
 is the right signal for depositors deciding whether to stay or pull
 their basket.
+
+### Rebalancing
+
+When a vault drifts heavy on one leg (e.g. base depletes, quote
+accumulates), the leader has three levers in increasing order of
+cost:
+
+1. **Do nothing — auto-rebalance.** Because sizes are
+   pct-of-inventory, the next flush after a drift automatically
+   makes the depleted side's quotes smaller and the accumulated
+   side's larger. If quote is heavy, bids materialize larger
+   (`quote_atoms × size_bps / 10000`) while asks shrink. Larger
+   bids attract sellers, who dump base onto the leader, rebuilding
+   the base leg. The ladder is self-correcting as long as the
+   reference price is reasonable.
+
+2. **Bump `reference_price.price`.** Shifts the whole ladder up or
+   down without changing offsets or sizes. Moving the reference up
+   makes bids more attractive to sellers (they get more quote per
+   base) and asks less attractive to buyers — net: invites selling
+   to the maker, rebuilds base. One hot-path write (`SetReferencePrice`),
+   asm-cost identical to a normal price update.
+
+3. **Reshape via `SetBookProfile` with asymmetric ladders.** `bids`
+   and `asks` are independent arrays — tighten one side's
+   `price_offset` or grow one side's `size_bps` to skew flow more
+   aggressively than the auto-rebalance alone provides. Costs a
+   full `BookProfile` rewrite + materialization on the next take.
+
+For most operating regimes (1) suffices. (2) and (3) are levers for
+when the leader has a directional view or specifically wants to
+accelerate rebalancing past what pct-of-inventory provides on its
+own.
 
 ## BookProfile
 
