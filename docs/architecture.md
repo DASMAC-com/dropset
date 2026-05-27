@@ -130,13 +130,17 @@ struct Vault {
     next: *mut Vault,
     /// Previous vault in the active DLL (unused on the free list).
     prev: *mut Vault,
-    /// Bids and asks expressed as offsets from
-    /// `reference_price.price`.
+    /// Bids and asks parameterized in basis points: a `price_offset`
+    /// in hundredths of a bp from `reference_price.price`, a
+    /// `size_bps` as fraction of inventory, and an `expiry_offset`
+    /// in slots after `quote_slot`. See `BookProfile`.
     profile: BookProfile,
-    /// Per-level fill allowance in base atoms, mirroring
-    /// `profile`'s `(bids, asks)` shape. Flushed from `profile`
-    /// sizes by the first taker to match this vault after a
-    /// `SetReferencePrice` — see `reference_price.stamp`.
+    /// Materialized per-level state — absolute price, atom-sized
+    /// allowance, and absolute expiry — computed from `profile`
+    /// and the current inventory by the first taker to match this
+    /// vault after a `SetReferencePrice` or `SetBookProfile` (see
+    /// `reference_price.stamp`). Subsequent takers read these
+    /// values directly and decrement `size` on fills.
     remaining: Remaining,
 }
 
@@ -145,27 +149,38 @@ struct ReferencePrice {
     /// OR'd with `FLUSH_BIT` (`1 << 63`) as a "flush pending"
     /// flag. Low 63 bits break ties for price-time priority at
     /// match time — takers mask off `FLUSH_BIT` before
-    /// comparing. The first taker to match this vault copies
-    /// `BookProfile` sizes into `Vault.remaining` and clears the
-    /// flag.
+    /// comparing. The first taker to match this vault materializes
+    /// `BookProfile` (price offsets and size_bps) and inventory
+    /// into `Vault.remaining` and clears the flag.
     stamp: u64,
-    /// Reference price for this leader's book profile.
+    /// Reference price the leader's book profile is anchored to.
     /// Custom 32-bit representation; range-checked by the taker
     /// at match time.
     price: Price,
-    /// Slot after which this reference price is no longer valid
-    /// (low 32 bits of `Clock::slot`, supplied by the leader).
-    /// Expired quotes are skipped by takers at match time.
-    expiry: u32,
+    /// Slot the quote was "as of" — supplied by the leader, validated
+    /// `<= current_slot` (no future-dating) and `>= current_slot − MAX_BACKDATE`.
+    /// Per-level effective expiry is `quote_slot + level.expiry_offset`.
+    quote_slot: u32,
 }
 
 struct Remaining {
-    /// Live bid-side allowance, refilled from
-    /// `BookProfile.bids[i].size` on flush.
-    bids: [u64; N_LEVELS],
-    /// Live ask-side allowance, refilled from
-    /// `BookProfile.asks[i].size` on flush.
-    asks: [u64; N_LEVELS],
+    bids: [LevelLive; N_LEVELS],
+    asks: [LevelLive; N_LEVELS],
+}
+
+struct LevelLive {
+    /// Absolute price for this level, materialized at flush from
+    /// `ref_price.price × (1_000_000 ∓ level.price_offset) / 1_000_000`
+    /// (subtract for bids, add for asks).
+    price: Price,
+    /// Live allowance in atoms (base for asks, quote for bids).
+    /// Materialized at flush from `inventory × level.size_bps / 10000`;
+    /// decremented on fills.
+    size: u64,
+    /// Absolute slot this level expires at, materialized at flush
+    /// from `ref_price.quote_slot + level.expiry_offset`. Takers
+    /// skip levels where `current_slot >= expires_at`.
+    expires_at: u32,
 }
 ```
 
@@ -272,19 +287,20 @@ their basket.
 
 ## BookProfile
 
-Bids and asks are stored as **offsets from the reference price**, not
-absolute prices, and materialized at match time by adding each offset to
-`reference_price.price`. This keeps the onchain representation compatible
-with standard batch-replace APIs — a leader's usual bid/ask ladder
-translates directly into a `BookProfile` by subtracting each level's
-absolute price from the reference.
+Every level is parameterized in **basis points**: a `price_offset`
+in hundredths of a bp (100 = 1 bp) from `reference_price.price`, a
+`size_bps` as fraction of vault inventory (10000 = 100%), and an
+`expiry_offset` in slots after `quote_slot`. Direction is implicit
+from which array the level lives in: bids subtract the offset from
+the reference, asks add it.
 
-Each level's `size` is a **per-refresh allowance**, not a standing
-quantity. Live availability is tracked in `Vault.remaining`, which the
-first post-refresh taker refills from `BookProfile` sizes (triggered
-by the `FLUSH_BIT` on `reference_price.stamp`). A single refresh can
-therefore be hit for at most `size` per level no matter how many
-separate takes arrive before the leader next calls `SetReferencePrice`.
+Nothing in `BookProfile` is in absolute atoms or absolute slots —
+the materialization to atoms and absolute slots happens at flush
+time (see below). This lets a maker reshape the ladder once via
+`SetBookProfile` and then leave it alone: as inventory drifts with
+fills, subsequent flushes auto-rescale the level sizes to the
+current `(base_atoms, quote_atoms)` without any further input from
+the maker.
 
 ```rust
 struct BookProfile {
@@ -295,16 +311,57 @@ struct BookProfile {
 }
 
 struct Level {
-    /// Unsigned offset from reference price, as a custom 32-bit
-    /// decimal representation. Direction is implicit: subtract
-    /// for bids, add for asks.
-    offset: PriceOffset,
-    /// Fill allowance at this level in base atoms, reset per
-    /// `SetReferencePrice` refresh. Live per-level availability
-    /// is tracked in `Vault.remaining`.
-    size: u64,
+    /// Spread from `reference_price.price`, in hundredths of a bp
+    /// (100 = 1 bp). Direction is implicit: subtract for bids,
+    /// add for asks. Materialized to an absolute price at flush.
+    price_offset: u32,
+    /// Per-refresh allowance as a fraction of the corresponding
+    /// inventory leg, in basis points (10000 = 100%). Materialized
+    /// to atoms at flush from `inventory × size_bps / 10000`.
+    size_bps: u16,
+    /// Per-level TTL in slots after `quote_slot`. Materialized to
+    /// an absolute slot at flush. Takers skip levels where
+    /// `current_slot >= expires_at`.
+    expiry_offset: u32,
 }
 ```
+
+### Flush
+
+When `SetReferencePrice` or `SetBookProfile` arms the `FLUSH_BIT` on
+`reference_price.stamp`, the next taker to hit this vault performs a
+one-time materialization across all levels into `Vault.remaining`:
+
+```
+asks_remaining[i].size       = base_atoms  × asks[i].size_bps / 10000
+asks_remaining[i].price      = ref.price   × (1_000_000 + asks[i].price_offset) / 1_000_000
+asks_remaining[i].expires_at = ref.quote_slot + asks[i].expiry_offset
+
+bids_remaining[i].size       = quote_atoms × bids[i].size_bps / 10000
+bids_remaining[i].price      = ref.price   × (1_000_000 − bids[i].price_offset) / 1_000_000
+bids_remaining[i].expires_at = ref.quote_slot + bids[i].expiry_offset
+```
+
+A u128 intermediate is used during multiplication to avoid u64
+overflow (relevant for both the price and size computations); the
+result is truncated back to the native field width. `FLUSH_BIT` is
+then cleared with one `u64` store.
+
+Properties:
+
+- **Per-refresh allowance is preserved.** Once `size` decrements to
+  zero at level `i`, that level is dead until the next refresh —
+  even if inventory remains. This caps per-refresh drainage and
+  prevents takers from chain-draining a stale top-of-book across
+  successive instructions.
+- **Inventory snapshot is automatic.** The maker doesn't manage
+  absolute sizes; the percentages bind to whatever inventory exists
+  at flush. After heavy buying drains base, the next flush
+  automatically rescales the ladder to the new (smaller) base leg.
+- **Per-level expiry stratifies the ladder.** A maker can give
+  top-of-book a short `expiry_offset` (e.g., a few seconds in slots)
+  and deep levels a much longer one, so refresh cadence can be
+  graded by depth instead of forced to the top-of-book rate.
 
 ## MarketHeader
 
@@ -548,29 +605,41 @@ walk.
 
 ### SetBookProfile
 
-Setup path. Writes the full `BookProfile` — all orders are
-expressed relative to a single reference price, so the profile
-itself is price-agnostic. Called after seeding the vault and any
-time the leader wants to reshape their book. Also sets `FLUSH_BIT`
-on `reference_price.stamp` with a single `u64` store, so the next
-taker copies the new sizes into `Vault.remaining` instead of reusing
-stale per-level allowances from the old profile.
+Setup path. Writes the full `BookProfile` — all levels expressed in
+bps and slot offsets, never absolute. Called after seeding the vault
+and any time the leader wants to reshape their ladder. Also sets
+`FLUSH_BIT` on `reference_price.stamp` with a single `u64` store, so
+the next taker re-materializes `Vault.remaining` from the new profile
+and current inventory.
 
 ### SetReferencePrice
 
-Hot path. Reads `market.nonce`, writes `Vault.reference_price`
-(two aligned `u64` stores: one for `market.nonce | FLUSH_BIT`
-as `stamp`, one packing `(price, expiry)`), and increments
-`market.nonce`. Setting `FLUSH_BIT` on `stamp` arms a pending
-refill of `Vault.remaining`, deferred to the next taker — so the
-write stays at two stores regardless of `N_LEVELS`. No vault
-iteration, no reallocations, no profile touch — asm-optimized,
-analogous to a propAMM reference-price update.
+Hot path. Takes `(price: Price, quote_slot: u32)` from the leader.
+`quote_slot` is validated:
+
+- `quote_slot <= current_slot` — no future-dating (which would
+  extend effective TTL artificially).
+- `current_slot - quote_slot <= MAX_BACKDATE` — sanity cap (e.g.,
+  50 slots). Backdating only shortens effective TTL, so this is
+  self-grief rather than an exploit, but worth bounding.
+
+Reads `market.nonce`, writes `Vault.reference_price` as two aligned
+`u64` stores: one for `market.nonce | FLUSH_BIT` as `stamp`, one
+packing `(price, quote_slot)`. Increments `market.nonce`. Setting
+`FLUSH_BIT` arms a pending materialization of `Vault.remaining`,
+deferred to the next taker — so the leader write stays at two stores
+regardless of `N_LEVELS`. No vault iteration, no reallocations, no
+profile touch — asm-optimized, analogous to a propAMM
+reference-price update.
 
 Authority is `vault.quote_authority`, not `vault.leader`. This is a
 single compare on the hot path; the unset-authority case is avoided
 by guaranteeing `quote_authority` is always populated (default copied
 from `leader` at `OpenVault`).
+
+Off-chain pre-signing: because `quote_slot` is supplied by the leader
+rather than read from the clock, a quote can be signed at slot N and
+relayed at slot M > N, with on-chain expiry math anchored to N.
 
 ### SetQuoteAuthority
 
@@ -590,9 +659,9 @@ existing SPL share holders, who can continue to `Withdraw` normally.
 
 Admin-only. Sets `Vault.frozen = 1` on the target vault, after which
 `SetReferencePrice` and `SetBookProfile` against that vault are
-rejected at the authority check. Existing quotes expire naturally
-via the TIF on `reference_price.expiry`; takers skip the vault via
-the existing expiry check (no taker-side change needed).
+rejected at the authority check. Existing quotes expire naturally as
+each level's `expires_at` passes; takers skip them via the existing
+per-level expiry check (no taker-side change needed).
 
 Frozen vaults remain usable by depositors: `Withdraw` still works,
 and `min_leader_share` is bypassed for the leader so they can exit
@@ -696,12 +765,11 @@ bookkeeping.
 ## Order matching
 
 There is no persistent order book account. Each take builds a fresh
-**ephemeral book** on the SVM program heap, uses it to fill the taker,
-and discards it when the instruction returns. Orders are materialized
-just-in-time from each vault's `(reference_price.price, profile)` —
-each level's absolute price is `reference_price.price + level.offset`
-(subtract for bids, add for asks). Leaders only pay for cheap
-reference-price updates between takes.
+**ephemeral book** on the SVM program heap, uses it to fill the
+taker, and discards it when the instruction returns. Levels are
+read from `Vault.remaining`, where prices, sizes, and per-level
+expiries are already materialized — the matching engine does no bps
+arithmetic at match time.
 
 ### Book construction
 
@@ -709,36 +777,38 @@ On every taker instruction:
 
 1. **Walk** the active-vault doubly linked list from `head`.
 1. **Range-check** the vault's `reference_price.price`. Drop the
-   vault entirely if out-of-range (this is the deferred
-   validation from the leader's hot path — a nonsense price
-   renders the vault unmatchable here).
+   vault entirely if out-of-range (this is the deferred validation
+   from the leader's hot path — a nonsense price renders the vault
+   unmatchable here).
 1. **Flush if armed.** If `FLUSH_BIT` is set on
-   `reference_price.stamp`, copy `BookProfile` sizes into
-   `Vault.remaining` and clear the bit with one `u64` store.
-1. Iterate the relevant side of `profile` (asks for a buy
-   taker, bids for a sell taker), adding `level.offset` to
-   `reference_price.price` to get each absolute price.
-1. **Push** each
-   `(price, remaining.<side>[i], stamp & !FLUSH_BIT, vault_ptr, level_idx)`
-   tuple onto a binary heap allocated on the program heap,
-   skipping levels where the side's `remaining` is `0`. The heap is keyed
-   by `(price, nonce)`: min-heap for asks, max-heap for bids.
-   Nonce breaks price ties (older = wins) — `FLUSH_BIT` is
-   masked off the stamp so a just-flushed vault doesn't sort
-   younger than a previously-flushed one with the same
+   `reference_price.stamp`, materialize `Vault.remaining` from
+   `BookProfile` and current inventory per the formulas in the
+   **BookProfile → Flush** section, and clear the bit with one
+   `u64` store.
+1. Iterate the relevant side of `remaining` (asks for a buy taker,
+   bids for a sell taker).
+1. **Push** each `(remaining.price, remaining.size, stamp &
+   !FLUSH_BIT, vault_ptr, level_idx)` tuple onto a binary heap
+   allocated on the program heap, skipping levels where
+   `remaining.size == 0` or `current_slot >= remaining.expires_at`.
+   The heap is keyed by `(price, nonce)`: min-heap for asks,
+   max-heap for bids. Nonce breaks price ties (older = wins) —
+   `FLUSH_BIT` is masked off the stamp so a just-flushed vault
+   doesn't sort younger than a previously-flushed one with the same
    underlying counter value.
 1. **Pop** from the heap and fill the taker: decrement the taker's
    remaining size, decrement the popped level's
-   `Vault.remaining.<side>[i]`, debit the vault's `base_atoms` /
-   `quote_atoms`, and accrue the taker fee from
+   `Vault.remaining.<side>[i].size`, debit the vault's `base_atoms`
+   / `quote_atoms`, and accrue the taker fee from
    `market.taker_fee_rate`. Continue until the taker is filled, the
    next heap top exceeds the taker's limit price, or the heap is
    drained.
 1. **Tear down.** The heap buffer is freed with the transaction;
-   debited inventory, `Vault.remaining` decrements, the cleared
-   `FLUSH_BIT` on any flushed vault, and `market.nonce` persist
-   to chain. Takers bump `market.nonce` per fill but never touch
-   `reference_price.stamp` beyond clearing `FLUSH_BIT`.
+   debited inventory, `Vault.remaining.size` decrements, the cleared
+   `FLUSH_BIT` on any flushed vault, and `market.nonce` persist to
+   chain. Takers bump `market.nonce` per fill but never touch
+   `reference_price.stamp` beyond clearing `FLUSH_BIT`, and never
+   touch `Vault.remaining.price` or `Vault.remaining.expires_at`.
 
 ### Crossed leader quotes
 
