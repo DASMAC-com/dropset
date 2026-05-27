@@ -232,6 +232,48 @@ quotes badly is observably losing value-per-share. This is why HWM
 does real work in the next section: it prevents perf fee from
 accruing on the way back up from drawdowns.
 
+### Share-accounting invariants
+
+Let `b = base_atoms`, `q = quote_atoms`, `s = total_shares`,
+`L = isqrt(b · q)`, `VPS = L / s`.
+
+**I1. Basket flows preserve VPS.** `Deposit` and `Withdraw` at the
+current ratio scale `b` and `q` by the same factor `(s ± Δs)/s`;
+hence `L' = L · (s ± Δs)/s` and `VPS' = L'/(s ± Δs) = L/s = VPS`.
+Existing holders are neither diluted nor accreted. ∎
+
+**I2. Fills move L, not s.** A taker fill changes `b` and `q` per
+the trade but never mints or burns shares. So `VPS' ≠ VPS` iff
+`L' ≠ L`, and the sign follows the slippage condition: `L` grows
+iff the trade price `P` satisfies `P > q/(b − dx)` on a sell of
+`dx` base (and the symmetric condition on bids). ∎
+
+**I3. `Realize` moves s, not L.** Perf-fee accrual adds `m` shares
+to both `leader_shares` and `total_shares` without touching `b` or
+`q`; `L` is unchanged. `VPS` drops from `L/s` to `L/(s + m)`, and
+`hwm := L/(s + m)`. ∎
+
+**I4. `leader_shares` is monotonic between leader actions.** Only
+`Deposit` (leader path), `Realize`, and `Withdraw` (leader path)
+mutate it: the first two add, the third subtracts under leader
+signature. No path decreases `leader_shares` as a side-effect of
+`L` moving — drawdowns lower VPS but not the share count. ∎
+
+**I5. `hwm` is monotonic.** Set only by `Realize`, and only when
+`VPS_new > hwm`. Recoveries to a prior VPS do not earn perf fee. ∎
+
+**I6. Invariant on total shares.** `total_shares = leader_shares +
+share_mint.supply` at all times. Every path that mutates `total_shares`
+mutates exactly one of the two terms by the same amount:
+
+| Operation | `leader_shares` | `share_mint.supply` |
+|---|---|---|
+| `Deposit` (leader path) | +Δs | 0 |
+| `Deposit` (outside path) | 0 | +Δs |
+| `Withdraw` (leader path) | −Δs | 0 |
+| `Withdraw` (outside path) | 0 | −Δs |
+| `Realize` | +m | 0 |
+
 ### High-water mark and performance fee
 
 `Vault.hwm` is the highest VPS the vault has ever reached, stored as a
