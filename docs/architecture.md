@@ -45,7 +45,16 @@ quotes with paired (base, quote) baskets, earning a pro-rata share of the
 spread the leader captures. The leader remains the active manager — they
 (or a delegated `quote_authority`) alone set quotes — while
 depositors are passive participants. A skin-in-the-game floor and
-per-share high-water-mark performance fee align incentives. Vault mechanics are detailed in the next section.
+per-share high-water-mark performance fee align incentives.
+
+The spec proceeds top-down: protocol-wide governance (**Registry**) →
+per-market container (**MarketHeader**) → physical layout (**Storage
+layout**) → the unit of liquidity (**Vault**) and its quote shape
+(**BookProfile**) → outside-depositor shares (**Shares**) → the
+addressing/auth model shared by every instruction (**Caller mechanics**)
+→ the instructions themselves (**Leader operations**, **Depositor
+operations**) → matching (**Order matching**) → reader-facing notes
+(**Operating model**).
 
 ## Conventions
 
@@ -79,32 +88,199 @@ basket math in Deposit/Withdraw (`shares × atoms / total_shares`),
 and the skin-in-the-game ratio check (`leader_shares × 10000` vs
 `min_leader_share × total_shares`).
 
+## Registry
+
+The `Registry` is a global singleton account that holds protocol-wide
+governance parameters and the admin allowlist.
+
+Vault creation is **permissionless**: any pubkey may call `OpenVault`
+by paying `vault_open_fee.atoms` of `vault_open_fee.mint` to the
+Registry's fee ATA — derived as
+`get_associated_token_address(registry_pda, vault_open_fee.mint)` —
+no storage needed on the Registry itself. Admins may call the same
+instruction without paying, including on behalf of others (useful for
+protocol-onboarded market makers). If admins later change
+`vault_open_fee.mint`, a fresh ATA is used going forward and prior
+fees stay in the old ATA; admins sweep both.
+
+The per-market cap on vault count (`max_vaults_per_market`) is set by
+the cost to reconstruct the ephemeral order book during each take
+and can be tuned across the protocol's lifecycle as CU budgets and
+runtime performance evolve.
+
+```rust
+struct FeeConfig {
+    /// Mint accepted for this fee.
+    mint: Pubkey,
+    /// Amount in atoms of `mint`.
+    atoms: u64,
+}
+
+struct Registry {
+    /// Hard cap on how many vaults any one market may allocate
+    /// (up to 255). Enforced at `OpenVault` time.
+    max_vaults_per_market: u8,
+    /// Taker fee rate stamped into `MarketHeader.taker_fee_rate`
+    /// at market creation. Admins may change a market's fee
+    /// later; this field only sets the initial value.
+    default_taker_fee_rate: Ppm16,
+    /// Minimum fraction of vault shares the leader must hold,
+    /// in basis points (10000 = 100%). Enforced at `Deposit` and
+    /// leader `Withdraw` against active vaults. Default 500 = 5%.
+    /// See **Vault → Skin-in-the-game floor**.
+    min_leader_share: u16,
+    /// Cap on `Vault.perf_fee_rate` enforced at `OpenVault` time,
+    /// in basis points (10000 = 100%). Default 3000 = 30%.
+    max_perf_fee_rate: u16,
+    /// Fee paid to the protocol treasury on `OpenVault`. Waived
+    /// when the signer is an admin.
+    vault_open_fee: FeeConfig,
+    /// Admins authorized to mutate the `Registry`, change
+    /// per-market `taker_fee_rate`, call `FreezeVault`, and
+    /// open vaults without paying `vault_open_fee`. Backed by a
+    /// small fixed-capacity flat array — unlike `Set<Vault>`, this
+    /// set rarely changes and isn't on any hot path, so the
+    /// sector/DLL/free-list machinery is unnecessary.
+    admins: Set<Pubkey>,
+}
+```
+
+Notably absent: there is **no leader allowlist**. Banning a pubkey
+would be trivially defeated by registering a fresh wallet, so the
+protocol does not maintain one. Admin power is exercised per-vault via
+`FreezeVault` (see **Leader operations**), and the `vault_open_fee`
+acts as the only material gate on fresh entry.
+
+## MarketHeader
+
+The `MarketHeader` is a fixed-size record at the front of the market
+account. It holds the market-wide counters and the active set of
+vaults; the physical sector array sits immediately after the header
+(see **Storage layout**).
+
+```rust
+struct MarketHeader {
+    /// Market-wide monotonic counter. Stamped onto the vault on
+    /// every `SetReferencePrice` and `SetBookProfile`; also advanced
+    /// on every taker fill. A `u64`, wide enough to never wrap over
+    /// the market's lifetime.
+    nonce: u64,
+    /// Active vaults on this market — bounded by
+    /// `registry.max_vaults_per_market`.
+    vaults: Set<Vault>,
+    /// Taker fee rate, capped at ~6.55% (`Ppm16` max). Mutable by an
+    /// admin.
+    taker_fee_rate: Ppm16,
+
+    // Pubkeys and bumps.
+    base_mint: Pubkey,
+    quote_mint: Pubkey,
+    /// SPL token account holding the **pooled** base inventory
+    /// for every vault on this market. Authority is a PDA derived
+    /// from the market account (`base_treasury_bump`).
+    /// **Invariant:** `base_treasury.amount ==
+    /// Σ vault.base_atoms` across every vault on the active and
+    /// tombstone DLLs. Each `Deposit`, `Withdraw`, and fill moves
+    /// atoms between this treasury and the caller's ATA while
+    /// adjusting the matching vault's `base_atoms` by the same
+    /// delta — the two must stay aligned per instruction.
+    base_treasury: Pubkey,
+    /// Same as `base_treasury`, for the quote leg.
+    /// **Invariant:** `quote_treasury.amount ==
+    /// Σ vault.quote_atoms`.
+    quote_treasury: Pubkey,
+    bump: u8,
+    base_treasury_bump: u8,
+    quote_treasury_bump: u8,
+}
+```
+
+Every quote a vault produces is identified by `MarketHeader.nonce`
+at the moment of stamping — a global counter incremented on every
+`SetReferencePrice`, `SetBookProfile`, and taker fill. At match time,
+levels at the same price are ranked by nonce: lower nonce = earlier
+arrival = wins. This is the canonical CLOB **price-time priority**
+rule, with the nonce standing in for "time" — slot timestamps would
+be too coarse, since multiple events can land in the same slot.
+
+## Storage layout
+
+Physically, the market account is a single contiguous slab grown by
+`realloc`: the `MarketHeader` followed by a fixed-size sector array,
+with three threaded lists tracking active, tombstoned, and free
+sectors.
+
+```txt
++----------------+----------+----------+----------+----------+-----+
+| MarketHeader   | Sector 0 | Sector 1 | Sector 2 | Sector 3 | ... |
++----------------+----------+----------+----------+----------+-----+
+```
+
+Each `Vault` carries two opaque pointer fields (`next`, `prev`) not
+shown in its struct (see **Vault**) — they thread whichever list the
+vault is currently on (active, tombstone, or free). `MarketHeader`
+separately stores three list heads (`head`, `tombstone_head`,
+`free_head`). These are stored as offsets into the sector region
+(durable across transactions); each instruction resolves them to
+current-tx pointers against the account's input-buffer base.
+
+Example state after opening Vaults 0–4, calling `CloseVault` on
+Vault 2 (which still has outstanding shares), and fully draining
+Vault 1 (`total_shares` reached 0):
+
+```txt
+  MarketHeader
+  +------------------+
+  | head           --+---> Vault 4 <-> Vault 3 <-> Vault 0 -> null
+  | tombstone_head -+---> Vault 2 -> null
+  | free_head      --+---> Vault 1 -> null
+  +------------------+
+```
+
+New vaults are prepended at `head` (so the most recent open sits at
+the front). `tombstone_head` points at vaults that have been
+`CloseVault`'d but still hold outstanding shares — depositors can
+continue to `Withdraw`, but the matching engine does not iterate
+this list. `free_head` points at fully reclaimed sectors; the free
+list is singly linked via `next` and ignores `prev`. All three
+lists are mutated only on vault open / close / reclaim — the hot
+path (`SetReferencePrice`) never touches list pointers.
+
+`Set<Vault>` operations map onto this layout as follows:
+
+- **Iterate active vaults** (taker hot path) → walk the DLL from
+  `head`. Tombstones are not visited.
+- **Insert (`OpenVault`)** → pop the free list if non-empty, else
+  `realloc` by `size_of::<Vault>()`; prepend at `head`.
+- **Tombstone (`CloseVault`)** → unlink from active DLL, prepend
+  at `tombstone_head`. The vault keeps its data; only the list
+  membership changes.
+- **Reclaim (`Withdraw` that drives `total_shares` to 0 on any
+  non-free vault)** → unlink from whichever DLL the vault is on
+  (active for a drained frozen vault, tombstone for a closed
+  vault), zero `vault.leader` and `vault.quote_authority` so the
+  emptiness marker holds, push onto free list.
+
+Market creation only pays rent for the header.
+
 ## Vault
 
-A **vault** holds a leader's pooled inventory (their own capital plus outside
-depositor contributions), their `BookProfile` (bids and asks as offsets from
-a single reference price), and a `ReferencePrice` they update on the hot
-path. Vaults live contiguously inside a shared market account (see
-`MarketHeader` below).
+A **vault** holds a leader's pooled inventory (their own capital plus
+outside depositor contributions), their `BookProfile` (bids and asks
+as offsets from a single reference price), and a `ReferencePrice`
+they update on the hot path. Vaults live contiguously inside the
+market account's sector array (see **Storage layout**).
 
-The leader is the vault's active manager — they alone set the `BookProfile`
-and `ReferencePrice` (or their delegated `quote_authority`). Outside
-depositors are passive participants who share in the spread the leader
-captures. Outside shares are SPL tokens held in standard ATAs (see
-**Shares** below); the leader's stake is non-SPL bookkeeping. Neither
-imposes any per-depositor storage on the vault sector itself.
+The leader is the vault's active manager — they alone set the
+`BookProfile` and `ReferencePrice` (or a delegated `quote_authority`).
+Outside depositors are passive participants who share in the spread
+the leader captures. Outside shares are SPL tokens held in standard
+ATAs (see **Shares**); the leader's stake is non-SPL bookkeeping.
+Neither imposes any per-depositor storage on the vault sector itself.
 
-Leader-supplied prices are **not** validated on write — takers range-check
-at match time, so a nonsense reference price just renders that vault
-unmatchable.
-
-Every quote gets a unique, monotonically increasing identifier drawn from
-`market.nonce` — a global counter incremented on every `SetReferencePrice`,
-`SetBookProfile`, and taker fill. At match time, quotes at the same price
-are ranked by nonce: lower nonce = earlier arrival = wins. This is the
-canonical CLOB **price-time priority** rule, with the nonce standing in
-for "time" — slot timestamps would be too coarse, since multiple quotes
-can land in the same slot.
+Leader-supplied prices are **not** validated on write — takers
+range-check at match time, so a nonsense reference price just
+renders that vault unmatchable.
 
 ```rust
 struct Vault {
@@ -138,9 +314,8 @@ struct Vault {
     total_shares: u64,
     /// Leader's stake. Non-SPL, protocol-tracked. Increments on
     /// leader `Deposit` and on `Realize` perf-fee accrual;
-    /// decrements on leader `Withdraw`. Used to enforce
-    /// `leader_shares / total_shares >= registry.min_leader_share`
-    /// at `Deposit` and leader `Withdraw` (against active vaults).
+    /// decrements on leader `Withdraw`. See
+    /// **Skin-in-the-game floor**.
     leader_shares: u64,
     /// High-water mark of value-per-share (`L / total_shares`),
     /// stored as Q32.32 fixed-point `u64` — VPS up to ~4.29×10⁹×
@@ -152,11 +327,8 @@ struct Vault {
     /// HWM, in basis points (10000 = 100%). Set at `OpenVault`
     /// time and capped by `registry.max_perf_fee_rate`.
     perf_fee_rate: u16,
-    /// Set to 1 when an admin freezes the vault. Frozen vaults
-    /// reject all quote-mutating instructions; depositors and the
-    /// leader can still `Withdraw` (the `min_leader_share` floor
-    /// is bypassed for the leader so they can exit alongside
-    /// everyone else). See `FreezeVault`.
+    /// Set to 1 when an admin freezes the vault. See
+    /// **Frozen and tombstoned vaults**.
     frozen: u8,
     /// Set to 1 if outside depositors are permitted. When 0, only
     /// the leader may `Deposit`; existing outside SPL share holders
@@ -334,6 +506,25 @@ by `m`, and `hwm := L / (s + m)`.
 `Vault.perf_fee_rate` is set at `OpenVault` time, capped by
 `registry.max_perf_fee_rate`, and immutable thereafter.
 
+### Realize
+
+Folds VPS gains above `hwm` into the leader's stake — increments
+`Vault.leader_shares` (and `Vault.total_shares` by the same amount)
+using the formula above and updates `hwm := L / total_shares_after`.
+
+**Permissionless.** Anyone may call. The leader has the strongest
+economic incentive; indexers and keepers may invoke it to pin HWM
+at a known point in time. `Realize` runs implicitly at the start of
+every `Deposit` and `Withdraw`, so outside flows always cross at a
+post-fee VPS and never transfer leader-owed fee value to or from the
+caller. **Never runs on the taker hot path.** Touches no SPL
+accounts — perf fee accrual is purely on-vault bookkeeping.
+
+**No-op on frozen and tombstoned vaults.** Once a vault leaves the
+active eCLOB, HWM is pinned and no further perf fee accrues,
+regardless of residual VPS movement from late fills. See
+**Frozen and tombstoned vaults** for the lifecycle picture.
+
 ### Skin-in-the-game floor
 
 `Registry.min_leader_share` (basis points; default 500 = 5%) is a hard
@@ -359,68 +550,41 @@ once the vault reaches `leader_shares / min_leader_share`, new outside
 deposits fail until the leader tops up. With a 5% floor, that caps
 outside capital at 19× the leader's stake.
 
-The floor is **bypassed for leader withdrawals from frozen vaults** —
-frozen vaults are winding down, and the leader is treated as any other
-depositor on exit.
+The floor is **bypassed for leader withdrawals from frozen or
+tombstoned vaults** — those vaults are winding down, and the leader
+is treated as any other depositor on exit. See
+**Frozen and tombstoned vaults**.
 
-### APR / yield accounting
+### Frozen and tombstoned vaults
 
-Headline vault APR is **annualized VPS growth**: pure spread accrual,
-by construction independent of directional moves in the underlying
-pair. A price move with no trading leaves token counts (and therefore
-L and VPS) unchanged; only spread capture or adverse selection move
-VPS.
+A vault leaves the active eCLOB by either of two lifecycle paths:
 
-| Event                              | L         | VPS / APR | Basket quote value     |
-|------------------------------------|-----------|-----------|------------------------|
-| Underlying pair moves, no fills    | unchanged | flat      | up or down (direction) |
-| Leader captures spread on flow     | grows     | positive  | up                     |
-| Leader adversely selected          | shrinks   | negative  | down                   |
+| State | Set by | DLL membership | Quote ix | Deposit | Withdraw | Realize | Lifecycle exit |
+|---|---|---|---|---|---|---|---|
+| **Active** | default | active | accepted | accepted | accepted | accrues | becomes frozen or tombstoned |
+| **Frozen** | admin via `FreezeVault` | stays on active DLL; takers skip via per-level expiry | rejected (`!vault.frozen` gate) | rejected | accepted; `min_leader_share` bypassed for the leader | no-op (HWM pinned at freeze time) | Reclaim when `total_shares == 0` |
+| **Tombstoned** | leader via `CloseVault` | tombstone DLL; takers do not iterate | rejected (vault not visited) | rejected | accepted; `min_leader_share` bypassed for the leader | no-op (HWM pinned at close time) | Reclaim when `total_shares == 0` |
+| **Reclaimed** | implicit on draining `Withdraw` | free DLL | n/a | n/a | n/a | n/a | sector available for reuse |
 
-The depositor's total quote-denominated return decomposes cleanly
-into **APR (MM skill) × basket price move (directional)**; the two
-are separately attributable. The protocol math is oracle-free. UIs
-that want to display a quote-converted total return can layer in a
-price feed (Pyth, Switchboard) for display only — no on-chain
-dependency.
+Both terminal states are designed so depositors can always exit and
+no further fee accrues to the leader after exit. The two states differ
+only in *who* initiated and *how the taker side perceives them*:
 
-APR can go **negative** when the leader is consistently adversely
-selected. That is the same metric working in both directions, and it
-is the right signal for depositors deciding whether to stay or pull
-their basket.
+- **Frozen** is the protocol's revocation lever against a misbehaving
+  leader. The vault remains on the active DLL so takers still iterate
+  it, but its quotes can't be refreshed; existing levels die off as
+  each level's `expires_at` passes. There is no "unfreeze" — frozen
+  is terminal.
+- **Tombstoned** is the leader's intended lifecycle exit ("done
+  quoting this market"). The vault is unlinked from active matching
+  immediately, no waiting on expiries.
 
-### Rebalancing
-
-When a vault drifts heavy on one leg (e.g. base depletes, quote
-accumulates), the leader has three levers in increasing order of
-cost:
-
-1. **Do nothing — auto-rebalance.** Because sizes are
-   pct-of-inventory, the next flush after a drift automatically
-   makes the depleted side's quotes smaller and the accumulated
-   side's larger. If quote is heavy, bids materialize larger
-   (`quote_atoms × size_bps / 10000`) while asks shrink. Larger
-   bids attract sellers, who dump base onto the leader, rebuilding
-   the base leg. The ladder is self-correcting as long as the
-   reference price is reasonable.
-
-2. **Bump `reference_price.price`.** Shifts the whole ladder up or
-   down without changing offsets or sizes. Moving the reference up
-   makes bids more attractive to sellers (they get more quote per
-   base) and asks less attractive to buyers — net: invites selling
-   to the maker, rebuilds base. One hot-path write (`SetReferencePrice`),
-   asm-cost identical to a normal price update.
-
-3. **Reshape via `SetBookProfile` with asymmetric ladders.** `bids`
-   and `asks` are independent arrays — tighten one side's
-   `price_offset` or grow one side's `size_bps` to skew flow more
-   aggressively than the auto-rebalance alone provides. Costs a
-   full `BookProfile` rewrite + materialization on the next take.
-
-For most operating regimes (1) suffices. (2) and (3) are levers for
-when the leader has a directional view or specifically wants to
-accelerate rebalancing past what pct-of-inventory provides on its
-own.
+Either state ends at **Reclaim** (see **Storage layout**): the
+final `Withdraw` that drives `total_shares` to 0 unlinks the vault
+from its current DLL, zeroes `vault.leader` and `vault.quote_authority`
+so the emptiness marker holds, and pushes the sector onto the free
+list. The same leader pubkey may then `OpenVault` afresh — paying
+`vault_open_fee` again — on this or any other market.
 
 ## BookProfile
 
@@ -508,169 +672,6 @@ Properties:
   and deep levels a much longer one, so flush cadence can be graded
   by depth instead of forced to the top-of-book rate.
 
-## MarketHeader
-
-The `MarketHeader` is a fixed-size record at the front of the market account:
-
-```rust
-struct MarketHeader {
-    /// Market-wide monotonic counter. Stamped onto the vault on
-    /// every `SetReferencePrice` and `SetBookProfile`; also advanced
-    /// on every taker fill. A `u64`, wide enough to never wrap over
-    /// the market's lifetime.
-    nonce: u64,
-    /// Active vaults on this market — bounded by
-    /// `registry.max_vaults_per_market`.
-    vaults: Set<Vault>,
-    /// Taker fee rate, capped at ~6.55% (`Ppm16` max). Mutable by an
-    /// admin.
-    taker_fee_rate: Ppm16,
-
-    // Pubkeys and bumps.
-    base_mint: Pubkey,
-    quote_mint: Pubkey,
-    /// SPL token account holding the **pooled** base inventory
-    /// for every vault on this market. Authority is a PDA derived
-    /// from the market account (`base_treasury_bump`).
-    /// **Invariant:** `base_treasury.amount ==
-    /// Σ vault.base_atoms` across every vault on the active and
-    /// tombstone DLLs. Each `Deposit`, `Withdraw`, and fill moves
-    /// atoms between this treasury and the caller's ATA while
-    /// adjusting the matching vault's `base_atoms` by the same
-    /// delta — the two must stay aligned per instruction.
-    base_treasury: Pubkey,
-    /// Same as `base_treasury`, for the quote leg.
-    /// **Invariant:** `quote_treasury.amount ==
-    /// Σ vault.quote_atoms`.
-    quote_treasury: Pubkey,
-    bump: u8,
-    base_treasury_bump: u8,
-    quote_treasury_bump: u8,
-}
-```
-
-### Storage layout
-
-The above pseudocode is the logical model. Physically, the market
-account is a single contiguous slab grown by `realloc`: the
-`MarketHeader` followed by a fixed-size sector array, with three
-threaded lists tracking active, tombstoned, and free sectors.
-
-```txt
-+----------------+----------+----------+----------+----------+-----+
-| MarketHeader   | Sector 0 | Sector 1 | Sector 2 | Sector 3 | ... |
-+----------------+----------+----------+----------+----------+-----+
-```
-
-Each `Vault` carries two opaque pointer fields (`next`, `prev`) not
-shown in the struct above — they thread whichever list the vault is
-currently on (active, tombstone, or free). `MarketHeader` separately
-stores three list heads (`head`, `tombstone_head`, `free_head`).
-These are stored as offsets into the sector region (durable across
-transactions); each instruction resolves them to current-tx pointers
-against the account's input-buffer base.
-
-Example state after opening Vaults 0–4, calling `CloseVault` on
-Vault 2 (which still has outstanding shares), and fully draining
-Vault 1 (`total_shares` reached 0):
-
-```txt
-  MarketHeader
-  +------------------+
-  | head           --+---> Vault 4 <-> Vault 3 <-> Vault 0 -> null
-  | tombstone_head -+---> Vault 2 -> null
-  | free_head      --+---> Vault 1 -> null
-  +------------------+
-```
-
-New vaults are prepended at `head` (so the most recent open sits at
-the front). `tombstone_head` points at vaults that have been
-`CloseVault`'d but still hold outstanding shares — depositors can
-continue to `Withdraw`, but the matching engine does not iterate
-this list. `free_head` points at fully reclaimed sectors; the free
-list is singly linked via `next` and ignores `prev`. All three
-lists are mutated only on vault open / close / reclaim — the hot
-path (`SetReferencePrice`) never touches list pointers.
-
-`Set<Vault>` operations map onto this layout as follows:
-
-- **Iterate active vaults** (taker hot path) → walk the DLL from
-  `head`. Tombstones are not visited.
-- **Insert (`OpenVault`)** → pop the free list if non-empty, else
-  `realloc` by `size_of::<Vault>()`; prepend at `head`.
-- **Tombstone (`CloseVault`)** → unlink from active DLL, prepend
-  at `tombstone_head`. The vault keeps its data; only the list
-  membership changes.
-- **Reclaim (`Withdraw` that drives `total_shares` to 0 on any
-  non-free vault)** → unlink from whichever DLL the vault is on
-  (active for a drained frozen vault, tombstone for a closed
-  vault), zero `vault.leader` and `vault.quote_authority` so the
-  emptiness marker holds, push onto free list.
-
-Market creation only pays rent for the header.
-
-## Registry
-
-The `Registry` is a global singleton account that holds protocol-wide
-governance parameters and the admin allowlist.
-
-Vault creation is **permissionless**: any pubkey may call `OpenVault`
-by paying `vault_open_fee.atoms` of `vault_open_fee.mint` to the
-Registry's fee ATA — derived as
-`get_associated_token_address(registry_pda, vault_open_fee.mint)` —
-no storage needed on the Registry itself. Admins may call the same
-instruction without paying, including on behalf of others (useful for
-protocol-onboarded market makers). If admins later change
-`vault_open_fee.mint`, a fresh ATA is used going forward and prior
-fees stay in the old ATA; admins sweep both.
-
-The per-market cap on vault count (`max_vaults_per_market`) is set by
-the cost to reconstruct the ephemeral order book during each take
-(detailed below) and can be tuned across the protocol's lifecycle as
-CU budgets and runtime performance evolve.
-
-```rust
-struct FeeConfig {
-    /// Mint accepted for this fee.
-    mint: Pubkey,
-    /// Amount in atoms of `mint`.
-    atoms: u64,
-}
-
-struct Registry {
-    /// Hard cap on how many vaults any one market may allocate
-    /// (up to 255). Enforced at `OpenVault` time on the Grow path.
-    max_vaults_per_market: u8,
-    /// Taker fee rate stamped into `MarketHeader.taker_fee_rate`
-    /// at market creation. Admins may change a market's fee
-    /// later; this field only sets the initial value.
-    default_taker_fee_rate: Ppm16,
-    /// Minimum fraction of vault shares the leader must hold,
-    /// in basis points (10000 = 100%). Enforced at `Deposit` and
-    /// leader `Withdraw` against active vaults. Default 500 = 5%.
-    min_leader_share: u16,
-    /// Cap on `Vault.perf_fee_rate` enforced at `OpenVault` time,
-    /// in basis points (10000 = 100%). Default 3000 = 30%.
-    max_perf_fee_rate: u16,
-    /// Fee paid to the protocol treasury on `OpenVault`. Waived
-    /// when the signer is an admin.
-    vault_open_fee: FeeConfig,
-    /// Admins authorized to mutate the `Registry`, change
-    /// per-market `taker_fee_rate`, call `FreezeVault`, and
-    /// open vaults without paying `vault_open_fee`. Backed by a
-    /// small fixed-capacity flat array — unlike `Set<Vault>`, this
-    /// set rarely changes and isn't on any hot path, so the
-    /// sector/DLL/free-list machinery is unnecessary.
-    admins: Set<Pubkey>,
-}
-```
-
-Notably absent: there is **no leader allowlist**. Banning a pubkey
-would be trivially defeated by registering a fresh wallet, so the
-protocol does not maintain one. Admin power is exercised per-vault via
-`FreezeVault` (see **Leader operations**), and the `vault_open_fee`
-acts as the only material gate on fresh entry.
-
 ## Shares
 
 Outside depositors hold their stake as **SPL tokens** minted from
@@ -680,27 +681,16 @@ ATAs and are transferable, composable with the rest of the Solana
 ecosystem (collateral in lending markets, listed on aggregators, etc.).
 
 The leader's stake is **not** an SPL token. It's tracked as
-`Vault.leader_shares`, a protocol-controlled `u64` that increments on
-leader `Deposit` and on `Realize` perf-fee accrual, and decrements on
-leader `Withdraw`. This guarantees the skin-in-the-game floor cannot
-be evaded by transferring shares to an alt wallet, and avoids any
-need to load the leader's ATA at check time.
+`Vault.leader_shares`, a protocol-controlled `u64`. This guarantees
+the skin-in-the-game floor cannot be evaded by transferring shares to
+an alt wallet, and avoids any need to load the leader's ATA at check
+time.
 
 Invariant: `leader_shares + share_mint.supply == total_shares`.
 
-## Leader operations
+## Caller mechanics
 
-A leader joins a market by calling `OpenVault` to allocate a vault
-sector (paying `vault_open_fee`), then seeding the vault with their
-first `Deposit`, then `SetBookProfile` to lay down their bid/ask
-ladder as offsets from a reference price. From there, steady-state
-activity is just `SetReferencePrice` on the hot path — sliding the
-whole ladder by updating a single anchor price. `SetBookProfile` can
-be re-called to reshape the ladder as needed.
-
-### Authority & pointer validation
-
-Every instruction targeting a specific vault — leader-callable,
+Every instruction that targets a specific vault — leader-callable,
 outside-depositor-callable, permissionless, and admin — passes a
 pointer into the market account's data region pointing directly at
 the vault, avoiding any list walk. Before touching the vault, the
@@ -762,6 +752,19 @@ Simplified input buffer schematic:
                              fixed offset
 ```
 
+## Leader operations
+
+A leader joins a market by calling `OpenVault` to allocate a vault
+sector (paying `vault_open_fee`), then seeding the vault with their
+first `Deposit`, then `SetBookProfile` to lay down their bid/ask
+ladder as offsets from a reference price. From there, steady-state
+activity is just `SetReferencePrice` on the hot path — sliding the
+whole ladder by updating a single anchor price. `SetBookProfile` can
+be re-called to reshape the ladder as needed.
+
+Authority gates and pointer validation are uniform across all
+instructions in this section; see **Caller mechanics**.
+
 ### OpenVault
 
 Called by anyone to allocate a vault sector and become its leader.
@@ -795,8 +798,8 @@ The new vault is inserted into `MarketHeader.vaults`. The insert is
 O(1) and reuses a freed sector if one exists, otherwise grows the
 market account by `size_of::<Vault>()`. If `vaults.len()` is already
 at `registry.max_vaults_per_market`, `OpenVault` fails and the caller
-must wait for an existing vault to close. See **Storage layout** under
-`MarketHeader` for the underlying mechanics.
+must wait for an existing vault to close. See **Storage layout** for
+the underlying mechanics.
 
 ### SetBookProfile
 
@@ -834,11 +837,6 @@ regardless of `N_LEVELS`. No vault iteration, no reallocations, no
 profile touch — asm-optimized, analogous to a propAMM
 reference-price update.
 
-Authority is `vault.quote_authority`, not `vault.leader`. This is a
-single compare on the hot path; the unset-authority case is avoided
-by guaranteeing `quote_authority` is always populated (default copied
-from `leader` at `OpenVault`).
-
 Off-chain pre-signing: because `quote_slot` is supplied by the leader
 rather than read from the clock, a quote can be signed at slot N and
 relayed at slot M > N, with on-chain expiry math anchored to N.
@@ -863,9 +861,8 @@ Leader-only. Moves the vault from the active DLL to the tombstone
 DLL: takers stop iterating it, so the vault no longer participates
 in the eCLOB, but **all depositor flows remain open**. Outside
 holders can `Withdraw` their SPL shares, the leader can `Withdraw`
-their stake (with `min_leader_share` bypassed, as on frozen
-vaults), and `Realize` still runs so any final HWM accrual can be
-pinned before the vault drains.
+their stake (with `min_leader_share` bypassed). `Realize` is a
+no-op on tombstoned vaults — HWM is pinned at the moment of close.
 
 The sector is *not* recycled at close time — it sits on the
 tombstone list as a record against which pending claims are
@@ -873,12 +870,8 @@ processed. Only when `total_shares == 0` does the sector unlink
 from the tombstone DLL and return to the free list (see
 **Reclaim** in **Storage layout**).
 
-`CloseVault` differs from `FreezeVault` in three ways: it is
-leader-initiated rather than admin-initiated; it immediately
-removes the vault from matching rather than relying on per-level
-expiry; and it is the intended lifecycle exit when a leader is
-done quoting a market, whereas freeze is the protocol's revocation
-lever.
+See **Vault → Frozen and tombstoned vaults** for the full lifecycle
+comparison with `FreezeVault`.
 
 ### FreezeVault
 
@@ -886,45 +879,38 @@ Admin-only. Sets `Vault.frozen = 1` on the target vault, after which
 `SetReferencePrice` and `SetBookProfile` against that vault are
 rejected at the authority check. Existing quotes expire naturally as
 each level's `expires_at` passes; takers skip them via the existing
-per-level expiry check (no taker-side change needed).
+per-level expiry check (no taker-side change needed). `Realize` is a
+no-op on frozen vaults — HWM is pinned at the moment of freeze.
 
 Frozen vaults remain usable by depositors: `Withdraw` still works,
 and `min_leader_share` is bypassed for the leader so they can exit
-alongside everyone else. `Realize` is a no-op (HWM pinned at freeze
-time; see **Realize**). Once `total_shares == 0`, the vault sector
+alongside everyone else. Once `total_shares == 0`, the vault sector
 returns to the free list per the **Reclaim** path in **Storage
-layout** — for frozen vaults that path unlinks from the active DLL.
-
-Unlike `CloseVault`, freezing leaves the vault on the active DLL —
-takers continue to iterate it but find no matchable levels once
-existing quotes expire. An admin who wants to evict the vault from
-the iteration immediately can pair `FreezeVault` with manual
-follow-on action, or rely on natural decay; the protocol does not
-provide an admin-side tombstone migration.
+layout**.
 
 `FreezeVault` is the protocol's revocation lever against a
 misbehaving leader. There is no separate "unfreeze" — frozen is
 terminal for that vault. If the same leader pubkey wants to
 re-enter, they pay `vault_open_fee` again and start a new vault.
 
+See **Vault → Frozen and tombstoned vaults** for the full lifecycle
+comparison with `CloseVault`.
+
 ## Depositor operations
 
-`Deposit`, `Withdraw`, and `Realize` use the same bounds/alignment
-pointer validation as leader ix (minus the leader-signer check), and
-the same instruction discriminants for both the leader and outside
-depositors. The path splits internally on `signer == vault.leader`:
-the leader updates `Vault.leader_shares` directly, while outside
-depositors mint or burn SPL tokens against `Vault.share_mint`. SPL
-mint and depositor-ATA accounts are required for the outside path,
-**optional for the leader path** — leaders can omit them.
+`Deposit` and `Withdraw` use the same pointer validation as leader
+ix (see **Caller mechanics**), and the same instruction discriminants
+for both the leader and outside depositors. The path splits
+internally on `signer == vault.leader`: the leader updates
+`Vault.leader_shares` directly, while outside depositors mint or burn
+SPL tokens against `Vault.share_mint`. SPL mint and depositor-ATA
+accounts are required for the outside path, **optional for the
+leader path** — leaders can omit them.
 
-Every `Deposit` and `Withdraw` begins by **realizing** the vault:
-if the vault is active and `VPS_now > hwm`, accrue the leader's
-perf-fee shares to `leader_shares` and reset `hwm`. This guarantees
-outside shares mint or burn at a post-fee VPS, so flows never
-transfer leader-owed fee value to or from the caller. On frozen and
-tombstoned vaults, Realize is a no-op — HWM is pinned at the moment
-the vault left the active eCLOB (see `Realize` below).
+Every `Deposit` and `Withdraw` begins by **realizing** the vault
+(see **Vault → Realize**); this guarantees outside shares mint or
+burn at a post-fee VPS. On frozen and tombstoned vaults the implicit
+Realize is a no-op (HWM is pinned).
 
 ### Deposit
 
@@ -952,7 +938,7 @@ depositor to the treasuries, then:
 **Skin-in-the-game check.** After update, if the caller is not the
 leader and `leader_shares × 10000 < min_leader_share × total_shares`,
 the instruction reverts. The check uses on-vault numbers only — no
-ATA load needed.
+ATA load needed. See **Vault → Skin-in-the-game floor**.
 
 **Seeding (first deposit).** If `total_shares == 0`, the vault has
 never been seeded. The first depositor **must** be the leader and
@@ -963,7 +949,7 @@ divide by zero in the pro-rata basket math). The instruction sets
 total_shares`, and `hwm := Q32.32(1.0)`. No SPL tokens are minted
 on seeding (leader stake is non-SPL).
 
-Deposits against frozen vaults are rejected.
+Deposits against frozen or tombstoned vaults are rejected.
 
 ### Withdraw
 
@@ -989,31 +975,14 @@ remaining shareholders. Then:
 transferred from the treasuries to the caller.
 
 If the caller is the leader against an **active** vault, the
-post-burn ratio must remain at or above `min_leader_share`. This
-check is **bypassed for frozen and tombstoned vaults**, allowing
-the leader to wind down alongside depositors.
+post-burn ratio must remain at or above `min_leader_share`. The
+floor is **bypassed for frozen and tombstoned vaults** — see
+**Vault → Skin-in-the-game floor** and
+**Vault → Frozen and tombstoned vaults**.
 
-If `total_shares` reaches 0 on a tombstoned vault, the sector is
-unlinked from the tombstone DLL and pushed onto the free list per
-**Reclaim** in **Storage layout**.
-
-### Realize
-
-Folds VPS gains above `hwm` into the leader's stake — increments
-`Vault.leader_shares` (and `Vault.total_shares` by the same amount)
-and updates `hwm := L / total_shares_after`. Permissionless: anyone
-may call. The leader has the strongest economic incentive, and
-indexers/keepers may invoke it to pin HWM at a known point in time.
-Runs implicitly at the start of every `Deposit` and `Withdraw`.
-**Never runs on the taker hot path.** Touches no SPL accounts —
-perf fee accrual is purely on-vault bookkeeping.
-
-`Realize` is a **no-op on frozen and tombstoned vaults**: once a
-vault leaves the active eCLOB, HWM is pinned and no further perf
-fee accrues, regardless of residual VPS movement from late fills.
-This makes `FreezeVault` a clean revocation lever (the leader
-forfeits any future fee accrual) and ensures `CloseVault` draws a
-final line under the leader's fee at close time.
+If `total_shares` reaches 0 on any non-free vault (drained frozen or
+drained tombstoned), the sector is unlinked from its current DLL and
+pushed onto the free list per **Reclaim** in **Storage layout**.
 
 ## Order matching
 
@@ -1028,16 +997,18 @@ arithmetic at match time.
 
 On every taker instruction:
 
-1. **Iterate** `MarketHeader.vaults`.
+1. **Iterate** `MarketHeader.vaults` (active DLL only — tombstoned
+   and frozen-then-drained vaults are not visited; frozen vaults
+   that still sit on the active DLL are visited but their levels
+   are skipped via per-level expiry).
 1. **Range-check** the vault's `reference_price.price`. Drop the
    vault entirely if out-of-range (this is the deferred validation
    from the leader's hot path — a nonsense price renders the vault
    unmatchable here).
 1. **Flush if armed.** If `FLUSH_BIT` is set on
    `reference_price.stamp`, materialize `Vault.remaining` from
-   `BookProfile` and current inventory per the formulas in the
-   **BookProfile → Flush** section, and clear the bit with one
-   `u64` store.
+   `BookProfile` and current inventory per the formulas in
+   **BookProfile → Flush**, and clear the bit with one `u64` store.
 1. Iterate the relevant side of `remaining` (asks for a buy taker,
    bids for a sell taker).
 1. **Push** each `(remaining.price, remaining.size, stamp &
@@ -1083,7 +1054,71 @@ until the next taker arrives. A crossed book is an arbitrage
 opportunity — any taker can profit from it, including the leaders
 themselves (a leader is just another pubkey on the taker side, so
 self-arbitraging a stale neighbor is the cheapest path to clean it
-up) —
-which gives leaders a standing incentive to keep their reference
-prices honest without the matching engine needing a leader-vs-leader
-pre-pass.
+up) — which gives leaders a standing incentive to keep their
+reference prices honest without the matching engine needing a
+leader-vs-leader pre-pass.
+
+## Operating model
+
+Reader-facing notes about how a vault behaves in steady state.
+Nothing here changes protocol semantics; it explains how leaders
+manage drift and how depositor returns decompose.
+
+### Rebalancing
+
+When a vault drifts heavy on one leg (e.g. base depletes, quote
+accumulates), the leader has three levers in increasing order of
+cost:
+
+1. **Do nothing — auto-rebalance.** Because sizes are
+   pct-of-inventory, the next flush after a drift automatically
+   makes the depleted side's quotes smaller and the accumulated
+   side's larger. If quote is heavy, bids materialize larger
+   (`quote_atoms × size_bps / 10000`) while asks shrink. Larger
+   bids attract sellers, who dump base onto the leader, rebuilding
+   the base leg. The ladder is self-correcting as long as the
+   reference price is reasonable.
+
+2. **Bump `reference_price.price`.** Shifts the whole ladder up or
+   down without changing offsets or sizes. Moving the reference up
+   makes bids more attractive to sellers (they get more quote per
+   base) and asks less attractive to buyers — net: invites selling
+   to the maker, rebuilds base. One hot-path write (`SetReferencePrice`),
+   asm-cost identical to a normal price update.
+
+3. **Reshape via `SetBookProfile` with asymmetric ladders.** `bids`
+   and `asks` are independent arrays — tighten one side's
+   `price_offset` or grow one side's `size_bps` to skew flow more
+   aggressively than the auto-rebalance alone provides. Costs a
+   full `BookProfile` rewrite + materialization on the next take.
+
+For most operating regimes (1) suffices. (2) and (3) are levers for
+when the leader has a directional view or specifically wants to
+accelerate rebalancing past what pct-of-inventory provides on its
+own.
+
+### APR / yield accounting
+
+Headline vault APR is **annualized VPS growth**: pure spread accrual,
+by construction independent of directional moves in the underlying
+pair. A price move with no trading leaves token counts (and therefore
+L and VPS) unchanged; only spread capture or adverse selection move
+VPS.
+
+| Event                              | L         | VPS / APR | Basket quote value     |
+|------------------------------------|-----------|-----------|------------------------|
+| Underlying pair moves, no fills    | unchanged | flat      | up or down (direction) |
+| Leader captures spread on flow     | grows     | positive  | up                     |
+| Leader adversely selected          | shrinks   | negative  | down                   |
+
+The depositor's total quote-denominated return decomposes cleanly
+into **APR (MM skill) × basket price move (directional)**; the two
+are separately attributable. The protocol math is oracle-free. UIs
+that want to display a quote-converted total return can layer in a
+price feed (Pyth, Switchboard) for display only — no on-chain
+dependency.
+
+APR can go **negative** when the leader is consistently adversely
+selected. That is the same metric working in both directions, and it
+is the right signal for depositors deciding whether to stay or pull
+their basket.
