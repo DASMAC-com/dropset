@@ -47,6 +47,22 @@ alone set quotes — while depositors are passive participants. A
 skin-in-the-game floor and per-share high-water-mark performance fee align
 incentives. Vault mechanics are detailed in the next section.
 
+## Conventions
+
+**Ppm (parts per million)** is the unit for all sub-bp rates in this spec:
+1 ppm = 10⁻⁶ = 0.0001 bp; 1 bp = 100 ppm; 1% = 10,000 ppm; 100% = 1,000,000 ppm.
+Two integer widths appear:
+
+- `Ppm16` — `u16`, max 65,535 ppm ≈ 6.55%. Used where a tight cap is
+  intentional (e.g. taker fee rate).
+- `Ppm32` — `u32`, max ~4.29 billion ppm ≈ 4,294%. Used where a wider range
+  is needed (e.g. price offsets, performance fee rates).
+
+**Set<T>** in pseudocode denotes an unordered, fixed-capacity collection — a
+membership abstraction. The on-chain representation is described in each
+section's storage notes (typically a fixed-size sector array threaded by
+pointers); pseudocode hides those details.
+
 ## Vault
 
 A **vault** holds a leader's pooled inventory (their own capital plus outside
@@ -125,11 +141,6 @@ struct Vault {
     /// (from before the flag was flipped) can still `Withdraw`.
     /// Mutable by the leader via `SetAllowOutsideDepositors`.
     allow_outside_depositors: u8,
-    /// Next vault in the active DLL, or next free sector when
-    /// this vault is on the free list.
-    next: *mut Vault,
-    /// Previous vault in the active DLL (unused on the free list).
-    prev: *mut Vault,
     /// Bids and asks parameterized in basis points: a `price_offset`
     /// in hundredths of a bp from `reference_price.price`, a
     /// `size_bps` as fraction of inventory, and an `expiry_offset`
@@ -268,17 +279,18 @@ pair. A price move with no trading leaves token counts (and therefore
 L and VPS) unchanged; only spread capture or adverse selection move
 VPS.
 
-| Event                              | L         | VPS / APR | Basket USD-equivalent  |
+| Event                              | L         | VPS / APR | Basket numeraire value |
 |------------------------------------|-----------|-----------|------------------------|
 | Underlying pair moves, no fills    | unchanged | flat      | up or down (direction) |
 | Leader captures spread on flow     | grows     | positive  | up                     |
 | Leader adversely selected          | shrinks   | negative  | down                   |
 
-The depositor's total USD-equivalent return decomposes cleanly into
-**APR (MM skill) × basket FX move (directional)**; the two are
-separately attributable. The protocol math is oracle-free. UIs that
-want to show "USD-equivalent total return" can layer in a price feed
-(Pyth, Switchboard) for display only — no on-chain dependency.
+The depositor's total numeraire-denominated return decomposes cleanly
+into **APR (MM skill) × basket price move (directional)**; the two
+are separately attributable. The protocol math is oracle-free. UIs
+that want to display a numeraire-converted total return can layer in
+a price feed (Pyth, Switchboard) for display only — no on-chain
+dependency.
 
 APR can go **negative** when the leader is consistently adversely
 selected. That is the same metric working in both directions, and it
@@ -311,10 +323,10 @@ struct BookProfile {
 }
 
 struct Level {
-    /// Spread from `reference_price.price`, in hundredths of a bp
-    /// (100 = 1 bp). Direction is implicit: subtract for bids,
-    /// add for asks. Materialized to an absolute price at flush.
-    price_offset: u32,
+    /// Spread from `reference_price.price`. Direction is implicit:
+    /// subtract for bids, add for asks. Materialized to an absolute
+    /// price at flush.
+    price_offset: Ppm32,
     /// Per-refresh allowance as a fraction of the corresponding
     /// inventory leg, in basis points (10000 = 100%). Materialized
     /// to atoms at flush from `inventory × size_bps / 10000`.
@@ -370,16 +382,15 @@ The `MarketHeader` is a fixed-size record at the front of the market account:
 ```rust
 struct MarketHeader {
     /// Market-wide monotonic counter. Stamped onto the vault on every
-    /// `SetReferencePrice`; also advanced on every taker fill. A `u64`, wide
-    /// enough to never wrap over the market's lifetime.
+    /// `SetReferencePrice`; also advanced on every taker fill. A `u64`,
+    /// wide enough to never wrap over the market's lifetime.
     nonce: u64,
-    /// Head of the active-vault doubly linked list, or null if empty.
-    head: *mut Vault,
-    /// Head of the free-vault list, or null if none to reuse.
-    free_head: *mut Vault,
-    /// Taker fee rate. `FeeRate` is a `u16` in hundredths of a basis point
-    /// (100 units = 1 bp), capping the fee at ~6.55%. Mutable by an admin.
-    taker_fee_rate: FeeRate,
+    /// Active vaults on this market — bounded by
+    /// `registry.max_vaults_per_market`.
+    vaults: Set<Vault>,
+    /// Taker fee rate, capped at ~6.55% (`Ppm16` max). Mutable by an
+    /// admin.
+    taker_fee_rate: Ppm16,
 
     // Pubkeys and bumps.
     base_mint: Pubkey,
@@ -392,17 +403,12 @@ struct MarketHeader {
 }
 ```
 
-The market account's data begins with a `MarketHeader` followed by a
-contiguous array of fixed-size `Vault` sectors. Vaults are allocated on
-demand: when a leader calls `OpenVault`, the account is `realloc`'d by
-`size_of::<Vault>()` (or a sector is pulled off the free list if one is
-available). Market creation only pays rent for the header.
+### Storage layout
 
-`MarketHeader` stores absolute SVM pointers (`head`, `free_head`) into
-the vault region that remain valid across transactions (see below for
-input buffer details).
-
-Contiguous memory layout — one slab, grown by `realloc` only:
+The above pseudocode is the logical model. Physically, the market
+account is a single contiguous slab grown by `realloc`: the
+`MarketHeader` followed by a fixed-size sector array, with two
+threaded lists tracking active vs. free sectors.
 
 ```txt
 +----------------+----------+----------+----------+----------+-----+
@@ -410,10 +416,13 @@ Contiguous memory layout — one slab, grown by `realloc` only:
 +----------------+----------+----------+----------+----------+-----+
 ```
 
-Two logical lists are threaded through the same sectors via each
-vault's `next`/`prev` pointers. Active vaults form a doubly linked
-list; vacated sectors form a singly linked free list. Example state
-after opening Vaults 0–3 and then closing Vault 1:
+Each `Vault` carries two opaque pointer fields (`next`, `prev`) not
+shown in the struct above — they thread the active-vault DLL and
+the singly linked free list. `MarketHeader` separately stores two
+list heads (`head`, `free_head`) into the sector region; these are
+absolute SVM pointers and remain valid across transactions.
+
+Example state after opening Vaults 0–3 and then closing Vault 1:
 
 ```txt
   MarketHeader
@@ -428,6 +437,16 @@ open — sits at the front). `free_head` points at the most recently
 vacated sector; the free list is singly linked via `next` and ignores
 `prev`. Both lists are mutated only on vault open/close — the hot
 path (`SetReferencePrice`) never touches list pointers.
+
+`Set<Vault>` operations map onto this layout as follows:
+
+- **Iterate active vaults** → walk the DLL from `head`.
+- **Insert (`OpenVault`)** → pop the free list if non-empty, else
+  `realloc` by `size_of::<Vault>()`; prepend at `head`.
+- **Remove (vault close, `total_shares == 0`)** → unlink from active
+  DLL, push onto free list.
+
+Market creation only pays rent for the header.
 
 ## Registry
 
@@ -464,7 +483,7 @@ struct Registry {
     /// Taker fee rate stamped into `MarketHeader.taker_fee_rate`
     /// at market creation. Admins may change a market's fee
     /// later; this field only sets the initial value.
-    default_taker_fee_rate: FeeRate,
+    default_taker_fee_rate: Ppm16,
     /// Minimum fraction of vault shares the leader must hold,
     /// in basis points (10000 = 100%). Enforced at `Deposit` and
     /// leader `Withdraw` against active vaults. Default 500 = 5%.
@@ -478,7 +497,7 @@ struct Registry {
     /// Admins authorized to mutate the `Registry`, change
     /// per-market `taker_fee_rate`, call `FreezeVault`, and
     /// open vaults without paying `vault_open_fee`.
-    admins: [Pubkey; N_ADMINS],
+    admins: Set<Pubkey>,
 }
 ```
 
@@ -590,18 +609,12 @@ If the fee mint on `Registry` changes after this vault was opened,
 old fees remain in the prior fee ATA and admins sweep both — the
 vault itself is unaffected.
 
-Two sector-allocation paths, tried in order:
-
-1. **Reuse.** If `free_head != null`, pop that sector and initialize
-   it.
-1. **Grow.** Otherwise, if the current number of allocated sectors
-   is below `registry.max_vaults_per_market`, `realloc` the account
-   by `size_of::<Vault>()` and use the new tail sector. The caller
-   pays the rent delta. If the cap is already reached, `OpenVault`
-   fails and the caller must wait for a free sector.
-
-In both cases, the sector is prepended at `head` — O(1), no list
-walk.
+The new vault is inserted into `MarketHeader.vaults`. The insert is
+O(1) and reuses a freed sector if one exists, otherwise grows the
+market account by `size_of::<Vault>()`. If `vaults.len()` is already
+at `registry.max_vaults_per_market`, `OpenVault` fails and the caller
+must wait for an existing vault to close. See **Storage layout** under
+`MarketHeader` for the underlying mechanics.
 
 ### SetBookProfile
 
@@ -775,7 +788,7 @@ arithmetic at match time.
 
 On every taker instruction:
 
-1. **Walk** the active-vault doubly linked list from `head`.
+1. **Iterate** `MarketHeader.vaults`.
 1. **Range-check** the vault's `reference_price.price`. Drop the
    vault entirely if out-of-range (this is the deferred validation
    from the leader's hot path — a nonsense price renders the vault
