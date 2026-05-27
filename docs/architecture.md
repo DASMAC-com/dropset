@@ -43,9 +43,9 @@ Each vault is operated by a single **leader** — the pubkey that paid the
 `vault_open_fee` to call `OpenVault`. Outside depositors can back the leader's
 quotes with paired (base, quote) baskets, earning a pro-rata share of the
 spread the leader captures. The leader remains the active manager — they
-alone set quotes — while depositors are passive participants. A
-skin-in-the-game floor and per-share high-water-mark performance fee align
-incentives. Vault mechanics are detailed in the next section.
+(or a delegated `quote_authority`) alone set quotes — while
+depositors are passive participants. A skin-in-the-game floor and
+per-share high-water-mark performance fee align incentives. Vault mechanics are detailed in the next section.
 
 ## Conventions
 
@@ -55,13 +55,29 @@ Two integer widths appear:
 
 - `Ppm16` — `u16`, max 65,535 ppm ≈ 6.55%. Used where a tight cap is
   intentional (e.g. taker fee rate).
-- `Ppm32` — `u32`, max ~4.29 billion ppm ≈ 4,294%. Used where a wider range
-  is needed (e.g. price offsets, performance fee rates).
+- `Ppm32` — `u32`, max ~4.29 billion ppm ≈ 4,294%. Used where a wider
+  range is needed (e.g. price offsets).
 
-**Set<T>** in pseudocode denotes an unordered, fixed-capacity collection — a
-membership abstraction. The on-chain representation is described in each
-section's storage notes (typically a fixed-size sector array threaded by
-pointers); pseudocode hides those details.
+**Basis points (bps)** apply to coarser rates where ppm granularity
+is overkill: `size_bps` (per-level fraction of inventory),
+`perf_fee_rate`, `min_leader_share`, and `max_perf_fee_rate`.
+Convention: 10000 = 100%.
+
+**Set<T>** in pseudocode denotes a fixed-capacity collection used
+for membership and iteration. Iteration order is
+implementation-defined and stable within a single instruction (the
+`Set<Vault>` storage uses doubly linked lists where new vaults
+prepend at the head — see **Storage layout**). The on-chain
+representation is described in each section's storage notes;
+pseudocode hides those details.
+
+**u128 intermediates** are used wherever a multiplication can exceed
+u64, then truncated back at assignment. This applies to: the flush
+formulas (`price × ppm`, `inventory × bps`), the Realize formula
+(numerator and denominator both involve `hwm·s` and `f·L`), the
+basket math in Deposit/Withdraw (`shares × atoms / total_shares`),
+and the skin-in-the-game ratio check (`leader_shares × 10000` vs
+`min_leader_share × total_shares`).
 
 ## Vault
 
@@ -83,12 +99,12 @@ at match time, so a nonsense reference price just renders that vault
 unmatchable.
 
 Every quote gets a unique, monotonically increasing identifier drawn from
-`market.nonce` — a global counter incremented on every `SetReferencePrice`
-(and every taker fill). At match time, quotes at the same price are ranked
-by nonce: lower nonce = earlier arrival = wins. This is the canonical CLOB
-**price-time priority** rule, with the nonce standing in for "time" — slot
-timestamps would be too coarse, since multiple quotes can land in the same
-slot.
+`market.nonce` — a global counter incremented on every `SetReferencePrice`,
+`SetBookProfile`, and taker fill. At match time, quotes at the same price
+are ranked by nonce: lower nonce = earlier arrival = wins. This is the
+canonical CLOB **price-time priority** rule, with the nonce standing in
+for "time" — slot timestamps would be too coarse, since multiple quotes
+can land in the same slot.
 
 ```rust
 struct Vault {
@@ -108,10 +124,14 @@ struct Vault {
     /// overwritten as two aligned u64 stores.
     reference_price: ReferencePrice,
     /// Base tokens (atoms) backing this vault's asks. Pooled
-    /// inventory across the leader and outside depositors.
+    /// inventory across the leader and outside depositors. The
+    /// physical balance lives in the market-wide `base_treasury`;
+    /// see treasury invariant in `MarketHeader`.
     base_atoms: u64,
     /// Quote tokens (atoms) backing this vault's bids. Pooled
-    /// inventory across the leader and outside depositors.
+    /// inventory across the leader and outside depositors. The
+    /// physical balance lives in the market-wide `quote_treasury`;
+    /// see treasury invariant in `MarketHeader`.
     quote_atoms: u64,
     /// Total vault shares outstanding (= leader_shares +
     /// share_mint.supply).
@@ -123,8 +143,10 @@ struct Vault {
     /// at `Deposit` and leader `Withdraw` (against active vaults).
     leader_shares: u64,
     /// High-water mark of value-per-share (`L / total_shares`),
-    /// stored as Q32.32 fixed-point. Never decreases —
-    /// performance fee accrues only when VPS exceeds this mark.
+    /// stored as Q32.32 fixed-point `u64` — VPS up to ~4.29×10⁹×
+    /// the seed value is representable (practically unreachable
+    /// in normal operation). Never decreases — performance fee
+    /// accrues only when VPS exceeds this mark.
     hwm: u64,
     /// Performance fee rate the leader charges on profits above
     /// HWM, in basis points (10000 = 100%). Set at `OpenVault`
@@ -141,10 +163,10 @@ struct Vault {
     /// (from before the flag was flipped) can still `Withdraw`.
     /// Mutable by the leader via `SetAllowOutsideDepositors`.
     allow_outside_depositors: u8,
-    /// Bids and asks parameterized in basis points: a `price_offset`
-    /// in hundredths of a bp from `reference_price.price`, a
-    /// `size_bps` as fraction of inventory, and an `expiry_offset`
-    /// in slots after `quote_slot`. See `BookProfile`.
+    /// Bids and asks as `(price_offset, size_bps, expiry_offset)`
+    /// per level: ppm offset from `reference_price.price`, bps
+    /// fraction of inventory, and slot offset after `quote_slot`.
+    /// See `BookProfile`.
     profile: BookProfile,
     /// Materialized per-level state — absolute price, atom-sized
     /// allowance, and absolute expiry — computed from `profile`
@@ -156,21 +178,26 @@ struct Vault {
 }
 
 struct ReferencePrice {
-    /// `market.nonce` stamped at the last `SetReferencePrice`,
-    /// OR'd with `FLUSH_BIT` (`1 << 63`) as a "flush pending"
-    /// flag. Low 63 bits break ties for price-time priority at
-    /// match time — takers mask off `FLUSH_BIT` before
-    /// comparing. The first taker to match this vault materializes
-    /// `BookProfile` (price offsets and size_bps) and inventory
-    /// into `Vault.remaining` and clears the flag.
+    /// `market.nonce` stamped at the last `SetReferencePrice` or
+    /// `SetBookProfile`, OR'd with `FLUSH_BIT` (`1 << 63`) as a
+    /// "flush pending" flag. `FLUSH_BIT` is armed by both
+    /// `SetReferencePrice` and `SetBookProfile`; the first taker
+    /// to match this vault materializes `BookProfile` and inventory
+    /// into `Vault.remaining` and clears the flag. Low 63 bits
+    /// hold the nonce; takers mask off `FLUSH_BIT` before comparing
+    /// for price-time priority. The 63-bit field is wide enough to
+    /// never wrap over the market's lifetime (~10¹¹ years at one
+    /// event per slot).
     stamp: u64,
     /// Reference price the leader's book profile is anchored to.
     /// Custom 32-bit representation; range-checked by the taker
     /// at match time.
     price: Price,
-    /// Slot the quote was "as of" — supplied by the leader, validated
-    /// `<= current_slot` (no future-dating) and `>= current_slot − MAX_BACKDATE`.
-    /// Per-level effective expiry is `quote_slot + level.expiry_offset`.
+    /// Slot the quote was "as of" — supplied by the leader,
+    /// validated `<= current_slot` (no future-dating) and
+    /// `>= current_slot − MAX_BACKDATE` (default 50 slots, ~20s
+    /// on Solana mainnet). Per-level effective expiry is
+    /// `quote_slot + level.expiry_offset`.
     quote_slot: u32,
 }
 
@@ -180,22 +207,21 @@ struct Remaining {
 }
 
 struct LevelLive {
-    /// Absolute price for this level, materialized at flush from
-    /// `ref_price.price × (1_000_000 ∓ level.price_offset) / 1_000_000`
-    /// (subtract for bids, add for asks).
+    /// Absolute price for this level. Materialized at flush; see
+    /// `BookProfile → Flush` for the formula.
     price: Price,
     /// Live allowance in atoms (base for asks, quote for bids).
-    /// Materialized at flush from `inventory × level.size_bps / 10000`;
-    /// decremented on fills.
+    /// Materialized at flush from the level's `size_bps` against
+    /// the matching inventory leg; decremented on fills.
     size: u64,
-    /// Absolute slot this level expires at, materialized at flush
+    /// Absolute slot this level expires at. Materialized at flush
     /// from `ref_price.quote_slot + level.expiry_offset`. Takers
     /// skip levels where `current_slot >= expires_at`.
     expires_at: u32,
 }
 ```
 
-### Value-per-share and the L invariant
+### Value-per-share and the L measure
 
 Vault value is tracked via a dimensionless metric borrowed from
 constant-product AMMs:
@@ -219,12 +245,15 @@ two-asset vault:
   invariant.** Both legs scale proportionally, so value-per-share
   (VPS) does not tick on basket flows.
 - **L tracks performance against a passive constant-product hold.**
-  For a sell of `dx` base at price P, new L² ≈ old L² + dx·(b·P − q).
-  So L grows when the leader sells above the AMM-implied price `q/b`
-  (spread captured) and shrinks when they sell below (adversely
-  selected). Directional moves of the underlying pair with no fills
-  leave inventory and L unchanged — directional exposure flows
-  through to depositors via the basket, not through VPS.
+  For a sell of `dx` base at price P, the exact post-trade identity
+  is `new L² = old L² + dx·(b·P − q) − dx²·P`. The linear term is
+  what reads as "spread captured" vs "adversely selected"; the
+  quadratic correction is negligible for `dx ≪ b` and only matters
+  near full-leg drain. L grows when the leader sells above the
+  AMM-implied price `q/b` and shrinks when they sell below.
+  Directional moves of the underlying pair with no fills leave
+  inventory and L unchanged — directional exposure flows through to
+  depositors via the basket, not through VPS.
 
 Unlike a Uniswap-v2 LP share — where L grows monotonically because
 fees stay in the pool — **L in Dropset can shrink**. A leader who
@@ -253,14 +282,16 @@ to both `leader_shares` and `total_shares` without touching `b` or
 `q`; `L` is unchanged. `VPS` drops from `L/s` to `L/(s + m)`, and
 `hwm := L/(s + m)`. ∎
 
-**I4. `leader_shares` is monotonic between leader actions.** Only
-`Deposit` (leader path), `Realize`, and `Withdraw` (leader path)
-mutate it: the first two add, the third subtracts under leader
-signature. No path decreases `leader_shares` as a side-effect of
-`L` moving — drawdowns lower VPS but not the share count. ∎
+**I4. `leader_shares` only grows from below.** Three paths mutate
+it: `Deposit` (leader path) and `Realize` (permissionless) add;
+`Withdraw` (leader path) subtracts under leader signature. No path
+decreases `leader_shares` as a side-effect of `L` moving —
+drawdowns lower VPS but not the share count. ∎
 
-**I5. `hwm` is monotonic.** Set only by `Realize`, and only when
-`VPS_new > hwm`. Recoveries to a prior VPS do not earn perf fee. ∎
+**I5. `hwm` is monotonic.** Initialized to `Q32.32(1.0)` by seeding
+(see Deposit's seeding branch); thereafter set only by `Realize`,
+and only when `VPS_new > hwm`. Recoveries to a prior VPS do not
+earn perf fee. ∎
 
 **I6. Invariant on total shares.** `total_shares = leader_shares +
 share_mint.supply` at all times. Every path that mutates `total_shares`
@@ -268,6 +299,7 @@ mutates exactly one of the two terms by the same amount:
 
 | Operation | `leader_shares` | `share_mint.supply` |
 |---|---|---|
+| `Deposit` (seeding; `s = 0` → leader path) | +Δs | 0 |
 | `Deposit` (leader path) | +Δs | 0 |
 | `Deposit` (outside path) | 0 | +Δs |
 | `Withdraw` (leader path) | −Δs | 0 |
@@ -316,8 +348,11 @@ natural choke points:
 Neither `SetReferencePrice` nor the taker hot path is touched. The
 check uses on-vault numbers only (`leader_shares` and `total_shares`)
 — no SPL mint or ATA load required, and the leader cannot evade the
-floor by transferring shares to an alt wallet (their stake is
-non-SPL by construction).
+floor *within a single vault* by transferring shares to an alt
+wallet (their stake is non-SPL by construction). Cross-vault
+collusion (the leader of vault A also acting as an outside depositor
+on vault B and vice versa) is unconstrained by this check; the floor
+only guarantees per-vault skin in the game.
 
 The deposit gate creates a clean implicit cap on outside capital:
 once the vault reaches `leader_shares / min_leader_share`, new outside
@@ -389,12 +424,13 @@ own.
 
 ## BookProfile
 
-Every level is parameterized in **basis points**: a `price_offset`
-in hundredths of a bp (100 = 1 bp) from `reference_price.price`, a
-`size_bps` as fraction of vault inventory (10000 = 100%), and an
-`expiry_offset` in slots after `quote_slot`. Direction is implicit
-from which array the level lives in: bids subtract the offset from
-the reference, asks add it.
+Each level carries a `price_offset` in **ppm** (1_000_000 = 100%)
+from `reference_price.price`, a `size_bps` as fraction of vault
+inventory in **basis points** (10000 = 100%), and an `expiry_offset`
+in slots after `quote_slot`. The two scales differ on purpose:
+prices need sub-bp granularity (so `Ppm32`), sizes do not. Direction
+is implicit from which array the level lives in: bids subtract the
+price offset from the reference, asks add it.
 
 Nothing in `BookProfile` is in absolute atoms or absolute slots —
 the materialization to atoms and absolute slots happens at flush
@@ -417,12 +453,14 @@ struct Level {
     /// subtract for bids, add for asks. Materialized to an absolute
     /// price at flush.
     price_offset: Ppm32,
-    /// Per-refresh allowance as a fraction of the corresponding
-    /// inventory leg, in basis points (10000 = 100%). Materialized
-    /// to atoms at flush from `inventory × size_bps / 10000`.
+    /// Per-flush allowance as a fraction of the corresponding
+    /// inventory leg, in basis points (10000 = 100%). Values above
+    /// 10000 are clamped to 10000 at flush so the per-level
+    /// allowance never exceeds the inventory leg. Materialized to
+    /// atoms at flush from `inventory × min(size_bps, 10000) / 10000`.
     size_bps: u16,
-    /// Per-level TTL in slots after `quote_slot`. Materialized to
-    /// an absolute slot at flush. Takers skip levels where
+    /// Per-level expiry in slots after `quote_slot`. Materialized
+    /// to an absolute slot at flush. Takers skip levels where
     /// `current_slot >= expires_at`.
     expiry_offset: u32,
 }
@@ -435,25 +473,30 @@ When `SetReferencePrice` or `SetBookProfile` arms the `FLUSH_BIT` on
 one-time materialization across all levels into `Vault.remaining`:
 
 ```
-asks_remaining[i].size       = base_atoms  × asks[i].size_bps / 10000
+asks_remaining[i].size       = base_atoms  × min(asks[i].size_bps, 10000) / 10000
 asks_remaining[i].price      = ref.price   × (1_000_000 + asks[i].price_offset) / 1_000_000
 asks_remaining[i].expires_at = ref.quote_slot + asks[i].expiry_offset
 
-bids_remaining[i].size       = quote_atoms × bids[i].size_bps / 10000
-bids_remaining[i].price      = ref.price   × (1_000_000 − bids[i].price_offset) / 1_000_000
+bids_remaining[i].size       = quote_atoms × min(bids[i].size_bps, 10000) / 10000
+bids_remaining[i].price      = ref.price   × (1_000_000 −sat bids[i].price_offset) / 1_000_000
 bids_remaining[i].expires_at = ref.quote_slot + bids[i].expiry_offset
 ```
 
 A u128 intermediate is used during multiplication to avoid u64
 overflow (relevant for both the price and size computations); the
-result is truncated back to the native field width. `FLUSH_BIT` is
-then cleared with one `u64` store.
+result is truncated back to the native field width. The `−sat`
+operator on bids is saturating subtraction — bid `price_offset`
+values ≥ 1_000_000 ppm produce a 0 bid price, which is range-checked
+out at match time. The `min(size_bps, 10000)` clamp keeps the
+per-flush allowance bounded by the inventory leg even if the leader
+sets `size_bps` above 100%. `FLUSH_BIT` is then cleared with one
+`u64` store.
 
 Properties:
 
-- **Per-refresh allowance is preserved.** Once `size` decrements to
-  zero at level `i`, that level is dead until the next refresh —
-  even if inventory remains. This caps per-refresh drainage and
+- **Per-flush allowance is preserved.** Once `size` decrements to
+  zero at level `i`, that level is dead until the next flush —
+  even if inventory remains. This caps per-flush drainage and
   prevents takers from chain-draining a stale top-of-book across
   successive instructions.
 - **Inventory snapshot is automatic.** The maker doesn't manage
@@ -462,8 +505,8 @@ Properties:
   automatically rescales the ladder to the new (smaller) base leg.
 - **Per-level expiry stratifies the ladder.** A maker can give
   top-of-book a short `expiry_offset` (e.g., a few seconds in slots)
-  and deep levels a much longer one, so refresh cadence can be
-  graded by depth instead of forced to the top-of-book rate.
+  and deep levels a much longer one, so flush cadence can be graded
+  by depth instead of forced to the top-of-book rate.
 
 ## MarketHeader
 
@@ -471,9 +514,10 @@ The `MarketHeader` is a fixed-size record at the front of the market account:
 
 ```rust
 struct MarketHeader {
-    /// Market-wide monotonic counter. Stamped onto the vault on every
-    /// `SetReferencePrice`; also advanced on every taker fill. A `u64`,
-    /// wide enough to never wrap over the market's lifetime.
+    /// Market-wide monotonic counter. Stamped onto the vault on
+    /// every `SetReferencePrice` and `SetBookProfile`; also advanced
+    /// on every taker fill. A `u64`, wide enough to never wrap over
+    /// the market's lifetime.
     nonce: u64,
     /// Active vaults on this market — bounded by
     /// `registry.max_vaults_per_market`.
@@ -485,7 +529,19 @@ struct MarketHeader {
     // Pubkeys and bumps.
     base_mint: Pubkey,
     quote_mint: Pubkey,
+    /// SPL token account holding the **pooled** base inventory
+    /// for every vault on this market. Authority is a PDA derived
+    /// from the market account (`base_treasury_bump`).
+    /// **Invariant:** `base_treasury.amount ==
+    /// Σ vault.base_atoms` across every vault on the active and
+    /// tombstone DLLs. Each `Deposit`, `Withdraw`, and fill moves
+    /// atoms between this treasury and the caller's ATA while
+    /// adjusting the matching vault's `base_atoms` by the same
+    /// delta — the two must stay aligned per instruction.
     base_treasury: Pubkey,
+    /// Same as `base_treasury`, for the quote leg.
+    /// **Invariant:** `quote_treasury.amount ==
+    /// Σ vault.quote_atoms`.
     quote_treasury: Pubkey,
     bump: u8,
     base_treasury_bump: u8,
@@ -497,8 +553,8 @@ struct MarketHeader {
 
 The above pseudocode is the logical model. Physically, the market
 account is a single contiguous slab grown by `realloc`: the
-`MarketHeader` followed by a fixed-size sector array, with two
-threaded lists tracking active vs. free sectors.
+`MarketHeader` followed by a fixed-size sector array, with three
+threaded lists tracking active, tombstoned, and free sectors.
 
 ```txt
 +----------------+----------+----------+----------+----------+-----+
@@ -507,34 +563,49 @@ threaded lists tracking active vs. free sectors.
 ```
 
 Each `Vault` carries two opaque pointer fields (`next`, `prev`) not
-shown in the struct above — they thread the active-vault DLL and
-the singly linked free list. `MarketHeader` separately stores two
-list heads (`head`, `free_head`) into the sector region; these are
-absolute SVM pointers and remain valid across transactions.
+shown in the struct above — they thread whichever list the vault is
+currently on (active, tombstone, or free). `MarketHeader` separately
+stores three list heads (`head`, `tombstone_head`, `free_head`).
+These are stored as offsets into the sector region (durable across
+transactions); each instruction resolves them to current-tx pointers
+against the account's input-buffer base.
 
-Example state after opening Vaults 0–3 and then closing Vault 1:
+Example state after opening Vaults 0–4, calling `CloseVault` on
+Vault 2 (which still has outstanding shares), and fully draining
+Vault 1 (`total_shares` reached 0):
 
 ```txt
   MarketHeader
-  +---------------+
-  | head      ----+---> Vault 3 <-> Vault 2 <-> Vault 0 -> null
-  | free_head ----+---> Vault 1 -> null
-  +---------------+
+  +------------------+
+  | head           --+---> Vault 4 <-> Vault 3 <-> Vault 0 -> null
+  | tombstone_head -+---> Vault 2 -> null
+  | free_head      --+---> Vault 1 -> null
+  +------------------+
 ```
 
-New vaults are prepended at `head` (so `Vault 3` — the most recent
-open — sits at the front). `free_head` points at the most recently
-vacated sector; the free list is singly linked via `next` and ignores
-`prev`. Both lists are mutated only on vault open/close — the hot
+New vaults are prepended at `head` (so the most recent open sits at
+the front). `tombstone_head` points at vaults that have been
+`CloseVault`'d but still hold outstanding shares — depositors can
+continue to `Withdraw`, but the matching engine does not iterate
+this list. `free_head` points at fully reclaimed sectors; the free
+list is singly linked via `next` and ignores `prev`. All three
+lists are mutated only on vault open / close / reclaim — the hot
 path (`SetReferencePrice`) never touches list pointers.
 
 `Set<Vault>` operations map onto this layout as follows:
 
-- **Iterate active vaults** → walk the DLL from `head`.
+- **Iterate active vaults** (taker hot path) → walk the DLL from
+  `head`. Tombstones are not visited.
 - **Insert (`OpenVault`)** → pop the free list if non-empty, else
   `realloc` by `size_of::<Vault>()`; prepend at `head`.
-- **Remove (vault close, `total_shares == 0`)** → unlink from active
-  DLL, push onto free list.
+- **Tombstone (`CloseVault`)** → unlink from active DLL, prepend
+  at `tombstone_head`. The vault keeps its data; only the list
+  membership changes.
+- **Reclaim (`Withdraw` that drives `total_shares` to 0 on any
+  non-free vault)** → unlink from whichever DLL the vault is on
+  (active for a drained frozen vault, tombstone for a closed
+  vault), zero `vault.leader` and `vault.quote_authority` so the
+  emptiness marker holds, push onto free list.
 
 Market creation only pays rent for the header.
 
@@ -586,7 +657,10 @@ struct Registry {
     vault_open_fee: FeeConfig,
     /// Admins authorized to mutate the `Registry`, change
     /// per-market `taker_fee_rate`, call `FreezeVault`, and
-    /// open vaults without paying `vault_open_fee`.
+    /// open vaults without paying `vault_open_fee`. Backed by a
+    /// small fixed-capacity flat array — unlike `Set<Vault>`, this
+    /// set rarely changes and isn't on any hot path, so the
+    /// sector/DLL/free-list machinery is unnecessary.
     admins: Set<Pubkey>,
 }
 ```
@@ -626,24 +700,42 @@ be re-called to reshape the ladder as needed.
 
 ### Authority & pointer validation
 
-Leader instructions pass a pointer into the market account's data
-region pointing directly at their vault, avoiding any list walk.
-Before mutating the vault, the program performs three checks:
+Every instruction targeting a specific vault — leader-callable,
+outside-depositor-callable, permissionless, and admin — passes a
+pointer into the market account's data region pointing directly at
+the vault, avoiding any list walk. Before touching the vault, the
+program performs three checks. The first two are the same for every
+caller; the third is the per-ix authority gate.
 
-1. **Bounds.** `ptr` lies within the market account's data region
-   after the header and before the end of allocated data
-   (i.e. `vaults_start <= ptr < account_data_end`, where
-   `vaults_start = account_data_base + size_of::<MarketHeader>()`).
+1. **Bounds.** The entire vault struct fits within the data region:
+   `vaults_start <= ptr && ptr + size_of::<Vault>() <= account_data_end`,
+   where `vaults_start = account_data_base + size_of::<MarketHeader>()`.
 1. **Alignment.** `(ptr - vaults_start) % size_of::<Vault>() == 0` —
    guarantees the pointer lands on a real vault boundary, so the
    cast to `&mut Vault` is well-formed.
-1. **Authority.** `vault.quote_authority == signer && !vault.frozen`
-   for quote-mutating ix (`SetReferencePrice`, `SetBookProfile`) —
-   single compare on the hot path, no branching for the unset case.
-   Inventory ix (`Deposit`, `Withdraw`, `Realize`,
-   `SetQuoteAuthority`, `SetAllowOutsideDepositors`) require
-   `vault.leader == signer`. Leader `Withdraw` remains available on
-   frozen vaults so the leader can wind down alongside depositors.
+1. **Authority.** Differs by instruction:
+   - **Quote-mutating** (`SetReferencePrice`, `SetBookProfile`):
+     `vault.quote_authority == signer && !vault.frozen` — single
+     compare on the hot path, no branching for the unset case
+     (`quote_authority` is always populated; see
+     `SetQuoteAuthority`).
+   - **Leader-only** (`SetQuoteAuthority`,
+     `SetAllowOutsideDepositors`, `CloseVault`):
+     `vault.leader == signer`.
+   - **Deposit**: leader path requires `vault.leader == signer`;
+     otherwise outside path requires
+     `vault.allow_outside_depositors == 1`.
+   - **Withdraw**: leader path requires `vault.leader == signer`;
+     otherwise outside path requires the caller to hold > 0 SPL
+     tokens on `vault.share_mint` (the burn from their ATA proves
+     possession). Leader `Withdraw` remains available on frozen
+     and tombstoned vaults so the leader can wind down alongside
+     depositors.
+   - **Permissionless** (`Realize`): no signer check. The leader
+     has the strongest economic incentive, but anyone may call —
+     useful for indexers and keepers that want to pin HWM at a
+     known point in time.
+   - **Admin-only** (`FreezeVault`): `signer ∈ registry.admins`.
 
 No discriminant tag is needed: the vault region is homogeneous, so
 (1) + (2) fully determine that `ptr` refers to a valid `Vault`. The
@@ -708,11 +800,17 @@ must wait for an existing vault to close. See **Storage layout** under
 
 ### SetBookProfile
 
-Setup path. Writes the full `BookProfile` — all levels expressed in
-bps and slot offsets, never absolute. Called after seeding the vault
-and any time the leader wants to reshape their ladder. Also sets
-`FLUSH_BIT` on `reference_price.stamp` with a single `u64` store, so
-the next taker re-materializes `Vault.remaining` from the new profile
+Setup-and-reshape path. Writes the full `BookProfile` — all levels
+expressed in ppm/bps and slot offsets, never absolute. Called after
+seeding the vault and any time the leader wants to reshape their
+ladder. The instruction reads and increments `market.nonce`, writes
+the new value (OR'd with `FLUSH_BIT`) to `reference_price.stamp`,
+and leaves `reference_price.price` and `reference_price.quote_slot`
+unchanged. Bumping the nonce on reshape means the new ladder takes
+fresh time priority at match time; otherwise a leader could quietly
+reshape into a more aggressive ladder while keeping a stale stamp
+that beats fresher quotes from other vaults at the same price. The
+next taker re-materializes `Vault.remaining` from the new profile
 and current inventory.
 
 ### SetReferencePrice
@@ -721,10 +819,11 @@ Hot path. Takes `(price: Price, quote_slot: u32)` from the leader.
 `quote_slot` is validated:
 
 - `quote_slot <= current_slot` — no future-dating (which would
-  extend effective TTL artificially).
-- `current_slot - quote_slot <= MAX_BACKDATE` — sanity cap (e.g.,
-  50 slots). Backdating only shortens effective TTL, so this is
-  self-grief rather than an exploit, but worth bounding.
+  extend the effective expiry window artificially).
+- `current_slot - quote_slot <= MAX_BACKDATE` — sanity cap;
+  default 50 slots (~20s on Solana mainnet). Backdating only
+  shortens the effective expiry window, so this is self-grief
+  rather than an exploit, but worth bounding.
 
 Reads `market.nonce`, writes `Vault.reference_price` as two aligned
 `u64` stores: one for `market.nonce | FLUSH_BIT` as `stamp`, one
@@ -758,6 +857,29 @@ Leader-only. Writes `Vault.allow_outside_depositors = flag`. Flipping
 to `false` blocks **new** outside `Deposit` ix but does not affect
 existing SPL share holders, who can continue to `Withdraw` normally.
 
+### CloseVault
+
+Leader-only. Moves the vault from the active DLL to the tombstone
+DLL: takers stop iterating it, so the vault no longer participates
+in the eCLOB, but **all depositor flows remain open**. Outside
+holders can `Withdraw` their SPL shares, the leader can `Withdraw`
+their stake (with `min_leader_share` bypassed, as on frozen
+vaults), and `Realize` still runs so any final HWM accrual can be
+pinned before the vault drains.
+
+The sector is *not* recycled at close time — it sits on the
+tombstone list as a record against which pending claims are
+processed. Only when `total_shares == 0` does the sector unlink
+from the tombstone DLL and return to the free list (see
+**Reclaim** in **Storage layout**).
+
+`CloseVault` differs from `FreezeVault` in three ways: it is
+leader-initiated rather than admin-initiated; it immediately
+removes the vault from matching rather than relying on per-level
+expiry; and it is the intended lifecycle exit when a leader is
+done quoting a market, whereas freeze is the protocol's revocation
+lever.
+
 ### FreezeVault
 
 Admin-only. Sets `Vault.frozen = 1` on the target vault, after which
@@ -768,8 +890,17 @@ per-level expiry check (no taker-side change needed).
 
 Frozen vaults remain usable by depositors: `Withdraw` still works,
 and `min_leader_share` is bypassed for the leader so they can exit
-alongside everyone else. Once `total_shares == 0`, the vault sector
-returns to the free list per the usual close path.
+alongside everyone else. `Realize` is a no-op (HWM pinned at freeze
+time; see **Realize**). Once `total_shares == 0`, the vault sector
+returns to the free list per the **Reclaim** path in **Storage
+layout** — for frozen vaults that path unlinks from the active DLL.
+
+Unlike `CloseVault`, freezing leaves the vault on the active DLL —
+takers continue to iterate it but find no matchable levels once
+existing quotes expire. An admin who wants to evict the vault from
+the iteration immediately can pair `FreezeVault` with manual
+follow-on action, or rely on natural decay; the protocol does not
+provide an admin-side tombstone migration.
 
 `FreezeVault` is the protocol's revocation lever against a
 misbehaving leader. There is no separate "unfreeze" — frozen is
@@ -788,10 +919,12 @@ mint and depositor-ATA accounts are required for the outside path,
 **optional for the leader path** — leaders can omit them.
 
 Every `Deposit` and `Withdraw` begins by **realizing** the vault:
-if `VPS_now > hwm`, accrue the leader's perf-fee shares to
-`leader_shares` and reset `hwm`. This guarantees outside shares mint
-or burn at a post-fee VPS, so flows never transfer leader-owed fee
-value to or from the caller.
+if the vault is active and `VPS_now > hwm`, accrue the leader's
+perf-fee shares to `leader_shares` and reset `hwm`. This guarantees
+outside shares mint or burn at a post-fee VPS, so flows never
+transfer leader-owed fee value to or from the caller. On frozen and
+tombstoned vaults, Realize is a no-op — HWM is pinned at the moment
+the vault left the active eCLOB (see `Realize` below).
 
 ### Deposit
 
@@ -822,10 +955,13 @@ the instruction reverts. The check uses on-vault numbers only — no
 ATA load needed.
 
 **Seeding (first deposit).** If `total_shares == 0`, the vault has
-never been seeded. The first depositor **must** be the leader; the
-instruction sets `total_shares := isqrt(base_in × quote_in)`,
-`leader_shares := total_shares`, and `hwm := Q32.32(1.0)`. No SPL
-tokens are minted on seeding (leader stake is non-SPL).
+never been seeded. The first depositor **must** be the leader and
+must supply `base_in > 0 && quote_in > 0` — a zero leg would yield
+`total_shares = 0` and re-trigger seeding on the next deposit (and
+divide by zero in the pro-rata basket math). The instruction sets
+`total_shares := isqrt(base_in × quote_in)`, `leader_shares :=
+total_shares`, and `hwm := Q32.32(1.0)`. No SPL tokens are minted
+on seeding (leader stake is non-SPL).
 
 Deposits against frozen vaults are rejected.
 
@@ -844,26 +980,40 @@ remaining shareholders. Then:
 
 - **Leader path** (`signer == vault.leader`): decrement
   `Vault.leader_shares` by `shares_in`. No SPL burn.
-- **Outside path** (`signer != vault.leader`): burn `shares_in`
-  SPL tokens from the caller's ATA on `Vault.share_mint`.
+- **Outside path** (signer holds SPL tokens on
+  `Vault.share_mint`): burn `shares_in` SPL tokens from the
+  caller's ATA. The burn itself gates authority — a caller with
+  no balance fails at the SPL layer.
 
 `Vault.total_shares` is decremented in both paths; the basket is
 transferred from the treasuries to the caller.
 
 If the caller is the leader against an **active** vault, the
 post-burn ratio must remain at or above `min_leader_share`. This
-check is **bypassed for frozen vaults**, allowing the leader to wind
-down alongside depositors.
+check is **bypassed for frozen and tombstoned vaults**, allowing
+the leader to wind down alongside depositors.
+
+If `total_shares` reaches 0 on a tombstoned vault, the sector is
+unlinked from the tombstone DLL and pushed onto the free list per
+**Reclaim** in **Storage layout**.
 
 ### Realize
 
 Folds VPS gains above `hwm` into the leader's stake — increments
 `Vault.leader_shares` (and `Vault.total_shares` by the same amount)
-and updates `hwm := L / total_shares_after`. Permissionless (the
-leader has the strongest incentive), and runs implicitly at the start
-of every `Deposit` and `Withdraw`. **Never runs on the taker hot
-path.** Touches no SPL accounts — perf fee accrual is purely on-vault
-bookkeeping.
+and updates `hwm := L / total_shares_after`. Permissionless: anyone
+may call. The leader has the strongest economic incentive, and
+indexers/keepers may invoke it to pin HWM at a known point in time.
+Runs implicitly at the start of every `Deposit` and `Withdraw`.
+**Never runs on the taker hot path.** Touches no SPL accounts —
+perf fee accrual is purely on-vault bookkeeping.
+
+`Realize` is a **no-op on frozen and tombstoned vaults**: once a
+vault leaves the active eCLOB, HWM is pinned and no further perf
+fee accrues, regardless of residual VPS movement from late fills.
+This makes `FreezeVault` a clean revocation lever (the leader
+forfeits any future fee accrual) and ensures `CloseVault` draws a
+final line under the leader's fee at close time.
 
 ## Order matching
 
@@ -894,18 +1044,29 @@ On every taker instruction:
    !FLUSH_BIT, vault_ptr, level_idx)` tuple onto a binary heap
    allocated on the program heap, skipping levels where
    `remaining.size == 0` or `current_slot >= remaining.expires_at`.
-   The heap is keyed by `(price, nonce)`: min-heap for asks,
-   max-heap for bids. Nonce breaks price ties (older = wins) —
-   `FLUSH_BIT` is masked off the stamp so a just-flushed vault
-   doesn't sort younger than a previously-flushed one with the same
-   underlying counter value.
-1. **Pop** from the heap and fill the taker: decrement the taker's
-   remaining size, decrement the popped level's
-   `Vault.remaining.<side>[i].size`, debit the vault's `base_atoms`
-   / `quote_atoms`, and accrue the taker fee from
-   `market.taker_fee_rate`. Continue until the taker is filled, the
-   next heap top exceeds the taker's limit price, or the heap is
-   drained.
+   The heap is keyed so the next-to-pop is the best price with the
+   oldest nonce on ties. For asks, "best" is lowest price — a
+   min-heap on `(price, nonce)` works directly. For bids, "best"
+   is highest price — use a min-heap on `(Price::MAX − price,
+   nonce)` (or equivalently invert the price comparator while
+   leaving nonce ascending). A naïve max-heap on `(price, nonce)`
+   for bids would flip the nonce comparison and let *newer* quotes
+   win on equal-price ties, violating price-time priority.
+   `FLUSH_BIT` is masked off the stamp before keying so a
+   just-flushed vault doesn't sort younger than a previously-flushed
+   one with the same underlying nonce.
+1. **Pop** from the heap and compute the fill as
+   `fill = min(taker_unfilled, level.size, vault_leg)` — where
+   `vault_leg` is `base_atoms` for asks or `quote_atoms` for bids —
+   so the trade never debits more inventory than the vault holds.
+   (A popped entry with `vault_leg == 0` yields `fill = 0`; the
+   loop moves on to the next pop.) Decrement the taker's unfilled
+   size by `fill`, decrement the popped level's
+   `Vault.remaining.<side>[i].size` by `fill`, debit the matching
+   leg of `base_atoms` / `quote_atoms` accordingly, and accrue the
+   taker fee from `market.taker_fee_rate`. Continue until the taker
+   is filled, the next heap top exceeds the taker's limit price, or
+   the heap is drained.
 1. **Tear down.** The heap buffer is freed with the transaction;
    debited inventory, `Vault.remaining.size` decrements, the cleared
    `FLUSH_BIT` on any flushed vault, and `market.nonce` persist to
@@ -919,6 +1080,10 @@ The protocol **does not** auto-match leaders against each other. If
 Leader A's ask drifts below Leader B's bid (e.g. because A just
 `SetReferencePrice`'d without observing B), nothing happens on chain
 until the next taker arrives. A crossed book is an arbitrage
-opportunity — any taker can profit from it — which gives leaders a
-standing incentive to keep their reference prices honest without the
-matching engine needing a leader-vs-leader pre-pass.
+opportunity — any taker can profit from it, including the leaders
+themselves (a leader is just another pubkey on the taker side, so
+self-arbitraging a stale neighbor is the cheapest path to clean it
+up) —
+which gives leaders a standing incentive to keep their reference
+prices honest without the matching engine needing a leader-vs-leader
+pre-pass.
