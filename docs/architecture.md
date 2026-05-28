@@ -1093,8 +1093,7 @@ The depositor's total quote-denominated return decomposes cleanly
 into **APR (leader skill) × basket price move (directional)**; the
 two are separately attributable. The protocol math is oracle-free. UIs
 that want to display a quote-converted total return can layer in a
-price feed (Pyth, Switchboard) for display only — no on-chain
-dependency.
+price feed for display only — no on-chain dependency.
 
 APR can go **negative** when the leader is consistently adversely
 selected. That is the same metric working in both directions, and it
