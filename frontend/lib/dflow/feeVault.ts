@@ -95,9 +95,18 @@ function loadFeeVaults(rpc: Rpc): Promise<void> {
           .send(),
       ),
     );
-    const flatEntries = chunks.flat();
     const accounts = responses.flatMap((r) => r.value);
-    flatEntries.forEach((entry, i) => {
+    // Index-alignment guard (mirrors useAllBalances): the chunked results must
+    // come back in the same order and count as the requested ATAs, or vault
+    // existence would be assigned to the wrong mint — declaring a fee for a
+    // vault-less mint (DFlow rejects /order) or hiding a valid one. Throwing
+    // here keeps `resolved` false so the next caller retries.
+    if (accounts.length !== entries.length) {
+      throw new Error(
+        `RPC returned ${accounts.length} accounts for ${entries.length} fee ATAs — chunked getMultipleAccounts is out of alignment`,
+      );
+    }
+    entries.forEach((entry, i) => {
       vaults.set(entry.mint, { ata: entry.ata, exists: accounts[i] != null });
     });
     resolved = true;
