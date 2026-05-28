@@ -576,10 +576,13 @@ struct Level {
     /// price at flush.
     price_offset: Ppm32,
     /// Per-flush allowance as a fraction of the corresponding
-    /// inventory leg, in basis points (10000 = 100%). Values above
-    /// 10000 are clamped to 10000 at flush so the per-level
-    /// allowance never exceeds the inventory leg. Materialized to
-    /// atoms at flush from `inventory × min(size_bps, 10000) / 10000`.
+    /// inventory leg, in basis points (10000 = 100%). The leg is
+    /// `base_atoms` for asks and `quote_atoms` for bids, so a
+    /// materialized bid size is denominated in **quote atoms** —
+    /// the leader is allocating their quote pool across bid prices.
+    /// **Invariant:** `Σ size_bps ≤ 10000` per side, enforced at
+    /// `SetLiquidityProfile`. Setting the sum to exactly 10000
+    /// fully commits that leg; lower sums leave a reserve.
     size_bps: u16,
     /// Per-level expiry in slots after `quote_slot`. Materialized
     /// to an absolute slot at flush. Takers skip levels where
@@ -595,23 +598,29 @@ When `SetReferencePrice` or `SetLiquidityProfile` arms the `FLUSH_BIT` on
 one-time materialization across all levels into `Vault.remaining`:
 
 ```
-asks_remaining[i].size       = base_atoms  × min(asks[i].size_bps, 10000) / 10000
+asks_remaining[i].size       = base_atoms  × asks[i].size_bps / 10000   // base atoms
 asks_remaining[i].price      = ref.price   × (1_000_000 + asks[i].price_offset) / 1_000_000
 asks_remaining[i].expires_at = ref.quote_slot + asks[i].expiry_offset
 
-bids_remaining[i].size       = quote_atoms × min(bids[i].size_bps, 10000) / 10000
+bids_remaining[i].size       = quote_atoms × bids[i].size_bps / 10000   // quote atoms
 bids_remaining[i].price      = ref.price   × (1_000_000 −sat bids[i].price_offset) / 1_000_000
 bids_remaining[i].expires_at = ref.quote_slot + bids[i].expiry_offset
 ```
+
+Note the unit asymmetry: ask `size` is in **base atoms** (the maker
+is offering base), bid `size` is in **quote atoms** (the maker is
+offering quote). Off-chain renderers that want a base-equivalent bid
+size for display compute `size / price`.
 
 A u128 intermediate is used during multiplication to avoid u64
 overflow (relevant for both the price and size computations); the
 result is truncated back to the native field width. The `−sat`
 operator on bids is saturating subtraction — bid `price_offset`
 values ≥ 1_000_000 ppm produce a 0 bid price, which is range-checked
-out at match time. The `min(size_bps, 10000)` clamp keeps the
-per-flush allowance bounded by the inventory leg even if the leader
-sets `size_bps` above 100%. `FLUSH_BIT` is then cleared with one
+out at match time. The per-side `Σ size_bps ≤ 10000` invariant
+(enforced at `SetLiquidityProfile`, see below) means the sum of
+materialized sizes per side never exceeds the inventory leg, so no
+runtime clamp is needed. `FLUSH_BIT` is then cleared with one
 `u64` store.
 
 Properties:
@@ -758,7 +767,22 @@ and the caller must wait for an existing vault to close.
 Setup-and-reshape path. Writes the full `LiquidityProfile` — all levels
 expressed in ppm/bps and slot offsets, never absolute. Called after
 seeding the vault and any time the leader wants to reshape their
-ladder. The instruction reads and increments `market.nonce`, writes
+ladder.
+
+**Per-side collateral invariant.** Validated before the write:
+
+```
+Σ bids[i].size_bps ≤ 10000
+Σ asks[i].size_bps ≤ 10000
+```
+
+A sum of exactly 10000 commits the full inventory leg across the
+ladder; smaller sums leave an unallocated reserve. Either side
+exceeding 10000 is rejected — it would over-commit the leg and
+turn `Position.size` into an unenforceable nominal. The check is
+N_LEVELS adds and one comparison per side.
+
+The instruction reads and increments `market.nonce`, writes
 the new value (OR'd with `FLUSH_BIT`) to `reference_price.stamp`,
 and leaves `reference_price.price` and `reference_price.quote_slot`
 unchanged. Bumping the nonce on reshape means the new ladder takes
@@ -952,18 +976,25 @@ On every taker instruction:
    `FLUSH_BIT` is masked off the stamp before keying so a
    just-flushed vault doesn't sort younger than a previously-flushed
    one with the same underlying nonce.
-1. **Pop** from the heap and compute the fill as
-   `fill = min(taker_unfilled, level.size, vault_leg)` — where
-   `vault_leg` is `base_atoms` for asks or `quote_atoms` for bids —
-   so the trade never debits more inventory than the vault holds.
-   (A popped entry with `vault_leg == 0` yields `fill = 0`; the
-   loop moves on to the next pop.) Decrement the taker's unfilled
-   size by `fill`, decrement the popped level's
-   `Vault.remaining.<side>[i].size` by `fill`, debit the matching
-   leg of `base_atoms` / `quote_atoms` accordingly, and accrue the
-   taker fee from `market.taker_fee_rate`. Continue until the taker
-   is filled, the next heap top exceeds the taker's limit price, or
-   the heap is drained.
+1. **Pop** from the heap and compute the fill. Units depend on side:
+   ask `level.size` is in base, bid `level.size` is in quote (see
+   **LiquidityProfile → Flush**), so the min runs in whichever unit
+   the maker's leg is denominated in.
+
+   - **Asks** (taker buying base): `fill_base = min(taker_unfilled_base,
+     level.size, base_atoms)`; debit `base_atoms -= fill_base`, credit
+     `quote_atoms += fill_base × level.price`.
+   - **Bids** (taker selling base): `fill_quote = min(taker_unfilled_base
+     × level.price, level.size, quote_atoms)`; debit `quote_atoms
+     -= fill_quote`, credit `base_atoms += fill_quote / level.price`.
+
+   In both cases the trade never debits more inventory than the
+   vault holds. (A popped entry with `vault_leg == 0` yields a
+   zero fill; the loop moves on.) Decrement the taker's unfilled
+   amount, decrement the popped level's `Vault.remaining.<side>[i].size`
+   by the fill, and accrue the taker fee from `market.taker_fee_rate`.
+   Continue until the taker is filled, the next heap top exceeds the
+   taker's limit price, or the heap is drained.
 1. **Tear down.** The heap buffer is freed with the transaction;
    debited inventory, `Vault.remaining.size` decrements, the cleared
    `FLUSH_BIT` on any flushed vault, and `market.nonce` persist to
