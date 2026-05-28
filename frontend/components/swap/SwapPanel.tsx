@@ -4,7 +4,7 @@ import { useWalletConnection } from "@solana/react-hooks";
 import { useEffect } from "react";
 import { RateLimitMessage } from "@/components/chrome/RateLimitMessage";
 import { stablecoinDecimals, stablecoinMint } from "@/lib/data/currencies";
-import { useFeeVaults } from "@/lib/dflow/feeVault";
+import { useFeeVaultExists } from "@/lib/dflow/feeVault";
 import { PLATFORM_FEE } from "@/lib/env";
 import { emit, useAppEvent } from "@/lib/events";
 import { parseAmountToBase } from "@/lib/format/balance";
@@ -37,10 +37,6 @@ export function SwapPanel() {
   const fromDecimals = stablecoinDecimals(fromStablecoin);
   const toDecimals = stablecoinDecimals(toStablecoin);
   const quote = useDflowQuote(fromMint, toMint, fromDecimals, amount);
-  // Whether the platform-fee vault (the fee wallet's ATA) for the to-mint
-  // exists on-chain. The fee is only charged — and so should only be reported
-  // — when it does; see lib/dflow/feeVault.ts.
-  const { vaultExists } = useFeeVaults();
 
   // Toggling direction promotes the current quote's output amount into the
   // new input. The promotion logic lives in the store action — it reads
@@ -175,6 +171,13 @@ export function SwapPanel() {
     quote.outAmount > 0n;
   const canSwap = label === "Swap" && !disabled && !dimmed;
 
+  // Whether the platform-fee vault (the fee wallet's ATA) for the to-mint
+  // exists on-chain — the fee is only charged, and so only reported, when it
+  // does. Gated on `canSwap && routeFound` so we never hit the RPC for a swap
+  // that can't happen (no wallet, insufficient input, no route). See
+  // lib/dflow/feeVault.ts.
+  const feeVaultExists = useFeeVaultExists(toMint, canSwap && routeFound);
+
   return (
     <>
       <div className="relative rounded-xl border border-border p-3">
@@ -205,7 +208,7 @@ export function SwapPanel() {
         {routeFound && quote.inAmount !== null && quote.outAmount !== null ? (
           <PlatformFee
             bps={
-              canSwap && PLATFORM_FEE && vaultExists(toMint)
+              canSwap && PLATFORM_FEE && feeVaultExists
                 ? PLATFORM_FEE.bps
                 : null
             }
