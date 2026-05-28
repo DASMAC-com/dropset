@@ -2,20 +2,12 @@
 
 import type { SolanaClientRuntime, WalletSession } from "@solana/client";
 import {
-  type Address,
-  address,
   getBase64Encoder,
   getTransactionDecoder,
   type SendableTransaction,
   type Signature,
   type Transaction,
 } from "@solana/kit";
-import {
-  findAssociatedTokenPda,
-  TOKEN_PROGRAM_ADDRESS,
-} from "@solana-program/token";
-import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
-import { stablecoinByMint, type TokenProgramKind } from "../data/currencies";
 import {
   DFLOW_ORDER_TIMEOUT_MS,
   SWAP_CONFIRM_MAX_UNKNOWN_POLLS,
@@ -29,28 +21,21 @@ import {
   parseDflowOrder,
   ValidationError,
 } from "../validate";
+import { resolveFeeAccount } from "./feeVault";
 
-const PROGRAM_FOR_KIND: Record<TokenProgramKind, Address> = {
-  classic: TOKEN_PROGRAM_ADDRESS,
-  token2022: TOKEN_2022_PROGRAM_ADDRESS,
-};
-
-// Derive the fee ATA for the output mint, owned by the configured platform
-// fee wallet. DFlow defaults to `platformFeeMode=outputMint`, so the fee
-// account must hold the output token. Returns null when no fee is configured
-// or when the output mint isn't in currencies.json (long-tail tokens that
-// don't have a pre-created ATA).
+// Resolve the platform-fee parameters for the output mint. Returns null —
+// meaning "declare no fee" — unless a fee is configured AND the fee wallet's
+// ATA for this mint already exists on-chain. DFlow rejects /order when the
+// `feeAccount` is missing, and factors a declared fee into the slippage budget
+// even when uncollected, so a mint without a pre-created vault must not
+// advertise the fee. Vault existence is resolved (and cached) by feeVault.ts.
 async function platformFeeParams(
+  rpc: SolanaClientRuntime["rpc"],
   outputMint: string,
 ): Promise<{ bps: number; feeAccount: string } | null> {
   if (!PLATFORM_FEE) return null;
-  const stable = stablecoinByMint(outputMint);
-  if (!stable) return null;
-  const [feeAccount] = await findAssociatedTokenPda({
-    owner: PLATFORM_FEE.wallet,
-    mint: address(outputMint),
-    tokenProgram: PROGRAM_FOR_KIND[stable.tokenProgram],
-  });
+  const feeAccount = await resolveFeeAccount(rpc, outputMint);
+  if (!feeAccount) return null;
   return { bps: PLATFORM_FEE.bps, feeAccount };
 }
 
@@ -69,6 +54,9 @@ export type DflowSwapInput = {
   slippageBps: string;
   userPublicKey: string;
   walletSession: WalletSession;
+  // Used to check (once, cached) whether the platform-fee vault for the output
+  // mint exists on-chain before declaring the fee to DFlow.
+  rpc: SolanaClientRuntime["rpc"];
 };
 
 export type DflowSwapResult = {
@@ -166,6 +154,7 @@ export async function executeDflowSwap(
     slippageBps,
     userPublicKey,
     walletSession,
+    rpc,
   } = input;
 
   const url = new URL(DFLOW_ORDER_URL);
@@ -180,7 +169,7 @@ export async function executeDflowSwap(
   // Skip fee params entirely when no fee is configured or no fee ATA exists
   // for this output mint. DFlow factors a declared fee into slippage budget
   // even if uncollected, so a missing-ATA mint must not advertise the fee.
-  const fee = await platformFeeParams(outputMint);
+  const fee = await platformFeeParams(rpc, outputMint);
   if (fee) {
     url.searchParams.set("platformFeeBps", String(fee.bps));
     url.searchParams.set("feeAccount", fee.feeAccount);
