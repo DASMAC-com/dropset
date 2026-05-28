@@ -8,6 +8,7 @@ barthélemy
 blockhash
 bpf
 brale
+cadc
 cfgs
 clippy
 clob
@@ -38,6 +39,7 @@ localnet
 luhansk
 mxne
 navigations
+paytrie
 permissionless
 prebuild
 predev
