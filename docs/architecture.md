@@ -1,3 +1,9 @@
+<!-- cspell:word drawdowns -->
+
+<!-- cspell:word toggleable -->
+
+<!-- cspell:word tombstoned -->
+
 # Ephemeral Central Limit Order Book (eCLOB) Architecture
 
 This sketch presents an ephemeral central limit order book (eCLOB) design that
@@ -48,8 +54,9 @@ below for details.
 
 ## Conventions
 
-**Ppm (parts per million)** is the unit for all sub-basis-point rates in this spec:
-1 ppm = 10⁻⁶ = 0.0001 bps; 1 bps = 100 ppm; 1% = 10,000 ppm; 100% = 1,000,000 ppm.
+**Ppm (parts per million)** is the unit for all sub-basis-point rates
+in this spec: 1 ppm = 10⁻⁶ = 0.0001 bps; 1 bps = 100 ppm;
+1% = 10,000 ppm; 100% = 1,000,000 ppm.
 Two integer widths appear:
 
 - `Ppm16` — `u16`, max 65,535 ppm ≈ 6.55%. Used where a tight cap is
@@ -364,7 +371,7 @@ struct Position {
 Vault value is tracked via a dimensionless metric borrowed from
 constant-product AMMs:
 
-```
+```text
 L = isqrt(base_atoms × quote_atoms)
 ```
 
@@ -431,18 +438,19 @@ drawdowns lower VPS but not the share count. ∎
 and only when `VPS_new > hwm`. Recoveries to a prior VPS do not
 earn perf fee. ∎
 
-**I6. Invariant on total shares.** `total_shares = leader_shares +
-share_mint.supply` at all times. Every path that mutates `total_shares`
-mutates exactly one of the two terms by the same amount:
+**I6. Invariant on total shares.**
+`total_shares = leader_shares + share_mint.supply` at all times.
+Every path that mutates `total_shares` mutates exactly one of the
+two terms by the same amount:
 
-| Operation | `leader_shares` | `share_mint.supply` |
-|---|---|---|
-| `Deposit` (seeding; `s = 0` → leader path) | +Δs | 0 |
-| `Deposit` (leader path) | +Δs | 0 |
-| `Deposit` (outside path) | 0 | +Δs |
-| `Withdraw` (leader path) | −Δs | 0 |
-| `Withdraw` (outside path) | 0 | −Δs |
-| `Realize` | +m | 0 |
+| Operation                                  | `leader_shares` | `share_mint.supply` |
+| ------------------------------------------ | --------------- | ------------------- |
+| `Deposit` (seeding; `s = 0` → leader path) | +Δs             | 0                   |
+| `Deposit` (leader path)                    | +Δs             | 0                   |
+| `Deposit` (outside path)                   | 0               | +Δs                 |
+| `Withdraw` (leader path)                   | −Δs             | 0                   |
+| `Withdraw` (outside path)                  | 0               | −Δs                 |
+| `Realize`                                  | +m              | 0                   |
 
 ### High-water mark and performance fee
 
@@ -459,7 +467,7 @@ stake is non-SPL). On `Realize`, if `VPS_new > hwm`:
 - The leader accrues `m` shares to `leader_shares`, capturing
   `f × (VPS_new − hwm)` per existing share, where:
 
-```
+```text
 m = f × s × (L − hwm × s) / ((1 − f) × L + f × hwm × s)
 ```
 
@@ -520,12 +528,12 @@ is treated as any other depositor on exit. See
 
 A vault leaves the active eCLOB by either of two lifecycle paths:
 
-| State | Set by | DLL membership | Quote ix | Deposit | Withdraw | Realize | Lifecycle exit |
-|---|---|---|---|---|---|---|---|
-| **Active** | default | active | accepted | accepted | accepted | accrues | becomes frozen or tombstoned |
-| **Frozen** | admin via `FreezeVault` | stays on active DLL; takers skip via per-level expiry | rejected (`!vault.frozen` gate) | rejected | accepted; `min_leader_share` bypassed for the leader | no-op (HWM pinned at freeze time) | Reclaim when `total_shares == 0` |
-| **Tombstoned** | leader via `CloseVault` | tombstone DLL; takers do not iterate | rejected (vault not visited) | rejected | accepted; `min_leader_share` bypassed for the leader | no-op (HWM pinned at close time) | Reclaim when `total_shares == 0` |
-| **Reclaimed** | implicit on draining `Withdraw` | free DLL | n/a | n/a | n/a | n/a | sector available for reuse |
+| State          | Set by                          | DLL membership                                        | Quote ix                        | Deposit  | Withdraw                                             | Realize                           | Lifecycle exit                   |
+| -------------- | ------------------------------- | ----------------------------------------------------- | ------------------------------- | -------- | ---------------------------------------------------- | --------------------------------- | -------------------------------- |
+| **Active**     | default                         | active                                                | accepted                        | accepted | accepted                                             | accrues                           | becomes frozen or tombstoned     |
+| **Frozen**     | admin via `FreezeVault`         | stays on active DLL; takers skip via per-level expiry | rejected (`!vault.frozen` gate) | rejected | accepted; `min_leader_share` bypassed for the leader | no-op (HWM pinned at freeze time) | Reclaim when `total_shares == 0` |
+| **Tombstoned** | leader via `CloseVault`         | tombstone DLL; takers do not iterate                  | rejected (vault not visited)    | rejected | accepted; `min_leader_share` bypassed for the leader | no-op (HWM pinned at close time)  | Reclaim when `total_shares == 0` |
+| **Reclaimed**  | implicit on draining `Withdraw` | free DLL                                              | n/a                             | n/a      | n/a                                                  | n/a                               | sector available for reuse       |
 
 Both terminal states are designed so depositors can always exit and
 no further fee accrues to the leader after exit. They differ in
@@ -597,14 +605,16 @@ When `SetReferencePrice` or `SetLiquidityProfile` arms the `FLUSH_BIT` on
 `reference_price.stamp`, the next taker to hit this vault performs a
 one-time materialization across all levels into `Vault.remaining`:
 
-```
-asks_remaining[i].size       = base_atoms  × asks[i].size_bps / 10000   // base atoms
-asks_remaining[i].price      = ref.price   × (1_000_000 + asks[i].price_offset) / 1_000_000
-asks_remaining[i].expires_at = ref.quote_slot + asks[i].expiry_offset
+```text
+// PPM = 1_000_000. Let a = asks[i], b = bids[i].
 
-bids_remaining[i].size       = quote_atoms × bids[i].size_bps / 10000   // quote atoms
-bids_remaining[i].price      = ref.price   × (1_000_000 −sat bids[i].price_offset) / 1_000_000
-bids_remaining[i].expires_at = ref.quote_slot + bids[i].expiry_offset
+asks_remaining[i].size       = base_atoms × a.size_bps / 10000  // base
+asks_remaining[i].price      = ref.price × (PPM + a.price_offset) / PPM
+asks_remaining[i].expires_at = ref.quote_slot + a.expiry_offset
+
+bids_remaining[i].size       = quote_atoms × b.size_bps / 10000  // quote
+bids_remaining[i].price      = ref.price × (PPM −sat b.price_offset) / PPM
+bids_remaining[i].expires_at = ref.quote_slot + b.expiry_offset
 ```
 
 Note the unit asymmetry: ask `size` is in **base atoms** (the maker
@@ -733,10 +743,11 @@ instructions in this section; see **Caller mechanics**.
 
 Called by anyone to allocate a vault sector and become its leader.
 The caller transfers `registry.vault_open_fee.atoms` of the fee mint
-to the Registry's fee ATA — `get_associated_token_address(registry_pda,
-vault_open_fee.mint)` — unless the signer is an admin (fee waived;
-admins may also pass a separate `leader: Pubkey` argument to open a
-vault on someone else's behalf — that pubkey becomes `Vault.leader`).
+to the Registry's fee ATA —
+`get_associated_token_address(registry_pda, vault_open_fee.mint)` —
+unless the signer is an admin (fee waived; admins may also pass a
+separate `leader: Pubkey` argument to open a vault on someone else's
+behalf — that pubkey becomes `Vault.leader`).
 
 Caller arguments stamped onto the vault:
 
@@ -771,7 +782,7 @@ ladder.
 
 **Per-side collateral invariant.** Validated before the write:
 
-```
+```text
 Σ bids[i].size_bps ≤ 10000
 Σ asks[i].size_bps ≤ 10000
 ```
@@ -869,7 +880,7 @@ Caller specifies a target `shares_out` and a max basket
 `(max_base_in, max_quote_in)` for slippage protection. The basket
 required at the current vault ratio is:
 
-```
+```text
 base_in  = ceil(shares_out × base_atoms  / total_shares)
 quote_in = ceil(shares_out × quote_atoms / total_shares)
 ```
@@ -896,9 +907,9 @@ never been seeded. The first depositor **must** be the leader and
 must supply `base_in > 0 && quote_in > 0` — a zero leg would yield
 `total_shares = 0` and re-trigger seeding on the next deposit (and
 divide by zero in the pro-rata basket math). The instruction sets
-`total_shares := isqrt(base_in × quote_in)`, `leader_shares :=
-total_shares`, and `hwm := Q32.32(1.0)`. No SPL tokens are minted
-on seeding (leader stake is non-SPL).
+`total_shares := isqrt(base_in × quote_in)`,
+`leader_shares := total_shares`, and `hwm := Q32.32(1.0)`. No SPL
+tokens are minted on seeding (leader stake is non-SPL).
 
 Deposits against frozen or tombstoned vaults are rejected.
 
@@ -907,7 +918,7 @@ Deposits against frozen or tombstoned vaults are rejected.
 Caller specifies `shares_in` to burn. The vault delivers a pro-rata
 basket:
 
-```
+```text
 base_out  = floor(shares_in × base_atoms  / total_shares)
 quote_out = floor(shares_in × quote_atoms / total_shares)
 ```
@@ -951,42 +962,51 @@ On every taker instruction:
    and frozen-then-drained vaults are not visited; frozen vaults
    that still sit on the active DLL are visited but their levels
    are skipped via per-level expiry).
+
 1. **Range-check** the vault's `reference_price.price`. Drop the
    vault entirely if out-of-range (this is the deferred validation
    from the leader's hot path — a nonsense price renders the vault
    unmatchable here).
+
 1. **Flush if armed.** If `FLUSH_BIT` is set on
    `reference_price.stamp`, materialize `Vault.remaining` from
    `LiquidityProfile` and current inventory per the formulas in
    **LiquidityProfile → Flush**, and clear the bit with one `u64` store.
+
 1. Iterate the relevant side of `remaining` (asks for a buy taker,
    bids for a sell taker).
-1. **Push** each `(remaining.price, remaining.size, stamp &
-   !FLUSH_BIT, vault_ptr, level_idx)` tuple onto a binary heap
-   allocated on the program heap, skipping levels where
-   `remaining.size == 0` or `current_slot >= remaining.expires_at`.
-   The heap is keyed so the next-to-pop is the best price with the
-   oldest nonce on ties. For asks, "best" is lowest price — a
-   min-heap on `(price, nonce)` works directly. For bids, "best"
-   is highest price — use a min-heap on `(Price::MAX − price,
-   nonce)` (or equivalently invert the price comparator while
-   leaving nonce ascending). A naïve max-heap on `(price, nonce)`
+
+1. **Push** each
+   `(remaining.price, remaining.size, stamp & !FLUSH_BIT, vault_ptr, level_idx)`
+   tuple onto a binary heap allocated on the program heap, skipping
+   levels where `remaining.size == 0` or
+   `current_slot >= remaining.expires_at`. The heap is keyed so the
+   next-to-pop is the best price with the oldest nonce on ties. For
+   asks, "best" is lowest price — a min-heap on `(price, nonce)`
+   works directly. For bids, "best" is highest price — use a
+   min-heap on `(Price::MAX − price, nonce)` (or equivalently invert
+   the price comparator while leaving nonce ascending). A naïve
+   max-heap on `(price, nonce)`
    for bids would flip the nonce comparison and let *newer* quotes
    win on equal-price ties, violating price-time priority.
    `FLUSH_BIT` is masked off the stamp before keying so a
    just-flushed vault doesn't sort younger than a previously-flushed
    one with the same underlying nonce.
+
 1. **Pop** from the heap and compute the fill. Units depend on side:
    ask `level.size` is in base, bid `level.size` is in quote (see
    **LiquidityProfile → Flush**), so the min runs in whichever unit
    the maker's leg is denominated in.
 
-   - **Asks** (taker buying base): `fill_base = min(taker_unfilled_base,
-     level.size, base_atoms)`; debit `base_atoms -= fill_base`, credit
+   - **Asks** (taker buying base):
+     `fill_base = min(taker_unfilled_base, level.size, base_atoms)`;
+     debit `base_atoms -= fill_base`, credit
      `quote_atoms += fill_base × level.price`.
-   - **Bids** (taker selling base): `fill_quote = min(taker_unfilled_base
-     × level.price, level.size, quote_atoms)`; debit `quote_atoms
-     -= fill_quote`, credit `base_atoms += fill_quote / level.price`.
+   - **Bids** (taker selling base): let
+     `taker_unfilled_quote = taker_unfilled_base × level.price`;
+     `fill_quote = min(taker_unfilled_quote, level.size, quote_atoms)`;
+     debit `quote_atoms -= fill_quote`, credit
+     `base_atoms += fill_quote / level.price`.
 
    In both cases the trade never debits more inventory than the
    vault holds. (A popped entry with `vault_leg == 0` yields a
@@ -995,6 +1015,7 @@ On every taker instruction:
    by the fill, and accrue the taker fee from `market.taker_fee_rate`.
    Continue until the taker is filled, the next heap top exceeds the
    taker's limit price, or the heap is drained.
+
 1. **Tear down.** The heap buffer is freed with the transaction;
    debited inventory, `Vault.remaining.size` decrements, the cleared
    `FLUSH_BIT` on any flushed vault, and `market.nonce` persist to
@@ -1036,14 +1057,14 @@ cost:
    the base leg. The ladder is self-correcting as long as the
    reference price is reasonable.
 
-2. **Bump `reference_price.price`.** Shifts the whole ladder up or
+1. **Bump `reference_price.price`.** Shifts the whole ladder up or
    down without changing offsets or sizes. Moving the reference up
    makes bids more attractive to sellers (they get more quote per
    base) and asks less attractive to buyers — net: invites selling
    to the leader, rebuilds base. One hot-path write
    (`SetReferencePrice`), asm-cost identical to a normal price update.
 
-3. **Reshape via `SetLiquidityProfile` with asymmetric ladders.** `bids`
+1. **Reshape via `SetLiquidityProfile` with asymmetric ladders.** `bids`
    and `asks` are independent arrays — tighten one side's
    `price_offset` or grow one side's `size_bps` to skew flow more
    aggressively than the auto-rebalance alone provides. Costs a
@@ -1062,11 +1083,11 @@ pair. A price move with no trading leaves token counts (and therefore
 L and VPS) unchanged; only spread capture or adverse selection move
 VPS.
 
-| Event                              | L         | VPS / APR | Basket quote value     |
-|------------------------------------|-----------|-----------|------------------------|
-| Underlying pair moves, no fills    | unchanged | flat      | up or down (direction) |
-| Leader captures spread on flow     | grows     | positive  | up                     |
-| Leader adversely selected          | shrinks   | negative  | down                   |
+| Event                           | L         | VPS / APR | Basket quote value     |
+| ------------------------------- | --------- | --------- | ---------------------- |
+| Underlying pair moves, no fills | unchanged | flat      | up or down (direction) |
+| Leader captures spread on flow  | grows     | positive  | up                     |
+| Leader adversely selected       | shrinks   | negative  | down                   |
 
 The depositor's total quote-denominated return decomposes cleanly
 into **APR (leader skill) × basket price move (directional)**; the
