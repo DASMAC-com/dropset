@@ -108,6 +108,7 @@ export function useDflowSwap(): UseDflowSwap {
         slippageBps: slippageBpsParam(slippage),
         userPublicKey: wallet.session.account.address.toString(),
         walletSession: wallet.session,
+        rpc: client.runtime.rpc,
       });
       // Wallet `sendTransaction` resolves at submission — wait for on-chain
       // confirmation before declaring success, otherwise the balance refetch
