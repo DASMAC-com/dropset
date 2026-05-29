@@ -27,11 +27,12 @@ import {
 } from "@/lib/data/vaults";
 import { explorerAddressUrl } from "@/lib/explorer";
 import { FORMATS } from "@/lib/format/formats";
+import { type Rgb, useFlagColor } from "@/lib/ui/flagColor";
 
 const COLSPAN = 8;
 
 const APR_TOOLTIP =
-  "APR 24h — the annualized 24h fee yield to depositors, net of the leader's performance share.";
+  "Annualized returns for depositors, based on the fees this vault accrued over the last 24 hours.";
 
 type SortDir = "asc" | "desc";
 type SortState = { key: MetricKey; direction: SortDir } | null;
@@ -47,6 +48,15 @@ const cmpMetric = (
   if (a === null) return 1;
   if (b === null) return -1;
   return direction === "desc" ? b - a : a - b;
+};
+
+// Average two flag colors for the group underline. Falls back to whichever
+// single color resolved (the other may still be rastering or have no
+// saturated band).
+const averageRgb = (a: Rgb | null, b: Rgb | null): Rgb | null => {
+  if (a && b)
+    return [(a[0] + b[0]) >> 1, (a[1] + b[1]) >> 1, (a[2] + b[2]) >> 1];
+  return a ?? b;
 };
 
 // Compact USD ("$1.2M") cell. `null` → em dash.
@@ -124,22 +134,48 @@ function SortableHeader({
           <Icon size={12} />
         </button>
         {info && (
-          <button
-            type="button"
-            title={info}
-            aria-label={info}
-            className="inline-flex cursor-help items-center text-muted-fg hover:text-foreground"
-          >
-            <Info size={11} />
-          </button>
+          <span className="group relative inline-flex items-center">
+            <Info
+              size={12}
+              className="text-muted-fg transition-colors group-hover:text-foreground"
+            />
+            <span
+              role="tooltip"
+              className="pointer-events-none absolute top-full right-0 z-30 mt-1 w-56 rounded-md border border-border bg-background px-2 py-1.5 text-left font-normal text-[11px] text-muted-fg normal-case opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100"
+            >
+              {info}
+            </span>
+          </span>
         )}
       </div>
     </th>
   );
 }
 
-// Two overlapping circular images (flags or token icons).
-function PairGlyphs({
+// Two flags rendered as full SVGs side by side. The Twemoji artwork is already
+// a rounded rectangle, so we don't clip it to a circle (that produced a stray
+// border on square flags like CH).
+function FlagPair({
+  base,
+  quote,
+  size,
+}: {
+  base: string;
+  quote: string;
+  size: number;
+}) {
+  return (
+    <span className="flex shrink-0 items-center gap-1">
+      {/* biome-ignore lint/performance/noImgElement: tiny static SVG, no optimization needed */}
+      <img src={base} alt="" aria-hidden width={size} height={size} />
+      {/* biome-ignore lint/performance/noImgElement: tiny static SVG, no optimization needed */}
+      <img src={quote} alt="" aria-hidden width={size} height={size} />
+    </span>
+  );
+}
+
+// Two overlapping circular token icons (the stablecoin logos are round).
+function TokenPair({
   base,
   quote,
   size,
@@ -150,7 +186,7 @@ function PairGlyphs({
 }) {
   return (
     <span className="flex shrink-0 items-center">
-      {/* biome-ignore lint/performance/noImgElement: tiny static asset, no optimization needed */}
+      {/* biome-ignore lint/performance/noImgElement: small static icon, no optimization needed */}
       <img
         src={base}
         alt=""
@@ -159,7 +195,7 @@ function PairGlyphs({
         height={size}
         className="rounded-full"
       />
-      {/* biome-ignore lint/performance/noImgElement: tiny static asset, no optimization needed */}
+      {/* biome-ignore lint/performance/noImgElement: small static icon, no optimization needed */}
       <img
         src={quote}
         alt=""
@@ -173,18 +209,26 @@ function PairGlyphs({
 }
 
 // FX-pair heading spanning the table, mirroring the per-currency headings on
-// /currencies: two flags + "EUR / USD" + nickname, with the pair's summed
-// 24h volume / TVL / vault count tucked to the right.
+// /currencies: two flags + "EUR / USD" + nickname, with the pair's summed TVL
+// / 24h volume / vault count to the right. The bottom edge is tinted with the
+// averaged dominant color of the two flags (an inset box-shadow rather than a
+// border, which would collapse with the cell separators below).
 function FxGroupHeading({ group }: { group: FxPairGroup }) {
+  const baseColor = useFlagColor(group.baseCurrency, group.baseFlagUrl);
+  const quoteColor = useFlagColor(group.quoteCurrency, group.quoteFlagUrl);
+  const avg = averageRgb(baseColor, quoteColor);
+  const style = avg
+    ? { boxShadow: `inset 0 -2px 0 rgb(${avg[0]} ${avg[1]} ${avg[2]} / 0.6)` }
+    : undefined;
   const count = group.vaults.length;
   return (
     <tr className="bg-background">
-      <td colSpan={COLSPAN} className="px-3 pt-8 pb-3">
+      <td colSpan={COLSPAN} className="px-3 pt-8 pb-3" style={style}>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <PairGlyphs
+          <FlagPair
             base={group.baseFlagUrl}
             quote={group.quoteFlagUrl}
-            size={36}
+            size={32}
           />
           <span className="font-semibold text-foreground text-xl">
             {group.label}
@@ -194,11 +238,11 @@ function FxGroupHeading({ group }: { group: FxPairGroup }) {
           )}
           <span className="ml-auto flex items-center gap-3 font-mono text-muted-fg text-xs tabular-nums">
             <span>
-              Vol{" "}
-              <NumberFlow value={group.volume24h} format={FORMATS.usdCompact} />
+              TVL <NumberFlow value={group.tvl} format={FORMATS.usdCompact} />
             </span>
             <span>
-              TVL <NumberFlow value={group.tvl} format={FORMATS.usdCompact} />
+              Vol{" "}
+              <NumberFlow value={group.volume24h} format={FORMATS.usdCompact} />
             </span>
             <span>
               {count} {count === 1 ? "vault" : "vaults"}
@@ -212,7 +256,8 @@ function FxGroupHeading({ group }: { group: FxPairGroup }) {
 
 // One vault row. The pair/token column leads with the market glyphs; the
 // leader has its own column. A single "Manage" button opens the deposit /
-// withdraw modal (disabled only when the vault is frozen).
+// withdraw modal — always available (a frozen vault is withdraw-only, which
+// the modal enforces).
 function VaultRow({
   entry,
   grouped,
@@ -232,13 +277,13 @@ function VaultRow({
       >
         <div className="flex items-center gap-2">
           {!grouped && (
-            <PairGlyphs
+            <FlagPair
               base={market.baseFlagUrl}
               quote={market.quoteFlagUrl}
               size={16}
             />
           )}
-          <PairGlyphs
+          <TokenPair
             base={market.baseIconUrl}
             quote={market.quoteIconUrl}
             size={18}
@@ -273,18 +318,19 @@ function VaultRow({
           )}
         </div>
       </td>
+      <UsdCell value={vault.tvl} />
       <UsdCell value={vault.volume24h} />
       <UsdCell value={vault.fees24h} />
-      <UsdCell value={vault.tvl} />
       <AprCell apr={vaultApr24h(vault)} />
       <DepositCell connected={connected} />
       <td className="px-3 py-2 text-right align-middle">
         <button
           type="button"
           onClick={() => onManage(market, vault)}
-          disabled={vault.frozen}
-          title={vault.frozen ? "This vault is frozen" : "Deposit or withdraw"}
-          className="rounded border border-border bg-background px-3 py-1 font-medium text-foreground text-xs transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-fg disabled:hover:border-border disabled:hover:text-muted-fg"
+          title={
+            vault.frozen ? "Frozen — withdrawals only" : "Deposit or withdraw"
+          }
+          className="rounded border border-border bg-background px-3 py-1 font-medium text-foreground text-xs transition-colors hover:border-accent hover:text-accent"
         >
           Manage
         </button>
@@ -346,9 +392,17 @@ export function VaultsView() {
     <div className="mx-auto max-w-6xl px-6 pt-3 pb-16">
       <div className="mb-3 flex items-end justify-between gap-3">
         <div>
-          <h1 className="font-semibold text-foreground text-lg">Vaults</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="font-semibold text-foreground text-lg">Vaults</h1>
+            <span className="rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 font-medium text-[10px] text-accent uppercase tracking-wide">
+              Preview
+            </span>
+          </div>
           <p className="text-muted-fg text-sm">
-            Back a leader's vault and share in spread capture.
+            Back a leader's vault and share in spread capture.{" "}
+            <span className="text-muted-fg/80">
+              All figures shown are mock data.
+            </span>
           </p>
         </div>
         <label className="flex select-none items-center gap-2 text-muted-fg text-xs hover:text-foreground">
@@ -378,6 +432,12 @@ export function VaultsView() {
                 Leader
               </th>
               <SortableHeader
+                sortKey="tvl"
+                label="TVL"
+                sort={sort}
+                onToggle={toggleSort}
+              />
+              <SortableHeader
                 sortKey="volume24h"
                 label="24h Vol"
                 sort={sort}
@@ -386,12 +446,6 @@ export function VaultsView() {
               <SortableHeader
                 sortKey="fees24h"
                 label="24h Fees"
-                sort={sort}
-                onToggle={toggleSort}
-              />
-              <SortableHeader
-                sortKey="tvl"
-                label="TVL"
                 sort={sort}
                 onToggle={toggleSort}
               />

@@ -38,7 +38,11 @@ export function VaultActionDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const [mode, setMode] = useState<VaultActionMode>("deposit");
+  // A frozen vault is withdraw-only, so it opens on the Withdraw tab and the
+  // Deposit tab is disabled below.
+  const [mode, setMode] = useState<VaultActionMode>(
+    vault.frozen ? "withdraw" : "deposit",
+  );
   const [baseAmount, setBaseAmount] = useState("");
   const [quoteAmount, setQuoteAmount] = useState("");
 
@@ -58,7 +62,8 @@ export function VaultActionDialog({
     setBaseAmount(Number.isFinite(n) ? formatDerived(n / ratio) : "");
   };
 
-  const depositBlocked = mode === "deposit" && !vault.outsideDepositsApproved;
+  const depositBlocked =
+    mode === "deposit" && (vault.frozen || !vault.outsideDepositsApproved);
   const title = mode === "deposit" ? "Deposit" : "Withdraw";
 
   // Primary CTA: connect first if disconnected, otherwise the action is
@@ -99,19 +104,24 @@ export function VaultActionDialog({
     </label>
   );
 
-  const segBtn = (m: VaultActionMode, label: string) => (
-    <button
-      type="button"
-      onClick={() => setMode(m)}
-      className={`flex-1 rounded-md px-3 py-1.5 font-medium text-sm transition-colors ${
-        mode === m
-          ? "bg-background text-foreground shadow-sm"
-          : "text-muted-fg hover:text-foreground"
-      }`}
-    >
-      {label}
-    </button>
-  );
+  const segBtn = (m: VaultActionMode, label: string) => {
+    const disabled = m === "deposit" && vault.frozen;
+    return (
+      <button
+        type="button"
+        onClick={() => setMode(m)}
+        disabled={disabled}
+        title={disabled ? "This vault is frozen — withdrawals only" : undefined}
+        className={`flex-1 rounded-md px-3 py-1.5 font-medium text-sm transition-colors disabled:cursor-not-allowed disabled:text-muted-fg/50 ${
+          mode === m
+            ? "bg-background text-foreground shadow-sm"
+            : "text-muted-fg hover:text-foreground"
+        }`}
+      >
+        {label}
+      </button>
+    );
+  };
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
