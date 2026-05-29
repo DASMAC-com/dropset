@@ -5,38 +5,64 @@ import { useState } from "react";
 import { ExternalLink, X } from "@/components/icons";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { shortenMint } from "@/lib/data/currencies";
-import type { Vault, VaultMarket } from "@/lib/data/vaults";
+import {
+  type Vault,
+  type VaultMarket,
+  vaultReserveRatio,
+} from "@/lib/data/vaults";
 import { emit } from "@/lib/events";
 import { explorerAddressUrl } from "@/lib/explorer";
 
 export type VaultActionMode = "deposit" | "withdraw";
 
-// Deposit / withdraw modal for a single vault. The on-chain submit is gated
-// until the OpenVault/Deposit/Withdraw instructions ship — the real flow
-// settles paired (base, quote) baskets per docs/architecture.md → Vault, so
-// the tx builder is intentionally left as a seam (see TODO(program) below).
+// Format a derived pro-rata amount for display in the paired input: trim to 6
+// decimals, drop trailing zeros, no grouping (keeps it copy/paste friendly).
+const formatDerived = (n: number): string =>
+  Number.isFinite(n) ? String(Number(n.toFixed(6))) : "";
+
+// Deposit / withdraw modal for a single vault. Both legs of the basket are
+// shown: editing the base (or quote) amount auto-fills the other pro-rata to
+// the vault's current reserve ratio, so liquidity is added/removed without
+// moving the vault's price. The on-chain submit is gated until the
+// OpenVault/Deposit/Withdraw instructions ship (see TODO(program) below).
 export function VaultActionDialog({
   market,
   vault,
-  mode,
   connected,
   open,
   onOpenChange,
 }: {
   market: VaultMarket;
   vault: Vault;
-  mode: VaultActionMode;
   connected: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const [amount, setAmount] = useState("");
+  const [mode, setMode] = useState<VaultActionMode>("deposit");
+  const [baseAmount, setBaseAmount] = useState("");
+  const [quoteAmount, setQuoteAmount] = useState("");
 
+  // Quote tokens per base token; null for an empty vault (no ratio to hold).
+  const ratio = vaultReserveRatio(vault);
+
+  const onBaseChange = (value: string) => {
+    setBaseAmount(value);
+    if (ratio === null) return;
+    const n = Number.parseFloat(value);
+    setQuoteAmount(Number.isFinite(n) ? formatDerived(n * ratio) : "");
+  };
+  const onQuoteChange = (value: string) => {
+    setQuoteAmount(value);
+    if (ratio === null) return;
+    const n = Number.parseFloat(value);
+    setBaseAmount(Number.isFinite(n) ? formatDerived(n / ratio) : "");
+  };
+
+  const depositBlocked = mode === "deposit" && !vault.outsideDepositsApproved;
   const title = mode === "deposit" ? "Deposit" : "Withdraw";
-  const hasAmount = Number.parseFloat(amount) > 0;
 
   // Primary CTA: connect first if disconnected, otherwise the action is
-  // disabled until the program is live on-chain.
+  // disabled until the program is live on-chain (or deposits aren't approved).
   const cta = !connected
     ? { label: "Connect wallet", disabled: false }
     : { label: title, disabled: true };
@@ -47,10 +73,45 @@ export function VaultActionDialog({
       return;
     }
     // TODO(program): build + send the Deposit/Withdraw transaction once the
-    // vault program is deployed. Deposits settle a paired (base, quote)
-    // basket sized to the vault's current share price; withdrawals redeem
-    // shares back into both legs. Until then this button stays disabled.
+    // vault program is deployed. The signed amounts are the paired basket
+    // derived above; deposits mint vault shares, withdrawals redeem them.
+    // Until then this button stays disabled.
   };
+
+  const amountField = (
+    side: "base" | "quote",
+    symbol: string,
+    value: string,
+    onChange: (v: string) => void,
+  ) => (
+    <label className="flex flex-col gap-1.5">
+      <span className="text-muted-fg text-xs">
+        {side === "base" ? "Base" : "Quote"} · {symbol}
+      </span>
+      <input
+        type="text"
+        inputMode="decimal"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="0.00"
+        className="h-10 rounded-md border border-border bg-muted px-3 font-mono text-foreground text-sm outline-none placeholder:text-muted-fg focus:border-accent"
+      />
+    </label>
+  );
+
+  const segBtn = (m: VaultActionMode, label: string) => (
+    <button
+      type="button"
+      onClick={() => setMode(m)}
+      className={`flex-1 rounded-md px-3 py-1.5 font-medium text-sm transition-colors ${
+        mode === m
+          ? "bg-background text-foreground shadow-sm"
+          : "text-muted-fg hover:text-foreground"
+      }`}
+    >
+      {label}
+    </button>
+  );
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -62,7 +123,7 @@ export function VaultActionDialog({
         >
           <div className="flex items-center justify-between border-border border-b px-5 py-4">
             <Dialog.Title className="font-semibold text-foreground">
-              {title} · {market.label}
+              {market.label}
             </Dialog.Title>
             <Dialog.Close className="rounded-md p-1 text-muted-fg transition-colors hover:bg-muted hover:text-foreground">
               <X size={14} />
@@ -70,25 +131,12 @@ export function VaultActionDialog({
           </div>
 
           <div className="flex flex-col gap-4 p-5">
+            <div className="flex gap-1 rounded-lg bg-muted p-1">
+              {segBtn("deposit", "Deposit")}
+              {segBtn("withdraw", "Withdraw")}
+            </div>
+
             <div className="flex items-center gap-2 text-muted-fg text-xs">
-              <span className="flex items-center gap-1">
-                {/* biome-ignore lint/performance/noImgElement: tiny static SVG, no optimization needed */}
-                <img
-                  src={market.baseFlagUrl}
-                  alt=""
-                  aria-hidden
-                  width={16}
-                  height={16}
-                />
-                {/* biome-ignore lint/performance/noImgElement: tiny static SVG, no optimization needed */}
-                <img
-                  src={market.quoteFlagUrl}
-                  alt=""
-                  aria-hidden
-                  width={16}
-                  height={16}
-                />
-              </span>
               <span>Leader</span>
               <span className="font-mono text-foreground">
                 {shortenMint(vault.leader)}
@@ -112,17 +160,14 @@ export function VaultActionDialog({
               </span>
             </div>
 
-            <label className="flex flex-col gap-1.5">
-              <span className="text-muted-fg text-xs">Amount</span>
-              <input
-                type="text"
-                inputMode="decimal"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                placeholder="0.00"
-                className="h-10 rounded-md border border-border bg-muted px-3 text-foreground text-sm outline-none placeholder:text-muted-fg focus:border-accent"
-              />
-            </label>
+            {amountField("base", market.base, baseAmount, onBaseChange)}
+            {amountField("quote", market.quote, quoteAmount, onQuoteChange)}
+
+            <p className="text-muted-fg text-xs">
+              {ratio === null
+                ? "This vault has no reserves yet, so amounts aren't linked."
+                : `Amounts fill pro-rata to the vault's reserves — set ${market.base} or ${market.quote} and the other follows.`}
+            </p>
 
             <button
               type="button"
@@ -135,9 +180,9 @@ export function VaultActionDialog({
 
             {connected && (
               <p className="text-center text-muted-fg text-xs">
-                {hasAmount ? `${title} of ${amount} ` : ""}
-                {mode === "deposit" ? "Deposits" : "Withdrawals"} open once the
-                vault program is live on-chain.
+                {depositBlocked
+                  ? "Outside deposits aren't approved for this vault yet."
+                  : `${mode === "deposit" ? "Deposits" : "Withdrawals"} open once the vault program is live on-chain.`}
               </p>
             )}
           </div>

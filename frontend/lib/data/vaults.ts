@@ -23,6 +23,11 @@ export type VaultRaw = {
   volume24h: number;
   fees24h: number;
   tvl: number;
+  // Current pooled reserves in whole token units. Their ratio fixes the
+  // pro-rata basket for deposits/withdrawals — adding liquidity must expand
+  // both legs in proportion so the vault's price isn't moved.
+  baseReserve: number;
+  quoteReserve: number;
   minLeaderSharePpm: number;
   frozen: boolean;
   outsideDepositsApproved: boolean;
@@ -128,6 +133,15 @@ const annualizedYield = (fees24h: number, tvl: number): number | null =>
 
 export const vaultApr24h = (v: Vault): number | null =>
   annualizedYield(v.fees24h, v.tvl);
+
+// Quote tokens per base token in the vault's current reserves. Deposits and
+// withdrawals must preserve this ratio (a pro-rata basket), so the UI fixes
+// one leg and derives the other from it. Returns null for an empty vault
+// (zero reserves), where there's no ratio to preserve.
+export const vaultReserveRatio = (v: Vault): number | null =>
+  v.baseReserve > 0 && v.quoteReserve > 0
+    ? v.quoteReserve / v.baseReserve
+    : null;
 
 // Group vaults into FX pairs, preserving first-seen order of both the groups
 // and the vaults within. Derived from the resolved currency codes so USDC- and

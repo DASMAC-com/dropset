@@ -9,14 +9,9 @@ import {
   ChevronUp,
   ExternalLink,
   Info,
-  Minus,
-  Plus,
 } from "@/components/icons";
 import { CopyButton } from "@/components/ui/CopyButton";
-import {
-  VaultActionDialog,
-  type VaultActionMode,
-} from "@/components/vaults/VaultActionDialog";
+import { VaultActionDialog } from "@/components/vaults/VaultActionDialog";
 import { shortenMint } from "@/lib/data/currencies";
 import {
   ALL_VAULTS,
@@ -33,7 +28,7 @@ import {
 import { explorerAddressUrl } from "@/lib/explorer";
 import { FORMATS } from "@/lib/format/formats";
 
-const COLSPAN = 7;
+const COLSPAN = 8;
 
 const APR_TOOLTIP =
   "APR 24h — the annualized 24h fee yield to depositors, net of the leader's performance share.";
@@ -177,123 +172,65 @@ function PairGlyphs({
   );
 }
 
-function LeaderTag({ leader, frozen }: { leader: string; frozen: boolean }) {
-  return (
-    <span className="flex items-center gap-1">
-      <span className="font-mono text-muted-fg text-xs" title={leader}>
-        {shortenMint(leader)}
-      </span>
-      <CopyButton value={leader} label="leader address" />
-      <a
-        href={explorerAddressUrl(leader)}
-        target="_blank"
-        rel="noopener noreferrer"
-        title="View leader on Solscan"
-        className="inline-flex shrink-0 items-center rounded p-1 text-muted-fg hover:bg-muted hover:text-accent"
-      >
-        <ExternalLink size={12} />
-      </a>
-      {frozen && (
-        <span className="rounded bg-accent-sell/15 px-1.5 py-0.5 font-medium text-[10px] text-accent-sell uppercase tracking-wide">
-          Frozen
-        </span>
-      )}
-    </span>
-  );
-}
-
-// FX-pair group header — flags + "EUR / USD" + nickname, plus the summed
-// aggregates for the pair. Clickable to expand/collapse its vaults.
-function FxGroupRow({
-  group,
-  expanded,
-  connected,
-  onToggleExpand,
-}: {
-  group: FxPairGroup;
-  expanded: boolean;
-  connected: boolean;
-  onToggleExpand: () => void;
-}) {
+// FX-pair heading spanning the table, mirroring the per-currency headings on
+// /currencies: two flags + "EUR / USD" + nickname, with the pair's summed
+// 24h volume / TVL / vault count tucked to the right.
+function FxGroupHeading({ group }: { group: FxPairGroup }) {
   const count = group.vaults.length;
   return (
-    <tr
-      className="cursor-pointer border-border border-t bg-background hover:bg-muted/40"
-      onClick={onToggleExpand}
-    >
-      <td className="border-border border-r px-3 py-2 align-middle last:border-r-0">
-        <div className="flex items-center gap-2">
-          <ChevronDown
-            size={14}
-            className={`shrink-0 text-muted-fg transition-transform ${expanded ? "" : "-rotate-90"}`}
-          />
+    <tr className="bg-background">
+      <td colSpan={COLSPAN} className="px-3 pt-8 pb-3">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <PairGlyphs
             base={group.baseFlagUrl}
             quote={group.quoteFlagUrl}
-            size={24}
+            size={36}
           />
-          <span className="font-semibold text-foreground">{group.label}</span>
+          <span className="font-semibold text-foreground text-xl">
+            {group.label}
+          </span>
           {group.nickname && (
-            <span className="text-muted-fg text-xs">“{group.nickname}”</span>
+            <span className="text-muted-fg text-base">“{group.nickname}”</span>
           )}
+          <span className="ml-auto flex items-center gap-3 font-mono text-muted-fg text-xs tabular-nums">
+            <span>
+              Vol{" "}
+              <NumberFlow value={group.volume24h} format={FORMATS.usdCompact} />
+            </span>
+            <span>
+              TVL <NumberFlow value={group.tvl} format={FORMATS.usdCompact} />
+            </span>
+            <span>
+              {count} {count === 1 ? "vault" : "vaults"}
+            </span>
+          </span>
         </div>
-      </td>
-      <UsdCell value={group.volume24h} />
-      <UsdCell value={group.fees24h} />
-      <UsdCell value={group.tvl} />
-      <AprCell apr={group.apr24h} />
-      <DepositCell connected={connected} />
-      <td className="px-3 py-2 text-right align-middle text-muted-fg text-xs">
-        {count} {count === 1 ? "vault" : "vaults"}
       </td>
     </tr>
   );
 }
 
-// One vault row. In grouped mode it's indented under its FX-pair header; in
-// ungrouped mode it leads with the pair flags so the FX context is visible.
+// One vault row. The pair/token column leads with the market glyphs; the
+// leader has its own column. A single "Manage" button opens the deposit /
+// withdraw modal (disabled only when the vault is frozen).
 function VaultRow({
   entry,
   grouped,
   connected,
-  onAction,
+  onManage,
 }: {
   entry: GroupedVault;
   grouped: boolean;
   connected: boolean;
-  onAction: (market: VaultMarket, vault: Vault, mode: VaultActionMode) => void;
+  onManage: (market: VaultMarket, vault: Vault) => void;
 }) {
   const { market, vault } = entry;
-  const depositDisabled = vault.frozen || !vault.outsideDepositsApproved;
-  const withdrawDisabled = vault.frozen;
-  const actionBtn = (mode: VaultActionMode, disabled: boolean) => {
-    const Icon = mode === "deposit" ? Plus : Minus;
-    const title = vault.frozen
-      ? "This vault is frozen"
-      : mode === "deposit" && !vault.outsideDepositsApproved
-        ? "Outside deposits not approved for this vault"
-        : mode === "deposit"
-          ? "Deposit into this vault"
-          : "Withdraw from this vault";
-    return (
-      <button
-        type="button"
-        onClick={() => onAction(market, vault, mode)}
-        disabled={disabled}
-        title={title}
-        className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1 font-medium text-foreground text-xs transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-fg disabled:hover:border-border disabled:hover:text-muted-fg"
-      >
-        <Icon size={12} />
-        {mode === "deposit" ? "Deposit" : "Withdraw"}
-      </button>
-    );
-  };
   return (
     <tr className="border-border border-t bg-muted/40">
       <td
         className={`border-border border-r py-2 pr-3 align-middle last:border-r-0 ${grouped ? "pl-10" : "pl-3"}`}
       >
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <div className="flex items-center gap-2">
           {!grouped && (
             <PairGlyphs
               base={market.baseFlagUrl}
@@ -306,11 +243,34 @@ function VaultRow({
             quote={market.quoteIconUrl}
             size={18}
           />
-          <span className="font-mono font-medium text-foreground text-xs">
+          <span className="font-mono font-medium text-foreground">
             {market.label}
           </span>
-          <span className="text-muted-fg">·</span>
-          <LeaderTag leader={vault.leader} frozen={vault.frozen} />
+        </div>
+      </td>
+      <td className="border-border border-r px-3 py-2 align-middle last:border-r-0">
+        <div className="flex items-center gap-1">
+          <span
+            className="font-mono text-foreground text-xs"
+            title={vault.leader}
+          >
+            {shortenMint(vault.leader)}
+          </span>
+          <CopyButton value={vault.leader} label="leader address" />
+          <a
+            href={explorerAddressUrl(vault.leader)}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="View leader on Solscan"
+            className="inline-flex shrink-0 items-center rounded p-1 text-muted-fg hover:bg-muted hover:text-accent"
+          >
+            <ExternalLink size={12} />
+          </a>
+          {vault.frozen && (
+            <span className="rounded bg-accent-sell/15 px-1.5 py-0.5 font-medium text-[10px] text-accent-sell uppercase tracking-wide">
+              Frozen
+            </span>
+          )}
         </div>
       </td>
       <UsdCell value={vault.volume24h} />
@@ -319,10 +279,15 @@ function VaultRow({
       <AprCell apr={vaultApr24h(vault)} />
       <DepositCell connected={connected} />
       <td className="px-3 py-2 text-right align-middle">
-        <div className="flex items-center justify-end gap-1">
-          {actionBtn("deposit", depositDisabled)}
-          {actionBtn("withdraw", withdrawDisabled)}
-        </div>
+        <button
+          type="button"
+          onClick={() => onManage(market, vault)}
+          disabled={vault.frozen}
+          title={vault.frozen ? "This vault is frozen" : "Deposit or withdraw"}
+          className="rounded border border-border bg-background px-3 py-1 font-medium text-foreground text-xs transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-fg disabled:hover:border-border disabled:hover:text-muted-fg"
+        >
+          Manage
+        </button>
       </td>
     </tr>
   );
@@ -331,18 +296,16 @@ function VaultRow({
 export function VaultsView() {
   const { connected } = useWalletConnection();
   const [groupByPair, setGroupByPair] = useState(true);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [sort, setSort] = useState<SortState>(null);
   const [dialog, setDialog] = useState<{
     market: VaultMarket;
     vault: Vault;
-    mode: VaultActionMode;
   } | null>(null);
 
   // There's always an effective sort; default 24h volume desc.
-  const effective = sort ?? {
-    key: "volume24h" as MetricKey,
-    direction: "desc" as SortDir,
+  const effective: { key: MetricKey; direction: SortDir } = sort ?? {
+    key: "volume24h",
+    direction: "desc",
   };
 
   const toggleSort = (key: MetricKey) =>
@@ -352,16 +315,8 @@ export function VaultsView() {
       return null;
     });
 
-  const toggleExpand = (key: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-
   // Grouped: sort the groups by aggregate, and each group's vaults by the same
-  // metric. Recomputed when the sort changes.
+  // metric.
   const groups = useMemo(() => {
     const { key, direction } = effective;
     return [...VAULT_FX_GROUPS]
@@ -384,11 +339,8 @@ export function VaultsView() {
     );
   }, [effective]);
 
-  const openDialog = (
-    market: VaultMarket,
-    vault: Vault,
-    mode: VaultActionMode,
-  ) => setDialog({ market, vault, mode });
+  const onManage = (market: VaultMarket, vault: Vault) =>
+    setDialog({ market, vault });
 
   return (
     <div className="mx-auto max-w-6xl px-6 pt-3 pb-16">
@@ -410,7 +362,7 @@ export function VaultsView() {
         </label>
       </div>
       <div className="rounded-lg border border-border">
-        <table className="w-full min-w-[900px] text-left text-sm">
+        <table className="w-full min-w-[940px] text-left text-sm">
           <thead className="text-muted-fg text-xs uppercase">
             <tr>
               <th
@@ -418,6 +370,12 @@ export function VaultsView() {
                 className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0"
               >
                 Pair / Vault
+              </th>
+              <th
+                scope="col"
+                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0"
+              >
+                Leader
               </th>
               <SortableHeader
                 sortKey="volume24h"
@@ -454,54 +412,33 @@ export function VaultsView() {
                 scope="col"
                 className="sticky top-14 z-20 bg-muted px-3 py-2 text-right font-medium"
               >
-                {groupByPair ? "Vaults" : "Actions"}
+                Manage
               </th>
             </tr>
           </thead>
           <tbody>
             {groupByPair
-              ? groups.flatMap(({ group, vaults }) => {
-                  const isOpen = expanded.has(group.key);
-                  return [
-                    <FxGroupRow
-                      key={group.key}
-                      group={group}
-                      expanded={isOpen}
+              ? groups.flatMap(({ group, vaults }) => [
+                  <FxGroupHeading key={`h-${group.key}`} group={group} />,
+                  ...vaults.map((entry) => (
+                    <VaultRow
+                      key={entry.vault.vaultPubkey}
+                      entry={entry}
+                      grouped
                       connected={connected}
-                      onToggleExpand={() => toggleExpand(group.key)}
-                    />,
-                    ...(isOpen
-                      ? vaults.map((entry) => (
-                          <VaultRow
-                            key={entry.vault.vaultPubkey}
-                            entry={entry}
-                            grouped
-                            connected={connected}
-                            onAction={openDialog}
-                          />
-                        ))
-                      : []),
-                  ];
-                })
+                      onManage={onManage}
+                    />
+                  )),
+                ])
               : flatVaults.map((entry) => (
                   <VaultRow
                     key={entry.vault.vaultPubkey}
                     entry={entry}
                     grouped={false}
                     connected={connected}
-                    onAction={openDialog}
+                    onManage={onManage}
                   />
                 ))}
-            {!groupByPair && flatVaults.length === 0 && (
-              <tr>
-                <td
-                  colSpan={COLSPAN}
-                  className="px-3 py-6 text-center text-muted-fg text-sm"
-                >
-                  No vaults yet
-                </td>
-              </tr>
-            )}
           </tbody>
         </table>
       </div>
@@ -509,7 +446,6 @@ export function VaultsView() {
         <VaultActionDialog
           market={dialog.market}
           vault={dialog.vault}
-          mode={dialog.mode}
           connected={connected}
           open={true}
           onOpenChange={(open) => {
