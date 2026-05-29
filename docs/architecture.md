@@ -113,7 +113,8 @@ struct Registry {
     /// when the signer is an admin.
     vault_open_fee: FeeConfig,
     /// Admins authorized to mutate the `Registry`, change
-    /// per-market `taker_fee_rate`, call `FreezeVault`, and
+    /// per-market `taker_fee_rate`, call `FreezeVault`, approve
+    /// outside deposits via `SetOutsideDepositsApproved`, and
     /// open vaults without paying `vault_open_fee`.
     admins: Set<Pubkey>,
 }
@@ -308,6 +309,15 @@ struct Vault {
     /// before the flag was flipped) can still `Withdraw`. Mutable
     /// by the leader via `SetAllowOutsideDepositors`.
     allow_outside_depositors: u8,
+    /// Set to 1 when an admin has approved this vault to take
+    /// outside deposits. An outside `Deposit` requires **both**
+    /// this flag and `allow_outside_depositors` to be 1: the leader
+    /// opts in, and an admin must independently sign off. Default 0
+    /// at `OpenVault` — a fresh vault cannot take outside baskets
+    /// until an admin approves it. Existing outside depositors (from
+    /// before approval was revoked) can still `Withdraw`. Mutable by
+    /// an admin via `SetOutsideDepositsApproved`.
+    outside_deposits_approved: u8,
     /// Bids and asks as `(price_offset, size_bps, expiry_offset)`
     /// per level: ppm offset from `reference_price.price`, bps
     /// fraction of inventory, and slot offset after `quote_slot`.
@@ -689,7 +699,9 @@ caller; the third is the per-ix authority gate.
      `vault.leader == signer`.
    - **Deposit**: leader path requires `vault.leader == signer`;
      otherwise outside path requires
-     `vault.allow_outside_depositors == 1`.
+     `vault.allow_outside_depositors == 1 &&
+     vault.outside_deposits_approved == 1` (leader opt-in plus
+     admin approval).
    - **Withdraw**: leader path requires `vault.leader == signer`;
      otherwise outside path requires the caller to hold > 0 SPL
      tokens on `vault.share_mint` (the burn from their ATA proves
@@ -699,7 +711,8 @@ caller; the third is the per-ix authority gate.
      has the strongest economic incentive, but anyone may call —
      useful for indexers and keepers that want to pin HWM at a
      known point in time.
-   - **Admin-only** (`FreezeVault`): `signer ∈ registry.admins`.
+   - **Admin-only** (`FreezeVault`, `SetOutsideDepositsApproved`):
+     `signer ∈ registry.admins`.
 
 No discriminant tag is needed: the vault region is homogeneous, so
 (1) + (2) fully determine that `ptr` refers to a valid `Vault`. The
@@ -761,8 +774,11 @@ Side effect: the instruction creates a new SPL mint for outside-share
 tokens (mint authority a vault-owned PDA) and records its address as
 `Vault.share_mint`. The vault is otherwise initialized empty
 (`base_atoms`, `quote_atoms`, `total_shares`, `leader_shares`, `hwm`,
-`frozen` all zero); the leader seeds inventory with their first
-`Deposit` (see **Depositor operations** below).
+`frozen`, `outside_deposits_approved` all zero); the leader seeds
+inventory with their first `Deposit` (see **Depositor operations**
+below). Because `outside_deposits_approved` starts at 0, a new vault
+cannot take outside baskets until an admin calls
+`SetOutsideDepositsApproved` — see **Leader operations**.
 
 If the fee mint on `Registry` changes after this vault was opened,
 old fees remain in the prior fee ATA and admins sweep both — the
@@ -842,6 +858,13 @@ Leader-only. Writes `Vault.allow_outside_depositors = flag`. Flipping
 to `false` blocks **new** outside `Deposit` ix but does not affect
 existing outside depositors, who can continue to `Withdraw` normally.
 
+This is only the leader's half of the outside-deposit gate: an
+outside `Deposit` also requires admin approval
+(`Vault.outside_deposits_approved == 1`, set via
+`SetOutsideDepositsApproved`). Setting this flag to `true` on a
+vault an admin has not approved has no effect on outside flow until
+that approval lands.
+
 ### CloseVault
 
 Leader-only. Moves the vault from the active DLL to the tombstone
@@ -859,6 +882,25 @@ the active DLL (existing levels still match until their
 re-enter, the same leader pubkey pays `vault_open_fee` again and
 starts a new vault. See **Vault → Frozen and tombstoned vaults** for
 full state semantics and the comparison with `CloseVault`.
+
+### SetOutsideDepositsApproved
+
+Admin-only. Writes `Vault.outside_deposits_approved = flag`. This is
+the admin's half of the two-key gate on outside deposits: a vault
+takes outside baskets only when an admin has approved it
+(`outside_deposits_approved == 1`) **and** the leader has opted in
+(`allow_outside_depositors == 1`). New vaults start unapproved
+(`outside_deposits_approved == 0` at `OpenVault`), so an admin must
+explicitly sign off before any outside depositor can join.
+
+Setting the flag back to `false` **revokes** approval: it blocks
+**new** outside `Deposit` ix but, like the leader's
+`SetAllowOutsideDepositors`, does not affect existing outside
+depositors, who can continue to `Withdraw` normally. Approval is
+independent of `frozen` — freezing a vault already rejects all
+deposits (see **FreezeVault**), so revoking approval is the lighter
+lever for gating only the outside-deposit path while leaving the
+leader free to keep quoting and managing inventory.
 
 ## Depositor operations
 
@@ -893,7 +935,10 @@ depositor to the treasuries, then:
   `Vault.leader_shares` by `shares_out`. No SPL tokens minted.
 - **Outside path** (`signer != vault.leader`): mint `shares_out`
   SPL tokens to the caller's ATA on `Vault.share_mint`. Requires
-  `Vault.allow_outside_depositors == 1`.
+  both `Vault.allow_outside_depositors == 1` (leader opt-in) and
+  `Vault.outside_deposits_approved == 1` (admin approval); either
+  flag unset rejects the deposit. See
+  **Leader operations → SetOutsideDepositsApproved**.
 
 `Vault.total_shares` is incremented in both paths.
 
