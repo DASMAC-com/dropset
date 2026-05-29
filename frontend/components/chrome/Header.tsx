@@ -46,6 +46,13 @@ export function Header() {
           >
             Currencies
           </Link>
+          <Link
+            href="/liquidity"
+            aria-current={pathname === "/liquidity" ? "page" : undefined}
+            className={navClass(pathname === "/liquidity")}
+          >
+            Liquidity
+          </Link>
         </nav>
         <button
           type="button"

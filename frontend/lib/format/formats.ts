@@ -37,6 +37,14 @@ export const FORMATS = {
     maximumFractionDigits: 1,
   } satisfies Format,
 
+  // Percent ("12.34%") for yield/APR readouts. `style: "percent"` scales
+  // the value ×100, so callers pass a fraction (0.1234 → "12.34%").
+  percent: {
+    style: "percent",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  } satisfies Format,
+
   // Signed percent ("+1.20" / "-1.20" / "0.00") — for gain/loss and
   // slippage readouts. The sign carries the meaning (not just color), so
   // colorblind users still see the direction.
