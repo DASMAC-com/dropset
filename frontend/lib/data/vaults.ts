@@ -3,17 +3,20 @@ import {
   currencyForStablecoin,
   currencyName,
   type IsoCurrencyCode,
+  tokenIconUrl,
 } from "./currencies";
 import vaultsData from "./vaults.json";
 
-// Per-leader liquidity vaults, grouped by market (pair). This module is the
-// single seam between the UI and the vault data source: today it parses a
-// committed mock fixture (vaults.json), but every consumer reads through the
-// exports below, so swapping in a real indexer fetch later is a one-file
-// change with no component edits. See docs/architecture.md → Vault.
+// Per-leader liquidity vaults, grouped by FX trading pair (e.g. EUR/USD). This
+// module is the single seam between the UI and the vault data source: today it
+// parses a committed mock fixture (vaults.json), but every consumer reads
+// through the exports below, so swapping in a real indexer fetch later is a
+// one-file change with no component edits. See docs/architecture.md → Vault.
 
 // As stored in vaults.json. `base`/`quote` are stablecoin symbols (e.g.
-// "EURC", "USDC") resolved against currencies.ts at load.
+// "EURC", "USDC") resolved against currencies.ts at load. Token order encodes
+// the FX convention: USD is the quote for EUR/GBP/AUD (base = EURC, quote =
+// USDC) and the base for JPY/CHF/CAD (base = USDC, quote = GYEN).
 export type VaultRaw = {
   vaultPubkey: string;
   leader: string;
@@ -34,10 +37,8 @@ export type MarketRaw = {
 export type Vault = VaultRaw;
 
 // A single stablecoin market (e.g. EURC/USDC) with its pair resolved to ISO
-// currency codes + flag URLs. `label` is the stablecoin pair "<base symbol> /
-// <quote symbol>", e.g. "EURC / USDC". Markets are grouped into FX pairs (see
-// FxPairGroup) by their underlying currencies, so EURC/USDC and EURC/USDT both
-// sit under the "EUR / USD" group.
+// currency codes + flag/icon URLs. `label` is the stablecoin pair, e.g.
+// "EURC / USDC".
 export type VaultMarket = {
   marketPubkey: string;
   base: string;
@@ -46,13 +47,18 @@ export type VaultMarket = {
   quoteCurrency: IsoCurrencyCode;
   baseFlagUrl: string;
   quoteFlagUrl: string;
+  baseIconUrl: string;
+  quoteIconUrl: string;
   label: string;
   vaults: Vault[];
 };
 
-// An FX trading pair (e.g. EUR / USD) grouping every stablecoin market whose
-// base and quote resolve to the same two currencies. This is the table's
-// top-level group, analogous to the per-currency groups on /currencies.
+// One vault paired with the market it trades — the atomic row of the table.
+export type GroupedVault = { market: VaultMarket; vault: Vault };
+
+// An FX trading pair (e.g. EUR / USD) grouping every vault whose market's base
+// and quote resolve to the same two currencies. Carries the summed aggregates
+// shown on the group header row.
 export type FxPairGroup = {
   key: string;
   baseCurrency: IsoCurrencyCode;
@@ -62,7 +68,22 @@ export type FxPairGroup = {
   baseName: string;
   quoteName: string;
   label: string;
-  markets: VaultMarket[];
+  nickname: string;
+  vaults: GroupedVault[];
+  volume24h: number;
+  fees24h: number;
+  tvl: number;
+  apr24h: number | null;
+};
+
+// FX dealer nicknames for the majors we list (NZD/"Kiwi" excluded for now).
+const FX_NICKNAMES: Record<string, string> = {
+  "EUR/USD": "Fiber",
+  "USD/JPY": "Ninja",
+  "GBP/USD": "Cable",
+  "USD/CHF": "Swissy",
+  "USD/CAD": "Loonie",
+  "AUD/USD": "Aussie",
 };
 
 const resolveCurrency = (
@@ -78,7 +99,7 @@ const resolveCurrency = (
   return code;
 };
 
-export const VAULT_MARKETS: VaultMarket[] = (
+const VAULT_MARKETS: VaultMarket[] = (
   vaultsData as { markets: MarketRaw[] }
 ).markets.map((m) => {
   const baseCurrency = resolveCurrency(m.base, m.marketPubkey);
@@ -91,15 +112,29 @@ export const VAULT_MARKETS: VaultMarket[] = (
     quoteCurrency,
     baseFlagUrl: currencyFlagUrl(baseCurrency),
     quoteFlagUrl: currencyFlagUrl(quoteCurrency),
+    baseIconUrl: tokenIconUrl(m.base),
+    quoteIconUrl: tokenIconUrl(m.quote),
     label: `${m.base} / ${m.quote}`,
     vaults: m.vaults,
   };
 });
 
-// Group markets into FX pairs, preserving first-seen order of both the groups
-// and the markets within each. Derived from the resolved currency codes so
-// USDC- and USDT-quoted markets fold into one "… / USD" group.
+// Annualized 24h fee yield to depositors, as a fraction (0.1234 = 12.34%).
+// Returns null when TVL is zero so the UI can render an em dash rather than a
+// divide-by-zero Infinity.
+const DAYS_PER_YEAR = 365;
+const annualizedYield = (fees24h: number, tvl: number): number | null =>
+  tvl > 0 ? (fees24h / tvl) * DAYS_PER_YEAR : null;
+
+export const vaultApr24h = (v: Vault): number | null =>
+  annualizedYield(v.fees24h, v.tvl);
+
+// Group vaults into FX pairs, preserving first-seen order of both the groups
+// and the vaults within. Derived from the resolved currency codes so USDC- and
+// USDT-quoted markets fold into one "EUR / USD" group. Pair-level metrics sum
+// across every vault; APR is TVL-weighted (total fees / total TVL).
 export const VAULT_FX_GROUPS: FxPairGroup[] = (() => {
+  const order: string[] = [];
   const groups = new Map<string, FxPairGroup>();
   for (const m of VAULT_MARKETS) {
     const key = `${m.baseCurrency}/${m.quoteCurrency}`;
@@ -114,37 +149,44 @@ export const VAULT_FX_GROUPS: FxPairGroup[] = (() => {
         baseName: currencyName(m.baseCurrency),
         quoteName: currencyName(m.quoteCurrency),
         label: `${m.baseCurrency} / ${m.quoteCurrency}`,
-        markets: [],
+        nickname: FX_NICKNAMES[`${m.baseCurrency}/${m.quoteCurrency}`] ?? "",
+        vaults: [],
+        volume24h: 0,
+        fees24h: 0,
+        tvl: 0,
+        apr24h: null,
       };
       groups.set(key, group);
+      order.push(key);
     }
-    group.markets.push(m);
+    for (const vault of m.vaults) {
+      group.vaults.push({ market: m, vault });
+      group.volume24h += vault.volume24h;
+      group.fees24h += vault.fees24h;
+      group.tvl += vault.tvl;
+    }
   }
-  return [...groups.values()];
+  for (const group of groups.values()) {
+    group.apr24h = annualizedYield(group.fees24h, group.tvl);
+  }
+  return order.map((key) => {
+    const g = groups.get(key);
+    if (!g) throw new Error(`unreachable: group ${key} missing`);
+    return g;
+  });
 })();
 
-const sum = (vaults: Vault[], pick: (v: Vault) => number): number =>
-  vaults.reduce((acc, v) => acc + pick(v), 0);
+// Flat list of every vault across all pairs, for the ungrouped table view.
+export const ALL_VAULTS: GroupedVault[] = VAULT_FX_GROUPS.flatMap(
+  (g) => g.vaults,
+);
 
-export const marketVolume24h = (m: VaultMarket): number =>
-  sum(m.vaults, (v) => v.volume24h);
-export const marketFees24h = (m: VaultMarket): number =>
-  sum(m.vaults, (v) => v.fees24h);
-export const marketTvl = (m: VaultMarket): number =>
-  sum(m.vaults, (v) => v.tvl);
-export const vaultCount = (m: VaultMarket): number => m.vaults.length;
+// Sortable numeric metrics. APR can be null (zero TVL); callers push nulls to
+// the bottom regardless of sort direction.
+export type MetricKey = "volume24h" | "fees24h" | "tvl" | "apr24h";
 
-// Annualized 24h fee yield to depositors, as a fraction (0.1234 = 12.34%).
-// Returns null when TVL is zero so the UI can render an em dash rather than a
-// divide-by-zero Infinity.
-const DAYS_PER_YEAR = 365;
-export const vaultApr24h = (v: Vault): number | null =>
-  v.tvl > 0 ? (v.fees24h / v.tvl) * DAYS_PER_YEAR : null;
+export const vaultMetric = (gv: GroupedVault, key: MetricKey): number | null =>
+  key === "apr24h" ? vaultApr24h(gv.vault) : gv.vault[key];
 
-// TVL-weighted market APR — sum the fees and TVL across vaults, then divide
-// once. This is the correct aggregate; a plain mean of per-vault APRs would
-// over-weight tiny vaults with outlier yields.
-export const marketApr24h = (m: VaultMarket): number | null => {
-  const tvl = marketTvl(m);
-  return tvl > 0 ? (marketFees24h(m) / tvl) * DAYS_PER_YEAR : null;
-};
+export const groupMetric = (g: FxPairGroup, key: MetricKey): number | null =>
+  g[key];

@@ -62,7 +62,34 @@
       ]
     },
     {
-      "marketPubkey": "Mkt4GBPUSDCp5nRvYx2hJmGcQsXk9PqVtZ7rWmEURbZ",
+      "marketPubkey": "Mkt4USDJPYw9TnF8xpR2vJ4hYzAe5KdLbcgUvN3sPq9",
+      "base": "USDC",
+      "quote": "GYEN",
+      "vaults": [
+        {
+          "vaultPubkey": "VautUJY1qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3Lc",
+          "leader": "Le4d3rJPYx2hJmGcQsXk9PqVtZ7rWmEURbZ8tKqWp5n",
+          "volume24h": 938000,
+          "fees24h": 469,
+          "tvl": 2750000,
+          "minLeaderSharePpm": 60000,
+          "frozen": true,
+          "outsideDepositsApproved": true
+        },
+        {
+          "vaultPubkey": "VautUJY2dAsmAcBootStrapYhJ2nGcQsXk9PqVtZ7rWn",
+          "leader": "Le4d3rJP2wTnF8xpR2vJ4hYzAe5KdLbcgUvN3sPq9mK",
+          "volume24h": 420000,
+          "fees24h": 210,
+          "tvl": 1600000,
+          "minLeaderSharePpm": 70000,
+          "frozen": false,
+          "outsideDepositsApproved": true
+        }
+      ]
+    },
+    {
+      "marketPubkey": "Mkt5GBPUSDCp5nRvYx2hJmGcQsXk9PqVtZ7rWmEURbZ",
       "base": "TGBP",
       "quote": "USDC",
       "vaults": [
@@ -77,7 +104,7 @@
           "outsideDepositsApproved": true
         },
         {
-          "vaultPubkey": "VautGBC2qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3Lc",
+          "vaultPubkey": "VautGBC2qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3Ld",
           "leader": "Le4d3rGBPwTnF8xpR2vJ4hYzAe5KdLbcgUvN3sPq9mK",
           "volume24h": 412000,
           "fees24h": 206,
@@ -89,12 +116,12 @@
       ]
     },
     {
-      "marketPubkey": "Mkt5VGBPUSDCw9TnF8xpR2vJ4hYzAe5KdLbcgUvN3sP",
+      "marketPubkey": "Mkt6VGBPUSDCw9TnF8xpR2vJ4hYzAe5KdLbcgUvN3sP",
       "base": "VGBP",
       "quote": "USDC",
       "vaults": [
         {
-          "vaultPubkey": "VautVGC1qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3Ld",
+          "vaultPubkey": "VautVGC1qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3Le",
           "leader": "Le4d3rVGBx2hJmGcQsXk9PqVtZ7rWmEURbZ8tKqWp5n",
           "volume24h": 188000,
           "fees24h": 94,
@@ -106,34 +133,51 @@
       ]
     },
     {
-      "marketPubkey": "Mkt6JPYUSDCw9TnF8xpR2vJ4hYzAe5KdLbcgUvN3sPq",
-      "base": "GYEN",
-      "quote": "USDC",
+      "marketPubkey": "Mkt7USDCHFw9TnF8xpR2vJ4hYzAe5KdLbcgUvN3sPq9",
+      "base": "USDC",
+      "quote": "VCHF",
       "vaults": [
         {
-          "vaultPubkey": "VautJYC1qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3Le",
-          "leader": "Le4d3rJPYx2hJmGcQsXk9PqVtZ7rWmEURbZ8tKqWp5n",
-          "volume24h": 938000,
-          "fees24h": 469,
-          "tvl": 2750000,
+          "vaultPubkey": "VautUCF1qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3Lf",
+          "leader": "Le4d3rCHFx2hJmGcQsXk9PqVtZ7rWmEURbZ8tKqWp5n",
+          "volume24h": 540000,
+          "fees24h": 270,
+          "tvl": 1900000,
           "minLeaderSharePpm": 60000,
-          "frozen": true,
+          "frozen": false,
           "outsideDepositsApproved": true
         }
       ]
     },
     {
-      "marketPubkey": "Mkt7CADUSDCk9PqVtZ7rWmYhJ2nGcQsXdAsmAcBoot3",
-      "base": "CADC",
-      "quote": "USDC",
+      "marketPubkey": "Mkt8USDCADk9PqVtZ7rWmYhJ2nGcQsXdAsmAcBoot3w",
+      "base": "USDC",
+      "quote": "CADC",
       "vaults": [
         {
-          "vaultPubkey": "VautCAC1dAsmAcBootStrapYhJ2nGcQsXk9PqVtZ7rWm",
+          "vaultPubkey": "VautUCD1dAsmAcBootStrapYhJ2nGcQsXk9PqVtZ7rWm",
           "leader": "DASMACbootStrap1Lead3rXk9PqVtZ7rWmYhJ2nGcQs",
           "volume24h": 156000,
           "fees24h": 78,
           "tvl": 1180000,
           "minLeaderSharePpm": 50000,
+          "frozen": false,
+          "outsideDepositsApproved": true
+        }
+      ]
+    },
+    {
+      "marketPubkey": "Mkt9AUDUSDCk9PqVtZ7rWmYhJ2nGcQsXdAsmAcBoot3",
+      "base": "AUDD",
+      "quote": "USDC",
+      "vaults": [
+        {
+          "vaultPubkey": "VautAUC1qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3Lg",
+          "leader": "Le4d3rAUDx2hJmGcQsXk9PqVtZ7rWmEURbZ8tKqWp5n",
+          "volume24h": 267000,
+          "fees24h": 133,
+          "tvl": 1050000,
+          "minLeaderSharePpm": 60000,
           "frozen": false,
           "outsideDepositsApproved": true
         }

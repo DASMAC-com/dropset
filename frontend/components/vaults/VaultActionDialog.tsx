@@ -1,7 +1,6 @@
 "use client";
 
 import * as Dialog from "@radix-ui/react-dialog";
-import { useWalletConnection } from "@solana/react-hooks";
 import { useState } from "react";
 import { ExternalLink, X } from "@/components/icons";
 import { CopyButton } from "@/components/ui/CopyButton";
@@ -20,16 +19,17 @@ export function VaultActionDialog({
   market,
   vault,
   mode,
+  connected,
   open,
   onOpenChange,
 }: {
   market: VaultMarket;
   vault: Vault;
   mode: VaultActionMode;
+  connected: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const { connected } = useWalletConnection();
   const [amount, setAmount] = useState("");
 
   const title = mode === "deposit" ? "Deposit" : "Withdraw";
@@ -103,6 +103,13 @@ export function VaultActionDialog({
               >
                 <ExternalLink size={12} />
               </a>
+            </div>
+
+            <div className="flex items-center justify-between rounded-md border border-border bg-muted px-3 py-2 text-xs">
+              <span className="text-muted-fg">Your deposit</span>
+              <span className="font-mono text-foreground">
+                {connected ? "$0.00" : "—"}
+              </span>
             </div>
 
             <label className="flex flex-col gap-1.5">
