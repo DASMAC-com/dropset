@@ -6,7 +6,7 @@
       "quote": "USDC",
       "vaults": [
         {
-          "vaultPubkey": "VautEUR1dAsmAcBootStrapq7Hk3LpZ9rWxYtcGm2Qe",
+          "vaultPubkey": "VautEUC1dAsmAcBootStrapq7Hk3LpZ9rWxYtcGm2Qe",
           "leader": "DASMACbootStrap1Lead3rXk9PqVtZ7rWmYhJ2nGcQs",
           "volume24h": 4820000,
           "fees24h": 2410,
@@ -16,7 +16,7 @@
           "outsideDepositsApproved": true
         },
         {
-          "vaultPubkey": "VautEUR2qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3La",
+          "vaultPubkey": "VautEUC2qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3La",
           "leader": "Le4d3rEURbZ8tKqWp5nRvYx2hJmGcQsXk9PqVtZ7rWm",
           "volume24h": 1284300,
           "fees24h": 642,
@@ -28,12 +28,46 @@
       ]
     },
     {
-      "marketPubkey": "Mkt2GBPUSDCp5nRvYx2hJmGcQsXk9PqVtZ7rWmEURbZ",
+      "marketPubkey": "Mkt2EURUSDTw9TnF8xpR2vJ4hYzAe5KdLbcgUvN3sPq",
+      "base": "EURC",
+      "quote": "USDT",
+      "vaults": [
+        {
+          "vaultPubkey": "VautEUT1qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3Lb",
+          "leader": "Le4d3rEUTx2hJmGcQsXk9PqVtZ7rWmEURbZ8tKqWp5n",
+          "volume24h": 612000,
+          "fees24h": 306,
+          "tvl": 2240000,
+          "minLeaderSharePpm": 60000,
+          "frozen": false,
+          "outsideDepositsApproved": true
+        }
+      ]
+    },
+    {
+      "marketPubkey": "Mkt3VEURUSDCp5nRvYx2hJmGcQsXk9PqVtZ7rWmEURb",
+      "base": "VEUR",
+      "quote": "USDC",
+      "vaults": [
+        {
+          "vaultPubkey": "VautVEC1dAsmAcBootStrapXk9PqVtZ7rWmYhJ2nGcQ",
+          "leader": "DASMACbootStrap1Lead3rXk9PqVtZ7rWmYhJ2nGcQs",
+          "volume24h": 358000,
+          "fees24h": 179,
+          "tvl": 1480000,
+          "minLeaderSharePpm": 50000,
+          "frozen": false,
+          "outsideDepositsApproved": true
+        }
+      ]
+    },
+    {
+      "marketPubkey": "Mkt4GBPUSDCp5nRvYx2hJmGcQsXk9PqVtZ7rWmEURbZ",
       "base": "TGBP",
       "quote": "USDC",
       "vaults": [
         {
-          "vaultPubkey": "VautGBP1dAsmAcBootStrapXk9PqVtZ7rWmYhJ2nGcQ",
+          "vaultPubkey": "VautGBC1dAsmAcBootStrapXk9PqVtZ7rWmYhJ2nGcR",
           "leader": "DASMACbootStrap1Lead3rXk9PqVtZ7rWmYhJ2nGcQs",
           "volume24h": 2310000,
           "fees24h": 1155,
@@ -43,7 +77,7 @@
           "outsideDepositsApproved": true
         },
         {
-          "vaultPubkey": "VautGBP2qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3Lb",
+          "vaultPubkey": "VautGBC2qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3Lc",
           "leader": "Le4d3rGBPwTnF8xpR2vJ4hYzAe5KdLbcgUvN3sPq9mK",
           "volume24h": 412000,
           "fees24h": 206,
@@ -55,12 +89,29 @@
       ]
     },
     {
-      "marketPubkey": "Mkt3JPYUSDCw9TnF8xpR2vJ4hYzAe5KdLbcgUvN3sPq",
+      "marketPubkey": "Mkt5VGBPUSDCw9TnF8xpR2vJ4hYzAe5KdLbcgUvN3sP",
+      "base": "VGBP",
+      "quote": "USDC",
+      "vaults": [
+        {
+          "vaultPubkey": "VautVGC1qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3Ld",
+          "leader": "Le4d3rVGBx2hJmGcQsXk9PqVtZ7rWmEURbZ8tKqWp5n",
+          "volume24h": 188000,
+          "fees24h": 94,
+          "tvl": 920000,
+          "minLeaderSharePpm": 70000,
+          "frozen": false,
+          "outsideDepositsApproved": true
+        }
+      ]
+    },
+    {
+      "marketPubkey": "Mkt6JPYUSDCw9TnF8xpR2vJ4hYzAe5KdLbcgUvN3sPq",
       "base": "GYEN",
       "quote": "USDC",
       "vaults": [
         {
-          "vaultPubkey": "VautJPY1qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3Lc",
+          "vaultPubkey": "VautJYC1qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3Le",
           "leader": "Le4d3rJPYx2hJmGcQsXk9PqVtZ7rWmEURbZ8tKqWp5n",
           "volume24h": 938000,
           "fees24h": 469,
@@ -72,12 +123,12 @@
       ]
     },
     {
-      "marketPubkey": "Mkt4CADUSDCk9PqVtZ7rWmYhJ2nGcQsXdAsmAcBoot3",
+      "marketPubkey": "Mkt7CADUSDCk9PqVtZ7rWmYhJ2nGcQsXdAsmAcBoot3",
       "base": "CADC",
       "quote": "USDC",
       "vaults": [
         {
-          "vaultPubkey": "VautCAD1dAsmAcBootStrapYhJ2nGcQsXk9PqVtZ7rWm",
+          "vaultPubkey": "VautCAC1dAsmAcBootStrapYhJ2nGcQsXk9PqVtZ7rWm",
           "leader": "DASMACbootStrap1Lead3rXk9PqVtZ7rWmYhJ2nGcQs",
           "volume24h": 156000,
           "fees24h": 78,

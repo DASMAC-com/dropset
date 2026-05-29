@@ -1,6 +1,7 @@
 import {
   currencyFlagUrl,
   currencyForStablecoin,
+  currencyName,
   type IsoCurrencyCode,
 } from "./currencies";
 import vaultsData from "./vaults.json";
@@ -32,8 +33,11 @@ export type MarketRaw = {
 
 export type Vault = VaultRaw;
 
-// A market with its pair resolved to ISO currency codes + flag URLs for
-// rendering. `label` is "<base currency> / <quote symbol>", e.g. "EUR / USDC".
+// A single stablecoin market (e.g. EURC/USDC) with its pair resolved to ISO
+// currency codes + flag URLs. `label` is the stablecoin pair "<base symbol> /
+// <quote symbol>", e.g. "EURC / USDC". Markets are grouped into FX pairs (see
+// FxPairGroup) by their underlying currencies, so EURC/USDC and EURC/USDT both
+// sit under the "EUR / USD" group.
 export type VaultMarket = {
   marketPubkey: string;
   base: string;
@@ -44,6 +48,21 @@ export type VaultMarket = {
   quoteFlagUrl: string;
   label: string;
   vaults: Vault[];
+};
+
+// An FX trading pair (e.g. EUR / USD) grouping every stablecoin market whose
+// base and quote resolve to the same two currencies. This is the table's
+// top-level group, analogous to the per-currency groups on /currencies.
+export type FxPairGroup = {
+  key: string;
+  baseCurrency: IsoCurrencyCode;
+  quoteCurrency: IsoCurrencyCode;
+  baseFlagUrl: string;
+  quoteFlagUrl: string;
+  baseName: string;
+  quoteName: string;
+  label: string;
+  markets: VaultMarket[];
 };
 
 const resolveCurrency = (
@@ -72,10 +91,37 @@ export const VAULT_MARKETS: VaultMarket[] = (
     quoteCurrency,
     baseFlagUrl: currencyFlagUrl(baseCurrency),
     quoteFlagUrl: currencyFlagUrl(quoteCurrency),
-    label: `${baseCurrency} / ${m.quote}`,
+    label: `${m.base} / ${m.quote}`,
     vaults: m.vaults,
   };
 });
+
+// Group markets into FX pairs, preserving first-seen order of both the groups
+// and the markets within each. Derived from the resolved currency codes so
+// USDC- and USDT-quoted markets fold into one "… / USD" group.
+export const VAULT_FX_GROUPS: FxPairGroup[] = (() => {
+  const groups = new Map<string, FxPairGroup>();
+  for (const m of VAULT_MARKETS) {
+    const key = `${m.baseCurrency}/${m.quoteCurrency}`;
+    let group = groups.get(key);
+    if (!group) {
+      group = {
+        key,
+        baseCurrency: m.baseCurrency,
+        quoteCurrency: m.quoteCurrency,
+        baseFlagUrl: m.baseFlagUrl,
+        quoteFlagUrl: m.quoteFlagUrl,
+        baseName: currencyName(m.baseCurrency),
+        quoteName: currencyName(m.quoteCurrency),
+        label: `${m.baseCurrency} / ${m.quoteCurrency}`,
+        markets: [],
+      };
+      groups.set(key, group);
+    }
+    group.markets.push(m);
+  }
+  return [...groups.values()];
+})();
 
 const sum = (vaults: Vault[], pick: (v: Vault) => number): number =>
   vaults.reduce((acc, v) => acc + pick(v), 0);

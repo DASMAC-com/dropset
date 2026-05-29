@@ -47,11 +47,11 @@ export function Header() {
             Currencies
           </Link>
           <Link
-            href="/liquidity"
-            aria-current={pathname === "/liquidity" ? "page" : undefined}
-            className={navClass(pathname === "/liquidity")}
+            href="/vaults"
+            aria-current={pathname === "/vaults" ? "page" : undefined}
+            className={navClass(pathname === "/vaults")}
           >
-            Liquidity
+            Vaults
           </Link>
         </nav>
         <button
