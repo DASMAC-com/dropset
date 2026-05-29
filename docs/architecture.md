@@ -725,10 +725,9 @@ caller; the third is the per-ix authority gate.
      `SetAllowOutsideDepositors`, `CloseVault`):
      `vault.leader == signer`.
    - **Deposit**: leader path requires `vault.leader == signer`;
-     otherwise outside path requires
-     `vault.allow_outside_depositors == 1 &&
-     vault.outside_deposits_approved == 1` (leader opt-in plus
-     admin approval).
+     otherwise outside path requires both
+     `vault.allow_outside_depositors == 1` (leader opt-in) and
+     `vault.outside_deposits_approved == 1` (admin approval).
    - **Withdraw**: leader path requires `vault.leader == signer`;
      otherwise outside path requires the caller to hold > 0 SPL
      tokens on `vault.share_mint` (the burn from their ATA proves
