@@ -4,6 +4,7 @@ import { useWalletConnection } from "@solana/react-hooks";
 import { useEffect } from "react";
 import { RateLimitMessage } from "@/components/chrome/RateLimitMessage";
 import { stablecoinDecimals, stablecoinMint } from "@/lib/data/currencies";
+import { useFeeVaultExists } from "@/lib/dflow/feeVault";
 import { PLATFORM_FEE } from "@/lib/env";
 import { emit, useAppEvent } from "@/lib/events";
 import { parseAmountToBase } from "@/lib/format/balance";
@@ -170,6 +171,13 @@ export function SwapPanel() {
     quote.outAmount > 0n;
   const canSwap = label === "Swap" && !disabled && !dimmed;
 
+  // Whether the platform-fee vault (the fee wallet's ATA) for the to-mint
+  // exists on-chain — the fee is only charged, and so only reported, when it
+  // does. Gated on `canSwap && routeFound` so we never hit the RPC for a swap
+  // that can't happen (no wallet, insufficient input, no route). See
+  // lib/dflow/feeVault.ts.
+  const feeVaultExists = useFeeVaultExists(toMint, canSwap && routeFound);
+
   return (
     <>
       <div className="relative rounded-xl border border-border p-3">
@@ -199,7 +207,11 @@ export function SwapPanel() {
         </button>
         {routeFound && quote.inAmount !== null && quote.outAmount !== null ? (
           <PlatformFee
-            bps={canSwap && PLATFORM_FEE ? PLATFORM_FEE.bps : null}
+            bps={
+              canSwap && PLATFORM_FEE && feeVaultExists
+                ? PLATFORM_FEE.bps
+                : null
+            }
             inAmount={quote.inAmount}
             outAmount={quote.outAmount}
             fromSymbol={fromStablecoin}
