@@ -105,17 +105,23 @@ struct Registry {
     /// later; this field only sets the initial value.
     default_taker_fee_rate: Ppm16,
     /// Minimum fraction of vault shares the leader must hold,
-    /// in ppm (1,000,000 = 100%). Enforced at `Deposit` and
-    /// leader `Withdraw` against active vaults. Default 50_000 = 5%.
+    /// in ppm (1,000,000 = 100%). Stamped into
+    /// `MarketHeader.default_min_leader_share` at market creation,
+    /// which in turn stamps each vault's `min_leader_share` at
+    /// `OpenVault`. This field only sets the protocol-wide initial
+    /// value; admins tune the floor per market and per vault
+    /// downstream. Default 50_000 = 5%.
     /// See **Vault → Skin-in-the-game floor**.
-    min_leader_share: Ppm32,
+    default_min_leader_share: Ppm32,
     /// Fee paid to the protocol treasury on `OpenVault`. Waived
     /// when the signer is an admin.
     vault_open_fee: FeeConfig,
     /// Admins authorized to mutate the `Registry`, change
-    /// per-market `taker_fee_rate`, call `FreezeVault`, approve
-    /// outside deposits via `SetOutsideDepositsApproved`, and
-    /// open vaults without paying `vault_open_fee`.
+    /// per-market `taker_fee_rate` and `default_min_leader_share`,
+    /// override a vault's `min_leader_share` via `SetMinLeaderShare`,
+    /// call `FreezeVault`, approve outside deposits via
+    /// `SetOutsideDepositsApproved`, and open vaults without paying
+    /// `vault_open_fee`.
     admins: Set<Pubkey>,
 }
 ```
@@ -148,6 +154,14 @@ struct MarketHeader {
     /// Taker fee rate, capped at ~6.55% (`Ppm16` max). Mutable by an
     /// admin.
     taker_fee_rate: Ppm16,
+    /// Default minimum fraction of vault shares the leader must hold,
+    /// in ppm (1,000,000 = 100%). Stamped into `Vault.min_leader_share`
+    /// at each `OpenVault` on this market. Seeded from
+    /// `Registry.default_min_leader_share` at market creation; mutable
+    /// by an admin, affecting only vaults opened after the change
+    /// (existing vaults keep their stamped value). See
+    /// **Vault → Skin-in-the-game floor**.
+    default_min_leader_share: Ppm32,
 
     // Pubkeys and bumps.
     base_mint: Pubkey,
@@ -301,6 +315,14 @@ struct Vault {
     /// Performance fee rate the leader charges on profits above
     /// HWM, in ppm (1,000,000 = 100%). Set at `OpenVault` time.
     perf_fee_rate: Ppm32,
+    /// Minimum fraction of vault shares the leader must hold, in ppm
+    /// (1,000,000 = 100%). The value actually enforced at `Deposit`
+    /// and leader `Withdraw` against this active vault. Stamped from
+    /// `MarketHeader.default_min_leader_share` at `OpenVault`; an
+    /// admin can override it per vault via `SetMinLeaderShare` (e.g.
+    /// to seat an issuer-funded vault at a lower floor than the
+    /// market default). See **Skin-in-the-game floor**.
+    min_leader_share: Ppm32,
     /// Set to 1 when an admin freezes the vault. See
     /// **Frozen and tombstoned vaults**.
     frozen: u8,
@@ -506,9 +528,14 @@ regardless of residual VPS movement from late fills. See
 
 ### Skin-in-the-game floor
 
-`Registry.min_leader_share` (ppm; default 50_000 = 5%) is a hard
-floor on the leader's stake in their own vault, enforced at the two
-natural choke points:
+Each vault's `Vault.min_leader_share` (ppm) is a hard floor on the
+leader's stake in their own vault, enforced at the two natural choke
+points. The value cascades: `Registry.default_min_leader_share`
+(default 50_000 = 5%) seeds `MarketHeader.default_min_leader_share`
+at market creation, which stamps `Vault.min_leader_share` at
+`OpenVault`; an admin can override any level downstream — the market
+default for future vaults, or a single vault directly via
+`SetMinLeaderShare`. The choke points:
 
 - **Deposit.** A `Deposit` is rejected if accepting it would push
   `leader_shares / total_shares` below `min_leader_share`.
@@ -711,8 +738,8 @@ caller; the third is the per-ix authority gate.
      has the strongest economic incentive, but anyone may call —
      useful for indexers and keepers that want to pin HWM at a
      known point in time.
-   - **Admin-only** (`FreezeVault`, `SetOutsideDepositsApproved`):
-     `signer ∈ registry.admins`.
+   - **Admin-only** (`FreezeVault`, `SetOutsideDepositsApproved`,
+     `SetMinLeaderShare`): `signer ∈ registry.admins`.
 
 No discriminant tag is needed: the vault region is homogeneous, so
 (1) + (2) fully determine that `ptr` refers to a valid `Vault`. The
@@ -772,7 +799,10 @@ Caller arguments stamped onto the vault:
 
 Side effect: the instruction creates a new SPL mint for outside-share
 tokens (mint authority a vault-owned PDA) and records its address as
-`Vault.share_mint`. The vault is otherwise initialized empty
+`Vault.share_mint`. It also stamps `Vault.min_leader_share` from the
+market's `MarketHeader.default_min_leader_share` (the skin-in-the-game
+floor this vault will be held to; admin-overridable per vault via
+`SetMinLeaderShare`). The vault is otherwise initialized empty
 (`base_atoms`, `quote_atoms`, `total_shares`, `leader_shares`, `hwm`,
 `frozen`, `outside_deposits_approved` all zero); the leader seeds
 inventory with their first `Deposit` (see **Depositor operations**
@@ -902,6 +932,25 @@ deposits (see **FreezeVault**), so revoking approval is the lighter
 lever for gating only the outside-deposit path while leaving the
 leader free to keep quoting and managing inventory.
 
+### SetMinLeaderShare
+
+Admin-only. Writes `Vault.min_leader_share = value` (ppm), overriding
+the floor stamped from `MarketHeader.default_min_leader_share` at
+`OpenVault`. This is the per-vault skin-in-the-game lever: lowering it
+lets a vault run with a smaller leader stake — e.g. seating an
+issuer-funded vault where a stablecoin issuer supplies most of the
+basket as an outside depositor and the leader holds only a thin
+slice — while leaving every other vault on the market at the default.
+Pairs naturally with `SetOutsideDepositsApproved`: the same admin sign-off
+that opens a vault to outside baskets can also relax its floor.
+
+The new value takes effect on the next `Deposit` or leader
+`Withdraw`; it does not retroactively force an out-of-floor vault
+back into compliance. Raising the floor above the current ratio
+simply blocks further outside deposits (and floor-violating leader
+withdrawals) until the leader tops up, exactly as the standing check
+in **Vault → Skin-in-the-game floor** describes.
+
 ## Depositor operations
 
 `Deposit` and `Withdraw` use the same pointer validation as leader
@@ -943,8 +992,10 @@ depositor to the treasuries, then:
 `Vault.total_shares` is incremented in both paths.
 
 **Skin-in-the-game check.** After update, if the caller is not the
-leader and `leader_shares × 1_000_000 < min_leader_share × total_shares`,
-the instruction reverts. The check uses on-vault numbers only — no
+leader and
+`leader_shares × 1_000_000 < vault.min_leader_share × total_shares`,
+the instruction reverts. The floor is the vault's own
+`Vault.min_leader_share`. The check uses on-vault numbers only — no
 ATA load needed. See **Vault → Skin-in-the-game floor**.
 
 **Seeding (first deposit).** If `total_shares == 0`, the vault has
@@ -982,8 +1033,8 @@ remaining depositors. Then:
 transferred from the treasuries to the caller.
 
 If the caller is the leader against an **active** vault, the
-post-burn ratio must remain at or above `min_leader_share`. The
-floor is **bypassed for frozen and tombstoned vaults** — see
+post-burn ratio must remain at or above `vault.min_leader_share`.
+The floor is **bypassed for frozen and tombstoned vaults** — see
 **Vault → Skin-in-the-game floor** and
 **Vault → Frozen and tombstoned vaults**.
 
