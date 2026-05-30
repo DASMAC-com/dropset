@@ -256,7 +256,7 @@ function VaultRow({
   const actionTitle =
     action.label === "Deposit" && action.disabled
       ? vault.frozen
-        ? "This vault is frozen — deposits are closed"
+        ? "This vault is frozen, so deposits are closed"
         : "Outside deposits aren't approved for this vault"
       : undefined;
 
@@ -441,7 +441,7 @@ export function VaultsView() {
           </label>
         </div>
         <p className="text-muted-fg text-xs">
-          <span className="font-medium text-amber-400">Preview</span> — all
+          <span className="font-medium text-amber-400">Preview.</span> All
           figures shown are mock data.
         </p>
       </div>

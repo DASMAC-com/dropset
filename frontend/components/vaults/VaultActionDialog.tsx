@@ -178,7 +178,7 @@ export function VaultActionDialog({
                   Withdraw all
                 </button>
                 <p className="text-center text-muted-fg text-xs">
-                  Withdrawals redeem your entire basket — partial withdrawals
+                  Withdrawals redeem your entire basket. Partial withdrawals
                   aren't supported.
                 </p>
               </>
@@ -241,7 +241,7 @@ export function VaultActionDialog({
                 <p className="text-muted-fg text-xs">
                   {ratio === null
                     ? "This vault has no reserves yet, so amounts aren't linked."
-                    : `Amounts fill pro-rata to the vault's reserves — set ${market.base} or ${market.quote} and the other follows.`}
+                    : `Amounts fill pro-rata to the vault's reserves. Set ${market.base} or ${market.quote} and the other follows.`}
                 </p>
                 <button
                   type="button"
@@ -254,7 +254,7 @@ export function VaultActionDialog({
                 {depositBlocked && (
                   <p className="text-center text-muted-fg text-xs">
                     {vault.frozen
-                      ? "This vault is frozen — deposits are closed."
+                      ? "This vault is frozen, so deposits are closed."
                       : "Outside deposits aren't approved for this vault yet."}
                   </p>
                 )}
