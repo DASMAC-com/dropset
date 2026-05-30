@@ -263,9 +263,10 @@ they update on the hot path. Vaults live contiguously inside the
 market account's sector array (see **Storage layout**). The leader
 (or a delegated `quote_authority`) is the only signer that can mutate
 quotes — both the `ReferencePrice` and the `LiquidityProfile`;
-outside-depositor shares live as SPL tokens (see **Shares**)
-and the leader's stake is non-SPL bookkeeping — neither imposes any
-per-depositor storage on the vault sector itself.
+both the leader's stake and outside-depositor shares are non-SPL
+bookkeeping (see **Shares**) — outside positions live on separate
+`VaultDepositor` PDAs, so neither imposes any per-depositor storage
+on the vault sector itself.
 
 Leader-supplied prices are **not** validated on write — takers
 range-check at match time, so a nonsense reference price just
@@ -280,11 +281,6 @@ struct Vault {
     /// stamps `leader`. Hot-path auth check is a single compare.
     /// Rotated via `SetQuoteAuthority` (leader-only).
     quote_authority: Pubkey,
-    /// SPL mint for outside-depositor shares. Mint authority is a
-    /// vault-owned PDA. Leader's own stake is tracked in
-    /// `leader_shares` and is **not** minted as SPL tokens.
-    /// Invariant: `leader_shares + share_mint.supply == total_shares`.
-    share_mint: Pubkey,
     /// Packed `(stamp, price, expiry)`. Hot path —
     /// overwritten as two aligned u64 stores.
     reference_price: ReferencePrice,
@@ -299,7 +295,7 @@ struct Vault {
     /// treasury invariant in **MarketHeader**.
     quote_atoms: u64,
     /// Total vault shares outstanding (= leader_shares +
-    /// share_mint.supply).
+    /// Σ VaultDepositor.shares).
     total_shares: u64,
     /// Leader's stake. Non-SPL, protocol-tracked. Increments on
     /// leader `Deposit` and on `Realize` perf-fee accrual;
@@ -471,18 +467,19 @@ and only when `VPS_new > hwm`. Recoveries to a prior VPS do not
 earn perf fee. ∎
 
 **I6. Invariant on total shares.**
-`total_shares = leader_shares + share_mint.supply` at all times.
-Every path that mutates `total_shares` mutates exactly one of the
-two terms by the same amount:
+`total_shares = leader_shares + Σ VaultDepositor.shares` at all
+times. Every path that mutates `total_shares` mutates exactly one of
+the two terms by the same amount (the outside paths touch a single
+`VaultDepositor.shares`):
 
-| Operation                                  | `leader_shares` | `share_mint.supply` |
-| ------------------------------------------ | --------------- | ------------------- |
-| `Deposit` (seeding; `s = 0` → leader path) | +Δs             | 0                   |
-| `Deposit` (leader path)                    | +Δs             | 0                   |
-| `Deposit` (outside path)                   | 0               | +Δs                 |
-| `Withdraw` (leader path)                   | −Δs             | 0                   |
-| `Withdraw` (outside path)                  | 0               | −Δs                 |
-| `Realize`                                  | +m              | 0                   |
+| Operation                                  | `leader_shares` | `Σ VaultDepositor.shares` |
+| ------------------------------------------ | --------------- | ------------------------- |
+| `Deposit` (seeding; `s = 0` → leader path) | +Δs             | 0                         |
+| `Deposit` (leader path)                    | +Δs             | 0                         |
+| `Deposit` (outside path)                   | 0               | +Δs                       |
+| `Withdraw` (leader path)                   | −Δs             | 0                         |
+| `Withdraw` (outside path)                  | 0               | −Δs                       |
+| `Realize`                                  | +m              | 0                         |
 
 ### High-water mark and performance fee
 
@@ -688,17 +685,87 @@ Properties:
 
 ## Shares
 
-Outside-depositor shares are SPL tokens minted from
-`Vault.share_mint`. They live in standard ATAs, are transferable, and
-compose with the rest of the Solana ecosystem (collateral in lending
-markets, listed on aggregators, etc.).
+Shares are **never SPL tokens** — neither the leader's stake nor an
+outside depositor's. The leader's stake is tracked as
+`Vault.leader_shares`; every outside depositor's stake is tracked as
+`shares` on a per-depositor **`VaultDepositor`** account (see
+**Depositor positions and cost basis**). Both are pure on-vault
+bookkeeping: nothing lives in an ATA, so the skin-in-the-game floor
+cannot be evaded by moving shares to an alt wallet and no token
+accounts are loaded at check time.
 
-The leader's stake is **not** an SPL token — it's tracked as
-`Vault.leader_shares` so the skin-in-the-game floor cannot be evaded
-by transferring shares to an alt wallet, and the leader's ATA never
-has to be loaded at check time.
+This makes a vault position **non-transferable and non-composable** —
+a depositor exits by `Withdraw`, not by sending shares to someone
+else (the Hyperliquid / Drift vault model). The trade is deliberate:
+positions are not a tradeable secondary asset, but in exchange the
+vault stores each depositor's cost basis authoritatively on-chain,
+with no lot-attribution ambiguity and no reliance on transfer-history
+reconstruction. CLMM-style fungible/NFT shares were rejected because
+Dropset positions are fungible *within* a vault (a pro-rata basket,
+no price range), so neither a fungible mint nor a position NFT buys
+anything the `VaultDepositor` doesn't.
 
-Invariant: `leader_shares + share_mint.supply == total_shares`.
+Invariant: `leader_shares + Σ VaultDepositor.shares == total_shares`.
+
+### Depositor positions and cost basis
+
+Each outside depositor's position in a vault is a `VaultDepositor`
+account — one per `(vault, owner)` pair, PDA-seeded by
+`("vault_depositor", vault, owner)`. It is the authoritative on-chain
+record of both the depositor's claim and what they paid for it:
+
+| Field             | Meaning                                                                                   |
+| ----------------- | ----------------------------------------------------------------------------------------- |
+| `vault`           | The vault this position is in.                                                            |
+| `owner`           | The depositor; bound by the PDA seeds, so the account is non-transferable.                |
+| `shares`          | Pro-rata claim on the vault (the per-depositor term of the I6 invariant).                 |
+| `net_deposits`    | Quote-denominated principal: `Σ (quote_in + base_in × entry_ref)`. The **entrance amount**; reduced pro-rata on withdraw. |
+| `entry_ref_price` | Shares-weighted average reference price (quote per base) across deposits.                 |
+| `entry_vps`       | Shares-weighted average VPS (`L / total_shares`) across deposits.                         |
+| `opened_at`       | Slot of the first deposit.                                                                |
+
+Every basis field is captured from **on-chain** state at deposit
+time — `entry_vps` from the vault's `L / total_shares`,
+`entry_ref_price` from the leader's live `ReferencePrice`. No oracle
+is needed to *record* basis; a price feed is only needed at *display*
+time, to mark a position's current value (`ref_now`).
+
+**Top-off (deposit into an existing position).** A second deposit
+merges the new lot into the running averages, weighted by shares
+(`s` = prior `shares`, `Δs` = `shares_out` this deposit):
+
+```text
+shares'          = s + Δs
+entry_vps'       = (s · entry_vps       + Δs · VPS_now) / shares'
+entry_ref_price' = (s · entry_ref_price + Δs · ref_now) / shares'
+net_deposits'    = net_deposits + (Δquote_in + Δbase_in · ref_now)
+```
+
+**PnL decomposition (display only).** The protocol math stays
+oracle-free (it stores basis, not PnL); a UI marks a position to a
+display price `ref_now` (the live `ReferencePrice`, or an external FX
+feed). For a position of `shares` in a vault holding `B` base / `Q`
+quote atoms over `S_tot` total shares, the current basket is
+`base_out = shares × B / S_tot`, `quote_out = shares × Q / S_tot`,
+and:
+
+```text
+current_value     = quote_out + base_out × ref_now
+value_at_entry_fx = quote_out + base_out × entry_ref_price
+yield_pnl         = value_at_entry_fx − net_deposits        # leader skill / spread, ex-FX
+fx_pnl            = base_out × (ref_now − entry_ref_price)   # directional move on the base leg
+net_pnl           = current_value − net_deposits = yield_pnl + fx_pnl
+```
+
+`yield_pnl` is the depositor's share of spread capture vs. adverse
+selection, valued at constant FX; `fx_pnl` is the directional move of
+the underlying pair on the base they hold. The headline "yield since
+open" as a percentage is `VPS_now / entry_vps − 1` — oracle-free and
+pure skill. This is the per-depositor form of the
+**APR (leader skill) × basket price move (directional)** split in
+**APR / yield accounting**. Because the position is soulbound, the
+basis is always the depositor's own — there is no transfer or
+lot-attribution ambiguity to resolve.
 
 ## Caller mechanics
 
@@ -729,10 +796,11 @@ caller; the third is the per-ix authority gate.
      `vault.allow_outside_depositors == 1` (leader opt-in) and
      `vault.outside_deposits_approved == 1` (admin approval).
    - **Withdraw**: leader path requires `vault.leader == signer`;
-     otherwise outside path requires the caller to hold > 0 SPL
-     tokens on `vault.share_mint` (the burn from their ATA proves
-     possession). See **Vault → Frozen and tombstoned vaults** for
-     the wind-down behavior on non-active vaults.
+     otherwise outside path requires a `VaultDepositor` PDA seeded by
+     `(vault, signer)` with `shares >= shares_in` (the seeds bind the
+     account to the signer, proving ownership). See
+     **Vault → Frozen and tombstoned vaults** for the wind-down
+     behavior on non-active vaults.
    - **Permissionless** (`Realize`): no signer check. The leader
      has the strongest economic incentive, but anyone may call —
      useful for indexers and keepers that want to pin HWM at a
@@ -796,9 +864,7 @@ Caller arguments stamped onto the vault:
 - `allow_outside_depositors: bool` — toggleable post-open via
   `SetAllowOutsideDepositors`.
 
-Side effect: the instruction creates a new SPL mint for outside-share
-tokens (mint authority a vault-owned PDA) and records its address as
-`Vault.share_mint`. It also stamps `Vault.min_leader_share` from the
+Side effect: the instruction stamps `Vault.min_leader_share` from the
 market's `MarketHeader.default_min_leader_share` (the skin-in-the-game
 floor this vault will be held to; admin-overridable per vault via
 `SetMinLeaderShare`). The vault is otherwise initialized empty
@@ -956,10 +1022,14 @@ in **Vault → Skin-in-the-game floor** describes.
 ix (see **Caller mechanics**), and the same instruction discriminants
 for both the leader and outside depositors. The path splits
 internally on `signer == vault.leader`: the leader updates
-`Vault.leader_shares` directly, while outside depositors mint or burn
-SPL tokens against `Vault.share_mint`. SPL mint and depositor-ATA
-accounts are required for the outside path, **optional for the
-leader path** — leaders can omit them.
+`Vault.leader_shares` directly, while outside depositors update
+`shares` on their `VaultDepositor` account (PDA seeded by
+`("vault_depositor", vault, owner)`; see **Depositor positions and
+cost basis**). The `VaultDepositor` account is required on the
+outside path — `init_if_needed` on `Deposit`, `close`-on-empty on
+`Withdraw` — and **omitted on the leader path**. No SPL share mint or
+ATA exists anymore; shares are pure on-vault bookkeeping on both
+paths.
 
 Both `Deposit` and `Withdraw` realize the vault first — see
 **Vault → Realize**.
@@ -980,10 +1050,15 @@ for existing depositors. The basket is transferred from the
 depositor to the treasuries, then:
 
 - **Leader path** (`signer == vault.leader`): increment
-  `Vault.leader_shares` by `shares_out`. No SPL tokens minted.
-- **Outside path** (`signer != vault.leader`): mint `shares_out`
-  SPL tokens to the caller's ATA on `Vault.share_mint`. Requires
-  both `Vault.allow_outside_depositors == 1` (leader opt-in) and
+  `Vault.leader_shares` by `shares_out`. No `VaultDepositor`.
+- **Outside path** (`signer != vault.leader`): credit `shares_out`
+  to the caller's `VaultDepositor` account (`init_if_needed`), and
+  record cost basis on it (see **Depositor positions and cost
+  basis** for the field semantics and the top-off merge). A first
+  deposit sets `shares`, `entry_vps`, `entry_ref_price`,
+  `net_deposits`, and `opened_at`; a top-off into an existing
+  account merges them shares-weighted. Requires both
+  `Vault.allow_outside_depositors == 1` (leader opt-in) and
   `Vault.outside_deposits_approved == 1` (admin approval); either
   flag unset rejects the deposit. See
   **Leader operations → SetOutsideDepositsApproved**.
@@ -1003,8 +1078,9 @@ must supply `base_in > 0 && quote_in > 0` — a zero leg would yield
 `total_shares = 0` and re-trigger seeding on the next deposit (and
 divide by zero in the pro-rata basket math). The instruction sets
 `total_shares := isqrt(base_in × quote_in)`,
-`leader_shares := total_shares`, and `hwm := Q32.32(1.0)`. No SPL
-tokens are minted on seeding (leader stake is non-SPL).
+`leader_shares := total_shares`, and `hwm := Q32.32(1.0)`. No
+`VaultDepositor` is created on seeding (the leader's stake lives on
+`Vault.leader_shares`).
 
 Deposits against frozen or tombstoned vaults are rejected.
 
@@ -1022,11 +1098,16 @@ Rounding down keeps any dust in the vault for the benefit of
 remaining depositors. Then:
 
 - **Leader path** (`signer == vault.leader`): decrement
-  `Vault.leader_shares` by `shares_in`. No SPL burn.
-- **Outside path** (signer holds SPL tokens on
-  `Vault.share_mint`): burn `shares_in` SPL tokens from the
-  caller's ATA. The burn itself gates authority — a caller with
-  no balance fails at the SPL layer.
+  `Vault.leader_shares` by `shares_in`.
+- **Outside path** (`signer != vault.leader`): decrement `shares` on
+  the caller's `VaultDepositor` by `shares_in`. The PDA seeds bind
+  the account to `signer`, so authority is gated by ownership and
+  `shares_in <= VaultDepositor.shares`. Reduce `net_deposits`
+  pro-rata (`net_deposits' = net_deposits × (shares − shares_in) /
+  shares`) so the withdrawn slice realizes its PnL; `entry_vps` and
+  `entry_ref_price` are left unchanged (a proportional reduction
+  preserves the shares-weighted averages). When `shares` reaches 0,
+  `close` the account and return its rent to the owner.
 
 `Vault.total_shares` is decremented in both paths; the basket is
 transferred from the treasuries to the caller.
@@ -1188,7 +1269,10 @@ The depositor's total quote-denominated return decomposes cleanly
 into **APR (leader skill) × basket price move (directional)**; the
 two are separately attributable. The protocol math is oracle-free. UIs
 that want to display a quote-converted total return can layer in a
-price feed for display only — no on-chain dependency.
+price feed for display only — no on-chain dependency. The
+per-depositor form of this split — yield vs. FX PnL against a
+position's stored entry basis — is in **Depositor positions and cost
+basis**.
 
 APR can go **negative** when the leader is consistently adversely
 selected. That is the same metric working in both directions, and it
