@@ -4,6 +4,12 @@
 
 <!-- cspell:word tombstoned -->
 
+<!-- cspell:word Hyperliquid -->
+
+<!-- cspell:word CLMM -->
+
+<!-- cspell:word soulbound -->
+
 # Ephemeral Central Limit Order Book (eCLOB) Architecture
 
 This sketch presents an ephemeral central limit order book (eCLOB) design that
@@ -714,15 +720,15 @@ account — one per `(vault, owner)` pair, PDA-seeded by
 `("vault_depositor", vault, owner)`. It is the authoritative on-chain
 record of both the depositor's claim and what they paid for it:
 
-| Field             | Meaning                                                                                   |
-| ----------------- | ----------------------------------------------------------------------------------------- |
-| `vault`           | The vault this position is in.                                                            |
-| `owner`           | The depositor; bound by the PDA seeds, so the account is non-transferable.                |
-| `shares`          | Pro-rata claim on the vault (the per-depositor term of the I6 invariant).                 |
+| Field             | Meaning                                                                                                                   |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `vault`           | The vault this position is in.                                                                                            |
+| `owner`           | The depositor; bound by the PDA seeds, so the account is non-transferable.                                                |
+| `shares`          | Pro-rata claim on the vault (the per-depositor term of the I6 invariant).                                                 |
 | `net_deposits`    | Quote-denominated principal: `Σ (quote_in + base_in × entry_ref)`. The **entrance amount**; reduced pro-rata on withdraw. |
-| `entry_ref_price` | Shares-weighted average reference price (quote per base) across deposits.                 |
-| `entry_vps`       | Shares-weighted average VPS (`L / total_shares`) across deposits.                         |
-| `opened_at`       | Slot of the first deposit.                                                                |
+| `entry_ref_price` | Shares-weighted average reference price (quote per base) across deposits.                                                 |
+| `entry_vps`       | Shares-weighted average VPS (`L / total_shares`) across deposits.                                                         |
+| `opened_at`       | Slot of the first deposit.                                                                                                |
 
 Every basis field is captured from **on-chain** state at deposit
 time — `entry_vps` from the vault's `L / total_shares`,
@@ -732,13 +738,14 @@ time, to mark a position's current value (`ref_now`).
 
 **Top-off (deposit into an existing position).** A second deposit
 merges the new lot into the running averages, weighted by shares
-(`s` = prior `shares`, `Δs` = `shares_out` this deposit):
+(`s` = prior `shares`, `Δs` = `shares_out` this deposit; `base_in`,
+`quote_in` = this deposit's basket):
 
 ```text
 shares'          = s + Δs
 entry_vps'       = (s · entry_vps       + Δs · VPS_now) / shares'
 entry_ref_price' = (s · entry_ref_price + Δs · ref_now) / shares'
-net_deposits'    = net_deposits + (Δquote_in + Δbase_in · ref_now)
+net_deposits'    = net_deposits + (quote_in + base_in · ref_now)
 ```
 
 **PnL decomposition (display only).** The protocol math stays
@@ -752,8 +759,8 @@ and:
 ```text
 current_value     = quote_out + base_out × ref_now
 value_at_entry_fx = quote_out + base_out × entry_ref_price
-yield_pnl         = value_at_entry_fx − net_deposits        # leader skill / spread, ex-FX
-fx_pnl            = base_out × (ref_now − entry_ref_price)   # directional move on the base leg
+yield_pnl         = value_at_entry_fx − net_deposits       # spread, ex-FX
+fx_pnl            = base_out × (ref_now − entry_ref_price)  # FX direction
 net_pnl           = current_value − net_deposits = yield_pnl + fx_pnl
 ```
 
@@ -1117,11 +1124,12 @@ remaining depositors. Then:
 - **Leader path** (`signer == vault.leader`): decrement
   `Vault.leader_shares` by `shares_in`.
 - **Outside path** (`signer != vault.leader`): decrement `shares` on
-  the caller's `VaultDepositor` by `shares_in`. The PDA seeds bind
-  the account to `signer`, so authority is gated by ownership and
-  `shares_in <= VaultDepositor.shares`. Reduce `net_deposits`
-  pro-rata (`net_deposits' = net_deposits × (shares − shares_in) /
-  shares`) so the withdrawn slice realizes its PnL; `entry_vps` and
+  the caller's `VaultDepositor` by `shares_in` (the PDA seeds bind the
+  account to `signer`, so authority is gated by ownership and
+  `shares_in <= VaultDepositor.shares`). Reduce `net_deposits`
+  pro-rata —
+  `net_deposits' = net_deposits × (shares − shares_in) / shares` —
+  so the withdrawn slice realizes its PnL; `entry_vps` and
   `entry_ref_price` are left unchanged (a proportional reduction
   preserves the shares-weighted averages). When `shares` reaches 0,
   `close` the account and return its rent to the owner.
