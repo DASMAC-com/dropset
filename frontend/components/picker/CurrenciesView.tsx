@@ -6,17 +6,9 @@ import NumberFlow from "@number-flow/react";
 import * as Popover from "@radix-ui/react-popover";
 import { useSearchParams } from "next/navigation";
 import { memo, Suspense, useMemo, useRef, useState } from "react";
-import {
-  ArrowUpDown,
-  ChevronDown,
-  ChevronUp,
-  ExternalLink,
-  HelpCircle,
-  Info,
-  Search,
-  X,
-} from "@/components/icons";
+import { ExternalLink, HelpCircle, Info, Search, X } from "@/components/icons";
 import { CopyButton } from "@/components/ui/CopyButton";
+import { SortableHeader } from "@/components/ui/SortableHeader";
 import {
   CURRENCIES,
   currencyFlagUrl,
@@ -106,39 +98,9 @@ const matches = (
   );
 };
 
-function SortableHeader({
-  sortKey,
-  label,
-  sort,
-  onToggle,
-}: {
-  sortKey: SortKey;
-  label: string;
-  sort: SortState;
-  onToggle: (key: SortKey) => void;
-}) {
-  const active = sort?.key === sortKey;
-  const Icon = !active
-    ? ArrowUpDown
-    : sort.direction === "desc"
-      ? ChevronDown
-      : ChevronUp;
-  return (
-    <th
-      scope="col"
-      className="sticky top-14 z-20 border-border border-r bg-muted p-0 last:border-r-0"
-    >
-      <button
-        type="button"
-        onClick={() => onToggle(sortKey)}
-        className={`flex w-full cursor-pointer select-none items-center justify-end gap-1 px-3 py-2 text-right font-medium outline-none transition-colors focus:outline-none focus-visible:outline-none ${active ? "text-foreground" : "text-muted-fg hover:text-foreground"}`}
-      >
-        {label}
-        <Icon size={12} />
-      </button>
-    </th>
-  );
-}
+// Pin the generic shared header to this table's sort keys so literal
+// `sortKey` props type-check against `sort` / `onToggle`.
+const CurrencySortHeader = SortableHeader<SortKey>;
 
 function CurrencyHeaderRow({ code }: { code: IsoCurrencyCode }) {
   const url = currencyFlagUrl(code);
@@ -716,25 +678,25 @@ function CurrenciesInner() {
               >
                 24h Δ
               </th>
-              <SortableHeader
+              <CurrencySortHeader
                 sortKey="volume24h"
                 label="24h Vol"
                 sort={headerSort}
                 onToggle={toggleSort}
               />
-              <SortableHeader
+              <CurrencySortHeader
                 sortKey="mcap"
                 label="Market Cap"
                 sort={headerSort}
                 onToggle={toggleSort}
               />
-              <SortableHeader
+              <CurrencySortHeader
                 sortKey="liquidity"
                 label="Liquidity"
                 sort={headerSort}
                 onToggle={toggleSort}
               />
-              <SortableHeader
+              <CurrencySortHeader
                 sortKey="holderCount"
                 label="Holders"
                 sort={headerSort}

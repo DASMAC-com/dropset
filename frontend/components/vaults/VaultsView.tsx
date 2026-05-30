@@ -3,14 +3,13 @@
 import NumberFlow from "@number-flow/react";
 import { useWalletConnection } from "@solana/react-hooks";
 import { useMemo, useState } from "react";
-import {
-  ArrowUpDown,
-  ChevronDown,
-  ChevronUp,
-  ExternalLink,
-  Info,
-} from "@/components/icons";
+import { ExternalLink } from "@/components/icons";
 import { CopyButton } from "@/components/ui/CopyButton";
+import {
+  SortableHeader,
+  type SortDir,
+  type SortState,
+} from "@/components/ui/SortableHeader";
 import { VaultActionDialog } from "@/components/vaults/VaultActionDialog";
 import { shortenMint } from "@/lib/data/currencies";
 import {
@@ -25,6 +24,7 @@ import {
   vaultApr24h,
   vaultMetric,
 } from "@/lib/data/vaults";
+import { useAppEvent } from "@/lib/events";
 import { explorerAddressUrl } from "@/lib/explorer";
 import { FORMATS } from "@/lib/format/formats";
 import { type Rgb, useFlagColor } from "@/lib/ui/flagColor";
@@ -34,8 +34,9 @@ const COLSPAN = 8;
 const APR_TOOLTIP =
   "Annualized returns for depositors, based on the fees this vault accrued over the last 24 hours.";
 
-type SortDir = "asc" | "desc";
-type SortState = { key: MetricKey; direction: SortDir } | null;
+// Pin the generic shared header to this table's metric keys so the literal
+// `sortKey` props type-check against `sort` / `onToggle`.
+const VaultSortHeader = SortableHeader<MetricKey>;
 
 // Order two metric values; nulls (zero-TVL APR) always sink to the bottom
 // regardless of direction.
@@ -97,58 +98,6 @@ function DepositCell({ connected }: { connected: boolean }) {
         <span className="text-muted-fg">—</span>
       )}
     </td>
-  );
-}
-
-function SortableHeader({
-  sortKey,
-  label,
-  sort,
-  onToggle,
-  info,
-}: {
-  sortKey: MetricKey;
-  label: string;
-  sort: SortState;
-  onToggle: (key: MetricKey) => void;
-  info?: string;
-}) {
-  const active = sort?.key === sortKey;
-  const Icon = !active
-    ? ArrowUpDown
-    : sort.direction === "desc"
-      ? ChevronDown
-      : ChevronUp;
-  return (
-    <th
-      scope="col"
-      className="sticky top-14 z-20 border-border border-r bg-muted p-0 last:border-r-0"
-    >
-      <div className="flex items-center justify-end gap-1 px-3 py-2">
-        <button
-          type="button"
-          onClick={() => onToggle(sortKey)}
-          className={`flex cursor-pointer select-none items-center gap-1 text-right font-medium outline-none transition-colors focus:outline-none focus-visible:outline-none ${active ? "text-foreground" : "text-muted-fg hover:text-foreground"}`}
-        >
-          {label}
-          <Icon size={12} />
-        </button>
-        {info && (
-          <span className="group relative inline-flex items-center">
-            <Info
-              size={12}
-              className="text-muted-fg transition-colors group-hover:text-foreground"
-            />
-            <span
-              role="tooltip"
-              className="pointer-events-none absolute top-full right-0 z-30 mt-1 w-56 rounded-md border border-border bg-background px-2 py-1.5 text-left font-normal text-[11px] text-muted-fg normal-case opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100"
-            >
-              {info}
-            </span>
-          </span>
-        )}
-      </div>
-    </th>
   );
 }
 
@@ -293,7 +242,7 @@ function VaultRow({
           </span>
         </div>
       </td>
-      <td className="border-border border-r px-3 py-2 align-middle last:border-r-0">
+      <td className="w-px whitespace-nowrap border-border border-r px-3 py-2 align-middle last:border-r-0">
         <div className="flex items-center gap-1">
           <span
             className="font-mono text-foreground text-xs"
@@ -342,7 +291,7 @@ function VaultRow({
 export function VaultsView() {
   const { connected } = useWalletConnection();
   const [groupByPair, setGroupByPair] = useState(true);
-  const [sort, setSort] = useState<SortState>(null);
+  const [sort, setSort] = useState<SortState<MetricKey>>(null);
   const [dialog, setDialog] = useState<{
     market: VaultMarket;
     vault: Vault;
@@ -360,6 +309,10 @@ export function VaultsView() {
       if (prev.direction === "desc") return { key, direction: "asc" };
       return null;
     });
+
+  // Keyboard shortcuts (see lib/ui/shortcuts.ts → vaults context).
+  useAppEvent("toggleGroupByPair", () => setGroupByPair((g) => !g));
+  useAppEvent("vaultsSort", (key) => toggleSort(key));
 
   // Grouped: sort the groups by aggregate, and each group's vaults by the same
   // metric.
@@ -423,33 +376,33 @@ export function VaultsView() {
                 scope="col"
                 className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0"
               >
-                Pair / Vault
+                Pair
               </th>
               <th
                 scope="col"
-                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0"
+                className="sticky top-14 z-20 w-px whitespace-nowrap border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0"
               >
                 Leader
               </th>
-              <SortableHeader
+              <VaultSortHeader
                 sortKey="tvl"
                 label="TVL"
                 sort={sort}
                 onToggle={toggleSort}
               />
-              <SortableHeader
+              <VaultSortHeader
                 sortKey="volume24h"
                 label="24h Vol"
                 sort={sort}
                 onToggle={toggleSort}
               />
-              <SortableHeader
+              <VaultSortHeader
                 sortKey="fees24h"
                 label="24h Fees"
                 sort={sort}
                 onToggle={toggleSort}
               />
-              <SortableHeader
+              <VaultSortHeader
                 sortKey="apr24h"
                 label="APR 24h"
                 sort={sort}
@@ -466,7 +419,7 @@ export function VaultsView() {
                 scope="col"
                 className="sticky top-14 z-20 bg-muted px-3 py-2 text-right font-medium"
               >
-                Manage
+                Position
               </th>
             </tr>
           </thead>

@@ -6,14 +6,16 @@ import { emit } from "../events";
 
 // Single source of truth for app-wide keyboard shortcuts, grouped by context.
 // `global` shortcuts fire on every page; page-specific contexts (`swap`,
-// `currencies`) layer on top. The combined set for a route must have no
-// duplicate keys — see assertNoCollisions below.
-export type ShortcutContext = "swap" | "currencies";
+// `currencies`, `vaults`) layer on top, as does the page-aware Navigation set
+// (see navShortcuts). The combined set for a route must have no duplicate keys
+// — see assertNoCollisions below.
+export type ShortcutContext = "swap" | "currencies" | "vaults";
 
 // Section headings shown in the help dialog. Order shortcuts within each
 // context so groups cluster together — the help dialog renders groups in
 // first-appearance order.
 export type ShortcutGroup =
+  | "Navigation"
   | "General"
   | "Tokens"
   | "Trade"
@@ -50,14 +52,31 @@ export const GLOBAL_SHORTCUTS: ShortcutSpec[] = [
   },
 ];
 
+// Page-aware navigation: s / c / v jump to Swap / Currencies / Vaults from any
+// page. Each is offered only on the pages it isn't already on, so a page's own
+// initial stays free for a page action (e.g. `s` = slippage on /swap). These
+// are layered ahead of the page-specific shortcuts in shortcutsForPath.
+const NAV_TARGETS = [
+  { context: "swap", key: "s", path: "/swap", label: "Swap" },
+  { context: "currencies", key: "c", path: "/currencies", label: "Currencies" },
+  { context: "vaults", key: "v", path: "/vaults", label: "Vaults" },
+] as const satisfies {
+  context: ShortcutContext;
+  key: string;
+  path: string;
+  label: string;
+}[];
+
+const navShortcuts = (current: ShortcutContext | null): ShortcutSpec[] =>
+  NAV_TARGETS.filter((t) => t.context !== current).map((t) => ({
+    key: t.key,
+    description: `Go to ${t.label}`,
+    group: "Navigation",
+    run: ({ router }) => router.push(t.path),
+  }));
+
 export const SHORTCUTS_BY_CONTEXT: Record<ShortcutContext, ShortcutSpec[]> = {
   swap: [
-    {
-      key: "c",
-      description: "Go to Currencies",
-      group: "General",
-      run: ({ router }) => router.push("/currencies"),
-    },
     {
       key: "f",
       description: "Open the From picker",
@@ -169,12 +188,6 @@ export const SHORTCUTS_BY_CONTEXT: Record<ShortcutContext, ShortcutSpec[]> = {
   ],
   currencies: [
     {
-      key: "s",
-      description: "Go to Swap",
-      group: "General",
-      run: ({ router }) => router.push("/swap"),
-    },
-    {
       key: "/",
       description: "Focus the search input",
       group: "Search",
@@ -199,12 +212,6 @@ export const SHORTCUTS_BY_CONTEXT: Record<ShortcutContext, ShortcutSpec[]> = {
       run: () => emit("toggleGroupByCurrency"),
     },
     {
-      key: "v",
-      description: "Sort by 24h volume",
-      group: "Sort & display",
-      run: () => emit("currenciesSort", "volume24h"),
-    },
-    {
       key: "m",
       description: "Sort by market cap",
       group: "Sort & display",
@@ -223,12 +230,48 @@ export const SHORTCUTS_BY_CONTEXT: Record<ShortcutContext, ShortcutSpec[]> = {
       run: () => emit("currenciesSort", "holderCount"),
     },
   ],
+  vaults: [
+    {
+      key: "g",
+      description: "Toggle Group by pair",
+      group: "Sort & display",
+      run: () => emit("toggleGroupByPair"),
+    },
+    {
+      key: "t",
+      description: "Sort by TVL",
+      group: "Sort & display",
+      run: () => emit("vaultsSort", "tvl"),
+    },
+    {
+      key: "v",
+      description: "Sort by 24h volume",
+      group: "Sort & display",
+      run: () => emit("vaultsSort", "volume24h"),
+    },
+    {
+      key: "f",
+      description: "Sort by 24h fees",
+      group: "Sort & display",
+      run: () => emit("vaultsSort", "fees24h"),
+    },
+    {
+      key: "a",
+      description: "Sort by 24h APR",
+      group: "Sort & display",
+      run: () => emit("vaultsSort", "apr24h"),
+    },
+  ],
 };
 
 const assertNoCollisions = (): void => {
   for (const ctx of Object.keys(SHORTCUTS_BY_CONTEXT) as ShortcutContext[]) {
     const seen = new Map<string, string>();
-    for (const s of [...GLOBAL_SHORTCUTS, ...SHORTCUTS_BY_CONTEXT[ctx]]) {
+    for (const s of [
+      ...navShortcuts(ctx),
+      ...SHORTCUTS_BY_CONTEXT[ctx],
+      ...GLOBAL_SHORTCUTS,
+    ]) {
       const k = s.key.toLowerCase();
       const prev = seen.get(k);
       if (prev) {
@@ -242,17 +285,19 @@ const assertNoCollisions = (): void => {
 };
 assertNoCollisions();
 
-// Page-specific specs come first so the page's nav-to-other-page shortcut
-// (tagged "General") leads the General section, with the global wallet/help
-// keys following inside the same group.
+const CONTEXT_BY_PATH: Record<string, ShortcutContext> = {
+  "/swap": "swap",
+  "/currencies": "currencies",
+  "/vaults": "vaults",
+};
+
+// Navigation leads (so it heads the help dialog), then the page-specific
+// shortcuts, then the global wallet/help keys. On unknown routes there's no
+// page context, so all three nav targets are offered.
 export const shortcutsForPath = (pathname: string): ShortcutSpec[] => {
-  const specific =
-    pathname === "/swap"
-      ? SHORTCUTS_BY_CONTEXT.swap
-      : pathname === "/currencies"
-        ? SHORTCUTS_BY_CONTEXT.currencies
-        : [];
-  return [...specific, ...GLOBAL_SHORTCUTS];
+  const context = CONTEXT_BY_PATH[pathname] ?? null;
+  const specific = context ? SHORTCUTS_BY_CONTEXT[context] : [];
+  return [...navShortcuts(context), ...specific, ...GLOBAL_SHORTCUTS];
 };
 
 const isTextEditable = (target: EventTarget | null): boolean =>
