@@ -12,7 +12,7 @@ import {
   type SortState,
 } from "@/components/ui/SortableHeader";
 import { VaultActionDialog } from "@/components/vaults/VaultActionDialog";
-import { shortenMint } from "@/lib/data/currencies";
+import { shortenMint, stablecoinDecimals } from "@/lib/data/currencies";
 import { positionBasket, positionPnl } from "@/lib/data/pnl";
 import {
   MOCK_OWNER,
@@ -37,7 +37,7 @@ import { FORMATS } from "@/lib/format/formats";
 import { groupedRowClassName } from "@/lib/ui/groupedRows";
 
 const APR_TOOLTIP =
-  "What you earn in a year from trading fees if the last 24 hours kept up. This does not count money made or lost when prices move.";
+  "What you earn in a year from the spread the market makers quote, if the last 24 hours kept up. This does not count money made or lost when prices move.";
 
 // Pin the generic shared header to this table's metric keys so the literal
 // `sortKey` props type-check against `sort` / `onToggle`.
@@ -113,9 +113,11 @@ function AprCell({ apr }: { apr: number | null }) {
   );
 }
 
-// Trim a token amount to 3 decimals with grouping for the position readout.
-const fmtAmount = (n: number): string =>
-  Number(n.toFixed(3)).toLocaleString("en-US", { maximumFractionDigits: 3 });
+// Format a token amount to that token's own decimals for the position readout.
+const fmtAmount = (n: number, symbol: string): string =>
+  n.toLocaleString("en-US", {
+    maximumFractionDigits: stablecoinDecimals(symbol),
+  });
 
 const fmtUsd = (n: number): string =>
   `$${n.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
@@ -139,7 +141,8 @@ function PositionValue({
   );
   return (
     <span className="whitespace-nowrap font-mono text-foreground text-xs">
-      {fmtAmount(baseOut)} {market.base} / {fmtAmount(quoteOut)} {market.quote}{" "}
+      {fmtAmount(baseOut, market.base)} {market.base} /{" "}
+      {fmtAmount(quoteOut, market.quote)} {market.quote}{" "}
       <span className="text-muted-fg">({fmtUsd(currentValue)})</span>
     </span>
   );

@@ -68,3 +68,34 @@ export const positionPnl = (
     yieldPctSinceOpen,
   };
 };
+
+export type WithdrawalPreview = {
+  baseOut: number;
+  quoteOut: number;
+  value: number;
+  realizedPnl: number;
+  remainingValue: number;
+};
+
+// Preview redeeming a fraction `w` of the position. Shares are one fungible
+// claim, so a withdrawal is always a pro-rata slice of the *whole* basket: it
+// returns w of each leg and realizes w of the net PnL (you can't withdraw only
+// the yield leg or only the FX leg). `fraction` is clamped to [0, 1]; at 1 the
+// preview equals the full position and the VaultDepositor PDA would close.
+export const withdrawalPreview = (
+  position: VaultPosition,
+  vault: Vault,
+  refNow: number,
+  fraction: number,
+): WithdrawalPreview => {
+  const w = Math.min(1, Math.max(0, fraction));
+  const { baseOut, quoteOut } = positionBasket(position, vault);
+  const { currentValue, netPnl } = positionPnl(position, vault, refNow);
+  return {
+    baseOut: w * baseOut,
+    quoteOut: w * quoteOut,
+    value: w * currentValue,
+    realizedPnl: w * netPnl,
+    remainingValue: (1 - w) * currentValue,
+  };
+};
