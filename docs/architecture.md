@@ -1036,18 +1036,33 @@ Both `Deposit` and `Withdraw` realize the vault first — see
 
 ### Deposit
 
-Caller specifies a target `shares_out` and a max basket
-`(max_base_in, max_quote_in)` for slippage protection. The basket
-required at the current vault ratio is:
+Caller sizes the deposit by **one leg** — a base amount *or* a quote
+amount — and passes a max basket `(max_base_in, max_quote_in)` for
+slippage protection. The argument is a tagged
+`amount_in: { Base(u64) | Quote(u64) }`: the depositor commits the
+leg they hold ("add 1,000 USDC") and the other leg follows from the
+vault's current ratio, mirroring the linked inputs in the deposit UI.
+The sized leg fixes `shares_out`, and the basket is then derived from
+`shares_out` at the current ratio:
 
 ```text
+shares_out =
+  floor(amount_in × total_shares / base_atoms)   // amount_in = Base(_)
+  floor(amount_in × total_shares / quote_atoms)  // amount_in = Quote(_)
+
 base_in  = ceil(shares_out × base_atoms  / total_shares)
 quote_in = ceil(shares_out × quote_atoms / total_shares)
 ```
 
-Rounding up keeps any dust on the depositor's side, preserving VPS
-for existing depositors. The basket is transferred from the
-depositor to the treasuries, then:
+`shares_out` is rounded **down** and the basket **up**, so the
+depositor always backs their minted shares with a full pro-rata
+basket; any rounding dust stays on the depositor's side (their sized
+leg is an upper bound — `base_in ≤ amount_in` when sizing by base,
+and symmetrically for quote), preserving VPS for existing depositors
+(invariant I1). The instruction reverts if `base_in > max_base_in`
+or `quote_in > max_quote_in` — the ratio moved beyond the caller's
+tolerance. The basket is transferred from the depositor to the
+treasuries, then:
 
 - **Leader path** (`signer == vault.leader`): increment
   `Vault.leader_shares` by `shares_out`. No `VaultDepositor`.
@@ -1073,8 +1088,10 @@ the instruction reverts. The floor is the vault's own
 ATA load needed. See **Vault → Skin-in-the-game floor**.
 
 **Seeding (first deposit).** If `total_shares == 0`, the vault has
-never been seeded. The first depositor **must** be the leader and
-must supply `base_in > 0 && quote_in > 0` — a zero leg would yield
+never been seeded. There is no ratio yet to derive one leg from, so
+single-leg sizing does not apply: the first depositor **must** be the
+leader and must supply both legs explicitly,
+`base_in > 0 && quote_in > 0` — a zero leg would yield
 `total_shares = 0` and re-trigger seeding on the next deposit (and
 divide by zero in the pro-rata basket math). The instruction sets
 `total_shares := isqrt(base_in × quote_in)`,
