@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import type { MouseEvent } from "react";
 import { Keyboard } from "@/components/icons";
 import { WalletButton } from "@/components/wallet/WalletButton";
 import { emit } from "@/lib/events";
@@ -11,6 +12,12 @@ const navClass = (active: boolean) =>
   active
     ? "inline-flex h-9 items-center rounded-md border border-muted-fg/40 bg-foreground/[0.07] px-3 font-medium text-foreground text-sm no-underline"
     : "inline-flex h-9 items-center rounded-md px-3 font-medium text-muted-fg text-sm no-underline hover:bg-muted hover:text-foreground";
+
+// After a mouse click the link keeps DOM focus, so its focus outline lingers
+// on the pill even after we've navigated away. Drop focus on click; keyboard
+// users still get the focus ring (they don't trigger this path on Enter).
+const blurOnClick = (e: MouseEvent<HTMLAnchorElement>) =>
+  e.currentTarget.blur();
 
 export function Header() {
   const pathname = usePathname();
@@ -36,6 +43,7 @@ export function Header() {
             href="/swap"
             aria-current={pathname === "/swap" ? "page" : undefined}
             className={navClass(pathname === "/swap")}
+            onClick={blurOnClick}
           >
             Swap
           </Link>
@@ -43,6 +51,7 @@ export function Header() {
             href="/currencies"
             aria-current={pathname === "/currencies" ? "page" : undefined}
             className={navClass(pathname === "/currencies")}
+            onClick={blurOnClick}
           >
             Currencies
           </Link>
@@ -50,6 +59,7 @@ export function Header() {
             href="/vaults"
             aria-current={pathname === "/vaults" ? "page" : undefined}
             className={navClass(pathname === "/vaults")}
+            onClick={blurOnClick}
           >
             Vaults
           </Link>

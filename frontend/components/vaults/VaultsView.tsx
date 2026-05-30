@@ -31,7 +31,7 @@ import { explorerAddressUrl } from "@/lib/explorer";
 import { FORMATS } from "@/lib/format/formats";
 
 const APR_TOOLTIP =
-  "Net annualized returns to depositors from spread fees over the last 24h, after the leader's profit share. Excludes FX price moves — this is spread accrual only.";
+  "What you earn in a year from trading fees if the last 24 hours kept up. This does not count money made or lost when prices move.";
 
 // Pin the generic shared header to this table's metric keys so the literal
 // `sortKey` props type-check against `sort` / `onToggle`.
@@ -107,25 +107,12 @@ function AprCell({ apr }: { apr: number | null }) {
   );
 }
 
-// The connected user's deposit value in a vault — "$-" when they hold no
-// position. Only rendered while a wallet is connected.
-function YourDepositCell({
-  vault,
-  position,
-}: {
-  vault: Vault;
-  position: VaultPosition | null;
-}) {
-  return (
-    <td className="border-border border-r px-3 py-2 text-right align-middle font-mono text-foreground tabular-nums last:border-r-0">
-      {position ? (
-        <NumberFlow value={positionUsd(vault, position)} format={FORMATS.usd} />
-      ) : (
-        <span className="text-muted-fg">$-</span>
-      )}
-    </td>
-  );
-}
+// Trim a token amount to 3 decimals with grouping for the position readout.
+const fmtAmount = (n: number): string =>
+  Number(n.toFixed(3)).toLocaleString("en-US", { maximumFractionDigits: 3 });
+
+const fmtUsd = (n: number): string =>
+  `$${n.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 
 // Two flags rendered as full SVGs side by side. The Twemoji artwork is already
 // a rounded rectangle, so we don't clip it to a circle (that produced a stray
@@ -319,17 +306,30 @@ function VaultRow({
       <AprCell apr={vaultApr24h(vault)} />
       <UsdCell value={vault.tvl} />
       <UsdCell value={vault.volume24h} />
-      {connected && <YourDepositCell vault={vault} position={position} />}
-      <td className="px-3 py-2 text-right align-middle">
-        <button
-          type="button"
-          onClick={action.onClick}
-          disabled={action.disabled}
-          title={actionTitle}
-          className="rounded border border-border bg-background px-3 py-1 font-medium text-foreground text-xs transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-fg disabled:hover:border-border disabled:hover:text-muted-fg"
-        >
-          {action.label}
-        </button>
+      <td className="px-3 py-2 align-middle">
+        <div className="flex items-center justify-end gap-3">
+          {connected &&
+            (position ? (
+              <span className="whitespace-nowrap font-mono text-foreground text-xs">
+                {fmtAmount(position.base)} {market.base} /{" "}
+                {fmtAmount(position.quote)} {market.quote}{" "}
+                <span className="text-muted-fg">
+                  ({fmtUsd(positionUsd(vault, position))})
+                </span>
+              </span>
+            ) : (
+              <span className="font-mono text-muted-fg text-xs">$-</span>
+            ))}
+          <button
+            type="button"
+            onClick={action.onClick}
+            disabled={action.disabled}
+            title={actionTitle}
+            className="shrink-0 rounded border border-border bg-background px-3 py-1 font-medium text-foreground text-xs transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-fg disabled:hover:border-border disabled:hover:text-muted-fg"
+          >
+            {action.label}
+          </button>
+        </div>
       </td>
     </tr>
   );
@@ -410,9 +410,8 @@ export function VaultsView() {
       return next;
     });
 
-  // Columns: Pair, Leader, APR, TVL, Vol, [Your Deposit], action. The deposit
-  // column only exists while connected.
-  const colSpan = connected ? 7 : 6;
+  // Columns: Pair, Leader, APR, TVL, Vol, Your Position.
+  const colSpan = 6;
   const hasResults = groupByPair ? groups.length > 0 : flatVaults.length > 0;
 
   return (
@@ -486,19 +485,11 @@ export function VaultsView() {
                 sort={sort}
                 onToggle={toggleSort}
               />
-              {connected && (
-                <th
-                  scope="col"
-                  className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0"
-                >
-                  Your Deposit
-                </th>
-              )}
               <th
                 scope="col"
                 className="sticky top-14 z-20 bg-muted px-3 py-2 text-right font-medium"
               >
-                <span className="sr-only">Manage</span>
+                Your Position
               </th>
             </tr>
           </thead>

@@ -36,6 +36,9 @@ export type MarketRaw = {
   marketPubkey: string;
   base: string;
   quote: string;
+  // Mock signed 24h FX move of the pair (fraction). Drives the "incl. FX"
+  // leg of position PnL; the real value would come from an FX oracle.
+  fxMove24h: number;
   vaults: VaultRaw[];
 };
 
@@ -55,6 +58,7 @@ export type VaultMarket = {
   baseIconUrl: string;
   quoteIconUrl: string;
   label: string;
+  fxMove24h: number;
   vaults: Vault[];
 };
 
@@ -120,6 +124,7 @@ const VAULT_MARKETS: VaultMarket[] = (
     baseIconUrl: tokenIconUrl(m.base),
     quoteIconUrl: tokenIconUrl(m.quote),
     label: `${m.base} / ${m.quote}`,
+    fxMove24h: m.fxMove24h,
     vaults: m.vaults,
   };
 });
@@ -217,3 +222,21 @@ export type VaultPosition = { base: number; quote: number };
 // empty.
 export const positionUsd = (vault: Vault, pos: VaultPosition): number =>
   vault.baseReserve > 0 ? (pos.base / vault.baseReserve) * vault.tvl : 0;
+
+// Mock position PnL, split two ways:
+//   - exclFx: spread accrual only — what the vault earned in fees over the
+//     last 24h, the FX-neutral return depositors actually keep.
+//   - inclFx: the same plus the pair's 24h FX move applied to the position,
+//     i.e. the raw mark-to-market a holder would see.
+// Both are derived from the position's USD value; with no real holding clock
+// the "24h" figures stand in for since-deposit. Real PnL lands with the
+// indexer.
+export const positionPnl = (
+  market: VaultMarket,
+  vault: Vault,
+  pos: VaultPosition,
+): { exclFx: number; inclFx: number } => {
+  const usd = positionUsd(vault, pos);
+  const spread = usd * ((vaultApr24h(vault) ?? 0) / 365);
+  return { exclFx: spread, inclFx: spread + usd * market.fxMove24h };
+};

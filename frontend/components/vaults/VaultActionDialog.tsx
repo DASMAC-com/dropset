@@ -6,6 +6,7 @@ import { ExternalLink, X } from "@/components/icons";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { shortenMint } from "@/lib/data/currencies";
 import {
+  positionPnl,
   type Vault,
   type VaultMarket,
   type VaultPosition,
@@ -16,6 +17,16 @@ import { explorerAddressUrl } from "@/lib/explorer";
 // Format a token amount for display: trim to 6 decimals, drop trailing zeros.
 const fmt = (n: number): string =>
   Number.isFinite(n) ? Number(n.toFixed(6)).toLocaleString("en-US") : "";
+
+// Signed USD ("+$1.20" / "-$0.34") for PnL readouts.
+const signedUsd = (n: number): string =>
+  `${n >= 0 ? "+" : "-"}$${Math.abs(n).toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+
+const pnlTone = (n: number): string =>
+  n > 0 ? "text-accent-buy" : n < 0 ? "text-accent-sell" : "text-muted-fg";
 
 // Manage a single vault position. The mode is implied by whether the user
 // already holds a position: with none you deposit a fresh pro-rata basket;
@@ -129,6 +140,29 @@ export function VaultActionDialog({
                     </span>
                   </div>
                 </div>
+                {(() => {
+                  const pnl = positionPnl(market, vault, position);
+                  return (
+                    <div className="flex flex-col gap-1.5 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-fg">PnL (excl. FX)</span>
+                        <span
+                          className={`font-mono tabular-nums ${pnlTone(pnl.exclFx)}`}
+                        >
+                          {signedUsd(pnl.exclFx)}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-fg">PnL (incl. FX)</span>
+                        <span
+                          className={`font-mono tabular-nums ${pnlTone(pnl.inclFx)}`}
+                        >
+                          {signedUsd(pnl.inclFx)}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })()}
                 <button
                   type="button"
                   onClick={submitWithdraw}

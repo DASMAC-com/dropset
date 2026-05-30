@@ -4,6 +4,7 @@
       "marketPubkey": "Mkt1EURUSDCq9wTnF8xpR2vJ4hYzAe5KdLbcgUvN3sP",
       "base": "EURC",
       "quote": "USDC",
+      "fxMove24h": 0.003,
       "vaults": [
         {
           "vaultPubkey": "VautEUC1dAsmAcBootStrapq7Hk3LpZ9rWxYtcGm2Qe",
@@ -35,6 +36,7 @@
       "marketPubkey": "Mkt2EURUSDTw9TnF8xpR2vJ4hYzAe5KdLbcgUvN3sPq",
       "base": "EURC",
       "quote": "USDT",
+      "fxMove24h": 0.0028,
       "vaults": [
         {
           "vaultPubkey": "VautEUT1qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3Lb",
@@ -54,6 +56,7 @@
       "marketPubkey": "Mkt3VEURUSDCp5nRvYx2hJmGcQsXk9PqVtZ7rWmEURb",
       "base": "VEUR",
       "quote": "USDC",
+      "fxMove24h": 0.003,
       "vaults": [
         {
           "vaultPubkey": "VautVEC1dAsmAcBootStrapXk9PqVtZ7rWmYhJ2nGcQ",
@@ -73,6 +76,7 @@
       "marketPubkey": "Mkt4USDJPYw9TnF8xpR2vJ4hYzAe5KdLbcgUvN3sPq9",
       "base": "USDC",
       "quote": "GYEN",
+      "fxMove24h": -0.005,
       "vaults": [
         {
           "vaultPubkey": "VautUJY1qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3Lc",
@@ -104,6 +108,7 @@
       "marketPubkey": "Mkt5GBPUSDCp5nRvYx2hJmGcQsXk9PqVtZ7rWmEURbZ",
       "base": "TGBP",
       "quote": "USDC",
+      "fxMove24h": 0.0021,
       "vaults": [
         {
           "vaultPubkey": "VautGBC1dAsmAcBootStrapXk9PqVtZ7rWmYhJ2nGcR",
@@ -135,6 +140,7 @@
       "marketPubkey": "Mkt6VGBPUSDCw9TnF8xpR2vJ4hYzAe5KdLbcgUvN3sP",
       "base": "VGBP",
       "quote": "USDC",
+      "fxMove24h": 0.0021,
       "vaults": [
         {
           "vaultPubkey": "VautVGC1qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3Le",
@@ -154,6 +160,7 @@
       "marketPubkey": "Mkt7USDCHFw9TnF8xpR2vJ4hYzAe5KdLbcgUvN3sPq9",
       "base": "USDC",
       "quote": "VCHF",
+      "fxMove24h": -0.0012,
       "vaults": [
         {
           "vaultPubkey": "VautUCF1qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3Lf",
@@ -173,6 +180,7 @@
       "marketPubkey": "Mkt8USDCADk9PqVtZ7rWmYhJ2nGcQsXdAsmAcBoot3w",
       "base": "USDC",
       "quote": "CADC",
+      "fxMove24h": -0.004,
       "vaults": [
         {
           "vaultPubkey": "VautUCD1dAsmAcBootStrapYhJ2nGcQsXk9PqVtZ7rWm",
@@ -192,6 +200,7 @@
       "marketPubkey": "Mkt9AUDUSDCk9PqVtZ7rWmYhJ2nGcQsXdAsmAcBoot3",
       "base": "AUDD",
       "quote": "USDC",
+      "fxMove24h": 0.006,
       "vaults": [
         {
           "vaultPubkey": "VautAUC1qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3Lg",
