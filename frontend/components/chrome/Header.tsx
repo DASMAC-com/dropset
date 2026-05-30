@@ -63,6 +63,11 @@ export function Header() {
           >
             Vaults
           </Link>
+          {pathname === "/vaults" && (
+            <span className="inline-flex h-9 items-center rounded-md border border-amber-500/50 bg-amber-500/15 px-2 font-semibold text-[10px] text-amber-400 uppercase tracking-wide">
+              Preview · mock data
+            </span>
+          )}
         </nav>
         <button
           type="button"

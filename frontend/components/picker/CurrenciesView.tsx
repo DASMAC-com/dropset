@@ -34,6 +34,7 @@ import {
 } from "@/lib/hooks/useUsdQuote";
 import { type Side, useSwapStore, useSwapStoreApi } from "@/lib/store";
 import { useFlagColor } from "@/lib/ui/flagColor";
+import { groupedRowClassName } from "@/lib/ui/groupedRows";
 import { useSwapNav } from "@/lib/ui/swapUrl";
 
 const COLSPAN = 9;
@@ -213,8 +214,6 @@ const StablecoinRow = memo(function StablecoinRow({
   rowIndex: number;
   groupSize: number;
 }) {
-  const striped = groupSize >= 2 && rowIndex % 2 === 1;
-  const isLastInGroup = rowIndex === groupSize - 1;
   const info = useTokenInfo(s.mint);
   const change = info?.priceChange24h;
   const changeTone =
@@ -251,7 +250,7 @@ const StablecoinRow = memo(function StablecoinRow({
   return (
     <tr
       id={s.symbol.toLowerCase()}
-      className={`scroll-mt-24 border-border border-t ${isLastInGroup ? "border-b" : ""} ${striped ? "bg-muted/70" : ""}`}
+      className={`scroll-mt-24 ${groupedRowClassName(rowIndex, groupSize)}`}
     >
       <td className="border-border border-r px-3 py-2 align-top last:border-r-0">
         <div className="flex items-center gap-2">

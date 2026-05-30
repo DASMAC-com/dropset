@@ -73,6 +73,13 @@ export function VaultActionDialog({
     );
   };
 
+  // Mock wallet balance ~2% of the pooled reserves, so "Max" fills a plausible
+  // pro-rata basket for the vault. Real balances arrive with the wallet
+  // integration.
+  const MAX_DEPOSIT_FRACTION = 0.02;
+  const maxBase = vault.baseReserve * MAX_DEPOSIT_FRACTION;
+  const maxQuote = vault.quoteReserve * MAX_DEPOSIT_FRACTION;
+
   const base = Number.parseFloat(baseAmount);
   const quote = Number.parseFloat(quoteAmount);
   const validBasket = base > 0 && quote > 0;
@@ -183,29 +190,53 @@ export function VaultActionDialog({
                   <span className="text-muted-fg text-xs">
                     Base · {market.base}
                   </span>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={baseAmount}
-                    onChange={(e) => onBaseChange(e.target.value)}
-                    placeholder="0.00"
-                    disabled={depositBlocked}
-                    className="h-10 rounded-md border border-border bg-muted px-3 font-mono text-foreground text-sm outline-none placeholder:text-muted-fg focus:border-accent disabled:cursor-not-allowed disabled:opacity-50"
-                  />
+                  <div className="relative">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={baseAmount}
+                      onChange={(e) => onBaseChange(e.target.value)}
+                      placeholder="0.00"
+                      disabled={depositBlocked}
+                      className="h-10 w-full rounded-md border border-border bg-muted pr-14 pl-3 font-mono text-foreground text-sm outline-none placeholder:text-muted-fg focus:border-accent disabled:cursor-not-allowed disabled:opacity-50"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onBaseChange(String(Number(maxBase.toFixed(6))))
+                      }
+                      disabled={depositBlocked || maxBase <= 0}
+                      className="-translate-y-1/2 absolute top-1/2 right-2 rounded border border-border bg-background px-1.5 py-0.5 font-medium text-[10px] text-muted-fg uppercase transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Max
+                    </button>
+                  </div>
                 </label>
                 <label className="flex flex-col gap-1.5">
                   <span className="text-muted-fg text-xs">
                     Quote · {market.quote}
                   </span>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={quoteAmount}
-                    onChange={(e) => onQuoteChange(e.target.value)}
-                    placeholder="0.00"
-                    disabled={depositBlocked}
-                    className="h-10 rounded-md border border-border bg-muted px-3 font-mono text-foreground text-sm outline-none placeholder:text-muted-fg focus:border-accent disabled:cursor-not-allowed disabled:opacity-50"
-                  />
+                  <div className="relative">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={quoteAmount}
+                      onChange={(e) => onQuoteChange(e.target.value)}
+                      placeholder="0.00"
+                      disabled={depositBlocked}
+                      className="h-10 w-full rounded-md border border-border bg-muted pr-14 pl-3 font-mono text-foreground text-sm outline-none placeholder:text-muted-fg focus:border-accent disabled:cursor-not-allowed disabled:opacity-50"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onQuoteChange(String(Number(maxQuote.toFixed(6))))
+                      }
+                      disabled={depositBlocked || maxQuote <= 0}
+                      className="-translate-y-1/2 absolute top-1/2 right-2 rounded border border-border bg-background px-1.5 py-0.5 font-medium text-[10px] text-muted-fg uppercase transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Max
+                    </button>
+                  </div>
                 </label>
                 <p className="text-muted-fg text-xs">
                   {ratio === null

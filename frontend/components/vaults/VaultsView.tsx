@@ -29,6 +29,7 @@ import {
 import { emit, useAppEvent } from "@/lib/events";
 import { explorerAddressUrl } from "@/lib/explorer";
 import { FORMATS } from "@/lib/format/formats";
+import { groupedRowClassName } from "@/lib/ui/groupedRows";
 
 const APR_TOOLTIP =
   "What you earn in a year from trading fees if the last 24 hours kept up. This does not count money made or lost when prices move.";
@@ -188,7 +189,7 @@ function FxGroupHeading({
           <FlagPair
             base={group.baseFlagUrl}
             quote={group.quoteFlagUrl}
-            size={32}
+            size={48}
           />
           <span className="font-semibold text-foreground text-xl">
             {group.label}
@@ -221,12 +222,16 @@ function VaultRow({
   grouped,
   connected,
   position,
+  rowIndex,
+  groupSize,
   onManage,
 }: {
   entry: GroupedVault;
   grouped: boolean;
   connected: boolean;
   position: VaultPosition | null;
+  rowIndex: number;
+  groupSize: number;
   onManage: (market: VaultMarket, vault: Vault) => void;
 }) {
   const { market, vault } = entry;
@@ -256,7 +261,7 @@ function VaultRow({
       : undefined;
 
   return (
-    <tr className="border-border border-t bg-muted/40">
+    <tr className={groupedRowClassName(rowIndex, groupSize)}>
       <td
         className={`border-border border-r py-2 pr-3 align-middle last:border-r-0 ${grouped ? "pl-10" : "pl-3"}`}
       >
@@ -271,7 +276,7 @@ function VaultRow({
           <TokenPair
             base={market.baseIconUrl}
             quote={market.quoteIconUrl}
-            size={18}
+            size={28}
           />
           <span className="font-mono font-medium text-foreground">
             {market.label}
@@ -416,21 +421,7 @@ export function VaultsView() {
 
   return (
     <div className="mx-auto max-w-6xl px-6 pt-3 pb-16">
-      <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="font-semibold text-foreground text-lg">Vaults</h1>
-            <span className="rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 font-medium text-[10px] text-accent uppercase tracking-wide">
-              Preview
-            </span>
-          </div>
-          <p className="text-muted-fg text-sm">
-            Back a leader's vault and share in spread capture.{" "}
-            <span className="text-muted-fg/80">
-              All figures shown are mock data.
-            </span>
-          </p>
-        </div>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <SearchBox
             value={query}
@@ -449,6 +440,10 @@ export function VaultsView() {
             Group by pair
           </label>
         </div>
+        <p className="text-muted-fg text-xs">
+          <span className="font-medium text-amber-400">Preview</span> — all
+          figures shown are mock data.
+        </p>
       </div>
       <div className="rounded-lg border border-border">
         <table className="w-full min-w-[860px] text-left text-sm">
@@ -510,25 +505,29 @@ export function VaultsView() {
                   group={group}
                   colSpan={colSpan}
                 />,
-                ...vaults.map((entry) => (
+                ...vaults.map((entry, i) => (
                   <VaultRow
                     key={entry.vault.vaultPubkey}
                     entry={entry}
                     grouped
                     connected={connected}
                     position={positions.get(entry.vault.vaultPubkey) ?? null}
+                    rowIndex={i}
+                    groupSize={vaults.length}
                     onManage={onManage}
                   />
                 )),
               ])
             ) : (
-              flatVaults.map((entry) => (
+              flatVaults.map((entry, i) => (
                 <VaultRow
                   key={entry.vault.vaultPubkey}
                   entry={entry}
                   grouped={false}
                   connected={connected}
                   position={positions.get(entry.vault.vaultPubkey) ?? null}
+                  rowIndex={i}
+                  groupSize={flatVaults.length}
                   onManage={onManage}
                 />
               ))
