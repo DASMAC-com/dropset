@@ -12,8 +12,8 @@ import {
   type SortState,
 } from "@/components/ui/SortableHeader";
 import { VaultActionDialog } from "@/components/vaults/VaultActionDialog";
-import { shortenMint, stablecoinDecimals } from "@/lib/data/currencies";
-import { positionBasket, positionPnl } from "@/lib/data/pnl";
+import { shortenMint } from "@/lib/data/currencies";
+import { positionPnl } from "@/lib/data/pnl";
 import {
   MOCK_OWNER,
   userPosition,
@@ -113,37 +113,24 @@ function AprCell({ apr }: { apr: number | null }) {
   );
 }
 
-// Format a token amount to that token's own decimals for the position readout.
-const fmtAmount = (n: number, symbol: string): string =>
-  n.toLocaleString("en-US", {
-    maximumFractionDigits: stablecoinDecimals(symbol),
-  });
-
-const fmtUsd = (n: number): string =>
-  `$${n.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
-
-// The connected user's basket in a vault — "<base> / <quote> ($value)" — using
-// the vault's reserve ratio as the display reference price stand-in.
+// The connected user's position value in a vault, marked at the vault's reserve
+// ratio (the display reference price stand-in). Just the USD figure; the basket
+// breakdown lives in the manage dialog.
 function PositionValue({
-  market,
   vault,
   position,
 }: {
-  market: VaultMarket;
   vault: Vault;
   position: VaultPosition;
 }) {
-  const { baseOut, quoteOut } = positionBasket(position, vault);
   const { currentValue } = positionPnl(
     position,
     vault,
     vaultReserveRatio(vault) ?? 0,
   );
   return (
-    <span className="whitespace-nowrap font-mono text-foreground text-xs">
-      {fmtAmount(baseOut, market.base)} {market.base} /{" "}
-      {fmtAmount(quoteOut, market.quote)} {market.quote}{" "}
-      <span className="text-muted-fg">({fmtUsd(currentValue)})</span>
+    <span className="font-mono text-foreground text-xs tabular-nums">
+      <NumberFlow value={currentValue} format={FORMATS.usd} />
     </span>
   );
 }
@@ -348,13 +335,9 @@ function VaultRow({
         <div className="flex items-center justify-end gap-3">
           {connected &&
             (position ? (
-              <PositionValue
-                market={market}
-                vault={vault}
-                position={position}
-              />
+              <PositionValue vault={vault} position={position} />
             ) : (
-              <span className="font-mono text-muted-fg text-xs">$0.00</span>
+              <span className="font-mono text-muted-fg text-xs">$-</span>
             ))}
           <button
             type="button"

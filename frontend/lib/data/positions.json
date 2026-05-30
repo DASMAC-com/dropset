@@ -2,7 +2,7 @@
   "positions": [
     {
       "vaultPubkey": "VautEUC1dAsmAcBootStrapq7Hk3LpZ9rWxYtcGm2Qe",
-      "owner": "Mock0wnerDepos1tor1111111111111111111111111",
+      "owner": "MockHolderBootStrapXk9PqVtZ7rWmYhJ2nGcQsLe4d",
       "shares": 10000,
       "netDeposits": 54000,
       "entryRefPrice": 1.1,
@@ -11,7 +11,7 @@
     },
     {
       "vaultPubkey": "VautAUC1qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3Lg",
-      "owner": "Mock0wnerDepos1tor1111111111111111111111111",
+      "owner": "MockHolderBootStrapXk9PqVtZ7rWmYhJ2nGcQsLe4d",
       "shares": 20000,
       "netDeposits": 20700,
       "entryRefPrice": 0.6,

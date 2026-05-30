@@ -50,9 +50,11 @@ sbpf
 société
 solana
 solscan
+soulbound
 stablecoins
 straitsx
 swatinem
+swissy
 tgbp
 tokenised
 topojson

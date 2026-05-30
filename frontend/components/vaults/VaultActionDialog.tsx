@@ -15,6 +15,8 @@ import {
 } from "@/lib/data/vaults";
 import { explorerAddressUrl } from "@/lib/explorer";
 import { FORMATS } from "@/lib/format/formats";
+import { sanitizePercent } from "@/lib/format/input";
+import { cappedPercentLabel } from "@/lib/format/percent";
 
 // Format / round a token amount to that token's own decimals, so EURC shows
 // its 6 places and a 2-decimal stable shows 2. Grouping on; trailing zeros
@@ -82,7 +84,7 @@ function PositionDetail({
       )}
       <div className="flex flex-col gap-1 border-border border-t pt-1.5">
         {detailRow(
-          "Yield (spread)",
+          "Yield",
           <span className={`font-mono tabular-nums ${pnlTone(pnl.yieldPnl)}`}>
             <NumberFlow value={pnl.yieldPnl} format={FORMATS.usd} />
           </span>,
@@ -122,55 +124,82 @@ function WithdrawSection({
   position: VaultPosition;
   onSubmit: () => void;
 }) {
-  const [fraction, setFraction] = useState(1);
+  // The percent is the configurable amount — type any value, or hit Max to
+  // fill 100%. The label caps at 99.99% unless it's an exact full redeem,
+  // sharing the swap row's rule (see cappedPercentLabel).
+  const [percent, setPercent] = useState("100");
+  const parsed = Number.parseFloat(percent);
+  const fraction = Number.isFinite(parsed)
+    ? Math.min(1, Math.max(0, parsed / 100))
+    : 0;
+  const isFull = parsed >= 100;
+  const label = cappedPercentLabel(
+    BigInt(Math.round(fraction * 10000)),
+    isFull,
+  );
+
   const refNow = vaultReserveRatio(vault) ?? position.entryRefPrice;
   const preview = withdrawalPreview(position, vault, refNow, fraction);
-  const PERCENTS = [25, 50, 75, 100];
+
   return (
     <div className="flex flex-col gap-3 border-border border-t pt-4">
-      <span className="text-muted-fg text-xs">Withdraw</span>
-      <div className="flex gap-1">
-        {PERCENTS.map((p) => {
-          const active = Math.abs(fraction - p / 100) < 1e-9;
-          return (
-            <button
-              key={p}
-              type="button"
-              onClick={() => setFraction(p / 100)}
-              className={`flex-1 rounded border px-2 py-1 font-medium text-xs transition-colors ${
-                active
-                  ? "border-accent text-accent"
-                  : "border-border text-muted-fg hover:border-accent hover:text-accent"
-              }`}
-            >
-              {p === 100 ? "Max" : `${p}%`}
-            </button>
-          );
-        })}
+      <div className="flex items-center justify-between">
+        <span className="text-muted-fg text-xs">Withdraw</span>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setPercent("100")}
+            className="rounded border border-border bg-background px-2 py-1 font-medium text-muted-fg text-xs transition-colors hover:border-accent hover:text-accent"
+          >
+            Max
+          </button>
+          <label className="flex w-16 items-center gap-1 rounded border border-border px-2 py-1 text-xs focus-within:border-accent">
+            <input
+              type="text"
+              inputMode="decimal"
+              value={percent}
+              onChange={(e) => setPercent(sanitizePercent(e.target.value))}
+              className="min-w-0 flex-1 bg-transparent text-right font-mono text-foreground outline-none"
+            />
+            <span className="text-muted-fg">%</span>
+          </label>
+        </div>
       </div>
       <div className="flex flex-col gap-1.5 rounded-md border border-border bg-muted px-3 py-3 text-xs">
-        <div className="flex flex-col gap-0.5">
-          <span className="text-muted-fg">You'll receive ≈</span>
-          <span className="font-mono text-foreground">
-            <NumberFlow value={preview.value} format={FORMATS.usd} /> (
-            {fmtToken(preview.baseOut, market.base)} {market.base} /{" "}
-            {fmtToken(preview.quoteOut, market.quote)} {market.quote})
-          </span>
-        </div>
         {detailRow(
-          "Realized PnL",
-          <span
-            className={`font-mono tabular-nums ${pnlTone(preview.realizedPnl)}`}
-          >
-            <NumberFlow value={preview.realizedPnl} format={FORMATS.usd} />
-          </span>,
-        )}
-        {detailRow(
-          "Remaining position",
+          "You'll receive ≈",
           <span className="font-mono text-foreground tabular-nums">
-            <NumberFlow value={preview.remainingValue} format={FORMATS.usd} />
+            <NumberFlow value={preview.value} format={FORMATS.usd} />
           </span>,
         )}
+        {detailRow(
+          market.base,
+          <span className="font-mono text-foreground tabular-nums">
+            {fmtToken(preview.baseOut, market.base)}
+          </span>,
+        )}
+        {detailRow(
+          market.quote,
+          <span className="font-mono text-foreground tabular-nums">
+            {fmtToken(preview.quoteOut, market.quote)}
+          </span>,
+        )}
+        <div className="flex flex-col gap-1.5 border-border border-t pt-1.5">
+          {detailRow(
+            "Realized PnL",
+            <span
+              className={`font-mono tabular-nums ${pnlTone(preview.realizedPnl)}`}
+            >
+              <NumberFlow value={preview.realizedPnl} format={FORMATS.usd} />
+            </span>,
+          )}
+          {detailRow(
+            "Remaining position",
+            <span className="font-mono text-foreground tabular-nums">
+              <NumberFlow value={preview.remainingValue} format={FORMATS.usd} />
+            </span>,
+          )}
+        </div>
       </div>
       <button
         type="button"
@@ -178,7 +207,7 @@ function WithdrawSection({
         disabled={fraction <= 0}
         className="h-10 rounded-md border border-border bg-background px-3 font-medium text-foreground text-sm transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {fraction >= 1 ? "Withdraw all" : "Withdraw"}
+        {isFull ? "Withdraw all" : `Withdraw ${label}`}
       </button>
     </div>
   );
@@ -204,8 +233,9 @@ export function VaultActionDialog({
 }) {
   const [baseAmount, setBaseAmount] = useState("");
   const [quoteAmount, setQuoteAmount] = useState("");
-  // Which leg the user is driving. The other follows pro-rata and locks, so
-  // you set one currency and the basket is determined; clearing it frees both.
+  // Which leg the user is driving (the target). The other stays editable but
+  // shows a ≈ to flag that it's derived pro-rata; editing it just flips the
+  // target. The exact amount pulled is settled on-chain at deposit time.
   const [activeLeg, setActiveLeg] = useState<"base" | "quote" | null>(null);
 
   // Quote tokens per base token; null for an empty vault (no ratio to hold).
@@ -258,26 +288,31 @@ export function VaultActionDialog({
     value: string,
     onChange: (v: string) => void,
     max: number,
-    disabled: boolean,
+    approx: boolean,
   ) => (
     <label className="flex flex-col gap-1.5">
       <span className="text-muted-fg text-xs">
         {label} · {symbol}
       </span>
       <div className="relative">
+        {approx && (
+          <span className="-translate-y-1/2 absolute top-1/2 left-3 text-muted-fg text-sm">
+            ≈
+          </span>
+        )}
         <input
           type="text"
           inputMode="decimal"
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder="0.00"
-          disabled={disabled}
-          className="h-10 w-full rounded-md border border-border bg-muted pr-14 pl-3 font-mono text-foreground text-sm outline-none placeholder:text-muted-fg focus:border-accent disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={depositBlocked}
+          className={`h-10 w-full rounded-md border border-border bg-muted pr-14 font-mono text-foreground text-sm outline-none placeholder:text-muted-fg focus:border-accent disabled:cursor-not-allowed disabled:opacity-50 ${approx ? "pl-8" : "pl-3"}`}
         />
         <button
           type="button"
           onClick={() => onChange(String(roundToken(max, symbol)))}
-          disabled={disabled || max <= 0}
+          disabled={depositBlocked || max <= 0}
           className="-translate-y-1/2 absolute top-1/2 right-2 rounded border border-border bg-background px-1.5 py-0.5 font-medium text-[10px] text-muted-fg uppercase transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
         >
           Max
@@ -291,7 +326,7 @@ export function VaultActionDialog({
             onClick={() =>
               onChange(String(roundToken((max * p) / 100, symbol)))
             }
-            disabled={disabled || max <= 0}
+            disabled={depositBlocked || max <= 0}
             className="rounded border border-border bg-background px-2 py-0.5 font-medium text-[10px] text-muted-fg transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-border disabled:hover:text-muted-fg"
           >
             {p}%
@@ -368,7 +403,7 @@ export function VaultActionDialog({
               baseAmount,
               onBaseChange,
               maxBase,
-              depositBlocked || activeLeg === "quote",
+              activeLeg === "quote",
             )}
             {amountField(
               "Quote",
@@ -376,7 +411,7 @@ export function VaultActionDialog({
               quoteAmount,
               onQuoteChange,
               maxQuote,
-              depositBlocked || activeLeg === "base",
+              activeLeg === "base",
             )}
             <p className="text-muted-fg text-xs">
               {ratio === null

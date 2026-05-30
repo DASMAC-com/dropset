@@ -7,11 +7,7 @@ import { stablecoinDecimals, stablecoinMint } from "@/lib/data/currencies";
 import { emit, useAppEvent } from "@/lib/events";
 import { formatBaseAmount, parseAmountToBase } from "@/lib/format/balance";
 import { sanitizePercent } from "@/lib/format/input";
-import {
-  formatPercentFromBps,
-  MAX_BELOW_FULL_BPS,
-  portionForPercent,
-} from "@/lib/format/percent";
+import { cappedPercentLabel, portionForPercent } from "@/lib/format/percent";
 import { useAllBalances } from "@/lib/hooks/useAllBalances";
 import { useSwapStore } from "@/lib/store";
 
@@ -61,8 +57,7 @@ export function FromBalanceButtons() {
       percentLabel = "100%";
     } else {
       const raw = (amountBase * 10000n + base / 2n) / base;
-      const bps = raw > MAX_BELOW_FULL_BPS ? MAX_BELOW_FULL_BPS : raw;
-      if (bps > 0n) percentLabel = formatPercentFromBps(bps);
+      if (raw > 0n) percentLabel = cappedPercentLabel(raw, false);
     }
   }
 

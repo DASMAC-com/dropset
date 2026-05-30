@@ -32,7 +32,7 @@ export type VaultPosition = {
 // The mock depositor whose positions the preview surfaces. A connected wallet
 // is treated as this owner so the seeded positions are visible without a real
 // indexer; the live accessor will key off the connected wallet's pubkey.
-export const MOCK_OWNER = "Mock0wnerDepos1tor1111111111111111111111111";
+export const MOCK_OWNER = "MockHolderBootStrapXk9PqVtZ7rWmYhJ2nGcQsLe4d";
 
 const POSITIONS = (positionsData as { positions: VaultPosition[] }).positions;
 
