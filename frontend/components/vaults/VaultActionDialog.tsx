@@ -204,12 +204,16 @@ export function VaultActionDialog({
 }) {
   const [baseAmount, setBaseAmount] = useState("");
   const [quoteAmount, setQuoteAmount] = useState("");
+  // Which leg the user is driving. The other follows pro-rata and locks, so
+  // you set one currency and the basket is determined; clearing it frees both.
+  const [activeLeg, setActiveLeg] = useState<"base" | "quote" | null>(null);
 
   // Quote tokens per base token; null for an empty vault (no ratio to hold).
   const ratio = vaultReserveRatio(vault);
 
   const onBaseChange = (value: string) => {
     setBaseAmount(value);
+    setActiveLeg(value.trim() ? "base" : null);
     if (ratio === null) return;
     const n = Number.parseFloat(value);
     setQuoteAmount(
@@ -218,6 +222,7 @@ export function VaultActionDialog({
   };
   const onQuoteChange = (value: string) => {
     setQuoteAmount(value);
+    setActiveLeg(value.trim() ? "quote" : null);
     if (ratio === null) return;
     const n = Number.parseFloat(value);
     setBaseAmount(
@@ -253,6 +258,7 @@ export function VaultActionDialog({
     value: string,
     onChange: (v: string) => void,
     max: number,
+    disabled: boolean,
   ) => (
     <label className="flex flex-col gap-1.5">
       <span className="text-muted-fg text-xs">
@@ -265,13 +271,13 @@ export function VaultActionDialog({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder="0.00"
-          disabled={depositBlocked}
+          disabled={disabled}
           className="h-10 w-full rounded-md border border-border bg-muted pr-14 pl-3 font-mono text-foreground text-sm outline-none placeholder:text-muted-fg focus:border-accent disabled:cursor-not-allowed disabled:opacity-50"
         />
         <button
           type="button"
           onClick={() => onChange(String(roundToken(max, symbol)))}
-          disabled={depositBlocked || max <= 0}
+          disabled={disabled || max <= 0}
           className="-translate-y-1/2 absolute top-1/2 right-2 rounded border border-border bg-background px-1.5 py-0.5 font-medium text-[10px] text-muted-fg uppercase transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
         >
           Max
@@ -285,7 +291,7 @@ export function VaultActionDialog({
             onClick={() =>
               onChange(String(roundToken((max * p) / 100, symbol)))
             }
-            disabled={depositBlocked || max <= 0}
+            disabled={disabled || max <= 0}
             className="rounded border border-border bg-background px-2 py-0.5 font-medium text-[10px] text-muted-fg transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-border disabled:hover:text-muted-fg"
           >
             {p}%
@@ -362,6 +368,7 @@ export function VaultActionDialog({
               baseAmount,
               onBaseChange,
               maxBase,
+              depositBlocked || activeLeg === "quote",
             )}
             {amountField(
               "Quote",
@@ -369,6 +376,7 @@ export function VaultActionDialog({
               quoteAmount,
               onQuoteChange,
               maxQuote,
+              depositBlocked || activeLeg === "base",
             )}
             <p className="text-muted-fg text-xs">
               {ratio === null

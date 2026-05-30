@@ -37,7 +37,7 @@ import { FORMATS } from "@/lib/format/formats";
 import { groupedRowClassName } from "@/lib/ui/groupedRows";
 
 const APR_TOOLTIP =
-  "What you earn in a year from the spread the market makers quote, if the last 24 hours kept up. This does not count money made or lost when prices move.";
+  "What you earn in a year based on the leader's skill, if the last 24 hours kept up. This does not count money made or lost when prices move.";
 
 // Pin the generic shared header to this table's metric keys so the literal
 // `sortKey` props type-check against `sort` / `onToggle`.
@@ -228,9 +228,9 @@ function FxGroupHeading({
             {group.label}
           </span>
           {group.nickname && (
-            <span className="text-muted-fg text-base">“{group.nickname}”</span>
+            <span className="text-muted-fg text-base">({group.nickname})</span>
           )}
-          <span className="ml-auto flex items-center gap-3 font-mono text-muted-fg text-xs tabular-nums">
+          <span className="flex items-center gap-3 font-mono text-muted-fg text-xs tabular-nums">
             <span>
               TVL <NumberFlow value={group.tvl} format={FORMATS.usdCompact} />
             </span>

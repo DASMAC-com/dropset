@@ -15,7 +15,7 @@
           "baseReserve": 2980000,
           "quoteReserve": 3120000,
           "totalShares": 1000000,
-          "vps": 1.03,
+          "vps": 1.15,
           "minLeaderSharePpm": 50000,
           "frozen": false,
           "outsideDepositsApproved": true
