@@ -44,6 +44,7 @@ export type AppEvents = {
   currenciesSort: CurrenciesSortKey;
   toggleGroupByPair: undefined;
   vaultsSort: VaultsSortKey;
+  focusVaultsSearch: undefined;
 };
 
 export type CurrenciesSortKey =
@@ -52,7 +53,7 @@ export type CurrenciesSortKey =
   | "liquidity"
   | "holderCount";
 
-export type VaultsSortKey = "tvl" | "volume24h" | "fees24h" | "apr24h";
+export type VaultsSortKey = "apr24h" | "tvl" | "volume24h";
 
 // Mirror of AppEvents keys as an importable constant. Use this at call
 // sites when you want refactor-friendly references (rename one entry and
@@ -82,6 +83,7 @@ export const EVENTS: { [K in keyof AppEvents]: K } = {
   currenciesSort: "currenciesSort",
   toggleGroupByPair: "toggleGroupByPair",
   vaultsSort: "vaultsSort",
+  focusVaultsSearch: "focusVaultsSearch",
 };
 
 type Handler<K extends keyof AppEvents> = (payload: AppEvents[K]) => void;

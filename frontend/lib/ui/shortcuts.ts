@@ -232,10 +232,22 @@ export const SHORTCUTS_BY_CONTEXT: Record<ShortcutContext, ShortcutSpec[]> = {
   ],
   vaults: [
     {
+      key: "/",
+      description: "Focus the search input",
+      group: "Search",
+      run: () => emit("focusVaultsSearch"),
+    },
+    {
       key: "g",
       description: "Toggle Group by pair",
       group: "Sort & display",
       run: () => emit("toggleGroupByPair"),
+    },
+    {
+      key: "a",
+      description: "Sort by 24h APR",
+      group: "Sort & display",
+      run: () => emit("vaultsSort", "apr24h"),
     },
     {
       key: "t",
@@ -248,18 +260,6 @@ export const SHORTCUTS_BY_CONTEXT: Record<ShortcutContext, ShortcutSpec[]> = {
       description: "Sort by 24h volume",
       group: "Sort & display",
       run: () => emit("vaultsSort", "volume24h"),
-    },
-    {
-      key: "f",
-      description: "Sort by 24h fees",
-      group: "Sort & display",
-      run: () => emit("vaultsSort", "fees24h"),
-    },
-    {
-      key: "a",
-      description: "Sort by 24h APR",
-      group: "Sort & display",
-      run: () => emit("vaultsSort", "apr24h"),
     },
   ],
 };

@@ -5,9 +5,10 @@
 import NumberFlow from "@number-flow/react";
 import * as Popover from "@radix-ui/react-popover";
 import { useSearchParams } from "next/navigation";
-import { memo, Suspense, useMemo, useRef, useState } from "react";
-import { ExternalLink, HelpCircle, Info, Search, X } from "@/components/icons";
+import { memo, Suspense, useMemo, useState } from "react";
+import { ExternalLink, HelpCircle, Info } from "@/components/icons";
 import { CopyButton } from "@/components/ui/CopyButton";
+import { SearchBox } from "@/components/ui/SearchBox";
 import { SortableHeader } from "@/components/ui/SortableHeader";
 import {
   CURRENCIES,
@@ -453,13 +454,6 @@ function CurrenciesInner() {
     initialSymbol ?? searchParams.get("q") ?? "",
   );
   const [strict, setStrict] = useState(initialSymbol !== null);
-  const [focused, setFocused] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useAppEvent("focusCurrenciesSearch", () => {
-    inputRef.current?.focus();
-    inputRef.current?.select();
-  });
 
   // Warm the Jupiter token-info cache on mount, then refresh every 10 s so
   // price / 24h Δ / volume / mcap / liquidity / holders stay live while the
@@ -566,62 +560,25 @@ function CurrenciesInner() {
     <div className="mx-auto max-w-6xl px-6 pt-3 pb-16">
       <div className="mb-3 flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-56 items-center gap-2 rounded-md border border-border bg-muted px-3">
-            <Search size={14} className="shrink-0 text-muted-fg" />
-            <input
-              ref={inputRef}
-              type="text"
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value);
-                // Any user edit relaxes strict mode (the picker `?` link
-                // boots the page in strict so EURC doesn't match EURCV; once
-                // the user touches the box they've signaled they want the
-                // ordinary substring search).
-                if (strict) setStrict(false);
-              }}
-              onFocus={() => setFocused(true)}
-              onBlur={() => {
-                setFocused(false);
-                commitQueryToUrl(query, strict);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") {
-                  e.preventDefault();
-                  inputRef.current?.blur();
-                } else if (e.key === "Enter") {
-                  e.preventDefault();
-                  commitQueryToUrl(query, strict);
-                  inputRef.current?.blur();
-                }
-              }}
-              placeholder="Search currencies…"
-              className="min-w-0 flex-1 bg-transparent text-foreground text-sm outline-none placeholder:text-muted-fg"
-            />
-            <kbd
-              aria-hidden
-              title={
-                focused ? "Press Esc to exit search" : "Press / to focus search"
-              }
-              className="hidden shrink-0 rounded border border-border bg-background px-1.5 py-0.5 font-mono text-[10px] text-muted-fg sm:inline-block"
-            >
-              {focused ? "Esc" : "/"}
-            </kbd>
-            {query && (
-              <button
-                type="button"
-                onClick={() => {
-                  setQuery("");
-                  if (strict) setStrict(false);
-                  commitQueryToUrl("", false);
-                }}
-                aria-label="Clear search"
-                className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-fg hover:bg-background hover:text-foreground"
-              >
-                <X size={14} />
-              </button>
-            )}
-          </div>
+          <SearchBox
+            value={query}
+            // Any user edit relaxes strict mode (the picker `?` link boots the
+            // page in strict so EURC doesn't match EURCV; once the user touches
+            // the box they've signaled they want the ordinary substring
+            // search).
+            onValueChange={(v) => {
+              setQuery(v);
+              if (strict) setStrict(false);
+            }}
+            onClear={() => {
+              setQuery("");
+              if (strict) setStrict(false);
+              commitQueryToUrl("", false);
+            }}
+            onCommit={() => commitQueryToUrl(query, strict)}
+            placeholder="Search currencies…"
+            focusEvent="focusCurrenciesSearch"
+          />
           <label className="flex select-none items-center gap-2 text-muted-fg text-xs hover:text-foreground">
             <input
               type="checkbox"

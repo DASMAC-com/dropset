@@ -197,10 +197,23 @@ export const ALL_VAULTS: GroupedVault[] = VAULT_FX_GROUPS.flatMap(
 
 // Sortable numeric metrics. APR can be null (zero TVL); callers push nulls to
 // the bottom regardless of sort direction.
-export type MetricKey = "volume24h" | "fees24h" | "tvl" | "apr24h";
+export type MetricKey = "apr24h" | "tvl" | "volume24h";
 
 export const vaultMetric = (gv: GroupedVault, key: MetricKey): number | null =>
   key === "apr24h" ? vaultApr24h(gv.vault) : gv.vault[key];
 
 export const groupMetric = (g: FxPairGroup, key: MetricKey): number | null =>
   g[key];
+
+// A depositor's (mock) position in a vault: the paired basket of base/quote
+// tokens they've supplied. Held in client state only — there's no indexer yet,
+// so the deposit/withdraw flow round-trips through this in-memory shape to let
+// the UI be exercised end to end.
+export type VaultPosition = { base: number; quote: number };
+
+// USD value of a position, derived from its share of the vault's reserves:
+// (deposited base / base reserve) × TVL. Pro-rata deposits keep base and quote
+// shares equal, so either leg gives the same fraction. Zero when the vault is
+// empty.
+export const positionUsd = (vault: Vault, pos: VaultPosition): number =>
+  vault.baseReserve > 0 ? (pos.base / vault.baseReserve) * vault.tvl : 0;
