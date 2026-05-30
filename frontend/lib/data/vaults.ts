@@ -28,6 +28,12 @@ export type VaultRaw = {
   // both legs in proportion so the vault's price isn't moved.
   baseReserve: number;
   quoteReserve: number;
+  // Total outstanding depositor shares; a position's `shares / totalShares` is
+  // its claim on the reserves (see docs/architecture.md → Depositor positions).
+  totalShares: number;
+  // Current value-per-share (`L / totalShares`), the FX-neutral skill index a
+  // position's `entryVps` is marked against for "yield since open".
+  vps: number;
   minLeaderSharePpm: number;
   frozen: boolean;
   outsideDepositsApproved: boolean;
@@ -209,34 +215,3 @@ export const vaultMetric = (gv: GroupedVault, key: MetricKey): number | null =>
 
 export const groupMetric = (g: FxPairGroup, key: MetricKey): number | null =>
   g[key];
-
-// A depositor's (mock) position in a vault: the paired basket of base/quote
-// tokens they've supplied. Held in client state only — there's no indexer yet,
-// so the deposit/withdraw flow round-trips through this in-memory shape to let
-// the UI be exercised end to end.
-export type VaultPosition = { base: number; quote: number };
-
-// USD value of a position, derived from its share of the vault's reserves:
-// (deposited base / base reserve) × TVL. Pro-rata deposits keep base and quote
-// shares equal, so either leg gives the same fraction. Zero when the vault is
-// empty.
-export const positionUsd = (vault: Vault, pos: VaultPosition): number =>
-  vault.baseReserve > 0 ? (pos.base / vault.baseReserve) * vault.tvl : 0;
-
-// Mock position PnL, split two ways:
-//   - exclFx: spread accrual only — what the vault earned in fees over the
-//     last 24h, the FX-neutral return depositors actually keep.
-//   - inclFx: the same plus the pair's 24h FX move applied to the position,
-//     i.e. the raw mark-to-market a holder would see.
-// Both are derived from the position's USD value; with no real holding clock
-// the "24h" figures stand in for since-deposit. Real PnL lands with the
-// indexer.
-export const positionPnl = (
-  market: VaultMarket,
-  vault: Vault,
-  pos: VaultPosition,
-): { exclFx: number; inclFx: number } => {
-  const usd = positionUsd(vault, pos);
-  const spread = usd * ((vaultApr24h(vault) ?? 0) / 365);
-  return { exclFx: spread, inclFx: spread + usd * market.fxMove24h };
-};

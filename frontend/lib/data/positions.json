@@ -1,0 +1,22 @@
+{
+  "positions": [
+    {
+      "vaultPubkey": "VautEUC1dAsmAcBootStrapq7Hk3LpZ9rWxYtcGm2Qe",
+      "owner": "Mock0wnerDepos1tor1111111111111111111111111",
+      "shares": 10000,
+      "netDeposits": 62000,
+      "entryRefPrice": 1.1,
+      "entryVps": 1.0,
+      "openedAtSlot": 290000000
+    },
+    {
+      "vaultPubkey": "VautAUC1qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3Lg",
+      "owner": "Mock0wnerDepos1tor1111111111111111111111111",
+      "shares": 20000,
+      "netDeposits": 20700,
+      "entryRefPrice": 0.6,
+      "entryVps": 1.0,
+      "openedAtSlot": 291000000
+    }
+  ]
+}

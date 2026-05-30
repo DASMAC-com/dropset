@@ -13,18 +13,23 @@ import {
 } from "@/components/ui/SortableHeader";
 import { VaultActionDialog } from "@/components/vaults/VaultActionDialog";
 import { shortenMint } from "@/lib/data/currencies";
+import { positionBasket, positionPnl } from "@/lib/data/pnl";
+import {
+  MOCK_OWNER,
+  userPosition,
+  type VaultPosition,
+} from "@/lib/data/positions";
 import {
   type FxPairGroup,
   type GroupedVault,
   groupMetric,
   type MetricKey,
-  positionUsd,
   VAULT_FX_GROUPS,
   type Vault,
   type VaultMarket,
-  type VaultPosition,
   vaultApr24h,
   vaultMetric,
+  vaultReserveRatio,
 } from "@/lib/data/vaults";
 import { emit, useAppEvent } from "@/lib/events";
 import { explorerAddressUrl } from "@/lib/explorer";
@@ -114,6 +119,31 @@ const fmtAmount = (n: number): string =>
 
 const fmtUsd = (n: number): string =>
   `$${n.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+
+// The connected user's basket in a vault — "<base> / <quote> ($value)" — using
+// the vault's reserve ratio as the display reference price stand-in.
+function PositionValue({
+  market,
+  vault,
+  position,
+}: {
+  market: VaultMarket;
+  vault: Vault;
+  position: VaultPosition;
+}) {
+  const { baseOut, quoteOut } = positionBasket(position, vault);
+  const { currentValue } = positionPnl(
+    position,
+    vault,
+    vaultReserveRatio(vault) ?? 0,
+  );
+  return (
+    <span className="whitespace-nowrap font-mono text-foreground text-xs">
+      {fmtAmount(baseOut)} {market.base} / {fmtAmount(quoteOut)} {market.quote}{" "}
+      <span className="text-muted-fg">({fmtUsd(currentValue)})</span>
+    </span>
+  );
+}
 
 // Two flags rendered as full SVGs side by side. The Twemoji artwork is already
 // a rounded rectangle, so we don't clip it to a circle (that produced a stray
@@ -315,15 +345,13 @@ function VaultRow({
         <div className="flex items-center justify-end gap-3">
           {connected &&
             (position ? (
-              <span className="whitespace-nowrap font-mono text-foreground text-xs">
-                {fmtAmount(position.base)} {market.base} /{" "}
-                {fmtAmount(position.quote)} {market.quote}{" "}
-                <span className="text-muted-fg">
-                  ({fmtUsd(positionUsd(vault, position))})
-                </span>
-              </span>
+              <PositionValue
+                market={market}
+                vault={vault}
+                position={position}
+              />
             ) : (
-              <span className="font-mono text-muted-fg text-xs">$-</span>
+              <span className="font-mono text-muted-fg text-xs">$0.00</span>
             ))}
           <button
             type="button"
@@ -345,13 +373,17 @@ export function VaultsView() {
   const [groupByPair, setGroupByPair] = useState(true);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortState<MetricKey>>(null);
-  const [positions, setPositions] = useState<Map<string, VaultPosition>>(
-    () => new Map(),
-  );
   const [dialog, setDialog] = useState<{
     market: VaultMarket;
     vault: Vault;
   } | null>(null);
+
+  // A connected wallet is treated as the mock depositor, so the seeded
+  // positions surface. Disconnected → no positions. The accessor is the data
+  // seam; a real fetch keyed on the connected pubkey drops in here later.
+  const owner = connected ? MOCK_OWNER : null;
+  const positionFor = (vaultPubkey: string): VaultPosition | null =>
+    owner ? userPosition(owner, vaultPubkey) : null;
 
   // There's always an effective sort; default 24h volume desc.
   const effective: { key: MetricKey; direction: SortDir } = sort ?? {
@@ -405,15 +437,6 @@ export function VaultsView() {
 
   const onManage = (market: VaultMarket, vault: Vault) =>
     setDialog({ market, vault });
-
-  const deposit = (vaultPubkey: string, basket: VaultPosition) =>
-    setPositions((prev) => new Map(prev).set(vaultPubkey, basket));
-  const withdraw = (vaultPubkey: string) =>
-    setPositions((prev) => {
-      const next = new Map(prev);
-      next.delete(vaultPubkey);
-      return next;
-    });
 
   // Columns: Pair, Leader, APR, TVL, Vol, Your Position.
   const colSpan = 6;
@@ -511,7 +534,7 @@ export function VaultsView() {
                     entry={entry}
                     grouped
                     connected={connected}
-                    position={positions.get(entry.vault.vaultPubkey) ?? null}
+                    position={positionFor(entry.vault.vaultPubkey)}
                     rowIndex={i}
                     groupSize={vaults.length}
                     onManage={onManage}
@@ -525,7 +548,7 @@ export function VaultsView() {
                   entry={entry}
                   grouped={false}
                   connected={connected}
-                  position={positions.get(entry.vault.vaultPubkey) ?? null}
+                  position={positionFor(entry.vault.vaultPubkey)}
                   rowIndex={i}
                   groupSize={flatVaults.length}
                   onManage={onManage}
@@ -539,9 +562,7 @@ export function VaultsView() {
         <VaultActionDialog
           market={dialog.market}
           vault={dialog.vault}
-          position={positions.get(dialog.vault.vaultPubkey) ?? null}
-          onDeposit={(basket) => deposit(dialog.vault.vaultPubkey, basket)}
-          onWithdraw={() => withdraw(dialog.vault.vaultPubkey)}
+          position={positionFor(dialog.vault.vaultPubkey)}
           open={true}
           onOpenChange={(open) => {
             if (!open) setDialog(null);
