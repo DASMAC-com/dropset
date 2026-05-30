@@ -15,7 +15,7 @@ import {
 } from "@/lib/data/vaults";
 import { explorerAddressUrl } from "@/lib/explorer";
 import { FORMATS } from "@/lib/format/formats";
-import { sanitizePercent } from "@/lib/format/input";
+import { sanitizeAmount, sanitizePercent } from "@/lib/format/input";
 import { cappedPercentLabel } from "@/lib/format/percent";
 
 // Format / round a token amount to that token's own decimals, so EURC shows
@@ -33,11 +33,35 @@ const roundToken = (n: number, symbol: string): number =>
 const pnlTone = (n: number): string =>
   n > 0 ? "text-accent-buy" : n < 0 ? "text-accent-sell" : "text-foreground";
 
-const detailRow = (label: string, node: ReactNode) => (
+const detailRow = (label: ReactNode, node: ReactNode) => (
   <div className="flex items-center justify-between">
     <span className="text-muted-fg">{label}</span>
     {node}
   </div>
+);
+
+// Small round token logo, used in place of the words "Base"/"Quote".
+function TokenIcon({ src, symbol }: { src: string; symbol: string }) {
+  return (
+    // biome-ignore lint/performance/noImgElement: small static icon, no optimization needed
+    <img
+      src={src}
+      alt=""
+      aria-hidden
+      width={16}
+      height={16}
+      className="rounded-full"
+      title={symbol}
+    />
+  );
+}
+
+// A token label: icon + symbol.
+const tokenLabel = (src: string, symbol: string): ReactNode => (
+  <span className="flex items-center gap-1 text-foreground">
+    <TokenIcon src={src} symbol={symbol} />
+    {symbol}
+  </span>
 );
 
 // Read-side position detail: entrance amount, current value, net PnL split into
@@ -173,13 +197,13 @@ function WithdrawSection({
           </span>,
         )}
         {detailRow(
-          market.base,
+          tokenLabel(market.baseIconUrl, market.base),
           <span className="font-mono text-foreground tabular-nums">
             {fmtToken(preview.baseOut, market.base)}
           </span>,
         )}
         {detailRow(
-          market.quote,
+          tokenLabel(market.quoteIconUrl, market.quote),
           <span className="font-mono text-foreground tabular-nums">
             {fmtToken(preview.quoteOut, market.quote)}
           </span>,
@@ -260,15 +284,29 @@ export function VaultActionDialog({
     );
   };
 
-  // Mock wallet balance ~2% of the pooled reserves, so the presets fill a
+  // Mock wallet balance ~2% of the pooled reserves, so Max / a percent fills a
   // plausible pro-rata basket. Real balances arrive with the wallet
   // integration.
   const MAX_DEPOSIT_FRACTION = 0.02;
   const maxBase = vault.baseReserve * MAX_DEPOSIT_FRACTION;
-  const maxQuote = vault.quoteReserve * MAX_DEPOSIT_FRACTION;
 
-  // Percent-of-balance presets, per currency (the linked leg follows pro-rata).
-  const PRESET_PERCENTS = [10, 25, 50];
+  // A single Max / percent control (not a row of presets) drives the base leg;
+  // the quote follows pro-rata via onBaseChange.
+  const [depositPercent, setDepositPercent] = useState("");
+  const applyDepositPercent = (raw: string) => {
+    const p = sanitizePercent(raw);
+    setDepositPercent(p);
+    const n = Number.parseFloat(p);
+    onBaseChange(
+      Number.isFinite(n)
+        ? String(roundToken((maxBase * n) / 100, market.base))
+        : "",
+    );
+  };
+  const maxDeposit = () => {
+    setDepositPercent("100");
+    onBaseChange(String(roundToken(maxBase, market.base)));
+  };
 
   const base = Number.parseFloat(baseAmount);
   const quote = Number.parseFloat(quoteAmount);
@@ -282,18 +320,17 @@ export function VaultActionDialog({
     onOpenChange(false);
   };
 
+  // Icon + symbol stands in for the "Base"/"Quote" label. Input is capped to
+  // the token's own decimals; the derived leg shows a ≈ prefix.
   const amountField = (
-    label: string,
+    iconUrl: string,
     symbol: string,
     value: string,
     onChange: (v: string) => void,
-    max: number,
     approx: boolean,
   ) => (
     <label className="flex flex-col gap-1.5">
-      <span className="text-muted-fg text-xs">
-        {label} · {symbol}
-      </span>
+      <span className="text-xs">{tokenLabel(iconUrl, symbol)}</span>
       <div className="relative">
         {approx && (
           <span className="-translate-y-1/2 absolute top-1/2 left-3 text-muted-fg text-sm">
@@ -304,34 +341,13 @@ export function VaultActionDialog({
           type="text"
           inputMode="decimal"
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) =>
+            onChange(sanitizeAmount(e.target.value, stablecoinDecimals(symbol)))
+          }
           placeholder="0.00"
           disabled={depositBlocked}
-          className={`h-10 w-full rounded-md border border-border bg-muted pr-14 font-mono text-foreground text-sm outline-none placeholder:text-muted-fg focus:border-accent disabled:cursor-not-allowed disabled:opacity-50 ${approx ? "pl-8" : "pl-3"}`}
+          className={`h-10 w-full rounded-md border border-border bg-muted pr-3 font-mono text-foreground text-sm outline-none placeholder:text-muted-fg focus:border-accent disabled:cursor-not-allowed disabled:opacity-50 ${approx ? "pl-8" : "pl-3"}`}
         />
-        <button
-          type="button"
-          onClick={() => onChange(String(roundToken(max, symbol)))}
-          disabled={depositBlocked || max <= 0}
-          className="-translate-y-1/2 absolute top-1/2 right-2 rounded border border-border bg-background px-1.5 py-0.5 font-medium text-[10px] text-muted-fg uppercase transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          Max
-        </button>
-      </div>
-      <div className="flex gap-1">
-        {PRESET_PERCENTS.map((p) => (
-          <button
-            key={p}
-            type="button"
-            onClick={() =>
-              onChange(String(roundToken((max * p) / 100, symbol)))
-            }
-            disabled={depositBlocked || max <= 0}
-            className="rounded border border-border bg-background px-2 py-0.5 font-medium text-[10px] text-muted-fg transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-border disabled:hover:text-muted-fg"
-          >
-            {p}%
-          </button>
-        ))}
       </div>
     </label>
   );
@@ -398,21 +414,44 @@ export function VaultActionDialog({
             )}
 
             {amountField(
-              "Base",
+              market.baseIconUrl,
               market.base,
               baseAmount,
               onBaseChange,
-              maxBase,
               activeLeg === "quote",
             )}
             {amountField(
-              "Quote",
+              market.quoteIconUrl,
               market.quote,
               quoteAmount,
               onQuoteChange,
-              maxQuote,
               activeLeg === "base",
             )}
+            <div className="flex items-center justify-between">
+              <span className="text-muted-fg text-xs">Amount</span>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={maxDeposit}
+                  disabled={depositBlocked || maxBase <= 0}
+                  className="rounded border border-border bg-background px-2 py-1 font-medium text-muted-fg text-xs transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Max
+                </button>
+                <label className="flex w-16 items-center gap-1 rounded border border-border px-2 py-1 text-xs focus-within:border-accent">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={depositPercent}
+                    onChange={(e) => applyDepositPercent(e.target.value)}
+                    placeholder="0"
+                    disabled={depositBlocked}
+                    className="min-w-0 flex-1 bg-transparent text-right font-mono text-foreground outline-none disabled:cursor-not-allowed"
+                  />
+                  <span className="text-muted-fg">%</span>
+                </label>
+              </div>
+            </div>
             <p className="text-muted-fg text-xs">
               {ratio === null
                 ? "This vault has no reserves yet, so amounts aren't linked."

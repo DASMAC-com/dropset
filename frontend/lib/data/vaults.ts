@@ -207,11 +207,24 @@ export const ALL_VAULTS: GroupedVault[] = VAULT_FX_GROUPS.flatMap(
 );
 
 // Sortable numeric metrics. APR can be null (zero TVL); callers push nulls to
-// the bottom regardless of sort direction.
-export type MetricKey = "apr24h" | "tvl" | "volume24h";
+// the bottom regardless of sort direction. "position" is the connected user's
+// position value — it depends on wallet state, so vaultMetric/groupMetric
+// return null for it and the view supplies the value.
+export type MetricKey = "apr24h" | "tvl" | "volume24h" | "position";
 
-export const vaultMetric = (gv: GroupedVault, key: MetricKey): number | null =>
-  key === "apr24h" ? vaultApr24h(gv.vault) : gv.vault[key];
+export const vaultMetric = (
+  gv: GroupedVault,
+  key: MetricKey,
+): number | null => {
+  if (key === "apr24h") return vaultApr24h(gv.vault);
+  if (key === "tvl") return gv.vault.tvl;
+  if (key === "volume24h") return gv.vault.volume24h;
+  return null;
+};
 
-export const groupMetric = (g: FxPairGroup, key: MetricKey): number | null =>
-  g[key];
+export const groupMetric = (g: FxPairGroup, key: MetricKey): number | null => {
+  if (key === "apr24h") return g.apr24h;
+  if (key === "tvl") return g.tvl;
+  if (key === "volume24h") return g.volume24h;
+  return null;
+};

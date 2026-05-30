@@ -2,7 +2,7 @@
 
 import NumberFlow from "@number-flow/react";
 import { useWalletConnection } from "@solana/react-hooks";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { ExternalLink } from "@/components/icons";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { SearchBox } from "@/components/ui/SearchBox";
@@ -368,8 +368,36 @@ export function VaultsView() {
   // positions surface. Disconnected → no positions. The accessor is the data
   // seam; a real fetch keyed on the connected pubkey drops in here later.
   const owner = connected ? MOCK_OWNER : null;
-  const positionFor = (vaultPubkey: string): VaultPosition | null =>
-    owner ? userPosition(owner, vaultPubkey) : null;
+  const positionFor = useCallback(
+    (vaultPubkey: string): VaultPosition | null =>
+      owner ? userPosition(owner, vaultPubkey) : null,
+    [owner],
+  );
+
+  // The connected user's position value in a vault (0 if none) — the sort key
+  // "position" can't live in vaultMetric since it depends on wallet state.
+  // Memoized so the sort useMemos below have a stable dependency.
+  const positionValue = useCallback(
+    (vault: Vault): number => {
+      const p = positionFor(vault.vaultPubkey);
+      return p
+        ? positionPnl(p, vault, vaultReserveRatio(vault) ?? 0).currentValue
+        : 0;
+    },
+    [positionFor],
+  );
+  const vaultSortValue = useCallback(
+    (gv: GroupedVault, key: MetricKey): number | null =>
+      key === "position" ? positionValue(gv.vault) : vaultMetric(gv, key),
+    [positionValue],
+  );
+  const groupSortValue = useCallback(
+    (g: FxPairGroup, key: MetricKey): number | null =>
+      key === "position"
+        ? g.vaults.reduce((sum, gv) => sum + positionValue(gv.vault), 0)
+        : groupMetric(g, key),
+    [positionValue],
+  );
 
   // There's always an effective sort; default 24h volume desc.
   const effective: { key: MetricKey; direction: SortDir } = sort ?? {
@@ -396,18 +424,22 @@ export function VaultsView() {
     const { key, direction } = effective;
     return [...VAULT_FX_GROUPS]
       .sort((a, b) =>
-        cmpMetric(groupMetric(a, key), groupMetric(b, key), direction),
+        cmpMetric(groupSortValue(a, key), groupSortValue(b, key), direction),
       )
       .map((group) => ({
         group,
         vaults: group.vaults
           .filter((entry) => matchesQuery(q, group, entry))
           .sort((a, b) =>
-            cmpMetric(vaultMetric(a, key), vaultMetric(b, key), direction),
+            cmpMetric(
+              vaultSortValue(a, key),
+              vaultSortValue(b, key),
+              direction,
+            ),
           ),
       }))
       .filter((g) => g.vaults.length > 0);
-  }, [effective, q]);
+  }, [effective, q, groupSortValue, vaultSortValue]);
 
   // Ungrouped: one flat, filtered + sorted list of every vault.
   const flatVaults = useMemo(() => {
@@ -417,9 +449,9 @@ export function VaultsView() {
     )
       .map(({ entry }) => entry)
       .sort((a, b) =>
-        cmpMetric(vaultMetric(a, key), vaultMetric(b, key), direction),
+        cmpMetric(vaultSortValue(a, key), vaultSortValue(b, key), direction),
       );
-  }, [effective, q]);
+  }, [effective, q, vaultSortValue]);
 
   const onManage = (market: VaultMarket, vault: Vault) =>
     setDialog({ market, vault });
@@ -489,12 +521,12 @@ export function VaultsView() {
                 sort={sort}
                 onToggle={toggleSort}
               />
-              <th
-                scope="col"
-                className="sticky top-14 z-20 bg-muted px-3 py-2 text-right font-medium"
-              >
-                Your Position
-              </th>
+              <VaultSortHeader
+                sortKey="position"
+                label="Your Position"
+                sort={sort}
+                onToggle={toggleSort}
+              />
             </tr>
           </thead>
           <tbody>
