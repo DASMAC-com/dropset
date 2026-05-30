@@ -144,6 +144,12 @@ export function VaultActionDialog({
   const maxBase = vault.baseReserve * MAX_DEPOSIT_FRACTION;
   const maxQuote = vault.quoteReserve * MAX_DEPOSIT_FRACTION;
 
+  // Percent-of-balance presets, mirroring the swap page's amount row. Sets the
+  // base leg to that fraction of the mock balance; the quote follows pro-rata.
+  const PRESET_PERCENTS = [10, 25, 50];
+  const applyPercent = (percent: number) =>
+    onBaseChange(String(Number(((maxBase * percent) / 100).toFixed(6))));
+
   const base = Number.parseFloat(baseAmount);
   const quote = Number.parseFloat(quoteAmount);
   const validBasket = base > 0 && quote > 0;
@@ -194,13 +200,31 @@ export function VaultActionDialog({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-background/80 backdrop-blur-2xl" />
         <Dialog.Content
           aria-describedby={undefined}
           className="-translate-x-1/2 -translate-y-1/2 fixed top-1/2 left-1/2 z-50 w-80 rounded-2xl border border-border bg-background shadow-xl"
         >
           <div className="flex items-center justify-between border-border border-b px-5 py-4">
-            <Dialog.Title className="font-semibold text-foreground">
+            <Dialog.Title className="flex items-center gap-2 font-semibold text-foreground">
+              <span className="flex shrink-0 items-center gap-1">
+                {/* biome-ignore lint/performance/noImgElement: tiny static SVG, no optimization needed */}
+                <img
+                  src={market.baseFlagUrl}
+                  alt=""
+                  aria-hidden
+                  width={20}
+                  height={20}
+                />
+                {/* biome-ignore lint/performance/noImgElement: tiny static SVG, no optimization needed */}
+                <img
+                  src={market.quoteFlagUrl}
+                  alt=""
+                  aria-hidden
+                  width={20}
+                  height={20}
+                />
+              </span>
               {position ? "Manage" : "Open position"} · {market.label}
             </Dialog.Title>
             <Dialog.Close className="rounded-md p-1 text-muted-fg transition-colors hover:bg-muted hover:text-foreground">
@@ -250,6 +274,20 @@ export function VaultActionDialog({
               () => onQuoteChange(String(Number(maxQuote.toFixed(6)))),
               maxQuote,
             )}
+            <div className="flex items-center gap-1">
+              <span className="mr-1 text-muted-fg text-xs">Balance</span>
+              {PRESET_PERCENTS.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => applyPercent(p)}
+                  disabled={depositBlocked || maxBase <= 0}
+                  className="rounded border border-border bg-background px-2 py-1 font-medium text-muted-fg text-xs transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-border disabled:hover:text-muted-fg"
+                >
+                  {p}%
+                </button>
+              ))}
+            </div>
             <p className="text-muted-fg text-xs">
               {ratio === null
                 ? "This vault has no reserves yet, so amounts aren't linked."
