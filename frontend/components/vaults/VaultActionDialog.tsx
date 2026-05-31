@@ -41,6 +41,16 @@ const fmtToken = (n: number, symbol: string): string =>
 // decimal places. Empty string for non-finite (clears the field).
 const padToken = (n: number, symbol: string): string =>
   Number.isFinite(n) ? n.toFixed(stablecoinDecimals(symbol)) : "";
+// A wallet / receivable balance: full token precision as needed — up to the
+// token's own decimals, trailing zeros trimmed, but at least two places so it
+// reads as a currency balance. Matches the swap picker's wallet readout.
+const fmtBalance = (n: number, symbol: string): string =>
+  Number.isFinite(n)
+    ? n.toLocaleString("en-US", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: stablecoinDecimals(symbol),
+      })
+    : "—";
 
 const pnlTone = (n: number): string =>
   n > 0 ? "text-accent-buy" : n < 0 ? "text-accent-sell" : "text-foreground";
@@ -249,13 +259,13 @@ function WithdrawSection({
         {detailRow(
           tokenLabel(market.baseIconUrl, market.base),
           <span className="font-mono text-foreground tabular-nums">
-            {fmtToken(preview.baseOut, market.base)}
+            {fmtBalance(preview.baseOut, market.base)}
           </span>,
         )}
         {detailRow(
           tokenLabel(market.quoteIconUrl, market.quote),
           <span className="font-mono text-foreground tabular-nums">
-            {fmtToken(preview.quoteOut, market.quote)}
+            {fmtBalance(preview.quoteOut, market.quote)}
           </span>,
         )}
         <div className="flex flex-col gap-1.5 border-border border-t pt-1.5">
@@ -366,9 +376,10 @@ export function VaultActionDialog({
     onOpenChange(false);
   };
 
-  // Icon + symbol stands in for the "Base"/"Quote" label. Input is capped to
-  // the token's own decimals; the derived leg shows a ≈ prefix. A Max / percent
-  // control sits under each leg (of that leg's mock balance).
+  // One deposit leg, styled after the attached zap-deposit card: a Max / %
+  // strip across the top, the token icon + symbol beside a large amount input,
+  // and a small line below carrying the wallet balance (left, swap-style) and
+  // the leg's ≈ USD value (right). The derived leg shows a ≈ before its amount.
   const amountField = (
     iconUrl: string,
     symbol: string,
@@ -378,6 +389,7 @@ export function VaultActionDialog({
     max: number,
     percent: string,
     setPercent: (p: string) => void,
+    usdValue: number,
   ) => {
     const setFromPercent = (raw: string) => {
       const p = sanitizePercent(raw);
@@ -386,63 +398,79 @@ export function VaultActionDialog({
       onChange(Number.isFinite(n) ? padToken((max * n) / 100, symbol) : "");
     };
     return (
-      <label className="flex flex-col gap-1.5">
-        <span className="text-xs">{tokenLabel(iconUrl, symbol)}</span>
-        <div className="relative">
-          {approx && (
-            <span className="-translate-y-1/2 absolute top-1/2 left-3 text-muted-fg text-sm">
-              ≈
-            </span>
-          )}
-          <input
-            type="text"
-            inputMode="decimal"
-            value={value}
-            onChange={(e) =>
-              onChange(
-                sanitizeAmount(e.target.value, stablecoinDecimals(symbol)),
-              )
-            }
-            placeholder="0.00"
-            disabled={depositBlocked}
-            className={`h-10 w-full rounded-md border border-border bg-muted pr-3 font-mono text-foreground text-sm outline-none placeholder:text-muted-fg focus:border-accent disabled:cursor-not-allowed disabled:opacity-50 ${approx ? "pl-8" : "pl-3"}`}
-          />
+      <label className="flex flex-col gap-2 rounded-xl border border-border bg-muted px-3 py-2.5">
+        {/* Max / % strip across the top of the card. */}
+        <div className="flex items-center justify-end gap-1">
+          <button
+            type="button"
+            onClick={() => {
+              setPercent("100");
+              onChange(padToken(max, symbol));
+            }}
+            disabled={depositBlocked || max <= 0}
+            className="rounded border border-border bg-background px-2 py-0.5 font-medium text-[10px] text-muted-fg uppercase transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Max
+          </button>
+          <label className="flex w-14 items-center gap-1 rounded border border-border bg-background px-2 py-0.5 text-[10px] focus-within:border-accent">
+            <input
+              type="text"
+              inputMode="decimal"
+              value={percent}
+              onChange={(e) => setFromPercent(e.target.value)}
+              placeholder="0"
+              disabled={depositBlocked}
+              className="min-w-0 flex-1 bg-transparent text-right font-mono text-foreground outline-none disabled:cursor-not-allowed"
+            />
+            <span className="text-muted-fg">%</span>
+          </label>
         </div>
-        <div className="flex items-center justify-between gap-1">
-          {/* Mock wallet balance for this leg, mirroring the swap picker's
-              wallet readout — sits opposite the Max / % cluster. */}
+        {/* Token icon + symbol beside the large amount input. */}
+        <div className="flex items-center justify-between gap-2">
+          <span className="flex shrink-0 items-center gap-2">
+            {/* biome-ignore lint/performance/noImgElement: small static icon, no optimization needed */}
+            <img
+              src={iconUrl}
+              alt=""
+              aria-hidden
+              width={28}
+              height={28}
+              className="h-7 w-7 rounded-full"
+            />
+            <span className="font-mono font-semibold text-foreground text-lg">
+              {symbol}
+            </span>
+          </span>
+          <span className="flex min-w-0 flex-1 items-center justify-end gap-1">
+            {approx && <span className="text-muted-fg text-lg">≈</span>}
+            <input
+              type="text"
+              inputMode="decimal"
+              value={value}
+              onChange={(e) =>
+                onChange(
+                  sanitizeAmount(e.target.value, stablecoinDecimals(symbol)),
+                )
+              }
+              placeholder="0.00"
+              disabled={depositBlocked}
+              className="min-w-0 flex-1 bg-transparent text-right font-mono text-foreground text-lg outline-none placeholder:text-muted-fg disabled:cursor-not-allowed disabled:opacity-50"
+            />
+          </span>
+        </div>
+        {/* Wallet balance (left, full decimals as needed) and the leg's ≈ USD
+            value (right), mirroring the swap token row's sub-line. */}
+        <div className="flex items-center justify-between gap-2 font-mono text-[11px] text-muted-fg tabular-nums">
           <span
-            className="flex items-center gap-1 text-[10px] text-muted-fg tabular-nums"
+            className="flex items-center gap-1"
             title={`Your ${symbol} balance`}
           >
-            <Wallet size={11} aria-hidden />
-            <span className="font-mono">{fmtToken(max, symbol)}</span>
+            <Wallet size={12} aria-hidden />
+            {fmtBalance(max, symbol)} {symbol}
           </span>
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={() => {
-                setPercent("100");
-                onChange(padToken(max, symbol));
-              }}
-              disabled={depositBlocked || max <= 0}
-              className="rounded border border-border bg-background px-2 py-0.5 font-medium text-[10px] text-muted-fg uppercase transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Max
-            </button>
-            <label className="flex w-14 items-center gap-1 rounded border border-border px-2 py-0.5 text-[10px] focus-within:border-accent">
-              <input
-                type="text"
-                inputMode="decimal"
-                value={percent}
-                onChange={(e) => setFromPercent(e.target.value)}
-                placeholder="0"
-                disabled={depositBlocked}
-                className="min-w-0 flex-1 bg-transparent text-right font-mono text-foreground outline-none disabled:cursor-not-allowed"
-              />
-              <span className="text-muted-fg">%</span>
-            </label>
-          </div>
+          <span>
+            ≈ <NumberFlow value={usdValue} format={FORMATS.usd} />
+          </span>
         </div>
       </label>
     );
@@ -509,26 +537,40 @@ export function VaultActionDialog({
               />
             )}
 
-            {amountField(
-              market.baseIconUrl,
-              market.base,
-              baseAmount,
-              onBaseChange,
-              activeLeg === "quote",
-              maxBase,
-              basePercent,
-              setBasePercent,
-            )}
-            {amountField(
-              market.quoteIconUrl,
-              market.quote,
-              quoteAmount,
-              onQuoteChange,
-              activeLeg === "base",
-              maxQuote,
-              quotePercent,
-              setQuotePercent,
-            )}
+            <div className="flex flex-col gap-2">
+              {amountField(
+                market.baseIconUrl,
+                market.base,
+                baseAmount,
+                onBaseChange,
+                activeLeg === "quote",
+                maxBase,
+                basePercent,
+                setBasePercent,
+                Number.isFinite(base) ? base * (ratio ?? 0) : 0,
+              )}
+              {amountField(
+                market.quoteIconUrl,
+                market.quote,
+                quoteAmount,
+                onQuoteChange,
+                activeLeg === "base",
+                maxQuote,
+                quotePercent,
+                setQuotePercent,
+                Number.isFinite(quote) ? quote : 0,
+              )}
+              {/* Total of both legs, quote-denominated — the headline figure
+                  from the attached deposit card. */}
+              <div className="flex items-center justify-between gap-2 border-border border-t pt-2">
+                <span className="font-medium text-foreground text-sm">
+                  Total Deposit
+                </span>
+                <span className="font-mono font-semibold text-foreground tabular-nums">
+                  <NumberFlow value={depositValue} format={FORMATS.usd} />
+                </span>
+              </div>
+            </div>
             <p className="text-muted-fg text-xs">
               {ratio === null
                 ? "This vault has no reserves yet, so amounts aren't linked."
@@ -537,9 +579,9 @@ export function VaultActionDialog({
 
             {floorBreached && !depositBlocked && (
               <p className="rounded-md border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-amber-300 text-xs">
-                This deposit is too large: it would dilute the leader below
-                their {floorPct}% minimum stake in this vault, so the program
-                would reject it. Lower the amount to continue.
+                Too large — this would push the leader below their {floorPct}%
+                minimum stake, so the transaction would be rejected. Lower the
+                amount.
               </p>
             )}
             <button

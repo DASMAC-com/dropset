@@ -212,9 +212,10 @@ export const SHORTCUTS_BY_CONTEXT: Record<ShortcutContext, ShortcutSpec[]> = {
       run: () => emit("toggleGroupByCurrency"),
     },
     {
-      // c (not t) for token: t is the To-picker key, and c reads as "currency".
+      // c (not t) for token: t is the To-picker key, and c reads as "currency"
+      // — the parenthetical reinforces the mnemonic in the help dialog.
       key: "c",
-      description: "Sort by token",
+      description: "Sort by (currency-backed) token",
       group: "Sort & display",
       run: () => emit("currenciesSort", "symbol"),
     },
