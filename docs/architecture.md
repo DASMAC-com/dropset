@@ -729,6 +729,9 @@ record of both the depositor's claim and what they paid for it:
 | `entry_ref_price` | Shares-weighted average reference price (quote per base) across deposits.                                                 |
 | `entry_vps`       | Shares-weighted average VPS (`L / total_shares`) across deposits.                                                         |
 | `opened_at`       | Slot of the first deposit.                                                                                                |
+| `realized_pnl`    | **Signed** quote-denominated PnL crystallized by past withdrawals (a withdrawal can realize a loss).                      |
+| `realized_yield`  | Signed yield (ex-FX) component of `realized_pnl`.                                                                         |
+| `realized_fx`     | Signed FX component of `realized_pnl`. `realized_yield + realized_fx == realized_pnl`.                                    |
 
 Every basis field is captured from **on-chain** state at deposit
 time — `entry_vps` from the vault's `L / total_shares`,
@@ -773,6 +776,30 @@ pure skill. This is the per-depositor form of the
 **APR / yield accounting**. Because the position is soulbound, the
 basis is always the depositor's own — there is no transfer or
 lot-attribution ambiguity to resolve.
+
+**All-time PnL.** The figures above are **unrealized** — they cover
+only the shares still in the vault. Each `Withdraw` crystallizes the
+withdrawn slice into the account's `realized_*` accumulators (see
+**Withdraw**), so a depositor's lifetime figures add the two:
+
+```text
+all_time_yield = realized_yield + yield_pnl
+all_time_fx    = realized_fx    + fx_pnl
+all_time_pnl   = realized_pnl   + net_pnl = all_time_yield + all_time_fx
+```
+
+`net_deposits` is the basis of the **remaining** position (it falls
+pro-rata on withdraw), so it is *not* lifetime contributions — and
+total-ever-deposited is **not** recoverable from the account alone,
+since the slice basis released on each withdrawal
+(`released_basis = net_deposits × shares_in / shares`) is folded into
+`realized_pnl` rather than stored separately. All-time *PnL* is
+recoverable (the formulas above); to also show total deposited, add a
+monotonic `gross_deposited` field (incremented on every deposit,
+never reduced) or read it from an indexer. Because the account is
+closed at zero shares, all-time PnL spans from the first deposit to a
+full exit; carrying it across a close-and-reopen needs an external
+indexer.
 
 ## Caller mechanics
 
@@ -1122,17 +1149,34 @@ Rounding down keeps any dust in the vault for the benefit of
 remaining depositors. Then:
 
 - **Leader path** (`signer == vault.leader`): decrement
-  `Vault.leader_shares` by `shares_in`.
+  `Vault.leader_shares` by `shares_in`. The leader has no
+  `VaultDepositor`, so no basis or realized accounting applies.
 - **Outside path** (`signer != vault.leader`): decrement `shares` on
   the caller's `VaultDepositor` by `shares_in` (the PDA seeds bind the
   account to `signer`, so authority is gated by ownership and
-  `shares_in <= VaultDepositor.shares`). Reduce `net_deposits`
-  pro-rata —
-  `net_deposits' = net_deposits × (shares − shares_in) / shares` —
-  so the withdrawn slice realizes its PnL; `entry_vps` and
-  `entry_ref_price` are left unchanged (a proportional reduction
-  preserves the shares-weighted averages). When `shares` reaches 0,
-  `close` the account and return its rent to the owner.
+  `shares_in <= VaultDepositor.shares`). The withdrawn slice's PnL is
+  crystallized and the basis reduced, per the accounting below.
+
+On the outside path, before the basis is reduced the withdrawn
+slice's PnL is added to the signed `realized_*` accumulators, marked
+at the vault's current `reference_price` (`r_now`) — the same source
+`entry_ref_price` was captured from, so the realized FX/yield split is
+internally consistent. `base_out` / `quote_out` are the withdrawn
+basket above:
+
+```text
+released_basis  = net_deposits × shares_in / shares
+realized_fx    += base_out × (r_now − entry_ref_price)
+realized_yield += quote_out + base_out × entry_ref_price − released_basis
+realized_pnl   += quote_out + base_out × r_now − released_basis
+net_deposits'   = net_deposits − released_basis
+```
+
+`entry_vps` and `entry_ref_price` are left unchanged — a proportional
+reduction preserves the shares-weighted averages. When `shares`
+reaches 0, `close` the account and return its rent to the owner; this
+discards the accumulators, so all-time PnL spans one open→full-exit
+lifetime (see **Depositor positions and cost basis → All-time PnL**).
 
 `Vault.total_shares` is decremented in both paths; the basket is
 transferred from the treasuries to the caller.
