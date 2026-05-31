@@ -8,6 +8,7 @@ import { useSearchParams } from "next/navigation";
 import { memo, Suspense, useMemo, useState } from "react";
 import { ExternalLink, HelpCircle, Info } from "@/components/icons";
 import { CopyButton } from "@/components/ui/CopyButton";
+import { Flag } from "@/components/ui/Flag";
 import { SearchBox } from "@/components/ui/SearchBox";
 import { SortableHeader } from "@/components/ui/SortableHeader";
 import {
@@ -208,11 +209,13 @@ const StablecoinRow = memo(function StablecoinRow({
   s,
   rowIndex,
   groupSize,
+  showFlag,
 }: {
   code: IsoCurrencyCode;
   s: Stablecoin;
   rowIndex: number;
   groupSize: number;
+  showFlag: boolean;
 }) {
   const info = useTokenInfo(s.mint);
   const change = info?.priceChange24h;
@@ -254,6 +257,7 @@ const StablecoinRow = memo(function StablecoinRow({
     >
       <td className="border-border border-r px-3 py-2 align-top last:border-r-0">
         <div className="flex items-center gap-2">
+          {showFlag && <Flag url={currencyFlagUrl(code)} size={20} />}
           {/* biome-ignore lint/performance/noImgElement: small static icon, no optimization needed */}
           <img
             src={s.icon}
@@ -680,6 +684,7 @@ function CurrenciesInner() {
                     s={s}
                     rowIndex={i}
                     groupSize={stables.length}
+                    showFlag={false}
                   />
                 )),
               ])
@@ -691,6 +696,7 @@ function CurrenciesInner() {
                   s={s}
                   rowIndex={i}
                   groupSize={flatStables.length}
+                  showFlag
                 />
               ))
             )}

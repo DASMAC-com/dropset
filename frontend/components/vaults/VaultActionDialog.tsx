@@ -289,24 +289,12 @@ export function VaultActionDialog({
   // integration.
   const MAX_DEPOSIT_FRACTION = 0.02;
   const maxBase = vault.baseReserve * MAX_DEPOSIT_FRACTION;
+  const maxQuote = vault.quoteReserve * MAX_DEPOSIT_FRACTION;
 
-  // A single Max / percent control (not a row of presets) drives the base leg;
-  // the quote follows pro-rata via onBaseChange.
-  const [depositPercent, setDepositPercent] = useState("");
-  const applyDepositPercent = (raw: string) => {
-    const p = sanitizePercent(raw);
-    setDepositPercent(p);
-    const n = Number.parseFloat(p);
-    onBaseChange(
-      Number.isFinite(n)
-        ? String(roundToken((maxBase * n) / 100, market.base))
-        : "",
-    );
-  };
-  const maxDeposit = () => {
-    setDepositPercent("100");
-    onBaseChange(String(roundToken(maxBase, market.base)));
-  };
+  // Each leg has its own Max / percent control (of that leg's balance); setting
+  // either fills it and the other follows pro-rata via onChange.
+  const [basePercent, setBasePercent] = useState("");
+  const [quotePercent, setQuotePercent] = useState("");
 
   const base = Number.parseFloat(baseAmount);
   const quote = Number.parseFloat(quoteAmount);
@@ -321,36 +309,77 @@ export function VaultActionDialog({
   };
 
   // Icon + symbol stands in for the "Base"/"Quote" label. Input is capped to
-  // the token's own decimals; the derived leg shows a ≈ prefix.
+  // the token's own decimals; the derived leg shows a ≈ prefix. A Max / percent
+  // control sits under each leg (of that leg's mock balance).
   const amountField = (
     iconUrl: string,
     symbol: string,
     value: string,
     onChange: (v: string) => void,
     approx: boolean,
-  ) => (
-    <label className="flex flex-col gap-1.5">
-      <span className="text-xs">{tokenLabel(iconUrl, symbol)}</span>
-      <div className="relative">
-        {approx && (
-          <span className="-translate-y-1/2 absolute top-1/2 left-3 text-muted-fg text-sm">
-            ≈
-          </span>
-        )}
-        <input
-          type="text"
-          inputMode="decimal"
-          value={value}
-          onChange={(e) =>
-            onChange(sanitizeAmount(e.target.value, stablecoinDecimals(symbol)))
-          }
-          placeholder="0.00"
-          disabled={depositBlocked}
-          className={`h-10 w-full rounded-md border border-border bg-muted pr-3 font-mono text-foreground text-sm outline-none placeholder:text-muted-fg focus:border-accent disabled:cursor-not-allowed disabled:opacity-50 ${approx ? "pl-8" : "pl-3"}`}
-        />
-      </div>
-    </label>
-  );
+    max: number,
+    percent: string,
+    setPercent: (p: string) => void,
+  ) => {
+    const setFromPercent = (raw: string) => {
+      const p = sanitizePercent(raw);
+      setPercent(p);
+      const n = Number.parseFloat(p);
+      onChange(
+        Number.isFinite(n) ? String(roundToken((max * n) / 100, symbol)) : "",
+      );
+    };
+    return (
+      <label className="flex flex-col gap-1.5">
+        <span className="text-xs">{tokenLabel(iconUrl, symbol)}</span>
+        <div className="relative">
+          {approx && (
+            <span className="-translate-y-1/2 absolute top-1/2 left-3 text-muted-fg text-sm">
+              ≈
+            </span>
+          )}
+          <input
+            type="text"
+            inputMode="decimal"
+            value={value}
+            onChange={(e) =>
+              onChange(
+                sanitizeAmount(e.target.value, stablecoinDecimals(symbol)),
+              )
+            }
+            placeholder="0.00"
+            disabled={depositBlocked}
+            className={`h-10 w-full rounded-md border border-border bg-muted pr-3 font-mono text-foreground text-sm outline-none placeholder:text-muted-fg focus:border-accent disabled:cursor-not-allowed disabled:opacity-50 ${approx ? "pl-8" : "pl-3"}`}
+          />
+        </div>
+        <div className="flex items-center justify-end gap-1">
+          <button
+            type="button"
+            onClick={() => {
+              setPercent("100");
+              onChange(String(roundToken(max, symbol)));
+            }}
+            disabled={depositBlocked || max <= 0}
+            className="rounded border border-border bg-background px-2 py-0.5 font-medium text-[10px] text-muted-fg uppercase transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Max
+          </button>
+          <label className="flex w-14 items-center gap-1 rounded border border-border px-2 py-0.5 text-[10px] focus-within:border-accent">
+            <input
+              type="text"
+              inputMode="decimal"
+              value={percent}
+              onChange={(e) => setFromPercent(e.target.value)}
+              placeholder="0"
+              disabled={depositBlocked}
+              className="min-w-0 flex-1 bg-transparent text-right font-mono text-foreground outline-none disabled:cursor-not-allowed"
+            />
+            <span className="text-muted-fg">%</span>
+          </label>
+        </div>
+      </label>
+    );
+  };
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -419,6 +448,9 @@ export function VaultActionDialog({
               baseAmount,
               onBaseChange,
               activeLeg === "quote",
+              maxBase,
+              basePercent,
+              setBasePercent,
             )}
             {amountField(
               market.quoteIconUrl,
@@ -426,32 +458,10 @@ export function VaultActionDialog({
               quoteAmount,
               onQuoteChange,
               activeLeg === "base",
+              maxQuote,
+              quotePercent,
+              setQuotePercent,
             )}
-            <div className="flex items-center justify-between">
-              <span className="text-muted-fg text-xs">Amount</span>
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={maxDeposit}
-                  disabled={depositBlocked || maxBase <= 0}
-                  className="rounded border border-border bg-background px-2 py-1 font-medium text-muted-fg text-xs transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Max
-                </button>
-                <label className="flex w-16 items-center gap-1 rounded border border-border px-2 py-1 text-xs focus-within:border-accent">
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={depositPercent}
-                    onChange={(e) => applyDepositPercent(e.target.value)}
-                    placeholder="0"
-                    disabled={depositBlocked}
-                    className="min-w-0 flex-1 bg-transparent text-right font-mono text-foreground outline-none disabled:cursor-not-allowed"
-                  />
-                  <span className="text-muted-fg">%</span>
-                </label>
-              </div>
-            </div>
             <p className="text-muted-fg text-xs">
               {ratio === null
                 ? "This vault has no reserves yet, so amounts aren't linked."

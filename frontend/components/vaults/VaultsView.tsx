@@ -5,6 +5,7 @@ import { useWalletConnection } from "@solana/react-hooks";
 import { useCallback, useMemo, useState } from "react";
 import { ExternalLink } from "@/components/icons";
 import { CopyButton } from "@/components/ui/CopyButton";
+import { FlagPair } from "@/components/ui/Flag";
 import { SearchBox } from "@/components/ui/SearchBox";
 import {
   SortableHeader,
@@ -135,28 +136,6 @@ function PositionValue({
   );
 }
 
-// Two flags rendered as full SVGs side by side. The Twemoji artwork is already
-// a rounded rectangle, so we don't clip it to a circle (that produced a stray
-// border on square flags like CH).
-function FlagPair({
-  base,
-  quote,
-  size,
-}: {
-  base: string;
-  quote: string;
-  size: number;
-}) {
-  return (
-    <span className="flex shrink-0 items-center gap-1">
-      {/* biome-ignore lint/performance/noImgElement: tiny static SVG, no optimization needed */}
-      <img src={base} alt="" aria-hidden width={size} height={size} />
-      {/* biome-ignore lint/performance/noImgElement: tiny static SVG, no optimization needed */}
-      <img src={quote} alt="" aria-hidden width={size} height={size} />
-    </span>
-  );
-}
-
 // Two overlapping circular token icons (the stablecoin logos are round).
 function TokenPair({
   base,
@@ -264,7 +243,9 @@ function VaultRow({
       }
     : position
       ? {
-          label: "Withdraw",
+          // A held position can be topped off or withdrawn, so the dialog is a
+          // general "Manage", not just "Withdraw".
+          label: "Manage",
           disabled: false,
           onClick: () => onManage(market, vault),
         }
