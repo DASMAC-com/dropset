@@ -720,18 +720,43 @@ account — one per `(vault, owner)` pair, PDA-seeded by
 `("vault_depositor", vault, owner)`. It is the authoritative on-chain
 record of both the depositor's claim and what they paid for it:
 
-| Field             | Meaning                                                                                                                   |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `vault`           | The vault this position is in.                                                                                            |
-| `owner`           | The depositor; bound by the PDA seeds, so the account is non-transferable.                                                |
-| `shares`          | Pro-rata claim on the vault (the per-depositor term of the I6 invariant).                                                 |
-| `net_deposits`    | Quote-denominated principal: `Σ (quote_in + base_in × entry_ref)`. The **entrance amount**; reduced pro-rata on withdraw. |
-| `entry_ref_price` | Shares-weighted average reference price (quote per base) across deposits.                                                 |
-| `entry_vps`       | Shares-weighted average VPS (`L / total_shares`) across deposits.                                                         |
-| `opened_at`       | Slot of the first deposit.                                                                                                |
-| `realized_pnl`    | **Signed** quote-denominated PnL crystallized by past withdrawals (a withdrawal can realize a loss).                      |
-| `realized_yield`  | Signed yield (ex-FX) component of `realized_pnl`.                                                                         |
-| `realized_fx`     | Signed FX component of `realized_pnl`. `realized_yield + realized_fx == realized_pnl`.                                    |
+```rust
+struct VaultDepositor {
+    /// The vault this position is in.
+    vault: Pubkey,
+    /// The depositor. Bound by the PDA seeds
+    /// (`"vault_depositor", vault, owner`), so the account is
+    /// non-transferable — there is no authority field to reassign.
+    owner: Pubkey,
+    /// Pro-rata claim on the vault — the per-depositor term of the
+    /// I6 invariant (`leader_shares + Σ VaultDepositor.shares ==
+    /// total_shares`).
+    shares: u64,
+    /// Quote-denominated principal of the **remaining** position:
+    /// `Σ (quote_in + base_in × entry_ref)` over deposits, reduced
+    /// pro-rata on withdraw. The **entrance amount** — basis of what
+    /// is still in the vault, not lifetime contributions.
+    net_deposits: u64,
+    /// Shares-weighted average reference price (quote per base)
+    /// across deposits. Same representation as `ReferencePrice.price`.
+    entry_ref_price: Price,
+    /// Shares-weighted average VPS (`L / total_shares`) across
+    /// deposits, as Q32.32 fixed-point `u64` — same encoding as
+    /// `Vault.hwm`. Basis for the "yield since open" figure.
+    entry_vps: u64,
+    /// Slot of the first deposit.
+    opened_at: u64,
+    /// **Signed** quote-denominated PnL crystallized by past
+    /// withdrawals (a withdrawal can realize a loss). Discarded when
+    /// the account is closed at zero shares.
+    realized_pnl: i64,
+    /// Signed yield (ex-FX) component of `realized_pnl`.
+    realized_yield: i64,
+    /// Signed FX component of `realized_pnl`.
+    /// Invariant: `realized_yield + realized_fx == realized_pnl`.
+    realized_fx: i64,
+}
+```
 
 Every basis field is captured from **on-chain** state at deposit
 time — `entry_vps` from the vault's `L / total_shares`,
