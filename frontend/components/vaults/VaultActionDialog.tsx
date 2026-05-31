@@ -395,8 +395,10 @@ function DepositLeg({
           />
         </div>
         {/* Bottom line: the "Auto" pill (bottom-left) on the leg that's being
-            auto-filled to match the other, and the leg's ≈ USD value (right). */}
-        <div className="flex items-center justify-between gap-2 font-mono text-[11px] text-muted-fg tabular-nums">
+            auto-filled to match the other, and the leg's ≈ USD value (right).
+            min-h reserves the pill's height so the card doesn't grow/shrink as
+            the pill pops between legs. */}
+        <div className="flex min-h-5 items-center justify-between gap-2 font-mono text-[11px] text-muted-fg tabular-nums">
           {autoFilled ? (
             <span
               className="rounded bg-background px-1.5 py-0.5 text-[9px] uppercase tracking-wide"

@@ -462,16 +462,6 @@ export function VaultsView() {
   const onManage = (market: VaultMarket, vault: Vault) =>
     setDialog({ market, vault });
 
-  // `m` opens the manage dialog for the first vault (in the current display
-  // order) where the user holds a position. No-op when disconnected or holding
-  // nothing.
-  useAppEvent("vaultsManage", () => {
-    if (!connected) return;
-    const entries = groupByPair ? groups.flatMap((g) => g.vaults) : flatVaults;
-    const first = entries.find((e) => positionFor(e.vault.vaultPubkey));
-    if (first) setDialog({ market: first.market, vault: first.vault });
-  });
-
   // Columns: Pair, Leader, Your Position, Manage, APR, TVL, 24h Vol.
   const colSpan = 7;
   const hasResults = groupByPair ? groups.length > 0 : flatVaults.length > 0;
@@ -534,7 +524,7 @@ export function VaultsView() {
                 />
                 <th
                   scope="col"
-                  className="sticky top-14 z-20 w-px whitespace-nowrap border-border border-r bg-muted px-3 py-2 text-right font-medium"
+                  className="sticky top-14 z-20 w-px whitespace-nowrap border-border border-r bg-muted px-3 py-2 text-right font-medium normal-case"
                 >
                   Manage
                 </th>
