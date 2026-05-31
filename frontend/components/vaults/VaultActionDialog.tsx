@@ -27,8 +27,12 @@ const fmtToken = (n: number, symbol: string): string =>
         maximumFractionDigits: stablecoinDecimals(symbol),
       })
     : "";
-const roundToken = (n: number, symbol: string): number =>
-  Number(n.toFixed(stablecoinDecimals(symbol)));
+// Fill an input with a token amount at its FULL precision — exactly the
+// token's decimals, padded with trailing zeros. Used for the derived leg and
+// the Max / percent fills so e.g. picking base shows the quote to all its
+// decimal places. Empty string for non-finite (clears the field).
+const padToken = (n: number, symbol: string): string =>
+  Number.isFinite(n) ? n.toFixed(stablecoinDecimals(symbol)) : "";
 
 const pnlTone = (n: number): string =>
   n > 0 ? "text-accent-buy" : n < 0 ? "text-accent-sell" : "text-foreground";
@@ -269,19 +273,13 @@ export function VaultActionDialog({
     setBaseAmount(value);
     setActiveLeg(value.trim() ? "base" : null);
     if (ratio === null) return;
-    const n = Number.parseFloat(value);
-    setQuoteAmount(
-      Number.isFinite(n) ? String(roundToken(n * ratio, market.quote)) : "",
-    );
+    setQuoteAmount(padToken(Number.parseFloat(value) * ratio, market.quote));
   };
   const onQuoteChange = (value: string) => {
     setQuoteAmount(value);
     setActiveLeg(value.trim() ? "quote" : null);
     if (ratio === null) return;
-    const n = Number.parseFloat(value);
-    setBaseAmount(
-      Number.isFinite(n) ? String(roundToken(n / ratio, market.base)) : "",
-    );
+    setBaseAmount(padToken(Number.parseFloat(value) / ratio, market.base));
   };
 
   // Mock wallet balance ~2% of the pooled reserves, so Max / a percent fills a
@@ -325,9 +323,7 @@ export function VaultActionDialog({
       const p = sanitizePercent(raw);
       setPercent(p);
       const n = Number.parseFloat(p);
-      onChange(
-        Number.isFinite(n) ? String(roundToken((max * n) / 100, symbol)) : "",
-      );
+      onChange(Number.isFinite(n) ? padToken((max * n) / 100, symbol) : "");
     };
     return (
       <label className="flex flex-col gap-1.5">
@@ -357,7 +353,7 @@ export function VaultActionDialog({
             type="button"
             onClick={() => {
               setPercent("100");
-              onChange(String(roundToken(max, symbol)));
+              onChange(padToken(max, symbol));
             }}
             disabled={depositBlocked || max <= 0}
             className="rounded border border-border bg-background px-2 py-0.5 font-medium text-[10px] text-muted-fg uppercase transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"

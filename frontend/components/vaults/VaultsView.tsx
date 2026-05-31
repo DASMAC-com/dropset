@@ -489,24 +489,28 @@ export function VaultsView() {
                 sort={sort}
                 onToggle={toggleSort}
                 info={APR_TOOLTIP}
+                thClassName="w-px whitespace-nowrap"
               />
               <VaultSortHeader
                 sortKey="tvl"
                 label="TVL"
                 sort={sort}
                 onToggle={toggleSort}
+                thClassName="w-px whitespace-nowrap"
               />
               <VaultSortHeader
                 sortKey="volume24h"
                 label="24h Vol"
                 sort={sort}
                 onToggle={toggleSort}
+                thClassName="w-px whitespace-nowrap"
               />
               <VaultSortHeader
                 sortKey="position"
                 label="Your Position"
                 sort={sort}
                 onToggle={toggleSort}
+                thClassName="w-px whitespace-nowrap"
               />
             </tr>
           </thead>

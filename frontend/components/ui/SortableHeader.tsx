@@ -17,12 +17,16 @@ export function SortableHeader<K extends string>({
   sort,
   onToggle,
   info,
+  thClassName = "",
 }: {
   sortKey: K;
   label: string;
   sort: SortState<K>;
   onToggle: (key: K) => void;
   info?: string;
+  // Extra classes on the <th> — e.g. "w-px whitespace-nowrap" to snap the
+  // column to its content width.
+  thClassName?: string;
 }) {
   const active = sort?.key === sortKey;
   const Icon = !active
@@ -33,7 +37,7 @@ export function SortableHeader<K extends string>({
   return (
     <th
       scope="col"
-      className="sticky top-14 z-20 border-border border-r bg-muted p-0 last:border-r-0"
+      className={`sticky top-14 z-20 border-border border-r bg-muted p-0 last:border-r-0 ${thClassName}`}
     >
       <div className="flex items-center justify-end gap-1 px-3 py-2">
         <button
