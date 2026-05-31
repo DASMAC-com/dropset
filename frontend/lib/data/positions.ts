@@ -27,6 +27,14 @@ export type VaultPosition = {
   entryVps: number;
   // Slot of the first deposit.
   openedAtSlot: number;
+  // Lifetime realized-PnL accumulators (signed, quote-denominated), grown on
+  // each withdrawal as the released slice's gains are booked. 0 for a position
+  // that's never been withdrawn from; they only reset on a full exit, when the
+  // VaultDepositor account closes. All-time PnL = realized + unrealized. See
+  // docs/architecture.md → "Depositor positions and cost basis" → All-time PnL.
+  realizedPnl: number;
+  realizedYield: number;
+  realizedFx: number;
 };
 
 // The mock depositor whose positions the preview surfaces. A connected wallet

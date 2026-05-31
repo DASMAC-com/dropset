@@ -14,6 +14,7 @@ import {
 import { useAppEvent } from "@/lib/events";
 import { sortByVolumeDesc, useInfoLookup } from "@/lib/hooks/useUsdQuote";
 import { type Side, useSwapStore, useSwapStoreApi } from "@/lib/store";
+import { DIALOG_CONTENT_POSITION, DIALOG_OVERLAY_CLASS } from "@/lib/ui/dialog";
 import { useSwapNav } from "@/lib/ui/swapUrl";
 import { isOnSide as predicateIsOnSide } from "@/lib/ui/tokenSelection";
 import { CurrencyGroupHeader } from "./CurrencyGroupHeader";
@@ -209,14 +210,14 @@ export function TokenPicker({ side }: { side: Side }) {
         <ChevronDown size={20} />
       </Dialog.Trigger>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[60] bg-background/80 backdrop-blur-2xl" />
+        <Dialog.Overlay className={DIALOG_OVERLAY_CLASS} />
         <Dialog.Content
           onOpenAutoFocus={(e) => {
             e.preventDefault();
             searchRef.current?.focus();
           }}
           aria-describedby={undefined}
-          className="-translate-x-1/2 fixed top-6 left-1/2 z-[70] flex max-h-[calc(100vh-3rem)] w-[min(420px,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-border bg-background shadow-lg"
+          className={`${DIALOG_CONTENT_POSITION} flex w-[min(420px,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-border bg-background shadow-lg`}
         >
           <Dialog.Title className="sr-only">
             Select {side === "from" ? "From" : "To"} token

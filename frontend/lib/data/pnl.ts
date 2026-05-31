@@ -69,6 +69,28 @@ export const positionPnl = (
   };
 };
 
+export type AllTimePnl = {
+  allTimeYield: number;
+  allTimeFx: number;
+  allTimePnl: number;
+};
+
+// Lifetime PnL = realized (booked on past withdrawals, stored on the position)
+// + unrealized (the current marked position). Split the same two ways. See
+// docs/architecture.md → "Depositor positions and cost basis" → All-time PnL.
+export const allTimePnl = (
+  position: VaultPosition,
+  vault: Vault,
+  refNow: number,
+): AllTimePnl => {
+  const { yieldPnl, fxPnl, netPnl } = positionPnl(position, vault, refNow);
+  return {
+    allTimeYield: position.realizedYield + yieldPnl,
+    allTimeFx: position.realizedFx + fxPnl,
+    allTimePnl: position.realizedPnl + netPnl,
+  };
+};
+
 export type WithdrawalPreview = {
   baseOut: number;
   quoteOut: number;

@@ -38,7 +38,7 @@ import { FORMATS } from "@/lib/format/formats";
 import { groupedRowClassName } from "@/lib/ui/groupedRows";
 
 const APR_TOOLTIP =
-  "What you earn in a year based on the leader's skill, if the last 24 hours kept up. This does not count money made or lost when prices move.";
+  "What you earn in a year from the leader's skill, based on the last 24 hours. This does not count money made or lost when prices move.";
 
 // Pin the generic shared header to this table's metric keys so the literal
 // `sortKey` props type-check against `sort` / `onToggle`.
@@ -52,17 +52,23 @@ const ALL_WITH_GROUP: { group: FxPairGroup; entry: GroupedVault }[] =
     group.vaults.map((entry) => ({ group, entry })),
   );
 
-// Order two metric values; nulls (zero-TVL APR) always sink to the bottom
-// regardless of direction.
+// Order two sort values; nulls (zero-TVL APR, etc.) always sink to the bottom
+// regardless of direction. Strings (leader, pair) compare case-insensitively.
 const cmpMetric = (
-  a: number | null,
-  b: number | null,
+  a: number | string | null,
+  b: number | string | null,
   direction: SortDir,
 ): number => {
   if (a === null && b === null) return 0;
   if (a === null) return 1;
   if (b === null) return -1;
-  return direction === "desc" ? b - a : a - b;
+  if (typeof a === "string" && typeof b === "string") {
+    const c = a.localeCompare(b, undefined, { sensitivity: "base" });
+    return direction === "desc" ? -c : c;
+  }
+  return direction === "desc"
+    ? (b as number) - (a as number)
+    : (a as number) - (b as number);
 };
 
 // Substring match across the pair's FX label / nickname / currency names and
@@ -368,15 +374,24 @@ export function VaultsView() {
     [positionFor],
   );
   const vaultSortValue = useCallback(
-    (gv: GroupedVault, key: MetricKey): number | null =>
-      key === "position" ? positionValue(gv.vault) : vaultMetric(gv, key),
+    (gv: GroupedVault, key: MetricKey): number | string | null => {
+      if (key === "position") return positionValue(gv.vault);
+      if (key === "leader") return gv.vault.leader;
+      if (key === "pair") return gv.market.label;
+      return vaultMetric(gv, key);
+    },
     [positionValue],
   );
   const groupSortValue = useCallback(
-    (g: FxPairGroup, key: MetricKey): number | null =>
-      key === "position"
-        ? g.vaults.reduce((sum, gv) => sum + positionValue(gv.vault), 0)
-        : groupMetric(g, key),
+    (g: FxPairGroup, key: MetricKey): number | string | null => {
+      if (key === "position")
+        return g.vaults.reduce((sum, gv) => sum + positionValue(gv.vault), 0);
+      // A pair groups many leaders, so rank it by its alphabetically first.
+      if (key === "leader")
+        return g.vaults.map((gv) => gv.vault.leader).sort()[0] ?? null;
+      if (key === "pair") return g.label;
+      return groupMetric(g, key);
+    },
     [positionValue],
   );
 
@@ -475,18 +490,21 @@ export function VaultsView() {
           <table className="w-auto text-left text-sm">
             <thead className="text-muted-fg text-xs uppercase">
               <tr>
-                <th
-                  scope="col"
-                  className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0"
-                >
-                  Pair
-                </th>
-                <th
-                  scope="col"
-                  className="sticky top-14 z-20 w-px whitespace-nowrap border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0"
-                >
-                  Leader
-                </th>
+                <VaultSortHeader
+                  sortKey="pair"
+                  label="Pair"
+                  sort={sort}
+                  onToggle={toggleSort}
+                  align="left"
+                />
+                <VaultSortHeader
+                  sortKey="leader"
+                  label="Leader"
+                  sort={sort}
+                  onToggle={toggleSort}
+                  align="left"
+                  thClassName="w-px whitespace-nowrap"
+                />
                 <VaultSortHeader
                   sortKey="apr24h"
                   label="APR 24h"

@@ -40,41 +40,81 @@ import { useSwapNav } from "@/lib/ui/swapUrl";
 
 const COLSPAN = 9;
 
-type SortKey = "volume24h" | "mcap" | "liquidity" | "holderCount";
+type SortKey =
+  | "symbol"
+  | "priceChange24h"
+  | "volume24h"
+  | "mcap"
+  | "liquidity"
+  | "holderCount"
+  | "mint";
 type SortDir = "asc" | "desc";
 type SortState = { key: SortKey; direction: SortDir } | null;
+
+// The value a stablecoin sorts on for a given column: its own symbol/mint
+// (strings, case-insensitive) or a numeric TokenInfo field. null when the
+// market datum hasn't loaded so the row sinks to the bottom.
+const sortVal = (
+  s: Stablecoin,
+  key: SortKey,
+  lookup: (mint: string) => TokenInfo | null,
+): number | string | null => {
+  if (key === "symbol") return s.symbol.toLowerCase();
+  if (key === "mint") return s.mint.toLowerCase();
+  return lookup(s.mint)?.[key] ?? null;
+};
+
+// Order two sort values; nulls sink, strings compare case-insensitively.
+const cmpSort = (
+  a: number | string | null,
+  b: number | string | null,
+  direction: SortDir,
+): number => {
+  if (a === null && b === null) return 0;
+  if (a === null) return 1;
+  if (b === null) return -1;
+  if (typeof a === "string" && typeof b === "string") {
+    const c = a.localeCompare(b, undefined, { sensitivity: "base" });
+    return direction === "desc" ? -c : c;
+  }
+  return direction === "desc"
+    ? (b as number) - (a as number)
+    : (a as number) - (b as number);
+};
 
 // Sort a stablecoin list by a numeric `TokenInfo` field. Tokens with no
 // reported value sink to the bottom and retain their input order (Array.sort
 // is stable in ES2019+), so the upstream JSON order is the implicit fallback
 // for ties and nulls.
-const sortStablesByMetric = <T extends { mint: string }>(
-  list: T[],
+const sortStablesByMetric = (
+  list: Stablecoin[],
   key: SortKey,
   direction: SortDir,
   lookup: (mint: string) => TokenInfo | null,
-): T[] =>
-  list.slice().sort((a, b) => {
-    const va = lookup(a.mint)?.[key] ?? -1;
-    const vb = lookup(b.mint)?.[key] ?? -1;
-    return direction === "desc" ? vb - va : va - vb;
-  });
+): Stablecoin[] =>
+  list
+    .slice()
+    .sort((a, b) =>
+      cmpSort(sortVal(a, key, lookup), sortVal(b, key, lookup), direction),
+    );
 
-// A currency group's rank is taken from its highest-ranked stablecoin on the
-// active metric — so USD floats to the top when sorting by volume because
-// USDC dominates, even if some EUR stable would individually outrank a long
-// PYUSD-style tail. Groups with no data on this metric stay at the bottom.
-const groupScore = <T extends { mint: string }>(
-  stables: T[],
+// A currency group's rank for ordering the groups themselves: its best-ranked
+// stablecoin on the active column. For numeric metrics that's the max (so USD
+// floats up by volume because USDC dominates); for string columns it's the
+// alphabetically first. Groups with no data stay at the bottom.
+const groupScore = (
+  stables: Stablecoin[],
   key: SortKey,
+  direction: SortDir,
   lookup: (mint: string) => TokenInfo | null,
-): number => {
-  let max = Number.NEGATIVE_INFINITY;
+): number | string | null => {
+  let best: number | string | null = null;
   for (const s of stables) {
-    const v = lookup(s.mint)?.[key];
-    if (typeof v === "number" && v > max) max = v;
+    const v = sortVal(s, key, lookup);
+    if (v === null) continue;
+    if (best === null || cmpSort(v, best, direction) < 0) best = v;
   }
-  return Number.isFinite(max) ? max : -1;
+  return best;
 };
 
 const xHref = (handle: string) => `https://x.com/${handle}`;
@@ -522,11 +562,9 @@ function CurrenciesInner() {
               sort.direction,
               lookup,
             ),
-            score: groupScore(stables, sort.key, lookup),
+            score: groupScore(stables, sort.key, sort.direction, lookup),
           }))
-          .sort((a, b) =>
-            sort.direction === "desc" ? b.score - a.score : a.score - b.score,
-          );
+          .sort((a, b) => cmpSort(a.score, b.score, sort.direction));
 
   // Flat (un-grouped) view: pool every filtered stable across currencies and
   // sort by the active column. Default to 24 h volume desc when no header is
@@ -540,11 +578,13 @@ function CurrenciesInner() {
     sort ?? (!groupByCurrency ? { key: "volume24h", direction: "desc" } : null);
   const flatStables = filtered
     .flatMap(({ code, stables }) => stables.map((s) => ({ code, s })))
-    .sort((a, b) => {
-      const va = lookup(a.s.mint)?.[flatKey] ?? -1;
-      const vb = lookup(b.s.mint)?.[flatKey] ?? -1;
-      return flatDirection === "desc" ? vb - va : va - vb;
-    });
+    .sort((a, b) =>
+      cmpSort(
+        sortVal(a.s, flatKey, lookup),
+        sortVal(b.s, flatKey, lookup),
+        flatDirection,
+      ),
+    );
 
   const pickToken = usePickToken();
   useAppEvent("pickCurrencyOnlyResult", (side) => {
@@ -608,36 +648,38 @@ function CurrenciesInner() {
         <table className="w-full min-w-[720px] text-left text-sm">
           <thead className="text-muted-fg text-xs uppercase">
             <tr>
-              <th
-                scope="col"
-                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0"
-              >
-                Token
-              </th>
+              <CurrencySortHeader
+                sortKey="symbol"
+                label="Token"
+                sort={headerSort}
+                onToggle={toggleSort}
+                align="left"
+              />
               <th
                 scope="col"
                 className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0"
               >
                 Swap
               </th>
-              <th
-                scope="col"
-                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0"
-              >
-                Mint Address
-              </th>
+              <CurrencySortHeader
+                sortKey="mint"
+                label="Mint Address"
+                sort={headerSort}
+                onToggle={toggleSort}
+                align="left"
+              />
               <th
                 scope="col"
                 className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0"
               >
                 Price
               </th>
-              <th
-                scope="col"
-                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0"
-              >
-                24h Δ
-              </th>
+              <CurrencySortHeader
+                sortKey="priceChange24h"
+                label="24h Δ"
+                sort={headerSort}
+                onToggle={toggleSort}
+              />
               <CurrencySortHeader
                 sortKey="volume24h"
                 label="24h Vol"

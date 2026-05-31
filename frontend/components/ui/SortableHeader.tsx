@@ -18,6 +18,7 @@ export function SortableHeader<K extends string>({
   onToggle,
   info,
   thClassName = "",
+  align = "right",
 }: {
   sortKey: K;
   label: string;
@@ -27,6 +28,9 @@ export function SortableHeader<K extends string>({
   // Extra classes on the <th> — e.g. "w-px whitespace-nowrap" to snap the
   // column to its content width.
   thClassName?: string;
+  // Header alignment — "left" for text columns (token, leader), "right" for
+  // numeric ones. Matches the cell alignment.
+  align?: "left" | "right";
 }) {
   const active = sort?.key === sortKey;
   const Icon = !active
@@ -39,7 +43,9 @@ export function SortableHeader<K extends string>({
       scope="col"
       className={`sticky top-14 z-20 border-border border-r bg-muted p-0 last:border-r-0 ${thClassName}`}
     >
-      <div className="flex items-center justify-end gap-1 px-3 py-2">
+      <div
+        className={`flex items-center gap-1 px-3 py-2 ${align === "left" ? "justify-start" : "justify-end"}`}
+      >
         <button
           type="button"
           onClick={() => onToggle(sortKey)}

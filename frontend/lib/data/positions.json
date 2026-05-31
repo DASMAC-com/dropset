@@ -7,7 +7,10 @@
       "netDeposits": 54000,
       "entryRefPrice": 1.1,
       "entryVps": 1.0,
-      "openedAtSlot": 290000000
+      "openedAtSlot": 290000000,
+      "realizedPnl": 3000,
+      "realizedYield": 3500,
+      "realizedFx": -500
     },
     {
       "vaultPubkey": "VautAUC1qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3Lg",
@@ -16,7 +19,10 @@
       "netDeposits": 20700,
       "entryRefPrice": 0.6,
       "entryVps": 1.0,
-      "openedAtSlot": 291000000
+      "openedAtSlot": 291000000,
+      "realizedPnl": 0,
+      "realizedYield": 0,
+      "realizedFx": 0
     }
   ]
 }

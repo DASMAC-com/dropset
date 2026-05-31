@@ -6,7 +6,12 @@ import { type ReactNode, useState } from "react";
 import { ExternalLink, X } from "@/components/icons";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { shortenMint, stablecoinDecimals } from "@/lib/data/currencies";
-import { positionBasket, positionPnl, withdrawalPreview } from "@/lib/data/pnl";
+import {
+  allTimePnl,
+  positionBasket,
+  positionPnl,
+  withdrawalPreview,
+} from "@/lib/data/pnl";
 import type { VaultPosition } from "@/lib/data/positions";
 import {
   type Vault,
@@ -17,6 +22,7 @@ import { explorerAddressUrl } from "@/lib/explorer";
 import { FORMATS } from "@/lib/format/formats";
 import { sanitizeAmount, sanitizePercent } from "@/lib/format/input";
 import { cappedPercentLabel } from "@/lib/format/percent";
+import { DIALOG_CONTENT_POSITION, DIALOG_OVERLAY_CLASS } from "@/lib/ui/dialog";
 
 // Format / round a token amount to that token's own decimals, so EURC shows
 // its 6 places and a 2-decimal stable shows 2. Grouping on; trailing zeros
@@ -83,6 +89,13 @@ function PositionDetail({
   const refNow = vaultReserveRatio(vault) ?? position.entryRefPrice;
   const { baseOut, quoteOut } = positionBasket(position, vault);
   const pnl = positionPnl(position, vault, refNow);
+  const at = allTimePnl(position, vault, refNow);
+  // Realized accumulators only diverge from the current position once there's
+  // been a past withdrawal; show the lifetime block only then.
+  const hasRealized =
+    position.realizedPnl !== 0 ||
+    position.realizedYield !== 0 ||
+    position.realizedFx !== 0;
   return (
     <div className="flex flex-col gap-1.5 rounded-md border border-border bg-muted px-3 py-3 text-xs">
       {detailRow(
@@ -93,7 +106,9 @@ function PositionDetail({
         </span>,
       )}
       {detailRow(
-        "Entrance amount",
+        // net_deposits is the basis of the shares still held, not lifetime
+        // contributions — call it out as the current entrance.
+        "Entrance (current)",
         <span className="font-mono text-foreground tabular-nums">
           <NumberFlow value={pnl.entranceAmount} format={FORMATS.usd} />
         </span>,
@@ -105,7 +120,7 @@ function PositionDetail({
         </span>,
       )}
       {detailRow(
-        "Net PnL",
+        "Net PnL (current)",
         <span className={`font-mono tabular-nums ${pnlTone(pnl.netPnl)}`}>
           <NumberFlow value={pnl.netPnl} format={FORMATS.usd} />
         </span>,
@@ -131,6 +146,35 @@ function PositionDetail({
         >
           <NumberFlow value={pnl.yieldPctSinceOpen} format={FORMATS.percent} />
         </span>,
+      )}
+      {hasRealized && (
+        <div className="flex flex-col gap-1 border-border border-t pt-1.5">
+          <span className="text-[10px] text-muted-fg uppercase tracking-wide">
+            All-time (incl. past withdrawals)
+          </span>
+          {detailRow(
+            "All-time PnL",
+            <span
+              className={`font-mono tabular-nums ${pnlTone(at.allTimePnl)}`}
+            >
+              <NumberFlow value={at.allTimePnl} format={FORMATS.usd} />
+            </span>,
+          )}
+          {detailRow(
+            "Yield",
+            <span
+              className={`font-mono tabular-nums ${pnlTone(at.allTimeYield)}`}
+            >
+              <NumberFlow value={at.allTimeYield} format={FORMATS.usd} />
+            </span>,
+          )}
+          {detailRow(
+            "FX move",
+            <span className={`font-mono tabular-nums ${pnlTone(at.allTimeFx)}`}>
+              <NumberFlow value={at.allTimeFx} format={FORMATS.usd} />
+            </span>,
+          )}
+        </div>
       )}
     </div>
   );
@@ -380,10 +424,10 @@ export function VaultActionDialog({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-background/80 backdrop-blur-2xl" />
+        <Dialog.Overlay className={DIALOG_OVERLAY_CLASS} />
         <Dialog.Content
           aria-describedby={undefined}
-          className="-translate-x-1/2 -translate-y-1/2 fixed top-1/2 left-1/2 z-50 w-80 rounded-2xl border border-border bg-background shadow-xl"
+          className={`${DIALOG_CONTENT_POSITION} flex w-80 flex-col overflow-y-auto rounded-2xl border border-border bg-background shadow-xl`}
         >
           <div className="flex items-center justify-between border-border border-b px-5 py-4">
             <Dialog.Title className="flex items-center gap-2 font-semibold text-foreground">

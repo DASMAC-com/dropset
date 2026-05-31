@@ -210,7 +210,13 @@ export const ALL_VAULTS: GroupedVault[] = VAULT_FX_GROUPS.flatMap(
 // the bottom regardless of sort direction. "position" is the connected user's
 // position value — it depends on wallet state, so vaultMetric/groupMetric
 // return null for it and the view supplies the value.
-export type MetricKey = "apr24h" | "tvl" | "volume24h" | "position";
+export type MetricKey =
+  | "apr24h"
+  | "tvl"
+  | "volume24h"
+  | "position"
+  | "leader"
+  | "pair";
 
 export const vaultMetric = (
   gv: GroupedVault,
