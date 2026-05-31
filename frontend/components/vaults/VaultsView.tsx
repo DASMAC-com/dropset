@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/SortableHeader";
 import { VaultActionDialog } from "@/components/vaults/VaultActionDialog";
 import { shortenMint } from "@/lib/data/currencies";
-import { positionPnl } from "@/lib/data/pnl";
+import { allTimePnl, positionPnl } from "@/lib/data/pnl";
 import {
   MOCK_OWNER,
   userPosition,
@@ -120,9 +120,13 @@ function AprCell({ apr }: { apr: number | null }) {
   );
 }
 
+const pnlTone = (n: number): string =>
+  n > 0 ? "text-accent-buy" : n < 0 ? "text-accent-sell" : "text-muted-fg";
+
 // The connected user's position value in a vault, marked at the vault's reserve
-// ratio (the display reference price stand-in). Just the USD figure; the basket
-// breakdown lives in the manage dialog.
+// ratio (the display reference price stand-in), with the all-time return %
+// below it (same red/green as the dialog's headline). The basket breakdown
+// lives in the manage dialog.
 function PositionValue({
   vault,
   position,
@@ -130,14 +134,17 @@ function PositionValue({
   vault: Vault;
   position: VaultPosition;
 }) {
-  const { currentValue } = positionPnl(
-    position,
-    vault,
-    vaultReserveRatio(vault) ?? 0,
-  );
+  const refNow = vaultReserveRatio(vault) ?? position.entryRefPrice;
+  const { currentValue } = positionPnl(position, vault, refNow);
+  const at = allTimePnl(position, vault, refNow);
   return (
-    <span className="font-mono text-foreground text-xs tabular-nums">
-      <NumberFlow value={currentValue} format={FORMATS.usd} />
+    <span className="flex flex-col items-end font-mono text-xs tabular-nums">
+      <span className="text-foreground">
+        <NumberFlow value={currentValue} format={FORMATS.usd} />
+      </span>
+      <span className={`text-[10px] ${pnlTone(at.allTimePnl)}`}>
+        (<NumberFlow value={at.allTimePct} format={FORMATS.signedReturn} />)
+      </span>
     </span>
   );
 }
@@ -326,10 +333,7 @@ function VaultRow({
           <span className="font-mono text-muted-fg text-xs">—</span>
         )}
       </td>
-      <AprCell apr={vaultApr24h(vault)} />
-      <UsdCell value={vault.tvl} />
-      <UsdCell value={vault.volume24h} />
-      <td className="px-3 py-2 text-right align-middle">
+      <td className="w-px whitespace-nowrap border-border border-r px-3 py-2 text-right align-middle last:border-r-0">
         <button
           type="button"
           onClick={action.onClick}
@@ -340,6 +344,9 @@ function VaultRow({
           {action.label}
         </button>
       </td>
+      <AprCell apr={vaultApr24h(vault)} />
+      <UsdCell value={vault.tvl} />
+      <UsdCell value={vault.volume24h} />
     </tr>
   );
 }
@@ -455,7 +462,17 @@ export function VaultsView() {
   const onManage = (market: VaultMarket, vault: Vault) =>
     setDialog({ market, vault });
 
-  // Columns: Pair, Leader, Your Position, APR, TVL, 24h Vol, Actions.
+  // `m` opens the manage dialog for the first vault (in the current display
+  // order) where the user holds a position. No-op when disconnected or holding
+  // nothing.
+  useAppEvent("vaultsManage", () => {
+    if (!connected) return;
+    const entries = groupByPair ? groups.flatMap((g) => g.vaults) : flatVaults;
+    const first = entries.find((e) => positionFor(e.vault.vaultPubkey));
+    if (first) setDialog({ market: first.market, vault: first.vault });
+  });
+
+  // Columns: Pair, Leader, Your Position, Manage, APR, TVL, 24h Vol.
   const colSpan = 7;
   const hasResults = groupByPair ? groups.length > 0 : flatVaults.length > 0;
 
@@ -515,6 +532,12 @@ export function VaultsView() {
                   onToggle={toggleSort}
                   thClassName="w-px whitespace-nowrap"
                 />
+                <th
+                  scope="col"
+                  className="sticky top-14 z-20 w-px whitespace-nowrap border-border border-r bg-muted px-3 py-2 text-right font-medium"
+                >
+                  Manage
+                </th>
                 <VaultSortHeader
                   sortKey="apr24h"
                   label="APR 24h"
@@ -537,12 +560,6 @@ export function VaultsView() {
                   onToggle={toggleSort}
                   thClassName="w-px whitespace-nowrap"
                 />
-                <th
-                  scope="col"
-                  className="sticky top-14 z-20 bg-muted px-3 py-2"
-                >
-                  <span className="sr-only">Actions</span>
-                </th>
               </tr>
             </thead>
             <tbody>

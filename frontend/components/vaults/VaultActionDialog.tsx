@@ -3,7 +3,7 @@
 import NumberFlow from "@number-flow/react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { type ReactNode, useState } from "react";
-import { ExternalLink, Wallet, X } from "@/components/icons";
+import { ChevronDown, ExternalLink, Wallet, X } from "@/components/icons";
 import { BalancePercentControl } from "@/components/ui/BalancePercentControl";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { shortenMint, stablecoinDecimals } from "@/lib/data/currencies";
@@ -212,11 +212,11 @@ function PositionDetail({
         </span>
         {detailRow(
           tokenLabel(market.baseIconUrl, market.base),
-          amountUsd(baseOut, market.base, baseOut * refNow),
+          amountUsd(baseOut, market.base, baseOut * market.baseUsd),
         )}
         {detailRow(
           tokenLabel(market.quoteIconUrl, market.quote),
-          amountUsd(quoteOut, market.quote, quoteOut),
+          amountUsd(quoteOut, market.quote, quoteOut * market.quoteUsd),
         )}
       </div>
     </div>
@@ -284,11 +284,19 @@ function WithdrawSection({
         <div className="flex flex-col gap-1.5 text-sm">
           {detailRow(
             tokenLabel(market.baseIconUrl, market.base),
-            amountUsd(preview.baseOut, market.base, preview.baseOut * refNow),
+            amountUsd(
+              preview.baseOut,
+              market.base,
+              preview.baseOut * market.baseUsd,
+            ),
           )}
           {detailRow(
             tokenLabel(market.quoteIconUrl, market.quote),
-            amountUsd(preview.quoteOut, market.quote, preview.quoteOut),
+            amountUsd(
+              preview.quoteOut,
+              market.quote,
+              preview.quoteOut * market.quoteUsd,
+            ),
           )}
         </div>
         <div className="flex flex-col gap-1.5 border-border border-t pt-1.5">
@@ -372,32 +380,33 @@ function DepositLeg({
               {symbol}
             </span>
           </span>
-          <span className="flex min-w-0 flex-1 items-center justify-end gap-1.5">
-            {autoFilled && (
-              <span
-                className="rounded bg-background px-1.5 py-0.5 text-[9px] text-muted-fg uppercase tracking-wide"
-                title={`Auto-filled to match the other leg — edit to drive ${symbol} instead`}
-              >
-                Auto
-              </span>
-            )}
-            <input
-              type="text"
-              inputMode="decimal"
-              value={value}
-              onChange={(e) =>
-                onChange(
-                  sanitizeAmount(e.target.value, stablecoinDecimals(symbol)),
-                )
-              }
-              placeholder="0.00"
-              disabled={disabled}
-              className="min-w-0 flex-1 bg-transparent text-right font-mono text-foreground text-lg outline-none placeholder:text-muted-fg disabled:cursor-not-allowed disabled:opacity-50"
-            />
-          </span>
+          <input
+            type="text"
+            inputMode="decimal"
+            value={value}
+            onChange={(e) =>
+              onChange(
+                sanitizeAmount(e.target.value, stablecoinDecimals(symbol)),
+              )
+            }
+            placeholder="0.00"
+            disabled={disabled}
+            className="min-w-0 flex-1 bg-transparent text-right font-mono text-foreground text-lg outline-none placeholder:text-muted-fg disabled:cursor-not-allowed disabled:opacity-50"
+          />
         </div>
-        {/* The leg's ≈ USD value. */}
-        <div className="flex justify-end font-mono text-[11px] text-muted-fg tabular-nums">
+        {/* Bottom line: the "Auto" pill (bottom-left) on the leg that's being
+            auto-filled to match the other, and the leg's ≈ USD value (right). */}
+        <div className="flex items-center justify-between gap-2 font-mono text-[11px] text-muted-fg tabular-nums">
+          {autoFilled ? (
+            <span
+              className="rounded bg-background px-1.5 py-0.5 text-[9px] uppercase tracking-wide"
+              title={`Auto-filled to match the other leg — edit to drive ${symbol} instead`}
+            >
+              Auto
+            </span>
+          ) : (
+            <span />
+          )}
           <span>
             ≈ <NumberFlow value={usdValue} format={FORMATS.usd} />
           </span>
@@ -487,10 +496,16 @@ export function VaultActionDialog({
   const depositLabel = position ? "Top off" : "Open position";
 
   // Quote-denominated value of the entered basket (the base leg marked at the
-  // vault's reserve ratio). Tested against the deposit cap below.
+  // vault's reserve ratio). Tested against the deposit cap below — the cap is
+  // in the same quote/share units, so this stays quote-denominated.
   const depositValue =
     (Number.isFinite(base) ? base : 0) * (ratio ?? 0) +
     (Number.isFinite(quote) ? quote : 0);
+  // USD value of the basket, using the mock per-token prices — for display
+  // only (the "Total Deposit" headline and per-leg ≈ readouts).
+  const baseUsdValue = (Number.isFinite(base) ? base : 0) * market.baseUsd;
+  const quoteUsdValue = (Number.isFinite(quote) ? quote : 0) * market.quoteUsd;
+  const depositUsd = baseUsdValue + quoteUsdValue;
   // The largest deposit the vault can take before the new shares would dilute
   // the leader below their min_leader_share floor; null when the floor can't
   // bind. A basket past the cap would be rejected on-chain, so we block it and
@@ -572,16 +587,26 @@ export function VaultActionDialog({
             {position && (
               <label className="flex flex-col gap-1.5">
                 <span className="text-muted-fg text-xs">Action</span>
-                <select
-                  value={mode}
-                  onChange={(e) =>
-                    setMode(e.target.value as "deposit" | "withdraw")
-                  }
-                  className="h-9 cursor-pointer rounded-md border border-border bg-muted px-3 font-medium text-foreground text-sm outline-none focus:border-accent"
-                >
-                  <option value="deposit">Deposit</option>
-                  <option value="withdraw">Withdraw</option>
-                </select>
+                <div className="relative">
+                  {/* appearance-none + a custom chevron at right-3 so the
+                      caret keeps the same margin as the px-3 text on the left
+                      (the native caret sat flush against the border). */}
+                  <select
+                    value={mode}
+                    onChange={(e) =>
+                      setMode(e.target.value as "deposit" | "withdraw")
+                    }
+                    className="h-9 w-full cursor-pointer appearance-none rounded-md border border-border bg-muted px-3 pr-9 font-medium text-foreground text-sm outline-none focus:border-accent"
+                  >
+                    <option value="deposit">Deposit</option>
+                    <option value="withdraw">Withdraw</option>
+                  </select>
+                  <ChevronDown
+                    size={16}
+                    aria-hidden
+                    className="-translate-y-1/2 pointer-events-none absolute top-1/2 right-3 text-muted-fg"
+                  />
+                </div>
               </label>
             )}
 
@@ -595,7 +620,7 @@ export function VaultActionDialog({
                     onChange={onBaseChange}
                     autoFilled={activeLeg === "quote"}
                     max={maxBase}
-                    usdValue={Number.isFinite(base) ? base * (ratio ?? 0) : 0}
+                    usdValue={baseUsdValue}
                     disabled={depositBlocked}
                   />
                   <DepositLeg
@@ -605,7 +630,7 @@ export function VaultActionDialog({
                     onChange={onQuoteChange}
                     autoFilled={activeLeg === "base"}
                     max={maxQuote}
-                    usdValue={Number.isFinite(quote) ? quote : 0}
+                    usdValue={quoteUsdValue}
                     disabled={depositBlocked}
                   />
                   {/* Total of both legs, quote-denominated — the headline
@@ -615,7 +640,7 @@ export function VaultActionDialog({
                       Total Deposit
                     </span>
                     <span className="font-mono font-semibold text-foreground tabular-nums">
-                      <NumberFlow value={depositValue} format={FORMATS.usd} />
+                      <NumberFlow value={depositUsd} format={FORMATS.usd} />
                     </span>
                   </div>
                 </div>

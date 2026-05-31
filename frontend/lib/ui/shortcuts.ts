@@ -284,6 +284,13 @@ export const SHORTCUTS_BY_CONTEXT: Record<ShortcutContext, ShortcutSpec[]> = {
       run: () => emit("vaultsSort", "position"),
     },
     {
+      // Matches the Manage column, which sits just after Your Position.
+      key: "m",
+      description: "Manage your first position",
+      group: "Sort & display",
+      run: () => emit("vaultsManage"),
+    },
+    {
       key: "a",
       description: "Sort by 24h APR",
       group: "Sort & display",

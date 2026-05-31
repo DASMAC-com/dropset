@@ -68,6 +68,9 @@ export type VaultMarket = {
   quoteFlagUrl: string;
   baseIconUrl: string;
   quoteIconUrl: string;
+  // Mock USD price per base / quote token, for the dialog's ≈ USD readouts.
+  baseUsd: number;
+  quoteUsd: number;
   label: string;
   fxMove24h: number;
   vaults: Vault[];
@@ -119,6 +122,25 @@ const resolveCurrency = (
   return code;
 };
 
+// Hard-coded mock USD prices per token symbol, used only for the dialog's
+// approximate USD readouts (the quote leg isn't always a USD stable, e.g.
+// USD/JPY quotes GYEN). Swap for a real oracle / price feed later.
+const TOKEN_USD: Record<string, number> = {
+  USDC: 1,
+  USDT: 1,
+  EURC: 1.08,
+  VEUR: 1.08,
+  GYEN: 0.0067,
+  TGBP: 1.27,
+  VGBP: 1.27,
+  VCHF: 1.12,
+  CADC: 0.73,
+  AUDD: 0.66,
+};
+
+// USD price for a stablecoin symbol; defaults to 1 (a USD stable) when unknown.
+export const tokenUsdPrice = (symbol: string): number => TOKEN_USD[symbol] ?? 1;
+
 const VAULT_MARKETS: VaultMarket[] = (
   vaultsData as { markets: MarketRaw[] }
 ).markets.map((m) => {
@@ -134,6 +156,8 @@ const VAULT_MARKETS: VaultMarket[] = (
     quoteFlagUrl: currencyFlagUrl(quoteCurrency),
     baseIconUrl: tokenIconUrl(m.base),
     quoteIconUrl: tokenIconUrl(m.quote),
+    baseUsd: tokenUsdPrice(m.base),
+    quoteUsd: tokenUsdPrice(m.quote),
     label: `${m.base} / ${m.quote}`,
     fxMove24h: m.fxMove24h,
     vaults: m.vaults,
