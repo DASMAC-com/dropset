@@ -1,3 +1,4 @@
+// cspell:ignore swissy
 import {
   currencyFlagUrl,
   currencyForStablecoin,
@@ -31,6 +32,10 @@ export type VaultRaw = {
   // Total outstanding depositor shares; a position's `shares / totalShares` is
   // its claim on the reserves (see docs/architecture.md → Depositor positions).
   totalShares: number;
+  // The leader's own (non-SPL) stake, included in totalShares. Its ratio to
+  // totalShares is the skin-in-the-game number the min_leader_share floor
+  // guards (see docs/architecture.md → Skin-in-the-game floor).
+  leaderShares: number;
   // Current value-per-share (`L / totalShares`), the FX-neutral skill index a
   // position's `entryVps` is marked against for "yield since open".
   vps: number;
@@ -153,6 +158,32 @@ export const vaultReserveRatio = (v: Vault): number | null =>
   v.baseReserve > 0 && v.quoteReserve > 0
     ? v.quoteReserve / v.baseReserve
     : null;
+
+// The min_leader_share floor as a fraction (the fixture stores it in ppm,
+// 1_000_000 = 100%).
+export const leaderFloorFraction = (v: Vault): number =>
+  v.minLeaderSharePpm / 1_000_000;
+
+// The leader's current stake as a fraction of all shares — their live
+// skin-in-the-game ratio. null for an empty vault (no shares yet).
+export const leaderShareFraction = (v: Vault): number | null =>
+  v.totalShares > 0 ? v.leaderShares / v.totalShares : null;
+
+// Largest outside deposit (quote-denominated value) the vault can accept
+// before the leader's stake would dilute below its min_leader_share floor.
+// A deposit mints `value / vps` new shares at the current value-per-share
+// while the leader's stake stays fixed, so the floor binds when
+//   leader_shares / (total_shares + value / vps) >= floor.
+// Solving for value gives the cap. Returns null when the floor can't bind —
+// no recorded leader stake or a zero-vps / empty vault — in which case the
+// frozen / outside-deposits-approved gates govern instead.
+export const maxOutsideDepositValue = (v: Vault): number | null => {
+  const floor = leaderFloorFraction(v);
+  if (v.leaderShares <= 0 || v.vps <= 0 || floor <= 0) return null;
+  const maxTotalShares = v.leaderShares / floor;
+  const room = maxTotalShares - v.totalShares;
+  return room > 0 ? room * v.vps : 0;
+};
 
 // Group vaults into FX pairs, preserving first-seen order of both the groups
 // and the vaults within. Derived from the resolved currency codes so USDC- and

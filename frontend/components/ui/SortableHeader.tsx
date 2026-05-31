@@ -60,9 +60,13 @@ export function SortableHeader<K extends string>({
               size={12}
               className="text-muted-fg transition-colors group-hover:text-foreground"
             />
+            {/* whitespace-normal resets the nowrap a snug `w-px
+                whitespace-nowrap` header inherits onto its descendants, so the
+                tooltip wraps inside its width instead of stretching out on one
+                line. */}
             <span
               role="tooltip"
-              className="pointer-events-none absolute top-full right-0 z-30 mt-1 w-56 rounded-md border border-border bg-background px-2 py-1.5 text-left font-normal text-[11px] text-muted-fg normal-case opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100"
+              className="pointer-events-none absolute top-full right-0 z-30 mt-1 w-56 whitespace-normal rounded-md border border-border bg-background px-2 py-1.5 text-left font-normal text-[11px] text-muted-fg normal-case opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100"
             >
               {info}
             </span>

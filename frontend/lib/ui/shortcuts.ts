@@ -212,6 +212,25 @@ export const SHORTCUTS_BY_CONTEXT: Record<ShortcutContext, ShortcutSpec[]> = {
       run: () => emit("toggleGroupByCurrency"),
     },
     {
+      // c (not t) for token: t is the To-picker key, and c reads as "currency".
+      key: "c",
+      description: "Sort by token",
+      group: "Sort & display",
+      run: () => emit("currenciesSort", "symbol"),
+    },
+    {
+      key: "a",
+      description: "Sort by mint address",
+      group: "Sort & display",
+      run: () => emit("currenciesSort", "mint"),
+    },
+    {
+      key: "d",
+      description: "Sort by 24h price change",
+      group: "Sort & display",
+      run: () => emit("currenciesSort", "priceChange24h"),
+    },
+    {
       key: "m",
       description: "Sort by market cap",
       group: "Sort & display",
@@ -263,6 +282,18 @@ export const SHORTCUTS_BY_CONTEXT: Record<ShortcutContext, ShortcutSpec[]> = {
     },
     {
       key: "p",
+      description: "Sort by pair",
+      group: "Sort & display",
+      run: () => emit("vaultsSort", "pair"),
+    },
+    {
+      key: "l",
+      description: "Sort by leader",
+      group: "Sort & display",
+      run: () => emit("vaultsSort", "leader"),
+    },
+    {
+      key: "y",
       description: "Sort by your position",
       group: "Sort & display",
       run: () => emit("vaultsSort", "position"),

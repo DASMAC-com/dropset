@@ -3,7 +3,7 @@
 import NumberFlow from "@number-flow/react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { type ReactNode, useState } from "react";
-import { ExternalLink, X } from "@/components/icons";
+import { ExternalLink, Wallet, X } from "@/components/icons";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { shortenMint, stablecoinDecimals } from "@/lib/data/currencies";
 import {
@@ -14,6 +14,8 @@ import {
 } from "@/lib/data/pnl";
 import type { VaultPosition } from "@/lib/data/positions";
 import {
+  leaderFloorFraction,
+  maxOutsideDepositValue,
   type Vault,
   type VaultMarket,
   vaultReserveRatio,
@@ -344,9 +346,23 @@ export function VaultActionDialog({
   const depositBlocked = vault.frozen || !vault.outsideDepositsApproved;
   const depositLabel = position ? "Top off" : "Open position";
 
+  // Quote-denominated value of the entered basket (the base leg marked at the
+  // vault's reserve ratio). Tested against the deposit cap below.
+  const depositValue =
+    (Number.isFinite(base) ? base : 0) * (ratio ?? 0) +
+    (Number.isFinite(quote) ? quote : 0);
+  // The largest deposit the vault can take before the new shares would dilute
+  // the leader below their min_leader_share floor; null when the floor can't
+  // bind. A basket past the cap would be rejected on-chain, so we block it and
+  // warn rather than let the user submit a doomed deposit.
+  const depositCap = maxOutsideDepositValue(vault);
+  const floorBreached =
+    depositCap !== null && validBasket && depositValue > depositCap;
+  const floorPct = Math.round(leaderFloorFraction(vault) * 100);
+
   // No on-chain send yet — actions just close the dialog.
   const submitDeposit = () => {
-    if (!validBasket || depositBlocked) return;
+    if (!validBasket || depositBlocked || floorBreached) return;
     onOpenChange(false);
   };
 
@@ -392,30 +408,41 @@ export function VaultActionDialog({
             className={`h-10 w-full rounded-md border border-border bg-muted pr-3 font-mono text-foreground text-sm outline-none placeholder:text-muted-fg focus:border-accent disabled:cursor-not-allowed disabled:opacity-50 ${approx ? "pl-8" : "pl-3"}`}
           />
         </div>
-        <div className="flex items-center justify-end gap-1">
-          <button
-            type="button"
-            onClick={() => {
-              setPercent("100");
-              onChange(padToken(max, symbol));
-            }}
-            disabled={depositBlocked || max <= 0}
-            className="rounded border border-border bg-background px-2 py-0.5 font-medium text-[10px] text-muted-fg uppercase transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+        <div className="flex items-center justify-between gap-1">
+          {/* Mock wallet balance for this leg, mirroring the swap picker's
+              wallet readout — sits opposite the Max / % cluster. */}
+          <span
+            className="flex items-center gap-1 text-[10px] text-muted-fg tabular-nums"
+            title={`Your ${symbol} balance`}
           >
-            Max
-          </button>
-          <label className="flex w-14 items-center gap-1 rounded border border-border px-2 py-0.5 text-[10px] focus-within:border-accent">
-            <input
-              type="text"
-              inputMode="decimal"
-              value={percent}
-              onChange={(e) => setFromPercent(e.target.value)}
-              placeholder="0"
-              disabled={depositBlocked}
-              className="min-w-0 flex-1 bg-transparent text-right font-mono text-foreground outline-none disabled:cursor-not-allowed"
-            />
-            <span className="text-muted-fg">%</span>
-          </label>
+            <Wallet size={11} aria-hidden />
+            <span className="font-mono">{fmtToken(max, symbol)}</span>
+          </span>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => {
+                setPercent("100");
+                onChange(padToken(max, symbol));
+              }}
+              disabled={depositBlocked || max <= 0}
+              className="rounded border border-border bg-background px-2 py-0.5 font-medium text-[10px] text-muted-fg uppercase transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Max
+            </button>
+            <label className="flex w-14 items-center gap-1 rounded border border-border px-2 py-0.5 text-[10px] focus-within:border-accent">
+              <input
+                type="text"
+                inputMode="decimal"
+                value={percent}
+                onChange={(e) => setFromPercent(e.target.value)}
+                placeholder="0"
+                disabled={depositBlocked}
+                className="min-w-0 flex-1 bg-transparent text-right font-mono text-foreground outline-none disabled:cursor-not-allowed"
+              />
+              <span className="text-muted-fg">%</span>
+            </label>
+          </div>
         </div>
       </label>
     );
@@ -508,10 +535,17 @@ export function VaultActionDialog({
                 : `Amounts fill pro-rata to the vault's reserves. Set ${market.base} or ${market.quote} and the other follows.`}
             </p>
 
+            {floorBreached && !depositBlocked && (
+              <p className="rounded-md border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-amber-300 text-xs">
+                This deposit is too large: it would dilute the leader below
+                their {floorPct}% minimum stake in this vault, so the program
+                would reject it. Lower the amount to continue.
+              </p>
+            )}
             <button
               type="button"
               onClick={submitDeposit}
-              disabled={!validBasket || depositBlocked}
+              disabled={!validBasket || depositBlocked || floorBreached}
               className="h-10 rounded-md bg-accent px-3 font-medium text-background text-sm transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-fg"
             >
               {depositLabel}

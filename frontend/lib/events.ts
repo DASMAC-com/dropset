@@ -48,12 +48,21 @@ export type AppEvents = {
 };
 
 export type CurrenciesSortKey =
+  | "symbol"
+  | "mint"
+  | "priceChange24h"
   | "volume24h"
   | "mcap"
   | "liquidity"
   | "holderCount";
 
-export type VaultsSortKey = "apr24h" | "tvl" | "volume24h" | "position";
+export type VaultsSortKey =
+  | "apr24h"
+  | "tvl"
+  | "volume24h"
+  | "position"
+  | "leader"
+  | "pair";
 
 // Mirror of AppEvents keys as an importable constant. Use this at call
 // sites when you want refactor-friendly references (rename one entry and

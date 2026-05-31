@@ -1,3 +1,4 @@
+// cspell:ignore soulbound
 import positionsData from "./positions.json";
 
 // Outside-depositor positions, one per (owner, vault). This module is the seam
