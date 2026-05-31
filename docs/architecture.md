@@ -783,9 +783,15 @@ struct VaultDepositor {
     shares: u64,
     /// Quote-denominated principal of the **remaining** position:
     /// `Σ (quote_in + base_in × entry_ref)` over deposits, reduced
-    /// pro-rata on withdraw. The **entrance amount** — basis of what
-    /// is still in the vault, not lifetime contributions.
+    /// pro-rata on withdraw. The basis of what is still in the vault —
+    /// the cost basis the unrealized `net_pnl` is measured against.
     net_deposits: u64,
+    /// Monotonic lifetime contributions: incremented by each deposit's
+    /// `(quote_in + base_in × ref_now)`, **never reduced on withdraw**.
+    /// This is "total deposited" and the stable denominator for an
+    /// all-time return percentage (unlike `net_deposits`, it doesn't
+    /// shrink when a depositor takes profit).
+    gross_deposited: u64,
     /// Shares-weighted average reference price (quote per base)
     /// across deposits. A `Price`, same as `ReferencePrice.price`;
     /// stored canonical and decoded to a scaled value to compute PnL
@@ -825,6 +831,7 @@ shares'          = s + Δs
 entry_vps'       = (s · entry_vps       + Δs · VPS_now) / shares'
 entry_ref_price' = (s · entry_ref_price + Δs · ref_now) / shares'
 net_deposits'    = net_deposits + (quote_in + base_in · ref_now)
+gross_deposited' = gross_deposited + (quote_in + base_in · ref_now)
 ```
 
 **PnL decomposition (display only).** The protocol math stays
@@ -864,19 +871,18 @@ withdrawn slice into the account's `realized_*` accumulators (see
 all_time_yield = realized_yield + yield_pnl
 all_time_fx    = realized_fx    + fx_pnl
 all_time_pnl   = realized_pnl   + net_pnl = all_time_yield + all_time_fx
+all_time_pct   = all_time_pnl / gross_deposited
 ```
 
-`net_deposits` is the basis of the **remaining** position (it falls
-pro-rata on withdraw), so it is *not* lifetime contributions — and
-total-ever-deposited is **not** recoverable from the account alone,
-since the slice basis released on each withdrawal
-(`released_basis = net_deposits × shares_in / shares`) is folded into
-`realized_pnl` rather than stored separately. All-time *PnL* is
-recoverable (the formulas above); to also show total deposited, add a
-monotonic `gross_deposited` field (incremented on every deposit,
-never reduced) or read it from an indexer. Because the account is
-closed at zero shares, all-time PnL spans from the first deposit to a
-full exit; carrying it across a close-and-reopen needs an external
+The percentage uses `gross_deposited`, not `net_deposits`:
+`net_deposits` is the basis of the **remaining** position and shrinks
+pro-rata on withdraw, so dividing by it would make the headline
+percentage jump every time a depositor takes profit. `gross_deposited`
+only ever grows, so it is both "total deposited" and a stable
+denominator — the same convention a CLMM venue uses when it bases
+position PnL% on lifetime deposits. Because the account is closed at
+zero shares, these figures span from the first deposit to a full
+exit; carrying them across a close-and-reopen needs an external
 indexer.
 
 ## Caller mechanics
@@ -1183,8 +1189,8 @@ treasuries, then:
   record cost basis on it (see **Depositor positions and cost
   basis** for the field semantics and the top-off merge). A first
   deposit sets `shares`, `entry_vps`, `entry_ref_price`,
-  `net_deposits`, and `opened_at`; a top-off into an existing
-  account merges them shares-weighted. Requires both
+  `net_deposits`, `gross_deposited`, and `opened_at`; a top-off into
+  an existing account merges them shares-weighted. Requires both
   `Vault.allow_outside_depositors == 1` (leader opt-in) and
   `Vault.outside_deposits_approved == 1` (admin approval); either
   flag unset rejects the deposit. See
@@ -1250,11 +1256,13 @@ realized_pnl   += quote_out + base_out × r_now − released_basis
 net_deposits'   = net_deposits − released_basis
 ```
 
-`entry_vps` and `entry_ref_price` are left unchanged — a proportional
-reduction preserves the shares-weighted averages. When `shares`
-reaches 0, `close` the account and return its rent to the owner; this
-discards the accumulators, so all-time PnL spans one open→full-exit
-lifetime (see **Depositor positions and cost basis → All-time PnL**).
+`entry_vps`, `entry_ref_price`, and `gross_deposited` are left
+unchanged — a proportional reduction preserves the shares-weighted
+averages, and `gross_deposited` only ever grows (on deposit). When
+`shares` reaches 0, `close` the account and return its rent to the
+owner; this discards the accumulators, so all-time PnL spans one
+open→full-exit lifetime (see
+**Depositor positions and cost basis → All-time PnL**).
 
 `Vault.total_shares` is decremented in both paths; the basket is
 transferred from the treasuries to the caller.
@@ -1425,3 +1433,28 @@ APR can go **negative** when the leader is consistently adversely
 selected. That is the same metric working in both directions, and it
 is the right signal for depositors deciding whether to stay or pull
 their basket.
+
+### Versus concentrated-liquidity APR
+
+A concentrated-liquidity venue reports two APR flavors; Dropset needs
+neither, which is worth stating because depositors arriving from those
+venues will expect them.
+
+- A **realized** fee APR taken from the delta of a fee-growth
+  accumulator between two snapshots. Dropset's headline is the same
+  delta idea on **VPS** rather than a fee counter — but VPS is
+  *signed*, so it already nets adverse selection, whereas a fee
+  accumulator only ever rises and books impermanent loss separately.
+  Dropset's number is therefore net market-making performance, not
+  gross fees, and it **auto-compounds** (spread stays in the vault),
+  where a CLMM fee APR is linear until the LP manually re-collects and
+  redeploys. Label the headline accordingly: it is a compounding
+  figure, net of adverse selection — not a gross fee rate.
+- A **forward** estimate that scales the pool headline by per-position
+  multipliers (concentration, time-in-range, transfer-fee haircut).
+  This **collapses here**: vault positions are homogeneous — one
+  fungible pro-rata basket at one VPS — so the headline APR is already
+  each depositor's APR, adjusted only by entry timing
+  (`yield_since_open`). There is no range and no time-in-range, so the
+  in-range-TVL denominator that makes trailing CLMM APR swing wildly
+  does not exist; the VPS denominator is stable.
