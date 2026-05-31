@@ -407,8 +407,11 @@ struct Position {
 `Price` is a `u32` decimal floating-point key. The high 5 bits hold a
 base-10 exponent biased by 16 (unbiased range `-16..=15`); the low 27
 bits hold a significand normalized to exactly 8 significant digits
-(`10_000_000..=99_999_999`). The value is `significand × 10^exponent`,
-spanning ~`1e-16` to ~`9.9999999e15` at 8 significant figures.
+(`10_000_000..=99_999_999`). The significand is a mantissa scaled by
+`10^7`, so the value is `(significand / 10^7) × 10^exponent` —
+equivalently `significand × 10^(exponent − 7)` — placing the mantissa
+in `[1.0000000, 9.9999999]`. The price spans ~`1e-16` to
+~`9.9999999e15` at 8 significant figures.
 
 ```text
  [ 5-bit biased exponent ][ 27-bit normalized significand ]
@@ -782,9 +785,10 @@ struct VaultDepositor {
     /// total_shares`).
     shares: u64,
     /// Quote-denominated principal of the **remaining** position:
-    /// `Σ (quote_in + base_in × entry_ref)` over deposits, reduced
-    /// pro-rata on withdraw. The basis of what is still in the vault —
-    /// the cost basis the unrealized `net_pnl` is measured against.
+    /// `Σ (quote_in + base_in × entry_ref)` over deposits, reduced by
+    /// the withdrawn slice's `released_basis` on withdraw. The basis of
+    /// what is still in the vault — the cost basis the unrealized
+    /// `net_pnl` is measured against.
     net_deposits: u64,
     /// Monotonic lifetime contributions: incremented by each deposit's
     /// `(quote_in + base_in × ref_now)`, **never reduced on withdraw**.
@@ -795,17 +799,22 @@ struct VaultDepositor {
     /// Shares-weighted average reference price (quote per base)
     /// across deposits. A `Price`, same as `ReferencePrice.price`;
     /// stored canonical and decoded to a scaled value to compute PnL
-    /// and to re-average on top-off (all cold-path).
+    /// and to re-average on top-off (all cold-path). Re-encoding to an
+    /// 8-significant-figure `Price` each top-off adds negligible drift
+    /// to the running average.
     entry_ref_price: Price,
     /// Shares-weighted average VPS (`L / total_shares`) across
-    /// deposits, as Q32.32 fixed-point `u64` — same encoding as
-    /// `Vault.hwm`. Basis for the "yield since open" figure.
+    /// deposits, as Q32.32 fixed-point `u64` — same encoding and
+    /// practical bound as `Vault.hwm`. Basis for the "yield since
+    /// open" figure.
     entry_vps: u64,
     /// Slot of the first deposit.
     opened_at: u64,
     /// **Signed** quote-denominated PnL crystallized by past
     /// withdrawals (a withdrawal can realize a loss). Discarded when
-    /// the account is closed at zero shares.
+    /// the account is closed at zero shares. `i64` holds per-depositor
+    /// PnL; widen to `i128` if a quote mint's atom scale could exceed
+    /// it.
     realized_pnl: i64,
     /// Signed yield (ex-FX) component of `realized_pnl`.
     realized_yield: i64,
@@ -854,13 +863,30 @@ net_pnl           = current_value − net_deposits = yield_pnl + fx_pnl
 
 `yield_pnl` is the depositor's share of spread capture vs. adverse
 selection, valued at constant FX; `fx_pnl` is the directional move of
-the underlying pair on the base they hold. The headline "yield since
-open" as a percentage is `VPS_now / entry_vps − 1` — oracle-free and
-pure skill. This is the per-depositor form of the
-**APR (leader skill) × basket price move (directional)** split in
-**APR / yield accounting**. Because the position is soulbound, the
-basis is always the depositor's own — there is no transfer or
-lot-attribution ambiguity to resolve.
+the underlying pair on the base they hold. Together they are the
+per-depositor form of the **APR (leader skill) × basket price move
+(directional)** split in **APR / yield accounting**. Because the
+position is soulbound, the basis is always the depositor's own — there
+is no transfer or lot-attribution ambiguity to resolve.
+
+Two caveats on these display figures:
+
+- **The yield/FX split is exact in total but approximate per leg.**
+  `net_pnl` is always exact (the `entry_ref_price` terms cancel). But
+  `fx_pnl` marks the *current* base holding `base_out` against the
+  *shares-weighted* `entry_ref_price`, while a lot's real FX exposure
+  is base-weighted; across top-offs at different reference prices the
+  yield/FX attribution drifts (bounded by `base_out ×` the spread of
+  entry prices, worst under large FX moves between top-offs). The two
+  legs always sum back to the exact `net_pnl`.
+- **"Yield since open %" is a separate, geometric metric.** The
+  headline `VPS_now / entry_vps − 1` is the FX-neutral, oracle-free
+  VPS growth — the per-depositor APR. It is **not** equal to
+  `yield_pnl / net_deposits`: VPS is a geometric measure
+  (`L = isqrt(base × quote)`), whereas `yield_pnl` is an arithmetic
+  constant-FX quote value, so the two diverge as the inventory ratio
+  moves. Show the VPS ratio as the headline % and `yield_pnl` as the
+  dollar attribution; don't derive one from the other.
 
 **All-time PnL.** The figures above are **unrealized** — they cover
 only the shares still in the vault. Each `Withdraw` crystallizes the
@@ -884,6 +910,13 @@ position PnL% on lifetime deposits. Because the account is closed at
 zero shares, these figures span from the first deposit to a full
 exit; carrying them across a close-and-reopen needs an external
 indexer.
+
+Note the realized accumulators are marked at the vault's **on-chain
+`reference_price`** at each withdrawal, whereas the unrealized
+`yield_pnl` / `fx_pnl` use the display `ref_now` — which may be an
+external feed. So when the display price differs from the on-chain
+reference, only the **totals** (`all_time_pnl`) reconcile across the
+realized/unrealized boundary; the per-leg yield/FX split does not.
 
 ## Caller mechanics
 
@@ -1225,8 +1258,8 @@ Caller specifies `shares_in` to burn. The vault delivers a pro-rata
 basket:
 
 ```text
-base_out  = floor(shares_in × base_atoms  / total_shares)
-quote_out = floor(shares_in × quote_atoms / total_shares)
+slice_base  = floor(shares_in × base_atoms  / total_shares)
+slice_quote = floor(shares_in × quote_atoms / total_shares)
 ```
 
 Rounding down keeps any dust in the vault for the benefit of
@@ -1244,15 +1277,16 @@ remaining depositors. Then:
 On the outside path, before the basis is reduced the withdrawn
 slice's PnL is added to the signed `realized_*` accumulators, marked
 at the vault's current `reference_price` (`r_now`) — the same source
-`entry_ref_price` was captured from, so the realized FX/yield split is
-internally consistent. `base_out` / `quote_out` are the withdrawn
-basket above:
+`entry_ref_price` was captured from, so the realized split's FX and
+yield legs share one reference. `slice_base` / `slice_quote` are the
+withdrawn basket above; `released_basis` is the floored slice of the
+remaining basis, and `net_deposits` is reduced by exactly that:
 
 ```text
-released_basis  = net_deposits × shares_in / shares
-realized_fx    += base_out × (r_now − entry_ref_price)
-realized_yield += quote_out + base_out × entry_ref_price − released_basis
-realized_pnl   += quote_out + base_out × r_now − released_basis
+released_basis  = floor(net_deposits × shares_in / shares)
+realized_fx    += slice_base × (r_now − entry_ref_price)
+realized_yield += slice_quote + slice_base × entry_ref_price − released_basis
+realized_pnl   += slice_quote + slice_base × r_now − released_basis
 net_deposits'   = net_deposits − released_basis
 ```
 
@@ -1457,4 +1491,6 @@ venues will expect them.
   each depositor's APR, adjusted only by entry timing
   (`yield_since_open`). There is no range and no time-in-range, so the
   in-range-TVL denominator that makes trailing CLMM APR swing wildly
-  does not exist; the VPS denominator is stable.
+  does not exist — APR is measured against VPS, which moves only on
+  fills and fee accrual, not on positions drifting in and out of a
+  range.
