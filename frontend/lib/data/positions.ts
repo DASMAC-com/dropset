@@ -18,9 +18,14 @@ export type VaultPosition = {
   // Pro-rata claim on the vault; `shares / vault.totalShares` is the fraction
   // of reserves owned.
   shares: number;
-  // Quote-denominated principal (the entrance amount), reduced pro-rata on
-  // withdraw: `Σ (quote_in + base_in × entry_ref)`.
+  // Quote-denominated principal (the cost basis of the shares STILL held),
+  // reduced pro-rata on withdraw: `Σ (quote_in + base_in × entry_ref)`.
   netDeposits: number;
+  // Monotonic lifetime contributions: grows on every deposit, never reduced on
+  // withdraw, so it's the stable denominator for an all-time return % and
+  // doubles as "total deposited". Always ≥ netDeposits; equal until the first
+  // withdrawal. See docs/architecture.md → "Depositor positions and cost basis".
+  grossDeposited: number;
   // Shares-weighted average reference price (quote per base) across deposits.
   entryRefPrice: number;
   // Shares-weighted average value-per-share at entry; the basis for the

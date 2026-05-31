@@ -54,6 +54,25 @@ export const FORMATS = {
     signDisplay: "exceptZero",
   } satisfies Format,
 
+  // Signed USD ("+$1,234.00" / "-$1,234.00") for gain/loss headlines where
+  // the sign should read explicitly, not only via color.
+  signedUsd: {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+    signDisplay: "exceptZero",
+  } satisfies Format,
+
+  // Signed, ×100-scaled percent ("+14.36%") for a return passed as a fraction
+  // — `percent`'s scaling plus an explicit sign.
+  signedReturn: {
+    style: "percent",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+    signDisplay: "exceptZero",
+  } satisfies Format,
+
   // Significant-digit rate ("0.011286" or "88.6") — used for the swap-pair
   // exchange rate readout where both small and large values are valid.
   rate: {

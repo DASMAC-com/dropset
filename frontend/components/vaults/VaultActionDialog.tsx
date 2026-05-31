@@ -26,15 +26,6 @@ import { sanitizeAmount, sanitizePercent } from "@/lib/format/input";
 import { cappedPercentLabel } from "@/lib/format/percent";
 import { DIALOG_CONTENT_POSITION, DIALOG_OVERLAY_CLASS } from "@/lib/ui/dialog";
 
-// Format / round a token amount to that token's own decimals, so EURC shows
-// its 6 places and a 2-decimal stable shows 2. Grouping on; trailing zeros
-// trimmed (maximumFractionDigits doesn't pad).
-const fmtToken = (n: number, symbol: string): string =>
-  Number.isFinite(n)
-    ? n.toLocaleString("en-US", {
-        maximumFractionDigits: stablecoinDecimals(symbol),
-      })
-    : "";
 // Fill an input with a token amount at its FULL precision — exactly the
 // token's decimals, padded with trailing zeros. Used for the derived leg and
 // the Max / percent fills so e.g. picking base shows the quote to all its
@@ -102,41 +93,65 @@ function PositionDetail({
   const { baseOut, quoteOut } = positionBasket(position, vault);
   const pnl = positionPnl(position, vault, refNow);
   const at = allTimePnl(position, vault, refNow);
-  // Realized accumulators only diverge from the current position once there's
-  // been a past withdrawal; show the lifetime block only then.
-  const hasRealized =
-    position.realizedPnl !== 0 ||
-    position.realizedYield !== 0 ||
-    position.realizedFx !== 0;
+  // grossDeposited only exceeds netDeposits once there's been a withdrawal —
+  // until then the two deposit figures are identical, so collapse them.
+  const hasWithdrawn = position.grossDeposited > position.netDeposits;
   return (
     <div className="flex flex-col gap-1.5 rounded-md border border-border bg-muted px-3 py-3 text-xs">
-      {detailRow(
-        "Holding",
-        <span className="font-mono text-foreground">
-          {fmtToken(baseOut, market.base)} {market.base} /{" "}
-          {fmtToken(quoteOut, market.quote)} {market.quote}
-        </span>,
+      {/* All-time headline: lifetime PnL and the return on every dollar ever
+          deposited (grossDeposited, the stable denominator). */}
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-muted-fg">All-time PnL</span>
+        <span
+          className={`font-mono font-semibold text-sm tabular-nums ${pnlTone(at.allTimePnl)}`}
+        >
+          <NumberFlow value={at.allTimePnl} format={FORMATS.signedUsd} /> (
+          <NumberFlow value={at.allTimePct} format={FORMATS.signedReturn} />)
+        </span>
+      </div>
+      {hasWithdrawn ? (
+        <>
+          {detailRow(
+            "Total deposited",
+            <span className="font-mono text-foreground tabular-nums">
+              <NumberFlow
+                value={position.grossDeposited}
+                format={FORMATS.usd}
+              />
+            </span>,
+          )}
+          {detailRow(
+            // net_deposits is the basis of the shares still held, not the
+            // lifetime total — call it out as the current cost basis.
+            "Current cost basis",
+            <span className="font-mono text-foreground tabular-nums">
+              <NumberFlow value={position.netDeposits} format={FORMATS.usd} />
+            </span>,
+          )}
+        </>
+      ) : (
+        detailRow(
+          "Deposited",
+          <span className="font-mono text-foreground tabular-nums">
+            <NumberFlow value={position.netDeposits} format={FORMATS.usd} />
+          </span>,
+        )
       )}
-      {detailRow(
-        // net_deposits is the basis of the shares still held, not lifetime
-        // contributions — call it out as the current entrance.
-        "Entrance (current)",
-        <span className="font-mono text-foreground tabular-nums">
-          <NumberFlow value={pnl.entranceAmount} format={FORMATS.usd} />
-        </span>,
-      )}
-      {detailRow(
-        "Current value",
-        <span className="font-mono text-foreground tabular-nums">
-          <NumberFlow value={pnl.currentValue} format={FORMATS.usd} />
-        </span>,
-      )}
-      {detailRow(
-        "Net PnL (current)",
-        <span className={`font-mono tabular-nums ${pnlTone(pnl.netPnl)}`}>
-          <NumberFlow value={pnl.netPnl} format={FORMATS.usd} />
-        </span>,
-      )}
+
+      <div className="flex flex-col gap-1.5 border-border border-t pt-1.5">
+        {detailRow(
+          "Current value",
+          <span className="font-mono text-foreground tabular-nums">
+            <NumberFlow value={pnl.currentValue} format={FORMATS.usd} />
+          </span>,
+        )}
+        {detailRow(
+          "Net PnL (current)",
+          <span className={`font-mono tabular-nums ${pnlTone(pnl.netPnl)}`}>
+            <NumberFlow value={pnl.netPnl} format={FORMATS.usd} />
+          </span>,
+        )}
+      </div>
       <div className="flex flex-col gap-1 border-border border-t pt-1.5">
         {detailRow(
           "Yield",
@@ -150,44 +165,37 @@ function PositionDetail({
             <NumberFlow value={pnl.fxPnl} format={FORMATS.usd} />
           </span>,
         )}
+        {detailRow(
+          "Yield since open",
+          <span
+            className={`font-mono tabular-nums ${pnlTone(pnl.yieldPctSinceOpen)}`}
+          >
+            <NumberFlow
+              value={pnl.yieldPctSinceOpen}
+              format={FORMATS.percent}
+            />
+          </span>,
+        )}
       </div>
-      {detailRow(
-        "Yield since open",
-        <span
-          className={`font-mono tabular-nums ${pnlTone(pnl.yieldPctSinceOpen)}`}
-        >
-          <NumberFlow value={pnl.yieldPctSinceOpen} format={FORMATS.percent} />
-        </span>,
-      )}
-      {hasRealized && (
-        <div className="flex flex-col gap-1 border-border border-t pt-1.5">
-          <span className="text-[10px] text-muted-fg uppercase tracking-wide">
-            All-time (incl. past withdrawals)
-          </span>
-          {detailRow(
-            "All-time PnL",
-            <span
-              className={`font-mono tabular-nums ${pnlTone(at.allTimePnl)}`}
-            >
-              <NumberFlow value={at.allTimePnl} format={FORMATS.usd} />
-            </span>,
-          )}
-          {detailRow(
-            "Yield",
-            <span
-              className={`font-mono tabular-nums ${pnlTone(at.allTimeYield)}`}
-            >
-              <NumberFlow value={at.allTimeYield} format={FORMATS.usd} />
-            </span>,
-          )}
-          {detailRow(
-            "FX move",
-            <span className={`font-mono tabular-nums ${pnlTone(at.allTimeFx)}`}>
-              <NumberFlow value={at.allTimeFx} format={FORMATS.usd} />
-            </span>,
-          )}
-        </div>
-      )}
+      {/* Current basket, broken out per leg at the bottom (tidier than one
+          inline string). */}
+      <div className="flex flex-col gap-1.5 border-border border-t pt-1.5">
+        <span className="text-[10px] text-muted-fg uppercase tracking-wide">
+          Holding
+        </span>
+        {detailRow(
+          tokenLabel(market.baseIconUrl, market.base),
+          <span className="font-mono text-foreground tabular-nums">
+            {fmtBalance(baseOut, market.base)}
+          </span>,
+        )}
+        {detailRow(
+          tokenLabel(market.quoteIconUrl, market.quote),
+          <span className="font-mono text-foreground tabular-nums">
+            {fmtBalance(quoteOut, market.quote)}
+          </span>,
+        )}
+      </div>
     </div>
   );
 }
@@ -350,6 +358,10 @@ export function VaultActionDialog({
   const [basePercent, setBasePercent] = useState("");
   const [quotePercent, setQuotePercent] = useState("");
 
+  // A held position can deposit (top off) or withdraw; the two forms are
+  // mutually exclusive, chosen from a dropdown. A fresh position only deposits.
+  const [mode, setMode] = useState<"deposit" | "withdraw">("deposit");
+
   const base = Number.parseFloat(baseAmount);
   const quote = Number.parseFloat(quoteAmount);
   const validBasket = base > 0 && quote > 0;
@@ -376,10 +388,11 @@ export function VaultActionDialog({
     onOpenChange(false);
   };
 
-  // One deposit leg, styled after the attached zap-deposit card: a Max / %
-  // strip across the top, the token icon + symbol beside a large amount input,
-  // and a small line below carrying the wallet balance (left, swap-style) and
-  // the leg's ≈ USD value (right). The derived leg shows a ≈ before its amount.
+  // One deposit leg: the token icon + symbol beside a large amount input with
+  // the wallet balance (left, swap-style) and the leg's ≈ USD value (right) on
+  // the line below — all inside the "picker" card. The Max / % controls sit
+  // OUTSIDE the card, beneath it, so the card's top-left isn't left empty. The
+  // derived leg shows a ≈ before its amount.
   const amountField = (
     iconUrl: string,
     symbol: string,
@@ -398,8 +411,57 @@ export function VaultActionDialog({
       onChange(Number.isFinite(n) ? padToken((max * n) / 100, symbol) : "");
     };
     return (
-      <label className="flex flex-col gap-2 rounded-xl border border-border bg-muted px-3 py-2.5">
-        {/* Max / % strip across the top of the card. */}
+      <div className="flex flex-col gap-1.5">
+        <label className="flex flex-col gap-2 rounded-xl border border-border bg-muted px-3 py-2.5">
+          {/* Token icon + symbol beside the large amount input. */}
+          <div className="flex items-center justify-between gap-2">
+            <span className="flex shrink-0 items-center gap-2">
+              {/* biome-ignore lint/performance/noImgElement: small static icon, no optimization needed */}
+              <img
+                src={iconUrl}
+                alt=""
+                aria-hidden
+                width={28}
+                height={28}
+                className="h-7 w-7 rounded-full"
+              />
+              <span className="font-mono font-semibold text-foreground text-lg">
+                {symbol}
+              </span>
+            </span>
+            <span className="flex min-w-0 flex-1 items-center justify-end gap-1">
+              {approx && <span className="text-muted-fg text-lg">≈</span>}
+              <input
+                type="text"
+                inputMode="decimal"
+                value={value}
+                onChange={(e) =>
+                  onChange(
+                    sanitizeAmount(e.target.value, stablecoinDecimals(symbol)),
+                  )
+                }
+                placeholder="0.00"
+                disabled={depositBlocked}
+                className="min-w-0 flex-1 bg-transparent text-right font-mono text-foreground text-lg outline-none placeholder:text-muted-fg disabled:cursor-not-allowed disabled:opacity-50"
+              />
+            </span>
+          </div>
+          {/* Wallet balance (left, full decimals as needed) and the leg's ≈ USD
+              value (right), mirroring the swap token row's sub-line. */}
+          <div className="flex items-center justify-between gap-2 font-mono text-[11px] text-muted-fg tabular-nums">
+            <span
+              className="flex items-center gap-1"
+              title={`Your ${symbol} balance`}
+            >
+              <Wallet size={12} aria-hidden />
+              {fmtBalance(max, symbol)} {symbol}
+            </span>
+            <span>
+              ≈ <NumberFlow value={usdValue} format={FORMATS.usd} />
+            </span>
+          </div>
+        </label>
+        {/* Max / % outside the picker card. */}
         <div className="flex items-center justify-end gap-1">
           <button
             type="button"
@@ -425,54 +487,7 @@ export function VaultActionDialog({
             <span className="text-muted-fg">%</span>
           </label>
         </div>
-        {/* Token icon + symbol beside the large amount input. */}
-        <div className="flex items-center justify-between gap-2">
-          <span className="flex shrink-0 items-center gap-2">
-            {/* biome-ignore lint/performance/noImgElement: small static icon, no optimization needed */}
-            <img
-              src={iconUrl}
-              alt=""
-              aria-hidden
-              width={28}
-              height={28}
-              className="h-7 w-7 rounded-full"
-            />
-            <span className="font-mono font-semibold text-foreground text-lg">
-              {symbol}
-            </span>
-          </span>
-          <span className="flex min-w-0 flex-1 items-center justify-end gap-1">
-            {approx && <span className="text-muted-fg text-lg">≈</span>}
-            <input
-              type="text"
-              inputMode="decimal"
-              value={value}
-              onChange={(e) =>
-                onChange(
-                  sanitizeAmount(e.target.value, stablecoinDecimals(symbol)),
-                )
-              }
-              placeholder="0.00"
-              disabled={depositBlocked}
-              className="min-w-0 flex-1 bg-transparent text-right font-mono text-foreground text-lg outline-none placeholder:text-muted-fg disabled:cursor-not-allowed disabled:opacity-50"
-            />
-          </span>
-        </div>
-        {/* Wallet balance (left, full decimals as needed) and the leg's ≈ USD
-            value (right), mirroring the swap token row's sub-line. */}
-        <div className="flex items-center justify-between gap-2 font-mono text-[11px] text-muted-fg tabular-nums">
-          <span
-            className="flex items-center gap-1"
-            title={`Your ${symbol} balance`}
-          >
-            <Wallet size={12} aria-hidden />
-            {fmtBalance(max, symbol)} {symbol}
-          </span>
-          <span>
-            ≈ <NumberFlow value={usdValue} format={FORMATS.usd} />
-          </span>
-        </div>
-      </label>
+      </div>
     );
   };
 
@@ -537,76 +552,93 @@ export function VaultActionDialog({
               />
             )}
 
-            <div className="flex flex-col gap-2">
-              {amountField(
-                market.baseIconUrl,
-                market.base,
-                baseAmount,
-                onBaseChange,
-                activeLeg === "quote",
-                maxBase,
-                basePercent,
-                setBasePercent,
-                Number.isFinite(base) ? base * (ratio ?? 0) : 0,
-              )}
-              {amountField(
-                market.quoteIconUrl,
-                market.quote,
-                quoteAmount,
-                onQuoteChange,
-                activeLeg === "base",
-                maxQuote,
-                quotePercent,
-                setQuotePercent,
-                Number.isFinite(quote) ? quote : 0,
-              )}
-              {/* Total of both legs, quote-denominated — the headline figure
-                  from the attached deposit card. */}
-              <div className="flex items-center justify-between gap-2 border-border border-t pt-2">
-                <span className="font-medium text-foreground text-sm">
-                  Total Deposit
-                </span>
-                <span className="font-mono font-semibold text-foreground tabular-nums">
-                  <NumberFlow value={depositValue} format={FORMATS.usd} />
-                </span>
-              </div>
-            </div>
-            <p className="text-muted-fg text-xs">
-              {ratio === null
-                ? "This vault has no reserves yet, so amounts aren't linked."
-                : `Amounts fill pro-rata to the vault's reserves. Set ${market.base} or ${market.quote} and the other follows.`}
-            </p>
-
-            {floorBreached && !depositBlocked && (
-              <p className="rounded-md border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-amber-300 text-xs">
-                Too large — this would push the leader below their {floorPct}%
-                minimum stake, so the transaction would be rejected. Lower the
-                amount.
-              </p>
-            )}
-            <button
-              type="button"
-              onClick={submitDeposit}
-              disabled={!validBasket || depositBlocked || floorBreached}
-              className="h-10 rounded-md bg-accent px-3 font-medium text-background text-sm transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-fg"
-            >
-              {depositLabel}
-            </button>
-            {depositBlocked && (
-              <p className="text-center text-muted-fg text-xs">
-                {vault.frozen
-                  ? "This vault is frozen, so deposits are closed."
-                  : "Outside deposits aren't approved for this vault yet."}
-              </p>
-            )}
-
+            {/* With a position, deposit and withdraw are mutually exclusive —
+                pick one from the dropdown so the form stays uncrowded. */}
             {position && (
-              <WithdrawSection
-                market={market}
-                vault={vault}
-                position={position}
-                onSubmit={() => onOpenChange(false)}
-              />
+              <label className="flex flex-col gap-1.5">
+                <span className="text-muted-fg text-xs">Action</span>
+                <select
+                  value={mode}
+                  onChange={(e) =>
+                    setMode(e.target.value as "deposit" | "withdraw")
+                  }
+                  className="h-9 cursor-pointer rounded-md border border-border bg-muted px-3 font-medium text-foreground text-sm outline-none focus:border-accent"
+                >
+                  <option value="deposit">Deposit</option>
+                  <option value="withdraw">Withdraw</option>
+                </select>
+              </label>
+            )}
+
+            {mode === "deposit" ? (
+              <>
+                <div className="flex flex-col gap-2">
+                  {amountField(
+                    market.baseIconUrl,
+                    market.base,
+                    baseAmount,
+                    onBaseChange,
+                    activeLeg === "quote",
+                    maxBase,
+                    basePercent,
+                    setBasePercent,
+                    Number.isFinite(base) ? base * (ratio ?? 0) : 0,
+                  )}
+                  {amountField(
+                    market.quoteIconUrl,
+                    market.quote,
+                    quoteAmount,
+                    onQuoteChange,
+                    activeLeg === "base",
+                    maxQuote,
+                    quotePercent,
+                    setQuotePercent,
+                    Number.isFinite(quote) ? quote : 0,
+                  )}
+                  {/* Total of both legs, quote-denominated — the headline
+                      figure from the attached deposit card. */}
+                  <div className="flex items-center justify-between gap-2 border-border border-t pt-2">
+                    <span className="font-medium text-foreground text-sm">
+                      Total Deposit
+                    </span>
+                    <span className="font-mono font-semibold text-foreground tabular-nums">
+                      <NumberFlow value={depositValue} format={FORMATS.usd} />
+                    </span>
+                  </div>
+                </div>
+
+                {floorBreached && !depositBlocked && (
+                  <p className="rounded-md border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-amber-300 text-xs">
+                    Too large. This would push the leader below their {floorPct}
+                    % minimum stake, so the transaction would be rejected. Lower
+                    the amount.
+                  </p>
+                )}
+                <button
+                  type="button"
+                  onClick={submitDeposit}
+                  disabled={!validBasket || depositBlocked || floorBreached}
+                  className="h-10 rounded-md bg-accent px-3 font-medium text-background text-sm transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-fg"
+                >
+                  {depositLabel}
+                </button>
+                {depositBlocked && (
+                  <p className="text-center text-muted-fg text-xs">
+                    {vault.frozen
+                      ? "This vault is frozen, so deposits are closed."
+                      : "Outside deposits aren't approved for this vault yet."}
+                  </p>
+                )}
+              </>
+            ) : (
+              position && (
+                <WithdrawSection
+                  market={market}
+                  vault={vault}
+                  position={position}
+                  onSubmit={() => onOpenChange(false)}
+                />
+              )
             )}
           </div>
         </Dialog.Content>

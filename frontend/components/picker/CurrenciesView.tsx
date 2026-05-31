@@ -657,7 +657,7 @@ function CurrenciesInner() {
               />
               <th
                 scope="col"
-                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0"
+                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium normal-case last:border-r-0"
               >
                 Swap
               </th>
@@ -670,7 +670,7 @@ function CurrenciesInner() {
               />
               <th
                 scope="col"
-                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0"
+                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium normal-case last:border-r-0"
               >
                 Price
               </th>

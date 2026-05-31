@@ -73,10 +73,15 @@ export type AllTimePnl = {
   allTimeYield: number;
   allTimeFx: number;
   allTimePnl: number;
+  // All-time PnL over lifetime contributions (grossDeposited) — a return on
+  // every dollar ever put in, not just the basis of the remaining position.
+  allTimePct: number;
 };
 
 // Lifetime PnL = realized (booked on past withdrawals, stored on the position)
-// + unrealized (the current marked position). Split the same two ways. See
+// + unrealized (the current marked position). Split the same two ways. The
+// return % divides by grossDeposited (lifetime in), the stable denominator, so
+// it doesn't jump when a withdrawal shrinks the remaining cost basis. See
 // docs/architecture.md → "Depositor positions and cost basis" → All-time PnL.
 export const allTimePnl = (
   position: VaultPosition,
@@ -84,10 +89,13 @@ export const allTimePnl = (
   refNow: number,
 ): AllTimePnl => {
   const { yieldPnl, fxPnl, netPnl } = positionPnl(position, vault, refNow);
+  const allTime = position.realizedPnl + netPnl;
   return {
     allTimeYield: position.realizedYield + yieldPnl,
     allTimeFx: position.realizedFx + fxPnl,
-    allTimePnl: position.realizedPnl + netPnl,
+    allTimePnl: allTime,
+    allTimePct:
+      position.grossDeposited > 0 ? allTime / position.grossDeposited : 0,
   };
 };
 
