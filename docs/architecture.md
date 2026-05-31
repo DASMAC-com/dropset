@@ -10,6 +10,8 @@
 
 <!-- cspell:word soulbound -->
 
+<!-- cspell:word significand -->
+
 # Ephemeral Central Limit Order Book (eCLOB) Architecture
 
 This sketch presents an ephemeral central limit order book (eCLOB) design that
@@ -369,8 +371,8 @@ struct ReferencePrice {
     /// event per slot).
     stamp: u64,
     /// Reference price the leader's book profile is anchored to.
-    /// Custom 32-bit representation; range-checked by the taker
-    /// at match time.
+    /// A `Price` (see **Price**); range-checked by the taker at
+    /// match time.
     price: Price,
     /// Slot the quote was "as of" — supplied by the leader,
     /// validated `<= current_slot` (no future-dating) and
@@ -399,6 +401,45 @@ struct Position {
     expires_at: u32,
 }
 ```
+
+### Price
+
+`Price` is a `u32` decimal floating-point key. The high 5 bits hold a
+base-10 exponent biased by 16 (unbiased range `-16..=15`); the low 27
+bits hold a significand normalized to exactly 8 significant digits
+(`10_000_000..=99_999_999`). The value is `significand × 10^exponent`,
+spanning ~`1e-16` to ~`9.9999999e15` at 8 significant figures.
+
+```text
+ [ 5-bit biased exponent ][ 27-bit normalized significand ]
+   bits 31..27               bits 26..0
+```
+
+Two reserved encodings double as taker bounds: `0x0000_0000` is zero
+(a market sell with no minimum fill price) and `0xFFFF_FFFF` is
+infinity (a market buy with no maximum). Every other bit pattern is a
+regular price.
+
+**Integer order is price order.** With the exponent in the high bits
+and the significand normalized to a fixed width, an unsigned `u32`
+compare of two `Price`s matches comparing the values they encode. The
+matching engine leans on this: price-time priority — the
+`(price, nonce)` heap keys, including the bid-side `Price::MAX − price`
+inversion — is a raw integer compare with no decode. Normalization
+also makes the encoding canonical (one bit pattern per representable
+price), so equality and tie-breaks are unambiguous.
+
+**Built for ordering, not multiplication.** The significand/exponent
+form is never multiplied directly. Fills move integer atom counts
+(`base_atoms`, `quote_atoms`), and any price arithmetic first decodes
+`Price` to a scaled value. Base-10 exponents keep FX prices like
+`1.0850` exact — no binary-fraction rounding — which matters for tick
+alignment and for the cost-basis math in **Depositor positions and
+cost basis**.
+
+The 32-bit width is load-bearing: it lets `(price, quote_slot)` pack
+into one `u64` on the `SetReferencePrice` hot path and keeps every
+materialized `Position.price` compact.
 
 ### Value-per-share and the L measure
 
@@ -657,6 +698,14 @@ bids_remaining[i].price      = ref.price × (PPM −sat b.price_offset) / PPM
 bids_remaining[i].expires_at = ref.quote_slot + b.expiry_offset
 ```
 
+**`ref.price` is decoded here.** `Price` is a comparison key, not an
+arithmetic type (see **Price**), so the offset math runs in decoded
+space: decode `ref.price`, apply `(PPM ± offset) / PPM`, and store
+`remaining[i].price` as the re-encoded absolute `Price`. The matching
+fill loop likewise decodes a level's `Price` to a scaled ratio for the
+atom arithmetic — a shift plus a base-10 scale, cacheable on the
+ephemeral heap entry so a level is never decoded twice in one take.
+
 Note the unit asymmetry: ask `size` is in **base atoms** (the maker
 is offering base), bid `size` is in **quote atoms** (the maker is
 offering quote). Off-chain renderers that want a base-equivalent bid
@@ -738,7 +787,9 @@ struct VaultDepositor {
     /// is still in the vault, not lifetime contributions.
     net_deposits: u64,
     /// Shares-weighted average reference price (quote per base)
-    /// across deposits. Same representation as `ReferencePrice.price`.
+    /// across deposits. A `Price`, same as `ReferencePrice.price`;
+    /// stored canonical and decoded to a scaled value to compute PnL
+    /// and to re-average on top-off (all cold-path).
     entry_ref_price: Price,
     /// Shares-weighted average VPS (`L / total_shares`) across
     /// deposits, as Q32.32 fixed-point `u64` — same encoding as
@@ -779,7 +830,9 @@ net_deposits'    = net_deposits + (quote_in + base_in · ref_now)
 **PnL decomposition (display only).** The protocol math stays
 oracle-free (it stores basis, not PnL); a UI marks a position to a
 display price `ref_now` (the live `ReferencePrice`, or an external FX
-feed). For a position of `shares` in a vault holding `B` base / `Q`
+feed). Both `entry_ref_price` and `ref_now` are `Price` values,
+decoded to a common scale before the arithmetic below (see **Price**).
+For a position of `shares` in a vault holding `B` base / `Q`
 quote atoms over `S_tot` total shares, the current basket is
 `base_out = shares × B / S_tot`, `quote_out = shares × Q / S_tot`,
 and:
