@@ -5,18 +5,12 @@
 import NumberFlow from "@number-flow/react";
 import * as Popover from "@radix-ui/react-popover";
 import { useSearchParams } from "next/navigation";
-import { memo, Suspense, useMemo, useRef, useState } from "react";
-import {
-  ArrowUpDown,
-  ChevronDown,
-  ChevronUp,
-  ExternalLink,
-  HelpCircle,
-  Info,
-  Search,
-  X,
-} from "@/components/icons";
+import { memo, Suspense, useMemo, useState } from "react";
+import { ExternalLink, HelpCircle, Info } from "@/components/icons";
 import { CopyButton } from "@/components/ui/CopyButton";
+import { Flag } from "@/components/ui/Flag";
+import { SearchBox } from "@/components/ui/SearchBox";
+import { SortableHeader } from "@/components/ui/SortableHeader";
 import {
   CURRENCIES,
   currencyFlagUrl,
@@ -41,45 +35,86 @@ import {
 } from "@/lib/hooks/useUsdQuote";
 import { type Side, useSwapStore, useSwapStoreApi } from "@/lib/store";
 import { useFlagColor } from "@/lib/ui/flagColor";
+import { groupedRowClassName } from "@/lib/ui/groupedRows";
 import { useSwapNav } from "@/lib/ui/swapUrl";
 
 const COLSPAN = 9;
 
-type SortKey = "volume24h" | "mcap" | "liquidity" | "holderCount";
+type SortKey =
+  | "symbol"
+  | "priceChange24h"
+  | "volume24h"
+  | "mcap"
+  | "liquidity"
+  | "holderCount"
+  | "mint";
 type SortDir = "asc" | "desc";
 type SortState = { key: SortKey; direction: SortDir } | null;
+
+// The value a stablecoin sorts on for a given column: its own symbol/mint
+// (strings, case-insensitive) or a numeric TokenInfo field. null when the
+// market datum hasn't loaded so the row sinks to the bottom.
+const sortVal = (
+  s: Stablecoin,
+  key: SortKey,
+  lookup: (mint: string) => TokenInfo | null,
+): number | string | null => {
+  if (key === "symbol") return s.symbol.toLowerCase();
+  if (key === "mint") return s.mint.toLowerCase();
+  return lookup(s.mint)?.[key] ?? null;
+};
+
+// Order two sort values; nulls sink, strings compare case-insensitively.
+const cmpSort = (
+  a: number | string | null,
+  b: number | string | null,
+  direction: SortDir,
+): number => {
+  if (a === null && b === null) return 0;
+  if (a === null) return 1;
+  if (b === null) return -1;
+  if (typeof a === "string" && typeof b === "string") {
+    const c = a.localeCompare(b, undefined, { sensitivity: "base" });
+    return direction === "desc" ? -c : c;
+  }
+  return direction === "desc"
+    ? (b as number) - (a as number)
+    : (a as number) - (b as number);
+};
 
 // Sort a stablecoin list by a numeric `TokenInfo` field. Tokens with no
 // reported value sink to the bottom and retain their input order (Array.sort
 // is stable in ES2019+), so the upstream JSON order is the implicit fallback
 // for ties and nulls.
-const sortStablesByMetric = <T extends { mint: string }>(
-  list: T[],
+const sortStablesByMetric = (
+  list: Stablecoin[],
   key: SortKey,
   direction: SortDir,
   lookup: (mint: string) => TokenInfo | null,
-): T[] =>
-  list.slice().sort((a, b) => {
-    const va = lookup(a.mint)?.[key] ?? -1;
-    const vb = lookup(b.mint)?.[key] ?? -1;
-    return direction === "desc" ? vb - va : va - vb;
-  });
+): Stablecoin[] =>
+  list
+    .slice()
+    .sort((a, b) =>
+      cmpSort(sortVal(a, key, lookup), sortVal(b, key, lookup), direction),
+    );
 
-// A currency group's rank is taken from its highest-ranked stablecoin on the
-// active metric — so USD floats to the top when sorting by volume because
-// USDC dominates, even if some EUR stable would individually outrank a long
-// PYUSD-style tail. Groups with no data on this metric stay at the bottom.
-const groupScore = <T extends { mint: string }>(
-  stables: T[],
+// A currency group's rank for ordering the groups themselves: its best-ranked
+// stablecoin on the active column. For numeric metrics that's the max (so USD
+// floats up by volume because USDC dominates); for string columns it's the
+// alphabetically first. Groups with no data stay at the bottom.
+const groupScore = (
+  stables: Stablecoin[],
   key: SortKey,
+  direction: SortDir,
   lookup: (mint: string) => TokenInfo | null,
-): number => {
-  let max = Number.NEGATIVE_INFINITY;
+): number | string | null => {
+  let best: number | string | null = null;
   for (const s of stables) {
-    const v = lookup(s.mint)?.[key];
-    if (typeof v === "number" && v > max) max = v;
+    const v = sortVal(s, key, lookup);
+    if (v === null) continue;
+    if (best === null || cmpSort(v, best, direction) < 0) best = v;
   }
-  return Number.isFinite(max) ? max : -1;
+  return best;
 };
 
 const xHref = (handle: string) => `https://x.com/${handle}`;
@@ -106,39 +141,9 @@ const matches = (
   );
 };
 
-function SortableHeader({
-  sortKey,
-  label,
-  sort,
-  onToggle,
-}: {
-  sortKey: SortKey;
-  label: string;
-  sort: SortState;
-  onToggle: (key: SortKey) => void;
-}) {
-  const active = sort?.key === sortKey;
-  const Icon = !active
-    ? ArrowUpDown
-    : sort.direction === "desc"
-      ? ChevronDown
-      : ChevronUp;
-  return (
-    <th
-      scope="col"
-      className="sticky top-14 z-20 border-border border-r bg-muted p-0 last:border-r-0"
-    >
-      <button
-        type="button"
-        onClick={() => onToggle(sortKey)}
-        className={`flex w-full cursor-pointer select-none items-center justify-end gap-1 px-3 py-2 text-right font-medium outline-none transition-colors focus:outline-none focus-visible:outline-none ${active ? "text-foreground" : "text-muted-fg hover:text-foreground"}`}
-      >
-        {label}
-        <Icon size={12} />
-      </button>
-    </th>
-  );
-}
+// Pin the generic shared header to this table's sort keys so literal
+// `sortKey` props type-check against `sort` / `onToggle`.
+const CurrencySortHeader = SortableHeader<SortKey>;
 
 function CurrencyHeaderRow({ code }: { code: IsoCurrencyCode }) {
   const url = currencyFlagUrl(code);
@@ -244,14 +249,14 @@ const StablecoinRow = memo(function StablecoinRow({
   s,
   rowIndex,
   groupSize,
+  showFlag,
 }: {
   code: IsoCurrencyCode;
   s: Stablecoin;
   rowIndex: number;
   groupSize: number;
+  showFlag: boolean;
 }) {
-  const striped = groupSize >= 2 && rowIndex % 2 === 1;
-  const isLastInGroup = rowIndex === groupSize - 1;
   const info = useTokenInfo(s.mint);
   const change = info?.priceChange24h;
   const changeTone =
@@ -288,10 +293,11 @@ const StablecoinRow = memo(function StablecoinRow({
   return (
     <tr
       id={s.symbol.toLowerCase()}
-      className={`scroll-mt-24 border-border border-t ${isLastInGroup ? "border-b" : ""} ${striped ? "bg-muted/70" : ""}`}
+      className={`scroll-mt-24 ${groupedRowClassName(rowIndex, groupSize)}`}
     >
       <td className="border-border border-r px-3 py-2 align-top last:border-r-0">
         <div className="flex items-center gap-2">
+          {showFlag && <Flag url={currencyFlagUrl(code)} size={20} />}
           {/* biome-ignore lint/performance/noImgElement: small static icon, no optimization needed */}
           <img
             src={s.icon}
@@ -491,13 +497,6 @@ function CurrenciesInner() {
     initialSymbol ?? searchParams.get("q") ?? "",
   );
   const [strict, setStrict] = useState(initialSymbol !== null);
-  const [focused, setFocused] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useAppEvent("focusCurrenciesSearch", () => {
-    inputRef.current?.focus();
-    inputRef.current?.select();
-  });
 
   // Warm the Jupiter token-info cache on mount, then refresh every 10 s so
   // price / 24h Δ / volume / mcap / liquidity / holders stay live while the
@@ -563,11 +562,9 @@ function CurrenciesInner() {
               sort.direction,
               lookup,
             ),
-            score: groupScore(stables, sort.key, lookup),
+            score: groupScore(stables, sort.key, sort.direction, lookup),
           }))
-          .sort((a, b) =>
-            sort.direction === "desc" ? b.score - a.score : a.score - b.score,
-          );
+          .sort((a, b) => cmpSort(a.score, b.score, sort.direction));
 
   // Flat (un-grouped) view: pool every filtered stable across currencies and
   // sort by the active column. Default to 24 h volume desc when no header is
@@ -581,11 +578,13 @@ function CurrenciesInner() {
     sort ?? (!groupByCurrency ? { key: "volume24h", direction: "desc" } : null);
   const flatStables = filtered
     .flatMap(({ code, stables }) => stables.map((s) => ({ code, s })))
-    .sort((a, b) => {
-      const va = lookup(a.s.mint)?.[flatKey] ?? -1;
-      const vb = lookup(b.s.mint)?.[flatKey] ?? -1;
-      return flatDirection === "desc" ? vb - va : va - vb;
-    });
+    .sort((a, b) =>
+      cmpSort(
+        sortVal(a.s, flatKey, lookup),
+        sortVal(b.s, flatKey, lookup),
+        flatDirection,
+      ),
+    );
 
   const pickToken = usePickToken();
   useAppEvent("pickCurrencyOnlyResult", (side) => {
@@ -604,62 +603,25 @@ function CurrenciesInner() {
     <div className="mx-auto max-w-6xl px-6 pt-3 pb-16">
       <div className="mb-3 flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-56 items-center gap-2 rounded-md border border-border bg-muted px-3">
-            <Search size={14} className="shrink-0 text-muted-fg" />
-            <input
-              ref={inputRef}
-              type="text"
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value);
-                // Any user edit relaxes strict mode (the picker `?` link
-                // boots the page in strict so EURC doesn't match EURCV; once
-                // the user touches the box they've signaled they want the
-                // ordinary substring search).
-                if (strict) setStrict(false);
-              }}
-              onFocus={() => setFocused(true)}
-              onBlur={() => {
-                setFocused(false);
-                commitQueryToUrl(query, strict);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") {
-                  e.preventDefault();
-                  inputRef.current?.blur();
-                } else if (e.key === "Enter") {
-                  e.preventDefault();
-                  commitQueryToUrl(query, strict);
-                  inputRef.current?.blur();
-                }
-              }}
-              placeholder="Search currencies…"
-              className="min-w-0 flex-1 bg-transparent text-foreground text-sm outline-none placeholder:text-muted-fg"
-            />
-            <kbd
-              aria-hidden
-              title={
-                focused ? "Press Esc to exit search" : "Press / to focus search"
-              }
-              className="hidden shrink-0 rounded border border-border bg-background px-1.5 py-0.5 font-mono text-[10px] text-muted-fg sm:inline-block"
-            >
-              {focused ? "Esc" : "/"}
-            </kbd>
-            {query && (
-              <button
-                type="button"
-                onClick={() => {
-                  setQuery("");
-                  if (strict) setStrict(false);
-                  commitQueryToUrl("", false);
-                }}
-                aria-label="Clear search"
-                className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-fg hover:bg-background hover:text-foreground"
-              >
-                <X size={14} />
-              </button>
-            )}
-          </div>
+          <SearchBox
+            value={query}
+            // Any user edit relaxes strict mode (the picker `?` link boots the
+            // page in strict so EURC doesn't match EURCV; once the user touches
+            // the box they've signaled they want the ordinary substring
+            // search).
+            onValueChange={(v) => {
+              setQuery(v);
+              if (strict) setStrict(false);
+            }}
+            onClear={() => {
+              setQuery("");
+              if (strict) setStrict(false);
+              commitQueryToUrl("", false);
+            }}
+            onCommit={() => commitQueryToUrl(query, strict)}
+            placeholder="Search currencies…"
+            focusEvent="focusCurrenciesSearch"
+          />
           <label className="flex select-none items-center gap-2 text-muted-fg text-xs hover:text-foreground">
             <input
               type="checkbox"
@@ -686,55 +648,57 @@ function CurrenciesInner() {
         <table className="w-full min-w-[720px] text-left text-sm">
           <thead className="text-muted-fg text-xs uppercase">
             <tr>
+              <CurrencySortHeader
+                sortKey="symbol"
+                label="Token"
+                sort={headerSort}
+                onToggle={toggleSort}
+                align="left"
+              />
               <th
                 scope="col"
-                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0"
-              >
-                Token
-              </th>
-              <th
-                scope="col"
-                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0"
+                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium normal-case last:border-r-0"
               >
                 Swap
               </th>
+              <CurrencySortHeader
+                sortKey="mint"
+                label="Mint Address"
+                sort={headerSort}
+                onToggle={toggleSort}
+                align="left"
+              />
               <th
                 scope="col"
-                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0"
-              >
-                Mint Address
-              </th>
-              <th
-                scope="col"
-                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0"
+                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium normal-case last:border-r-0"
               >
                 Price
               </th>
-              <th
-                scope="col"
-                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium last:border-r-0"
-              >
-                24h Δ
-              </th>
-              <SortableHeader
+              <CurrencySortHeader
+                sortKey="priceChange24h"
+                label="24h Δ"
+                sort={headerSort}
+                onToggle={toggleSort}
+              />
+              <CurrencySortHeader
                 sortKey="volume24h"
                 label="24h Vol"
                 sort={headerSort}
                 onToggle={toggleSort}
               />
-              <SortableHeader
+              <CurrencySortHeader
                 sortKey="mcap"
                 label="Market Cap"
                 sort={headerSort}
                 onToggle={toggleSort}
               />
-              <SortableHeader
+              <CurrencySortHeader
                 sortKey="liquidity"
                 label="Liquidity"
                 sort={headerSort}
                 onToggle={toggleSort}
               />
-              <SortableHeader
+              <CurrencySortHeader
                 sortKey="holderCount"
                 label="Holders"
                 sort={headerSort}
@@ -762,6 +726,7 @@ function CurrenciesInner() {
                     s={s}
                     rowIndex={i}
                     groupSize={stables.length}
+                    showFlag={false}
                   />
                 )),
               ])
@@ -773,6 +738,7 @@ function CurrenciesInner() {
                   s={s}
                   rowIndex={i}
                   groupSize={flatStables.length}
+                  showFlag
                 />
               ))
             )}

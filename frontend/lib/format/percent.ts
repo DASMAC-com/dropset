@@ -30,6 +30,15 @@ const BASIS_POINTS_DIVISOR = 10_000n;
 // the caller wants to display "99.99%" instead of rounding up to 100%.
 export const MAX_BELOW_FULL_BPS = 9_999n;
 
+// Render a 0..10000 bps ratio as a percent label, showing "100%" only when the
+// caller confirms it's an exact full amount; anything else that would round to
+// 100% is capped at "99.99%". Shared by the swap balance-% control and the
+// vault withdraw control.
+export const cappedPercentLabel = (bps: bigint, isFull: boolean): string =>
+  isFull
+    ? "100%"
+    : formatPercentFromBps(bps > MAX_BELOW_FULL_BPS ? MAX_BELOW_FULL_BPS : bps);
+
 // Number-domain conversions for fee/slippage UI. Kept as plain `number`
 // because both inputs are bounded small (bps in [0, 10000], percent in
 // [0, 100]) — bigint math here would force every display site to convert

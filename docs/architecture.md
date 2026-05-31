@@ -4,6 +4,14 @@
 
 <!-- cspell:word tombstoned -->
 
+<!-- cspell:word Hyperliquid -->
+
+<!-- cspell:word CLMM -->
+
+<!-- cspell:word soulbound -->
+
+<!-- cspell:word significand -->
+
 # Ephemeral Central Limit Order Book (eCLOB) Architecture
 
 This sketch presents an ephemeral central limit order book (eCLOB) design that
@@ -263,9 +271,10 @@ they update on the hot path. Vaults live contiguously inside the
 market account's sector array (see **Storage layout**). The leader
 (or a delegated `quote_authority`) is the only signer that can mutate
 quotes — both the `ReferencePrice` and the `LiquidityProfile`;
-outside-depositor shares live as SPL tokens (see **Shares**)
-and the leader's stake is non-SPL bookkeeping — neither imposes any
-per-depositor storage on the vault sector itself.
+both the leader's stake and outside-depositor shares are non-SPL
+bookkeeping (see **Shares**) — outside positions live on separate
+`VaultDepositor` PDAs, so neither imposes any per-depositor storage
+on the vault sector itself.
 
 Leader-supplied prices are **not** validated on write — takers
 range-check at match time, so a nonsense reference price just
@@ -280,11 +289,6 @@ struct Vault {
     /// stamps `leader`. Hot-path auth check is a single compare.
     /// Rotated via `SetQuoteAuthority` (leader-only).
     quote_authority: Pubkey,
-    /// SPL mint for outside-depositor shares. Mint authority is a
-    /// vault-owned PDA. Leader's own stake is tracked in
-    /// `leader_shares` and is **not** minted as SPL tokens.
-    /// Invariant: `leader_shares + share_mint.supply == total_shares`.
-    share_mint: Pubkey,
     /// Packed `(stamp, price, expiry)`. Hot path —
     /// overwritten as two aligned u64 stores.
     reference_price: ReferencePrice,
@@ -299,7 +303,7 @@ struct Vault {
     /// treasury invariant in **MarketHeader**.
     quote_atoms: u64,
     /// Total vault shares outstanding (= leader_shares +
-    /// share_mint.supply).
+    /// Σ VaultDepositor.shares).
     total_shares: u64,
     /// Leader's stake. Non-SPL, protocol-tracked. Increments on
     /// leader `Deposit` and on `Realize` perf-fee accrual;
@@ -367,8 +371,8 @@ struct ReferencePrice {
     /// event per slot).
     stamp: u64,
     /// Reference price the leader's book profile is anchored to.
-    /// Custom 32-bit representation; range-checked by the taker
-    /// at match time.
+    /// A `Price` (see **Price**); range-checked by the taker at
+    /// match time.
     price: Price,
     /// Slot the quote was "as of" — supplied by the leader,
     /// validated `<= current_slot` (no future-dating) and
@@ -397,6 +401,48 @@ struct Position {
     expires_at: u32,
 }
 ```
+
+### Price
+
+`Price` is a `u32` decimal floating-point key. The high 5 bits hold a
+base-10 exponent biased by 16 (unbiased range `-16..=15`); the low 27
+bits hold a significand normalized to exactly 8 significant digits
+(`10_000_000..=99_999_999`). The significand is a mantissa scaled by
+`10^7`, so the value is `(significand / 10^7) × 10^exponent` —
+equivalently `significand × 10^(exponent − 7)` — placing the mantissa
+in `[1.0000000, 9.9999999]`. The price spans ~`1e-16` to
+~`9.9999999e15` at 8 significant figures.
+
+```text
+ [ 5-bit biased exponent ][ 27-bit normalized significand ]
+   bits 31..27               bits 26..0
+```
+
+Two reserved encodings double as taker bounds: `0x0000_0000` is zero
+(a market sell with no minimum fill price) and `0xFFFF_FFFF` is
+infinity (a market buy with no maximum). Every other bit pattern is a
+regular price.
+
+**Integer order is price order.** With the exponent in the high bits
+and the significand normalized to a fixed width, an unsigned `u32`
+compare of two `Price`s matches comparing the values they encode. The
+matching engine leans on this: price-time priority — the
+`(price, nonce)` heap keys, including the bid-side `Price::MAX − price`
+inversion — is a raw integer compare with no decode. Normalization
+also makes the encoding canonical (one bit pattern per representable
+price), so equality and tie-breaks are unambiguous.
+
+**Built for ordering, not multiplication.** The significand/exponent
+form is never multiplied directly. Fills move integer atom counts
+(`base_atoms`, `quote_atoms`), and any price arithmetic first decodes
+`Price` to a scaled value. Base-10 exponents keep FX prices like
+`1.0850` exact — no binary-fraction rounding — which matters for tick
+alignment and for the cost-basis math in **Depositor positions and
+cost basis**.
+
+The 32-bit width is load-bearing: it lets `(price, quote_slot)` pack
+into one `u64` on the `SetReferencePrice` hot path and keeps every
+materialized `Position.price` compact.
 
 ### Value-per-share and the L measure
 
@@ -471,18 +517,19 @@ and only when `VPS_new > hwm`. Recoveries to a prior VPS do not
 earn perf fee. ∎
 
 **I6. Invariant on total shares.**
-`total_shares = leader_shares + share_mint.supply` at all times.
-Every path that mutates `total_shares` mutates exactly one of the
-two terms by the same amount:
+`total_shares = leader_shares + Σ VaultDepositor.shares` at all
+times. Every path that mutates `total_shares` mutates exactly one of
+the two terms by the same amount (the outside paths touch a single
+`VaultDepositor.shares`):
 
-| Operation                                  | `leader_shares` | `share_mint.supply` |
-| ------------------------------------------ | --------------- | ------------------- |
-| `Deposit` (seeding; `s = 0` → leader path) | +Δs             | 0                   |
-| `Deposit` (leader path)                    | +Δs             | 0                   |
-| `Deposit` (outside path)                   | 0               | +Δs                 |
-| `Withdraw` (leader path)                   | −Δs             | 0                   |
-| `Withdraw` (outside path)                  | 0               | −Δs                 |
-| `Realize`                                  | +m              | 0                   |
+| Operation                                  | `leader_shares` | `Σ VaultDepositor.shares` |
+| ------------------------------------------ | --------------- | ------------------------- |
+| `Deposit` (seeding; `s = 0` → leader path) | +Δs             | 0                         |
+| `Deposit` (leader path)                    | +Δs             | 0                         |
+| `Deposit` (outside path)                   | 0               | +Δs                       |
+| `Withdraw` (leader path)                   | −Δs             | 0                         |
+| `Withdraw` (outside path)                  | 0               | −Δs                       |
+| `Realize`                                  | +m              | 0                         |
 
 ### High-water mark and performance fee
 
@@ -654,6 +701,14 @@ bids_remaining[i].price      = ref.price × (PPM −sat b.price_offset) / PPM
 bids_remaining[i].expires_at = ref.quote_slot + b.expiry_offset
 ```
 
+**`ref.price` is decoded here.** `Price` is a comparison key, not an
+arithmetic type (see **Price**), so the offset math runs in decoded
+space: decode `ref.price`, apply `(PPM ± offset) / PPM`, and store
+`remaining[i].price` as the re-encoded absolute `Price`. The matching
+fill loop likewise decodes a level's `Price` to a scaled ratio for the
+atom arithmetic — a shift plus a base-10 scale, cacheable on the
+ephemeral heap entry so a level is never decoded twice in one take.
+
 Note the unit asymmetry: ask `size` is in **base atoms** (the maker
 is offering base), bid `size` is in **quote atoms** (the maker is
 offering quote). Off-chain renderers that want a base-equivalent bid
@@ -688,17 +743,180 @@ Properties:
 
 ## Shares
 
-Outside-depositor shares are SPL tokens minted from
-`Vault.share_mint`. They live in standard ATAs, are transferable, and
-compose with the rest of the Solana ecosystem (collateral in lending
-markets, listed on aggregators, etc.).
+Shares are **never SPL tokens** — neither the leader's stake nor an
+outside depositor's. The leader's stake is tracked as
+`Vault.leader_shares`; every outside depositor's stake is tracked as
+`shares` on a per-depositor **`VaultDepositor`** account (see
+**Depositor positions and cost basis**). Both are pure on-vault
+bookkeeping: nothing lives in an ATA, so the skin-in-the-game floor
+cannot be evaded by moving shares to an alt wallet and no token
+accounts are loaded at check time.
 
-The leader's stake is **not** an SPL token — it's tracked as
-`Vault.leader_shares` so the skin-in-the-game floor cannot be evaded
-by transferring shares to an alt wallet, and the leader's ATA never
-has to be loaded at check time.
+This makes a vault position **non-transferable and non-composable** —
+a depositor exits by `Withdraw`, not by sending shares to someone
+else (the Hyperliquid / Drift vault model). The trade is deliberate:
+positions are not a tradeable secondary asset, but in exchange the
+vault stores each depositor's cost basis authoritatively on-chain,
+with no lot-attribution ambiguity and no reliance on transfer-history
+reconstruction. CLMM-style fungible/NFT shares were rejected because
+Dropset positions are fungible *within* a vault (a pro-rata basket,
+no price range), so neither a fungible mint nor a position NFT buys
+anything the `VaultDepositor` doesn't.
 
-Invariant: `leader_shares + share_mint.supply == total_shares`.
+Invariant: `leader_shares + Σ VaultDepositor.shares == total_shares`.
+
+### Depositor positions and cost basis
+
+Each outside depositor's position in a vault is a `VaultDepositor`
+account — one per `(vault, owner)` pair, PDA-seeded by
+`("vault_depositor", vault, owner)`. It is the authoritative on-chain
+record of both the depositor's claim and what they paid for it:
+
+```rust
+struct VaultDepositor {
+    /// The vault this position is in.
+    vault: Pubkey,
+    /// The depositor. Bound by the PDA seeds
+    /// (`"vault_depositor", vault, owner`), so the account is
+    /// non-transferable — there is no authority field to reassign.
+    owner: Pubkey,
+    /// Pro-rata claim on the vault — the per-depositor term of the
+    /// I6 invariant (`leader_shares + Σ VaultDepositor.shares ==
+    /// total_shares`).
+    shares: u64,
+    /// Quote-denominated principal of the **remaining** position:
+    /// `Σ (quote_in + base_in × entry_ref)` over deposits, reduced by
+    /// the withdrawn slice's `released_basis` on withdraw. The basis of
+    /// what is still in the vault — the cost basis the unrealized
+    /// `net_pnl` is measured against.
+    net_deposits: u64,
+    /// Monotonic lifetime contributions: incremented by each deposit's
+    /// `(quote_in + base_in × ref_now)`, **never reduced on withdraw**.
+    /// This is "total deposited" and the stable denominator for an
+    /// all-time return percentage (unlike `net_deposits`, it doesn't
+    /// shrink when a depositor takes profit).
+    gross_deposited: u64,
+    /// Shares-weighted average reference price (quote per base)
+    /// across deposits. A `Price`, same as `ReferencePrice.price`;
+    /// stored canonical and decoded to a scaled value to compute PnL
+    /// and to re-average on top-off (all cold-path). Re-encoding to an
+    /// 8-significant-figure `Price` each top-off adds negligible drift
+    /// to the running average.
+    entry_ref_price: Price,
+    /// Shares-weighted average VPS (`L / total_shares`) across
+    /// deposits, as Q32.32 fixed-point `u64` — same encoding and
+    /// practical bound as `Vault.hwm`. Basis for the "yield since
+    /// open" figure.
+    entry_vps: u64,
+    /// Slot of the first deposit.
+    opened_at: u64,
+    /// **Signed** quote-denominated PnL crystallized by past
+    /// withdrawals (a withdrawal can realize a loss). Discarded when
+    /// the account is closed at zero shares. `i64` holds per-depositor
+    /// PnL; widen to `i128` if a quote mint's atom scale could exceed
+    /// it.
+    realized_pnl: i64,
+    /// Signed yield (ex-FX) component of `realized_pnl`.
+    realized_yield: i64,
+    /// Signed FX component of `realized_pnl`.
+    /// Invariant: `realized_yield + realized_fx == realized_pnl`.
+    realized_fx: i64,
+}
+```
+
+Every basis field is captured from **on-chain** state at deposit
+time — `entry_vps` from the vault's `L / total_shares`,
+`entry_ref_price` from the leader's live `ReferencePrice`. No oracle
+is needed to *record* basis; a price feed is only needed at *display*
+time, to mark a position's current value (`ref_now`).
+
+**Top-off (deposit into an existing position).** A second deposit
+merges the new lot into the running averages, weighted by shares
+(`s` = prior `shares`, `Δs` = `shares_out` this deposit; `base_in`,
+`quote_in` = this deposit's basket):
+
+```text
+shares'          = s + Δs
+entry_vps'       = (s · entry_vps       + Δs · VPS_now) / shares'
+entry_ref_price' = (s · entry_ref_price + Δs · ref_now) / shares'
+net_deposits'    = net_deposits + (quote_in + base_in · ref_now)
+gross_deposited' = gross_deposited + (quote_in + base_in · ref_now)
+```
+
+**PnL decomposition (display only).** The protocol math stays
+oracle-free (it stores basis, not PnL); a UI marks a position to a
+display price `ref_now` (the live `ReferencePrice`, or an external FX
+feed). Both `entry_ref_price` and `ref_now` are `Price` values,
+decoded to a common scale before the arithmetic below (see **Price**).
+For a position of `shares` in a vault holding `B` base / `Q`
+quote atoms over `S_tot` total shares, the current basket is
+`base_out = shares × B / S_tot`, `quote_out = shares × Q / S_tot`,
+and:
+
+```text
+current_value     = quote_out + base_out × ref_now
+value_at_entry_fx = quote_out + base_out × entry_ref_price
+yield_pnl         = value_at_entry_fx − net_deposits       # spread, ex-FX
+fx_pnl            = base_out × (ref_now − entry_ref_price)  # FX direction
+net_pnl           = current_value − net_deposits = yield_pnl + fx_pnl
+```
+
+`yield_pnl` is the depositor's share of spread capture vs. adverse
+selection, valued at constant FX; `fx_pnl` is the directional move of
+the underlying pair on the base they hold. Together they are the
+per-depositor form of the **APR (leader skill) × basket price move
+(directional)** split in **APR / yield accounting**. Because the
+position is soulbound, the basis is always the depositor's own — there
+is no transfer or lot-attribution ambiguity to resolve.
+
+Two caveats on these display figures:
+
+- **The yield/FX split is exact in total but approximate per leg.**
+  `net_pnl` is always exact (the `entry_ref_price` terms cancel). But
+  `fx_pnl` marks the *current* base holding `base_out` against the
+  *shares-weighted* `entry_ref_price`, while a lot's real FX exposure
+  is base-weighted; across top-offs at different reference prices the
+  yield/FX attribution drifts (bounded by `base_out ×` the spread of
+  entry prices, worst under large FX moves between top-offs). The two
+  legs always sum back to the exact `net_pnl`.
+- **"Yield since open %" is a separate, geometric metric.** The
+  headline `VPS_now / entry_vps − 1` is the FX-neutral, oracle-free
+  VPS growth — the per-depositor APR. It is **not** equal to
+  `yield_pnl / net_deposits`: VPS is a geometric measure
+  (`L = isqrt(base × quote)`), whereas `yield_pnl` is an arithmetic
+  constant-FX quote value, so the two diverge as the inventory ratio
+  moves. Show the VPS ratio as the headline % and `yield_pnl` as the
+  dollar attribution; don't derive one from the other.
+
+**All-time PnL.** The figures above are **unrealized** — they cover
+only the shares still in the vault. Each `Withdraw` crystallizes the
+withdrawn slice into the account's `realized_*` accumulators (see
+**Withdraw**), so a depositor's lifetime figures add the two:
+
+```text
+all_time_yield = realized_yield + yield_pnl
+all_time_fx    = realized_fx    + fx_pnl
+all_time_pnl   = realized_pnl   + net_pnl = all_time_yield + all_time_fx
+all_time_pct   = all_time_pnl / gross_deposited
+```
+
+The percentage uses `gross_deposited`, not `net_deposits`:
+`net_deposits` is the basis of the **remaining** position and shrinks
+pro-rata on withdraw, so dividing by it would make the headline
+percentage jump every time a depositor takes profit. `gross_deposited`
+only ever grows, so it is both "total deposited" and a stable
+denominator — the same convention a CLMM venue uses when it bases
+position PnL% on lifetime deposits. Because the account is closed at
+zero shares, these figures span from the first deposit to a full
+exit; carrying them across a close-and-reopen needs an external
+indexer.
+
+Note the realized accumulators are marked at the vault's **on-chain
+`reference_price`** at each withdrawal, whereas the unrealized
+`yield_pnl` / `fx_pnl` use the display `ref_now` — which may be an
+external feed. So when the display price differs from the on-chain
+reference, only the **totals** (`all_time_pnl`) reconcile across the
+realized/unrealized boundary; the per-leg yield/FX split does not.
 
 ## Caller mechanics
 
@@ -729,10 +947,11 @@ caller; the third is the per-ix authority gate.
      `vault.allow_outside_depositors == 1` (leader opt-in) and
      `vault.outside_deposits_approved == 1` (admin approval).
    - **Withdraw**: leader path requires `vault.leader == signer`;
-     otherwise outside path requires the caller to hold > 0 SPL
-     tokens on `vault.share_mint` (the burn from their ATA proves
-     possession). See **Vault → Frozen and tombstoned vaults** for
-     the wind-down behavior on non-active vaults.
+     otherwise outside path requires a `VaultDepositor` PDA seeded by
+     `(vault, signer)` with `shares >= shares_in` (the seeds bind the
+     account to the signer, proving ownership). See
+     **Vault → Frozen and tombstoned vaults** for the wind-down
+     behavior on non-active vaults.
    - **Permissionless** (`Realize`): no signer check. The leader
      has the strongest economic incentive, but anyone may call —
      useful for indexers and keepers that want to pin HWM at a
@@ -796,9 +1015,7 @@ Caller arguments stamped onto the vault:
 - `allow_outside_depositors: bool` — toggleable post-open via
   `SetAllowOutsideDepositors`.
 
-Side effect: the instruction creates a new SPL mint for outside-share
-tokens (mint authority a vault-owned PDA) and records its address as
-`Vault.share_mint`. It also stamps `Vault.min_leader_share` from the
+Side effect: the instruction stamps `Vault.min_leader_share` from the
 market's `MarketHeader.default_min_leader_share` (the skin-in-the-game
 floor this vault will be held to; admin-overridable per vault via
 `SetMinLeaderShare`). The vault is otherwise initialized empty
@@ -956,34 +1173,58 @@ in **Vault → Skin-in-the-game floor** describes.
 ix (see **Caller mechanics**), and the same instruction discriminants
 for both the leader and outside depositors. The path splits
 internally on `signer == vault.leader`: the leader updates
-`Vault.leader_shares` directly, while outside depositors mint or burn
-SPL tokens against `Vault.share_mint`. SPL mint and depositor-ATA
-accounts are required for the outside path, **optional for the
-leader path** — leaders can omit them.
+`Vault.leader_shares` directly, while outside depositors update
+`shares` on their `VaultDepositor` account (PDA seeded by
+`("vault_depositor", vault, owner)`; see **Depositor positions and
+cost basis**). The `VaultDepositor` account is required on the
+outside path — `init_if_needed` on `Deposit`, `close`-on-empty on
+`Withdraw` — and **omitted on the leader path**. No SPL share mint or
+ATA exists anymore; shares are pure on-vault bookkeeping on both
+paths.
 
 Both `Deposit` and `Withdraw` realize the vault first — see
 **Vault → Realize**.
 
 ### Deposit
 
-Caller specifies a target `shares_out` and a max basket
-`(max_base_in, max_quote_in)` for slippage protection. The basket
-required at the current vault ratio is:
+Caller sizes the deposit by **one leg** — a base amount *or* a quote
+amount — and passes a max basket `(max_base_in, max_quote_in)` for
+slippage protection. The argument is a tagged
+`amount_in: { Base(u64) | Quote(u64) }`: the depositor commits the
+leg they hold ("add 1,000 USDC") and the other leg follows from the
+vault's current ratio, mirroring the linked inputs in the deposit UI.
+The sized leg fixes `shares_out`, and the basket is then derived from
+`shares_out` at the current ratio:
 
 ```text
+shares_out =
+  floor(amount_in × total_shares / base_atoms)   // amount_in = Base(_)
+  floor(amount_in × total_shares / quote_atoms)  // amount_in = Quote(_)
+
 base_in  = ceil(shares_out × base_atoms  / total_shares)
 quote_in = ceil(shares_out × quote_atoms / total_shares)
 ```
 
-Rounding up keeps any dust on the depositor's side, preserving VPS
-for existing depositors. The basket is transferred from the
-depositor to the treasuries, then:
+`shares_out` is rounded **down** and the basket **up**, so the
+depositor always backs their minted shares with a full pro-rata
+basket; any rounding dust stays on the depositor's side (their sized
+leg is an upper bound — `base_in ≤ amount_in` when sizing by base,
+and symmetrically for quote), preserving VPS for existing depositors
+(invariant I1). The instruction reverts if `base_in > max_base_in`
+or `quote_in > max_quote_in` — the ratio moved beyond the caller's
+tolerance. The basket is transferred from the depositor to the
+treasuries, then:
 
 - **Leader path** (`signer == vault.leader`): increment
-  `Vault.leader_shares` by `shares_out`. No SPL tokens minted.
-- **Outside path** (`signer != vault.leader`): mint `shares_out`
-  SPL tokens to the caller's ATA on `Vault.share_mint`. Requires
-  both `Vault.allow_outside_depositors == 1` (leader opt-in) and
+  `Vault.leader_shares` by `shares_out`. No `VaultDepositor`.
+- **Outside path** (`signer != vault.leader`): credit `shares_out`
+  to the caller's `VaultDepositor` account (`init_if_needed`), and
+  record cost basis on it (see **Depositor positions and cost
+  basis** for the field semantics and the top-off merge). A first
+  deposit sets `shares`, `entry_vps`, `entry_ref_price`,
+  `net_deposits`, `gross_deposited`, and `opened_at`; a top-off into
+  an existing account merges them shares-weighted. Requires both
+  `Vault.allow_outside_depositors == 1` (leader opt-in) and
   `Vault.outside_deposits_approved == 1` (admin approval); either
   flag unset rejects the deposit. See
   **Leader operations → SetOutsideDepositsApproved**.
@@ -998,13 +1239,16 @@ the instruction reverts. The floor is the vault's own
 ATA load needed. See **Vault → Skin-in-the-game floor**.
 
 **Seeding (first deposit).** If `total_shares == 0`, the vault has
-never been seeded. The first depositor **must** be the leader and
-must supply `base_in > 0 && quote_in > 0` — a zero leg would yield
+never been seeded. There is no ratio yet to derive one leg from, so
+single-leg sizing does not apply: the first depositor **must** be the
+leader and must supply both legs explicitly,
+`base_in > 0 && quote_in > 0` — a zero leg would yield
 `total_shares = 0` and re-trigger seeding on the next deposit (and
 divide by zero in the pro-rata basket math). The instruction sets
 `total_shares := isqrt(base_in × quote_in)`,
-`leader_shares := total_shares`, and `hwm := Q32.32(1.0)`. No SPL
-tokens are minted on seeding (leader stake is non-SPL).
+`leader_shares := total_shares`, and `hwm := Q32.32(1.0)`. No
+`VaultDepositor` is created on seeding (the leader's stake lives on
+`Vault.leader_shares`).
 
 Deposits against frozen or tombstoned vaults are rejected.
 
@@ -1014,19 +1258,45 @@ Caller specifies `shares_in` to burn. The vault delivers a pro-rata
 basket:
 
 ```text
-base_out  = floor(shares_in × base_atoms  / total_shares)
-quote_out = floor(shares_in × quote_atoms / total_shares)
+slice_base  = floor(shares_in × base_atoms  / total_shares)
+slice_quote = floor(shares_in × quote_atoms / total_shares)
 ```
 
 Rounding down keeps any dust in the vault for the benefit of
 remaining depositors. Then:
 
 - **Leader path** (`signer == vault.leader`): decrement
-  `Vault.leader_shares` by `shares_in`. No SPL burn.
-- **Outside path** (signer holds SPL tokens on
-  `Vault.share_mint`): burn `shares_in` SPL tokens from the
-  caller's ATA. The burn itself gates authority — a caller with
-  no balance fails at the SPL layer.
+  `Vault.leader_shares` by `shares_in`. The leader has no
+  `VaultDepositor`, so no basis or realized accounting applies.
+- **Outside path** (`signer != vault.leader`): decrement `shares` on
+  the caller's `VaultDepositor` by `shares_in` (the PDA seeds bind the
+  account to `signer`, so authority is gated by ownership and
+  `shares_in <= VaultDepositor.shares`). The withdrawn slice's PnL is
+  crystallized and the basis reduced, per the accounting below.
+
+On the outside path, before the basis is reduced the withdrawn
+slice's PnL is added to the signed `realized_*` accumulators, marked
+at the vault's current `reference_price` (`r_now`) — the same source
+`entry_ref_price` was captured from, so the realized split's FX and
+yield legs share one reference. `slice_base` / `slice_quote` are the
+withdrawn basket above; `released_basis` is the floored slice of the
+remaining basis, and `net_deposits` is reduced by exactly that:
+
+```text
+released_basis  = floor(net_deposits × shares_in / shares)
+realized_fx    += slice_base × (r_now − entry_ref_price)
+realized_yield += slice_quote + slice_base × entry_ref_price − released_basis
+realized_pnl   += slice_quote + slice_base × r_now − released_basis
+net_deposits'   = net_deposits − released_basis
+```
+
+`entry_vps`, `entry_ref_price`, and `gross_deposited` are left
+unchanged — a proportional reduction preserves the shares-weighted
+averages, and `gross_deposited` only ever grows (on deposit). When
+`shares` reaches 0, `close` the account and return its rent to the
+owner; this discards the accumulators, so all-time PnL spans one
+open→full-exit lifetime (see
+**Depositor positions and cost basis → All-time PnL**).
 
 `Vault.total_shares` is decremented in both paths; the basket is
 transferred from the treasuries to the caller.
@@ -1188,9 +1458,39 @@ The depositor's total quote-denominated return decomposes cleanly
 into **APR (leader skill) × basket price move (directional)**; the
 two are separately attributable. The protocol math is oracle-free. UIs
 that want to display a quote-converted total return can layer in a
-price feed for display only — no on-chain dependency.
+price feed for display only — no on-chain dependency. The
+per-depositor form of this split — yield vs. FX PnL against a
+position's stored entry basis — is in **Depositor positions and cost
+basis**.
 
 APR can go **negative** when the leader is consistently adversely
 selected. That is the same metric working in both directions, and it
 is the right signal for depositors deciding whether to stay or pull
 their basket.
+
+### Versus concentrated-liquidity APR
+
+A concentrated-liquidity venue reports two APR flavors; Dropset needs
+neither, which is worth stating because depositors arriving from those
+venues will expect them.
+
+- A **realized** fee APR taken from the delta of a fee-growth
+  accumulator between two snapshots. Dropset's headline is the same
+  delta idea on **VPS** rather than a fee counter — but VPS is
+  *signed*, so it already nets adverse selection, whereas a fee
+  accumulator only ever rises and books impermanent loss separately.
+  Dropset's number is therefore net market-making performance, not
+  gross fees, and it **auto-compounds** (spread stays in the vault),
+  where a CLMM fee APR is linear until the LP manually re-collects and
+  redeploys. Label the headline accordingly: it is a compounding
+  figure, net of adverse selection — not a gross fee rate.
+- A **forward** estimate that scales the pool headline by per-position
+  multipliers (concentration, time-in-range, transfer-fee haircut).
+  This **collapses here**: vault positions are homogeneous — one
+  fungible pro-rata basket at one VPS — so the headline APR is already
+  each depositor's APR, adjusted only by entry timing
+  (`yield_since_open`). There is no range and no time-in-range, so the
+  in-range-TVL denominator that makes trailing CLMM APR swing wildly
+  does not exist — APR is measured against VPS, which moves only on
+  fills and fee accrual, not on positions drifting in and out of a
+  range.

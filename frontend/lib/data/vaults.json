@@ -1,0 +1,256 @@
+{
+  "markets": [
+    {
+      "marketPubkey": "Mkt1EURUSDCq9wTnF8xpR2vJ4hYzAe5KdLbcgUvN3sP",
+      "base": "EURC",
+      "quote": "USDC",
+      "fxMove24h": 0.003,
+      "vaults": [
+        {
+          "vaultPubkey": "VautEUC1dAsmAcBootStrapq7Hk3LpZ9rWxYtcGm2Qe",
+          "leader": "DASMACbootStrap1Lead3rXk9PqVtZ7rWmYhJ2nGcQs",
+          "volume24h": 4820000,
+          "fees24h": 2410,
+          "tvl": 6100000,
+          "baseReserve": 2983471.48216,
+          "quoteReserve": 3124556.7319,
+          "totalShares": 1000000,
+          "leaderShares": 52000,
+          "vps": 1.15,
+          "minLeaderSharePpm": 50000,
+          "frozen": false,
+          "outsideDepositsApproved": true
+        },
+        {
+          "vaultPubkey": "VautEUC2qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3La",
+          "leader": "Le4d3rEURbZ8tKqWp5nRvYx2hJmGcQsXk9PqVtZ7rWm",
+          "volume24h": 1284300,
+          "fees24h": 642,
+          "tvl": 5120000,
+          "baseReserve": 2510000,
+          "quoteReserve": 2610000,
+          "totalShares": 1000000,
+          "leaderShares": 85000,
+          "vps": 1.018,
+          "minLeaderSharePpm": 80000,
+          "frozen": false,
+          "outsideDepositsApproved": true
+        }
+      ]
+    },
+    {
+      "marketPubkey": "Mkt2EURUSDTw9TnF8xpR2vJ4hYzAe5KdLbcgUvN3sPq",
+      "base": "EURC",
+      "quote": "USDT",
+      "fxMove24h": 0.0028,
+      "vaults": [
+        {
+          "vaultPubkey": "VautEUT1qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3Lb",
+          "leader": "Le4d3rEUTx2hJmGcQsXk9PqVtZ7rWmEURbZ8tKqWp5n",
+          "volume24h": 612000,
+          "fees24h": 306,
+          "tvl": 2240000,
+          "baseReserve": 1100000,
+          "quoteReserve": 1140000,
+          "totalShares": 1000000,
+          "leaderShares": 300000,
+          "vps": 1.012,
+          "minLeaderSharePpm": 60000,
+          "frozen": false,
+          "outsideDepositsApproved": true
+        }
+      ]
+    },
+    {
+      "marketPubkey": "Mkt3VEURUSDCp5nRvYx2hJmGcQsXk9PqVtZ7rWmEURb",
+      "base": "VEUR",
+      "quote": "USDC",
+      "fxMove24h": 0.003,
+      "vaults": [
+        {
+          "vaultPubkey": "VautVEC1dAsmAcBootStrapXk9PqVtZ7rWmYhJ2nGcQ",
+          "leader": "DASMACbootStrap1Lead3rXk9PqVtZ7rWmYhJ2nGcQs",
+          "volume24h": 358000,
+          "fees24h": 179,
+          "tvl": 1480000,
+          "baseReserve": 730000,
+          "quoteReserve": 750000,
+          "totalShares": 1000000,
+          "leaderShares": 250000,
+          "vps": 1.009,
+          "minLeaderSharePpm": 50000,
+          "frozen": false,
+          "outsideDepositsApproved": true
+        }
+      ]
+    },
+    {
+      "marketPubkey": "Mkt4USDJPYw9TnF8xpR2vJ4hYzAe5KdLbcgUvN3sPq9",
+      "base": "USDC",
+      "quote": "GYEN",
+      "fxMove24h": -0.005,
+      "vaults": [
+        {
+          "vaultPubkey": "VautUJY1qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3Lc",
+          "leader": "Le4d3rJPYx2hJmGcQsXk9PqVtZ7rWmEURbZ8tKqWp5n",
+          "volume24h": 938000,
+          "fees24h": 469,
+          "tvl": 2750000,
+          "baseReserve": 1370000,
+          "quoteReserve": 205500000,
+          "totalShares": 1000000,
+          "leaderShares": 200000,
+          "vps": 1.021,
+          "minLeaderSharePpm": 60000,
+          "frozen": true,
+          "outsideDepositsApproved": true
+        },
+        {
+          "vaultPubkey": "VautUJY2dAsmAcBootStrapYhJ2nGcQsXk9PqVtZ7rWn",
+          "leader": "Le4d3rJP2wTnF8xpR2vJ4hYzAe5KdLbcgUvN3sPq9mK",
+          "volume24h": 420000,
+          "fees24h": 210,
+          "tvl": 1600000,
+          "baseReserve": 800000,
+          "quoteReserve": 120000000,
+          "totalShares": 1000000,
+          "leaderShares": 350000,
+          "vps": 1.014,
+          "minLeaderSharePpm": 70000,
+          "frozen": false,
+          "outsideDepositsApproved": true
+        }
+      ]
+    },
+    {
+      "marketPubkey": "Mkt5GBPUSDCp5nRvYx2hJmGcQsXk9PqVtZ7rWmEURbZ",
+      "base": "TGBP",
+      "quote": "USDC",
+      "fxMove24h": 0.0021,
+      "vaults": [
+        {
+          "vaultPubkey": "VautGBC1dAsmAcBootStrapXk9PqVtZ7rWmYhJ2nGcR",
+          "leader": "DASMACbootStrap1Lead3rXk9PqVtZ7rWmYhJ2nGcQs",
+          "volume24h": 2310000,
+          "fees24h": 1155,
+          "tvl": 3400000,
+          "baseReserve": 1340000,
+          "quoteReserve": 1700000,
+          "totalShares": 1000000,
+          "leaderShares": 400000,
+          "vps": 1.026,
+          "minLeaderSharePpm": 50000,
+          "frozen": false,
+          "outsideDepositsApproved": true
+        },
+        {
+          "vaultPubkey": "VautGBC2qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3Ld",
+          "leader": "Le4d3rGBPwTnF8xpR2vJ4hYzAe5KdLbcgUvN3sPq9mK",
+          "volume24h": 412000,
+          "fees24h": 206,
+          "tvl": 0,
+          "baseReserve": 0,
+          "quoteReserve": 0,
+          "totalShares": 0,
+          "leaderShares": 0,
+          "vps": 1.0,
+          "minLeaderSharePpm": 100000,
+          "frozen": false,
+          "outsideDepositsApproved": false
+        }
+      ]
+    },
+    {
+      "marketPubkey": "Mkt6VGBPUSDCw9TnF8xpR2vJ4hYzAe5KdLbcgUvN3sP",
+      "base": "VGBP",
+      "quote": "USDC",
+      "fxMove24h": 0.0021,
+      "vaults": [
+        {
+          "vaultPubkey": "VautVGC1qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3Le",
+          "leader": "Le4d3rVGBx2hJmGcQsXk9PqVtZ7rWmEURbZ8tKqWp5n",
+          "volume24h": 188000,
+          "fees24h": 94,
+          "tvl": 920000,
+          "baseReserve": 360000,
+          "quoteReserve": 460000,
+          "totalShares": 1000000,
+          "leaderShares": 300000,
+          "vps": 1.006,
+          "minLeaderSharePpm": 70000,
+          "frozen": false,
+          "outsideDepositsApproved": true
+        }
+      ]
+    },
+    {
+      "marketPubkey": "Mkt7USDCHFw9TnF8xpR2vJ4hYzAe5KdLbcgUvN3sPq9",
+      "base": "USDC",
+      "quote": "VCHF",
+      "fxMove24h": -0.0012,
+      "vaults": [
+        {
+          "vaultPubkey": "VautUCF1qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3Lf",
+          "leader": "Le4d3rCHFx2hJmGcQsXk9PqVtZ7rWmEURbZ8tKqWp5n",
+          "volume24h": 540000,
+          "fees24h": 270,
+          "tvl": 1900000,
+          "baseReserve": 1000000,
+          "quoteReserve": 818000,
+          "totalShares": 1000000,
+          "leaderShares": 280000,
+          "vps": 1.017,
+          "minLeaderSharePpm": 60000,
+          "frozen": false,
+          "outsideDepositsApproved": true
+        }
+      ]
+    },
+    {
+      "marketPubkey": "Mkt8USDCADk9PqVtZ7rWmYhJ2nGcQsXdAsmAcBoot3w",
+      "base": "USDC",
+      "quote": "CADC",
+      "fxMove24h": -0.004,
+      "vaults": [
+        {
+          "vaultPubkey": "VautUCD1dAsmAcBootStrapYhJ2nGcQsXk9PqVtZ7rWm",
+          "leader": "DASMACbootStrap1Lead3rXk9PqVtZ7rWmYhJ2nGcQs",
+          "volume24h": 156000,
+          "fees24h": 78,
+          "tvl": 1180000,
+          "baseReserve": 500000,
+          "quoteReserve": 932000,
+          "totalShares": 1000000,
+          "leaderShares": 320000,
+          "vps": 1.011,
+          "minLeaderSharePpm": 50000,
+          "frozen": false,
+          "outsideDepositsApproved": true
+        }
+      ]
+    },
+    {
+      "marketPubkey": "Mkt9AUDUSDCk9PqVtZ7rWmYhJ2nGcQsXdAsmAcBoot3",
+      "base": "AUDD",
+      "quote": "USDC",
+      "fxMove24h": 0.006,
+      "vaults": [
+        {
+          "vaultPubkey": "VautAUC1qZ7rWmYhJ2nGcQsXk9PqVtdAsmAcBoot3Lg",
+          "leader": "Le4d3rAUDx2hJmGcQsXk9PqVtZ7rWmEURbZ8tKqWp5n",
+          "volume24h": 267000,
+          "fees24h": 133,
+          "tvl": 1050000,
+          "baseReserve": 800333.512,
+          "quoteReserve": 525221.875,
+          "totalShares": 1000000,
+          "leaderShares": 300000,
+          "vps": 0.98,
+          "minLeaderSharePpm": 60000,
+          "frozen": false,
+          "outsideDepositsApproved": true
+        }
+      ]
+    }
+  ]
+}
