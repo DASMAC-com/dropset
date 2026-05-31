@@ -443,123 +443,128 @@ export function VaultsView() {
 
   return (
     <div className="mx-auto max-w-6xl px-6 pt-3 pb-16">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <SearchBox
-            value={query}
-            onValueChange={setQuery}
-            onClear={() => setQuery("")}
-            placeholder="Search pairs…"
-            focusEvent="focusVaultsSearch"
-          />
-          <label className="flex select-none items-center gap-2 text-muted-fg text-xs hover:text-foreground">
-            <input
-              type="checkbox"
-              checked={groupByPair}
-              onChange={(e) => setGroupByPair(e.target.checked)}
-              className="h-3.5 w-3.5 cursor-pointer accent-accent"
+      {/* Center the toolbar + table as one block and size it to the table's
+          content, so the toolbar (search left, preview right) lines up with
+          the table edges however wide the table ends up. */}
+      <div className="mx-auto w-fit max-w-full">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <SearchBox
+              value={query}
+              onValueChange={setQuery}
+              onClear={() => setQuery("")}
+              placeholder="Search pairs…"
+              focusEvent="focusVaultsSearch"
             />
-            Group by pair
-          </label>
+            <label className="flex select-none items-center gap-2 text-muted-fg text-xs hover:text-foreground">
+              <input
+                type="checkbox"
+                checked={groupByPair}
+                onChange={(e) => setGroupByPair(e.target.checked)}
+                className="h-3.5 w-3.5 cursor-pointer accent-accent"
+              />
+              Group by pair
+            </label>
+          </div>
+          <p className="text-muted-fg text-xs">
+            <span className="font-medium text-amber-400">Preview.</span> All
+            figures shown are mock data.
+          </p>
         </div>
-        <p className="text-muted-fg text-xs">
-          <span className="font-medium text-amber-400">Preview.</span> All
-          figures shown are mock data.
-        </p>
-      </div>
-      <div className="rounded-lg border border-border">
-        <table className="w-full min-w-[860px] text-left text-sm">
-          <thead className="text-muted-fg text-xs uppercase">
-            <tr>
-              <th
-                scope="col"
-                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0"
-              >
-                Pair
-              </th>
-              <th
-                scope="col"
-                className="sticky top-14 z-20 w-px whitespace-nowrap border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0"
-              >
-                Leader
-              </th>
-              <VaultSortHeader
-                sortKey="apr24h"
-                label="APR 24h"
-                sort={sort}
-                onToggle={toggleSort}
-                info={APR_TOOLTIP}
-                thClassName="w-px whitespace-nowrap"
-              />
-              <VaultSortHeader
-                sortKey="tvl"
-                label="TVL"
-                sort={sort}
-                onToggle={toggleSort}
-                thClassName="w-px whitespace-nowrap"
-              />
-              <VaultSortHeader
-                sortKey="volume24h"
-                label="24h Vol"
-                sort={sort}
-                onToggle={toggleSort}
-                thClassName="w-px whitespace-nowrap"
-              />
-              <VaultSortHeader
-                sortKey="position"
-                label="Your Position"
-                sort={sort}
-                onToggle={toggleSort}
-                thClassName="w-px whitespace-nowrap"
-              />
-            </tr>
-          </thead>
-          <tbody>
-            {!hasResults ? (
+        <div className="rounded-lg border border-border">
+          <table className="w-auto text-left text-sm">
+            <thead className="text-muted-fg text-xs uppercase">
               <tr>
-                <td
-                  colSpan={colSpan}
-                  className="px-3 py-6 text-center text-muted-fg text-sm"
+                <th
+                  scope="col"
+                  className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0"
                 >
-                  No vaults match
-                </td>
+                  Pair
+                </th>
+                <th
+                  scope="col"
+                  className="sticky top-14 z-20 w-px whitespace-nowrap border-border border-r bg-muted px-3 py-2 font-medium last:border-r-0"
+                >
+                  Leader
+                </th>
+                <VaultSortHeader
+                  sortKey="apr24h"
+                  label="APR 24h"
+                  sort={sort}
+                  onToggle={toggleSort}
+                  info={APR_TOOLTIP}
+                  thClassName="w-px whitespace-nowrap"
+                />
+                <VaultSortHeader
+                  sortKey="tvl"
+                  label="TVL"
+                  sort={sort}
+                  onToggle={toggleSort}
+                  thClassName="w-px whitespace-nowrap"
+                />
+                <VaultSortHeader
+                  sortKey="volume24h"
+                  label="24h Vol"
+                  sort={sort}
+                  onToggle={toggleSort}
+                  thClassName="w-px whitespace-nowrap"
+                />
+                <VaultSortHeader
+                  sortKey="position"
+                  label="Your Position"
+                  sort={sort}
+                  onToggle={toggleSort}
+                  thClassName="w-px whitespace-nowrap"
+                />
               </tr>
-            ) : groupByPair ? (
-              groups.flatMap(({ group, vaults }) => [
-                <FxGroupHeading
-                  key={`h-${group.key}`}
-                  group={group}
-                  colSpan={colSpan}
-                />,
-                ...vaults.map((entry, i) => (
+            </thead>
+            <tbody>
+              {!hasResults ? (
+                <tr>
+                  <td
+                    colSpan={colSpan}
+                    className="px-3 py-6 text-center text-muted-fg text-sm"
+                  >
+                    No vaults match
+                  </td>
+                </tr>
+              ) : groupByPair ? (
+                groups.flatMap(({ group, vaults }) => [
+                  <FxGroupHeading
+                    key={`h-${group.key}`}
+                    group={group}
+                    colSpan={colSpan}
+                  />,
+                  ...vaults.map((entry, i) => (
+                    <VaultRow
+                      key={entry.vault.vaultPubkey}
+                      entry={entry}
+                      grouped
+                      connected={connected}
+                      position={positionFor(entry.vault.vaultPubkey)}
+                      rowIndex={i}
+                      groupSize={vaults.length}
+                      onManage={onManage}
+                    />
+                  )),
+                ])
+              ) : (
+                flatVaults.map((entry, i) => (
                   <VaultRow
                     key={entry.vault.vaultPubkey}
                     entry={entry}
-                    grouped
+                    grouped={false}
                     connected={connected}
                     position={positionFor(entry.vault.vaultPubkey)}
                     rowIndex={i}
-                    groupSize={vaults.length}
+                    groupSize={flatVaults.length}
                     onManage={onManage}
                   />
-                )),
-              ])
-            ) : (
-              flatVaults.map((entry, i) => (
-                <VaultRow
-                  key={entry.vault.vaultPubkey}
-                  entry={entry}
-                  grouped={false}
-                  connected={connected}
-                  position={positionFor(entry.vault.vaultPubkey)}
-                  rowIndex={i}
-                  groupSize={flatVaults.length}
-                  onManage={onManage}
-                />
-              ))
-            )}
-          </tbody>
-        </table>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
       {dialog && (
         <VaultActionDialog
