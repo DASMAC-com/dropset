@@ -315,27 +315,30 @@ function VaultRow({
           )}
         </div>
       </td>
+      <td className="w-px whitespace-nowrap border-border border-r px-3 py-2 text-right align-middle last:border-r-0">
+        {connected ? (
+          position ? (
+            <PositionValue vault={vault} position={position} />
+          ) : (
+            <span className="font-mono text-muted-fg text-xs">$-</span>
+          )
+        ) : (
+          <span className="font-mono text-muted-fg text-xs">—</span>
+        )}
+      </td>
       <AprCell apr={vaultApr24h(vault)} />
       <UsdCell value={vault.tvl} />
       <UsdCell value={vault.volume24h} />
-      <td className="px-3 py-2 align-middle">
-        <div className="flex items-center justify-end gap-3">
-          {connected &&
-            (position ? (
-              <PositionValue vault={vault} position={position} />
-            ) : (
-              <span className="font-mono text-muted-fg text-xs">$-</span>
-            ))}
-          <button
-            type="button"
-            onClick={action.onClick}
-            disabled={action.disabled}
-            title={actionTitle}
-            className="shrink-0 rounded border border-border bg-background px-3 py-1 font-medium text-foreground text-xs transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-fg disabled:hover:border-border disabled:hover:text-muted-fg"
-          >
-            {action.label}
-          </button>
-        </div>
+      <td className="px-3 py-2 text-right align-middle">
+        <button
+          type="button"
+          onClick={action.onClick}
+          disabled={action.disabled}
+          title={actionTitle}
+          className="shrink-0 rounded border border-border bg-background px-3 py-1 font-medium text-foreground text-xs transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-fg disabled:hover:border-border disabled:hover:text-muted-fg"
+        >
+          {action.label}
+        </button>
       </td>
     </tr>
   );
@@ -452,8 +455,8 @@ export function VaultsView() {
   const onManage = (market: VaultMarket, vault: Vault) =>
     setDialog({ market, vault });
 
-  // Columns: Pair, Leader, APR, TVL, Vol, Your Position.
-  const colSpan = 6;
+  // Columns: Pair, Leader, Your Position, APR, TVL, 24h Vol, Actions.
+  const colSpan = 7;
   const hasResults = groupByPair ? groups.length > 0 : flatVaults.length > 0;
 
   return (
@@ -506,6 +509,13 @@ export function VaultsView() {
                   thClassName="w-px whitespace-nowrap"
                 />
                 <VaultSortHeader
+                  sortKey="position"
+                  label="Your Position"
+                  sort={sort}
+                  onToggle={toggleSort}
+                  thClassName="w-px whitespace-nowrap"
+                />
+                <VaultSortHeader
                   sortKey="apr24h"
                   label="APR 24h"
                   sort={sort}
@@ -527,13 +537,12 @@ export function VaultsView() {
                   onToggle={toggleSort}
                   thClassName="w-px whitespace-nowrap"
                 />
-                <VaultSortHeader
-                  sortKey="position"
-                  label="Your Position"
-                  sort={sort}
-                  onToggle={toggleSort}
-                  thClassName="w-px whitespace-nowrap"
-                />
+                <th
+                  scope="col"
+                  className="sticky top-14 z-20 bg-muted px-3 py-2"
+                >
+                  <span className="sr-only">Actions</span>
+                </th>
               </tr>
             </thead>
             <tbody>
