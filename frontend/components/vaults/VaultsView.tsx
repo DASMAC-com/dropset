@@ -436,22 +436,25 @@ function VaultsInner() {
     quote: searchParams.get("quote") ?? "",
     leader: searchParams.get("leader") ?? "",
   }));
-  const updatePin = (next: Partial<Pin>) =>
-    setPin((prev) => {
-      const merged = { ...prev, ...next };
-      const params = new URLSearchParams(window.location.search);
-      for (const key of ["base", "quote", "leader"] as const) {
-        if (merged[key]) params.set(key, merged[key]);
-        else params.delete(key);
-      }
-      const search = params.toString();
-      window.history.replaceState(
-        null,
-        "",
-        `${window.location.pathname}${search ? `?${search}` : ""}${window.location.hash}`,
-      );
-      return merged;
-    });
+  // Merge against the current pin and apply the URL write as a plain side
+  // effect — NOT inside the setPin updater, which React may re-run during
+  // render (replaceState there pokes the Router mid-render). updatePin only
+  // runs from event handlers, so the `pin` closure is current.
+  const updatePin = (next: Partial<Pin>) => {
+    const merged = { ...pin, ...next };
+    setPin(merged);
+    const params = new URLSearchParams(window.location.search);
+    for (const key of ["base", "quote", "leader"] as const) {
+      if (merged[key]) params.set(key, merged[key]);
+      else params.delete(key);
+    }
+    const search = params.toString();
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${search ? `?${search}` : ""}${window.location.hash}`,
+    );
+  };
 
   // The pin predicate: exact market on base/quote (when set), and a
   // case-insensitive prefix match on the leader so short slugs work.
