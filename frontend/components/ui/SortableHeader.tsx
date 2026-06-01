@@ -1,6 +1,7 @@
 "use client";
 
-import { ArrowUpDown, ChevronDown, ChevronUp, Info } from "@/components/icons";
+import { ArrowUpDown, ChevronDown, ChevronUp } from "@/components/icons";
+import { InfoTooltip } from "@/components/ui/InfoTooltip";
 
 // Shared sortable column header for the data tables on /currencies and
 // /vaults. Generic over the table's sort-key union so each table keeps its own
@@ -54,24 +55,7 @@ export function SortableHeader<K extends string>({
           {label}
           <Icon size={12} />
         </button>
-        {info && (
-          <span className="group relative inline-flex items-center">
-            <Info
-              size={12}
-              className="text-muted-fg transition-colors group-hover:text-foreground"
-            />
-            {/* whitespace-normal resets the nowrap a snug `w-px
-                whitespace-nowrap` header inherits onto its descendants, so the
-                tooltip wraps inside its width instead of stretching out on one
-                line. */}
-            <span
-              role="tooltip"
-              className="pointer-events-none absolute top-full right-0 z-30 mt-1 w-56 whitespace-normal rounded-md border border-border bg-background px-2 py-1.5 text-left font-normal text-[11px] text-muted-fg normal-case opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100"
-            >
-              {info}
-            </span>
-          </span>
-        )}
+        {info && <InfoTooltip label={info} />}
       </div>
     </th>
   );
