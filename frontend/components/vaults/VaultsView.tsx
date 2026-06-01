@@ -3,7 +3,7 @@
 import NumberFlow from "@number-flow/react";
 import { useWalletConnection } from "@solana/react-hooks";
 import { useCallback, useMemo, useState } from "react";
-import { ExternalLink } from "@/components/icons";
+import { ExternalLink, RefreshCw } from "@/components/icons";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { FlagPair } from "@/components/ui/Flag";
 import { SearchBox } from "@/components/ui/SearchBox";
@@ -36,6 +36,7 @@ import { emit, useAppEvent } from "@/lib/events";
 import { explorerAddressUrl } from "@/lib/explorer";
 import { FORMATS } from "@/lib/format/formats";
 import { groupedRowClassName } from "@/lib/ui/groupedRows";
+import { useGoToSwapPair } from "@/lib/ui/swapUrl";
 
 const APR_TOOLTIP =
   "What you earn in a year from the leader's skill, based on the last 24 hours. This does not count money made or lost when prices move.";
@@ -247,6 +248,7 @@ function VaultRow({
   onManage: (market: VaultMarket, vault: Vault) => void;
 }) {
   const { market, vault } = entry;
+  const goToSwapPair = useGoToSwapPair();
 
   const action = !connected
     ? {
@@ -276,9 +278,7 @@ function VaultRow({
 
   return (
     <tr className={groupedRowClassName(rowIndex, groupSize)}>
-      <td
-        className={`border-border border-r py-2 pr-3 align-middle last:border-r-0 ${grouped ? "pl-10" : "pl-3"}`}
-      >
+      <td className="border-border border-r px-3 py-2 align-middle last:border-r-0">
         <div className="flex items-center gap-2">
           {!grouped && (
             <FlagPair
@@ -295,6 +295,21 @@ function VaultRow({
           <span className="font-mono font-medium text-foreground">
             {market.label}
           </span>
+          {/* Jump to /swap with this pair loaded into the store. */}
+          <button
+            type="button"
+            onClick={() =>
+              goToSwapPair(
+                { currency: market.baseCurrency, stablecoin: market.base },
+                { currency: market.quoteCurrency, stablecoin: market.quote },
+              )
+            }
+            title={`Swap ${market.label}`}
+            aria-label={`Swap ${market.label}`}
+            className="ml-1 inline-flex shrink-0 items-center rounded p-1 text-muted-fg transition-colors hover:bg-muted hover:text-accent"
+          >
+            <RefreshCw size={14} />
+          </button>
         </div>
       </td>
       <td className="w-px whitespace-nowrap border-border border-r px-3 py-2 align-middle last:border-r-0">
