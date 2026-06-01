@@ -12,6 +12,33 @@ export const swapHref = (from: string, to: string): string => {
   return `/swap?${params.toString()}`;
 };
 
+// Canonical URL for the Vaults tab filtered to a pair (and optionally a single
+// leader). `base`/`quote` are stablecoin symbols; `leader` is a base58 pubkey
+// or prefix. The page reads these to pin its view, and they double as a
+// shareable deep link to a specific vault. Symmetric to `swapHref`.
+export const vaultsHref = (
+  base: string,
+  quote: string,
+  leader?: string,
+): string => {
+  const params = new URLSearchParams({ base, quote });
+  if (leader) params.set("leader", leader);
+  return `/vaults?${params.toString()}`;
+};
+
+// Navigate to the Vaults tab filtered to a pair. Vaults state lives entirely in
+// the URL (there's no persisted store like swap's), so a plain push is the
+// whole handoff — and the resulting URL is shareable as-is.
+export function useGoToVaultsForPair(): (
+  base: string,
+  quote: string,
+  leader?: string,
+) => void {
+  const router = useRouter();
+  return (base, quote, leader) =>
+    router.push(vaultsHref(base, quote, leader) as Route);
+}
+
 // Navigate to /swap with a resolved pair. Same-route writes use
 // history.replaceState to update the address bar without a router transition
 // (so the URL canonicalization step from a picker click on /swap doesn't add

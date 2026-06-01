@@ -258,6 +258,12 @@ export const SHORTCUTS_BY_CONTEXT: Record<ShortcutContext, ShortcutSpec[]> = {
       run: () => emit("focusVaultsSearch"),
     },
     {
+      key: "m",
+      description: "Manage the lone search result",
+      group: "Search",
+      run: () => emit("vaultsManageOnlyResult"),
+    },
+    {
       key: "g",
       description: "Toggle Group by pair",
       group: "Sort & display",

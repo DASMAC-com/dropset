@@ -2,8 +2,9 @@
 
 import NumberFlow from "@number-flow/react";
 import { useWalletConnection } from "@solana/react-hooks";
-import { useCallback, useMemo, useState } from "react";
-import { ExternalLink, RefreshCw } from "@/components/icons";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useMemo, useState } from "react";
+import { ExternalLink, RefreshCw, X } from "@/components/icons";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { FlagPair } from "@/components/ui/Flag";
 import { SearchBox } from "@/components/ui/SearchBox";
@@ -366,8 +367,37 @@ function VaultRow({
   );
 }
 
-export function VaultsView() {
+// A removable filter chip for an active URL pin.
+function FilterChip({
+  label,
+  onClear,
+}: {
+  label: string;
+  onClear: () => void;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-border bg-muted py-1 pr-1 pl-2.5 font-mono text-foreground text-xs">
+      {label}
+      <button
+        type="button"
+        onClick={onClear}
+        aria-label={`Clear ${label} filter`}
+        className="inline-flex items-center rounded-full p-0.5 text-muted-fg transition-colors hover:bg-background hover:text-foreground"
+      >
+        <X size={12} />
+      </button>
+    </span>
+  );
+}
+
+// A structured filter pinning the view to a market (base/quote symbols) and an
+// optional leader (full pubkey or prefix). Driven by the `?base=&quote=&leader=`
+// URL params so a filtered view is a shareable deep link to a vault.
+type Pin = { base: string; quote: string; leader: string };
+
+function VaultsInner() {
   const { connected } = useWalletConnection();
+  const searchParams = useSearchParams();
   const [groupByPair, setGroupByPair] = useState(true);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortState<MetricKey>>(null);
@@ -375,6 +405,42 @@ export function VaultsView() {
     market: VaultMarket;
     vault: Vault;
   } | null>(null);
+
+  // Seed the pin from the URL once, then own it in state. Updates write back to
+  // the URL via replaceState (no router transition) so the address bar always
+  // reflects — and can reproduce — the current filter, mirroring /currencies.
+  const [pin, setPin] = useState<Pin>(() => ({
+    base: searchParams.get("base") ?? "",
+    quote: searchParams.get("quote") ?? "",
+    leader: searchParams.get("leader") ?? "",
+  }));
+  const updatePin = (next: Partial<Pin>) =>
+    setPin((prev) => {
+      const merged = { ...prev, ...next };
+      const params = new URLSearchParams(window.location.search);
+      for (const key of ["base", "quote", "leader"] as const) {
+        if (merged[key]) params.set(key, merged[key]);
+        else params.delete(key);
+      }
+      const search = params.toString();
+      window.history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}${search ? `?${search}` : ""}${window.location.hash}`,
+      );
+      return merged;
+    });
+
+  // The pin predicate: exact market on base/quote (when set), and a
+  // case-insensitive prefix match on the leader so short slugs work.
+  const matchesPin = useCallback(
+    (entry: GroupedVault): boolean =>
+      (!pin.base || entry.market.base === pin.base) &&
+      (!pin.quote || entry.market.quote === pin.quote) &&
+      (!pin.leader ||
+        entry.vault.leader.toLowerCase().startsWith(pin.leader.toLowerCase())),
+    [pin.base, pin.quote, pin.leader],
+  );
 
   // A connected wallet is treated as the mock depositor, so the seeded
   // positions surface. Disconnected → no positions. The accessor is the data
@@ -450,7 +516,7 @@ export function VaultsView() {
       .map((group) => ({
         group,
         vaults: group.vaults
-          .filter((entry) => matchesQuery(q, group, entry))
+          .filter((entry) => matchesQuery(q, group, entry) && matchesPin(entry))
           .sort((a, b) =>
             cmpMetric(
               vaultSortValue(a, key),
@@ -460,22 +526,31 @@ export function VaultsView() {
           ),
       }))
       .filter((g) => g.vaults.length > 0);
-  }, [effective, q, groupSortValue, vaultSortValue]);
+  }, [effective, q, matchesPin, groupSortValue, vaultSortValue]);
 
   // Ungrouped: one flat, filtered + sorted list of every vault.
   const flatVaults = useMemo(() => {
     const { key, direction } = effective;
-    return ALL_WITH_GROUP.filter(({ group, entry }) =>
-      matchesQuery(q, group, entry),
+    return ALL_WITH_GROUP.filter(
+      ({ group, entry }) => matchesQuery(q, group, entry) && matchesPin(entry),
     )
       .map(({ entry }) => entry)
       .sort((a, b) =>
         cmpMetric(vaultSortValue(a, key), vaultSortValue(b, key), direction),
       );
-  }, [effective, q, vaultSortValue]);
+  }, [effective, q, matchesPin, vaultSortValue]);
 
   const onManage = (market: VaultMarket, vault: Vault) =>
     setDialog({ market, vault });
+
+  // `m` opens the manage dialog when the current filters resolve to exactly one
+  // vault (across groups or the flat list), like /currencies' f/t lone-result
+  // picks. The dialog itself shows Connect / Deposit / Manage as appropriate.
+  useAppEvent("vaultsManageOnlyResult", () => {
+    const entries = groupByPair ? groups.flatMap((g) => g.vaults) : flatVaults;
+    const only = entries.length === 1 ? entries[0] : null;
+    if (only) setDialog({ market: only.market, vault: only.vault });
+  });
 
   // Columns: Pair, Leader, Your Position, Manage, APR, TVL, 24h Vol.
   const colSpan = 7;
@@ -505,6 +580,20 @@ export function VaultsView() {
               />
               Group by pair
             </label>
+            {/* Active URL pin (?base=&quote=&leader=) shown as removable
+                chips — clearing one drops it from the filter and the URL. */}
+            {(pin.base || pin.quote) && (
+              <FilterChip
+                label={`${pin.base || "·"} / ${pin.quote || "·"}`}
+                onClear={() => updatePin({ base: "", quote: "" })}
+              />
+            )}
+            {pin.leader && (
+              <FilterChip
+                label={`Leader ${pin.leader.length > 12 ? shortenMint(pin.leader) : pin.leader}`}
+                onClear={() => updatePin({ leader: "" })}
+              />
+            )}
           </div>
           <p className="text-muted-fg text-xs">
             <span className="font-medium text-amber-400">Preview.</span> All
@@ -627,5 +716,14 @@ export function VaultsView() {
         />
       )}
     </div>
+  );
+}
+
+// useSearchParams (read by the pin filter) must sit under a Suspense boundary.
+export function VaultsView() {
+  return (
+    <Suspense fallback={null}>
+      <VaultsInner />
+    </Suspense>
   );
 }

@@ -13,7 +13,7 @@ import { formatAtomic, useDflowQuote } from "@/lib/hooks/useDflowQuote";
 import { useDflowSwap } from "@/lib/hooks/useDflowSwap";
 import { useTokenInfoRefresh, useUsdQuote } from "@/lib/hooks/useUsdQuote";
 import { useSameToken, useSwapStore, useSwapStoreApi } from "@/lib/store";
-import { useSwapNav } from "@/lib/ui/swapUrl";
+import { useGoToVaultsForPair, useSwapNav } from "@/lib/ui/swapUrl";
 import { PlatformFee } from "./PlatformFee";
 import { QuoteError } from "./QuoteError";
 import { SwapArrowButton } from "./SwapArrowButton";
@@ -32,6 +32,7 @@ export function SwapPanel() {
   const amount = useSwapStore((s) => s.amount);
   const store = useSwapStoreApi();
   const gotoSwap = useSwapNav();
+  const goToVaults = useGoToVaultsForPair();
   const fromMint = stablecoinMint(fromStablecoin);
   const toMint = stablecoinMint(toStablecoin);
   const fromDecimals = stablecoinDecimals(fromStablecoin);
@@ -219,6 +220,17 @@ export function SwapPanel() {
             fresh={quoteFresh}
           />
         ) : null}
+      </div>
+      {/* Jump to the Vaults tab pre-filtered to this pair, so a user can back a
+          leader's liquidity for what they're trading. */}
+      <div className="mt-2 flex justify-center">
+        <button
+          type="button"
+          onClick={() => goToVaults(fromStablecoin, toStablecoin)}
+          className="text-muted-fg text-xs transition-colors hover:text-foreground"
+        >
+          View {fromStablecoin} / {toStablecoin} vaults
+        </button>
       </div>
       <RateLimitMessage />
       <QuoteError quote={quote} fromMint={fromMint} toMint={toMint} />
