@@ -4,7 +4,7 @@ import NumberFlow from "@number-flow/react";
 import { useWalletConnection } from "@solana/react-hooks";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useMemo, useState } from "react";
-import { ExternalLink, RefreshCw, X } from "@/components/icons";
+import { Crosshair, ExternalLink, RefreshCw, X } from "@/components/icons";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { FlagPair } from "@/components/ui/Flag";
 import { SearchBox } from "@/components/ui/SearchBox";
@@ -236,17 +236,22 @@ function VaultRow({
   grouped,
   connected,
   position,
+  pinned,
   rowIndex,
   groupSize,
   onManage,
+  onPin,
 }: {
   entry: GroupedVault;
   grouped: boolean;
   connected: boolean;
   position: VaultPosition | null;
+  // Whether the URL filter is pinned to exactly this vault.
+  pinned: boolean;
   rowIndex: number;
   groupSize: number;
   onManage: (market: VaultMarket, vault: Vault) => void;
+  onPin: (entry: GroupedVault) => void;
 }) {
   const { market, vault } = entry;
   const goToSwapPair = useGoToSwapPair();
@@ -331,6 +336,23 @@ function VaultRow({
           >
             <ExternalLink size={12} />
           </a>
+          {/* Pin the view to this exact vault — writes base/quote/leader into
+              the URL (a shareable deep link); click again to clear. */}
+          <button
+            type="button"
+            onClick={() => onPin(entry)}
+            aria-label={pinned ? "Clear vault filter" : "Pin this vault"}
+            title={
+              pinned
+                ? "Clear vault filter"
+                : "Pin this vault — filters the table and updates the shareable URL"
+            }
+            className={`inline-flex shrink-0 items-center rounded p-1 transition-colors hover:bg-muted ${
+              pinned ? "text-accent" : "text-muted-fg hover:text-accent"
+            }`}
+          >
+            <Crosshair size={12} />
+          </button>
           {vault.frozen && (
             <span className="rounded bg-accent-sell/15 px-1.5 py-0.5 font-medium text-[10px] text-accent-sell uppercase tracking-wide">
               Frozen
@@ -543,6 +565,22 @@ function VaultsInner() {
   const onManage = (market: VaultMarket, vault: Vault) =>
     setDialog({ market, vault });
 
+  // The pin "crosshair" on each row toggles the URL filter to that exact vault.
+  const isPinnedVault = (e: GroupedVault) =>
+    pin.base === e.market.base &&
+    pin.quote === e.market.quote &&
+    pin.leader === e.vault.leader;
+  const togglePinVault = (e: GroupedVault) =>
+    updatePin(
+      isPinnedVault(e)
+        ? { base: "", quote: "", leader: "" }
+        : {
+            base: e.market.base,
+            quote: e.market.quote,
+            leader: e.vault.leader,
+          },
+    );
+
   // `m` opens the manage dialog when the current filters resolve to exactly one
   // vault (across groups or the flat list), like /currencies' f/t lone-result
   // picks. The dialog itself shows Connect / Deposit / Manage as appropriate.
@@ -680,9 +718,11 @@ function VaultsInner() {
                       grouped
                       connected={connected}
                       position={positionFor(entry.vault.vaultPubkey)}
+                      pinned={isPinnedVault(entry)}
                       rowIndex={i}
                       groupSize={vaults.length}
                       onManage={onManage}
+                      onPin={togglePinVault}
                     />
                   )),
                 ])
@@ -694,9 +734,11 @@ function VaultsInner() {
                     grouped={false}
                     connected={connected}
                     position={positionFor(entry.vault.vaultPubkey)}
+                    pinned={isPinnedVault(entry)}
                     rowIndex={i}
                     groupSize={flatVaults.length}
                     onManage={onManage}
+                    onPin={togglePinVault}
                   />
                 ))
               )}

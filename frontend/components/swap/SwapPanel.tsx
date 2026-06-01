@@ -4,6 +4,7 @@ import { useWalletConnection } from "@solana/react-hooks";
 import { useEffect } from "react";
 import { RateLimitMessage } from "@/components/chrome/RateLimitMessage";
 import { stablecoinDecimals, stablecoinMint } from "@/lib/data/currencies";
+import { findVaultMarket } from "@/lib/data/vaults";
 import { useFeeVaultExists } from "@/lib/dflow/feeVault";
 import { PLATFORM_FEE } from "@/lib/env";
 import { emit, useAppEvent } from "@/lib/events";
@@ -33,6 +34,10 @@ export function SwapPanel() {
   const store = useSwapStoreApi();
   const gotoSwap = useSwapNav();
   const goToVaults = useGoToVaultsForPair();
+  // The vault market for this pair, if one exists — independent of swap
+  // direction (a vault's base/quote are fixed by the market). Drives the
+  // "view vaults" link, which only shows when there's actually a vault.
+  const vaultMarket = findVaultMarket(fromStablecoin, toStablecoin);
   const fromMint = stablecoinMint(fromStablecoin);
   const toMint = stablecoinMint(toStablecoin);
   const fromDecimals = stablecoinDecimals(fromStablecoin);
@@ -221,17 +226,20 @@ export function SwapPanel() {
           />
         ) : null}
       </div>
-      {/* Jump to the Vaults tab pre-filtered to this pair, so a user can back a
-          leader's liquidity for what they're trading. */}
-      <div className="mt-2 flex justify-center">
-        <button
-          type="button"
-          onClick={() => goToVaults(fromStablecoin, toStablecoin)}
-          className="text-muted-fg text-xs transition-colors hover:text-foreground"
-        >
-          View {fromStablecoin} / {toStablecoin} vaults
-        </button>
-      </div>
+      {/* Jump to the Vaults tab pre-filtered to this pair (in the market's own
+          base/quote order), so a user can back a leader's liquidity for what
+          they're trading. Only shown when a vault actually lists the pair. */}
+      {vaultMarket && (
+        <div className="mt-1 flex justify-center">
+          <button
+            type="button"
+            onClick={() => goToVaults(vaultMarket.base, vaultMarket.quote)}
+            className="text-muted-fg text-xs transition-colors hover:text-foreground"
+          >
+            View {vaultMarket.base} / {vaultMarket.quote} vaults
+          </button>
+        </div>
+      )}
       <RateLimitMessage />
       <QuoteError quote={quote} fromMint={fromMint} toMint={toMint} />
       <SwapResult

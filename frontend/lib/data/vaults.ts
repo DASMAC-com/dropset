@@ -164,6 +164,15 @@ const VAULT_MARKETS: VaultMarket[] = (
   };
 });
 
+// The vault market for an unordered stablecoin pair. A vault's base/quote are
+// fixed by the market, not by which way a taker trades — so USDC→EURC and
+// EURC→USDC both map to the one EURC/USDC market. Returns null when no vault
+// lists the pair (callers use this to hide a "view vaults" affordance).
+export const findVaultMarket = (a: string, b: string): VaultMarket | null =>
+  VAULT_MARKETS.find(
+    (m) => (m.base === a && m.quote === b) || (m.base === b && m.quote === a),
+  ) ?? null;
+
 // Annualized 24h fee yield to depositors, as a fraction (0.1234 = 12.34%).
 // Returns null when TVL is zero so the UI can render an em dash rather than a
 // divide-by-zero Infinity.
