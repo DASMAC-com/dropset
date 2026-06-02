@@ -621,8 +621,17 @@ function VaultsInner() {
               />
               Group by pair
             </label>
-            {/* Active URL pin (?base=&quote=&leader=) shown as removable
-                chips — clearing one drops it from the filter and the URL. */}
+          </div>
+          <p className="text-muted-fg text-xs">
+            <span className="font-medium text-amber-400">Preview.</span> All
+            figures shown are mock data.
+          </p>
+        </div>
+        {/* Active URL pin (?base=&quote=&leader=) shown as removable chips on
+            their own row, so a varying number of chips never changes the
+            search/preview toolbar width (which the table aligns to). */}
+        {(pin.base || pin.quote || pin.leader) && (
+          <div className="mb-3 flex flex-wrap items-center gap-2">
             {(pin.base || pin.quote) && (
               <FilterChip
                 label={`${pin.base || "·"} / ${pin.quote || "·"}`}
@@ -636,11 +645,7 @@ function VaultsInner() {
               />
             )}
           </div>
-          <p className="text-muted-fg text-xs">
-            <span className="font-medium text-amber-400">Preview.</span> All
-            figures shown are mock data.
-          </p>
-        </div>
+        )}
         <div className="rounded-lg border border-border">
           <table className="w-auto text-left text-sm">
             <thead className="text-muted-fg text-xs uppercase">
