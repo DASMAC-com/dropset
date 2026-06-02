@@ -26,6 +26,25 @@ export const vaultsHref = (
   return `/vaults?${params.toString()}`;
 };
 
+// Set/delete query params on the current URL via replaceState (no router
+// transition), preserving the other params + hash. A falsy value deletes the
+// key. Shared by the vaults pin filter and the currencies search-URL sync.
+export const replaceUrlParams = (
+  updates: Record<string, string | null>,
+): void => {
+  const params = new URLSearchParams(window.location.search);
+  for (const [key, value] of Object.entries(updates)) {
+    if (value) params.set(key, value);
+    else params.delete(key);
+  }
+  const search = params.toString();
+  window.history.replaceState(
+    null,
+    "",
+    `${window.location.pathname}${search ? `?${search}` : ""}${window.location.hash}`,
+  );
+};
+
 // Navigate to the Vaults tab filtered to a pair. Vaults state lives entirely in
 // the URL (there's no persisted store like swap's), so a plain push is the
 // whole handoff — and the resulting URL is shareable as-is.

@@ -9,6 +9,7 @@ import { CopyButton } from "@/components/ui/CopyButton";
 import { FlagPair } from "@/components/ui/Flag";
 import { SearchBox } from "@/components/ui/SearchBox";
 import {
+  compareSortValues,
   SortableHeader,
   type SortDir,
   type SortState,
@@ -37,7 +38,8 @@ import { emit, useAppEvent } from "@/lib/events";
 import { explorerAddressUrl } from "@/lib/explorer";
 import { FORMATS } from "@/lib/format/formats";
 import { groupedRowClassName } from "@/lib/ui/groupedRows";
-import { useGoToSwapPair } from "@/lib/ui/swapUrl";
+import { pnlTone } from "@/lib/ui/pnlTone";
+import { replaceUrlParams, useGoToSwapPair } from "@/lib/ui/swapUrl";
 
 const APR_TOOLTIP =
   "What you earn in a year from the leader's skill, based on the last 24 hours. This does not count money made or lost when prices move.";
@@ -54,24 +56,8 @@ const ALL_WITH_GROUP: { group: FxPairGroup; entry: GroupedVault }[] =
     group.vaults.map((entry) => ({ group, entry })),
   );
 
-// Order two sort values; nulls (zero-TVL APR, etc.) always sink to the bottom
-// regardless of direction. Strings (leader, pair) compare case-insensitively.
-const cmpMetric = (
-  a: number | string | null,
-  b: number | string | null,
-  direction: SortDir,
-): number => {
-  if (a === null && b === null) return 0;
-  if (a === null) return 1;
-  if (b === null) return -1;
-  if (typeof a === "string" && typeof b === "string") {
-    const c = a.localeCompare(b, undefined, { sensitivity: "base" });
-    return direction === "desc" ? -c : c;
-  }
-  return direction === "desc"
-    ? (b as number) - (a as number)
-    : (a as number) - (b as number);
-};
+// Shared null-sinking, case-insensitive comparator (see SortableHeader).
+const cmpMetric = compareSortValues;
 
 // Substring match across the pair's FX label / nickname / currency names and
 // the vault's tokens + leader address.
@@ -122,9 +108,6 @@ function AprCell({ apr }: { apr: number | null }) {
   );
 }
 
-const pnlTone = (n: number): string =>
-  n > 0 ? "text-accent-buy" : n < 0 ? "text-accent-sell" : "text-muted-fg";
-
 // The connected user's position value in a vault, marked at the vault's reserve
 // ratio (the display reference price stand-in), with the all-time return %
 // below it (same red/green as the dialog's headline). The basket breakdown
@@ -144,7 +127,9 @@ function PositionValue({
       <span className="text-foreground">
         <NumberFlow value={currentValue} format={FORMATS.usd} />
       </span>
-      <span className={`text-[10px] ${pnlTone(at.allTimePnl)}`}>
+      <span
+        className={`text-[10px] ${pnlTone(at.allTimePnl, "text-muted-fg")}`}
+      >
         (<NumberFlow value={at.allTimePct} format={FORMATS.signedReturn} />)
       </span>
     </span>
@@ -444,17 +429,7 @@ function VaultsInner() {
   const updatePin = (next: Partial<Pin>) => {
     const merged = { ...pin, ...next };
     setPin(merged);
-    const params = new URLSearchParams(window.location.search);
-    for (const key of ["base", "quote", "leader"] as const) {
-      if (merged[key]) params.set(key, merged[key]);
-      else params.delete(key);
-    }
-    const search = params.toString();
-    window.history.replaceState(
-      null,
-      "",
-      `${window.location.pathname}${search ? `?${search}` : ""}${window.location.hash}`,
-    );
+    replaceUrlParams(merged);
   };
 
   // Re-sync the pin from the URL on browser Back/Forward. Our own writes use

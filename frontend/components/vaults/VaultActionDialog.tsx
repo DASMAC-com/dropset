@@ -26,8 +26,9 @@ import {
 import { explorerAddressUrl } from "@/lib/explorer";
 import { FORMATS } from "@/lib/format/formats";
 import { sanitizeAmount } from "@/lib/format/input";
-import { cappedPercentLabel } from "@/lib/format/percent";
+import { BPS_SCALE, cappedPercentLabel } from "@/lib/format/percent";
 import { DIALOG_CONTENT_POSITION, DIALOG_OVERLAY_CLASS } from "@/lib/ui/dialog";
+import { pnlTone } from "@/lib/ui/pnlTone";
 
 // Fill an input with a token amount at its FULL precision — exactly the
 // token's decimals, padded with trailing zeros. Used for the derived leg and
@@ -45,9 +46,6 @@ const fmtBalance = (n: number, symbol: string): string =>
         maximumFractionDigits: stablecoinDecimals(symbol),
       })
     : "—";
-
-const pnlTone = (n: number): string =>
-  n > 0 ? "text-accent-buy" : n < 0 ? "text-accent-sell" : "text-foreground";
 
 const detailRow = (label: ReactNode, node: ReactNode) => (
   <div className="flex items-center justify-between">
@@ -83,15 +81,20 @@ const tokenLabel = (src: string, symbol: string): ReactNode => (
   </span>
 );
 
-// The % trigger label for a deposit leg, derived from amount ÷ balance: blank
-// ("%") until the leg has a value, "100%" at a full balance, else the live
-// percent (capped at 99.99% short of full, sharing the swap row's rule).
-const depositPercentLabel = (amount: number, max: number): string => {
-  if (!(max > 0) || !(amount > 0)) return "%";
-  if (amount >= max) return "100%";
-  const bps = Math.round((amount / max) * 10000);
+// Percent label for a fraction in [0, 1]: blank ("%") at zero, "100%" only on
+// an exact full amount, else the live percent capped at 99.99% (cappedPercentLabel).
+// Shared by the deposit legs and the withdraw control; the swap From row keeps
+// its own bigint path for large balances.
+const fractionPercentLabel = (fraction: number, isFull: boolean): string => {
+  if (!(fraction > 0)) return "%";
+  if (isFull) return "100%";
+  const bps = Math.round(fraction * Number(BPS_SCALE));
   return bps > 0 ? cappedPercentLabel(BigInt(bps), false) : "%";
 };
+
+// The % trigger label for a deposit leg, derived from amount ÷ balance.
+const depositPercentLabel = (amount: number, max: number): string =>
+  fractionPercentLabel(max > 0 ? amount / max : 0, max > 0 && amount >= max);
 
 // A token amount stacked over its ≈ USD value — used in the holding and
 // withdraw breakdowns so each leg shows what it's worth.
@@ -258,12 +261,7 @@ function WithdrawSection({
     ? Math.min(1, Math.max(0, parsed / 100))
     : 0;
   const isFull = parsed >= 100;
-  const percentLabel =
-    fraction <= 0
-      ? "%"
-      : isFull
-        ? "100%"
-        : cappedPercentLabel(BigInt(Math.round(fraction * 10000)), false);
+  const percentLabel = fractionPercentLabel(fraction, isFull);
 
   const refNow = vaultReserveRatio(vault) ?? position.entryRefPrice;
   const quoteUsd = tokenUsdPrice(market.quote);
