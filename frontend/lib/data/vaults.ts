@@ -187,10 +187,13 @@ export const vaultReserveRatio = (v: Vault): number | null =>
     ? v.quoteReserve / v.baseReserve
     : null;
 
-// The min_leader_share floor as a fraction (the fixture stores it in ppm,
-// 1_000_000 = 100%).
+// Parts-per-million is how the protocol stores share fractions (1_000_000 =
+// 100%); see Ppm32 in docs/architecture.md.
+const PPM = 1_000_000;
+
+// The min_leader_share floor as a fraction.
 export const leaderFloorFraction = (v: Vault): number =>
-  v.minLeaderSharePpm / 1_000_000;
+  v.minLeaderSharePpm / PPM;
 
 // The leader's current stake as a fraction of all shares — their live
 // skin-in-the-game ratio. null for an empty vault (no shares yet).
@@ -227,6 +230,15 @@ export const maxOutsideDepositValue = (v: Vault): number | null => {
   const room = maxTotalShares - v.totalShares;
   return room > 0 ? room * valuePerShare : 0;
 };
+
+// Mock outside-depositor wallet balance per leg: ~2% of each pooled reserve, so
+// Max / a percent fills a plausible pro-rata basket. This is the seam for real
+// balances — the wallet integration replaces this one helper, not dialog code.
+const MOCK_DEPOSIT_FRACTION = 0.02;
+export const mockMaxDeposit = (v: Vault): { base: number; quote: number } => ({
+  base: v.baseReserve * MOCK_DEPOSIT_FRACTION,
+  quote: v.quoteReserve * MOCK_DEPOSIT_FRACTION,
+});
 
 // Group vaults into FX pairs, preserving first-seen order of both the groups
 // and the vaults within. Derived from the resolved currency codes so USDC- and

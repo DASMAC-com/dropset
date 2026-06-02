@@ -18,6 +18,7 @@ import type { VaultPosition } from "@/lib/data/positions";
 import {
   leaderFloorFraction,
   maxOutsideDepositValue,
+  mockMaxDeposit,
   tokenUsdPrice,
   type Vault,
   type VaultMarket,
@@ -109,9 +110,11 @@ const amountUsd = (amount: number, symbol: string, usd: number): ReactNode => (
   </span>
 );
 
-// Read-side position detail: entrance amount, current value, net PnL split into
-// the yield (spread capture) and FX-move legs, and the FX-neutral yield % since
-// open. See docs/architecture.md → "Depositor positions and cost basis".
+// Read-side position detail: the all-time PnL headline (with return %), the
+// deposited / current-cost-basis figures, current value and unrealized net PnL
+// split into the yield (spread capture) and FX-move legs, the FX-neutral yield
+// % since open, and the per-leg holding. See docs/architecture.md →
+// "Depositor positions and cost basis".
 function PositionDetail({
   market,
   vault,
@@ -340,11 +343,11 @@ function WithdrawSection({
   );
 }
 
-// One deposit leg: the token icon + symbol beside a large amount input, with
-// the leg's ≈ USD value below. The wallet balance sits on the row beneath the
-// card alongside the shared Max / % control (matching the swap token row). The
-// derived leg shows an "Auto" badge — it's filled to match the other leg, and
-// editing it just makes it the one the user is driving.
+// One deposit leg: the token chip beside a large amount input, with the leg's
+// ≈ USD value and the shared Max / % control inside the card. The row beneath
+// the card carries the wallet balance and, on the derived leg, an "Auto" badge
+// — that leg is filled to match the other, and editing it makes it the one the
+// user is driving.
 function DepositLeg({
   iconUrl,
   symbol,
@@ -461,9 +464,9 @@ export function VaultActionDialog({
 }) {
   const [baseAmount, setBaseAmount] = useState("");
   const [quoteAmount, setQuoteAmount] = useState("");
-  // Which leg the user is driving (the target). The other stays editable but
-  // shows a ≈ to flag that it's derived pro-rata; editing it just flips the
-  // target. The exact amount pulled is settled on-chain at deposit time.
+  // Which leg the user is driving (the target). The other stays editable but is
+  // flagged with an "Auto" badge to show it's derived pro-rata; editing it just
+  // flips the target. The exact amount pulled is settled at transaction time.
   const [activeLeg, setActiveLeg] = useState<"base" | "quote" | null>(null);
 
   // Quote tokens per base token; null for an empty vault (no ratio to hold).
@@ -482,12 +485,9 @@ export function VaultActionDialog({
     setBaseAmount(padToken(Number.parseFloat(value) / ratio, market.base));
   };
 
-  // Mock wallet balance ~2% of the pooled reserves, so Max / a percent fills a
-  // plausible pro-rata basket. Real balances arrive with the wallet
-  // integration.
-  const MAX_DEPOSIT_FRACTION = 0.02;
-  const maxBase = vault.baseReserve * MAX_DEPOSIT_FRACTION;
-  const maxQuote = vault.quoteReserve * MAX_DEPOSIT_FRACTION;
+  // Mock per-leg wallet balance (seam — see mockMaxDeposit). Max / a percent
+  // fills a plausible pro-rata basket; real balances replace this one call.
+  const { base: maxBase, quote: maxQuote } = mockMaxDeposit(vault);
 
   // A held position can deposit (top off) or withdraw; the two forms are
   // mutually exclusive, chosen from a dropdown. A fresh position only deposits.

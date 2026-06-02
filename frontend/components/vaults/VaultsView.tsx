@@ -59,6 +59,10 @@ const ALL_WITH_GROUP: { group: FxPairGroup; entry: GroupedVault }[] =
 // Shared null-sinking, case-insensitive comparator (see SortableHeader).
 const cmpMetric = compareSortValues;
 
+// A `leader` pin longer than this is treated as a full pubkey and shortened in
+// its chip; a shorter value is a hand-typed prefix and shown verbatim.
+const LEADER_SLUG_MAX = 12;
+
 // Substring match across the pair's FX label / nickname / currency names and
 // the vault's tokens + leader address.
 const matchesQuery = (
@@ -642,7 +646,7 @@ function VaultsInner() {
             )}
             {pin.leader && (
               <FilterChip
-                label={`Leader ${pin.leader.length > 12 ? shortenMint(pin.leader) : pin.leader}`}
+                label={`Leader ${pin.leader.length > LEADER_SLUG_MAX ? shortenMint(pin.leader) : pin.leader}`}
                 onClear={() => updatePin({ leader: "" })}
               />
             )}
