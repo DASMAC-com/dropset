@@ -3,7 +3,7 @@
 import NumberFlow from "@number-flow/react";
 import { useWalletConnection } from "@solana/react-hooks";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { Crosshair, ExternalLink, RefreshCw, X } from "@/components/icons";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { FlagPair } from "@/components/ui/Flag";
@@ -457,6 +457,22 @@ function VaultsInner() {
     );
   };
 
+  // Re-sync the pin from the URL on browser Back/Forward. Our own writes use
+  // replaceState (no navigation), so only popstate can move the URL out from
+  // under the state — without this the table/chips would keep a stale pin.
+  useEffect(() => {
+    const onPop = () => {
+      const params = new URLSearchParams(window.location.search);
+      setPin({
+        base: params.get("base") ?? "",
+        quote: params.get("quote") ?? "",
+        leader: params.get("leader") ?? "",
+      });
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
   // The pin predicate: exact market on base/quote (when set), and a
   // case-insensitive prefix match on the leader so short slugs work.
   const matchesPin = useCallback(
@@ -520,11 +536,13 @@ function VaultsInner() {
     [positionValue],
   );
 
-  // There's always an effective sort; default 24h volume desc.
-  const effective: { key: MetricKey; direction: SortDir } = sort ?? {
-    key: "volume24h",
-    direction: "desc",
-  };
+  // There's always an effective sort; default 24h volume desc. Memoized so the
+  // groups/flatVaults memos below don't recompute every render in the default
+  // (unsorted) state from a fresh object identity.
+  const effective: { key: MetricKey; direction: SortDir } = useMemo(
+    () => sort ?? { key: "volume24h", direction: "desc" },
+    [sort],
+  );
 
   const toggleSort = (key: MetricKey) =>
     setSort((prev) => {

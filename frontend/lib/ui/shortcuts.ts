@@ -377,6 +377,13 @@ const isPassthroughInput = (target: EventTarget | null): boolean =>
   target instanceof HTMLElement &&
   target.dataset.shortcutPassthrough === "true";
 
+// True when focus is inside an open modal dialog (Radix sets role="dialog" on
+// its content). Page shortcuts must not fire behind a modal — otherwise a key
+// pressed with focus on a dialog button (e.g. the deposit dialog's Max) would
+// silently mutate the table underneath.
+const isInsideDialog = (target: EventTarget | null): boolean =>
+  target instanceof Element && target.closest('[role="dialog"]') !== null;
+
 export function useKeyboardShortcuts(): void {
   const router = useRouter();
   const pathname = usePathname();
@@ -384,6 +391,8 @@ export function useKeyboardShortcuts(): void {
     const active = shortcutsForPath(pathname);
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
+      // A modal owns the keyboard while open — don't fire page shortcuts behind it.
+      if (isInsideDialog(e.target)) return;
       const passthrough = isPassthroughInput(e.target);
       // Editable target without passthrough consumes every key.
       if (isTextEditable(e.target) && !passthrough) return;

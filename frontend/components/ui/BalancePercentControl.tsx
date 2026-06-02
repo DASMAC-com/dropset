@@ -1,7 +1,7 @@
 "use client";
 
 import * as Popover from "@radix-ui/react-popover";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { sanitizePercent } from "@/lib/format/input";
 import { Z_POPOVER } from "@/lib/ui/dialog";
 
@@ -42,6 +42,12 @@ export function BalancePercentControl({
 }) {
   const [custom, setCustom] = useState("");
   const customRef = useRef<HTMLInputElement>(null);
+
+  // Clear the custom field whenever the popover closes, so reopening doesn't
+  // show (and select) a stale value that no longer matches the live percent.
+  useEffect(() => {
+    if (!open) setCustom("");
+  }, [open]);
 
   const onCustomChange = (raw: string) => {
     const cleaned = sanitizePercent(raw);

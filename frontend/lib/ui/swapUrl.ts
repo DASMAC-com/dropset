@@ -89,6 +89,9 @@ export function useGoToSwapPair(): (
       state.from.stablecoin !== from.stablecoin;
     state.setSides(from, to);
     if (fromChanged) state.setAmount("");
+    // Drop the previous pair's cached out-amount so a later swapSides can't
+    // promote a stale value before the first fresh quote lands.
+    state.setLastFormattedOutAmount("");
     gotoSwap(from.stablecoin, to.stablecoin);
   };
 }
