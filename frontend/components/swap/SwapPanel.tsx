@@ -4,6 +4,7 @@ import { useWalletConnection } from "@solana/react-hooks";
 import { useEffect } from "react";
 import { RateLimitMessage } from "@/components/chrome/RateLimitMessage";
 import { stablecoinDecimals, stablecoinMint } from "@/lib/data/currencies";
+import { findVaultMarket } from "@/lib/data/vaults";
 import { useFeeVaultExists } from "@/lib/dflow/feeVault";
 import { PLATFORM_FEE } from "@/lib/env";
 import { emit, useAppEvent } from "@/lib/events";
@@ -13,7 +14,7 @@ import { formatAtomic, useDflowQuote } from "@/lib/hooks/useDflowQuote";
 import { useDflowSwap } from "@/lib/hooks/useDflowSwap";
 import { useTokenInfoRefresh, useUsdQuote } from "@/lib/hooks/useUsdQuote";
 import { useSameToken, useSwapStore, useSwapStoreApi } from "@/lib/store";
-import { useSwapNav } from "@/lib/ui/swapUrl";
+import { useGoToVaultsForPair, useSwapNav } from "@/lib/ui/swapUrl";
 import { PlatformFee } from "./PlatformFee";
 import { QuoteError } from "./QuoteError";
 import { SwapArrowButton } from "./SwapArrowButton";
@@ -32,6 +33,11 @@ export function SwapPanel() {
   const amount = useSwapStore((s) => s.amount);
   const store = useSwapStoreApi();
   const gotoSwap = useSwapNav();
+  const goToVaults = useGoToVaultsForPair();
+  // The vault market for this pair, if one exists — independent of swap
+  // direction (a vault's base/quote are fixed by the market). Drives the
+  // "view vaults" link, which only shows when there's actually a vault.
+  const vaultMarket = findVaultMarket(fromStablecoin, toStablecoin);
   const fromMint = stablecoinMint(fromStablecoin);
   const toMint = stablecoinMint(toStablecoin);
   const fromDecimals = stablecoinDecimals(fromStablecoin);
@@ -220,6 +226,21 @@ export function SwapPanel() {
           />
         ) : null}
       </div>
+      {/* Jump to the Vaults tab pre-filtered to this pair (in the market's own
+          base/quote order), shown only when a vault lists the pair. A plain
+          sibling so the page's gap-3 spaces it evenly above (card) and below
+          (globe). */}
+      {vaultMarket && (
+        <div className="flex justify-center">
+          <button
+            type="button"
+            onClick={() => goToVaults(vaultMarket.base, vaultMarket.quote)}
+            className="text-muted-fg text-xs transition-colors hover:text-foreground"
+          >
+            View {vaultMarket.base} / {vaultMarket.quote} vaults
+          </button>
+        </div>
+      )}
       <RateLimitMessage />
       <QuoteError quote={quote} fromMint={fromMint} toMint={toMint} />
       <SwapResult

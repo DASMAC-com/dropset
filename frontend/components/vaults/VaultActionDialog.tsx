@@ -6,6 +6,7 @@ import { type ReactNode, useState } from "react";
 import { ChevronDown, ExternalLink, Wallet, X } from "@/components/icons";
 import { BalancePercentControl } from "@/components/ui/BalancePercentControl";
 import { CopyButton } from "@/components/ui/CopyButton";
+import { InfoTooltip } from "@/components/ui/InfoTooltip";
 import { shortenMint, stablecoinDecimals } from "@/lib/data/currencies";
 import {
   allTimePnl,
@@ -17,6 +18,8 @@ import type { VaultPosition } from "@/lib/data/positions";
 import {
   leaderFloorFraction,
   maxOutsideDepositValue,
+  mockMaxDeposit,
+  tokenUsdPrice,
   type Vault,
   type VaultMarket,
   vaultReserveRatio,
@@ -24,8 +27,9 @@ import {
 import { explorerAddressUrl } from "@/lib/explorer";
 import { FORMATS } from "@/lib/format/formats";
 import { sanitizeAmount } from "@/lib/format/input";
-import { cappedPercentLabel } from "@/lib/format/percent";
+import { BPS_SCALE, cappedPercentLabel } from "@/lib/format/percent";
 import { DIALOG_CONTENT_POSITION, DIALOG_OVERLAY_CLASS } from "@/lib/ui/dialog";
+import { pnlTone } from "@/lib/ui/pnlTone";
 
 // Fill an input with a token amount at its FULL precision — exactly the
 // token's decimals, padded with trailing zeros. Used for the derived leg and
@@ -43,9 +47,6 @@ const fmtBalance = (n: number, symbol: string): string =>
         maximumFractionDigits: stablecoinDecimals(symbol),
       })
     : "—";
-
-const pnlTone = (n: number): string =>
-  n > 0 ? "text-accent-buy" : n < 0 ? "text-accent-sell" : "text-foreground";
 
 const detailRow = (label: ReactNode, node: ReactNode) => (
   <div className="flex items-center justify-between">
@@ -70,23 +71,31 @@ function TokenIcon({ src, symbol }: { src: string; symbol: string }) {
   );
 }
 
-// A token label: icon + symbol.
+// A token chip: round icon + symbol. The single source of truth for how a
+// token is shown in the dialog — the holding/withdraw breakdowns and each
+// deposit leg all render through this, so the icon size and symbol weight stay
+// consistent across the popup.
 const tokenLabel = (src: string, symbol: string): ReactNode => (
-  <span className="flex items-center gap-1 text-foreground">
+  <span className="flex shrink-0 items-center gap-1.5 font-mono font-medium text-foreground text-sm">
     <TokenIcon src={src} symbol={symbol} />
     {symbol}
   </span>
 );
 
-// The % trigger label for a deposit leg, derived from amount ÷ balance: blank
-// ("%") until the leg has a value, "100%" at a full balance, else the live
-// percent (capped at 99.99% short of full, sharing the swap row's rule).
-const depositPercentLabel = (amount: number, max: number): string => {
-  if (!(max > 0) || !(amount > 0)) return "%";
-  if (amount >= max) return "100%";
-  const bps = Math.round((amount / max) * 10000);
+// Percent label for a fraction in [0, 1]: blank ("%") at zero, "100%" only on
+// an exact full amount, else the live percent capped at 99.99% (cappedPercentLabel).
+// Shared by the deposit legs and the withdraw control; the swap From row keeps
+// its own bigint path for large balances.
+const fractionPercentLabel = (fraction: number, isFull: boolean): string => {
+  if (!(fraction > 0)) return "%";
+  if (isFull) return "100%";
+  const bps = Math.round(fraction * Number(BPS_SCALE));
   return bps > 0 ? cappedPercentLabel(BigInt(bps), false) : "%";
 };
+
+// The % trigger label for a deposit leg, derived from amount ÷ balance.
+const depositPercentLabel = (amount: number, max: number): string =>
+  fractionPercentLabel(max > 0 ? amount / max : 0, max > 0 && amount >= max);
 
 // A token amount stacked over its ≈ USD value — used in the holding and
 // withdraw breakdowns so each leg shows what it's worth.
@@ -101,9 +110,11 @@ const amountUsd = (amount: number, symbol: string, usd: number): ReactNode => (
   </span>
 );
 
-// Read-side position detail: entrance amount, current value, net PnL split into
-// the yield (spread capture) and FX-move legs, and the FX-neutral yield % since
-// open. See docs/architecture.md → "Depositor positions and cost basis".
+// Read-side position detail: the all-time PnL headline (with return %), the
+// deposited / current-cost-basis figures, current value and unrealized net PnL
+// split into the yield (spread capture) and FX-move legs, the FX-neutral yield
+// % since open, and the per-leg holding. See docs/architecture.md →
+// "Depositor positions and cost basis".
 function PositionDetail({
   market,
   vault,
@@ -114,6 +125,9 @@ function PositionDetail({
   position: VaultPosition;
 }) {
   const refNow = vaultReserveRatio(vault) ?? position.entryRefPrice;
+  // Quote→USD rate for the ≈ readouts; the base leg is valued at refNow into
+  // quote first, so every USD figure here shares one basis as Current value.
+  const quoteUsd = tokenUsdPrice(market.quote);
   const { baseOut, quoteOut } = positionBasket(position, vault);
   const pnl = positionPnl(position, vault, refNow);
   const at = allTimePnl(position, vault, refNow);
@@ -212,11 +226,11 @@ function PositionDetail({
         </span>
         {detailRow(
           tokenLabel(market.baseIconUrl, market.base),
-          amountUsd(baseOut, market.base, baseOut * market.baseUsd),
+          amountUsd(baseOut, market.base, baseOut * refNow * quoteUsd),
         )}
         {detailRow(
           tokenLabel(market.quoteIconUrl, market.quote),
-          amountUsd(quoteOut, market.quote, quoteOut * market.quoteUsd),
+          amountUsd(quoteOut, market.quote, quoteOut * quoteUsd),
         )}
       </div>
     </div>
@@ -227,7 +241,8 @@ function PositionDetail({
 // fungible claim, so a withdrawal is always a pro-rata slice of the whole
 // basket — both legs and the realized PnL scale together. 100% redeems
 // everything (and, per the protocol, closes the VaultDepositor PDA). Read-side
-// only: submit just closes (TODO(program)).
+// only for now: submitting just closes the dialog — this is where the on-chain
+// Withdraw instruction will be built and sent when the program is integrated.
 function WithdrawSection({
   market,
   vault,
@@ -249,14 +264,10 @@ function WithdrawSection({
     ? Math.min(1, Math.max(0, parsed / 100))
     : 0;
   const isFull = parsed >= 100;
-  const percentLabel =
-    fraction <= 0
-      ? "%"
-      : isFull
-        ? "100%"
-        : cappedPercentLabel(BigInt(Math.round(fraction * 10000)), false);
+  const percentLabel = fractionPercentLabel(fraction, isFull);
 
   const refNow = vaultReserveRatio(vault) ?? position.entryRefPrice;
+  const quoteUsd = tokenUsdPrice(market.quote);
   const preview = withdrawalPreview(position, vault, refNow, fraction);
 
   return (
@@ -281,13 +292,13 @@ function WithdrawSection({
             <NumberFlow value={preview.value} format={FORMATS.usd} />
           </span>,
         )}
-        <div className="flex flex-col gap-1.5 text-sm">
+        <div className="flex flex-col gap-1.5">
           {detailRow(
             tokenLabel(market.baseIconUrl, market.base),
             amountUsd(
               preview.baseOut,
               market.base,
-              preview.baseOut * market.baseUsd,
+              preview.baseOut * refNow * quoteUsd,
             ),
           )}
           {detailRow(
@@ -295,7 +306,7 @@ function WithdrawSection({
             amountUsd(
               preview.quoteOut,
               market.quote,
-              preview.quoteOut * market.quoteUsd,
+              preview.quoteOut * quoteUsd,
             ),
           )}
         </div>
@@ -332,14 +343,15 @@ function WithdrawSection({
   );
 }
 
-// One deposit leg: the token icon + symbol beside a large amount input, with
-// the leg's ≈ USD value below. The wallet balance sits on the row beneath the
-// card alongside the shared Max / % control (matching the swap token row). The
-// derived leg shows an "Auto" badge — it's filled to match the other leg, and
-// editing it just makes it the one the user is driving.
+// One deposit leg: the token chip beside a large amount input, with the leg's
+// ≈ USD value and the shared Max / % control inside the card. The row beneath
+// the card carries the wallet balance and, on the derived leg, an "Auto" badge
+// — that leg is filled to match the other, and editing it makes it the one the
+// user is driving.
 function DepositLeg({
   iconUrl,
   symbol,
+  otherSymbol,
   value,
   onChange,
   autoFilled,
@@ -349,6 +361,8 @@ function DepositLeg({
 }: {
   iconUrl: string;
   symbol: string;
+  // The other leg's symbol, named in the "Auto" tooltip.
+  otherSymbol: string;
   value: string;
   onChange: (v: string) => void;
   autoFilled: boolean;
@@ -362,28 +376,17 @@ function DepositLeg({
     onChange(padToken((max * percent) / 100, symbol));
   return (
     <div className="flex flex-col gap-1.5">
-      <label className="flex flex-col gap-2 rounded-xl border border-border bg-muted px-3 py-2.5">
-        {/* Token icon (sized to the symbol's font) + symbol beside the large
-            amount input. */}
+      {/* A div, not a label: the card holds the interactive Max / % control, so
+          we don't want a wrapping label stealing clicks to focus the input. */}
+      <div className="flex flex-col gap-2 rounded-xl border border-border bg-muted px-3 py-2.5">
+        {/* Token chip beside the large amount input. */}
         <div className="flex items-center justify-between gap-2">
-          <span className="flex shrink-0 items-center gap-2">
-            {/* biome-ignore lint/performance/noImgElement: small static icon, no optimization needed */}
-            <img
-              src={iconUrl}
-              alt=""
-              aria-hidden
-              width={18}
-              height={18}
-              className="h-[1.125rem] w-[1.125rem] rounded-full"
-            />
-            <span className="font-mono font-semibold text-foreground text-lg">
-              {symbol}
-            </span>
-          </span>
+          {tokenLabel(iconUrl, symbol)}
           <input
             type="text"
             inputMode="decimal"
             value={value}
+            aria-label={`${symbol} amount`}
             onChange={(e) =>
               onChange(
                 sanitizeAmount(e.target.value, stablecoinDecimals(symbol)),
@@ -394,46 +397,47 @@ function DepositLeg({
             className="min-w-0 flex-1 bg-transparent text-right font-mono text-foreground text-lg outline-none placeholder:text-muted-fg disabled:cursor-not-allowed disabled:opacity-50"
           />
         </div>
-        {/* Bottom line: the "Auto" pill (bottom-left) on the leg that's being
-            auto-filled to match the other, and the leg's ≈ USD value (right).
-            min-h reserves the pill's height so the card doesn't grow/shrink as
-            the pill pops between legs. */}
-        <div className="flex min-h-5 items-center justify-between gap-2 font-mono text-[11px] text-muted-fg tabular-nums">
-          {autoFilled ? (
-            <span
-              className="rounded bg-background px-1.5 py-0.5 text-[9px] uppercase tracking-wide"
-              title={`Auto-filled to match the other leg — edit to drive ${symbol} instead`}
-            >
-              Auto
-            </span>
-          ) : (
-            <span />
-          )}
+        {/* Inside the card: the Max / % control (left) and the leg's ≈ USD
+            value (right). */}
+        <div className="flex items-center justify-between gap-2 font-mono text-[10px] text-muted-fg tabular-nums">
+          <BalancePercentControl
+            percentLabel={depositPercentLabel(amount, max)}
+            onApplyPercent={applyPercent}
+            onApplyMax={() => applyPercent(100)}
+            disabled={disabled || max <= 0}
+            open={pctOpen}
+            onOpenChange={setPctOpen}
+            dense
+            maxTitle={`Use your full ${symbol} balance`}
+            percentTitle={`Use a percentage of your ${symbol} balance`}
+          />
           <span>
             ≈ <NumberFlow value={usdValue} format={FORMATS.usd} />
           </span>
         </div>
-      </label>
-      {/* Wallet balance shares the row with the shared Max / % control. */}
-      <div className="flex items-center justify-between gap-1">
+      </div>
+      {/* Below the card: the wallet balance (left) and the "Auto" pill (right,
+          where the Max / % control used to sit) on the auto-filled leg. min-h
+          reserves the pill's height so the row doesn't grow as it pops between
+          legs. */}
+      <div className="flex min-h-6 items-center justify-between gap-2 font-mono text-[10px] text-muted-fg tabular-nums">
         <span
-          className="flex items-center gap-1 font-mono text-[11px] text-muted-fg tabular-nums"
+          className="flex items-center gap-1"
           title={`Your ${symbol} balance`}
         >
           <Wallet size={12} aria-hidden />
           {fmtBalance(max, symbol)} {symbol}
         </span>
-        <BalancePercentControl
-          percentLabel={depositPercentLabel(amount, max)}
-          onApplyPercent={applyPercent}
-          onApplyMax={() => applyPercent(100)}
-          disabled={disabled || max <= 0}
-          open={pctOpen}
-          onOpenChange={setPctOpen}
-          dense
-          maxTitle={`Use your full ${symbol} balance`}
-          percentTitle={`Use a percentage of your ${symbol} balance`}
-        />
+        {autoFilled && (
+          <span className="inline-flex items-center gap-1 rounded border border-border bg-muted px-1.5 py-0.5 font-medium text-muted-fg uppercase tracking-wide">
+            Auto
+            <InfoTooltip
+              size={11}
+              side="top"
+              label={`This amount is set automatically from your ${otherSymbol} deposit, and finalized at transaction time.`}
+            />
+          </span>
+        )}
       </div>
     </div>
   );
@@ -441,9 +445,10 @@ function DepositLeg({
 
 // Manage a single vault position. With no position the user opens one; with a
 // position they see its PnL detail and can top off or withdraw any fraction of
-// the basket (take-profit). Read-side only: the buttons don't send an on-chain
-// transaction yet (TODO(program)); deposit amounts link pro-rata to the vault's
-// reserve ratio, and each leg rounds to its own token decimals.
+// the basket (take-profit). Read-side only for now: the buttons don't send a
+// transaction yet — this is where the on-chain Deposit / Withdraw instructions
+// will be built when the program is integrated. Deposit amounts link pro-rata
+// to the vault's reserve ratio, and each leg rounds to its own token decimals.
 export function VaultActionDialog({
   market,
   vault,
@@ -459,9 +464,9 @@ export function VaultActionDialog({
 }) {
   const [baseAmount, setBaseAmount] = useState("");
   const [quoteAmount, setQuoteAmount] = useState("");
-  // Which leg the user is driving (the target). The other stays editable but
-  // shows a ≈ to flag that it's derived pro-rata; editing it just flips the
-  // target. The exact amount pulled is settled on-chain at deposit time.
+  // Which leg the user is driving (the target). The other stays editable but is
+  // flagged with an "Auto" badge to show it's derived pro-rata; editing it just
+  // flips the target. The exact amount pulled is settled at transaction time.
   const [activeLeg, setActiveLeg] = useState<"base" | "quote" | null>(null);
 
   // Quote tokens per base token; null for an empty vault (no ratio to hold).
@@ -480,12 +485,9 @@ export function VaultActionDialog({
     setBaseAmount(padToken(Number.parseFloat(value) / ratio, market.base));
   };
 
-  // Mock wallet balance ~2% of the pooled reserves, so Max / a percent fills a
-  // plausible pro-rata basket. Real balances arrive with the wallet
-  // integration.
-  const MAX_DEPOSIT_FRACTION = 0.02;
-  const maxBase = vault.baseReserve * MAX_DEPOSIT_FRACTION;
-  const maxQuote = vault.quoteReserve * MAX_DEPOSIT_FRACTION;
+  // Mock per-leg wallet balance (seam — see mockMaxDeposit). Max / a percent
+  // fills a plausible pro-rata basket; real balances replace this one call.
+  const { base: maxBase, quote: maxQuote } = mockMaxDeposit(vault);
 
   // A held position can deposit (top off) or withdraw; the two forms are
   // mutually exclusive, chosen from a dropdown. A fresh position only deposits.
@@ -503,10 +505,14 @@ export function VaultActionDialog({
   const depositValue =
     (Number.isFinite(base) ? base : 0) * (ratio ?? 0) +
     (Number.isFinite(quote) ? quote : 0);
-  // USD value of the basket, using the mock per-token prices — for display
-  // only (the "Total Deposit" headline and per-leg ≈ readouts).
-  const baseUsdValue = (Number.isFinite(base) ? base : 0) * market.baseUsd;
-  const quoteUsdValue = (Number.isFinite(quote) ? quote : 0) * market.quoteUsd;
+  // USD value of the basket, for display only ("Total Deposit" + per-leg ≈).
+  // Each leg's quote-denominated value × the quote token's USD price, so the
+  // legs and the total share one basis and read as real USD even when the
+  // quote leg isn't a USD stable (e.g. GYEN).
+  const quoteUsd = tokenUsdPrice(market.quote);
+  const baseUsdValue =
+    (Number.isFinite(base) ? base : 0) * (ratio ?? 0) * quoteUsd;
+  const quoteUsdValue = (Number.isFinite(quote) ? quote : 0) * quoteUsd;
   const depositUsd = baseUsdValue + quoteUsdValue;
   // The largest deposit the vault can take before the new shares would dilute
   // the leader below their min_leader_share floor; null when the floor can't
@@ -517,7 +523,8 @@ export function VaultActionDialog({
     depositCap !== null && validBasket && depositValue > depositCap;
   const floorPct = Math.round(leaderFloorFraction(vault) * 100);
 
-  // No on-chain send yet — actions just close the dialog.
+  // Read-side only: this is where the Deposit transaction will be built and
+  // sent once the program is integrated; for now a valid basket just closes.
   const submitDeposit = () => {
     if (!validBasket || depositBlocked || floorBreached) return;
     onOpenChange(false);
@@ -553,7 +560,10 @@ export function VaultActionDialog({
               </span>
               {position ? "Manage" : "Open position"} · {market.label}
             </Dialog.Title>
-            <Dialog.Close className="rounded-md p-1 text-muted-fg transition-colors hover:bg-muted hover:text-foreground">
+            <Dialog.Close
+              aria-label="Close"
+              className="rounded-md p-1 text-muted-fg transition-colors hover:bg-muted hover:text-foreground"
+            >
               <X size={14} />
             </Dialog.Close>
           </div>
@@ -570,6 +580,7 @@ export function VaultActionDialog({
                 target="_blank"
                 rel="noopener noreferrer"
                 title="View leader on Solscan"
+                aria-label="View leader on Solscan"
                 className="inline-flex shrink-0 items-center rounded p-1 text-muted-fg hover:bg-muted hover:text-accent"
               >
                 <ExternalLink size={12} />
@@ -618,6 +629,7 @@ export function VaultActionDialog({
                   <DepositLeg
                     iconUrl={market.baseIconUrl}
                     symbol={market.base}
+                    otherSymbol={market.quote}
                     value={baseAmount}
                     onChange={onBaseChange}
                     autoFilled={activeLeg === "quote"}
@@ -628,6 +640,7 @@ export function VaultActionDialog({
                   <DepositLeg
                     iconUrl={market.quoteIconUrl}
                     symbol={market.quote}
+                    otherSymbol={market.base}
                     value={quoteAmount}
                     onChange={onQuoteChange}
                     autoFilled={activeLeg === "base"}
@@ -641,7 +654,7 @@ export function VaultActionDialog({
                     <span className="font-medium text-foreground text-sm">
                       Total Deposit
                     </span>
-                    <span className="font-mono font-semibold text-foreground tabular-nums">
+                    <span className="font-mono font-semibold text-foreground text-sm tabular-nums">
                       <NumberFlow value={depositUsd} format={FORMATS.usd} />
                     </span>
                   </div>

@@ -10,7 +10,10 @@ import { ExternalLink, HelpCircle, Info } from "@/components/icons";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { Flag } from "@/components/ui/Flag";
 import { SearchBox } from "@/components/ui/SearchBox";
-import { SortableHeader } from "@/components/ui/SortableHeader";
+import {
+  compareSortValues,
+  SortableHeader,
+} from "@/components/ui/SortableHeader";
 import {
   CURRENCIES,
   currencyFlagUrl,
@@ -36,7 +39,7 @@ import {
 import { type Side, useSwapStore, useSwapStoreApi } from "@/lib/store";
 import { useFlagColor } from "@/lib/ui/flagColor";
 import { groupedRowClassName } from "@/lib/ui/groupedRows";
-import { useSwapNav } from "@/lib/ui/swapUrl";
+import { replaceUrlParams, useSwapNav } from "@/lib/ui/swapUrl";
 
 const COLSPAN = 9;
 
@@ -64,23 +67,8 @@ const sortVal = (
   return lookup(s.mint)?.[key] ?? null;
 };
 
-// Order two sort values; nulls sink, strings compare case-insensitively.
-const cmpSort = (
-  a: number | string | null,
-  b: number | string | null,
-  direction: SortDir,
-): number => {
-  if (a === null && b === null) return 0;
-  if (a === null) return 1;
-  if (b === null) return -1;
-  if (typeof a === "string" && typeof b === "string") {
-    const c = a.localeCompare(b, undefined, { sensitivity: "base" });
-    return direction === "desc" ? -c : c;
-  }
-  return direction === "desc"
-    ? (b as number) - (a as number)
-    : (a as number) - (b as number);
-};
+// Shared null-sinking, case-insensitive comparator (see SortableHeader).
+const cmpSort = compareSortValues;
 
 // Sort a stablecoin list by a numeric `TokenInfo` field. Tokens with no
 // reported value sink to the bottom and retain their input order (Array.sort
@@ -509,14 +497,10 @@ function CurrenciesInner() {
   // mode (set only by an initial `?symbol=` from the picker) writes `symbol`.
   // We always clear the other param so refreshes can't end up with both.
   const commitQueryToUrl = (value: string, isStrict: boolean) => {
-    const params = new URLSearchParams(window.location.search);
-    params.delete(isStrict ? "q" : "symbol");
-    const key = isStrict ? "symbol" : "q";
-    if (value) params.set(key, value);
-    else params.delete(key);
-    const search = params.toString();
-    const next = `${window.location.pathname}${search ? `?${search}` : ""}${window.location.hash}`;
-    window.history.replaceState(null, "", next);
+    replaceUrlParams({
+      [isStrict ? "symbol" : "q"]: value || null,
+      [isStrict ? "q" : "symbol"]: null,
+    });
   };
 
   const q = query.trim().toLowerCase();

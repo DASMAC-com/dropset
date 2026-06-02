@@ -68,9 +68,6 @@ export type VaultMarket = {
   quoteFlagUrl: string;
   baseIconUrl: string;
   quoteIconUrl: string;
-  // Mock USD price per base / quote token, for the dialog's ≈ USD readouts.
-  baseUsd: number;
-  quoteUsd: number;
   label: string;
   fxMove24h: number;
   vaults: Vault[];
@@ -156,13 +153,20 @@ const VAULT_MARKETS: VaultMarket[] = (
     quoteFlagUrl: currencyFlagUrl(quoteCurrency),
     baseIconUrl: tokenIconUrl(m.base),
     quoteIconUrl: tokenIconUrl(m.quote),
-    baseUsd: tokenUsdPrice(m.base),
-    quoteUsd: tokenUsdPrice(m.quote),
     label: `${m.base} / ${m.quote}`,
     fxMove24h: m.fxMove24h,
     vaults: m.vaults,
   };
 });
+
+// The vault market for an unordered stablecoin pair. A vault's base/quote are
+// fixed by the market, not by which way a taker trades — so USDC→EURC and
+// EURC→USDC both map to the one EURC/USDC market. Returns null when no vault
+// lists the pair (callers use this to hide a "view vaults" affordance).
+export const findVaultMarket = (a: string, b: string): VaultMarket | null =>
+  VAULT_MARKETS.find(
+    (m) => (m.base === a && m.quote === b) || (m.base === b && m.quote === a),
+  ) ?? null;
 
 // Annualized 24h fee yield to depositors, as a fraction (0.1234 = 12.34%).
 // Returns null when TVL is zero so the UI can render an em dash rather than a
@@ -183,31 +187,58 @@ export const vaultReserveRatio = (v: Vault): number | null =>
     ? v.quoteReserve / v.baseReserve
     : null;
 
-// The min_leader_share floor as a fraction (the fixture stores it in ppm,
-// 1_000_000 = 100%).
+// Parts-per-million is how the protocol stores share fractions (1_000_000 =
+// 100%); see Ppm32 in docs/architecture.md.
+const PPM = 1_000_000;
+
+// The min_leader_share floor as a fraction.
 export const leaderFloorFraction = (v: Vault): number =>
-  v.minLeaderSharePpm / 1_000_000;
+  v.minLeaderSharePpm / PPM;
 
 // The leader's current stake as a fraction of all shares — their live
 // skin-in-the-game ratio. null for an empty vault (no shares yet).
 export const leaderShareFraction = (v: Vault): number | null =>
   v.totalShares > 0 ? v.leaderShares / v.totalShares : null;
 
+// The vault's current QUOTE-denominated value per share: the pooled reserves
+// valued in quote tokens (`baseReserve · ratio + quoteReserve`) over total
+// shares. This is the unit a deposit's quote value is minted against — distinct
+// from `Vault.vps`, which is a normalized FX-neutral skill index (~1.0) used
+// only for "yield since open". null for an empty vault.
+export const vaultValuePerShare = (v: Vault): number | null => {
+  const ratio = vaultReserveRatio(v);
+  if (ratio === null || v.totalShares <= 0) return null;
+  return (v.baseReserve * ratio + v.quoteReserve) / v.totalShares;
+};
+
 // Largest outside deposit (quote-denominated value) the vault can accept
 // before the leader's stake would dilute below its min_leader_share floor.
-// A deposit mints `value / vps` new shares at the current value-per-share
-// while the leader's stake stays fixed, so the floor binds when
-//   leader_shares / (total_shares + value / vps) >= floor.
-// Solving for value gives the cap. Returns null when the floor can't bind —
-// no recorded leader stake or a zero-vps / empty vault — in which case the
-// frozen / outside-deposits-approved gates govern instead.
+// A deposit of quote value V mints `V / valuePerShare` new shares while the
+// leader's stake stays fixed, so the floor binds when
+//   leader_shares / (total_shares + V / valuePerShare) >= floor.
+// Solving for V gives the cap. Uses the QUOTE-denominated value per share so
+// the cap is in the same units as the entered basket (critical for non-USD
+// quote legs like GYEN); using the normalized `vps` here understated the cap
+// and falsely tripped the floor warning on safe deposits. Returns null when the
+// floor can't bind (no leader stake / empty vault) — the frozen /
+// outside-deposits-approved gates govern instead.
 export const maxOutsideDepositValue = (v: Vault): number | null => {
   const floor = leaderFloorFraction(v);
-  if (v.leaderShares <= 0 || v.vps <= 0 || floor <= 0) return null;
+  const valuePerShare = vaultValuePerShare(v);
+  if (v.leaderShares <= 0 || valuePerShare === null || floor <= 0) return null;
   const maxTotalShares = v.leaderShares / floor;
   const room = maxTotalShares - v.totalShares;
-  return room > 0 ? room * v.vps : 0;
+  return room > 0 ? room * valuePerShare : 0;
 };
+
+// Mock outside-depositor wallet balance per leg: ~2% of each pooled reserve, so
+// Max / a percent fills a plausible pro-rata basket. This is the seam for real
+// balances — the wallet integration replaces this one helper, not dialog code.
+const MOCK_DEPOSIT_FRACTION = 0.02;
+export const mockMaxDeposit = (v: Vault): { base: number; quote: number } => ({
+  base: v.baseReserve * MOCK_DEPOSIT_FRACTION,
+  quote: v.quoteReserve * MOCK_DEPOSIT_FRACTION,
+});
 
 // Group vaults into FX pairs, preserving first-seen order of both the groups
 // and the vaults within. Derived from the resolved currency codes so USDC- and

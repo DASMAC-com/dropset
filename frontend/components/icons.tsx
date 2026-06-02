@@ -22,6 +22,7 @@ import {
   Pause as RawPause,
   Play as RawPlay,
   Plus as RawPlus,
+  RefreshCw as RawRefreshCw,
   Search as RawSearch,
   Settings2 as RawSettings2,
   Wallet as RawWallet,
@@ -63,6 +64,7 @@ export const Minus = safe(RawMinus);
 export const Pause = safe(RawPause);
 export const Play = safe(RawPlay);
 export const Plus = safe(RawPlus);
+export const RefreshCw = safe(RawRefreshCw);
 export const Search = safe(RawSearch);
 export const Settings2 = safe(RawSettings2);
 export const Wallet = safe(RawWallet);

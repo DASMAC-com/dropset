@@ -1,8 +1,9 @@
 "use client";
 
 import * as Popover from "@radix-ui/react-popover";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { sanitizePercent } from "@/lib/format/input";
+import { Z_POPOVER } from "@/lib/ui/dialog";
 
 // Shared "Max + %" balance control used by the swap From row and the vault
 // deposit legs. The % trigger shows a caller-derived label — blank ("%") until
@@ -42,6 +43,12 @@ export function BalancePercentControl({
   const [custom, setCustom] = useState("");
   const customRef = useRef<HTMLInputElement>(null);
 
+  // Clear the custom field whenever the popover closes, so reopening doesn't
+  // show (and select) a stale value that no longer matches the live percent.
+  useEffect(() => {
+    if (!open) setCustom("");
+  }, [open]);
+
   const onCustomChange = (raw: string) => {
     const cleaned = sanitizePercent(raw);
     setCustom(cleaned);
@@ -74,6 +81,7 @@ export function BalancePercentControl({
           type="button"
           disabled={disabled}
           title={percentTitle}
+          aria-label={percentTitle}
           className={`${buttonClass} ${dense ? "min-w-[2rem]" : "min-w-[2.25rem]"} tabular-nums`}
         >
           {percentLabel}
@@ -88,7 +96,7 @@ export function BalancePercentControl({
               customRef.current?.select();
             }}
             onCloseAutoFocus={onCloseAutoFocus}
-            className="z-[80] flex items-center gap-1 rounded-xl border border-border bg-background p-1.5 shadow-lg"
+            className={`${Z_POPOVER} flex items-center gap-1 rounded-xl border border-border bg-background p-1.5 shadow-lg`}
           >
             {PRESET_PERCENTS.map((p) => (
               <button

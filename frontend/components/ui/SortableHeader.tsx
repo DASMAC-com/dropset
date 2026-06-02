@@ -1,6 +1,7 @@
 "use client";
 
-import { ArrowUpDown, ChevronDown, ChevronUp, Info } from "@/components/icons";
+import { ArrowUpDown, ChevronDown, ChevronUp } from "@/components/icons";
+import { InfoTooltip } from "@/components/ui/InfoTooltip";
 
 // Shared sortable column header for the data tables on /currencies and
 // /vaults. Generic over the table's sort-key union so each table keeps its own
@@ -10,6 +11,27 @@ import { ArrowUpDown, ChevronDown, ChevronUp, Info } from "@/components/icons";
 
 export type SortDir = "asc" | "desc";
 export type SortState<K extends string> = { key: K; direction: SortDir } | null;
+
+// Order two sort values for a column. Nulls (missing market data, zero-TVL APR,
+// etc.) always sink to the bottom regardless of direction; strings compare
+// case-insensitively. Shared by /vaults and /currencies so the two tables sort
+// identically.
+export const compareSortValues = (
+  a: number | string | null,
+  b: number | string | null,
+  direction: SortDir,
+): number => {
+  if (a === null && b === null) return 0;
+  if (a === null) return 1;
+  if (b === null) return -1;
+  if (typeof a === "string" && typeof b === "string") {
+    const c = a.localeCompare(b, undefined, { sensitivity: "base" });
+    return direction === "desc" ? -c : c;
+  }
+  return direction === "desc"
+    ? (b as number) - (a as number)
+    : (a as number) - (b as number);
+};
 
 export function SortableHeader<K extends string>({
   sortKey,
@@ -38,9 +60,15 @@ export function SortableHeader<K extends string>({
     : sort.direction === "desc"
       ? ChevronDown
       : ChevronUp;
+  const ariaSort = !active
+    ? "none"
+    : sort.direction === "desc"
+      ? "descending"
+      : "ascending";
   return (
     <th
       scope="col"
+      aria-sort={ariaSort}
       className={`sticky top-14 z-20 border-border border-r bg-muted p-0 last:border-r-0 ${thClassName}`}
     >
       <div
@@ -52,26 +80,9 @@ export function SortableHeader<K extends string>({
           className={`flex cursor-pointer select-none items-center gap-1 text-right font-medium outline-none transition-colors focus:outline-none focus-visible:outline-none ${active ? "text-foreground" : "text-muted-fg hover:text-foreground"}`}
         >
           {label}
-          <Icon size={12} />
+          <Icon size={12} aria-hidden />
         </button>
-        {info && (
-          <span className="group relative inline-flex items-center">
-            <Info
-              size={12}
-              className="text-muted-fg transition-colors group-hover:text-foreground"
-            />
-            {/* whitespace-normal resets the nowrap a snug `w-px
-                whitespace-nowrap` header inherits onto its descendants, so the
-                tooltip wraps inside its width instead of stretching out on one
-                line. */}
-            <span
-              role="tooltip"
-              className="pointer-events-none absolute top-full right-0 z-30 mt-1 w-56 whitespace-normal rounded-md border border-border bg-background px-2 py-1.5 text-left font-normal text-[11px] text-muted-fg normal-case opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100"
-            >
-              {info}
-            </span>
-          </span>
-        )}
+        {info && <InfoTooltip label={info} />}
       </div>
     </th>
   );

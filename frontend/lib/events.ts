@@ -45,6 +45,7 @@ export type AppEvents = {
   toggleGroupByPair: undefined;
   vaultsSort: VaultsSortKey;
   focusVaultsSearch: undefined;
+  vaultsManageOnlyResult: undefined;
 };
 
 export type CurrenciesSortKey =
@@ -93,6 +94,7 @@ export const EVENTS: { [K in keyof AppEvents]: K } = {
   toggleGroupByPair: "toggleGroupByPair",
   vaultsSort: "vaultsSort",
   focusVaultsSearch: "focusVaultsSearch",
+  vaultsManageOnlyResult: "vaultsManageOnlyResult",
 };
 
 type Handler<K extends keyof AppEvents> = (payload: AppEvents[K]) => void;

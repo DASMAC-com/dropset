@@ -2,12 +2,14 @@
 
 import NumberFlow from "@number-flow/react";
 import { useWalletConnection } from "@solana/react-hooks";
-import { useCallback, useMemo, useState } from "react";
-import { ExternalLink } from "@/components/icons";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Crosshair, ExternalLink, RefreshCw, X } from "@/components/icons";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { FlagPair } from "@/components/ui/Flag";
 import { SearchBox } from "@/components/ui/SearchBox";
 import {
+  compareSortValues,
   SortableHeader,
   type SortDir,
   type SortState,
@@ -36,6 +38,8 @@ import { emit, useAppEvent } from "@/lib/events";
 import { explorerAddressUrl } from "@/lib/explorer";
 import { FORMATS } from "@/lib/format/formats";
 import { groupedRowClassName } from "@/lib/ui/groupedRows";
+import { pnlTone } from "@/lib/ui/pnlTone";
+import { replaceUrlParams, useGoToSwapPair } from "@/lib/ui/swapUrl";
 
 const APR_TOOLTIP =
   "What you earn in a year from the leader's skill, based on the last 24 hours. This does not count money made or lost when prices move.";
@@ -52,24 +56,12 @@ const ALL_WITH_GROUP: { group: FxPairGroup; entry: GroupedVault }[] =
     group.vaults.map((entry) => ({ group, entry })),
   );
 
-// Order two sort values; nulls (zero-TVL APR, etc.) always sink to the bottom
-// regardless of direction. Strings (leader, pair) compare case-insensitively.
-const cmpMetric = (
-  a: number | string | null,
-  b: number | string | null,
-  direction: SortDir,
-): number => {
-  if (a === null && b === null) return 0;
-  if (a === null) return 1;
-  if (b === null) return -1;
-  if (typeof a === "string" && typeof b === "string") {
-    const c = a.localeCompare(b, undefined, { sensitivity: "base" });
-    return direction === "desc" ? -c : c;
-  }
-  return direction === "desc"
-    ? (b as number) - (a as number)
-    : (a as number) - (b as number);
-};
+// Shared null-sinking, case-insensitive comparator (see SortableHeader).
+const cmpMetric = compareSortValues;
+
+// A `leader` pin longer than this is treated as a full pubkey and shortened in
+// its chip; a shorter value is a hand-typed prefix and shown verbatim.
+const LEADER_SLUG_MAX = 12;
 
 // Substring match across the pair's FX label / nickname / currency names and
 // the vault's tokens + leader address.
@@ -120,9 +112,6 @@ function AprCell({ apr }: { apr: number | null }) {
   );
 }
 
-const pnlTone = (n: number): string =>
-  n > 0 ? "text-accent-buy" : n < 0 ? "text-accent-sell" : "text-muted-fg";
-
 // The connected user's position value in a vault, marked at the vault's reserve
 // ratio (the display reference price stand-in), with the all-time return %
 // below it (same red/green as the dialog's headline). The basket breakdown
@@ -142,7 +131,9 @@ function PositionValue({
       <span className="text-foreground">
         <NumberFlow value={currentValue} format={FORMATS.usd} />
       </span>
-      <span className={`text-[10px] ${pnlTone(at.allTimePnl)}`}>
+      <span
+        className={`text-[10px] ${pnlTone(at.allTimePnl, "text-muted-fg")}`}
+      >
         (<NumberFlow value={at.allTimePct} format={FORMATS.signedReturn} />)
       </span>
     </span>
@@ -234,19 +225,25 @@ function VaultRow({
   grouped,
   connected,
   position,
+  pinned,
   rowIndex,
   groupSize,
   onManage,
+  onPin,
 }: {
   entry: GroupedVault;
   grouped: boolean;
   connected: boolean;
   position: VaultPosition | null;
+  // Whether the URL filter is pinned to exactly this vault.
+  pinned: boolean;
   rowIndex: number;
   groupSize: number;
   onManage: (market: VaultMarket, vault: Vault) => void;
+  onPin: (entry: GroupedVault) => void;
 }) {
   const { market, vault } = entry;
+  const goToSwapPair = useGoToSwapPair();
 
   const action = !connected
     ? {
@@ -276,9 +273,7 @@ function VaultRow({
 
   return (
     <tr className={groupedRowClassName(rowIndex, groupSize)}>
-      <td
-        className={`border-border border-r py-2 pr-3 align-middle last:border-r-0 ${grouped ? "pl-10" : "pl-3"}`}
-      >
+      <td className="border-border border-r px-3 py-2 align-middle last:border-r-0">
         <div className="flex items-center gap-2">
           {!grouped && (
             <FlagPair
@@ -295,6 +290,21 @@ function VaultRow({
           <span className="font-mono font-medium text-foreground">
             {market.label}
           </span>
+          {/* Jump to /swap with this pair loaded into the store. */}
+          <button
+            type="button"
+            onClick={() =>
+              goToSwapPair(
+                { currency: market.baseCurrency, stablecoin: market.base },
+                { currency: market.quoteCurrency, stablecoin: market.quote },
+              )
+            }
+            title={`Swap ${market.label}`}
+            aria-label={`Swap ${market.label}`}
+            className="ml-1 inline-flex shrink-0 items-center rounded p-1 text-muted-fg transition-colors hover:bg-muted hover:text-accent"
+          >
+            <RefreshCw size={14} />
+          </button>
         </div>
       </td>
       <td className="w-px whitespace-nowrap border-border border-r px-3 py-2 align-middle last:border-r-0">
@@ -311,10 +321,28 @@ function VaultRow({
             target="_blank"
             rel="noopener noreferrer"
             title="View leader on Solscan"
+            aria-label="View leader on Solscan"
             className="inline-flex shrink-0 items-center rounded p-1 text-muted-fg hover:bg-muted hover:text-accent"
           >
             <ExternalLink size={12} />
           </a>
+          {/* Pin the view to this exact vault — writes base/quote/leader into
+              the URL (a shareable deep link); click again to clear. */}
+          <button
+            type="button"
+            onClick={() => onPin(entry)}
+            aria-label={pinned ? "Clear vault filter" : "Pin this vault"}
+            title={
+              pinned
+                ? "Clear vault filter"
+                : "Pin this vault — filters the table and updates the shareable URL"
+            }
+            className={`inline-flex shrink-0 items-center rounded p-1 transition-colors hover:bg-muted ${
+              pinned ? "text-accent" : "text-muted-fg hover:text-accent"
+            }`}
+          >
+            <Crosshair size={12} />
+          </button>
           {vault.frozen && (
             <span className="rounded bg-accent-sell/15 px-1.5 py-0.5 font-medium text-[10px] text-accent-sell uppercase tracking-wide">
               Frozen
@@ -351,8 +379,37 @@ function VaultRow({
   );
 }
 
-export function VaultsView() {
+// A removable filter chip for an active URL pin.
+function FilterChip({
+  label,
+  onClear,
+}: {
+  label: string;
+  onClear: () => void;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-border bg-muted py-1 pr-1 pl-2.5 font-mono text-foreground text-xs">
+      {label}
+      <button
+        type="button"
+        onClick={onClear}
+        aria-label={`Clear ${label} filter`}
+        className="inline-flex items-center rounded-full p-0.5 text-muted-fg transition-colors hover:bg-background hover:text-foreground"
+      >
+        <X size={12} />
+      </button>
+    </span>
+  );
+}
+
+// A structured filter pinning the view to a market (base/quote symbols) and an
+// optional leader (full pubkey or prefix). Driven by the `?base=&quote=&leader=`
+// URL params so a filtered view is a shareable deep link to a vault.
+type Pin = { base: string; quote: string; leader: string };
+
+function VaultsInner() {
   const { connected } = useWalletConnection();
+  const searchParams = useSearchParams();
   const [groupByPair, setGroupByPair] = useState(true);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortState<MetricKey>>(null);
@@ -360,6 +417,51 @@ export function VaultsView() {
     market: VaultMarket;
     vault: Vault;
   } | null>(null);
+
+  // Seed the pin from the URL once, then own it in state. Updates write back to
+  // the URL via replaceState (no router transition) so the address bar always
+  // reflects — and can reproduce — the current filter, mirroring /currencies.
+  const [pin, setPin] = useState<Pin>(() => ({
+    base: searchParams.get("base") ?? "",
+    quote: searchParams.get("quote") ?? "",
+    leader: searchParams.get("leader") ?? "",
+  }));
+  // Merge against the current pin and apply the URL write as a plain side
+  // effect — NOT inside the setPin updater, which React may re-run during
+  // render (replaceState there pokes the Router mid-render). updatePin only
+  // runs from event handlers, so the `pin` closure is current.
+  const updatePin = (next: Partial<Pin>) => {
+    const merged = { ...pin, ...next };
+    setPin(merged);
+    replaceUrlParams(merged);
+  };
+
+  // Re-sync the pin from the URL on browser Back/Forward. Our own writes use
+  // replaceState (no navigation), so only popstate can move the URL out from
+  // under the state — without this the table/chips would keep a stale pin.
+  useEffect(() => {
+    const onPop = () => {
+      const params = new URLSearchParams(window.location.search);
+      setPin({
+        base: params.get("base") ?? "",
+        quote: params.get("quote") ?? "",
+        leader: params.get("leader") ?? "",
+      });
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  // The pin predicate: exact market on base/quote (when set), and a
+  // case-insensitive prefix match on the leader so short slugs work.
+  const matchesPin = useCallback(
+    (entry: GroupedVault): boolean =>
+      (!pin.base || entry.market.base === pin.base) &&
+      (!pin.quote || entry.market.quote === pin.quote) &&
+      (!pin.leader ||
+        entry.vault.leader.toLowerCase().startsWith(pin.leader.toLowerCase())),
+    [pin.base, pin.quote, pin.leader],
+  );
 
   // A connected wallet is treated as the mock depositor, so the seeded
   // positions surface. Disconnected → no positions. The accessor is the data
@@ -378,7 +480,8 @@ export function VaultsView() {
     (vault: Vault): number => {
       const p = positionFor(vault.vaultPubkey);
       return p
-        ? positionPnl(p, vault, vaultReserveRatio(vault) ?? 0).currentValue
+        ? positionPnl(p, vault, vaultReserveRatio(vault) ?? p.entryRefPrice)
+            .currentValue
         : 0;
     },
     [positionFor],
@@ -397,19 +500,28 @@ export function VaultsView() {
       if (key === "position")
         return g.vaults.reduce((sum, gv) => sum + positionValue(gv.vault), 0);
       // A pair groups many leaders, so rank it by its alphabetically first.
+      // Case-insensitive to match the row-level leader comparator (cmpMetric).
       if (key === "leader")
-        return g.vaults.map((gv) => gv.vault.leader).sort()[0] ?? null;
+        return (
+          g.vaults
+            .map((gv) => gv.vault.leader)
+            .sort((a, b) =>
+              a.toLowerCase().localeCompare(b.toLowerCase()),
+            )[0] ?? null
+        );
       if (key === "pair") return g.label;
       return groupMetric(g, key);
     },
     [positionValue],
   );
 
-  // There's always an effective sort; default 24h volume desc.
-  const effective: { key: MetricKey; direction: SortDir } = sort ?? {
-    key: "volume24h",
-    direction: "desc",
-  };
+  // There's always an effective sort; default 24h volume desc. Memoized so the
+  // groups/flatVaults memos below don't recompute every render in the default
+  // (unsorted) state from a fresh object identity.
+  const effective: { key: MetricKey; direction: SortDir } = useMemo(
+    () => sort ?? { key: "volume24h", direction: "desc" },
+    [sort],
+  );
 
   const toggleSort = (key: MetricKey) =>
     setSort((prev) => {
@@ -435,7 +547,7 @@ export function VaultsView() {
       .map((group) => ({
         group,
         vaults: group.vaults
-          .filter((entry) => matchesQuery(q, group, entry))
+          .filter((entry) => matchesQuery(q, group, entry) && matchesPin(entry))
           .sort((a, b) =>
             cmpMetric(
               vaultSortValue(a, key),
@@ -445,22 +557,47 @@ export function VaultsView() {
           ),
       }))
       .filter((g) => g.vaults.length > 0);
-  }, [effective, q, groupSortValue, vaultSortValue]);
+  }, [effective, q, matchesPin, groupSortValue, vaultSortValue]);
 
   // Ungrouped: one flat, filtered + sorted list of every vault.
   const flatVaults = useMemo(() => {
     const { key, direction } = effective;
-    return ALL_WITH_GROUP.filter(({ group, entry }) =>
-      matchesQuery(q, group, entry),
+    return ALL_WITH_GROUP.filter(
+      ({ group, entry }) => matchesQuery(q, group, entry) && matchesPin(entry),
     )
       .map(({ entry }) => entry)
       .sort((a, b) =>
         cmpMetric(vaultSortValue(a, key), vaultSortValue(b, key), direction),
       );
-  }, [effective, q, vaultSortValue]);
+  }, [effective, q, matchesPin, vaultSortValue]);
 
   const onManage = (market: VaultMarket, vault: Vault) =>
     setDialog({ market, vault });
+
+  // The pin "crosshair" on each row toggles the URL filter to that exact vault.
+  const isPinnedVault = (e: GroupedVault) =>
+    pin.base === e.market.base &&
+    pin.quote === e.market.quote &&
+    pin.leader === e.vault.leader;
+  const togglePinVault = (e: GroupedVault) =>
+    updatePin(
+      isPinnedVault(e)
+        ? { base: "", quote: "", leader: "" }
+        : {
+            base: e.market.base,
+            quote: e.market.quote,
+            leader: e.vault.leader,
+          },
+    );
+
+  // `m` opens the manage dialog when the current filters resolve to exactly one
+  // vault (across groups or the flat list), like /currencies' f/t lone-result
+  // picks. The dialog itself shows Connect / Deposit / Manage as appropriate.
+  useAppEvent("vaultsManageOnlyResult", () => {
+    const entries = groupByPair ? groups.flatMap((g) => g.vaults) : flatVaults;
+    const only = entries.length === 1 ? entries[0] : null;
+    if (only) setDialog({ market: only.market, vault: only.vault });
+  });
 
   // Columns: Pair, Leader, Your Position, Manage, APR, TVL, 24h Vol.
   const colSpan = 7;
@@ -496,6 +633,25 @@ export function VaultsView() {
             figures shown are mock data.
           </p>
         </div>
+        {/* Active URL pin (?base=&quote=&leader=) shown as removable chips on
+            their own row, so a varying number of chips never changes the
+            search/preview toolbar width (which the table aligns to). */}
+        {(pin.base || pin.quote || pin.leader) && (
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            {(pin.base || pin.quote) && (
+              <FilterChip
+                label={`${pin.base || "·"} / ${pin.quote || "·"}`}
+                onClear={() => updatePin({ base: "", quote: "" })}
+              />
+            )}
+            {pin.leader && (
+              <FilterChip
+                label={`Leader ${pin.leader.length > LEADER_SLUG_MAX ? shortenMint(pin.leader) : pin.leader}`}
+                onClear={() => updatePin({ leader: "" })}
+              />
+            )}
+          </div>
+        )}
         <div className="rounded-lg border border-border">
           <table className="w-auto text-left text-sm">
             <thead className="text-muted-fg text-xs uppercase">
@@ -576,9 +732,11 @@ export function VaultsView() {
                       grouped
                       connected={connected}
                       position={positionFor(entry.vault.vaultPubkey)}
+                      pinned={isPinnedVault(entry)}
                       rowIndex={i}
                       groupSize={vaults.length}
                       onManage={onManage}
+                      onPin={togglePinVault}
                     />
                   )),
                 ])
@@ -590,9 +748,11 @@ export function VaultsView() {
                     grouped={false}
                     connected={connected}
                     position={positionFor(entry.vault.vaultPubkey)}
+                    pinned={isPinnedVault(entry)}
                     rowIndex={i}
                     groupSize={flatVaults.length}
                     onManage={onManage}
+                    onPin={togglePinVault}
                   />
                 ))
               )}
@@ -612,5 +772,14 @@ export function VaultsView() {
         />
       )}
     </div>
+  );
+}
+
+// useSearchParams (read by the pin filter) must sit under a Suspense boundary.
+export function VaultsView() {
+  return (
+    <Suspense fallback={null}>
+      <VaultsInner />
+    </Suspense>
   );
 }
