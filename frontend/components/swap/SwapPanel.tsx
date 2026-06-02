@@ -186,65 +186,61 @@ export function SwapPanel() {
 
   return (
     <>
-      {/* The card and the "view vaults" link form one block so the link hugs
-          the card with a small gap, rather than inheriting the page's larger
-          inter-section gap-3. */}
-      <div className="flex flex-col gap-1.5">
-        <div className="relative rounded-xl border border-border p-3">
-          <div className="relative flex flex-col gap-[14px]">
-            <TokenRow side="from" label="From" />
-            <TokenRow
-              side="to"
-              label="To"
-              quote={quote}
-              fromUsd={quoteFromUsd}
-              quoteFresh={quoteFresh}
-            />
-            <div className="absolute inset-x-0 top-1/2 z-10 flex -translate-y-1/2 items-center justify-center">
-              <SwapArrowButton />
-            </div>
+      <div className="relative rounded-xl border border-border p-3">
+        <div className="relative flex flex-col gap-[14px]">
+          <TokenRow side="from" label="From" />
+          <TokenRow
+            side="to"
+            label="To"
+            quote={quote}
+            fromUsd={quoteFromUsd}
+            quoteFresh={quoteFresh}
+          />
+          <div className="absolute inset-x-0 top-1/2 z-10 flex -translate-y-1/2 items-center justify-center">
+            <SwapArrowButton />
           </div>
+        </div>
+        <button
+          type="button"
+          onClick={onClick}
+          disabled={disabled}
+          title={sameToken ? "Pick a different token on one side" : undefined}
+          className={`mt-[14px] w-full rounded-lg bg-accent-buy px-4 py-3.5 font-medium text-background text-lg transition-colors hover:bg-accent-buy-hover disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-fg disabled:hover:bg-muted ${
+            dimmed ? "opacity-60 hover:opacity-80" : ""
+          }`}
+        >
+          {label}
+        </button>
+        {routeFound && quote.inAmount !== null && quote.outAmount !== null ? (
+          <PlatformFee
+            bps={
+              canSwap && PLATFORM_FEE && feeVaultExists
+                ? PLATFORM_FEE.bps
+                : null
+            }
+            inAmount={quote.inAmount}
+            outAmount={quote.outAmount}
+            fromSymbol={fromStablecoin}
+            toSymbol={toStablecoin}
+            fresh={quoteFresh}
+          />
+        ) : null}
+      </div>
+      {/* Jump to the Vaults tab pre-filtered to this pair (in the market's own
+          base/quote order), shown only when a vault lists the pair. A plain
+          sibling so the page's gap-3 spaces it evenly above (card) and below
+          (globe). */}
+      {vaultMarket && (
+        <div className="flex justify-center">
           <button
             type="button"
-            onClick={onClick}
-            disabled={disabled}
-            title={sameToken ? "Pick a different token on one side" : undefined}
-            className={`mt-[14px] w-full rounded-lg bg-accent-buy px-4 py-3.5 font-medium text-background text-lg transition-colors hover:bg-accent-buy-hover disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-fg disabled:hover:bg-muted ${
-              dimmed ? "opacity-60 hover:opacity-80" : ""
-            }`}
+            onClick={() => goToVaults(vaultMarket.base, vaultMarket.quote)}
+            className="text-muted-fg text-xs transition-colors hover:text-foreground"
           >
-            {label}
+            View {vaultMarket.base} / {vaultMarket.quote} vaults
           </button>
-          {routeFound && quote.inAmount !== null && quote.outAmount !== null ? (
-            <PlatformFee
-              bps={
-                canSwap && PLATFORM_FEE && feeVaultExists
-                  ? PLATFORM_FEE.bps
-                  : null
-              }
-              inAmount={quote.inAmount}
-              outAmount={quote.outAmount}
-              fromSymbol={fromStablecoin}
-              toSymbol={toStablecoin}
-              fresh={quoteFresh}
-            />
-          ) : null}
         </div>
-        {/* Jump to the Vaults tab pre-filtered to this pair (in the market's own
-          base/quote order), so a user can back a leader's liquidity for what
-          they're trading. Only shown when a vault actually lists the pair. */}
-        {vaultMarket && (
-          <div className="flex justify-center">
-            <button
-              type="button"
-              onClick={() => goToVaults(vaultMarket.base, vaultMarket.quote)}
-              className="text-muted-fg text-xs transition-colors hover:text-foreground"
-            >
-              View {vaultMarket.base} / {vaultMarket.quote} vaults
-            </button>
-          </div>
-        )}
-      </div>
+      )}
       <RateLimitMessage />
       <QuoteError quote={quote} fromMint={fromMint} toMint={toMint} />
       <SwapResult
