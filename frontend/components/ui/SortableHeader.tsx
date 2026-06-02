@@ -39,9 +39,15 @@ export function SortableHeader<K extends string>({
     : sort.direction === "desc"
       ? ChevronDown
       : ChevronUp;
+  const ariaSort = !active
+    ? "none"
+    : sort.direction === "desc"
+      ? "descending"
+      : "ascending";
   return (
     <th
       scope="col"
+      aria-sort={ariaSort}
       className={`sticky top-14 z-20 border-border border-r bg-muted p-0 last:border-r-0 ${thClassName}`}
     >
       <div
@@ -53,7 +59,7 @@ export function SortableHeader<K extends string>({
           className={`flex cursor-pointer select-none items-center gap-1 text-right font-medium outline-none transition-colors focus:outline-none focus-visible:outline-none ${active ? "text-foreground" : "text-muted-fg hover:text-foreground"}`}
         >
           {label}
-          <Icon size={12} />
+          <Icon size={12} aria-hidden />
         </button>
         {info && <InfoTooltip label={info} />}
       </div>

@@ -562,7 +562,10 @@ export function VaultActionDialog({
               </span>
               {position ? "Manage" : "Open position"} · {market.label}
             </Dialog.Title>
-            <Dialog.Close className="rounded-md p-1 text-muted-fg transition-colors hover:bg-muted hover:text-foreground">
+            <Dialog.Close
+              aria-label="Close"
+              className="rounded-md p-1 text-muted-fg transition-colors hover:bg-muted hover:text-foreground"
+            >
               <X size={14} />
             </Dialog.Close>
           </div>
@@ -579,6 +582,7 @@ export function VaultActionDialog({
                 target="_blank"
                 rel="noopener noreferrer"
                 title="View leader on Solscan"
+                aria-label="View leader on Solscan"
                 className="inline-flex shrink-0 items-center rounded p-1 text-muted-fg hover:bg-muted hover:text-accent"
               >
                 <ExternalLink size={12} />

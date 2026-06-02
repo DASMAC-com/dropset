@@ -332,6 +332,7 @@ function VaultRow({
             target="_blank"
             rel="noopener noreferrer"
             title="View leader on Solscan"
+            aria-label="View leader on Solscan"
             className="inline-flex shrink-0 items-center rounded p-1 text-muted-fg hover:bg-muted hover:text-accent"
           >
             <ExternalLink size={12} />

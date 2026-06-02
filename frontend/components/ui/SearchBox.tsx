@@ -60,6 +60,7 @@ export function SearchBox({
           }
         }}
         placeholder={placeholder}
+        aria-label={placeholder}
         className="min-w-0 flex-1 bg-transparent text-foreground text-sm outline-none placeholder:text-muted-fg"
       />
       <kbd
