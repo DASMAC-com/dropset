@@ -68,9 +68,6 @@ export type VaultMarket = {
   quoteFlagUrl: string;
   baseIconUrl: string;
   quoteIconUrl: string;
-  // Mock USD price per base / quote token, for the dialog's ≈ USD readouts.
-  baseUsd: number;
-  quoteUsd: number;
   label: string;
   fxMove24h: number;
   vaults: Vault[];
@@ -156,8 +153,6 @@ const VAULT_MARKETS: VaultMarket[] = (
     quoteFlagUrl: currencyFlagUrl(quoteCurrency),
     baseIconUrl: tokenIconUrl(m.base),
     quoteIconUrl: tokenIconUrl(m.quote),
-    baseUsd: tokenUsdPrice(m.base),
-    quoteUsd: tokenUsdPrice(m.quote),
     label: `${m.base} / ${m.quote}`,
     fxMove24h: m.fxMove24h,
     vaults: m.vaults,
@@ -202,20 +197,35 @@ export const leaderFloorFraction = (v: Vault): number =>
 export const leaderShareFraction = (v: Vault): number | null =>
   v.totalShares > 0 ? v.leaderShares / v.totalShares : null;
 
+// The vault's current QUOTE-denominated value per share: the pooled reserves
+// valued in quote tokens (`baseReserve · ratio + quoteReserve`) over total
+// shares. This is the unit a deposit's quote value is minted against — distinct
+// from `Vault.vps`, which is a normalized FX-neutral skill index (~1.0) used
+// only for "yield since open". null for an empty vault.
+export const vaultValuePerShare = (v: Vault): number | null => {
+  const ratio = vaultReserveRatio(v);
+  if (ratio === null || v.totalShares <= 0) return null;
+  return (v.baseReserve * ratio + v.quoteReserve) / v.totalShares;
+};
+
 // Largest outside deposit (quote-denominated value) the vault can accept
 // before the leader's stake would dilute below its min_leader_share floor.
-// A deposit mints `value / vps` new shares at the current value-per-share
-// while the leader's stake stays fixed, so the floor binds when
-//   leader_shares / (total_shares + value / vps) >= floor.
-// Solving for value gives the cap. Returns null when the floor can't bind —
-// no recorded leader stake or a zero-vps / empty vault — in which case the
-// frozen / outside-deposits-approved gates govern instead.
+// A deposit of quote value V mints `V / valuePerShare` new shares while the
+// leader's stake stays fixed, so the floor binds when
+//   leader_shares / (total_shares + V / valuePerShare) >= floor.
+// Solving for V gives the cap. Uses the QUOTE-denominated value per share so
+// the cap is in the same units as the entered basket (critical for non-USD
+// quote legs like GYEN); using the normalized `vps` here understated the cap
+// and falsely tripped the floor warning on safe deposits. Returns null when the
+// floor can't bind (no leader stake / empty vault) — the frozen /
+// outside-deposits-approved gates govern instead.
 export const maxOutsideDepositValue = (v: Vault): number | null => {
   const floor = leaderFloorFraction(v);
-  if (v.leaderShares <= 0 || v.vps <= 0 || floor <= 0) return null;
+  const valuePerShare = vaultValuePerShare(v);
+  if (v.leaderShares <= 0 || valuePerShare === null || floor <= 0) return null;
   const maxTotalShares = v.leaderShares / floor;
   const room = maxTotalShares - v.totalShares;
-  return room > 0 ? room * v.vps : 0;
+  return room > 0 ? room * valuePerShare : 0;
 };
 
 // Group vaults into FX pairs, preserving first-seen order of both the groups

@@ -484,7 +484,8 @@ function VaultsInner() {
     (vault: Vault): number => {
       const p = positionFor(vault.vaultPubkey);
       return p
-        ? positionPnl(p, vault, vaultReserveRatio(vault) ?? 0).currentValue
+        ? positionPnl(p, vault, vaultReserveRatio(vault) ?? p.entryRefPrice)
+            .currentValue
         : 0;
     },
     [positionFor],
@@ -503,8 +504,15 @@ function VaultsInner() {
       if (key === "position")
         return g.vaults.reduce((sum, gv) => sum + positionValue(gv.vault), 0);
       // A pair groups many leaders, so rank it by its alphabetically first.
+      // Case-insensitive to match the row-level leader comparator (cmpMetric).
       if (key === "leader")
-        return g.vaults.map((gv) => gv.vault.leader).sort()[0] ?? null;
+        return (
+          g.vaults
+            .map((gv) => gv.vault.leader)
+            .sort((a, b) =>
+              a.toLowerCase().localeCompare(b.toLowerCase()),
+            )[0] ?? null
+        );
       if (key === "pair") return g.label;
       return groupMetric(g, key);
     },

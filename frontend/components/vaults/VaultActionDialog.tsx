@@ -18,6 +18,7 @@ import type { VaultPosition } from "@/lib/data/positions";
 import {
   leaderFloorFraction,
   maxOutsideDepositValue,
+  tokenUsdPrice,
   type Vault,
   type VaultMarket,
   vaultReserveRatio,
@@ -118,6 +119,9 @@ function PositionDetail({
   position: VaultPosition;
 }) {
   const refNow = vaultReserveRatio(vault) ?? position.entryRefPrice;
+  // Quote→USD rate for the ≈ readouts; the base leg is valued at refNow into
+  // quote first, so every USD figure here shares one basis as Current value.
+  const quoteUsd = tokenUsdPrice(market.quote);
   const { baseOut, quoteOut } = positionBasket(position, vault);
   const pnl = positionPnl(position, vault, refNow);
   const at = allTimePnl(position, vault, refNow);
@@ -216,11 +220,11 @@ function PositionDetail({
         </span>
         {detailRow(
           tokenLabel(market.baseIconUrl, market.base),
-          amountUsd(baseOut, market.base, baseOut * market.baseUsd),
+          amountUsd(baseOut, market.base, baseOut * refNow * quoteUsd),
         )}
         {detailRow(
           tokenLabel(market.quoteIconUrl, market.quote),
-          amountUsd(quoteOut, market.quote, quoteOut * market.quoteUsd),
+          amountUsd(quoteOut, market.quote, quoteOut * quoteUsd),
         )}
       </div>
     </div>
@@ -262,6 +266,7 @@ function WithdrawSection({
         : cappedPercentLabel(BigInt(Math.round(fraction * 10000)), false);
 
   const refNow = vaultReserveRatio(vault) ?? position.entryRefPrice;
+  const quoteUsd = tokenUsdPrice(market.quote);
   const preview = withdrawalPreview(position, vault, refNow, fraction);
 
   return (
@@ -292,7 +297,7 @@ function WithdrawSection({
             amountUsd(
               preview.baseOut,
               market.base,
-              preview.baseOut * market.baseUsd,
+              preview.baseOut * refNow * quoteUsd,
             ),
           )}
           {detailRow(
@@ -300,7 +305,7 @@ function WithdrawSection({
             amountUsd(
               preview.quoteOut,
               market.quote,
-              preview.quoteOut * market.quoteUsd,
+              preview.quoteOut * quoteUsd,
             ),
           )}
         </div>
@@ -502,10 +507,14 @@ export function VaultActionDialog({
   const depositValue =
     (Number.isFinite(base) ? base : 0) * (ratio ?? 0) +
     (Number.isFinite(quote) ? quote : 0);
-  // USD value of the basket, using the mock per-token prices — for display
-  // only (the "Total Deposit" headline and per-leg ≈ readouts).
-  const baseUsdValue = (Number.isFinite(base) ? base : 0) * market.baseUsd;
-  const quoteUsdValue = (Number.isFinite(quote) ? quote : 0) * market.quoteUsd;
+  // USD value of the basket, for display only ("Total Deposit" + per-leg ≈).
+  // Each leg's quote-denominated value × the quote token's USD price, so the
+  // legs and the total share one basis and read as real USD even when the
+  // quote leg isn't a USD stable (e.g. GYEN).
+  const quoteUsd = tokenUsdPrice(market.quote);
+  const baseUsdValue =
+    (Number.isFinite(base) ? base : 0) * (ratio ?? 0) * quoteUsd;
+  const quoteUsdValue = (Number.isFinite(quote) ? quote : 0) * quoteUsd;
   const depositUsd = baseUsdValue + quoteUsdValue;
   // The largest deposit the vault can take before the new shares would dilute
   // the leader below their min_leader_share floor; null when the floor can't
