@@ -16,6 +16,7 @@ import {
   useState,
 } from "react";
 import { PUBLIC_RPC_URL, PUBLIC_WS_URL } from "./env";
+import { registerMetaMaskConnect } from "./wallet/metamask";
 
 const makeClient = (connectors: readonly WalletConnector[]): SolanaClient =>
   createClient({
@@ -68,6 +69,12 @@ export function Providers({ children }: { children: ReactNode }) {
     clientRef.current = next;
     keyRef.current = connectorKey(connectors);
     setClient(next);
+  }, []);
+
+  useEffect(() => {
+    // Register MetaMask Connect so it joins the Wallet Standard registry; the
+    // watcher below then surfaces it like any other discovered wallet.
+    void registerMetaMaskConnect();
   }, []);
 
   useEffect(() => {
