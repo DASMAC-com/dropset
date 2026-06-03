@@ -12,6 +12,10 @@
 
 <!-- cspell:word significand -->
 
+<!-- cspell:word geyser -->
+
+<!-- cspell:word borsh -->
+
 # Ephemeral Central Limit Order Book (eCLOB) Architecture
 
 This sketch presents an ephemeral central limit order book (eCLOB) design that
@@ -121,8 +125,12 @@ struct Registry {
     /// downstream. Default 50_000 = 5%.
     /// See **Vault → Skin-in-the-game floor**.
     default_min_leader_share: Ppm32,
-    /// Fee paid to the protocol treasury on `OpenVault`. Waived
-    /// when the signer is an admin.
+    /// Fee paid on `OpenVault` to the **Registry fee ATA**
+    /// (`get_associated_token_address(registry_pda,
+    /// vault_open_fee.mint)`; see the **Registry** overview above).
+    /// Waived when the signer is an admin. (This fee account is
+    /// distinct from a market's `base_treasury`/`quote_treasury`,
+    /// which custody pooled trading inventory, not protocol fees.)
     vault_open_fee: FeeConfig,
     /// Admins authorized to mutate the `Registry`, change
     /// per-market `taker_fee_rate` and `default_min_leader_share`,
@@ -183,6 +191,10 @@ struct MarketHeader {
     /// fill moves atoms between this treasury and the caller's
     /// ATA while adjusting the matching vault's `base_atoms` by
     /// the same delta — the two must stay aligned per instruction.
+    /// The treasury is the SPL **custody account**; its `.amount`
+    /// is the market's *reserves* quantity. Note this sums active
+    /// **and tombstoned** vaults, so it is total custodied
+    /// inventory, not matchable liquidity.
     base_treasury: Pubkey,
     /// Same as `base_treasury`, for the quote leg.
     /// **Invariant:** `quote_treasury.amount ==
@@ -1400,6 +1412,59 @@ self-arbitraging a stale neighbor is the cheapest path to clean it
 up) — which gives leaders a standing incentive to keep their
 reference prices honest without the matching engine needing a
 leader-vs-leader pre-pass.
+
+## Events and emission
+
+The protocol emits structured events on its **cold paths** so off-chain
+indexers can reconstruct trades, liquidity flows, and fee accrual. The
+**hot path emits nothing** — `SetReferencePrice` and `SetLiquidityProfile`
+stay at two aligned `u64` stores (see **SetReferencePrice**); a leader's
+quote refresh is recovered off-chain from account-state diffs, not from
+an event.
+
+**Mechanism.** Events are Anchor-`#[event]` structs emitted via
+`emit_cpi!` (a self-CPI whose instruction data carries the event). This
+requires the framework's `event-cpi` feature to be enabled on the
+program. `#[event_cpi]` **appends two accounts — `event_authority` and
+`program` — to every emitting instruction's account list**. The append
+is **per instruction, not per event**, so it costs two accounts on any
+instruction that emits at all (notably the taker fill, which is already
+the most account-hungry instruction since it reconstructs the active
+vault set and touches both treasuries). Any CPI caller of an emitting
+instruction must budget for these two extra accounts.
+
+**Emission points.** The **taker fill** (at book tear-down), `Deposit`,
+`Withdraw`, `OpenVault`, and `Realize` emit. The leader quote-refresh
+instructions do not.
+
+**Why fills must be events, not account diffs.** `market.nonce` is
+bumped on every fill and every quote update, and a geyser stream
+delivers end-of-slot *coalesced* account state — so per-fill price,
+counterparty, and size cannot be recovered from account diffs alone. The
+fill event is therefore the authoritative trade record. A fill event
+carries the taker, the matched leader, and the vault's `quote_authority`
+alongside amounts, price, and post-fill inventory; **the protocol does
+not stamp an on-chain self-trade/wash flag** — there is no leader
+allowlist (see **Registry**), a fresh wallet trivially defeats a
+signer-based check, and the deliberately-minimized match loop should not
+carry it. Wash classification is left to off-chain consumers, which have
+the maker/taker identities to cluster on.
+
+**Granularity and the CPI data budget.** A single take can sweep many
+levels across many vaults (the heap pop loop in **Order matching**), so
+the fill event is specified per matched `(vault, level)` plus one
+take-level summary. Because `emit_cpi!` does **not** auto-chunk and CPI
+instruction data is bounded, a take that sweeps up to
+`max_vaults_per_market` levels can exceed the data cap under **either** a
+single packed batch event **or** one event per leg — so whichever
+encoding is chosen, the emit path **must split across multiple self-CPIs
+or revert deterministically** rather than silently truncate. (Choosing
+packed-vs-per-leg changes the number of self-CPIs and the CU cost, not
+the two-account append.)
+
+**Schema source of truth.** The event field layouts are the program's
+`#[event]` structs, surfaced verbatim in the generated IDL; the IDL is
+the canonical schema that off-chain clients are generated from.
 
 ## Operating model
 
