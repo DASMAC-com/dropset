@@ -35,7 +35,7 @@
     "tailwindcss": "^4.3.0",
     "typescript": "^5.6.0"
   },
-  "name": "dropset-gamma-frontend",
+  "name": "dropset-frontend",
   "packageManager": "pnpm@10.30.3",
   "pnpm": {
     "onlyBuiltDependencies": [

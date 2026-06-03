@@ -931,7 +931,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "dropset-gamma"
+name = "dropset"
 version = "0.1.0"
 dependencies = [
  "anchor-lang-v2",

@@ -5,7 +5,7 @@ use anchor_v2_testing::{Keypair, Signer};
 use common::{
     assert_anchor_account_eq, deploy_with_authority, send_ixn, PROGRAM_ID, SIGNER_FUNDING_LAMPORTS,
 };
-use dropset_gamma::{instruction::Init as InitInstruction, Registry, DEFAULT_MAX_SEATS_PER_MARKET};
+use dropset::{instruction::Init as InitInstruction, Registry, DEFAULT_MAX_SEATS_PER_MARKET};
 use solana_instruction::{AccountMeta, Instruction};
 use solana_loader_v3_interface::get_program_data_address;
 use solana_pubkey::Pubkey;
