@@ -135,7 +135,15 @@ export function useDflowSwap(): UseDflowSwap {
     } finally {
       inFlight.current = false;
     }
-  }, [wallet, client, fromStablecoin, toStablecoin, amount, slippage, setAmount]);
+  }, [
+    wallet,
+    client,
+    fromStablecoin,
+    toStablecoin,
+    amount,
+    slippage,
+    setAmount,
+  ]);
 
   return { status, result, error, execute, reset };
 }
