@@ -31,6 +31,6 @@ level = "warn"
 
 [package]
 edition = "2021"
-name = "dropset-gamma"
+name = "dropset"
 publish = false
 version = "0.1.0"
