@@ -115,6 +115,20 @@
           "url": "https://www.sgforge.com",
           "socials": { "x": "SG_Forge" }
         }
+      },
+      {
+        "symbol": "EURAU",
+        "name": "AllUnity EURAU",
+        "mint": "9pCWprxbZMW2rYSMhPTeoyLMV2sN2WJqshdT7DQVt6hS",
+        "mintSourceUrl": "https://allunity.com/eurau/",
+        "decimals": 6,
+        "tokenProgram": "token2022",
+        "icon": "https://assets.coingecko.com/coins/images/68076/standard/EURAU_black.png",
+        "issuer": {
+          "name": ["AllUnity"],
+          "url": "https://allunity.com/eurau/",
+          "socials": { "x": "AllUnityStable" }
+        }
       }
     ]
   },
@@ -132,6 +146,19 @@
           "name": ["AUDC"],
           "url": "https://www.audd.digital/",
           "socials": { "x": "AUDD_digital" }
+        }
+      },
+      {
+        "symbol": "AUDM",
+        "name": "Macropod",
+        "mint": "CiYXBwHPrdNkMtxR8YEWKv78K6bQjFoEWhPQrZqEmubi",
+        "decimals": 6,
+        "tokenProgram": "token2022",
+        "icon": "https://s2.coinmarketcap.com/static/img/coins/64x64/38981.png",
+        "issuer": {
+          "name": ["Macropod Global"],
+          "url": "https://www.macropod.com/audm",
+          "socials": { "x": "Macropod_AU" }
         }
       }
     ]
