@@ -9,6 +9,7 @@ import { Check, ChevronDown, Copy, ExternalLink, X } from "@/components/icons";
 import { COPY_FEEDBACK_DURATION_MS } from "@/lib/data/timings";
 import { useAppEvent } from "@/lib/events";
 import { explorerAddressUrl } from "@/lib/explorer";
+import { useWalletAccountWatch } from "@/lib/hooks/useWalletAccountWatch";
 
 // 4 + 4 hex characters out of 64 is enough to disambiguate two wallets at
 // a glance without taking up real estate in the header. Matches the
@@ -19,6 +20,10 @@ export function WalletButton() {
   const { connected, wallet, status, currentConnector } = useWalletConnection();
   const modal = useWalletModalState({ closeOnConnect: true });
   const [copied, setCopied] = useState(false);
+
+  // Drop the connection if the user switches accounts in their wallet
+  // extension — the store doesn't track in-place account changes on its own.
+  useWalletAccountWatch();
 
   // SwapPanel's CTA (and any other surface) can request the modal via this event.
   // Each useWalletModalState() call owns its own isOpen state — they don't share —
