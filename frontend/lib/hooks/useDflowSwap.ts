@@ -56,6 +56,7 @@ export function useDflowSwap(): UseDflowSwap {
   const fromStablecoin = useSwapStore((s) => s.from.stablecoin);
   const toStablecoin = useSwapStore((s) => s.to.stablecoin);
   const amount = useSwapStore((s) => s.amount);
+  const setAmount = useSwapStore((s) => s.setAmount);
   const slippage = useSwapStore((s) => s.slippage);
 
   const [status, setStatus] = useState<SwapStatus>("idle");
@@ -117,6 +118,10 @@ export function useDflowSwap(): UseDflowSwap {
       await waitForSwapConfirmation(client.runtime.rpc, res.signature);
       setResult({ ...res, fromStablecoin, toStablecoin });
       setStatus("success");
+      // Clear the input once the swap confirms: the from-balance just
+      // dropped by `amount`, so leaving it populated invites a re-submit
+      // the user likely can no longer fund (or didn't intend to repeat).
+      setAmount("");
       // Tell components subscribed via useSplToken to refetch — the swap
       // mutated balances for both the from- and to-mints.
       emit("swapSucceeded");
@@ -130,7 +135,7 @@ export function useDflowSwap(): UseDflowSwap {
     } finally {
       inFlight.current = false;
     }
-  }, [wallet, client, fromStablecoin, toStablecoin, amount, slippage]);
+  }, [wallet, client, fromStablecoin, toStablecoin, amount, slippage, setAmount]);
 
   return { status, result, error, execute, reset };
 }
