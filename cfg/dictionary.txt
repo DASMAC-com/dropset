@@ -3,6 +3,7 @@ anza
 atas
 audc
 audd
+audm
 barthelemy
 barthélemy
 blockhash
@@ -19,6 +20,7 @@ discordapp
 dropset
 dtolnay
 etherfuse
+eurau
 eurc
 eurcv
 eurozone
@@ -37,6 +39,7 @@ lemy
 litesvm
 localnet
 luhansk
+macropod
 mxne
 navigations
 paytrie
