@@ -19,21 +19,31 @@ import {
 import { PUBLIC_RPC_URL, PUBLIC_WS_URL } from "./env";
 import { registerMetaMaskConnect } from "./wallet/metamask";
 
-// Route the client's logs to the console, but keep expected wallet-connection
-// failures (user dismissed the wallet modal, relay/QR timed out) off
-// console.error — they'd otherwise trip Next's dev error overlay even though
-// the failure is already surfaced through wallet status in the UI.
+// Benign wallet-connect outcomes — the user dismissed the wallet modal or the
+// relay/QR handshake timed out. Not errors worth surfacing; the UI already
+// reflects the failed status.
+const SILENCED_CONNECT_REASONS = new Set([
+  "User closed modal",
+  "User rejected the request",
+  "Transport request timed out",
+]);
+
+// Route the client's logs to the console, but drop the benign connect outcomes
+// above entirely and keep any other connection failure off console.error (so
+// Next's dev error overlay doesn't flag an outcome already shown in the UI).
 const logger: ClientLogger = ({ level, message, data }) => {
-  const effective =
-    level === "error" && message === "wallet connection failed"
-      ? "warn"
-      : level;
+  if (message === "wallet connection failed") {
+    const reason = typeof data?.message === "string" ? data.message : "";
+    if (SILENCED_CONNECT_REASONS.has(reason)) return;
+    console.warn(`[solana] ${message}`, data ?? {});
+    return;
+  }
   const fn =
-    effective === "error"
+    level === "error"
       ? console.error
-      : effective === "warn"
+      : level === "warn"
         ? console.warn
-        : effective === "info"
+        : level === "info"
           ? console.info
           : console.debug;
   fn(`[solana] ${message}`, data ?? {});
