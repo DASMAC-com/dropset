@@ -18,6 +18,7 @@ import {
   HelpCircle as RawHelpCircle,
   Info as RawInfo,
   Keyboard as RawKeyboard,
+  Loader2 as RawLoader2,
   Minus as RawMinus,
   Pause as RawPause,
   Play as RawPlay,
@@ -60,6 +61,7 @@ export const Flag = safe(RawFlag);
 export const HelpCircle = safe(RawHelpCircle);
 export const Info = safe(RawInfo);
 export const Keyboard = safe(RawKeyboard);
+export const Loader2 = safe(RawLoader2);
 export const Minus = safe(RawMinus);
 export const Pause = safe(RawPause);
 export const Play = safe(RawPlay);
