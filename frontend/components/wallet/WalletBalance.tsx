@@ -1,7 +1,7 @@
 "use client";
 
 import { useWalletConnection } from "@solana/react-hooks";
-import { Wallet } from "@/components/icons";
+import { Loader2, Wallet } from "@/components/icons";
 import { stablecoinDecimals, stablecoinMint } from "@/lib/data/currencies";
 import { formatBalanceDisplay } from "@/lib/format/balance";
 import { useAllBalances } from "@/lib/hooks/useAllBalances";
@@ -27,9 +27,20 @@ export function WalletBalance({ stablecoin }: { stablecoin: string }) {
       </span>
     );
   }
-  // Hide entirely until the initial fetch resolves — showing "—" / "0"
-  // before we know would be misleading.
-  if (!isReady) return null;
+  // Balances are chunked out to the RPC, so the initial fetch takes a beat.
+  // Show a spinner in the wallet-icon slot rather than "—" / "0" (misleading)
+  // or nothing (looks like the row is broken / unconnected).
+  if (!isReady) {
+    return (
+      <span
+        className="flex items-center gap-1 text-muted-fg"
+        title={`Loading your ${stablecoin} balance…`}
+      >
+        <Loader2 size={14} className="animate-spin" aria-hidden />
+        <span>{stablecoin}</span>
+      </span>
+    );
+  }
 
   // null → no associated token account (display "—"). 0n → ATA exists with
   // zero balance (display "0"). Positive bigint → formatted number. The
