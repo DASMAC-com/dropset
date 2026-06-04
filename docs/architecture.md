@@ -1,21 +1,3 @@
-<!-- cspell:word drawdowns -->
-
-<!-- cspell:word toggleable -->
-
-<!-- cspell:word tombstoned -->
-
-<!-- cspell:word Hyperliquid -->
-
-<!-- cspell:word CLMM -->
-
-<!-- cspell:word soulbound -->
-
-<!-- cspell:word significand -->
-
-<!-- cspell:word geyser -->
-
-<!-- cspell:word borsh -->
-
 # Ephemeral Central Limit Order Book (eCLOB) Architecture
 
 This sketch presents an ephemeral central limit order book (eCLOB) design that
@@ -193,8 +175,8 @@ struct MarketHeader {
     /// the same delta — the two must stay aligned per instruction.
     /// The treasury is the SPL **custody account**; its `.amount`
     /// is the market's *reserves* quantity. Note this sums active
-    /// **and tombstoned** vaults, so it is total custodied
-    /// inventory, not matchable liquidity.
+    /// **and tombstoned** vaults, so it is total inventory held
+    /// in custody, not matchable liquidity.
     base_treasury: Pubkey,
     /// Same as `base_treasury`, for the quote leg.
     /// **Invariant:** `quote_treasury.amount ==

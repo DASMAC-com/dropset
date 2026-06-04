@@ -1,35 +1,3 @@
-<!-- cspell:word eclob -->
-
-<!-- cspell:word geyser -->
-
-<!-- cspell:word coingecko -->
-
-<!-- cspell:word dexscreener -->
-
-<!-- cspell:word defillama -->
-
-<!-- cspell:word birdeye -->
-
-<!-- cspell:word geckoterminal -->
-
-<!-- cspell:word codama -->
-
-<!-- cspell:word anchorpy -->
-
-<!-- cspell:word borsh -->
-
-<!-- cspell:word pyth -->
-
-<!-- cspell:word beethoven -->
-
-<!-- cspell:word priceNative -->
-
-<!-- cspell:word txnIndex -->
-
-<!-- cspell:word dailyVolume -->
-
-<!-- cspell:word mev -->
-
 # Dropset Interface Spec
 
 The **consumer/client contract** for Dropset: the on-chain events the indexer
@@ -86,7 +54,7 @@ level-blasting sweep would hit). A fill is emitted **per matched
 | `taker_fee_atoms`                      | protocol taker fee charged |
 | `signature` / `slot` / `txn_index`     | transaction coordinates    |
 
-`avg_price` is **derived** (`total_fill_quote / total_fill_base`), never emitted.
+`avg_price` is **derived** (`total_fill_quote / total_fill_base`), not emitted.
 
 ### Lifecycle / liquidity events
 
@@ -124,7 +92,7 @@ ______________________________________________________________________
 An `emit_cpi!` event is a **self-CPI inner instruction** (not a `Program data:`
 log). Its instruction data is:
 
-```
+```text
 [ EVENT_IX_TAG_LE  (8 bytes, 0x1d9acb512ea545e4) ]
 [ event discriminator (8 bytes) ]
 [ borsh-serialized event fields ]
@@ -144,10 +112,10 @@ envelope; the Codama-generated struct codec then decodes the borsh body
 not subject to the runtime's ~10 KB cumulative log-bytes-per-tx limit, so a
 take that blasts through many levels **never drops a leg**; `sol_log_data`/
 `emit!` would silently truncate. The cost is the two appended accounts
-(`event_authority` + `program`) on every emitting ix — **negligible on the fill**
+(`event_authority` + `program`) on every emitting ix — **trivial on the fill**
 (the whole book is one market account) but a real budget item for **routers**
 (§4). If a router's multi-hop account budget ever binds, the escape hatch is a
-**bare self-CPI** (+1 account: drop `event_authority`, keep `program`); origin is
+**bare self-CPI** (+1 account — drop the `event_authority` PDA); origin is
 authenticated off-chain by program id + instruction binding, so the auth PDA is
 optional.
 
