@@ -4,7 +4,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import * as Popover from "@radix-ui/react-popover";
 import { useWalletConnection, useWalletModalState } from "@solana/react-hooks";
 import Image from "next/image";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, Copy, ExternalLink, X } from "@/components/icons";
 import { COPY_FEEDBACK_DURATION_MS } from "@/lib/data/timings";
@@ -72,6 +72,18 @@ export function WalletButton() {
   );
 
   const renderRow = (w: PickerWallet) => {
+    // "Detected" only for truly-present wallets. A wallet that's connectable
+    // without being installed (MetaMask, via its relay) gets no badge — it
+    // still connects on click, and "Not detected" would wrongly read as "must
+    // install". Only wallets that genuinely require installation (a site link,
+    // no connector) keep the amber "Not detected".
+    let badge: ReactNode = null;
+    if (w.detected) {
+      badge = <span className="text-accent-buy text-xs">Detected</span>;
+    } else if (!w.connectorId) {
+      badge = <span className="text-amber-400 text-xs">Not detected</span>;
+    }
+
     const inner = (
       <>
         {w.icon ? (
@@ -89,11 +101,7 @@ export function WalletButton() {
           </div>
         )}
         <span className="flex-1 font-medium text-foreground">{w.name}</span>
-        {w.detected ? (
-          <span className="text-accent-buy text-xs">Detected</span>
-        ) : (
-          <span className="text-amber-400 text-xs">Not detected</span>
-        )}
+        {badge}
       </>
     );
 
