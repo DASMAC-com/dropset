@@ -88,4 +88,5 @@ wincode
 wordmark
 worldlibertyfi
 zarp
+zaru
 zeroable
