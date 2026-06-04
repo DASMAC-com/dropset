@@ -8,6 +8,28 @@ import { PUBLIC_RPC_URL } from "../env";
 // shows up in the picker alongside extension wallets. Unlike injected wallets
 // it works on mobile, in incognito, and with no extension installed.
 
+type EthereumProvider = {
+  isMetaMask?: boolean;
+  providers?: EthereumProvider[];
+};
+
+/**
+ * Whether the MetaMask *extension* is actually present in this browser. Used to
+ * gate the picker's "Detected" badge: we don't want MetaMask to read as
+ * detected merely because we registered its relay SDK. Client-only — returns
+ * false during SSR. Handles the legacy `window.ethereum.providers` array (used
+ * when several wallets inject) as well as a lone `window.ethereum`.
+ */
+export function isMetaMaskExtensionPresent(): boolean {
+  if (typeof window === "undefined") return false;
+  const eth = (window as unknown as { ethereum?: EthereumProvider }).ethereum;
+  if (!eth) return false;
+  if (Array.isArray(eth.providers)) {
+    return eth.providers.some((p) => p?.isMetaMask === true);
+  }
+  return eth.isMetaMask === true;
+}
+
 let registration: Promise<void> | null = null;
 
 /**

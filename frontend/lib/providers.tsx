@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  type ClientLogger,
   createClient,
   getWalletStandardConnectors,
   type SolanaClient,
@@ -18,11 +19,42 @@ import {
 import { PUBLIC_RPC_URL, PUBLIC_WS_URL } from "./env";
 import { registerMetaMaskConnect } from "./wallet/metamask";
 
+// Benign wallet-connect outcomes — the user dismissed the wallet modal or the
+// relay/QR handshake timed out. Not errors worth surfacing; the UI already
+// reflects the failed status.
+const SILENCED_CONNECT_REASONS = new Set([
+  "User closed modal",
+  "User rejected the request",
+  "Transport request timed out",
+]);
+
+// Route the client's logs to the console, but drop the benign connect outcomes
+// above entirely and keep any other connection failure off console.error (so
+// Next's dev error overlay doesn't flag an outcome already shown in the UI).
+const logger: ClientLogger = ({ level, message, data }) => {
+  if (message === "wallet connection failed") {
+    const reason = typeof data?.message === "string" ? data.message : "";
+    if (SILENCED_CONNECT_REASONS.has(reason)) return;
+    console.warn(`[solana] ${message}`, data ?? {});
+    return;
+  }
+  const fn =
+    level === "error"
+      ? console.error
+      : level === "warn"
+        ? console.warn
+        : level === "info"
+          ? console.info
+          : console.debug;
+  fn(`[solana] ${message}`, data ?? {});
+};
+
 const makeClient = (connectors: readonly WalletConnector[]): SolanaClient =>
   createClient({
     endpoint: PUBLIC_RPC_URL,
     websocketEndpoint: PUBLIC_WS_URL,
     walletConnectors: connectors,
+    logger,
   });
 
 // Identity of a connector set, independent of object identity, so we only

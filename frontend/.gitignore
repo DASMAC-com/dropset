@@ -11,7 +11,9 @@
 
 /public/flag-icons
 /public/token-icons
+/public/wallet-icons
 /lib/data/icon-manifest.gen.json
+/lib/data/wallet-manifest.gen.json
 
 .DS_Store
 *.pem
