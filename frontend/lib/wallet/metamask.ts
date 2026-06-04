@@ -17,8 +17,8 @@ type EthereumProvider = {
  * Whether the MetaMask *extension* is actually present in this browser. Used to
  * gate the picker's "Detected" badge: we don't want MetaMask to read as
  * detected merely because we registered its relay SDK. Client-only — returns
- * false during SSR. Handles the EIP-5749 `providers` array (multiple injected
- * wallets) as well as a lone `window.ethereum`.
+ * false during SSR. Handles the legacy `window.ethereum.providers` array (used
+ * when several wallets inject) as well as a lone `window.ethereum`.
  */
 export function isMetaMaskExtensionPresent(): boolean {
   if (typeof window === "undefined") return false;

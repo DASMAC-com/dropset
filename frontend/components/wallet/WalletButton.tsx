@@ -181,12 +181,11 @@ export function WalletButton() {
   );
 
   // While a connect is in flight, an external SDK (MetaMask's relay QR dialog)
-  // shows its own modal, but its own backdrop doesn't reliably dim or capture
-  // clicks (and we hide it via globals.css). Our picker is already closed, so
-  // supply the dim + click-blocking ourselves. The overlay sits just under
-  // MetaMask's content (z-index 99999) and is portaled to <body> so no ancestor
-  // stacking context can trap it; MetaMask's dialog stays clickable above, and
-  // since the overlay doesn't dismiss the modal, only its X closes it.
+  // shows its own modal but doesn't reliably dim the page behind it. Our picker
+  // is already closed, so add a dim layer ourselves. It sits below MetaMask's
+  // own backdrop + content (z-index 99998/99999) and is portaled to <body> so
+  // no ancestor stacking context can trap it. This is purely visual: MetaMask's
+  // backdrop still sits on top, so clicking outside the dialog closes it.
   const connectingOverlay =
     connecting && typeof document !== "undefined"
       ? createPortal(
