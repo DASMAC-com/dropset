@@ -367,6 +367,20 @@
           "url": "https://www.zarpstablecoin.com/",
           "socials": { "x": "ZARP_Stablecoin" }
         }
+      },
+      {
+        "symbol": "ZARU",
+        "name": "ZAR Universal",
+        "mint": "2WvREMqcoxtGuKTyyuzVMH7xDkeH8mY6phduvUofPRXN",
+        "mintSourceUrl": "https://framerusercontent.com/assets/4vWet1hfjeodcPrLYSpUg2rok.pdf",
+        "decimals": 6,
+        "tokenProgram": "token2022",
+        "icon": "https://framerusercontent.com/images/FaKFHps3vRQ3oHjT6ZQCdN0bg.png",
+        "issuer": {
+          "name": ["Loop South Africa (Pty) Ltd"],
+          "url": "https://zaru.network/",
+          "socials": { "x": "ZARUniversal" }
+        }
       }
     ]
   }
