@@ -1422,16 +1422,35 @@ stay at two aligned `u64` stores (see **SetReferencePrice**); a leader's
 quote refresh is recovered off-chain from account-state diffs, not from
 an event.
 
-**Mechanism.** Events are Anchor-`#[event]` structs emitted via
-`emit_cpi!` (a self-CPI whose instruction data carries the event). This
-requires the framework's `event-cpi` feature to be enabled on the
-program. `#[event_cpi]` **appends two accounts — `event_authority` and
-`program` — to every emitting instruction's account list**. The append
-is **per instruction, not per event**, so it costs two accounts on any
-instruction that emits at all (notably the taker fill, which is already
-the most account-hungry instruction since it reconstructs the active
-vault set and touches both treasuries). Any CPI caller of an emitting
-instruction must budget for these two extra accounts.
+**Mechanism — inner-instruction events (full fidelity, never dropped).**
+Events are Anchor `#[event]` structs emitted via `emit_cpi!`: a self-CPI
+whose *instruction data* carries the event, recorded as an inner
+instruction. This is chosen for **full fidelity** — every fill of every
+take must be recorded, even when a taker blasts through many price
+levels. Inner-instruction data is **not** subject to the runtime's
+cumulative ~10 KB-of-log-bytes-per-transaction limit
+(`LOG_MESSAGES_BYTES_LIMIT`), so a large sweep never drops a fill. The
+log-based alternative (`sol_log_data`/`emit!`) costs zero extra accounts
+but **silently truncates** past that hard per-transaction ceiling — an
+unacceptable, unrecoverable loss for the canonical trade record — so it
+is rejected here. `emit_cpi!` requires the `event-cpi` feature and
+appends two accounts, the `event_authority` PDA and the `program`, to
+every emitting instruction.
+
+**Account cost — cheap on the fill, matters only for routers.** This is
+negligible on the taker fill itself: Dropset keeps the entire book
+(`MarketHeader` + every vault) in a **single market account**, so a take
+loads only a handful of accounts (the market, both treasuries, the
+taker's two ATAs, the token program) and reconstructs the book in program
+memory — it is **not** account-hungry, and +2 is immaterial. The cost
+that matters is on **CPI callers (routers such as Jupiter/DFlow/Titan)**,
+which thread our accounts into a multi-hop route under a tight
+per-transaction account budget. If that budget ever binds, the
+optimization is a **bare self-CPI** that carries the event in instruction
+data but drops the `event_authority` auth PDA (saving one account — the
+`program` account is still required for any self-CPI); origin is then
+authenticated off-chain by program id + instruction binding. Default to
+standard `emit_cpi!` for IDL/tooling compatibility.
 
 **Emission points.** The **taker fill** (at book tear-down), `Deposit`,
 `Withdraw`, `OpenVault`, and `Realize` emit. The leader quote-refresh
@@ -1441,30 +1460,37 @@ instructions do not.
 bumped on every fill and every quote update, and a geyser stream
 delivers end-of-slot *coalesced* account state — so per-fill price,
 counterparty, and size cannot be recovered from account diffs alone. The
-fill event is therefore the authoritative trade record. A fill event
-carries the taker, the matched leader, and the vault's `quote_authority`
-alongside amounts, price, and post-fill inventory; **the protocol does
-not stamp an on-chain self-trade/wash flag** — there is no leader
-allowlist (see **Registry**), a fresh wallet trivially defeats a
-signer-based check, and the deliberately-minimized match loop should not
-carry it. Wash classification is left to off-chain consumers, which have
-the maker/taker identities to cluster on.
+fill event is therefore the authoritative trade record. It carries the
+taker and, per leg, the matched vault's **`leader` and `quote_authority`
+directly** — not merely the vault's sector index, since sectors are
+**reused via the free list** (see **Storage layout**), so an index is not
+a stable attribution key; the inner-instruction budget easily affords the
+pubkeys — alongside amounts, price, and post-fill inventory. **The
+protocol does not stamp
+an on-chain self-trade/wash flag** — there is no leader allowlist (see
+**Registry**), a fresh wallet trivially defeats a signer-based check,
+and the deliberately-minimized match loop should not carry it. Wash
+classification is left to off-chain consumers, which have the
+maker/taker identities to cluster on.
 
-**Granularity and the CPI data budget.** A single take can sweep many
-levels across many vaults (the heap pop loop in **Order matching**), so
-the fill event is specified per matched `(vault, level)` plus one
-take-level summary. Because `emit_cpi!` does **not** auto-chunk and CPI
-instruction data is bounded, a take that sweeps up to
-`max_vaults_per_market` levels can exceed the data cap under **either** a
-single packed batch event **or** one event per leg — so whichever
-encoding is chosen, the emit path **must split across multiple self-CPIs
-or revert deterministically** rather than silently truncate. (Choosing
-packed-vs-per-leg changes the number of self-CPIs and the CU cost, not
-the two-account append.)
+**Granularity — every leg recorded, never truncated.** A single take can
+sweep many levels across many vaults (the heap pop loop in **Order
+matching**), and **every leg is recorded** — no truncation, no revert for
+an event-size reason. The per-leg `(vault, level)` records and the
+take-level summary ride as inner-instruction data. A single CPI's
+instruction data is itself bounded (~10 KB per call), but there is **no
+cumulative cap** on inner-instruction data across a transaction, so a
+sweep too large for one self-CPI simply **splits across multiple
+self-CPIs** — full fidelity is preserved either way. Whether to emit one
+aggregated `FillBatch` per self-CPI (fewer CPIs, less CU, must chunk when
+a sweep exceeds one CPI) or one event per leg (simplest, always fits,
+more CPIs / CU) is a **CU/byte optimization** that does not affect
+fidelity; see the plan's open decision.
 
 **Schema source of truth.** The event field layouts are the program's
 `#[event]` structs, surfaced verbatim in the generated IDL; the IDL is
-the canonical schema that off-chain clients are generated from.
+the canonical schema that off-chain clients are generated from, and the
+self-CPI instruction data decodes against it.
 
 ## Operating model
 
