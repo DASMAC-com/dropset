@@ -4,12 +4,15 @@ import * as Dialog from "@radix-ui/react-dialog";
 import * as Popover from "@radix-ui/react-popover";
 import { useWalletConnection, useWalletModalState } from "@solana/react-hooks";
 import Image from "next/image";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, ChevronDown, Copy, ExternalLink, X } from "@/components/icons";
 import { COPY_FEEDBACK_DURATION_MS } from "@/lib/data/timings";
+import { buildPickerWallets, type PickerWallet } from "@/lib/data/wallets";
 import { useAppEvent } from "@/lib/events";
 import { explorerAddressUrl } from "@/lib/explorer";
 import { useWalletAccountWatch } from "@/lib/hooks/useWalletAccountWatch";
+import { DIALOG_CONTENT_POSITION, DIALOG_OVERLAY_CLASS } from "@/lib/ui/dialog";
+import { isMetaMaskExtensionPresent } from "@/lib/wallet/metamask";
 
 // 4 + 4 hex characters out of 64 is enough to disambiguate two wallets at
 // a glance without taking up real estate in the header. Matches the
@@ -20,6 +23,16 @@ export function WalletButton() {
   const { connected, wallet, status, currentConnector } = useWalletConnection();
   const modal = useWalletModalState({ closeOnConnect: true });
   const [copied, setCopied] = useState(false);
+
+  // Gate MetaMask's "Detected" badge on a real extension rather than on our
+  // relay-SDK registration. Re-checked whenever the picker opens so a wallet
+  // installed mid-session is reflected without a reload.
+  const [metamaskInstalled, setMetamaskInstalled] = useState(false);
+  useEffect(() => {
+    // Only re-check while the picker is open — that's the only time the badge
+    // is visible, and it catches a wallet installed mid-session on reopen.
+    if (modal.isOpen) setMetamaskInstalled(isMetaMaskExtensionPresent());
+  }, [modal.isOpen]);
 
   // Drop the connection if the user switches accounts in their wallet
   // extension — the store doesn't track in-place account changes on its own.
@@ -38,16 +51,81 @@ export function WalletButton() {
     return <div className="h-9 w-32 animate-pulse rounded-md bg-muted" />;
   }
 
+  const { detected, notDetected } = buildPickerWallets(
+    modal.connectors,
+    metamaskInstalled,
+  );
+
+  const renderRow = (w: PickerWallet) => {
+    const inner = (
+      <>
+        {w.icon ? (
+          <Image
+            src={w.icon}
+            alt=""
+            width={32}
+            height={32}
+            className="h-8 w-8 rounded-lg"
+            unoptimized
+          />
+        ) : (
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted font-bold text-muted-fg text-xs">
+            {w.name.charAt(0)}
+          </div>
+        )}
+        <span className="flex-1 font-medium text-foreground">{w.name}</span>
+        {w.detected ? (
+          <span className="text-accent-buy text-xs">Detected</span>
+        ) : (
+          <span className="text-amber-400 text-xs">Not detected</span>
+        )}
+      </>
+    );
+
+    const rowClass =
+      "flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left text-sm transition-colors hover:bg-muted";
+
+    // A connectorId means we can connect right now (installed wallet, or
+    // MetaMask's always-present relay).
+    if (w.connectorId) {
+      const connectorId = w.connectorId;
+      return (
+        <button
+          key={w.id}
+          type="button"
+          disabled={modal.status === "connecting"}
+          onClick={() => modal.connect(connectorId)}
+          className={`${rowClass} disabled:opacity-50`}
+        >
+          {inner}
+        </button>
+      );
+    }
+    // Nothing to connect to → link out to the wallet's official site so the
+    // user can install it (then it shows up as detected on next open).
+    return (
+      <a
+        key={w.id}
+        href={w.site}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={`${rowClass} no-underline`}
+      >
+        {inner}
+      </a>
+    );
+  };
+
   const picker = (
     <Dialog.Root
       open={modal.isOpen}
       onOpenChange={(open) => (open ? modal.open() : modal.close())}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
+        <Dialog.Overlay className={DIALOG_OVERLAY_CLASS} />
         <Dialog.Content
           aria-describedby={undefined}
-          className="-translate-x-1/2 -translate-y-1/2 fixed top-1/2 left-1/2 z-50 w-80 rounded-2xl border border-border bg-background shadow-xl"
+          className={`${DIALOG_CONTENT_POSITION} flex w-[min(380px,calc(100vw-2rem))] flex-col overflow-y-auto rounded-2xl border border-border bg-background shadow-xl`}
         >
           <div className="flex items-center justify-between border-border border-b px-5 py-4">
             <Dialog.Title className="font-semibold text-foreground">
@@ -59,42 +137,16 @@ export function WalletButton() {
           </div>
 
           <div className="p-3">
-            {modal.connectors.length === 0 && (
-              <p className="px-3 py-6 text-center text-muted-fg text-sm">
-                No wallets detected.
-              </p>
-            )}
+            {detected.map(renderRow)}
 
-            {modal.connectors.map((connector) => (
-              <button
-                key={connector.id}
-                type="button"
-                disabled={modal.status === "connecting"}
-                onClick={() => modal.connect(connector.id)}
-                className="flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left text-sm transition-colors hover:bg-muted disabled:opacity-50"
-              >
-                {connector.icon ? (
-                  <Image
-                    src={connector.icon}
-                    alt=""
-                    width={32}
-                    height={32}
-                    className="h-8 w-8 rounded-lg"
-                    unoptimized
-                  />
-                ) : (
-                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted font-bold text-muted-fg text-xs">
-                    {connector.name.charAt(0)}
-                  </div>
+            {notDetected.length > 0 && (
+              <>
+                {detected.length > 0 && (
+                  <div className="my-2 border-border border-t" />
                 )}
-                <span className="flex-1 font-medium text-foreground">
-                  {connector.name}
-                </span>
-                {connector.ready && (
-                  <span className="text-accent-buy text-xs">Detected</span>
-                )}
-              </button>
-            ))}
+                {notDetected.map(renderRow)}
+              </>
+            )}
 
             {modal.status === "connecting" && (
               <div className="px-3 py-3 text-center text-muted-fg text-xs">
