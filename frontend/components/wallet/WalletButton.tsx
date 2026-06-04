@@ -9,7 +9,7 @@ import { createPortal } from "react-dom";
 import { Check, ChevronDown, Copy, ExternalLink, X } from "@/components/icons";
 import { COPY_FEEDBACK_DURATION_MS } from "@/lib/data/timings";
 import { buildPickerWallets, type PickerWallet } from "@/lib/data/wallets";
-import { useAppEvent } from "@/lib/events";
+import { emit, useAppEvent } from "@/lib/events";
 import { explorerAddressUrl } from "@/lib/explorer";
 import { useWalletAccountWatch } from "@/lib/hooks/useWalletAccountWatch";
 import { DIALOG_CONTENT_POSITION, DIALOG_OVERLAY_CLASS } from "@/lib/ui/dialog";
@@ -40,6 +40,14 @@ export function WalletButton() {
   // relay flow doesn't reliably hold the client in "connecting" while its modal
   // is open, which would let the overlay drop too early.
   const [connecting, setConnecting] = useState(false);
+
+  // Tell Providers when the picker is open so it won't swap the SolanaClient
+  // (reactive wallet discovery rebuilds it on connector-set changes) while the
+  // user is about to pick. A swap mid-connect lands the session on an orphaned
+  // client and leaves the header stuck on "Connect Wallet" until a refresh.
+  useEffect(() => {
+    emit("walletPickerOpen", modal.isOpen);
+  }, [modal.isOpen]);
 
   // Drop the connection if the user switches accounts in their wallet
   // extension — the store doesn't track in-place account changes on its own.
