@@ -4,12 +4,12 @@ import * as Dialog from "@radix-ui/react-dialog";
 import * as Popover from "@radix-ui/react-popover";
 import { useWalletConnection, useWalletModalState } from "@solana/react-hooks";
 import Image from "next/image";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, Copy, ExternalLink, X } from "@/components/icons";
 import { COPY_FEEDBACK_DURATION_MS } from "@/lib/data/timings";
 import { buildPickerWallets, type PickerWallet } from "@/lib/data/wallets";
-import { useAppEvent } from "@/lib/events";
+import { emit, useAppEvent } from "@/lib/events";
 import { explorerAddressUrl } from "@/lib/explorer";
 import { useWalletAccountWatch } from "@/lib/hooks/useWalletAccountWatch";
 import { DIALOG_CONTENT_POSITION, DIALOG_OVERLAY_CLASS } from "@/lib/ui/dialog";
@@ -41,6 +41,14 @@ export function WalletButton() {
   // is open, which would let the overlay drop too early.
   const [connecting, setConnecting] = useState(false);
 
+  // Tell Providers when the picker is open so it won't swap the SolanaClient
+  // (reactive wallet discovery rebuilds it on connector-set changes) while the
+  // user is about to pick. A swap mid-connect lands the session on an orphaned
+  // client and leaves the header stuck on "Connect Wallet" until a refresh.
+  useEffect(() => {
+    emit("walletPickerOpen", modal.isOpen);
+  }, [modal.isOpen]);
+
   // Drop the connection if the user switches accounts in their wallet
   // extension — the store doesn't track in-place account changes on its own.
   useWalletAccountWatch();
@@ -64,6 +72,18 @@ export function WalletButton() {
   );
 
   const renderRow = (w: PickerWallet) => {
+    // "Detected" only for truly-present wallets. A wallet that's connectable
+    // without being installed (MetaMask, via its relay) gets no badge — it
+    // still connects on click, and "Not detected" would wrongly read as "must
+    // install". Only wallets that genuinely require installation (a site link,
+    // no connector) keep the amber "Not detected".
+    let badge: ReactNode = null;
+    if (w.detected) {
+      badge = <span className="text-accent-buy text-xs">Detected</span>;
+    } else if (!w.connectorId) {
+      badge = <span className="text-amber-400 text-xs">Not detected</span>;
+    }
+
     const inner = (
       <>
         {w.icon ? (
@@ -81,11 +101,7 @@ export function WalletButton() {
           </div>
         )}
         <span className="flex-1 font-medium text-foreground">{w.name}</span>
-        {w.detected ? (
-          <span className="text-accent-buy text-xs">Detected</span>
-        ) : (
-          <span className="text-amber-400 text-xs">Not detected</span>
-        )}
+        {badge}
       </>
     );
 

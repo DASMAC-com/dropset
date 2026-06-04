@@ -35,6 +35,9 @@ export type AppEvents = {
   toggleHelp: undefined;
   openWalletModal: undefined;
   toggleWallet: undefined;
+  // Whether the wallet picker is currently open. Providers listens so it can
+  // avoid swapping the SolanaClient (reactive wallet discovery) mid-pick.
+  walletPickerOpen: boolean;
   zoomIn: undefined;
   zoomOut: undefined;
   pan: PanDirection;
@@ -84,6 +87,7 @@ export const EVENTS: { [K in keyof AppEvents]: K } = {
   toggleHelp: "toggleHelp",
   openWalletModal: "openWalletModal",
   toggleWallet: "toggleWallet",
+  walletPickerOpen: "walletPickerOpen",
   zoomIn: "zoomIn",
   zoomOut: "zoomOut",
   pan: "pan",
