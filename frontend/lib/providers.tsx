@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  type ClientLogger,
   createClient,
   getWalletStandardConnectors,
   type SolanaClient,
@@ -18,11 +19,32 @@ import {
 import { PUBLIC_RPC_URL, PUBLIC_WS_URL } from "./env";
 import { registerMetaMaskConnect } from "./wallet/metamask";
 
+// Route the client's logs to the console, but keep expected wallet-connection
+// failures (user dismissed the wallet modal, relay/QR timed out) off
+// console.error — they'd otherwise trip Next's dev error overlay even though
+// the failure is already surfaced through wallet status in the UI.
+const logger: ClientLogger = ({ level, message, data }) => {
+  const effective =
+    level === "error" && message === "wallet connection failed"
+      ? "warn"
+      : level;
+  const fn =
+    effective === "error"
+      ? console.error
+      : effective === "warn"
+        ? console.warn
+        : effective === "info"
+          ? console.info
+          : console.debug;
+  fn(`[solana] ${message}`, data ?? {});
+};
+
 const makeClient = (connectors: readonly WalletConnector[]): SolanaClient =>
   createClient({
     endpoint: PUBLIC_RPC_URL,
     websocketEndpoint: PUBLIC_WS_URL,
     walletConnectors: connectors,
+    logger,
   });
 
 // Identity of a connector set, independent of object identity, so we only

@@ -5,6 +5,7 @@ import * as Popover from "@radix-ui/react-popover";
 import { useWalletConnection, useWalletModalState } from "@solana/react-hooks";
 import Image from "next/image";
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Check, ChevronDown, Copy, ExternalLink, X } from "@/components/icons";
 import { COPY_FEEDBACK_DURATION_MS } from "@/lib/data/timings";
 import { buildPickerWallets, type PickerWallet } from "@/lib/data/wallets";
@@ -94,7 +95,16 @@ export function WalletButton() {
           key={w.id}
           type="button"
           disabled={modal.status === "connecting"}
-          onClick={() => modal.connect(connectorId)}
+          onClick={() => {
+            // Close our picker first so the wallet's own modal (e.g. MetaMask's
+            // relay QR dialog) owns the screen — leaving our Radix dialog open
+            // underneath makes its focus-trap / scroll-lock fight MetaMask's
+            // backdrop, so the background ends up clickable. Catch the rejection
+            // (user dismissed, transport timed out) — it's surfaced via status,
+            // and an uncaught reject otherwise becomes an unhandledRejection.
+            modal.close();
+            void modal.connect(connectorId).catch(() => {});
+          }}
           className={`${rowClass} disabled:opacity-50`}
         >
           {inner}
@@ -159,6 +169,23 @@ export function WalletButton() {
     </Dialog.Root>
   );
 
+  // While a connect is in flight, an external SDK (MetaMask's relay QR dialog)
+  // shows its own modal but its backdrop doesn't reliably capture clicks, so
+  // the app stays interactive behind it. Our picker is already closed by then,
+  // so block the background with our own overlay. It sits just under MetaMask's
+  // modal (z-index 99998/99999) and is portaled to <body> so no ancestor
+  // stacking context can trap it; MetaMask's dialog stays fully clickable above.
+  const connectingOverlay =
+    modal.status === "connecting" && typeof document !== "undefined"
+      ? createPortal(
+          <div
+            className="fixed inset-0 z-[99990] bg-black/40"
+            aria-hidden="true"
+          />,
+          document.body,
+        )
+      : null;
+
   if (!connected || !wallet) {
     return (
       <>
@@ -171,6 +198,7 @@ export function WalletButton() {
           {status === "connecting" ? "Connecting…" : "Connect Wallet"}
         </button>
         {picker}
+        {connectingOverlay}
       </>
     );
   }
