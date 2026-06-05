@@ -112,9 +112,7 @@ impl Price {
     /// `[10_000_000, 99_999_999]` or the exponent is outside `[−16, 15]`.
     #[inline]
     pub const fn encode(significand: u32, unbiased_exponent: i8) -> Option<Self> {
-        if unbiased_exponent < UNBIASED_EXPONENT_MIN
-            || unbiased_exponent > UNBIASED_EXPONENT_MAX
-        {
+        if unbiased_exponent < UNBIASED_EXPONENT_MIN || unbiased_exponent > UNBIASED_EXPONENT_MAX {
             return None;
         }
         let biased = (unbiased_exponent as i16 + BIAS as i16) as u8;
@@ -295,10 +293,7 @@ mod tests {
                 let p = Price::new(sig, biased_exp).unwrap();
                 assert_eq!(p.significand(), sig);
                 assert_eq!(p.biased_exponent(), biased_exp);
-                assert_eq!(
-                    p.unbiased_exponent(),
-                    biased_exp as i8 - BIAS as i8,
-                );
+                assert_eq!(p.unbiased_exponent(), biased_exp as i8 - BIAS as i8,);
                 assert!(p.is_valid());
             }
         }
@@ -364,8 +359,7 @@ mod tests {
     #[test]
     fn sentinels_bracket_all_regular_prices() {
         let min_regular = Price::new(SIGNIFICAND_MIN, 0).unwrap();
-        let max_regular =
-            Price::new(SIGNIFICAND_MAX, MAX_BIASED_EXPONENT).unwrap();
+        let max_regular = Price::new(SIGNIFICAND_MAX, MAX_BIASED_EXPONENT).unwrap();
         assert!(Price::ZERO < min_regular);
         assert!(max_regular < Price::INFINITY);
     }
