@@ -3,11 +3,12 @@ mod common;
 use anchor_lang_v2::{programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, Signer};
 use common::{
-    decode_slab, deploy_with_authority, send_ixn, PROGRAM_ID, SIGNER_FUNDING_LAMPORTS,
+    assert_program_error, decode_slab, deploy_with_authority, send_ixn, PROGRAM_ID,
+    SIGNER_FUNDING_LAMPORTS,
 };
 use dropset::{
-    instruction::Init as InitInstruction, RegistryHeader, DEFAULT_MAX_VAULTS_PER_MARKET,
-    DEFAULT_MIN_LEADER_SHARE, DEFAULT_TAKER_FEE,
+    instruction::Init as InitInstruction, DropsetError, RegistryHeader,
+    DEFAULT_MAX_VAULTS_PER_MARKET, DEFAULT_MIN_LEADER_SHARE, DEFAULT_TAKER_FEE,
 };
 use solana_instruction::{AccountMeta, Instruction};
 use solana_loader_v3_interface::get_program_data_address;
@@ -48,10 +49,7 @@ fn init_rejects_wrong_program_data_address() {
         init_ixn(authority.pubkey(), Pubkey::new_unique(), bogus),
     )
     .expect_err("non-canonical program_data must be rejected");
-    assert!(
-        err.contains("Custom"),
-        "expected InvalidProgramDataAddress, got {err}"
-    );
+    assert_program_error(&err, DropsetError::InvalidProgramDataAddress);
 }
 
 #[test]
@@ -68,10 +66,7 @@ fn init_rejects_non_upgrade_authority() {
         canonical_init_ixn(imposter.pubkey(), Pubkey::new_unique()),
     )
     .expect_err("non-authority must be rejected");
-    assert!(
-        err.contains("Custom"),
-        "expected InvalidUpgradeAuthority, got {err}"
-    );
+    assert_program_error(&err, DropsetError::InvalidUpgradeAuthority);
 }
 
 #[test]

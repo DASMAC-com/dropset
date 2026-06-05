@@ -113,6 +113,15 @@ where
     (header, items)
 }
 
+/// Assert a `send_ixn` failure string carries the program's custom error
+/// code for `code`. Derives the expected `Custom(N)` from the program's
+/// own `From<DropsetError>` mapping, so it tracks any change to the error
+/// offset or variant order rather than hard-coding a number.
+pub fn assert_program_error(err: &str, code: dropset::DropsetError) {
+    let expected = format!("{:?}", anchor_lang_v2::Error::from(code));
+    assert!(err.contains(&expected), "expected {expected}, got: {err}");
+}
+
 /// Assert an anchor `#[account]` buffer matches `expected` exactly: owned
 /// by the program, prefixed with `T`'s discriminator, body bytes
 /// bytemuck-equal to `expected`, total length equal to

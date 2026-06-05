@@ -3,11 +3,12 @@ mod common;
 use anchor_lang_v2::{programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, LiteSVM, Signer};
 use common::{
-    decode_slab, deploy_with_authority, send_ixn, PROGRAM_ID, SIGNER_FUNDING_LAMPORTS,
+    assert_program_error, decode_slab, deploy_with_authority, send_ixn, PROGRAM_ID,
+    SIGNER_FUNDING_LAMPORTS,
 };
 use dropset::{
     instruction::{AddAdmin as AddAdminIx, Init as InitIx, RemoveAdmin as RemoveAdminIx},
-    Registry, RegistryHeader,
+    DropsetError, Registry, RegistryHeader,
 };
 use solana_instruction::{AccountMeta, Instruction};
 use solana_loader_v3_interface::get_program_data_address;
@@ -111,7 +112,7 @@ fn add_admin_rejects_duplicate() {
         add_ixn(authority.pubkey(), authority.pubkey()),
     )
     .expect_err("an admin cannot be added twice");
-    assert!(err.contains("Custom"), "expected AlreadyAdmin, got {err}");
+    assert_program_error(&err, DropsetError::AlreadyAdmin);
     // Set and rent unchanged.
     assert_eq!(admins(&svm).len(), 1);
     assert_eq!(svm.get_account(&registry_pda()).unwrap().lamports, rent_for(&svm, 1));
@@ -129,7 +130,7 @@ fn add_admin_rejects_non_admin_signer() {
         add_ixn(imposter.pubkey(), Pubkey::new_unique()),
     )
     .expect_err("non-admin must be rejected");
-    assert!(err.contains("Custom"), "expected Unauthorized, got {err}");
+    assert_program_error(&err, DropsetError::Unauthorized);
     assert_eq!(admins(&svm).len(), 1);
 }
 
@@ -167,7 +168,7 @@ fn remove_admin_rejects_last_admin() {
         remove_ixn(authority.pubkey(), authority.pubkey()),
     )
     .expect_err("removing the last admin must be rejected");
-    assert!(err.contains("Custom"), "expected CannotRemoveLastAdmin, got {err}");
+    assert_program_error(&err, DropsetError::CannotRemoveLastAdmin);
     assert_eq!(admins(&svm).len(), 1);
 }
 
@@ -184,7 +185,7 @@ fn remove_admin_rejects_unknown() {
         remove_ixn(authority.pubkey(), Pubkey::new_unique()),
     )
     .expect_err("removing a non-admin must be rejected");
-    assert!(err.contains("Custom"), "expected AdminNotFound, got {err}");
+    assert_program_error(&err, DropsetError::AdminNotFound);
     assert_eq!(admins(&svm).len(), 2);
 }
 
@@ -198,6 +199,6 @@ fn remove_admin_rejects_non_admin_signer() {
     svm.airdrop(&imposter.pubkey(), SIGNER_FUNDING_LAMPORTS).unwrap();
     let err = send_ixn(&mut svm, &imposter, remove_ixn(imposter.pubkey(), new_admin))
         .expect_err("non-admin signer must be rejected");
-    assert!(err.contains("Custom"), "expected Unauthorized, got {err}");
+    assert_program_error(&err, DropsetError::Unauthorized);
     assert_eq!(admins(&svm).len(), 2);
 }
