@@ -9,10 +9,13 @@ use solana_pubkey::Pubkey;
 
 pub use dropset::ID as PROGRAM_ID;
 
-const PROGRAM_SO_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../target/deploy/dropset.so");
+const PROGRAM_SO_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../target/deploy/dropset.so"
+);
 const PROGRAM_KEYPAIR_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../target/deploy/dropset-keypair.json"
+    "/../../target/deploy/dropset-keypair.json"
 );
 
 /// Fits comfortably under the per-txn size limit.

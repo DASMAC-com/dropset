@@ -1,6 +1,6 @@
 ---
 env:
-  ANCHOR_REV: '304dda8c568ffffc01d02d87578dc062109eb257'
+  ANCHOR_REV: '2a191379'
   SOLANA_VERSION: 'v3.1.9'
 jobs:
   test:

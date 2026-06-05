@@ -2,7 +2,7 @@
 overflow-checks = true
 
 [workspace]
-members = ["program"]
+members = ["programs/dropset"]
 resolver = "2"
 
 [workspace.dependencies]

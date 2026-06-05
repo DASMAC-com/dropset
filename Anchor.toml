@@ -6,4 +6,4 @@ wallet = "~/.config/solana/id.json"
 test = "cargo test"
 
 [workspace]
-members = ["program"]
+members = ["programs/dropset"]
