@@ -8,4 +8,6 @@ pub enum DropsetError {
     InvalidProgramData,
     #[msg("Init must be signed by the program's upgrade authority")]
     InvalidUpgradeAuthority,
+    #[msg("the registry admin set has no room for another admin")]
+    AdminSetFull,
 }

@@ -88,7 +88,7 @@ fn init_succeeds_for_upgrade_authority() {
     )
     .expect("init should succeed");
 
-    // Verify registry header fields + the admin slab tail.
+    // Verify registry header fields + the admin tail.
     let account = svm.get_account(&registry_pda).expect("registry created");
     assert_eq!(account.owner, PROGRAM_ID, "registry not owned by program");
     let (header, admins) = decode_slab::<RegistryHeader, [u8; 32]>(&account.data);
@@ -99,6 +99,6 @@ fn init_succeeds_for_upgrade_authority() {
     // `default_fee_config` is left zeroed at genesis (no fee mint).
     assert_eq!(header.default_fee_config.mint, <[u8; 32]>::default().into());
     assert_eq!(header.default_fee_config.atoms.get(), 0);
-    // The genesis admin is the sole member of the admin set.
+    // The genesis admin is the sole member of the densely-packed set.
     assert_eq!(admins, &[genesis_admin.to_bytes()][..]);
 }
