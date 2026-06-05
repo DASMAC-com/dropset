@@ -8,7 +8,7 @@ pub const DEFAULT_MAX_SEATS_PER_MARKET: u8 = 10;
 
 #[account]
 pub struct Registry {
-    pub default_taker_fee_rate: FeeRate,
+    pub default_taker_fee: FeeRate,
     pub max_seats_per_market: u8,
     pub bump: u8,
     pub _pad: [u8; 2],
