@@ -115,14 +115,18 @@ fn add_admin_rejects_duplicate() {
     assert_program_error(&err, DropsetError::AlreadyAdmin);
     // Set and rent unchanged.
     assert_eq!(admins(&svm).len(), 1);
-    assert_eq!(svm.get_account(&registry_pda()).unwrap().lamports, rent_for(&svm, 1));
+    assert_eq!(
+        svm.get_account(&registry_pda()).unwrap().lamports,
+        rent_for(&svm, 1)
+    );
 }
 
 #[test]
 fn add_admin_rejects_non_admin_signer() {
     let (mut svm, _authority) = setup();
     let imposter = Keypair::new();
-    svm.airdrop(&imposter.pubkey(), SIGNER_FUNDING_LAMPORTS).unwrap();
+    svm.airdrop(&imposter.pubkey(), SIGNER_FUNDING_LAMPORTS)
+        .unwrap();
 
     let err = send_ixn(
         &mut svm,
@@ -145,7 +149,12 @@ fn remove_admin_compacts_and_refunds_rent() {
     assert_eq!(reg_before, rent_for(&svm, 2));
     let authority_before = svm.get_account(&authority.pubkey()).unwrap().lamports;
 
-    send_ixn(&mut svm, &authority, remove_ixn(authority.pubkey(), new_admin)).expect("remove");
+    send_ixn(
+        &mut svm,
+        &authority,
+        remove_ixn(authority.pubkey(), new_admin),
+    )
+    .expect("remove");
 
     let after = svm.get_account(&pda).unwrap();
     // Only the genesis admin remains.
@@ -153,7 +162,10 @@ fn remove_admin_compacts_and_refunds_rent() {
     // Shrunk to one admin and the freed rent left the account.
     assert_eq!(after.data.len(), Registry::space_for(1));
     assert_eq!(after.lamports, rent_for(&svm, 1));
-    assert_eq!(reg_before - after.lamports, rent_for(&svm, 2) - rent_for(&svm, 1));
+    assert_eq!(
+        reg_before - after.lamports,
+        rent_for(&svm, 2) - rent_for(&svm, 1)
+    );
     // The signer received the refund (rent delta dwarfs any tx fee).
     let authority_after = svm.get_account(&authority.pubkey()).unwrap().lamports;
     assert!(authority_after > authority_before);
@@ -196,9 +208,14 @@ fn remove_admin_rejects_non_admin_signer() {
     send_ixn(&mut svm, &authority, add_ixn(authority.pubkey(), new_admin)).expect("add");
 
     let imposter = Keypair::new();
-    svm.airdrop(&imposter.pubkey(), SIGNER_FUNDING_LAMPORTS).unwrap();
-    let err = send_ixn(&mut svm, &imposter, remove_ixn(imposter.pubkey(), new_admin))
-        .expect_err("non-admin signer must be rejected");
+    svm.airdrop(&imposter.pubkey(), SIGNER_FUNDING_LAMPORTS)
+        .unwrap();
+    let err = send_ixn(
+        &mut svm,
+        &imposter,
+        remove_ixn(imposter.pubkey(), new_admin),
+    )
+    .expect_err("non-admin signer must be rejected");
     assert_program_error(&err, DropsetError::Unauthorized);
     assert_eq!(admins(&svm).len(), 2);
 }

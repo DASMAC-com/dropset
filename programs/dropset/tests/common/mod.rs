@@ -108,8 +108,9 @@ where
     let header = bytemuck::from_bytes::<H>(&data[DISC..header_end]);
     let len = u32::from_le_bytes(data[header_end..header_end + 4].try_into().unwrap()) as usize;
     let items_start = header_end + 4;
-    let items =
-        bytemuck::cast_slice::<u8, T>(&data[items_start..items_start + len * core::mem::size_of::<T>()]);
+    let items = bytemuck::cast_slice::<u8, T>(
+        &data[items_start..items_start + len * core::mem::size_of::<T>()],
+    );
     (header, items)
 }
 

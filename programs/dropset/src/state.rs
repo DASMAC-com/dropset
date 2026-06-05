@@ -82,8 +82,7 @@ pub trait AdminSet {
     /// rent** to `rent_recipient`. Returns whether `admin` was present.
     /// Rejects with [`DropsetError::CannotRemoveLastAdmin`] if `admin` is
     /// the sole remaining admin — the set is never allowed to empty.
-    fn admin_remove(&mut self, admin: &Address, rent_recipient: &mut AccountView)
-        -> Result<bool>;
+    fn admin_remove(&mut self, admin: &Address, rent_recipient: &mut AccountView) -> Result<bool>;
 }
 
 impl AdminSet for Registry {
@@ -102,15 +101,12 @@ impl AdminSet for Registry {
             self.resize_to_capacity(needed)?;
             self.top_up(payer)?;
         }
-        self.try_push(admin).map_err(|_| DropsetError::AdminSetFull)?;
+        self.try_push(admin)
+            .map_err(|_| DropsetError::AdminSetFull)?;
         Ok(())
     }
 
-    fn admin_remove(
-        &mut self,
-        admin: &Address,
-        rent_recipient: &mut AccountView,
-    ) -> Result<bool> {
+    fn admin_remove(&mut self, admin: &Address, rent_recipient: &mut AccountView) -> Result<bool> {
         let pos = match self.as_slice().iter().position(|a| address_eq(a, admin)) {
             Some(pos) => pos,
             None => return Ok(false),

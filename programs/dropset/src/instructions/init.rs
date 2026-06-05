@@ -1,7 +1,6 @@
 use crate::errors::DropsetError;
 use crate::{
-    AdminSet, Registry, DEFAULT_MAX_VAULTS_PER_MARKET, DEFAULT_MIN_LEADER_SHARE,
-    DEFAULT_TAKER_FEE,
+    AdminSet, Registry, DEFAULT_MAX_VAULTS_PER_MARKET, DEFAULT_MIN_LEADER_SHARE, DEFAULT_TAKER_FEE,
 };
 use anchor_lang_v2::{
     address_eq,

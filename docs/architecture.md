@@ -69,9 +69,10 @@ governance parameters and the admin allowlist.
 
 Vault creation is **permissionless**: any pubkey may call `OpenVault`
 by paying the **market's** open-vault fee — `market.fee_config.atoms`
-of `market.fee_config.mint` — to the Registry's fee ATA, derived as
-`get_associated_token_address_with_program_id(registry_pda,
-fee_config.mint, token_program)`. The token-program seed is mandatory
+of `market.fee_config.mint` — to the Registry's fee ATA, keyed on
+`get_associated_token_address_with_program_id` over
+`(registry_pda, fee_config.mint, token_program)`. The token-program
+seed is mandatory
 (classic SPL Token and Token-2022 derive different ATAs for the same
 mint) and is taken from the **fee mint's account `owner`** — the
 caller passes the mint and its owning token program, validated
@@ -1024,9 +1025,10 @@ instructions in this section; see **Caller mechanics**.
 
 Called by anyone to allocate a vault sector and become its leader.
 The caller transfers `market.fee_config.atoms` of
-`market.fee_config.mint` to the Registry's fee ATA —
-`get_associated_token_address_with_program_id(registry_pda,
-fee_config.mint, token_program)` — unless the signer is an admin (fee
+`market.fee_config.mint` to the Registry's fee ATA
+(`get_associated_token_address_with_program_id` over
+`(registry_pda, fee_config.mint, token_program)`) — unless the signer
+is an admin (fee
 waived; admins may also pass a separate `leader: Pubkey` argument to
 open a vault on someone else's behalf — that pubkey becomes
 `Vault.leader`). The caller passes the fee mint and its owning token
@@ -1218,8 +1220,9 @@ Token-2022 transfer-fee extension, since that extension would deliver
 less than `atoms` into the registry fee ATA.
 
 Changing the mint routes future fees to a fresh registry ATA
-(`get_associated_token_address_with_program_id(registry_pda, mint,
-token_program)`); fees already collected stay in the prior ATA and
+(`get_associated_token_address_with_program_id` over
+`(registry_pda, mint, token_program)`); fees already collected stay in
+the prior ATA and
 admins sweep both. Takes effect on the next `OpenVault`; vaults
 already open are unaffected (the fee is charged only at open time).
 

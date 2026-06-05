@@ -90,7 +90,10 @@ fn init_succeeds_for_upgrade_authority() {
     assert_eq!(header.bump, registry_bump);
     assert_eq!(header.max_vaults_per_market, DEFAULT_MAX_VAULTS_PER_MARKET);
     assert_eq!(header.default_taker_fee.get(), DEFAULT_TAKER_FEE);
-    assert_eq!(header.default_min_leader_share.get(), DEFAULT_MIN_LEADER_SHARE);
+    assert_eq!(
+        header.default_min_leader_share.get(),
+        DEFAULT_MIN_LEADER_SHARE
+    );
     // `default_fee_config` is left zeroed at genesis (no fee mint).
     assert_eq!(header.default_fee_config.mint, <[u8; 32]>::default().into());
     assert_eq!(header.default_fee_config.atoms.get(), 0);
