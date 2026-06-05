@@ -5,6 +5,8 @@ disable-model-invocation: true
 user-invocable: true
 ---
 
+<!-- cspell:word oneline -->
+
 # `review-pr`
 
 Act as an adversarial reviewer before the human
