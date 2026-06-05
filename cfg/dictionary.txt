@@ -86,6 +86,7 @@ vgbp
 vwap
 wincode
 wordmark
+worktree
 worldlibertyfi
 zarp
 zaru

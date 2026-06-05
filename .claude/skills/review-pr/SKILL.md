@@ -47,6 +47,7 @@ all changes are committed and pushed.
      can be fixed mechanically (formatting,
      import order, trailing whitespace, spelling,
      etc.).
+
    - Stage the fixes by explicit path and commit
      as a single signed commit:
 
@@ -56,6 +57,7 @@ all changes are committed and pushed.
      ```
 
    - Re-run `make lint` to confirm it passes.
+
    - If lint still fails after the fix attempt,
      catalogue the remaining failures as
      **blocking** issues (step 6) and do **not**
