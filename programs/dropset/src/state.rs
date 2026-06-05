@@ -45,9 +45,9 @@ pub struct RegistryHeader {
     /// `MarketHeader.fee_config` at market creation.
     pub default_fee_config: FeeConfig,
     /// Default skin-in-the-game floor stamped into markets.
-    pub default_min_leader_share: PodU32,
+    pub default_min_leader_share: Ppm32,
     /// Default taker fee stamped into markets.
-    pub default_taker_fee: PodU16,
+    pub default_taker_fee: Ppm16,
     /// Default cap on vaults per market.
     pub max_vaults_per_market: u8,
     /// Registry PDA bump.
