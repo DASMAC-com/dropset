@@ -9,3 +9,6 @@ target/
 
 # Local audit findings (see .claude/skills/audit-codebase).
 .audits/
+
+# macOS metadata.
+.DS_Store
