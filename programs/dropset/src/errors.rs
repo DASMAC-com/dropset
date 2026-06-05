@@ -10,6 +10,8 @@ pub enum DropsetError {
     InvalidUpgradeAuthority,
     #[msg("the registry admin set has no room for another admin")]
     AdminSetFull,
+    #[msg("the named pubkey is already a registry admin")]
+    AlreadyAdmin,
     #[msg("signer is not a registry admin")]
     Unauthorized,
     #[msg("the named pubkey is not a registry admin")]

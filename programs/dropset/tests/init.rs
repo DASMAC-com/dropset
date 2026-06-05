@@ -102,3 +102,26 @@ fn init_succeeds_for_upgrade_authority() {
     // The genesis admin is the sole member of the densely-packed set.
     assert_eq!(admins, &[genesis_admin.to_bytes()][..]);
 }
+
+#[test]
+fn init_rejects_second_init() {
+    let authority = Keypair::new();
+    let mut svm = deploy_with_authority(&authority);
+    let genesis_admin = Pubkey::new_unique();
+
+    send_ixn(
+        &mut svm,
+        &authority,
+        canonical_init_ixn(authority.pubkey(), genesis_admin),
+    )
+    .expect("first init should succeed");
+
+    // The registry PDA now exists, so the `init` constraint must reject a
+    // second initialization (the account can't be created again).
+    send_ixn(
+        &mut svm,
+        &authority,
+        canonical_init_ixn(authority.pubkey(), Pubkey::new_unique()),
+    )
+    .expect_err("registry can only be initialized once");
+}

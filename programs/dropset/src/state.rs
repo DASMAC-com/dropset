@@ -74,8 +74,9 @@ pub trait AdminSet {
     /// Whether `admin` is in the set.
     fn admin_contains(&self, admin: &Address) -> bool;
     /// Insert `admin`, growing the tail by one slot and **funding the
-    /// extra rent** from `payer` when the account is full. Idempotent: a
-    /// no-op (no growth, no charge) if `admin` is already present.
+    /// extra rent** from `payer` when the account is full. Rejects with
+    /// [`DropsetError::AlreadyAdmin`] if `admin` is already a member — an
+    /// admin cannot be added twice.
     fn admin_insert(&mut self, admin: Address, payer: &AccountView) -> Result<()>;
     /// Remove `admin`, compacting the tail and **refunding the freed
     /// rent** to `rent_recipient`. Returns whether `admin` was present.
@@ -92,7 +93,7 @@ impl AdminSet for Registry {
 
     fn admin_insert(&mut self, admin: Address, payer: &AccountView) -> Result<()> {
         if self.admin_contains(&admin) {
-            return Ok(());
+            return Err(DropsetError::AlreadyAdmin.into());
         }
         // Grow the tail by one slot if there's no room, funding the
         // resulting rent shortfall from `payer`.

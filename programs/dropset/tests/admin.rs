@@ -103,14 +103,16 @@ fn add_admin_grows_and_funds_rent() {
 }
 
 #[test]
-fn add_admin_is_idempotent() {
+fn add_admin_rejects_duplicate() {
     let (mut svm, authority) = setup();
-    send_ixn(
+    let err = send_ixn(
         &mut svm,
         &authority,
         add_ixn(authority.pubkey(), authority.pubkey()),
     )
-    .expect("re-adding an existing admin is a no-op");
+    .expect_err("an admin cannot be added twice");
+    assert!(err.contains("Custom"), "expected AlreadyAdmin, got {err}");
+    // Set and rent unchanged.
     assert_eq!(admins(&svm).len(), 1);
     assert_eq!(svm.get_account(&registry_pda()).unwrap().lamports, rent_for(&svm, 1));
 }
