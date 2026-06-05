@@ -8,4 +8,14 @@ pub enum DropsetError {
     InvalidProgramData,
     #[msg("Init must be signed by the program's upgrade authority")]
     InvalidUpgradeAuthority,
+    #[msg("the registry admin set has no room for another admin")]
+    AdminSetFull,
+    #[msg("the named pubkey is already a registry admin")]
+    AlreadyAdmin,
+    #[msg("signer is not a registry admin")]
+    Unauthorized,
+    #[msg("the named pubkey is not a registry admin")]
+    AdminNotFound,
+    #[msg("cannot remove the last remaining registry admin")]
+    CannotRemoveLastAdmin,
 }

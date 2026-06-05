@@ -1,11 +1,15 @@
 mod common;
 
-use anchor_lang_v2::{bytemuck::Zeroable, programs::System, Id, InstructionData};
+use anchor_lang_v2::{programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, Signer};
 use common::{
-    assert_anchor_account_eq, deploy_with_authority, send_ixn, PROGRAM_ID, SIGNER_FUNDING_LAMPORTS,
+    assert_program_error, decode_slab, deploy_with_authority, send_ixn, PROGRAM_ID,
+    SIGNER_FUNDING_LAMPORTS,
 };
-use dropset::{instruction::Init as InitInstruction, Registry, DEFAULT_MAX_SEATS_PER_MARKET};
+use dropset::{
+    instruction::Init as InitInstruction, DropsetError, RegistryHeader,
+    DEFAULT_MAX_VAULTS_PER_MARKET, DEFAULT_MIN_LEADER_SHARE, DEFAULT_TAKER_FEE,
+};
 use solana_instruction::{AccountMeta, Instruction};
 use solana_loader_v3_interface::get_program_data_address;
 use solana_pubkey::Pubkey;
@@ -45,10 +49,7 @@ fn init_rejects_wrong_program_data_address() {
         init_ixn(authority.pubkey(), Pubkey::new_unique(), bogus),
     )
     .expect_err("non-canonical program_data must be rejected");
-    assert!(
-        err.contains("Custom"),
-        "expected InvalidProgramDataAddress, got {err}"
-    );
+    assert_program_error(&err, DropsetError::InvalidProgramDataAddress);
 }
 
 #[test]
@@ -65,10 +66,7 @@ fn init_rejects_non_upgrade_authority() {
         canonical_init_ixn(imposter.pubkey(), Pubkey::new_unique()),
     )
     .expect_err("non-authority must be rejected");
-    assert!(
-        err.contains("Custom"),
-        "expected InvalidUpgradeAuthority, got {err}"
-    );
+    assert_program_error(&err, DropsetError::InvalidUpgradeAuthority);
 }
 
 #[test]
@@ -85,11 +83,43 @@ fn init_succeeds_for_upgrade_authority() {
     )
     .expect("init should succeed");
 
-    // Verify registry fields.
-    let mut expected = Registry::zeroed();
-    expected.max_seats_per_market = DEFAULT_MAX_SEATS_PER_MARKET;
-    expected.bump = registry_bump;
-    expected.admins.push(genesis_admin);
+    // Verify registry header fields + the admin tail.
     let account = svm.get_account(&registry_pda).expect("registry created");
-    assert_anchor_account_eq(&account.data, &account.owner, &expected);
+    assert_eq!(account.owner, PROGRAM_ID, "registry not owned by program");
+    let (header, admins) = decode_slab::<RegistryHeader, [u8; 32]>(&account.data);
+    assert_eq!(header.bump, registry_bump);
+    assert_eq!(header.max_vaults_per_market, DEFAULT_MAX_VAULTS_PER_MARKET);
+    assert_eq!(header.default_taker_fee.get(), DEFAULT_TAKER_FEE);
+    assert_eq!(
+        header.default_min_leader_share.get(),
+        DEFAULT_MIN_LEADER_SHARE
+    );
+    // `default_fee_config` is left zeroed at genesis (no fee mint).
+    assert_eq!(header.default_fee_config.mint, <[u8; 32]>::default().into());
+    assert_eq!(header.default_fee_config.atoms.get(), 0);
+    // The genesis admin is the sole member of the densely-packed set.
+    assert_eq!(admins, &[genesis_admin.to_bytes()][..]);
+}
+
+#[test]
+fn init_rejects_second_init() {
+    let authority = Keypair::new();
+    let mut svm = deploy_with_authority(&authority);
+    let genesis_admin = Pubkey::new_unique();
+
+    send_ixn(
+        &mut svm,
+        &authority,
+        canonical_init_ixn(authority.pubkey(), genesis_admin),
+    )
+    .expect("first init should succeed");
+
+    // The registry PDA now exists, so the `init` constraint must reject a
+    // second initialization (the account can't be created again).
+    send_ixn(
+        &mut svm,
+        &authority,
+        canonical_init_ixn(authority.pubkey(), Pubkey::new_unique()),
+    )
+    .expect_err("registry can only be initialized once");
 }

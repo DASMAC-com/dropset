@@ -20,4 +20,14 @@ pub mod dropset {
         ctx.accounts
             .init(ctx.bumps.registry, genesis_admin, ctx.program_id)
     }
+
+    #[discrim = 1]
+    pub fn add_admin(ctx: &mut Context<AddAdmin>, new_admin: Address) -> Result<()> {
+        ctx.accounts.add_admin(new_admin)
+    }
+
+    #[discrim = 2]
+    pub fn remove_admin(ctx: &mut Context<RemoveAdmin>, target: Address) -> Result<()> {
+        ctx.accounts.remove_admin(target)
+    }
 }

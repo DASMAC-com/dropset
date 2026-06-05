@@ -1,5 +1,7 @@
 use crate::errors::DropsetError;
-use crate::{Registry, DEFAULT_MAX_SEATS_PER_MARKET};
+use crate::{
+    AdminSet, Registry, DEFAULT_MAX_VAULTS_PER_MARKET, DEFAULT_MIN_LEADER_SHARE, DEFAULT_TAKER_FEE,
+};
 use anchor_lang_v2::{
     address_eq,
     bytemuck::{self, Pod, Zeroable},
@@ -23,9 +25,17 @@ struct ProgramDataHeader {
 pub struct Init {
     #[account(mut)]
     pub payer: Signer,
-    #[account(init, payer = payer, seeds = [b"registry"], bump)]
-    pub registry: Account<Registry>,
+    // Sized for the genesis admin only; grow the slab when admin
+    // management is added.
+    #[account(init, payer = payer, space = Registry::space_for(1), seeds = [b"registry"], bump)]
+    pub registry: Registry,
     pub system_program: Program<System>,
+    /// SAFETY: the program's ProgramData account is owned by the BPF
+    /// upgradeable loader, not this program, so it cannot be a typed
+    /// `Account<T>`. `init()` verifies it is the canonical ProgramData
+    /// PDA via `find_and_verify_program_address` and only reads its
+    /// header to authenticate the upgrade authority — no data is
+    /// written and no other invariant is assumed.
     pub program_data: UncheckedAccount,
 }
 
@@ -55,11 +65,17 @@ impl Init {
             return Err(DropsetError::InvalidUpgradeAuthority.into());
         }
 
-        // Init registry values.
+        // Init registry values. Header fields via DerefMut; the admin
+        // set is the slab tail. `default_fee_config` is left zeroed —
+        // no fee mint is configured at genesis.
         let registry = &mut self.registry;
-        registry.max_seats_per_market = DEFAULT_MAX_SEATS_PER_MARKET;
         registry.bump = bump;
-        registry.admins.push(genesis_admin);
+        registry.max_vaults_per_market = DEFAULT_MAX_VAULTS_PER_MARKET;
+        registry.default_taker_fee = DEFAULT_TAKER_FEE.into();
+        registry.default_min_leader_share = DEFAULT_MIN_LEADER_SHARE.into();
+        // The account is pre-sized for one admin, so this seats the
+        // genesis admin without growing or charging extra rent.
+        registry.admin_insert(genesis_admin, self.payer.as_ref())?;
         Ok(())
     }
 }

@@ -93,11 +93,42 @@ pub fn send_ixn(svm: &mut LiteSVM, signer: &Keypair, ixn: Instruction) -> Result
         .map_err(|e| format!("{:?}", e.err))
 }
 
+/// Decode a `Slab<H, T>` account buffer into `(header, tail items)`.
+/// Layout: `[disc:8][H][len:u32 LE][items...]`. Assumes the standard
+/// 8-byte `#[account]` discriminator and `align_of::<T>() == 1` (true
+/// for our `Address`/`Pod`-byte tails), so items start right after the
+/// length prefix with no padding.
+pub fn decode_slab<H, T>(data: &[u8]) -> (&H, &[T])
+where
+    H: bytemuck::Pod,
+    T: bytemuck::Pod,
+{
+    const DISC: usize = 8;
+    let header_end = DISC + core::mem::size_of::<H>();
+    let header = bytemuck::from_bytes::<H>(&data[DISC..header_end]);
+    let len = u32::from_le_bytes(data[header_end..header_end + 4].try_into().unwrap()) as usize;
+    let items_start = header_end + 4;
+    let items = bytemuck::cast_slice::<u8, T>(
+        &data[items_start..items_start + len * core::mem::size_of::<T>()],
+    );
+    (header, items)
+}
+
+/// Assert a `send_ixn` failure string carries the program's custom error
+/// code for `code`. Derives the expected `Custom(N)` from the program's
+/// own `From<DropsetError>` mapping, so it tracks any change to the error
+/// offset or variant order rather than hard-coding a number.
+pub fn assert_program_error(err: &str, code: dropset::DropsetError) {
+    let expected = format!("{:?}", anchor_lang_v2::Error::from(code));
+    assert!(err.contains(&expected), "expected {expected}, got: {err}");
+}
+
 /// Assert an anchor `#[account]` buffer matches `expected` exactly: owned
 /// by the program, prefixed with `T`'s discriminator, body bytes
 /// bytemuck-equal to `expected`, total length equal to
 /// `disc.len() + size_of::<T>()` (catches any padding / trailing bytes the
 /// framework might inject).
+#[allow(dead_code)]
 pub fn assert_anchor_account_eq<T>(data: &[u8], owner: &Pubkey, expected: &T)
 where
     T: Discriminator + bytemuck::Pod,

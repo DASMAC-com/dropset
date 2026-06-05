@@ -40,7 +40,7 @@ propAMM-cadence reference-price refresh through a familiar CLOB-style API,
 but without propAMM opacity or engineering burden.
 
 Each vault is operated by a single **leader** (the pubkey that paid
-the `vault_open_fee` to call `OpenVault`). Outside depositors back
+the market's open-vault fee to call `OpenVault`). Outside depositors back
 that leader's quotes with paired (base, quote) baskets and share in
 spread capture, with a skin-in-the-game floor and per-share
 high-water-mark performance fee aligning incentives. See **Vault**
@@ -68,13 +68,22 @@ The `Registry` is a global singleton account that holds protocol-wide
 governance parameters and the admin allowlist.
 
 Vault creation is **permissionless**: any pubkey may call `OpenVault`
-by paying `vault_open_fee.atoms` of `vault_open_fee.mint` to the
-Registry's fee ATA — derived as
-`get_associated_token_address(registry_pda, vault_open_fee.mint)` —
-no storage needed on the Registry itself. Admins may call the same
-instruction without paying, including on behalf of others (useful for
-protocol-onboarded market makers). If admins later change
-`vault_open_fee.mint`, a fresh ATA is used going forward and prior
+by paying the **market's** open-vault fee — `market.fee_config.atoms`
+of `market.fee_config.mint` — to the Registry's fee ATA, keyed on
+`get_associated_token_address_with_program_id` over
+`(registry_pda, fee_config.mint, token_program)`. The token-program
+seed is mandatory
+(classic SPL Token and Token-2022 derive different ATAs for the same
+mint) and is taken from the **fee mint's account `owner`** — the
+caller passes the mint and its owning token program, validated
+`token_program == fee_config.mint.owner` at `OpenVault`. No storage is
+needed on the Registry itself. The fee
+is **per market** — each `MarketHeader` carries its own `fee_config`,
+seeded from `Registry.default_fee_config` at market creation and
+tuned per market by an admin via `SetMarketFeeConfig`. Admins may
+call `OpenVault` without paying, including on behalf of others (useful
+for protocol-onboarded market makers). If a market's `fee_config.mint`
+later changes, a fresh registry ATA is used going forward and prior
 fees stay in the old ATA; admins sweep both.
 
 The per-market cap on vault count (`max_vaults_per_market`) is set by
@@ -94,10 +103,10 @@ struct Registry {
     /// Hard cap on how many vaults any one market may allocate
     /// (up to 255). Enforced at `OpenVault` time.
     max_vaults_per_market: u8,
-    /// Taker fee rate stamped into `MarketHeader.taker_fee_rate`
+    /// Taker fee rate stamped into `MarketHeader.taker_fee`
     /// at market creation. Admins may change a market's fee
     /// later; this field only sets the initial value.
-    default_taker_fee_rate: Ppm16,
+    default_taker_fee: Ppm16,
     /// Minimum fraction of vault shares the leader must hold,
     /// in ppm (1,000,000 = 100%). Stamped into
     /// `MarketHeader.default_min_leader_share` at market creation,
@@ -107,19 +116,25 @@ struct Registry {
     /// downstream. Default 50_000 = 5%.
     /// See **Vault → Skin-in-the-game floor**.
     default_min_leader_share: Ppm32,
-    /// Fee paid on `OpenVault` to the **Registry fee ATA**
-    /// (`get_associated_token_address(registry_pda,
-    /// vault_open_fee.mint)`; see the **Registry** overview above).
-    /// Waived when the signer is an admin. (This fee account is
-    /// distinct from a market's `base_treasury`/`quote_treasury`,
-    /// which custody pooled trading inventory, not protocol fees.)
-    vault_open_fee: FeeConfig,
-    /// Admins authorized to mutate the `Registry`, change
-    /// per-market `taker_fee_rate` and `default_min_leader_share`,
-    /// override a vault's `min_leader_share` via `SetMinLeaderShare`,
-    /// call `FreezeVault`, approve outside deposits via
-    /// `SetOutsideDepositsApproved`, and open vaults without paying
-    /// `vault_open_fee`.
+    /// Default `FeeConfig` for the per-`OpenVault` fee, **stamped into
+    /// `MarketHeader.fee_config` at market creation**. This field only
+    /// seeds the initial per-market value; admins tune each market's
+    /// open-vault fee downstream via `SetMarketFeeConfig`. The fee is
+    /// paid to the **Registry fee ATA** for the configured mint
+    /// (`get_associated_token_address_with_program_id(registry_pda,
+    /// fee_config.mint, token_program)`, the token program taken from
+    /// the mint's account owner; see the **Registry** overview above),
+    /// waived when the signer is an admin. (This fee
+    /// account is distinct from a market's
+    /// `base_treasury`/`quote_treasury`, which custody pooled trading
+    /// inventory, not protocol fees.)
+    default_fee_config: FeeConfig,
+    /// Admins authorized to mutate the `Registry`, change a market's
+    /// `taker_fee`, `default_min_leader_share`, and `fee_config`
+    /// (the last via `SetMarketFeeConfig`), override a vault's
+    /// `min_leader_share` via `SetMinLeaderShare`, call `FreezeVault`,
+    /// approve outside deposits via `SetOutsideDepositsApproved`, and
+    /// open vaults without paying the per-market open-vault fee.
     admins: Set<Pubkey>,
 }
 ```
@@ -128,9 +143,10 @@ Notably absent: there is **no leader allowlist**. Banning a pubkey
 would be trivially defeated by registering a fresh wallet, so the
 protocol does not maintain one. Admin power is exercised per-vault via
 `FreezeVault` (see **Leader operations**), and the non-refundable
-`vault_open_fee` acts as the only material gate on fresh entry: every
-new wallet pays the fee again, so spinning up replacements after a
-freeze has a real, repeated cost rather than being free.
+per-market open-vault fee (`MarketHeader.fee_config`) acts as the only
+material gate on fresh entry: every new wallet pays the fee again, so
+spinning up replacements after a freeze has a real, repeated cost
+rather than being free.
 
 ## MarketHeader
 
@@ -151,7 +167,7 @@ struct MarketHeader {
     vaults: Set<Vault>,
     /// Taker fee rate, capped at ~6.55% (`Ppm16` max). Mutable by an
     /// admin.
-    taker_fee_rate: Ppm16,
+    taker_fee: Ppm16,
     /// Default minimum fraction of vault shares the leader must hold,
     /// in ppm (1,000,000 = 100%). Stamped into `Vault.min_leader_share`
     /// at each `OpenVault` on this market. Seeded from
@@ -160,6 +176,18 @@ struct MarketHeader {
     /// (existing vaults keep their stamped value). See
     /// **Vault → Skin-in-the-game floor**.
     default_min_leader_share: Ppm32,
+    /// This market's per-`OpenVault` fee: mint and amount (see
+    /// `FeeConfig`). Seeded from
+    /// `Registry.default_fee_config` at market creation; mutable by an
+    /// admin via `SetMarketFeeConfig`. The fee is paid to the
+    /// **Registry fee ATA** for `fee_config.mint`
+    /// (`get_associated_token_address_with_program_id(registry_pda,
+    /// fee_config.mint, token_program)`, the token program taken from
+    /// the mint's account owner), not to this market's treasuries, and
+    /// is waived for admin signers. Changing
+    /// the mint routes future fees to a fresh registry ATA — admins
+    /// sweep both old and new.
+    fee_config: FeeConfig,
 
     // Pubkeys and bumps.
     base_mint: Pubkey,
@@ -628,7 +656,7 @@ final `Withdraw` that drives `total_shares` to 0 unlinks the vault
 from its current DLL, zeroes `vault.leader` and `vault.quote_authority`
 so the emptiness marker holds, and pushes the sector onto the free
 list. The same leader pubkey may then `OpenVault` afresh — paying
-`vault_open_fee` again — on this or any other market.
+the open-vault fee again — on this or any other market.
 
 ## LiquidityProfile
 
@@ -951,7 +979,8 @@ caller; the third is the per-ix authority gate.
      useful for indexers and keepers that want to pin HWM at a
      known point in time.
    - **Admin-only** (`FreezeVault`, `SetOutsideDepositsApproved`,
-     `SetMinLeaderShare`): `signer ∈ registry.admins`.
+     `SetMinLeaderShare`, `SetMarketFeeConfig`):
+     `signer ∈ registry.admins`.
 
 No discriminant tag is needed: the vault region is homogeneous, so
 (1) + (2) fully determine that `ptr` refers to a valid `Vault`. The
@@ -981,7 +1010,8 @@ Simplified input buffer schematic:
 ## Leader operations
 
 A leader joins a market by calling `OpenVault` to allocate a vault
-sector (paying `vault_open_fee`), then seeding the vault with their
+sector (paying the market's open-vault fee, `market.fee_config`), then
+seeding the vault with their
 first `Deposit`, then `SetLiquidityProfile` to lay down their bid/ask
 ladder as offsets from a reference price. From there, steady-state
 activity is just `SetReferencePrice` on the hot path — sliding the
@@ -994,12 +1024,22 @@ instructions in this section; see **Caller mechanics**.
 ### OpenVault
 
 Called by anyone to allocate a vault sector and become its leader.
-The caller transfers `registry.vault_open_fee.atoms` of the fee mint
-to the Registry's fee ATA —
-`get_associated_token_address(registry_pda, vault_open_fee.mint)` —
-unless the signer is an admin (fee waived; admins may also pass a
-separate `leader: Pubkey` argument to open a vault on someone else's
-behalf — that pubkey becomes `Vault.leader`).
+The caller transfers `market.fee_config.atoms` of
+`market.fee_config.mint` to the Registry's fee ATA
+(`get_associated_token_address_with_program_id` over
+`(registry_pda, fee_config.mint, token_program)`) — unless the signer
+is an admin (fee
+waived; admins may also pass a separate `leader: Pubkey` argument to
+open a vault on someone else's behalf — that pubkey becomes
+`Vault.leader`). The caller passes the fee mint and its owning token
+program; the program reads the token program from the **mint's account
+`owner`** (validating `token_program == fee_config.mint.owner`) to both
+derive the fee ATA above and issue the transfer CPI — classic SPL
+Token and Token-2022 derive different ATAs for the same mint, so the
+program is never assumed. If `fee_config.mint` carries the Token-2022
+transfer-fee extension, the amount landing in the fee ATA is less than
+`atoms`; admins should configure only mints without a transfer fee
+(see `SetMarketFeeConfig`).
 
 Caller arguments stamped onto the vault:
 
@@ -1020,9 +1060,9 @@ below). Because `outside_deposits_approved` starts at 0, a new vault
 cannot take outside baskets until an admin calls
 `SetOutsideDepositsApproved` — see **Leader operations**.
 
-If the fee mint on `Registry` changes after this vault was opened,
-old fees remain in the prior fee ATA and admins sweep both — the
-vault itself is unaffected.
+If this market's `fee_config.mint` changes (via `SetMarketFeeConfig`)
+after this vault was opened, old fees remain in the prior registry fee
+ATA and admins sweep both — the vault itself is unaffected.
 
 The new vault is inserted via the **Insert** operation in
 **Storage layout** (O(1); reuses a freed sector when available). If
@@ -1119,7 +1159,7 @@ Admin-only. Sets `Vault.frozen = 1`. This is the protocol's
 revocation lever against a misbehaving leader: the vault stays on
 the active DLL (existing levels still match until their
 `expires_at`) but cannot be re-quoted. There is no "unfreeze" — to
-re-enter, the same leader pubkey pays `vault_open_fee` again and
+re-enter, the same leader pubkey pays the open-vault fee again and
 starts a new vault. See **Vault → Frozen and tombstoned vaults** for
 full state semantics and the comparison with `CloseVault`.
 
@@ -1160,6 +1200,31 @@ back into compliance. Raising the floor above the current ratio
 simply blocks further outside deposits (and floor-violating leader
 withdrawals) until the leader tops up, exactly as the standing check
 in **Vault → Skin-in-the-game floor** describes.
+
+### SetMarketFeeConfig
+
+Admin-only. Overwrites `MarketHeader.fee_config` (the per-`OpenVault`
+fee: `mint` and `atoms`), seeded at market creation from
+`Registry.default_fee_config`. Use it to retune the open-vault fee on
+a single market — raise or lower the amount, or switch the fee to a
+different mint — while every other market stays at its own value.
+
+The admin passes the new mint **and its owning token program**, which
+the instruction validates as `token_program == mint.owner` so the
+stored mint is always backed by a real, classifiable token program
+(classic SPL Token or Token-2022). The token program is not stored —
+it is re-derived from the mint's owner on each `OpenVault` (see there)
+— so this check exists only to reject a mint/program mismatch at
+configuration time. Admins should configure only mints **without** the
+Token-2022 transfer-fee extension, since that extension would deliver
+less than `atoms` into the registry fee ATA.
+
+Changing the mint routes future fees to a fresh registry ATA
+(`get_associated_token_address_with_program_id` over
+`(registry_pda, mint, token_program)`); fees already collected stay in
+the prior ATA and
+admins sweep both. Takes effect on the next `OpenVault`; vaults
+already open are unaffected (the fee is charged only at open time).
 
 ## Depositor operations
 
@@ -1371,7 +1436,7 @@ On every taker instruction:
    vault holds. (A popped entry with `vault_leg == 0` yields a
    zero fill; the loop moves on.) Decrement the taker's unfilled
    amount, decrement the popped level's `Vault.remaining.<side>[i].size`
-   by the fill, and accrue the taker fee from `market.taker_fee_rate`.
+   by the fill, and accrue the taker fee from `market.taker_fee`.
    Continue until the taker is filled, the next heap top exceeds the
    taker's limit price, or the heap is drained.
 
