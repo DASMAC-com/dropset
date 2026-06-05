@@ -18,4 +18,6 @@ pub enum DropsetError {
     AdminNotFound,
     #[msg("cannot remove the last remaining registry admin")]
     CannotRemoveLastAdmin,
+    #[msg("fee mint must be owned by SPL Token or Token-2022")]
+    InvalidFeeMint,
 }

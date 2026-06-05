@@ -1,6 +1,7 @@
 use crate::errors::DropsetError;
 use crate::{
-    AdminSet, Registry, DEFAULT_MAX_VAULTS_PER_MARKET, DEFAULT_MIN_LEADER_SHARE, DEFAULT_TAKER_FEE,
+    AdminSet, FeeConfig, Registry, DEFAULT_MAX_VAULTS_PER_MARKET, DEFAULT_MIN_LEADER_SHARE,
+    DEFAULT_TAKER_FEE, SPL_TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID,
 };
 use anchor_lang_v2::{
     address_eq,
@@ -37,11 +38,20 @@ pub struct Init {
     /// header to authenticate the upgrade authority — no data is
     /// written and no other invariant is assumed.
     pub program_data: UncheckedAccount,
+    /// The mint to charge fees in. Must be owned by SPL Token or
+    /// Token-2022; `init()` validates the owner on-chain.
+    pub fee_mint: UncheckedAccount,
 }
 
 impl Init {
     #[inline(always)]
-    pub fn init(&mut self, bump: u8, genesis_admin: Address, program_id: &Address) -> Result<()> {
+    pub fn init(
+        &mut self,
+        bump: u8,
+        genesis_admin: Address,
+        fee_atoms: u64,
+        program_id: &Address,
+    ) -> Result<()> {
         let program_data_account = self.program_data.account();
 
         // Verify the program data account.
@@ -65,14 +75,25 @@ impl Init {
             return Err(DropsetError::InvalidUpgradeAuthority.into());
         }
 
+        // Verify the fee mint is owned by SPL Token or Token-2022.
+        let mint_owner = self.fee_mint.account().owner();
+        if !address_eq(mint_owner, &SPL_TOKEN_PROGRAM_ID)
+            && !address_eq(mint_owner, &TOKEN_2022_PROGRAM_ID)
+        {
+            return Err(DropsetError::InvalidFeeMint.into());
+        }
+
         // Init registry values. Header fields via DerefMut; the admin
-        // set is the slab tail. `default_fee_config` is left zeroed —
-        // no fee mint is configured at genesis.
+        // set is the slab tail.
         let registry = &mut self.registry;
         registry.bump = bump;
         registry.max_vaults_per_market = DEFAULT_MAX_VAULTS_PER_MARKET;
         registry.default_taker_fee = DEFAULT_TAKER_FEE.into();
         registry.default_min_leader_share = DEFAULT_MIN_LEADER_SHARE.into();
+        registry.default_fee_config = FeeConfig {
+            mint: *self.fee_mint.address(),
+            atoms: fee_atoms.into(),
+        };
         // The account is pre-sized for one admin, so this seats the
         // genesis admin without growing or charging extra rent.
         registry.admin_insert(genesis_admin, self.payer.as_ref())?;
