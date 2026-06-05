@@ -106,8 +106,8 @@ all changes are committed and pushed.
    If the cross-check produces material
    disagreements, iterate: re-spawn the relevant
    topic agent with the challenge and have it
-   defend or retract. Continue until findings
-   stabilize.
+   defend or retract. Iterate at most 2 additional
+   rounds, then accept the surviving findings.
 
 1. **Fix blocking issues** that are mechanical
    (e.g. unused imports, missing error handling,
@@ -122,25 +122,22 @@ all changes are committed and pushed.
    decisions — leave those as warnings for the
    human reviewer.
 
+1. **Re-lint after fixes.** If any fix commits
+   were made in the previous step, re-run
+   `make lint` to catch violations introduced by
+   those fixes. Apply the same fix-and-retry
+   logic as step 3.
+
 1. **Push all fix commits:**
 
    ```sh
    git push
    ```
 
-1. **Update the PR title and description.** Run
-   the same logic as `/pr-title-description` to
-   ensure the title and body reflect the final
-   state of the branch (after lint and review
-   fixes).
-
-1. **Report.** Print a structured summary:
-
-   - Lint status: pass or fail with details.
-   - Issues found / fixed / remaining.
-   - Remaining warnings and nits for human review,
-     each with `file:line` and rationale.
-   - Whether the PR was marked ready.
+1. **Update the PR title and description.** Invoke
+   `/pr-title-description` to ensure the title
+   and body reflect the final state of the branch
+   (after lint and review fixes).
 
 1. **Gate.** If there are **zero blocking issues**
    and lint passes, mark the PR ready:
@@ -149,5 +146,12 @@ all changes are committed and pushed.
    gh pr ready <number>
    ```
 
-   If blocking issues remain, leave it in draft
-   and tell the user what needs manual attention.
+   If blocking issues remain, leave it in draft.
+
+1. **Report.** Print a structured summary:
+
+   - Lint status: pass or fail with details.
+   - Issues found / fixed / remaining.
+   - Remaining warnings and nits for human review,
+     each with `file:line` and rationale.
+   - Whether the PR was marked ready.

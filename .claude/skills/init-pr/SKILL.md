@@ -61,6 +61,11 @@ match `eng-###` (case-insensitive), stop and ask.
    git rebase main
    ```
 
+   If the rebase produces conflicts, abort it
+   (`git rebase --abort`) and tell the user.
+   Do not attempt to resolve conflicts
+   automatically in this skill.
+
 1. Create an empty, **signed** commit so there is
    something to push:
 
