@@ -74,7 +74,9 @@ impl Init {
         registry.max_vaults_per_market = DEFAULT_MAX_VAULTS_PER_MARKET;
         registry.default_taker_fee = DEFAULT_TAKER_FEE.into();
         registry.default_min_leader_share = DEFAULT_MIN_LEADER_SHARE.into();
-        registry.admin_insert(genesis_admin)?;
+        // The account is pre-sized for one admin, so this seats the
+        // genesis admin without growing or charging extra rent.
+        registry.admin_insert(genesis_admin, self.payer.as_ref())?;
         Ok(())
     }
 }

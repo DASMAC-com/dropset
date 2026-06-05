@@ -73,13 +73,14 @@ pub type Registry = Slab<RegistryHeader, Address>;
 pub trait AdminSet {
     /// Whether `admin` is in the set.
     fn admin_contains(&self, admin: &Address) -> bool;
-    /// Insert `admin`. Idempotent (no-op if already present). Errors
-    /// with [`DropsetError::AdminSetFull`] if the account has no spare
-    /// capacity; growing the tail (realloc + rent top-up) is the
-    /// caller's job, since it needs a payer.
-    fn admin_insert(&mut self, admin: Address) -> Result<()>;
+    /// Insert `admin`, growing the tail by one slot and **funding the
+    /// extra rent** from `payer` when the account is full. Idempotent: a
+    /// no-op (no growth, no charge) if `admin` is already present.
+    fn admin_insert(&mut self, admin: Address, payer: &AccountView) -> Result<()>;
     /// Remove `admin`, compacting the tail and **refunding the freed
     /// rent** to `rent_recipient`. Returns whether `admin` was present.
+    /// Rejects with [`DropsetError::CannotRemoveLastAdmin`] if `admin` is
+    /// the sole remaining admin — the set is never allowed to empty.
     fn admin_remove(&mut self, admin: &Address, rent_recipient: &mut AccountView)
         -> Result<bool>;
 }
@@ -89,12 +90,16 @@ impl AdminSet for Registry {
         self.as_slice().iter().any(|a| address_eq(a, admin))
     }
 
-    fn admin_insert(&mut self, admin: Address) -> Result<()> {
+    fn admin_insert(&mut self, admin: Address, payer: &AccountView) -> Result<()> {
         if self.admin_contains(&admin) {
             return Ok(());
         }
-        if self.is_full() {
-            return Err(DropsetError::AdminSetFull.into());
+        // Grow the tail by one slot if there's no room, funding the
+        // resulting rent shortfall from `payer`.
+        let needed = self.len() + 1;
+        if self.capacity() < needed {
+            self.resize_to_capacity(needed)?;
+            self.top_up(payer)?;
         }
         self.try_push(admin).map_err(|_| DropsetError::AdminSetFull)?;
         Ok(())
@@ -109,6 +114,11 @@ impl AdminSet for Registry {
             Some(pos) => pos,
             None => return Ok(false),
         };
+        // Never let the set go empty — at least one admin must remain to
+        // govern the registry.
+        if self.len() <= 1 {
+            return Err(DropsetError::CannotRemoveLastAdmin.into());
+        }
         // Move the last admin into the gap and drop the tail entry, then
         // shrink the account to fit and return the freed rent.
         self.swap_remove(pos);
