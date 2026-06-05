@@ -12,6 +12,11 @@ user-invocable: true
 Write (or update) the title and description
 for the pull request on the current branch.
 
+This skill only writes metadata. It does **not**
+mark the PR as ready — that is handled by
+`/review-pr` after lint and adversarial review
+pass.
+
 ## Steps
 
 1. Identify the current branch and its PR
@@ -62,10 +67,9 @@ for the pull request on the current branch.
    context.
 
 1. If a PR already exists for the branch, update
-   it with `gh pr edit <number> --body "..."`.
-   If the PR is in draft mode, also mark it ready
-   for review with `gh pr ready <number>`.
-   Otherwise, report the description so the user
-   can create the PR.
+   it with
+   `gh pr edit <number> --title "..." --body "..."`.
+   If no PR exists, report the title and
+   description so the user can create one.
 
 1. Show the user the PR URL when done.

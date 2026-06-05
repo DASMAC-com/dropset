@@ -1,44 +1,68 @@
 ---
 name: init-pr
-description: Create a placeholder PR from a fresh branch to warm CI caches.
+description: Bootstrap a worktree — pull main, set up the branch, push a draft PR, and warm CI caches.
 disable-model-invocation: true
 user-invocable: true
 ---
 
 # `init-pr`
 
-Create a placeholder PR on a new branch so CI
-caches start warming while work continues.
+Bootstrap the current worktree: pull main in the
+base repo, set up the branch, push a draft PR so
+CI caches start warming while work continues.
+
+This is the first skill an agent should run after
+`claude --worktree <tag>` starts.
 
 ## Input
 
-Requires a Linear tag like `eng-123` as the
-argument. If not provided, stop and ask the
-user for it.
+Accepts an optional Linear tag like `eng-123`.
+If not provided, infer it from the worktree
+directory name (the last component of the current
+working directory). If the inferred name doesn't
+match `eng-###` (case-insensitive), stop and ask.
 
 ## Steps
 
-1. Validate the input matches the pattern
-   `eng-###` (case-insensitive). If not, stop
-   and ask the user for a valid Linear tag.
+1. Validate that the resolved tag matches the
+   pattern `eng-###` (case-insensitive). If not,
+   stop and ask the user for it.
 
-1. If the current branch is not `main`, check
-   out `main` and pull the latest:
-
-   ```sh
-   git checkout main
-   git pull
-   ```
-
-1. Create and check out a new branch using the
-   Linear tag as the branch name:
+1. Pull main in the **base repository** (not this
+   worktree). Detect the main worktree path:
 
    ```sh
-   git checkout -b <eng-###>
+   main_wt=$(git worktree list --porcelain \
+     | awk '/^worktree /{p=$2} /^branch refs\/heads\/main$/{print p}')
+   git -C "$main_wt" pull --ff-only
    ```
 
-1. Create an empty, **signed** commit so there
-   is something to push:
+   If `main_wt` is empty (main isn't checked out
+   anywhere), skip the pull and warn the user.
+
+1. Ensure the current branch is named after the
+   Linear tag. Check the current branch:
+
+   ```sh
+   git branch --show-current
+   ```
+
+   If the name doesn't already match the tag,
+   rename it:
+
+   ```sh
+   git branch -m <eng-###>
+   ```
+
+1. Rebase onto the freshly-pulled main so the
+   worktree starts from the latest code:
+
+   ```sh
+   git rebase main
+   ```
+
+1. Create an empty, **signed** commit so there is
+   something to push:
 
    ```sh
    git commit --allow-empty -S -m "<ENG-###>"
@@ -46,13 +70,7 @@ user for it.
 
    The `-S` is mandatory: branch protection on
    this repo requires every commit to have a
-   verified signature, and the empty cache-warm
-   commit is the most painful one to retroactively
-   sign — amending it without `--allow-empty`
-   fails (no tree change), and re-signing it
-   later forces a re-sign of every child commit
-   (changes its SHA, which re-parents all
-   descendants). Sign it from the start.
+   verified signature.
 
 1. Push the branch:
 
