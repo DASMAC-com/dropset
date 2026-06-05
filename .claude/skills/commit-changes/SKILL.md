@@ -1,16 +1,16 @@
 ---
 name: commit-changes
-description: Commit only the files edited in the current session, ignoring changes from any parallel session, with a plain hand-authored-looking commit message.
+description: Stage, commit, and push changes from this worktree with a clean hand-authored commit message.
 disable-model-invocation: true
 user-invocable: true
 ---
 
 # `commit-changes`
 
-Commit only the changes that originated in the
-current session. A parallel session may have
-edits in flight on other files in the same
-working tree — those must be left alone.
+Commit and push the changes in this worktree.
+Each worktree is an isolated copy of the repo
+owned by a single agent, so all uncommitted
+changes here belong to this session.
 
 ## Steps
 
@@ -21,30 +21,17 @@ working tree — those must be left alone.
    git diff --stat
    ```
 
-1. From the current session's transcript, build
-   an explicit list of files that were edited in
-   this session (via Read / Edit / Write tool
-   calls). This is the allowlist.
-
-1. Cross-reference the allowlist against
-   `git status`. Drop any file that has no
-   uncommitted change.
-
-1. Show the user the resulting list and have
-   them confirm before staging. Any file that
-   wasn't touched in this session must be
-   excluded.
-
-1. Stage only the confirmed files by explicit
-   path:
+1. Review all changed and untracked files. Stage
+   them by explicit path:
 
    ```sh
    git add <path1> <path2> ...
    ```
 
    Never use `git add -A`, `git add .`, or
-   `git add -u`; those sweep in changes from
-   the parallel session.
+   `git add -u`. Always list paths explicitly
+   so nothing unintended slips in (build
+   artifacts, generated files, secrets).
 
 1. Draft a concise commit message:
 
@@ -65,20 +52,14 @@ working tree — those must be left alone.
 
    The `-S` is mandatory — branch protection on
    this repo requires every commit to have a
-   verified signature. Re-signing after the fact
-   forces a rebase that re-stamps every
-   descendant commit (16+ touches), so always
-   sign at commit time.
+   verified signature.
 
-1. Push the new commit to the current branch's
-   upstream. If the branch has no upstream yet,
-   set it on push:
+1. Push to the branch's upstream:
 
    ```sh
    git push 2>/dev/null || \
      git push -u origin "$(git branch --show-current)"
    ```
 
-1. Print the resulting commit hash, short
-   summary, and the push result so the user can
-   verify.
+1. Print the commit hash, short summary, and push
+   result.
