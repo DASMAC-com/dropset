@@ -25,7 +25,6 @@ discordapp
 drawdowns
 dropset
 dtolnay
-econia
 etherfuse
 eurau
 eurc

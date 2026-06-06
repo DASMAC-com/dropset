@@ -510,7 +510,7 @@ mod tests {
     // ── Specific examples ────────────────────────────────────────
 
     #[test]
-    fn econia_example_price_987() {
+    fn example_price_987() {
         // 987 = 9.87 × 10^2 → sig = 98_700_000, unbiased_exp = 2.
         let p = Price::encode(98_700_000, 2).unwrap();
         let v = p.to_f64();
