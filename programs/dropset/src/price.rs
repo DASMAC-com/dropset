@@ -9,32 +9,32 @@ use anchor_lang_v2::bytemuck::{Pod, Zeroable};
 // ── Constants ────────────────────────────────────────────────────────
 
 /// Bits occupied by the significand (lower portion of the u32).
-pub const SIGNIFICAND_BITS: u32 = 27;
+pub(crate) const SIGNIFICAND_BITS: u32 = 27;
 
 /// Bitmask isolating the 27-bit significand.
-pub const SIGNIFICAND_MASK: u32 = (1u32 << SIGNIFICAND_BITS) - 1;
+pub(crate) const SIGNIFICAND_MASK: u32 = (1u32 << SIGNIFICAND_BITS) - 1;
 
 /// Exponent bias. `unbiased = biased − BIAS`.
-pub const BIAS: u8 = 16;
+pub(crate) const BIAS: u8 = 16;
 
 /// Smallest valid significand (8 significant digits).
-pub const SIGNIFICAND_MIN: u32 = 10_000_000;
+pub(crate) const SIGNIFICAND_MIN: u32 = 10_000_000;
 
 /// Largest valid significand (8 significant digits).
-pub const SIGNIFICAND_MAX: u32 = 99_999_999;
+pub(crate) const SIGNIFICAND_MAX: u32 = 99_999_999;
 
 /// Largest biased exponent (5 bits, `0..=31`).
-pub const MAX_BIASED_EXPONENT: u8 = 31;
+pub(crate) const MAX_BIASED_EXPONENT: u8 = 31;
 
 /// Smallest unbiased exponent (`−16`).
-pub const UNBIASED_EXPONENT_MIN: i8 = 0 - BIAS as i8;
+pub(crate) const UNBIASED_EXPONENT_MIN: i8 = 0 - BIAS as i8;
 
 /// Largest unbiased exponent (`15`).
-pub const UNBIASED_EXPONENT_MAX: i8 = MAX_BIASED_EXPONENT as i8 - BIAS as i8;
+pub(crate) const UNBIASED_EXPONENT_MAX: i8 = MAX_BIASED_EXPONENT as i8 - BIAS as i8;
 
 // Compile-time invariants.
 const _: () = assert!(SIGNIFICAND_MAX < SIGNIFICAND_MASK);
-const _: () = assert!((MAX_BIASED_EXPONENT as u16 + BIAS as u16) <= u8::MAX as u16);
+const _: () = assert!(MAX_BIASED_EXPONENT as u32 == (1u32 << (32 - SIGNIFICAND_BITS)) - 1);
 
 // ── Price ────────────────────────────────────────────────────────────
 
@@ -205,7 +205,7 @@ impl Price {
         u32::MAX - self.0
     }
 
-    /// Convert to `f64` for display and testing.
+    /// Convert to `f64` for testing.
     #[cfg(test)]
     pub fn to_f64(self) -> f64 {
         if self.is_zero() {
@@ -445,6 +445,19 @@ mod tests {
     fn from_scaled_exponent_underflow() {
         // sig=1 needs 7 upscale steps → biased_exp = 5 − 7 = −2.
         assert!(Price::from_scaled(1, 5).is_none());
+    }
+
+    #[test]
+    fn from_scaled_u64_max() {
+        // u64::MAX ≈ 1.8e19 → ~12 division steps, biased_exp += 12.
+        // Starting at biased_exp=0, result should be biased_exp=12.
+        let p = Price::from_scaled(u64::MAX, 0).unwrap();
+        assert_eq!(p.significand(), 18_446_744);
+        assert_eq!(p.biased_exponent(), 12);
+        assert!(p.is_valid());
+
+        // Starting at biased_exp=20, 12 divisions push to 32 > 31.
+        assert!(Price::from_scaled(u64::MAX, 20).is_none());
     }
 
     #[test]
