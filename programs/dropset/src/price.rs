@@ -3,6 +3,23 @@
 //! `Price` is a `u32` encoding with 8 significant digits and a base-10
 //! exponent, designed so that raw unsigned integer comparison matches
 //! price-value ordering. See the architecture spec's **Price** section.
+//!
+//! # Validation
+//!
+//! `Price` derives `Pod`, so Anchor will deserialize arbitrary bytes
+//! into it without validation. [`Price::from_bits`] is similarly
+//! unchecked. **Every instruction handler that accepts a `Price` from
+//! user input must call [`Price::is_valid`] before the value
+//! participates in ordering or arithmetic.** Failing to do so allows
+//! invalid bit patterns that mis-sort in the order book.
+//!
+//! # Truncation
+//!
+//! [`Price::from_scaled`] normalizes by repeated integer division,
+//! which truncates toward zero. This is the conservative choice for a
+//! matching engine — it never rounds a price *up* past what was
+//! submitted — but callers should be aware that sub-digit precision is
+//! silently lost.
 
 use anchor_lang_v2::bytemuck::{Pod, Zeroable};
 
@@ -62,6 +79,10 @@ const _: () = assert!(MAX_BIASED_EXPONENT as u32 == (1u32 << (32 - SIGNIFICAND_B
 /// and the significand normalized to a fixed width, unsigned `u32`
 /// comparison of two prices matches comparing the values they encode.
 /// The encoding is canonical: one bit pattern per representable price.
+///
+/// **IDL note:** `Price` does not derive `IdlType`. Add the derive if
+/// this type appears in an Anchor `#[account]` struct or instruction
+/// argument that requires IDL generation.
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Pod, Zeroable)]
 #[bytemuck(crate = "anchor_lang_v2::bytemuck")]
@@ -123,6 +144,9 @@ impl Price {
     /// `Price`. Adjusts the exponent to bring the significand into the
     /// canonical 8-digit range `[10_000_000, 99_999_999]`.
     ///
+    /// Digits beyond the 8th are **truncated toward zero** (not
+    /// rounded), so the result never exceeds the true input value.
+    ///
     /// Returns `None` if the result falls outside the representable
     /// exponent range, or `Price::ZERO` when `sig` is 0.
     pub fn from_scaled(mut sig: u64, mut biased_exp: i16) -> Option<Self> {
@@ -151,8 +175,12 @@ impl Price {
 
     /// Wrap a raw `u32` without validation. Used for reading from
     /// trusted on-chain storage where the bits were written by this
-    /// program. Call [`is_valid`](Self::is_valid) if the source may be
-    /// untrusted.
+    /// program.
+    ///
+    /// **If the source is untrusted (e.g. instruction arguments or CPI
+    /// data), call [`is_valid`](Self::is_valid) before using the
+    /// result.** Invalid bit patterns compare incorrectly against valid
+    /// prices and will corrupt order-book ordering.
     #[inline(always)]
     pub const fn from_bits(bits: u32) -> Self {
         Self(bits)
