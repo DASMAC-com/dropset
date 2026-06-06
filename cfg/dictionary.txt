@@ -47,6 +47,7 @@ litesvm
 localnet
 luhansk
 macropod
+multisigs
 mxne
 navigations
 ohlcv

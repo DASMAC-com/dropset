@@ -3,8 +3,8 @@ mod common;
 use anchor_lang_v2::{programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, Signer};
 use common::{
-    assert_program_error, create_spl_mint, decode_slab, deploy_with_authority, send_ixn,
-    PROGRAM_ID, SIGNER_FUNDING_LAMPORTS,
+    assert_program_error, create_spl_mint, create_token2022_mint, decode_slab,
+    deploy_with_authority, send_ixn, PROGRAM_ID, SIGNER_FUNDING_LAMPORTS,
 };
 use dropset::{
     instruction::Init as InitInstruction, DropsetError, RegistryHeader,
@@ -137,6 +137,29 @@ fn init_succeeds_with_spl_token_mint() {
     assert_eq!(header.default_fee_config.mint, fee_mint.to_bytes().into());
     assert_eq!(header.default_fee_config.atoms.get(), TEST_FEE_ATOMS);
     // The genesis admin is the sole member of the densely-packed set.
+    assert_eq!(admins, &[genesis_admin.to_bytes()][..]);
+}
+
+#[test]
+fn init_succeeds_with_token2022_mint() {
+    let authority = Keypair::new();
+    let mut svm = deploy_with_authority(&authority);
+    let genesis_admin = Pubkey::new_unique();
+    let fee_mint = create_token2022_mint(&mut svm, &authority);
+
+    send_ixn(
+        &mut svm,
+        &authority,
+        canonical_init_ixn(authority.pubkey(), genesis_admin, fee_mint, TEST_FEE_ATOMS),
+    )
+    .expect("init with Token-2022 mint should succeed");
+
+    let account = svm
+        .get_account(&registry_address())
+        .expect("registry created");
+    let (header, admins) = decode_slab::<RegistryHeader, [u8; 32]>(&account.data);
+    assert_eq!(header.default_fee_config.mint, fee_mint.to_bytes().into());
+    assert_eq!(header.default_fee_config.atoms.get(), TEST_FEE_ATOMS);
     assert_eq!(admins, &[genesis_admin.to_bytes()][..]);
 }
 

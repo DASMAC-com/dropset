@@ -148,6 +148,10 @@ where
 /// SPL Token program ID.
 const SPL_TOKEN_PROGRAM_ID: Pubkey =
     Pubkey::from_str_const("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+#[allow(dead_code)]
+/// Token-2022 (Token Extensions) program ID.
+const TOKEN_2022_PROGRAM_ID: Pubkey =
+    Pubkey::from_str_const("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 const SYSTEM_PROGRAM_ID: Pubkey = Pubkey::from_str_const("11111111111111111111111111111111");
 
 /// SPL Token Mint account size (bytes).
@@ -182,6 +186,42 @@ pub fn create_spl_mint(svm: &mut LiteSVM, authority: &Keypair) -> Pubkey {
 
     let init_mint = Instruction::new_with_bytes(
         SPL_TOKEN_PROGRAM_ID,
+        &mint_data,
+        vec![AccountMeta::new(mint_kp.pubkey(), false)],
+    );
+
+    send_signed(svm, &[authority, &mint_kp], &[create, init_mint]);
+    mint_kp.pubkey()
+}
+
+/// Create a Token-2022 mint with 6 decimals, owned by `authority`.
+/// Returns the mint address.
+#[allow(dead_code)]
+pub fn create_token2022_mint(svm: &mut LiteSVM, authority: &Keypair) -> Pubkey {
+    let mint_kp = Keypair::new();
+    let lamports = svm.minimum_balance_for_rent_exemption(MINT_LEN);
+
+    let mut create_data = Vec::with_capacity(4 + 8 + 8 + 32);
+    create_data.extend_from_slice(&0u32.to_le_bytes());
+    create_data.extend_from_slice(&lamports.to_le_bytes());
+    create_data.extend_from_slice(&(MINT_LEN as u64).to_le_bytes());
+    create_data.extend_from_slice(&TOKEN_2022_PROGRAM_ID.to_bytes());
+
+    let create = Instruction::new_with_bytes(
+        SYSTEM_PROGRAM_ID,
+        &create_data,
+        vec![
+            AccountMeta::new(authority.pubkey(), true),
+            AccountMeta::new(mint_kp.pubkey(), true),
+        ],
+    );
+
+    let mut mint_data = vec![20u8, 6];
+    mint_data.extend_from_slice(&authority.pubkey().to_bytes());
+    mint_data.push(0); // COption::None for freeze authority
+
+    let init_mint = Instruction::new_with_bytes(
+        TOKEN_2022_PROGRAM_ID,
         &mint_data,
         vec![AccountMeta::new(mint_kp.pubkey(), false)],
     );

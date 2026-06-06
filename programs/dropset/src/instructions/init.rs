@@ -26,8 +26,8 @@ struct ProgramDataHeader {
 pub struct Init {
     #[account(mut)]
     pub payer: Signer,
-    // Sized for the genesis admin only; grow the slab when admin
-    // management is added.
+    // Sized for the genesis admin only; `admin_insert` grows the slab
+    // dynamically when more admins are added.
     #[account(init, payer = payer, space = Registry::space_for(1), seeds = [b"registry"], bump)]
     pub registry: Registry,
     pub system_program: Program<System>,
@@ -39,7 +39,7 @@ pub struct Init {
     /// written and no other invariant is assumed.
     pub program_data: UncheckedAccount,
     /// The mint to charge fees in. Must be owned by SPL Token or
-    /// Token-2022; `init()` validates the owner on-chain.
+    /// Token-2022; `init()` validates the owner and data length.
     pub fee_mint: UncheckedAccount,
 }
 
@@ -75,11 +75,23 @@ impl Init {
             return Err(DropsetError::InvalidUpgradeAuthority.into());
         }
 
-        // Verify the fee mint is owned by SPL Token or Token-2022.
+        // Verify the fee mint is owned by SPL Token or Token-2022 and
+        // is actually a Mint account (not a token account or multisig).
+        // SPL Token Mint is always exactly 82 bytes; token accounts are
+        // 165 and multisigs 355. Token-2022 Mints are 82+ (extensions
+        // may follow the base layout).
+        const MINT_BASE_LEN: usize = 82;
         let mint_owner = self.fee_mint.account().owner();
-        if !address_eq(mint_owner, &SPL_TOKEN_PROGRAM_ID)
-            && !address_eq(mint_owner, &TOKEN_2022_PROGRAM_ID)
-        {
+        let mint_data = self.fee_mint.account().try_borrow()?;
+        if address_eq(mint_owner, &SPL_TOKEN_PROGRAM_ID) {
+            if mint_data.len() != MINT_BASE_LEN {
+                return Err(DropsetError::InvalidFeeMint.into());
+            }
+        } else if address_eq(mint_owner, &TOKEN_2022_PROGRAM_ID) {
+            if mint_data.len() < MINT_BASE_LEN {
+                return Err(DropsetError::InvalidFeeMint.into());
+            }
+        } else {
             return Err(DropsetError::InvalidFeeMint.into());
         }
 
