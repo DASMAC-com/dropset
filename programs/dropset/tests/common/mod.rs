@@ -2,7 +2,7 @@ use anchor_lang_v2::{bytemuck, Discriminator};
 use anchor_v2_testing::{
     Keypair, LiteSVM, Message, Signer, VersionedMessage, VersionedTransaction,
 };
-use solana_instruction::Instruction;
+use solana_instruction::{AccountMeta, Instruction};
 use solana_loader_v3_interface::{instruction as loader_v3, state::UpgradeableLoaderState};
 use solana_native_token::LAMPORTS_PER_SOL;
 use solana_pubkey::Pubkey;
@@ -143,6 +143,138 @@ where
     let (disc, body) = data.split_at(disc_len);
     assert_eq!(disc, T::DISCRIMINATOR, "discriminator mismatch");
     assert_eq!(body, bytemuck::bytes_of(expected), "body bytes mismatch");
+}
+
+/// SPL Token program ID.
+const SPL_TOKEN_PROGRAM_ID: Pubkey =
+    Pubkey::from_str_const("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+#[allow(dead_code)]
+/// Token-2022 (Token Extensions) program ID.
+const TOKEN_2022_PROGRAM_ID: Pubkey =
+    Pubkey::from_str_const("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
+const SYSTEM_PROGRAM_ID: Pubkey = Pubkey::from_str_const("11111111111111111111111111111111");
+
+/// SPL Token Mint account size (bytes).
+const MINT_LEN: usize = 82;
+/// SPL Token Account size (bytes).
+#[allow(dead_code)]
+const TOKEN_ACCOUNT_LEN: usize = 165;
+
+/// Create an SPL Token mint with 6 decimals, owned by `authority`.
+/// Returns the mint address.
+pub fn create_spl_mint(svm: &mut LiteSVM, authority: &Keypair) -> Pubkey {
+    let mint_kp = Keypair::new();
+    let lamports = svm.minimum_balance_for_rent_exemption(MINT_LEN);
+
+    // SystemProgram::CreateAccount instruction (index 0).
+    let mut create_data = Vec::with_capacity(4 + 8 + 8 + 32);
+    create_data.extend_from_slice(&0u32.to_le_bytes()); // instruction index
+    create_data.extend_from_slice(&lamports.to_le_bytes());
+    create_data.extend_from_slice(&(MINT_LEN as u64).to_le_bytes());
+    create_data.extend_from_slice(&SPL_TOKEN_PROGRAM_ID.to_bytes());
+
+    let create = Instruction::new_with_bytes(
+        SYSTEM_PROGRAM_ID,
+        &create_data,
+        vec![
+            AccountMeta::new(authority.pubkey(), true),
+            AccountMeta::new(mint_kp.pubkey(), true),
+        ],
+    );
+
+    // InitializeMint2 instruction data: [20u8, decimals, mint_authority(32), 0 (no freeze)]
+    let mut mint_data = vec![20u8, 6]; // discriminator + 6 decimals
+    mint_data.extend_from_slice(&authority.pubkey().to_bytes()); // mint authority
+    mint_data.push(0); // COption::None for freeze authority
+
+    let init_mint = Instruction::new_with_bytes(
+        SPL_TOKEN_PROGRAM_ID,
+        &mint_data,
+        vec![AccountMeta::new(mint_kp.pubkey(), false)],
+    );
+
+    send_signed(svm, &[authority, &mint_kp], &[create, init_mint]);
+    mint_kp.pubkey()
+}
+
+/// Create a Token-2022 mint with 6 decimals, owned by `authority`.
+/// Returns the mint address.
+#[allow(dead_code)]
+pub fn create_token2022_mint(svm: &mut LiteSVM, authority: &Keypair) -> Pubkey {
+    let mint_kp = Keypair::new();
+    let lamports = svm.minimum_balance_for_rent_exemption(MINT_LEN);
+
+    let mut create_data = Vec::with_capacity(4 + 8 + 8 + 32);
+    create_data.extend_from_slice(&0u32.to_le_bytes());
+    create_data.extend_from_slice(&lamports.to_le_bytes());
+    create_data.extend_from_slice(&(MINT_LEN as u64).to_le_bytes());
+    create_data.extend_from_slice(&TOKEN_2022_PROGRAM_ID.to_bytes());
+
+    let create = Instruction::new_with_bytes(
+        SYSTEM_PROGRAM_ID,
+        &create_data,
+        vec![
+            AccountMeta::new(authority.pubkey(), true),
+            AccountMeta::new(mint_kp.pubkey(), true),
+        ],
+    );
+
+    let mut mint_data = vec![20u8, 6];
+    mint_data.extend_from_slice(&authority.pubkey().to_bytes());
+    mint_data.push(0); // COption::None for freeze authority
+
+    let init_mint = Instruction::new_with_bytes(
+        TOKEN_2022_PROGRAM_ID,
+        &mint_data,
+        vec![AccountMeta::new(mint_kp.pubkey(), false)],
+    );
+
+    send_signed(svm, &[authority, &mint_kp], &[create, init_mint]);
+    mint_kp.pubkey()
+}
+
+/// Create a Token-2022 token account (165 bytes) for the given mint.
+/// Returns the token account address — useful for testing that the
+/// program correctly rejects a token account passed as a mint.
+#[allow(dead_code)]
+pub fn create_token2022_token_account(
+    svm: &mut LiteSVM,
+    authority: &Keypair,
+    mint: &Pubkey,
+) -> Pubkey {
+    let acct_kp = Keypair::new();
+    let lamports = svm.minimum_balance_for_rent_exemption(TOKEN_ACCOUNT_LEN);
+
+    let mut create_data = Vec::with_capacity(4 + 8 + 8 + 32);
+    create_data.extend_from_slice(&0u32.to_le_bytes());
+    create_data.extend_from_slice(&lamports.to_le_bytes());
+    create_data.extend_from_slice(&(TOKEN_ACCOUNT_LEN as u64).to_le_bytes());
+    create_data.extend_from_slice(&TOKEN_2022_PROGRAM_ID.to_bytes());
+
+    let create = Instruction::new_with_bytes(
+        SYSTEM_PROGRAM_ID,
+        &create_data,
+        vec![
+            AccountMeta::new(authority.pubkey(), true),
+            AccountMeta::new(acct_kp.pubkey(), true),
+        ],
+    );
+
+    // InitializeAccount3: [18u8, owner_pubkey(32)]
+    let mut init_data = vec![18u8];
+    init_data.extend_from_slice(&authority.pubkey().to_bytes());
+
+    let init_acct = Instruction::new_with_bytes(
+        TOKEN_2022_PROGRAM_ID,
+        &init_data,
+        vec![
+            AccountMeta::new(acct_kp.pubkey(), false),
+            AccountMeta::new_readonly(*mint, false),
+        ],
+    );
+
+    send_signed(svm, &[authority, &acct_kp], &[create, init_acct]);
+    acct_kp.pubkey()
 }
 
 fn send_signed(svm: &mut LiteSVM, signers: &[&Keypair], instructions: &[Instruction]) {

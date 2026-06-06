@@ -3,8 +3,8 @@ mod common;
 use anchor_lang_v2::{programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, LiteSVM, Signer};
 use common::{
-    assert_program_error, decode_slab, deploy_with_authority, send_ixn, PROGRAM_ID,
-    SIGNER_FUNDING_LAMPORTS,
+    assert_program_error, create_spl_mint, decode_slab, deploy_with_authority, send_ixn,
+    PROGRAM_ID, SIGNER_FUNDING_LAMPORTS,
 };
 use dropset::{
     instruction::{AddAdmin as AddAdminIx, Init as InitIx, RemoveAdmin as RemoveAdminIx},
@@ -18,15 +18,20 @@ fn registry_pda() -> Pubkey {
     Pubkey::find_program_address(&[b"registry"], &PROGRAM_ID).0
 }
 
-fn init_ixn(payer: Pubkey, genesis_admin: Pubkey) -> Instruction {
+fn init_ixn(payer: Pubkey, genesis_admin: Pubkey, fee_mint: Pubkey) -> Instruction {
     Instruction::new_with_bytes(
         PROGRAM_ID,
-        &InitIx { genesis_admin }.data(),
+        &InitIx {
+            genesis_admin,
+            fee_atoms: 1_000_000_000,
+        }
+        .data(),
         vec![
             AccountMeta::new(payer, true),
             AccountMeta::new(registry_pda(), false),
             AccountMeta::new_readonly(System::id(), false),
             AccountMeta::new_readonly(get_program_data_address(&PROGRAM_ID), false),
+            AccountMeta::new_readonly(fee_mint, false),
         ],
     )
 }
@@ -59,10 +64,11 @@ fn remove_ixn(admin: Pubkey, target: Pubkey) -> Instruction {
 fn setup() -> (LiteSVM, Keypair) {
     let authority = Keypair::new();
     let mut svm = deploy_with_authority(&authority);
+    let fee_mint = create_spl_mint(&mut svm, &authority);
     send_ixn(
         &mut svm,
         &authority,
-        init_ixn(authority.pubkey(), authority.pubkey()),
+        init_ixn(authority.pubkey(), authority.pubkey(), fee_mint),
     )
     .expect("init should succeed");
     (svm, authority)

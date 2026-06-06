@@ -15,6 +15,13 @@ pub type Ppm16 = u16;
 /// skin-in-the-game floor. Stored as an alignment-1 `PodU32`.
 pub type Ppm32 = u32;
 
+/// SPL Token program.
+pub const SPL_TOKEN_PROGRAM_ID: Address =
+    Address::from_str_const("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+/// Token-2022 (Token Extensions) program.
+pub const TOKEN_2022_PROGRAM_ID: Address =
+    Address::from_str_const("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
+
 /// Initial per-market vault cap stamped onto new markets.
 pub const DEFAULT_MAX_VAULTS_PER_MARKET: u8 = 10;
 /// Initial taker fee (ppm) stamped onto new markets. The spec sets no

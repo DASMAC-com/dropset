@@ -1,6 +1,7 @@
 use crate::errors::DropsetError;
 use crate::{
-    AdminSet, Registry, DEFAULT_MAX_VAULTS_PER_MARKET, DEFAULT_MIN_LEADER_SHARE, DEFAULT_TAKER_FEE,
+    AdminSet, FeeConfig, Registry, DEFAULT_MAX_VAULTS_PER_MARKET, DEFAULT_MIN_LEADER_SHARE,
+    DEFAULT_TAKER_FEE, SPL_TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID,
 };
 use anchor_lang_v2::{
     address_eq,
@@ -25,8 +26,8 @@ struct ProgramDataHeader {
 pub struct Init {
     #[account(mut)]
     pub payer: Signer,
-    // Sized for the genesis admin only; grow the slab when admin
-    // management is added.
+    // Sized for the genesis admin only; `admin_insert` grows the slab
+    // dynamically when more admins are added.
     #[account(init, payer = payer, space = Registry::space_for(1), seeds = [b"registry"], bump)]
     pub registry: Registry,
     pub system_program: Program<System>,
@@ -37,11 +38,21 @@ pub struct Init {
     /// header to authenticate the upgrade authority — no data is
     /// written and no other invariant is assumed.
     pub program_data: UncheckedAccount,
+    /// The mint to charge fees in. Must be owned by SPL Token or
+    /// Token-2022; `init()` validates the owner, data length, and
+    /// (for Token-2022 with extensions) the AccountType discriminator.
+    pub fee_mint: UncheckedAccount,
 }
 
 impl Init {
     #[inline(always)]
-    pub fn init(&mut self, bump: u8, genesis_admin: Address, program_id: &Address) -> Result<()> {
+    pub fn init(
+        &mut self,
+        bump: u8,
+        genesis_admin: Address,
+        fee_atoms: u64,
+        program_id: &Address,
+    ) -> Result<()> {
         let program_data_account = self.program_data.account();
 
         // Verify the program data account.
@@ -65,14 +76,47 @@ impl Init {
             return Err(DropsetError::InvalidUpgradeAuthority.into());
         }
 
+        // Verify the fee mint is owned by SPL Token or Token-2022 and
+        // is actually a Mint account (not a token account or multisig).
+        //
+        // SPL Token: Mint is always exactly 82 bytes (token accounts
+        // are 165, multisigs 355), so an exact-length check suffices.
+        //
+        // Token-2022: base Mint is 82 bytes; extensions append after
+        // an AccountType discriminator at offset 82.  When extensions
+        // are present (len > 82) we verify that byte is
+        // AccountType::Mint (1) — this is the same check Token-2022's
+        // own `StateWithExtensions::<Mint>::unpack` performs.
+        const MINT_BASE_LEN: usize = 82;
+        const ACCOUNT_TYPE_MINT: u8 = 1;
+        let mint_owner = self.fee_mint.account().owner();
+        let mint_data = self.fee_mint.account().try_borrow()?;
+        if address_eq(mint_owner, &SPL_TOKEN_PROGRAM_ID) {
+            if mint_data.len() != MINT_BASE_LEN {
+                return Err(DropsetError::InvalidFeeMint.into());
+            }
+        } else if address_eq(mint_owner, &TOKEN_2022_PROGRAM_ID) {
+            if mint_data.len() < MINT_BASE_LEN {
+                return Err(DropsetError::InvalidFeeMint.into());
+            }
+            if mint_data.len() > MINT_BASE_LEN && mint_data[MINT_BASE_LEN] != ACCOUNT_TYPE_MINT {
+                return Err(DropsetError::InvalidFeeMint.into());
+            }
+        } else {
+            return Err(DropsetError::InvalidFeeMint.into());
+        }
+
         // Init registry values. Header fields via DerefMut; the admin
-        // set is the slab tail. `default_fee_config` is left zeroed —
-        // no fee mint is configured at genesis.
+        // set is the slab tail.
         let registry = &mut self.registry;
         registry.bump = bump;
         registry.max_vaults_per_market = DEFAULT_MAX_VAULTS_PER_MARKET;
         registry.default_taker_fee = DEFAULT_TAKER_FEE.into();
         registry.default_min_leader_share = DEFAULT_MIN_LEADER_SHARE.into();
+        registry.default_fee_config = FeeConfig {
+            mint: *self.fee_mint.address(),
+            atoms: fee_atoms.into(),
+        };
         // The account is pre-sized for one admin, so this seats the
         // genesis admin without growing or charging extra rent.
         registry.admin_insert(genesis_admin, self.payer.as_ref())?;

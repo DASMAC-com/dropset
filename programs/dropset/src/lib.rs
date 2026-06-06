@@ -18,9 +18,9 @@ pub mod dropset {
     use super::*;
 
     #[discrim = 0]
-    pub fn init(ctx: &mut Context<Init>, genesis_admin: Address) -> Result<()> {
+    pub fn init(ctx: &mut Context<Init>, genesis_admin: Address, fee_atoms: u64) -> Result<()> {
         ctx.accounts
-            .init(ctx.bumps.registry, genesis_admin, ctx.program_id)
+            .init(ctx.bumps.registry, genesis_admin, fee_atoms, ctx.program_id)
     }
 
     #[discrim = 1]
