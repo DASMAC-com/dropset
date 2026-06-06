@@ -156,6 +156,9 @@ const SYSTEM_PROGRAM_ID: Pubkey = Pubkey::from_str_const("1111111111111111111111
 
 /// SPL Token Mint account size (bytes).
 const MINT_LEN: usize = 82;
+/// SPL Token Account size (bytes).
+#[allow(dead_code)]
+const TOKEN_ACCOUNT_LEN: usize = 165;
 
 /// Create an SPL Token mint with 6 decimals, owned by `authority`.
 /// Returns the mint address.
@@ -228,6 +231,50 @@ pub fn create_token2022_mint(svm: &mut LiteSVM, authority: &Keypair) -> Pubkey {
 
     send_signed(svm, &[authority, &mint_kp], &[create, init_mint]);
     mint_kp.pubkey()
+}
+
+/// Create a Token-2022 token account (165 bytes) for the given mint.
+/// Returns the token account address — useful for testing that the
+/// program correctly rejects a token account passed as a mint.
+#[allow(dead_code)]
+pub fn create_token2022_token_account(
+    svm: &mut LiteSVM,
+    authority: &Keypair,
+    mint: &Pubkey,
+) -> Pubkey {
+    let acct_kp = Keypair::new();
+    let lamports = svm.minimum_balance_for_rent_exemption(TOKEN_ACCOUNT_LEN);
+
+    let mut create_data = Vec::with_capacity(4 + 8 + 8 + 32);
+    create_data.extend_from_slice(&0u32.to_le_bytes());
+    create_data.extend_from_slice(&lamports.to_le_bytes());
+    create_data.extend_from_slice(&(TOKEN_ACCOUNT_LEN as u64).to_le_bytes());
+    create_data.extend_from_slice(&TOKEN_2022_PROGRAM_ID.to_bytes());
+
+    let create = Instruction::new_with_bytes(
+        SYSTEM_PROGRAM_ID,
+        &create_data,
+        vec![
+            AccountMeta::new(authority.pubkey(), true),
+            AccountMeta::new(acct_kp.pubkey(), true),
+        ],
+    );
+
+    // InitializeAccount3: [18u8, owner_pubkey(32)]
+    let mut init_data = vec![18u8];
+    init_data.extend_from_slice(&authority.pubkey().to_bytes());
+
+    let init_acct = Instruction::new_with_bytes(
+        TOKEN_2022_PROGRAM_ID,
+        &init_data,
+        vec![
+            AccountMeta::new(acct_kp.pubkey(), false),
+            AccountMeta::new_readonly(*mint, false),
+        ],
+    );
+
+    send_signed(svm, &[authority, &acct_kp], &[create, init_acct]);
+    acct_kp.pubkey()
 }
 
 fn send_signed(svm: &mut LiteSVM, signers: &[&Keypair], instructions: &[Instruction]) {

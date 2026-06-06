@@ -3,8 +3,8 @@ mod common;
 use anchor_lang_v2::{programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, Signer};
 use common::{
-    assert_program_error, create_spl_mint, create_token2022_mint, decode_slab,
-    deploy_with_authority, send_ixn, PROGRAM_ID, SIGNER_FUNDING_LAMPORTS,
+    assert_program_error, create_spl_mint, create_token2022_mint, create_token2022_token_account,
+    decode_slab, deploy_with_authority, send_ixn, PROGRAM_ID, SIGNER_FUNDING_LAMPORTS,
 };
 use dropset::{
     instruction::Init as InitInstruction, DropsetError, RegistryHeader,
@@ -161,6 +161,29 @@ fn init_succeeds_with_token2022_mint() {
     assert_eq!(header.default_fee_config.mint, fee_mint.to_bytes().into());
     assert_eq!(header.default_fee_config.atoms.get(), TEST_FEE_ATOMS);
     assert_eq!(admins, &[genesis_admin.to_bytes()][..]);
+}
+
+#[test]
+fn init_rejects_token2022_token_account_as_mint() {
+    let authority = Keypair::new();
+    let mut svm = deploy_with_authority(&authority);
+    let mint = create_token2022_mint(&mut svm, &authority);
+    let token_account = create_token2022_token_account(&mut svm, &authority, &mint);
+
+    // A Token-2022 token account (165 bytes) is owned by Token-2022 but
+    // is not a mint — the data-length / AccountType check must reject it.
+    let err = send_ixn(
+        &mut svm,
+        &authority,
+        canonical_init_ixn(
+            authority.pubkey(),
+            Pubkey::new_unique(),
+            token_account,
+            TEST_FEE_ATOMS,
+        ),
+    )
+    .expect_err("token account must not be accepted as a fee mint");
+    assert_program_error(&err, DropsetError::InvalidFeeMint);
 }
 
 #[test]

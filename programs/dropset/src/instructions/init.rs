@@ -39,7 +39,8 @@ pub struct Init {
     /// written and no other invariant is assumed.
     pub program_data: UncheckedAccount,
     /// The mint to charge fees in. Must be owned by SPL Token or
-    /// Token-2022; `init()` validates the owner and data length.
+    /// Token-2022; `init()` validates the owner, data length, and
+    /// (for Token-2022 with extensions) the AccountType discriminator.
     pub fee_mint: UncheckedAccount,
 }
 
@@ -77,10 +78,17 @@ impl Init {
 
         // Verify the fee mint is owned by SPL Token or Token-2022 and
         // is actually a Mint account (not a token account or multisig).
-        // SPL Token Mint is always exactly 82 bytes; token accounts are
-        // 165 and multisigs 355. Token-2022 Mints are 82+ (extensions
-        // may follow the base layout).
+        //
+        // SPL Token: Mint is always exactly 82 bytes (token accounts
+        // are 165, multisigs 355), so an exact-length check suffices.
+        //
+        // Token-2022: base Mint is 82 bytes; extensions append after
+        // an AccountType discriminator at offset 82.  When extensions
+        // are present (len > 82) we verify that byte is
+        // AccountType::Mint (1) — this is the same check Token-2022's
+        // own `StateWithExtensions::<Mint>::unpack` performs.
         const MINT_BASE_LEN: usize = 82;
+        const ACCOUNT_TYPE_MINT: u8 = 1;
         let mint_owner = self.fee_mint.account().owner();
         let mint_data = self.fee_mint.account().try_borrow()?;
         if address_eq(mint_owner, &SPL_TOKEN_PROGRAM_ID) {
@@ -89,6 +97,9 @@ impl Init {
             }
         } else if address_eq(mint_owner, &TOKEN_2022_PROGRAM_ID) {
             if mint_data.len() < MINT_BASE_LEN {
+                return Err(DropsetError::InvalidFeeMint.into());
+            }
+            if mint_data.len() > MINT_BASE_LEN && mint_data[MINT_BASE_LEN] != ACCOUNT_TYPE_MINT {
                 return Err(DropsetError::InvalidFeeMint.into());
             }
         } else {
