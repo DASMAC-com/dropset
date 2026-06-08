@@ -50,11 +50,13 @@ export function registerMetaMaskConnect(): Promise<void> {
       },
       // Reuse the app's mainnet RPC so this doesn't need its own Infura key.
       api: { supportedNetworks: { mainnet: PUBLIC_RPC_URL } },
-      // The SDK enables dapp-side telemetry by default and POSTs to MetaMask's
-      // analytics endpoint on init; when that request is blocked (ad/tracker
-      // blockers) it surfaces as an uncaught "Failed to fetch" in the console.
-      // A DEX has no business firing MetaMask telemetry regardless, so off.
-      analytics: { enabled: false },
+      // Analytics is on. The SDK ships only connection / wallet-action
+      // counters (no wallet address, no IP, no PII) to MetaMask's analytics
+      // endpoint, and only after the user actually triggers a flow — not on
+      // init. Failed batches are caught and retried inside the SDK, so an ad
+      // blocker won't surface as a console error here. Helps MetaMask spot
+      // dapp-side connection regressions; cost to us is zero.
+      analytics: { enabled: true },
     });
   })().catch((error) => {
     // A failed registration must not take down the rest of the wallet picker;
