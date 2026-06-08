@@ -21,7 +21,10 @@
 //! submitted — but callers should be aware that sub-digit precision is
 //! silently lost.
 
-use anchor_lang_v2::bytemuck::{Pod, Zeroable};
+use anchor_lang_v2::{
+    bytemuck::{Pod, Zeroable},
+    IdlType,
+};
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -84,7 +87,7 @@ const _: () = assert!(MAX_BIASED_EXPONENT as u32 == (1u32 << (32 - SIGNIFICAND_B
 /// this type appears in an Anchor `#[account]` struct or instruction
 /// argument that requires IDL generation.
 #[repr(transparent)]
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Pod, Zeroable)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Pod, Zeroable, IdlType)]
 #[bytemuck(crate = "anchor_lang_v2::bytemuck")]
 pub struct Price(u32);
 

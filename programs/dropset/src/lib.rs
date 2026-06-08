@@ -32,4 +32,9 @@ pub mod dropset {
     pub fn remove_admin(ctx: &mut Context<RemoveAdmin>, target: Address) -> Result<()> {
         ctx.accounts.remove_admin(target)
     }
+
+    #[discrim = 3]
+    pub fn register_market(ctx: &mut Context<RegisterMarket>) -> Result<()> {
+        ctx.accounts.register_market(ctx.bumps.market)
+    }
 }

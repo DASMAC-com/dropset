@@ -18,4 +18,12 @@ pub enum DropsetError {
     AdminNotFound,
     #[msg("cannot remove the last remaining registry admin")]
     CannotRemoveLastAdmin,
+    #[msg("fee mint does not match the registry's configured fee mint")]
+    InvalidFeeMint,
+    #[msg("base and quote mints must differ")]
+    DuplicateBaseQuoteMint,
+    #[msg("supplied sector index is out of range")]
+    InvalidSectorIndex,
+    #[msg("vault list pointers are inconsistent with the list head")]
+    CorruptVaultList,
 }
