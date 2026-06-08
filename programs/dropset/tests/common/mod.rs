@@ -123,6 +123,19 @@ pub fn assert_program_error(err: &str, code: dropset::DropsetError) {
     assert!(err.contains(&expected), "expected {expected}, got: {err}");
 }
 
+/// Assert a `send_ixn` failure carries `variant` of Solana's
+/// `InstructionError` — e.g. `"IllegalOwner"`, `"InvalidAccountData"`,
+/// `"IncorrectProgramId"`, `"InvalidSeeds"`. Used for negative tests
+/// whose rejection comes from the runtime or a CPI rather than from a
+/// `DropsetError`.
+#[allow(dead_code)]
+pub fn assert_instruction_error(err: &str, variant: &str) {
+    assert!(
+        err.contains(variant),
+        "expected InstructionError containing {variant:?}, got: {err}"
+    );
+}
+
 /// Assert an anchor `#[account]` buffer matches `expected` exactly: owned
 /// by the program, prefixed with `T`'s discriminator, body bytes
 /// bytemuck-equal to `expected`, total length equal to

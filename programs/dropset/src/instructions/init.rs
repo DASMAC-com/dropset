@@ -46,9 +46,10 @@ pub struct Init {
     /// `Mint` — so no separate length / discriminator check is needed.
     pub fee_mint: InterfaceAccount<Mint>,
     /// Registry-owned fee vault for the per-`OpenVault` charge. Created
-    /// here via the ATA program; that CPI rejects any `fee_mint` the
-    /// token program can't unpack as a mint, which is the real
-    /// gatekeeper for invalid mints.
+    /// here by CPI to the ATA program; its address is the canonical
+    /// ATA over `(registry, token_program, fee_mint)`, and the ATA
+    /// program rejects any `(mint, token_program)` pair whose owners
+    /// disagree — a second backstop after `InterfaceAccount<Mint>`.
     #[account(
         init,
         payer = payer,
@@ -57,9 +58,11 @@ pub struct Init {
         associated_token::token_program = token_program,
     )]
     pub fee_vault: InterfaceAccount<TokenAccount>,
-    /// Token program owning `fee_mint` — SPL Token or Token-2022. The
-    /// ATA-init constraint passes this through to the ATA CPI and
-    /// requires it match `fee_mint`'s owner.
+    /// Token program owning `fee_mint` — SPL Token or Token-2022.
+    /// Passed through to the ATA program for the create CPI; the
+    /// derived ATA address bakes this in (seeds include the token
+    /// program), so a mismatched value yields a wrong ATA and init
+    /// fails.
     pub token_program: UncheckedAccount,
     pub associated_token_program: Program<AssociatedToken>,
     pub system_program: Program<System>,

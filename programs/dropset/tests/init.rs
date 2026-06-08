@@ -3,9 +3,10 @@ mod common;
 use anchor_lang_v2::{programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, Signer};
 use common::{
-    assert_program_error, associated_token_address, create_spl_mint, create_token2022_mint,
-    create_token2022_token_account, decode_slab, deploy_with_authority, send_ixn, ATA_PROGRAM_ID,
-    PROGRAM_ID, SIGNER_FUNDING_LAMPORTS, SPL_TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID,
+    assert_instruction_error, assert_program_error, associated_token_address, create_spl_mint,
+    create_token2022_mint, create_token2022_token_account, decode_slab, deploy_with_authority,
+    send_ixn, ATA_PROGRAM_ID, PROGRAM_ID, SIGNER_FUNDING_LAMPORTS, SPL_TOKEN_PROGRAM_ID,
+    TOKEN_2022_PROGRAM_ID,
 };
 use dropset::{
     instruction::Init as InitInstruction, DropsetError, RegistryHeader,
@@ -119,18 +120,44 @@ fn init_rejects_non_upgrade_authority() {
 }
 
 /// Assert the registry's fee vault was created as the ATA over
-/// `(registry, token_program, fee_mint)` and is owned by `token_program`.
+/// `(registry, token_program, fee_mint)` and matches the on-chain
+/// shape the ATA program produces for `token_program` — SPL Token is
+/// 165 bytes; Token-2022 is 165 base + 1 `AccountType` + 4 bytes for
+/// the `ImmutableOwner` extension the ATA program enables by default.
 fn assert_fee_vault_created(
     svm: &anchor_v2_testing::LiteSVM,
     fee_mint: Pubkey,
     token_program: Pubkey,
 ) {
+    const SPL_TOKEN_ACCOUNT_LEN: usize = 165;
+    const TOKEN_2022_ATA_LEN: usize = 170;
     let vault_addr = associated_token_address(&registry_address(), &fee_mint, &token_program);
     let vault = svm
         .get_account(&vault_addr)
         .expect("fee vault should be created");
     assert_eq!(vault.owner, token_program, "fee vault owner mismatch");
-    assert!(!vault.data.is_empty(), "fee vault data is empty");
+    let expected_len = if token_program == TOKEN_2022_PROGRAM_ID {
+        TOKEN_2022_ATA_LEN
+    } else {
+        SPL_TOKEN_ACCOUNT_LEN
+    };
+    assert_eq!(
+        vault.data.len(),
+        expected_len,
+        "fee vault data length mismatch for {token_program}"
+    );
+    // The token account's `mint` field sits at offset 0 of its data
+    // (32 bytes), then `owner` at offset 32 (32 bytes). Verify the
+    // registry is the on-chain owner of the vault — i.e. only a CPI
+    // signed with the registry PDA can move the funds.
+    let mint_field: [u8; 32] = vault.data[..32].try_into().unwrap();
+    let owner_field: [u8; 32] = vault.data[32..64].try_into().unwrap();
+    assert_eq!(mint_field, fee_mint.to_bytes(), "fee vault mint mismatch");
+    assert_eq!(
+        owner_field,
+        registry_address().to_bytes(),
+        "fee vault SPL owner is not the registry PDA"
+    );
 }
 
 #[test]
@@ -204,9 +231,10 @@ fn init_succeeds_with_token2022_mint() {
 }
 
 /// A Token-2022 token account (165 bytes, not 82) passed in the mint
-/// slot. Validation now happens via `InterfaceAccount<Mint>` /
-/// the ATA-init CPI rather than a manual length check, so we only
-/// assert the call is rejected — no specific custom error code.
+/// slot. `InterfaceAccount<Mint>` deserialization is the primary
+/// rejection — `PodMint::unpack` reads the trailing `AccountType` byte
+/// and refuses the wrong discriminator, surfacing as a runtime
+/// `InvalidAccountData`.
 #[test]
 fn init_rejects_token2022_token_account_as_mint() {
     let authority = Keypair::new();
@@ -214,7 +242,7 @@ fn init_rejects_token2022_token_account_as_mint() {
     let mint = create_token2022_mint(&mut svm, &authority);
     let token_account = create_token2022_token_account(&mut svm, &authority, &mint);
 
-    send_ixn(
+    let err = send_ixn(
         &mut svm,
         &authority,
         canonical_init_ixn(
@@ -226,10 +254,12 @@ fn init_rejects_token2022_token_account_as_mint() {
         ),
     )
     .expect_err("token account must not be accepted as a fee mint");
+    assert_instruction_error(&err, "InvalidAccountData");
 }
 
-/// A system-owned account passed as the mint — neither owned by SPL
-/// Token nor Token-2022. As above, we only assert init refuses it.
+/// A system-owned account passed as the mint. `InterfaceAccount<Mint>`
+/// rejects it on the owner check (not Token / Token-2022), which the
+/// runtime reports as `IllegalOwner`.
 #[test]
 fn init_rejects_non_token_mint() {
     let authority = Keypair::new();
@@ -238,7 +268,7 @@ fn init_rejects_non_token_mint() {
     let bogus_mint = Pubkey::new_unique();
     svm.airdrop(&bogus_mint, SIGNER_FUNDING_LAMPORTS).unwrap();
 
-    send_ixn(
+    let err = send_ixn(
         &mut svm,
         &authority,
         canonical_init_ixn(
@@ -250,6 +280,65 @@ fn init_rejects_non_token_mint() {
         ),
     )
     .expect_err("non-token mint must be rejected");
+    assert_instruction_error(&err, "IllegalOwner");
+}
+
+/// `fee_mint` and `token_program` don't agree (SPL Token mint passed
+/// alongside the Token-2022 program). The ATA program CPI's owner
+/// check on the mint surfaces as `IncorrectProgramId`.
+#[test]
+fn init_rejects_mismatched_token_program() {
+    let authority = Keypair::new();
+    let mut svm = deploy_with_authority(&authority);
+    let mint = create_spl_mint(&mut svm, &authority);
+
+    let err = send_ixn(
+        &mut svm,
+        &authority,
+        canonical_init_ixn(
+            authority.pubkey(),
+            Pubkey::new_unique(),
+            mint,
+            TEST_FEE_ATOMS,
+            TOKEN_2022_PROGRAM_ID,
+        ),
+    )
+    .expect_err("token_program / fee_mint mismatch must be rejected");
+    assert_instruction_error(&err, "IncorrectProgramId");
+}
+
+/// A `fee_vault` address that isn't the canonical ATA derivation. The
+/// `associated_token::*` init constraint refuses any other address —
+/// reported by the runtime as `InvalidSeeds`.
+#[test]
+fn init_rejects_non_canonical_fee_vault() {
+    let authority = Keypair::new();
+    let mut svm = deploy_with_authority(&authority);
+    let mint = create_spl_mint(&mut svm, &authority);
+
+    let registry = registry_address();
+    let bogus_vault = Pubkey::new_unique();
+    let ixn = Instruction::new_with_bytes(
+        PROGRAM_ID,
+        &InitInstruction {
+            genesis_admin: Pubkey::new_unique(),
+            fee_atoms: TEST_FEE_ATOMS,
+        }
+        .data(),
+        vec![
+            AccountMeta::new(authority.pubkey(), true),
+            AccountMeta::new(registry, false),
+            AccountMeta::new_readonly(get_program_data_address(&PROGRAM_ID), false),
+            AccountMeta::new_readonly(mint, false),
+            AccountMeta::new(bogus_vault, false),
+            AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
+            AccountMeta::new_readonly(ATA_PROGRAM_ID, false),
+            AccountMeta::new_readonly(System::id(), false),
+        ],
+    );
+    let err =
+        send_ixn(&mut svm, &authority, ixn).expect_err("non-canonical fee_vault must be rejected");
+    assert_instruction_error(&err, "InvalidSeeds");
 }
 
 #[test]
