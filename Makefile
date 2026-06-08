@@ -28,10 +28,12 @@ frontend:
 	cd frontend && pnpm dev
 
 # https://github.com/solana-foundation/anchor/tree/anchor-next/lang-v2
+# Keep the rev aligned with `ANCHOR_REV` in .github/workflows/test.yml
+# and the `rev = ...` pin in workspace Cargo.toml.
 install-anchor-v2:
 	CARGO_PROFILE_RELEASE_LTO=off cargo install \
 		--git https://github.com/solana-foundation/anchor.git \
-		--branch anchor-next \
+		--rev 2a191379 \
 		anchor-cli --force
 
 lint:

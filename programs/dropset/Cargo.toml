@@ -2,6 +2,7 @@
 
 [dependencies]
 anchor-lang-v2.workspace = true
+anchor-spl-v2.workspace = true
 solana-program-log.workspace = true
 solana-sdk-ids.workspace = true
 wincode.workspace = true
@@ -17,7 +18,7 @@ solana-pubkey.workspace = true
 [features]
 cpi = ["no-entrypoint"]
 default = []
-idl-build = ["anchor-lang-v2/idl-build"]
+idl-build = []
 no-entrypoint = []
 no-log-ix-name = []
 profile = ["anchor-v2-testing/profile"]

@@ -3,8 +3,9 @@ mod common;
 use anchor_lang_v2::{programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, Signer};
 use common::{
-    assert_program_error, create_spl_mint, create_token2022_mint, create_token2022_token_account,
-    decode_slab, deploy_with_authority, send_ixn, PROGRAM_ID, SIGNER_FUNDING_LAMPORTS,
+    assert_program_error, associated_token_address, create_spl_mint, create_token2022_mint,
+    create_token2022_token_account, decode_slab, deploy_with_authority, send_ixn, ATA_PROGRAM_ID,
+    PROGRAM_ID, SIGNER_FUNDING_LAMPORTS, SPL_TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID,
 };
 use dropset::{
     instruction::Init as InitInstruction, DropsetError, RegistryHeader,
@@ -27,7 +28,10 @@ fn init_ixn(
     fee_mint: Pubkey,
     fee_atoms: u64,
     program_data: Pubkey,
+    token_program: Pubkey,
 ) -> Instruction {
+    let registry = registry_address();
+    let fee_vault = associated_token_address(&registry, &fee_mint, &token_program);
     Instruction::new_with_bytes(
         PROGRAM_ID,
         &InitInstruction {
@@ -37,10 +41,13 @@ fn init_ixn(
         .data(),
         vec![
             AccountMeta::new(payer, true),
-            AccountMeta::new(registry_address(), false),
-            AccountMeta::new_readonly(System::id(), false),
+            AccountMeta::new(registry, false),
             AccountMeta::new_readonly(program_data, false),
             AccountMeta::new_readonly(fee_mint, false),
+            AccountMeta::new(fee_vault, false),
+            AccountMeta::new_readonly(token_program, false),
+            AccountMeta::new_readonly(ATA_PROGRAM_ID, false),
+            AccountMeta::new_readonly(System::id(), false),
         ],
     )
 }
@@ -50,6 +57,7 @@ fn canonical_init_ixn(
     genesis_admin: Pubkey,
     fee_mint: Pubkey,
     fee_atoms: u64,
+    token_program: Pubkey,
 ) -> Instruction {
     init_ixn(
         payer,
@@ -57,6 +65,7 @@ fn canonical_init_ixn(
         fee_mint,
         fee_atoms,
         get_program_data_address(&PROGRAM_ID),
+        token_program,
     )
 }
 
@@ -78,6 +87,7 @@ fn init_rejects_wrong_program_data_address() {
             fee_mint,
             TEST_FEE_ATOMS,
             bogus,
+            SPL_TOKEN_PROGRAM_ID,
         ),
     )
     .expect_err("non-canonical program_data must be rejected");
@@ -101,10 +111,26 @@ fn init_rejects_non_upgrade_authority() {
             Pubkey::new_unique(),
             fee_mint,
             TEST_FEE_ATOMS,
+            SPL_TOKEN_PROGRAM_ID,
         ),
     )
     .expect_err("non-authority must be rejected");
     assert_program_error(&err, DropsetError::InvalidUpgradeAuthority);
+}
+
+/// Assert the registry's fee vault was created as the ATA over
+/// `(registry, token_program, fee_mint)` and is owned by `token_program`.
+fn assert_fee_vault_created(
+    svm: &anchor_v2_testing::LiteSVM,
+    fee_mint: Pubkey,
+    token_program: Pubkey,
+) {
+    let vault_addr = associated_token_address(&registry_address(), &fee_mint, &token_program);
+    let vault = svm
+        .get_account(&vault_addr)
+        .expect("fee vault should be created");
+    assert_eq!(vault.owner, token_program, "fee vault owner mismatch");
+    assert!(!vault.data.is_empty(), "fee vault data is empty");
 }
 
 #[test]
@@ -118,7 +144,13 @@ fn init_succeeds_with_spl_token_mint() {
     send_ixn(
         &mut svm,
         &authority,
-        canonical_init_ixn(authority.pubkey(), genesis_admin, fee_mint, TEST_FEE_ATOMS),
+        canonical_init_ixn(
+            authority.pubkey(),
+            genesis_admin,
+            fee_mint,
+            TEST_FEE_ATOMS,
+            SPL_TOKEN_PROGRAM_ID,
+        ),
     )
     .expect("init should succeed");
 
@@ -138,6 +170,7 @@ fn init_succeeds_with_spl_token_mint() {
     assert_eq!(header.default_fee_config.atoms.get(), TEST_FEE_ATOMS);
     // The genesis admin is the sole member of the densely-packed set.
     assert_eq!(admins, &[genesis_admin.to_bytes()][..]);
+    assert_fee_vault_created(&svm, fee_mint, SPL_TOKEN_PROGRAM_ID);
 }
 
 #[test]
@@ -150,7 +183,13 @@ fn init_succeeds_with_token2022_mint() {
     send_ixn(
         &mut svm,
         &authority,
-        canonical_init_ixn(authority.pubkey(), genesis_admin, fee_mint, TEST_FEE_ATOMS),
+        canonical_init_ixn(
+            authority.pubkey(),
+            genesis_admin,
+            fee_mint,
+            TEST_FEE_ATOMS,
+            TOKEN_2022_PROGRAM_ID,
+        ),
     )
     .expect("init with Token-2022 mint should succeed");
 
@@ -161,8 +200,13 @@ fn init_succeeds_with_token2022_mint() {
     assert_eq!(header.default_fee_config.mint, fee_mint.to_bytes().into());
     assert_eq!(header.default_fee_config.atoms.get(), TEST_FEE_ATOMS);
     assert_eq!(admins, &[genesis_admin.to_bytes()][..]);
+    assert_fee_vault_created(&svm, fee_mint, TOKEN_2022_PROGRAM_ID);
 }
 
+/// A Token-2022 token account (165 bytes, not 82) passed in the mint
+/// slot. Validation now happens via `InterfaceAccount<Mint>` /
+/// the ATA-init CPI rather than a manual length check, so we only
+/// assert the call is rejected — no specific custom error code.
 #[test]
 fn init_rejects_token2022_token_account_as_mint() {
     let authority = Keypair::new();
@@ -170,9 +214,7 @@ fn init_rejects_token2022_token_account_as_mint() {
     let mint = create_token2022_mint(&mut svm, &authority);
     let token_account = create_token2022_token_account(&mut svm, &authority, &mint);
 
-    // A Token-2022 token account (165 bytes) is owned by Token-2022 but
-    // is not a mint — the data-length / AccountType check must reject it.
-    let err = send_ixn(
+    send_ixn(
         &mut svm,
         &authority,
         canonical_init_ixn(
@@ -180,22 +222,23 @@ fn init_rejects_token2022_token_account_as_mint() {
             Pubkey::new_unique(),
             token_account,
             TEST_FEE_ATOMS,
+            TOKEN_2022_PROGRAM_ID,
         ),
     )
     .expect_err("token account must not be accepted as a fee mint");
-    assert_program_error(&err, DropsetError::InvalidFeeMint);
 }
 
+/// A system-owned account passed as the mint — neither owned by SPL
+/// Token nor Token-2022. As above, we only assert init refuses it.
 #[test]
 fn init_rejects_non_token_mint() {
     let authority = Keypair::new();
     let mut svm = deploy_with_authority(&authority);
 
-    // A system-owned account is not a valid fee mint.
     let bogus_mint = Pubkey::new_unique();
     svm.airdrop(&bogus_mint, SIGNER_FUNDING_LAMPORTS).unwrap();
 
-    let err = send_ixn(
+    send_ixn(
         &mut svm,
         &authority,
         canonical_init_ixn(
@@ -203,10 +246,10 @@ fn init_rejects_non_token_mint() {
             Pubkey::new_unique(),
             bogus_mint,
             TEST_FEE_ATOMS,
+            SPL_TOKEN_PROGRAM_ID,
         ),
     )
     .expect_err("non-token mint must be rejected");
-    assert_program_error(&err, DropsetError::InvalidFeeMint);
 }
 
 #[test]
@@ -219,7 +262,13 @@ fn init_rejects_second_init() {
     send_ixn(
         &mut svm,
         &authority,
-        canonical_init_ixn(authority.pubkey(), genesis_admin, fee_mint, TEST_FEE_ATOMS),
+        canonical_init_ixn(
+            authority.pubkey(),
+            genesis_admin,
+            fee_mint,
+            TEST_FEE_ATOMS,
+            SPL_TOKEN_PROGRAM_ID,
+        ),
     )
     .expect("first init should succeed");
 
@@ -233,6 +282,7 @@ fn init_rejects_second_init() {
             Pubkey::new_unique(),
             fee_mint,
             TEST_FEE_ATOMS,
+            SPL_TOKEN_PROGRAM_ID,
         ),
     )
     .expect_err("registry can only be initialized once");
