@@ -4,12 +4,10 @@
 
 Source-grounded notes feeding the **Order matching** and **Events and
 emission** sections of `docs/architecture.md` (lines ~1370–1545).
-Every load-bearing claim cites a specific file path + line range in
-either the local `~/repos/agave`, `~/repos/sbpf`, `~/repos/anchor`, or
-`~/repos/pinocchio` checkouts, or in published crates.
-
-Workflow stats: 7 research dimensions • 78 raw claims • 59 confirmed
-• 19 refuted • 242 agent invocations.
+Every load-bearing claim cites a GitHub permalink to a specific
+file:line range in `anza-xyz/agave`, `anza-xyz/sbpf`,
+`anza-xyz/pinocchio`, `solana-foundation/anchor`, or a published
+crate at a pinned tag.
 
 ## 1. SVM heap mechanics (what we're actually getting)
 
@@ -68,8 +66,16 @@ Note: the *solana-program* (non-Pinocchio) default `BumpAllocator` is
 hard-coded to `HEAP_LENGTH=32 KiB`
 ([`solana-program-entrypoint-3.1.1/src/lib.rs:219-230`](https://github.com/anza-xyz/solana-sdk/blob/program-entrypoint%40v3.1.1/program-entrypoint/src/lib.rs#L219-L230)); enlarging via
 `RequestHeapFrame` requires a custom `#[global_allocator]` to actually
-USE the extra bytes. Anchor v2 + Pinocchio sidesteps this —
-Pinocchio's macro is parameterized on the runtime heap size.
+USE the extra bytes. Pinocchio's `default_allocator!` macro is **also
+not parameterized** — it hard-codes `MAX_HEAP_LENGTH = 256 KiB` as the
+allocator end
+([`pinocchio/sdk/src/entrypoint/mod.rs:610-621`](https://github.com/anza-xyz/pinocchio/blob/009301423f920fd105bd32a25560d127b6f0bf4f/sdk/src/entrypoint/mod.rs#L610-L621)).
+The allocator hands out addresses up to 256 KiB regardless of the
+runtime-requested frame; allocations above the actually-mapped frame
+succeed at the allocator level but fault on access. For the default
+32 KiB frame this is invisible (Dropset's usage stays well below);
+above 32 KiB you must call `RequestHeapFrame` so the VM maps the
+region.
 
 **Legacy `sol_alloc_free_` is dead** for new deployments
 ([`agave/syscalls/src/lib.rs:476-481`](https://github.com/anza-xyz/agave/blob/1ad187441b53d2ffb8f41a99e06f44ae27fda219/syscalls/src/lib.rs#L476-L481), gated by
@@ -95,17 +101,22 @@ overflow; recursion bounded at 64.
 | `Vec::new()` + push            | **forbidden** in matching loop — every realloc leaks the old buffer on the bump allocator |
 
 **Capacity math.** Spec entry is
-`(price_key:u32, nonce:u64, size:u64, vault_idx:u16, level_idx:u8)`.
-With natural u64 alignment that's ~24 B/entry. At
-`MAX_VAULTS_PER_MARKET = 10` ([`programs/dropset/src/state.rs:26`](https://github.com/DASMAC-com/dropset/blob/ecfc46fd5e8c627292aefd627899cd05cb28df61/programs/dropset/src/state.rs#L26))
-× 32 levels/side = 320 entries × 24 B = **7,680 B**. Fits the 32 KiB
-default heap with > 3× headroom.
+`(key:u32, nonce:u64, size:u64, vault_idx:u16, level_idx:u8)`. With
+`#[repr(C)]` and the field order in §3 (key first so derived `Ord`
+sorts lexicographically), the layout pads to **32 B/entry**: u32@0
+(+4 pad), u64@8, u64@16, u16@24, u8@26, +5 trailing pad (struct
+align = 8). At `DEFAULT_MAX_VAULTS_PER_MARKET = 10`
+([`programs/dropset/src/state.rs:26`](https://github.com/DASMAC-com/dropset/blob/ecfc46fd5e8c627292aefd627899cd05cb28df61/programs/dropset/src/state.rs#L26))
+× 32 levels/side = 320 entries × 32 B = **10,240 B**. Fits the
+32 KiB default heap with ~3× headroom.
 
 **When to `request_heap_frame`.** Only when
-`vaults × levels × 24 B + other_alloc_pressure` approaches ~24 KiB
-usable. For dropset's documented scale: not needed. If
-`MAX_VAULTS_PER_MARKET` ever grows to hundreds, request 64 KiB
-(cost: 8 CU).
+`vaults × levels × 32 B + other_alloc_pressure` approaches ~24 KiB
+usable. For dropset's documented scale: not needed. `max_vaults_per_market`
+is a `u8` ([`programs/dropset/src/state.rs:62`](https://github.com/DASMAC-com/dropset/blob/ecfc46fd5e8c627292aefd627899cd05cb28df61/programs/dropset/src/state.rs#L62));
+worst case at 255 × 32 × 32 B = 255 KiB fits the 256 KiB max heap
+with margin. Markets configured well below the cap scale the frame
+request accordingly (8 CU per extra 32 KiB).
 
 **v2 import note.** `lang-v2` is `#![no_std]`
 ([`anchor/lang-v2/src/lib.rs:5-6`](https://github.com/solana-foundation/anchor/blob/2a191379020f15c1d384bdadd41f23949734ce98/lang-v2/src/lib.rs#L5-L6)). Use `alloc::collections::BinaryHeap`,
@@ -190,7 +201,8 @@ same with `CpiContext::invoke`.
 **On-the-wire data layout.**
 
 ```text
-[ 8 B EVENT_IX_TAG_LE = e4 45 a5 2e 51 cb 9a 1d ]   // sha256("anchor:event")[..8]
+[ 8 B EVENT_IX_TAG_LE = e4 45 a5 2e 51 cb 9a 1d ]   // u64 0x1d9acb512ea545e4 to_le_bytes;
+                                                    // the u64 itself is sha256("anchor:event")[..8] read BE
 [ 8 B event-discriminator = sha256("event:<EventName>")[..8] ]
 [ event body — wincode (borsh-wire-compatible) by default,    ]
 [ or bytemuck::bytes_of(self) under #[event(bytemuck)]        ]
@@ -292,11 +304,10 @@ Use `invoke` (not `invoke_signed`) self-CPI with a
 *non-EVENT_IX_TAG* prefix routed via a fallback handler — drop
 `event_authority` from the accounts list.
 
-**Minimum account list.** Empty. `invoke_signed`/`invoke` does
-require account-info translation through CPI, but the
-inner-instruction record is written into `meta.innerInstructions`
-regardless of signer status, and the record carries
-`programId = caller` unconditionally.
+**Minimum account list.** One — the `program` account stays on the
+outer Accounts struct (any self-CPI requires the callee program's
+`AccountInfo` to be available). Inner-instruction records land in
+`meta.innerInstructions` regardless of signer status; `programId = caller` always.
 
 **Origin auth (off-chain).** Indexer filters
 `innerInstructions[*].instructions[*]` by
@@ -311,19 +322,22 @@ for an indexer-only channel.
 Anchor's fallback handler or a plain SBF program if you want to skip
 Anchor entirely.
 
-**When to flip.** When the router-account-list budget is tight (e.g.,
-taker instruction is itself invoked via CPI from a router and adds
-30+ account metas, leaving little room before
-`MAX_ACCOUNTS_PER_INSTRUCTION = 255`). Each `emit_cpi!` adds 2
-account metas; bare drops to 0. Account-meta CU under SIMD-0339 is
-`34 B per meta / 250 B/CU ≈ 0.14 CU` — not material for CU, only for
-the account-list count.
+**When to flip.** When the router-account-list budget is tight
+(e.g., the taker instruction is itself invoked via CPI from a router
+that adds 30+ account metas, leaving little room before
+`MAX_ACCOUNTS_PER_INSTRUCTION = 255`). `#[event_cpi]` injects 2
+accounts into the outer Accounts struct (`event_authority` +
+`program`); bare drops `event_authority`, keeping `program` —
+**saves 1 outer-account slot**. Account-meta CU under SIMD-0339 is
+`34 B per meta / 250 B/CU ≈ 0.14 CU` — not material for CU, only
+for the account-list count.
 
 **CU comparison.** Same `invoke_units` (1000 / 946 CU under
-SIMD-0339) + `data_len/250`. Bare saves `2 × 34/250 ≈ 0.27 CU` and 2
-account-info translations (`80/250` each under SIMD-0339).
-Negligible per-emit; meaningful only at high emit counts or tight
-account budgets.
+SIMD-0339) + `data_len/250`. Inside the self-CPI itself the
+`event_authority` is the only signer meta Anchor pushes — bare
+drops it for `1 × 34/250 ≈ 0.14 CU` and one account-info
+translation (`80/250` under SIMD-0339). Negligible per-emit;
+meaningful only at high emit counts or tight account budgets.
 
 ## 6. Runtime limits that govern fidelity
 
@@ -391,15 +405,15 @@ Build the next CPI when adding the next leg would exceed
 
 ## 7. Architecture-spec coherence checks
 
-| Spec claim (line)                                                           | Status                          | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| --------------------------------------------------------------------------- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Ephemeral book on SVM program heap (1375)                                   | **CONFIRMED**                   | Default 32 KiB more than covers 10-vault × 32-level case (≈7.7 KiB).                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| Min-heap on `(Price::MAX − price, nonce)` for bids (1405-1418)              | **CONFIRMED — with refinement** | Use `Price::bid_key()` (already at [`price.rs:228-234`](https://github.com/DASMAC-com/dropset/blob/ecfc46fd5e8c627292aefd627899cd05cb28df61/programs/dropset/src/price.rs#L228-L234)) producing `u32`, packed into a `#[repr(C)]` `HeapEntry` whose derived `Ord` is lexicographic. Avoid storing `Price` directly + flipped comparator.                                                                                                                                                                                      |
-| Inner-ix data not subject to `LOG_MESSAGES_BYTES_LIMIT` (1477-1479)         | **CONFIRMED**                   | LogCollector path ([`svm-log-collector/src/lib.rs:5`](https://github.com/anza-xyz/agave/blob/1ad187441b53d2ffb8f41a99e06f44ae27fda219/svm-log-collector/src/lib.rs#L5), [`:26-42`](https://github.com/anza-xyz/agave/blob/1ad187441b53d2ffb8f41a99e06f44ae27fda219/svm-log-collector/src/lib.rs#L26-L42)) is wholly separate from `instruction_trace` ([`transaction_processor.rs:1089-1139`](https://github.com/anza-xyz/agave/blob/1ad187441b53d2ffb8f41a99e06f44ae27fda219/svm/src/transaction_processor.rs#L1089-L1139)). |
-| `emit_cpi!` appends `event_authority` and `program` accounts (1483-1485)    | **CONFIRMED**                   | [`lang-v2/derive/src/lib.rs:5459-5470`](https://github.com/solana-foundation/anchor/blob/2a191379020f15c1d384bdadd41f23949734ce98/lang-v2/derive/src/lib.rs#L5459-L5470). Order is `event_authority` then `program`.                                                                                                                                                                                                                                                                                                          |
-| Bare self-CPI carries event in ix-data, drops `event_authority` (1496-1500) | **CONFIRMED**                   | Off-chain origin proof reduces to `programId == self`. Acceptable for indexer-only channel. Must use a non-`EVENT_IX_TAG` prefix to avoid Anchor's dispatcher hijack.                                                                                                                                                                                                                                                                                                                                                         |
-| No cumulative cap on inner-ix data across a tx (1528-1530)                  | **CONFIRMED**                   | Only the per-CPI 10 KiB and the 64-instruction trace count constrain.                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| Single CPI ix-data ~10 KB (1528)                                            | **CONFIRMED**                   | Exactly 10,240 B ([`transaction-context/src/lib.rs:18`](https://github.com/anza-xyz/agave/blob/1ad187441b53d2ffb8f41a99e06f44ae27fda219/transaction-context/src/lib.rs#L18)). Effective event-payload budget = 10,224 B after 16 B tag+disc overhead.                                                                                                                                                                                                                                                                         |
+| Spec claim (line)                                                           | Status                                     | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| --------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Ephemeral book on SVM program heap (1375)                                   | **CONFIRMED**                              | Default 32 KiB heap covers the 10-vault × 32-level case at the §3 entry layout (10,240 B; ~3× headroom).                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Min-heap on `(Price::MAX − price, nonce)` for bids (1405-1418)              | **CONFIRMED — with refinement**            | Use `Price::bid_key()` (already at [`price.rs:228-234`](https://github.com/DASMAC-com/dropset/blob/ecfc46fd5e8c627292aefd627899cd05cb28df61/programs/dropset/src/price.rs#L228-L234)) producing `u32`, packed into a `#[repr(C)]` `HeapEntry` whose derived `Ord` is lexicographic. Avoid storing `Price` directly + flipped comparator.                                                                                                                                                                                                                                       |
+| Inner-ix data not subject to `LOG_MESSAGES_BYTES_LIMIT` (1477-1479)         | **CONFIRMED**                              | LogCollector path ([`svm-log-collector/src/lib.rs:5`](https://github.com/anza-xyz/agave/blob/1ad187441b53d2ffb8f41a99e06f44ae27fda219/svm-log-collector/src/lib.rs#L5), [`:26-42`](https://github.com/anza-xyz/agave/blob/1ad187441b53d2ffb8f41a99e06f44ae27fda219/svm-log-collector/src/lib.rs#L26-L42)) is wholly separate from `instruction_trace` ([`transaction_processor.rs:1089-1139`](https://github.com/anza-xyz/agave/blob/1ad187441b53d2ffb8f41a99e06f44ae27fda219/svm/src/transaction_processor.rs#L1089-L1139)).                                                  |
+| `emit_cpi!` appends `event_authority` and `program` accounts (1483-1485)    | **CONFIRMED — outer Accounts struct only** | [`lang-v2/derive/src/lib.rs:5459-5470`](https://github.com/solana-foundation/anchor/blob/2a191379020f15c1d384bdadd41f23949734ce98/lang-v2/derive/src/lib.rs#L5459-L5470) — order is `event_authority` then `program`. The self-CPI invocation itself takes only `event_authority` as a readonly signer ([`lang-v2/derive/src/lib.rs:5370-5395`](https://github.com/solana-foundation/anchor/blob/2a191379020f15c1d384bdadd41f23949734ce98/lang-v2/derive/src/lib.rs#L5370-L5395)); `program` is on the outer struct so the runtime can supply its `AccountInfo` to the invoke. |
+| Bare self-CPI carries event in ix-data, drops `event_authority` (1496-1500) | **CONFIRMED**                              | Off-chain origin proof reduces to `programId == self`. Acceptable for indexer-only channel. Must use a non-`EVENT_IX_TAG` prefix to avoid Anchor's dispatcher hijack.                                                                                                                                                                                                                                                                                                                                                                                                          |
+| No cumulative cap on inner-ix data across a tx (1528-1530)                  | **CONFIRMED**                              | Only the per-CPI 10 KiB and the 64-instruction trace count constrain.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Single CPI ix-data ~10 KB (1528)                                            | **CONFIRMED**                              | Exactly 10,240 B ([`transaction-context/src/lib.rs:18`](https://github.com/anza-xyz/agave/blob/1ad187441b53d2ffb8f41a99e06f44ae27fda219/transaction-context/src/lib.rs#L18)). Effective event-payload budget = 10,224 B after 16 B tag+disc overhead.                                                                                                                                                                                                                                                                                                                          |
 
 **Add to spec (not currently called out):**
 
@@ -420,27 +434,26 @@ Build the next CPI when adding the next leg would exceed
 
 ## 8. Open questions / things to verify before implementing
 
-**Downgraded confidence (medium):**
+**To verify before implementing:**
 
-1. **Per-entry size of 24 B (medium).** The architecture spec tuple
-   `(price, size, stamp & !FLUSH_BIT, vault_ptr, level_idx)` lands
-   at 24-32 B depending on field order. **Verify with
-   `core::mem::size_of::<HeapEntry>()`** when the struct is
-   concrete. Use `#[repr(C)]` and
-   `assert_eq!(size_of::<HeapEntry>(), 24)` as a build-time check.
-1. **Pinocchio default-allocator behavior with `RequestHeapFrame`.**
-   Pinocchio's `default_allocator!` initializes to
-   `MAX_HEAP_LENGTH (256 KiB)` per its source. Confirm by reading
-   the actual Pinocchio version pinned in the dropset workspace
-   whether allocations beyond 32 KiB succeed without
-   `RequestHeapFrame` (likely they fault — Pinocchio assumes the
-   frame was requested).
+1. **`MAX_LEVELS_PER_SIDE` constant.** The capacity math in §2 and
+   the recipe in §3 reference `MAX_LEVELS_PER_SIDE` but no such
+   constant exists in `programs/dropset/src/` yet. Pick a value
+   (the spec narrative implies 32) and add it to `state.rs`. Add
+   `assert_eq!(size_of::<HeapEntry>(), 32)` and
+   \`assert!(MAX_LEVELS_PER_SIDE * DEFAULT_MAX_VAULTS_PER_MARKET as usize
+   - size_of::<HeapEntry>() \<= 32 * 1024)\` as build-time checks so
+     the heap fit stays explicit.
 1. **Bare self-CPI under v2's dispatcher.** v2's entrypoint matches
    the full 8-byte `EVENT_IX_TAG` before user dispatch
    ([`lang-v2/derive/src/lib.rs:4510-4546`](https://github.com/solana-foundation/anchor/blob/2a191379020f15c1d384bdadd41f23949734ce98/lang-v2/derive/src/lib.rs#L4510-L4546)). A bare self-CPI must use
    a prefix where the first 8 bytes ≠ `0x1d9acb512ea545e4`.
    **Verify with a unit test** that a chosen bare-tag is routed to
    the fallback handler.
+1. **SIMD-0268 / SIMD-0339 activation status.** The doc designs for
+   pre-SIMD-0268 numbers (stack depth 5, invoke 1000 CU). Before
+   relying on the higher post-SIMD numbers, check the current
+   Agave feature-gate set against the cluster you're targeting.
 
 **Where docs lag the code:**
 
