@@ -89,12 +89,35 @@ export function WalletButton() {
     metamaskInstalled,
   );
 
+  const renderIcon = (w: PickerWallet) =>
+    w.icon ? (
+      <Image
+        src={w.icon}
+        alt=""
+        width={32}
+        height={32}
+        className="h-8 w-8 rounded-lg"
+        unoptimized
+      />
+    ) : (
+      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted font-bold text-muted-fg text-xs">
+        {w.name.charAt(0)}
+      </div>
+    );
+
   const renderRow = (w: PickerWallet) => {
     // MetaMask's relay connector lives in the Wallet Standard registry only
     // after `registerMetaMaskConnect()` resolves. Until then, hold the row
     // disabled so a fast first-of-day tap can't race the SDK's async init.
-    const isMetaMaskRelay = w.key === "metamask" && w.connectorId !== undefined;
-    const metaMaskPending = isMetaMaskRelay && !metaMaskReady;
+    // The curated `key="metamask"` matches both the extension and the relay,
+    // and `buildPickerWallets` collapses them into a single row whose
+    // connector is whichever the discovery loop saw first. If the extension
+    // is present, that connector is sync-ready — no need to gate on relay
+    // readiness, since either the row already holds the extension's
+    // connector or a watcher-driven rebuild will swap it in shortly.
+    const isMetaMaskRelayRow =
+      w.key === "metamask" && w.connectorId !== undefined && !metamaskInstalled;
+    const metaMaskPending = isMetaMaskRelayRow && !metaMaskReady;
 
     // "Detected" only for truly-present wallets. A wallet that's connectable
     // without being installed (MetaMask, via its relay) gets no badge — it
@@ -115,27 +138,6 @@ export function WalletButton() {
     } else if (!w.connectorId) {
       badge = <span className="text-amber-400 text-xs">Not detected</span>;
     }
-
-    const inner = (
-      <>
-        {w.icon ? (
-          <Image
-            src={w.icon}
-            alt=""
-            width={32}
-            height={32}
-            className="h-8 w-8 rounded-lg"
-            unoptimized
-          />
-        ) : (
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted font-bold text-muted-fg text-xs">
-            {w.name.charAt(0)}
-          </div>
-        )}
-        <span className="flex-1 font-medium text-foreground">{w.name}</span>
-        {badge}
-      </>
-    );
 
     const rowClass =
       "flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left text-sm transition-colors hover:bg-muted";
@@ -167,7 +169,9 @@ export function WalletButton() {
           }}
           className={`${rowClass} disabled:opacity-50`}
         >
-          {inner}
+          {renderIcon(w)}
+          <span className="flex-1 font-medium text-foreground">{w.name}</span>
+          {badge}
         </button>
       );
     }
@@ -187,20 +191,7 @@ export function WalletButton() {
         rel="noopener noreferrer"
         className={`${rowClass} no-underline`}
       >
-        {w.icon ? (
-          <Image
-            src={w.icon}
-            alt=""
-            width={32}
-            height={32}
-            className="h-8 w-8 rounded-lg"
-            unoptimized
-          />
-        ) : (
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted font-bold text-muted-fg text-xs">
-            {w.name.charAt(0)}
-          </div>
-        )}
+        {renderIcon(w)}
         <span className="flex-1">
           <span className="block font-medium text-foreground">{w.name}</span>
           {mobile && (
