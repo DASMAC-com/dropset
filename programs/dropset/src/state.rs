@@ -15,13 +15,6 @@ pub type Ppm16 = u16;
 /// skin-in-the-game floor. Stored as an alignment-1 `PodU32`.
 pub type Ppm32 = u32;
 
-/// SPL Token program.
-pub const SPL_TOKEN_PROGRAM_ID: Address =
-    Address::from_str_const("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
-/// Token-2022 (Token Extensions) program.
-pub const TOKEN_2022_PROGRAM_ID: Address =
-    Address::from_str_const("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
-
 /// Initial per-market vault cap stamped onto new markets.
 pub const DEFAULT_MAX_VAULTS_PER_MARKET: u8 = 10;
 /// Initial taker fee (ppm) stamped onto new markets. The spec sets no
@@ -32,13 +25,18 @@ pub const DEFAULT_MIN_LEADER_SHARE: Ppm32 = 50_000;
 
 /// A flat fee charged in `mint`, paid to the registry fee ATA. Mirrors
 /// the `FeeConfig` in the architecture spec; reused per-market by the
-/// `MarketHeader` once markets exist.
+/// `MarketHeader` once markets exist. Carrying `token_program`
+/// alongside `mint` lets downstream fee-collection paths derive the
+/// canonical ATA — `(authority, token_program, mint)` — without
+/// guessing which token program owns the mint.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, IdlType)]
 #[bytemuck(crate = "anchor_lang_v2::bytemuck")]
 pub struct FeeConfig {
     /// Mint accepted for this fee.
     pub mint: Address,
+    /// Token program owning `mint` — SPL Token or Token-2022.
+    pub token_program: Address,
     /// Amount in atoms of `mint`.
     pub atoms: PodU64,
 }
@@ -105,7 +103,7 @@ impl AdminSet for Registry {
         // resulting rent shortfall from `payer`.
         let needed = self.len() + 1;
         if self.capacity() < needed {
-            self.resize_to_capacity(needed)?;
+            self.resize_to_capacity(needed as u32)?;
             self.top_up(payer)?;
         }
         self.try_push(admin)
@@ -127,7 +125,7 @@ impl AdminSet for Registry {
         // shrink the account to fit and return the freed rent.
         self.swap_remove(pos);
         let new_len = self.len();
-        self.resize_to_capacity(new_len)?;
+        self.resize_to_capacity(new_len as u32)?;
         self.refund(rent_recipient)?;
         Ok(true)
     }

@@ -123,6 +123,19 @@ pub fn assert_program_error(err: &str, code: dropset::DropsetError) {
     assert!(err.contains(&expected), "expected {expected}, got: {err}");
 }
 
+/// Assert a `send_ixn` failure carries `variant` of Solana's
+/// `InstructionError` — e.g. `"IllegalOwner"`, `"InvalidAccountData"`,
+/// `"IncorrectProgramId"`, `"InvalidSeeds"`. Used for negative tests
+/// whose rejection comes from the runtime or a CPI rather than from a
+/// `DropsetError`.
+#[allow(dead_code)]
+pub fn assert_instruction_error(err: &str, variant: &str) {
+    assert!(
+        err.contains(variant),
+        "expected InstructionError containing {variant:?}, got: {err}"
+    );
+}
+
 /// Assert an anchor `#[account]` buffer matches `expected` exactly: owned
 /// by the program, prefixed with `T`'s discriminator, body bytes
 /// bytemuck-equal to `expected`, total length equal to
@@ -146,13 +159,24 @@ where
 }
 
 /// SPL Token program ID.
-const SPL_TOKEN_PROGRAM_ID: Pubkey =
+pub const SPL_TOKEN_PROGRAM_ID: Pubkey =
     Pubkey::from_str_const("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
-#[allow(dead_code)]
 /// Token-2022 (Token Extensions) program ID.
-const TOKEN_2022_PROGRAM_ID: Pubkey =
+pub const TOKEN_2022_PROGRAM_ID: Pubkey =
     Pubkey::from_str_const("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
+/// Associated Token Account program ID.
+pub const ATA_PROGRAM_ID: Pubkey =
+    Pubkey::from_str_const("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
 const SYSTEM_PROGRAM_ID: Pubkey = Pubkey::from_str_const("11111111111111111111111111111111");
+
+/// Derive the associated-token-account address for `(wallet, mint, token_program)`.
+pub fn associated_token_address(wallet: &Pubkey, mint: &Pubkey, token_program: &Pubkey) -> Pubkey {
+    Pubkey::find_program_address(
+        &[wallet.as_ref(), token_program.as_ref(), mint.as_ref()],
+        &ATA_PROGRAM_ID,
+    )
+    .0
+}
 
 /// SPL Token Mint account size (bytes).
 const MINT_LEN: usize = 82;

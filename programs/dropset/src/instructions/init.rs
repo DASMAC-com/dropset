@@ -1,13 +1,17 @@
 use crate::errors::DropsetError;
 use crate::{
     AdminSet, FeeConfig, Registry, DEFAULT_MAX_VAULTS_PER_MARKET, DEFAULT_MIN_LEADER_SHARE,
-    DEFAULT_TAKER_FEE, SPL_TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID,
+    DEFAULT_TAKER_FEE,
 };
 use anchor_lang_v2::{
     address_eq,
     bytemuck::{self, Pod, Zeroable},
     find_and_verify_program_address,
     prelude::*,
+};
+use anchor_spl_v2::{
+    associated_token::AssociatedToken,
+    token_interface::{Mint, TokenAccount, TokenInterface},
 };
 use solana_sdk_ids::bpf_loader_upgradeable;
 
@@ -30,7 +34,6 @@ pub struct Init {
     // dynamically when more admins are added.
     #[account(init, payer = payer, space = Registry::space_for(1), seeds = [b"registry"], bump)]
     pub registry: Registry,
-    pub system_program: Program<System>,
     /// SAFETY: the program's ProgramData account is owned by the BPF
     /// upgradeable loader, not this program, so it cannot be a typed
     /// `Account<T>`. `init()` verifies it is the canonical ProgramData
@@ -38,10 +41,31 @@ pub struct Init {
     /// header to authenticate the upgrade authority — no data is
     /// written and no other invariant is assumed.
     pub program_data: UncheckedAccount,
-    /// The mint to charge fees in. Must be owned by SPL Token or
-    /// Token-2022; `init()` validates the owner, data length, and
-    /// (for Token-2022 with extensions) the AccountType discriminator.
-    pub fee_mint: UncheckedAccount,
+    /// The mint to charge fees in. `InterfaceAccount<Mint>` validates
+    /// SPL Token / Token-2022 ownership and that the data unpacks as a
+    /// `Mint` — so no separate length / discriminator check is needed.
+    pub fee_mint: InterfaceAccount<Mint>,
+    /// Registry-owned fee vault for the per-`OpenVault` charge. Created
+    /// here by CPI to the ATA program; its address is the canonical
+    /// ATA over `(registry, token_program, fee_mint)`, and the ATA
+    /// program rejects any `(mint, token_program)` pair whose owners
+    /// disagree — a second backstop after `InterfaceAccount<Mint>`.
+    #[account(
+        init,
+        payer = payer,
+        associated_token::mint = fee_mint,
+        associated_token::authority = registry,
+        associated_token::token_program = token_program,
+    )]
+    pub fee_vault: InterfaceAccount<TokenAccount>,
+    /// Token program owning `fee_mint` — SPL Token or Token-2022.
+    /// `Interface<TokenInterface>` rejects any other address up front
+    /// (`IncorrectProgramId`); the ATA seeds bake this in too, so a
+    /// caller-supplied mismatch against `fee_mint`'s owner yields a
+    /// non-canonical ATA and a separate `InvalidSeeds` rejection.
+    pub token_program: Interface<'static, TokenInterface>,
+    pub associated_token_program: Program<AssociatedToken>,
+    pub system_program: Program<System>,
 }
 
 impl Init {
@@ -76,36 +100,6 @@ impl Init {
             return Err(DropsetError::InvalidUpgradeAuthority.into());
         }
 
-        // Verify the fee mint is owned by SPL Token or Token-2022 and
-        // is actually a Mint account (not a token account or multisig).
-        //
-        // SPL Token: Mint is always exactly 82 bytes (token accounts
-        // are 165, multisigs 355), so an exact-length check suffices.
-        //
-        // Token-2022: base Mint is 82 bytes; extensions append after
-        // an AccountType discriminator at offset 82.  When extensions
-        // are present (len > 82) we verify that byte is
-        // AccountType::Mint (1) — this is the same check Token-2022's
-        // own `StateWithExtensions::<Mint>::unpack` performs.
-        const MINT_BASE_LEN: usize = 82;
-        const ACCOUNT_TYPE_MINT: u8 = 1;
-        let mint_owner = self.fee_mint.account().owner();
-        let mint_data = self.fee_mint.account().try_borrow()?;
-        if address_eq(mint_owner, &SPL_TOKEN_PROGRAM_ID) {
-            if mint_data.len() != MINT_BASE_LEN {
-                return Err(DropsetError::InvalidFeeMint.into());
-            }
-        } else if address_eq(mint_owner, &TOKEN_2022_PROGRAM_ID) {
-            if mint_data.len() < MINT_BASE_LEN {
-                return Err(DropsetError::InvalidFeeMint.into());
-            }
-            if mint_data.len() > MINT_BASE_LEN && mint_data[MINT_BASE_LEN] != ACCOUNT_TYPE_MINT {
-                return Err(DropsetError::InvalidFeeMint.into());
-            }
-        } else {
-            return Err(DropsetError::InvalidFeeMint.into());
-        }
-
         // Init registry values. Header fields via DerefMut; the admin
         // set is the slab tail.
         let registry = &mut self.registry;
@@ -115,6 +109,7 @@ impl Init {
         registry.default_min_leader_share = DEFAULT_MIN_LEADER_SHARE.into();
         registry.default_fee_config = FeeConfig {
             mint: *self.fee_mint.address(),
+            token_program: *self.token_program.address(),
             atoms: fee_atoms.into(),
         };
         // The account is pre-sized for one admin, so this seats the

@@ -20,6 +20,10 @@ wincode = {version = "0.5", features = ["derive"]}
 branch = "anchor-next"
 git = "https://github.com/solana-foundation/anchor.git"
 
+[workspace.dependencies.anchor-spl-v2]
+branch = "anchor-next"
+git = "https://github.com/solana-foundation/anchor.git"
+
 [workspace.dependencies.anchor-v2-testing]
 branch = "anchor-next"
 git = "https://github.com/solana-foundation/anchor.git"
