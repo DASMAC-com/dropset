@@ -6,14 +6,25 @@ import { useWalletConnection, useWalletModalState } from "@solana/react-hooks";
 import Image from "next/image";
 import { type ReactNode, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown, Copy, ExternalLink, X } from "@/components/icons";
+import {
+  Check,
+  ChevronDown,
+  Copy,
+  ExternalLink,
+  Loader2,
+  X,
+} from "@/components/icons";
 import { COPY_FEEDBACK_DURATION_MS } from "@/lib/data/timings";
 import { buildPickerWallets, type PickerWallet } from "@/lib/data/wallets";
 import { emit, useAppEvent } from "@/lib/events";
 import { explorerAddressUrl } from "@/lib/explorer";
 import { useWalletAccountWatch } from "@/lib/hooks/useWalletAccountWatch";
+import { isMobile } from "@/lib/ua";
 import { DIALOG_CONTENT_POSITION, DIALOG_OVERLAY_CLASS } from "@/lib/ui/dialog";
-import { isMetaMaskExtensionPresent } from "@/lib/wallet/metamask";
+import {
+  isMetaMaskExtensionPresent,
+  useMetaMaskRegistrationReady,
+} from "@/lib/wallet/metamask";
 
 // 4 + 4 hex characters out of 64 is enough to disambiguate two wallets at
 // a glance without taking up real estate in the header. Matches the
@@ -34,6 +45,13 @@ export function WalletButton() {
     // is visible, and it catches a wallet installed mid-session on reopen.
     if (modal.isOpen) setMetamaskInstalled(isMetaMaskExtensionPresent());
   }, [modal.isOpen]);
+
+  // MetaMask's relay SDK initializes asynchronously (dynamic import +
+  // createSolanaClient); on a cold first-of-day start the picker can render
+  // before registration finishes, leaving a row whose connector isn't yet
+  // live. Tapping it would race the SDK. We gate the row on this flag so the
+  // user can't fire a connect the SDK isn't ready to honor.
+  const metaMaskReady = useMetaMaskRegistrationReady();
 
   // True for the duration of a connect attempt — drives the blocking overlay
   // below. Tracked locally (not off `modal.status`) because an external SDK's
@@ -72,13 +90,27 @@ export function WalletButton() {
   );
 
   const renderRow = (w: PickerWallet) => {
+    // MetaMask's relay connector lives in the Wallet Standard registry only
+    // after `registerMetaMaskConnect()` resolves. Until then, hold the row
+    // disabled so a fast first-of-day tap can't race the SDK's async init.
+    const isMetaMaskRelay = w.key === "metamask" && w.connectorId !== undefined;
+    const metaMaskPending = isMetaMaskRelay && !metaMaskReady;
+
     // "Detected" only for truly-present wallets. A wallet that's connectable
     // without being installed (MetaMask, via its relay) gets no badge — it
     // still connects on click, and "Not detected" would wrongly read as "must
     // install". Only wallets that genuinely require installation (a site link,
     // no connector) keep the amber "Not detected".
+    //
+    // While MetaMask's relay registration is in flight, swap the badge for a
+    // small spinner so the disabled row has a visible reason for being
+    // disabled.
     let badge: ReactNode = null;
-    if (w.detected) {
+    if (metaMaskPending) {
+      badge = (
+        <Loader2 size={14} className="animate-spin text-muted-fg" aria-hidden />
+      );
+    } else if (w.detected) {
       badge = <span className="text-accent-buy text-xs">Detected</span>;
     } else if (!w.connectorId) {
       badge = <span className="text-amber-400 text-xs">Not detected</span>;
@@ -116,7 +148,8 @@ export function WalletButton() {
         <button
           key={w.id}
           type="button"
-          disabled={modal.status === "connecting"}
+          disabled={modal.status === "connecting" || metaMaskPending}
+          aria-busy={metaMaskPending || undefined}
           onClick={() => {
             // Close our picker first so the wallet's own modal (e.g. MetaMask's
             // relay QR dialog) owns the screen — leaving our Radix dialog open
@@ -139,7 +172,13 @@ export function WalletButton() {
       );
     }
     // Nothing to connect to → link out to the wallet's official site so the
-    // user can install it (then it shows up as detected on next open).
+    // user can install it (then it shows up as detected on next open). On
+    // mobile this row reads as a connect attempt to many users (Phantom is a
+    // common confusion — tapping the row opens the Phantom app via a
+    // universal link but never sends a connect request), so on a mobile UA we
+    // surface an explicit "Install" affordance with an external-link glyph
+    // and a hint line so the user knows the row is a download, not a connect.
+    const mobile = isMobile();
     return (
       <a
         key={w.id}
@@ -148,7 +187,37 @@ export function WalletButton() {
         rel="noopener noreferrer"
         className={`${rowClass} no-underline`}
       >
-        {inner}
+        {w.icon ? (
+          <Image
+            src={w.icon}
+            alt=""
+            width={32}
+            height={32}
+            className="h-8 w-8 rounded-lg"
+            unoptimized
+          />
+        ) : (
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted font-bold text-muted-fg text-xs">
+            {w.name.charAt(0)}
+          </div>
+        )}
+        <span className="flex-1">
+          <span className="block font-medium text-foreground">{w.name}</span>
+          {mobile && (
+            <span className="mt-0.5 block text-muted-fg text-xs">
+              Install, then return — or open this site in {w.name}'s in-app
+              browser.
+            </span>
+          )}
+        </span>
+        {mobile ? (
+          <span className="flex items-center gap-1 text-amber-400 text-xs">
+            Install
+            <ExternalLink size={12} aria-hidden />
+          </span>
+        ) : (
+          badge
+        )}
       </a>
     );
   };

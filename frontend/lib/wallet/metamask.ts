@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from "react";
 import { PUBLIC_RPC_URL } from "../env";
 
 // MetaMask Connect (the relay-based SDK, distinct from the MetaMask browser
@@ -31,6 +32,12 @@ export function isMetaMaskExtensionPresent(): boolean {
 }
 
 let registration: Promise<void> | null = null;
+let registrationReady = false;
+const registrationListeners = new Set<() => void>();
+
+const notifyRegistrationListeners = () => {
+  for (const listener of registrationListeners) listener();
+};
 
 /**
  * Register MetaMask Connect with the Wallet Standard registry. Idempotent and
@@ -58,11 +65,45 @@ export function registerMetaMaskConnect(): Promise<void> {
       // dapp-side connection regressions; cost to us is zero.
       analytics: { enabled: true },
     });
+    registrationReady = true;
+    notifyRegistrationListeners();
   })().catch((error) => {
     // A failed registration must not take down the rest of the wallet picker;
-    // clear the latch so a later mount can retry.
+    // clear the latch so a later mount can retry. Stays unready so the row in
+    // the picker won't promise a connect that we can't fulfill.
     registration = null;
+    registrationReady = false;
+    notifyRegistrationListeners();
     console.warn("[wallet] MetaMask Connect registration failed", error);
   });
   return registration;
+}
+
+const subscribeRegistration = (listener: () => void) => {
+  registrationListeners.add(listener);
+  return () => {
+    registrationListeners.delete(listener);
+  };
+};
+
+const getRegistrationReady = () => registrationReady;
+// SSR has no concept of "ready"; the row is hidden behind a client-only
+// readiness check anyway, but useSyncExternalStore requires a server snapshot.
+const getRegistrationReadyServer = () => false;
+
+/**
+ * Whether `registerMetaMaskConnect()`'s dynamic-imported SDK has finished
+ * `createSolanaClient(...)`. Until this returns `true`, MetaMask's relay
+ * connector either isn't in the Wallet Standard registry yet or has just
+ * landed — a tap that races registration would either find no connector or
+ * land on a partially-initialized one. The picker uses this to disable the
+ * MetaMask row (and show a spinner) so the user doesn't fire a connect that
+ * the SDK can't yet honor.
+ */
+export function useMetaMaskRegistrationReady(): boolean {
+  return useSyncExternalStore(
+    subscribeRegistration,
+    getRegistrationReady,
+    getRegistrationReadyServer,
+  );
 }

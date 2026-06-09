@@ -27,6 +27,12 @@ export const KNOWN_WALLETS: readonly KnownWallet[] = (
 export type PickerWallet = {
   // Stable React key: the connector id when one exists, else a synthetic id.
   id: string;
+  // Lowercase token from the curated list (`KnownWallet["key"]`) when the row
+  // originates from a curated entry; undefined for an "extra" wallet
+  // discovered solely via Wallet Standard. The renderer uses this to apply
+  // wallet-specific affordances (e.g. gate the MetaMask row on relay-SDK
+  // registration readiness).
+  key?: string;
   name: string;
   icon?: string;
   detected: boolean;
@@ -68,6 +74,7 @@ export function buildPickerWallets(
       w.key === "metamask" ? metamaskInstalled : connector !== undefined;
     return {
       id: connector?.id ?? `known:${w.key}`,
+      key: w.key,
       name: w.name,
       // Prefer the live connector's own icon; fall back to the bundled brand
       // icon so not-installed wallets still show a real logo.
