@@ -703,13 +703,16 @@ the open-vault fee again — on this or any other market.
 
 When the `admin-teardown` Cargo feature is enabled (see **Account
 lifecycle and rent reclamation**), an admin may additionally
-`force_withdraw_depositor` against any `VaultDepositor` regardless
-of the vault's state — active, frozen, or tombstoned. This
-intentionally widens the "only the owner can move outside-deposit
-funds" property held by every production build, in service of being
-able to drain markets to zero between testnet / early-mainnet
-deploy cycles. The feature is absent from the final immutable
-build, and with it absent the original property is restored.
+`force_withdraw_depositor` against any `VaultDepositor` and
+`force_withdraw_leader` against any vault's `leader_shares`,
+regardless of the vault's state — active, frozen, or tombstoned.
+Together these widen the "only the owner can move their stake"
+property held by every production build (outside funds and
+leader funds both), in service of being able to drain markets to
+zero between testnet / early-mainnet deploy cycles without
+requiring leader cooperation. The feature is absent from the final
+immutable build, and with it absent the original property is
+restored.
 
 ## LiquidityProfile
 
@@ -1027,6 +1030,18 @@ realized-PnL accumulator updates, same vault `total_shares` /
 `base_atoms` / `quote_atoms` decrements — just with the signer
 gate widened. There is no separate accounting path.
 
+A sibling `force_withdraw_leader` covers the leader's stake, which
+lives in `vault.leader_shares` rather than on a `VaultDepositor`
+PDA and is therefore not reachable via the depositor variant. Same
+admin gate, same payout-to-stake-holder rule (funds always land
+with `vault.leader`, never with the calling admin), no vault-state
+precondition; mechanically it is the same logic as leader-path
+`Withdraw` for `shares_in = vault.leader_shares` with the signer
+check widened to `signer ∈ registry.admins`. Because the leader has
+no PDA, there is no rent to refund on this instruction — the only
+state change is the share/atom decrement and, once
+`total_shares == 0`, the vault sector reclaims to the free DLL.
+
 ## Caller mechanics
 
 Every instruction that targets a specific vault — leader-callable,
@@ -1115,8 +1130,8 @@ that is not a permissionless instruction falls under one of them.
      `OpenVault` fee path.
    - Feature-gated under `admin-teardown` (see **Account
      lifecycle and rent reclamation**): `force_withdraw_depositor`,
-     `close_market_treasury`, `close_market`,
-     `close_registry_fee_vault`, `close_registry`.
+     `force_withdraw_leader`, `close_market_treasury`,
+     `close_market`, `close_registry_fee_vault`, `close_registry`.
 
 The upgrade authority is intentionally narrow — exactly one
 instruction — so that post-init the admin set is the sole
@@ -1826,13 +1841,17 @@ Per market, in order:
    `force_withdraw_depositor` against each depositor on each vault
    in the market. Each call pays the depositor and closes their
    PDA (rent to the depositor).
-2. **Leader exits.** Each vault's leader withdraws their
-   `leader_shares` via the existing `Withdraw` (the
-   `min_leader_share` floor is bypassed once `outside shares == 0`
-   on the vault). This empties `vault.base_atoms` /
-   `vault.quote_atoms` to zero, which by the treasury invariants
-   in **MarketHeader** drains the base and quote treasuries to
-   zero across the whole market.
+2. **Force-withdraw every leader.** Admin runs
+   `force_withdraw_leader` against each vault. The leader's stake
+   lives in `vault.leader_shares` (no separate PDA), so this is the
+   only way to drain the vault to zero without leader cooperation.
+   Each call pays the leader's slice to the leader's `(base_mint,
+   quote_mint)` ATAs and zeros `leader_shares`. With outside shares
+   already zero from step 1, `total_shares` hits zero and the vault
+   sector reclaims to the free DLL — but that is just an in-slab
+   pointer move, not a separate rent refund. After this step the
+   treasury invariants in **MarketHeader** guarantee
+   `base_treasury.amount == 0` and `quote_treasury.amount == 0`.
 3. **Close both treasuries.** `close_market_treasury` for the
    base leg, again for the quote leg.
 4. **Close the market.** `close_market` reclaims the entire
@@ -1858,7 +1877,7 @@ authority can redeploy a fresh binary at the same program id.
 
 Every instruction introduced above (`close_registry`,
 `close_registry_fee_vault`, `close_market`, `close_market_treasury`,
-`force_withdraw_depositor`) lives behind
+`force_withdraw_depositor`, `force_withdraw_leader`) lives behind
 `#[cfg(feature = "admin-teardown")]`. The feature is enabled for
 testnet and early-mainnet builds — when redeploy-from-scratch is a
 live operational tool — and disabled for the final immutable build,
