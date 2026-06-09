@@ -11,7 +11,7 @@ use anchor_lang_v2::{
 };
 use anchor_spl_v2::{
     associated_token::AssociatedToken,
-    token_interface::{Mint, TokenAccount},
+    token_interface::{Mint, TokenAccount, TokenInterface},
 };
 use solana_sdk_ids::bpf_loader_upgradeable;
 
@@ -59,11 +59,11 @@ pub struct Init {
     )]
     pub fee_vault: InterfaceAccount<TokenAccount>,
     /// Token program owning `fee_mint` — SPL Token or Token-2022.
-    /// Passed through to the ATA program for the create CPI; the
-    /// derived ATA address bakes this in (seeds include the token
-    /// program), so a mismatched value yields a wrong ATA and init
-    /// fails.
-    pub token_program: UncheckedAccount,
+    /// `Interface<TokenInterface>` rejects any other address up front
+    /// (`IncorrectProgramId`); the ATA seeds bake this in too, so a
+    /// caller-supplied mismatch against `fee_mint`'s owner yields a
+    /// non-canonical ATA and a separate `InvalidSeeds` rejection.
+    pub token_program: Interface<'static, TokenInterface>,
     pub associated_token_program: Program<AssociatedToken>,
     pub system_program: Program<System>,
 }
@@ -109,6 +109,7 @@ impl Init {
         registry.default_min_leader_share = DEFAULT_MIN_LEADER_SHARE.into();
         registry.default_fee_config = FeeConfig {
             mint: *self.fee_mint.address(),
+            token_program: *self.token_program.address(),
             atoms: fee_atoms.into(),
         };
         // The account is pre-sized for one admin, so this seats the

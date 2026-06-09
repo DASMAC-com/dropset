@@ -194,6 +194,10 @@ fn init_succeeds_with_spl_token_mint() {
     );
     // Fee config matches the mint account and atoms passed to init.
     assert_eq!(header.default_fee_config.mint, fee_mint.to_bytes().into());
+    assert_eq!(
+        header.default_fee_config.token_program,
+        SPL_TOKEN_PROGRAM_ID.to_bytes().into()
+    );
     assert_eq!(header.default_fee_config.atoms.get(), TEST_FEE_ATOMS);
     // The genesis admin is the sole member of the densely-packed set.
     assert_eq!(admins, &[genesis_admin.to_bytes()][..]);
@@ -225,6 +229,10 @@ fn init_succeeds_with_token2022_mint() {
         .expect("registry created");
     let (header, admins) = decode_slab::<RegistryHeader, [u8; 32]>(&account.data);
     assert_eq!(header.default_fee_config.mint, fee_mint.to_bytes().into());
+    assert_eq!(
+        header.default_fee_config.token_program,
+        TOKEN_2022_PROGRAM_ID.to_bytes().into()
+    );
     assert_eq!(header.default_fee_config.atoms.get(), TEST_FEE_ATOMS);
     assert_eq!(admins, &[genesis_admin.to_bytes()][..]);
     assert_fee_vault_created(&svm, fee_mint, TOKEN_2022_PROGRAM_ID);

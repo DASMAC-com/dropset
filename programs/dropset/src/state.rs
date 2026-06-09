@@ -25,13 +25,18 @@ pub const DEFAULT_MIN_LEADER_SHARE: Ppm32 = 50_000;
 
 /// A flat fee charged in `mint`, paid to the registry fee ATA. Mirrors
 /// the `FeeConfig` in the architecture spec; reused per-market by the
-/// `MarketHeader` once markets exist.
+/// `MarketHeader` once markets exist. Carrying `token_program`
+/// alongside `mint` lets downstream fee-collection paths derive the
+/// canonical ATA — `(authority, token_program, mint)` — without
+/// guessing which token program owns the mint.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, IdlType)]
 #[bytemuck(crate = "anchor_lang_v2::bytemuck")]
 pub struct FeeConfig {
     /// Mint accepted for this fee.
     pub mint: Address,
+    /// Token program owning `mint` — SPL Token or Token-2022.
+    pub token_program: Address,
     /// Amount in atoms of `mint`.
     pub atoms: PodU64,
 }

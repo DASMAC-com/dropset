@@ -17,13 +17,13 @@ solana-sdk-ids = "3"
 wincode = {version = "0.5", features = ["derive"]}
 
 [workspace.dependencies.anchor-lang-v2]
+branch = "anchor-next"
 git = "https://github.com/solana-foundation/anchor.git"
-rev = "2a191379"
 
 [workspace.dependencies.anchor-spl-v2]
+branch = "anchor-next"
 git = "https://github.com/solana-foundation/anchor.git"
-rev = "2a191379"
 
 [workspace.dependencies.anchor-v2-testing]
+branch = "anchor-next"
 git = "https://github.com/solana-foundation/anchor.git"
-rev = "2a191379"
