@@ -98,6 +98,7 @@ pub fn send_ixn(svm: &mut LiteSVM, signer: &Keypair, ixn: Instruction) -> Result
 /// 8-byte `#[account]` discriminator and `align_of::<T>() == 1` (true
 /// for our `Address`/`Pod`-byte tails), so items start right after the
 /// length prefix with no padding.
+#[allow(dead_code)]
 pub fn decode_slab<H, T>(data: &[u8]) -> (&H, &[T])
 where
     H: bytemuck::Pod,
@@ -118,6 +119,7 @@ where
 /// code for `code`. Derives the expected `Custom(N)` from the program's
 /// own `From<DropsetError>` mapping, so it tracks any change to the error
 /// offset or variant order rather than hard-coding a number.
+#[allow(dead_code)]
 pub fn assert_program_error(err: &str, code: dropset::DropsetError) {
     let expected = format!("{:?}", anchor_lang_v2::Error::from(code));
     assert!(err.contains(&expected), "expected {expected}, got: {err}");
@@ -301,11 +303,92 @@ pub fn create_token2022_token_account(
     acct_kp.pubkey()
 }
 
-fn send_signed(svm: &mut LiteSVM, signers: &[&Keypair], instructions: &[Instruction]) {
+pub fn send_signed(svm: &mut LiteSVM, signers: &[&Keypair], instructions: &[Instruction]) {
     let blockhash = svm.latest_blockhash();
     let msg = Message::new_with_blockhash(instructions, Some(&signers[0].pubkey()), &blockhash);
     let txn = VersionedTransaction::try_new(VersionedMessage::Legacy(msg), signers).unwrap();
     svm.send_transaction(txn)
         .map_err(|e| format!("setup txn failed: {:?}\nlogs: {:?}", e.err, e.meta.logs))
         .unwrap();
+}
+
+// ── Mock USDC + ATA helpers used by the `register_market` tests ─────
+
+/// Mock-USDC mint decimals — matches real USDC.
+#[allow(dead_code)]
+pub const MOCK_USDC_DECIMALS: u8 = 6;
+
+/// $1,000 in mock-USDC atoms (6 decimals): the open-market fee used by
+/// the register-market test fixtures.
+#[allow(dead_code)]
+pub const REGISTER_MARKET_FEE_ATOMS: u64 = 1_000 * 1_000_000;
+
+/// Create a USDC-shaped SPL Token mint with [`MOCK_USDC_DECIMALS`].
+///
+/// Returns the mint address; `authority` becomes the mint authority,
+/// which lets tests mint mock-USDC to a payer before charging the
+/// open-market fee.
+#[allow(dead_code)]
+pub fn create_mock_usdc_mint(svm: &mut LiteSVM, authority: &Keypair) -> Pubkey {
+    // Real USDC is 6 decimals under the classic SPL Token program; the
+    // existing helper already builds that exact shape, so reuse it
+    // rather than duplicating the InitializeMint2 plumbing.
+    create_spl_mint(svm, authority)
+}
+
+/// Mint `amount` atoms of `mint` to `destination_ata` under the SPL
+/// Token program. `mint_authority` must be a signer with mint authority
+/// on `mint`.
+#[allow(dead_code)]
+pub fn mint_to(
+    svm: &mut LiteSVM,
+    mint_authority: &Keypair,
+    mint: &Pubkey,
+    destination_ata: &Pubkey,
+    amount: u64,
+) {
+    // SPL Token `MintTo` ix (discriminator 7): [7u8, amount(8 bytes LE)].
+    let mut data = vec![7u8];
+    data.extend_from_slice(&amount.to_le_bytes());
+    let ix = Instruction::new_with_bytes(
+        SPL_TOKEN_PROGRAM_ID,
+        &data,
+        vec![
+            AccountMeta::new(*mint, false),
+            AccountMeta::new(*destination_ata, false),
+            AccountMeta::new_readonly(mint_authority.pubkey(), true),
+        ],
+    );
+    send_signed(svm, &[mint_authority], &[ix]);
+}
+
+/// Create the ATA for `(wallet, mint, token_program)` via the ATA
+/// program, funded by `payer`. Returns the ATA address. Works for both
+/// SPL Token and Token-2022 (the ATA program selects on the supplied
+/// program id).
+#[allow(dead_code)]
+pub fn create_associated_token_account(
+    svm: &mut LiteSVM,
+    payer: &Keypair,
+    wallet: &Pubkey,
+    mint: &Pubkey,
+    token_program: &Pubkey,
+) -> Pubkey {
+    let ata = associated_token_address(wallet, mint, token_program);
+    // ATA `Create` (discriminator 0) takes no extra data; account list
+    // matches the ATA program's documented order.
+    let ix = Instruction::new_with_bytes(
+        ATA_PROGRAM_ID,
+        &[0u8],
+        vec![
+            AccountMeta::new(payer.pubkey(), true),
+            AccountMeta::new(ata, false),
+            AccountMeta::new_readonly(*wallet, false),
+            AccountMeta::new_readonly(*mint, false),
+            AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
+            AccountMeta::new_readonly(*token_program, false),
+        ],
+    );
+    send_signed(svm, &[payer], &[ix]);
+    ata
 }

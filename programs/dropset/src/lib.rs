@@ -18,9 +18,10 @@ pub mod dropset {
     use super::*;
 
     #[discrim = 0]
+    #[access_control(ctx.accounts.verify_upgrade_authority(ctx.program_id))]
     pub fn init(ctx: &mut Context<Init>, genesis_admin: Address, fee_atoms: u64) -> Result<()> {
         ctx.accounts
-            .init(ctx.bumps.registry, genesis_admin, fee_atoms, ctx.program_id)
+            .init(ctx.bumps.registry, genesis_admin, fee_atoms)
     }
 
     #[discrim = 1]
@@ -31,5 +32,10 @@ pub mod dropset {
     #[discrim = 2]
     pub fn remove_admin(ctx: &mut Context<RemoveAdmin>, target: Address) -> Result<()> {
         ctx.accounts.remove_admin(target)
+    }
+
+    #[discrim = 3]
+    pub fn register_market(ctx: &mut Context<RegisterMarket>) -> Result<()> {
+        ctx.accounts.register_market(ctx.bumps.market)
     }
 }

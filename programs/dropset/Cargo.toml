@@ -7,7 +7,12 @@ solana-program-log.workspace = true
 solana-sdk-ids.workspace = true
 wincode.workspace = true
 
+# `anchor-lang-v2` is re-declared here with the `testing` feature so the
+# stack-backed `AccountBuffer` becomes available to unit tests inside
+# `src/`. Dev-dependencies are NOT included in `cargo build-sbf`
+# (anchor build) — the production .so never ships the testing scaffold.
 [dev-dependencies]
+anchor-lang-v2 = {workspace = true, features = ["testing"]}
 anchor-v2-testing.workspace = true
 solana-instruction.workspace = true
 solana-keypair.workspace = true
@@ -18,6 +23,10 @@ solana-pubkey.workspace = true
 [features]
 cpi = ["no-entrypoint"]
 default = []
+# Anchor v2 derive macros emit `cfg(feature = "idl-build")` gated code in
+# user crates. The lang-v2 / spl-v2 crates removed the matching forwarded
+# features (e3cf7608 V2: Remove idl-build from Anchor crates), so this
+# stays a stub that only flips the cfg locally.
 idl-build = []
 no-entrypoint = []
 no-log-ix-name = []

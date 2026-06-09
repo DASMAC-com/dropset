@@ -13,7 +13,14 @@ use anchor_spl_v2::{
     associated_token::AssociatedToken,
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
-use solana_sdk_ids::bpf_loader_upgradeable;
+
+// cspell:ignore BPFLoaderUpgradeab
+/// BPF upgradeable loader program ID — the owner of every program's
+/// `ProgramData` account. Typed as [`Address`] so the PDA
+/// verification reads cleanly; the `solana-sdk-ids` re-export is a
+/// `Pubkey` that would otherwise need a conversion at every call site.
+const BPF_LOADER_UPGRADEABLE_ID: Address =
+    anchor_lang_v2::address!("BPFLoaderUpgradeab1e11111111111111111111111");
 
 /// Expected `UpgradeableLoaderState::ProgramData` header.
 #[repr(C, packed)]
@@ -36,10 +43,13 @@ pub struct Init {
     pub registry: Registry,
     /// SAFETY: the program's ProgramData account is owned by the BPF
     /// upgradeable loader, not this program, so it cannot be a typed
-    /// `Account<T>`. `init()` verifies it is the canonical ProgramData
-    /// PDA via `find_and_verify_program_address` and only reads its
-    /// header to authenticate the upgrade authority — no data is
-    /// written and no other invariant is assumed.
+    /// `Account<T>`. `verify_upgrade_authority` re-derives the
+    /// canonical `ProgramData` PDA and only reads its header to
+    /// authenticate the upgrade authority — no data is written and
+    /// no other invariant is assumed. A declarative
+    /// `seeds = [crate::ID.as_ref()], seeds::program = …` would emit
+    /// an opaque `{"kind":"expr"}` seed that anchor v2's IDL spec
+    /// can't deserialize today; the manual check sidesteps that.
     pub program_data: UncheckedAccount,
     /// The mint to charge fees in. `InterfaceAccount<Mint>` validates
     /// SPL Token / Token-2022 ownership and that the data unpacks as a
@@ -69,36 +79,38 @@ pub struct Init {
 }
 
 impl Init {
-    #[inline(always)]
-    pub fn init(
-        &mut self,
-        bump: u8,
-        genesis_admin: Address,
-        fee_atoms: u64,
-        program_id: &Address,
-    ) -> Result<()> {
-        let program_data_account = self.program_data.account();
-
-        // Verify the program data account.
+    /// Pre-handler check used via `#[access_control]` on the
+    /// `init` dispatcher: pin `program_data` to this program's
+    /// canonical `ProgramData` PDA, decode its header, and reject
+    /// the instruction unless `payer` is the program's upgrade
+    /// authority. Lives here rather than inline in the handler so
+    /// the body below stays focused on stamping registry state.
+    pub fn verify_upgrade_authority(&self, program_id: &Address) -> Result<()> {
         find_and_verify_program_address(
             &[program_id.as_ref()],
-            &bpf_loader_upgradeable::ID,
+            &BPF_LOADER_UPGRADEABLE_ID,
             self.program_data.address(),
         )
         .map_err(|_| DropsetError::InvalidProgramDataAddress)?;
-
-        // Get upgrade authority.
-        let upgrade_authority = program_data_account
+        let upgrade_authority = self
+            .program_data
+            .account()
             .try_borrow()?
             .get(..core::mem::size_of::<ProgramDataHeader>())
             .map(bytemuck::from_bytes::<ProgramDataHeader>)
             .ok_or(DropsetError::InvalidProgramData)?
             .upgrade_authority;
-
-        // Verify upgrade authority.
         if !address_eq(&upgrade_authority, self.payer.address()) {
             return Err(DropsetError::InvalidUpgradeAuthority.into());
         }
+        Ok(())
+    }
+
+    #[inline(always)]
+    pub fn init(&mut self, bump: u8, genesis_admin: Address, fee_atoms: u64) -> Result<()> {
+        // The program-data PDA is verified by the `seeds` constraint
+        // and the upgrade-authority check fires via `#[access_control]`
+        // before this body runs — see `lib.rs::init`.
 
         // Init registry values. Header fields via DerefMut; the admin
         // set is the slab tail.

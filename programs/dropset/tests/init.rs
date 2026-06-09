@@ -76,8 +76,9 @@ fn init_rejects_wrong_program_data_address() {
     let mut svm = deploy_with_authority(&authority);
     let fee_mint = create_spl_mint(&mut svm, &authority);
 
-    // Any pubkey other than the canonical programdata PDA — the address
-    // verification fails before any data is read.
+    // Any pubkey other than the canonical programdata PDA — the
+    // `verify_upgrade_authority` access-control hook fails the PDA
+    // derivation before any data is read.
     let bogus = Pubkey::new_unique();
     let err = send_ixn(
         &mut svm,
