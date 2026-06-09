@@ -26,4 +26,6 @@ pub enum DropsetError {
     InvalidSectorIndex,
     #[msg("vault list pointers are inconsistent with the list head")]
     CorruptVaultList,
+    #[msg("registry market_count cannot exceed u32::MAX")]
+    MarketCountOverflow,
 }
