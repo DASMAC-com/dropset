@@ -1539,6 +1539,25 @@ fidelity; see the plan's open decision.
 the canonical schema that off-chain clients are generated from, and the
 self-CPI instruction data decodes against it.
 
+**Serialization mode.** Anchor v2's `#[event]` macro picks between two
+serializers: the default (`wincode` with a borsh-wire-compatible
+config; supports `Vec` / `String` / `Option`) and opt-in zero-copy
+`#[event(bytemuck)]` (`repr(C)` POD structs only, written as
+`bytemuck::bytes_of(self)`). The **fill event uses
+`#[event(bytemuck)]`**: it is fixed-size by construction (taker plus
+per-leg `leader` / `quote_authority` pubkeys, amounts, price, post-fill
+inventory) and is the hot-path emission, so both the zero serializer
+cost and the small stack footprint of the event-struct literal at the
+macro site matter. The cold-path events (`Deposit`, `Withdraw`,
+`OpenVault`, `Realize`) use the default `#[event]` — they benefit from
+dynamic fields and emit too rarely for the bytemuck saving to matter.
+The default-mode wire format is byte-identical to borsh, so off-chain
+decoders generated from the IDL keep working unchanged; bytemuck events
+surface in the IDL as a `repr(C)` blob and decode by offset. Verified
+macro expansion and CU sources are in
+[`docs/research/svm-heap-emit-cpi.md`](research/svm-heap-emit-cpi.md)
+§4.
+
 ## Operating model
 
 Reader-facing notes about how a vault behaves in steady state.
