@@ -40,6 +40,25 @@ match `eng-###` (case-insensitive), stop and ask.
    If `main_wt` is empty (main isn't checked out
    anywhere), skip the pull and warn the user.
 
+1. Symlink `frontend/.env.local` from the main
+   worktree so `pnpm dev` / `make frontend` pick up
+   the same env without a manual copy. `.env*` is
+   in `frontend/.gitignore`, so the symlink isn't
+   tracked. Skip if main has no env file, or if
+   this worktree already has one (don't clobber
+   a real file someone placed deliberately):
+
+   ```sh
+   src="$main_wt/frontend/.env.local"
+   dst="frontend/.env.local"
+   if [ -f "$src" ] && [ ! -e "$dst" ] && [ ! -L "$dst" ]; then
+     ln -s "$src" "$dst"
+   fi
+   ```
+
+   If `main_wt` was empty in the previous step,
+   skip this one too.
+
 1. Ensure the current branch is named after the
    Linear tag. Check the current branch:
 
