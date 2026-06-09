@@ -140,9 +140,10 @@ pub struct Vault {
     pub allow_outside_depositors: u8,
     /// Set to 1 when an admin approved outside deposits.
     pub outside_deposits_approved: u8,
-    /// Explicit pad so [`Vault`] stays Pod-friendly (no implicit
-    /// padding). Zero-initialized.
-    pub _pad: [u8; 5],
+    /// Explicit reserved bytes so [`Vault`] stays Pod-friendly (no
+    /// implicit padding) and leaves a small slot for future flag
+    /// additions without changing the on-chain size.
+    pub _reserved: [u8; 5],
     /// Bids / asks ladder as offsets from the reference price.
     pub profile: LiquidityProfile,
     /// Materialized per-level state (computed at flush time).
@@ -353,238 +354,279 @@ impl VaultDll for Market {
     }
 }
 
-/// Cross-list pointer-table unit tests — exercise the DLL operations in
-/// isolation from the rest of the program. They drive a hand-built
-/// `MarketHeader` + `Vec<Vault>` through the same `VaultDll` algorithms
-/// the on-chain `Market` slab uses, so the on-chain account layout
-/// doesn't have to be stood up to assert the invariants.
+/// Unit tests driving the **real** `Market` slab via a stack-backed
+/// `AccountBuffer` from `anchor_lang_v2::testing`. Pre-allocates a
+/// fixed number of sectors up front and exercises the
+/// pointer-arithmetic surface (`link_head`, `unlink`, free-list reuse
+/// of `allocate_sector`) directly against the on-chain code path.
+///
+/// `allocate_sector`'s tail-growth branch calls `resize_to_capacity` +
+/// `top_up` (a system-program transfer CPI), neither of which has a
+/// host-side mock in this scaffold. That branch is covered by the
+/// `OpenVault` integration tests in a downstream PR — every other
+/// `VaultDll` line lives here.
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anchor_lang_v2::{testing::AccountBuffer, AnchorAccount, Discriminator};
 
-    /// In-memory stand-in for the slab tail: a `MarketHeader` plus a
-    /// dynamic `Vec<Vault>` we can grow as new sectors are allocated.
-    /// `VaultDll` is normally implemented on `Slab<MarketHeader, Vault>`,
-    /// but the algorithm only needs *some* container that exposes a
-    /// `MarketHeader` and an indexable `[Vault]` slice — so we mirror
-    /// that surface here to test the algorithm directly.
-    struct Tape {
-        header: MarketHeader,
-        vaults: Vec<Vault>,
+    /// Number of sectors pre-allocated in the test fixture. Bigger
+    /// than any single test needs so the free-list interleaving
+    /// scenarios all have headroom.
+    const SECTORS: u32 = 4;
+
+    /// Total buffer bytes: `RuntimeAccount` header (96) + 8-byte
+    /// discriminator + `MarketHeader` + slab `len` field + `SECTORS`
+    /// × `size_of::<Vault>()`. Rounded up to a constant that fits the
+    /// largest test and stays on the stack comfortably.
+    const BUF_BYTES: usize = 4096;
+
+    /// Total data-region bytes (everything after `RuntimeAccount`):
+    /// `discriminator + MarketHeader + len_field + SECTORS * Vault`.
+    /// `Market::space_for(SECTORS)` already accounts for the slab
+    /// header / len / alignment padding; add the 8-byte
+    /// `#[account]` discriminator on top.
+    const DATA_LEN: usize = 8 + Market::space_for(SECTORS);
+
+    /// Build a fresh buffer with [`SECTORS`] zeroed sectors, empty
+    /// list heads, and the correct discriminator. Returns the buffer
+    /// (kept on the stack — caller holds it for the test lifetime).
+    fn setup() -> AccountBuffer<BUF_BYTES> {
+        let buf = AccountBuffer::<BUF_BYTES>::new();
+        buf.init(
+            [0xAA; 32],
+            crate::ID.to_bytes(),
+            DATA_LEN,
+            /* is_signer */ false,
+            /* is_writable */ true,
+            /* executable */ false,
+        );
+        // Write the discriminator + slab `len = SECTORS`. The rest of
+        // the data region is already zero from `AccountBuffer::new`,
+        // which doubles as zeroed `Vault`s.
+        let mut data = vec![0u8; DATA_LEN];
+        data[..8].copy_from_slice(<MarketHeader as Discriminator>::DISCRIMINATOR);
+        // len field lives right after the header at LEN_OFFSET, which
+        // is `disc + size_of::<MarketHeader>()` for Anchor accounts.
+        let len_off = 8 + core::mem::size_of::<MarketHeader>();
+        data[len_off..len_off + 4].copy_from_slice(&SECTORS.to_le_bytes());
+        buf.write_data(&data);
+        buf
     }
 
-    impl Tape {
-        fn new() -> Self {
-            let mut header = MarketHeader::zeroed();
-            header.head = NULL_SECTOR.into();
-            header.tombstone_head = NULL_SECTOR.into();
-            header.free_head = NULL_SECTOR.into();
-            Self {
-                header,
-                vaults: Vec::new(),
-            }
+    /// Load the buffer as a mutable `Market` and initialize the list
+    /// heads + every sector's `next`/`prev` to `NULL_SECTOR`. Tests
+    /// then build whatever list state they need on top.
+    fn load_market(buf: &AccountBuffer<BUF_BYTES>) -> Market {
+        let view = unsafe { buf.view() };
+        // SAFETY: this is the only live wrapper over `view`'s data
+        // for the test's duration.
+        let mut market = unsafe { Market::load_mut(view).unwrap() };
+        market.head = NULL_SECTOR.into();
+        market.tombstone_head = NULL_SECTOR.into();
+        market.free_head = NULL_SECTOR.into();
+        for i in 0..SECTORS as usize {
+            market.as_mut_slice()[i].next = NULL_SECTOR.into();
+            market.as_mut_slice()[i].prev = NULL_SECTOR.into();
         }
+        market
+    }
 
-        fn allocate(&mut self) -> u32 {
-            let free_head = self.header.free_head.get();
-            if free_head != NULL_SECTOR {
-                let next = self.vaults[free_head as usize].next.get();
-                self.header.free_head = next.into();
-                self.vaults[free_head as usize] = Vault::zeroed();
-                self.vaults[free_head as usize].next = NULL_SECTOR.into();
-                self.vaults[free_head as usize].prev = NULL_SECTOR.into();
-                return free_head;
-            }
-            let idx = self.vaults.len() as u32;
-            let mut v = Vault::zeroed();
-            v.next = NULL_SECTOR.into();
-            v.prev = NULL_SECTOR.into();
-            self.vaults.push(v);
-            idx
+    /// Walk `list` starting at its head and return the visit order.
+    /// Used by tests to assert ordering without baking it into the
+    /// `VaultDll` trait (the production matching engine iterates
+    /// inline, not via a helper).
+    fn walk(market: &Market, list: DllList) -> std::vec::Vec<u32> {
+        let mut out = std::vec::Vec::new();
+        let mut cur = list.head(market);
+        while cur != NULL_SECTOR {
+            out.push(cur);
+            cur = market.as_slice()[cur as usize].next.get();
         }
+        out
+    }
 
-        fn link_head(&mut self, list: DllList, sector: u32) {
-            let prev_head = list.head(&self.header);
-            self.vaults[sector as usize].next = prev_head.into();
-            self.vaults[sector as usize].prev = NULL_SECTOR.into();
-            if prev_head != NULL_SECTOR {
-                self.vaults[prev_head as usize].prev = sector.into();
-            }
-            list.set_head(&mut self.header, sector);
-        }
-
-        fn unlink(&mut self, list: DllList, sector: u32) {
-            let next = self.vaults[sector as usize].next.get();
-            let prev = self.vaults[sector as usize].prev.get();
-            if prev != NULL_SECTOR {
-                self.vaults[prev as usize].next = next.into();
-            } else {
-                list.set_head(&mut self.header, next);
-            }
-            if next != NULL_SECTOR {
-                self.vaults[next as usize].prev = prev.into();
-            }
-            self.vaults[sector as usize].next = NULL_SECTOR.into();
-            self.vaults[sector as usize].prev = NULL_SECTOR.into();
-        }
-
-        fn walk(&self, list: DllList) -> Vec<u32> {
-            let mut out = Vec::new();
-            let mut cur = list.head(&self.header);
-            while cur != NULL_SECTOR {
-                out.push(cur);
-                cur = self.vaults[cur as usize].next.get();
-            }
-            out
-        }
+    #[test]
+    fn space_for_zero_matches_min_data_len() {
+        // The slab's `space_for(0)` should equal its `MIN_DATA_LEN`
+        // (header + len + alignment), with the 8-byte discriminator
+        // sitting on top. Used as the size argument by
+        // `register_market`'s `#[account(init, space = …)]`.
+        assert_eq!(
+            Market::space_for(0),
+            <Market as anchor_lang_v2::Space>::INIT_SPACE
+        );
     }
 
     #[test]
     fn empty_lists_walk_to_nothing() {
-        let tape = Tape::new();
-        assert!(tape.walk(DllList::Active).is_empty());
-        assert!(tape.walk(DllList::Tombstone).is_empty());
-        assert!(tape.walk(DllList::Free).is_empty());
-    }
-
-    #[test]
-    fn allocate_returns_sequential_indices() {
-        let mut tape = Tape::new();
-        assert_eq!(tape.allocate(), 0);
-        assert_eq!(tape.allocate(), 1);
-        assert_eq!(tape.allocate(), 2);
+        let buf = setup();
+        let market = load_market(&buf);
+        assert!(walk(&market, DllList::Active).is_empty());
+        assert!(walk(&market, DllList::Tombstone).is_empty());
+        assert!(walk(&market, DllList::Free).is_empty());
     }
 
     #[test]
     fn link_head_prepends_most_recent() {
-        let mut tape = Tape::new();
-        for _ in 0..3 {
-            let s = tape.allocate();
-            tape.link_head(DllList::Active, s);
-        }
+        let buf = setup();
+        let mut market = load_market(&buf);
+        market.link_head(DllList::Active, 0).unwrap();
+        market.link_head(DllList::Active, 1).unwrap();
+        market.link_head(DllList::Active, 2).unwrap();
         // Spec: "New vaults are prepended at `head`" — most recent first.
-        assert_eq!(tape.walk(DllList::Active), [2, 1, 0]);
+        assert_eq!(walk(&market, DllList::Active), [2, 1, 0]);
+    }
+
+    #[test]
+    fn link_head_rejects_out_of_range_sector() {
+        let buf = setup();
+        let mut market = load_market(&buf);
+        // The slab tail holds `SECTORS` entries; index `SECTORS` is
+        // one past the end and must be rejected before any pointer
+        // is patched.
+        let err = market
+            .link_head(DllList::Active, SECTORS)
+            .expect_err("sector >= len must be rejected");
+        // The mapped ProgramError comes from DropsetError::InvalidSectorIndex.
+        let expected: ProgramError = DropsetError::InvalidSectorIndex.into();
+        assert_eq!(err, expected);
+        // List head was not mutated.
+        assert_eq!(market.head.get(), NULL_SECTOR);
     }
 
     #[test]
     fn unlink_middle_patches_neighbors() {
-        let mut tape = Tape::new();
-        for _ in 0..3 {
-            let s = tape.allocate();
-            tape.link_head(DllList::Active, s);
+        let buf = setup();
+        let mut market = load_market(&buf);
+        for s in 0..3 {
+            market.link_head(DllList::Active, s).unwrap();
         }
         // Order: 2 <-> 1 <-> 0. Unlink the middle.
-        tape.unlink(DllList::Active, 1);
-        assert_eq!(tape.walk(DllList::Active), [2, 0]);
-        assert_eq!(tape.vaults[2].next.get(), 0);
-        assert_eq!(tape.vaults[0].prev.get(), 2);
-        // The detached sector is left with NULL pointers so it's safe to
-        // re-thread onto another list.
-        assert_eq!(tape.vaults[1].next.get(), NULL_SECTOR);
-        assert_eq!(tape.vaults[1].prev.get(), NULL_SECTOR);
+        market.unlink(DllList::Active, 1).unwrap();
+        assert_eq!(walk(&market, DllList::Active), [2, 0]);
+        assert_eq!(market.as_slice()[2].next.get(), 0);
+        assert_eq!(market.as_slice()[0].prev.get(), 2);
+        // The detached sector is left with NULL pointers so it's
+        // safe to re-thread onto another list.
+        assert_eq!(market.as_slice()[1].next.get(), NULL_SECTOR);
+        assert_eq!(market.as_slice()[1].prev.get(), NULL_SECTOR);
     }
 
     #[test]
     fn unlink_head_promotes_next() {
-        let mut tape = Tape::new();
-        for _ in 0..3 {
-            let s = tape.allocate();
-            tape.link_head(DllList::Active, s);
+        let buf = setup();
+        let mut market = load_market(&buf);
+        for s in 0..3 {
+            market.link_head(DllList::Active, s).unwrap();
         }
         // Order: 2 <-> 1 <-> 0. Unlink the head (sector 2).
-        tape.unlink(DllList::Active, 2);
-        assert_eq!(tape.walk(DllList::Active), [1, 0]);
-        assert_eq!(tape.header.head.get(), 1);
-        assert_eq!(tape.vaults[1].prev.get(), NULL_SECTOR);
+        market.unlink(DllList::Active, 2).unwrap();
+        assert_eq!(walk(&market, DllList::Active), [1, 0]);
+        assert_eq!(market.head.get(), 1);
+        assert_eq!(market.as_slice()[1].prev.get(), NULL_SECTOR);
     }
 
     #[test]
     fn unlink_tail_leaves_predecessor_at_end() {
-        let mut tape = Tape::new();
-        for _ in 0..3 {
-            let s = tape.allocate();
-            tape.link_head(DllList::Active, s);
+        let buf = setup();
+        let mut market = load_market(&buf);
+        for s in 0..3 {
+            market.link_head(DllList::Active, s).unwrap();
         }
         // Order: 2 <-> 1 <-> 0. Unlink the tail (sector 0).
-        tape.unlink(DllList::Active, 0);
-        assert_eq!(tape.walk(DllList::Active), [2, 1]);
-        assert_eq!(tape.vaults[1].next.get(), NULL_SECTOR);
+        market.unlink(DllList::Active, 0).unwrap();
+        assert_eq!(walk(&market, DllList::Active), [2, 1]);
+        assert_eq!(market.as_slice()[1].next.get(), NULL_SECTOR);
     }
 
     #[test]
     fn unlink_only_element_empties_list() {
-        let mut tape = Tape::new();
-        let s = tape.allocate();
-        tape.link_head(DllList::Active, s);
-        tape.unlink(DllList::Active, s);
-        assert!(tape.walk(DllList::Active).is_empty());
-        assert_eq!(tape.header.head.get(), NULL_SECTOR);
+        let buf = setup();
+        let mut market = load_market(&buf);
+        market.link_head(DllList::Active, 0).unwrap();
+        market.unlink(DllList::Active, 0).unwrap();
+        assert!(walk(&market, DllList::Active).is_empty());
+        assert_eq!(market.head.get(), NULL_SECTOR);
+    }
+
+    #[test]
+    fn unlink_rejects_out_of_range_sector() {
+        let buf = setup();
+        let mut market = load_market(&buf);
+        let err = market
+            .unlink(DllList::Active, SECTORS)
+            .expect_err("sector >= len must be rejected");
+        let expected: ProgramError = DropsetError::InvalidSectorIndex.into();
+        assert_eq!(err, expected);
     }
 
     #[test]
     fn active_to_tombstone_moves_independently() {
-        let mut tape = Tape::new();
-        let a = tape.allocate();
-        let b = tape.allocate();
-        tape.link_head(DllList::Active, a);
-        tape.link_head(DllList::Active, b);
+        let buf = setup();
+        let mut market = load_market(&buf);
+        market.link_head(DllList::Active, 0).unwrap();
+        market.link_head(DllList::Active, 1).unwrap();
         // CloseVault flow: unlink from active, prepend to tombstone.
-        tape.unlink(DllList::Active, a);
-        tape.link_head(DllList::Tombstone, a);
-        assert_eq!(tape.walk(DllList::Active), [b]);
-        assert_eq!(tape.walk(DllList::Tombstone), [a]);
+        market.unlink(DllList::Active, 0).unwrap();
+        market.link_head(DllList::Tombstone, 0).unwrap();
+        assert_eq!(walk(&market, DllList::Active), [1]);
+        assert_eq!(walk(&market, DllList::Tombstone), [0]);
         // The two lists must not share members or pointers.
-        assert_eq!(tape.vaults[a as usize].next.get(), NULL_SECTOR);
-        assert_eq!(tape.vaults[b as usize].prev.get(), NULL_SECTOR);
+        assert_eq!(market.as_slice()[0].next.get(), NULL_SECTOR);
+        assert_eq!(market.as_slice()[1].prev.get(), NULL_SECTOR);
     }
 
     #[test]
-    fn free_list_recycles_sector_on_next_allocate() {
-        let mut tape = Tape::new();
-        let a = tape.allocate();
-        let b = tape.allocate();
-        tape.link_head(DllList::Active, a);
-        tape.link_head(DllList::Active, b);
-        // Reclaim flow: unlink from whichever DLL, push onto free list.
-        tape.unlink(DllList::Active, a);
-        tape.link_head(DllList::Free, a);
-        // Next allocate must reuse the freed sector rather than grow.
-        let reused = tape.allocate();
-        assert_eq!(reused, a);
-        // Free list is drained.
-        assert_eq!(tape.header.free_head.get(), NULL_SECTOR);
-        // Slab didn't grow beyond the original two sectors.
-        assert_eq!(tape.vaults.len(), 2);
+    fn allocate_sector_recycles_from_free_list() {
+        let buf = setup();
+        let mut market = load_market(&buf);
+        // Push two sectors onto the free list — LIFO order, so the
+        // next two `allocate_sector` calls pop sector 1 then sector 0.
+        market.link_head(DllList::Free, 0).unwrap();
+        market.link_head(DllList::Free, 1).unwrap();
+        // Scribble on sector 1 to verify allocate re-zeroes it.
+        market.as_mut_slice()[1].base_atoms = 12345u64.into();
+        market.as_mut_slice()[1].leader_shares = 999u64.into();
+
+        // Dummy payer — `allocate_sector`'s free-list branch never
+        // reads it. Doesn't have to be funded.
+        let payer_buf = AccountBuffer::<128>::new();
+        payer_buf.init([0xBB; 32], [0u8; 32], 0, true, true, false);
+        let payer = unsafe { payer_buf.view() };
+
+        let reused = market.allocate_sector(&payer).unwrap();
+        assert_eq!(reused, 1);
+        // Free head moved on to sector 0.
+        assert_eq!(market.free_head.get(), 0);
+        // Re-zeroed.
+        assert_eq!(market.as_slice()[1].base_atoms.get(), 0);
+        assert_eq!(market.as_slice()[1].leader_shares.get(), 0);
+        assert_eq!(market.as_slice()[1].next.get(), NULL_SECTOR);
+        assert_eq!(market.as_slice()[1].prev.get(), NULL_SECTOR);
+
+        // Second allocate drains the free list.
+        let reused2 = market.allocate_sector(&payer).unwrap();
+        assert_eq!(reused2, 0);
+        assert_eq!(market.free_head.get(), NULL_SECTOR);
     }
 
     #[test]
     fn free_list_lifo_order() {
-        let mut tape = Tape::new();
-        let a = tape.allocate();
-        let b = tape.allocate();
-        let c = tape.allocate();
-        // Push a, then b, then c onto the free list. LIFO: c, b, a.
-        tape.link_head(DllList::Free, a);
-        tape.link_head(DllList::Free, b);
-        tape.link_head(DllList::Free, c);
-        assert_eq!(tape.allocate(), c);
-        assert_eq!(tape.allocate(), b);
-        assert_eq!(tape.allocate(), a);
-        // All consumed — next allocate must grow.
-        assert_eq!(tape.allocate(), 3);
-    }
+        let buf = setup();
+        let mut market = load_market(&buf);
+        // Push 0, 1, 2 onto the free list. LIFO: 2, 1, 0.
+        market.link_head(DllList::Free, 0).unwrap();
+        market.link_head(DllList::Free, 1).unwrap();
+        market.link_head(DllList::Free, 2).unwrap();
 
-    #[test]
-    fn reallocated_sector_starts_clean() {
-        let mut tape = Tape::new();
-        let a = tape.allocate();
-        // Scribble on it then reclaim.
-        tape.vaults[a as usize].base_atoms = 12345u64.into();
-        tape.vaults[a as usize].leader_shares = 999u64.into();
-        tape.link_head(DllList::Free, a);
-        let reused = tape.allocate();
-        assert_eq!(reused, a);
-        assert_eq!(tape.vaults[a as usize].base_atoms.get(), 0);
-        assert_eq!(tape.vaults[a as usize].leader_shares.get(), 0);
+        let payer_buf = AccountBuffer::<128>::new();
+        payer_buf.init([0xBB; 32], [0u8; 32], 0, true, true, false);
+        let payer = unsafe { payer_buf.view() };
+
+        assert_eq!(market.allocate_sector(&payer).unwrap(), 2);
+        assert_eq!(market.allocate_sector(&payer).unwrap(), 1);
+        assert_eq!(market.allocate_sector(&payer).unwrap(), 0);
+        assert_eq!(market.free_head.get(), NULL_SECTOR);
     }
 }

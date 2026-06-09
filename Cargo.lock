@@ -186,6 +186,7 @@ dependencies = [
  "solana-instruction",
  "solana-msg",
  "solana-program-error",
+ "solana-program-log",
  "solana-program-memory",
  "solana-sha256-hasher",
  "solana-system-interface 2.0.0",

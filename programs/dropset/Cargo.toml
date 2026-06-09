@@ -7,7 +7,12 @@ solana-program-log.workspace = true
 solana-sdk-ids.workspace = true
 wincode.workspace = true
 
+# `anchor-lang-v2` is re-declared here with the `testing` feature so the
+# stack-backed `AccountBuffer` becomes available to unit tests inside
+# `src/`. Dev-dependencies are NOT included in `cargo build-sbf`
+# (anchor build) — the production .so never ships the testing scaffold.
 [dev-dependencies]
+anchor-lang-v2 = {workspace = true, features = ["testing"]}
 anchor-v2-testing.workspace = true
 solana-instruction.workspace = true
 solana-keypair.workspace = true
