@@ -1503,6 +1503,14 @@ standard `emit_cpi!` for IDL/tooling compatibility.
 `Withdraw`, `OpenVault`, and `Realize` emit. The leader quote-refresh
 instructions do not.
 
+**Per-emit cost.** Each `emit_cpi!` runs as a self-CPI: ~1000 CU
+invocation overhead + `data_len/250` CU for the payload. The hard
+ceiling is **64 inner instructions per transaction**
+(`MAX_INSTRUCTION_TRACE_LENGTH`), not bytes — so emit budgeting at
+sweep time is against `64 − (top-level ix + token CPIs)`, not the
+per-CPI 10 KiB cap. A sweep that exhausts both axes packs into
+multiple aggregated-event CPIs rather than one emit per leg.
+
 **Why fills must be events, not account diffs.** `market.nonce` is
 bumped on every fill and every quote update, and a geyser stream
 delivers end-of-slot *coalesced* account state — so per-fill price,
