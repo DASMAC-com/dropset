@@ -190,7 +190,8 @@ same with `CpiContext::invoke`.
 ```
 [ 8 B EVENT_IX_TAG_LE = e4 45 a5 2e 51 cb 9a 1d ]   // sha256("anchor:event")[..8]
 [ 8 B event-discriminator = sha256("event:<EventName>")[..8] ]
-[ borsh-encoded event body                         ]
+[ event body — wincode (borsh-wire-compatible) by default,    ]
+[ or bytemuck::bytes_of(self) under #[event(bytemuck)]        ]
 ```
 
 - `EVENT_IX_TAG = 0x1d9acb512ea545e4` at [`anchor/lang/src/event.rs:1-3`](https://github.com/solana-foundation/anchor/blob/2a191379020f15c1d384bdadd41f23949734ce98/lang/src/event.rs#L1-L3)
@@ -199,6 +200,28 @@ same with `CpiContext::invoke`.
   [`lang/syn/src/codegen/program/common.rs:11-16`](https://github.com/solana-foundation/anchor/blob/2a191379020f15c1d384bdadd41f23949734ce98/lang/syn/src/codegen/program/common.rs#L11-L16)
 - Per-event `Event::data` preallocates 256 B (was 1024 pre-0.30):
   [`anchor/lang/attribute/event/src/lib.rs:50-56`](https://github.com/solana-foundation/anchor/blob/2a191379020f15c1d384bdadd41f23949734ce98/lang/attribute/event/src/lib.rs#L50-L56)
+
+**Serialization modes (v2-only).** v2 picks the serializer via the
+`#[event]` macro argument
+([`lang-v2/derive/src/lib.rs:4915`](https://github.com/solana-foundation/anchor/blob/2a191379020f15c1d384bdadd41f23949734ce98/lang-v2/derive/src/lib.rs#L4915)):
+
+| mode                     | serializer / writer                                                | constraints                                                  | when to pick                                                                            |
+| ------------------------ | ------------------------------------------------------------------ | ------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| `#[event]` (default)     | wincode with `BORSH_CONFIG` — wire output is byte-identical to borsh | supports `Vec` / `String` / `Option` / nested enums          | cold-path events that need dynamic shape (`OpenVault`, `Realize`, `Deposit`, `Withdraw`) |
+| `#[event(bytemuck)]`     | zero-copy `bytemuck::bytes_of(self)` on a `repr(C)` POD struct      | fixed-size primitives only; no fat pointers, no allocations  | hot-path fill events — cheapest emit, smallest stack footprint at the macro site        |
+
+- Wincode branch at
+  [`lang-v2/derive/src/lib.rs:3206-3214`](https://github.com/solana-foundation/anchor/blob/2a191379020f15c1d384bdadd41f23949734ce98/lang-v2/derive/src/lib.rs#L3206-L3214)
+- Bytemuck branch at
+  [`lang-v2/derive/src/lib.rs:3185-3196`](https://github.com/solana-foundation/anchor/blob/2a191379020f15c1d384bdadd41f23949734ce98/lang-v2/derive/src/lib.rs#L3185-L3196)
+- IDL `TypeKind::Borsh` vs `TypeKind::BytemuckRepr` tagging at
+  [`lang-v2/derive/src/lib.rs:4949-4955`](https://github.com/solana-foundation/anchor/blob/2a191379020f15c1d384bdadd41f23949734ce98/lang-v2/derive/src/lib.rs#L4949-L4955)
+
+Because the default-mode wire format is borsh-identical via
+`BORSH_CONFIG`, off-chain decoders that already use borsh keep working
+unchanged for default events. Bytemuck events are decoded as a
+`repr(C)` blob in the IDL (`{serialization:"bytemuck",repr:{kind:"c"}}`)
+and require the indexer to read fields by offset.
 
 **`event_authority` PDA.** Seeds `[b"__event_authority"]`;
 address+bump baked at compile time as
@@ -384,6 +407,15 @@ Build the next CPI when adding the next leg would exceed
   `64 - (top_level + token_cpis)`.
 - Each `emit_cpi!` adds `~1000 CU + data_len/250` CU. At ~120 B/event
   ≈ 1000.5 CU/emit. 200 emits ≈ 200 KCU.
+- **Event serialization mode.** Use `#[event(bytemuck)]` for the
+  fill event — the payload is fixed-size primitives (taker pubkey,
+  leader pubkey, quote_authority pubkey, fill amounts, price,
+  post-fill inventory), it's emitted per leg on the hot path, and
+  bytemuck cuts both the serializer cost and the stack footprint of
+  the struct literal at the macro site (Section 3 pitfall). Use the
+  default `#[event]` (wincode, borsh-wire-compatible) for cold-path
+  events that benefit from `Vec` / `String` / `Option` — `OpenVault`,
+  `Realize`, `Deposit`, `Withdraw`.
 
 ## 8. Open questions / things to verify before implementing
 
