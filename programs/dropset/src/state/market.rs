@@ -215,6 +215,21 @@ const _: () = assert!(core::mem::size_of::<MarketHeader>() == 233);
 const _: () = assert!(core::mem::size_of::<LiquidityProfile>() == 2 * N_LEVELS * 10);
 const _: () = assert!(core::mem::size_of::<Remaining>() == 2 * N_LEVELS * 16);
 
+// Field-offset guards: total-size asserts alone don't catch a reorder
+// that happens to preserve the byte count (e.g. swapping `_reserved`
+// with another byte array). Pin the load-bearing offsets so the build
+// breaks on any field reorder that would shift the on-chain layout —
+// `next`/`prev` are dispatched directly by the DLL ops, `leader`
+// doubles as the emptiness marker, and `_reserved` is the only field
+// whose contents are intentionally zeroed.
+const _: () = assert!(core::mem::offset_of!(Vault, next) == 0);
+const _: () = assert!(core::mem::offset_of!(Vault, prev) == 4);
+const _: () = assert!(core::mem::offset_of!(Vault, leader) == 8);
+const _: () = assert!(core::mem::offset_of!(Vault, _reserved) == 139);
+const _: () = assert!(core::mem::offset_of!(MarketHeader, head) == 8);
+const _: () = assert!(core::mem::offset_of!(MarketHeader, tombstone_head) == 12);
+const _: () = assert!(core::mem::offset_of!(MarketHeader, free_head) == 16);
+
 /// Doubly-linked-list operations over the [`Vault`] sectors threaded by
 /// `next` / `prev`. The three list heads
 /// ([`MarketHeader::head`], [`MarketHeader::tombstone_head`],
@@ -309,6 +324,17 @@ impl VaultDll for Market {
     fn link_head(&mut self, list: DllList, sector: u32) -> Result<()> {
         let len = self.len();
         require!((sector as usize) < len, DropsetError::InvalidSectorIndex);
+        // The sector must be detached. `allocate_sector` and `unlink`
+        // both leave a sector with `(next, prev) = (NULL, NULL)`;
+        // anything else here is a double-link that would silently
+        // corrupt whichever list it currently sits on.
+        {
+            let v = &self.as_slice()[sector as usize];
+            require!(
+                v.next.get() == NULL_SECTOR && v.prev.get() == NULL_SECTOR,
+                DropsetError::CorruptVaultList
+            );
+        }
         let prev_head = list.head(self);
         // Stamp the new sector's pointers.
         {
@@ -447,11 +473,12 @@ mod tests {
     }
 
     #[test]
-    fn space_for_zero_matches_min_data_len() {
-        // The slab's `space_for(0)` should equal its `MIN_DATA_LEN`
-        // (header + len + alignment), with the 8-byte discriminator
-        // sitting on top. Used as the size argument by
-        // `register_market`'s `#[account(init, space = …)]`.
+    fn space_for_zero_matches_init_space() {
+        // `space_for(0)` is the byte count used by `register_market`'s
+        // `#[account(init, space = Market::space_for(0))]`; `INIT_SPACE`
+        // is the same value surfaced through the `Space` trait that
+        // anchor's derive consults during initialization. Pinning their
+        // equality here guarantees the two paths stay in sync.
         assert_eq!(
             Market::space_for(0),
             <Market as anchor_lang_v2::Space>::INIT_SPACE
@@ -493,6 +520,27 @@ mod tests {
         assert_eq!(err, expected);
         // List head was not mutated.
         assert_eq!(market.head.get(), NULL_SECTOR);
+    }
+
+    #[test]
+    fn link_head_rejects_already_linked_sector() {
+        let buf = setup();
+        let mut market = load_market(&buf);
+        // Link sector 0 onto Active. Its `next` now points at the
+        // old head (NULL_SECTOR), which is fine; but a stale linked
+        // sector with a non-NULL `prev` (from somewhere else)
+        // would silently corrupt the destination list on re-link.
+        // Simulate that by stamping `prev = 1` on a fresh sector and
+        // attempt to link it.
+        market.as_mut_slice()[1].prev = 0u32.into();
+        let err = market
+            .link_head(DllList::Active, 1)
+            .expect_err("double-link of an already-linked sector must be rejected");
+        let expected: ProgramError = DropsetError::CorruptVaultList.into();
+        assert_eq!(err, expected);
+        // Nothing was mutated downstream of the guard.
+        assert_eq!(market.head.get(), NULL_SECTOR);
+        assert_eq!(market.as_slice()[1].next.get(), NULL_SECTOR);
     }
 
     #[test]
@@ -548,6 +596,28 @@ mod tests {
         market.unlink(DllList::Active, 0).unwrap();
         assert!(walk(&market, DllList::Active).is_empty());
         assert_eq!(market.head.get(), NULL_SECTOR);
+    }
+
+    #[test]
+    fn unlink_rejects_orphan_head() {
+        // Manually corrupt the slab so a sector's `prev == NULL` but
+        // the list head doesn't point at it — that's the inconsistent
+        // "head-or-orphan" branch of `unlink`'s defensive check
+        // (line ~341). Without the require! this would happily set
+        // `head = next` based on the orphan's pointers and corrupt
+        // the visible list. The Active list is left empty (head =
+        // NULL_SECTOR) while sector 0 carries `prev = NULL` from
+        // setup but isn't reachable from any head.
+        let buf = setup();
+        let mut market = load_market(&buf);
+        // sector 0 already has prev=NULL from setup; market.head is
+        // also NULL. The orphan case fires because sector 0 is not
+        // the active head.
+        let err = market
+            .unlink(DllList::Active, 0)
+            .expect_err("unlink of an orphan that isn't the head must be rejected");
+        let expected: ProgramError = DropsetError::CorruptVaultList.into();
+        assert_eq!(err, expected);
     }
 
     #[test]
@@ -628,5 +698,38 @@ mod tests {
         assert_eq!(market.allocate_sector(&payer).unwrap(), 1);
         assert_eq!(market.allocate_sector(&payer).unwrap(), 0);
         assert_eq!(market.free_head.get(), NULL_SECTOR);
+    }
+
+    #[test]
+    fn reclaim_then_reopen_cross_list_lifecycle() {
+        // End-to-end exercise of the sector lifecycle the spec
+        // describes: an active vault is reclaimed (active → free),
+        // a subsequent `OpenVault` reuses it (free → active), and
+        // the second occupant's view of the active DLL is consistent
+        // with the first occupant having gone through the free list.
+        let buf = setup();
+        let mut market = load_market(&buf);
+        let payer_buf = AccountBuffer::<128>::new();
+        payer_buf.init([0xBB; 32], [0u8; 32], 0, true, true, false);
+        let payer = unsafe { payer_buf.view() };
+
+        // Sector 0 lives on Active.
+        market.link_head(DllList::Active, 0).unwrap();
+        assert_eq!(walk(&market, DllList::Active), [0]);
+
+        // Reclaim: unlink from Active, push onto Free.
+        market.unlink(DllList::Active, 0).unwrap();
+        market.link_head(DllList::Free, 0).unwrap();
+        assert!(walk(&market, DllList::Active).is_empty());
+        assert_eq!(walk(&market, DllList::Free), [0]);
+
+        // Reopen: allocate_sector pops the free list, returns the
+        // reclaimed index, and the caller links it back onto Active.
+        let reused = market.allocate_sector(&payer).unwrap();
+        assert_eq!(reused, 0);
+        assert_eq!(market.free_head.get(), NULL_SECTOR);
+        market.link_head(DllList::Active, reused).unwrap();
+        assert_eq!(walk(&market, DllList::Active), [0]);
+        assert!(walk(&market, DllList::Free).is_empty());
     }
 }
