@@ -1,3 +1,5 @@
+<!-- markdownlint-disable MD013 -->
+
 # SVM heap + Anchor event-cpi: deep-research synthesis
 
 Source-grounded notes feeding the **Order matching** and **Events and
@@ -34,7 +36,7 @@ created.
 
 **VM memory map.** Four 4 GiB virtual regions. The heap is region 3.
 
-```
+```text
 MM_BYTECODE_START = 1 << 32   // 0x1_0000_0000  program (RO)
 MM_STACK_START    = 2 << 32   // 0x2_0000_0000  stack (RW)
 MM_HEAP_START     = 3 << 32   // 0x3_0000_0000  heap  (RW)
@@ -85,12 +87,12 @@ overflow; recursion bounded at 64.
 
 **Allocation idioms ranked.**
 
-| idiom                          | when                                                                                          |
-| ------------------------------ | --------------------------------------------------------------------------------------------- |
-| `BinaryHeap::with_capacity(N)` | needs `pop_min` — this is the matching engine                                                 |
-| `Box<[T; N]>`                  | fixed-size slab, no pop-min semantics; you'd reimplement sift-down                            |
-| `Vec::with_capacity(N)`        | not enough by itself for matching                                                             |
-| `Vec::new()` + push            | **forbidden** in matching loop — every realloc leaks the old buffer on the bump allocator     |
+| idiom                          | when                                                                                      |
+| ------------------------------ | ----------------------------------------------------------------------------------------- |
+| `BinaryHeap::with_capacity(N)` | needs `pop_min` — this is the matching engine                                             |
+| `Box<[T; N]>`                  | fixed-size slab, no pop-min semantics; you'd reimplement sift-down                        |
+| `Vec::with_capacity(N)`        | not enough by itself for matching                                                         |
+| `Vec::new()` + push            | **forbidden** in matching loop — every realloc leaks the old buffer on the bump allocator |
 
 **Capacity math.** Spec entry is
 `(price_key:u32, nonce:u64, size:u64, vault_idx:u16, level_idx:u8)`.
@@ -187,7 +189,7 @@ same with `CpiContext::invoke`.
 
 **On-the-wire data layout.**
 
-```
+```text
 [ 8 B EVENT_IX_TAG_LE = e4 45 a5 2e 51 cb 9a 1d ]   // sha256("anchor:event")[..8]
 [ 8 B event-discriminator = sha256("event:<EventName>")[..8] ]
 [ event body — wincode (borsh-wire-compatible) by default,    ]
@@ -205,10 +207,10 @@ same with `CpiContext::invoke`.
 `#[event]` macro argument
 ([`lang-v2/derive/src/lib.rs:4915`](https://github.com/solana-foundation/anchor/blob/2a191379020f15c1d384bdadd41f23949734ce98/lang-v2/derive/src/lib.rs#L4915)):
 
-| mode                     | serializer / writer                                                | constraints                                                  | when to pick                                                                            |
-| ------------------------ | ------------------------------------------------------------------ | ------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
-| `#[event]` (default)     | wincode with `BORSH_CONFIG` — wire output is byte-identical to borsh | supports `Vec` / `String` / `Option` / nested enums          | cold-path events that need dynamic shape (`OpenVault`, `Realize`, `Deposit`, `Withdraw`) |
-| `#[event(bytemuck)]`     | zero-copy `bytemuck::bytes_of(self)` on a `repr(C)` POD struct      | fixed-size primitives only; no fat pointers, no allocations  | hot-path fill events — cheapest emit, smallest stack footprint at the macro site        |
+| mode                 | serializer / writer                                                  | constraints                                                 | when to pick                                                                             |
+| -------------------- | -------------------------------------------------------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `#[event]` (default) | wincode with `BORSH_CONFIG` — wire output is byte-identical to borsh | supports `Vec` / `String` / `Option` / nested enums         | cold-path events that need dynamic shape (`OpenVault`, `Realize`, `Deposit`, `Withdraw`) |
+| `#[event(bytemuck)]` | zero-copy `bytemuck::bytes_of(self)` on a `repr(C)` POD struct       | fixed-size primitives only; no fat pointers, no allocations | hot-path fill events — cheapest emit, smallest stack footprint at the macro site         |
 
 - Wincode branch at
   [`lang-v2/derive/src/lib.rs:3206-3214`](https://github.com/solana-foundation/anchor/blob/2a191379020f15c1d384bdadd41f23949734ce98/lang-v2/derive/src/lib.rs#L3206-L3214)
@@ -240,8 +242,7 @@ pub event_authority: UncheckedAccount,
 pub program: UncheckedAccount,
 ```
 
-Caller passes them as `(event_authority_pda, is_signer=false,
-is_writable=false)` and `(program_id, false, false)`. The program
+Caller passes them as `(event_authority_pda, is_signer=false, is_writable=false)` and `(program_id, false, false)`. The program
 upgrades `event_authority` to a signer via `invoke_signed` (tests:
 [`anchor/tests-v2/tests/event_cpi.rs:79-93`](https://github.com/solana-foundation/anchor/blob/2a191379020f15c1d384bdadd41f23949734ce98/tests-v2/tests/event_cpi.rs#L79-L93)).
 
@@ -272,13 +273,13 @@ feature gate ([`anchor/lang-v2/Cargo.toml`](https://github.com/solana-foundation
 
 **`emit!` vs `emit_cpi!`.**
 
-|                | `emit!`                                       | `emit_cpi!`                                  |
-| -------------- | --------------------------------------------- | -------------------------------------------- |
-| transport      | `sol_log_data` → `Program data: <b64>` log    | self-CPI; data lives in `meta.innerInstructions` |
-| RPC truncation | yes (logs)                                    | no (inner-ix preserved)                      |
-| budget         | `LOG_MESSAGES_BYTES_LIMIT` (per-tx)           | per-CPI ix-data cap (10 KiB per call)        |
-| CU             | ~syscall base                                 | ~1000 CU + `data_len/250`                    |
-| accounts       | none                                          | event_authority + program                    |
+|                | `emit!`                                    | `emit_cpi!`                                      |
+| -------------- | ------------------------------------------ | ------------------------------------------------ |
+| transport      | `sol_log_data` → `Program data: <b64>` log | self-CPI; data lives in `meta.innerInstructions` |
+| RPC truncation | yes (logs)                                 | no (inner-ix preserved)                          |
+| budget         | `LOG_MESSAGES_BYTES_LIMIT` (per-tx)        | per-CPI ix-data cap (10 KiB per call)            |
+| CU             | ~syscall base                              | ~1000 CU + `data_len/250`                        |
+| accounts       | none                                       | event_authority + program                        |
 
 `emit!` impl at [`anchor/lang/attribute/event/src/lib.rs:103-111`](https://github.com/solana-foundation/anchor/blob/2a191379020f15c1d384bdadd41f23949734ce98/lang/attribute/event/src/lib.rs#L103-L111).
 `emit_cpi!` documentation comment notes "more reliable because RPCs
@@ -390,15 +391,15 @@ Build the next CPI when adding the next leg would exceed
 
 ## 7. Architecture-spec coherence checks
 
-| Spec claim (line)                                                                | Status                       | Notes                                                                                                                                                                                                                                  |
-| -------------------------------------------------------------------------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Ephemeral book on SVM program heap (1375)                                        | **CONFIRMED**                | Default 32 KiB more than covers 10-vault × 32-level case (≈7.7 KiB).                                                                                                                                                                   |
-| Min-heap on `(Price::MAX − price, nonce)` for bids (1405-1418)                   | **CONFIRMED — with refinement** | Use `Price::bid_key()` (already at [`price.rs:228-234`](https://github.com/DASMAC-com/dropset/blob/ecfc46fd5e8c627292aefd627899cd05cb28df61/programs/dropset/src/price.rs#L228-L234)) producing `u32`, packed into a `#[repr(C)]` `HeapEntry` whose derived `Ord` is lexicographic. Avoid storing `Price` directly + flipped comparator.                              |
-| Inner-ix data not subject to `LOG_MESSAGES_BYTES_LIMIT` (1477-1479)              | **CONFIRMED**                | LogCollector path ([`svm-log-collector/src/lib.rs:5`](https://github.com/anza-xyz/agave/blob/1ad187441b53d2ffb8f41a99e06f44ae27fda219/svm-log-collector/src/lib.rs#L5), [`:26-42`](https://github.com/anza-xyz/agave/blob/1ad187441b53d2ffb8f41a99e06f44ae27fda219/svm-log-collector/src/lib.rs#L26-L42)) is wholly separate from `instruction_trace` ([`transaction_processor.rs:1089-1139`](https://github.com/anza-xyz/agave/blob/1ad187441b53d2ffb8f41a99e06f44ae27fda219/svm/src/transaction_processor.rs#L1089-L1139)).                                                                                         |
-| `emit_cpi!` appends `event_authority` and `program` accounts (1483-1485)         | **CONFIRMED**                | [`lang-v2/derive/src/lib.rs:5459-5470`](https://github.com/solana-foundation/anchor/blob/2a191379020f15c1d384bdadd41f23949734ce98/lang-v2/derive/src/lib.rs#L5459-L5470). Order is `event_authority` then `program`.                                                                                                                                                      |
-| Bare self-CPI carries event in ix-data, drops `event_authority` (1496-1500)      | **CONFIRMED**                | Off-chain origin proof reduces to `programId == self`. Acceptable for indexer-only channel. Must use a non-`EVENT_IX_TAG` prefix to avoid Anchor's dispatcher hijack.                                                                  |
-| No cumulative cap on inner-ix data across a tx (1528-1530)                       | **CONFIRMED**                | Only the per-CPI 10 KiB and the 64-instruction trace count constrain.                                                                                                                                                                  |
-| Single CPI ix-data ~10 KB (1528)                                                 | **CONFIRMED**                | Exactly 10,240 B ([`transaction-context/src/lib.rs:18`](https://github.com/anza-xyz/agave/blob/1ad187441b53d2ffb8f41a99e06f44ae27fda219/transaction-context/src/lib.rs#L18)). Effective event-payload budget = 10,224 B after 16 B tag+disc overhead.                                                                                                        |
+| Spec claim (line)                                                           | Status                          | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| --------------------------------------------------------------------------- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Ephemeral book on SVM program heap (1375)                                   | **CONFIRMED**                   | Default 32 KiB more than covers 10-vault × 32-level case (≈7.7 KiB).                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Min-heap on `(Price::MAX − price, nonce)` for bids (1405-1418)              | **CONFIRMED — with refinement** | Use `Price::bid_key()` (already at [`price.rs:228-234`](https://github.com/DASMAC-com/dropset/blob/ecfc46fd5e8c627292aefd627899cd05cb28df61/programs/dropset/src/price.rs#L228-L234)) producing `u32`, packed into a `#[repr(C)]` `HeapEntry` whose derived `Ord` is lexicographic. Avoid storing `Price` directly + flipped comparator.                                                                                                                                                                                      |
+| Inner-ix data not subject to `LOG_MESSAGES_BYTES_LIMIT` (1477-1479)         | **CONFIRMED**                   | LogCollector path ([`svm-log-collector/src/lib.rs:5`](https://github.com/anza-xyz/agave/blob/1ad187441b53d2ffb8f41a99e06f44ae27fda219/svm-log-collector/src/lib.rs#L5), [`:26-42`](https://github.com/anza-xyz/agave/blob/1ad187441b53d2ffb8f41a99e06f44ae27fda219/svm-log-collector/src/lib.rs#L26-L42)) is wholly separate from `instruction_trace` ([`transaction_processor.rs:1089-1139`](https://github.com/anza-xyz/agave/blob/1ad187441b53d2ffb8f41a99e06f44ae27fda219/svm/src/transaction_processor.rs#L1089-L1139)). |
+| `emit_cpi!` appends `event_authority` and `program` accounts (1483-1485)    | **CONFIRMED**                   | [`lang-v2/derive/src/lib.rs:5459-5470`](https://github.com/solana-foundation/anchor/blob/2a191379020f15c1d384bdadd41f23949734ce98/lang-v2/derive/src/lib.rs#L5459-L5470). Order is `event_authority` then `program`.                                                                                                                                                                                                                                                                                                          |
+| Bare self-CPI carries event in ix-data, drops `event_authority` (1496-1500) | **CONFIRMED**                   | Off-chain origin proof reduces to `programId == self`. Acceptable for indexer-only channel. Must use a non-`EVENT_IX_TAG` prefix to avoid Anchor's dispatcher hijack.                                                                                                                                                                                                                                                                                                                                                         |
+| No cumulative cap on inner-ix data across a tx (1528-1530)                  | **CONFIRMED**                   | Only the per-CPI 10 KiB and the 64-instruction trace count constrain.                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Single CPI ix-data ~10 KB (1528)                                            | **CONFIRMED**                   | Exactly 10,240 B ([`transaction-context/src/lib.rs:18`](https://github.com/anza-xyz/agave/blob/1ad187441b53d2ffb8f41a99e06f44ae27fda219/transaction-context/src/lib.rs#L18)). Effective event-payload budget = 10,224 B after 16 B tag+disc overhead.                                                                                                                                                                                                                                                                         |
 
 **Add to spec (not currently called out):**
 
@@ -427,14 +428,14 @@ Build the next CPI when adding the next leg would exceed
    `core::mem::size_of::<HeapEntry>()`** when the struct is
    concrete. Use `#[repr(C)]` and
    `assert_eq!(size_of::<HeapEntry>(), 24)` as a build-time check.
-2. **Pinocchio default-allocator behavior with `RequestHeapFrame`.**
+1. **Pinocchio default-allocator behavior with `RequestHeapFrame`.**
    Pinocchio's `default_allocator!` initializes to
    `MAX_HEAP_LENGTH (256 KiB)` per its source. Confirm by reading
    the actual Pinocchio version pinned in the dropset workspace
    whether allocations beyond 32 KiB succeed without
    `RequestHeapFrame` (likely they fault — Pinocchio assumes the
    frame was requested).
-3. **Bare self-CPI under v2's dispatcher.** v2's entrypoint matches
+1. **Bare self-CPI under v2's dispatcher.** v2's entrypoint matches
    the full 8-byte `EVENT_IX_TAG` before user dispatch
    ([`lang-v2/derive/src/lib.rs:4510-4546`](https://github.com/solana-foundation/anchor/blob/2a191379020f15c1d384bdadd41f23949734ce98/lang-v2/derive/src/lib.rs#L4510-L4546)). A bare self-CPI must use
    a prefix where the first 8 bytes ≠ `0x1d9acb512ea545e4`.
