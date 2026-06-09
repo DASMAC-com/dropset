@@ -1156,7 +1156,7 @@ that is not a permissionless instruction falls under one of them.
    account. Gates `init` only — used once at program genesis to
    create the Registry, after which the upgrade authority is no
    longer consulted by any instruction.
-2. **Registry admin set.** The `admins` field on the Registry,
+1. **Registry admin set.** The `admins` field on the Registry,
    mutated by `add_admin` / `remove_admin`. Gates every
    instruction with a `signer ∈ registry.admins` check, listed
    here so the full set is visible in one place:
@@ -1851,15 +1851,15 @@ SOL lamports that come back on close — accounts inlined into a
 parent (vault sectors inside a market slab) do not hold separate
 rent and close with their parent.
 
-| #  | Account                                                       | Owner program            | Holds rent?                                  | Close path                                                                                                                          | Rent recipient                                |
-| -- | ------------------------------------------------------------- | ------------------------ | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| 1  | **Registry** PDA, seeds `[b"registry"]`                       | dropset                  | yes (variable: 8 + header + admin slab tail) | `close_registry` (admin, feature-gated). Pre-condition: `market_count == 0`, zero admins beyond the caller, fee vault closed.       | passed-in `rent_recipient`                    |
-| 2  | **Registry fee vault** ATA, `ata(registry, fee_mint, tp)`     | SPL Token / Token-2022   | yes (~165–170 B)                             | `close_registry_fee_vault` (admin, feature-gated). Pre-condition: `amount == 0` (drain via existing admin fee sweep). CPI `CloseAccount` signed by Registry PDA. | passed-in `rent_recipient`                    |
-| 3  | **Market** PDA (`MarketHeader` + vault slab inline)           | dropset                  | yes (large; grows with vault count)          | `close_market` (admin, feature-gated). Pre-conditions: `outstanding_vault_depositors == 0`, both treasuries closed.                 | passed-in `rent_recipient`                    |
-| 4  | **Vault** sectors inside the market slab                      | n/a (inline)             | **no separate rent** — covered by Market's   | closed implicitly by `close_market`; there is no per-vault close instruction. Reclaim (to the free DLL) does not refund any rent.   | n/a                                           |
-| 5  | **Base treasury** ATA, derived from market PDA                | SPL Token / Token-2022   | yes                                          | `close_market_treasury` (admin, feature-gated). Pre-condition: `amount == 0`. CPI `CloseAccount` signed by market PDA.              | passed-in `rent_recipient`                    |
-| 6  | **Quote treasury** ATA, derived from market PDA               | SPL Token / Token-2022   | yes                                          | same instruction, run for the quote leg.                                                                                            | passed-in `rent_recipient`                    |
-| 7  | **VaultDepositor** PDA, seeds `("vault_depositor", v, owner)` | dropset                  | yes                                          | (a) existing close-on-empty in `Withdraw` when `shares == 0`; (b) `force_withdraw_depositor` (see **Depositor positions and cost basis → Admin force-withdraw**). Either path decrements `MarketHeader.outstanding_vault_depositors`. | depositor `owner` — their PDA, their rent     |
+| #   | Account                                                       | Owner program          | Holds rent?                                  | Close path                                                                                                                                                                                                                            | Rent recipient                            |
+| --- | ------------------------------------------------------------- | ---------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| 1   | **Registry** PDA, seeds `[b"registry"]`                       | dropset                | yes (variable: 8 + header + admin slab tail) | `close_registry` (admin, feature-gated). Pre-condition: `market_count == 0`, zero admins beyond the caller, fee vault closed.                                                                                                         | passed-in `rent_recipient`                |
+| 2   | **Registry fee vault** ATA, `ata(registry, fee_mint, tp)`     | SPL Token / Token-2022 | yes (~165–170 B)                             | `close_registry_fee_vault` (admin, feature-gated). Pre-condition: `amount == 0` (drain via existing admin fee sweep). CPI `CloseAccount` signed by Registry PDA.                                                                      | passed-in `rent_recipient`                |
+| 3   | **Market** PDA (`MarketHeader` + vault slab inline)           | dropset                | yes (large; grows with vault count)          | `close_market` (admin, feature-gated). Pre-conditions: `outstanding_vault_depositors == 0`, both treasuries closed.                                                                                                                   | passed-in `rent_recipient`                |
+| 4   | **Vault** sectors inside the market slab                      | n/a (inline)           | **no separate rent** — covered by Market's   | closed implicitly by `close_market`; there is no per-vault close instruction. Reclaim (to the free DLL) does not refund any rent.                                                                                                     | n/a                                       |
+| 5   | **Base treasury** ATA, derived from market PDA                | SPL Token / Token-2022 | yes                                          | `close_market_treasury` (admin, feature-gated). Pre-condition: `amount == 0`. CPI `CloseAccount` signed by market PDA.                                                                                                                | passed-in `rent_recipient`                |
+| 6   | **Quote treasury** ATA, derived from market PDA               | SPL Token / Token-2022 | yes                                          | same instruction, run for the quote leg.                                                                                                                                                                                              | passed-in `rent_recipient`                |
+| 7   | **VaultDepositor** PDA, seeds `("vault_depositor", v, owner)` | dropset                | yes                                          | (a) existing close-on-empty in `Withdraw` when `shares == 0`; (b) `force_withdraw_depositor` (see **Depositor positions and cost basis → Admin force-withdraw**). Either path decrements `MarketHeader.outstanding_vault_depositors`. | depositor `owner` — their PDA, their rent |
 
 Everything outside this table (`system_program`, `token_program`,
 `ProgramData`, the program executable itself) is not program state
@@ -1880,37 +1880,38 @@ Per market, in order:
    (rent to the depositor), and decrements
    `MarketHeader.outstanding_vault_depositors`. The market is
    ready for step 4 only when this counter reads zero.
-2. **Force-withdraw every leader.** Admin runs
+1. **Force-withdraw every leader.** Admin runs
    `force_withdraw_leader` against each vault. The leader's stake
    lives in `vault.leader_shares` (no separate PDA), so this is the
    only way to drain the vault to zero without leader cooperation.
-   Each call pays the leader's slice to the leader's `(base_mint,
-   quote_mint)` ATAs and zeros `leader_shares`. With outside shares
+   Each call pays the leader's slice to the leader's
+   `(base_mint, quote_mint)` ATAs and zeros `leader_shares`.
+   With outside shares
    already zero from step 1, `total_shares` hits zero and the vault
    sector reclaims to the free DLL — but that is just an in-slab
    pointer move, not a separate rent refund. After this step the
    treasury invariants in **MarketHeader** guarantee
    `base_treasury.amount == 0` and `quote_treasury.amount == 0`.
-3. **Close both treasuries.** `close_market_treasury` for the
+1. **Close both treasuries.** `close_market_treasury` for the
    base leg, again for the quote leg.
-4. **Close the market.** `close_market` reclaims the entire
+1. **Close the market.** `close_market` reclaims the entire
    `MarketHeader` + vault slab rent in one shot, and decrements
    `registry.market_count` by one.
 
 Repeat 1–4 for every market on the registry. Then, once every
 market is gone:
 
-5. **Drain the fee vault.** Existing admin fee sweep moves
+1. **Drain the fee vault.** Existing admin fee sweep moves
    accumulated fees out of the Registry fee ATA. If the market's
    `fee_config.mint` changed during the program's life, more than
    one fee ATA may exist; sweep each. The set of historical fee
    mints is **not enumerated on-chain** — the admin maintains it
    off-chain from `SetMarketFeeConfig` events.
-6. **Close fee vault(s).** `close_registry_fee_vault` per fee ATA.
-7. **Remove all but one admin.** Existing `remove_admin` enforces
+1. **Close fee vault(s).** `close_registry_fee_vault` per fee ATA.
+1. **Remove all but one admin.** Existing `remove_admin` enforces
    "never empty" — `close_registry` is the only path that drops
    the last admin.
-8. **Close the registry.** `close_registry` requires
+1. **Close the registry.** `close_registry` requires
    `registry.market_count == 0` (witness that step 4 ran for
    every market), zeros the slab, and refunds the Registry PDA's
    lamports to `rent_recipient`.
