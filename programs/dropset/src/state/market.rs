@@ -203,6 +203,17 @@ pub struct MarketHeader {
 /// invariants the matching engine relies on.
 pub type Market = Slab<MarketHeader, Vault>;
 
+// Size regression guards: `#[derive(Pod)]` already rejects implicit
+// padding, but it can't catch a field reorder that lands at the same
+// total size by accident, nor a silent bump to a `Pod*` wrapper width.
+// These const asserts pin the on-chain layout — any change must be a
+// deliberate update here, paired with the matching account-data
+// migration story.
+const _: () = assert!(core::mem::size_of::<Vault>() == 560);
+const _: () = assert!(core::mem::size_of::<MarketHeader>() == 233);
+const _: () = assert!(core::mem::size_of::<LiquidityProfile>() == 2 * N_LEVELS * 10);
+const _: () = assert!(core::mem::size_of::<Remaining>() == 2 * N_LEVELS * 16);
+
 /// Doubly-linked-list operations over the [`Vault`] sectors threaded by
 /// `next` / `prev`. The three list heads
 /// ([`MarketHeader::head`], [`MarketHeader::tombstone_head`],
@@ -226,7 +237,7 @@ pub trait VaultDll {
     /// [`NULL_SECTOR`].
     fn link_head(&mut self, list: DllList, sector: u32) -> Result<()>;
 
-    /// Unlink `sector` from `list`. Patches the neighbours' pointers
+    /// Unlink `sector` from `list`. Patches the neighbors' pointers
     /// and the list head; leaves `sector.next` / `sector.prev` as
     /// `NULL_SECTOR` afterwards.
     fn unlink(&mut self, list: DllList, sector: u32) -> Result<()>;
@@ -326,7 +337,7 @@ impl VaultDll for Market {
             let v = &self.as_slice()[sector as usize];
             (v.next.get(), v.prev.get())
         };
-        // Patch the neighbours.
+        // Patch the neighbors.
         if prev != NULL_SECTOR {
             require!((prev as usize) < len, DropsetError::CorruptVaultList);
             self.as_mut_slice()[prev as usize].next = next.into();
@@ -477,7 +488,7 @@ mod tests {
     }
 
     #[test]
-    fn unlink_middle_patches_neighbours() {
+    fn unlink_middle_patches_neighbors() {
         let mut tape = Tape::new();
         for _ in 0..3 {
             let s = tape.allocate();

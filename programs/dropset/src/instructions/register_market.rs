@@ -16,14 +16,12 @@
 //! mint plumbing is needed in this handler.
 
 use anchor_lang_v2::{address_eq, find_and_verify_program_address, prelude::*};
-// The derive expands `associated_token::*` constraint expressions to
-// `anchor_spl_v2::associated_token::<Marker>` paths, so a `use` is
-// required even though `RegisterMarket` doesn't name the module
-// directly.
+// `associated_token::{self, ...}` keeps the module in scope so the
+// derive can expand `associated_token::*` constraint expressions to
+// `anchor_spl_v2::associated_token::<Marker>` paths.
 #[allow(unused_imports)]
-use anchor_spl_v2::associated_token;
 use anchor_spl_v2::{
-    associated_token::AssociatedToken,
+    associated_token::{self, AssociatedToken},
     token_2022::{transfer_checked, TransferChecked},
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
