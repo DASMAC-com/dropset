@@ -241,12 +241,6 @@ pub trait VaultDll {
     /// and the list head; leaves `sector.next` / `sector.prev` as
     /// `NULL_SECTOR` afterwards.
     fn unlink(&mut self, list: DllList, sector: u32) -> Result<()>;
-
-    /// Walk `list` starting at its head; returns the visit order as a
-    /// `Vec<u32>`. Helper for unit tests; production paths iterate
-    /// inline.
-    #[cfg(test)]
-    fn walk(&self, list: DllList) -> alloc::vec::Vec<u32>;
 }
 
 /// Identifies which of the three DLL heads on the [`MarketHeader`] a
@@ -357,21 +351,7 @@ impl VaultDll for Market {
         v.prev = NULL_SECTOR.into();
         Ok(())
     }
-
-    #[cfg(test)]
-    fn walk(&self, list: DllList) -> alloc::vec::Vec<u32> {
-        let mut out = alloc::vec::Vec::new();
-        let mut cur = list.head(self);
-        while cur != NULL_SECTOR {
-            out.push(cur);
-            cur = self.as_slice()[cur as usize].next.get();
-        }
-        out
-    }
 }
-
-#[cfg(test)]
-extern crate alloc;
 
 /// Cross-list pointer-table unit tests — exercise the DLL operations in
 /// isolation from the rest of the program. They drive a hand-built
@@ -381,7 +361,6 @@ extern crate alloc;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloc::vec::Vec;
 
     /// In-memory stand-in for the slab tail: a `MarketHeader` plus a
     /// dynamic `Vec<Vault>` we can grow as new sectors are allocated.

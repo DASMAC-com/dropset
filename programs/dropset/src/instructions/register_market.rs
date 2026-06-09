@@ -32,6 +32,10 @@ use crate::{
     AdminSet, FeeConfig, Registry,
 };
 
+/// Accounts for the `register_market` instruction: a fresh
+/// `(base_mint, quote_mint)` market PDA plus its two treasury ATAs,
+/// charged against the registry's per-`OpenVault` fee (waived for
+/// admins). See the module doc for the spec-level intent.
 #[derive(Accounts)]
 pub struct RegisterMarket {
     /// Funds rent for the market PDA and the two treasury ATAs, and
