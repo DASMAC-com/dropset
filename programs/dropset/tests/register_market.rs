@@ -8,14 +8,14 @@ mod common;
 use anchor_lang_v2::{programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, Signer};
 use common::{
-    assert_program_error, associated_token_address, create_associated_token_account,
-    create_mock_usdc_mint, create_spl_mint, create_token2022_mint, deploy_with_authority, mint_to,
-    send_ixn, ATA_PROGRAM_ID, PROGRAM_ID, REGISTER_MARKET_FEE_ATOMS, SIGNER_FUNDING_LAMPORTS,
+    associated_token_address, create_associated_token_account, create_mock_usdc_mint,
+    create_spl_mint, create_token2022_mint, deploy_with_authority, mint_to, send_ixn,
+    ATA_PROGRAM_ID, PROGRAM_ID, REGISTER_MARKET_FEE_ATOMS, SIGNER_FUNDING_LAMPORTS,
     SPL_TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID,
 };
 use dropset::{
     instruction::{Init as InitInstruction, RegisterMarket as RegisterMarketInstruction},
-    DropsetError, MarketHeader, NULL_SECTOR, N_LEVELS,
+    MarketHeader, NULL_SECTOR, N_LEVELS,
 };
 use solana_instruction::{AccountMeta, Instruction};
 use solana_loader_v3_interface::get_program_data_address;
@@ -220,7 +220,8 @@ fn register_market_succeeds_with_two_spl_mints() {
 
     // The fee actually moved.
     assert_eq!(token_balance(&svm, &payer_ata), 0);
-    let registry_fee_ata = associated_token_address(&registry_pda(), &fee_mint, &SPL_TOKEN_PROGRAM_ID);
+    let registry_fee_ata =
+        associated_token_address(&registry_pda(), &fee_mint, &SPL_TOKEN_PROGRAM_ID);
     assert_eq!(
         token_balance(&svm, &registry_fee_ata),
         REGISTER_MARKET_FEE_ATOMS
@@ -291,8 +292,8 @@ fn admin_path_waives_fee() {
 
     // Fresh throwaway pubkey — distinct from `payer` so anchor's
     // duplicate-mutable-account check doesn't trip before our handler
-    // runs. Funded with a tiny lamport balance so the runtime
-    // recognizes it as an existing system account.
+    // runs. Funded with lamports so the runtime recognizes it as an
+    // existing system account.
     let dummy_source = Keypair::new();
     svm.airdrop(&dummy_source.pubkey(), SIGNER_FUNDING_LAMPORTS)
         .unwrap();
@@ -310,7 +311,8 @@ fn admin_path_waives_fee() {
     send_ixn(&mut svm, &authority, ix).expect("admin path should waive fee");
 
     // Registry fee ATA exists (init_if_needed ran) but holds zero.
-    let registry_fee_ata = associated_token_address(&registry_pda(), &fee_mint, &SPL_TOKEN_PROGRAM_ID);
+    let registry_fee_ata =
+        associated_token_address(&registry_pda(), &fee_mint, &SPL_TOKEN_PROGRAM_ID);
     assert_eq!(token_balance(&svm, &registry_fee_ata), 0);
 }
 
@@ -397,14 +399,13 @@ fn rejects_underfunded_payer() {
     let (mut svm, authority, fee_mint) = bootstrap();
     let payer = fresh_payer(&mut svm);
     // Create the ATA but fund less than the fee.
-    let payer_ata =
-        create_associated_token_account(
-            &mut svm,
-            &authority,
-            &payer.pubkey(),
-            &fee_mint,
-            &SPL_TOKEN_PROGRAM_ID,
-        );
+    let payer_ata = create_associated_token_account(
+        &mut svm,
+        &authority,
+        &payer.pubkey(),
+        &fee_mint,
+        &SPL_TOKEN_PROGRAM_ID,
+    );
     mint_to(
         &mut svm,
         &authority,
@@ -480,14 +481,13 @@ fn rejects_non_mint_as_base() {
     // Build a regular SPL token account against `real_mint`; this is a
     // 165-byte account owned by the SPL Token program — wrong shape for
     // a mint.
-    let token_account =
-        create_associated_token_account(
-            &mut svm,
-            &authority,
-            &payer.pubkey(),
-            &real_mint,
-            &SPL_TOKEN_PROGRAM_ID,
-        );
+    let token_account = create_associated_token_account(
+        &mut svm,
+        &authority,
+        &payer.pubkey(),
+        &real_mint,
+        &SPL_TOKEN_PROGRAM_ID,
+    );
 
     let ix = register_market_ixn(
         payer.pubkey(),

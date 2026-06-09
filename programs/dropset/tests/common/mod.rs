@@ -119,6 +119,7 @@ where
 /// code for `code`. Derives the expected `Custom(N)` from the program's
 /// own `From<DropsetError>` mapping, so it tracks any change to the error
 /// offset or variant order rather than hard-coding a number.
+#[allow(dead_code)]
 pub fn assert_program_error(err: &str, code: dropset::DropsetError) {
     let expected = format!("{:?}", anchor_lang_v2::Error::from(code));
     assert!(err.contains(&expected), "expected {expected}, got: {err}");
