@@ -13,6 +13,7 @@ blockhash
 borsh
 bpf
 brale
+bytemuck
 cadc
 cfgs
 clippy
@@ -21,12 +22,14 @@ clob
 cngn
 codama
 codegen
+cpis
 dasmac
 dflow
 discordapp
 drawdowns
 dropset
 dtolnay
+eclob
 etherfuse
 eurau
 eurc
@@ -39,6 +42,7 @@ générale
 helvetiker
 hyperliquid
 idrx
+inlines
 jito
 kapsule
 keypair
@@ -49,6 +53,7 @@ litesvm
 localnet
 luhansk
 macropod
+metas
 multisigs
 mxne
 navigations
@@ -59,6 +64,8 @@ prebuild
 predev
 programdata
 pubkeys
+reentrancy
+repr
 rollups
 réunion
 sbpf
@@ -72,6 +79,8 @@ soulbound
 stablecoins
 straitsx
 swatinem
+syscall
+syscalls
 tgbp
 toggleable
 tokenised
@@ -81,6 +90,7 @@ transfero
 tryb
 unmirrored
 usdg
+usize
 vchf
 vercel
 vertible
