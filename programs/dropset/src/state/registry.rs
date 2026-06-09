@@ -52,6 +52,13 @@ pub struct RegistryHeader {
     /// Default fee for the per-`OpenVault` charge, stamped into
     /// `MarketHeader.fee_config` at market creation.
     pub default_fee_config: FeeConfig,
+    /// Number of live markets created against this registry. Incremented
+    /// by `create_market`, decremented by `close_market`. `close_registry`
+    /// requires this to be zero — the only on-chain witness that no
+    /// orphan markets remain, since the program cannot iterate all PDAs
+    /// to verify by enumeration. See the architecture spec, **Account
+    /// lifecycle and rent reclamation**.
+    pub market_count: PodU32,
     /// Default skin-in-the-game floor (ppm, [`Ppm32`]) stamped into markets.
     pub default_min_leader_share: PodU32,
     /// Default taker fee (ppm, [`Ppm16`]) stamped into markets.
