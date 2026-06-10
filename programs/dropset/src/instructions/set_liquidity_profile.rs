@@ -7,7 +7,7 @@
 //! and arms `FLUSH_BIT` so the next taker re-materializes
 //! `Vault.remaining` from the new ladder + current inventory.
 //!
-//! **MVP pre-condition** (added in ENG-423): rejects when
+//! **Pre-condition**: rejects when
 //! `vault.reference_price.price.is_zero()` — i.e. before the leader
 //! has called `set_reference_price` at least once. The profile is
 //! pure-relative; without an anchor price the offsets have no
@@ -78,7 +78,7 @@ impl SetLiquidityProfile {
                 DropsetError::Unauthorized
             );
             require!(!vault.frozen.get(), DropsetError::VaultFrozen);
-            // The MVP rule (ENG-423): a vault's reference price must be
+            // Per-spec rule: a vault's reference price must be
             // set before its profile is — the profile is pure ppm
             // offsets and needs a real anchor.
             require!(

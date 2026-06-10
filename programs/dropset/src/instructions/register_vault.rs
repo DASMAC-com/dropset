@@ -8,12 +8,13 @@
 //! DLL, and writes the leader's pubkey, quote authority, perf-fee rate,
 //! `min_leader_share` (stamped from the market default), and HWM seed.
 //!
-//! MVP scope deliberately omits the spec's admin "open on someone
-//! else's behalf" path — non-admin and admin alike open vaults under
-//! the calling signer as `leader`. Adding the override is a one-arg
-//! follow-up that doesn't change the DLL or rent paths.
+//! Admins may pass a `leader_override` to seat a vault on someone
+//! else's behalf — useful for issuer-funded vaults where the protocol
+//! seeds a market maker. Non-admin callers must pass the
+//! [`Address::default()`] sentinel (or their own pubkey) — any other
+//! value is rejected with [`DropsetError::LeaderOverrideNotAllowed`].
 
-use anchor_lang_v2::prelude::*;
+use anchor_lang_v2::{address_eq, prelude::*};
 // `associated_token::{self, ...}` keeps the module in scope so the
 // `associated_token::*` constraint paths on `registry_fee_treasury`
 // expand to `anchor_spl_v2::associated_token::<Marker>`.
@@ -89,6 +90,7 @@ impl RegisterVault {
         perf_fee_rate: u32,
         quote_authority: Address,
         allow_outside_depositors: bool,
+        leader_override: Address,
     ) -> Result<OpenVaultEvent> {
         // Validate perf fee. Capped at 100% (`PPM`). The spec leaves
         // this open-ended; the cap matches the `Ppm32` semantic.
@@ -102,8 +104,28 @@ impl RegisterVault {
         let active = self.market.active_count.get();
         require!(active < max_vaults, DropsetError::VaultCapExceeded);
 
+        // Resolve the leader. Spec § OpenVault:
+        // - Non-admin caller: must pass `Address::default()` (no
+        //   override) or their own pubkey — anything else is a
+        //   misuse of the admin-only override.
+        // - Admin caller: may pass any pubkey; that pubkey becomes
+        //   `Vault.leader`. `Address::default()` means "use payer".
+        let payer_addr = *self.payer.address();
+        let is_admin = self.registry.admin_contains(&payer_addr);
+        let override_used = !address_eq(&leader_override, &Address::default());
+        if !is_admin && override_used {
+            require!(
+                address_eq(&leader_override, &payer_addr),
+                DropsetError::LeaderOverrideNotAllowed
+            );
+        }
+        let leader = if override_used {
+            leader_override
+        } else {
+            payer_addr
+        };
+
         // Charge the open-vault fee unless the signer is an admin.
-        let is_admin = self.registry.admin_contains(self.payer.address());
         if !is_admin {
             let atoms = self.market.fee_config.atoms.get();
             if atoms > 0 {
@@ -130,7 +152,6 @@ impl RegisterVault {
 
         // Stamp the new sector. `allocate_sector` zeroed it, so we
         // only need to write the leader-controlled fields.
-        let leader = *self.payer.address();
         let market_addr = *self.market.address();
         let min_leader_share = self.market.default_min_leader_share.get();
         let vault = &mut self.market.as_mut_slice()[sector as usize];

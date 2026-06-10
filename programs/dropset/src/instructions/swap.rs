@@ -168,6 +168,7 @@ impl Swap {
         side_u8: u8,
         amount_in: u64,
         limit_price_bits: u32,
+        min_out: u64,
     ) -> Result<alloc::vec::Vec<FillEvent>> {
         let side = SwapSide::from_u8(side_u8).ok_or(DropsetError::InvalidSwapSide)?;
         let limit_price = Price::from_bits(limit_price_bits);
@@ -329,6 +330,21 @@ impl Swap {
         let mut total_fee: u128 = 0;
         let mut filled_legs: u32 = 0;
         let mut fill_events: alloc::vec::Vec<FillEvent> = alloc::vec::Vec::new();
+        // Snapshots taken BEFORE each leg mutates state, so that a
+        // failed `min_out` check can restore the per-vault inventory
+        // and per-level `remaining.size` to exactly the pre-swap
+        // values. Walked in reverse so overlapping snapshots of the
+        // same `sector_idx` resolve to the earliest captured state.
+        struct LegSnapshot {
+            sector_idx: u32,
+            level_idx: u32,
+            is_ask_side: bool,
+            base_before: u64,
+            quote_before: u64,
+            size_before: u64,
+        }
+        let mut snapshots: alloc::vec::Vec<LegSnapshot> = alloc::vec::Vec::new();
+        let nonce_at_start = self.market.nonce.get();
 
         for &(sector_idx, level_idx, price, level_size, _nonce) in levels.iter().take(live_count) {
             // Limit-price filter.
@@ -394,6 +410,24 @@ impl Swap {
                 SwapSide::Sell => ((fill_quote as u128) * (taker_fee_ppm as u128)) / (PPM as u128),
             };
             let fee_u64 = fee.min(u64::MAX as u128) as u64;
+
+            // Snapshot the pre-leg state so the `min_out` soft-revert
+            // at the end can roll back every mutation cleanly.
+            {
+                let v = &self.market.as_slice()[sector_idx as usize];
+                let size_before = match side {
+                    SwapSide::Buy => v.remaining.asks[level_idx as usize].size.get(),
+                    SwapSide::Sell => v.remaining.bids[level_idx as usize].size.get(),
+                };
+                snapshots.push(LegSnapshot {
+                    sector_idx,
+                    level_idx,
+                    is_ask_side: matches!(side, SwapSide::Buy),
+                    base_before: v.base_atoms.get(),
+                    quote_before: v.quote_atoms.get(),
+                    size_before,
+                });
+            }
 
             // Update vault inventory and level remaining size. The
             // fee is retained in the vault on the output leg — so the
@@ -483,7 +517,36 @@ impl Swap {
             });
         }
 
-        require!(filled_legs > 0, DropsetError::NothingFilled);
+        // Soft-revert check: if the net output the taker would receive
+        // is below the caller-specified `min_out`, roll back every
+        // mutation and return `Ok(Vec::new())`. The instruction
+        // doesn't error — the surrounding transaction survives, which
+        // is the contract SDK callers rely on when bundling a swap
+        // with other instructions. `min_out == 0` opts out (the
+        // legacy fail-on-zero-fill behavior is recovered by passing
+        // any non-zero `min_out`).
+        let achievable_net_out = total_out
+            .saturating_sub(total_fee)
+            .min(u64::MAX as u128) as u64;
+        if filled_legs == 0 || achievable_net_out < min_out {
+            // Walk snapshots in reverse so two legs that touched the
+            // same sector's inventory restore to the earliest
+            // captured value.
+            for snap in snapshots.iter().rev() {
+                let v = &mut self.market.as_mut_slice()[snap.sector_idx as usize];
+                v.base_atoms = snap.base_before.into();
+                v.quote_atoms = snap.quote_before.into();
+                if snap.is_ask_side {
+                    v.remaining.asks[snap.level_idx as usize].size =
+                        snap.size_before.into();
+                } else {
+                    v.remaining.bids[snap.level_idx as usize].size =
+                        snap.size_before.into();
+                }
+            }
+            self.market.nonce = nonce_at_start.into();
+            return Ok(alloc::vec::Vec::new());
+        }
 
         // Net taker transfer: pay the input leg in, receive the output
         // leg out. Both legs are aggregated across all matched levels

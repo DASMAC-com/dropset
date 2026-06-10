@@ -1218,12 +1218,13 @@ Caller arguments stamped onto the vault:
 - `allow_outside_depositors: bool` — toggleable post-open via
   `SetAllowOutsideDepositors`.
 
-**MVP carve-out (ENG-423).** The admin "open on someone else's
-behalf" path is not yet wired — every `OpenVault` (admin or non-admin)
-stamps the calling signer as `Vault.leader`. The admin path still
-waives the per-market fee, but the spec's `leader: Pubkey`
-admin-only override is deferred. Until it lands, an issuer-funded
-vault must be opened by the issuer's own wallet directly.
+**`leader` resolution.** Every `OpenVault` takes a
+`leader_override: Address` argument. A non-admin caller must pass
+either `Address::default()` (use signer) or their own pubkey —
+otherwise the instruction rejects with `LeaderOverrideNotAllowed`.
+Admins may pass any pubkey; that pubkey is stamped as
+`Vault.leader`. Passing `Address::default()` on the admin path uses
+the admin signer as the leader (same as the non-admin path).
 
 Side effect: the instruction stamps `Vault.min_leader_share` from the
 market's `MarketHeader.default_min_leader_share` (the skin-in-the-game
@@ -1476,17 +1477,15 @@ treasuries, then:
   flag unset rejects the deposit. See
   **Leader operations → SetOutsideDepositsApproved**.
 
-**MVP carve-out (ENG-423).** The current `deposit` instruction
-holds a single Accounts shape that always declares the
-`VaultDepositor` PDA with `init_if_needed`. On the leader path the
-PDA is still allocated (one-time ~0.0017 SOL rent) but the handler
-writes nothing to it — leader shares live on `Vault.leader_shares`
-per the spec above. Splitting `deposit` into separate
-`deposit_leader` / `deposit_outside` instructions to suppress the
-leader-side allocation is a follow-up that doesn't change the
-on-chain math. On withdraw, the outside-path PDA is now closed back
-to the depositor on zero-share exit and
-`MarketHeader.outstanding_vault_depositors` decremented, so the
+**Instruction split.** The two paths are wired as separate
+instructions in the program: `deposit_leader` / `withdraw_leader`
+omit the `VaultDepositor` account entirely (the leader has no PDA),
+and `deposit` / `withdraw` carry the PDA + basis tracking + close-
+on-empty path for outside depositors. Each handler rejects the
+opposite signer (the outside variants reject `signer ==
+vault.leader`, the leader variants reject any other signer). The
+outside-path PDA is closed back to the depositor on zero-share exit
+and `MarketHeader.outstanding_vault_depositors` decremented, so the
 spec's `close_market` invariant is reachable.
 
 `Vault.total_shares` is incremented in both paths.

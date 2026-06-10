@@ -143,7 +143,16 @@ impl Withdraw {
         require!(total_shares > 0, DropsetError::InsufficientShares);
 
         let signer_addr = *self.signer.address();
-        let is_leader = address_eq(&leader, &signer_addr);
+        // Outside-depositor path only — the leader withdraws via
+        // `withdraw_leader` (no PDA load). Rejecting here is what
+        // makes the two-instruction split clean: the leader's
+        // signer can never reach this handler's `VaultDepositor`
+        // mutations or `close = signer` rent refund.
+        require!(
+            !address_eq(&leader, &signer_addr),
+            DropsetError::Unauthorized
+        );
+        let is_leader = false;
 
         // Realize first (spec).
         let realize_outcome = {

@@ -116,6 +116,7 @@ fn rejects_when_reference_price_not_set() {
             perf_fee_rate: 0,
             quote_authority: authority.pubkey(),
             allow_outside_depositors: false,
+            leader_override: Pubkey::default(),
         }
         .data(),
         vec![

@@ -28,10 +28,11 @@ use common::{
 };
 use dropset::{
     instruction::{
-        Deposit as DepositInstruction, Init as InitInstruction,
+        DepositLeader as DepositLeaderInstruction, Init as InitInstruction,
         RegisterMarket as RegisterMarketInstruction, RegisterVault as RegisterVaultInstruction,
         SetLiquidityProfile as SetLiquidityProfileInstruction,
-        SetReferencePrice as SetReferencePriceInstruction, Withdraw as WithdrawInstruction,
+        SetReferencePrice as SetReferencePriceInstruction,
+        WithdrawLeader as WithdrawLeaderInstruction,
     },
     LiquidityProfile, MarketHeader, Price, RegistryHeader, Vault, N_LEVELS,
 };
@@ -181,6 +182,10 @@ fn end_to_end_single_leader_pipeline() {
             perf_fee_rate: 0,
             quote_authority: authority.pubkey(),
             allow_outside_depositors: false,
+            // Sentinel — `register_vault` resolves "no override" via
+            // `Address::default()`, which the handler treats as "use
+            // payer as leader".
+            leader_override: Pubkey::default(),
         }
         .data(),
         vec![
@@ -281,11 +286,11 @@ fn end_to_end_single_leader_pipeline() {
     );
     mint_to(&mut svm, &authority, &base_mint, &leader_base_ata, base_amount);
     mint_to(&mut svm, &authority, &quote_mint, &leader_quote_ata, quote_amount);
-    let vault_depositor = vault_depositor_pda(&market, 0, &authority.pubkey());
 
+    // `deposit_leader` (PDA-free) — leader seeding the vault.
     let deposit_ix = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &DepositInstruction {
+        &DepositLeaderInstruction {
             vault_idx: 0,
             base_in: base_amount,
             quote_in: quote_amount,
@@ -296,7 +301,6 @@ fn end_to_end_single_leader_pipeline() {
         vec![
             AccountMeta::new(authority.pubkey(), true),
             AccountMeta::new(market, false),
-            AccountMeta::new(vault_depositor, false),
             AccountMeta::new_readonly(base_mint, false),
             AccountMeta::new_readonly(quote_mint, false),
             AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
@@ -305,14 +309,13 @@ fn end_to_end_single_leader_pipeline() {
             AccountMeta::new(leader_quote_ata, false),
             AccountMeta::new(base_treasury, false),
             AccountMeta::new(quote_treasury, false),
-            AccountMeta::new_readonly(SYSVAR_CLOCK_ID, false),
             AccountMeta::new_readonly(System::id(), false),
             AccountMeta::new_readonly(ATA_PROGRAM_ID, false),
             AccountMeta::new_readonly(event_authority, false),
             AccountMeta::new_readonly(PROGRAM_ID, false),
         ],
     );
-    send_ixn(&mut svm, &authority, deposit_ix).expect("deposit");
+    send_ixn(&mut svm, &authority, deposit_ix).expect("deposit_leader");
 
     let (_, v) = read_market_and_vault(&svm, &market);
     assert_eq!(v.base_atoms.get(), base_amount);
@@ -336,7 +339,7 @@ fn end_to_end_single_leader_pipeline() {
     let total_shares = v.total_shares.get();
     let withdraw_ix = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &WithdrawInstruction {
+        &WithdrawLeaderInstruction {
             vault_idx: 0,
             shares_in: total_shares,
             min_base_out: 0,
@@ -346,7 +349,6 @@ fn end_to_end_single_leader_pipeline() {
         vec![
             AccountMeta::new(authority.pubkey(), true),
             AccountMeta::new(market, false),
-            AccountMeta::new(vault_depositor, false),
             AccountMeta::new_readonly(base_mint, false),
             AccountMeta::new_readonly(quote_mint, false),
             AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
@@ -361,7 +363,7 @@ fn end_to_end_single_leader_pipeline() {
             AccountMeta::new_readonly(PROGRAM_ID, false),
         ],
     );
-    send_ixn(&mut svm, &authority, withdraw_ix).expect("withdraw");
+    send_ixn(&mut svm, &authority, withdraw_ix).expect("withdraw_leader");
 
     let (_, v) = read_market_and_vault(&svm, &market);
     assert_eq!(v.total_shares.get(), 0);

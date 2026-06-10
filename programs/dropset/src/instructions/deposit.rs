@@ -173,13 +173,24 @@ impl Deposit {
         require!(!frozen, DropsetError::VaultFrozen);
 
         let signer_addr = *self.signer.address();
-        let is_leader = address_eq(&leader, &signer_addr);
+        // This handler is the outside-depositor path. The leader's
+        // own deposits go through `deposit_leader` (no PDA, no basis
+        // tracking). Reject the leader here so they don't allocate a
+        // `VaultDepositor` PDA they'll never use.
+        require!(
+            !address_eq(&leader, &signer_addr),
+            DropsetError::Unauthorized
+        );
+        let is_leader = false;
         let is_seeding = total_shares == 0;
 
-        if !is_leader {
-            require!(allow_outside, DropsetError::OutsideDepositorsNotAllowed);
-            require!(outside_approved, DropsetError::OutsideDepositorsNotApproved);
-        }
+        // Seeding (`total_shares == 0`) requires the leader — and the
+        // outside path is by definition not the leader. Reject up
+        // front to give a clearer error than the share-math collapse.
+        require!(!is_seeding, DropsetError::SeedingRequiresLeader);
+
+        require!(allow_outside, DropsetError::OutsideDepositorsNotAllowed);
+        require!(outside_approved, DropsetError::OutsideDepositorsNotApproved);
 
         // Realize first (spec). No-op when seeding (total_shares == 0).
         // Capture outcome so we can emit a RealizeEvent if shares minted.
