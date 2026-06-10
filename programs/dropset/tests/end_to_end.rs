@@ -58,19 +58,6 @@ fn event_authority_pda() -> Pubkey {
     Pubkey::find_program_address(&[b"__event_authority"], &PROGRAM_ID).0
 }
 
-fn vault_depositor_pda(market: &Pubkey, sector_idx: u32, owner: &Pubkey) -> Pubkey {
-    Pubkey::find_program_address(
-        &[
-            b"vault_depositor",
-            market.as_ref(),
-            &sector_idx.to_le_bytes(),
-            owner.as_ref(),
-        ],
-        &PROGRAM_ID,
-    )
-    .0
-}
-
 /// Read the market header + first vault sector. The Vault struct
 /// contains a `Price` field (`#[repr(transparent)] u32`) which gives
 /// it alignment 4; the slab tail starts at an offset that may not be
