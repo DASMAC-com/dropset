@@ -232,6 +232,14 @@ export const SHORTCUTS_BY_CONTEXT: Record<ShortcutContext, ShortcutSpec[]> = {
       run: () => emit("currenciesSort", "priceChange24h"),
     },
     {
+      // h for the 24h window — the parenthetical reinforces the mnemonic in
+      // the help dialog.
+      key: "h",
+      description: "Sort by 24(h) volume",
+      group: "Sort & display",
+      run: () => emit("currenciesSort", "volume24h"),
+    },
+    {
       key: "m",
       description: "Sort by market cap",
       group: "Sort & display",
@@ -244,8 +252,8 @@ export const SHORTCUTS_BY_CONTEXT: Record<ShortcutContext, ShortcutSpec[]> = {
       run: () => emit("currenciesSort", "liquidity"),
     },
     {
-      key: "h",
-      description: "Sort by holders",
+      key: "n",
+      description: "Sort by (n)umber of holders",
       group: "Sort & display",
       run: () => emit("currenciesSort", "holderCount"),
     },
