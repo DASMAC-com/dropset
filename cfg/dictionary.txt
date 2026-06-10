@@ -91,6 +91,7 @@ straitsx
 swatinem
 syscall
 syscalls
+sysvar
 tapia
 tgbp
 toggleable

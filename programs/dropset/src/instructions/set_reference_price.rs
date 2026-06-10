@@ -1,0 +1,100 @@
+//! `set_reference_price` — leader hot path.
+//!
+//! Updates the vault's reference price (and `quote_slot`) in two
+//! aligned `u64` stores, bumps `market.nonce`, and arms the
+//! `FLUSH_BIT` so the next taker materializes `Vault.remaining` from
+//! the (unchanged) `LiquidityProfile`. Per the architecture spec's
+//! **SetReferencePrice**, this is the asm-optimized path — analogous
+//! to a propAMM reference-price update — so it emits no events and
+//! does no list walks.
+
+use anchor_lang_v2::{address_eq, prelude::*};
+
+use crate::{
+    errors::DropsetError,
+    state::{Market, FLUSH_BIT, MAX_BACKDATE},
+    Price, ReferencePrice,
+};
+
+#[derive(Accounts)]
+pub struct SetReferencePrice {
+    /// Quote authority — the only signer the spec accepts here. Set at
+    /// `OpenVault` (defaults to the leader).
+    pub signer: Signer,
+    /// Market account holding the target vault.
+    #[account(mut)]
+    pub market: Market,
+    /// Read for the current slot. The leader-supplied `quote_slot` is
+    /// validated against this (no future-dating, capped backdate).
+    pub clock: Sysvar<Clock>,
+}
+
+impl SetReferencePrice {
+    #[inline(always)]
+    pub fn set_reference_price(
+        &mut self,
+        vault_idx: u32,
+        price: Price,
+        quote_slot: u64,
+    ) -> Result<()> {
+        // Validate the price bit pattern up front — `Price` derives Pod
+        // so Anchor will deserialize any 4-byte input; an invalid
+        // significand would mis-sort in the matching engine. The
+        // `ZERO` / `INFINITY` sentinels are also rejected here: they
+        // exist as taker `limit_price` markers, not as legitimate
+        // anchor prices. Allowing `ZERO` would let a leader silently
+        // collapse outside depositors' realized-PnL basis math
+        // (price decoders return 0 for the sentinel); `INFINITY`
+        // would let the basis math saturate to `u64::MAX`.
+        require!(
+            price.is_valid() && !price.is_zero() && !price.is_infinity(),
+            DropsetError::InvalidPrice
+        );
+        // Cap `quote_slot` to `u32` cleanly so the storage truncation
+        // is explicit rather than silent.
+        require!(
+            quote_slot <= u32::MAX as u64,
+            DropsetError::InvalidQuoteSlot
+        );
+
+        let current_slot = self.clock.slot;
+        require!(
+            quote_slot <= current_slot && current_slot.saturating_sub(quote_slot) <= MAX_BACKDATE,
+            DropsetError::InvalidQuoteSlot
+        );
+
+        let len = self.market.len();
+        require!((vault_idx as usize) < len, DropsetError::InvalidSectorIndex);
+
+        // Validate the target vault BEFORE mutating any header state —
+        // a caller targeting a free-list sector or the wrong vault
+        // must not advance `market.nonce`.
+        let signer_addr = *self.signer.address();
+        {
+            let vault = &self.market.as_slice()[vault_idx as usize];
+            require!(
+                !address_eq(&vault.leader, &Address::default()),
+                DropsetError::VaultEmpty
+            );
+            require!(
+                address_eq(&vault.quote_authority, &signer_addr),
+                DropsetError::Unauthorized
+            );
+            require!(!vault.frozen.get(), DropsetError::VaultFrozen);
+        }
+
+        // Bump the market nonce (header borrow via Slab's DerefMut).
+        let nonce = self.market.nonce.get();
+        let new_nonce = nonce.checked_add(1).ok_or(DropsetError::MathOverflow)?;
+        self.market.nonce = new_nonce.into();
+
+        // Re-borrow the vault mutably and stamp the new reference price.
+        let vault = &mut self.market.as_mut_slice()[vault_idx as usize];
+        vault.reference_price = ReferencePrice {
+            stamp: (nonce | FLUSH_BIT).into(),
+            price,
+            quote_slot: (quote_slot as u32).into(),
+        };
+        Ok(())
+    }
+}

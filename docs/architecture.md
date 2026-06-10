@@ -1218,6 +1218,14 @@ Caller arguments stamped onto the vault:
 - `allow_outside_depositors: bool` — toggleable post-open via
   `SetAllowOutsideDepositors`.
 
+**`leader` resolution.** Every `OpenVault` takes a
+`leader_override: Address` argument. A non-admin caller must pass
+either `Address::default()` (use signer) or their own pubkey —
+otherwise the instruction rejects with `LeaderOverrideNotAllowed`.
+Admins may pass any pubkey; that pubkey is stamped as
+`Vault.leader`. Passing `Address::default()` on the admin path uses
+the admin signer as the leader (same as the non-admin path).
+
 Side effect: the instruction stamps `Vault.min_leader_share` from the
 market's `MarketHeader.default_min_leader_share` (the skin-in-the-game
 floor this vault will be held to; admin-overridable per vault via
@@ -1257,6 +1265,18 @@ ladder; smaller sums leave an unallocated reserve. Either side
 exceeding 10000 is rejected — it would over-commit the leg and
 turn `Position.size` into an unenforceable nominal. The check is
 N_LEVELS adds and one comparison per side.
+
+**Pre-condition: reference price must be set.** `SetLiquidityProfile`
+rejects when `vault.reference_price.price == Price::ZERO` — the
+sentinel a freshly-allocated vault carries before the leader's first
+`SetReferencePrice`. The profile is purely relative (ppm offsets from
+the reference price), so writing a ladder without first anchoring it
+to a real price would arm a flush that materializes to garbage
+absolute prices and instantly burn the per-flush allowance. The
+order is therefore fixed for a vault's lifecycle: open → seed via
+`Deposit` → `SetReferencePrice` → `SetLiquidityProfile`. The check is
+a single comparison against the already-loaded `reference_price.price`
+field.
 
 The instruction reads and increments `market.nonce`, writes
 the new value (OR'd with `FLUSH_BIT`) to `reference_price.stamp`,
@@ -1457,6 +1477,18 @@ treasuries, then:
   flag unset rejects the deposit. See
   **Leader operations → SetOutsideDepositsApproved**.
 
+**Instruction split.** The two paths are wired as separate
+instructions in the program: `deposit_leader` / `withdraw_leader`
+omit the `VaultDepositor` account entirely (the leader has no PDA),
+and `deposit` / `withdraw` carry the PDA + basis tracking + close-
+on-empty path for outside depositors. Each handler rejects the
+opposite signer (the outside variants reject
+`signer == vault.leader`, the leader variants reject any other
+signer). The
+outside-path PDA is closed back to the depositor on zero-share exit
+and `MarketHeader.outstanding_vault_depositors` decremented, so the
+spec's `close_market` invariant is reachable.
+
 `Vault.total_shares` is incremented in both paths.
 
 **Skin-in-the-game check.** After update, if the caller is not the
@@ -1628,6 +1660,28 @@ self-arbitraging a stale neighbor is the cheapest path to clean it
 up) — which gives leaders a standing incentive to keep their
 reference prices honest without the matching engine needing a
 leader-vs-leader pre-pass.
+
+### Minimum-output guard (`min_out`)
+
+The take instruction accepts a `min_out: u64` for SDK
+composability. The matcher snapshots every touched sector's
+inventory + per-level `remaining.size` + `market.nonce` before
+mutating, runs the full fill loop, then checks whether the
+achievable net output (after taker fee) meets `min_out`. On
+failure the snapshots are walked in reverse to restore exact
+pre-swap state, `FLUSH_BIT` is re-armed on every vault the
+matcher flushed during the walk, and the instruction returns
+without emitting events or firing CPI transfers. No error — the
+surrounding transaction survives so a bundle of instructions that
+includes the swap doesn't unravel when no liquidity is available
+at the caller's price.
+
+`min_out == 0` is the legacy "any fill counts" behavior: a
+zero-fill swap still soft-reverts (no events, no transfers), but
+a partial fill with `total_out > 0` always commits. Frozen vaults
+are skipped from the matching set entirely so a leader-initiated
+freeze takes effect from the next taker instruction rather than
+waiting for per-level expiry.
 
 ## Events and emission
 
