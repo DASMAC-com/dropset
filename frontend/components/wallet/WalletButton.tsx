@@ -59,13 +59,17 @@ export function WalletButton() {
   // is open, which would let the overlay drop too early.
   const [connecting, setConnecting] = useState(false);
 
-  // Tell Providers when the picker is open so it won't swap the SolanaClient
-  // (reactive wallet discovery rebuilds it on connector-set changes) while the
-  // user is about to pick. A swap mid-connect lands the session on an orphaned
-  // client and leaves the header stuck on "Connect Wallet" until a refresh.
+  // Tell Providers when the picker is open OR a connect is in flight so it
+  // won't swap the SolanaClient (reactive wallet discovery rebuilds it on
+  // connector-set changes) while the user is about to pick or mid-handshake.
+  // A swap mid-connect lands the session on an orphaned client and leaves the
+  // header stuck on "Connect Wallet" until a refresh. `connecting` extends the
+  // guard past `modal.close()` because external SDK relay flows don't hold the
+  // client store in "connecting" while their own modal is open, so isIdle()
+  // alone would otherwise see the client as safe to rebuild mid-handshake.
   useEffect(() => {
-    emit("walletPickerOpen", modal.isOpen);
-  }, [modal.isOpen]);
+    emit("walletPickerOpen", modal.isOpen || connecting);
+  }, [modal.isOpen, connecting]);
 
   // Drop the connection if the user switches accounts in their wallet
   // extension — the store doesn't track in-place account changes on its own.

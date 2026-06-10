@@ -92,10 +92,14 @@ export function Providers({ children }: { children: ReactNode }) {
   // A connector set seen while it wasn't safe to swap the client, deferred
   // until it is (see below). Null when there's nothing pending.
   const pendingRef = useRef<readonly WalletConnector[] | null>(null);
-  // Whether the wallet picker is open. Swapping the client while the user is
-  // mid-pick races the connect: the session lands on the old (destroyed)
-  // client while React rebinds to the new one, so the header stays
-  // "Connect Wallet" until a reload. Don't rebuild while it's open.
+  // True while the user is mid-pick OR a connect is in flight. Swapping the
+  // client during either races the connect: the session lands on the old
+  // (destroyed) client while React rebinds to the new one, so the header
+  // stays "Connect Wallet" until a reload. The picker drives this flag via
+  // the `walletPickerOpen` event, which is asserted from picker-open through
+  // connect-resolution (the SolanaClient store doesn't reliably hold
+  // "connecting" during an external SDK's relay flow, so isIdle alone
+  // wouldn't keep us safe past `modal.close()`).
   const pickerOpenRef = useRef(false);
 
   const rebuild = useCallback((connectors: readonly WalletConnector[]) => {
