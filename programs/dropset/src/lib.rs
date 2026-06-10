@@ -2,11 +2,13 @@
 use anchor_lang_v2::prelude::*;
 
 mod errors;
+mod events;
 mod instructions;
 mod price;
 mod state;
 
 pub use errors::*;
+pub use events::*;
 use instructions::*;
 pub use price::*;
 pub use state::*;
@@ -37,5 +39,37 @@ pub mod dropset {
     #[discrim = 3]
     pub fn register_market(ctx: &mut Context<RegisterMarket>) -> Result<()> {
         ctx.accounts.register_market(ctx.bumps.market)
+    }
+
+    #[discrim = 4]
+    pub fn register_vault(
+        ctx: &mut Context<RegisterVault>,
+        perf_fee_rate: u32,
+        quote_authority: Address,
+        allow_outside_depositors: bool,
+    ) -> Result<()> {
+        ctx.accounts
+            .register_vault(perf_fee_rate, quote_authority, allow_outside_depositors)
+    }
+
+    #[discrim = 5]
+    pub fn set_reference_price(
+        ctx: &mut Context<SetReferencePrice>,
+        vault_idx: u32,
+        price_bits: u32,
+        quote_slot: u64,
+    ) -> Result<()> {
+        ctx.accounts
+            .set_reference_price(vault_idx, Price::from_bits(price_bits), quote_slot)
+    }
+
+    #[discrim = 6]
+    pub fn set_liquidity_profile(
+        ctx: &mut Context<SetLiquidityProfile>,
+        vault_idx: u32,
+        profile_bytes: [u8; PROFILE_BYTES],
+    ) -> Result<()> {
+        ctx.accounts
+            .set_liquidity_profile(vault_idx, profile_bytes)
     }
 }

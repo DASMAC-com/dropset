@@ -28,4 +28,44 @@ pub enum DropsetError {
     CorruptVaultList,
     #[msg("registry market_count cannot exceed u32::MAX")]
     MarketCountOverflow,
+    #[msg("market vault cap (registry.max_vaults_per_market) is full")]
+    VaultCapExceeded,
+    #[msg("perf_fee_rate exceeds 1_000_000 ppm (100%)")]
+    InvalidPerfFeeRate,
+    #[msg("non-admin caller cannot open a vault on someone else's behalf")]
+    LeaderOverrideNotAllowed,
+    #[msg("supplied vault sector is not assigned (leader == default)")]
+    VaultEmpty,
+    #[msg("vault is frozen")]
+    VaultFrozen,
+    #[msg("price bit pattern is not a valid encoding")]
+    InvalidPrice,
+    #[msg("quote_slot is future-dated or backdated past MAX_BACKDATE")]
+    InvalidQuoteSlot,
+    #[msg("set_liquidity_profile requires the vault's reference price to be set first")]
+    ReferencePriceNotSet,
+    #[msg("liquidity profile size_bps sum exceeds 10_000 on one side")]
+    LiquidityProfileSizeOverflow,
+    #[msg("leader has not enabled outside depositors on this vault")]
+    OutsideDepositorsNotAllowed,
+    #[msg("admin has not approved outside deposits on this vault")]
+    OutsideDepositorsNotApproved,
+    #[msg("first deposit to a vault must come from its leader")]
+    SeedingRequiresLeader,
+    #[msg("first deposit to a vault must supply both base and quote legs")]
+    SeedingRequiresBothLegs,
+    #[msg("non-seeding deposit must size exactly one of base_in / quote_in")]
+    SingleLegRequired,
+    #[msg("derived basket exceeds caller's slippage bounds")]
+    BasketSlippage,
+    #[msg("operation would violate the vault's min_leader_share floor")]
+    MinLeaderShareViolated,
+    #[msg("requested shares exceed the caller's available stake")]
+    InsufficientShares,
+    #[msg("swap matched nothing; check side, limit_price, and vault state")]
+    NothingFilled,
+    #[msg("supplied VaultDepositor PDA does not match the (market, sector, owner) seeds")]
+    VaultDepositorMismatch,
+    #[msg("arithmetic overflow in basket / share math")]
+    MathOverflow,
 }

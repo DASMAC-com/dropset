@@ -1,6 +1,12 @@
 pub mod admin;
 pub mod init;
 pub mod register_market;
+pub mod register_vault;
+pub mod set_liquidity_profile;
+pub mod set_reference_price;
 pub use admin::*;
 pub use init::*;
 pub use register_market::*;
+pub use register_vault::*;
+pub use set_liquidity_profile::*;
+pub use set_reference_price::*;

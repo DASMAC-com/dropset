@@ -22,6 +22,51 @@ pub const N_LEVELS: usize = 8;
 /// as a real index and works as a null marker.
 pub const NULL_SECTOR: u32 = u32::MAX;
 
+/// Flush flag OR'd onto [`ReferencePrice::stamp`] by `SetReferencePrice`
+/// and `SetLiquidityProfile`. The next taker materializes
+/// [`Vault::remaining`] from the [`LiquidityProfile`] and clears the
+/// flag — see the spec's **LiquidityProfile → Flush**.
+pub const FLUSH_BIT: u64 = 1u64 << 63;
+
+/// Default sanity cap (in slots) on how stale a leader-supplied
+/// `quote_slot` may be. ~20s on Solana mainnet. Per the spec's
+/// **SetReferencePrice**: backdating only shortens the effective expiry
+/// window (self-grief, not exploit), but worth bounding.
+pub const MAX_BACKDATE: u64 = 50;
+
+/// Q32.32 fixed-point representation of `1.0` — the seed value for
+/// [`Vault::hwm`] at first-deposit time. The HWM is value-per-share
+/// (`L / total_shares`); the first depositor's basket implies
+/// `L = total_shares` (since `total_shares := isqrt(b·q) == L`), so the
+/// initial VPS is exactly 1.0.
+pub const Q32_32_ONE: u64 = 1u64 << 32;
+
+/// Parts-per-million denominator (`1_000_000 = 100%`).
+pub const PPM: u64 = 1_000_000;
+
+/// Basis-points denominator (`10_000 = 100%`).
+pub const BPS: u64 = 10_000;
+
+/// Integer square root via Newton's method, on `u128` to give the
+/// matching-engine math headroom. Used for the seeding-deposit share
+/// formula `total_shares := isqrt(base × quote)` and for `Realize`
+/// (`L = isqrt(base × quote)`).
+#[inline]
+pub fn isqrt_u128(n: u128) -> u128 {
+    if n < 2 {
+        return n;
+    }
+    // Initial estimate: half the bit-width of `n` shifted up by one —
+    // gives an over-estimate that Newton's method then refines down.
+    let mut x = n;
+    let mut y = (x + 1) / 2;
+    while y < x {
+        x = y;
+        y = (x + n / x) / 2;
+    }
+    x
+}
+
 /// Reference-price record stamped onto every vault. See the spec's
 /// **Vault → ReferencePrice**.
 #[repr(C)]
@@ -301,6 +346,109 @@ impl DllList {
             DllList::Tombstone => h.tombstone_head = value.into(),
             DllList::Free => h.free_head = value.into(),
         }
+    }
+}
+
+/// Outcome of a `realize_in_place` call — returned so callers can emit
+/// a `RealizeEvent` only when `m > 0`.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct RealizeOutcome {
+    /// New shares minted into `leader_shares` (and `total_shares`).
+    pub shares_minted: u64,
+    /// HWM after this call. Equal to the pre-call value when nothing was minted.
+    pub hwm_after: u64,
+}
+
+/// Per the spec's **Realize**: when `VPS = L / total_shares` exceeds
+/// the high-water mark, mint `m` new shares to the leader and bump
+/// HWM. No-op when:
+/// - `total_shares == 0` (vault is unseeded — no shares to dilute);
+/// - `vault.frozen != 0` (per spec, HWM is pinned at freeze time);
+/// - `vault.perf_fee_rate == 0` (no fee to accrue);
+/// - `VPS <= HWM` (no excess to fee).
+///
+/// `L`, `HWM`, and the intermediate share math run in `u128` to keep
+/// the perf-fee formula precise without overflow on realistic atom
+/// scales. The final `m` is clamped back into `u64`.
+pub fn realize_in_place(vault: &mut Vault) -> RealizeOutcome {
+    let s = vault.total_shares.get();
+    let hwm = vault.hwm.get();
+    if s == 0 || vault.frozen != 0 {
+        return RealizeOutcome {
+            shares_minted: 0,
+            hwm_after: hwm,
+        };
+    }
+    let f_ppm = vault.perf_fee_rate.get() as u128;
+    let b = vault.base_atoms.get() as u128;
+    let q = vault.quote_atoms.get() as u128;
+    let l = isqrt_u128(b.saturating_mul(q));
+    if l == 0 {
+        return RealizeOutcome {
+            shares_minted: 0,
+            hwm_after: hwm,
+        };
+    }
+    // `vps` in Q32.32, same encoding as `hwm`.
+    let vps = (l << 32) / (s as u128);
+    if vps <= hwm as u128 {
+        return RealizeOutcome {
+            shares_minted: 0,
+            hwm_after: hwm,
+        };
+    }
+    if f_ppm == 0 {
+        // No perf fee — HWM still trails VPS upwards so a later fee
+        // change can't claw back past historical highs.
+        let hwm_after = vps as u64;
+        vault.hwm = hwm_after.into();
+        return RealizeOutcome {
+            shares_minted: 0,
+            hwm_after,
+        };
+    }
+    // m = f · s · (L − hwm·s) / ((1 − f) · L + f · hwm·s)
+    //
+    // Working in Q32.32 for the `hwm × s` term, then shifting back
+    // before the division so we don't compound the Q32.32 scale across
+    // numerator and denominator.
+    let s_u = s as u128;
+    let hwm_u = hwm as u128;
+    let hwm_s = (hwm_u * s_u) >> 32; // back to atom scale
+    if l <= hwm_s {
+        // VPS rose by sub-quantum (rounding error) — skip.
+        vault.hwm = (vps as u64).into();
+        return RealizeOutcome {
+            shares_minted: 0,
+            hwm_after: vps as u64,
+        };
+    }
+    let num = f_ppm * s_u * (l - hwm_s);
+    let one_minus_f = PPM as u128 - f_ppm;
+    let denom = one_minus_f * l + f_ppm * hwm_s;
+    if denom == 0 {
+        return RealizeOutcome {
+            shares_minted: 0,
+            hwm_after: hwm,
+        };
+    }
+    let m = (num / denom).min(u64::MAX as u128) as u64;
+    if m == 0 {
+        vault.hwm = (vps as u64).into();
+        return RealizeOutcome {
+            shares_minted: 0,
+            hwm_after: vps as u64,
+        };
+    }
+    let s_after = s.saturating_add(m);
+    let leader_after = vault.leader_shares.get().saturating_add(m);
+    let hwm_after = ((l << 32) / s_after as u128) as u64;
+    vault.total_shares = s_after.into();
+    vault.leader_shares = leader_after.into();
+    vault.hwm = hwm_after.into();
+    RealizeOutcome {
+        shares_minted: m,
+        hwm_after,
     }
 }
 

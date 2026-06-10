@@ -1258,6 +1258,18 @@ exceeding 10000 is rejected — it would over-commit the leg and
 turn `Position.size` into an unenforceable nominal. The check is
 N_LEVELS adds and one comparison per side.
 
+**Pre-condition: reference price must be set.** `SetLiquidityProfile`
+rejects when `vault.reference_price.price == Price::ZERO` — the
+sentinel a freshly-allocated vault carries before the leader's first
+`SetReferencePrice`. The profile is purely relative (ppm offsets from
+the reference price), so writing a ladder without first anchoring it
+to a real price would arm a flush that materializes to garbage
+absolute prices and instantly burn the per-flush allowance. The
+order is therefore fixed for a vault's lifecycle: open → seed via
+`Deposit` → `SetReferencePrice` → `SetLiquidityProfile`. The check is
+a single comparison against the already-loaded `reference_price.price`
+field.
+
 The instruction reads and increments `market.nonce`, writes
 the new value (OR'd with `FLUSH_BIT`) to `reference_price.stamp`,
 and leaves `reference_price.price` and `reference_price.quote_slot`
