@@ -48,8 +48,11 @@ pub mod dropset {
         quote_authority: Address,
         allow_outside_depositors: bool,
     ) -> Result<()> {
-        ctx.accounts
-            .register_vault(perf_fee_rate, quote_authority, allow_outside_depositors)
+        let event = ctx
+            .accounts
+            .register_vault(perf_fee_rate, quote_authority, allow_outside_depositors)?;
+        emit_cpi!(event);
+        Ok(())
     }
 
     #[discrim = 5]
@@ -81,8 +84,14 @@ pub mod dropset {
         max_base_in: u64,
         max_quote_in: u64,
     ) -> Result<()> {
-        ctx.accounts
-            .deposit(vault_idx, base_in, quote_in, max_base_in, max_quote_in)
+        let (realize_event, deposit_event) =
+            ctx.accounts
+                .deposit(vault_idx, base_in, quote_in, max_base_in, max_quote_in)?;
+        if let Some(re) = realize_event {
+            emit_cpi!(re);
+        }
+        emit_cpi!(deposit_event);
+        Ok(())
     }
 
     #[discrim = 8]
@@ -93,8 +102,14 @@ pub mod dropset {
         min_base_out: u64,
         min_quote_out: u64,
     ) -> Result<()> {
-        ctx.accounts
-            .withdraw(vault_idx, shares_in, min_base_out, min_quote_out)
+        let (realize_event, withdraw_event) = ctx
+            .accounts
+            .withdraw(vault_idx, shares_in, min_base_out, min_quote_out)?;
+        if let Some(re) = realize_event {
+            emit_cpi!(re);
+        }
+        emit_cpi!(withdraw_event);
+        Ok(())
     }
 
     #[discrim = 9]
@@ -104,6 +119,14 @@ pub mod dropset {
         amount_in: u64,
         limit_price_bits: u32,
     ) -> Result<()> {
-        ctx.accounts.swap(side, amount_in, limit_price_bits)
+        let fill_events = ctx.accounts.swap(side, amount_in, limit_price_bits)?;
+        // Per the architecture spec § Events and emission →
+        // Granularity: every leg is recorded, never truncated. The
+        // matching engine accumulates `FillEvent`s and we emit them
+        // here one at a time via `emit_cpi!`.
+        for ev in fill_events {
+            emit_cpi!(ev);
+        }
+        Ok(())
     }
 }

@@ -105,6 +105,11 @@ fn rejects_when_reference_price_not_set() {
     send_ixn(&mut svm, &authority, register_market_ix).expect("register_market");
 
     // Admin opens the vault for simplicity — skips fee path.
+    // `#[event_cpi]` on the `RegisterVault` Accounts struct appends
+    // two accounts: the event-authority PDA (seeds = `__event_authority`)
+    // and the program account itself, used by `emit_cpi!`'s self-CPI.
+    let event_authority =
+        Pubkey::find_program_address(&[b"__event_authority"], &PROGRAM_ID).0;
     let register_vault_ix = Instruction::new_with_bytes(
         PROGRAM_ID,
         &RegisterVaultInstruction {
@@ -122,6 +127,8 @@ fn rejects_when_reference_price_not_set() {
             AccountMeta::new(dummy_source.pubkey(), false),
             AccountMeta::new(registry_fee_treasury, false),
             AccountMeta::new_readonly(System::id(), false),
+            AccountMeta::new_readonly(event_authority, false),
+            AccountMeta::new_readonly(PROGRAM_ID, false),
         ],
     );
     send_ixn(&mut svm, &authority, register_vault_ix).expect("register_vault");

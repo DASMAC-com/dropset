@@ -31,6 +31,7 @@ use crate::{
     AdminSet, Registry, PPM, Q32_32_ONE,
 };
 
+#[event_cpi]
 #[derive(Accounts)]
 pub struct RegisterVault {
     /// Pays sector-rent top-up (if the slab realloc grows the account)
@@ -76,13 +77,19 @@ pub struct RegisterVault {
 }
 
 impl RegisterVault {
+    /// Run the handler body and return the [`OpenVaultEvent`] payload
+    /// for `lib.rs` to dispatch through `emit_cpi!`. The macro
+    /// requires `ctx` in scope, which the `impl` method can't see —
+    /// keeping the emit out here means the spec's "events ride as
+    /// inner-instruction data, not logs" rule (§ Events and emission)
+    /// holds without restructuring every handler to take `ctx`.
     #[inline(always)]
     pub fn register_vault(
         &mut self,
         perf_fee_rate: u32,
         quote_authority: Address,
         allow_outside_depositors: bool,
-    ) -> Result<()> {
+    ) -> Result<OpenVaultEvent> {
         // Validate perf fee. Capped at 100% (`PPM`). The spec leaves
         // this open-ended; the cap matches the `Ppm32` semantic.
         require!(
@@ -137,7 +144,7 @@ impl RegisterVault {
         // counters, profile, and remaining are already zero from
         // `allocate_sector`'s `Vault::zeroed()`.
 
-        emit!(OpenVaultEvent {
+        Ok(OpenVaultEvent {
             market: market_addr,
             sector_idx: sector,
             leader,
@@ -145,7 +152,6 @@ impl RegisterVault {
             perf_fee_rate,
             min_leader_share,
             allow_outside_depositors,
-        });
-        Ok(())
+        })
     }
 }

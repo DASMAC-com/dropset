@@ -26,6 +26,7 @@ use crate::{
     VaultDepositorHeader,
 };
 
+#[event_cpi]
 #[derive(Accounts)]
 #[instruction(
     vault_idx: u32,
@@ -98,6 +99,8 @@ pub struct Withdraw {
 }
 
 impl Withdraw {
+    /// Returns `(Option<RealizeEvent>, WithdrawEvent)` for `lib.rs` to
+    /// dispatch via `emit_cpi!`.
     #[inline(always)]
     pub fn withdraw(
         &mut self,
@@ -105,7 +108,7 @@ impl Withdraw {
         shares_in: u64,
         min_base_out: u64,
         min_quote_out: u64,
-    ) -> Result<()> {
+    ) -> Result<(Option<RealizeEvent>, WithdrawEvent)> {
         require!(shares_in > 0, DropsetError::InsufficientShares);
         let len = self.market.len();
         require!((vault_idx as usize) < len, DropsetError::InvalidSectorIndex);
@@ -312,17 +315,19 @@ impl Withdraw {
         // the leftover PDA carries zero state and is harmless.
         // The counter is decremented in the same follow-up.
 
-        if realize_outcome.shares_minted > 0 {
-            emit!(RealizeEvent {
+        let realize_event = if realize_outcome.shares_minted > 0 {
+            Some(RealizeEvent {
                 market: market_addr,
                 sector_idx: vault_idx,
                 shares_minted: realize_outcome.shares_minted,
                 leader_shares_after: new_leader_shares,
                 total_shares_after: new_total,
                 hwm_after: realize_outcome.hwm_after,
-            });
-        }
-        emit!(WithdrawEvent {
+            })
+        } else {
+            None
+        };
+        let withdraw_event = WithdrawEvent {
             market: market_addr,
             sector_idx: vault_idx,
             depositor: signer_addr,
@@ -335,7 +340,7 @@ impl Withdraw {
             base_atoms_after: new_base_atoms,
             quote_atoms_after: new_quote_atoms,
             realized_pnl_delta,
-        });
-        Ok(())
+        };
+        Ok((realize_event, withdraw_event))
     }
 }

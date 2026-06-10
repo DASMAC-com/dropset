@@ -56,6 +56,7 @@ impl SwapSide {
     }
 }
 
+#[event_cpi]
 #[derive(Accounts)]
 pub struct Swap {
     /// Taker.
@@ -156,12 +157,18 @@ struct HeapEntry {
 }
 
 impl Swap {
+    /// Returns the per-leg `FillEvent` list for `lib.rs` to dispatch
+    /// via `emit_cpi!`. The matching engine can't call `emit_cpi!`
+    /// directly — the macro requires `ctx` in scope, which the
+    /// `&mut self` handler can't see. Accumulating and emitting at
+    /// the lib.rs layer preserves the spec's per-leg-fill rule
+    /// (§ Events and emission → Granularity).
     pub fn swap(
         &mut self,
         side_u8: u8,
         amount_in: u64,
         limit_price_bits: u32,
-    ) -> Result<()> {
+    ) -> Result<alloc::vec::Vec<FillEvent>> {
         let side = SwapSide::from_u8(side_u8).ok_or(DropsetError::InvalidSwapSide)?;
         let limit_price = Price::from_bits(limit_price_bits);
         require!(limit_price.is_valid(), DropsetError::InvalidPrice);
@@ -321,6 +328,7 @@ impl Swap {
         let mut total_out: u128 = 0;
         let mut total_fee: u128 = 0;
         let mut filled_legs: u32 = 0;
+        let mut fill_events: alloc::vec::Vec<FillEvent> = alloc::vec::Vec::new();
 
         for &(sector_idx, level_idx, price, level_size, _nonce) in levels.iter().take(live_count) {
             // Limit-price filter.
@@ -455,7 +463,7 @@ impl Swap {
                 let v = &self.market.as_slice()[sector_idx as usize];
                 (v.leader, v.quote_authority)
             };
-            emit!(FillEvent {
+            fill_events.push(FillEvent {
                 market: market_addr,
                 taker: *self.taker.address(),
                 leader,
@@ -557,6 +565,6 @@ impl Swap {
                 }
             }
         }
-        Ok(())
+        Ok(fill_events)
     }
 }

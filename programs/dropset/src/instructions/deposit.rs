@@ -29,6 +29,7 @@ use crate::{
     VaultDepositorHeader, Q32_32_ONE,
 };
 
+#[event_cpi]
 #[derive(Accounts)]
 #[instruction(
     vault_idx: u32,
@@ -110,6 +111,9 @@ pub struct Deposit {
 }
 
 impl Deposit {
+    /// Returns `(Option<RealizeEvent>, DepositEvent)` for `lib.rs` to
+    /// dispatch through `emit_cpi!`. See [`super::register_vault`] for
+    /// the rationale on emitting outside the handler.
     #[inline(always)]
     pub fn deposit(
         &mut self,
@@ -118,7 +122,7 @@ impl Deposit {
         quote_in: u64,
         max_base_in: u64,
         max_quote_in: u64,
-    ) -> Result<()> {
+    ) -> Result<(Option<RealizeEvent>, DepositEvent)> {
         let len = self.market.len();
         require!((vault_idx as usize) < len, DropsetError::InvalidSectorIndex);
 
@@ -355,17 +359,19 @@ impl Deposit {
             }
         }
 
-        if realize_outcome.shares_minted > 0 {
-            emit!(RealizeEvent {
+        let realize_event = if realize_outcome.shares_minted > 0 {
+            Some(RealizeEvent {
                 market: market_addr,
                 sector_idx: vault_idx,
                 shares_minted: realize_outcome.shares_minted,
                 leader_shares_after: new_leader_shares,
                 total_shares_after: new_total,
                 hwm_after: realize_outcome.hwm_after,
-            });
-        }
-        emit!(DepositEvent {
+            })
+        } else {
+            None
+        };
+        let deposit_event = DepositEvent {
             market: market_addr,
             sector_idx: vault_idx,
             depositor: signer_addr,
@@ -378,7 +384,7 @@ impl Deposit {
             leader_shares_after: new_leader_shares,
             base_atoms_after: new_base_atoms,
             quote_atoms_after: new_quote_atoms,
-        });
-        Ok(())
+        };
+        Ok((realize_event, deposit_event))
     }
 }
