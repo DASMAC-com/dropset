@@ -108,8 +108,7 @@ fn rejects_when_reference_price_not_set() {
     // `#[event_cpi]` on the `RegisterVault` Accounts struct appends
     // two accounts: the event-authority PDA (seeds = `__event_authority`)
     // and the program account itself, used by `emit_cpi!`'s self-CPI.
-    let event_authority =
-        Pubkey::find_program_address(&[b"__event_authority"], &PROGRAM_ID).0;
+    let event_authority = Pubkey::find_program_address(&[b"__event_authority"], &PROGRAM_ID).0;
     let register_vault_ix = Instruction::new_with_bytes(
         PROGRAM_ID,
         &RegisterVaultInstruction {

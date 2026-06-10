@@ -1,15 +1,21 @@
-//! `withdraw` — leader-path and outside-depositor-path exits.
+//! `withdraw` — outside-depositor exit path.
 //!
-//! Burns `shares_in` from either `vault.leader_shares` (when `signer ==
-//! vault.leader`) or the caller's `VaultDepositor.shares` (PDA seeds
-//! bind to `signer`). Computes the floored pro-rata basket and
-//! transfers it from the market treasuries to the caller's ATAs,
-//! signed by the market PDA. On the outside path, crystallizes
-//! realized PnL into the `VaultDepositor`'s `realized_*` accumulators
-//! and reduces `net_deposits` by the released basis slice. When the
-//! outside depositor's `shares` reaches zero, Anchor's `close =
-//! signer` returns the PDA rent to them and we decrement
-//! `market.outstanding_vault_depositors`.
+//! Burns `shares_in` from the caller's `VaultDepositor.shares` (PDA
+//! seeds bind to the signer, so authority is implicit). Computes the
+//! floored pro-rata basket and transfers it from the market
+//! treasuries to the caller's ATAs, signed by the market PDA.
+//! Crystallizes realized PnL into the `VaultDepositor`'s
+//! `realized_*` accumulators using
+//! [`crate::Price::quote_for_base`] to decode `entry_ref_price` and
+//! the live reference price, and reduces `net_deposits` by the
+//! released basis slice. When the outside depositor's `shares`
+//! reaches zero, the PDA is closed back to the depositor and
+//! `MarketHeader.outstanding_vault_depositors` decremented.
+//!
+//! The leader's withdraw path lives in
+//! [`super::withdraw_leader`] — this handler explicitly rejects
+//! `signer == vault.leader` so the leader's signer never reaches
+//! the PDA mutations or rent refund.
 
 use anchor_lang_v2::{address_eq, prelude::*};
 #[allow(unused_imports)]
@@ -44,11 +50,13 @@ pub struct Withdraw {
     #[account(mut)]
     pub market: Market,
     /// Outside depositor's PDA. Mut so we can decrement `shares` and
-    /// stamp realized PnL. `close = signer` returns the rent to
-    /// `signer` when the handler-level "if shares == 0" close path
-    /// fires — for MVP we handle that branch with an explicit
-    /// `close_account` CPI in the handler to keep the leader-path
-    /// no-op symmetric.
+    /// stamp realized PnL. The handler calls
+    /// [`anchor_lang_v2::AnchorAccount::close`] explicitly when
+    /// post-burn `shares == 0`, refunding the rent to the signer
+    /// and decrementing `outstanding_vault_depositors` — a manual
+    /// close keeps the conditional rent-refund logic in one place
+    /// instead of relying on Anchor's unconditional `close = signer`
+    /// attribute.
     #[account(
         mut,
         seeds = [
@@ -224,19 +232,20 @@ impl Withdraw {
             // clamp into `i64` at the store.
             let ref_now_price = crate::Price::from_bits(ref_price_bits);
             let entry_ref_price = vd.entry_ref_price;
-            let qref_now = ref_now_price.quote_for_base(slice_base_u64).min(i128::MAX as u128)
-                as i128;
-            let qref_entry = entry_ref_price
+            let quote_for_ref_now = ref_now_price
+                .quote_for_base(slice_base_u64)
+                .min(i128::MAX as u128) as i128;
+            let quote_for_ref_entry = entry_ref_price
                 .quote_for_base(slice_base_u64)
                 .min(i128::MAX as u128) as i128;
             let slice_quote_i = slice_quote as i128;
             let released_i = released_basis as i128;
-            let fx_delta: i128 = qref_now.saturating_sub(qref_entry);
+            let fx_delta: i128 = quote_for_ref_now.saturating_sub(quote_for_ref_entry);
             let yield_delta: i128 = slice_quote_i
-                .saturating_add(qref_entry)
+                .saturating_add(quote_for_ref_entry)
                 .saturating_sub(released_i);
             let pnl_delta: i128 = slice_quote_i
-                .saturating_add(qref_now)
+                .saturating_add(quote_for_ref_now)
                 .saturating_sub(released_i);
             vd.realized_fx = (((vd.realized_fx.get() as i128).saturating_add(fx_delta))
                 .clamp(i64::MIN as i128, i64::MAX as i128) as i64)
@@ -244,8 +253,7 @@ impl Withdraw {
             let new_pnl = (vd.realized_pnl.get() as i128).saturating_add(pnl_delta);
             let new_yield = (vd.realized_yield.get() as i128).saturating_add(yield_delta);
             vd.realized_pnl = (new_pnl.clamp(i64::MIN as i128, i64::MAX as i128) as i64).into();
-            vd.realized_yield =
-                (new_yield.clamp(i64::MIN as i128, i64::MAX as i128) as i64).into();
+            vd.realized_yield = (new_yield.clamp(i64::MIN as i128, i64::MAX as i128) as i64).into();
             realized_pnl_delta = pnl_delta.clamp(i64::MIN as i128, i64::MAX as i128) as i64;
 
             let new_shares = vd.shares.get() - shares_in;
@@ -326,8 +334,7 @@ impl Withdraw {
             let signer_view = *self.signer.as_ref();
             self.vault_depositor.close(signer_view)?;
             let prev = self.market.outstanding_vault_depositors.get();
-            self.market.outstanding_vault_depositors =
-                prev.saturating_sub(1).into();
+            self.market.outstanding_vault_depositors = prev.saturating_sub(1).into();
         }
 
         let realize_event = if realize_outcome.shares_minted > 0 {

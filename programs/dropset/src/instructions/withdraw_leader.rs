@@ -132,10 +132,7 @@ impl WithdrawLeader {
         let slice_base_u64 = slice_base as u64;
         let slice_quote_u64 = slice_quote as u64;
 
-        require!(
-            leader_shares >= shares_in,
-            DropsetError::InsufficientShares
-        );
+        require!(leader_shares >= shares_in, DropsetError::InsufficientShares);
         let new_leader = leader_shares - shares_in;
         // Skin-in-the-game floor on active vaults — bypassed for
         // frozen / tombstoned per spec.

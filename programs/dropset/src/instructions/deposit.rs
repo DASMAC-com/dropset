@@ -372,8 +372,7 @@ impl Deposit {
                 let denom = s + ds;
                 let entry_vps_prev = vd.entry_vps.get() as u128;
                 let entry_vps_new = (s * entry_vps_prev + ds * (vps_after as u128)) / denom;
-                let entry_ref_new =
-                    vd.entry_ref_price.weighted_average(ref_now_price, s, ds);
+                let entry_ref_new = vd.entry_ref_price.weighted_average(ref_now_price, s, ds);
                 vd.shares = new_vd_shares.into();
                 vd.net_deposits = (vd.net_deposits.get() + lot_quote_value_u64).into();
                 vd.gross_deposited = (vd.gross_deposited.get() + lot_quote_value_u64).into();

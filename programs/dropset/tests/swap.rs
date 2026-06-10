@@ -11,9 +11,8 @@ use anchor_lang_v2::{programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, Signer};
 use common::{
     associated_token_address, create_associated_token_account, create_mock_usdc_mint,
-    create_spl_mint, decode_slab, deploy_with_authority, mint_to, send_ixn,
-    ATA_PROGRAM_ID, PROGRAM_ID, REGISTER_MARKET_FEE_ATOMS, SIGNER_FUNDING_LAMPORTS,
-    SPL_TOKEN_PROGRAM_ID,
+    create_spl_mint, decode_slab, deploy_with_authority, mint_to, send_ixn, ATA_PROGRAM_ID,
+    PROGRAM_ID, REGISTER_MARKET_FEE_ATOMS, SIGNER_FUNDING_LAMPORTS, SPL_TOKEN_PROGRAM_ID,
 };
 use dropset::{
     instruction::{
@@ -50,9 +49,8 @@ fn read_first_vault(svm: &anchor_v2_testing::LiteSVM, market: &Pubkey) -> (Marke
     let acct = svm.get_account(market).expect("market");
     const DISC: usize = 8;
     let header_end = DISC + core::mem::size_of::<MarketHeader>();
-    let header = anchor_lang_v2::bytemuck::pod_read_unaligned::<MarketHeader>(
-        &acct.data[DISC..header_end],
-    );
+    let header =
+        anchor_lang_v2::bytemuck::pod_read_unaligned::<MarketHeader>(&acct.data[DISC..header_end]);
     let after_len = header_end + 4;
     let v_align = core::mem::align_of::<Vault>();
     let items_start = (after_len + v_align - 1) & !(v_align - 1);
@@ -112,7 +110,8 @@ fn setup_seeded_vault() -> (
     let registry_fee_treasury =
         associated_token_address(&registry, &fee_mint, &SPL_TOKEN_PROGRAM_ID);
     let dummy = Keypair::new();
-    svm.airdrop(&dummy.pubkey(), SIGNER_FUNDING_LAMPORTS).unwrap();
+    svm.airdrop(&dummy.pubkey(), SIGNER_FUNDING_LAMPORTS)
+        .unwrap();
     let ix = Instruction::new_with_bytes(
         PROGRAM_ID,
         &RegisterMarketInstruction {}.data(),
@@ -222,7 +221,13 @@ fn setup_seeded_vault() -> (
         &SPL_TOKEN_PROGRAM_ID,
     );
     mint_to(&mut svm, &authority, &base_mint, &leader_base, base_amount);
-    mint_to(&mut svm, &authority, &quote_mint, &leader_quote, quote_amount);
+    mint_to(
+        &mut svm,
+        &authority,
+        &quote_mint,
+        &leader_quote,
+        quote_amount,
+    );
     let ix = Instruction::new_with_bytes(
         PROGRAM_ID,
         &DepositLeaderInstruction {
@@ -420,19 +425,23 @@ fn min_out_soft_reverts_when_unattainable() {
     // Vault inventory + market nonce restored to pre-swap.
     let (header_after, vault_after) = read_first_vault(&svm, &market);
     assert_eq!(vault_before.base_atoms.get(), vault_after.base_atoms.get());
-    assert_eq!(vault_before.quote_atoms.get(), vault_after.quote_atoms.get());
+    assert_eq!(
+        vault_before.quote_atoms.get(),
+        vault_after.quote_atoms.get()
+    );
     assert_eq!(header_before.nonce.get(), header_after.nonce.get());
     // Treasury invariant holds.
-    assert_eq!(token_balance(&svm, &base_treasury), vault_after.base_atoms.get());
+    assert_eq!(
+        token_balance(&svm, &base_treasury),
+        vault_after.base_atoms.get()
+    );
     assert_eq!(
         token_balance(&svm, &quote_treasury),
         vault_after.quote_atoms.get()
     );
 
     // Suppress the "unused" warning for the slab decoder.
-    let registry_account = svm
-        .get_account(&registry_pda())
-        .expect("registry");
+    let registry_account = svm.get_account(&registry_pda()).expect("registry");
     let (_, _) = decode_slab::<dropset::RegistryHeader, [u8; 32]>(&registry_account.data);
 }
 

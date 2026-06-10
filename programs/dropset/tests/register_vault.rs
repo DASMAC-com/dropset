@@ -86,7 +86,8 @@ fn bootstrap_market() -> (
     let base_tr = associated_token_address(&market, &base_mint, &SPL_TOKEN_PROGRAM_ID);
     let quote_tr = associated_token_address(&market, &quote_mint, &SPL_TOKEN_PROGRAM_ID);
     let dummy = Keypair::new();
-    svm.airdrop(&dummy.pubkey(), SIGNER_FUNDING_LAMPORTS).unwrap();
+    svm.airdrop(&dummy.pubkey(), SIGNER_FUNDING_LAMPORTS)
+        .unwrap();
     let ix = Instruction::new_with_bytes(
         PROGRAM_ID,
         &RegisterMarketInstruction {}.data(),
@@ -155,7 +156,8 @@ fn admin_can_open_vault_for_another_leader() {
     // Admin opens a vault with a foreign pubkey as leader.
     let foreign = Keypair::new();
     let dummy = Keypair::new();
-    svm.airdrop(&dummy.pubkey(), SIGNER_FUNDING_LAMPORTS).unwrap();
+    svm.airdrop(&dummy.pubkey(), SIGNER_FUNDING_LAMPORTS)
+        .unwrap();
     let ix = register_vault_for(
         &market,
         &authority.pubkey(),
@@ -217,7 +219,8 @@ fn non_admin_with_foreign_leader_override_rejects() {
 fn invalid_perf_fee_rate_rejects() {
     let (mut svm, authority, market, fee_mint, _base_mint, _quote_mint) = bootstrap_market();
     let dummy = Keypair::new();
-    svm.airdrop(&dummy.pubkey(), SIGNER_FUNDING_LAMPORTS).unwrap();
+    svm.airdrop(&dummy.pubkey(), SIGNER_FUNDING_LAMPORTS)
+        .unwrap();
     // perf_fee_rate > 1_000_000 ppm = > 100% — rejected.
     let ix = register_vault_for(
         &market,
@@ -228,7 +231,7 @@ fn invalid_perf_fee_rate_rejects() {
         &authority.pubkey(),
         &Pubkey::default(),
     );
-    let err = send_ixn(&mut svm, &authority, ix)
-        .expect_err("perf_fee_rate > 1_000_000 must reject");
+    let err =
+        send_ixn(&mut svm, &authority, ix).expect_err("perf_fee_rate > 1_000_000 must reject");
     common::assert_program_error(&err, DropsetError::InvalidPerfFeeRate);
 }

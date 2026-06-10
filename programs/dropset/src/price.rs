@@ -319,7 +319,7 @@ impl Price {
     ///
     /// The weighted average is computed in *decoded value* space — the
     /// raw `u32` bit patterns of two prices are not meaningfully
-    /// averageable (they're packed `(exponent, significand)`). Both
+    /// well-defined to average (they're packed `(exponent, significand)`). Both
     /// prices are first lifted to a common scaled integer
     /// (`value × 10^9`), averaged, then re-encoded via `from_scaled`.
     /// The 9-digit scaling factor keeps the math integral for typical
@@ -357,9 +357,8 @@ impl Price {
         if total == 0 {
             return self;
         }
-        let avg = (w_self.saturating_mul(v_self))
-            .saturating_add(w_other.saturating_mul(v_other))
-            / total;
+        let avg =
+            (w_self.saturating_mul(v_self)).saturating_add(w_other.saturating_mul(v_other)) / total;
         let avg_u64 = avg.min(u64::MAX as u128) as u64;
         // `value × 10^9 = sig × 10^(biased - 14)` ⟹ for `from_scaled`
         // with input scaled by 10^9, the input "biased_exp" is `14`.
@@ -887,7 +886,7 @@ mod tests {
     }
 
     #[test]
-    fn quote_for_base_huge_inputs_dont_panic() {
+    fn quote_for_base_huge_inputs_do_not_panic() {
         // sig ≈ 10^8, unbiased_exp = 15 → unb = 8 (×10^8).
         // base = u64::MAX (~1.84e19). Result ≈ 1.84e35, well inside u128
         // (~3.4e38). Confirm the math runs to completion without panic

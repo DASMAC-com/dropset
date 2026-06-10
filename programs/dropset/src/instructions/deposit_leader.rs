@@ -114,7 +114,11 @@ impl DepositLeader {
         };
         let (total_shares, base_atoms, quote_atoms) = {
             let v = &self.market.as_slice()[vault_idx as usize];
-            (v.total_shares.get(), v.base_atoms.get(), v.quote_atoms.get())
+            (
+                v.total_shares.get(),
+                v.base_atoms.get(),
+                v.quote_atoms.get(),
+            )
         };
 
         // Share / basket math — same as the outside path but without
@@ -148,8 +152,7 @@ impl DepositLeader {
             let base_in_final = (shares_out_u128 * b).div_ceil(ts);
             let quote_in_final = (shares_out_u128 * q).div_ceil(ts);
             require!(
-                base_in_final <= max_base_in as u128
-                    && quote_in_final <= max_quote_in as u128,
+                base_in_final <= max_base_in as u128 && quote_in_final <= max_quote_in as u128,
                 DropsetError::BasketSlippage
             );
             (
@@ -200,7 +203,12 @@ impl DepositLeader {
             if is_seeding {
                 v.hwm = Q32_32_ONE.into();
             }
-            (new_total, new_leader, v.base_atoms.get(), v.quote_atoms.get())
+            (
+                new_total,
+                new_leader,
+                v.base_atoms.get(),
+                v.quote_atoms.get(),
+            )
         };
 
         let realize_event = if realize_outcome.shares_minted > 0 {

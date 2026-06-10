@@ -1482,8 +1482,9 @@ instructions in the program: `deposit_leader` / `withdraw_leader`
 omit the `VaultDepositor` account entirely (the leader has no PDA),
 and `deposit` / `withdraw` carry the PDA + basis tracking + close-
 on-empty path for outside depositors. Each handler rejects the
-opposite signer (the outside variants reject `signer ==
-vault.leader`, the leader variants reject any other signer). The
+opposite signer (the outside variants reject
+`signer == vault.leader`, the leader variants reject any other
+signer). The
 outside-path PDA is closed back to the depositor on zero-share exit
 and `MarketHeader.outstanding_vault_depositors` decremented, so the
 spec's `close_market` invariant is reachable.

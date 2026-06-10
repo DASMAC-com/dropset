@@ -1,21 +1,26 @@
-//! `swap` (spec's `Take`) — taker fills a single vault's side of the
-//! ephemeral book.
+//! `swap` (spec's `Take`) — multi-vault taker fill on the ephemeral
+//! book.
 //!
-//! MVP shape: caller picks the `vault_idx` to match against; the
-//! handler iterates that vault's [`Vault::remaining`] for the chosen
-//! side (asks for Buy, bids for Sell), flushes from
-//! [`Vault::profile`] if `FLUSH_BIT` is armed, and fills the taker
-//! against levels in their stored order. Cross-vault aggregation —
-//! the heap-based price-time-priority match the spec describes —
-//! lands in a follow-up: with `registry.max_vaults_per_market = 10`
-//! the single-vault path covers the MVP launch (one leader, one
-//! vault) and the heap upgrade is purely additive.
+//! Walks the market's active DLL from `market.head` via `Vault.next`,
+//! flushes per-vault on `FLUSH_BIT`, and collects every live level
+//! into a `Vec<HeapEntry>` on the program heap. Sorts by
+//! `(price_key, nonce, sector_idx, level_idx)` so the spec's
+//! cross-vault price-time priority falls out of a single
+//! `sort_by_key`, then walks the sorted vec filling the taker
+//! leg-by-leg until `amount_in` is exhausted, the limit price is
+//! crossed, or the heap is drained.
+//!
+//! `min_out` adds an SDK-composability soft-revert: if the
+//! achievable net output (after taker fee) is below the caller's
+//! `min_out`, every per-leg snapshot is restored to its pre-swap
+//! value and the handler returns `Ok(Vec::new())` so the
+//! surrounding tx can survive a no-fill. `min_out == 0` opts out
+//! and the legacy any-fill-counts behavior holds.
 //!
 //! Per spec § **Events and emission**, every filled `(vault, level)`
-//! leg emits one `FillEvent` via `emit!` (default log path for MVP;
-//! `emit_cpi!` upgrade lands with the same follow-up that wires up
-//! `#[event_cpi]` on this handler). No truncation: the loop emits as
-//! it fills.
+//! leg emits one bytemuck `FillEvent` via `emit_cpi!`. No
+//! truncation: the matcher accumulates a `Vec<FillEvent>` and
+//! `lib.rs` dispatches each via the macro one at a time.
 
 extern crate alloc;
 
@@ -227,8 +232,7 @@ impl Swap {
             let (price_valid, stamp, ref_price, ref_slot, base_atoms, quote_atoms) = {
                 let v = &self.market.as_slice()[cur as usize];
                 let p = v.reference_price.price;
-                let valid =
-                    p.is_valid() && !p.is_zero() && !p.is_infinity();
+                let valid = p.is_valid() && !p.is_zero() && !p.is_infinity();
                 (
                     valid,
                     v.reference_price.stamp.get(),
@@ -309,7 +313,15 @@ impl Swap {
         let live_count = heap.len();
         let levels: alloc::vec::Vec<(u32, u32, Price, u64, u32)> = heap
             .iter()
-            .map(|e| (e.sector_idx, e.level_idx, e.price, e.size, e.nonce.min(u32::MAX as u64) as u32))
+            .map(|e| {
+                (
+                    e.sector_idx,
+                    e.level_idx,
+                    e.price,
+                    e.size,
+                    e.nonce.min(u32::MAX as u64) as u32,
+                )
+            })
             .collect();
 
         // Build the market PDA signer seeds (for the return-leg CPI).
@@ -372,9 +384,8 @@ impl Swap {
                 SwapSide::Buy => {
                     // level.size is in base; convert the taker's
                     // quote budget to base via the level price.
-                    let cap_by_taker_quote = price.base_for_quote(
-                        taker_unfilled_in.min(u64::MAX as u128) as u64,
-                    );
+                    let cap_by_taker_quote =
+                        price.base_for_quote(taker_unfilled_in.min(u64::MAX as u128) as u64);
                     let cap_by_level = level_size as u128;
                     let cap_by_vault = base_atoms as u128;
                     let fill_b = cap_by_taker_quote.min(cap_by_level).min(cap_by_vault);
@@ -388,9 +399,8 @@ impl Swap {
                 SwapSide::Sell => {
                     // level.size is in quote; convert the taker's
                     // unfilled base to quote via the level price.
-                    let taker_implied_quote = price.quote_for_base(
-                        taker_unfilled_in.min(u64::MAX as u128) as u64,
-                    );
+                    let taker_implied_quote =
+                        price.quote_for_base(taker_unfilled_in.min(u64::MAX as u128) as u64);
                     let cap_by_level = level_size as u128;
                     let cap_by_vault = quote_atoms as u128;
                     let fill_q = taker_implied_quote.min(cap_by_level).min(cap_by_vault);
@@ -525,9 +535,7 @@ impl Swap {
         // with other instructions. `min_out == 0` opts out (the
         // legacy fail-on-zero-fill behavior is recovered by passing
         // any non-zero `min_out`).
-        let achievable_net_out = total_out
-            .saturating_sub(total_fee)
-            .min(u64::MAX as u128) as u64;
+        let achievable_net_out = total_out.saturating_sub(total_fee).min(u64::MAX as u128) as u64;
         if filled_legs == 0 || achievable_net_out < min_out {
             // Walk snapshots in reverse so two legs that touched the
             // same sector's inventory restore to the earliest
@@ -537,11 +545,9 @@ impl Swap {
                 v.base_atoms = snap.base_before.into();
                 v.quote_atoms = snap.quote_before.into();
                 if snap.is_ask_side {
-                    v.remaining.asks[snap.level_idx as usize].size =
-                        snap.size_before.into();
+                    v.remaining.asks[snap.level_idx as usize].size = snap.size_before.into();
                 } else {
-                    v.remaining.bids[snap.level_idx as usize].size =
-                        snap.size_before.into();
+                    v.remaining.bids[snap.level_idx as usize].size = snap.size_before.into();
                 }
             }
             self.market.nonce = nonce_at_start.into();

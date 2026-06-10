@@ -111,9 +111,9 @@ pub mod dropset {
         min_base_out: u64,
         min_quote_out: u64,
     ) -> Result<()> {
-        let (realize_event, withdraw_event) = ctx
-            .accounts
-            .withdraw(vault_idx, shares_in, min_base_out, min_quote_out)?;
+        let (realize_event, withdraw_event) =
+            ctx.accounts
+                .withdraw(vault_idx, shares_in, min_base_out, min_quote_out)?;
         if let Some(re) = realize_event {
             emit_cpi!(re);
         }
@@ -129,9 +129,9 @@ pub mod dropset {
         limit_price_bits: u32,
         min_out: u64,
     ) -> Result<()> {
-        let fill_events =
-            ctx.accounts
-                .swap(side, amount_in, limit_price_bits, min_out)?;
+        let fill_events = ctx
+            .accounts
+            .swap(side, amount_in, limit_price_bits, min_out)?;
         // Per the architecture spec § Events and emission →
         // Granularity: every leg is recorded, never truncated. The
         // matching engine accumulates `FillEvent`s and we emit them
@@ -154,13 +154,9 @@ pub mod dropset {
         max_base_in: u64,
         max_quote_in: u64,
     ) -> Result<()> {
-        let (realize_event, deposit_event) = ctx.accounts.deposit_leader(
-            vault_idx,
-            base_in,
-            quote_in,
-            max_base_in,
-            max_quote_in,
-        )?;
+        let (realize_event, deposit_event) =
+            ctx.accounts
+                .deposit_leader(vault_idx, base_in, quote_in, max_base_in, max_quote_in)?;
         if let Some(re) = realize_event {
             emit_cpi!(re);
         }
@@ -176,12 +172,9 @@ pub mod dropset {
         min_base_out: u64,
         min_quote_out: u64,
     ) -> Result<()> {
-        let (realize_event, withdraw_event) = ctx.accounts.withdraw_leader(
-            vault_idx,
-            shares_in,
-            min_base_out,
-            min_quote_out,
-        )?;
+        let (realize_event, withdraw_event) =
+            ctx.accounts
+                .withdraw_leader(vault_idx, shares_in, min_base_out, min_quote_out)?;
         if let Some(re) = realize_event {
             emit_cpi!(re);
         }

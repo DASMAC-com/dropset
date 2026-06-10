@@ -22,9 +22,9 @@ use anchor_lang_v2::{programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, Signer};
 use common::{
     associated_token_address, create_associated_token_account, create_mock_usdc_mint,
-    create_spl_mint, decode_slab, deploy_with_authority, mint_to, send_ixn,
-    ATA_PROGRAM_ID, MOCK_USDC_DECIMALS, PROGRAM_ID, REGISTER_MARKET_FEE_ATOMS,
-    SIGNER_FUNDING_LAMPORTS, SPL_TOKEN_PROGRAM_ID,
+    create_spl_mint, decode_slab, deploy_with_authority, mint_to, send_ixn, ATA_PROGRAM_ID,
+    MOCK_USDC_DECIMALS, PROGRAM_ID, REGISTER_MARKET_FEE_ATOMS, SIGNER_FUNDING_LAMPORTS,
+    SPL_TOKEN_PROGRAM_ID,
 };
 use dropset::{
     instruction::{
@@ -71,9 +71,8 @@ fn read_market_and_vault(
     let acct = svm.get_account(market).expect("market exists");
     const DISC: usize = 8;
     let header_end = DISC + core::mem::size_of::<MarketHeader>();
-    let header = anchor_lang_v2::bytemuck::pod_read_unaligned::<MarketHeader>(
-        &acct.data[DISC..header_end],
-    );
+    let header =
+        anchor_lang_v2::bytemuck::pod_read_unaligned::<MarketHeader>(&acct.data[DISC..header_end]);
     let len = u32::from_le_bytes(acct.data[header_end..header_end + 4].try_into().unwrap());
     assert!(len > 0, "expected at least one vault sector");
     // The slab pads after the `len: u32` to align the items array
@@ -83,8 +82,9 @@ fn read_market_and_vault(
     let v_align = core::mem::align_of::<Vault>();
     let items_start = (after_len + v_align - 1) & !(v_align - 1);
     let v_size = core::mem::size_of::<Vault>();
-    let vault =
-        anchor_lang_v2::bytemuck::pod_read_unaligned::<Vault>(&acct.data[items_start..items_start + v_size]);
+    let vault = anchor_lang_v2::bytemuck::pod_read_unaligned::<Vault>(
+        &acct.data[items_start..items_start + v_size],
+    );
     (header, vault)
 }
 
@@ -136,7 +136,8 @@ fn end_to_end_single_leader_pipeline() {
     // admin path (Anchor v2 rejects duplicate-mut accounts, so we
     // can't reuse `authority` here).
     let dummy = Keypair::new();
-    svm.airdrop(&dummy.pubkey(), SIGNER_FUNDING_LAMPORTS).unwrap();
+    svm.airdrop(&dummy.pubkey(), SIGNER_FUNDING_LAMPORTS)
+        .unwrap();
 
     let register_market_ix = Instruction::new_with_bytes(
         PROGRAM_ID,
@@ -271,8 +272,20 @@ fn end_to_end_single_leader_pipeline() {
         &quote_mint,
         &SPL_TOKEN_PROGRAM_ID,
     );
-    mint_to(&mut svm, &authority, &base_mint, &leader_base_ata, base_amount);
-    mint_to(&mut svm, &authority, &quote_mint, &leader_quote_ata, quote_amount);
+    mint_to(
+        &mut svm,
+        &authority,
+        &base_mint,
+        &leader_base_ata,
+        base_amount,
+    );
+    mint_to(
+        &mut svm,
+        &authority,
+        &quote_mint,
+        &leader_quote_ata,
+        quote_amount,
+    );
 
     // `deposit_leader` (PDA-free) — leader seeding the vault.
     let deposit_ix = Instruction::new_with_bytes(
@@ -367,8 +380,7 @@ fn end_to_end_single_leader_pipeline() {
 
     // Registry market_count untouched.
     let registry_account = svm.get_account(&registry).expect("registry");
-    let (registry_header, _) =
-        decode_slab::<RegistryHeader, [u8; 32]>(&registry_account.data);
+    let (registry_header, _) = decode_slab::<RegistryHeader, [u8; 32]>(&registry_account.data);
     assert_eq!(registry_header.market_count.get(), 1);
     // outstanding_vault_depositors stayed at 0 — this was the
     // leader path; no VaultDepositor PDA was credited.
