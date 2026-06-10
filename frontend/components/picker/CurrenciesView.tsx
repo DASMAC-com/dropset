@@ -396,7 +396,7 @@ const StablecoinRow = memo(function StablecoinRow({
       </td>
       <td className="border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums last:border-r-0">
         <span
-          className={`rounded px-1 transition-colors duration-300 ${flashBg(priceFlash)}`}
+          className={`rounded px-1 transition-[background-color] duration-300 ${flashBg(priceFlash)}`}
         >
           {isFiniteNumber(info?.usdPrice) ? (
             <NumberFlow value={info.usdPrice} format={FORMATS.usdPrice} />
@@ -409,7 +409,7 @@ const StablecoinRow = memo(function StablecoinRow({
         className={`border-border border-r px-3 py-2 text-right align-top font-mono tabular-nums last:border-r-0 ${changeTone}`}
       >
         <span
-          className={`rounded px-1 transition-colors duration-300 ${flashBg(changeFlash)}`}
+          className={`rounded px-1 transition-[background-color] duration-300 ${flashBg(changeFlash)}`}
         >
           {isFiniteNumber(change) ? (
             <NumberFlow
@@ -424,7 +424,7 @@ const StablecoinRow = memo(function StablecoinRow({
       </td>
       <td className="border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums last:border-r-0">
         <span
-          className={`rounded px-1 transition-colors duration-300 ${flashBg(volumeFlash)}`}
+          className={`rounded px-1 transition-[background-color] duration-300 ${flashBg(volumeFlash)}`}
         >
           {isFiniteNumber(info?.volume24h) ? (
             <NumberFlow value={info.volume24h} format={FORMATS.usdCompact} />
@@ -435,7 +435,7 @@ const StablecoinRow = memo(function StablecoinRow({
       </td>
       <td className="border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums last:border-r-0">
         <span
-          className={`rounded px-1 transition-colors duration-300 ${flashBg(mcapFlash)}`}
+          className={`rounded px-1 transition-[background-color] duration-300 ${flashBg(mcapFlash)}`}
         >
           {isFiniteNumber(info?.mcap) ? (
             <NumberFlow value={info.mcap} format={FORMATS.usdCompact} />
@@ -446,7 +446,7 @@ const StablecoinRow = memo(function StablecoinRow({
       </td>
       <td className="border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums last:border-r-0">
         <span
-          className={`rounded px-1 transition-colors duration-300 ${flashBg(liquidityFlash)}`}
+          className={`rounded px-1 transition-[background-color] duration-300 ${flashBg(liquidityFlash)}`}
         >
           {isFiniteNumber(info?.liquidity) ? (
             <NumberFlow value={info.liquidity} format={FORMATS.usdCompact} />
@@ -457,7 +457,7 @@ const StablecoinRow = memo(function StablecoinRow({
       </td>
       <td className="border-border border-r px-3 py-2 text-right align-top font-mono text-foreground tabular-nums last:border-r-0">
         <span
-          className={`rounded px-1 transition-colors duration-300 ${flashBg(holdersFlash)}`}
+          className={`rounded px-1 transition-[background-color] duration-300 ${flashBg(holdersFlash)}`}
         >
           {isFiniteNumber(info?.holderCount) ? (
             <NumberFlow
