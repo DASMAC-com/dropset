@@ -211,7 +211,19 @@ impl Swap {
         // construction.
         let mut heap: alloc::vec::Vec<HeapEntry> = alloc::vec::Vec::new();
         let mut cur = head;
+        // Bound the walk by `market.len()` so a corrupt `next` ptr
+        // that creates a cycle can't burn CU indefinitely. Each live
+        // sector should appear at most once on the active DLL.
+        let mut steps_remaining = self.market.len();
+        // Track which vaults' `FLUSH_BIT` got cleared so the soft-
+        // revert path can re-arm them. The materialized
+        // `remaining[*]` arrays stay in place — they're derived from
+        // the (now-restored) inventory, so the next flush against
+        // current state will overwrite anyway.
+        let mut flushed_sectors: alloc::vec::Vec<u32> = alloc::vec::Vec::new();
         while cur != crate::state::NULL_SECTOR {
+            require!(steps_remaining > 0, DropsetError::CorruptVaultList);
+            steps_remaining -= 1;
             // Sanity: bounds-check before borrowing the sector. A
             // corrupt `next` would have already broken the DLL ops
             // that produced it, but the matching engine reads the
@@ -229,12 +241,21 @@ impl Swap {
             // construction (free-list sectors live elsewhere). An
             // invalid / sentinel reference price skips the vault
             // (rather than aborting) — spec L1554-1563.
-            let (price_valid, stamp, ref_price, ref_slot, base_atoms, quote_atoms) = {
+            let (vault_active, stamp, ref_price, ref_slot, base_atoms, quote_atoms) = {
                 let v = &self.market.as_slice()[cur as usize];
                 let p = v.reference_price.price;
                 let valid = p.is_valid() && !p.is_zero() && !p.is_infinity();
+                // Spec § Vault → Frozen and tombstoned vaults: frozen
+                // vaults stay on the active DLL but their levels die
+                // off as `expires_at` passes. Implement that
+                // semantically here by skipping frozen vaults
+                // entirely from the matching set, so the leader's
+                // freeze is enforced from the first instruction
+                // after it lands rather than waiting for level
+                // expiry to kick in.
+                let frozen = v.frozen.get();
                 (
-                    valid,
+                    valid && !frozen,
                     v.reference_price.stamp.get(),
                     p,
                     v.reference_price.quote_slot.get(),
@@ -242,7 +263,7 @@ impl Swap {
                     v.quote_atoms.get(),
                 )
             };
-            if !price_valid {
+            if !vault_active {
                 cur = next_sector;
                 continue;
             }
@@ -267,6 +288,7 @@ impl Swap {
                         ref_slot.saturating_add(ask.expiry_offset.get()).into();
                 }
                 v.reference_price.stamp = (stamp & !FLUSH_BIT).into();
+                flushed_sectors.push(cur);
             }
             // Collect live levels of the chosen side from this vault.
             let nonce = stamp & !FLUSH_BIT;
@@ -549,6 +571,16 @@ impl Swap {
                 } else {
                     v.remaining.bids[snap.level_idx as usize].size = snap.size_before.into();
                 }
+            }
+            // Re-arm `FLUSH_BIT` on every vault we flushed during
+            // the matching walk. Without this, a leader's pending
+            // re-materialization would be silently consumed by a
+            // failed-`min_out` taker, leaving subsequent legitimate
+            // takers reading stale `remaining[*]`.
+            for &sector_idx in &flushed_sectors {
+                let v = &mut self.market.as_mut_slice()[sector_idx as usize];
+                let cur = v.reference_price.stamp.get();
+                v.reference_price.stamp = (cur | FLUSH_BIT).into();
             }
             self.market.nonce = nonce_at_start.into();
             return Ok(alloc::vec::Vec::new());

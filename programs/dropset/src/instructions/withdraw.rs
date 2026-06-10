@@ -28,7 +28,7 @@ use anchor_spl_v2::{
 use crate::{
     errors::DropsetError,
     events::{RealizeEvent, WithdrawEvent},
-    state::{realize_in_place, Market, PPM},
+    state::{realize_in_place, Market},
     VaultDepositorHeader,
 };
 
@@ -121,26 +121,16 @@ impl Withdraw {
         let len = self.market.len();
         require!((vault_idx as usize) < len, DropsetError::InvalidSectorIndex);
 
-        // Snapshot pre-state.
-        let (
-            leader,
-            frozen,
-            total_shares,
-            _leader_shares,
-            _base_atoms,
-            _quote_atoms,
-            min_leader_share,
-            ref_price_bits,
-        ) = {
+        // Snapshot pre-state. `frozen` and `min_leader_share` were
+        // needed by the deleted leader-path branch; the outside path
+        // doesn't enforce the floor (the depositor isn't the leader)
+        // and doesn't observe `frozen` (the deposit-side gate
+        // already rejected outside flows on a frozen vault).
+        let (leader, total_shares, ref_price_bits) = {
             let v = &self.market.as_slice()[vault_idx as usize];
             (
                 v.leader,
-                v.frozen.get(),
                 v.total_shares.get(),
-                v.leader_shares.get(),
-                v.base_atoms.get(),
-                v.quote_atoms.get(),
-                v.min_leader_share.get(),
                 v.reference_price.price.as_u32(),
             )
         };
@@ -155,12 +145,11 @@ impl Withdraw {
         // `withdraw_leader` (no PDA load). Rejecting here is what
         // makes the two-instruction split clean: the leader's
         // signer can never reach this handler's `VaultDepositor`
-        // mutations or `close = signer` rent refund.
+        // mutations or the rent refund on zero-share close.
         require!(
             !address_eq(&leader, &signer_addr),
             DropsetError::Unauthorized
         );
-        let is_leader = false;
 
         // Realize first (spec).
         let realize_outcome = {
@@ -191,27 +180,11 @@ impl Withdraw {
         let slice_base_u64 = slice_base as u64;
         let slice_quote_u64 = slice_quote as u64;
 
-        // Path-specific share burn + (for outside path) PnL realization.
-        let mut realized_pnl_delta: i64 = 0;
-        let new_leader_shares = if is_leader {
-            require!(leader_shares >= shares_in, DropsetError::InsufficientShares);
-            let new_leader = leader_shares - shares_in;
-            // Min-leader-share floor only enforced on active vaults
-            // (frozen / tombstoned bypass — MVP doesn't ship those, so
-            // the active branch always applies). The floor uses the
-            // post-burn ratio.
-            if !frozen {
-                let new_total = total_shares - shares_in;
-                if new_total > 0 {
-                    let lhs = (new_leader as u128) * (PPM as u128);
-                    let rhs = (min_leader_share as u128) * (new_total as u128);
-                    require!(lhs >= rhs, DropsetError::MinLeaderShareViolated);
-                }
-            }
-            new_leader
-        } else {
-            // Outside path: PDA seeds already bound to signer; just
-            // verify shares balance and crystallize PnL.
+        // Outside path: PDA seeds already bound to signer; just
+        // verify shares balance and crystallize PnL. Leader-path
+        // burns live in `withdraw_leader.rs`.
+        let realized_pnl_delta: i64;
+        let new_leader_shares = {
             let vd = &mut self.vault_depositor;
             require!(
                 vd.shares.get() >= shares_in,
@@ -276,9 +249,8 @@ impl Withdraw {
             v.total_shares = new_total.into();
             v.base_atoms = new_base.into();
             v.quote_atoms = new_quote.into();
-            if is_leader {
-                v.leader_shares = new_leader_shares.into();
-            }
+            // Outside path: leader_shares is unchanged. The
+            // leader-only branch lives in `withdraw_leader.rs`.
             (new_total, new_base, new_quote)
         };
 
@@ -329,7 +301,7 @@ impl Withdraw {
         // `close_market` can safely proceed (architecture.md §
         // Account lifecycle and rent reclamation), so it must come
         // back to zero on every clean exit.
-        if !is_leader && self.vault_depositor.shares.get() == 0 {
+        if self.vault_depositor.shares.get() == 0 {
             use anchor_lang_v2::AnchorAccount;
             let signer_view = *self.signer.as_ref();
             self.vault_depositor.close(signer_view)?;
@@ -353,7 +325,7 @@ impl Withdraw {
             market: market_addr,
             sector_idx: vault_idx,
             depositor: signer_addr,
-            is_leader,
+            is_leader: false,
             shares_in,
             base_out: slice_base_u64,
             quote_out: slice_quote_u64,

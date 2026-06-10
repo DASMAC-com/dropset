@@ -39,8 +39,17 @@ impl SetReferencePrice {
     ) -> Result<()> {
         // Validate the price bit pattern up front — `Price` derives Pod
         // so Anchor will deserialize any 4-byte input; an invalid
-        // significand would mis-sort in the matching engine.
-        require!(price.is_valid(), DropsetError::InvalidPrice);
+        // significand would mis-sort in the matching engine. The
+        // `ZERO` / `INFINITY` sentinels are also rejected here: they
+        // exist as taker `limit_price` markers, not as legitimate
+        // anchor prices. Allowing `ZERO` would let a leader silently
+        // collapse outside depositors' realized-PnL basis math
+        // (price decoders return 0 for the sentinel); `INFINITY`
+        // would let the basis math saturate to `u64::MAX`.
+        require!(
+            price.is_valid() && !price.is_zero() && !price.is_infinity(),
+            DropsetError::InvalidPrice
+        );
         // Cap `quote_slot` to `u32` cleanly so the storage truncation
         // is explicit rather than silent.
         require!(

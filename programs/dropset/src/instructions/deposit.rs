@@ -1,18 +1,20 @@
-//! `deposit` — leader seeding + outside-depositor flows.
+//! `deposit` — outside-depositor flow.
 //!
-//! Sizes by **one leg** post-seeding; the matching leg is derived from
-//! the vault's current ratio (`base_atoms`, `quote_atoms`) so VPS is
-//! preserved (spec invariant I1). Calls [`realize_in_place`] first per
-//! spec — outside flows always cross at the post-fee VPS. On the
-//! outside path, allocates / tops off a [`VaultDepositorHeader`] PDA
-//! that records cost basis (`entry_vps`, `entry_ref_price`,
-//! `net_deposits`, `gross_deposited`, `opened_at`) so a later
-//! `Withdraw` can crystallize realized PnL.
+//! Sizes by **one leg**; the matching leg is derived from the vault's
+//! current ratio (`base_atoms`, `quote_atoms`) so VPS is preserved
+//! (spec invariant I1). Calls [`realize_in_place`] first per spec —
+//! outside flows always cross at the post-fee VPS. Allocates / tops
+//! off a [`VaultDepositorHeader`] PDA that records cost basis
+//! (`entry_vps`, `entry_ref_price`, `net_deposits`,
+//! `gross_deposited`, `opened_at`) so a later `Withdraw` can
+//! crystallize realized PnL.
 //!
-//! Seeding (`total_shares == 0`) must come from the leader and supply
-//! both legs explicitly; `total_shares := isqrt(base × quote)` and
-//! `leader_shares := total_shares` per the spec's **Deposit →
-//! Seeding**.
+//! Seeding (`total_shares == 0`) is rejected here — vault seeding is
+//! a leader-only operation that lives in
+//! [`super::deposit_leader`]. The handler also rejects when
+//! `signer == vault.leader` so the leader never allocates a
+//! `VaultDepositor` PDA they won't use; the leader's top-up path is
+//! `deposit_leader`.
 
 use anchor_lang_v2::{address_eq, prelude::*};
 #[allow(unused_imports)]
@@ -46,12 +48,12 @@ pub struct Deposit {
     /// Market the vault lives on. Mut for share + inventory writes.
     #[account(mut)]
     pub market: Market,
-    /// `init_if_needed` on the outside path. On the leader path the
-    /// PDA is still derived (Anchor needs the account list to stay
-    /// fixed-shape) but its bytes are zero-initialized and never
-    /// touched. Closing it on the leader path is left as a future
-    /// rent-recovery PR. Seeds bind to `(market, sector, signer)` so
-    /// signer ownership is implicit.
+    /// `init_if_needed` so a first-time depositor pays rent inline
+    /// and a top-off depositor sees the existing PDA. Seeds bind to
+    /// `(market, sector_idx, signer)` so signer ownership is
+    /// implicit — there is no separate `authority` field to
+    /// reassign. The handler closes this PDA on zero-share exit
+    /// (`withdraw`) so the depositor's rent comes back.
     #[account(
         init_if_needed,
         payer = signer,
@@ -115,9 +117,8 @@ impl Deposit {
     /// dispatch through `emit_cpi!`. See [`super::register_vault`] for
     /// the rationale on emitting outside the handler. `bump` is the
     /// `VaultDepositor` PDA bump from `ctx.bumps.vault_depositor` —
-    /// stamped onto every deposit (leader + outside) so `withdraw`'s
-    /// `bump = vault_depositor.bump` reverification has a valid value
-    /// even on a leader-path PDA that's otherwise unused.
+    /// stamped so `withdraw`'s `bump = vault_depositor.bump`
+    /// reverification has a valid value to compare against.
     #[inline(always)]
     pub fn deposit(
         &mut self,
@@ -128,11 +129,8 @@ impl Deposit {
         max_quote_in: u64,
         bump: u8,
     ) -> Result<(Option<RealizeEvent>, DepositEvent)> {
-        // Always stamp the canonical PDA bump so `withdraw`'s
-        // `bump = vault_depositor.bump` reverification works on every
-        // exit path — including a leader-path PDA that's otherwise
-        // unused for share/basis state (see the "MVP carve-out" note
-        // in docs/architecture.md § Deposit).
+        // Stamp the canonical PDA bump so `withdraw`'s
+        // `bump = vault_depositor.bump` reverification works.
         self.vault_depositor.bump = bump;
 
         let len = self.market.len();
@@ -181,16 +179,25 @@ impl Deposit {
             !address_eq(&leader, &signer_addr),
             DropsetError::Unauthorized
         );
-        let is_leader = false;
-        let is_seeding = total_shares == 0;
 
         // Seeding (`total_shares == 0`) requires the leader — and the
         // outside path is by definition not the leader. Reject up
         // front to give a clearer error than the share-math collapse.
-        require!(!is_seeding, DropsetError::SeedingRequiresLeader);
+        require!(total_shares > 0, DropsetError::SeedingRequiresLeader);
 
         require!(allow_outside, DropsetError::OutsideDepositorsNotAllowed);
         require!(outside_approved, DropsetError::OutsideDepositorsNotApproved);
+
+        // The depositor's `entry_ref_price` is stamped here from
+        // `vault.reference_price.price`; if the leader never set it
+        // (still the zero sentinel) the basis math collapses
+        // silently — `quote_for_base(ZERO, base) == 0`. Reject up
+        // front rather than letting the depositor enter at a
+        // nonsensical basis.
+        require!(
+            ref_price_bits != 0 && ref_price_bits != u32::MAX,
+            DropsetError::ReferencePriceNotSet
+        );
 
         // Realize first (spec). No-op when seeding (total_shares == 0).
         // Capture outcome so we can emit a RealizeEvent if shares minted.
@@ -209,17 +216,10 @@ impl Deposit {
             )
         };
 
-        // Compute the basket + shares_out.
-        let (shares_out, base_in_final, quote_in_final) = if is_seeding {
-            require!(is_leader, DropsetError::SeedingRequiresLeader);
-            require!(
-                base_in > 0 && quote_in > 0,
-                DropsetError::SeedingRequiresBothLegs
-            );
-            let s = isqrt_u128((base_in as u128) * (quote_in as u128));
-            require!(s > 0 && s <= u64::MAX as u128, DropsetError::MathOverflow);
-            (s as u64, base_in, quote_in)
-        } else {
+        // Compute the basket + shares_out. Seeding is rejected
+        // earlier (this is the outside path), so `total_shares > 0`
+        // by the time we get here — only the single-leg path runs.
+        let (shares_out, base_in_final, quote_in_final) = {
             // Subsequent deposit: exactly one leg is sized.
             require!(
                 (base_in > 0) ^ (quote_in > 0),
@@ -253,9 +253,11 @@ impl Deposit {
             )
         };
 
-        // Skin-in-the-game floor (outside-path, non-seeding): post-deposit
-        // ratio leader_shares / total_shares >= min_leader_share / PPM.
-        if !is_leader && !is_seeding {
+        // Skin-in-the-game floor: post-deposit
+        // `leader_shares / total_shares >= min_leader_share / PPM`.
+        // Always enforced here — this handler is outside-only by
+        // construction.
+        {
             let new_total = (total_shares as u128) + (shares_out as u128);
             let lhs = (leader_shares as u128) * (PPM as u128);
             let rhs = (min_leader_share as u128) * new_total;
@@ -292,7 +294,9 @@ impl Deposit {
             transfer_checked(cpi, quote_in_final, decimals)?;
         }
 
-        // Apply share + inventory mutations to the vault.
+        // Apply share + inventory mutations to the vault. Outside
+        // path: `Vault.leader_shares` is unchanged; the depositor's
+        // shares-out lands on the `VaultDepositor` PDA below.
         let market_addr = *self.market.address();
         let (new_total, new_leader_shares, new_base_atoms, new_quote_atoms) = {
             let v = &mut self.market.as_mut_slice()[vault_idx as usize];
@@ -300,30 +304,16 @@ impl Deposit {
             v.quote_atoms = (quote_atoms + quote_in_final).into();
             let new_total = total_shares + shares_out;
             v.total_shares = new_total.into();
-            if is_leader {
-                let new_leader = leader_shares + shares_out;
-                v.leader_shares = new_leader.into();
-                if is_seeding {
-                    v.hwm = Q32_32_ONE.into();
-                }
-                (
-                    new_total,
-                    new_leader,
-                    v.base_atoms.get(),
-                    v.quote_atoms.get(),
-                )
-            } else {
-                (
-                    new_total,
-                    leader_shares,
-                    v.base_atoms.get(),
-                    v.quote_atoms.get(),
-                )
-            }
+            (
+                new_total,
+                leader_shares,
+                v.base_atoms.get(),
+                v.quote_atoms.get(),
+            )
         };
 
-        // Outside path: update the VaultDepositor basis fields.
-        if !is_leader {
+        // Update the VaultDepositor basis fields.
+        {
             let vd = &mut self.vault_depositor;
             let prior_shares = vd.shares.get();
             let new_vd_shares = prior_shares + shares_out;
@@ -360,7 +350,10 @@ impl Deposit {
                 // Bump the market's outstanding depositor counter — this
                 // is a fresh `VaultDepositor` PDA.
                 let prev = self.market.outstanding_vault_depositors.get();
-                self.market.outstanding_vault_depositors = (prev + 1).into();
+                let next = prev
+                    .checked_add(1)
+                    .ok_or(DropsetError::MathOverflow)?;
+                self.market.outstanding_vault_depositors = next.into();
             } else {
                 // Top-off: merge shares-weighted averages. `entry_vps`
                 // is Q32.32 so a raw u128 weighted-avg is exact;
@@ -397,8 +390,8 @@ impl Deposit {
             market: market_addr,
             sector_idx: vault_idx,
             depositor: signer_addr,
-            is_leader,
-            is_seeding,
+            is_leader: false,
+            is_seeding: false,
             base_in: base_in_final,
             quote_in: quote_in_final,
             shares_out,

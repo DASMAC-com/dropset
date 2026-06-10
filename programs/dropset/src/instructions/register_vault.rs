@@ -35,9 +35,10 @@ use crate::{
 #[event_cpi]
 #[derive(Accounts)]
 pub struct RegisterVault {
-    /// Pays sector-rent top-up (if the slab realloc grows the account)
-    /// and the open-vault fee (unless waived for an admin). Also the
-    /// vault's `leader` for MVP.
+    /// Pays sector-rent top-up (if the slab realloc grows the
+    /// account) and the open-vault fee (unless waived for an admin).
+    /// Becomes the vault's `leader` unless an admin supplied a
+    /// distinct `leader_override` — see the handler.
     #[account(mut)]
     pub payer: Signer,
 
@@ -97,6 +98,16 @@ impl RegisterVault {
         require!(
             (perf_fee_rate as u64) <= PPM,
             DropsetError::InvalidPerfFeeRate
+        );
+        // Reject `Address::default()` — the zero pubkey is the
+        // free-list emptiness marker; if a leader stamped it as
+        // `quote_authority` the vault would be quote-bricked
+        // (`set_reference_price` checks `signer == quote_authority`
+        // and the zero address has no private key). Use the leader
+        // pubkey when the caller wants "no separate delegation".
+        require!(
+            !address_eq(&quote_authority, &Address::default()),
+            DropsetError::Unauthorized
         );
 
         // Cap check before doing any work.
