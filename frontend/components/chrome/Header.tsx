@@ -38,7 +38,10 @@ export function Header() {
             suppressHydrationWarning
           />
         </Link>
-        <nav className="flex items-center gap-2">
+        {/* Nav links are hidden on phones — mobile is a swap-only experience
+            (the currencies/vaults pages redirect to /swap below `md`, see
+            MobileSwapRedirect), so there's nothing to navigate to. */}
+        <nav className="hidden items-center gap-2 md:flex">
           <Link
             href="/swap"
             aria-current={pathname === "/swap" ? "page" : undefined}

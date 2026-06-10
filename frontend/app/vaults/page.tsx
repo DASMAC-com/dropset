@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { MobileSwapRedirect } from "@/components/chrome/MobileSwapRedirect";
 import { VaultsView } from "@/components/vaults/VaultsView";
 
 export const metadata: Metadata = {
@@ -6,5 +7,10 @@ export const metadata: Metadata = {
 };
 
 export default function VaultsPage() {
-  return <VaultsView />;
+  return (
+    <>
+      <MobileSwapRedirect />
+      <VaultsView />
+    </>
+  );
 }
