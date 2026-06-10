@@ -41,16 +41,12 @@ impl SetReferencePrice {
         // so Anchor will deserialize any 4-byte input; an invalid
         // significand would mis-sort in the matching engine.
         require!(price.is_valid(), DropsetError::InvalidPrice);
-
-        let len = self.market.len();
-        require!((vault_idx as usize) < len, DropsetError::InvalidSectorIndex);
-
-        // Bump the market nonce first (this borrows the header via
-        // Slab's DerefMut). The tail borrow that mutates the vault
-        // happens after this header write completes.
-        let nonce = self.market.nonce.get();
-        let new_nonce = nonce.checked_add(1).ok_or(DropsetError::MathOverflow)?;
-        self.market.nonce = new_nonce.into();
+        // Cap `quote_slot` to `u32` cleanly so the storage truncation
+        // is explicit rather than silent.
+        require!(
+            quote_slot <= u32::MAX as u64,
+            DropsetError::InvalidQuoteSlot
+        );
 
         let current_slot = self.clock.slot;
         require!(
@@ -58,19 +54,33 @@ impl SetReferencePrice {
             DropsetError::InvalidQuoteSlot
         );
 
-        // Now mutate the vault sector.
-        let signer_addr = *self.signer.address();
-        let vault = &mut self.market.as_mut_slice()[vault_idx as usize];
-        require!(
-            !address_eq(&vault.leader, &Address::default()),
-            DropsetError::VaultEmpty
-        );
-        require!(
-            address_eq(&vault.quote_authority, &signer_addr),
-            DropsetError::Unauthorized
-        );
-        require!(vault.frozen == 0, DropsetError::VaultFrozen);
+        let len = self.market.len();
+        require!((vault_idx as usize) < len, DropsetError::InvalidSectorIndex);
 
+        // Validate the target vault BEFORE mutating any header state —
+        // a caller targeting a free-list sector or the wrong vault
+        // must not advance `market.nonce`.
+        let signer_addr = *self.signer.address();
+        {
+            let vault = &self.market.as_slice()[vault_idx as usize];
+            require!(
+                !address_eq(&vault.leader, &Address::default()),
+                DropsetError::VaultEmpty
+            );
+            require!(
+                address_eq(&vault.quote_authority, &signer_addr),
+                DropsetError::Unauthorized
+            );
+            require!(vault.frozen == 0, DropsetError::VaultFrozen);
+        }
+
+        // Bump the market nonce (header borrow via Slab's DerefMut).
+        let nonce = self.market.nonce.get();
+        let new_nonce = nonce.checked_add(1).ok_or(DropsetError::MathOverflow)?;
+        self.market.nonce = new_nonce.into();
+
+        // Re-borrow the vault mutably and stamp the new reference price.
+        let vault = &mut self.market.as_mut_slice()[vault_idx as usize];
         vault.reference_price = ReferencePrice {
             stamp: (nonce | FLUSH_BIT).into(),
             price,

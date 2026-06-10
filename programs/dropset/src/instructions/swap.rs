@@ -174,7 +174,7 @@ impl Swap {
         // expires_at) tuples for the side, filter expired / zero-size /
         // sentinel, and sort by price.
         let mut levels: [(u32, Price, u64, u32); N_LEVELS] = [(0, Price::ZERO, 0, 0); N_LEVELS];
-        let mut nlive: usize = 0;
+        let mut live_count: usize = 0;
         {
             let v = &self.market.as_slice()[vault_idx as usize];
             for i in 0..N_LEVELS {
@@ -193,8 +193,8 @@ impl Swap {
                 {
                     continue;
                 }
-                levels[nlive] = (i as u32, price, size, expires_at);
-                nlive += 1;
+                levels[live_count] = (i as u32, price, size, expires_at);
+                live_count += 1;
             }
         }
         // Sort active levels: asks ascending by price, bids
@@ -202,8 +202,8 @@ impl Swap {
         // level_idx ascending — surrogate for nonce in MVP, since a
         // single vault's levels share its stamp.
         match side {
-            SwapSide::Buy => levels[..nlive].sort_by_key(|t| (t.1.as_u32(), t.0)),
-            SwapSide::Sell => levels[..nlive].sort_by_key(|t| (t.1.bid_key(), t.0)),
+            SwapSide::Buy => levels[..live_count].sort_by_key(|t| (t.1.as_u32(), t.0)),
+            SwapSide::Sell => levels[..live_count].sort_by_key(|t| (t.1.bid_key(), t.0)),
         }
 
         // Build the market PDA signer seeds (for the return-leg CPI).
@@ -224,7 +224,7 @@ impl Swap {
         let mut total_fee: u128 = 0;
         let mut filled_legs: u32 = 0;
 
-        for &(level_idx, price, level_size, _exp) in levels.iter().take(nlive) {
+        for &(level_idx, price, level_size, _exp) in levels.iter().take(live_count) {
             // Limit-price filter.
             let crosses = match side {
                 SwapSide::Buy => {
@@ -309,13 +309,20 @@ impl Swap {
             };
             let fee_u64 = fee.min(u64::MAX as u128) as u64;
 
-            // Update vault inventory and level remaining size.
-            let (new_base, new_quote, nonce_after) = {
+            // Update vault inventory and level remaining size. The
+            // fee is retained in the vault on the output leg — so the
+            // inventory debit is `fill_<out> - fee_u64`, matching the
+            // `net_out` actually transferred to the taker. This keeps
+            // the treasury-vs-vault invariant
+            // `treasury.amount == Σ vault.<leg>_atoms` holding per
+            // leg: treasury sends `net_out`, vault books `-(net_out)`.
+            let (new_base, new_quote) = {
                 let v = &mut self.market.as_mut_slice()[vault_idx as usize];
                 let (b_new, q_new) = match side {
                     SwapSide::Buy => {
-                        // Taker buys base, pays quote.
-                        let b = v.base_atoms.get().saturating_sub(fill_base);
+                        // Taker buys base, pays quote. Fee retained in base.
+                        let net_base_out = fill_base.saturating_sub(fee_u64);
+                        let b = v.base_atoms.get().saturating_sub(net_base_out);
                         let q = v.quote_atoms.get().saturating_add(fill_quote);
                         v.base_atoms = b.into();
                         v.quote_atoms = q.into();
@@ -328,9 +335,10 @@ impl Swap {
                         (b, q)
                     }
                     SwapSide::Sell => {
-                        // Taker sells base, receives quote.
+                        // Taker sells base, receives quote. Fee retained in quote.
+                        let net_quote_out = fill_quote.saturating_sub(fee_u64);
                         let b = v.base_atoms.get().saturating_add(fill_base);
-                        let q = v.quote_atoms.get().saturating_sub(fill_quote);
+                        let q = v.quote_atoms.get().saturating_sub(net_quote_out);
                         v.base_atoms = b.into();
                         v.quote_atoms = q.into();
                         v.remaining.bids[level_idx as usize].size = (v.remaining.bids
@@ -342,7 +350,7 @@ impl Swap {
                         (b, q)
                     }
                 };
-                (b_new, q_new, 0u64)
+                (b_new, q_new)
             };
 
             // Bump market.nonce per leg (header borrow after the tail
@@ -350,7 +358,6 @@ impl Swap {
             let nonce = self.market.nonce.get();
             let new_nonce = nonce.saturating_add(1);
             self.market.nonce = new_nonce.into();
-            let _ = nonce_after; // placeholder until we re-thread `new_nonce` into the event below
 
             // Decrement the taker's remaining input.
             let consumed_in: u128 = match side {

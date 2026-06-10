@@ -63,31 +63,37 @@ impl SetLiquidityProfile {
             DropsetError::LiquidityProfileSizeOverflow
         );
 
-        // Bump market.nonce (header borrow). The vault tail borrow
-        // happens after.
+        // Validate the target vault BEFORE bumping `market.nonce`. A
+        // caller targeting a free-list sector or the wrong vault must
+        // not advance the header counter.
+        let signer_addr = *self.signer.address();
+        {
+            let vault = &self.market.as_slice()[vault_idx as usize];
+            require!(
+                !address_eq(&vault.leader, &Address::default()),
+                DropsetError::VaultEmpty
+            );
+            require!(
+                address_eq(&vault.quote_authority, &signer_addr),
+                DropsetError::Unauthorized
+            );
+            require!(vault.frozen == 0, DropsetError::VaultFrozen);
+            // The MVP rule (ENG-423): a vault's reference price must be
+            // set before its profile is — the profile is pure ppm
+            // offsets and needs a real anchor.
+            require!(
+                !vault.reference_price.price.is_zero(),
+                DropsetError::ReferencePriceNotSet
+            );
+        }
+
+        // Bump market.nonce (header borrow).
         let nonce = self.market.nonce.get();
         let new_nonce = nonce.checked_add(1).ok_or(DropsetError::MathOverflow)?;
         self.market.nonce = new_nonce.into();
 
-        let signer_addr = *self.signer.address();
+        // Re-borrow the vault mutably and stamp the new profile.
         let vault = &mut self.market.as_mut_slice()[vault_idx as usize];
-        require!(
-            !address_eq(&vault.leader, &Address::default()),
-            DropsetError::VaultEmpty
-        );
-        require!(
-            address_eq(&vault.quote_authority, &signer_addr),
-            DropsetError::Unauthorized
-        );
-        require!(vault.frozen == 0, DropsetError::VaultFrozen);
-
-        // The user-requested rule: reference price must already be
-        // set. Verified in unit + integration tests.
-        require!(
-            !vault.reference_price.price.is_zero(),
-            DropsetError::ReferencePriceNotSet
-        );
-
         vault.profile = *profile;
         // Stamp the new nonce | FLUSH_BIT; leave `price` and
         // `quote_slot` untouched — that's the SetLiquidityProfile

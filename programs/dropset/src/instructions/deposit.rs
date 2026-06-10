@@ -25,7 +25,7 @@ use anchor_spl_v2::{
 use crate::{
     errors::DropsetError,
     events::{DepositEvent, RealizeEvent},
-    state::{isqrt_u128, realize_in_place, Market, BPS, PPM, VAULT_DEPOSITOR_SEED},
+    state::{isqrt_u128, realize_in_place, Market, PPM, VAULT_DEPOSITOR_SEED},
     VaultDepositorHeader, Q32_32_ONE,
 };
 
@@ -385,12 +385,6 @@ impl Deposit {
             base_atoms_after: new_base_atoms,
             quote_atoms_after: new_quote_atoms,
         });
-
-        // Suppress unused-const warning when BPS isn't referenced
-        // anywhere downstream of the basket math (it is in
-        // set_liquidity_profile; kept in scope here so the symbol stays
-        // findable from one module).
-        let _ = BPS;
         Ok(())
     }
 }

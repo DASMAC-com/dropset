@@ -13,7 +13,10 @@
 //! the calling signer as `leader`. Adding the override is a one-arg
 //! follow-up that doesn't change the DLL or rent paths.
 
-use anchor_lang_v2::{find_and_verify_program_address, prelude::*};
+use anchor_lang_v2::prelude::*;
+// `associated_token::{self, ...}` keeps the module in scope so the
+// `associated_token::*` constraint paths on `registry_fee_treasury`
+// expand to `anchor_spl_v2::associated_token::<Marker>`.
 #[allow(unused_imports)]
 use anchor_spl_v2::{
     associated_token::{self, AssociatedToken},
@@ -133,12 +136,6 @@ impl RegisterVault {
         // `frozen`, `outside_deposits_approved`, base/quote/share
         // counters, profile, and remaining are already zero from
         // `allocate_sector`'s `Vault::zeroed()`.
-
-        // ATA program isn't reached here — the fee path is the only
-        // CPI, and `find_and_verify_program_address` isn't needed
-        // because we're not bumping any seed addresses outside the
-        // market PDA itself.
-        let _ = find_and_verify_program_address; // hush unused import
 
         emit!(OpenVaultEvent {
             market: market_addr,
