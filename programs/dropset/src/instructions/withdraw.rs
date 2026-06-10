@@ -22,7 +22,7 @@ use anchor_spl_v2::{
 use crate::{
     errors::DropsetError,
     events::{RealizeEvent, WithdrawEvent},
-    state::{realize_in_place, Market, PPM, VAULT_DEPOSITOR_SEED},
+    state::{realize_in_place, Market, PPM},
     VaultDepositorHeader,
 };
 
@@ -52,7 +52,7 @@ pub struct Withdraw {
     #[account(
         mut,
         seeds = [
-            VAULT_DEPOSITOR_SEED,
+            b"vault_depositor",
             market.address().as_ref(),
             &vault_idx.to_le_bytes(),
             signer.address().as_ref(),

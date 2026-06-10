@@ -25,7 +25,7 @@ use anchor_spl_v2::{
 use crate::{
     errors::DropsetError,
     events::{DepositEvent, RealizeEvent},
-    state::{isqrt_u128, realize_in_place, Market, PPM, VAULT_DEPOSITOR_SEED},
+    state::{isqrt_u128, realize_in_place, Market, PPM},
     VaultDepositorHeader, Q32_32_ONE,
 };
 
@@ -56,7 +56,7 @@ pub struct Deposit {
         init_if_needed,
         payer = signer,
         seeds = [
-            VAULT_DEPOSITOR_SEED,
+            b"vault_depositor",
             market.address().as_ref(),
             &vault_idx.to_le_bytes(),
             signer.address().as_ref(),
