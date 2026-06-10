@@ -172,6 +172,17 @@ pub struct MarketHeader {
     pub free_head: PodU32,
     /// Active-DLL length. Bounded by `registry.max_vaults_per_market`.
     pub active_count: PodU32,
+    /// Number of live `VaultDepositor` PDAs across every vault on this
+    /// market (active and tombstoned). Incremented when an outside
+    /// `Deposit` opens a fresh `VaultDepositor`, decremented when
+    /// `Withdraw` closes one on `shares == 0` and when
+    /// `force_withdraw_depositor` closes one. **Not** incremented on
+    /// top-off (existing `VaultDepositor`). `close_market` requires
+    /// this to be zero — the only on-chain witness that no orphan
+    /// depositor PDAs remain, since the program cannot iterate all
+    /// PDAs to verify by enumeration. See the architecture spec,
+    /// **Account lifecycle and rent reclamation**.
+    pub outstanding_vault_depositors: PodU32,
     /// Per-market open-vault fee: mint and amount. Seeded from
     /// `Registry.default_fee_config` at market creation.
     pub fee_config: FeeConfig,
@@ -211,7 +222,7 @@ pub type Market = Slab<MarketHeader, Vault>;
 // deliberate update here, paired with the matching account-data
 // migration story.
 const _: () = assert!(core::mem::size_of::<Vault>() == 560);
-const _: () = assert!(core::mem::size_of::<MarketHeader>() == 233);
+const _: () = assert!(core::mem::size_of::<MarketHeader>() == 237);
 const _: () = assert!(core::mem::size_of::<LiquidityProfile>() == 2 * N_LEVELS * 10);
 const _: () = assert!(core::mem::size_of::<Remaining>() == 2 * N_LEVELS * 16);
 

@@ -119,6 +119,10 @@ impl Init {
         registry.max_vaults_per_market = DEFAULT_MAX_VAULTS_PER_MARKET;
         registry.default_taker_fee = DEFAULT_TAKER_FEE.into();
         registry.default_min_leader_share = DEFAULT_MIN_LEADER_SHARE.into();
+        // No markets exist at init; `create_market` will increment, and
+        // `close_registry` (under the `admin-teardown` feature) checks
+        // this is zero before the registry can be closed.
+        registry.market_count = 0u32.into();
         registry.default_fee_config = FeeConfig {
             mint: *self.fee_mint.address(),
             token_program: *self.token_program.address(),

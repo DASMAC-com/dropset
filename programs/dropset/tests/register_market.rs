@@ -9,13 +9,13 @@ use anchor_lang_v2::{programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, Signer};
 use common::{
     associated_token_address, create_associated_token_account, create_mock_usdc_mint,
-    create_spl_mint, create_token2022_mint, deploy_with_authority, mint_to, send_ixn,
+    create_spl_mint, create_token2022_mint, decode_slab, deploy_with_authority, mint_to, send_ixn,
     ATA_PROGRAM_ID, PROGRAM_ID, REGISTER_MARKET_FEE_ATOMS, SIGNER_FUNDING_LAMPORTS,
     SPL_TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID,
 };
 use dropset::{
     instruction::{Init as InitInstruction, RegisterMarket as RegisterMarketInstruction},
-    MarketHeader, NULL_SECTOR, N_LEVELS,
+    MarketHeader, RegistryHeader, NULL_SECTOR, N_LEVELS,
 };
 use solana_instruction::{AccountMeta, Instruction};
 use solana_loader_v3_interface::get_program_data_address;
@@ -93,7 +93,8 @@ fn register_market_ixn(
         // positionally, not by name.
         vec![
             AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(registry, false),
+            // `mut`: register_market bumps registry.market_count.
+            AccountMeta::new(registry, false),
             AccountMeta::new_readonly(base_mint, false),
             AccountMeta::new_readonly(quote_mint, false),
             AccountMeta::new_readonly(base_token_program, false),
@@ -200,9 +201,26 @@ fn register_market_succeeds_with_two_spl_mints() {
     assert_eq!(header.tombstone_head.get(), NULL_SECTOR);
     assert_eq!(header.free_head.get(), NULL_SECTOR);
     assert_eq!(header.active_count.get(), 0);
+    // Fresh market has no depositors — the counter only advances when
+    // an outside Deposit opens a fresh VaultDepositor PDA.
+    assert_eq!(header.outstanding_vault_depositors.get(), 0);
     assert_eq!(header.nonce.get(), 0);
     assert_eq!(header.fee_config.mint, fee_mint.to_bytes().into());
     assert_eq!(header.fee_config.atoms.get(), REGISTER_MARKET_FEE_ATOMS);
+
+    // Registry bumped the live-market counter — the on-chain witness
+    // `close_registry` checks against under the `admin-teardown`
+    // feature. See architecture spec, **Account lifecycle and rent
+    // reclamation**.
+    let registry_account = svm
+        .get_account(&registry_pda())
+        .expect("registry account exists");
+    let (registry_header, _) = decode_slab::<RegistryHeader, [u8; 32]>(&registry_account.data);
+    assert_eq!(
+        registry_header.market_count.get(),
+        1,
+        "register_market should increment market_count from 0 to 1"
+    );
 
     // Treasuries are the canonical ATAs at `market` for each mint.
     assert_eq!(
@@ -314,6 +332,14 @@ fn admin_path_waives_fee() {
     let registry_fee_ata =
         associated_token_address(&registry_pda(), &fee_mint, &SPL_TOKEN_PROGRAM_ID);
     assert_eq!(token_balance(&svm, &registry_fee_ata), 0);
+
+    // The admin path still bumps `market_count` — the increment lives
+    // after the fee branch, so both paths share it.
+    let registry_account = svm
+        .get_account(&registry_pda())
+        .expect("registry account exists");
+    let (registry_header, _) = decode_slab::<RegistryHeader, [u8; 32]>(&registry_account.data);
+    assert_eq!(registry_header.market_count.get(), 1);
 }
 
 // ── Failure modes ───────────────────────────────────────────────────

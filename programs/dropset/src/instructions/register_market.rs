@@ -43,9 +43,9 @@ pub struct RegisterMarket {
     #[account(mut)]
     pub payer: Signer,
 
-    /// Singleton registry. Read for the fee config, admin set, and
-    /// stamped defaults.
-    #[account(seeds = [b"registry"], bump = registry.bump)]
+    /// Singleton registry. Mutated to bump `market_count`, and read
+    /// for the fee config, admin set, and stamped defaults.
+    #[account(mut, seeds = [b"registry"], bump = registry.bump)]
     pub registry: Registry,
 
     /// Base leg mint. `InterfaceAccount<Mint>` accepts SPL Token and
@@ -192,8 +192,8 @@ impl RegisterMarket {
         // Stamp the header. `init` zeroed the slab, so list heads
         // start at `NULL_SECTOR` (`u32::MAX`); we set them explicitly
         // anyway so the invariant is local to this handler.
-        // `active_count`, `nonce`, and the slab tail's `len` field are
-        // already zero.
+        // `active_count`, `outstanding_vault_depositors`, `nonce`, and
+        // the slab tail's `len` field are already zero.
         let base_mint_addr = *self.base_mint.address();
         let quote_mint_addr = *self.quote_mint.address();
         let base_treasury_addr = *self.base_treasury.address();
@@ -210,6 +210,7 @@ impl RegisterMarket {
         market.tombstone_head = NULL_SECTOR.into();
         market.free_head = NULL_SECTOR.into();
         market.active_count = 0u32.into();
+        market.outstanding_vault_depositors = 0u32.into();
         market.nonce = 0u64.into();
         market.base_mint = base_mint_addr;
         market.quote_mint = quote_mint_addr;
@@ -222,6 +223,16 @@ impl RegisterMarket {
             token_program: default_fee_config.token_program,
             atoms: default_fee_config.atoms.get().into(),
         };
+
+        // Bump the registry's live-market counter — the on-chain
+        // witness `close_registry` checks against under the
+        // `admin-teardown` feature. See architecture spec,
+        // **Account lifecycle and rent reclamation**.
+        let prev = self.registry.market_count.get();
+        self.registry.market_count = prev
+            .checked_add(1)
+            .ok_or(DropsetError::MarketCountOverflow)?
+            .into();
         Ok(())
     }
 }

@@ -129,6 +129,13 @@ struct Registry {
     /// `base_treasury`/`quote_treasury`, which custody pooled trading
     /// inventory, not protocol fees.)
     default_fee_config: FeeConfig,
+    /// Number of live markets created against this registry.
+    /// Incremented by `create_market`, decremented by `close_market`.
+    /// `close_registry` requires `market_count == 0` — the only
+    /// on-chain witness that no orphan markets remain (the program
+    /// cannot iterate all PDAs to verify by enumeration). See
+    /// **Account lifecycle and rent reclamation**.
+    market_count: u32,
     /// Admins authorized to mutate the `Registry`, change a market's
     /// `taker_fee`, `default_min_leader_share`, and `fee_config`
     /// (the last via `SetMarketFeeConfig`), override a vault's
@@ -148,6 +155,27 @@ material gate on fresh entry: every new wallet pays the fee again, so
 spinning up replacements after a freeze has a real, repeated cost
 rather than being free.
 
+### Admin gating of market creation
+
+Markets are **not** permissionless. Any `create_market` /
+`register_market` instruction must verify `signer ∈ registry.admins`
+before allocating a `MarketHeader` and its treasuries, and on
+success it increments `registry.market_count` by one (the symmetric
+decrement happens in `close_market`; see **Account lifecycle and
+rent reclamation → Teardown ordering**). This is the steady-state
+rule — independent of the `admin-teardown` Cargo feature (which
+gates *close*-side instructions); admin-gated *creation* is present
+in every build. The check uses the same `AdminSet::admin_contains`
+path that `add_admin` and `remove_admin` already use.
+
+Rationale: a market commits the program to custodying two SPL
+treasuries and exposing a fresh `(base_mint, quote_mint)` pair to
+takers. Mistakes — wrong mint, wrong fee config — cannot be
+unilaterally reversed by a leader, only by an admin via the
+teardown path. Gating creation on the admin set keeps the set of
+live markets bounded and curated. Vault creation inside an existing
+market remains permissionless (see `OpenVault`).
+
 ## MarketHeader
 
 The `MarketHeader` is a fixed-size record at the front of the market
@@ -165,6 +193,19 @@ struct MarketHeader {
     /// Active vaults on this market — bounded by
     /// `registry.max_vaults_per_market`.
     vaults: Set<Vault>,
+    /// Number of live `VaultDepositor` PDAs across every vault on
+    /// this market (active and tombstoned). Incremented when an
+    /// outside `Deposit` opens a fresh `VaultDepositor`, decremented
+    /// when `Withdraw` closes one on `shares == 0` and when
+    /// `force_withdraw_depositor` closes one. **Not** incremented on
+    /// top-off (existing `VaultDepositor`). `close_market` requires
+    /// `outstanding_vault_depositors == 0` — without it, a
+    /// `VaultDepositor` PDA could be left orphaned against a closed
+    /// market sector (the depositor's rent is still theirs to
+    /// reclaim by closing their own PDA, but their on-chain claim
+    /// would silently zero on any subsequent `Withdraw`). See
+    /// **Account lifecycle and rent reclamation**.
+    outstanding_vault_depositors: u32,
     /// Taker fee rate, capped at ~6.55% (`Ppm16` max). Mutable by an
     /// admin.
     taker_fee: Ppm16,
@@ -223,6 +264,32 @@ levels at the same price are ranked by nonce: lower nonce = earlier
 arrival = wins. This is the canonical CLOB **price-time priority**
 rule, with the nonce standing in for "time" — slot timestamps would
 be too coarse, since multiple events can land in the same slot.
+
+### Market closure
+
+Closing a market is feature-gated (see **Account lifecycle and rent
+reclamation**) and refunds the entire `MarketHeader` + vault-slab
+rent — vault sectors are inline storage and carry no separate rent,
+so there is intentionally no per-vault close instruction. The slab
+itself is closed as one allocation when the market closes.
+
+`close_market` requires `signer ∈ registry.admins` and the following
+on-chain pre-conditions:
+
+- `outstanding_vault_depositors == 0` — every `VaultDepositor` PDA
+  on this market has been closed (use `force_withdraw_depositor`
+  to clear stragglers — see **Depositor positions and cost basis →
+  Admin force-withdraw**). Counter enforcement is required because
+  the program cannot iterate all `VaultDepositor` PDAs on-chain.
+- `base_treasury` and `quote_treasury` are both closed — which
+  requires both to be drained to zero, which by the treasury
+  invariants above requires `vault.base_atoms == 0` and
+  `vault.quote_atoms == 0` on every vault on the market.
+
+Once those hold, the market's lamports are transferred to a
+`rent_recipient` account and the account data is zeroed and
+de-assigned from the program. `registry.market_count` is
+decremented by one in the same instruction.
 
 ## Storage layout
 
@@ -658,6 +725,19 @@ so the emptiness marker holds, and pushes the sector onto the free
 list. The same leader pubkey may then `OpenVault` afresh — paying
 the open-vault fee again — on this or any other market.
 
+When the `admin-teardown` Cargo feature is enabled (see **Account
+lifecycle and rent reclamation**), an admin may additionally
+`force_withdraw_depositor` against any `VaultDepositor` and
+`force_withdraw_leader` against any vault's `leader_shares`,
+regardless of the vault's state — active, frozen, or tombstoned.
+Together these widen the "only the owner can move their stake"
+property held by every production build (outside funds and
+leader funds both), in service of being able to drain markets to
+zero between testnet / early-mainnet deploy cycles without
+requiring leader cooperation. The feature is absent from the final
+immutable build, and with it absent the original property is
+restored.
+
 ## LiquidityProfile
 
 Each level carries a `price_offset` in **ppm** (1_000_000 = 100%)
@@ -940,6 +1020,65 @@ external feed. So when the display price differs from the on-chain
 reference, only the **totals** (`all_time_pnl`) reconcile across the
 realized/unrealized boundary; the per-leg yield/FX split does not.
 
+#### Admin force-withdraw (feature-gated)
+
+The `force_withdraw_depositor` instruction lives behind the
+`admin-teardown` Cargo feature (see **Account lifecycle and rent
+reclamation**) and lets an admin pay a depositor out and close
+their `VaultDepositor` PDA without the depositor's signature. Its
+sole purpose is to make markets fully drainable for the testnet /
+early-mainnet redeploy cycle; it is absent from the final
+immutable build.
+
+- **Signer.** `signer ∈ registry.admins`.
+- **Vault state.** Active, frozen, or tombstoned. **Reclaimed**
+  sectors (on the free DLL, `leader == Pubkey::default()`) carry
+  no depositors by invariant — by the prescribed teardown ordering,
+  every `VaultDepositor` is closed before the vault is allowed to
+  reach Reclaimed, so this case does not arise. The instruction
+  rejects Reclaimed sectors as a defense-in-depth check.
+- **Effect.** Mechanically identical to outside-depositor
+  `Withdraw` (see below) with two differences:
+  - the signer check is `signer ∈ registry.admins` instead of
+    "signer matches the `VaultDepositor` PDA seeds";
+  - the payout target is the depositor's `(base_mint, quote_mint)`
+    ATAs, created via `init_if_needed` if absent. The admin is
+    never a possible payout target — funds always land with the
+    `owner`, not the caller.
+- **ATA rent.** If `init_if_needed` allocates a fresh ATA for the
+  `owner`, the calling admin pays the ~2.04 mSOL ATA rent. This is
+  a deliberate operational cost on the teardown wallet, not on the
+  depositor — by symmetry with the rest of the teardown surface,
+  the admin running the wind-down bears all the new-account rent.
+- **Rent (PDA).** The closed `VaultDepositor` PDA's lamports are
+  refunded to its `owner`, the same as the existing close-on-empty
+  path. The depositor's PDA rent is always the depositor's, even
+  when the admin initiated the close.
+- **Counter.** `MarketHeader.outstanding_vault_depositors` is
+  decremented by one — the same decrement the close-on-empty path
+  performs.
+
+The instruction is the same logic as `Withdraw` for the depositor
+slice `shares_in = VaultDepositor.shares` — same basket math, same
+realized-PnL accumulator updates, same vault `total_shares` /
+`base_atoms` / `quote_atoms` decrements — just with the signer
+gate widened. There is no separate accounting path.
+
+A sibling `force_withdraw_leader` covers the leader's stake, which
+lives in `vault.leader_shares` rather than on a `VaultDepositor`
+PDA and is therefore not reachable via the depositor variant. Same
+admin gate, same payout-to-stake-holder rule (funds always land
+with `vault.leader`, never with the calling admin), and the same
+admin-pays-ATA-rent rule on `init_if_needed`. Vault state: active,
+frozen, or tombstoned — Reclaimed sectors are rejected (the
+sector's leader pubkey has already been zeroed). Mechanically it
+is the same logic as leader-path `Withdraw` for
+`shares_in = vault.leader_shares` with the signer check widened to
+`signer ∈ registry.admins`. Because the leader has no PDA, there
+is no PDA rent to refund — the only state change is the
+share/atom decrement and, once `total_shares == 0`, the vault
+sector reclaims to the free DLL.
+
 ## Caller mechanics
 
 Every instruction that targets a specific vault — leader-callable,
@@ -1006,6 +1145,36 @@ Simplified input buffer schematic:
                                     |
                              fixed offset
 ```
+
+### Admin authority
+
+The protocol has two authorization tiers; everything in this spec
+that is not a permissionless instruction falls under one of them.
+
+1. **Upgrade authority.** The pubkey set as the BPF Upgradeable
+   Loader's upgrade authority on the program's `ProgramData`
+   account. Gates `init` only — used once at program genesis to
+   create the Registry, after which the upgrade authority is no
+   longer consulted by any instruction.
+1. **Registry admin set.** The `admins` field on the Registry,
+   mutated by `add_admin` / `remove_admin`. Gates every
+   instruction with a `signer ∈ registry.admins` check, listed
+   here so the full set is visible in one place:
+   - Steady-state: `add_admin`, `remove_admin`, `create_market`
+     (see **Registry → Admin gating of market creation**),
+     `FreezeVault`, `SetOutsideDepositsApproved`,
+     `SetMinLeaderShare`, `SetMarketFeeConfig`, and a waived
+     `OpenVault` fee path.
+   - Feature-gated under `admin-teardown` (see **Account
+     lifecycle and rent reclamation**): `force_withdraw_depositor`,
+     `force_withdraw_leader`, `close_market_treasury`,
+     `close_market`, `close_registry_fee_vault`, `close_registry`.
+
+The upgrade authority is intentionally narrow — exactly one
+instruction — so that post-init the admin set is the sole
+governance surface, and the only way to grow or shrink that
+surface is `add_admin` / `remove_admin` signed by an existing
+admin.
 
 ## Leader operations
 
@@ -1660,3 +1829,121 @@ venues will expect them.
   does not exist — APR is measured against VPS, which moves only on
   fills and fee accrual, not on positions drifting in and out of a
   range.
+
+## Account lifecycle and rent reclamation
+
+For live mainnet testing the program must support full teardown:
+every account it ever created can be closed and its rent reclaimed,
+so the program can be upgrade-redeployed against the same program
+id between cycles. The teardown instructions described here are
+**feature-gated** behind a Cargo feature `admin-teardown`, compiled
+into testnet / early-mainnet builds and omitted from the final
+immutable deploy. Authorization while the feature is enabled is the
+existing Registry admin set (see **Caller mechanics → Admin
+authority**); a reader of the final-build IDL will find these
+instructions absent.
+
+### Rent-holding accounts
+
+This is the canonical inventory of every account dropset can create
+that holds rent, and the close path for each. "Holds rent" means
+SOL lamports that come back on close — accounts inlined into a
+parent (vault sectors inside a market slab) do not hold separate
+rent and close with their parent.
+
+| #   | Account                                                       | Owner program          | Holds rent?                                  | Close path                                                                                                                                                                                                                            | Rent recipient                            |
+| --- | ------------------------------------------------------------- | ---------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| 1   | **Registry** PDA, seeds `[b"registry"]`                       | dropset                | yes (variable: 8 + header + admin slab tail) | `close_registry` (admin, feature-gated). Pre-condition: `market_count == 0`, zero admins beyond the caller, fee vault closed.                                                                                                         | passed-in `rent_recipient`                |
+| 2   | **Registry fee vault** ATA, `ata(registry, fee_mint, tp)`     | SPL Token / Token-2022 | yes (~165–170 B)                             | `close_registry_fee_vault` (admin, feature-gated). Pre-condition: `amount == 0` (drain via existing admin fee sweep). CPI `CloseAccount` signed by Registry PDA.                                                                      | passed-in `rent_recipient`                |
+| 3   | **Market** PDA (`MarketHeader` + vault slab inline)           | dropset                | yes (large; grows with vault count)          | `close_market` (admin, feature-gated). Pre-conditions: `outstanding_vault_depositors == 0`, both treasuries closed.                                                                                                                   | passed-in `rent_recipient`                |
+| 4   | **Vault** sectors inside the market slab                      | n/a (inline)           | **no separate rent** — covered by Market's   | closed implicitly by `close_market`; there is no per-vault close instruction. Reclaim (to the free DLL) does not refund any rent.                                                                                                     | n/a                                       |
+| 5   | **Base treasury** ATA, derived from market PDA                | SPL Token / Token-2022 | yes                                          | `close_market_treasury` (admin, feature-gated). Pre-condition: `amount == 0`. CPI `CloseAccount` signed by market PDA.                                                                                                                | passed-in `rent_recipient`                |
+| 6   | **Quote treasury** ATA, derived from market PDA               | SPL Token / Token-2022 | yes                                          | same instruction, run for the quote leg.                                                                                                                                                                                              | passed-in `rent_recipient`                |
+| 7   | **VaultDepositor** PDA, seeds `("vault_depositor", v, owner)` | dropset                | yes                                          | (a) existing close-on-empty in `Withdraw` when `shares == 0`; (b) `force_withdraw_depositor` (see **Depositor positions and cost basis → Admin force-withdraw**). Either path decrements `MarketHeader.outstanding_vault_depositors`. | depositor `owner` — their PDA, their rent |
+
+Everything outside this table (`system_program`, `token_program`,
+`ProgramData`, the program executable itself) is not program state
+and is out of scope for teardown.
+
+### Teardown ordering
+
+Teardown follows a dependency order — each step's pre-condition is
+satisfied by the prior step. Skipping ahead errors out by the
+pre-conditions listed in the table above rather than producing an
+inconsistent state.
+
+Per market, in order:
+
+1. **Force-withdraw every `VaultDepositor`.** Admin runs
+   `force_withdraw_depositor` against each depositor on each vault
+   in the market. Each call pays the depositor, closes their PDA
+   (rent to the depositor), and decrements
+   `MarketHeader.outstanding_vault_depositors`. The market is
+   ready for step 4 only when this counter reads zero.
+1. **Force-withdraw every leader.** Admin runs
+   `force_withdraw_leader` against each vault. The leader's stake
+   lives in `vault.leader_shares` (no separate PDA), so this is the
+   only way to drain the vault to zero without leader cooperation.
+   Each call pays the leader's slice to the leader's
+   `(base_mint, quote_mint)` ATAs and zeros `leader_shares`.
+   With outside shares
+   already zero from step 1, `total_shares` hits zero and the vault
+   sector reclaims to the free DLL — but that is just an in-slab
+   pointer move, not a separate rent refund. After this step the
+   treasury invariants in **MarketHeader** guarantee
+   `base_treasury.amount == 0` and `quote_treasury.amount == 0`.
+1. **Close both treasuries.** `close_market_treasury` for the
+   base leg, again for the quote leg.
+1. **Close the market.** `close_market` reclaims the entire
+   `MarketHeader` + vault slab rent in one shot, and decrements
+   `registry.market_count` by one.
+
+Repeat 1–4 for every market on the registry. Then, once every
+market is gone:
+
+1. **Drain the fee vault.** Existing admin fee sweep moves
+   accumulated fees out of the Registry fee ATA. If the market's
+   `fee_config.mint` changed during the program's life, more than
+   one fee ATA may exist; sweep each. The set of historical fee
+   mints is **not enumerated on-chain** — the admin maintains it
+   off-chain from `SetMarketFeeConfig` events.
+1. **Close fee vault(s).** `close_registry_fee_vault` per fee ATA.
+1. **Remove all but one admin.** Existing `remove_admin` enforces
+   "never empty" — `close_registry` is the only path that drops
+   the last admin.
+1. **Close the registry.** `close_registry` requires
+   `registry.market_count == 0` (witness that step 4 ran for
+   every market), zeros the slab, and refunds the Registry PDA's
+   lamports to `rent_recipient`.
+
+After step 8 the program has zero on-chain state and the upgrade
+authority can redeploy a fresh binary at the same program id.
+
+### Feature gating
+
+Every instruction introduced above (`close_registry`,
+`close_registry_fee_vault`, `close_market`, `close_market_treasury`,
+`force_withdraw_depositor`, `force_withdraw_leader`) lives behind
+`#[cfg(feature = "admin-teardown")]`. The feature is enabled for
+testnet and early-mainnet builds — when redeploy-from-scratch is a
+live operational tool — and disabled for the final immutable build,
+at which point the only way to remove a market is the steady-state
+leader-driven `CloseVault` / drain path and the protocol's custody
+guarantee returns to "no admin can pull a depositor's funds."
+
+With the feature absent there is correspondingly no admin path to
+close the Registry. This is the intended final state: with the
+upgrade authority revoked (so `init` is unreachable) and the
+teardown surface gone (so `close_registry` is unreachable), the
+program becomes immutable and its on-chain state — Registry,
+markets, and any open vaults — is permanent. The
+`market_count` and `outstanding_vault_depositors` counters
+introduced above are kept in the production build anyway:
+removing them would create a layout fork between builds and would
+buy nothing, since with the close-side instructions gone they
+simply read but never gate.
+
+Admin-gated **market creation** (see **Registry → Admin gating of
+market creation**) is *not* part of this feature — it is steady-state
+behavior and present in every build, and `registry.market_count` is
+incremented in every build.

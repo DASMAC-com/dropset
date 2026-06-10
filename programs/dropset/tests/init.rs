@@ -200,6 +200,8 @@ fn init_succeeds_with_spl_token_mint() {
         SPL_TOKEN_PROGRAM_ID.to_bytes().into()
     );
     assert_eq!(header.default_fee_config.atoms.get(), TEST_FEE_ATOMS);
+    // Init seeds zero markets — the counter only advances on create_market.
+    assert_eq!(header.market_count.get(), 0);
     // The genesis admin is the sole member of the densely-packed set.
     assert_eq!(admins, &[genesis_admin.to_bytes()][..]);
     assert_fee_vault_created(&svm, fee_mint, SPL_TOKEN_PROGRAM_ID);
@@ -235,6 +237,7 @@ fn init_succeeds_with_token2022_mint() {
         TOKEN_2022_PROGRAM_ID.to_bytes().into()
     );
     assert_eq!(header.default_fee_config.atoms.get(), TEST_FEE_ATOMS);
+    assert_eq!(header.market_count.get(), 0);
     assert_eq!(admins, &[genesis_admin.to_bytes()][..]);
     assert_fee_vault_created(&svm, fee_mint, TOKEN_2022_PROGRAM_ID);
 }
