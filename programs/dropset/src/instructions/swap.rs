@@ -17,7 +17,9 @@
 //! `#[event_cpi]` on this handler). No truncation: the loop emits as
 //! it fills.
 
-use anchor_lang_v2::{address_eq, prelude::*};
+extern crate alloc;
+
+use anchor_lang_v2::prelude::*;
 #[allow(unused_imports)]
 use anchor_spl_v2::{
     associated_token::AssociatedToken,
@@ -127,10 +129,35 @@ fn flush_level_size(size_bps: u16, leg_atoms: u64) -> u64 {
     (((leg_atoms as u128) * (size_bps as u128)) / (BPS as u128)).min(u64::MAX as u128) as u64
 }
 
+/// One entry on the ephemeral matching heap. Built per-`(vault,
+/// level)` pair during the active-DLL walk; sorted by
+/// `(price_key, nonce, sector_idx, level_idx)` so the canonical
+/// price-time priority falls out of a single `sort_by_key`. `nonce` is
+/// `stamp & !FLUSH_BIT` from the vault's reference price — i.e. the
+/// `market.nonce` snapshot at the most recent quote write, which is
+/// the spec's price-time tiebreaker.
+#[derive(Copy, Clone)]
+struct HeapEntry {
+    /// Sort key: `price.as_u32()` for asks, `price.bid_key()` for bids.
+    price_key: u32,
+    /// Original `Price` for fill math.
+    price: crate::Price,
+    /// `stamp & !FLUSH_BIT` — older nonce wins on equal-price ties.
+    nonce: u64,
+    /// Sector index of the source vault.
+    sector_idx: u32,
+    /// Level index within the source vault.
+    level_idx: u32,
+    /// Materialized level size at heap-build time. The fill loop
+    /// re-reads the live `remaining[i].size` so it sees prior-leg
+    /// decrements; this snapshot is only the upper bound at first
+    /// visit, used to skip dead levels.
+    size: u64,
+}
+
 impl Swap {
     pub fn swap(
         &mut self,
-        vault_idx: u32,
         side_u8: u8,
         amount_in: u64,
         limit_price_bits: u32,
@@ -153,93 +180,129 @@ impl Swap {
         require!(limit_ok, DropsetError::InvalidLimitPrice);
         require!(amount_in > 0, DropsetError::NothingFilled);
 
-        let len = self.market.len();
-        require!((vault_idx as usize) < len, DropsetError::InvalidSectorIndex);
-
-        // Snapshot vault meta + flush if FLUSH_BIT armed.
+        // Snapshot market-wide constants the loop needs.
         let market_addr = *self.market.address();
         let market_bump = self.market.bump;
         let base_mint_addr = self.market.base_mint;
         let quote_mint_addr = self.market.quote_mint;
         let taker_fee_ppm = self.market.taker_fee.get() as u64;
         let current_slot = self.clock.slot as u32;
+        let head = self.market.head.get();
 
-        {
-            // Flush + sanity-check the vault's reference price.
-            let v = &mut self.market.as_mut_slice()[vault_idx as usize];
+        // Walk the active DLL from `market.head` via `Vault.next`.
+        // Per the spec § Order matching → Book construction: for
+        // each active vault, range-check `reference_price.price`,
+        // flush from `LiquidityProfile` if `FLUSH_BIT` is armed, then
+        // push the chosen side's live levels onto an ephemeral heap.
+        // Tombstoned vaults sit on a separate DLL and are skipped by
+        // construction.
+        let mut heap: alloc::vec::Vec<HeapEntry> = alloc::vec::Vec::new();
+        let mut cur = head;
+        while cur != crate::state::NULL_SECTOR {
+            // Sanity: bounds-check before borrowing the sector. A
+            // corrupt `next` would have already broken the DLL ops
+            // that produced it, but the matching engine reads the
+            // pointer adversarially.
             require!(
-                !address_eq(&v.leader, &Address::default()),
-                DropsetError::VaultEmpty
+                (cur as usize) < self.market.len(),
+                DropsetError::CorruptVaultList
             );
-            require!(
-                v.reference_price.price.is_valid()
-                    && !v.reference_price.price.is_zero()
-                    && !v.reference_price.price.is_infinity(),
-                DropsetError::InvalidPrice
-            );
-            let stamp = v.reference_price.stamp.get();
+            let next_sector = {
+                let v = &self.market.as_slice()[cur as usize];
+                v.next.get()
+            };
+            // Read vault meta + decide whether to flush. A vault on
+            // the active DLL must have a non-default leader by
+            // construction (free-list sectors live elsewhere). An
+            // invalid / sentinel reference price skips the vault
+            // (rather than aborting) — spec L1554-1563.
+            let (price_valid, stamp, ref_price, ref_slot, base_atoms, quote_atoms) = {
+                let v = &self.market.as_slice()[cur as usize];
+                let p = v.reference_price.price;
+                let valid =
+                    p.is_valid() && !p.is_zero() && !p.is_infinity();
+                (
+                    valid,
+                    v.reference_price.stamp.get(),
+                    p,
+                    v.reference_price.quote_slot.get(),
+                    v.base_atoms.get(),
+                    v.quote_atoms.get(),
+                )
+            };
+            if !price_valid {
+                cur = next_sector;
+                continue;
+            }
             if stamp & FLUSH_BIT != 0 {
-                let reference = v.reference_price.price;
-                let quote_slot_base = v.reference_price.quote_slot.get();
-                let base_atoms = v.base_atoms.get();
-                let quote_atoms = v.quote_atoms.get();
+                // Materialize Remaining from LiquidityProfile +
+                // current inventory, then clear FLUSH_BIT.
+                let v = &mut self.market.as_mut_slice()[cur as usize];
                 for i in 0..N_LEVELS {
                     let bid = v.profile.bids[i];
                     let ask = v.profile.asks[i];
                     v.remaining.bids[i].price =
-                        flush_level_price(reference, bid.price_offset.get(), false);
+                        flush_level_price(ref_price, bid.price_offset.get(), false);
                     v.remaining.bids[i].size =
                         flush_level_size(bid.size_bps.get(), quote_atoms).into();
-                    v.remaining.bids[i].expires_at = quote_slot_base
-                        .saturating_add(bid.expiry_offset.get())
-                        .into();
+                    v.remaining.bids[i].expires_at =
+                        ref_slot.saturating_add(bid.expiry_offset.get()).into();
                     v.remaining.asks[i].price =
-                        flush_level_price(reference, ask.price_offset.get(), true);
+                        flush_level_price(ref_price, ask.price_offset.get(), true);
                     v.remaining.asks[i].size =
                         flush_level_size(ask.size_bps.get(), base_atoms).into();
-                    v.remaining.asks[i].expires_at = quote_slot_base
-                        .saturating_add(ask.expiry_offset.get())
-                        .into();
+                    v.remaining.asks[i].expires_at =
+                        ref_slot.saturating_add(ask.expiry_offset.get()).into();
                 }
                 v.reference_price.stamp = (stamp & !FLUSH_BIT).into();
             }
-        }
-
-        // Build a heap-ish view: collect (level_idx, price, size,
-        // expires_at) tuples for the side, filter expired / zero-size /
-        // sentinel, and sort by price.
-        let mut levels: [(u32, Price, u64, u32); N_LEVELS] = [(0, Price::ZERO, 0, 0); N_LEVELS];
-        let mut live_count: usize = 0;
-        {
-            let v = &self.market.as_slice()[vault_idx as usize];
-            for i in 0..N_LEVELS {
-                let lvl = match side {
-                    SwapSide::Buy => v.remaining.asks[i],
-                    SwapSide::Sell => v.remaining.bids[i],
-                };
-                let size = lvl.size.get();
-                let expires_at = lvl.expires_at.get();
-                let price = lvl.price;
-                if size == 0
-                    || expires_at <= current_slot
-                    || price.is_zero()
-                    || price.is_infinity()
-                    || !price.is_valid()
-                {
-                    continue;
+            // Collect live levels of the chosen side from this vault.
+            let nonce = stamp & !FLUSH_BIT;
+            {
+                let v = &self.market.as_slice()[cur as usize];
+                for i in 0..N_LEVELS {
+                    let lvl = match side {
+                        SwapSide::Buy => v.remaining.asks[i],
+                        SwapSide::Sell => v.remaining.bids[i],
+                    };
+                    let size = lvl.size.get();
+                    let expires_at = lvl.expires_at.get();
+                    let price = lvl.price;
+                    if size == 0
+                        || expires_at <= current_slot
+                        || price.is_zero()
+                        || price.is_infinity()
+                        || !price.is_valid()
+                    {
+                        continue;
+                    }
+                    let price_key = match side {
+                        SwapSide::Buy => price.as_u32(),
+                        SwapSide::Sell => price.bid_key(),
+                    };
+                    heap.push(HeapEntry {
+                        price_key,
+                        price,
+                        nonce,
+                        sector_idx: cur,
+                        level_idx: i as u32,
+                        size,
+                    });
                 }
-                levels[live_count] = (i as u32, price, size, expires_at);
-                live_count += 1;
             }
+            cur = next_sector;
         }
-        // Sort active levels: asks ascending by price, bids
-        // descending (= ascending by `bid_key`). Ties broken by
-        // level_idx ascending — surrogate for nonce in MVP, since a
-        // single vault's levels share its stamp.
-        match side {
-            SwapSide::Buy => levels[..live_count].sort_by_key(|t| (t.1.as_u32(), t.0)),
-            SwapSide::Sell => levels[..live_count].sort_by_key(|t| (t.1.bid_key(), t.0)),
-        }
+        // Sort by (price_key, nonce, sector_idx, level_idx) — best
+        // price first; on ties, older quote (lower nonce) wins; on
+        // further ties, lower sector_idx wins; finally lower
+        // level_idx. This is the spec's price-time priority over a
+        // single materialized snapshot of the book.
+        heap.sort_by_key(|e| (e.price_key, e.nonce, e.sector_idx, e.level_idx));
+        let live_count = heap.len();
+        let levels: alloc::vec::Vec<(u32, u32, Price, u64, u32)> = heap
+            .iter()
+            .map(|e| (e.sector_idx, e.level_idx, e.price, e.size, e.nonce.min(u32::MAX as u64) as u32))
+            .collect();
 
         // Build the market PDA signer seeds (for the return-leg CPI).
         let bump_arr = [market_bump];
@@ -259,7 +322,7 @@ impl Swap {
         let mut total_fee: u128 = 0;
         let mut filled_legs: u32 = 0;
 
-        for &(level_idx, price, level_size, _exp) in levels.iter().take(live_count) {
+        for &(sector_idx, level_idx, price, level_size, _nonce) in levels.iter().take(live_count) {
             // Limit-price filter.
             let crosses = match side {
                 SwapSide::Buy => {
@@ -274,10 +337,10 @@ impl Swap {
                 break;
             }
 
-            // Snapshot the vault's current inventory inside the fill
-            // loop — each leg debits/credits it, so we read fresh.
+            // Snapshot the matched vault's current inventory — each
+            // leg debits/credits it, so we read fresh.
             let (base_atoms, quote_atoms) = {
-                let v = &self.market.as_slice()[vault_idx as usize];
+                let v = &self.market.as_slice()[sector_idx as usize];
                 (v.base_atoms.get(), v.quote_atoms.get())
             };
 
@@ -332,7 +395,7 @@ impl Swap {
             // `treasury.amount == Σ vault.<leg>_atoms` holding per
             // leg: treasury sends `net_out`, vault books `-(net_out)`.
             let (new_base, new_quote) = {
-                let v = &mut self.market.as_mut_slice()[vault_idx as usize];
+                let v = &mut self.market.as_mut_slice()[sector_idx as usize];
                 let (b_new, q_new) = match side {
                     SwapSide::Buy => {
                         // Taker buys base, pays quote. Fee retained in base.
@@ -389,7 +452,7 @@ impl Swap {
 
             // Emit one event per matched (vault, level) leg.
             let (leader, quote_authority) = {
-                let v = &self.market.as_slice()[vault_idx as usize];
+                let v = &self.market.as_slice()[sector_idx as usize];
                 (v.leader, v.quote_authority)
             };
             emit!(FillEvent {
@@ -399,7 +462,7 @@ impl Swap {
                 quote_authority,
                 side: side_u8,
                 _pad: [0; 7],
-                sector_idx: vault_idx,
+                sector_idx,
                 level_idx,
                 fill_base,
                 fill_quote,

@@ -217,8 +217,8 @@ impl Withdraw {
             let qref_entry = entry_ref_price
                 .quote_for_base(slice_base_u64)
                 .min(i128::MAX as u128) as i128;
-            let slice_quote_i = (slice_quote as i128).min(i128::MAX);
-            let released_i = (released_basis as i128).min(i128::MAX);
+            let slice_quote_i = slice_quote as i128;
+            let released_i = released_basis as i128;
             let fx_delta: i128 = qref_now.saturating_sub(qref_entry);
             let yield_delta: i128 = slice_quote_i
                 .saturating_add(qref_entry)

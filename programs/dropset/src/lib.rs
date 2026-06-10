@@ -100,12 +100,10 @@ pub mod dropset {
     #[discrim = 9]
     pub fn swap(
         ctx: &mut Context<Swap>,
-        vault_idx: u32,
         side: u8,
         amount_in: u64,
         limit_price_bits: u32,
     ) -> Result<()> {
-        ctx.accounts
-            .swap(vault_idx, side, amount_in, limit_price_bits)
+        ctx.accounts.swap(side, amount_in, limit_price_bits)
     }
 }
