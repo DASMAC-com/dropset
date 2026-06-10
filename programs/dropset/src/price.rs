@@ -236,6 +236,136 @@ impl Price {
         u32::MAX - self.0
     }
 
+    /// Decode `self` as a numeric ratio and compute `base × price`,
+    /// rounded toward zero. Used by the matching engine to convert a
+    /// per-vault `base_atoms` fill into the matching `quote_atoms`
+    /// debit, and by the basis math in deposit/withdraw to express
+    /// `entry_ref_price × base` as a quote-denominated value.
+    ///
+    /// Per the encoding (`value = sig × 10^(unbiased_exp − 7)`):
+    /// - `unbiased_exp ≥ 7`: multiply by `10^(unbiased_exp − 7)`.
+    /// - `unbiased_exp < 7`: divide by `10^(7 − unbiased_exp)`.
+    ///
+    /// Sentinels: `ZERO` returns `0`, `INFINITY` returns `u128::MAX`.
+    /// Multiplication saturates on overflow so the result is always a
+    /// well-defined `u128` (callers cap to `u64` as needed).
+    #[inline]
+    pub fn quote_for_base(self, base: u64) -> u128 {
+        if self.is_zero() {
+            return 0;
+        }
+        if self.is_infinity() {
+            return u128::MAX;
+        }
+        let sig = self.significand() as u128;
+        let unb = self.unbiased_exponent() as i32 - 7;
+        let mut x = (base as u128).saturating_mul(sig);
+        if unb >= 0 {
+            for _ in 0..unb {
+                x = x.saturating_mul(10);
+            }
+        } else {
+            for _ in 0..(-unb) {
+                x /= 10;
+            }
+        }
+        x
+    }
+
+    /// Inverse of [`quote_for_base`](Self::quote_for_base): compute
+    /// `quote / price`, rounded toward zero. Used by the matching
+    /// engine to convert a per-vault `quote_atoms` fill (bid side)
+    /// into the matching `base_atoms` debit, and as the symmetric
+    /// counterpart in basis math.
+    ///
+    /// Sentinels: `ZERO` returns `u128::MAX` (division by zero —
+    /// effectively "infinite base for any quote"); `INFINITY` returns
+    /// `0` (no base buys infinite-priced asks).
+    #[inline]
+    pub fn base_for_quote(self, quote: u64) -> u128 {
+        if self.is_zero() {
+            return u128::MAX;
+        }
+        if self.is_infinity() {
+            return 0;
+        }
+        let sig = self.significand() as u128;
+        let unb = self.unbiased_exponent() as i32 - 7;
+        // num / den, where price = sig × 10^unb / 10^7 → unb < 0
+        // means dividing by a small price (scale numerator up); unb ≥ 0
+        // means dividing by a large price (scale denominator up).
+        let mut num = quote as u128;
+        let mut den = sig;
+        if unb >= 0 {
+            for _ in 0..unb {
+                den = den.saturating_mul(10);
+            }
+        } else {
+            for _ in 0..(-unb) {
+                num = num.saturating_mul(10);
+            }
+        }
+        if den == 0 {
+            return 0;
+        }
+        num / den
+    }
+
+    /// Shares-weighted average of two prices, re-encoded as a new
+    /// `Price`. Used by `deposit`'s top-off path to merge a new lot's
+    /// reference price into the depositor's running average per the
+    /// spec's **Depositor positions and cost basis → Top-off**:
+    /// `entry_ref' = (s · entry_ref + Δs · ref_now) / (s + Δs)`.
+    ///
+    /// The weighted average is computed in *decoded value* space — the
+    /// raw `u32` bit patterns of two prices are not meaningfully
+    /// averageable (they're packed `(exponent, significand)`). Both
+    /// prices are first lifted to a common scaled integer
+    /// (`value × 10^9`), averaged, then re-encoded via `from_scaled`.
+    /// The 9-digit scaling factor keeps the math integral for typical
+    /// FX prices and re-encodes to the canonical 8-significant-figure
+    /// form (truncating toward zero — one ULP per top-off, acceptable
+    /// for cost-basis bookkeeping).
+    ///
+    /// Returns `self` when both weights are zero. Returns `Price::ZERO`
+    /// if either input is the sentinel `ZERO`, on the conservative
+    /// assumption that a zero-value lot collapses the average.
+    /// Returns `Price::INFINITY` if either input is `INFINITY` (same
+    /// reasoning — an unbounded reference would corrupt the average).
+    pub fn weighted_average(self, other: Self, w_self: u128, w_other: u128) -> Self {
+        if w_self == 0 && w_other == 0 {
+            return self;
+        }
+        if w_self == 0 {
+            return other;
+        }
+        if w_other == 0 {
+            return self;
+        }
+        if self.is_zero() || other.is_zero() {
+            return Self::ZERO;
+        }
+        if self.is_infinity() || other.is_infinity() {
+            return Self::INFINITY;
+        }
+        // Lift to `value × 10^9` so the weighted-avg integer math
+        // doesn't lose sub-1.0 digits at FX scales.
+        const SCALE: u64 = 1_000_000_000;
+        let v_self = self.quote_for_base(SCALE);
+        let v_other = other.quote_for_base(SCALE);
+        let total = w_self.saturating_add(w_other);
+        if total == 0 {
+            return self;
+        }
+        let avg = (w_self.saturating_mul(v_self))
+            .saturating_add(w_other.saturating_mul(v_other))
+            / total;
+        let avg_u64 = avg.min(u64::MAX as u128) as u64;
+        // `value × 10^9 = sig × 10^(biased - 14)` ⟹ for `from_scaled`
+        // with input scaled by 10^9, the input "biased_exp" is `14`.
+        Self::from_scaled(avg_u64, 14).unwrap_or(Self::ZERO)
+    }
+
     /// Convert to `f64` for testing.
     #[cfg(test)]
     pub fn to_f64(self) -> f64 {
@@ -644,5 +774,127 @@ mod tests {
         let z: Price = Price::zeroed();
         assert_eq!(z, Price::ZERO);
         assert!(z.is_zero());
+    }
+
+    // ── quote_for_base / base_for_quote ──────────────────────────
+
+    #[test]
+    fn quote_for_base_unit_price() {
+        // price = 1.0 → sig = 10_000_000, unbiased_exp = 0
+        let p = Price::encode(10_000_000, 0).unwrap();
+        // quote = base × 1.0
+        assert_eq!(p.quote_for_base(1_000_000), 1_000_000);
+        assert_eq!(p.quote_for_base(0), 0);
+    }
+
+    #[test]
+    fn quote_for_base_fx_price() {
+        // EUR/USD = 1.0850
+        let p = Price::encode(10_850_000, 0).unwrap();
+        // 1_000_000 EUR atoms × 1.0850 = 1_085_000 USD atoms
+        assert_eq!(p.quote_for_base(1_000_000), 1_085_000);
+    }
+
+    #[test]
+    fn quote_for_base_large_price() {
+        // price = 987 = 9.87 × 10^2 → sig = 98_700_000, unbiased = 2
+        let p = Price::encode(98_700_000, 2).unwrap();
+        assert_eq!(p.quote_for_base(1), 987);
+        assert_eq!(p.quote_for_base(1_000), 987_000);
+    }
+
+    #[test]
+    fn quote_for_base_small_price() {
+        // price = 0.01 = 1.0 × 10^-2 → sig = 10_000_000, unbiased = -2
+        let p = Price::encode(10_000_000, -2).unwrap();
+        // 1_000_000 × 0.01 = 10_000
+        assert_eq!(p.quote_for_base(1_000_000), 10_000);
+    }
+
+    #[test]
+    fn quote_for_base_sentinels() {
+        assert_eq!(Price::ZERO.quote_for_base(1_000_000), 0);
+        assert_eq!(Price::INFINITY.quote_for_base(1_000_000), u128::MAX);
+    }
+
+    #[test]
+    fn base_for_quote_unit_price() {
+        let p = Price::encode(10_000_000, 0).unwrap();
+        assert_eq!(p.base_for_quote(1_000_000), 1_000_000);
+    }
+
+    #[test]
+    fn base_for_quote_fx_price() {
+        let p = Price::encode(10_850_000, 0).unwrap();
+        // 1_085_000 USD atoms / 1.0850 = 1_000_000 EUR atoms
+        assert_eq!(p.base_for_quote(1_085_000), 1_000_000);
+    }
+
+    #[test]
+    fn base_for_quote_sentinels() {
+        assert_eq!(Price::ZERO.base_for_quote(1_000_000), u128::MAX);
+        assert_eq!(Price::INFINITY.base_for_quote(1_000_000), 0);
+    }
+
+    #[test]
+    fn quote_base_roundtrip() {
+        // For an exactly-encodable price, base → quote → base should
+        // round-trip to itself within rounding.
+        let p = Price::encode(10_850_000, 0).unwrap();
+        let base = 1_000_000_u64;
+        let quote = p.quote_for_base(base);
+        let base_back = p.base_for_quote(quote as u64);
+        assert_eq!(base_back, base as u128);
+    }
+
+    // ── weighted_average ─────────────────────────────────────────
+
+    #[test]
+    fn weighted_average_equal_weights_midpoint() {
+        // 1.00 and 1.10, equal weight → 1.05
+        let a = Price::encode(10_000_000, 0).unwrap();
+        let b = Price::encode(11_000_000, 0).unwrap();
+        let avg = Price::weighted_average(a, b, 1, 1);
+        // f64 value within 1 ULP of 1.05
+        assert!((avg.to_f64() - 1.05).abs() < 1e-7);
+    }
+
+    #[test]
+    fn weighted_average_skewed_weights() {
+        // 1.00 (weight 3) and 2.00 (weight 1) → 1.25
+        let a = Price::encode(10_000_000, 0).unwrap();
+        let b = Price::encode(20_000_000, 0).unwrap();
+        let avg = Price::weighted_average(a, b, 3, 1);
+        assert!((avg.to_f64() - 1.25).abs() < 1e-7);
+    }
+
+    #[test]
+    fn weighted_average_zero_weight_returns_other() {
+        let a = Price::encode(10_000_000, 0).unwrap();
+        let b = Price::encode(20_000_000, 0).unwrap();
+        assert_eq!(Price::weighted_average(a, b, 0, 1), b);
+        assert_eq!(Price::weighted_average(a, b, 1, 0), a);
+    }
+
+    #[test]
+    fn weighted_average_sentinel_collapses() {
+        let a = Price::encode(10_000_000, 0).unwrap();
+        assert_eq!(Price::weighted_average(a, Price::ZERO, 1, 1), Price::ZERO);
+        assert_eq!(
+            Price::weighted_average(a, Price::INFINITY, 1, 1),
+            Price::INFINITY
+        );
+    }
+
+    #[test]
+    fn quote_for_base_huge_inputs_dont_panic() {
+        // sig ≈ 10^8, unbiased_exp = 15 → unb = 8 (×10^8).
+        // base = u64::MAX (~1.84e19). Result ≈ 1.84e35, well inside u128
+        // (~3.4e38). Confirm the math runs to completion without panic
+        // and produces the well-defined product; on overflow the
+        // saturating_mul kicks in and clamps to u128::MAX.
+        let p = Price::encode(SIGNIFICAND_MAX, UNBIASED_EXPONENT_MAX).unwrap();
+        let result = p.quote_for_base(u64::MAX);
+        assert!(result > 0);
     }
 }

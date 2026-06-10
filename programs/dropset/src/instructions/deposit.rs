@@ -139,9 +139,9 @@ impl Deposit {
             let v = &self.market.as_slice()[vault_idx as usize];
             (
                 v.leader,
-                v.allow_outside_depositors,
-                v.outside_deposits_approved,
-                v.frozen,
+                v.allow_outside_depositors.get(),
+                v.outside_deposits_approved.get(),
+                v.frozen.get(),
                 v.total_shares.get(),
                 v.leader_shares.get(),
                 v.base_atoms.get(),
@@ -154,21 +154,15 @@ impl Deposit {
             !address_eq(&leader, &Address::default()),
             DropsetError::VaultEmpty
         );
-        require!(frozen == 0, DropsetError::VaultFrozen);
+        require!(!frozen, DropsetError::VaultFrozen);
 
         let signer_addr = *self.signer.address();
         let is_leader = address_eq(&leader, &signer_addr);
         let is_seeding = total_shares == 0;
 
         if !is_leader {
-            require!(
-                allow_outside == 1,
-                DropsetError::OutsideDepositorsNotAllowed
-            );
-            require!(
-                outside_approved == 1,
-                DropsetError::OutsideDepositorsNotApproved
-            );
+            require!(allow_outside, DropsetError::OutsideDepositorsNotAllowed);
+            require!(outside_approved, DropsetError::OutsideDepositorsNotApproved);
         }
 
         // Realize first (spec). No-op when seeding (total_shares == 0).
@@ -306,26 +300,22 @@ impl Deposit {
             let vd = &mut self.vault_depositor;
             let prior_shares = vd.shares.get();
             let new_vd_shares = prior_shares + shares_out;
-            // Decode reference price + recompute VPS to capture basis.
-            // VPS uses the *post-deposit* total_shares per the spec
-            // (top-off merges shares-weighted against `VPS_now`); for
-            // seeding-symmetric capture on a first outside deposit,
-            // use the same post-deposit state.
+            // Post-deposit VPS = L / total_shares, Q32.32. Spec's
+            // **Depositor positions and cost basis → Top-off** says
+            // top-offs merge against `VPS_now` evaluated at the
+            // post-deposit state.
             let l_after = isqrt_u128((new_base_atoms as u128) * (new_quote_atoms as u128));
             let vps_after = if new_total == 0 {
                 Q32_32_ONE
             } else {
                 ((l_after << 32) / new_total as u128) as u64
             };
-            // Quote-denominated lot value: `quote_in + base_in × ref`,
-            // where `ref` is decoded from the live reference price.
-            // For MVP we use the raw u32 ref bits as a proxy scaled
-            // factor — fine when ref_price > 0 (gated below). A full
-            // decoder lands in the same follow-up that wires up
-            // off-chain price display.
-            let ref_now = ref_price_bits as u64;
-            let lot_quote_value =
-                (quote_in_final as u128) + (base_in_final as u128) * (ref_now as u128);
+            // Decoded reference price for cost-basis math.
+            let ref_now_price = crate::Price::from_bits(ref_price_bits);
+            // Quote-denominated lot value: `quote_in + base_in × ref`
+            // (spec L944). Uses `quote_for_base` to decode the price.
+            let lot_quote_value = (quote_in_final as u128)
+                .saturating_add(ref_now_price.quote_for_base(base_in_final));
             let lot_quote_value_u64 = lot_quote_value.min(u64::MAX as u128) as u64;
 
             if prior_shares == 0 {
@@ -336,7 +326,7 @@ impl Deposit {
                 vd.shares = (new_vd_shares).into();
                 vd.net_deposits = lot_quote_value_u64.into();
                 vd.gross_deposited = lot_quote_value_u64.into();
-                vd.entry_ref_price = crate::Price::from_bits(ref_price_bits);
+                vd.entry_ref_price = ref_now_price;
                 vd.entry_vps = vps_after.into();
                 vd.opened_at = self.clock.slot.into();
                 // realized_* default to zero; bump captured by Anchor.
@@ -345,19 +335,23 @@ impl Deposit {
                 let prev = self.market.outstanding_vault_depositors.get();
                 self.market.outstanding_vault_depositors = (prev + 1).into();
             } else {
-                // Top-off: merge weighted averages.
+                // Top-off: merge shares-weighted averages. `entry_vps`
+                // is Q32.32 so a raw u128 weighted-avg is exact;
+                // `entry_ref_price` is a custom decimal-float so we
+                // route through `Price::weighted_average` which
+                // decodes / averages / re-encodes.
                 let s = prior_shares as u128;
                 let ds = shares_out as u128;
                 let denom = s + ds;
                 let entry_vps_prev = vd.entry_vps.get() as u128;
-                let entry_ref_prev = vd.entry_ref_price.as_u32() as u128;
                 let entry_vps_new = (s * entry_vps_prev + ds * (vps_after as u128)) / denom;
-                let entry_ref_new = (s * entry_ref_prev + ds * (ref_now as u128)) / denom;
+                let entry_ref_new =
+                    vd.entry_ref_price.weighted_average(ref_now_price, s, ds);
                 vd.shares = new_vd_shares.into();
                 vd.net_deposits = (vd.net_deposits.get() + lot_quote_value_u64).into();
                 vd.gross_deposited = (vd.gross_deposited.get() + lot_quote_value_u64).into();
                 vd.entry_vps = (entry_vps_new as u64).into();
-                vd.entry_ref_price = crate::Price::from_bits(entry_ref_new as u32);
+                vd.entry_ref_price = entry_ref_new;
             }
         }
 

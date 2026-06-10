@@ -132,7 +132,7 @@ impl RegisterVault {
         vault.perf_fee_rate = perf_fee_rate.into();
         vault.min_leader_share = min_leader_share.into();
         vault.hwm = Q32_32_ONE.into();
-        vault.allow_outside_depositors = allow_outside_depositors as u8;
+        vault.allow_outside_depositors = allow_outside_depositors.into();
         // `frozen`, `outside_deposits_approved`, base/quote/share
         // counters, profile, and remaining are already zero from
         // `allocate_sector`'s `Vault::zeroed()`.

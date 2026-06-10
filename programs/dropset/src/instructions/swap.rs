@@ -27,10 +27,32 @@ use anchor_spl_v2::{
 
 use crate::{
     errors::DropsetError,
-    events::{FillEvent, SwapSide},
+    events::FillEvent,
     state::{Market, BPS, FLUSH_BIT, PPM},
     Price, N_LEVELS,
 };
+
+/// Side of a taker fill — `Buy` consumes asks (taker pays quote, gets
+/// base); `Sell` consumes bids (taker pays base, gets quote). Lives
+/// here rather than in [`crate::events`] because it is a swap
+/// instruction argument, not an event field.
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum SwapSide {
+    Buy = 0,
+    Sell = 1,
+}
+
+impl SwapSide {
+    /// Convert from the wire `u8` argument.
+    pub fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            0 => Some(Self::Buy),
+            1 => Some(Self::Sell),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Accounts)]
 pub struct Swap {
@@ -113,9 +135,22 @@ impl Swap {
         amount_in: u64,
         limit_price_bits: u32,
     ) -> Result<()> {
-        let side = SwapSide::from_u8(side_u8).ok_or(DropsetError::InvalidPrice)?;
+        let side = SwapSide::from_u8(side_u8).ok_or(DropsetError::InvalidSwapSide)?;
         let limit_price = Price::from_bits(limit_price_bits);
         require!(limit_price.is_valid(), DropsetError::InvalidPrice);
+        // Sentinel semantics per side — see `price.rs` for the
+        // `ZERO`/`INFINITY` definitions:
+        //   * `Buy` accepts `INFINITY` (no upper bound on ask price)
+        //     and any regular price; `ZERO` would reject every ask
+        //     and is rejected up front as a likely caller mistake.
+        //   * `Sell` accepts `ZERO` (no lower bound on bid price)
+        //     and any regular price; `INFINITY` would reject every
+        //     bid and is rejected symmetrically.
+        let limit_ok = match side {
+            SwapSide::Buy => !limit_price.is_zero(),
+            SwapSide::Sell => !limit_price.is_infinity(),
+        };
+        require!(limit_ok, DropsetError::InvalidLimitPrice);
         require!(amount_in > 0, DropsetError::NothingFilled);
 
         let len = self.market.len();
@@ -239,32 +274,6 @@ impl Swap {
                 break;
             }
 
-            // Decode price to a scaled u64 ratio, conservatively. We
-            // approximate by reusing the significand × 10^(exp - 7);
-            // for atom-scale arithmetic at FX-style prices (~1.0 to
-            // ~100) this is accurate. A full decoder lands with the
-            // bytemuck heap upgrade.
-            let sig = price.significand() as u128;
-            let unb = price.unbiased_exponent() as i32 - 7;
-            // price_scaled ≈ sig × 10^unb, in fixed quote-per-base units
-            // scaled by 10^9 so atom math stays integral on typical
-            // FX values. Cap negative shifts so we never divide by
-            // zero downstream.
-            let mut price_num: u128 = sig;
-            let mut price_den: u128 = 1;
-            if unb >= 0 {
-                for _ in 0..unb {
-                    price_num = price_num.saturating_mul(10);
-                }
-            } else {
-                for _ in 0..(-unb) {
-                    price_den = price_den.saturating_mul(10);
-                }
-            }
-            if price_num == 0 || price_den == 0 {
-                continue;
-            }
-
             // Snapshot the vault's current inventory inside the fill
             // loop — each leg debits/credits it, so we read fresh.
             let (base_atoms, quote_atoms) = {
@@ -274,30 +283,36 @@ impl Swap {
 
             let (fill_base, fill_quote): (u64, u64) = match side {
                 SwapSide::Buy => {
-                    // level.size is in base; convert taker's quote
-                    // budget to base via the level price.
-                    let cap_by_taker_quote = (taker_unfilled_in * price_den) / price_num;
+                    // level.size is in base; convert the taker's
+                    // quote budget to base via the level price.
+                    let cap_by_taker_quote = price.base_for_quote(
+                        taker_unfilled_in.min(u64::MAX as u128) as u64,
+                    );
                     let cap_by_level = level_size as u128;
                     let cap_by_vault = base_atoms as u128;
                     let fill_b = cap_by_taker_quote.min(cap_by_level).min(cap_by_vault);
                     if fill_b == 0 {
                         continue;
                     }
-                    let fill_q = (fill_b * price_num) / price_den;
-                    (fill_b as u64, fill_q as u64)
+                    let fill_b_u64 = fill_b.min(u64::MAX as u128) as u64;
+                    let fill_q = price.quote_for_base(fill_b_u64);
+                    (fill_b_u64, fill_q.min(u64::MAX as u128) as u64)
                 }
                 SwapSide::Sell => {
-                    // level.size is in quote; convert taker's base to
-                    // quote via the level price.
-                    let taker_implied_quote = (taker_unfilled_in * price_num) / price_den;
+                    // level.size is in quote; convert the taker's
+                    // unfilled base to quote via the level price.
+                    let taker_implied_quote = price.quote_for_base(
+                        taker_unfilled_in.min(u64::MAX as u128) as u64,
+                    );
                     let cap_by_level = level_size as u128;
                     let cap_by_vault = quote_atoms as u128;
                     let fill_q = taker_implied_quote.min(cap_by_level).min(cap_by_vault);
                     if fill_q == 0 {
                         continue;
                     }
-                    let fill_b = (fill_q * price_den) / price_num;
-                    (fill_b as u64, fill_q as u64)
+                    let fill_q_u64 = fill_q.min(u64::MAX as u128) as u64;
+                    let fill_b = price.base_for_quote(fill_q_u64);
+                    (fill_b.min(u64::MAX as u128) as u64, fill_q_u64)
                 }
             };
 

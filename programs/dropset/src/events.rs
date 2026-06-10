@@ -71,28 +71,6 @@ pub struct RealizeEvent {
     pub hwm_after: u64,
 }
 
-/// Side of a taker fill — `Buy` consumes asks (taker pays quote, gets
-/// base); `Sell` consumes bids (taker pays base, gets quote).
-#[repr(u8)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum SwapSide {
-    Buy = 0,
-    Sell = 1,
-}
-
-impl SwapSide {
-    /// Convert from the wire `u8` argument. Defensive — the dispatcher
-    /// already rejects unknown discriminants, but matching engine math
-    /// keys off this so an exhaustive check is cheap.
-    pub fn from_u8(v: u8) -> Option<Self> {
-        match v {
-            0 => Some(Self::Buy),
-            1 => Some(Self::Sell),
-            _ => None,
-        }
-    }
-}
-
 /// Per-leg fill record. Bytemuck-serialized via `emit_cpi!` so the
 /// inner-instruction data carries the canonical trade record at
 /// `~1000 CU` + payload size per emit — the hot path can afford it.

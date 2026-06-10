@@ -179,12 +179,16 @@ pub struct Vault {
     /// Floor on `leader_shares / total_shares` in ppm. Stamped at
     /// `OpenVault` from `MarketHeader.default_min_leader_share`.
     pub min_leader_share: PodU32,
-    /// Set to 1 when an admin has frozen this vault.
-    pub frozen: u8,
-    /// Set to 1 when the leader opted into outside deposits.
-    pub allow_outside_depositors: u8,
-    /// Set to 1 when an admin approved outside deposits.
-    pub outside_deposits_approved: u8,
+    /// True when an admin has frozen this vault. Alignment-1
+    /// `PodBool` so the field stays at the same on-chain offset as
+    /// the previous `u8` representation, but readers / writers go
+    /// through `.get()` / `.into()` for strongly-typed semantics
+    /// rather than `== 1` / `!= 0` comparisons.
+    pub frozen: PodBool,
+    /// True when the leader opted into outside deposits.
+    pub allow_outside_depositors: PodBool,
+    /// True when an admin approved outside deposits.
+    pub outside_deposits_approved: PodBool,
     /// Explicit reserved bytes so [`Vault`] stays Pod-friendly (no
     /// implicit padding) and leaves a small slot for future flag
     /// additions without changing the on-chain size.
@@ -373,7 +377,7 @@ pub struct RealizeOutcome {
 pub fn realize_in_place(vault: &mut Vault) -> RealizeOutcome {
     let s = vault.total_shares.get();
     let hwm = vault.hwm.get();
-    if s == 0 || vault.frozen != 0 {
+    if s == 0 || vault.frozen.get() {
         return RealizeOutcome {
             shares_minted: 0,
             hwm_after: hwm,
@@ -934,7 +938,7 @@ mod tests {
     fn realize_noop_when_frozen() {
         // Even with VPS above HWM, frozen vaults must not accrue.
         let mut v = seeded_vault(200, 200, 100, 100, Q32_32_ONE, 100_000);
-        v.frozen = 1;
+        v.frozen = true.into();
         let r = realize_in_place(&mut v);
         assert_eq!(r.shares_minted, 0);
     }

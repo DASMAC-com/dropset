@@ -68,4 +68,8 @@ pub enum DropsetError {
     VaultDepositorMismatch,
     #[msg("arithmetic overflow in basket / share math")]
     MathOverflow,
+    #[msg("swap `side` argument is neither Buy nor Sell")]
+    InvalidSwapSide,
+    #[msg("limit_price sentinel is invalid for this swap side")]
+    InvalidLimitPrice,
 }

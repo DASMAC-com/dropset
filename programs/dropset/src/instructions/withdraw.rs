@@ -124,7 +124,7 @@ impl Withdraw {
             let v = &self.market.as_slice()[vault_idx as usize];
             (
                 v.leader,
-                v.frozen,
+                v.frozen.get(),
                 v.total_shares.get(),
                 v.leader_shares.get(),
                 v.base_atoms.get(),
@@ -180,7 +180,7 @@ impl Withdraw {
             // (frozen / tombstoned bypass — MVP doesn't ship those, so
             // the active branch always applies). The floor uses the
             // post-burn ratio.
-            if frozen == 0 {
+            if !frozen {
                 let new_total = total_shares - shares_in;
                 if new_total > 0 {
                     let lhs = (new_leader as u128) * (PPM as u128);
@@ -199,31 +199,41 @@ impl Withdraw {
             );
             let released_basis =
                 ((vd.net_deposits.get() as u128) * s_in) / (vd.shares.get() as u128);
-            // Realized PnL math, per spec:
+            // Realized PnL math, per spec L1513-1519:
             //   realized_fx    += slice_base × (ref_now − entry_ref)
             //   realized_yield += slice_quote + slice_base × entry_ref − released_basis
             //   realized_pnl   += slice_quote + slice_base × ref_now    − released_basis
-            // All terms in `u128` to avoid intermediate overflow; the
-            // signed delta clamps into `i64` at the end. For MVP we use
-            // the raw `Price` bits as a proxy scaled factor — matches
-            // what `deposit` stored for `entry_ref_price`. A full
-            // base-10 decoder lands in the same follow-up as the
-            // off-chain price display.
-            let ref_now = ref_price_bits as u128;
-            let entry_ref = vd.entry_ref_price.as_u32() as u128;
-            let fx_delta: i128 = (slice_base as i128) * ((ref_now as i128) - (entry_ref as i128));
-            let yield_delta: i128 = (slice_quote as i128)
-                + (slice_base as i128) * (entry_ref as i128)
-                - (released_basis as i128);
-            let pnl_delta: i128 = (slice_quote as i128) + (slice_base as i128) * (ref_now as i128)
-                - (released_basis as i128);
-            vd.realized_fx = (((vd.realized_fx.get() as i128) + fx_delta)
+            //
+            // `ref_now × slice_base` and `entry_ref × slice_base` are
+            // decoded via `Price::quote_for_base` — both produce a
+            // quote-atom value, so the deltas are well-typed in
+            // quote-denominated units. All math in `u128`/`i128` to
+            // avoid intermediate overflow; the signed accumulators
+            // clamp into `i64` at the store.
+            let ref_now_price = crate::Price::from_bits(ref_price_bits);
+            let entry_ref_price = vd.entry_ref_price;
+            let qref_now = ref_now_price.quote_for_base(slice_base_u64).min(i128::MAX as u128)
+                as i128;
+            let qref_entry = entry_ref_price
+                .quote_for_base(slice_base_u64)
+                .min(i128::MAX as u128) as i128;
+            let slice_quote_i = (slice_quote as i128).min(i128::MAX);
+            let released_i = (released_basis as i128).min(i128::MAX);
+            let fx_delta: i128 = qref_now.saturating_sub(qref_entry);
+            let yield_delta: i128 = slice_quote_i
+                .saturating_add(qref_entry)
+                .saturating_sub(released_i);
+            let pnl_delta: i128 = slice_quote_i
+                .saturating_add(qref_now)
+                .saturating_sub(released_i);
+            vd.realized_fx = (((vd.realized_fx.get() as i128).saturating_add(fx_delta))
                 .clamp(i64::MIN as i128, i64::MAX as i128) as i64)
                 .into();
-            let new_pnl = (vd.realized_pnl.get() as i128) + pnl_delta;
-            let new_yield = (vd.realized_yield.get() as i128) + yield_delta;
+            let new_pnl = (vd.realized_pnl.get() as i128).saturating_add(pnl_delta);
+            let new_yield = (vd.realized_yield.get() as i128).saturating_add(yield_delta);
             vd.realized_pnl = (new_pnl.clamp(i64::MIN as i128, i64::MAX as i128) as i64).into();
-            vd.realized_yield = (new_yield.clamp(i64::MIN as i128, i64::MAX as i128) as i64).into();
+            vd.realized_yield =
+                (new_yield.clamp(i64::MIN as i128, i64::MAX as i128) as i64).into();
             realized_pnl_delta = pnl_delta.clamp(i64::MIN as i128, i64::MAX as i128) as i64;
 
             let new_shares = vd.shares.get() - shares_in;

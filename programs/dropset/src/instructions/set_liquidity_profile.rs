@@ -77,7 +77,7 @@ impl SetLiquidityProfile {
                 address_eq(&vault.quote_authority, &signer_addr),
                 DropsetError::Unauthorized
             );
-            require!(vault.frozen == 0, DropsetError::VaultFrozen);
+            require!(!vault.frozen.get(), DropsetError::VaultFrozen);
             // The MVP rule (ENG-423): a vault's reference price must be
             // set before its profile is — the profile is pure ppm
             // offsets and needs a real anchor.

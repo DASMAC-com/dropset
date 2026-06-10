@@ -71,7 +71,7 @@ impl SetReferencePrice {
                 address_eq(&vault.quote_authority, &signer_addr),
                 DropsetError::Unauthorized
             );
-            require!(vault.frozen == 0, DropsetError::VaultFrozen);
+            require!(!vault.frozen.get(), DropsetError::VaultFrozen);
         }
 
         // Bump the market nonce (header borrow via Slab's DerefMut).
