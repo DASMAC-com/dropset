@@ -113,7 +113,11 @@ pub struct Deposit {
 impl Deposit {
     /// Returns `(Option<RealizeEvent>, DepositEvent)` for `lib.rs` to
     /// dispatch through `emit_cpi!`. See [`super::register_vault`] for
-    /// the rationale on emitting outside the handler.
+    /// the rationale on emitting outside the handler. `bump` is the
+    /// `VaultDepositor` PDA bump from `ctx.bumps.vault_depositor` —
+    /// stamped onto every deposit (leader + outside) so `withdraw`'s
+    /// `bump = vault_depositor.bump` reverification has a valid value
+    /// even on a leader-path PDA that's otherwise unused.
     #[inline(always)]
     pub fn deposit(
         &mut self,
@@ -122,7 +126,15 @@ impl Deposit {
         quote_in: u64,
         max_base_in: u64,
         max_quote_in: u64,
+        bump: u8,
     ) -> Result<(Option<RealizeEvent>, DepositEvent)> {
+        // Always stamp the canonical PDA bump so `withdraw`'s
+        // `bump = vault_depositor.bump` reverification works on every
+        // exit path — including a leader-path PDA that's otherwise
+        // unused for share/basis state (see the "MVP carve-out" note
+        // in docs/architecture.md § Deposit).
+        self.vault_depositor.bump = bump;
+
         let len = self.market.len();
         require!((vault_idx as usize) < len, DropsetError::InvalidSectorIndex);
 

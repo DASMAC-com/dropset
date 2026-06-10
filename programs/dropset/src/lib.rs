@@ -84,9 +84,14 @@ pub mod dropset {
         max_base_in: u64,
         max_quote_in: u64,
     ) -> Result<()> {
-        let (realize_event, deposit_event) =
-            ctx.accounts
-                .deposit(vault_idx, base_in, quote_in, max_base_in, max_quote_in)?;
+        let (realize_event, deposit_event) = ctx.accounts.deposit(
+            vault_idx,
+            base_in,
+            quote_in,
+            max_base_in,
+            max_quote_in,
+            ctx.bumps.vault_depositor,
+        )?;
         if let Some(re) = realize_event {
             emit_cpi!(re);
         }
