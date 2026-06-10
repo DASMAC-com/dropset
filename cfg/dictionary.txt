@@ -39,6 +39,8 @@ eurcv
 eurozone
 exfiltration
 forex
+fxpractice
+guéant
 gyen
 générale
 helvetiker
@@ -50,6 +52,7 @@ kapsule
 keypair
 kripto
 lamports
+lehalle
 lemy
 litesvm
 localnet
@@ -59,13 +62,16 @@ metas
 multisigs
 mxne
 navigations
+oanda
 ohlcv
+parameterizes
 paytrie
 permissionless
 prebuild
 predev
 programdata
 pubkeys
+raydium
 reentrancy
 repr
 rollups
@@ -79,10 +85,13 @@ solflare
 solscan
 soulbound
 stablecoins
+stablecorp
+stoikov
 straitsx
 swatinem
 syscall
 syscalls
+tapia
 tgbp
 toggleable
 tokenised
