@@ -350,9 +350,7 @@ impl Deposit {
                 // Bump the market's outstanding depositor counter — this
                 // is a fresh `VaultDepositor` PDA.
                 let prev = self.market.outstanding_vault_depositors.get();
-                let next = prev
-                    .checked_add(1)
-                    .ok_or(DropsetError::MathOverflow)?;
+                let next = prev.checked_add(1).ok_or(DropsetError::MathOverflow)?;
                 self.market.outstanding_vault_depositors = next.into();
             } else {
                 // Top-off: merge shares-weighted averages. `entry_vps`

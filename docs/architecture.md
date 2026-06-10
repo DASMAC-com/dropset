@@ -1661,6 +1661,28 @@ up) — which gives leaders a standing incentive to keep their
 reference prices honest without the matching engine needing a
 leader-vs-leader pre-pass.
 
+### Minimum-output guard (`min_out`)
+
+The take instruction accepts a `min_out: u64` for SDK
+composability. The matcher snapshots every touched sector's
+inventory + per-level `remaining.size` + `market.nonce` before
+mutating, runs the full fill loop, then checks whether the
+achievable net output (after taker fee) meets `min_out`. On
+failure the snapshots are walked in reverse to restore exact
+pre-swap state, `FLUSH_BIT` is re-armed on every vault the
+matcher flushed during the walk, and the instruction returns
+without emitting events or firing CPI transfers. No error — the
+surrounding transaction survives so a bundle of instructions that
+includes the swap doesn't unravel when no liquidity is available
+at the caller's price.
+
+`min_out == 0` is the legacy "any fill counts" behavior: a
+zero-fill swap still soft-reverts (no events, no transfers), but
+a partial fill with `total_out > 0` always commits. Frozen vaults
+are skipped from the matching set entirely so a leader-initiated
+freeze takes effect from the next taker instruction rather than
+waiting for per-level expiry.
+
 ## Events and emission
 
 The protocol emits structured events on its **cold paths** so off-chain
