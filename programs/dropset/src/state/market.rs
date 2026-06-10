@@ -891,4 +891,84 @@ mod tests {
         assert_eq!(walk(&market, DllList::Active), [0]);
         assert!(walk(&market, DllList::Free).is_empty());
     }
+
+    // ── realize_in_place ────────────────────────────────────────────
+    //
+    // These exercise the perf-fee accrual formula directly on a
+    // stack-allocated `Vault` — no slab, no AccountBuffer, no SVM. The
+    // function is pure on its &mut Vault argument, so unit tests can
+    // construct any (b, q, total_shares, leader_shares, hwm, fee)
+    // state and assert the outcome.
+
+    fn seeded_vault(b: u64, q: u64, total: u64, leader: u64, hwm: u64, fee_ppm: u32) -> Vault {
+        let mut v = Vault::zeroed();
+        v.base_atoms = b.into();
+        v.quote_atoms = q.into();
+        v.total_shares = total.into();
+        v.leader_shares = leader.into();
+        v.hwm = hwm.into();
+        v.perf_fee_rate = fee_ppm.into();
+        v
+    }
+
+    #[test]
+    fn realize_noop_on_unseeded_vault() {
+        let mut v = Vault::zeroed();
+        let r = realize_in_place(&mut v);
+        assert_eq!(r.shares_minted, 0);
+        assert_eq!(r.hwm_after, 0);
+    }
+
+    #[test]
+    fn realize_noop_when_vps_at_or_below_hwm() {
+        // Seeded at VPS = 1.0 (Q32_32_ONE), HWM also = 1.0.
+        // b * q = 10_000 → L = 100, total_shares = 100, VPS = 1.0.
+        let mut v = seeded_vault(100, 100, 100, 100, Q32_32_ONE, 100_000);
+        let r = realize_in_place(&mut v);
+        assert_eq!(r.shares_minted, 0);
+        assert_eq!(v.total_shares.get(), 100);
+        assert_eq!(v.leader_shares.get(), 100);
+    }
+
+    #[test]
+    fn realize_noop_when_frozen() {
+        // Even with VPS above HWM, frozen vaults must not accrue.
+        let mut v = seeded_vault(200, 200, 100, 100, Q32_32_ONE, 100_000);
+        v.frozen = 1;
+        let r = realize_in_place(&mut v);
+        assert_eq!(r.shares_minted, 0);
+    }
+
+    #[test]
+    fn realize_mints_shares_when_vps_exceeds_hwm() {
+        // Seed with VPS = 1.0, then push b·q up so VPS > 1.0 and the
+        // 10% perf fee should mint new shares to the leader.
+        let mut v = seeded_vault(400, 400, 100, 100, Q32_32_ONE, 100_000);
+        // L = isqrt(400 * 400) = 400, total_shares = 100 → VPS = 4.0
+        // (Q32.32 = 4 * 2^32).
+        let r = realize_in_place(&mut v);
+        assert!(r.shares_minted > 0, "expected perf-fee mint at VPS > HWM");
+        // total_shares and leader_shares moved by the same `m`.
+        assert_eq!(
+            v.total_shares.get() - 100,
+            v.leader_shares.get() - 100,
+            "perf-fee accrual must move total and leader shares by the same delta"
+        );
+        // HWM advanced to the post-mint VPS.
+        assert_eq!(v.hwm.get(), r.hwm_after);
+        assert!(r.hwm_after > Q32_32_ONE);
+    }
+
+    #[test]
+    fn realize_zero_fee_advances_hwm_only() {
+        // With perf_fee_rate = 0 the leader earns no shares, but HWM
+        // still trails up so a later fee bump cannot retroactively
+        // accrue against historical highs.
+        let mut v = seeded_vault(400, 400, 100, 100, Q32_32_ONE, 0);
+        let r = realize_in_place(&mut v);
+        assert_eq!(r.shares_minted, 0);
+        assert!(r.hwm_after > Q32_32_ONE);
+        assert_eq!(v.leader_shares.get(), 100);
+        assert_eq!(v.total_shares.get(), 100);
+    }
 }
