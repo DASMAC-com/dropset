@@ -72,4 +72,41 @@ pub mod dropset {
         ctx.accounts
             .set_liquidity_profile(vault_idx, profile_bytes)
     }
+
+    #[discrim = 7]
+    pub fn deposit(
+        ctx: &mut Context<Deposit>,
+        vault_idx: u32,
+        base_in: u64,
+        quote_in: u64,
+        max_base_in: u64,
+        max_quote_in: u64,
+    ) -> Result<()> {
+        ctx.accounts
+            .deposit(vault_idx, base_in, quote_in, max_base_in, max_quote_in)
+    }
+
+    #[discrim = 8]
+    pub fn withdraw(
+        ctx: &mut Context<Withdraw>,
+        vault_idx: u32,
+        shares_in: u64,
+        min_base_out: u64,
+        min_quote_out: u64,
+    ) -> Result<()> {
+        ctx.accounts
+            .withdraw(vault_idx, shares_in, min_base_out, min_quote_out)
+    }
+
+    #[discrim = 9]
+    pub fn swap(
+        ctx: &mut Context<Swap>,
+        vault_idx: u32,
+        side: u8,
+        amount_in: u64,
+        limit_price_bits: u32,
+    ) -> Result<()> {
+        ctx.accounts
+            .swap(vault_idx, side, amount_in, limit_price_bits)
+    }
 }
