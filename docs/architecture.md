@@ -1218,6 +1218,13 @@ Caller arguments stamped onto the vault:
 - `allow_outside_depositors: bool` — toggleable post-open via
   `SetAllowOutsideDepositors`.
 
+**MVP carve-out (ENG-423).** The admin "open on someone else's
+behalf" path is not yet wired — every `OpenVault` (admin or non-admin)
+stamps the calling signer as `Vault.leader`. The admin path still
+waives the per-market fee, but the spec's `leader: Pubkey`
+admin-only override is deferred. Until it lands, an issuer-funded
+vault must be opened by the issuer's own wallet directly.
+
 Side effect: the instruction stamps `Vault.min_leader_share` from the
 market's `MarketHeader.default_min_leader_share` (the skin-in-the-game
 floor this vault will be held to; admin-overridable per vault via
@@ -1468,6 +1475,19 @@ treasuries, then:
   `Vault.outside_deposits_approved == 1` (admin approval); either
   flag unset rejects the deposit. See
   **Leader operations → SetOutsideDepositsApproved**.
+
+**MVP carve-out (ENG-423).** The current `deposit` instruction
+holds a single Accounts shape that always declares the
+`VaultDepositor` PDA with `init_if_needed`. On the leader path the
+PDA is still allocated (one-time ~0.0017 SOL rent) but the handler
+writes nothing to it — leader shares live on `Vault.leader_shares`
+per the spec above. Splitting `deposit` into separate
+`deposit_leader` / `deposit_outside` instructions to suppress the
+leader-side allocation is a follow-up that doesn't change the
+on-chain math. On withdraw, the outside-path PDA is now closed back
+to the depositor on zero-share exit and
+`MarketHeader.outstanding_vault_depositors` decremented, so the
+spec's `close_market` invariant is reachable.
 
 `Vault.total_shares` is incremented in both paths.
 

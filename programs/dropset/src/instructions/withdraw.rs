@@ -305,15 +305,21 @@ impl Withdraw {
             transfer_checked(cpi, slice_quote_u64, decimals)?;
         }
 
-        // Close the VaultDepositor PDA when an outside depositor's shares
-        // reach zero. For MVP the close happens inline by zeroing the
-        // account's lamports → owner; Anchor's #[account(close = ...)]
-        // attribute does this declaratively in v1 but is exposed via
-        // `close_account` helper in v2. We leave the PDA in place when
-        // shares > 0; the next deposit re-uses it via `init_if_needed`.
-        // A follow-up PR wires up the rent-recovery close path; for now
-        // the leftover PDA carries zero state and is harmless.
-        // The counter is decremented in the same follow-up.
+        // Close the VaultDepositor PDA when an outside depositor's
+        // shares hit zero — refund rent to the depositor and
+        // decrement `MarketHeader.outstanding_vault_depositors`. The
+        // counter is the spec's only on-chain witness that
+        // `close_market` can safely proceed (architecture.md §
+        // Account lifecycle and rent reclamation), so it must come
+        // back to zero on every clean exit.
+        if !is_leader && self.vault_depositor.shares.get() == 0 {
+            use anchor_lang_v2::AnchorAccount;
+            let signer_view = *self.signer.as_ref();
+            self.vault_depositor.close(signer_view)?;
+            let prev = self.market.outstanding_vault_depositors.get();
+            self.market.outstanding_vault_depositors =
+                prev.saturating_sub(1).into();
+        }
 
         let realize_event = if realize_outcome.shares_minted > 0 {
             Some(RealizeEvent {
