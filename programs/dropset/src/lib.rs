@@ -69,8 +69,7 @@ pub mod dropset {
         vault_idx: u32,
         profile_bytes: [u8; PROFILE_BYTES],
     ) -> Result<()> {
-        ctx.accounts
-            .set_liquidity_profile(vault_idx, profile_bytes)
+        ctx.accounts.set_liquidity_profile(vault_idx, profile_bytes)
     }
 
     #[discrim = 7]

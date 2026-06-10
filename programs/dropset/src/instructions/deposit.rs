@@ -25,8 +25,8 @@ use anchor_spl_v2::{
 use crate::{
     errors::DropsetError,
     events::{DepositEvent, RealizeEvent},
-    state::{isqrt_u128, realize_in_place, Market, VAULT_DEPOSITOR_SEED, BPS, PPM},
-    Q32_32_ONE, VaultDepositorHeader,
+    state::{isqrt_u128, realize_in_place, Market, BPS, PPM, VAULT_DEPOSITOR_SEED},
+    VaultDepositorHeader, Q32_32_ONE,
 };
 
 #[derive(Accounts)]
@@ -120,10 +120,7 @@ impl Deposit {
         max_quote_in: u64,
     ) -> Result<()> {
         let len = self.market.len();
-        require!(
-            (vault_idx as usize) < len,
-            DropsetError::InvalidSectorIndex
-        );
+        require!((vault_idx as usize) < len, DropsetError::InvalidSectorIndex);
 
         // Snapshot pre-state we need post-mutation. Borrow the vault
         // immutably to read fields, drop the borrow, then re-borrow mut.
@@ -222,13 +219,10 @@ impl Deposit {
             // Basket = ceil(shares_out × leg / total_shares). u128
             // intermediates; the final values fit in u64 by construction
             // (basket ≤ caller's input + 1).
-            let base_in_final =
-                ((shares_out_u128 * b) + ts - 1) / ts;
-            let quote_in_final =
-                ((shares_out_u128 * q) + ts - 1) / ts;
+            let base_in_final = (shares_out_u128 * b).div_ceil(ts);
+            let quote_in_final = (shares_out_u128 * q).div_ceil(ts);
             require!(
-                base_in_final <= max_base_in as u128
-                    && quote_in_final <= max_quote_in as u128,
+                base_in_final <= max_base_in as u128 && quote_in_final <= max_quote_in as u128,
                 DropsetError::BasketSlippage
             );
             (
@@ -241,7 +235,7 @@ impl Deposit {
         // Skin-in-the-game floor (outside-path, non-seeding): post-deposit
         // ratio leader_shares / total_shares >= min_leader_share / PPM.
         if !is_leader && !is_seeding {
-            let new_total = (total_shares as u128) + (shares_out as u64 as u128);
+            let new_total = (total_shares as u128) + (shares_out as u128);
             let lhs = (leader_shares as u128) * (PPM as u128);
             let rhs = (min_leader_share as u128) * new_total;
             require!(lhs >= rhs, DropsetError::MinLeaderShareViolated);
@@ -291,7 +285,12 @@ impl Deposit {
                 if is_seeding {
                     v.hwm = Q32_32_ONE.into();
                 }
-                (new_total, new_leader, v.base_atoms.get(), v.quote_atoms.get())
+                (
+                    new_total,
+                    new_leader,
+                    v.base_atoms.get(),
+                    v.quote_atoms.get(),
+                )
             } else {
                 (
                     new_total,
@@ -312,9 +311,7 @@ impl Deposit {
             // (top-off merges shares-weighted against `VPS_now`); for
             // seeding-symmetric capture on a first outside deposit,
             // use the same post-deposit state.
-            let l_after = isqrt_u128(
-                (new_base_atoms as u128) * (new_quote_atoms as u128),
-            );
+            let l_after = isqrt_u128((new_base_atoms as u128) * (new_quote_atoms as u128));
             let vps_after = if new_total == 0 {
                 Q32_32_ONE
             } else {
@@ -327,8 +324,8 @@ impl Deposit {
             // decoder lands in the same follow-up that wires up
             // off-chain price display.
             let ref_now = ref_price_bits as u64;
-            let lot_quote_value = (quote_in_final as u128)
-                + (base_in_final as u128) * (ref_now as u128);
+            let lot_quote_value =
+                (quote_in_final as u128) + (base_in_final as u128) * (ref_now as u128);
             let lot_quote_value_u64 = lot_quote_value.min(u64::MAX as u128) as u64;
 
             if prior_shares == 0 {
@@ -346,8 +343,7 @@ impl Deposit {
                 // Bump the market's outstanding depositor counter — this
                 // is a fresh `VaultDepositor` PDA.
                 let prev = self.market.outstanding_vault_depositors.get();
-                self.market.outstanding_vault_depositors =
-                    (prev + 1).into();
+                self.market.outstanding_vault_depositors = (prev + 1).into();
             } else {
                 // Top-off: merge weighted averages.
                 let s = prior_shares as u128;
@@ -355,17 +351,13 @@ impl Deposit {
                 let denom = s + ds;
                 let entry_vps_prev = vd.entry_vps.get() as u128;
                 let entry_ref_prev = vd.entry_ref_price.as_u32() as u128;
-                let entry_vps_new =
-                    (s * entry_vps_prev + ds * (vps_after as u128)) / denom;
-                let entry_ref_new =
-                    (s * entry_ref_prev + ds * (ref_now as u128)) / denom;
+                let entry_vps_new = (s * entry_vps_prev + ds * (vps_after as u128)) / denom;
+                let entry_ref_new = (s * entry_ref_prev + ds * (ref_now as u128)) / denom;
                 vd.shares = new_vd_shares.into();
                 vd.net_deposits = (vd.net_deposits.get() + lot_quote_value_u64).into();
-                vd.gross_deposited =
-                    (vd.gross_deposited.get() + lot_quote_value_u64).into();
+                vd.gross_deposited = (vd.gross_deposited.get() + lot_quote_value_u64).into();
                 vd.entry_vps = (entry_vps_new as u64).into();
-                vd.entry_ref_price =
-                    crate::Price::from_bits(entry_ref_new as u32);
+                vd.entry_ref_price = crate::Price::from_bits(entry_ref_new as u32);
             }
         }
 

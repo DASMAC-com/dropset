@@ -43,24 +43,18 @@ impl SetReferencePrice {
         require!(price.is_valid(), DropsetError::InvalidPrice);
 
         let len = self.market.len();
-        require!(
-            (vault_idx as usize) < len,
-            DropsetError::InvalidSectorIndex
-        );
+        require!((vault_idx as usize) < len, DropsetError::InvalidSectorIndex);
 
         // Bump the market nonce first (this borrows the header via
         // Slab's DerefMut). The tail borrow that mutates the vault
         // happens after this header write completes.
         let nonce = self.market.nonce.get();
-        let new_nonce = nonce
-            .checked_add(1)
-            .ok_or(DropsetError::MathOverflow)?;
+        let new_nonce = nonce.checked_add(1).ok_or(DropsetError::MathOverflow)?;
         self.market.nonce = new_nonce.into();
 
         let current_slot = self.clock.slot;
         require!(
-            quote_slot <= current_slot
-                && current_slot.saturating_sub(quote_slot) <= MAX_BACKDATE,
+            quote_slot <= current_slot && current_slot.saturating_sub(quote_slot) <= MAX_BACKDATE,
             DropsetError::InvalidQuoteSlot
         );
 

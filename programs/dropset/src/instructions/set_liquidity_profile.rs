@@ -47,10 +47,7 @@ impl SetLiquidityProfile {
     ) -> Result<()> {
         let profile: &LiquidityProfile = bytemuck::from_bytes(&profile_bytes);
         let len = self.market.len();
-        require!(
-            (vault_idx as usize) < len,
-            DropsetError::InvalidSectorIndex
-        );
+        require!((vault_idx as usize) < len, DropsetError::InvalidSectorIndex);
 
         // Per-side `Σ size_bps ≤ 10_000`. `u32` accumulator: at
         // N_LEVELS = 8 the upper bound is `8 × u16::MAX = 524_280`,
@@ -69,9 +66,7 @@ impl SetLiquidityProfile {
         // Bump market.nonce (header borrow). The vault tail borrow
         // happens after.
         let nonce = self.market.nonce.get();
-        let new_nonce = nonce
-            .checked_add(1)
-            .ok_or(DropsetError::MathOverflow)?;
+        let new_nonce = nonce.checked_add(1).ok_or(DropsetError::MathOverflow)?;
         self.market.nonce = new_nonce.into();
 
         let signer_addr = *self.signer.address();

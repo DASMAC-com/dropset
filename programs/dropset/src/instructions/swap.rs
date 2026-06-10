@@ -28,8 +28,8 @@ use anchor_spl_v2::{
 use crate::{
     errors::DropsetError,
     events::{FillEvent, SwapSide},
-    state::{Market, FLUSH_BIT, BPS, PPM},
-    N_LEVELS, Price,
+    state::{Market, BPS, FLUSH_BIT, PPM},
+    Price, N_LEVELS,
 };
 
 #[derive(Accounts)]
@@ -102,8 +102,7 @@ fn flush_level_price(reference: Price, offset_ppm: u32, is_ask: bool) -> Price {
 
 /// `level.size_bps` × the matching leg, in atoms.
 fn flush_level_size(size_bps: u16, leg_atoms: u64) -> u64 {
-    (((leg_atoms as u128) * (size_bps as u128)) / (BPS as u128))
-        .min(u64::MAX as u128) as u64
+    (((leg_atoms as u128) * (size_bps as u128)) / (BPS as u128)).min(u64::MAX as u128) as u64
 }
 
 impl Swap {
@@ -120,10 +119,7 @@ impl Swap {
         require!(amount_in > 0, DropsetError::NothingFilled);
 
         let len = self.market.len();
-        require!(
-            (vault_idx as usize) < len,
-            DropsetError::InvalidSectorIndex
-        );
+        require!((vault_idx as usize) < len, DropsetError::InvalidSectorIndex);
 
         // Snapshot vault meta + flush if FLUSH_BIT armed.
         let market_addr = *self.market.address();
@@ -228,11 +224,12 @@ impl Swap {
         let mut total_fee: u128 = 0;
         let mut filled_legs: u32 = 0;
 
-        for li in 0..nlive {
-            let (level_idx, price, level_size, _exp) = levels[li];
+        for &(level_idx, price, level_size, _exp) in levels.iter().take(nlive) {
             // Limit-price filter.
             let crosses = match side {
-                SwapSide::Buy => price.as_u32() > limit_price.as_u32() && !limit_price.is_infinity(),
+                SwapSide::Buy => {
+                    price.as_u32() > limit_price.as_u32() && !limit_price.is_infinity()
+                }
                 SwapSide::Sell => price.as_u32() < limit_price.as_u32() && !limit_price.is_zero(),
             };
             if crosses {
@@ -279,8 +276,7 @@ impl Swap {
                 SwapSide::Buy => {
                     // level.size is in base; convert taker's quote
                     // budget to base via the level price.
-                    let cap_by_taker_quote =
-                        (taker_unfilled_in * price_den) / price_num;
+                    let cap_by_taker_quote = (taker_unfilled_in * price_den) / price_num;
                     let cap_by_level = level_size as u128;
                     let cap_by_vault = base_atoms as u128;
                     let fill_b = cap_by_taker_quote.min(cap_by_level).min(cap_by_vault);
@@ -293,8 +289,7 @@ impl Swap {
                 SwapSide::Sell => {
                     // level.size is in quote; convert taker's base to
                     // quote via the level price.
-                    let taker_implied_quote =
-                        (taker_unfilled_in * price_num) / price_den;
+                    let taker_implied_quote = (taker_unfilled_in * price_num) / price_den;
                     let cap_by_level = level_size as u128;
                     let cap_by_vault = quote_atoms as u128;
                     let fill_q = taker_implied_quote.min(cap_by_level).min(cap_by_vault);
@@ -309,12 +304,8 @@ impl Swap {
             // Apply taker fee on the *output* leg, retained in the
             // matched vault for the depositors' benefit.
             let fee = match side {
-                SwapSide::Buy => {
-                    ((fill_base as u128) * (taker_fee_ppm as u128)) / (PPM as u128)
-                }
-                SwapSide::Sell => {
-                    ((fill_quote as u128) * (taker_fee_ppm as u128)) / (PPM as u128)
-                }
+                SwapSide::Buy => ((fill_base as u128) * (taker_fee_ppm as u128)) / (PPM as u128),
+                SwapSide::Sell => ((fill_quote as u128) * (taker_fee_ppm as u128)) / (PPM as u128),
             };
             let fee_u64 = fee.min(u64::MAX as u128) as u64;
 
@@ -328,10 +319,12 @@ impl Swap {
                         let q = v.quote_atoms.get().saturating_add(fill_quote);
                         v.base_atoms = b.into();
                         v.quote_atoms = q.into();
-                        v.remaining.asks[level_idx as usize].size =
-                            (v.remaining.asks[level_idx as usize].size.get()
-                                .saturating_sub(fill_base))
-                                .into();
+                        v.remaining.asks[level_idx as usize].size = (v.remaining.asks
+                            [level_idx as usize]
+                            .size
+                            .get()
+                            .saturating_sub(fill_base))
+                        .into();
                         (b, q)
                     }
                     SwapSide::Sell => {
@@ -340,10 +333,12 @@ impl Swap {
                         let q = v.quote_atoms.get().saturating_sub(fill_quote);
                         v.base_atoms = b.into();
                         v.quote_atoms = q.into();
-                        v.remaining.bids[level_idx as usize].size =
-                            (v.remaining.bids[level_idx as usize].size.get()
-                                .saturating_sub(fill_quote))
-                                .into();
+                        v.remaining.bids[level_idx as usize].size = (v.remaining.bids
+                            [level_idx as usize]
+                            .size
+                            .get()
+                            .saturating_sub(fill_quote))
+                        .into();
                         (b, q)
                     }
                 };
@@ -363,12 +358,11 @@ impl Swap {
                 SwapSide::Sell => fill_base as u128,
             };
             taker_unfilled_in = taker_unfilled_in.saturating_sub(consumed_in);
-            total_out = total_out
-                + match side {
-                    SwapSide::Buy => fill_base as u128,
-                    SwapSide::Sell => fill_quote as u128,
-                };
-            total_fee = total_fee.saturating_add(fee as u128);
+            total_out += match side {
+                SwapSide::Buy => fill_base as u128,
+                SwapSide::Sell => fill_quote as u128,
+            };
+            total_fee = total_fee.saturating_add(fee);
             filled_legs = filled_legs.saturating_add(1);
 
             // Emit one event per matched (vault, level) leg.
@@ -404,11 +398,11 @@ impl Swap {
         let (taker_in_atoms, taker_out_atoms) = match side {
             SwapSide::Buy => (
                 (amount_in as u128 - taker_unfilled_in) as u64, // quote spent
-                total_out as u64,                                 // base received
+                total_out as u64,                               // base received
             ),
             SwapSide::Sell => (
                 (amount_in as u128 - taker_unfilled_in) as u64, // base spent
-                total_out as u64,                                 // quote received
+                total_out as u64,                               // quote received
             ),
         };
 

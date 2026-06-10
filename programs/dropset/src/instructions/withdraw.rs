@@ -22,7 +22,7 @@ use anchor_spl_v2::{
 use crate::{
     errors::DropsetError,
     events::{RealizeEvent, WithdrawEvent},
-    state::{realize_in_place, Market, VAULT_DEPOSITOR_SEED, PPM},
+    state::{realize_in_place, Market, PPM, VAULT_DEPOSITOR_SEED},
     VaultDepositorHeader,
 };
 
@@ -108,10 +108,7 @@ impl Withdraw {
     ) -> Result<()> {
         require!(shares_in > 0, DropsetError::InsufficientShares);
         let len = self.market.len();
-        require!(
-            (vault_idx as usize) < len,
-            DropsetError::InvalidSectorIndex
-        );
+        require!((vault_idx as usize) < len, DropsetError::InvalidSectorIndex);
 
         // Snapshot pre-state.
         let (
@@ -177,10 +174,7 @@ impl Withdraw {
         // Path-specific share burn + (for outside path) PnL realization.
         let mut realized_pnl_delta: i64 = 0;
         let new_leader_shares = if is_leader {
-            require!(
-                leader_shares >= shares_in,
-                DropsetError::InsufficientShares
-            );
+            require!(leader_shares >= shares_in, DropsetError::InsufficientShares);
             let new_leader = leader_shares - shares_in;
             // Min-leader-share floor only enforced on active vaults
             // (frozen / tombstoned bypass — MVP doesn't ship those, so
@@ -203,8 +197,8 @@ impl Withdraw {
                 vd.shares.get() >= shares_in,
                 DropsetError::InsufficientShares
             );
-            let released_basis = ((vd.net_deposits.get() as u128) * s_in)
-                / (vd.shares.get() as u128);
+            let released_basis =
+                ((vd.net_deposits.get() as u128) * s_in) / (vd.shares.get() as u128);
             // Realized PnL math, per spec:
             //   realized_fx    += slice_base × (ref_now − entry_ref)
             //   realized_yield += slice_quote + slice_base × entry_ref − released_basis
@@ -217,13 +211,11 @@ impl Withdraw {
             // off-chain price display.
             let ref_now = ref_price_bits as u128;
             let entry_ref = vd.entry_ref_price.as_u32() as u128;
-            let fx_delta: i128 =
-                (slice_base as i128) * ((ref_now as i128) - (entry_ref as i128));
+            let fx_delta: i128 = (slice_base as i128) * ((ref_now as i128) - (entry_ref as i128));
             let yield_delta: i128 = (slice_quote as i128)
                 + (slice_base as i128) * (entry_ref as i128)
                 - (released_basis as i128);
-            let pnl_delta: i128 = (slice_quote as i128)
-                + (slice_base as i128) * (ref_now as i128)
+            let pnl_delta: i128 = (slice_quote as i128) + (slice_base as i128) * (ref_now as i128)
                 - (released_basis as i128);
             vd.realized_fx = (((vd.realized_fx.get() as i128) + fx_delta)
                 .clamp(i64::MIN as i128, i64::MAX as i128) as i64)
@@ -232,8 +224,7 @@ impl Withdraw {
             let new_yield = (vd.realized_yield.get() as i128) + yield_delta;
             vd.realized_pnl = (new_pnl.clamp(i64::MIN as i128, i64::MAX as i128) as i64).into();
             vd.realized_yield = (new_yield.clamp(i64::MIN as i128, i64::MAX as i128) as i64).into();
-            realized_pnl_delta = pnl_delta
-                .clamp(i64::MIN as i128, i64::MAX as i128) as i64;
+            realized_pnl_delta = pnl_delta.clamp(i64::MIN as i128, i64::MAX as i128) as i64;
 
             let new_shares = vd.shares.get() - shares_in;
             vd.shares = new_shares.into();

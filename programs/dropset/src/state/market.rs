@@ -59,7 +59,7 @@ pub fn isqrt_u128(n: u128) -> u128 {
     // Initial estimate: half the bit-width of `n` shifted up by one —
     // gives an over-estimate that Newton's method then refines down.
     let mut x = n;
-    let mut y = (x + 1) / 2;
+    let mut y = x.div_ceil(2);
     while y < x {
         x = y;
         y = (x + n / x) / 2;

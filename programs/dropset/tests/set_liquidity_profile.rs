@@ -109,7 +109,7 @@ fn rejects_when_reference_price_not_set() {
         PROGRAM_ID,
         &RegisterVaultInstruction {
             perf_fee_rate: 0,
-            quote_authority: authority.pubkey().into(),
+            quote_authority: authority.pubkey(),
             allow_outside_depositors: false,
         }
         .data(),
