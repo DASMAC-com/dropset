@@ -19,6 +19,38 @@ const navClass = (active: boolean) =>
 const blurOnClick = (e: MouseEvent<HTMLAnchorElement>) =>
   e.currentTarget.blur();
 
+// No `display` utility here — each slot supplies its own (`inline-flex`,
+// `hidden md:inline-flex`, etc.). Baking `inline-flex` in would collide with
+// a caller's `hidden`: both set `display`, and the unprefixed `inline-flex`
+// wins by stylesheet order, so the element would never hide.
+const iconButtonClass =
+  "h-9 w-9 items-center justify-center rounded-md text-foreground hover:bg-muted";
+
+// The link to Dropset's X account. Rendered in two slots (beside the logo on
+// phones, in the right-hand cluster on desktop) with only one visible per
+// breakpoint, so caller passes the responsive visibility class.
+function XLink({ className }: { className: string }) {
+  return (
+    <a
+      href="https://x.com/__Dropset__"
+      target="_blank"
+      rel="noopener noreferrer"
+      className={`${iconButtonClass} ${className}`}
+    >
+      <span className="sr-only">Dropset on X</span>
+      <svg
+        viewBox="0 0 24 24"
+        className="h-4 w-4"
+        fill="currentColor"
+        aria-hidden="true"
+      >
+        <title>X</title>
+        <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+      </svg>
+    </a>
+  );
+}
+
 export function Header() {
   const pathname = usePathname();
   return (
@@ -38,6 +70,9 @@ export function Header() {
             suppressHydrationWarning
           />
         </Link>
+        {/* On phones the nav is hidden, so the X link sits beside the logo to
+            fill the empty left side. Desktop keeps it in the right cluster. */}
+        <XLink className="inline-flex md:hidden" />
         {/* Nav links are hidden on phones — mobile is a swap-only experience
             (the currencies/vaults pages redirect to /swap below `md`, see
             MobileSwapRedirect), so there's nothing to navigate to. */}
@@ -67,38 +102,27 @@ export function Header() {
             Vaults
           </Link>
           {pathname === "/vaults" && (
-            <span className="hidden h-9 items-center rounded-md border border-amber-500/50 bg-amber-500/15 px-2 font-semibold text-[10px] text-amber-400 uppercase tracking-wide sm:inline-flex">
+            <span className="inline-flex h-9 items-center rounded-md border border-amber-500/50 bg-amber-500/15 px-2 font-semibold text-[10px] text-amber-400 uppercase tracking-wide">
               Preview · mock data
             </span>
           )}
         </nav>
-        <button
-          type="button"
-          onClick={() => emit("toggleHelp")}
-          aria-label="Show keyboard shortcuts"
-          title="Keyboard shortcuts (?)"
-          className="ml-auto hidden h-9 w-9 items-center justify-center rounded-md text-foreground hover:bg-muted sm:inline-flex"
-        >
-          <Keyboard size={18} />
-        </button>
-        <a
-          href="https://x.com/__Dropset__"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="ml-auto inline-flex h-9 w-9 items-center justify-center rounded-md text-foreground hover:bg-muted sm:ml-0"
-        >
-          <span className="sr-only">Dropset on X</span>
-          <svg
-            viewBox="0 0 24 24"
-            className="h-4 w-4"
-            fill="currentColor"
-            aria-hidden="true"
+        {/* Right-hand controls. ml-auto on the wrapper pushes the whole cluster
+            to the right edge on every screen; on phones it's just the wallet
+            button (keyboard shortcuts and the X link are desktop-only here). */}
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => emit("toggleHelp")}
+            aria-label="Show keyboard shortcuts"
+            title="Keyboard shortcuts (?)"
+            className={`hidden md:inline-flex ${iconButtonClass}`}
           >
-            <title>X</title>
-            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-          </svg>
-        </a>
-        <WalletButton />
+            <Keyboard size={18} />
+          </button>
+          <XLink className="hidden md:inline-flex" />
+          <WalletButton />
+        </div>
       </div>
     </header>
   );

@@ -632,7 +632,7 @@ function CurrenciesInner() {
           </p>
         </div>
       </div>
-      <div className="hidden overflow-x-auto rounded-lg border border-border md:block">
+      <div className="hidden rounded-lg border border-border md:block">
         <table className="w-full min-w-[720px] text-left text-sm">
           <thead className="text-muted-fg text-xs uppercase">
             <tr>
