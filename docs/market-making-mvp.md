@@ -255,11 +255,13 @@ expiry stratification is an explicit feature of the protocol (see
 **Invariant:** Level 1 expiry must exceed the `SetReferencePrice`
 heartbeat (30 s here, 90 slots ≈ 36 s gives ~6 s safety margin),
 otherwise top-of-book goes dark in the gap between expiry and the
-next forced refresh. If `quote_slot` is backdated to relay a
-pre-signed update (up to `MAX_BACKDATE = 50 slots ≈ 20 s`), the
-absolute expiry of every level shifts back by the same amount —
-keep the backdate well under the L1 margin or skip backdating
-on top-of-book refreshes.
+next forced refresh. `quote_slot` backdating (up to
+`MAX_BACKDATE = 50 slots ≈ 20 s`) shifts every level's absolute
+expiry back by the same amount, which would wipe out the L1 margin
+entirely. **Rule:** do not backdate `SetReferencePrice` on the
+heartbeat path. Backdating is only safe for cold-path
+`SetLiquidityProfile` reshapes, where the L2+ expiries (≥ 2 min)
+absorb the shift trivially.
 
 ### Bot heartbeat
 
