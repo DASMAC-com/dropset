@@ -585,7 +585,16 @@ function CurrenciesInner() {
 
   return (
     <div className="mx-auto max-w-6xl px-6 pt-3 pb-16">
-      <div className="mb-3 flex items-center justify-between gap-3">
+      {/* The currencies table is a wide, data-dense desktop view. Below the
+       * `md` breakpoint we hide the controls + table entirely and show a
+       * short prompt instead — far better than forcing a 720px table to
+       * scroll inside a phone viewport. */}
+      <div className="rounded-lg border border-border p-6 text-center text-muted-fg text-sm md:hidden">
+        The currencies table is best viewed on a larger screen. Open Dropset on
+        a desktop browser to browse full market data — price, 24h volume, market
+        cap, liquidity and holders for every listed currency.
+      </div>
+      <div className="mb-3 hidden items-center justify-between gap-3 md:flex">
         <div className="flex items-center gap-3">
           <SearchBox
             value={query}
@@ -628,7 +637,7 @@ function CurrenciesInner() {
           </p>
         </div>
       </div>
-      <div className="rounded-lg border border-border">
+      <div className="hidden overflow-x-auto rounded-lg border border-border md:block">
         <table className="w-full min-w-[720px] text-left text-sm">
           <thead className="text-muted-fg text-xs uppercase">
             <tr>

@@ -23,11 +23,11 @@ export function Header() {
   const pathname = usePathname();
   return (
     <header className="sticky top-0 z-50 border-border border-b bg-background">
-      <div className="mx-auto flex h-14 max-w-6xl items-center gap-2 px-6">
+      <div className="mx-auto flex h-14 max-w-6xl items-center gap-2 px-3 sm:px-6">
         <Link
           href="/swap"
           aria-label="Dropset"
-          className="mr-4 flex shrink-0 items-center no-underline"
+          className="mr-2 flex shrink-0 items-center no-underline sm:mr-4"
         >
           <Image
             src="/favicon.png"
@@ -64,7 +64,7 @@ export function Header() {
             Vaults
           </Link>
           {pathname === "/vaults" && (
-            <span className="inline-flex h-9 items-center rounded-md border border-amber-500/50 bg-amber-500/15 px-2 font-semibold text-[10px] text-amber-400 uppercase tracking-wide">
+            <span className="hidden h-9 items-center rounded-md border border-amber-500/50 bg-amber-500/15 px-2 font-semibold text-[10px] text-amber-400 uppercase tracking-wide sm:inline-flex">
               Preview · mock data
             </span>
           )}
@@ -74,7 +74,7 @@ export function Header() {
           onClick={() => emit("toggleHelp")}
           aria-label="Show keyboard shortcuts"
           title="Keyboard shortcuts (?)"
-          className="ml-auto inline-flex h-9 w-9 items-center justify-center rounded-md text-foreground hover:bg-muted"
+          className="ml-auto hidden h-9 w-9 items-center justify-center rounded-md text-foreground hover:bg-muted sm:inline-flex"
         >
           <Keyboard size={18} />
         </button>
@@ -82,7 +82,7 @@ export function Header() {
           href="https://x.com/__Dropset__"
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex h-9 w-9 items-center justify-center rounded-md text-foreground hover:bg-muted"
+          className="ml-auto inline-flex h-9 w-9 items-center justify-center rounded-md text-foreground hover:bg-muted sm:ml-0"
         >
           <span className="sr-only">Dropset on X</span>
           <svg

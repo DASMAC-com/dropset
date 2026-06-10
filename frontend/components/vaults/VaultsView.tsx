@@ -605,10 +605,17 @@ function VaultsInner() {
 
   return (
     <div className="mx-auto max-w-6xl px-6 pt-3 pb-16">
+      {/* The vaults table is a wide, multi-column desktop view. Below the `md`
+       * breakpoint we hide it entirely and show a short prompt instead, rather
+       * than cram it into a phone viewport. */}
+      <div className="rounded-lg border border-border p-6 text-center text-muted-fg text-sm md:hidden">
+        The vaults table is best viewed on a larger screen. Open Dropset on a
+        desktop browser to browse vault pairs, leaders, APR and TVL.
+      </div>
       {/* Center the toolbar + table as one block and size it to the table's
           content, so the toolbar (search left, preview right) lines up with
           the table edges however wide the table ends up. */}
-      <div className="mx-auto w-fit max-w-full">
+      <div className="mx-auto hidden w-fit max-w-full md:block">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <SearchBox
@@ -652,7 +659,7 @@ function VaultsInner() {
             )}
           </div>
         )}
-        <div className="rounded-lg border border-border">
+        <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-auto text-left text-sm">
             <thead className="text-muted-fg text-xs uppercase">
               <tr>
