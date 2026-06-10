@@ -138,8 +138,10 @@ Properties:
 - Top-to-top spread = `2 × 50 bps = 100 bps`.
 - The first $20 of one-sided trade clears at the 50 bps offset
   (100 bps spread).
-- Beyond that, effective spread widens: the next $15 averages ~75 bps
-  half-spread, then ~125 bps, then ~250 bps.
+- Beyond that, effective spread widens by level: the next $15 clears
+  at a 100 bps half-spread, the next $10 at 200 bps, the final $5 at
+  500 bps. Cumulative VWAP half-spread to clear the whole $50 leg is
+  `(20·50 + 15·100 + 10·200 + 5·500)/50 = 140 bps`.
 
 ### Justification (Avellaneda–Stoikov)
 
@@ -151,8 +153,9 @@ equation (3.18) for the half-spread:
 half_spread = γ·σ²·τ/2 + (1/γ)·ln(1 + γ/κ)
 ```
 
-For a CADC/USDC scale (σ ≈ 50 bps/day annualized → ~3e-6 in
-price-units-per-√sec), small τ, and γ = 0.1: the inventory term
+For a CADC/USDC scale (realized daily vol ≈ 50 bps →
+σ ≈ 5e-3 / √86_400 ≈ 1.7e-5 in price-units-per-√sec), small τ, and
+γ = 0.1: the inventory term
 `γσ²τ/2` is negligible; the half-spread is dominated by the
 `(1/γ)·ln(1+γ/κ)` fill-intensity term, which with the dropset-alpha
 defaults (κ from `FILL_DECAY_STEPS = 10`, `PRICE_STEP = 0.0001`) comes
@@ -190,8 +193,13 @@ q          = (base_value_in_USDC - quote_atoms_USDC) / 2
 δ_ref_bps  = -q · γ · σ² · τ / mid · 10000
 ```
 
+The factor of 2 expresses **deviation from neutral**: a $10 swing
+between legs means each side has moved $5 off the midpoint
+($55 / $45 starting from $50 / $50), so the signed deviation is $5,
+not $10.
+
 For a $100 vault drifted by $10 (`q ≈ 5`), γ = 5 (more aggressive than
-A-S default — small `Q` needs faster mean-reversion), σ ≈ 3e-6,
+A-S default — small `Q` needs faster mean-reversion), σ ≈ 1.7e-5,
 τ = 3600 s: `δ_ref` comes out sub-bps, which is too small to matter.
 
 **Override with a linear inventory skew** instead: shift reference by
@@ -233,7 +241,7 @@ Expected: **1–3 calls per day**.
 
 | Level | offset (slots) | wall-clock |
 | ----- | -------------- | ---------- |
-| 1     | 60             | ~24 s       |
+| 1     | 90             | ~36 s       |
 | 2     | 300            | ~2 min      |
 | 3     | 1_200          | ~8 min      |
 | 4     | 7_200          | ~50 min     |
@@ -243,6 +251,15 @@ prices; deep levels live longer because they rarely fill and we don't
 want to churn `SetReferencePrice` just to keep them alive. Per-level
 expiry stratification is an explicit feature of the protocol (see
 **architecture.md → LiquidityProfile → Flush**).
+
+**Invariant:** Level 1 expiry must exceed the `SetReferencePrice`
+heartbeat (30 s here, 90 slots ≈ 36 s gives ~6 s safety margin),
+otherwise top-of-book goes dark in the gap between expiry and the
+next forced refresh. If `quote_slot` is backdated to relay a
+pre-signed update (up to `MAX_BACKDATE = 50 slots ≈ 20 s`), the
+absolute expiry of every level shifts back by the same amount —
+keep the backdate well under the L1 margin or skip backdating
+on top-of-book refreshes.
 
 ### Bot heartbeat
 
