@@ -38,9 +38,7 @@ fn happy_path_opens_pda_stamps_basis_and_bumps_counter() {
         1,
         "counter incremented by exactly 1"
     );
-    let vd = f
-        .vault_depositor(0, &alice.pubkey())
-        .expect("PDA created");
+    let vd = f.vault_depositor(0, &alice.pubkey()).expect("PDA created");
     assert!(vd.shares.get() > 0, "shares stamped");
     assert!(vd.net_deposits.get() > 0, "net_deposits stamped");
     assert!(vd.gross_deposited.get() > 0, "gross_deposited stamped");

@@ -161,7 +161,8 @@ impl Fixture {
         let base_treasury = associated_token_address(&market, &base_mint, &SPL_TOKEN_PROGRAM_ID);
         let quote_treasury = associated_token_address(&market, &quote_mint, &SPL_TOKEN_PROGRAM_ID);
         let dummy = Keypair::new();
-        svm.airdrop(&dummy.pubkey(), SIGNER_FUNDING_LAMPORTS).unwrap();
+        svm.airdrop(&dummy.pubkey(), SIGNER_FUNDING_LAMPORTS)
+            .unwrap();
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
             &RegisterMarketIx {}.data(),
@@ -212,8 +213,12 @@ impl Fixture {
         let ref_price = Price::encode(10_850_000, 0).unwrap();
         f.set_reference_price(&f.authority.insecure_clone(), 0, ref_price.as_u32(), 0)
             .expect("set_reference_price");
-        f.set_liquidity_profile(&f.authority.insecure_clone(), 0, simple_profile(5_000, 10_000, u32::MAX))
-            .expect("set_liquidity_profile");
+        f.set_liquidity_profile(
+            &f.authority.insecure_clone(),
+            0,
+            simple_profile(5_000, 10_000, u32::MAX),
+        )
+        .expect("set_liquidity_profile");
         f.deposit_leader(0, base, quote, base, quote)
             .expect("seed deposit_leader");
         f
@@ -466,7 +471,14 @@ impl Fixture {
         max_quote_in: u64,
     ) -> Result<(), String> {
         let auth = self.authority.insecure_clone();
-        self.deposit_leader_as(&auth, vault_idx, base_in, quote_in, max_base_in, max_quote_in)
+        self.deposit_leader_as(
+            &auth,
+            vault_idx,
+            base_in,
+            quote_in,
+            max_base_in,
+            max_quote_in,
+        )
     }
 
     /// Like [`Self::deposit_leader`] but signed by an arbitrary
@@ -489,10 +501,22 @@ impl Fixture {
         // `max_*_in`. Minting the caps guarantees the leader can cover
         // whatever basket the handler derives.
         if max_base_in > 0 {
-            mint_to(&mut self.svm, &auth, &self.base_mint, &leader_base, max_base_in);
+            mint_to(
+                &mut self.svm,
+                &auth,
+                &self.base_mint,
+                &leader_base,
+                max_base_in,
+            );
         }
         if max_quote_in > 0 {
-            mint_to(&mut self.svm, &auth, &self.quote_mint, &leader_quote, max_quote_in);
+            mint_to(
+                &mut self.svm,
+                &auth,
+                &self.quote_mint,
+                &leader_quote,
+                max_quote_in,
+            );
         }
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
@@ -722,7 +746,9 @@ impl Fixture {
 
     pub fn market_header(&self) -> MarketHeader {
         let acct = self.svm.get_account(&self.market).expect("market");
-        bytemuck::pod_read_unaligned::<MarketHeader>(&acct.data[8..8 + core::mem::size_of::<MarketHeader>()])
+        bytemuck::pod_read_unaligned::<MarketHeader>(
+            &acct.data[8..8 + core::mem::size_of::<MarketHeader>()],
+        )
     }
 
     pub fn vault(&self, sector_idx: u32) -> Vault {

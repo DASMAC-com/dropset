@@ -11,8 +11,10 @@
 
 mod common;
 
+use anchor_lang_v2::bytemuck;
 use anchor_lang_v2::{programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, Signer};
+use common::fixture::{simple_profile, Fixture, PROFILE_BYTES};
 use common::{
     associated_token_address, create_mock_usdc_mint, create_spl_mint, deploy_with_authority,
     send_ixn, ATA_PROGRAM_ID, PROGRAM_ID, REGISTER_MARKET_FEE_ATOMS, SPL_TOKEN_PROGRAM_ID,
@@ -25,8 +27,6 @@ use dropset::{
     },
     DropsetError, N_LEVELS,
 };
-use anchor_lang_v2::bytemuck;
-use common::fixture::{simple_profile, Fixture, PROFILE_BYTES};
 use dropset::{LiquidityProfile, Price, FLUSH_BIT};
 use solana_instruction::{AccountMeta, Instruction};
 use solana_loader_v3_interface::get_program_data_address;

@@ -60,8 +60,7 @@ fn seeding_sets_shares_to_isqrt_and_hwm_to_one() {
 fn single_leg_topup_grows_leader_and_total_equally() {
     let mut f = fixture_with_unseeded_vault();
     let (base, quote) = (1_000_000_u64, 1_085_000_u64);
-    f.deposit_leader(0, base, quote, base, quote)
-        .expect("seed");
+    f.deposit_leader(0, base, quote, base, quote).expect("seed");
     let before = f.vault(0);
 
     // Top up base-only; the basket ceil pulls a little quote too, but

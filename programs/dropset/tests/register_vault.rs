@@ -6,6 +6,7 @@ mod common;
 
 use anchor_lang_v2::{programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, Signer};
+use common::fixture::Fixture;
 use common::{
     associated_token_address, create_associated_token_account, create_mock_usdc_mint,
     create_spl_mint, deploy_with_authority, mint_to, send_ixn, ATA_PROGRAM_ID, PROGRAM_ID,
@@ -18,7 +19,6 @@ use dropset::{
     },
     DropsetError, MarketHeader, Vault,
 };
-use common::fixture::Fixture;
 use solana_instruction::{AccountMeta, Instruction};
 use solana_loader_v3_interface::get_program_data_address;
 use solana_pubkey::Pubkey;
@@ -291,7 +291,11 @@ fn vault_lands_at_active_head_and_increments_count() {
     let mut f = Fixture::bootstrap();
     f.register_vault(0, f.authority.pubkey(), false, Pubkey::default())
         .expect("first vault");
-    assert_eq!(f.market_header().head.get(), 0, "first vault at active head");
+    assert_eq!(
+        f.market_header().head.get(),
+        0,
+        "first vault at active head"
+    );
     assert_eq!(f.market_header().active_count.get(), 1);
 
     // Second vault (distinct perf so the txn differs) is prepended.

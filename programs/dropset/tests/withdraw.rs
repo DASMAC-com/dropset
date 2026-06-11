@@ -42,7 +42,9 @@ fn partial_withdraw_reduces_basis_and_keeps_pda() {
 
     f.withdraw(&alice, 0, half, 0, 0).expect("partial withdraw");
 
-    let vd2 = f.vault_depositor(0, &alice.pubkey()).expect("PDA still open");
+    let vd2 = f
+        .vault_depositor(0, &alice.pubkey())
+        .expect("PDA still open");
     assert_eq!(vd2.shares.get(), vd.shares.get() - half, "shares burned");
     assert!(
         vd2.net_deposits.get() < vd.net_deposits.get(),

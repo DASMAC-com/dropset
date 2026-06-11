@@ -10,12 +10,12 @@ mod common;
 use anchor_lang_v2::{programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, Signer};
 use common::fixture::{simple_profile, Fixture, PROFILE_BYTES};
-use dropset::FLUSH_BIT;
 use common::{
     associated_token_address, create_associated_token_account, create_mock_usdc_mint,
     create_spl_mint, decode_slab, deploy_with_authority, mint_to, send_ixn, ATA_PROGRAM_ID,
     PROGRAM_ID, REGISTER_MARKET_FEE_ATOMS, SIGNER_FUNDING_LAMPORTS, SPL_TOKEN_PROGRAM_ID,
 };
+use dropset::FLUSH_BIT;
 use dropset::{
     instruction::{
         DepositLeader as DepositLeaderInstruction, Init as InitInstruction,
@@ -501,12 +501,12 @@ fn sell_side_fills_against_bids() {
         f.token_balance(&quote_ata) > 0,
         "taker received quote for the base sold"
     );
-    assert!(
-        f.token_balance(&base_ata) < base_before,
-        "taker spent base"
-    );
+    assert!(f.token_balance(&base_ata) < base_before, "taker spent base");
     let v = f.vault(0);
-    assert!(v.base_atoms.get() > SEED_BASE, "vault base grew on the buy-from-taker");
+    assert!(
+        v.base_atoms.get() > SEED_BASE,
+        "vault base grew on the buy-from-taker"
+    );
     assert!(v.quote_atoms.get() < SEED_QUOTE, "vault quote shrank");
 }
 
@@ -525,7 +525,11 @@ fn limit_price_stops_before_level() {
         .expect("swap returns Ok with no fill");
 
     assert_eq!(f.token_balance(&quote_ata), q_before, "no quote spent");
-    assert_eq!(f.token_balance(&f.base_ata(&taker.pubkey())), 0, "no base received");
+    assert_eq!(
+        f.token_balance(&f.base_ata(&taker.pubkey())),
+        0,
+        "no base received"
+    );
 }
 
 #[test]
@@ -543,8 +547,16 @@ fn frozen_vault_skipped_from_matching() {
 
     assert_eq!(f.token_balance(&quote_ata), q_before, "no quote spent");
     let v = f.vault(0);
-    assert_eq!(v.base_atoms.get(), SEED_BASE, "frozen vault inventory untouched");
-    assert_eq!(v.quote_atoms.get(), SEED_QUOTE, "frozen vault inventory untouched");
+    assert_eq!(
+        v.base_atoms.get(),
+        SEED_BASE,
+        "frozen vault inventory untouched"
+    );
+    assert_eq!(
+        v.quote_atoms.get(),
+        SEED_QUOTE,
+        "frozen vault inventory untouched"
+    );
 }
 
 #[test]
@@ -621,7 +633,8 @@ fn seeded_two_vaults(ref0_bits: u32, ref1_bits: u32) -> Fixture {
     // Sector 0.
     f.register_vault(0, f.authority.pubkey(), false, Pubkey::default())
         .expect("register vault 0");
-    f.set_reference_price(&auth, 0, ref0_bits, 0).expect("ref 0");
+    f.set_reference_price(&auth, 0, ref0_bits, 0)
+        .expect("ref 0");
     f.set_liquidity_profile(&auth, 0, simple_profile(5_000, 10_000, u32::MAX))
         .expect("profile 0");
     f.deposit_leader(0, 1_000_000, 1_085_000, 1_000_000, 1_085_000)
@@ -635,7 +648,8 @@ fn seeded_two_vaults(ref0_bits: u32, ref1_bits: u32) -> Fixture {
     // byte-identical duplicate of sector 0's.
     f.register_vault(1, f.authority.pubkey(), false, Pubkey::default())
         .expect("register vault 1");
-    f.set_reference_price(&auth, 1, ref1_bits, 0).expect("ref 1");
+    f.set_reference_price(&auth, 1, ref1_bits, 0)
+        .expect("ref 1");
     f.set_liquidity_profile(&auth, 1, simple_profile(5_000, 10_000, u32::MAX))
         .expect("profile 1");
     f.deposit_leader(1, 1_000_000, 1_085_000, 1_000_000, 1_085_000)
@@ -717,9 +731,15 @@ fn multi_vault_spills_cheaper_then_pricier() {
     let v0 = f.vault(0).base_atoms.get();
     let v1 = f.vault(1).base_atoms.get();
     assert_eq!(v1, 0, "cheaper vault drained first");
-    assert!(v0 < 1_000_000, "pricier vault partially filled by the spillover");
+    assert!(
+        v0 < 1_000_000,
+        "pricier vault partially filled by the spillover"
+    );
     assert!(v0 > 0, "pricier vault not fully drained");
-    assert!(v1 < v0, "cheaper vault is more depleted than the pricier one");
+    assert!(
+        v1 < v0,
+        "cheaper vault is more depleted than the pricier one"
+    );
 }
 
 #[test]
@@ -754,8 +774,12 @@ fn expired_levels_are_skipped() {
     // Re-profile the seeded vault with a 1-slot expiry, warp well past
     // it, then Buy: every level has expired, so nothing fills.
     let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
-    f.set_liquidity_profile(&f.authority.insecure_clone(), 0, simple_profile(5_000, 10_000, 1))
-        .expect("short-expiry profile");
+    f.set_liquidity_profile(
+        &f.authority.insecure_clone(),
+        0,
+        simple_profile(5_000, 10_000, 1),
+    )
+    .expect("short-expiry profile");
     f.svm.warp_to_slot(100);
 
     let taker = f.funded_depositor(0, 200_000);
@@ -768,7 +792,11 @@ fn expired_levels_are_skipped() {
         q_before,
         "no quote spent against expired levels"
     );
-    assert_eq!(f.vault(0).base_atoms.get(), SEED_BASE, "inventory untouched");
+    assert_eq!(
+        f.vault(0).base_atoms.get(),
+        SEED_BASE,
+        "inventory untouched"
+    );
 }
 
 /// Two ask levels, 5_000 bps each (Σ = 10_000), at different offsets.
