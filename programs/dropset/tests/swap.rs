@@ -644,8 +644,9 @@ fn seeded_two_vaults(ref0_bits: u32, ref1_bits: u32) -> Fixture {
     // ATA as sector 0's) isn't a byte-identical, already-processed txn.
     f.svm.expire_blockhash();
 
-    // Sector 1 — perf_fee_rate = 1 so the register txn isn't a
-    // byte-identical duplicate of sector 0's.
+    // Sector 1. Its register / seed txns mirror sector 0's argument-for
+    // -argument; the blockhash bump above is what keeps them from
+    // colliding as already-processed duplicates.
     f.register_vault(1, f.authority.pubkey(), false, Pubkey::default())
         .expect("register vault 1");
     f.set_reference_price(&auth, 1, ref1_bits, 0)
@@ -689,26 +690,36 @@ fn multi_vault_cheaper_price_fills_first() {
 #[test]
 fn multi_vault_equal_price_older_nonce_wins() {
     // Both vaults anchored at the same 1.0850 reference → identical ask
-    // price. Sector 0 was quoted first (older nonce), so it must fill
-    // first; sector 1 stays untouched.
+    // price, so the fill order is decided purely by the price-time
+    // tiebreak `(price_key, nonce, sector_idx, …)`. To isolate the
+    // *nonce* term from the *sector_idx* term, give the OLDER nonce to
+    // the HIGHER-index vault: `seeded_two_vaults` quotes sector 0 first,
+    // so re-quote it here to stamp it with the newest nonce. Now sector
+    // 1 holds the older nonce but the higher index — if `nonce` breaks
+    // the tie, sector 1 fills; if `sector_idx` did, sector 0 would.
     let same = Price::encode(10_850_000, 0).unwrap().as_u32();
     let mut f = seeded_two_vaults(same, same);
+    // Distinct blockhash so the re-quote isn't a duplicate of sector 0's
+    // original set_reference_price txn.
+    f.svm.expire_blockhash();
+    f.set_reference_price(&f.authority.insecure_clone(), 0, same, 0)
+        .expect("re-quote sector 0 with the newest nonce");
 
-    // Sanity: the two materialized ask prices really are equal — flush
-    // them by reading after a tiny probe is overkill, so assert on the
-    // post-fill outcome instead.
     let taker = f.funded_depositor(0, 200_000);
     f.swap(&taker, 0, 50_000, Price::INFINITY.as_u32(), 1)
         .expect("buy fills the older-nonce vault");
 
+    // Sector 1 (older nonce, higher index) absorbs the buy; sector 0
+    // (newer nonce, lower index) sees at most a rounding-dust atom.
+    let fill_older = 1_000_000 - f.vault(1).base_atoms.get();
+    let fill_newer = 1_000_000 - f.vault(0).base_atoms.get();
     assert!(
-        f.vault(0).base_atoms.get() < 1_000_000,
-        "older-nonce vault (sector 0) filled first"
+        fill_older >= 40_000,
+        "older-nonce vault (sector 1) filled first (filled {fill_older})"
     );
-    assert_eq!(
-        f.vault(1).base_atoms.get(),
-        1_000_000,
-        "newer-nonce vault (sector 1) untouched on the tie"
+    assert!(
+        fill_newer <= 2,
+        "newer-nonce vault (sector 0) untouched on the tie (filled {fill_newer})"
     );
 }
 
