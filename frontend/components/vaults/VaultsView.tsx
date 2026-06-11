@@ -273,7 +273,7 @@ function VaultRow({
 
   return (
     <tr className={groupedRowClassName(rowIndex, groupSize)}>
-      <td className="border-border border-r px-3 py-2 align-middle last:border-r-0">
+      <td className="whitespace-nowrap border-border border-r px-3 py-2 align-middle last:border-r-0">
         <div className="flex items-center gap-2">
           {!grouped && (
             <FlagPair

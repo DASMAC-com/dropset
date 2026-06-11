@@ -283,7 +283,7 @@ const StablecoinRow = memo(function StablecoinRow({
       id={s.symbol.toLowerCase()}
       className={`scroll-mt-24 ${groupedRowClassName(rowIndex, groupSize)}`}
     >
-      <td className="border-border border-r px-3 py-2 align-top last:border-r-0">
+      <td className="whitespace-nowrap border-border border-r px-3 py-2 align-top last:border-r-0">
         <div className="flex items-center gap-2">
           {showFlag && <Flag url={currencyFlagUrl(code)} size={20} />}
           {/* biome-ignore lint/performance/noImgElement: small static icon, no optimization needed */}
