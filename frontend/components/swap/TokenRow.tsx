@@ -1,7 +1,7 @@
 "use client";
 
 import NumberFlow, { type Format } from "@number-flow/react";
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useMemo, useRef } from "react";
 import { CircleAlert } from "@/components/icons";
 import { TokenPicker } from "@/components/picker/TokenPicker";
 import { WalletBalance } from "@/components/wallet/WalletBalance";
@@ -15,6 +15,7 @@ import { useAppEvent } from "@/lib/events";
 import { FORMATS } from "@/lib/format/formats";
 import { groupThousands, sanitizeAmount } from "@/lib/format/input";
 import type { DflowQuote } from "@/lib/hooks/useDflowQuote";
+import { useMediaQuery } from "@/lib/hooks/useMediaQuery";
 import {
   type UsdQuote,
   useLiquidityLookup,
@@ -24,15 +25,12 @@ import { type Side, useSwapStore } from "@/lib/store";
 import { FromBalanceButtons } from "./FromBalanceButtons";
 import { MaxSlippageButton } from "./MaxSlippageButton";
 
-// Cap the to-side output at 6 significant figures (the Jupiter/Uniswap
-// convention) so a long high-precision quote — e.g. 86.619952 on a 6-decimal
-// token — renders as "86.62" instead of overflowing the fixed-width amount
-// slot and spilling out the left of the card on narrow screens. Small values
-// keep their leading precision (0.00012345 stays intact). The full-precision
-// value still drives the actual swap; this only shortens the on-screen
-// readout. Module-level so its identity is stable — NumberFlow compares format
-// identity to decide whether to restart its digit animation.
-const TO_AMOUNT_FORMAT: Format = { maximumSignificantDigits: 6 };
+// Below `sm` (phones) cap the to-side output at 6 significant figures so a long
+// high-precision quote — e.g. 86.619952 on a 6-decimal token — can't overflow
+// the fixed-width amount slot and spill out of the card. From `sm` up there's
+// room, so show the token's full fractional precision. The full-precision
+// value always drives the actual swap; this only shapes the on-screen readout.
+const NARROW_FORMAT: Format = { maximumSignificantDigits: 6 };
 
 export function TokenRow({
   side,
@@ -63,6 +61,10 @@ export function TokenRow({
   const setAmount = useSwapStore((s) => s.setAmount);
   const setActiveSide = useSwapStore((s) => s.setActiveSide);
 
+  // Default to wide so the (client-only) panel renders full precision on
+  // desktop without waiting; phones flip to the capped format on first paint.
+  const wide = useMediaQuery("(min-width: 640px)", true);
+
   // Jupiter-derived liquidity signal for the current stablecoin. "illiquid"
   // means Jupiter returned no usable USD reference price — typically because
   // the token has thin or no on-chain depth. This is independent from DFlow's
@@ -91,6 +93,14 @@ export function TokenRow({
   const activeBorder = side === "to" ? "border-accent-buy" : "border-accent";
   const decimals = stablecoinDecimals(stablecoin);
   const formattedAmount = groupThousands(amount);
+
+  // Full fractional precision on wider screens, the capped format on phones.
+  // Memoized so identity is stable across renders — NumberFlow compares format
+  // identity to decide whether to restart its digit animation.
+  const toAmountFormat = useMemo<Format>(
+    () => (wide ? { maximumFractionDigits: decimals } : NARROW_FORMAT),
+    [wide, decimals],
+  );
 
   // To-side numeric value for <NumberFlow>. Null when there's no quote
   // (loading first time, error, sameToken, zero input) — in those cases
@@ -226,7 +236,7 @@ export function TokenRow({
               }`}
             >
               {toAmountNumber !== null ? (
-                <NumberFlow value={toAmountNumber} format={TO_AMOUNT_FORMAT} />
+                <NumberFlow value={toAmountNumber} format={toAmountFormat} />
               ) : (
                 toPlaceholder
               )}

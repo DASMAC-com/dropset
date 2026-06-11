@@ -662,7 +662,7 @@ function VaultsInner() {
             )}
           </div>
         )}
-        <div className="rounded-lg border border-border">
+        <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-auto text-left text-sm">
             <thead className="text-muted-fg text-xs uppercase">
               <tr>
@@ -690,7 +690,7 @@ function VaultsInner() {
                 />
                 <th
                   scope="col"
-                  className="sticky top-14 z-20 w-px whitespace-nowrap border-border border-r bg-muted px-3 py-2 text-right font-medium normal-case"
+                  className="w-px whitespace-nowrap border-border border-r bg-muted px-3 py-2 text-right font-medium normal-case"
                 >
                   Manage
                 </th>

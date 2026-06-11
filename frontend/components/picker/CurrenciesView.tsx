@@ -638,7 +638,7 @@ function CurrenciesInner() {
           </p>
         </div>
       </div>
-      <div className="hidden rounded-lg border border-border sm:block">
+      <div className="hidden overflow-x-auto rounded-lg border border-border sm:block">
         <table className="w-full min-w-[720px] text-left text-sm">
           <thead className="text-muted-fg text-xs uppercase">
             <tr>
@@ -651,7 +651,7 @@ function CurrenciesInner() {
               />
               <th
                 scope="col"
-                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium normal-case last:border-r-0"
+                className="border-border border-r bg-muted px-3 py-2 font-medium normal-case last:border-r-0"
               >
                 Swap
               </th>
@@ -664,7 +664,7 @@ function CurrenciesInner() {
               />
               <th
                 scope="col"
-                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium normal-case last:border-r-0"
+                className="border-border border-r bg-muted px-3 py-2 text-right font-medium normal-case last:border-r-0"
               >
                 Price
               </th>
