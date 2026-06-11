@@ -1,5 +1,7 @@
 # Project instructions
 
+<!-- cspell:word PIPESTATUS -->
+
 ## Commits and PRs
 
 - **Never add AI attribution to commits or PRs.** Do not include a
