@@ -9,7 +9,8 @@ mod common;
 
 use anchor_lang_v2::{programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, Signer};
-use common::fixture::Fixture;
+use common::fixture::{simple_profile, Fixture, PROFILE_BYTES};
+use dropset::FLUSH_BIT;
 use common::{
     associated_token_address, create_associated_token_account, create_mock_usdc_mint,
     create_spl_mint, decode_slab, deploy_with_authority, mint_to, send_ixn, ATA_PROGRAM_ID,
@@ -604,4 +605,221 @@ fn taker_fee_retained_in_vault() {
         fee_vault_base > SEED_BASE - no_fee_recv,
         "vault retained the taker fee"
     );
+}
+
+// ── Multi-vault price-time priority + flush / expiry (WI2) ───────────
+
+/// Build a two-vault market (sectors 0 then 1), each seeded with
+/// 1_000_000 base / 1_085_000 quote and a full-inventory ±0.5% ladder,
+/// but anchored at the given reference prices. Sector 0 is set up
+/// first, so its `reference_price.stamp` nonce is strictly older than
+/// sector 1's — the price-time tiebreaker when prices are equal.
+fn seeded_two_vaults(ref0_bits: u32, ref1_bits: u32) -> Fixture {
+    let mut f = Fixture::bootstrap();
+    let auth = f.authority.insecure_clone();
+
+    // Sector 0.
+    f.register_vault(0, f.authority.pubkey(), false, Pubkey::default())
+        .expect("register vault 0");
+    f.set_reference_price(&auth, 0, ref0_bits, 0).expect("ref 0");
+    f.set_liquidity_profile(&auth, 0, simple_profile(5_000, 10_000, u32::MAX))
+        .expect("profile 0");
+    f.deposit_leader(0, 1_000_000, 1_085_000, 1_000_000, 1_085_000)
+        .expect("seed 0");
+
+    // Advance the blockhash so sector 1's seed mint (same amount, same
+    // ATA as sector 0's) isn't a byte-identical, already-processed txn.
+    f.svm.expire_blockhash();
+
+    // Sector 1 — perf_fee_rate = 1 so the register txn isn't a
+    // byte-identical duplicate of sector 0's.
+    f.register_vault(1, f.authority.pubkey(), false, Pubkey::default())
+        .expect("register vault 1");
+    f.set_reference_price(&auth, 1, ref1_bits, 0).expect("ref 1");
+    f.set_liquidity_profile(&auth, 1, simple_profile(5_000, 10_000, u32::MAX))
+        .expect("profile 1");
+    f.deposit_leader(1, 1_000_000, 1_085_000, 1_000_000, 1_085_000)
+        .expect("seed 1");
+    f
+}
+
+#[test]
+fn multi_vault_cheaper_price_fills_first() {
+    // Sector 1 quotes the lower reference (cheaper asks for a Buy), so
+    // a small Buy must fill entirely against sector 1 and leave the
+    // pricier sector 0 untouched.
+    let hi = Price::encode(10_900_000, 0).unwrap().as_u32();
+    let lo = Price::encode(10_800_000, 0).unwrap().as_u32();
+    let mut f = seeded_two_vaults(hi, lo);
+
+    let taker = f.funded_depositor(0, 200_000);
+    f.swap(&taker, 0, 50_000, Price::INFINITY.as_u32(), 1)
+        .expect("buy fills the cheaper vault");
+
+    // The cheaper vault absorbs the buy. Integer rounding can leave a
+    // 1-2 atom quote residual that buys a single base atom off the
+    // pricier vault's level, so assert the *bulk* landed on sector 1
+    // and sector 0 saw at most rounding dust.
+    let fill_cheaper = 1_000_000 - f.vault(1).base_atoms.get();
+    let fill_pricier = 1_000_000 - f.vault(0).base_atoms.get();
+    assert!(
+        fill_cheaper >= 40_000,
+        "cheaper vault (sector 1) absorbed the buy (filled {fill_cheaper})"
+    );
+    assert!(
+        fill_pricier <= 2,
+        "pricier vault (sector 0) saw only rounding dust (filled {fill_pricier})"
+    );
+}
+
+#[test]
+fn multi_vault_equal_price_older_nonce_wins() {
+    // Both vaults anchored at the same 1.0850 reference → identical ask
+    // price. Sector 0 was quoted first (older nonce), so it must fill
+    // first; sector 1 stays untouched.
+    let same = Price::encode(10_850_000, 0).unwrap().as_u32();
+    let mut f = seeded_two_vaults(same, same);
+
+    // Sanity: the two materialized ask prices really are equal — flush
+    // them by reading after a tiny probe is overkill, so assert on the
+    // post-fill outcome instead.
+    let taker = f.funded_depositor(0, 200_000);
+    f.swap(&taker, 0, 50_000, Price::INFINITY.as_u32(), 1)
+        .expect("buy fills the older-nonce vault");
+
+    assert!(
+        f.vault(0).base_atoms.get() < 1_000_000,
+        "older-nonce vault (sector 0) filled first"
+    );
+    assert_eq!(
+        f.vault(1).base_atoms.get(),
+        1_000_000,
+        "newer-nonce vault (sector 1) untouched on the tie"
+    );
+}
+
+#[test]
+fn multi_vault_spills_cheaper_then_pricier() {
+    // A Buy large enough to exhaust the cheaper vault's ask level then
+    // spill into the pricier one. The cheaper sector 1 (full ask = its
+    // whole 1_000_000 base) drains to zero before sector 0 is touched.
+    let hi = Price::encode(10_900_000, 0).unwrap().as_u32();
+    let lo = Price::encode(10_800_000, 0).unwrap().as_u32();
+    let mut f = seeded_two_vaults(hi, lo);
+
+    // 1_500_000 quote fully drains the cheaper vault's 1_000_000-base
+    // ask (~1.0854e6 quote) and spills the rest into the pricier one,
+    // leaving sector 0 partially filled.
+    let taker = f.funded_depositor(0, 1_500_000);
+    f.swap(&taker, 0, 1_500_000, Price::INFINITY.as_u32(), 1)
+        .expect("large buy spills across both vaults");
+
+    let v0 = f.vault(0).base_atoms.get();
+    let v1 = f.vault(1).base_atoms.get();
+    assert_eq!(v1, 0, "cheaper vault drained first");
+    assert!(v0 < 1_000_000, "pricier vault partially filled by the spillover");
+    assert!(v0 > 0, "pricier vault not fully drained");
+    assert!(v1 < v0, "cheaper vault is more depleted than the pricier one");
+}
+
+#[test]
+fn flush_rematerializes_after_reference_price_change() {
+    // First Buy materializes `remaining` from the 1.0850 ladder. After
+    // a much higher reference is stamped (re-arming FLUSH_BIT), an
+    // identical Buy must re-materialize at the new (worse-for-taker)
+    // ask and return less base.
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+    let t1 = f.funded_depositor(0, 200_000);
+    f.swap(&t1, 0, 50_000, Price::INFINITY.as_u32(), 1)
+        .expect("first buy");
+    let got1 = f.token_balance(&f.base_ata(&t1.pubkey()));
+
+    let higher = Price::encode(13_000_000, 0).unwrap(); // 1.30
+    f.set_reference_price(&f.authority.insecure_clone(), 0, higher.as_u32(), 0)
+        .expect("raise reference, re-arms FLUSH_BIT");
+
+    let t2 = f.funded_depositor(0, 200_000);
+    f.swap(&t2, 0, 50_000, Price::INFINITY.as_u32(), 1)
+        .expect("second buy at the new price");
+    let got2 = f.token_balance(&f.base_ata(&t2.pubkey()));
+
+    assert!(
+        got2 < got1,
+        "higher reference re-materialized a worse ask: {got2} < {got1}"
+    );
+}
+
+#[test]
+fn expired_levels_are_skipped() {
+    // Re-profile the seeded vault with a 1-slot expiry, warp well past
+    // it, then Buy: every level has expired, so nothing fills.
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+    f.set_liquidity_profile(&f.authority.insecure_clone(), 0, simple_profile(5_000, 10_000, 1))
+        .expect("short-expiry profile");
+    f.svm.warp_to_slot(100);
+
+    let taker = f.funded_depositor(0, 200_000);
+    let q_before = f.token_balance(&f.quote_ata(&taker.pubkey()));
+    f.swap(&taker, 0, 50_000, Price::INFINITY.as_u32(), 0)
+        .expect("ok, all levels expired");
+
+    assert_eq!(
+        f.token_balance(&f.quote_ata(&taker.pubkey())),
+        q_before,
+        "no quote spent against expired levels"
+    );
+    assert_eq!(f.vault(0).base_atoms.get(), SEED_BASE, "inventory untouched");
+}
+
+/// Two ask levels, 5_000 bps each (Σ = 10_000), at different offsets.
+fn two_ask_level_profile() -> [u8; PROFILE_BYTES] {
+    let mut p: dropset::LiquidityProfile = anchor_lang_v2::bytemuck::Zeroable::zeroed();
+    p.asks[0].price_offset = 5_000u32.into();
+    p.asks[0].size_bps = 5_000u16.into();
+    p.asks[0].expiry_offset = u32::MAX.into();
+    p.asks[1].price_offset = 10_000u32.into();
+    p.asks[1].size_bps = 5_000u16.into();
+    p.asks[1].expiry_offset = u32::MAX.into();
+    let mut bytes = [0u8; PROFILE_BYTES];
+    bytes.copy_from_slice(anchor_lang_v2::bytemuck::bytes_of(&p));
+    bytes
+}
+
+#[test]
+fn min_out_soft_revert_restores_multiple_legs_and_rearms_flush() {
+    // A vault with two ask levels. A Buy that crosses both, then fails
+    // its `min_out`, must restore *both* levels' remaining size and
+    // re-arm FLUSH_BIT.
+    let mut f = Fixture::bootstrap();
+    let auth = f.authority.insecure_clone();
+    f.register_vault(0, f.authority.pubkey(), false, Pubkey::default())
+        .expect("register");
+    f.set_reference_price(&auth, 0, Price::encode(10_850_000, 0).unwrap().as_u32(), 0)
+        .expect("ref");
+    f.set_liquidity_profile(&auth, 0, two_ask_level_profile())
+        .expect("two-level profile");
+    f.deposit_leader(0, 1_000_000, 1_085_000, 1_000_000, 1_085_000)
+        .expect("seed");
+
+    let taker = f.funded_depositor(0, 5_000_000);
+    let q_before = f.token_balance(&f.quote_ata(&taker.pubkey()));
+    // Big enough to fill both 500_000-base levels; min_out unattainable.
+    f.swap(&taker, 0, 2_000_000, Price::INFINITY.as_u32(), u64::MAX)
+        .expect("soft-revert returns Ok");
+
+    let v = f.vault(0);
+    // Each level materialized to base_atoms * 5_000 / 10_000 = 500_000;
+    // the revert must restore both to that full size.
+    assert_eq!(v.remaining.asks[0].size.get(), 500_000, "level 0 restored");
+    assert_eq!(v.remaining.asks[1].size.get(), 500_000, "level 1 restored");
+    assert!(
+        v.reference_price.stamp.get() & FLUSH_BIT != 0,
+        "FLUSH_BIT re-armed after soft-revert"
+    );
+    assert_eq!(
+        f.token_balance(&f.quote_ata(&taker.pubkey())),
+        q_before,
+        "taker spent nothing on the reverted swap"
+    );
+    assert_eq!(v.base_atoms.get(), 1_000_000, "vault inventory restored");
 }
