@@ -184,8 +184,24 @@ impl Withdraw {
         // verify shares balance and crystallize PnL. Leader-path
         // burns live in `withdraw_leader.rs`.
         let realized_pnl_delta: i64;
+        // Snapshot the market address before the `vault_depositor`
+        // mutable borrow so the defensive identity check below can
+        // compare against it without re-borrowing `self.market`.
+        let market_addr_check = *self.market.address();
         let new_leader_shares = {
             let vd = &mut self.vault_depositor;
+            // Defensive: the PDA seeds (market, vault_idx, signer)
+            // already bind this account, so its stored identity fields
+            // must agree. Assert it explicitly — a future change to the
+            // seed derivation, or an account reconstructed by other
+            // means, is caught here instead of silently crediting the
+            // wrong position's realized PnL / share burn.
+            require!(
+                address_eq(&vd.market, &market_addr_check)
+                    && vd.sector_idx.get() == vault_idx
+                    && address_eq(&vd.owner, &signer_addr),
+                DropsetError::VaultDepositorMismatch
+            );
             require!(
                 vd.shares.get() >= shares_in,
                 DropsetError::InsufficientShares

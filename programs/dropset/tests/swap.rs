@@ -9,6 +9,7 @@ mod common;
 
 use anchor_lang_v2::{programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, Signer};
+use common::fixture::Fixture;
 use common::{
     associated_token_address, create_associated_token_account, create_mock_usdc_mint,
     create_spl_mint, decode_slab, deploy_with_authority, mint_to, send_ixn, ATA_PROGRAM_ID,
@@ -469,4 +470,138 @@ fn invalid_side_byte_rejects() {
     let err = send_ixn(&mut svm, &taker, ix)
         .expect_err("swap with side=2 must reject as InvalidSwapSide");
     common::assert_program_error(&err, dropset::DropsetError::InvalidSwapSide);
+}
+
+// ── Fixture-based expansion (WI2) ────────────────────────────────────
+//
+// These reuse the shared `Fixture::seeded` bootstrap (1.0850 ref price,
+// ±0.5% full-inventory ladder, seeded 1_000_000 base / 1_085_000 quote)
+// rather than the bespoke `setup_seeded_vault` above.
+
+/// Default seed used across the fixture-based swap tests.
+const SEED_BASE: u64 = 1_000_000;
+const SEED_QUOTE: u64 = 1_085_000;
+
+#[test]
+fn sell_side_fills_against_bids() {
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+    // Taker sells base, receives quote — exercises the bid-side heap
+    // key + sort. Funded with base only.
+    let taker = f.funded_depositor(100_000, 0);
+    let base_ata = f.base_ata(&taker.pubkey());
+    let quote_ata = f.quote_ata(&taker.pubkey());
+    let base_before = f.token_balance(&base_ata);
+
+    // Sell with ZERO limit (no lower bound on bid price), min_out = 1.
+    f.swap(&taker, 1, 100_000, Price::ZERO.as_u32(), 1)
+        .expect("sell fills");
+
+    assert!(
+        f.token_balance(&quote_ata) > 0,
+        "taker received quote for the base sold"
+    );
+    assert!(
+        f.token_balance(&base_ata) < base_before,
+        "taker spent base"
+    );
+    let v = f.vault(0);
+    assert!(v.base_atoms.get() > SEED_BASE, "vault base grew on the buy-from-taker");
+    assert!(v.quote_atoms.get() < SEED_QUOTE, "vault quote shrank");
+}
+
+#[test]
+fn limit_price_stops_before_level() {
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+    let taker = f.funded_depositor(0, 200_000);
+    let quote_ata = f.quote_ata(&taker.pubkey());
+    let q_before = f.token_balance(&quote_ata);
+
+    // Ask sits at ~1.0904 (1.0850 × 1.005). A Buy limit of 1.08 is
+    // strictly tighter, so the best (only) level crosses and nothing
+    // fills — with min_out = 0 the handler returns Ok with no transfer.
+    let tight_limit = Price::encode(10_800_000, 0).unwrap();
+    f.swap(&taker, 0, 100_000, tight_limit.as_u32(), 0)
+        .expect("swap returns Ok with no fill");
+
+    assert_eq!(f.token_balance(&quote_ata), q_before, "no quote spent");
+    assert_eq!(f.token_balance(&f.base_ata(&taker.pubkey())), 0, "no base received");
+}
+
+#[test]
+fn frozen_vault_skipped_from_matching() {
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+    // Freeze the only vault — it must drop out of the matching set even
+    // though its levels would otherwise be the best (only) price.
+    f.poke_frozen(0, true);
+    let taker = f.funded_depositor(0, 200_000);
+    let quote_ata = f.quote_ata(&taker.pubkey());
+    let q_before = f.token_balance(&quote_ata);
+
+    f.swap(&taker, 0, 100_000, Price::INFINITY.as_u32(), 0)
+        .expect("ok, no fill against a frozen vault");
+
+    assert_eq!(f.token_balance(&quote_ata), q_before, "no quote spent");
+    let v = f.vault(0);
+    assert_eq!(v.base_atoms.get(), SEED_BASE, "frozen vault inventory untouched");
+    assert_eq!(v.quote_atoms.get(), SEED_QUOTE, "frozen vault inventory untouched");
+}
+
+#[test]
+fn min_out_boundary_commits_at_equal_and_reverts_one_over() {
+    // Probe the achievable net output on a throwaway fixture.
+    let achievable = {
+        let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+        let taker = f.funded_depositor(0, 200_000);
+        f.swap(&taker, 0, 100_000, Price::INFINITY.as_u32(), 1)
+            .expect("probe swap");
+        f.token_balance(&f.base_ata(&taker.pubkey()))
+    };
+    assert!(achievable > 0, "probe must fill something");
+
+    // min_out exactly equal to achievable → commits.
+    {
+        let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+        let taker = f.funded_depositor(0, 200_000);
+        f.swap(&taker, 0, 100_000, Price::INFINITY.as_u32(), achievable)
+            .expect("min_out == achievable commits");
+        assert_eq!(f.token_balance(&f.base_ata(&taker.pubkey())), achievable);
+    }
+    // min_out one atom over → soft-reverts (Ok, no transfer).
+    {
+        let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+        let taker = f.funded_depositor(0, 200_000);
+        f.swap(&taker, 0, 100_000, Price::INFINITY.as_u32(), achievable + 1)
+            .expect("min_out one over soft-reverts");
+        assert_eq!(f.token_balance(&f.base_ata(&taker.pubkey())), 0);
+    }
+}
+
+#[test]
+fn taker_fee_retained_in_vault() {
+    // Same swap with and without a taker fee — the fee'd taker receives
+    // strictly less base, and the difference stays in the vault.
+    let run = |fee_ppm: u16| {
+        let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+        f.poke_taker_fee(fee_ppm);
+        let taker = f.funded_depositor(0, 200_000);
+        f.swap(&taker, 0, 100_000, Price::INFINITY.as_u32(), 1)
+            .expect("swap");
+        (
+            f.token_balance(&f.base_ata(&taker.pubkey())),
+            f.vault(0).base_atoms.get(),
+        )
+    };
+    let (no_fee_recv, _) = run(0);
+    let (fee_recv, fee_vault_base) = run(10_000); // 1%
+
+    assert!(
+        fee_recv < no_fee_recv,
+        "a positive taker fee leaves the taker with less base ({fee_recv} vs {no_fee_recv})"
+    );
+    // Without a fee the vault sent out `no_fee_recv` base; with the fee
+    // it retains the fee slice, so its remaining base is higher.
+    assert!(
+        fee_vault_base > SEED_BASE - no_fee_recv,
+        "vault retained the taker fee"
+    );
 }

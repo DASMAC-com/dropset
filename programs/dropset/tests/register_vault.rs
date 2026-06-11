@@ -18,6 +18,7 @@ use dropset::{
     },
     DropsetError, MarketHeader, Vault,
 };
+use common::fixture::Fixture;
 use solana_instruction::{AccountMeta, Instruction};
 use solana_loader_v3_interface::get_program_data_address;
 use solana_pubkey::Pubkey;
@@ -234,4 +235,72 @@ fn invalid_perf_fee_rate_rejects() {
     let err =
         send_ixn(&mut svm, &authority, ix).expect_err("perf_fee_rate > 1_000_000 must reject");
     common::assert_program_error(&err, DropsetError::InvalidPerfFeeRate);
+}
+
+// ── Fixture-based expansion (WI2) ────────────────────────────────────
+
+#[test]
+fn non_admin_pays_open_vault_fee() {
+    let mut f = Fixture::bootstrap();
+    let bob = f.funded_keypair(SIGNER_FUNDING_LAMPORTS);
+    let treasury_before = f.token_balance(&f.registry_fee_treasury);
+
+    f.register_vault_as(&bob, 0, bob.pubkey(), false, Pubkey::default())
+        .expect("non-admin opens a vault by paying the fee");
+
+    assert_eq!(
+        f.token_balance(&f.registry_fee_treasury) - treasury_before,
+        REGISTER_MARKET_FEE_ATOMS,
+        "fee credited to the registry treasury"
+    );
+    assert_eq!(
+        f.token_balance(&f.fee_ata(&bob.pubkey())),
+        0,
+        "payer's fee ATA fully debited"
+    );
+    assert_eq!(f.market_header().active_count.get(), 1, "vault opened");
+}
+
+#[test]
+fn rejects_vault_cap_exceeded() {
+    let mut f = Fixture::bootstrap();
+    // Default cap is 10. Vary perf_fee_rate per call so the
+    // transactions aren't byte-identical (LiteSVM dedups signatures).
+    for i in 0..10u32 {
+        f.register_vault(i, f.authority.pubkey(), false, Pubkey::default())
+            .expect("vault within cap");
+    }
+    assert_eq!(f.market_header().active_count.get(), 10);
+    let err = f
+        .register_vault(10, f.authority.pubkey(), false, Pubkey::default())
+        .expect_err("the 11th vault must exceed the cap");
+    common::assert_program_error(&err, DropsetError::VaultCapExceeded);
+}
+
+#[test]
+fn rejects_default_quote_authority() {
+    let mut f = Fixture::bootstrap();
+    let err = f
+        .register_vault(0, Pubkey::default(), false, Pubkey::default())
+        .expect_err("Address::default() quote_authority must reject");
+    common::assert_program_error(&err, DropsetError::Unauthorized);
+}
+
+#[test]
+fn vault_lands_at_active_head_and_increments_count() {
+    let mut f = Fixture::bootstrap();
+    f.register_vault(0, f.authority.pubkey(), false, Pubkey::default())
+        .expect("first vault");
+    assert_eq!(f.market_header().head.get(), 0, "first vault at active head");
+    assert_eq!(f.market_header().active_count.get(), 1);
+
+    // Second vault (distinct perf so the txn differs) is prepended.
+    f.register_vault(1, f.authority.pubkey(), false, Pubkey::default())
+        .expect("second vault");
+    assert_eq!(
+        f.market_header().head.get(),
+        1,
+        "most recent vault prepended at the active head"
+    );
+    assert_eq!(f.market_header().active_count.get(), 2);
 }

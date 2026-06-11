@@ -62,7 +62,7 @@ pub enum DropsetError {
     MinLeaderShareViolated,
     #[msg("requested shares exceed the caller's available stake")]
     InsufficientShares,
-    #[msg("swap matched nothing; check side, limit_price, and vault state")]
+    #[msg("swap amount_in must be greater than zero")]
     NothingFilled,
     #[msg("supplied VaultDepositor PDA does not match the (market, sector, owner) seeds")]
     VaultDepositorMismatch,

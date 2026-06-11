@@ -9,6 +9,10 @@ use solana_pubkey::Pubkey;
 
 pub use dropset::ID as PROGRAM_ID;
 
+/// Shared market bootstrap + per-instruction ix-builders. See
+/// [`fixture::Fixture`].
+pub mod fixture;
+
 const PROGRAM_SO_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../target/deploy/dropset.so"

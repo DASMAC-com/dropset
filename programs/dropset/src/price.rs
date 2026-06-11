@@ -886,6 +886,43 @@ mod tests {
     }
 
     #[test]
+    fn roundtrip_never_overcharges_taker() {
+        // `swap`'s `taker_unfilled_in -= consumed_in` debit (WARNING
+        // 1c) is only safe if the decoders never compose to *more*
+        // than the input: a taker quoting `q` and getting back
+        // `base_for_quote(q)` base must never be billed
+        // `quote_for_base(base_for_quote(q)) > q`, else
+        // `saturating_sub` floors to 0 and the taker pays their whole
+        // budget for a partial fill. Both decoders truncate toward
+        // zero, so each composition is `<=` the identity; pin that
+        // across a spread of prices and amounts so a future rounding
+        // change (e.g. switching to round-half-up) trips here.
+        let prices = [
+            Price::encode(10_000_000, 0).unwrap(),  // 1.0
+            Price::encode(10_850_000, 0).unwrap(),  // 1.0850
+            Price::encode(33_333_333, 0).unwrap(),  // ~3.333
+            Price::encode(98_700_000, 2).unwrap(),  // 987
+            Price::encode(10_000_000, -2).unwrap(), // 0.01
+            Price::encode(99_999_999, 5).unwrap(),  // large
+        ];
+        let amounts = [1_u64, 3, 7, 999, 1_000_000, 1_085_321, 7_777_777_777];
+        for p in prices {
+            for &q in &amounts {
+                let rt_quote = p.quote_for_base(p.base_for_quote(q).min(u64::MAX as u128) as u64);
+                assert!(
+                    rt_quote <= q as u128,
+                    "quote_for_base(base_for_quote({q})) = {rt_quote} overcharged at {p:?}"
+                );
+                let rt_base = p.base_for_quote(p.quote_for_base(q).min(u64::MAX as u128) as u64);
+                assert!(
+                    rt_base <= q as u128,
+                    "base_for_quote(quote_for_base({q})) = {rt_base} overcharged at {p:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn quote_for_base_huge_inputs_do_not_panic() {
         // sig ≈ 10^8, unbiased_exp = 15 → unb = 8 (×10^8).
         // base = u64::MAX (~1.84e19). Result ≈ 1.84e35, well inside u128
