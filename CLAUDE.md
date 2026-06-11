@@ -23,10 +23,10 @@ Write Bash calls so they reduce to a reusable allow-rule
 (`Bash(prefix:*)`) instead of prompting once per invocation:
 
 - Prefer the dedicated tools — Read, Grep, Glob — over `cat`, `grep`,
-  `find`, `ls` in Bash. They never prompt. This includes *slicing* a
-  file: use Read with `offset`/`limit` instead of `sed -n 'X,Yp'`,
-  `awk 'NR>=X'`, `head`, or `tail`. Never shell out to `python3` /
-  `node` / `jq` to read or edit JSON/config (including
+  `find`, `ls` in Bash. They don't prompt for in-workspace paths. This
+  includes *slicing* a file: use Read with `offset`/`limit` instead of
+  `sed -n 'X,Yp'`, `awk 'NR>=X'`, `head`, or `tail`. Never shell out to
+  `python3` / `node` / `jq` to read or edit JSON/config (including
   `.claude/settings.local.json`) — use Read + Edit/Write. Each such
   one-liner is unique and re-prompts forever.
 - One command per Bash call. Avoid `&&`, `;`, and pipes when separate
