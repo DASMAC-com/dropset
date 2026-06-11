@@ -119,7 +119,8 @@ fn rejects_non_seeding_with_both_legs() {
 #[test]
 fn rejects_frozen_vault() {
     let mut f = fixture_with_unseeded_vault();
-    f.poke_frozen(0, true);
+    let admin = f.authority.insecure_clone();
+    f.freeze_vault(&admin, 0).expect("admin freezes vault");
     let err = f
         .deposit_leader(0, 1_000_000, 1_085_000, 1_000_000, 1_085_000)
         .expect_err("frozen vault must reject leader deposit");

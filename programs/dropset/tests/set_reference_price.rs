@@ -58,8 +58,8 @@ fn rejects_unauthorized_signer() {
 #[test]
 fn rejects_frozen_vault() {
     let mut f = fixture_with_vault();
-    f.poke_frozen(0, true);
     let signer = f.authority.insecure_clone();
+    f.freeze_vault(&signer, 0).expect("admin freezes vault");
     let err = f
         .set_reference_price(&signer, 0, valid_price(), 0)
         .expect_err("frozen vault must reject a reference-price update");

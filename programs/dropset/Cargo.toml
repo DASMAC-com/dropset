@@ -21,8 +21,15 @@ solana-native-token.workspace = true
 solana-pubkey.workspace = true
 
 [features]
+# Feature-gated teardown surface (force-withdraw + close instructions).
+# Per the architecture spec (§ Account lifecycle and rent reclamation),
+# these are compiled into testnet / early-mainnet builds — where
+# redeploy-from-scratch is a live operational tool — and dropped from
+# the final immutable deploy. Enabled in `default` for now since the
+# program is pre-final; the final build removes it from `default`.
+admin-teardown = []
 cpi = ["no-entrypoint"]
-default = []
+default = ["admin-teardown"]
 # Anchor v2 derive macros emit `cfg(feature = "idl-build")` gated code in
 # user crates. The lang-v2 / spl-v2 crates removed the matching forwarded
 # features (e3cf7608 V2: Remove idl-build from Anchor crates), so this

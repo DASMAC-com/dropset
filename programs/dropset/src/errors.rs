@@ -72,4 +72,20 @@ pub enum DropsetError {
     InvalidSwapSide,
     #[msg("limit_price sentinel is invalid for this swap side")]
     InvalidLimitPrice,
+    #[msg("vault is already on the tombstone list")]
+    VaultAlreadyTombstoned,
+    #[msg("token account must be drained to zero before it can be closed")]
+    TokenAccountNotEmpty,
+    #[msg("market treasury must be closed before the market can be closed")]
+    MarketTreasuryNotClosed,
+    #[msg("market still has outstanding VaultDepositor PDAs")]
+    MarketHasDepositors,
+    #[msg("registry still has live markets (market_count != 0)")]
+    RegistryHasMarkets,
+    #[msg("registry still has admins beyond the caller")]
+    RegistryHasOtherAdmins,
+    #[msg("supplied mint is not one of the market's base/quote legs")]
+    NotAMarketTreasury,
+    #[msg("teardown instructions are disabled in this build (admin-teardown feature off)")]
+    TeardownDisabled,
 }

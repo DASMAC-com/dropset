@@ -146,7 +146,8 @@ fn frozen_vault_skipped_from_matching() {
     let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
     // Freeze the only vault — it must drop out of the matching set even
     // though its levels would otherwise be the best (only) price.
-    f.poke_frozen(0, true);
+    let admin = f.authority.insecure_clone();
+    f.freeze_vault(&admin, 0).expect("admin freezes vault");
     let taker = f.funded_depositor(0, 200_000);
     let quote_ata = f.quote_ata(&taker.pubkey());
     let q_before = f.token_balance(&quote_ata);

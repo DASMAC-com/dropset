@@ -317,6 +317,27 @@ pub trait VaultDll {
     /// and the list head; leaves `sector.next` / `sector.prev` as
     /// `NULL_SECTOR` afterwards.
     fn unlink(&mut self, list: DllList, sector: u32) -> Result<()>;
+
+    /// Locate which threaded list (active or tombstone) currently holds
+    /// `sector` by walking each head. Returns `None` when the sector is
+    /// on neither — i.e. it is on the free list or otherwise detached.
+    /// The free list is intentionally excluded: callers reclaiming a
+    /// drained sector want to know whether it was active (so they can
+    /// decrement `active_count`) or tombstoned, and a free sector is
+    /// already where reclaim would put it. Bounded by
+    /// `registry.max_vaults_per_market` (a `u8`), so the walk is cheap.
+    fn vault_list_of(&self, sector: u32) -> Option<DllList>;
+
+    /// Reclaim a fully-drained sector (`total_shares == 0`) to the free
+    /// DLL. Finds the sector's current list, unlinks it (decrementing
+    /// `active_count` when it was active), zeroes `leader` so the
+    /// emptiness marker holds while it sits on the free list, and
+    /// prepends it to `free_head`. The vault's inventory / share
+    /// counters are the caller's responsibility — this is purely the
+    /// list-pointer move the spec's **Vault → Frozen and tombstoned
+    /// vaults → Reclaim** step describes (no rent is refunded; sectors
+    /// are inline in the market slab).
+    fn reclaim_sector(&mut self, sector: u32) -> Result<()>;
 }
 
 /// Identifies which of the three DLL heads on the [`MarketHeader`] a
@@ -539,6 +560,44 @@ impl VaultDll for Market {
         let v = &mut self.as_mut_slice()[sector as usize];
         v.next = NULL_SECTOR.into();
         v.prev = NULL_SECTOR.into();
+        Ok(())
+    }
+
+    fn vault_list_of(&self, sector: u32) -> Option<DllList> {
+        for list in [DllList::Active, DllList::Tombstone] {
+            let mut cur = list.head(self);
+            while cur != NULL_SECTOR {
+                if cur == sector {
+                    return Some(list);
+                }
+                cur = self.as_slice()[cur as usize].next.get();
+            }
+        }
+        None
+    }
+
+    fn reclaim_sector(&mut self, sector: u32) -> Result<()> {
+        let len = self.len();
+        require!((sector as usize) < len, DropsetError::InvalidSectorIndex);
+        // The sector must currently be threaded on active or tombstone.
+        // A sector that's already free (or otherwise unreachable) is a
+        // double-reclaim and would corrupt the free list.
+        let list = self
+            .vault_list_of(sector)
+            .ok_or(DropsetError::CorruptVaultList)?;
+        self.unlink(list, sector)?;
+        // Only the active list is counted; tombstoned sectors were
+        // already removed from `active_count` when they were closed.
+        if list == DllList::Active {
+            let prev = self.active_count.get();
+            self.active_count = prev.saturating_sub(1).into();
+        }
+        // Zero the emptiness marker so `leader == default` holds for as
+        // long as the sector sits on the free list — `allocate_sector`
+        // re-zeroes the whole struct on reuse, but keeping the invariant
+        // true in the interim matches what every other reader expects.
+        self.as_mut_slice()[sector as usize].leader = Address::default();
+        self.link_head(DllList::Free, sector)?;
         Ok(())
     }
 }
@@ -893,6 +952,71 @@ mod tests {
         assert_eq!(market.free_head.get(), NULL_SECTOR);
         market.link_head(DllList::Active, reused).unwrap();
         assert_eq!(walk(&market, DllList::Active), [0]);
+        assert!(walk(&market, DllList::Free).is_empty());
+    }
+
+    #[test]
+    fn vault_list_of_locates_active_and_tombstone() {
+        let buf = setup();
+        let mut market = load_market(&buf);
+        market.link_head(DllList::Active, 0).unwrap();
+        market.link_head(DllList::Tombstone, 1).unwrap();
+        assert_eq!(market.vault_list_of(0), Some(DllList::Active));
+        assert_eq!(market.vault_list_of(1), Some(DllList::Tombstone));
+        // A detached sector is on neither list.
+        assert_eq!(market.vault_list_of(2), None);
+    }
+
+    #[test]
+    fn reclaim_active_sector_moves_to_free_and_decrements_count() {
+        let buf = setup();
+        let mut market = load_market(&buf);
+        market.link_head(DllList::Active, 0).unwrap();
+        market.link_head(DllList::Active, 1).unwrap();
+        market.active_count = 2u32.into();
+        // Stamp a non-default leader so we can assert reclaim zeroes it.
+        market.as_mut_slice()[0].leader = [0x11; 32].into();
+
+        market.reclaim_sector(0).unwrap();
+
+        // Sector 0 left the active list and joined the free list.
+        assert_eq!(walk(&market, DllList::Active), [1]);
+        assert_eq!(walk(&market, DllList::Free), [0]);
+        // Active count dropped by one.
+        assert_eq!(market.active_count.get(), 1);
+        // Emptiness marker restored.
+        assert_eq!(market.as_slice()[0].leader, Address::default());
+    }
+
+    #[test]
+    fn reclaim_tombstone_sector_leaves_active_count() {
+        let buf = setup();
+        let mut market = load_market(&buf);
+        // One active vault, one tombstoned vault awaiting drain.
+        market.link_head(DllList::Active, 0).unwrap();
+        market.link_head(DllList::Tombstone, 1).unwrap();
+        market.active_count = 1u32.into();
+
+        market.reclaim_sector(1).unwrap();
+
+        // Active list + count untouched; tombstone emptied; free gained 1.
+        assert_eq!(walk(&market, DllList::Active), [0]);
+        assert_eq!(market.active_count.get(), 1);
+        assert!(walk(&market, DllList::Tombstone).is_empty());
+        assert_eq!(walk(&market, DllList::Free), [1]);
+    }
+
+    #[test]
+    fn reclaim_rejects_sector_on_no_list() {
+        let buf = setup();
+        let mut market = load_market(&buf);
+        // Sector 0 is detached (on neither active nor tombstone) — a
+        // double-reclaim attempt. Must error rather than corrupt free.
+        let err = market
+            .reclaim_sector(0)
+            .expect_err("reclaim of an unthreaded sector must be rejected");
+        let expected: ProgramError = DropsetError::CorruptVaultList.into();
+        assert_eq!(err, expected);
         assert!(walk(&market, DllList::Free).is_empty());
     }
 

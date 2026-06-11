@@ -8,12 +8,13 @@
 //! so a test reads as intent ("deposit, then withdraw half") rather
 //! than `AccountMeta` lists.
 //!
-//! Production handlers can't yet set some flags a negative test needs
-//! (`frozen`, `taker_fee`, and — before WI1b shipped — the outside
-//! flags). The `poke_*` helpers rewrite those fields directly on the
-//! account and reinstall it. Each `poke_*` call site should be replaced
-//! with the real admin instruction once it lands; they exist only to
-//! reach states the on-chain code can't yet produce on its own.
+//! Production handlers can't yet set some fields a negative test needs
+//! (`min_leader_share`, `taker_fee`). The `poke_*` helpers rewrite those
+//! fields directly on the account and reinstall it. Each `poke_*` call
+//! site should be replaced with the real admin instruction once it
+//! lands; they exist only to reach states the on-chain code can't yet
+//! produce on its own. (`frozen` graduated to the real `freeze_vault`
+//! instruction — see [`Fixture::freeze_vault`].)
 
 #![allow(dead_code)]
 
@@ -26,7 +27,11 @@ use anchor_lang_v2::{bytemuck, programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, LiteSVM, Signer};
 use dropset::{
     instruction::{
-        Deposit as DepositIx, DepositLeader as DepositLeaderIx, Init as InitIx,
+        CloseMarket as CloseMarketIx, CloseMarketTreasury as CloseMarketTreasuryIx,
+        CloseRegistry as CloseRegistryIx, CloseRegistryFeeVault as CloseRegistryFeeVaultIx,
+        CloseVault as CloseVaultIx, Deposit as DepositIx, DepositLeader as DepositLeaderIx,
+        ForceWithdrawDepositor as ForceWithdrawDepositorIx,
+        ForceWithdrawLeader as ForceWithdrawLeaderIx, FreezeVault as FreezeVaultIx, Init as InitIx,
         RegisterMarket as RegisterMarketIx, RegisterVault as RegisterVaultIx,
         SetAllowOutsideDepositors as SetAllowOutsideDepositorsIx,
         SetLiquidityProfile as SetLiquidityProfileIx,
@@ -34,7 +39,7 @@ use dropset::{
         SetReferencePrice as SetReferencePriceIx, Swap as SwapIx, Withdraw as WithdrawIx,
         WithdrawLeader as WithdrawLeaderIx,
     },
-    LiquidityProfile, MarketHeader, Price, Vault, VaultDepositorHeader, N_LEVELS,
+    LiquidityProfile, MarketHeader, Price, RegistryHeader, Vault, VaultDepositorHeader, N_LEVELS,
 };
 use solana_instruction::{AccountMeta, Instruction};
 use solana_loader_v3_interface::get_program_data_address;
@@ -737,11 +742,211 @@ impl Fixture {
         send_ixn(&mut self.svm, taker, ix)
     }
 
+    // ── lifecycle / teardown senders ─────────────────────────────────
+
+    /// `close_vault` — leader moves their vault to the tombstone DLL.
+    pub fn close_vault(&mut self, signer: &Keypair, vault_idx: u32) -> Result<(), String> {
+        let ix = Instruction::new_with_bytes(
+            PROGRAM_ID,
+            &CloseVaultIx { vault_idx }.data(),
+            vec![
+                AccountMeta::new_readonly(signer.pubkey(), true),
+                AccountMeta::new(self.market, false),
+                AccountMeta::new_readonly(event_authority(), false),
+                AccountMeta::new_readonly(PROGRAM_ID, false),
+            ],
+        );
+        send_ixn(&mut self.svm, signer, ix)
+    }
+
+    /// `freeze_vault` — admin freezes a vault in place.
+    pub fn freeze_vault(&mut self, admin: &Keypair, vault_idx: u32) -> Result<(), String> {
+        let ix = Instruction::new_with_bytes(
+            PROGRAM_ID,
+            &FreezeVaultIx { vault_idx }.data(),
+            vec![
+                AccountMeta::new_readonly(admin.pubkey(), true),
+                AccountMeta::new_readonly(self.registry, false),
+                AccountMeta::new(self.market, false),
+                AccountMeta::new_readonly(event_authority(), false),
+                AccountMeta::new_readonly(PROGRAM_ID, false),
+            ],
+        );
+        send_ixn(&mut self.svm, admin, ix)
+    }
+
+    /// `force_withdraw_depositor` — admin drains `owner`'s full position
+    /// and closes their PDA, refunding its rent to `owner`. The admin
+    /// pays for the owner's payout ATAs if `init_if_needed` allocates
+    /// them — here they already exist (the depositor was funded).
+    pub fn force_withdraw_depositor(
+        &mut self,
+        admin: &Keypair,
+        vault_idx: u32,
+        owner: &Pubkey,
+    ) -> Result<(), String> {
+        let (vd, _) = vault_depositor_pda(&self.market, vault_idx, owner);
+        let ix = Instruction::new_with_bytes(
+            PROGRAM_ID,
+            &ForceWithdrawDepositorIx { vault_idx }.data(),
+            vec![
+                AccountMeta::new(admin.pubkey(), true),
+                AccountMeta::new_readonly(self.registry, false),
+                AccountMeta::new(self.market, false),
+                AccountMeta::new(*owner, false),
+                AccountMeta::new(vd, false),
+                AccountMeta::new_readonly(self.base_mint, false),
+                AccountMeta::new_readonly(self.quote_mint, false),
+                AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
+                AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
+                AccountMeta::new(self.base_ata(owner), false),
+                AccountMeta::new(self.quote_ata(owner), false),
+                AccountMeta::new(self.base_treasury, false),
+                AccountMeta::new(self.quote_treasury, false),
+                AccountMeta::new_readonly(ATA_PROGRAM_ID, false),
+                AccountMeta::new_readonly(System::id(), false),
+                AccountMeta::new_readonly(event_authority(), false),
+                AccountMeta::new_readonly(PROGRAM_ID, false),
+            ],
+        );
+        send_ixn(&mut self.svm, admin, ix)
+    }
+
+    /// `force_withdraw_leader` — admin drains the vault's leader stake to
+    /// the leader's ATAs. On full drain the sector reclaims to the free
+    /// DLL.
+    pub fn force_withdraw_leader(
+        &mut self,
+        admin: &Keypair,
+        vault_idx: u32,
+        leader: &Pubkey,
+    ) -> Result<(), String> {
+        let ix = Instruction::new_with_bytes(
+            PROGRAM_ID,
+            &ForceWithdrawLeaderIx { vault_idx }.data(),
+            vec![
+                AccountMeta::new(admin.pubkey(), true),
+                AccountMeta::new_readonly(self.registry, false),
+                AccountMeta::new(self.market, false),
+                AccountMeta::new_readonly(*leader, false),
+                AccountMeta::new_readonly(self.base_mint, false),
+                AccountMeta::new_readonly(self.quote_mint, false),
+                AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
+                AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
+                AccountMeta::new(self.base_ata(leader), false),
+                AccountMeta::new(self.quote_ata(leader), false),
+                AccountMeta::new(self.base_treasury, false),
+                AccountMeta::new(self.quote_treasury, false),
+                AccountMeta::new_readonly(ATA_PROGRAM_ID, false),
+                AccountMeta::new_readonly(System::id(), false),
+                AccountMeta::new_readonly(event_authority(), false),
+                AccountMeta::new_readonly(PROGRAM_ID, false),
+            ],
+        );
+        send_ixn(&mut self.svm, admin, ix)
+    }
+
+    /// `close_market_treasury` — close one market treasury ATA, sending
+    /// its rent to `rent_recipient`. `mint` selects the leg; `treasury`
+    /// is that leg's treasury ATA.
+    pub fn close_market_treasury(
+        &mut self,
+        admin: &Keypair,
+        mint: &Pubkey,
+        treasury: &Pubkey,
+        rent_recipient: &Pubkey,
+    ) -> Result<(), String> {
+        let ix = Instruction::new_with_bytes(
+            PROGRAM_ID,
+            &CloseMarketTreasuryIx {}.data(),
+            vec![
+                AccountMeta::new_readonly(admin.pubkey(), true),
+                AccountMeta::new_readonly(self.registry, false),
+                AccountMeta::new_readonly(self.market, false),
+                AccountMeta::new_readonly(*mint, false),
+                AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
+                AccountMeta::new(*treasury, false),
+                AccountMeta::new(*rent_recipient, false),
+            ],
+        );
+        send_ixn(&mut self.svm, admin, ix)
+    }
+
+    /// `close_market` — close the market PDA + vault slab, refunding rent
+    /// to `rent_recipient` and decrementing `registry.market_count`.
+    pub fn close_market(&mut self, admin: &Keypair, rent_recipient: &Pubkey) -> Result<(), String> {
+        let ix = Instruction::new_with_bytes(
+            PROGRAM_ID,
+            &CloseMarketIx {}.data(),
+            vec![
+                AccountMeta::new_readonly(admin.pubkey(), true),
+                AccountMeta::new(self.registry, false),
+                AccountMeta::new(self.market, false),
+                AccountMeta::new_readonly(self.base_treasury, false),
+                AccountMeta::new_readonly(self.quote_treasury, false),
+                AccountMeta::new(*rent_recipient, false),
+            ],
+        );
+        send_ixn(&mut self.svm, admin, ix)
+    }
+
+    /// `close_registry_fee_vault` — close the registry fee ATA, refunding
+    /// rent to `rent_recipient`.
+    pub fn close_registry_fee_vault(
+        &mut self,
+        admin: &Keypair,
+        rent_recipient: &Pubkey,
+    ) -> Result<(), String> {
+        let ix = Instruction::new_with_bytes(
+            PROGRAM_ID,
+            &CloseRegistryFeeVaultIx {}.data(),
+            vec![
+                AccountMeta::new_readonly(admin.pubkey(), true),
+                AccountMeta::new_readonly(self.registry, false),
+                AccountMeta::new_readonly(self.fee_mint, false),
+                AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
+                AccountMeta::new(self.registry_fee_treasury, false),
+                AccountMeta::new(*rent_recipient, false),
+            ],
+        );
+        send_ixn(&mut self.svm, admin, ix)
+    }
+
+    /// `close_registry` — close the registry PDA, refunding rent to
+    /// `rent_recipient`.
+    pub fn close_registry(
+        &mut self,
+        admin: &Keypair,
+        rent_recipient: &Pubkey,
+    ) -> Result<(), String> {
+        let ix = Instruction::new_with_bytes(
+            PROGRAM_ID,
+            &CloseRegistryIx {}.data(),
+            vec![
+                AccountMeta::new_readonly(admin.pubkey(), true),
+                AccountMeta::new(self.registry, false),
+                AccountMeta::new(*rent_recipient, false),
+            ],
+        );
+        send_ixn(&mut self.svm, admin, ix)
+    }
+
     // ── account-data readers ─────────────────────────────────────────
 
     pub fn token_balance(&self, ata: &Pubkey) -> u64 {
         let acct = self.svm.get_account(ata).expect("token account exists");
         u64::from_le_bytes(acct.data[64..72].try_into().unwrap())
+    }
+
+    /// `registry.market_count` — the live-market witness `close_registry`
+    /// gates on.
+    pub fn registry_market_count(&self) -> u32 {
+        let acct = self.svm.get_account(&self.registry).expect("registry");
+        bytemuck::pod_read_unaligned::<RegistryHeader>(
+            &acct.data[8..8 + core::mem::size_of::<RegistryHeader>()],
+        )
+        .market_count
+        .get()
     }
 
     pub fn market_header(&self) -> MarketHeader {
@@ -779,15 +984,6 @@ impl Fixture {
         let off = vault_byte_offset(sector_idx) + field_offset;
         acct.data[off..off + bytes.len()].copy_from_slice(bytes);
         self.svm.set_account(self.market, acct).expect("set market");
-    }
-
-    /// Flip `Vault.frozen` directly (no `FreezeVault` ix yet).
-    pub fn poke_frozen(&mut self, sector_idx: u32, frozen: bool) {
-        self.poke_vault_bytes(
-            sector_idx,
-            core::mem::offset_of!(Vault, frozen),
-            &[frozen as u8],
-        );
     }
 
     /// Set `Vault.min_leader_share` (ppm) directly (no
