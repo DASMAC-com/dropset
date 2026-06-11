@@ -229,9 +229,11 @@ export function SwapPanel() {
       {/* Jump to the Vaults tab pre-filtered to this pair (in the market's own
           base/quote order), shown only when a vault lists the pair. A plain
           sibling so the page's gap-3 spaces it evenly above (card) and below
-          (globe). */}
+          (globe). Hidden below `sm` — real mobile devices redirect /vaults
+          back to /swap (see MobileSwapRedirect), so the link would be a
+          no-op at phone widths. */}
       {vaultMarket && (
-        <div className="flex justify-center">
+        <div className="hidden justify-center sm:flex">
           <button
             type="button"
             onClick={() => goToVaults(vaultMarket.base, vaultMarket.quote)}

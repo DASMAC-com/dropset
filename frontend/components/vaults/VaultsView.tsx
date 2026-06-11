@@ -273,7 +273,7 @@ function VaultRow({
 
   return (
     <tr className={groupedRowClassName(rowIndex, groupSize)}>
-      <td className="border-border border-r px-3 py-2 align-middle last:border-r-0">
+      <td className="whitespace-nowrap border-border border-r px-3 py-2 align-middle last:border-r-0">
         <div className="flex items-center gap-2">
           {!grouped && (
             <FlagPair
@@ -605,10 +605,20 @@ function VaultsInner() {
 
   return (
     <div className="mx-auto max-w-6xl px-6 pt-3 pb-16">
+      {/* Below `sm` (~phone width) the table is hidden (the `hidden sm:block`
+          guard below) and this prompt shows instead. Real mobile devices are
+          redirected to /swap on load (MobileSwapRedirect), so in practice this
+          is what a very narrow *desktop* window sees. From `sm` up (e.g. a
+          laptop at half width) the full table shows and may scroll sideways. */}
+      <div className="rounded-lg border border-border p-6 text-center text-muted-fg text-sm sm:hidden">
+        The vaults table is best viewed on a wider screen. Widen your window or
+        open Dropset on a desktop browser to browse vault pairs, leaders, APR
+        and TVL.
+      </div>
       {/* Center the toolbar + table as one block and size it to the table's
           content, so the toolbar (search left, preview right) lines up with
           the table edges however wide the table ends up. */}
-      <div className="mx-auto w-fit max-w-full">
+      <div className="mx-auto hidden w-fit max-w-full sm:block">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <SearchBox
@@ -652,8 +662,8 @@ function VaultsInner() {
             )}
           </div>
         )}
-        <div className="rounded-lg border border-border">
-          <table className="w-auto text-left text-sm">
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-auto min-w-max text-left text-sm">
             <thead className="text-muted-fg text-xs uppercase">
               <tr>
                 <VaultSortHeader
@@ -680,7 +690,7 @@ function VaultsInner() {
                 />
                 <th
                   scope="col"
-                  className="sticky top-14 z-20 w-px whitespace-nowrap border-border border-r bg-muted px-3 py-2 text-right font-medium normal-case"
+                  className="w-px whitespace-nowrap border-border border-r bg-muted px-3 py-2 text-right font-medium normal-case"
                 >
                   Manage
                 </th>

@@ -11,6 +11,10 @@ import { HelpCircle } from "@/components/icons";
 // in the dropdown picker that wraps the identity in a row-select `<button>`,
 // clicks would otherwise bubble up and switch the user's selected token.
 // `stopPropagation` keeps clicks on the link link-only.
+//
+// Hidden below `sm` (`hidden sm:flex`): it deep-links to /currencies, which
+// real mobile devices redirect straight back to /swap (see MobileSwapRedirect),
+// so the icon would be a confusing no-op at phone widths.
 export function TokenInfoLink({
   symbol,
   className = "",
@@ -23,7 +27,7 @@ export function TokenInfoLink({
       href={`/currencies?symbol=${encodeURIComponent(symbol)}`}
       title={`More info about ${symbol}`}
       onClick={(e) => e.stopPropagation()}
-      className={`flex shrink-0 items-center rounded p-0.5 text-muted-fg hover:bg-muted hover:text-accent ${className}`}
+      className={`hidden shrink-0 items-center rounded p-0.5 text-muted-fg hover:bg-muted hover:text-accent sm:flex ${className}`}
     >
       <HelpCircle size={12} />
     </Link>

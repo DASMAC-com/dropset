@@ -69,7 +69,7 @@ export function SortableHeader<K extends string>({
     <th
       scope="col"
       aria-sort={ariaSort}
-      className={`sticky top-14 z-20 border-border border-r bg-muted p-0 last:border-r-0 ${thClassName}`}
+      className={`border-border border-r bg-muted p-0 last:border-r-0 ${thClassName}`}
     >
       <div
         className={`flex items-center gap-1 px-3 py-2 ${align === "left" ? "justify-start" : "justify-end"}`}

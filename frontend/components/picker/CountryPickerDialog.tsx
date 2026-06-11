@@ -66,7 +66,12 @@ export function CountryPickerDialog({
               ? { top, maxHeight: `calc(100vh - ${top}px - 1rem)` }
               : undefined
           }
-          className={`-translate-x-1/2 fixed left-1/2 z-[70] flex w-fit max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border border-border bg-background shadow-lg ${
+          // Same definite width as the token-row picker (TokenPicker). A
+          // content-sized `w-fit` gave the flex rows nothing to shrink
+          // against, so the `shrink-0` From/To buttons overflowed and
+          // overlapped the mint; a fixed width lets the flex-1 identity
+          // column truncate instead.
+          className={`-translate-x-1/2 fixed left-1/2 z-[70] flex w-[min(420px,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-border bg-background shadow-lg ${
             top === null
               ? "-translate-y-1/2 top-1/2 max-h-[calc(100vh-3rem)]"
               : ""

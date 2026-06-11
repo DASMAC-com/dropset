@@ -15,6 +15,7 @@ import { useAppEvent } from "@/lib/events";
 import { FORMATS } from "@/lib/format/formats";
 import { groupThousands, sanitizeAmount } from "@/lib/format/input";
 import type { DflowQuote } from "@/lib/hooks/useDflowQuote";
+import { useMediaQuery } from "@/lib/hooks/useMediaQuery";
 import {
   type UsdQuote,
   useLiquidityLookup,
@@ -23,6 +24,13 @@ import {
 import { type Side, useSwapStore } from "@/lib/store";
 import { FromBalanceButtons } from "./FromBalanceButtons";
 import { MaxSlippageButton } from "./MaxSlippageButton";
+
+// Below `sm` (phones) cap the to-side output at 6 significant figures so a long
+// high-precision quote — e.g. 86.619952 on a 6-decimal token — can't overflow
+// the fixed-width amount slot and spill out of the card. From `sm` up there's
+// room, so show the token's full fractional precision. The full-precision
+// value always drives the actual swap; this only shapes the on-screen readout.
+const NARROW_FORMAT: Format = { maximumSignificantDigits: 6 };
 
 export function TokenRow({
   side,
@@ -53,6 +61,10 @@ export function TokenRow({
   const setAmount = useSwapStore((s) => s.setAmount);
   const setActiveSide = useSwapStore((s) => s.setActiveSide);
 
+  // Default to wide so the (client-only) panel renders full precision on
+  // desktop without waiting; phones flip to the capped format on first paint.
+  const wide = useMediaQuery("(min-width: 640px)", true);
+
   // Jupiter-derived liquidity signal for the current stablecoin. "illiquid"
   // means Jupiter returned no usable USD reference price — typically because
   // the token has thin or no on-chain depth. This is independent from DFlow's
@@ -82,6 +94,14 @@ export function TokenRow({
   const decimals = stablecoinDecimals(stablecoin);
   const formattedAmount = groupThousands(amount);
 
+  // Full fractional precision on wider screens, the capped format on phones.
+  // Memoized so identity is stable across renders — NumberFlow compares format
+  // identity to decide whether to restart its digit animation.
+  const toAmountFormat = useMemo<Format>(
+    () => (wide ? { maximumFractionDigits: decimals } : NARROW_FORMAT),
+    [wide, decimals],
+  );
+
   // To-side numeric value for <NumberFlow>. Null when there's no quote
   // (loading first time, error, sameToken, zero input) — in those cases
   // the panel renders a static placeholder string instead of an animated
@@ -97,16 +117,6 @@ export function TokenRow({
     quote.outAmount !== null
       ? Number(quote.outAmount) / 10 ** decimals
       : null;
-  // Maximum precision shown — defer to NumberFlow's grouping/decimal
-  // handling rather than our own groupThousands() so the rolling digits
-  // animate as a single unit.
-  // Memoized so identity is stable across renders — NumberFlow uses
-  // identity to detect format changes and would otherwise reset its
-  // animation every render.
-  const toAmountFormat = useMemo<Format>(
-    () => ({ maximumFractionDigits: decimals }),
-    [decimals],
-  );
   // No value to show on the to-side → render the same em-dash placeholder
   // the error / rateLimited states use. Previously rendered "0" / "0.0",
   // which looked like a real (zero) quote — the dash is unambiguous.

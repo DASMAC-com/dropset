@@ -283,7 +283,7 @@ const StablecoinRow = memo(function StablecoinRow({
       id={s.symbol.toLowerCase()}
       className={`scroll-mt-24 ${groupedRowClassName(rowIndex, groupSize)}`}
     >
-      <td className="border-border border-r px-3 py-2 align-top last:border-r-0">
+      <td className="whitespace-nowrap border-border border-r px-3 py-2 align-top last:border-r-0">
         <div className="flex items-center gap-2">
           {showFlag && <Flag url={currencyFlagUrl(code)} size={20} />}
           {/* biome-ignore lint/performance/noImgElement: small static icon, no optimization needed */}
@@ -585,7 +585,17 @@ function CurrenciesInner() {
 
   return (
     <div className="mx-auto max-w-6xl px-6 pt-3 pb-16">
-      <div className="mb-3 flex items-center justify-between gap-3">
+      {/* Below `sm` (~phone width) the table and its controls are hidden (the
+          `hidden sm:*` guards below) and this prompt shows instead. Real mobile
+          devices are redirected to /swap on load (MobileSwapRedirect), so in
+          practice this is what a very narrow *desktop* window sees. From `sm`
+          up (e.g. a laptop at half width) the full table shows and is allowed
+          to scroll sideways. */}
+      <div className="rounded-lg border border-border p-6 text-center text-muted-fg text-sm sm:hidden">
+        The currencies table is best viewed on a wider screen. Widen your window
+        or open Dropset on a desktop browser to browse full market data.
+      </div>
+      <div className="mb-3 hidden items-center justify-between gap-3 sm:flex">
         <div className="flex items-center gap-3">
           <SearchBox
             value={query}
@@ -628,8 +638,8 @@ function CurrenciesInner() {
           </p>
         </div>
       </div>
-      <div className="rounded-lg border border-border">
-        <table className="w-full min-w-[720px] text-left text-sm">
+      <div className="hidden overflow-x-auto rounded-lg border border-border sm:block">
+        <table className="w-full min-w-max text-left text-sm">
           <thead className="text-muted-fg text-xs uppercase">
             <tr>
               <CurrencySortHeader
@@ -641,7 +651,7 @@ function CurrenciesInner() {
               />
               <th
                 scope="col"
-                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 font-medium normal-case last:border-r-0"
+                className="border-border border-r bg-muted px-3 py-2 font-medium normal-case last:border-r-0"
               >
                 Swap
               </th>
@@ -654,7 +664,7 @@ function CurrenciesInner() {
               />
               <th
                 scope="col"
-                className="sticky top-14 z-20 border-border border-r bg-muted px-3 py-2 text-right font-medium normal-case last:border-r-0"
+                className="border-border border-r bg-muted px-3 py-2 text-right font-medium normal-case last:border-r-0"
               >
                 Price
               </th>
