@@ -14,7 +14,7 @@ import { isMobile } from "@/lib/ua";
 // /swap when you only meant to shrink the window for a moment. A desktop
 // browser is never "mobile" by UA no matter how narrow you drag it, so
 // resizing is now a no-op; narrow desktop windows fall back to the
-// `md:hidden` "best viewed wider" card the table pages render instead.
+// `sm:hidden` "best viewed wider" card the table pages render instead.
 //
 // isMobile() is client-only (false during SSR), which is fine here: this runs
 // in an effect, after hydration, where navigator is available. Rendered by the
