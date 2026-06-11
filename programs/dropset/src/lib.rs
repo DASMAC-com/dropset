@@ -181,4 +181,22 @@ pub mod dropset {
         emit_cpi!(withdraw_event);
         Ok(())
     }
+
+    #[discrim = 12]
+    pub fn set_allow_outside_depositors(
+        ctx: &mut Context<SetAllowOutsideDepositors>,
+        vault_idx: u32,
+        flag: bool,
+    ) -> Result<()> {
+        ctx.accounts.set_allow_outside_depositors(vault_idx, flag)
+    }
+
+    #[discrim = 13]
+    pub fn set_outside_deposits_approved(
+        ctx: &mut Context<SetOutsideDepositsApproved>,
+        vault_idx: u32,
+        flag: bool,
+    ) -> Result<()> {
+        ctx.accounts.set_outside_deposits_approved(vault_idx, flag)
+    }
 }

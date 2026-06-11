@@ -871,16 +871,26 @@ Invariant: `leader_shares + Σ VaultDepositor.shares == total_shares`.
 
 Each outside depositor's position in a vault is a `VaultDepositor`
 account — one per `(vault, owner)` pair, PDA-seeded by
-`("vault_depositor", vault, owner)`. It is the authoritative on-chain
-record of both the depositor's claim and what they paid for it:
+`("vault_depositor", market, sector_idx, owner)`. The vault is
+identified by its `(market, sector_idx)` rather than a single derived
+vault address, because vaults are slab sectors inside the market
+account, not standalone PDAs; including `sector_idx` in the seeds means
+a sector recycled across vault lifetimes derives a fresh
+`VaultDepositor` address. It is the authoritative on-chain record of
+both the depositor's claim and what they paid for it:
 
 ```rust
 struct VaultDepositor {
-    /// The vault this position is in.
-    vault: Pubkey,
+    /// The market the vault lives on. With `sector_idx`, identifies
+    /// the vault — the two are seed inputs, so the position is bound
+    /// to one sector of one market.
+    market: Pubkey,
+    /// Sector index of the vault within the market's slab.
+    sector_idx: u32,
     /// The depositor. Bound by the PDA seeds
-    /// (`"vault_depositor", vault, owner`), so the account is
-    /// non-transferable — there is no authority field to reassign.
+    /// (`"vault_depositor", market, sector_idx, owner`), so the
+    /// account is non-transferable — there is no authority field to
+    /// reassign.
     owner: Pubkey,
     /// Pro-rata claim on the vault — the per-depositor term of the
     /// I6 invariant (`leader_shares + Σ VaultDepositor.shares ==
@@ -1213,8 +1223,14 @@ transfer-fee extension, the amount landing in the fee ATA is less than
 Caller arguments stamped onto the vault:
 
 - `perf_fee_rate: Ppm32` — immutable thereafter.
-- `quote_authority: Option<Pubkey>` — if `None`, the protocol stamps
-  `Vault.leader`. Rotatable post-open via `SetQuoteAuthority`.
+- `quote_authority: Address` — **must not be `Address::default()`**;
+  the zero address is rejected with `Unauthorized`. It doubles as the
+  free-list emptiness marker, and (having no private key) would
+  quote-brick the vault, since `SetReferencePrice` /
+  `SetLiquidityProfile` gate on `signer == quote_authority`. A caller
+  that wants no separate delegation passes the leader's own pubkey
+  rather than a `None`/default sentinel. Rotatable post-open via
+  `SetQuoteAuthority`.
 - `allow_outside_depositors: bool` — toggleable post-open via
   `SetAllowOutsideDepositors`.
 
@@ -1291,6 +1307,14 @@ and current inventory.
 ### SetReferencePrice
 
 Hot path. Takes `(price: Price, quote_slot: u32)` from the leader.
+`price` is validated up front: it must be a well-formed encoding
+(`Price::is_valid`) **and** a regular price — the `Price::ZERO` and
+`Price::INFINITY` sentinels are rejected with `InvalidPrice`. Those
+sentinels exist only as taker `limit_price` markers; storing one as a
+vault's reference price would corrupt the basis math (the decoders
+return `0` for `ZERO` and saturate to `u64::MAX` for `INFINITY`), so a
+leader cannot stamp them even though they pass the bit-pattern check.
+
 `quote_slot` is validated:
 
 - `quote_slot <= current_slot` — no future-dating (which would

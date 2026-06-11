@@ -131,8 +131,21 @@ fn flush_level_price(reference: Price, offset_ppm: u32, is_ask: bool) -> Price {
 }
 
 /// `level.size_bps` × the matching leg, in atoms.
-fn flush_level_size(size_bps: u16, leg_atoms: u64) -> u64 {
-    (((leg_atoms as u128) * (size_bps as u128)) / (BPS as u128)).min(u64::MAX as u128) as u64
+///
+/// `size_bps <= BPS` is enforced at `set_liquidity_profile`, so the
+/// guard below never fires on a profile written through the normal
+/// path. It is load-bearing only against a future instruction that
+/// reshapes a profile without that validation: with the invariant held
+/// the product is at most `leg_atoms * BPS`, which divided by `BPS` is
+/// `<= leg_atoms <= u64::MAX`, so the cast is lossless. We `require!`
+/// the invariant rather than silently `.min(u64::MAX)`-clamping, which
+/// would mask the bug by shrinking the level's materialized size.
+fn flush_level_size(size_bps: u16, leg_atoms: u64) -> Result<u64> {
+    require!(
+        size_bps as u64 <= BPS,
+        DropsetError::LiquidityProfileSizeOverflow
+    );
+    Ok((leg_atoms as u128 * size_bps as u128 / BPS as u128) as u64)
 }
 
 /// One entry on the ephemeral matching heap. Built per-`(vault,
@@ -191,7 +204,7 @@ impl Swap {
             SwapSide::Sell => !limit_price.is_infinity(),
         };
         require!(limit_ok, DropsetError::InvalidLimitPrice);
-        require!(amount_in > 0, DropsetError::NothingFilled);
+        require!(amount_in > 0, DropsetError::InvalidAmountIn);
 
         // Snapshot market-wide constants the loop needs.
         let market_addr = *self.market.address();
@@ -277,13 +290,13 @@ impl Swap {
                     v.remaining.bids[i].price =
                         flush_level_price(ref_price, bid.price_offset.get(), false);
                     v.remaining.bids[i].size =
-                        flush_level_size(bid.size_bps.get(), quote_atoms).into();
+                        flush_level_size(bid.size_bps.get(), quote_atoms)?.into();
                     v.remaining.bids[i].expires_at =
                         ref_slot.saturating_add(bid.expiry_offset.get()).into();
                     v.remaining.asks[i].price =
                         flush_level_price(ref_price, ask.price_offset.get(), true);
                     v.remaining.asks[i].size =
-                        flush_level_size(ask.size_bps.get(), base_atoms).into();
+                        flush_level_size(ask.size_bps.get(), base_atoms)?.into();
                     v.remaining.asks[i].expires_at =
                         ref_slot.saturating_add(ask.expiry_offset.get()).into();
                 }
@@ -381,7 +394,17 @@ impl Swap {
         let nonce_at_start = self.market.nonce.get();
 
         for &(sector_idx, level_idx, price, level_size, _nonce) in levels.iter().take(live_count) {
-            // Limit-price filter.
+            // Limit-price filter — also the review's "early-exit when
+            // the best level can't fill" gate (WARNING 1a). `levels`
+            // is sorted best-price-first, so the first level that
+            // crosses the taker's limit means every remaining level
+            // crosses too: `break` bails before any snapshot or fill
+            // work, and the `filled_legs == 0` path below re-arms
+            // FLUSH_BIT and returns an empty result. (This does not
+            // meter the INF-limit / MAX-`min_out` soft-revert spam,
+            // which crosses zero levels and walks the whole book —
+            // that needs a soft-revert fee or per-slot cooldown,
+            // tracked separately.)
             let crosses = match side {
                 SwapSide::Buy => {
                     price.as_u32() > limit_price.as_u32() && !limit_price.is_infinity()
@@ -416,7 +439,23 @@ impl Swap {
                     }
                     let fill_b_u64 = fill_b.min(u64::MAX as u128) as u64;
                     let fill_q = price.quote_for_base(fill_b_u64);
-                    (fill_b_u64, fill_q.min(u64::MAX as u128) as u64)
+                    // 1d: a huge price can push the quote leg past
+                    // u64::MAX. Reject explicitly instead of silently
+                    // truncating — a clamped quote would debit the
+                    // taker (and book the vault) less than the price
+                    // implies, shattering the treasury invariant.
+                    require!(fill_q <= u64::MAX as u128, DropsetError::MathOverflow);
+                    // 1c: never charge the taker more than their
+                    // remaining input. The decoders truncate toward
+                    // zero in both directions, so
+                    // `quote_for_base(base_for_quote(q))` can exceed
+                    // `q` by a few atoms; capping the quote leg (the
+                    // taker's input on a Buy) keeps the per-leg vault
+                    // credit equal to what the taker actually pays and
+                    // stops `taker_unfilled_in` from saturating to 0
+                    // and billing the full budget for a partial fill.
+                    let fill_q = fill_q.min(taker_unfilled_in);
+                    (fill_b_u64, fill_q as u64)
                 }
                 SwapSide::Sell => {
                     // level.size is in quote; convert the taker's
@@ -431,7 +470,13 @@ impl Swap {
                     }
                     let fill_q_u64 = fill_q.min(u64::MAX as u128) as u64;
                     let fill_b = price.base_for_quote(fill_q_u64);
-                    (fill_b.min(u64::MAX as u128) as u64, fill_q_u64)
+                    // 1d: symmetric overflow guard on the base leg.
+                    require!(fill_b <= u64::MAX as u128, DropsetError::MathOverflow);
+                    // 1c: cap the base leg (the taker's input on a
+                    // Sell) to the remaining input for the same
+                    // round-trip-rounding reason as the Buy side.
+                    let fill_b = fill_b.min(taker_unfilled_in);
+                    (fill_b as u64, fill_q_u64)
                 }
             };
 

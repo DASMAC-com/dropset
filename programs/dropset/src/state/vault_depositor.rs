@@ -73,12 +73,12 @@ const _: () = assert!(core::mem::offset_of!(VaultDepositorHeader, shares) == 68)
 const _: () = assert!(core::mem::offset_of!(VaultDepositorHeader, bump) == 136);
 const _: () = assert!(core::mem::offset_of!(VaultDepositorHeader, _reserved) == 137);
 
-/// PDA seed prefix for [`VaultDepositorHeader`] accounts. Inlined as
-/// the `b"vault_depositor"` byte string in each Accounts struct that
-/// references it — anchor v2's IDL classifier recognizes byte-string
-/// literals as `IdlSeed::Const` but treats a named constant
-/// reference as the opaque `{"kind":"expr"}` fallback (which anchor
-/// CLI's `IdlInstructionAccountItem` deserializer rejects). The
-/// constant lives here for documentation; do NOT use it directly in
-/// `seeds = [ ... ]` constraints.
-pub const VAULT_DEPOSITOR_SEED: &[u8] = b"vault_depositor";
+// PDA seed prefix for `VaultDepositorHeader` accounts: the byte string
+// `b"vault_depositor"`. It is inlined directly in each `seeds = [ ... ]`
+// constraint (`deposit`, `withdraw`) rather than referenced through a
+// named constant — anchor v2's IDL classifier recognizes a byte-string
+// literal as `IdlSeed::Const` but treats a named-constant reference as
+// the opaque `{"kind":"expr"}` fallback, which anchor CLI's
+// `IdlInstructionAccountItem` deserializer then rejects. There is no
+// runtime path that needs the seed as a value, so no constant is
+// exported; if a client-helper crate ever needs one, define it there.

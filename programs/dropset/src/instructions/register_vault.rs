@@ -156,25 +156,38 @@ impl RegisterVault {
 
         // Allocate a sector — reuses a free-list entry when available,
         // else extends the slab. Tops up any rent shortfall from
-        // `payer`.
+        // `payer`. `allocate_sector` leaves the sector zeroed and
+        // detached (`next == prev == NULL_SECTOR`).
         let sector = self.market.allocate_sector(self.payer.as_ref())?;
-        self.market.link_head(DllList::Active, sector)?;
-        self.market.active_count = (active + 1).into();
 
-        // Stamp the new sector. `allocate_sector` zeroed it, so we
-        // only need to write the leader-controlled fields.
+        // Stamp the new sector BEFORE threading it onto the active DLL
+        // (WARNING 1e). `swap.rs` relies on the invariant "a vault on
+        // the active DLL has a non-default leader"; linking first and
+        // stamping after would briefly publish a sector on the active
+        // list with `leader == Address::default()`. No observer can
+        // race us inside a single transaction, but ordering the writes
+        // so the invariant holds at every step keeps the matching
+        // engine's assumption honest. `allocate_sector` zeroed the
+        // sector, so we only write the leader-controlled fields.
         let market_addr = *self.market.address();
         let min_leader_share = self.market.default_min_leader_share.get();
-        let vault = &mut self.market.as_mut_slice()[sector as usize];
-        vault.leader = leader;
-        vault.quote_authority = quote_authority;
-        vault.perf_fee_rate = perf_fee_rate.into();
-        vault.min_leader_share = min_leader_share.into();
-        vault.hwm = Q32_32_ONE.into();
-        vault.allow_outside_depositors = allow_outside_depositors.into();
-        // `frozen`, `outside_deposits_approved`, base/quote/share
-        // counters, profile, and remaining are already zero from
-        // `allocate_sector`'s `Vault::zeroed()`.
+        {
+            let vault = &mut self.market.as_mut_slice()[sector as usize];
+            vault.leader = leader;
+            vault.quote_authority = quote_authority;
+            vault.perf_fee_rate = perf_fee_rate.into();
+            vault.min_leader_share = min_leader_share.into();
+            vault.hwm = Q32_32_ONE.into();
+            vault.allow_outside_depositors = allow_outside_depositors.into();
+            // `frozen`, `outside_deposits_approved`, base/quote/share
+            // counters, profile, and remaining are already zero from
+            // `allocate_sector`'s `Vault::zeroed()`.
+        }
+
+        // Now thread the fully-stamped sector onto the active DLL and
+        // bump the active count.
+        self.market.link_head(DllList::Active, sector)?;
+        self.market.active_count = (active + 1).into();
 
         Ok(OpenVaultEvent {
             market: market_addr,
