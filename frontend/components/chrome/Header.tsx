@@ -104,11 +104,12 @@ export function Header() {
           </Link>
           {pathname === "/vaults" && (
             // shrink-0 + whitespace-nowrap so the pill never gets squeezed
-            // into a multi-line wrap that overflows its fixed h-9 height.
-            // Hidden until `md`: in the tight sm–md band the header has no
-            // room for it, and the in-page "Preview" notice still covers it.
-            <span className="hidden h-9 shrink-0 items-center whitespace-nowrap rounded-md border border-amber-500/50 bg-amber-500/15 px-2 font-semibold text-[10px] text-amber-400 uppercase tracking-wide md:inline-flex">
-              Preview · mock data
+            // into a multi-line wrap that overflows its fixed h-9 height. In
+            // the tight sm–md band only "Preview" shows; the "· mock data"
+            // suffix appears from md up, where the header has room for it.
+            <span className="inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-md border border-amber-500/50 bg-amber-500/15 px-2 font-semibold text-[10px] text-amber-400 uppercase tracking-wide">
+              Preview
+              <span className="hidden md:inline">&nbsp;· mock data</span>
             </span>
           )}
         </nav>
