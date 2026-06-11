@@ -585,17 +585,17 @@ function CurrenciesInner() {
 
   return (
     <div className="mx-auto max-w-6xl px-6 pt-3 pb-16">
-      {/* Below `md` the wide table and its controls are hidden (the `hidden
-          md:*` guards below) and this prompt shows instead. Mobile devices
-          are redirected to /swap on load (MobileSwapRedirect), so in practice
-          this is what a narrow *desktop* window sees — a graceful message
-          rather than a blank area or a sideways-scrolling table. */}
-      <div className="rounded-lg border border-border p-6 text-center text-muted-fg text-sm md:hidden">
+      {/* Below `sm` (~phone width) the table and its controls are hidden (the
+          `hidden sm:*` guards below) and this prompt shows instead. Real mobile
+          devices are redirected to /swap on load (MobileSwapRedirect), so in
+          practice this is what a very narrow *desktop* window sees. From `sm`
+          up (e.g. a laptop at half width) the full table shows and is allowed
+          to scroll sideways. */}
+      <div className="rounded-lg border border-border p-6 text-center text-muted-fg text-sm sm:hidden">
         The currencies table is best viewed on a wider screen. Widen your window
-        or open Dropset on a desktop browser to browse full market data — price,
-        24h volume, market cap, liquidity and holders.
+        or open Dropset on a desktop browser to browse full market data.
       </div>
-      <div className="mb-3 hidden items-center justify-between gap-3 md:flex">
+      <div className="mb-3 hidden items-center justify-between gap-3 sm:flex">
         <div className="flex items-center gap-3">
           <SearchBox
             value={query}
@@ -638,7 +638,7 @@ function CurrenciesInner() {
           </p>
         </div>
       </div>
-      <div className="hidden rounded-lg border border-border md:block">
+      <div className="hidden rounded-lg border border-border sm:block">
         <table className="w-full min-w-[720px] text-left text-sm">
           <thead className="text-muted-fg text-xs uppercase">
             <tr>

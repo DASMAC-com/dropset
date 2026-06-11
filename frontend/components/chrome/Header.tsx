@@ -20,7 +20,7 @@ const blurOnClick = (e: MouseEvent<HTMLAnchorElement>) =>
   e.currentTarget.blur();
 
 // No `display` utility here — each slot supplies its own (`inline-flex`,
-// `hidden md:inline-flex`, etc.). Baking `inline-flex` in would collide with
+// `hidden sm:inline-flex`, etc.). Baking `inline-flex` in would collide with
 // a caller's `hidden`: both set `display`, and the unprefixed `inline-flex`
 // wins by stylesheet order, so the element would never hide.
 const iconButtonClass =
@@ -70,13 +70,14 @@ export function Header() {
             suppressHydrationWarning
           />
         </Link>
-        {/* On phones the nav is hidden, so the X link sits beside the logo to
-            fill the empty left side. Desktop keeps it in the right cluster. */}
-        <XLink className="inline-flex md:hidden" />
-        {/* Nav links are hidden on phones — mobile is a swap-only experience
-            (the currencies/vaults pages redirect to /swap below `md`, see
-            MobileSwapRedirect), so there's nothing to navigate to. */}
-        <nav className="hidden items-center gap-2 md:flex">
+        {/* On narrow widths the nav is hidden, so the X link sits beside the
+            logo to fill the empty left side. Wider keeps it in the right
+            cluster. */}
+        <XLink className="inline-flex sm:hidden" />
+        {/* Nav links are hidden below `sm` — that's roughly phone width; real
+            mobile devices are redirected to /swap anyway (MobileSwapRedirect).
+            A laptop at half width (≥640px) still shows the full nav. */}
+        <nav className="hidden items-center gap-2 sm:flex">
           <Link
             href="/swap"
             aria-current={pathname === "/swap" ? "page" : undefined}
@@ -108,19 +109,19 @@ export function Header() {
           )}
         </nav>
         {/* Right-hand controls. ml-auto on the wrapper pushes the whole cluster
-            to the right edge on every screen; on phones it's just the wallet
-            button (keyboard shortcuts and the X link are desktop-only here). */}
+            to the right edge on every screen; below `sm` it's just the wallet
+            button (keyboard shortcuts and the X link show from `sm` up). */}
         <div className="ml-auto flex items-center gap-2">
           <button
             type="button"
             onClick={() => emit("toggleHelp")}
             aria-label="Show keyboard shortcuts"
             title="Keyboard shortcuts (?)"
-            className={`hidden md:inline-flex ${iconButtonClass}`}
+            className={`hidden sm:inline-flex ${iconButtonClass}`}
           >
             <Keyboard size={18} />
           </button>
-          <XLink className="hidden md:inline-flex" />
+          <XLink className="hidden sm:inline-flex" />
           <WalletButton />
         </div>
       </div>

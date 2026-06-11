@@ -605,12 +605,12 @@ function VaultsInner() {
 
   return (
     <div className="mx-auto max-w-6xl px-6 pt-3 pb-16">
-      {/* Below `md` the wide table is hidden (the `hidden md:block` guard
-          below) and this prompt shows instead. Mobile devices are redirected
-          to /swap on load (MobileSwapRedirect), so in practice this is what a
-          narrow *desktop* window sees — a graceful message rather than a blank
-          area. */}
-      <div className="rounded-lg border border-border p-6 text-center text-muted-fg text-sm md:hidden">
+      {/* Below `sm` (~phone width) the table is hidden (the `hidden sm:block`
+          guard below) and this prompt shows instead. Real mobile devices are
+          redirected to /swap on load (MobileSwapRedirect), so in practice this
+          is what a very narrow *desktop* window sees. From `sm` up (e.g. a
+          laptop at half width) the full table shows and may scroll sideways. */}
+      <div className="rounded-lg border border-border p-6 text-center text-muted-fg text-sm sm:hidden">
         The vaults table is best viewed on a wider screen. Widen your window or
         open Dropset on a desktop browser to browse vault pairs, leaders, APR
         and TVL.
@@ -618,7 +618,7 @@ function VaultsInner() {
       {/* Center the toolbar + table as one block and size it to the table's
           content, so the toolbar (search left, preview right) lines up with
           the table edges however wide the table ends up. */}
-      <div className="mx-auto hidden w-fit max-w-full md:block">
+      <div className="mx-auto hidden w-fit max-w-full sm:block">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <SearchBox
