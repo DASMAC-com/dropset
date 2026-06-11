@@ -57,6 +57,20 @@ fn allow_outside_depositors_rejects_invalid_idx() {
     common::assert_program_error(&err, dropset::DropsetError::InvalidSectorIndex);
 }
 
+#[test]
+fn allow_outside_depositors_rejects_empty_sector() {
+    let mut f = fixture_with_vault();
+    // Vacate the (in-range) sector by zeroing its leader — the
+    // free-list emptiness marker. The VaultEmpty guard must fire
+    // before the leader-authorization check.
+    f.poke_leader_empty(0);
+    let leader = f.authority.insecure_clone();
+    let err = f
+        .set_allow_outside_depositors(&leader, 0, true)
+        .expect_err("an empty sector must reject");
+    common::assert_program_error(&err, dropset::DropsetError::VaultEmpty);
+}
+
 // ── set_outside_deposits_approved (admin-only) ───────────────────────
 
 #[test]
@@ -98,4 +112,15 @@ fn outside_deposits_approved_rejects_invalid_idx() {
         .set_outside_deposits_approved(&admin, 99, true)
         .expect_err("out-of-range vault_idx must reject");
     common::assert_program_error(&err, dropset::DropsetError::InvalidSectorIndex);
+}
+
+#[test]
+fn outside_deposits_approved_rejects_empty_sector() {
+    let mut f = fixture_with_vault();
+    f.poke_leader_empty(0);
+    let admin = f.authority.insecure_clone();
+    let err = f
+        .set_outside_deposits_approved(&admin, 0, true)
+        .expect_err("an empty sector must reject");
+    common::assert_program_error(&err, dropset::DropsetError::VaultEmpty);
 }

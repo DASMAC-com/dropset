@@ -801,6 +801,14 @@ impl Fixture {
         );
     }
 
+    /// Zero a vault's `leader` (the free-list emptiness marker) so a
+    /// live, in-range sector reads as empty — there is no `CloseVault`
+    /// ix yet to vacate a sector the normal way, so this is how a test
+    /// reaches the `VaultEmpty` rejection branch.
+    pub fn poke_leader_empty(&mut self, sector_idx: u32) {
+        self.poke_vault_bytes(sector_idx, core::mem::offset_of!(Vault, leader), &[0u8; 32]);
+    }
+
     /// Set `MarketHeader.taker_fee` directly (no `SetMarketFeeConfig`
     /// ix yet).
     pub fn poke_taker_fee(&mut self, fee_ppm: u16) {

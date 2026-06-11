@@ -57,7 +57,7 @@ fn seeding_sets_shares_to_isqrt_and_hwm_to_one() {
 }
 
 #[test]
-fn single_leg_topup_grows_leader_and_total_equally() {
+fn single_leg_top_up_grows_leader_and_total_equally() {
     let mut f = fixture_with_unseeded_vault();
     let (base, quote) = (1_000_000_u64, 1_085_000_u64);
     f.deposit_leader(0, base, quote, base, quote).expect("seed");

@@ -63,7 +63,7 @@ pub enum DropsetError {
     #[msg("requested shares exceed the caller's available stake")]
     InsufficientShares,
     #[msg("swap amount_in must be greater than zero")]
-    NothingFilled,
+    InvalidAmountIn,
     #[msg("supplied VaultDepositor PDA does not match the (market, sector, owner) seeds")]
     VaultDepositorMismatch,
     #[msg("arithmetic overflow in basket / share math")]

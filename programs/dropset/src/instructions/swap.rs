@@ -204,7 +204,7 @@ impl Swap {
             SwapSide::Sell => !limit_price.is_infinity(),
         };
         require!(limit_ok, DropsetError::InvalidLimitPrice);
-        require!(amount_in > 0, DropsetError::NothingFilled);
+        require!(amount_in > 0, DropsetError::InvalidAmountIn);
 
         // Snapshot market-wide constants the loop needs.
         let market_addr = *self.market.address();
