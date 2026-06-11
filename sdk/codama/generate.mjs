@@ -1,0 +1,56 @@
+// Codama codegen for the Dropset clients.
+//
+// Pipeline (interface.md § SDK, spine A): the checked-in `anchor-next`
+// IDL -> a Codama tree -> TypeScript (`@solana/kit`) and Rust clients
+// (instruction builders, account / event codecs, PDA helpers).
+//
+// Regenerate with `make sdk` (or `pnpm generate` here) after `make idl`.
+
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import {
+  bottomUpTransformerVisitor,
+  createFromRoot,
+  numberTypeNode,
+} from 'codama';
+import { rootNodeFromAnchor } from '@codama/nodes-from-anchor';
+import { renderVisitor as renderJavaScript } from '@codama/renderers-js';
+import { renderVisitor as renderRust } from '@codama/renderers-rust';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const repoRoot = join(here, '..', '..');
+const idlPath = join(repoRoot, 'sdk', 'idl', 'dropset.json');
+
+const idl = JSON.parse(readFileSync(idlPath, 'utf8'));
+const codama = createFromRoot(rootNodeFromAnchor(idl));
+
+// `Price` is a u32 decimal-float comparison key, but it does not derive
+// `IdlType`, so the program's IDL surfaces it as a *fieldless* struct.
+// Left as-is, Codama would emit a zero-byte codec and silently corrupt
+// every `Price`-bearing decode (FillEvent.fill_price, ReferencePrice).
+// Remap the defined type to its true wire form — a bare `u32` — so the
+// generated codecs read the right four bytes. The human-facing decimal
+// codec (bits <-> value) is layered by hand in each client's `price`
+// module, keyed off these raw bits.
+codama.update(
+  bottomUpTransformerVisitor([
+    {
+      select: '[definedTypeNode]price',
+      transform: (node) => ({ ...node, type: numberTypeNode('u32') }),
+    },
+  ]),
+);
+
+const tsOut = join(repoRoot, 'sdk', 'ts', 'src', 'generated');
+const rustCrate = join(repoRoot, 'sdk', 'rs');
+const rustOut = join(rustCrate, 'src', 'generated');
+
+codama.accept(renderJavaScript(tsOut, { formatCode: false }));
+codama.accept(
+  renderRust(rustOut, { formatCode: false, crateFolder: rustCrate }),
+);
+
+console.log('Generated TypeScript client ->', tsOut);
+console.log('Generated Rust client       ->', rustOut);

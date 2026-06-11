@@ -1,6 +1,7 @@
 {
   "dependencies": {
     "@discordapp/twemoji": "^16.0.1",
+    "@dropset/sdk": "workspace:*",
     "@metamask/connect-solana": "^1.2.0",
     "@number-flow/react": "^0.6.0",
     "@radix-ui/react-dialog": "^1.1.15",

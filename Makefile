@@ -2,8 +2,10 @@
 .PHONY: check-toolchain
 .PHONY: clean
 .PHONY: frontend
+.PHONY: idl
 .PHONY: install-anchor-v2
 .PHONY: lint
+.PHONY: sdk
 .PHONY: test
 .PHONY: test-no-teardown
 
@@ -16,6 +18,16 @@ check-toolchain:
 	@command -v cargo-build-sbf >/dev/null \
 		|| { echo "cargo build-sbf not found (install Solana toolchain)"; \
 			exit 1; }
+
+# Regenerate the checked-in IDL from the program. Pin anchor-cli to the
+# same anchor-next rev as the program crate (see install-anchor-v2) so
+# the IDL-diff baseline doesn't drift — interface.md § SDK, CI discipline.
+idl: check-toolchain
+	anchor idl build -o sdk/idl/dropset.json
+
+# Regenerate the TS + Rust clients from the checked-in IDL via Codama.
+sdk:
+	cd sdk/codama && pnpm install && pnpm generate
 
 debugger: program
 	anchor debugger

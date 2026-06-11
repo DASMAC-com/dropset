@@ -1,5 +1,8 @@
 target/
 
+# Node / pnpm workspace (hoisted to the repo root by pnpm-workspace.yaml).
+node_modules/
+
 # Track the vanity program keypair.
 !/target/
 /target/*
