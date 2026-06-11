@@ -663,7 +663,7 @@ function VaultsInner() {
           </div>
         )}
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-auto text-left text-sm">
+          <table className="w-auto min-w-max text-left text-sm">
             <thead className="text-muted-fg text-xs uppercase">
               <tr>
                 <VaultSortHeader

@@ -639,7 +639,7 @@ function CurrenciesInner() {
         </div>
       </div>
       <div className="hidden overflow-x-auto rounded-lg border border-border sm:block">
-        <table className="w-full min-w-[720px] text-left text-sm">
+        <table className="w-full min-w-max text-left text-sm">
           <thead className="text-muted-fg text-xs uppercase">
             <tr>
               <CurrencySortHeader
