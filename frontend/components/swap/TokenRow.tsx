@@ -1,7 +1,7 @@
 "use client";
 
 import NumberFlow, { type Format } from "@number-flow/react";
-import { useLayoutEffect, useMemo, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { CircleAlert } from "@/components/icons";
 import { TokenPicker } from "@/components/picker/TokenPicker";
 import { WalletBalance } from "@/components/wallet/WalletBalance";
@@ -23,6 +23,16 @@ import {
 import { type Side, useSwapStore } from "@/lib/store";
 import { FromBalanceButtons } from "./FromBalanceButtons";
 import { MaxSlippageButton } from "./MaxSlippageButton";
+
+// Cap the to-side output at 6 significant figures (the Jupiter/Uniswap
+// convention) so a long high-precision quote — e.g. 86.619952 on a 6-decimal
+// token — renders as "86.62" instead of overflowing the fixed-width amount
+// slot and spilling out the left of the card on narrow screens. Small values
+// keep their leading precision (0.00012345 stays intact). The full-precision
+// value still drives the actual swap; this only shortens the on-screen
+// readout. Module-level so its identity is stable — NumberFlow compares format
+// identity to decide whether to restart its digit animation.
+const TO_AMOUNT_FORMAT: Format = { maximumSignificantDigits: 6 };
 
 export function TokenRow({
   side,
@@ -97,16 +107,6 @@ export function TokenRow({
     quote.outAmount !== null
       ? Number(quote.outAmount) / 10 ** decimals
       : null;
-  // Maximum precision shown — defer to NumberFlow's grouping/decimal
-  // handling rather than our own groupThousands() so the rolling digits
-  // animate as a single unit.
-  // Memoized so identity is stable across renders — NumberFlow uses
-  // identity to detect format changes and would otherwise reset its
-  // animation every render.
-  const toAmountFormat = useMemo<Format>(
-    () => ({ maximumFractionDigits: decimals }),
-    [decimals],
-  );
   // No value to show on the to-side → render the same em-dash placeholder
   // the error / rateLimited states use. Previously rendered "0" / "0.0",
   // which looked like a real (zero) quote — the dash is unambiguous.
@@ -226,7 +226,7 @@ export function TokenRow({
               }`}
             >
               {toAmountNumber !== null ? (
-                <NumberFlow value={toAmountNumber} format={toAmountFormat} />
+                <NumberFlow value={toAmountNumber} format={TO_AMOUNT_FORMAT} />
               ) : (
                 toPlaceholder
               )}

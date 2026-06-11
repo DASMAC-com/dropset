@@ -605,12 +605,17 @@ function VaultsInner() {
 
   return (
     <div className="mx-auto max-w-6xl px-6 pt-3 pb-16">
-      {/* This wide, multi-column table is desktop-only. On phones the page
-          redirects to /swap (see MobileSwapRedirect); the `hidden md:block`
-          guard keeps the table from flashing before that redirect fires and
-          serves as a fallback if JS hasn't run yet.
-
-          Center the toolbar + table as one block and size it to the table's
+      {/* Below `md` the wide table is hidden (the `hidden md:block` guard
+          below) and this prompt shows instead. Mobile devices are redirected
+          to /swap on load (MobileSwapRedirect), so in practice this is what a
+          narrow *desktop* window sees — a graceful message rather than a blank
+          area. */}
+      <div className="rounded-lg border border-border p-6 text-center text-muted-fg text-sm md:hidden">
+        The vaults table is best viewed on a wider screen. Widen your window or
+        open Dropset on a desktop browser to browse vault pairs, leaders, APR
+        and TVL.
+      </div>
+      {/* Center the toolbar + table as one block and size it to the table's
           content, so the toolbar (search left, preview right) lines up with
           the table edges however wide the table ends up. */}
       <div className="mx-auto hidden w-fit max-w-full md:block">

@@ -585,10 +585,16 @@ function CurrenciesInner() {
 
   return (
     <div className="mx-auto max-w-6xl px-6 pt-3 pb-16">
-      {/* This wide, data-dense table is desktop-only. On phones the page
-          redirects to /swap (see MobileSwapRedirect); the `hidden md:*`
-          guards below keep the table from flashing before that redirect
-          fires and serve as a fallback if JS hasn't run yet. */}
+      {/* Below `md` the wide table and its controls are hidden (the `hidden
+          md:*` guards below) and this prompt shows instead. Mobile devices
+          are redirected to /swap on load (MobileSwapRedirect), so in practice
+          this is what a narrow *desktop* window sees — a graceful message
+          rather than a blank area or a sideways-scrolling table. */}
+      <div className="rounded-lg border border-border p-6 text-center text-muted-fg text-sm md:hidden">
+        The currencies table is best viewed on a wider screen. Widen your window
+        or open Dropset on a desktop browser to browse full market data — price,
+        24h volume, market cap, liquidity and holders.
+      </div>
       <div className="mb-3 hidden items-center justify-between gap-3 md:flex">
         <div className="flex items-center gap-3">
           <SearchBox
