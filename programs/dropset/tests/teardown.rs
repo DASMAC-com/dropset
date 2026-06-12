@@ -140,9 +140,9 @@ fn full_buildup_teardown_reclaims_all_rent() {
     assert!(f.token_balance(&lead_q) > lead_quote_before);
 
     // ── Step 3: close both treasuries ────────────────────────────────
-    // Drained treasury cannot still be closed twice — but first confirm
-    // a non-empty one would be rejected is covered elsewhere; here both
-    // are empty.
+    // Both treasuries are now drained, so they close cleanly. The
+    // rejection of a still-funded treasury is covered separately by
+    // `close_treasury_rejects_nonempty`.
     let (base_mint, quote_mint) = (f.base_mint, f.quote_mint);
     let (base_treasury, quote_treasury) = (f.base_treasury, f.quote_treasury);
     let rr_before_treasuries = lamports(&f.svm, &rr);
@@ -248,4 +248,161 @@ fn close_registry_rejects_live_markets() {
         .close_registry(&admin, &rr)
         .expect_err("close_registry must reject while market_count > 0");
     common::assert_program_error(&err, dropset::DropsetError::RegistryHasMarkets);
+}
+
+/// `force_withdraw_depositor` must reclaim a sector it empties — the
+/// invariant "a drained sector is reclaimed" has to hold regardless of
+/// teardown order. Here we deliberately drain the leader *first* (out of
+/// the documented depositors-first order), leaving the last depositor to
+/// zero `total_shares`; the depositor path is then the one that has to
+/// reclaim. (Mirrors the leader path's `new_total == 0` reclaim.)
+#[test]
+fn force_withdraw_depositor_reclaims_emptied_sector() {
+    let mut f = Fixture::bootstrap();
+    let (leader, alice) = f.with_outside_depositor();
+    let admin = f.authority.insecure_clone();
+
+    // Leader exits first. The vault still holds alice's shares, so the
+    // sector is *not* reclaimed yet: leader preserved, still on the
+    // active list.
+    f.force_withdraw_leader(&admin, 0, &leader.pubkey())
+        .expect("force_withdraw_leader");
+    let v = f.vault(0);
+    assert_eq!(v.leader_shares.get(), 0, "leader stake drained");
+    assert!(
+        v.total_shares.get() > 0,
+        "depositor shares still outstanding"
+    );
+    assert_ne!(
+        v.leader,
+        Pubkey::default().to_bytes().into(),
+        "sector not reclaimed while a depositor remains — leader preserved"
+    );
+    assert_eq!(f.market_header().active_count.get(), 1, "still active");
+
+    // Last depositor exits — this drives `total_shares -> 0`, so the
+    // depositor path must reclaim the sector.
+    f.force_withdraw_depositor(&admin, 0, &alice.pubkey())
+        .expect("force_withdraw_depositor");
+    let v = f.vault(0);
+    assert_eq!(v.total_shares.get(), 0, "vault fully drained");
+    assert_eq!(
+        v.leader,
+        Pubkey::default().to_bytes().into(),
+        "sector reclaimed on the depositor path — leader zeroed"
+    );
+    let h = f.market_header();
+    assert_eq!(h.active_count.get(), 0, "active count dropped to zero");
+    assert_eq!(h.head.get(), dropset::NULL_SECTOR, "active list now empty");
+    assert_eq!(
+        h.free_head.get(),
+        0,
+        "sector 0 reclaimed onto the free list"
+    );
+    assert_eq!(
+        h.outstanding_vault_depositors.get(),
+        0,
+        "depositor counter back to zero"
+    );
+}
+
+/// Only a registry admin may force-withdraw a depositor.
+#[test]
+fn force_withdraw_depositor_rejects_non_admin() {
+    let mut f = Fixture::bootstrap();
+    let (_leader, alice) = f.with_outside_depositor();
+    let stranger = f.funded_keypair(10 * common::SIGNER_FUNDING_LAMPORTS);
+    let err = f
+        .force_withdraw_depositor(&stranger, 0, &alice.pubkey())
+        .expect_err("non-admin cannot force-withdraw a depositor");
+    common::assert_program_error(&err, dropset::DropsetError::Unauthorized);
+}
+
+/// Only a registry admin may close a market treasury.
+#[test]
+fn close_market_treasury_rejects_non_admin() {
+    let mut f = Fixture::seeded(1_000_000, 1_085_000);
+    let stranger = f.funded_keypair(10 * common::SIGNER_FUNDING_LAMPORTS);
+    let rr = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS).pubkey();
+    let (base_mint, base_treasury) = (f.base_mint, f.base_treasury);
+    let err = f
+        .close_market_treasury(&stranger, &base_mint, &base_treasury, &rr)
+        .expect_err("non-admin cannot close a market treasury");
+    common::assert_program_error(&err, dropset::DropsetError::Unauthorized);
+}
+
+/// Only a registry admin may close the market.
+#[test]
+fn close_market_rejects_non_admin() {
+    let mut f = Fixture::seeded(1_000_000, 1_085_000);
+    let stranger = f.funded_keypair(10 * common::SIGNER_FUNDING_LAMPORTS);
+    let rr = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS).pubkey();
+    let err = f
+        .close_market(&stranger, &rr)
+        .expect_err("non-admin cannot close the market");
+    common::assert_program_error(&err, dropset::DropsetError::Unauthorized);
+}
+
+/// Only a registry admin may close the registry fee vault.
+#[test]
+fn close_registry_fee_vault_rejects_non_admin() {
+    let mut f = Fixture::seeded(1_000_000, 1_085_000);
+    let stranger = f.funded_keypair(10 * common::SIGNER_FUNDING_LAMPORTS);
+    let rr = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS).pubkey();
+    let err = f
+        .close_registry_fee_vault(&stranger, &rr)
+        .expect_err("non-admin cannot close the registry fee vault");
+    common::assert_program_error(&err, dropset::DropsetError::Unauthorized);
+}
+
+/// Only a registry admin may close the registry.
+#[test]
+fn close_registry_rejects_non_admin() {
+    let mut f = Fixture::seeded(1_000_000, 1_085_000);
+    let stranger = f.funded_keypair(10 * common::SIGNER_FUNDING_LAMPORTS);
+    let rr = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS).pubkey();
+    let err = f
+        .close_registry(&stranger, &rr)
+        .expect_err("non-admin cannot close the registry");
+    common::assert_program_error(&err, dropset::DropsetError::Unauthorized);
+}
+
+/// `close_market` must reject while any `VaultDepositor` PDA is still
+/// open — `outstanding_vault_depositors` is the witness, checked before
+/// the treasury gate.
+#[test]
+fn close_market_rejects_with_outstanding_depositors() {
+    let mut f = Fixture::bootstrap();
+    f.with_outside_depositor();
+    let admin = f.authority.insecure_clone();
+    let rr = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS).pubkey();
+    assert_eq!(f.market_header().outstanding_vault_depositors.get(), 1);
+    let err = f
+        .close_market(&admin, &rr)
+        .expect_err("close_market must reject while a depositor PDA is open");
+    common::assert_program_error(&err, dropset::DropsetError::MarketHasDepositors);
+}
+
+/// `close_market_treasury` must reject a market-owned ATA whose mint is
+/// neither market leg. The `associated_token` constraint resolves (the
+/// account *is* `ata(market, mint)`), so the handler's explicit leg
+/// check is what rejects it.
+#[test]
+fn close_treasury_rejects_non_leg_mint() {
+    let mut f = Fixture::seeded(1_000_000, 1_085_000);
+    let admin = f.authority.insecure_clone();
+    let rr = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS).pubkey();
+    let market = f.market;
+    let other_mint = common::create_spl_mint(&mut f.svm, &admin);
+    let other_treasury = common::create_associated_token_account(
+        &mut f.svm,
+        &admin,
+        &market,
+        &other_mint,
+        &common::SPL_TOKEN_PROGRAM_ID,
+    );
+    let err = f
+        .close_market_treasury(&admin, &other_mint, &other_treasury, &rr)
+        .expect_err("a non-leg market-owned ATA must not be closeable");
+    common::assert_program_error(&err, dropset::DropsetError::NotAMarketTreasury);
 }

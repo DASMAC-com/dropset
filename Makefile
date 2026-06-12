@@ -5,6 +5,7 @@
 .PHONY: install-anchor-v2
 .PHONY: lint
 .PHONY: test
+.PHONY: test-no-teardown
 
 all: lint test
 clean:
@@ -42,3 +43,12 @@ program: check-toolchain
 
 test: program
 	cargo test
+
+# Feature-off coverage: build the program WITHOUT `admin-teardown`
+# (the shape of the final immutable deploy) and assert every teardown
+# instruction returns `TeardownDisabled`. `anchor build`'s trailing args
+# are forwarded to `cargo build-sbf`, so this rebuilds `dropset.so`
+# feature-off; we then run only the feature-off-gated test target.
+test-no-teardown: check-toolchain
+	anchor build -- --no-default-features
+	cargo test --no-default-features --test teardown_disabled

@@ -14,6 +14,7 @@ wincode.workspace = true
 [dev-dependencies]
 anchor-lang-v2 = {workspace = true, features = ["testing"]}
 anchor-v2-testing.workspace = true
+litesvm.workspace = true
 solana-instruction.workspace = true
 solana-keypair.workspace = true
 solana-loader-v3-interface.workspace = true
@@ -25,8 +26,14 @@ solana-pubkey.workspace = true
 # Per the architecture spec (§ Account lifecycle and rent reclamation),
 # these are compiled into testnet / early-mainnet builds — where
 # redeploy-from-scratch is a live operational tool — and dropped from
-# the final immutable deploy. Enabled in `default` for now since the
-# program is pre-final; the final build removes it from `default`.
+# the final immutable deploy.
+#
+# Decision (ENG-447): kept in `default` for now since the program is
+# pre-final and the teardown integration suite (`tests/teardown.rs`) is
+# `#[cfg(feature = "admin-teardown")]`-gated, so `make test` must build
+# the feature on. The final immutable build MUST drop it from `default`;
+# `make test-no-teardown` already exercises the feature-off dispatcher
+# (every teardown instruction then returns `TeardownDisabled`).
 admin-teardown = []
 cpi = ["no-entrypoint"]
 default = ["admin-teardown"]

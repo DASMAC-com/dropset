@@ -20,8 +20,8 @@
 
 use super::{
     associated_token_address, create_associated_token_account, create_mock_usdc_mint,
-    create_spl_mint, deploy_with_authority, mint_to, send_ixn, ATA_PROGRAM_ID, PROGRAM_ID,
-    REGISTER_MARKET_FEE_ATOMS, SIGNER_FUNDING_LAMPORTS, SPL_TOKEN_PROGRAM_ID,
+    create_spl_mint, deploy_with_authority, mint_to, send_ixn, send_ixn_meta, ATA_PROGRAM_ID,
+    PROGRAM_ID, REGISTER_MARKET_FEE_ATOMS, SIGNER_FUNDING_LAMPORTS, SPL_TOKEN_PROGRAM_ID,
 };
 use anchor_lang_v2::{bytemuck, programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, LiteSVM, Signer};
@@ -41,6 +41,7 @@ use dropset::{
     },
     LiquidityProfile, MarketHeader, Price, RegistryHeader, Vault, VaultDepositorHeader, N_LEVELS,
 };
+use litesvm::types::TransactionMetadata;
 use solana_instruction::{AccountMeta, Instruction};
 use solana_loader_v3_interface::get_program_data_address;
 use solana_pubkey::Pubkey;
@@ -229,6 +230,36 @@ impl Fixture {
         f
     }
 
+    /// Bootstrap → open one outside-deposit-enabled vault (sector 0) led
+    /// by a **distinct** keypair (not the admin) → seed it → satisfy the
+    /// two-key gate → take one outside deposit from a fresh `alice`.
+    /// Returns `(leader, alice)`.
+    ///
+    /// The shape the teardown depositor paths need: a live
+    /// `VaultDepositor` PDA (so `force_withdraw_depositor`'s accounts
+    /// resolve) plus a leader that never aliases the admin (Anchor v2
+    /// rejects duplicate mutable accounts on `force_withdraw_leader`).
+    /// Mirrors the build-up in `teardown.rs`'s headline test.
+    pub fn with_outside_depositor(&mut self) -> (Keypair, Keypair) {
+        let admin = self.authority.insecure_clone();
+        let leader = self.funded_keypair(10 * SIGNER_FUNDING_LAMPORTS);
+        self.register_vault(0, leader.pubkey(), true, leader.pubkey())
+            .expect("admin opens leader's vault");
+        let px = Price::encode(10_850_000, 0).unwrap();
+        self.set_reference_price(&leader, 0, px.as_u32(), 0)
+            .expect("leader sets reference price");
+        self.set_liquidity_profile(&leader, 0, simple_profile(5_000, 10_000, u32::MAX))
+            .expect("leader sets ladder");
+        self.deposit_leader_as(&leader, 0, 1_000_000, 1_085_000, 1_000_000, 1_085_000)
+            .expect("leader seeds the vault");
+        self.set_outside_deposits_approved(&admin, 0, true)
+            .expect("admin approves");
+        let alice = self.funded_depositor(200_000, 200_000);
+        self.deposit(&alice, 0, 50_000, 0, 200_000, 200_000)
+            .expect("outside deposit");
+        (leader, alice)
+    }
+
     // ── signer / ATA helpers ─────────────────────────────────────────
 
     pub fn funded_keypair(&mut self, lamports: u64) -> Keypair {
@@ -299,6 +330,24 @@ impl Fixture {
         allow_outside_depositors: bool,
         leader_override: Pubkey,
     ) -> Result<(), String> {
+        self.register_vault_meta(
+            perf_fee_rate,
+            quote_authority,
+            allow_outside_depositors,
+            leader_override,
+        )
+        .map(|_| ())
+    }
+
+    /// Like [`Self::register_vault`] but yields the transaction metadata
+    /// so a test can decode the emitted `OpenVaultEvent`.
+    pub fn register_vault_meta(
+        &mut self,
+        perf_fee_rate: u32,
+        quote_authority: Pubkey,
+        allow_outside_depositors: bool,
+        leader_override: Pubkey,
+    ) -> Result<TransactionMetadata, String> {
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
             &RegisterVaultIx {
@@ -322,7 +371,7 @@ impl Fixture {
             ],
         );
         let auth = self.authority.insecure_clone();
-        send_ixn(&mut self.svm, &auth, ix)
+        send_ixn_meta(&mut self.svm, &auth, ix)
     }
 
     /// `register_vault` via the **non-admin** fee path: `payer` signs
@@ -497,6 +546,29 @@ impl Fixture {
         max_base_in: u64,
         max_quote_in: u64,
     ) -> Result<(), String> {
+        self.deposit_leader_as_meta(
+            signer,
+            vault_idx,
+            base_in,
+            quote_in,
+            max_base_in,
+            max_quote_in,
+        )
+        .map(|_| ())
+    }
+
+    /// Like [`Self::deposit_leader_as`] but yields the transaction
+    /// metadata so a test can decode the emitted `DepositEvent` (and any
+    /// `RealizeEvent`).
+    pub fn deposit_leader_as_meta(
+        &mut self,
+        signer: &Keypair,
+        vault_idx: u32,
+        base_in: u64,
+        quote_in: u64,
+        max_base_in: u64,
+        max_quote_in: u64,
+    ) -> Result<TransactionMetadata, String> {
         let leader = signer.pubkey();
         let (leader_base, leader_quote) = self.create_atas(&leader);
         let auth = self.authority.insecure_clone();
@@ -550,7 +622,7 @@ impl Fixture {
                 AccountMeta::new_readonly(PROGRAM_ID, false),
             ],
         );
-        send_ixn(&mut self.svm, signer, ix)
+        send_ixn_meta(&mut self.svm, signer, ix)
     }
 
     pub fn withdraw_leader(
@@ -574,6 +646,20 @@ impl Fixture {
         min_base_out: u64,
         min_quote_out: u64,
     ) -> Result<(), String> {
+        self.withdraw_leader_as_meta(signer, vault_idx, shares_in, min_base_out, min_quote_out)
+            .map(|_| ())
+    }
+
+    /// Like [`Self::withdraw_leader_as`] but yields the transaction
+    /// metadata so a test can decode the emitted `WithdrawEvent`.
+    pub fn withdraw_leader_as_meta(
+        &mut self,
+        signer: &Keypair,
+        vault_idx: u32,
+        shares_in: u64,
+        min_base_out: u64,
+        min_quote_out: u64,
+    ) -> Result<TransactionMetadata, String> {
         let leader = signer.pubkey();
         let (leader_base, leader_quote) = self.create_atas(&leader);
         let ix = Instruction::new_with_bytes(
@@ -602,7 +688,7 @@ impl Fixture {
                 AccountMeta::new_readonly(PROGRAM_ID, false),
             ],
         );
-        send_ixn(&mut self.svm, signer, ix)
+        send_ixn_meta(&mut self.svm, signer, ix)
     }
 
     /// Outside-depositor deposit. `depositor` signs and pays; its ATAs
@@ -616,6 +702,28 @@ impl Fixture {
         max_base_in: u64,
         max_quote_in: u64,
     ) -> Result<(), String> {
+        self.deposit_meta(
+            depositor,
+            vault_idx,
+            base_in,
+            quote_in,
+            max_base_in,
+            max_quote_in,
+        )
+        .map(|_| ())
+    }
+
+    /// Like [`Self::deposit`] but yields the transaction metadata so a
+    /// test can decode the emitted `DepositEvent` (and any `RealizeEvent`).
+    pub fn deposit_meta(
+        &mut self,
+        depositor: &Keypair,
+        vault_idx: u32,
+        base_in: u64,
+        quote_in: u64,
+        max_base_in: u64,
+        max_quote_in: u64,
+    ) -> Result<TransactionMetadata, String> {
         let (vd, _) = vault_depositor_pda(&self.market, vault_idx, &depositor.pubkey());
         let b_ata = self.base_ata(&depositor.pubkey());
         let q_ata = self.quote_ata(&depositor.pubkey());
@@ -648,7 +756,7 @@ impl Fixture {
                 AccountMeta::new_readonly(PROGRAM_ID, false),
             ],
         );
-        send_ixn(&mut self.svm, depositor, ix)
+        send_ixn_meta(&mut self.svm, depositor, ix)
     }
 
     /// Outside-depositor withdraw.
@@ -660,6 +768,20 @@ impl Fixture {
         min_base_out: u64,
         min_quote_out: u64,
     ) -> Result<(), String> {
+        self.withdraw_meta(depositor, vault_idx, shares_in, min_base_out, min_quote_out)
+            .map(|_| ())
+    }
+
+    /// Like [`Self::withdraw`] but yields the transaction metadata so a
+    /// test can decode the emitted `WithdrawEvent` (and any `RealizeEvent`).
+    pub fn withdraw_meta(
+        &mut self,
+        depositor: &Keypair,
+        vault_idx: u32,
+        shares_in: u64,
+        min_base_out: u64,
+        min_quote_out: u64,
+    ) -> Result<TransactionMetadata, String> {
         let (vd, _) = vault_depositor_pda(&self.market, vault_idx, &depositor.pubkey());
         let b_ata = self.base_ata(&depositor.pubkey());
         let q_ata = self.quote_ata(&depositor.pubkey());
@@ -690,7 +812,7 @@ impl Fixture {
                 AccountMeta::new_readonly(PROGRAM_ID, false),
             ],
         );
-        send_ixn(&mut self.svm, depositor, ix)
+        send_ixn_meta(&mut self.svm, depositor, ix)
     }
 
     /// Build a `swap` instruction (not sent) — lets a test bundle it or
@@ -738,14 +860,38 @@ impl Fixture {
         limit_price_bits: u32,
         min_out: u64,
     ) -> Result<(), String> {
+        self.swap_meta(taker, side, amount_in, limit_price_bits, min_out)
+            .map(|_| ())
+    }
+
+    /// Like [`Self::swap`] but yields the transaction metadata so a test
+    /// can decode the per-leg `FillEvent`s.
+    pub fn swap_meta(
+        &mut self,
+        taker: &Keypair,
+        side: u8,
+        amount_in: u64,
+        limit_price_bits: u32,
+        min_out: u64,
+    ) -> Result<TransactionMetadata, String> {
         let ix = self.swap_ix(&taker.pubkey(), side, amount_in, limit_price_bits, min_out);
-        send_ixn(&mut self.svm, taker, ix)
+        send_ixn_meta(&mut self.svm, taker, ix)
     }
 
     // ── lifecycle / teardown senders ─────────────────────────────────
 
     /// `close_vault` — leader moves their vault to the tombstone DLL.
     pub fn close_vault(&mut self, signer: &Keypair, vault_idx: u32) -> Result<(), String> {
+        self.close_vault_meta(signer, vault_idx).map(|_| ())
+    }
+
+    /// Like [`Self::close_vault`] but yields the transaction metadata so
+    /// a test can decode the emitted `CloseVaultEvent`.
+    pub fn close_vault_meta(
+        &mut self,
+        signer: &Keypair,
+        vault_idx: u32,
+    ) -> Result<TransactionMetadata, String> {
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
             &CloseVaultIx { vault_idx }.data(),
@@ -756,11 +902,21 @@ impl Fixture {
                 AccountMeta::new_readonly(PROGRAM_ID, false),
             ],
         );
-        send_ixn(&mut self.svm, signer, ix)
+        send_ixn_meta(&mut self.svm, signer, ix)
     }
 
     /// `freeze_vault` — admin freezes a vault in place.
     pub fn freeze_vault(&mut self, admin: &Keypair, vault_idx: u32) -> Result<(), String> {
+        self.freeze_vault_meta(admin, vault_idx).map(|_| ())
+    }
+
+    /// Like [`Self::freeze_vault`] but yields the transaction metadata so
+    /// a test can decode the emitted `FreezeVaultEvent`.
+    pub fn freeze_vault_meta(
+        &mut self,
+        admin: &Keypair,
+        vault_idx: u32,
+    ) -> Result<TransactionMetadata, String> {
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
             &FreezeVaultIx { vault_idx }.data(),
@@ -772,7 +928,7 @@ impl Fixture {
                 AccountMeta::new_readonly(PROGRAM_ID, false),
             ],
         );
-        send_ixn(&mut self.svm, admin, ix)
+        send_ixn_meta(&mut self.svm, admin, ix)
     }
 
     /// `force_withdraw_depositor` — admin drains `owner`'s full position
@@ -1003,6 +1159,19 @@ impl Fixture {
     /// reaches the `VaultEmpty` rejection branch.
     pub fn poke_leader_empty(&mut self, sector_idx: u32) {
         self.poke_vault_bytes(sector_idx, core::mem::offset_of!(Vault, leader), &[0u8; 32]);
+    }
+
+    /// Set `Vault.hwm` (value-per-share high-water mark, Q32.32) directly.
+    /// Dropping it below the live value-per-share is how a test arms a
+    /// `Realize` perf-fee accrual without plumbing a profitable swap —
+    /// HWM lagging behind NAV is exactly the condition `realize_in_place`
+    /// accrues on.
+    pub fn poke_hwm(&mut self, sector_idx: u32, hwm: u64) {
+        self.poke_vault_bytes(
+            sector_idx,
+            core::mem::offset_of!(Vault, hwm),
+            &hwm.to_le_bytes(),
+        );
     }
 
     /// Set `MarketHeader.taker_fee` directly (no `SetMarketFeeConfig`

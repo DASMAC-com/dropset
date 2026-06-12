@@ -206,8 +206,10 @@ impl Withdraw {
                 vd.shares.get() >= shares_in,
                 DropsetError::InsufficientShares
             );
-            let released_basis =
-                ((vd.net_deposits.get() as u128) * s_in) / (vd.shares.get() as u128);
+            let released_basis = (vd.net_deposits.get() as u128)
+                .checked_mul(s_in)
+                .ok_or(DropsetError::MathOverflow)?
+                / (vd.shares.get() as u128);
             // Realized PnL math, per spec L1513-1519:
             //   realized_fx    += slice_base × (ref_now − entry_ref)
             //   realized_yield += slice_quote + slice_base × entry_ref − released_basis
@@ -247,7 +249,12 @@ impl Withdraw {
 
             let new_shares = vd.shares.get() - shares_in;
             vd.shares = new_shares.into();
-            vd.net_deposits = (vd.net_deposits.get() - (released_basis as u64)).into();
+            vd.net_deposits = vd
+                .net_deposits
+                .get()
+                .checked_sub(released_basis as u64)
+                .ok_or(DropsetError::MathOverflow)?
+                .into();
             // Counter decrement + PDA close happens after the transfer.
             leader_shares
         };
