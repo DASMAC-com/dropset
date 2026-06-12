@@ -16,11 +16,11 @@ capture it as its own issue to pick up later.
 Every issue is filed into the same fixed
 destination (do **not** ask the user for these):
 
-| Field    | Value        | ID                                     |
-| -------- | ------------ | -------------------------------------- |
-| Team     | Engineering  | `84659a7c-5ea3-47b1-b2bd-c531e3721d6b` |
-| Project  | Dropset      | `d505fe50-cc8b-41ca-be93-6215d9adcea0` |
-| Assignee | Alex         | `b3ec6d9f-3c78-48da-8b4e-042176e8c579` |
+| Field    | Value       | ID                                     |
+| -------- | ----------- | -------------------------------------- |
+| Team     | Engineering | `84659a7c-5ea3-47b1-b2bd-c531e3721d6b` |
+| Project  | Dropset     | `d505fe50-cc8b-41ca-be93-6215d9adcea0` |
+| Assignee | Alex        | `b3ec6d9f-3c78-48da-8b4e-042176e8c579` |
 
 Use the IDs, not the names — there are also
 completed "Dropset beta" and "Dropset alpha"
@@ -58,7 +58,7 @@ what to file.
 1. Create the issue with `save_issue` (do **not**
    pass `id` — that's for updates only):
 
-   ```
+   ```text
    mcp__claude_ai_Linear__save_issue(
      team: "84659a7c-5ea3-47b1-b2bd-c531e3721d6b",
      project: "d505fe50-cc8b-41ca-be93-6215d9adcea0",
