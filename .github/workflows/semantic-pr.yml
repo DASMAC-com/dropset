@@ -7,6 +7,10 @@ jobs:
     steps:
     - env:
         GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+      # Assume success in a merge group by skipping the step, which
+      # can't access a PR title inside a merge group.
+      if: |
+        github.event_name != 'merge_group'
       uses: 'amannn/action-semantic-pull-request@v6'
       with:
         requireScope: true
@@ -16,6 +20,7 @@ jobs:
         validateSingleCommitMatchesPrTitle: true
 name: 'Semantic PR'
 'on':
+  merge_group: null
   pull_request:
     types:
     - 'edited'

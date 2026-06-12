@@ -58,5 +58,6 @@ jobs:
         path: '~/.cache/pre-commit'
 name: 'Lint'
 'on':
+  merge_group: null
   pull_request: null
 ...
