@@ -1,6 +1,6 @@
 ---
 name: platform-audit-loop
-description: One iteration of a continuous background platform audit — pick a unit of work (random non-generated file, recent PR, or architecture survey), run security / comment-accuracy / doc-freshness / design-quality / naming-convention sub-agents with adversarial cross-check, dedup against prior findings and open Linear issues, then file one self-contained Linear subtask per confirmed finding and announce it. Drive it with `/loop platform-audit-loop`.
+description: One iteration of a continuous background platform audit — pick a unit of work (a random non-generated file, a recent PR, or a whole-system architecture pass), run the relevant sub-agents (security / comment-accuracy / doc-freshness / design-quality / naming for files; layering / invariant-coverage / paradigm / data-flow / duplication / spec-health for architecture) with an adversarial cross-check, dedup against prior findings and open Linear issues, then file Linear subtasks under the umbrella issue and announce. Drive it with `/loop platform-audit-loop`.
 disable-model-invocation: true
 user-invocable: true
 ---
@@ -69,7 +69,7 @@ through `jq` / `python` / `sed`.
   ```json
   {
     "iteration": 0,
-    "last_mode": "survey",
+    "last_mode": "arch",
     "covered": {
       "programs/dropset/src/instructions/swap.rs": {
         "audited_at": "2026-06-12",
@@ -117,7 +117,7 @@ through `jq` / `python` / `sed`.
 Glob for `.audit-loop/state.json`. If the
 directory is missing, Write the three state files
 with empty skeletons (`iteration: 0`,
-`last_mode: "survey"`, empty `covered`,
+`last_mode: "arch"`, empty `covered`,
 `pr_cursor.last_pr_number: 0`; empty `findings`;
 the static skip seed). Read `.gitignore`; if it
 has no `.audit-loop/` line, Edit it to add one (do
@@ -128,11 +128,14 @@ not `echo >>`).
 `last_mode` so every job runs regularly without
 randomness in the control flow:
 
-| `last_mode`      | this iteration |
-| ---------------- | -------------- |
-| `survey` / unset | `file`         |
-| `file`           | `pr`           |
-| `pr`             | `survey`       |
+| `last_mode`    | this iteration |
+| -------------- | -------------- |
+| `arch` / unset | `file`         |
+| `file`         | `pr`           |
+| `pr`           | `arch`         |
+
+`arch` is the heaviest pass (it scans the whole
+system); it fires once every three iterations.
 
 **3. FILE mode — one random non-generated file.**
 
@@ -159,7 +162,7 @@ randomness in the control flow:
   Pick one at random within the preferred bucket.
   If everything is covered and unchanged, fall back
   to the least-recently-audited file.
-- The subject is that one file; skip to step 4.
+- The subject is that one file; go to step 6.
 
 **4. PR mode — newest unaudited recent PR.**
 
@@ -170,26 +173,69 @@ randomness in the control flow:
   (step 3).
 - `gh pr diff <number>` for the diff. The subject is
   the non-generated files that PR touched, reviewed
-  in the context of the diff. Skip to step 4's
-  audit (shared with FILE).
+  in the context of the diff. Go to step 6 (the
+  audit shared with FILE mode).
 
-**5. SURVEY mode — architecture / paradigm pass.**
-Pick a subsystem (rotate over `programs/dropset/`
-modules and the `frontend/` feature areas; prefer
-ones not recently surveyed — track them in
-`covered` under a `survey:<subsystem>` key). Read
-`docs/architecture.md` for the intended design,
-then evaluate the subsystem against it. Findings
-here are concrete **refactor proposals**, each
-filed as its own parallel-friendly subtask.
+**5. ARCH mode — holistic, whole-system audit.**
+Unlike FILE / PR mode, this looks at the *whole*
+system at once to catch cross-cutting issues no
+single file reveals. Read the specs in `docs/`
+(`architecture.md`, `interface.md`,
+`market-making-mvp.md`) for intent — but treat them
+as **subject matter, not just ground truth**: the
+specs are themselves in scope. Spawn parallel
+sub-agents, one per lens, over the full
+`programs/dropset/src/**` tree (and `frontend/`
+where relevant):
 
-**6. Run the audit dimensions in parallel.** Spawn
-sub-agents via the `Agent` tool (single message,
-multiple calls), each scoped to the subject and
-told the repo conventions. Each returns findings
-with `file`, `line`, `dimension`, `severity`
-(high/med/low), `fingerprint_slug`, `title`,
-`rationale`, and `fix_sketch`. Dimensions:
+- **Layering & dependencies** — dependency
+  direction, leaky abstractions, a layer reaching
+  into another's internals (e.g. the matcher knowing
+  `Market`'s storage layout).
+- **Invariant coverage** — take each invariant the
+  system relies on (the documented `I1`–`I6`
+  share-accounting set, treasury-vs-vault, vault
+  lifecycle states, plus any the code assumes but no
+  doc states) and trace it across *every*
+  instruction; flag paths that enforce it
+  inconsistently or not at all.
+- **Paradigm & consistency** — drift from the
+  intended eCLOB model, divergent idioms across
+  instructions, structure that has grown incoherent
+  — judged on its own merits, not only against the
+  spec.
+- **State ownership & data-flow** — who owns and
+  mutates each piece of state, and whether that flow
+  is coherent end to end.
+- **Cross-module duplication / seams** — the same
+  idea open-coded across modules, or a missing seam
+  that forces shotgun edits.
+- **Spec health** — the docs themselves: sections
+  that are **over-specified** (detail that
+  over-constrains or has already rotted),
+  **under-specified** (behavior the code had to
+  invent with no spec), content sitting in the wrong
+  document, and specs that should be **split or
+  merged** for a saner boundary. The spec is a
+  first-class artifact to audit, not just a
+  yardstick.
+
+Then spawn a **synthesis** sub-agent that reconciles
+the lenses into a small set of distinct
+architecture-level findings — merging overlaps and
+dropping anything that's really a single-file nit
+(that's the file loop's job). Each carries a
+`fingerprint_slug`, a `title`, and the proposal
+material step 9 files. Go to step 7 with these.
+
+**6. Run the file dimensions in parallel (FILE / PR
+mode).** ARCH mode does its fan-out in step 5 and
+skips here. Spawn sub-agents via the `Agent` tool
+(single message, multiple calls), each scoped to the
+subject and told the repo conventions. Each returns
+findings with `file`, `line`, `dimension`,
+`severity` (high/med/low), `fingerprint_slug`,
+`title`, `rationale`, and `fix_sketch`. Dimensions:
 
 - **Security / pen-testing** — Rust: missing
   signer / owner / PDA / `has_one` checks, unchecked
@@ -217,8 +263,7 @@ with `file`, `line`, `dimension`, `severity`
 - **Pragmatic-Programmer design quality** — ETC
   (is this easy to change?), orthogonality /
   decoupling, reversibility, avoiding speculative
-  abstraction. This is the primary lens for SURVEY
-  mode's refactor proposals.
+  abstraction.
 - **Naming conventions** — verify names are sensible
   and consistent: types / functions / fields / files
   / modules follow the casing and idioms already
@@ -232,8 +277,8 @@ with `file`, `line`, `dimension`, `severity`
   a rename only when it genuinely improves clarity or
   restores consistency — not as taste.
 
-In SURVEY mode, weight the design-quality and naming
-dimensions; in FILE / PR mode, run all six.
+FILE and PR mode run all six dimensions above; ARCH
+mode uses its own lenses (step 5).
 
 **7. Adversarial cross-check.** Spawn a fresh
 skeptic sub-agent with the collected findings and
@@ -302,6 +347,31 @@ After each `save_issue`, append the finding
 `filed_at`, `status: "open"`) to `findings.json`
 (Read then Edit/Write).
 
+**ARCH-mode findings** are filed the same way
+(Backlog subtask of ENG-452, same IDs) but as **one
+detailed proposal issue each** — they are not
+atomically fixable, so don't pretend otherwise.
+Don't include the "safe to fix in isolation" line;
+use this body instead:
+
+- `**Concern**:` what's structurally wrong and why
+  it matters.
+- `**Evidence**:` the files / instructions / spec
+  sections involved, with `path:line` anchors across
+  the codebase.
+- `**Options**:` the candidate approaches with their
+  trade-offs.
+- `**Recommended**:` the approach you'd take, and
+  why.
+- `**Likely decomposition**:` a sketch of the
+  smaller, independently-landable steps it splits
+  into, so triage can break it up.
+- `**Discovered by**: platform-audit-loop iteration <n> @ <commit sha>`
+
+Priority 3; these are proposals for Alex to triage,
+not pre-approved work. Title them by area, e.g.
+`arch: decouple the matcher from Market storage layout`.
+
 **10. Announce.** For each newly filed subtask,
 print a prominent line:
 `FILED ENG-### [<dimension>/<severity>] <file> — <title>`.
@@ -310,16 +380,17 @@ this iteration, send exactly **one**
 `PushNotification` summarizing the top one. If
 nothing was filed, send no notification.
 
-**11. Close out and exit.** Update `state.json`:
-mark the subject covered (path → today + current
-SHA in FILE mode; `survey:<subsystem>` in SURVEY
-mode; advance `pr_cursor.last_pr_number` in PR
-mode), set `last_mode` to this iteration's mode,
-`iteration++`. Then print the tally and stop so
-`/loop` re-invokes:
+**11. Close out and exit.** Update `state.json`. In
+FILE mode mark the subject covered, recording today's
+date and its current SHA. In PR mode advance
+`pr_cursor.last_pr_number`. ARCH mode records no
+per-file coverage (it scans the whole system, and
+dedup prevents refiling). Set `last_mode` to this
+iteration's mode and increment `iteration`. Then
+print the tally and stop so `/loop` re-invokes:
 
 ```txt
-iteration <n> | mode <file|pr|survey> | subject <…>
+iteration <n> | mode <file|pr|arch> | subject <…>
 filed <k> (h/m/l) | deduped <d> | skip.txt += <globs>
 ```
 

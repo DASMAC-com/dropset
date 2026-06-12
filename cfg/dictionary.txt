@@ -56,6 +56,7 @@ kapsule
 keypair
 kripto
 lamports
+landable
 lehalle
 lemy
 litesvm
