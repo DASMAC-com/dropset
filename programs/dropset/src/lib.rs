@@ -37,19 +37,19 @@ pub mod dropset {
     }
 
     #[discrim = 3]
-    pub fn register_market(ctx: &mut Context<RegisterMarket>) -> Result<()> {
-        ctx.accounts.register_market(ctx.bumps.market)
+    pub fn create_market(ctx: &mut Context<CreateMarket>) -> Result<()> {
+        ctx.accounts.create_market(ctx.bumps.market)
     }
 
     #[discrim = 4]
-    pub fn register_vault(
-        ctx: &mut Context<RegisterVault>,
+    pub fn create_vault(
+        ctx: &mut Context<CreateVault>,
         perf_fee_rate: u32,
         quote_authority: Address,
         allow_outside_depositors: bool,
         leader_override: Address,
     ) -> Result<()> {
-        let event = ctx.accounts.register_vault(
+        let event = ctx.accounts.create_vault(
             perf_fee_rate,
             quote_authority,
             allow_outside_depositors,

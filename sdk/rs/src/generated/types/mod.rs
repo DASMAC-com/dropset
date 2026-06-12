@@ -6,21 +6,21 @@
 //!
 
 pub(crate) mod r#close_vault_event;
+pub(crate) mod r#create_vault_event;
 pub(crate) mod r#deposit_event;
 pub(crate) mod r#fee_config;
 pub(crate) mod r#fill_event;
 pub(crate) mod r#freeze_vault_event;
-pub(crate) mod r#open_vault_event;
 pub(crate) mod r#price;
 pub(crate) mod r#realize_event;
 pub(crate) mod r#withdraw_event;
 
 pub use self::r#close_vault_event::*;
+pub use self::r#create_vault_event::*;
 pub use self::r#deposit_event::*;
 pub use self::r#fee_config::*;
 pub use self::r#fill_event::*;
 pub use self::r#freeze_vault_event::*;
-pub use self::r#open_vault_event::*;
 pub use self::r#price::*;
 pub use self::r#realize_event::*;
 pub use self::r#withdraw_event::*;

@@ -30,7 +30,7 @@ const idl = JSON.parse(readFileSync(idlPath, 'utf8'));
 const codama = createFromRoot(rootNodeFromAnchor(idl));
 
 // The renderers emit codecs for `definedTypes` but not for `program.events`,
-// so the 5 `#[event]` structs (Deposit/Withdraw/OpenVault/Realize/Fill)
+// so the 5 `#[event]` structs (Deposit/Withdraw/CreateVault/Realize/Fill)
 // don't get codecs. interface.md §1/§2 puts event decoding in the SDK's
 // remit (the indexer strips the `[tag][discriminator]` envelope, then the
 // Codama struct codec decodes the borsh body). Inject each event's struct

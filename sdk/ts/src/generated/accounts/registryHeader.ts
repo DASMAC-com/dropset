@@ -15,7 +15,7 @@ export function getRegistryHeaderDiscriminatorBytes() { return fixEncoderSize(ge
 
 export type RegistryHeader = { discriminator: ReadonlyUint8Array; 
 /**
- * Default fee for the per-`OpenVault` charge, stamped into
+ * Default fee for the per-`CreateVault` charge, stamped into
  * `MarketHeader.fee_config` at market creation.
  */
 defaultFeeConfig: FeeConfig; 
@@ -39,7 +39,7 @@ bump: number;  };
 
 export type RegistryHeaderArgs = { 
 /**
- * Default fee for the per-`OpenVault` charge, stamped into
+ * Default fee for the per-`CreateVault` charge, stamped into
  * `MarketHeader.fee_config` at market creation.
  */
 defaultFeeConfig: FeeConfigArgs; 

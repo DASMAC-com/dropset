@@ -8,7 +8,7 @@
 //! * `set_outside_deposits_approved` — **admin-only**. Flips
 //!   `Vault.outside_deposits_approved` (§ SetOutsideDepositsApproved).
 //!
-//! New vaults open with both flags `false` (the `register_vault`
+//! New vaults open with both flags `false` (the `create_vault`
 //! default), so outside deposits are unreachable until each side
 //! opts in. Flipping either flag back to `false` blocks **new** outside
 //! deposits but leaves existing depositors' `withdraw` path open — the

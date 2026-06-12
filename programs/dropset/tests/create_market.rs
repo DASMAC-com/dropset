@@ -1,4 +1,4 @@
-//! Integration tests for the `register_market` instruction. Each test
+//! Integration tests for the `create_market` instruction. Each test
 //! stands up a fresh SVM, deploys the program, seats a genesis admin in
 //! the registry against a mock-USDC fee mint, and exercises one slice
 //! of the happy-path / failure-mode matrix.
@@ -10,11 +10,11 @@ use anchor_v2_testing::{Keypair, Signer};
 use common::{
     associated_token_address, create_associated_token_account, create_mock_usdc_mint,
     create_spl_mint, create_token2022_mint, decode_slab, deploy_with_authority, mint_to, send_ixn,
-    ATA_PROGRAM_ID, PROGRAM_ID, REGISTER_MARKET_FEE_ATOMS, SIGNER_FUNDING_LAMPORTS,
+    ATA_PROGRAM_ID, CREATE_MARKET_FEE_ATOMS, PROGRAM_ID, SIGNER_FUNDING_LAMPORTS,
     SPL_TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID,
 };
 use dropset::{
-    instruction::{Init as InitInstruction, RegisterMarket as RegisterMarketInstruction},
+    instruction::{CreateMarket as CreateMarketInstruction, Init as InitInstruction},
     MarketHeader, RegistryHeader, NULL_SECTOR, N_LEVELS,
 };
 use solana_instruction::{AccountMeta, Instruction};
@@ -41,7 +41,7 @@ fn bootstrap() -> (anchor_v2_testing::LiteSVM, Keypair, Pubkey) {
         PROGRAM_ID,
         &InitInstruction {
             genesis_admin: authority.pubkey(),
-            fee_atoms: REGISTER_MARKET_FEE_ATOMS,
+            fee_atoms: CREATE_MARKET_FEE_ATOMS,
         }
         .data(),
         vec![
@@ -67,11 +67,11 @@ fn market_pda(base_mint: &Pubkey, quote_mint: &Pubkey) -> (Pubkey, u8) {
     Pubkey::find_program_address(&[base_mint.as_ref(), quote_mint.as_ref()], &PROGRAM_ID)
 }
 
-/// Assemble a `RegisterMarket` instruction with everything pre-derived.
+/// Assemble a `CreateMarket` instruction with everything pre-derived.
 /// `payer` signs the tx; `signer_fee_source` is the payer's source ATA
 /// — pass any pubkey on the admin path (the handler skips reading it).
 #[allow(clippy::too_many_arguments)]
-fn register_market_ixn(
+fn create_market_ixn(
     payer: Pubkey,
     base_mint: Pubkey,
     quote_mint: Pubkey,
@@ -88,12 +88,12 @@ fn register_market_ixn(
     let registry_fee_treasury = associated_token_address(&registry, &fee_mint, &fee_token_program);
     Instruction::new_with_bytes(
         PROGRAM_ID,
-        &RegisterMarketInstruction {}.data(),
-        // Order MUST match the `RegisterMarket` derive — anchor reads
+        &CreateMarketInstruction {}.data(),
+        // Order MUST match the `CreateMarket` derive — anchor reads
         // positionally, not by name.
         vec![
             AccountMeta::new(payer, true),
-            // `mut`: register_market bumps registry.market_count.
+            // `mut`: create_market bumps registry.market_count.
             AccountMeta::new(registry, false),
             AccountMeta::new_readonly(base_mint, false),
             AccountMeta::new_readonly(quote_mint, false),
@@ -133,7 +133,7 @@ fn fresh_payer(svm: &mut anchor_v2_testing::LiteSVM) -> Keypair {
     payer
 }
 
-/// Mint `REGISTER_MARKET_FEE_ATOMS` of `fee_mint` to a fresh ATA owned
+/// Mint `CREATE_MARKET_FEE_ATOMS` of `fee_mint` to a fresh ATA owned
 /// by `wallet`, and return that ATA. Used by the non-admin path so the
 /// fee-transfer CPI has the right balance.
 fn fund_with_fee(
@@ -149,13 +149,7 @@ fn fund_with_fee(
         fee_mint,
         &SPL_TOKEN_PROGRAM_ID,
     );
-    mint_to(
-        svm,
-        mint_authority,
-        fee_mint,
-        &ata,
-        REGISTER_MARKET_FEE_ATOMS,
-    );
+    mint_to(svm, mint_authority, fee_mint, &ata, CREATE_MARKET_FEE_ATOMS);
     ata
 }
 
@@ -170,7 +164,7 @@ fn token_balance(svm: &anchor_v2_testing::LiteSVM, ata: &Pubkey) -> u64 {
 // ── Happy paths ─────────────────────────────────────────────────────
 
 #[test]
-fn register_market_succeeds_with_two_spl_mints() {
+fn create_market_succeeds_with_two_spl_mints() {
     let (mut svm, authority, fee_mint) = bootstrap();
     let payer = fresh_payer(&mut svm);
     let payer_ata = fund_with_fee(&mut svm, &authority, &fee_mint, &payer);
@@ -178,7 +172,7 @@ fn register_market_succeeds_with_two_spl_mints() {
     let base_mint = create_spl_mint(&mut svm, &authority);
     let quote_mint = create_spl_mint(&mut svm, &authority);
 
-    let ix = register_market_ixn(
+    let ix = create_market_ixn(
         payer.pubkey(),
         base_mint,
         quote_mint,
@@ -188,7 +182,7 @@ fn register_market_succeeds_with_two_spl_mints() {
         SPL_TOKEN_PROGRAM_ID,
         payer_ata,
     );
-    send_ixn(&mut svm, &payer, ix).expect("register_market should succeed");
+    send_ixn(&mut svm, &payer, ix).expect("create_market should succeed");
 
     // Market header is stamped with the values seeded from the registry,
     // and both list heads start empty.
@@ -206,7 +200,7 @@ fn register_market_succeeds_with_two_spl_mints() {
     assert_eq!(header.outstanding_vault_depositors.get(), 0);
     assert_eq!(header.nonce.get(), 0);
     assert_eq!(header.fee_config.mint, fee_mint.to_bytes().into());
-    assert_eq!(header.fee_config.atoms.get(), REGISTER_MARKET_FEE_ATOMS);
+    assert_eq!(header.fee_config.atoms.get(), CREATE_MARKET_FEE_ATOMS);
 
     // Registry bumped the live-market counter — the on-chain witness
     // `close_registry` checks against under the `admin-teardown`
@@ -219,7 +213,7 @@ fn register_market_succeeds_with_two_spl_mints() {
     assert_eq!(
         registry_header.market_count.get(),
         1,
-        "register_market should increment market_count from 0 to 1"
+        "create_market should increment market_count from 0 to 1"
     );
 
     // Treasuries are the canonical ATAs at `market` for each mint.
@@ -242,7 +236,7 @@ fn register_market_succeeds_with_two_spl_mints() {
         associated_token_address(&registry_pda(), &fee_mint, &SPL_TOKEN_PROGRAM_ID);
     assert_eq!(
         token_balance(&svm, &registry_fee_ata),
-        REGISTER_MARKET_FEE_ATOMS
+        CREATE_MARKET_FEE_ATOMS
     );
 
     // Vault tail starts empty: the slab `len` field sits right after
@@ -250,7 +244,7 @@ fn register_market_succeeds_with_two_spl_mints() {
     let account = svm.get_account(&market).expect("market exists");
     let len_off = 8 + core::mem::size_of::<MarketHeader>();
     let len = u32::from_le_bytes(account.data[len_off..len_off + 4].try_into().unwrap());
-    assert_eq!(len, 0, "no vaults at register_market time");
+    assert_eq!(len, 0, "no vaults at create_market time");
 
     // N_LEVELS hasn't drifted unintentionally — surface that here so
     // any vault-layout retune lands as a deliberate test update too.
@@ -258,7 +252,7 @@ fn register_market_succeeds_with_two_spl_mints() {
 }
 
 #[test]
-fn register_market_succeeds_with_mixed_token_programs() {
+fn create_market_succeeds_with_mixed_token_programs() {
     // Real FX pair shape: classic SPL on one leg, Token-2022 on the
     // other. The ATA program derives different addresses per program,
     // so the test exercises both derivation paths in one call.
@@ -268,7 +262,7 @@ fn register_market_succeeds_with_mixed_token_programs() {
     let base_mint = create_spl_mint(&mut svm, &authority); // SPL
     let quote_mint = create_token2022_mint(&mut svm, &authority); // Token-2022
 
-    let ix = register_market_ixn(
+    let ix = create_market_ixn(
         payer.pubkey(),
         base_mint,
         quote_mint,
@@ -278,7 +272,7 @@ fn register_market_succeeds_with_mixed_token_programs() {
         SPL_TOKEN_PROGRAM_ID,
         payer_ata,
     );
-    send_ixn(&mut svm, &payer, ix).expect("mixed-program register_market should succeed");
+    send_ixn(&mut svm, &payer, ix).expect("mixed-program create_market should succeed");
 
     let (market, _) = market_pda(&base_mint, &quote_mint);
     let header = read_market_header(&svm, &market);
@@ -316,7 +310,7 @@ fn admin_path_waives_fee() {
     svm.airdrop(&dummy_source.pubkey(), SIGNER_FUNDING_LAMPORTS)
         .unwrap();
 
-    let ix = register_market_ixn(
+    let ix = create_market_ixn(
         authority.pubkey(),
         base_mint,
         quote_mint,
@@ -359,7 +353,7 @@ fn rejects_same_mint_for_base_and_quote() {
     let payer_ata = fund_with_fee(&mut svm, &authority, &fee_mint, &payer);
     let mint = create_spl_mint(&mut svm, &authority);
 
-    let ix = register_market_ixn(
+    let ix = create_market_ixn(
         payer.pubkey(),
         mint,
         mint,
@@ -394,7 +388,7 @@ fn rejects_wrong_fee_mint() {
         &authority,
         &bogus_fee_mint,
         &bogus_source,
-        REGISTER_MARKET_FEE_ATOMS,
+        CREATE_MARKET_FEE_ATOMS,
     );
 
     // The `address = registry.default_fee_config.mint` constraint on
@@ -403,7 +397,7 @@ fn rejects_wrong_fee_mint() {
     // bogus mint surfaces as `AccountDataTooSmall` at load time —
     // either way the wrong mint is rejected. The point of this test
     // is the rejection, not the specific code.
-    let ix = register_market_ixn(
+    let ix = create_market_ixn(
         payer.pubkey(),
         base_mint,
         quote_mint,
@@ -437,12 +431,12 @@ fn rejects_underfunded_payer() {
         &authority,
         &fee_mint,
         &payer_ata,
-        REGISTER_MARKET_FEE_ATOMS - 1,
+        CREATE_MARKET_FEE_ATOMS - 1,
     );
     let base_mint = create_spl_mint(&mut svm, &authority);
     let quote_mint = create_spl_mint(&mut svm, &authority);
 
-    let ix = register_market_ixn(
+    let ix = create_market_ixn(
         payer.pubkey(),
         base_mint,
         quote_mint,
@@ -456,7 +450,7 @@ fn rejects_underfunded_payer() {
 }
 
 #[test]
-fn rejects_second_register_market_on_same_pair() {
+fn rejects_second_create_market_on_same_pair() {
     // The `init` constraint enforces single-shot creation — the runtime
     // refuses to re-create an existing PDA, so the second call fails
     // before our handler runs.
@@ -466,7 +460,7 @@ fn rejects_second_register_market_on_same_pair() {
     let base_mint = create_spl_mint(&mut svm, &authority);
     let quote_mint = create_spl_mint(&mut svm, &authority);
 
-    let ix = register_market_ixn(
+    let ix = create_market_ixn(
         payer.pubkey(),
         base_mint,
         quote_mint,
@@ -476,13 +470,13 @@ fn rejects_second_register_market_on_same_pair() {
         SPL_TOKEN_PROGRAM_ID,
         payer_ata,
     );
-    send_ixn(&mut svm, &payer, ix.clone()).expect("first register_market must succeed");
+    send_ixn(&mut svm, &payer, ix.clone()).expect("first create_market must succeed");
 
     // Fund a fresh ATA so the second attempt fails at `init`, not at
     // the source balance.
     let payer2 = fresh_payer(&mut svm);
     let payer2_ata = fund_with_fee(&mut svm, &authority, &fee_mint, &payer2);
-    let ix2 = register_market_ixn(
+    let ix2 = create_market_ixn(
         payer2.pubkey(),
         base_mint,
         quote_mint,
@@ -492,7 +486,7 @@ fn rejects_second_register_market_on_same_pair() {
         SPL_TOKEN_PROGRAM_ID,
         payer2_ata,
     );
-    send_ixn(&mut svm, &payer2, ix2).expect_err("second register_market on same pair must fail");
+    send_ixn(&mut svm, &payer2, ix2).expect_err("second create_market on same pair must fail");
 }
 
 #[test]
@@ -515,7 +509,7 @@ fn rejects_non_mint_as_base() {
         &SPL_TOKEN_PROGRAM_ID,
     );
 
-    let ix = register_market_ixn(
+    let ix = create_market_ixn(
         payer.pubkey(),
         token_account, // bogus base "mint"
         quote_mint,

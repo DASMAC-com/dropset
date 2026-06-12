@@ -241,7 +241,7 @@ fn seeded_two_vaults(ref0_bits: u32, ref1_bits: u32) -> Fixture {
     let auth = f.authority.insecure_clone();
 
     // Sector 0.
-    f.register_vault(0, f.authority.pubkey(), false, Pubkey::default())
+    f.create_vault(0, f.authority.pubkey(), false, Pubkey::default())
         .expect("register vault 0");
     f.set_reference_price(&auth, 0, ref0_bits, 0)
         .expect("ref 0");
@@ -257,7 +257,7 @@ fn seeded_two_vaults(ref0_bits: u32, ref1_bits: u32) -> Fixture {
     // Sector 1. Its register / seed transactions mirror sector 0's
     // argument-for-argument; the blockhash bump above is what keeps
     // them from colliding as already-processed duplicates.
-    f.register_vault(1, f.authority.pubkey(), false, Pubkey::default())
+    f.create_vault(1, f.authority.pubkey(), false, Pubkey::default())
         .expect("register vault 1");
     f.set_reference_price(&auth, 1, ref1_bits, 0)
         .expect("ref 1");
@@ -441,7 +441,7 @@ fn min_out_soft_revert_restores_multiple_legs_and_rearms_flush() {
     // re-arm FLUSH_BIT.
     let mut f = Fixture::bootstrap();
     let auth = f.authority.insecure_clone();
-    f.register_vault(0, f.authority.pubkey(), false, Pubkey::default())
+    f.create_vault(0, f.authority.pubkey(), false, Pubkey::default())
         .expect("register");
     f.set_reference_price(&auth, 0, Price::encode(10_850_000, 0).unwrap().as_u32(), 0)
         .expect("ref");

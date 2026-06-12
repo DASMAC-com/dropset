@@ -27,7 +27,7 @@ head: number;
  */
 tombstoneHead: number; 
 /**
- * Head of the free DLL: sectors available for reuse on `OpenVault`.
+ * Head of the free DLL: sectors available for reuse on `CreateVault`.
  * Singly linked via `next`; `prev` is ignored.
  */
 freeHead: number; 
@@ -47,7 +47,7 @@ activeCount: number;
  */
 outstandingVaultDepositors: number; 
 /**
- * Per-market open-vault fee: mint and amount. Seeded from
+ * Per-market create-vault fee: mint and amount. Seeded from
  * `Registry.default_fee_config` at market creation.
  */
 feeConfig: FeeConfig; 
@@ -93,7 +93,7 @@ head: number;
  */
 tombstoneHead: number; 
 /**
- * Head of the free DLL: sectors available for reuse on `OpenVault`.
+ * Head of the free DLL: sectors available for reuse on `CreateVault`.
  * Singly linked via `next`; `prev` is ignored.
  */
 freeHead: number; 
@@ -113,7 +113,7 @@ activeCount: number;
  */
 outstandingVaultDepositors: number; 
 /**
- * Per-market open-vault fee: mint and amount. Seeded from
+ * Per-market create-vault fee: mint and amount. Seeded from
  * `Registry.default_fee_config` at market creation.
  */
 feeConfig: FeeConfigArgs; 

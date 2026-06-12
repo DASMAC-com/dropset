@@ -35,7 +35,7 @@ pub struct CloseVault {
 
 impl CloseVault {
     /// Returns the [`CloseVaultEvent`] payload for `lib.rs` to dispatch
-    /// through `emit_cpi!` (see [`super::register_vault`] for why the
+    /// through `emit_cpi!` (see [`super::create_vault`] for why the
     /// emit lives in the dispatcher rather than the handler).
     #[inline(always)]
     pub fn close_vault(&mut self, vault_idx: u32) -> Result<CloseVaultEvent> {

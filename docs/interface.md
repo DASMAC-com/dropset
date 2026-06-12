@@ -60,7 +60,7 @@ level-blasting sweep would hit). A fill is emitted **per matched
 
 - **`Deposit` / `Withdraw`** — inventory deltas (join/exit liquidity; feed TVL
   and per-depositor cost-basis).
-- **`OpenVault`** — a new vault/leader enters a market.
+- **`CreateVault`** — a new vault/leader enters a market.
 - **`Realize`** — performance-fee accrual (leader economics).
 
 ### Dedupe / primary key

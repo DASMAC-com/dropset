@@ -19,7 +19,7 @@ use crate::{
 #[derive(Accounts)]
 pub struct SetReferencePrice {
     /// Quote authority — the only signer the spec accepts here. Set at
-    /// `OpenVault` (defaults to the leader).
+    /// `CreateVault` (defaults to the leader).
     pub signer: Signer,
     /// Market account holding the target vault.
     #[account(mut)]

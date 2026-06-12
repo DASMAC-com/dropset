@@ -5,7 +5,7 @@
 //! [`common::events`]), asserting the field values match the on-chain
 //! state the instruction just produced.
 //!
-//! These are the always-on events — `OpenVault`, `Deposit`, `Withdraw`,
+//! These are the always-on events — `CreateVault`, `Deposit`, `Withdraw`,
 //! `Realize`, and `Fill` plus the ENG-433-new `CloseVault` / `Freeze` —
 //! so this file is not gated behind `admin-teardown`. The teardown
 //! force-withdraw paths re-emit `WithdrawEvent` (same struct, asserted
@@ -26,8 +26,8 @@ fn open_gated_vault() -> (Fixture, Keypair) {
     let mut f = Fixture::bootstrap();
     let admin = f.authority.insecure_clone();
     let leader = f.funded_keypair(10 * common::SIGNER_FUNDING_LAMPORTS);
-    f.register_vault(0, leader.pubkey(), true, leader.pubkey())
-        .expect("register_vault");
+    f.create_vault(0, leader.pubkey(), true, leader.pubkey())
+        .expect("create_vault");
     let px = Price::encode(10_850_000, 0).unwrap();
     f.set_reference_price(&leader, 0, px.as_u32(), 0)
         .expect("set_reference_price");
@@ -41,15 +41,15 @@ fn open_gated_vault() -> (Fixture, Keypair) {
 }
 
 #[test]
-fn register_vault_emits_open_vault_event() {
+fn create_vault_emits_create_vault_event() {
     let mut f = Fixture::bootstrap();
     let leader = f.funded_keypair(10 * common::SIGNER_FUNDING_LAMPORTS);
     let quote_authority = Pubkey::new_unique();
     let meta = f
-        .register_vault_meta(50_000, quote_authority, true, leader.pubkey())
-        .expect("register_vault");
+        .create_vault_meta(50_000, quote_authority, true, leader.pubkey())
+        .expect("create_vault");
 
-    let ev = events::open_vault(&meta);
+    let ev = events::create_vault(&meta);
     assert_eq!(ev.market, f.market.to_bytes());
     assert_eq!(ev.sector_idx, 0);
     assert_eq!(ev.leader, leader.pubkey().to_bytes());
@@ -65,8 +65,8 @@ fn register_vault_emits_open_vault_event() {
 fn deposit_leader_seed_emits_deposit_event() {
     let mut f = Fixture::bootstrap();
     let leader = f.funded_keypair(10 * common::SIGNER_FUNDING_LAMPORTS);
-    f.register_vault(0, leader.pubkey(), false, leader.pubkey())
-        .expect("register_vault");
+    f.create_vault(0, leader.pubkey(), false, leader.pubkey())
+        .expect("create_vault");
     let px = Price::encode(10_850_000, 0).unwrap();
     f.set_reference_price(&leader, 0, px.as_u32(), 0)
         .expect("set_reference_price");
@@ -201,8 +201,8 @@ fn deposit_realizes_perf_fee_and_emits_realize_event() {
     let mut f = Fixture::bootstrap();
     let leader = f.funded_keypair(10 * common::SIGNER_FUNDING_LAMPORTS);
     // 10% perf fee so a NAV gain mints a visible fee.
-    f.register_vault(100_000, leader.pubkey(), false, leader.pubkey())
-        .expect("register_vault");
+    f.create_vault(100_000, leader.pubkey(), false, leader.pubkey())
+        .expect("create_vault");
     let px = Price::encode(10_850_000, 0).unwrap();
     f.set_reference_price(&leader, 0, px.as_u32(), 0)
         .expect("set_reference_price");

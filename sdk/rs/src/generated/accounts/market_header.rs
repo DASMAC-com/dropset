@@ -22,7 +22,7 @@ pub struct MarketHeader {
     /// Head of the tombstone DLL: sectors that have been `CloseVault`'d
     /// but still hold outstanding shares. Not visited by matching.
     pub tombstone_head: u32,
-    /// Head of the free DLL: sectors available for reuse on `OpenVault`.
+    /// Head of the free DLL: sectors available for reuse on `CreateVault`.
     /// Singly linked via `next`; `prev` is ignored.
     pub free_head: u32,
     /// Active-DLL length. Bounded by `registry.max_vaults_per_market`.
@@ -38,7 +38,7 @@ pub struct MarketHeader {
     /// PDAs to verify by enumeration. See the architecture spec,
     /// **Account lifecycle and rent reclamation**.
     pub outstanding_vault_depositors: u32,
-    /// Per-market open-vault fee: mint and amount. Seeded from
+    /// Per-market create-vault fee: mint and amount. Seeded from
     /// `Registry.default_fee_config` at market creation.
     pub fee_config: FeeConfig,
     /// Taker fee rate, capped at ~6.55% (`Ppm16` max).

@@ -31,7 +31,7 @@ pub struct Init {
     /// SPL Token / Token-2022 ownership and that the data unpacks as a
     /// `Mint` — so no separate length / discriminator check is needed.
     pub fee_mint: solana_pubkey::Pubkey,
-    /// Registry-owned fee vault for the per-`OpenVault` charge. Created
+    /// Registry-owned fee vault for the per-`CreateVault` charge. Created
     /// here by CPI to the ATA program; its address is the canonical
     /// ATA over `(registry, token_program, fee_mint)`, and the ATA
     /// program rejects any `(mint, token_program)` pair whose owners
@@ -195,7 +195,7 @@ impl InitBuilder {
         self.fee_mint = Some(fee_mint);
         self
     }
-    /// Registry-owned fee vault for the per-`OpenVault` charge. Created
+    /// Registry-owned fee vault for the per-`CreateVault` charge. Created
     /// here by CPI to the ATA program; its address is the canonical
     /// ATA over `(registry, token_program, fee_mint)`, and the ATA
     /// program rejects any `(mint, token_program)` pair whose owners
@@ -305,7 +305,7 @@ pub struct InitCpiAccounts<'a, 'b> {
     /// SPL Token / Token-2022 ownership and that the data unpacks as a
     /// `Mint` — so no separate length / discriminator check is needed.
     pub fee_mint: &'b solana_account_info::AccountInfo<'a>,
-    /// Registry-owned fee vault for the per-`OpenVault` charge. Created
+    /// Registry-owned fee vault for the per-`CreateVault` charge. Created
     /// here by CPI to the ATA program; its address is the canonical
     /// ATA over `(registry, token_program, fee_mint)`, and the ATA
     /// program rejects any `(mint, token_program)` pair whose owners
@@ -345,7 +345,7 @@ pub struct InitCpi<'a, 'b> {
     /// SPL Token / Token-2022 ownership and that the data unpacks as a
     /// `Mint` — so no separate length / discriminator check is needed.
     pub fee_mint: &'b solana_account_info::AccountInfo<'a>,
-    /// Registry-owned fee vault for the per-`OpenVault` charge. Created
+    /// Registry-owned fee vault for the per-`CreateVault` charge. Created
     /// here by CPI to the ATA program; its address is the canonical
     /// ATA over `(registry, token_program, fee_mint)`, and the ATA
     /// program rejects any `(mint, token_program)` pair whose owners
@@ -545,7 +545,7 @@ impl<'a, 'b> InitCpiBuilder<'a, 'b> {
         self.instruction.fee_mint = Some(fee_mint);
         self
     }
-    /// Registry-owned fee vault for the per-`OpenVault` charge. Created
+    /// Registry-owned fee vault for the per-`CreateVault` charge. Created
     /// here by CPI to the ATA program; its address is the canonical
     /// ATA over `(registry, token_program, fee_mint)`, and the ATA
     /// program rejects any `(mint, token_program)` pair whose owners

@@ -13,7 +13,7 @@ use borsh::BorshSerialize;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct RegistryHeader {
     pub discriminator: [u8; 8],
-    /// Default fee for the per-`OpenVault` charge, stamped into
+    /// Default fee for the per-`CreateVault` charge, stamped into
     /// `MarketHeader.fee_config` at market creation.
     pub default_fee_config: FeeConfig,
     /// Number of live markets created against this registry. Incremented

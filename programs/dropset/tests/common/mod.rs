@@ -331,22 +331,22 @@ pub fn send_signed(svm: &mut LiteSVM, signers: &[&Keypair], instructions: &[Inst
         .unwrap();
 }
 
-// ── Mock USDC + ATA helpers used by the `register_market` tests ─────
+// ── Mock USDC + ATA helpers used by the `create_market` tests ─────
 
 /// Mock-USDC mint decimals — matches real USDC.
 #[allow(dead_code)]
 pub const MOCK_USDC_DECIMALS: u8 = 6;
 
-/// $1,000 in mock-USDC atoms (6 decimals): the open-market fee used by
-/// the register-market test fixtures.
+/// $1,000 in mock-USDC atoms (6 decimals): the create-market fee used by
+/// the create-market test fixtures.
 #[allow(dead_code)]
-pub const REGISTER_MARKET_FEE_ATOMS: u64 = 1_000 * 1_000_000;
+pub const CREATE_MARKET_FEE_ATOMS: u64 = 1_000 * 1_000_000;
 
 /// Create a USDC-shaped SPL Token mint with [`MOCK_USDC_DECIMALS`].
 ///
 /// Returns the mint address; `authority` becomes the mint authority,
 /// which lets tests mint mock-USDC to a payer before charging the
-/// open-market fee.
+/// create-market fee.
 #[allow(dead_code)]
 pub fn create_mock_usdc_mint(svm: &mut LiteSVM, authority: &Keypair) -> Pubkey {
     // Real USDC is 6 decimals under the classic SPL Token program; the

@@ -1,5 +1,5 @@
-//! `register_vault` (spec's `OpenVault`) — allocate a new vault sector
-//! and stamp it with the leader's parameters.
+//! `create_vault` — allocate a new vault sector and stamp it with the
+//! leader's parameters.
 //!
 //! Charges `market.fee_config.atoms` of `market.fee_config.mint` to the
 //! Registry's fee ATA — waived when the signer is a registry admin.
@@ -27,16 +27,16 @@ use anchor_spl_v2::{
 
 use crate::{
     errors::DropsetError,
-    events::OpenVaultEvent,
+    events::CreateVaultEvent,
     state::{DllList, Market, VaultDll},
     AdminSet, Registry, PPM, Q32_32_ONE,
 };
 
 #[event_cpi]
 #[derive(Accounts)]
-pub struct RegisterVault {
+pub struct CreateVault {
     /// Pays sector-rent top-up (if the slab realloc grows the
-    /// account) and the open-vault fee (unless waived for an admin).
+    /// account) and the create-vault fee (unless waived for an admin).
     /// Becomes the vault's `leader` unless an admin supplied a
     /// distinct `leader_override` — see the handler.
     #[account(mut)]
@@ -52,8 +52,8 @@ pub struct RegisterVault {
     #[account(mut)]
     pub market: Market,
 
-    /// Mint the open-vault fee is paid in. Pinned to the value
-    /// `register_market` stamped into `market.fee_config.mint`.
+    /// Mint the create-vault fee is paid in. Pinned to the value
+    /// `create_market` stamped into `market.fee_config.mint`.
     #[account(address = market.fee_config.mint)]
     pub fee_mint: InterfaceAccount<Mint>,
     /// Token program owning `fee_mint`. Pinned to the value stamped at
@@ -78,21 +78,21 @@ pub struct RegisterVault {
     pub system_program: Program<System>,
 }
 
-impl RegisterVault {
-    /// Run the handler body and return the [`OpenVaultEvent`] payload
+impl CreateVault {
+    /// Run the handler body and return the [`CreateVaultEvent`] payload
     /// for `lib.rs` to dispatch through `emit_cpi!`. The macro
     /// requires `ctx` in scope, which the `impl` method can't see —
     /// keeping the emit out here means the spec's "events ride as
     /// inner-instruction data, not logs" rule (§ Events and emission)
     /// holds without restructuring every handler to take `ctx`.
     #[inline(always)]
-    pub fn register_vault(
+    pub fn create_vault(
         &mut self,
         perf_fee_rate: u32,
         quote_authority: Address,
         allow_outside_depositors: bool,
         leader_override: Address,
-    ) -> Result<OpenVaultEvent> {
+    ) -> Result<CreateVaultEvent> {
         // Validate perf fee. Capped at 100% (`PPM`). The spec leaves
         // this open-ended; the cap matches the `Ppm32` semantic.
         require!(
@@ -115,7 +115,7 @@ impl RegisterVault {
         let active = self.market.active_count.get();
         require!(active < max_vaults, DropsetError::VaultCapExceeded);
 
-        // Resolve the leader. Spec § OpenVault:
+        // Resolve the leader. Spec § CreateVault:
         // - Non-admin caller: must pass `Address::default()` (no
         //   override) or their own pubkey — anything else is a
         //   misuse of the admin-only override.
@@ -136,7 +136,7 @@ impl RegisterVault {
             payer_addr
         };
 
-        // Charge the open-vault fee unless the signer is an admin.
+        // Charge the create-vault fee unless the signer is an admin.
         if !is_admin {
             let atoms = self.market.fee_config.atoms.get();
             if atoms > 0 {
@@ -189,7 +189,7 @@ impl RegisterVault {
         self.market.link_head(DllList::Active, sector)?;
         self.market.active_count = (active + 1).into();
 
-        Ok(OpenVaultEvent {
+        Ok(CreateVaultEvent {
             market: market_addr,
             sector_idx: sector,
             leader,

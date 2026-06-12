@@ -22,7 +22,7 @@
 
 use anchor_lang_v2::{bytemuck, event::EVENT_IX_TAG_LE, Discriminator};
 use dropset::{
-    CloseVaultEvent, DepositEvent, FillEvent, FreezeVaultEvent, OpenVaultEvent, RealizeEvent,
+    CloseVaultEvent, CreateVaultEvent, DepositEvent, FillEvent, FreezeVaultEvent, RealizeEvent,
     WithdrawEvent,
 };
 use litesvm::types::TransactionMetadata;
@@ -113,7 +113,7 @@ impl<'a> Cursor<'a> {
 // `pubkey.to_bytes()` without depending on the on-chain `Address` type.
 
 #[derive(Debug)]
-pub struct OpenVault {
+pub struct CreateVault {
     pub market: [u8; 32],
     pub sector_idx: u32,
     pub leader: [u8; 32],
@@ -123,10 +123,10 @@ pub struct OpenVault {
     pub allow_outside_depositors: bool,
 }
 
-pub fn open_vault(meta: &TransactionMetadata) -> OpenVault {
-    let body = one_body::<OpenVaultEvent>(meta);
+pub fn create_vault(meta: &TransactionMetadata) -> CreateVault {
+    let body = one_body::<CreateVaultEvent>(meta);
     let mut c = Cursor::new(&body);
-    let d = OpenVault {
+    let d = CreateVault {
         market: c.pubkey(),
         sector_idx: c.u32(),
         leader: c.pubkey(),

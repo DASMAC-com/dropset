@@ -56,7 +56,7 @@ programData: Address<TAccountProgramData>;
  */
 feeMint: Address<TAccountFeeMint>;
 /**
- * Registry-owned fee vault for the per-`OpenVault` charge. Created
+ * Registry-owned fee vault for the per-`CreateVault` charge. Created
  * here by CPI to the ATA program; its address is the canonical
  * ATA over `(registry, token_program, fee_mint)`, and the ATA
  * program rejects any `(mint, token_program)` pair whose owners
@@ -130,7 +130,7 @@ programData: Address<TAccountProgramData>;
  */
 feeMint: Address<TAccountFeeMint>;
 /**
- * Registry-owned fee vault for the per-`OpenVault` charge. Created
+ * Registry-owned fee vault for the per-`CreateVault` charge. Created
  * here by CPI to the ATA program; its address is the canonical
  * ATA over `(registry, token_program, fee_mint)`, and the ATA
  * program rejects any `(mint, token_program)` pair whose owners
@@ -202,7 +202,7 @@ programData: TAccountMetas[2];
  */
 feeMint: TAccountMetas[3];
 /**
- * Registry-owned fee vault for the per-`OpenVault` charge. Created
+ * Registry-owned fee vault for the per-`CreateVault` charge. Created
  * here by CPI to the ATA program; its address is the canonical
  * ATA over `(registry, token_program, fee_mint)`, and the ATA
  * program rejects any `(mint, token_program)` pair whose owners
