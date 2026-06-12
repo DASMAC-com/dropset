@@ -130,10 +130,23 @@ call, not a reason to widen rules.)
    - this worktree's `.claude/settings.local.json`
    - `<base>/.claude/settings.local.json`
 
-1. **Build the firmed allowlist.** Take the union of
-   both `allow` arrays, apply the generalization
-   rules above, and dedupe. This is the single
-   canonical array both files will get.
+1. **Build the firmed allowlist.** Union both `allow`
+   arrays, apply the generalization rules above, and
+   dedupe — this is the single canonical array both
+   files will get. Two cautions on the union:
+
+   - **Watch entries that live in only one file.** The
+     two copies can have drifted, and a rule missing
+     from the base may have been *deliberately* dropped
+     there. Don't silently resurrect it into both;
+     treat every one-file-only entry as a distinct diff
+     item the user has to approve in the next step.
+   - **Run the safety floor over the *result*, not just
+     over rules you generalized.** A pre-existing
+     bare-verb wildcard (e.g. a stray `git *` that crept
+     into one copy) would otherwise ride the union
+     straight into the base file untouched. Flag any
+     such entry instead of propagating it.
 
 1. **Propose, then wait for the user.** Before
    writing **anything**, show the user exactly what
@@ -147,6 +160,9 @@ call, not a reason to widen rules.)
      per-worktree variants into one");
    - each rule being **removed** as a now-subsumed
      duplicate;
+   - each entry present in **only one** of the two
+     files, so the user can confirm it should land in
+     both (rather than having drifted out on purpose);
    - any over-broad rule you're **flagging** but
      leaving in place (per the safety floor).
 
@@ -160,6 +176,13 @@ call, not a reason to widen rules.)
    Edit/Write — replacing only the `allow` array and
    leaving `additionalDirectories` (and any other
    keys) intact. Both files end byte-identical.
+   Writing the base copy reaches outside this
+   worktree, so it only works when the base repo is in
+   this session's `additionalDirectories` (it normally
+   is). If that write is denied, say so and report that
+   only the worktree copy was firmed — don't leave the
+   user thinking future worktrees were covered when
+   they weren't.
 
 1. **Report.** Confirm what was written and that both
    the worktree and base-repo copies now match.
