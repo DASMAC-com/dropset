@@ -7,7 +7,7 @@
  */
 
 import { assertIsInstructionWithAccounts, containsBytes, fixEncoderSize, getBytesEncoder, type Address, type Instruction, type InstructionWithData, type ReadonlyUint8Array } from '@solana/kit';
-import { parseAddAdminInstruction, parseDepositInstruction, parseDepositLeaderInstruction, parseInitInstruction, parseRegisterMarketInstruction, parseRegisterVaultInstruction, parseRemoveAdminInstruction, parseSetAllowOutsideDepositorsInstruction, parseSetLiquidityProfileInstruction, parseSetOutsideDepositsApprovedInstruction, parseSetReferencePriceInstruction, parseSwapInstruction, parseWithdrawInstruction, parseWithdrawLeaderInstruction, type ParsedAddAdminInstruction, type ParsedDepositInstruction, type ParsedDepositLeaderInstruction, type ParsedInitInstruction, type ParsedRegisterMarketInstruction, type ParsedRegisterVaultInstruction, type ParsedRemoveAdminInstruction, type ParsedSetAllowOutsideDepositorsInstruction, type ParsedSetLiquidityProfileInstruction, type ParsedSetOutsideDepositsApprovedInstruction, type ParsedSetReferencePriceInstruction, type ParsedSwapInstruction, type ParsedWithdrawInstruction, type ParsedWithdrawLeaderInstruction } from '../instructions';
+import { parseAddAdminInstruction, parseCloseMarketInstruction, parseCloseMarketTreasuryInstruction, parseCloseRegistryFeeVaultInstruction, parseCloseRegistryInstruction, parseCloseVaultInstruction, parseDepositInstruction, parseDepositLeaderInstruction, parseForceWithdrawDepositorInstruction, parseForceWithdrawLeaderInstruction, parseFreezeVaultInstruction, parseInitInstruction, parseRegisterMarketInstruction, parseRegisterVaultInstruction, parseRemoveAdminInstruction, parseSetAllowOutsideDepositorsInstruction, parseSetLiquidityProfileInstruction, parseSetOutsideDepositsApprovedInstruction, parseSetReferencePriceInstruction, parseSwapInstruction, parseWithdrawInstruction, parseWithdrawLeaderInstruction, type ParsedAddAdminInstruction, type ParsedCloseMarketInstruction, type ParsedCloseMarketTreasuryInstruction, type ParsedCloseRegistryFeeVaultInstruction, type ParsedCloseRegistryInstruction, type ParsedCloseVaultInstruction, type ParsedDepositInstruction, type ParsedDepositLeaderInstruction, type ParsedForceWithdrawDepositorInstruction, type ParsedForceWithdrawLeaderInstruction, type ParsedFreezeVaultInstruction, type ParsedInitInstruction, type ParsedRegisterMarketInstruction, type ParsedRegisterVaultInstruction, type ParsedRemoveAdminInstruction, type ParsedSetAllowOutsideDepositorsInstruction, type ParsedSetLiquidityProfileInstruction, type ParsedSetOutsideDepositsApprovedInstruction, type ParsedSetReferencePriceInstruction, type ParsedSwapInstruction, type ParsedWithdrawInstruction, type ParsedWithdrawLeaderInstruction } from '../instructions';
 
 export const DROPSET_PROGRAM_ADDRESS = 'TESTnXwv2eHoftsSd5NEdpH4zEu7XRC8jviuoNPdB2Q' as Address<'TESTnXwv2eHoftsSd5NEdpH4zEu7XRC8jviuoNPdB2Q'>;
 
@@ -21,13 +21,21 @@ if (containsBytes(data, fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Arr
 throw new Error("The provided account could not be identified as a dropset account.")
 }
 
-export enum DropsetInstruction { AddAdmin, Deposit, DepositLeader, Init, RegisterMarket, RegisterVault, RemoveAdmin, SetAllowOutsideDepositors, SetLiquidityProfile, SetOutsideDepositsApproved, SetReferencePrice, Swap, Withdraw, WithdrawLeader }
+export enum DropsetInstruction { AddAdmin, CloseMarket, CloseMarketTreasury, CloseRegistry, CloseRegistryFeeVault, CloseVault, Deposit, DepositLeader, ForceWithdrawDepositor, ForceWithdrawLeader, FreezeVault, Init, RegisterMarket, RegisterVault, RemoveAdmin, SetAllowOutsideDepositors, SetLiquidityProfile, SetOutsideDepositsApproved, SetReferencePrice, Swap, Withdraw, WithdrawLeader }
 
 export function identifyDropsetInstruction(instruction: { data: ReadonlyUint8Array } | ReadonlyUint8Array): DropsetInstruction {
 const data = 'data' in instruction ? instruction.data : instruction;
 if (containsBytes(data, fixEncoderSize(getBytesEncoder(), 1).encode(new Uint8Array([1])), 0)) { return DropsetInstruction.AddAdmin; }
+if (containsBytes(data, fixEncoderSize(getBytesEncoder(), 1).encode(new Uint8Array([19])), 0)) { return DropsetInstruction.CloseMarket; }
+if (containsBytes(data, fixEncoderSize(getBytesEncoder(), 1).encode(new Uint8Array([18])), 0)) { return DropsetInstruction.CloseMarketTreasury; }
+if (containsBytes(data, fixEncoderSize(getBytesEncoder(), 1).encode(new Uint8Array([21])), 0)) { return DropsetInstruction.CloseRegistry; }
+if (containsBytes(data, fixEncoderSize(getBytesEncoder(), 1).encode(new Uint8Array([20])), 0)) { return DropsetInstruction.CloseRegistryFeeVault; }
+if (containsBytes(data, fixEncoderSize(getBytesEncoder(), 1).encode(new Uint8Array([14])), 0)) { return DropsetInstruction.CloseVault; }
 if (containsBytes(data, fixEncoderSize(getBytesEncoder(), 1).encode(new Uint8Array([7])), 0)) { return DropsetInstruction.Deposit; }
 if (containsBytes(data, fixEncoderSize(getBytesEncoder(), 1).encode(new Uint8Array([10])), 0)) { return DropsetInstruction.DepositLeader; }
+if (containsBytes(data, fixEncoderSize(getBytesEncoder(), 1).encode(new Uint8Array([16])), 0)) { return DropsetInstruction.ForceWithdrawDepositor; }
+if (containsBytes(data, fixEncoderSize(getBytesEncoder(), 1).encode(new Uint8Array([17])), 0)) { return DropsetInstruction.ForceWithdrawLeader; }
+if (containsBytes(data, fixEncoderSize(getBytesEncoder(), 1).encode(new Uint8Array([15])), 0)) { return DropsetInstruction.FreezeVault; }
 if (containsBytes(data, fixEncoderSize(getBytesEncoder(), 1).encode(new Uint8Array([0])), 0)) { return DropsetInstruction.Init; }
 if (containsBytes(data, fixEncoderSize(getBytesEncoder(), 1).encode(new Uint8Array([3])), 0)) { return DropsetInstruction.RegisterMarket; }
 if (containsBytes(data, fixEncoderSize(getBytesEncoder(), 1).encode(new Uint8Array([4])), 0)) { return DropsetInstruction.RegisterVault; }
@@ -44,8 +52,16 @@ throw new Error("The provided instruction could not be identified as a dropset i
 
 export type ParsedDropsetInstruction<TProgram extends string = 'TESTnXwv2eHoftsSd5NEdpH4zEu7XRC8jviuoNPdB2Q'> =
 | { instructionType: DropsetInstruction.AddAdmin } & ParsedAddAdminInstruction<TProgram>
+| { instructionType: DropsetInstruction.CloseMarket } & ParsedCloseMarketInstruction<TProgram>
+| { instructionType: DropsetInstruction.CloseMarketTreasury } & ParsedCloseMarketTreasuryInstruction<TProgram>
+| { instructionType: DropsetInstruction.CloseRegistry } & ParsedCloseRegistryInstruction<TProgram>
+| { instructionType: DropsetInstruction.CloseRegistryFeeVault } & ParsedCloseRegistryFeeVaultInstruction<TProgram>
+| { instructionType: DropsetInstruction.CloseVault } & ParsedCloseVaultInstruction<TProgram>
 | { instructionType: DropsetInstruction.Deposit } & ParsedDepositInstruction<TProgram>
 | { instructionType: DropsetInstruction.DepositLeader } & ParsedDepositLeaderInstruction<TProgram>
+| { instructionType: DropsetInstruction.ForceWithdrawDepositor } & ParsedForceWithdrawDepositorInstruction<TProgram>
+| { instructionType: DropsetInstruction.ForceWithdrawLeader } & ParsedForceWithdrawLeaderInstruction<TProgram>
+| { instructionType: DropsetInstruction.FreezeVault } & ParsedFreezeVaultInstruction<TProgram>
 | { instructionType: DropsetInstruction.Init } & ParsedInitInstruction<TProgram>
 | { instructionType: DropsetInstruction.RegisterMarket } & ParsedRegisterMarketInstruction<TProgram>
 | { instructionType: DropsetInstruction.RegisterVault } & ParsedRegisterVaultInstruction<TProgram>
@@ -67,10 +83,26 @@ export type ParsedDropsetInstruction<TProgram extends string = 'TESTnXwv2eHoftsS
             switch (instructionType) {
                 case DropsetInstruction.AddAdmin: { assertIsInstructionWithAccounts(instruction);
 return { instructionType: DropsetInstruction.AddAdmin, ...parseAddAdminInstruction(instruction) }; }
+case DropsetInstruction.CloseMarket: { assertIsInstructionWithAccounts(instruction);
+return { instructionType: DropsetInstruction.CloseMarket, ...parseCloseMarketInstruction(instruction) }; }
+case DropsetInstruction.CloseMarketTreasury: { assertIsInstructionWithAccounts(instruction);
+return { instructionType: DropsetInstruction.CloseMarketTreasury, ...parseCloseMarketTreasuryInstruction(instruction) }; }
+case DropsetInstruction.CloseRegistry: { assertIsInstructionWithAccounts(instruction);
+return { instructionType: DropsetInstruction.CloseRegistry, ...parseCloseRegistryInstruction(instruction) }; }
+case DropsetInstruction.CloseRegistryFeeVault: { assertIsInstructionWithAccounts(instruction);
+return { instructionType: DropsetInstruction.CloseRegistryFeeVault, ...parseCloseRegistryFeeVaultInstruction(instruction) }; }
+case DropsetInstruction.CloseVault: { assertIsInstructionWithAccounts(instruction);
+return { instructionType: DropsetInstruction.CloseVault, ...parseCloseVaultInstruction(instruction) }; }
 case DropsetInstruction.Deposit: { assertIsInstructionWithAccounts(instruction);
 return { instructionType: DropsetInstruction.Deposit, ...parseDepositInstruction(instruction) }; }
 case DropsetInstruction.DepositLeader: { assertIsInstructionWithAccounts(instruction);
 return { instructionType: DropsetInstruction.DepositLeader, ...parseDepositLeaderInstruction(instruction) }; }
+case DropsetInstruction.ForceWithdrawDepositor: { assertIsInstructionWithAccounts(instruction);
+return { instructionType: DropsetInstruction.ForceWithdrawDepositor, ...parseForceWithdrawDepositorInstruction(instruction) }; }
+case DropsetInstruction.ForceWithdrawLeader: { assertIsInstructionWithAccounts(instruction);
+return { instructionType: DropsetInstruction.ForceWithdrawLeader, ...parseForceWithdrawLeaderInstruction(instruction) }; }
+case DropsetInstruction.FreezeVault: { assertIsInstructionWithAccounts(instruction);
+return { instructionType: DropsetInstruction.FreezeVault, ...parseFreezeVaultInstruction(instruction) }; }
 case DropsetInstruction.Init: { assertIsInstructionWithAccounts(instruction);
 return { instructionType: DropsetInstruction.Init, ...parseInitInstruction(instruction) }; }
 case DropsetInstruction.RegisterMarket: { assertIsInstructionWithAccounts(instruction);

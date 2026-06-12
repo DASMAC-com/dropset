@@ -6,8 +6,16 @@
 //!
 
   pub(crate) mod r#add_admin;
+  pub(crate) mod r#close_market;
+  pub(crate) mod r#close_market_treasury;
+  pub(crate) mod r#close_registry;
+  pub(crate) mod r#close_registry_fee_vault;
+  pub(crate) mod r#close_vault;
   pub(crate) mod r#deposit;
   pub(crate) mod r#deposit_leader;
+  pub(crate) mod r#force_withdraw_depositor;
+  pub(crate) mod r#force_withdraw_leader;
+  pub(crate) mod r#freeze_vault;
   pub(crate) mod r#init;
   pub(crate) mod r#register_market;
   pub(crate) mod r#register_vault;
@@ -21,8 +29,16 @@
   pub(crate) mod r#withdraw_leader;
 
   pub use self::r#add_admin::*;
+  pub use self::r#close_market::*;
+  pub use self::r#close_market_treasury::*;
+  pub use self::r#close_registry::*;
+  pub use self::r#close_registry_fee_vault::*;
+  pub use self::r#close_vault::*;
   pub use self::r#deposit::*;
   pub use self::r#deposit_leader::*;
+  pub use self::r#force_withdraw_depositor::*;
+  pub use self::r#force_withdraw_leader::*;
+  pub use self::r#freeze_vault::*;
   pub use self::r#init::*;
   pub use self::r#register_market::*;
   pub use self::r#register_vault::*;

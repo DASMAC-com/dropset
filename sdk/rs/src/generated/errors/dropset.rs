@@ -102,7 +102,7 @@ pub enum DropsetError {
     InsufficientShares = 0x178D,
     /// 6030 - swap amount_in must be greater than zero
     #[error("swap amount_in must be greater than zero")]
-    NothingFilled = 0x178E,
+    InvalidAmountIn = 0x178E,
     /// 6031 - supplied VaultDepositor PDA does not match the (market, sector, owner) seeds
     #[error("supplied VaultDepositor PDA does not match the (market, sector, owner) seeds")]
     VaultDepositorMismatch = 0x178F,
@@ -115,6 +115,30 @@ pub enum DropsetError {
     /// 6034 - limit_price sentinel is invalid for this swap side
     #[error("limit_price sentinel is invalid for this swap side")]
     InvalidLimitPrice = 0x1792,
+    /// 6035 - vault is already on the tombstone list
+    #[error("vault is already on the tombstone list")]
+    VaultAlreadyTombstoned = 0x1793,
+    /// 6036 - token account must be drained to zero before it can be closed
+    #[error("token account must be drained to zero before it can be closed")]
+    TokenAccountNotEmpty = 0x1794,
+    /// 6037 - market treasury must be closed before the market can be closed
+    #[error("market treasury must be closed before the market can be closed")]
+    MarketTreasuryNotClosed = 0x1795,
+    /// 6038 - market still has outstanding VaultDepositor PDAs
+    #[error("market still has outstanding VaultDepositor PDAs")]
+    MarketHasDepositors = 0x1796,
+    /// 6039 - registry still has live markets (market_count != 0)
+    #[error("registry still has live markets (market_count != 0)")]
+    RegistryHasMarkets = 0x1797,
+    /// 6040 - registry still has admins beyond the caller
+    #[error("registry still has admins beyond the caller")]
+    RegistryHasOtherAdmins = 0x1798,
+    /// 6041 - supplied mint is not one of the market's base/quote legs
+    #[error("supplied mint is not one of the market's base/quote legs")]
+    NotAMarketTreasury = 0x1799,
+    /// 6042 - teardown instructions are disabled in this build (admin-teardown feature off)
+    #[error("teardown instructions are disabled in this build (admin-teardown feature off)")]
+    TeardownDisabled = 0x179A,
 }
 
 impl From<DropsetError> for solana_program_error::ProgramError {

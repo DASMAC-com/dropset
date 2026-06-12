@@ -7,6 +7,7 @@
  */
 
 export * from './eventAuthority';
+export * from './forceWithdrawDepositorVaultDepositor';
 export * from './market';
 export * from './registry';
 export * from './vaultDepositor';

@@ -7,8 +7,16 @@
  */
 
 export * from './addAdmin';
+export * from './closeMarket';
+export * from './closeMarketTreasury';
+export * from './closeRegistry';
+export * from './closeRegistryFeeVault';
+export * from './closeVault';
 export * from './deposit';
 export * from './depositLeader';
+export * from './forceWithdrawDepositor';
+export * from './forceWithdrawLeader';
+export * from './freezeVault';
 export * from './init';
 export * from './registerMarket';
 export * from './registerVault';
