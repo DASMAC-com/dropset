@@ -218,6 +218,18 @@ all changes are committed and pushed.
    unverified tests, a non-conforming title, or a
    merge conflict with `main` — leave it in draft.
 
+1. **Firm up the permission allowlist.** A review
+   run approves a lot of one-off commands, so it is
+   the natural moment to generalize them. Invoke
+   `/firm-perms` to collapse the per-worktree and
+   per-arg `permissions.allow` entries into reusable
+   globs and propagate them to the base repo so
+   future worktrees inherit them. This is
+   housekeeping on the gitignored
+   `.claude/settings.local.json` — it does **not**
+   affect the PR diff or its ready state, so run it
+   regardless of the gate outcome.
+
 1. **Report.** Print a structured summary:
 
    - Lint status: pass or fail with details.
