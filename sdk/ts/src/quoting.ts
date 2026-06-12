@@ -16,12 +16,14 @@
  * matching the invariant the program enforces at `set_liquidity_profile`.
  */
 
-import { decodePrice, isInfinityPrice, isZeroPrice, type PriceBits } from './price';
+import { isInfinityPrice, isZeroPrice, quoteForBase, type PriceBits } from './price';
 
 /** Bid/ask levels per side (matches the program's `N_LEVELS`). */
 export const N_LEVELS = 8;
 const PPM = 1_000_000n;
 const BPS = 10_000n;
+/** Common scale for the integer price ratio — mirrors Rust's `SCALE`. */
+const SCALE = 1_000_000_000n;
 /** Serialized `LiquidityProfile` length: 2 sides × 8 levels × 10 bytes. */
 export const PROFILE_BYTES = 2 * N_LEVELS * 10;
 
@@ -51,25 +53,29 @@ function levelToRelative(
   reference: PriceBits,
   isAsk: boolean,
 ): RelLevel {
-  const refVal = decodePrice(reference);
-  if (refVal === 0 || !Number.isFinite(refVal) || isZeroPrice(reference) || isInfinityPrice(reference)) {
+  if (isZeroPrice(reference) || isInfinityPrice(reference)) {
     throw new QuotingError('reference price is not a regular price');
   }
-  // ratioPpm = (P / R) · 1e6, floored — mirrors the Rust integer ratio.
-  const ratioPpm = Math.floor((decodePrice(lvl.price) / refVal) * 1_000_000);
-  let offset: number;
+  // ratioPpm = (P / R) · 1e6 in exact integer math — byte-identical to the
+  // Rust path (`quote_for_base(SCALE)` then `p_val * PPM / ref_val`), so
+  // both SDKs emit the same profile_bytes. Float division here would
+  // diverge by up to 1 ppm at boundaries.
+  const refVal = quoteForBase(reference, SCALE);
+  if (refVal === 0n) throw new QuotingError('reference price is not a regular price');
+  const ratioPpm = (quoteForBase(lvl.price, SCALE) * PPM) / refVal;
+  let offset: bigint;
   if (isAsk) {
-    if (ratioPpm < 1_000_000) throw new QuotingError('ask priced at or below reference');
-    offset = ratioPpm - 1_000_000;
+    if (ratioPpm < PPM) throw new QuotingError('ask priced at or below reference');
+    offset = ratioPpm - PPM;
   } else {
-    if (ratioPpm > 1_000_000) throw new QuotingError('bid priced at or above reference');
-    offset = 1_000_000 - ratioPpm;
+    if (ratioPpm > PPM) throw new QuotingError('bid priced at or above reference');
+    offset = PPM - ratioPpm;
   }
-  if (offset > 0xffff_ffff) throw new QuotingError('price offset overflows u32');
+  if (offset > 0xffff_ffffn) throw new QuotingError('price offset overflows u32');
   if (legAtoms <= 0n) throw new QuotingError('inventory leg is zero');
   const sizeBps = (lvl.size * BPS) / legAtoms;
   if (sizeBps > BPS) throw new QuotingError('level size exceeds inventory leg');
-  return { priceOffset: offset, sizeBps: Number(sizeBps), expiryOffset: lvl.expiryOffset };
+  return { priceOffset: Number(offset), sizeBps: Number(sizeBps), expiryOffset: lvl.expiryOffset };
 }
 
 function writeLevel(view: DataView, offset: number, l: RelLevel): void {

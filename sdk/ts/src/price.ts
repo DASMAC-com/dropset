@@ -134,3 +134,42 @@ export function decodePrice(bits: PriceBits): number {
   if (u === PRICE_INFINITY) return Number.POSITIVE_INFINITY;
   return priceSignificand(u) * 10 ** (priceUnbiasedExponent(u) - 7);
 }
+
+/** `quote_for_base(INFINITY)` / `base_for_quote(ZERO)` sentinel value. */
+const U128_MAX = (1n << 128n) - 1n;
+
+/**
+ * `base * price`, rounded toward zero — the exact integer math the on-chain
+ * matcher uses (mirrors Rust `Price::quote_for_base`). `ZERO -> 0n`,
+ * `INFINITY -> U128_MAX`. Use this (not {@link decodePrice} float math) for
+ * cross-language-consistent ratios. `bigint` carries the full range; values
+ * are not saturated to `u64` (lossless for the FX atom scales).
+ */
+export function quoteForBase(bits: PriceBits, base: bigint): bigint {
+  const u = bits >>> 0;
+  if (u === PRICE_ZERO) return 0n;
+  if (u === PRICE_INFINITY) return U128_MAX;
+  const sig = BigInt(priceSignificand(u));
+  const unb = priceUnbiasedExponent(u) - 7;
+  let x = base * sig;
+  if (unb >= 0) for (let i = 0; i < unb; i++) x *= 10n;
+  else for (let i = 0; i < -unb; i++) x /= 10n;
+  return x;
+}
+
+/**
+ * `quote / price`, rounded toward zero (mirrors Rust `Price::base_for_quote`).
+ * `ZERO -> U128_MAX`, `INFINITY -> 0n`.
+ */
+export function baseForQuote(bits: PriceBits, quote: bigint): bigint {
+  const u = bits >>> 0;
+  if (u === PRICE_ZERO) return U128_MAX;
+  if (u === PRICE_INFINITY) return 0n;
+  const sig = BigInt(priceSignificand(u));
+  const unb = priceUnbiasedExponent(u) - 7;
+  let num = quote;
+  let den = sig;
+  if (unb >= 0) for (let i = 0; i < unb; i++) den *= 10n;
+  else for (let i = 0; i < -unb; i++) num *= 10n;
+  return den === 0n ? 0n : num / den;
+}

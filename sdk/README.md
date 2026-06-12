@@ -29,9 +29,11 @@ builders, account/event codecs, PDA helpers. Regenerate with
 **B. Book math (`price-core`).** The `Price` codec and just-in-time book
 reconstruction can't be derived from the IDL (the `Vault` slab is opaque to
 it). They live once in the solana-free `dropset-price-core` crate, used
-directly by the Rust SDK and compiled to **WASM** (`make wasm`) for the TS
-client — instead of each language hand-mirroring the engine. Correctness is
-pinned by the conformance vectors below.
+directly by the Rust SDK. The TS client currently ships a thin hand-written
+mirror of the `Price` codec + native-quoting math, kept in exact integer
+lockstep with the Rust engine by the conformance vectors below. `make wasm`
+compiles the same crate to WASM; wiring it into `@dropset/sdk` to retire the
+TS mirror (interface.md §6B) is a tracked follow-up.
 
 ## Conformance
 
@@ -39,8 +41,9 @@ pinned by the conformance vectors below.
 (`cargo run -p dropset-price-core --example gen_conformance`) and verified
 in **both** languages — Rust (`price-core/tests/conformance.rs`) and TS
 (`ts/src/conformance.test.ts`). Run all SDK tests with `make sdk-test`.
-Scope today is the `Price` math; `simulate_swap` conformance (needs
-serialized market fixtures) is a follow-up.
+Scope today is the `Price` codec + ratio math (`quote_for_base` /
+`base_for_quote`); `simulate_swap` conformance (needs serialized market
+fixtures) is a follow-up.
 
 ## Quoting: native vs relative
 
