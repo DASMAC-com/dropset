@@ -1,6 +1,6 @@
 ---
 name: platform-audit-loop
-description: One iteration of a continuous background platform audit — pick a unit of work (a random non-generated file, a recent PR, or a whole-system architecture pass), run the relevant sub-agents (security / comment-accuracy / doc-freshness / design-quality / naming for files; layering / invariant-coverage / paradigm / data-flow / duplication / spec-health for architecture) with an adversarial cross-check, dedup against prior findings and open Linear issues, then file Linear subtasks under the umbrella issue and announce. Drive it with `/loop platform-audit-loop`.
+description: One iteration of a continuous background platform audit — pick a unit of work (a random non-generated file, a recent PR, or a whole-system architecture pass), run the relevant sub-agents (security / comment-accuracy / doc-freshness / design-quality / naming for files; layering / invariant-coverage / paradigm / data-flow / duplication / cross-platform-seams / spec-health for architecture) with an adversarial cross-check, dedup against prior findings and open Linear issues, then file Linear subtasks under the umbrella issue and announce. Drive it with `/loop platform-audit-loop`.
 disable-model-invocation: true
 user-invocable: true
 ---
@@ -111,17 +111,53 @@ through `jq` / `python` / `sed`.
   seeded from the static list below and grown by
   the skill itself (see step 3).
 
+- `.audit-loop/components.json` — the **discovered
+  platform registry**: which components /
+  architectures actually exist in this repo. Like
+  the skip-list, it is *learned and updated*, not
+  hardcoded in this skill — so the platform list
+  isn't pinned in the prose and grows as the system
+  does.
+
+  ```json
+  {
+    "components": [
+      {
+        "name": "program",
+        "kind": "solana-program",
+        "roots": ["programs/dropset/src/**"],
+        "risk": "high",
+        "discovered_at": "2026-06-12"
+      }
+    ]
+  }
+  ```
+
+  `kind` selects the per-platform security / paradigm
+  checklist; `risk` weights file-mode selection. New
+  components (an indexer, a Docker build, CI) are
+  appended as they first appear.
+
 ## Steps
 
-**1. Ensure state exists and is gitignored.**
+**1. Ensure state exists and refresh discovery.**
 Glob for `.audit-loop/state.json`. If the
-directory is missing, Write the three state files
+directory is missing, Write the four state files
 with empty skeletons (`iteration: 0`,
 `last_mode: "arch"`, empty `covered`,
 `pr_cursor.last_pr_number: 0`; empty `findings`;
-the static skip seed). Read `.gitignore`; if it
-has no `.audit-loop/` line, Edit it to add one (do
-not `echo >>`).
+the static skip seed; empty `components`). Read
+`.gitignore`; if it has no `.audit-loop/` line, Edit
+it to add one (do not `echo >>`). Then **refresh the
+component registry**: infer the repo's platforms
+from its structure — top-level dirs and build
+manifests (`Cargo.toml`, `package.json`,
+`Dockerfile`, `docker-compose.yml`,
+`.github/workflows/`) — and append any newly-seen
+component to `components.json` with its `kind`,
+`roots`, and a `risk` weighting. Like `skip.txt`,
+this registry only grows; the skill never hardcodes
+the platform list.
 
 **2. Pick this iteration's mode.** Read
 `state.json` and advance a fixed 3-way rotation off
@@ -139,10 +175,14 @@ system); it fires once every three iterations.
 
 **3. FILE mode — one random non-generated file.**
 
-- Read `.audit-loop/skip.txt`. Enumerate the
-  eligible universe with Glob over the
-  hand-authored roots (see skip-list section);
-  drop any path matching a `skip.txt` glob.
+- Read `.audit-loop/skip.txt`. Enumerate **all
+  tracked source files repo-wide** with
+  `git ls-files`, then drop any path matching a
+  `skip.txt` glob. Discovery is repo-wide on
+  purpose: a new platform (an `indexer/`, a
+  `docker/` dir, `.github/` CI) is covered the
+  moment it's committed — nothing here is pinned to
+  a fixed set of roots.
 - For each surviving candidate, screen the first
   ~15 lines (Read with `limit: 15`) for a generated
   marker (`@generated`, `DO NOT EDIT`,
@@ -157,11 +197,15 @@ system); it fires once every three iterations.
 - Choose the subject: prefer never-covered files,
   then files whose current
   `git log -1 --format=%H -- <path>` SHA differs
-  from the recorded one, biased toward
-  `programs/dropset/src/**` (the risk surface).
-  Pick one at random within the preferred bucket.
-  If everything is covered and unchanged, fall back
-  to the least-recently-audited file.
+  from the recorded one, biased toward the
+  components marked high-`risk` in `components.json`
+  (for this repo, the on-chain program; trust
+  boundaries in an indexer / backend if present).
+  The bias is a weighting, not a gate — every tracked
+  source file is eligible. Pick one at random within
+  the preferred bucket. If everything is covered and
+  unchanged, fall back to the least-recently-audited
+  file.
 - The subject is that one file; go to step 6.
 
 **4. PR mode — newest unaudited recent PR.**
@@ -184,32 +228,46 @@ single file reveals. Read the specs in `docs/`
 `market-making-mvp.md`) for intent — but treat them
 as **subject matter, not just ground truth**: the
 specs are themselves in scope. Spawn parallel
-sub-agents, one per lens, over the full
-`programs/dropset/src/**` tree (and `frontend/`
-where relevant):
+sub-agents, one per lens, **across the whole repo —
+every component in `components.json`** (for this
+repo: the on-chain program, the frontend, any
+indexer / backend, infra such as Docker and CI, and
+the docs). The lenses below use the program as the
+running example, but apply each to whatever
+components the registry lists:
 
 - **Layering & dependencies** — dependency
   direction, leaky abstractions, a layer reaching
   into another's internals (e.g. the matcher knowing
   `Market`'s storage layout).
-- **Invariant coverage** — take each invariant the
-  system relies on (the documented `I1`–`I6`
-  share-accounting set, treasury-vs-vault, vault
-  lifecycle states, plus any the code assumes but no
-  doc states) and trace it across *every*
-  instruction; flag paths that enforce it
+- **Invariant coverage** — take each invariant a
+  component relies on (the program's documented
+  `I1`–`I6` share-accounting set, treasury-vs-vault,
+  vault lifecycle states; an indexer's
+  exactly-once / dedup-key guarantees; any the code
+  assumes but no doc states) and trace it across
+  *every* relevant path; flag where it's enforced
   inconsistently or not at all.
-- **Paradigm & consistency** — drift from the
-  intended eCLOB model, divergent idioms across
-  instructions, structure that has grown incoherent
-  — judged on its own merits, not only against the
-  spec.
+- **Paradigm & consistency** — drift from each
+  component's intended model (the on-chain eCLOB; an
+  indexer's reorg / finality model), divergent idioms
+  within a platform, structure that has grown
+  incoherent — judged on its own merits, not only
+  against the spec.
 - **State ownership & data-flow** — who owns and
   mutates each piece of state, and whether that flow
-  is coherent end to end.
+  is coherent end to end, including across platform
+  boundaries (on-chain → events → indexer → API).
 - **Cross-module duplication / seams** — the same
   idea open-coded across modules, or a missing seam
   that forces shotgun edits.
+- **Cross-platform seams** — coherence *between*
+  platforms: does an indexer's decoded event schema
+  still track the on-chain `FillEvent` / the
+  `interface.md` contract? Are shared constants /
+  types duplicated across platforms instead of
+  shared? Do Docker / CI pin the same toolchain the
+  program and build actually need?
 - **Spec health** — the docs themselves: sections
   that are **over-specified** (detail that
   over-constrains or has already rotted),
@@ -230,30 +288,46 @@ material step 9 files. Go to step 7 with these.
 
 **6. Run the file dimensions in parallel (FILE / PR
 mode).** ARCH mode does its fan-out in step 5 and
-skips here. Spawn sub-agents via the `Agent` tool
-(single message, multiple calls), each scoped to the
-subject and told the repo conventions. Each returns
-findings with `file`, `line`, `dimension`,
-`severity` (high/med/low), `fingerprint_slug`,
-`title`, `rationale`, and `fix_sketch`. Dimensions:
+skips here. First **classify the subject** by
+matching its path to a component in
+`components.json` — its `kind` (on-chain program /
+frontend / indexer or backend / infra / docs)
+selects the checklist — and run each dimension with
+the checklist that fits it.
+Spawn sub-agents via the `Agent` tool (single
+message, multiple calls), each scoped to the subject
+and told the repo conventions. Each returns findings
+with `file`, `line`, `dimension`, `severity`
+(high/med/low), `fingerprint_slug`, `title`,
+`rationale`, and `fix_sketch`. Dimensions:
 
-- **Security / pen-testing** — Rust: missing
-  signer / owner / PDA / `has_one` checks, unchecked
-  arithmetic, CPI to unverified programs, slippage /
-  min-out gaps, freeze / authority gating, integer
-  truncation, reinitialization. Frontend:
-  unvalidated input into swap params, secret
-  leakage, unsafe HTML, trusting RPC responses. May
-  consult `mcp__solana-mcp__Solana_Expert__Ask_For_Help`
-  for Solana-specific attack patterns.
+- **Security / pen-testing** — pick the checklist
+  for the subject's platform.
+  Program (Rust): missing signer / owner / PDA /
+  `has_one` checks, unchecked arithmetic, CPI to
+  unverified programs, slippage / min-out gaps,
+  freeze / authority gating, integer truncation,
+  reinitialization (may consult
+  `mcp__solana-mcp__Solana_Expert__Ask_For_Help`).
+  Frontend: unvalidated input into swap params,
+  secret leakage, unsafe HTML, trusting RPC
+  responses. Indexer / backend: reorg & finality
+  handling, idempotent / exactly-once event
+  processing, dedup-key correctness, SQL / command
+  injection, unsafe deserialization, secret handling,
+  schema-migration safety. Infra (Docker / CI):
+  unpinned base images or actions, secrets baked into
+  layers or logs, running as root, non-reproducible
+  builds, over-broad token scopes.
 - **Comment accuracy** — comments and doc-comments
   that contradict, overstate, or no longer match
   the code they annotate.
 - **Doc-freshness vs code** — when the subject is a
-  `docs/**` file or source referenced by a doc:
-  Grep the doc's named structs / fields /
-  invariants / events against
-  `programs/dropset/src/**` and flag drift (renamed
+  `docs/**` file (or source referenced by a doc):
+  Grep the doc's named symbols (structs / fields /
+  invariants / events / endpoints / env vars)
+  against the code they describe — in whatever
+  platform owns them — and flag drift (renamed
   field, changed size assert, dropped event field,
   stale status line).
 - **Magic numbers / DRY / modularity** — unnamed
@@ -417,13 +491,13 @@ frontend/public/**
 .audit-loop/**
 ```
 
-Eligible (hand-authored) universe:
-`programs/dropset/src/**/*.rs`,
-`programs/dropset/tests/**/*.rs`,
-`frontend/app|components|lib/**/*.ts(x)` (minus
-`frontend/lib/data/`), `frontend/scripts/*.mjs`,
-`docs/**/*.md`, `Makefile`, `Anchor.toml`,
-`Cargo.toml`.
+The eligible universe is **everything `git ls-files`
+returns, minus the skip-list and the generated-file
+content heuristic** — i.e. all hand-authored,
+committed source, whatever platform it belongs to.
+There is no allowlist of roots to maintain: a new
+`indexer/`, `docker/`, or `.github/` tree is in
+scope the moment it's committed.
 
 The seed is only a starting point. Whenever step 3
 catches a generated file the path globs missed
