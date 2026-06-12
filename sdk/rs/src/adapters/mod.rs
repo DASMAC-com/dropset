@@ -12,12 +12,13 @@
 //!   gated on solana-crate version skew + each router's closed `Swap` enum.
 //! - [`titan`] — the `TradingVenue` trait. Closest to drop-in (no closed
 //!   enum; `generate_swap_instruction` returns the program's own ix).
-//! - [`beethoven`] — on-chain CPI composability; documentation-only here,
-//!   belongs in the on-chain `dropset-interface` crate and is blocked on a
-//!   swap-context extension.
+//!
+//! beethoven CPI composability is **not** here: it's an on-chain Pinocchio
+//! integration, so per interface.md §6 it belongs in the on-chain
+//! `dropset-interface` crate, not this off-chain SDK. It's blocked on a
+//! swap-context extension and tracked in ENG-444.
 
 pub mod amm;
-pub mod beethoven;
 pub mod dflow;
 pub mod jupiter;
 pub mod titan;

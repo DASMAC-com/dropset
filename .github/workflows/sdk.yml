@@ -23,12 +23,15 @@ jobs:
         cache-dependency-path: 'pnpm-lock.yaml'
         node-version: '${{ env.NODE_VERSION }}'
     - run: 'pnpm install --frozen-lockfile'
-    # Generated clients must match the checked-in IDL (no manual edits,
-    # no drift). Regenerate via Codama and fail on any diff.
+    # The generated TS + Rust clients must match a fresh codegen from the
+    # checked-in IDL — no manual edits, no drift (cf. the CPI-bindings
+    # check on dropset-beta). Regenerate, then stage + diff so additions
+    # and deletions fail the gate too, not just in-place modifications.
     - name: 'Generated clients match the IDL'
       run: |
         make sdk
-        git diff --exit-code -- sdk/ts/src/generated sdk/rs/src/generated
+        git add -A -- sdk/ts/src/generated sdk/rs/src/generated
+        git diff --cached --exit-code -- sdk/ts/src/generated sdk/rs/src/generated
     # TypeScript SDK: typecheck + cross-language conformance vectors.
     - run: 'pnpm --filter @dropset/sdk run check'
     - run: 'pnpm --filter @dropset/sdk test'

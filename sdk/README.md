@@ -60,9 +60,11 @@ per-router mappings:
   closed `Swap` enum, and on solana-crate version skew (boundary byte
   conversion). Tracked: ENG-442 (Jupiter), ENG-443 (DFlow).
 - **titan** — the `TradingVenue` trait; closest to drop-in (no closed enum).
-- **beethoven** — on-chain Pinocchio CPI; documentation-only here (CPIs
-  belong in the on-chain `dropset-interface` crate per interface.md §6),
-  blocked on a swap-context extension. Tracked: ENG-444.
+
+beethoven is **not** an off-chain adapter — it's an on-chain Pinocchio CPI
+integration, so per interface.md §6 it belongs in the on-chain
+`dropset-interface` crate, not here. Blocked on a swap-context extension;
+tracked in ENG-444.
 
 ## Verification
 
