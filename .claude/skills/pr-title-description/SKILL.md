@@ -1,7 +1,6 @@
 ---
 name: pr-title-description
 description: Write or update a PR title and description for the current branch, matching the style of recent PRs.
-disable-model-invocation: true
 user-invocable: true
 ---
 

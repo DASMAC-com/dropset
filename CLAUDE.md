@@ -4,6 +4,17 @@
 
 ## Commits and PRs
 
+- **Run `init-pr` first.** At the start of a worktree session,
+  if the `init-pr` skill hasn't been run yet, suggest running it
+  before other work — it pushes a draft PR that warms the CI
+  caches (Rust, pnpm, pre-commit), so the later lint and test
+  runs land on warm caches instead of building from cold.
+- **Commit as you go.** While working a PR, run `commit-changes`
+  at each natural checkpoint — a coherent change, a green test —
+  instead of queueing one big commit for the end. The skill is
+  model-invocable, so commit incrementally without being asked;
+  small signed commits keep the diff reviewable and push work to
+  the draft PR so its CI caches keep warming.
 - **Never add AI attribution to commits or PRs.** Do not include a
   `Co-Authored-By:` trailer (e.g. `Co-Authored-By: Claude …`), a
   "🤖 Generated with Claude Code" footer, or any other attribution.
