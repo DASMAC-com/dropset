@@ -58,14 +58,14 @@ what to file.
 1. Create the issue with `save_issue` (do **not**
    pass `id` — that's for updates only):
 
-   ```text
+   ```txt
    mcp__claude_ai_Linear__save_issue(
      team: "84659a7c-5ea3-47b1-b2bd-c531e3721d6b",
      project: "d505fe50-cc8b-41ca-be93-6215d9adcea0",
      assignee: "b3ec6d9f-3c78-48da-8b4e-042176e8c579",
      title: "<title>",
      description: "<markdown body>",
-     priority: 3,
+     priority: 3,  // 2 if the user calls it urgent
      links: [{ url: "<pr-url>", title: "<pr-title>" }]  // omit if no PR
    )
    ```
