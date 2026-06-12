@@ -10,6 +10,12 @@
 //! Each router module ([`super::dflow`], [`super::jupiter`],
 //! [`super::titan`]) maps its trait onto this core and documents the
 //! per-router boundary (solana-sdk version skew, closed `Swap` enums).
+//!
+//! **No network calls.** Every method operates on the cached account bytes
+//! passed to [`DropsetAmm::from_account`] / [`DropsetAmm::update`] — Jupiter
+//! batches and caches the accounts from `get_accounts_to_update` and may
+//! call `quote` many times against one cache, so its integration contract
+//! forbids any I/O in the implementation. This core satisfies that.
 
 use solana_instruction::Instruction;
 use solana_pubkey::Pubkey;
@@ -23,6 +29,14 @@ use crate::DROPSET_ID;
 /// The clock sysvar — read by `swap` for the current slot (expiry checks).
 pub const CLOCK_SYSVAR: Pubkey =
     solana_pubkey::pubkey!("SysvarC1ock11111111111111111111111111111111");
+
+/// Human-readable venue label (`Amm::label` / `TradingVenue` name).
+pub const LABEL: &str = "Dropset";
+
+/// Account count of the `swap` instruction — the routers' `get_accounts_len`.
+/// Constant: the whole book is one market account, so a take never grows
+/// its account list (interface.md § 4, "not account-hungry").
+pub const SWAP_ACCOUNTS_LEN: usize = 13;
 
 /// A Dropset market presented through a router's quoting + swap surface.
 #[derive(Clone)]
@@ -157,6 +171,40 @@ impl DropsetAmm {
     /// take is "not account-hungry").
     pub fn accounts_to_update(&self) -> Vec<Pubkey> {
         vec![self.market_key]
+    }
+
+    /// Venue label (`Amm::label`).
+    pub fn label(&self) -> &'static str {
+        LABEL
+    }
+
+    /// Swap-instruction account count (`Amm::get_accounts_len`).
+    pub fn accounts_len(&self) -> usize {
+        SWAP_ACCOUNTS_LEN
+    }
+
+    /// The program quotes exact-in only; ExactOut is unsupported
+    /// (`Amm::supports_exact_out`).
+    pub fn supports_exact_out(&self) -> bool {
+        false
+    }
+
+    /// The book trades both directions (`Amm::unidirectional` -> false).
+    pub fn unidirectional(&self) -> bool {
+        false
+    }
+
+    /// Whether the market can currently trade (`Amm::is_active`): at least
+    /// one active vault with a valid, non-sentinel reference price that
+    /// isn't frozen — the same gate the matcher applies.
+    pub fn is_active(&self) -> bool {
+        let Ok(view) = MarketView::load(&self.data) else {
+            return false;
+        };
+        view.active_vaults().any(|(_, v)| {
+            let p = v.reference_price.price();
+            v.frozen == 0 && p.is_valid() && !p.is_zero() && !p.is_infinity()
+        })
     }
 
     /// Refresh the cached market account data (`update`).
@@ -325,6 +373,25 @@ mod tests {
         assert_eq!(ix.program_id, DROPSET_ID);
         assert_eq!(ix.data[0], 9, "swap discriminator");
         assert_eq!(ix.accounts.len(), 13);
+    }
+
+    #[test]
+    fn is_active_reflects_matchable_vaults() {
+        use crate::layout::MarketHeader;
+        use bytemuck::Zeroable;
+
+        // One live ask -> active.
+        let live = one_ask_market(500_000);
+        let amm = DropsetAmm::from_account(Pubkey::from([7u8; 32]), &live).unwrap();
+        assert!(amm.is_active());
+        assert_eq!(amm.label(), "Dropset");
+        assert_eq!(amm.accounts_len(), 13);
+        assert!(!amm.supports_exact_out());
+
+        // No vaults -> inactive.
+        let empty = build_market(MarketHeader::zeroed(), &[]);
+        let amm = DropsetAmm::from_account(Pubkey::from([7u8; 32]), &empty).unwrap();
+        assert!(!amm.is_active());
     }
 
     #[test]
