@@ -1,7 +1,6 @@
 ---
 name: firm-perms
 description: Generalize the local permission allowlist into reusable globs and propagate it to the base-repo settings so future worktrees inherit it. Use after you've had to approve per-worktree or per-arg `git -C …/worktrees/<tag> …` (or similar) variants and want to collapse them so they stop re-prompting.
-disable-model-invocation: true
 user-invocable: true
 ---
 
