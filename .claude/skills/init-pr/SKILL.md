@@ -29,35 +29,55 @@ match `eng-###` (case-insensitive), stop and ask.
    stop and ask the user for it.
 
 1. Pull main in the **base repository** (not this
-   worktree). Detect the main worktree path:
+   worktree). Don't use command substitution to
+   find it — run the listing as its own command and
+   read the path out of the output yourself:
 
    ```sh
-   main_wt=$(git worktree list --porcelain \
-     | awk '/^worktree /{p=$2} /^branch refs\/heads\/main$/{print p}')
-   git -C "$main_wt" pull --ff-only
+   git worktree list --porcelain
    ```
 
-   If `main_wt` is empty (main isn't checked out
-   anywhere), skip the pull and warn the user.
+   In that output, the worktree whose `branch` line
+   is `refs/heads/main` is the base repo. Take its
+   literal path and pull, passing the path inline so
+   the call reduces to a stable allow-rule (no `$(…)`):
+
+   ```sh
+   git -C <main-worktree-path> pull --ff-only
+   ```
+
+   If no worktree has `main` checked out, skip the
+   pull and warn the user.
 
 1. Symlink `frontend/.env.local` from the main
    worktree so `pnpm dev` / `make frontend` pick up
    the same env without a manual copy. `.env*` is
    in `frontend/.gitignore`, so the symlink isn't
    tracked. Skip if main has no env file, or if
-   this worktree already has one (don't clobber
-   a real file someone placed deliberately):
+   this worktree already has one (don't clobber a
+   real file someone placed deliberately).
+
+   Do the existence checks with the **Glob/Read
+   tools**, not a shell `test`/`if`. A
+   `test … && … || …` compound never reduces to an
+   allow-rule and re-prompts every run:
+
+   - Glob `frontend/.env.local` in **this** worktree.
+     If it matches, a file already exists — skip.
+   - Glob (or Read) `frontend/.env.local` under the
+     main worktree path. If it doesn't exist, main
+     has no env file — skip and move on.
+
+   Only when this worktree has none and main has one,
+   create the link (the bare `ln` matches an existing
+   allow-rule, so it won't prompt):
 
    ```sh
-   src="$main_wt/frontend/.env.local"
-   dst="frontend/.env.local"
-   if [ -f "$src" ] && [ ! -e "$dst" ] && [ ! -L "$dst" ]; then
-     ln -s "$src" "$dst"
-   fi
+   ln -s <main-worktree-path>/frontend/.env.local frontend/.env.local
    ```
 
-   If `main_wt` was empty in the previous step,
-   skip this one too.
+   If main isn't checked out anywhere (previous
+   step), skip this one too.
 
 1. Ensure the current branch is named after the
    Linear tag. Check the current branch:

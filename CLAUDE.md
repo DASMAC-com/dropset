@@ -19,8 +19,24 @@
 
 ## Shell commands
 
-Write Bash calls so they reduce to a reusable allow-rule
-(`Bash(prefix:*)`) instead of prompting once per invocation:
+The guiding rule: **every Bash invocation should reduce to a
+reusable allow-rule** (`Bash(prefix:*)`). A call that can't —
+because of a compound, a substitution, a pipe, or a one-off
+literal — is unique, so the user must approve it by hand *every
+single time*. When you catch yourself about to run something that
+won't generalize, stop and reshape it (split it, hoist the dynamic
+part into a prior step or a tool, pass values literally) before
+running it.
+
+This applies to shell you **author**, not just shell you type
+ad-hoc: snippets in skills, scripts, Makefile targets, and docs get
+executed verbatim, so the same patterns below re-prompt forever when
+baked into them. Write committed shell to the same standard — prefer
+a sequence of bare commands that each reduce to a glob (or "run X,
+read its output, then run Y with the value inline") over a clever
+one-liner.
+
+Concrete rules:
 
 - Prefer the dedicated tools — Read, Grep, Glob — over `cat`, `grep`,
   `find`, `ls` in Bash. They don't prompt for in-workspace paths. This
