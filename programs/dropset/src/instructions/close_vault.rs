@@ -53,7 +53,10 @@ impl CloseVault {
             !address_eq(&leader, &Address::default()),
             DropsetError::VaultEmpty
         );
-        require!(address_eq(&leader, &signer_addr), DropsetError::Unauthorized);
+        require!(
+            address_eq(&leader, &signer_addr),
+            DropsetError::Unauthorized
+        );
 
         // The vault must currently be on the active DLL. A vault already
         // on the tombstone list is a no-op the leader probably didn't
@@ -61,9 +64,7 @@ impl CloseVault {
         // have been caught by the `VaultEmpty` check above.
         match self.market.vault_list_of(vault_idx) {
             Some(DllList::Active) => {}
-            Some(DllList::Tombstone) => {
-                return Err(DropsetError::VaultAlreadyTombstoned.into())
-            }
+            Some(DllList::Tombstone) => return Err(DropsetError::VaultAlreadyTombstoned.into()),
             _ => return Err(DropsetError::CorruptVaultList.into()),
         }
 

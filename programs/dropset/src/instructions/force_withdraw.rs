@@ -61,7 +61,7 @@ pub struct ForceWithdrawDepositor {
     /// seed and the payout-ATA authority so funds and rent both flow to
     /// the depositor, never the admin.
     /// `mut` because the closed `VaultDepositor` PDA refunds its rent
-    /// here — the runtime rejects a lamport change on a readonly account.
+    /// here — the runtime rejects crediting lamports to a readonly account.
     /// CHECK: constrained by the `vault_depositor` PDA seeds (which bind
     /// this key) and the `associated_token::authority` constraints on
     /// the payout ATAs below.
@@ -218,8 +218,7 @@ impl ForceWithdrawDepositor {
             let new_pnl = (vd.realized_pnl.get() as i128).saturating_add(pnl_delta);
             let new_yield = (vd.realized_yield.get() as i128).saturating_add(yield_delta);
             vd.realized_pnl = (new_pnl.clamp(i64::MIN as i128, i64::MAX as i128) as i64).into();
-            vd.realized_yield =
-                (new_yield.clamp(i64::MIN as i128, i64::MAX as i128) as i64).into();
+            vd.realized_yield = (new_yield.clamp(i64::MIN as i128, i64::MAX as i128) as i64).into();
             realized_pnl_delta = pnl_delta.clamp(i64::MIN as i128, i64::MAX as i128) as i64;
 
             let new_shares = vd.shares.get() - shares_in;

@@ -29,7 +29,7 @@ use common::fixture::{simple_profile, Fixture};
 use dropset::Price;
 use solana_pubkey::Pubkey;
 
-/// Lamport balance of `pk`, or 0 if the account does not exist (closed
+/// Lamports balance of `pk`, or 0 if the account does not exist (closed
 /// accounts are purged once their lamports hit zero).
 fn lamports(svm: &LiteSVM, pk: &Pubkey) -> u64 {
     svm.get_account(pk).map(|a| a.lamports).unwrap_or(0)

@@ -13,9 +13,7 @@
 
 use anchor_lang_v2::{address_eq, prelude::*};
 
-use crate::{
-    errors::DropsetError, events::FreezeVaultEvent, state::Market, AdminSet, Registry,
-};
+use crate::{errors::DropsetError, events::FreezeVaultEvent, state::Market, AdminSet, Registry};
 
 #[event_cpi]
 #[derive(Accounts)]

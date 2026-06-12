@@ -237,7 +237,8 @@ pub mod dropset {
         }
         #[cfg(feature = "admin-teardown")]
         {
-            let (realize_event, withdraw_event) = ctx.accounts.force_withdraw_depositor(vault_idx)?;
+            let (realize_event, withdraw_event) =
+                ctx.accounts.force_withdraw_depositor(vault_idx)?;
             if let Some(re) = realize_event {
                 emit_cpi!(re);
             }
