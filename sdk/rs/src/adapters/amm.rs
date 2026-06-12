@@ -288,7 +288,7 @@ mod tests {
         let mut buf = vec![0u8; 8]; // discriminator (value unchecked by load)
         buf.extend_from_slice(bytemuck::bytes_of(&header));
         buf.extend_from_slice(&(vaults.len() as u32).to_le_bytes());
-        while buf.len() % VAULT_ALIGN != 0 {
+        while !buf.len().is_multiple_of(VAULT_ALIGN) {
             buf.push(0); // align the first sector, as the on-chain slab does
         }
         for v in vaults {

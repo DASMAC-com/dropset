@@ -1,10 +1,11 @@
-packages:
-  - frontend
-  - sdk/ts
-  - sdk/codama
-
-# Workspace-level pnpm settings. `onlyBuiltDependencies` must live here
-# (not in frontend/package.json) to take effect — it allow-lists deps
-# whose install scripts may run (e.g. sharp's native build for Next).
+---
+# `onlyBuiltDependencies` allow-lists deps whose install scripts may run
+# (e.g. sharp's native build for Next); it must live at the workspace root
+# to take effect. The frontend + SDK packages share this one workspace.
 onlyBuiltDependencies:
-  - sharp
+- 'sharp'
+packages:
+- 'frontend'
+- 'sdk/ts'
+- 'sdk/codama'
+...

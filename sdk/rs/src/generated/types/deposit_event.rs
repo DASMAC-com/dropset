@@ -5,27 +5,31 @@
 //! <https://github.com/codama-idl/codama>
 //!
 
-use solana_pubkey::Pubkey;
-use borsh::BorshSerialize;
 use borsh::BorshDeserialize;
+use borsh::BorshSerialize;
+use solana_pubkey::Pubkey;
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DepositEvent {
-#[cfg_attr(feature = "serde", serde(with = "serde_with::As::<serde_with::DisplayFromStr>"))]
-pub market: Pubkey,
-pub sector_idx: u32,
-#[cfg_attr(feature = "serde", serde(with = "serde_with::As::<serde_with::DisplayFromStr>"))]
-pub depositor: Pubkey,
-pub is_leader: bool,
-pub is_seeding: bool,
-pub base_in: u64,
-pub quote_in: u64,
-pub shares_out: u64,
-pub total_shares_after: u64,
-pub leader_shares_after: u64,
-pub base_atoms_after: u64,
-pub quote_atoms_after: u64,
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
+    )]
+    pub market: Pubkey,
+    pub sector_idx: u32,
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
+    )]
+    pub depositor: Pubkey,
+    pub is_leader: bool,
+    pub is_seeding: bool,
+    pub base_in: u64,
+    pub quote_in: u64,
+    pub shares_out: u64,
+    pub total_shares_after: u64,
+    pub leader_shares_after: u64,
+    pub base_atoms_after: u64,
+    pub quote_atoms_after: u64,
 }
-
-

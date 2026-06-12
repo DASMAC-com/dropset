@@ -85,7 +85,9 @@ impl Price {
         {
             return None;
         }
-        Some(Self(((biased_exponent as u32) << SIGNIFICAND_BITS) | significand))
+        Some(Self(
+            ((biased_exponent as u32) << SIGNIFICAND_BITS) | significand,
+        ))
     }
 
     /// Construct from a significand and **unbiased** exponent (`[-16, 15]`).

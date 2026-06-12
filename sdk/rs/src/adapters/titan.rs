@@ -28,6 +28,6 @@
 //! `Instruction` convert at the boundary via raw bytes if a major differs.
 
 pub use super::amm::{
-    DropsetAmm, DropsetQuote, DropsetQuoteParams, DropsetSwapParams, AmmError, LegInfo,
+    AmmError, DropsetAmm, DropsetQuote, DropsetQuoteParams, DropsetSwapParams, LegInfo,
     CLOCK_SYSVAR,
 };

@@ -6,7 +6,10 @@ use dropset_price_core::price::Price;
 use serde_json::Value;
 
 fn vectors() -> Value {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../conformance/price_vectors.json");
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../conformance/price_vectors.json"
+    );
     let raw = std::fs::read_to_string(path).expect("read price_vectors.json");
     serde_json::from_str(&raw).expect("parse price_vectors.json")
 }

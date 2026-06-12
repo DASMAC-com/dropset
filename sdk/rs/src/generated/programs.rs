@@ -7,7 +7,5 @@
 
 use solana_pubkey::{pubkey, Pubkey};
 
-
-  /// `dropset` program ID.
-  pub const DROPSET_ID: Pubkey = pubkey!("TESTnXwv2eHoftsSd5NEdpH4zEu7XRC8jviuoNPdB2Q");
-
+/// `dropset` program ID.
+pub const DROPSET_ID: Pubkey = pubkey!("TESTnXwv2eHoftsSd5NEdpH4zEu7XRC8jviuoNPdB2Q");

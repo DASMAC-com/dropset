@@ -30,5 +30,5 @@
 //!    instruction + account metas directly.
 
 pub use super::amm::{
-    DropsetAmm, DropsetQuote, DropsetQuoteParams, DropsetSwapParams, AmmError, CLOCK_SYSVAR,
+    AmmError, DropsetAmm, DropsetQuote, DropsetQuoteParams, DropsetSwapParams, CLOCK_SYSVAR,
 };

@@ -151,9 +151,11 @@ impl NativeBook {
         base_atoms: u64,
         quote_atoms: u64,
     ) -> Result<[u8; 160], QuotingError> {
-        Ok(profile_bytes(
-            &self.to_profile(reference, base_atoms, quote_atoms)?,
-        ))
+        Ok(profile_bytes(&self.to_profile(
+            reference,
+            base_atoms,
+            quote_atoms,
+        )?))
     }
 }
 
@@ -212,7 +214,7 @@ mod tests {
             }],
             bids: vec![NativeLevel {
                 price: Price::encode(99_000_000, -1).unwrap(), // 0.99 -> -10000 ppm
-                size: 200_000,                                // of 1_000_000 quote -> 2000 bps
+                size: 200_000,                                 // of 1_000_000 quote -> 2000 bps
                 expiry_offset: 150,
             }],
         };
@@ -226,7 +228,9 @@ mod tests {
         assert_eq!(p.asks[1].size_bps.get(), 0);
 
         // Serializes to the 160-byte instruction arg.
-        let bytes = book.to_profile_bytes(reference, 1_000_000, 1_000_000).unwrap();
+        let bytes = book
+            .to_profile_bytes(reference, 1_000_000, 1_000_000)
+            .unwrap();
         assert_eq!(bytes.len(), 160);
     }
 
@@ -242,7 +246,8 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            book.to_profile(reference, 1_000_000, 1_000_000).unwrap_err(),
+            book.to_profile(reference, 1_000_000, 1_000_000)
+                .unwrap_err(),
             QuotingError::AskBelowReference
         );
     }
@@ -264,7 +269,8 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            book.to_profile(reference, 1_000_000, 1_000_000).unwrap_err(),
+            book.to_profile(reference, 1_000_000, 1_000_000)
+                .unwrap_err(),
             QuotingError::SizeExceedsInventory
         );
     }
@@ -283,7 +289,8 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            book.to_profile(reference, 1_000_000, 1_000_000).unwrap_err(),
+            book.to_profile(reference, 1_000_000, 1_000_000)
+                .unwrap_err(),
             QuotingError::TooManyLevels
         );
     }

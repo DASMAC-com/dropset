@@ -5,11 +5,10 @@
 //! <https://github.com/codama-idl/codama>
 //!
 
-  pub(crate) mod r#market_header;
-  pub(crate) mod r#registry_header;
-  pub(crate) mod r#vault_depositor_header;
+pub(crate) mod r#market_header;
+pub(crate) mod r#registry_header;
+pub(crate) mod r#vault_depositor_header;
 
-  pub use self::r#market_header::*;
-  pub use self::r#registry_header::*;
-  pub use self::r#vault_depositor_header::*;
-
+pub use self::r#market_header::*;
+pub use self::r#registry_header::*;
+pub use self::r#vault_depositor_header::*;

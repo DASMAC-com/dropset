@@ -1,23 +1,23 @@
 {
-  "name": "@dropset/sdk",
-  "version": "0.1.0",
-  "type": "module",
+  "dependencies": {
+    "@solana/kit": "^6.9.0"
+  },
   "description": "Dropset TypeScript SDK (@solana/kit): instruction builders, account & event codecs, PDA helpers, and the Price codec.",
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.0"
+  },
   "exports": {
     ".": "./src/index.ts",
     "./generated": "./src/generated/index.ts"
   },
+  "main": "./src/index.ts",
+  "name": "@dropset/sdk",
   "scripts": {
     "check": "tsc --noEmit",
     "test": "node --import tsx --test src/conformance.test.ts"
   },
-  "dependencies": {
-    "@solana/kit": "^6.9.0"
-  },
-  "devDependencies": {
-    "tsx": "^4.19.2",
-    "typescript": "^5.6.0"
-  }
+  "type": "module",
+  "types": "./src/index.ts",
+  "version": "0.1.0"
 }

@@ -97,10 +97,7 @@ pub fn simulate_swap(
         // Skip vaults the matcher won't touch: invalid/sentinel ref
         // price or frozen (frozen vaults stay on the active DLL but are
         // skipped from the matching set — see swap.rs).
-        if !reference.is_valid()
-            || reference.is_zero()
-            || reference.is_infinity()
-            || v.frozen != 0
+        if !reference.is_valid() || reference.is_zero() || reference.is_infinity() || v.frozen != 0
         {
             continue;
         }
@@ -129,7 +126,11 @@ pub fn simulate_swap(
             {
                 continue;
             }
-            let key = if is_buy { price.as_u32() } else { price.bid_key() };
+            let key = if is_buy {
+                price.as_u32()
+            } else {
+                price.bid_key()
+            };
             levels.push(Lvl {
                 key,
                 price,
@@ -174,8 +175,9 @@ pub fn simulate_swap(
             .or_insert((v.base_atoms.get(), v.quote_atoms.get()));
 
         let (fill_base, fill_quote): (u64, u64) = if is_buy {
-            let cap_by_taker_quote =
-                lvl.price.base_for_quote(unfilled.min(u64::MAX as u128) as u64);
+            let cap_by_taker_quote = lvl
+                .price
+                .base_for_quote(unfilled.min(u64::MAX as u128) as u64);
             let fill_b = cap_by_taker_quote
                 .min(lvl.size as u128)
                 .min(base_atoms as u128);
@@ -190,8 +192,9 @@ pub fn simulate_swap(
             let fill_q = fill_q.min(unfilled) as u64;
             (fill_b, fill_q)
         } else {
-            let taker_implied_quote =
-                lvl.price.quote_for_base(unfilled.min(u64::MAX as u128) as u64);
+            let taker_implied_quote = lvl
+                .price
+                .quote_for_base(unfilled.min(u64::MAX as u128) as u64);
             let fill_q = taker_implied_quote
                 .min(lvl.size as u128)
                 .min(quote_atoms as u128);
@@ -212,7 +215,7 @@ pub fn simulate_swap(
             (fill_base as u128 * taker_fee_ppm) / PPM as u128
         } else {
             (fill_quote as u128 * taker_fee_ppm) / PPM as u128
-        } as u128;
+        };
 
         // Decrement simulated vault inventory + this level's allowance,
         // mirroring the on-chain per-leg mutation.
@@ -279,6 +282,10 @@ fn level_state(
         } else {
             v.remaining.bids[i]
         };
-        (Price::from_bits(p.price.get()), p.size.get(), p.expires_at.get())
+        (
+            Price::from_bits(p.price.get()),
+            p.size.get(),
+            p.expires_at.get(),
+        )
     }
 }

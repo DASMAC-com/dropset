@@ -5,688 +5,693 @@
 //! <https://github.com/codama-idl/codama>
 //!
 
-use solana_pubkey::Pubkey;
-use borsh::BorshSerialize;
 use borsh::BorshDeserialize;
+use borsh::BorshSerialize;
+use solana_pubkey::Pubkey;
 
 pub const INIT_DISCRIMINATOR: [u8; 1] = [0];
 
 /// Accounts.
 #[derive(Debug)]
 pub struct Init {
-      
-              
-          pub payer: solana_pubkey::Pubkey,
-          
-              
-          pub registry: solana_pubkey::Pubkey,
-                /// SAFETY: the program's ProgramData account is owned by the BPF
-/// upgradeable loader, not this program, so it cannot be a typed
-/// `Account<T>`. `verify_upgrade_authority` re-derives the
-/// canonical `ProgramData` PDA and only reads its header to
-/// authenticate the upgrade authority — no data is written and
-/// no other invariant is assumed. A declarative
-/// `seeds = [crate::ID.as_ref()], seeds::program = …` would emit
-/// an opaque `{"kind":"expr"}` seed that anchor v2's IDL spec
-/// can't deserialize today; the manual check sidesteps that.
+    pub payer: solana_pubkey::Pubkey,
 
-    
-              
-          pub program_data: solana_pubkey::Pubkey,
-                /// The mint to charge fees in. `InterfaceAccount<Mint>` validates
-/// SPL Token / Token-2022 ownership and that the data unpacks as a
-/// `Mint` — so no separate length / discriminator check is needed.
+    pub registry: solana_pubkey::Pubkey,
+    /// SAFETY: the program's ProgramData account is owned by the BPF
+    /// upgradeable loader, not this program, so it cannot be a typed
+    /// `Account<T>`. `verify_upgrade_authority` re-derives the
+    /// canonical `ProgramData` PDA and only reads its header to
+    /// authenticate the upgrade authority — no data is written and
+    /// no other invariant is assumed. A declarative
+    /// `seeds = [crate::ID.as_ref()], seeds::program = …` would emit
+    /// an opaque `{"kind":"expr"}` seed that anchor v2's IDL spec
+    /// can't deserialize today; the manual check sidesteps that.
+    pub program_data: solana_pubkey::Pubkey,
+    /// The mint to charge fees in. `InterfaceAccount<Mint>` validates
+    /// SPL Token / Token-2022 ownership and that the data unpacks as a
+    /// `Mint` — so no separate length / discriminator check is needed.
+    pub fee_mint: solana_pubkey::Pubkey,
+    /// Registry-owned fee vault for the per-`OpenVault` charge. Created
+    /// here by CPI to the ATA program; its address is the canonical
+    /// ATA over `(registry, token_program, fee_mint)`, and the ATA
+    /// program rejects any `(mint, token_program)` pair whose owners
+    /// disagree — a second backstop after `InterfaceAccount<Mint>`.
+    pub fee_vault: solana_pubkey::Pubkey,
+    /// Token program owning `fee_mint` — SPL Token or Token-2022.
+    /// `Interface<TokenInterface>` rejects any other address up front
+    /// (`IncorrectProgramId`); the ATA seeds bake this in too, so a
+    /// caller-supplied mismatch against `fee_mint`'s owner yields a
+    /// non-canonical ATA and a separate `InvalidSeeds` rejection.
+    pub token_program: solana_pubkey::Pubkey,
 
-    
-              
-          pub fee_mint: solana_pubkey::Pubkey,
-                /// Registry-owned fee vault for the per-`OpenVault` charge. Created
-/// here by CPI to the ATA program; its address is the canonical
-/// ATA over `(registry, token_program, fee_mint)`, and the ATA
-/// program rejects any `(mint, token_program)` pair whose owners
-/// disagree — a second backstop after `InterfaceAccount<Mint>`.
+    pub associated_token_program: solana_pubkey::Pubkey,
 
-    
-              
-          pub fee_vault: solana_pubkey::Pubkey,
-                /// Token program owning `fee_mint` — SPL Token or Token-2022.
-/// `Interface<TokenInterface>` rejects any other address up front
-/// (`IncorrectProgramId`); the ATA seeds bake this in too, so a
-/// caller-supplied mismatch against `fee_mint`'s owner yields a
-/// non-canonical ATA and a separate `InvalidSeeds` rejection.
-
-    
-              
-          pub token_program: solana_pubkey::Pubkey,
-          
-              
-          pub associated_token_program: solana_pubkey::Pubkey,
-          
-              
-          pub system_program: solana_pubkey::Pubkey,
-      }
+    pub system_program: solana_pubkey::Pubkey,
+}
 
 impl Init {
-  pub fn instruction(&self, args: InitInstructionArgs) -> solana_instruction::Instruction {
-    self.instruction_with_remaining_accounts(args, &[])
-  }
-  #[allow(clippy::arithmetic_side_effects)]
-  #[allow(clippy::vec_init_then_push)]
-  pub fn instruction_with_remaining_accounts(&self, args: InitInstructionArgs, remaining_accounts: &[solana_instruction::AccountMeta]) -> solana_instruction::Instruction {
-    let mut accounts = Vec::with_capacity(8+ remaining_accounts.len());
-                            accounts.push(solana_instruction::AccountMeta::new(
-            self.payer,
-            true
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new(
-            self.registry,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.program_data,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.fee_mint,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new(
-            self.fee_vault,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.token_program,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.associated_token_program,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.system_program,
-            false
-          ));
-                      accounts.extend_from_slice(remaining_accounts);
-    let mut data = InitInstructionData::new().try_to_vec().unwrap();
-          let mut args = args.try_to_vec().unwrap();
-      data.append(&mut args);
-    
-    solana_instruction::Instruction {
-      program_id: crate::DROPSET_ID,
-      accounts,
-      data,
+    pub fn instruction(&self, args: InitInstructionArgs) -> solana_instruction::Instruction {
+        self.instruction_with_remaining_accounts(args, &[])
     }
-  }
+    #[allow(clippy::arithmetic_side_effects)]
+    #[allow(clippy::vec_init_then_push)]
+    pub fn instruction_with_remaining_accounts(
+        &self,
+        args: InitInstructionArgs,
+        remaining_accounts: &[solana_instruction::AccountMeta],
+    ) -> solana_instruction::Instruction {
+        let mut accounts = Vec::with_capacity(8 + remaining_accounts.len());
+        accounts.push(solana_instruction::AccountMeta::new(self.payer, true));
+        accounts.push(solana_instruction::AccountMeta::new(self.registry, false));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.program_data,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.fee_mint,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(self.fee_vault, false));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.token_program,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.associated_token_program,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.system_program,
+            false,
+        ));
+        accounts.extend_from_slice(remaining_accounts);
+        let mut data = InitInstructionData::new().try_to_vec().unwrap();
+        let mut args = args.try_to_vec().unwrap();
+        data.append(&mut args);
+
+        solana_instruction::Instruction {
+            program_id: crate::DROPSET_ID,
+            accounts,
+            data,
+        }
+    }
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
- pub struct InitInstructionData {
-            discriminator: [u8; 1],
-                  }
+pub struct InitInstructionData {
+    discriminator: [u8; 1],
+}
 
 impl InitInstructionData {
-  pub fn new() -> Self {
-    Self {
-                        discriminator: [0],
-                                              }
-  }
+    pub fn new() -> Self {
+        Self { discriminator: [0] }
+    }
 
     pub(crate) fn try_to_vec(&self) -> Result<Vec<u8>, std::io::Error> {
-    borsh::to_vec(self)
-  }
-  }
+        borsh::to_vec(self)
+    }
+}
 
 impl Default for InitInstructionData {
-  fn default() -> Self {
-    Self::new()
-  }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
- pub struct InitInstructionArgs {
-                  pub genesis_admin: Pubkey,
-                pub fee_atoms: u64,
-      }
-
-impl InitInstructionArgs {
-  pub(crate) fn try_to_vec(&self) -> Result<Vec<u8>, std::io::Error> {
-    borsh::to_vec(self)
-  }
+pub struct InitInstructionArgs {
+    pub genesis_admin: Pubkey,
+    pub fee_atoms: u64,
 }
 
+impl InitInstructionArgs {
+    pub(crate) fn try_to_vec(&self) -> Result<Vec<u8>, std::io::Error> {
+        borsh::to_vec(self)
+    }
+}
 
 /// Instruction builder for `Init`.
 ///
 /// ### Accounts:
 ///
-                      ///   0. `[writable, signer]` payer
-                ///   1. `[writable]` registry
-          ///   2. `[]` program_data
-          ///   3. `[]` fee_mint
-                ///   4. `[writable]` fee_vault
-                ///   5. `[optional]` token_program (default to `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`)
-                ///   6. `[optional]` associated_token_program (default to `ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL`)
-                ///   7. `[optional]` system_program (default to `11111111111111111111111111111111`)
+///   0. `[writable, signer]` payer
+///   1. `[writable]` registry
+///   2. `[]` program_data
+///   3. `[]` fee_mint
+///   4. `[writable]` fee_vault
+///   5. `[optional]` token_program (default to `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`)
+///   6. `[optional]` associated_token_program (default to `ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL`)
+///   7. `[optional]` system_program (default to `11111111111111111111111111111111`)
 #[derive(Clone, Debug, Default)]
 pub struct InitBuilder {
-            payer: Option<solana_pubkey::Pubkey>,
-                registry: Option<solana_pubkey::Pubkey>,
-                program_data: Option<solana_pubkey::Pubkey>,
-                fee_mint: Option<solana_pubkey::Pubkey>,
-                fee_vault: Option<solana_pubkey::Pubkey>,
-                token_program: Option<solana_pubkey::Pubkey>,
-                associated_token_program: Option<solana_pubkey::Pubkey>,
-                system_program: Option<solana_pubkey::Pubkey>,
-                        genesis_admin: Option<Pubkey>,
-                fee_atoms: Option<u64>,
-        __remaining_accounts: Vec<solana_instruction::AccountMeta>,
+    payer: Option<solana_pubkey::Pubkey>,
+    registry: Option<solana_pubkey::Pubkey>,
+    program_data: Option<solana_pubkey::Pubkey>,
+    fee_mint: Option<solana_pubkey::Pubkey>,
+    fee_vault: Option<solana_pubkey::Pubkey>,
+    token_program: Option<solana_pubkey::Pubkey>,
+    associated_token_program: Option<solana_pubkey::Pubkey>,
+    system_program: Option<solana_pubkey::Pubkey>,
+    genesis_admin: Option<Pubkey>,
+    fee_atoms: Option<u64>,
+    __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
 
 impl InitBuilder {
-  pub fn new() -> Self {
-    Self::default()
-  }
-            #[inline(always)]
+    pub fn new() -> Self {
+        Self::default()
+    }
+    #[inline(always)]
     pub fn payer(&mut self, payer: solana_pubkey::Pubkey) -> &mut Self {
-                        self.payer = Some(payer);
-                    self
+        self.payer = Some(payer);
+        self
     }
-            #[inline(always)]
+    #[inline(always)]
     pub fn registry(&mut self, registry: solana_pubkey::Pubkey) -> &mut Self {
-                        self.registry = Some(registry);
-                    self
+        self.registry = Some(registry);
+        self
     }
-            /// SAFETY: the program's ProgramData account is owned by the BPF
-/// upgradeable loader, not this program, so it cannot be a typed
-/// `Account<T>`. `verify_upgrade_authority` re-derives the
-/// canonical `ProgramData` PDA and only reads its header to
-/// authenticate the upgrade authority — no data is written and
-/// no other invariant is assumed. A declarative
-/// `seeds = [crate::ID.as_ref()], seeds::program = …` would emit
-/// an opaque `{"kind":"expr"}` seed that anchor v2's IDL spec
-/// can't deserialize today; the manual check sidesteps that.
-#[inline(always)]
+    /// SAFETY: the program's ProgramData account is owned by the BPF
+    /// upgradeable loader, not this program, so it cannot be a typed
+    /// `Account<T>`. `verify_upgrade_authority` re-derives the
+    /// canonical `ProgramData` PDA and only reads its header to
+    /// authenticate the upgrade authority — no data is written and
+    /// no other invariant is assumed. A declarative
+    /// `seeds = [crate::ID.as_ref()], seeds::program = …` would emit
+    /// an opaque `{"kind":"expr"}` seed that anchor v2's IDL spec
+    /// can't deserialize today; the manual check sidesteps that.
+    #[inline(always)]
     pub fn program_data(&mut self, program_data: solana_pubkey::Pubkey) -> &mut Self {
-                        self.program_data = Some(program_data);
-                    self
+        self.program_data = Some(program_data);
+        self
     }
-            /// The mint to charge fees in. `InterfaceAccount<Mint>` validates
-/// SPL Token / Token-2022 ownership and that the data unpacks as a
-/// `Mint` — so no separate length / discriminator check is needed.
-#[inline(always)]
+    /// The mint to charge fees in. `InterfaceAccount<Mint>` validates
+    /// SPL Token / Token-2022 ownership and that the data unpacks as a
+    /// `Mint` — so no separate length / discriminator check is needed.
+    #[inline(always)]
     pub fn fee_mint(&mut self, fee_mint: solana_pubkey::Pubkey) -> &mut Self {
-                        self.fee_mint = Some(fee_mint);
-                    self
+        self.fee_mint = Some(fee_mint);
+        self
     }
-            /// Registry-owned fee vault for the per-`OpenVault` charge. Created
-/// here by CPI to the ATA program; its address is the canonical
-/// ATA over `(registry, token_program, fee_mint)`, and the ATA
-/// program rejects any `(mint, token_program)` pair whose owners
-/// disagree — a second backstop after `InterfaceAccount<Mint>`.
-#[inline(always)]
+    /// Registry-owned fee vault for the per-`OpenVault` charge. Created
+    /// here by CPI to the ATA program; its address is the canonical
+    /// ATA over `(registry, token_program, fee_mint)`, and the ATA
+    /// program rejects any `(mint, token_program)` pair whose owners
+    /// disagree — a second backstop after `InterfaceAccount<Mint>`.
+    #[inline(always)]
     pub fn fee_vault(&mut self, fee_vault: solana_pubkey::Pubkey) -> &mut Self {
-                        self.fee_vault = Some(fee_vault);
-                    self
+        self.fee_vault = Some(fee_vault);
+        self
     }
-            /// `[optional account, default to 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA']`
-/// Token program owning `fee_mint` — SPL Token or Token-2022.
-/// `Interface<TokenInterface>` rejects any other address up front
-/// (`IncorrectProgramId`); the ATA seeds bake this in too, so a
-/// caller-supplied mismatch against `fee_mint`'s owner yields a
-/// non-canonical ATA and a separate `InvalidSeeds` rejection.
-#[inline(always)]
+    /// `[optional account, default to 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA']`
+    /// Token program owning `fee_mint` — SPL Token or Token-2022.
+    /// `Interface<TokenInterface>` rejects any other address up front
+    /// (`IncorrectProgramId`); the ATA seeds bake this in too, so a
+    /// caller-supplied mismatch against `fee_mint`'s owner yields a
+    /// non-canonical ATA and a separate `InvalidSeeds` rejection.
+    #[inline(always)]
     pub fn token_program(&mut self, token_program: solana_pubkey::Pubkey) -> &mut Self {
-                        self.token_program = Some(token_program);
-                    self
+        self.token_program = Some(token_program);
+        self
     }
-            /// `[optional account, default to 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL']`
-#[inline(always)]
-    pub fn associated_token_program(&mut self, associated_token_program: solana_pubkey::Pubkey) -> &mut Self {
-                        self.associated_token_program = Some(associated_token_program);
-                    self
+    /// `[optional account, default to 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL']`
+    #[inline(always)]
+    pub fn associated_token_program(
+        &mut self,
+        associated_token_program: solana_pubkey::Pubkey,
+    ) -> &mut Self {
+        self.associated_token_program = Some(associated_token_program);
+        self
     }
-            /// `[optional account, default to '11111111111111111111111111111111']`
-#[inline(always)]
+    /// `[optional account, default to '11111111111111111111111111111111']`
+    #[inline(always)]
     pub fn system_program(&mut self, system_program: solana_pubkey::Pubkey) -> &mut Self {
-                        self.system_program = Some(system_program);
-                    self
+        self.system_program = Some(system_program);
+        self
     }
-                    #[inline(always)]
-      pub fn genesis_admin(&mut self, genesis_admin: Pubkey) -> &mut Self {
+    #[inline(always)]
+    pub fn genesis_admin(&mut self, genesis_admin: Pubkey) -> &mut Self {
         self.genesis_admin = Some(genesis_admin);
         self
-      }
-                #[inline(always)]
-      pub fn fee_atoms(&mut self, fee_atoms: u64) -> &mut Self {
+    }
+    #[inline(always)]
+    pub fn fee_atoms(&mut self, fee_atoms: u64) -> &mut Self {
         self.fee_atoms = Some(fee_atoms);
         self
-      }
-        /// Add an additional account to the instruction.
-  #[inline(always)]
-  pub fn add_remaining_account(&mut self, account: solana_instruction::AccountMeta) -> &mut Self {
-    self.__remaining_accounts.push(account);
-    self
-  }
-  /// Add additional accounts to the instruction.
-  #[inline(always)]
-  pub fn add_remaining_accounts(&mut self, accounts: &[solana_instruction::AccountMeta]) -> &mut Self {
-    self.__remaining_accounts.extend_from_slice(accounts);
-    self
-  }
-  #[allow(clippy::clone_on_copy)]
-  pub fn instruction(&self) -> solana_instruction::Instruction {
-    let accounts = Init {
-                              payer: self.payer.expect("payer is not set"),
-                                        registry: self.registry.expect("registry is not set"),
-                                        program_data: self.program_data.expect("program_data is not set"),
-                                        fee_mint: self.fee_mint.expect("fee_mint is not set"),
-                                        fee_vault: self.fee_vault.expect("fee_vault is not set"),
-                                        token_program: self.token_program.unwrap_or(solana_pubkey::pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")),
-                                        associated_token_program: self.associated_token_program.unwrap_or(solana_pubkey::pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")),
-                                        system_program: self.system_program.unwrap_or(solana_pubkey::pubkey!("11111111111111111111111111111111")),
-                      };
-          let args = InitInstructionArgs {
-                                                              genesis_admin: self.genesis_admin.clone().expect("genesis_admin is not set"),
-                                                                  fee_atoms: self.fee_atoms.clone().expect("fee_atoms is not set"),
-                                    };
-    
-    accounts.instruction_with_remaining_accounts(args, &self.__remaining_accounts)
-  }
+    }
+    /// Add an additional account to the instruction.
+    #[inline(always)]
+    pub fn add_remaining_account(&mut self, account: solana_instruction::AccountMeta) -> &mut Self {
+        self.__remaining_accounts.push(account);
+        self
+    }
+    /// Add additional accounts to the instruction.
+    #[inline(always)]
+    pub fn add_remaining_accounts(
+        &mut self,
+        accounts: &[solana_instruction::AccountMeta],
+    ) -> &mut Self {
+        self.__remaining_accounts.extend_from_slice(accounts);
+        self
+    }
+    #[allow(clippy::clone_on_copy)]
+    pub fn instruction(&self) -> solana_instruction::Instruction {
+        let accounts = Init {
+            payer: self.payer.expect("payer is not set"),
+            registry: self.registry.expect("registry is not set"),
+            program_data: self.program_data.expect("program_data is not set"),
+            fee_mint: self.fee_mint.expect("fee_mint is not set"),
+            fee_vault: self.fee_vault.expect("fee_vault is not set"),
+            token_program: self.token_program.unwrap_or(solana_pubkey::pubkey!(
+                "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+            )),
+            associated_token_program: self.associated_token_program.unwrap_or(
+                solana_pubkey::pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"),
+            ),
+            system_program: self
+                .system_program
+                .unwrap_or(solana_pubkey::pubkey!("11111111111111111111111111111111")),
+        };
+        let args = InitInstructionArgs {
+            genesis_admin: self
+                .genesis_admin
+                .clone()
+                .expect("genesis_admin is not set"),
+            fee_atoms: self.fee_atoms.clone().expect("fee_atoms is not set"),
+        };
+
+        accounts.instruction_with_remaining_accounts(args, &self.__remaining_accounts)
+    }
 }
 
-  /// `init` CPI accounts.
-  pub struct InitCpiAccounts<'a, 'b> {
-          
-                    
-              pub payer: &'b solana_account_info::AccountInfo<'a>,
-                
-                    
-              pub registry: &'b solana_account_info::AccountInfo<'a>,
-                        /// SAFETY: the program's ProgramData account is owned by the BPF
-/// upgradeable loader, not this program, so it cannot be a typed
-/// `Account<T>`. `verify_upgrade_authority` re-derives the
-/// canonical `ProgramData` PDA and only reads its header to
-/// authenticate the upgrade authority — no data is written and
-/// no other invariant is assumed. A declarative
-/// `seeds = [crate::ID.as_ref()], seeds::program = …` would emit
-/// an opaque `{"kind":"expr"}` seed that anchor v2's IDL spec
-/// can't deserialize today; the manual check sidesteps that.
+/// `init` CPI accounts.
+pub struct InitCpiAccounts<'a, 'b> {
+    pub payer: &'b solana_account_info::AccountInfo<'a>,
 
-      
-                    
-              pub program_data: &'b solana_account_info::AccountInfo<'a>,
-                        /// The mint to charge fees in. `InterfaceAccount<Mint>` validates
-/// SPL Token / Token-2022 ownership and that the data unpacks as a
-/// `Mint` — so no separate length / discriminator check is needed.
+    pub registry: &'b solana_account_info::AccountInfo<'a>,
+    /// SAFETY: the program's ProgramData account is owned by the BPF
+    /// upgradeable loader, not this program, so it cannot be a typed
+    /// `Account<T>`. `verify_upgrade_authority` re-derives the
+    /// canonical `ProgramData` PDA and only reads its header to
+    /// authenticate the upgrade authority — no data is written and
+    /// no other invariant is assumed. A declarative
+    /// `seeds = [crate::ID.as_ref()], seeds::program = …` would emit
+    /// an opaque `{"kind":"expr"}` seed that anchor v2's IDL spec
+    /// can't deserialize today; the manual check sidesteps that.
+    pub program_data: &'b solana_account_info::AccountInfo<'a>,
+    /// The mint to charge fees in. `InterfaceAccount<Mint>` validates
+    /// SPL Token / Token-2022 ownership and that the data unpacks as a
+    /// `Mint` — so no separate length / discriminator check is needed.
+    pub fee_mint: &'b solana_account_info::AccountInfo<'a>,
+    /// Registry-owned fee vault for the per-`OpenVault` charge. Created
+    /// here by CPI to the ATA program; its address is the canonical
+    /// ATA over `(registry, token_program, fee_mint)`, and the ATA
+    /// program rejects any `(mint, token_program)` pair whose owners
+    /// disagree — a second backstop after `InterfaceAccount<Mint>`.
+    pub fee_vault: &'b solana_account_info::AccountInfo<'a>,
+    /// Token program owning `fee_mint` — SPL Token or Token-2022.
+    /// `Interface<TokenInterface>` rejects any other address up front
+    /// (`IncorrectProgramId`); the ATA seeds bake this in too, so a
+    /// caller-supplied mismatch against `fee_mint`'s owner yields a
+    /// non-canonical ATA and a separate `InvalidSeeds` rejection.
+    pub token_program: &'b solana_account_info::AccountInfo<'a>,
 
-      
-                    
-              pub fee_mint: &'b solana_account_info::AccountInfo<'a>,
-                        /// Registry-owned fee vault for the per-`OpenVault` charge. Created
-/// here by CPI to the ATA program; its address is the canonical
-/// ATA over `(registry, token_program, fee_mint)`, and the ATA
-/// program rejects any `(mint, token_program)` pair whose owners
-/// disagree — a second backstop after `InterfaceAccount<Mint>`.
+    pub associated_token_program: &'b solana_account_info::AccountInfo<'a>,
 
-      
-                    
-              pub fee_vault: &'b solana_account_info::AccountInfo<'a>,
-                        /// Token program owning `fee_mint` — SPL Token or Token-2022.
-/// `Interface<TokenInterface>` rejects any other address up front
-/// (`IncorrectProgramId`); the ATA seeds bake this in too, so a
-/// caller-supplied mismatch against `fee_mint`'s owner yields a
-/// non-canonical ATA and a separate `InvalidSeeds` rejection.
-
-      
-                    
-              pub token_program: &'b solana_account_info::AccountInfo<'a>,
-                
-                    
-              pub associated_token_program: &'b solana_account_info::AccountInfo<'a>,
-                
-                    
-              pub system_program: &'b solana_account_info::AccountInfo<'a>,
-            }
+    pub system_program: &'b solana_account_info::AccountInfo<'a>,
+}
 
 /// `init` CPI instruction.
 pub struct InitCpi<'a, 'b> {
-  /// The program to invoke.
-  pub __program: &'b solana_account_info::AccountInfo<'a>,
-      
-              
-          pub payer: &'b solana_account_info::AccountInfo<'a>,
-          
-              
-          pub registry: &'b solana_account_info::AccountInfo<'a>,
-                /// SAFETY: the program's ProgramData account is owned by the BPF
-/// upgradeable loader, not this program, so it cannot be a typed
-/// `Account<T>`. `verify_upgrade_authority` re-derives the
-/// canonical `ProgramData` PDA and only reads its header to
-/// authenticate the upgrade authority — no data is written and
-/// no other invariant is assumed. A declarative
-/// `seeds = [crate::ID.as_ref()], seeds::program = …` would emit
-/// an opaque `{"kind":"expr"}` seed that anchor v2's IDL spec
-/// can't deserialize today; the manual check sidesteps that.
+    /// The program to invoke.
+    pub __program: &'b solana_account_info::AccountInfo<'a>,
 
-    
-              
-          pub program_data: &'b solana_account_info::AccountInfo<'a>,
-                /// The mint to charge fees in. `InterfaceAccount<Mint>` validates
-/// SPL Token / Token-2022 ownership and that the data unpacks as a
-/// `Mint` — so no separate length / discriminator check is needed.
+    pub payer: &'b solana_account_info::AccountInfo<'a>,
 
-    
-              
-          pub fee_mint: &'b solana_account_info::AccountInfo<'a>,
-                /// Registry-owned fee vault for the per-`OpenVault` charge. Created
-/// here by CPI to the ATA program; its address is the canonical
-/// ATA over `(registry, token_program, fee_mint)`, and the ATA
-/// program rejects any `(mint, token_program)` pair whose owners
-/// disagree — a second backstop after `InterfaceAccount<Mint>`.
+    pub registry: &'b solana_account_info::AccountInfo<'a>,
+    /// SAFETY: the program's ProgramData account is owned by the BPF
+    /// upgradeable loader, not this program, so it cannot be a typed
+    /// `Account<T>`. `verify_upgrade_authority` re-derives the
+    /// canonical `ProgramData` PDA and only reads its header to
+    /// authenticate the upgrade authority — no data is written and
+    /// no other invariant is assumed. A declarative
+    /// `seeds = [crate::ID.as_ref()], seeds::program = …` would emit
+    /// an opaque `{"kind":"expr"}` seed that anchor v2's IDL spec
+    /// can't deserialize today; the manual check sidesteps that.
+    pub program_data: &'b solana_account_info::AccountInfo<'a>,
+    /// The mint to charge fees in. `InterfaceAccount<Mint>` validates
+    /// SPL Token / Token-2022 ownership and that the data unpacks as a
+    /// `Mint` — so no separate length / discriminator check is needed.
+    pub fee_mint: &'b solana_account_info::AccountInfo<'a>,
+    /// Registry-owned fee vault for the per-`OpenVault` charge. Created
+    /// here by CPI to the ATA program; its address is the canonical
+    /// ATA over `(registry, token_program, fee_mint)`, and the ATA
+    /// program rejects any `(mint, token_program)` pair whose owners
+    /// disagree — a second backstop after `InterfaceAccount<Mint>`.
+    pub fee_vault: &'b solana_account_info::AccountInfo<'a>,
+    /// Token program owning `fee_mint` — SPL Token or Token-2022.
+    /// `Interface<TokenInterface>` rejects any other address up front
+    /// (`IncorrectProgramId`); the ATA seeds bake this in too, so a
+    /// caller-supplied mismatch against `fee_mint`'s owner yields a
+    /// non-canonical ATA and a separate `InvalidSeeds` rejection.
+    pub token_program: &'b solana_account_info::AccountInfo<'a>,
 
-    
-              
-          pub fee_vault: &'b solana_account_info::AccountInfo<'a>,
-                /// Token program owning `fee_mint` — SPL Token or Token-2022.
-/// `Interface<TokenInterface>` rejects any other address up front
-/// (`IncorrectProgramId`); the ATA seeds bake this in too, so a
-/// caller-supplied mismatch against `fee_mint`'s owner yields a
-/// non-canonical ATA and a separate `InvalidSeeds` rejection.
+    pub associated_token_program: &'b solana_account_info::AccountInfo<'a>,
 
-    
-              
-          pub token_program: &'b solana_account_info::AccountInfo<'a>,
-          
-              
-          pub associated_token_program: &'b solana_account_info::AccountInfo<'a>,
-          
-              
-          pub system_program: &'b solana_account_info::AccountInfo<'a>,
-            /// The arguments for the instruction.
+    pub system_program: &'b solana_account_info::AccountInfo<'a>,
+    /// The arguments for the instruction.
     pub __args: InitInstructionArgs,
-  }
+}
 
 impl<'a, 'b> InitCpi<'a, 'b> {
-  pub fn new(
-    program: &'b solana_account_info::AccountInfo<'a>,
-          accounts: InitCpiAccounts<'a, 'b>,
-              args: InitInstructionArgs,
-      ) -> Self {
-    Self {
-      __program: program,
-              payer: accounts.payer,
-              registry: accounts.registry,
-              program_data: accounts.program_data,
-              fee_mint: accounts.fee_mint,
-              fee_vault: accounts.fee_vault,
-              token_program: accounts.token_program,
-              associated_token_program: accounts.associated_token_program,
-              system_program: accounts.system_program,
-                    __args: args,
-          }
-  }
-  #[inline(always)]
-  pub fn invoke(&self) -> solana_program_error::ProgramResult {
-    self.invoke_signed_with_remaining_accounts(&[], &[])
-  }
-  #[inline(always)]
-  pub fn invoke_with_remaining_accounts(&self, remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)]) -> solana_program_error::ProgramResult {
-    self.invoke_signed_with_remaining_accounts(&[], remaining_accounts)
-  }
-  #[inline(always)]
-  pub fn invoke_signed(&self, signers_seeds: &[&[&[u8]]]) -> solana_program_error::ProgramResult {
-    self.invoke_signed_with_remaining_accounts(signers_seeds, &[])
-  }
-  #[allow(clippy::arithmetic_side_effects)]
-  #[allow(clippy::clone_on_copy)]
-  #[allow(clippy::vec_init_then_push)]
-  pub fn invoke_signed_with_remaining_accounts(
-    &self,
-    signers_seeds: &[&[&[u8]]],
-    remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)]
-  ) -> solana_program_error::ProgramResult {
-    let mut accounts = Vec::with_capacity(8+ remaining_accounts.len());
-                            accounts.push(solana_instruction::AccountMeta::new(
-            *self.payer.key,
-            true
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new(
-            *self.registry.key,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.program_data.key,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.fee_mint.key,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new(
-            *self.fee_vault.key,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.token_program.key,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.associated_token_program.key,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.system_program.key,
-            false
-          ));
-                      remaining_accounts.iter().for_each(|remaining_account| {
-      accounts.push(solana_instruction::AccountMeta {
-          pubkey: *remaining_account.0.key,
-          is_signer: remaining_account.1,
-          is_writable: remaining_account.2,
-      })
-    });
-    let mut data = InitInstructionData::new().try_to_vec().unwrap();
-          let mut args = self.__args.try_to_vec().unwrap();
-      data.append(&mut args);
-    
-    let instruction = solana_instruction::Instruction {
-      program_id: crate::DROPSET_ID,
-      accounts,
-      data,
-    };
-    let mut account_infos = Vec::with_capacity(9 + remaining_accounts.len());
-    account_infos.push(self.__program.clone());
-                  account_infos.push(self.payer.clone());
-                        account_infos.push(self.registry.clone());
-                        account_infos.push(self.program_data.clone());
-                        account_infos.push(self.fee_mint.clone());
-                        account_infos.push(self.fee_vault.clone());
-                        account_infos.push(self.token_program.clone());
-                        account_infos.push(self.associated_token_program.clone());
-                        account_infos.push(self.system_program.clone());
-              remaining_accounts.iter().for_each(|remaining_account| account_infos.push(remaining_account.0.clone()));
-
-    if signers_seeds.is_empty() {
-      solana_cpi::invoke(&instruction, &account_infos)
-    } else {
-      solana_cpi::invoke_signed(&instruction, &account_infos, signers_seeds)
+    pub fn new(
+        program: &'b solana_account_info::AccountInfo<'a>,
+        accounts: InitCpiAccounts<'a, 'b>,
+        args: InitInstructionArgs,
+    ) -> Self {
+        Self {
+            __program: program,
+            payer: accounts.payer,
+            registry: accounts.registry,
+            program_data: accounts.program_data,
+            fee_mint: accounts.fee_mint,
+            fee_vault: accounts.fee_vault,
+            token_program: accounts.token_program,
+            associated_token_program: accounts.associated_token_program,
+            system_program: accounts.system_program,
+            __args: args,
+        }
     }
-  }
+    #[inline(always)]
+    pub fn invoke(&self) -> solana_program_error::ProgramResult {
+        self.invoke_signed_with_remaining_accounts(&[], &[])
+    }
+    #[inline(always)]
+    pub fn invoke_with_remaining_accounts(
+        &self,
+        remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
+    ) -> solana_program_error::ProgramResult {
+        self.invoke_signed_with_remaining_accounts(&[], remaining_accounts)
+    }
+    #[inline(always)]
+    pub fn invoke_signed(&self, signers_seeds: &[&[&[u8]]]) -> solana_program_error::ProgramResult {
+        self.invoke_signed_with_remaining_accounts(signers_seeds, &[])
+    }
+    #[allow(clippy::arithmetic_side_effects)]
+    #[allow(clippy::clone_on_copy)]
+    #[allow(clippy::vec_init_then_push)]
+    pub fn invoke_signed_with_remaining_accounts(
+        &self,
+        signers_seeds: &[&[&[u8]]],
+        remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
+    ) -> solana_program_error::ProgramResult {
+        let mut accounts = Vec::with_capacity(8 + remaining_accounts.len());
+        accounts.push(solana_instruction::AccountMeta::new(*self.payer.key, true));
+        accounts.push(solana_instruction::AccountMeta::new(
+            *self.registry.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.program_data.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.fee_mint.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            *self.fee_vault.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.token_program.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.associated_token_program.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.system_program.key,
+            false,
+        ));
+        remaining_accounts.iter().for_each(|remaining_account| {
+            accounts.push(solana_instruction::AccountMeta {
+                pubkey: *remaining_account.0.key,
+                is_signer: remaining_account.1,
+                is_writable: remaining_account.2,
+            })
+        });
+        let mut data = InitInstructionData::new().try_to_vec().unwrap();
+        let mut args = self.__args.try_to_vec().unwrap();
+        data.append(&mut args);
+
+        let instruction = solana_instruction::Instruction {
+            program_id: crate::DROPSET_ID,
+            accounts,
+            data,
+        };
+        let mut account_infos = Vec::with_capacity(9 + remaining_accounts.len());
+        account_infos.push(self.__program.clone());
+        account_infos.push(self.payer.clone());
+        account_infos.push(self.registry.clone());
+        account_infos.push(self.program_data.clone());
+        account_infos.push(self.fee_mint.clone());
+        account_infos.push(self.fee_vault.clone());
+        account_infos.push(self.token_program.clone());
+        account_infos.push(self.associated_token_program.clone());
+        account_infos.push(self.system_program.clone());
+        remaining_accounts
+            .iter()
+            .for_each(|remaining_account| account_infos.push(remaining_account.0.clone()));
+
+        if signers_seeds.is_empty() {
+            solana_cpi::invoke(&instruction, &account_infos)
+        } else {
+            solana_cpi::invoke_signed(&instruction, &account_infos, signers_seeds)
+        }
+    }
 }
 
 /// Instruction builder for `Init` via CPI.
 ///
 /// ### Accounts:
 ///
-                      ///   0. `[writable, signer]` payer
-                ///   1. `[writable]` registry
-          ///   2. `[]` program_data
-          ///   3. `[]` fee_mint
-                ///   4. `[writable]` fee_vault
-          ///   5. `[]` token_program
-          ///   6. `[]` associated_token_program
-          ///   7. `[]` system_program
+///   0. `[writable, signer]` payer
+///   1. `[writable]` registry
+///   2. `[]` program_data
+///   3. `[]` fee_mint
+///   4. `[writable]` fee_vault
+///   5. `[]` token_program
+///   6. `[]` associated_token_program
+///   7. `[]` system_program
 #[derive(Clone, Debug)]
 pub struct InitCpiBuilder<'a, 'b> {
-  instruction: Box<InitCpiBuilderInstruction<'a, 'b>>,
+    instruction: Box<InitCpiBuilderInstruction<'a, 'b>>,
 }
 
 impl<'a, 'b> InitCpiBuilder<'a, 'b> {
-  pub fn new(program: &'b solana_account_info::AccountInfo<'a>) -> Self {
-    let instruction = Box::new(InitCpiBuilderInstruction {
-      __program: program,
-              payer: None,
-              registry: None,
-              program_data: None,
-              fee_mint: None,
-              fee_vault: None,
-              token_program: None,
-              associated_token_program: None,
-              system_program: None,
-                                            genesis_admin: None,
-                                fee_atoms: None,
-                    __remaining_accounts: Vec::new(),
-    });
-    Self { instruction }
-  }
-      #[inline(always)]
+    pub fn new(program: &'b solana_account_info::AccountInfo<'a>) -> Self {
+        let instruction = Box::new(InitCpiBuilderInstruction {
+            __program: program,
+            payer: None,
+            registry: None,
+            program_data: None,
+            fee_mint: None,
+            fee_vault: None,
+            token_program: None,
+            associated_token_program: None,
+            system_program: None,
+            genesis_admin: None,
+            fee_atoms: None,
+            __remaining_accounts: Vec::new(),
+        });
+        Self { instruction }
+    }
+    #[inline(always)]
     pub fn payer(&mut self, payer: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.payer = Some(payer);
-                    self
+        self.instruction.payer = Some(payer);
+        self
     }
-      #[inline(always)]
+    #[inline(always)]
     pub fn registry(&mut self, registry: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.registry = Some(registry);
-                    self
+        self.instruction.registry = Some(registry);
+        self
     }
-      /// SAFETY: the program's ProgramData account is owned by the BPF
-/// upgradeable loader, not this program, so it cannot be a typed
-/// `Account<T>`. `verify_upgrade_authority` re-derives the
-/// canonical `ProgramData` PDA and only reads its header to
-/// authenticate the upgrade authority — no data is written and
-/// no other invariant is assumed. A declarative
-/// `seeds = [crate::ID.as_ref()], seeds::program = …` would emit
-/// an opaque `{"kind":"expr"}` seed that anchor v2's IDL spec
-/// can't deserialize today; the manual check sidesteps that.
-#[inline(always)]
-    pub fn program_data(&mut self, program_data: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.program_data = Some(program_data);
-                    self
+    /// SAFETY: the program's ProgramData account is owned by the BPF
+    /// upgradeable loader, not this program, so it cannot be a typed
+    /// `Account<T>`. `verify_upgrade_authority` re-derives the
+    /// canonical `ProgramData` PDA and only reads its header to
+    /// authenticate the upgrade authority — no data is written and
+    /// no other invariant is assumed. A declarative
+    /// `seeds = [crate::ID.as_ref()], seeds::program = …` would emit
+    /// an opaque `{"kind":"expr"}` seed that anchor v2's IDL spec
+    /// can't deserialize today; the manual check sidesteps that.
+    #[inline(always)]
+    pub fn program_data(
+        &mut self,
+        program_data: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.program_data = Some(program_data);
+        self
     }
-      /// The mint to charge fees in. `InterfaceAccount<Mint>` validates
-/// SPL Token / Token-2022 ownership and that the data unpacks as a
-/// `Mint` — so no separate length / discriminator check is needed.
-#[inline(always)]
+    /// The mint to charge fees in. `InterfaceAccount<Mint>` validates
+    /// SPL Token / Token-2022 ownership and that the data unpacks as a
+    /// `Mint` — so no separate length / discriminator check is needed.
+    #[inline(always)]
     pub fn fee_mint(&mut self, fee_mint: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.fee_mint = Some(fee_mint);
-                    self
+        self.instruction.fee_mint = Some(fee_mint);
+        self
     }
-      /// Registry-owned fee vault for the per-`OpenVault` charge. Created
-/// here by CPI to the ATA program; its address is the canonical
-/// ATA over `(registry, token_program, fee_mint)`, and the ATA
-/// program rejects any `(mint, token_program)` pair whose owners
-/// disagree — a second backstop after `InterfaceAccount<Mint>`.
-#[inline(always)]
+    /// Registry-owned fee vault for the per-`OpenVault` charge. Created
+    /// here by CPI to the ATA program; its address is the canonical
+    /// ATA over `(registry, token_program, fee_mint)`, and the ATA
+    /// program rejects any `(mint, token_program)` pair whose owners
+    /// disagree — a second backstop after `InterfaceAccount<Mint>`.
+    #[inline(always)]
     pub fn fee_vault(&mut self, fee_vault: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.fee_vault = Some(fee_vault);
-                    self
+        self.instruction.fee_vault = Some(fee_vault);
+        self
     }
-      /// Token program owning `fee_mint` — SPL Token or Token-2022.
-/// `Interface<TokenInterface>` rejects any other address up front
-/// (`IncorrectProgramId`); the ATA seeds bake this in too, so a
-/// caller-supplied mismatch against `fee_mint`'s owner yields a
-/// non-canonical ATA and a separate `InvalidSeeds` rejection.
-#[inline(always)]
-    pub fn token_program(&mut self, token_program: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.token_program = Some(token_program);
-                    self
+    /// Token program owning `fee_mint` — SPL Token or Token-2022.
+    /// `Interface<TokenInterface>` rejects any other address up front
+    /// (`IncorrectProgramId`); the ATA seeds bake this in too, so a
+    /// caller-supplied mismatch against `fee_mint`'s owner yields a
+    /// non-canonical ATA and a separate `InvalidSeeds` rejection.
+    #[inline(always)]
+    pub fn token_program(
+        &mut self,
+        token_program: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.token_program = Some(token_program);
+        self
     }
-      #[inline(always)]
-    pub fn associated_token_program(&mut self, associated_token_program: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.associated_token_program = Some(associated_token_program);
-                    self
+    #[inline(always)]
+    pub fn associated_token_program(
+        &mut self,
+        associated_token_program: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.associated_token_program = Some(associated_token_program);
+        self
     }
-      #[inline(always)]
-    pub fn system_program(&mut self, system_program: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.system_program = Some(system_program);
-                    self
+    #[inline(always)]
+    pub fn system_program(
+        &mut self,
+        system_program: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.system_program = Some(system_program);
+        self
     }
-                    #[inline(always)]
-      pub fn genesis_admin(&mut self, genesis_admin: Pubkey) -> &mut Self {
+    #[inline(always)]
+    pub fn genesis_admin(&mut self, genesis_admin: Pubkey) -> &mut Self {
         self.instruction.genesis_admin = Some(genesis_admin);
         self
-      }
-                #[inline(always)]
-      pub fn fee_atoms(&mut self, fee_atoms: u64) -> &mut Self {
+    }
+    #[inline(always)]
+    pub fn fee_atoms(&mut self, fee_atoms: u64) -> &mut Self {
         self.instruction.fee_atoms = Some(fee_atoms);
         self
-      }
-        /// Add an additional account to the instruction.
-  #[inline(always)]
-  pub fn add_remaining_account(&mut self, account: &'b solana_account_info::AccountInfo<'a>, is_writable: bool, is_signer: bool) -> &mut Self {
-    self.instruction.__remaining_accounts.push((account, is_writable, is_signer));
-    self
-  }
-  /// Add additional accounts to the instruction.
-  ///
-  /// Each account is represented by a tuple of the `AccountInfo`, a `bool` indicating whether the account is writable or not,
-  /// and a `bool` indicating whether the account is a signer or not.
-  #[inline(always)]
-  pub fn add_remaining_accounts(&mut self, accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)]) -> &mut Self {
-    self.instruction.__remaining_accounts.extend_from_slice(accounts);
-    self
-  }
-  #[inline(always)]
-  pub fn invoke(&self) -> solana_program_error::ProgramResult {
-    self.invoke_signed(&[])
-  }
-  #[allow(clippy::clone_on_copy)]
-  #[allow(clippy::vec_init_then_push)]
-  pub fn invoke_signed(&self, signers_seeds: &[&[&[u8]]]) -> solana_program_error::ProgramResult {
-          let args = InitInstructionArgs {
-                                                              genesis_admin: self.instruction.genesis_admin.clone().expect("genesis_admin is not set"),
-                                                                  fee_atoms: self.instruction.fee_atoms.clone().expect("fee_atoms is not set"),
-                                    };
+    }
+    /// Add an additional account to the instruction.
+    #[inline(always)]
+    pub fn add_remaining_account(
+        &mut self,
+        account: &'b solana_account_info::AccountInfo<'a>,
+        is_writable: bool,
+        is_signer: bool,
+    ) -> &mut Self {
+        self.instruction
+            .__remaining_accounts
+            .push((account, is_writable, is_signer));
+        self
+    }
+    /// Add additional accounts to the instruction.
+    ///
+    /// Each account is represented by a tuple of the `AccountInfo`, a `bool` indicating whether the account is writable or not,
+    /// and a `bool` indicating whether the account is a signer or not.
+    #[inline(always)]
+    pub fn add_remaining_accounts(
+        &mut self,
+        accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
+    ) -> &mut Self {
+        self.instruction
+            .__remaining_accounts
+            .extend_from_slice(accounts);
+        self
+    }
+    #[inline(always)]
+    pub fn invoke(&self) -> solana_program_error::ProgramResult {
+        self.invoke_signed(&[])
+    }
+    #[allow(clippy::clone_on_copy)]
+    #[allow(clippy::vec_init_then_push)]
+    pub fn invoke_signed(&self, signers_seeds: &[&[&[u8]]]) -> solana_program_error::ProgramResult {
+        let args = InitInstructionArgs {
+            genesis_admin: self
+                .instruction
+                .genesis_admin
+                .clone()
+                .expect("genesis_admin is not set"),
+            fee_atoms: self
+                .instruction
+                .fee_atoms
+                .clone()
+                .expect("fee_atoms is not set"),
+        };
         let instruction = InitCpi {
-        __program: self.instruction.__program,
-                  
-          payer: self.instruction.payer.expect("payer is not set"),
-                  
-          registry: self.instruction.registry.expect("registry is not set"),
-                  
-          program_data: self.instruction.program_data.expect("program_data is not set"),
-                  
-          fee_mint: self.instruction.fee_mint.expect("fee_mint is not set"),
-                  
-          fee_vault: self.instruction.fee_vault.expect("fee_vault is not set"),
-                  
-          token_program: self.instruction.token_program.expect("token_program is not set"),
-                  
-          associated_token_program: self.instruction.associated_token_program.expect("associated_token_program is not set"),
-                  
-          system_program: self.instruction.system_program.expect("system_program is not set"),
-                          __args: args,
-            };
-    instruction.invoke_signed_with_remaining_accounts(signers_seeds, &self.instruction.__remaining_accounts)
-  }
+            __program: self.instruction.__program,
+
+            payer: self.instruction.payer.expect("payer is not set"),
+
+            registry: self.instruction.registry.expect("registry is not set"),
+
+            program_data: self
+                .instruction
+                .program_data
+                .expect("program_data is not set"),
+
+            fee_mint: self.instruction.fee_mint.expect("fee_mint is not set"),
+
+            fee_vault: self.instruction.fee_vault.expect("fee_vault is not set"),
+
+            token_program: self
+                .instruction
+                .token_program
+                .expect("token_program is not set"),
+
+            associated_token_program: self
+                .instruction
+                .associated_token_program
+                .expect("associated_token_program is not set"),
+
+            system_program: self
+                .instruction
+                .system_program
+                .expect("system_program is not set"),
+            __args: args,
+        };
+        instruction.invoke_signed_with_remaining_accounts(
+            signers_seeds,
+            &self.instruction.__remaining_accounts,
+        )
+    }
 }
 
 #[derive(Clone, Debug)]
 struct InitCpiBuilderInstruction<'a, 'b> {
-  __program: &'b solana_account_info::AccountInfo<'a>,
-            payer: Option<&'b solana_account_info::AccountInfo<'a>>,
-                registry: Option<&'b solana_account_info::AccountInfo<'a>>,
-                program_data: Option<&'b solana_account_info::AccountInfo<'a>>,
-                fee_mint: Option<&'b solana_account_info::AccountInfo<'a>>,
-                fee_vault: Option<&'b solana_account_info::AccountInfo<'a>>,
-                token_program: Option<&'b solana_account_info::AccountInfo<'a>>,
-                associated_token_program: Option<&'b solana_account_info::AccountInfo<'a>>,
-                system_program: Option<&'b solana_account_info::AccountInfo<'a>>,
-                        genesis_admin: Option<Pubkey>,
-                fee_atoms: Option<u64>,
-        /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
-  __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,
+    __program: &'b solana_account_info::AccountInfo<'a>,
+    payer: Option<&'b solana_account_info::AccountInfo<'a>>,
+    registry: Option<&'b solana_account_info::AccountInfo<'a>>,
+    program_data: Option<&'b solana_account_info::AccountInfo<'a>>,
+    fee_mint: Option<&'b solana_account_info::AccountInfo<'a>>,
+    fee_vault: Option<&'b solana_account_info::AccountInfo<'a>>,
+    token_program: Option<&'b solana_account_info::AccountInfo<'a>>,
+    associated_token_program: Option<&'b solana_account_info::AccountInfo<'a>>,
+    system_program: Option<&'b solana_account_info::AccountInfo<'a>>,
+    genesis_admin: Option<Pubkey>,
+    fee_atoms: Option<u64>,
+    /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
+    __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,
 }
-

@@ -71,13 +71,22 @@ fn sdk_simulate_swap_matches_onchain_buy() {
     let base_before = f.token_balance(&base_ata);
     let quote_before = f.token_balance(&quote_ata);
 
-    f.swap(&taker, 0 /* Buy */, amount_in, Price::INFINITY.as_u32(), 0)
-        .expect("on-chain swap");
+    f.swap(
+        &taker,
+        0, /* Buy */
+        amount_in,
+        Price::INFINITY.as_u32(),
+        0,
+    )
+    .expect("on-chain swap");
 
     let realized_out = f.token_balance(&base_ata) - base_before;
     let realized_in = quote_before - f.token_balance(&quote_ata);
 
-    assert_eq!(predicted.out_amount, realized_out, "SDK out != on-chain out");
+    assert_eq!(
+        predicted.out_amount, realized_out,
+        "SDK out != on-chain out"
+    );
     assert_eq!(predicted.in_amount, realized_in, "SDK in != on-chain in");
 }
 
@@ -99,12 +108,21 @@ fn sdk_simulate_swap_matches_onchain_sell() {
     let base_before = f.token_balance(&base_ata);
     let quote_before = f.token_balance(&quote_ata);
 
-    f.swap(&taker, 1 /* Sell */, amount_in, Price::ZERO.as_u32(), 0)
-        .expect("on-chain swap");
+    f.swap(
+        &taker,
+        1, /* Sell */
+        amount_in,
+        Price::ZERO.as_u32(),
+        0,
+    )
+    .expect("on-chain swap");
 
     let realized_out = f.token_balance(&quote_ata) - quote_before;
     let realized_in = base_before - f.token_balance(&base_ata);
 
-    assert_eq!(predicted.out_amount, realized_out, "SDK out != on-chain out");
+    assert_eq!(
+        predicted.out_amount, realized_out,
+        "SDK out != on-chain out"
+    );
     assert_eq!(predicted.in_amount, realized_in, "SDK in != on-chain in");
 }

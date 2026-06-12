@@ -5,40 +5,50 @@
 //! <https://github.com/codama-idl/codama>
 //!
 
-use solana_pubkey::Pubkey;
 use crate::generated::types::Price;
-use borsh::BorshSerialize;
 use borsh::BorshDeserialize;
+use borsh::BorshSerialize;
+use solana_pubkey::Pubkey;
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct FillEvent {
-#[cfg_attr(feature = "serde", serde(with = "serde_with::As::<serde_with::DisplayFromStr>"))]
-pub market: Pubkey,
-#[cfg_attr(feature = "serde", serde(with = "serde_with::As::<serde_with::DisplayFromStr>"))]
-pub taker: Pubkey,
-#[cfg_attr(feature = "serde", serde(with = "serde_with::As::<serde_with::DisplayFromStr>"))]
-pub leader: Pubkey,
-#[cfg_attr(feature = "serde", serde(with = "serde_with::As::<serde_with::DisplayFromStr>"))]
-pub quote_authority: Pubkey,
-/// `0` for ask-side (taker Buy), `1` for bid-side (taker Sell).
-pub side: u8,
-/// Padding so subsequent fields are aligned-1-friendly without
-/// implicit struct padding the bytemuck check would reject.
-pub pad: [u8; 7],
-pub sector_idx: u32,
-pub level_idx: u32,
-pub fill_base: u64,
-pub fill_quote: u64,
-pub fill_price: Price,
-/// Padding to keep the next `u64` at an 8-byte boundary in the
-/// fixed-size repr-C layout. `Price` is `u32`, so 4 bytes of pad
-/// keep the struct stride well-defined.
-pub pad2: [u8; 4],
-pub base_atoms_after: u64,
-pub quote_atoms_after: u64,
-pub nonce_after: u64,
-pub taker_fee_atoms: u64,
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
+    )]
+    pub market: Pubkey,
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
+    )]
+    pub taker: Pubkey,
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
+    )]
+    pub leader: Pubkey,
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
+    )]
+    pub quote_authority: Pubkey,
+    /// `0` for ask-side (taker Buy), `1` for bid-side (taker Sell).
+    pub side: u8,
+    /// Padding so subsequent fields are aligned-1-friendly without
+    /// implicit struct padding the bytemuck check would reject.
+    pub pad: [u8; 7],
+    pub sector_idx: u32,
+    pub level_idx: u32,
+    pub fill_base: u64,
+    pub fill_quote: u64,
+    pub fill_price: Price,
+    /// Padding to keep the next `u64` at an 8-byte boundary in the
+    /// fixed-size repr-C layout. `Price` is `u32`, so 4 bytes of pad
+    /// keep the struct stride well-defined.
+    pub pad2: [u8; 4],
+    pub base_atoms_after: u64,
+    pub quote_atoms_after: u64,
+    pub nonce_after: u64,
+    pub taker_fee_atoms: u64,
 }
-
-

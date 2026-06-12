@@ -36,13 +36,17 @@ pub fn price_is_valid(bits: u32) -> bool {
 /// `base * price`, rounded toward zero (saturated to u64).
 #[wasm_bindgen]
 pub fn price_quote_for_base(bits: u32, base: u64) -> u64 {
-    Price::from_bits(bits).quote_for_base(base).min(u64::MAX as u128) as u64
+    Price::from_bits(bits)
+        .quote_for_base(base)
+        .min(u64::MAX as u128) as u64
 }
 
 /// `quote / price`, rounded toward zero (saturated to u64).
 #[wasm_bindgen]
 pub fn price_base_for_quote(bits: u32, quote: u64) -> u64 {
-    Price::from_bits(bits).base_for_quote(quote).min(u64::MAX as u128) as u64
+    Price::from_bits(bits)
+        .base_for_quote(quote)
+        .min(u64::MAX as u128) as u64
 }
 
 /// Result of [`simulate_swap`].

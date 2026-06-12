@@ -22,5 +22,5 @@
 //! (base for a buy, quote for a sell).
 
 pub use super::amm::{
-    DropsetAmm, DropsetQuote, DropsetQuoteParams, DropsetSwapParams, AmmError, CLOCK_SYSVAR,
+    AmmError, DropsetAmm, DropsetQuote, DropsetQuoteParams, DropsetSwapParams, CLOCK_SYSVAR,
 };

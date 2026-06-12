@@ -84,6 +84,12 @@ const tsOut = join(repoRoot, 'sdk', 'ts', 'src', 'generated');
 const rustCrate = join(repoRoot, 'sdk', 'rs');
 const rustOut = join(rustCrate, 'src', 'generated');
 
+// Neither client is formatted here: Codama's bundled formatters don't
+// match the repo's tools (its rustfmt diverges from `cargo fmt`). The
+// `make sdk` target runs `cargo fmt` after this so the generated Rust
+// lands in canonical `cargo fmt` form — clean under the rustfmt hook and
+// reproducible by the SDK CI gate. TS is left raw: biome lints only
+// frontend/, and raw output is still deterministic.
 codama.accept(renderJavaScript(tsOut, { formatCode: false }));
 codama.accept(
   renderRust(rustOut, { formatCode: false, crateFolder: rustCrate }),

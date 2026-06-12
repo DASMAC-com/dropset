@@ -27,9 +27,12 @@ check-toolchain:
 idl: check-toolchain
 	anchor idl build -o sdk/idl/dropset.json
 
-# Regenerate the TS + Rust clients from the checked-in IDL via Codama.
+# Regenerate the TS + Rust clients from the checked-in IDL via Codama,
+# then normalize the Rust output with `cargo fmt` so it lands in canonical
+# form (clean under the rustfmt hook, reproducible by the SDK CI gate).
 sdk:
 	cd sdk/codama && pnpm install && pnpm generate
+	cargo fmt -p dropset-sdk
 
 # Build the price-core WASM package for the TS client (requires wasm-pack:
 # `cargo install wasm-pack`). Outputs sdk/price-core/pkg.

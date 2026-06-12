@@ -5,9 +5,9 @@
 //! <https://github.com/codama-idl/codama>
 //!
 
-use solana_pubkey::Pubkey;
-use borsh::BorshSerialize;
 use borsh::BorshDeserialize;
+use borsh::BorshSerialize;
+use solana_pubkey::Pubkey;
 
 /// A flat fee charged in `mint`, paid to the registry fee ATA. Mirrors
 /// the `FeeConfig` in the architecture spec; reused per-market by the
@@ -18,14 +18,18 @@ use borsh::BorshDeserialize;
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct FeeConfig {
-/// Mint accepted for this fee.
-#[cfg_attr(feature = "serde", serde(with = "serde_with::As::<serde_with::DisplayFromStr>"))]
-pub mint: Pubkey,
-/// Token program owning `mint` — SPL Token or Token-2022.
-#[cfg_attr(feature = "serde", serde(with = "serde_with::As::<serde_with::DisplayFromStr>"))]
-pub token_program: Pubkey,
-/// Amount in atoms of `mint`.
-pub atoms: u64,
+    /// Mint accepted for this fee.
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
+    )]
+    pub mint: Pubkey,
+    /// Token program owning `mint` — SPL Token or Token-2022.
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
+    )]
+    pub token_program: Pubkey,
+    /// Amount in atoms of `mint`.
+    pub atoms: u64,
 }
-
-

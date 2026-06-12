@@ -5,7 +5,7 @@ Implements the SDK section of [`docs/interface.md`](../docs/interface.md).
 
 ## Layout
 
-```
+```text
 sdk/
   idl/dropset.json     Checked-in Anchor IDL (regenerate: `make idl`)
   codama/              Codegen: IDL -> TS + Rust clients (`make sdk`)
@@ -19,12 +19,12 @@ sdk/
 
 **A. IDL → clients (Codama).** `anchor idl build` emits the IDL; Codama
 generates the TypeScript (`@solana/kit`) and Rust clients — instruction
-builders, account/event codecs, PDA helpers. Regenerate with `make idl &&
-make sdk`. Two codegen fix-ups live in `codama/generate.mjs`: `Price` is
-remapped to its real `u32` wire form (the on-chain type isn't `IdlType`, so
-it surfaces as a fieldless struct), and `set_liquidity_profile`'s
-`profile_bytes` is restored to `[u8; 160]` (anchor-next can't const-eval
-`PROFILE_BYTES`).
+builders, account/event codecs, PDA helpers. Regenerate with
+`make idl && make sdk`. Two codegen fix-ups live in `codama/generate.mjs`:
+`Price` is remapped to its real `u32` wire form (the on-chain type isn't
+`IdlType`, so it surfaces as a fieldless struct), and
+`set_liquidity_profile`'s `profile_bytes` is restored to `[u8; 160]`
+(anchor-next can't const-eval `PROFILE_BYTES`).
 
 **B. Book math (`price-core`).** The `Price` codec and just-in-time book
 reconstruction can't be derived from the IDL (the `Vault` slab is opaque to

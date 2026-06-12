@@ -167,7 +167,7 @@ const _: () = assert!(core::mem::size_of::<MarketHeader>() == 237);
 const _: () = assert!(core::mem::size_of::<Vault>() == 560);
 // Sectors stay aligned across the slab: stride must be a multiple of the
 // on-chain Vault alignment (see VAULT_ALIGN / MarketView::load).
-const _: () = assert!(core::mem::size_of::<Vault>() % VAULT_ALIGN == 0);
+const _: () = assert!(core::mem::size_of::<Vault>().is_multiple_of(VAULT_ALIGN));
 const _: () = assert!(core::mem::size_of::<LiquidityProfile>() == 2 * N_LEVELS * 10);
 const _: () = assert!(core::mem::size_of::<Remaining>() == 2 * N_LEVELS * 16);
 
@@ -225,8 +225,9 @@ impl<'a> MarketView<'a> {
         if data.len() < len_at + 4 {
             return Err(LayoutError::TooSmall);
         }
-        let header: &MarketHeader = bytemuck::try_from_bytes(&data[ACCOUNT_DISCRIMINATOR_LEN..len_at])
-            .map_err(|_| LayoutError::Cast)?;
+        let header: &MarketHeader =
+            bytemuck::try_from_bytes(&data[ACCOUNT_DISCRIMINATOR_LEN..len_at])
+                .map_err(|_| LayoutError::Cast)?;
         let len = u32::from_le_bytes(data[len_at..len_at + 4].try_into().unwrap()) as usize;
         // The slab aligns the first sector to the on-chain Vault align
         // (see VAULT_ALIGN); subsequent sectors are size_of::<Vault>()

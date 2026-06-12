@@ -31,7 +31,8 @@ jobs:
       run: |
         make sdk
         git add -A -- sdk/ts/src/generated sdk/rs/src/generated
-        git diff --cached --exit-code -- sdk/ts/src/generated sdk/rs/src/generated
+        git diff --cached --exit-code -- \
+        sdk/ts/src/generated sdk/rs/src/generated
     # TypeScript SDK: typecheck + cross-language conformance vectors.
     - run: 'pnpm --filter @dropset/sdk run check'
     - run: 'pnpm --filter @dropset/sdk test'

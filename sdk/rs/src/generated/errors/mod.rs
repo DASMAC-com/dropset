@@ -5,7 +5,6 @@
 //! <https://github.com/codama-idl/codama>
 //!
 
-      pub(crate) mod dropset;
-  
-      pub use self::dropset::DropsetError;
-  
+pub(crate) mod dropset;
+
+pub use self::dropset::DropsetError;

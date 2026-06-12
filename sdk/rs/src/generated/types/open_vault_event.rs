@@ -5,23 +5,30 @@
 //! <https://github.com/codama-idl/codama>
 //!
 
-use solana_pubkey::Pubkey;
-use borsh::BorshSerialize;
 use borsh::BorshDeserialize;
+use borsh::BorshSerialize;
+use solana_pubkey::Pubkey;
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OpenVaultEvent {
-#[cfg_attr(feature = "serde", serde(with = "serde_with::As::<serde_with::DisplayFromStr>"))]
-pub market: Pubkey,
-pub sector_idx: u32,
-#[cfg_attr(feature = "serde", serde(with = "serde_with::As::<serde_with::DisplayFromStr>"))]
-pub leader: Pubkey,
-#[cfg_attr(feature = "serde", serde(with = "serde_with::As::<serde_with::DisplayFromStr>"))]
-pub quote_authority: Pubkey,
-pub perf_fee_rate: u32,
-pub min_leader_share: u32,
-pub allow_outside_depositors: bool,
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
+    )]
+    pub market: Pubkey,
+    pub sector_idx: u32,
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
+    )]
+    pub leader: Pubkey,
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
+    )]
+    pub quote_authority: Pubkey,
+    pub perf_fee_rate: u32,
+    pub min_leader_share: u32,
+    pub allow_outside_depositors: bool,
 }
-
-

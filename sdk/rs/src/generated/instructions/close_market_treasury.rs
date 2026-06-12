@@ -5,597 +5,570 @@
 //! <https://github.com/codama-idl/codama>
 //!
 
-use borsh::BorshSerialize;
 use borsh::BorshDeserialize;
+use borsh::BorshSerialize;
 
 pub const CLOSE_MARKET_TREASURY_DISCRIMINATOR: [u8; 1] = [18];
 
 /// Accounts.
 #[derive(Debug)]
 pub struct CloseMarketTreasury {
-            /// Registry admin — authorized via the registry admin set.
-
-    
-              
-          pub admin: solana_pubkey::Pubkey,
-                /// Singleton registry, read for the admin-membership check.
-
-    
-              
-          pub registry: solana_pubkey::Pubkey,
-                /// Market owning the treasury. Read-only — closing a treasury does
-/// not mutate market state (the market is closed separately, after
-/// both treasuries are gone). The market PDA still signs the
-/// `CloseAccount` CPI via its `(base_mint, quote_mint)` seeds,
-/// recovered from `market.bump`. Taken bare (no `seeds` constraint),
-/// matching every other handler: the `associated_token::authority =
-/// market` constraint on `treasury` already binds the ATA to this
-/// market, and the CPI signature fails if a non-matching market is
-/// passed.
-
-    
-              
-          pub market: solana_pubkey::Pubkey,
-                /// One of the market's two leg mints. The ATA constraint below binds
-/// `treasury` to the canonical `(market, mint)` ATA; the handler
-/// additionally rejects any mint that isn't one of the market legs.
-
-    
-              
-          pub mint: solana_pubkey::Pubkey,
-                /// Token program owning `mint`.
-
-    
-              
-          pub token_program: solana_pubkey::Pubkey,
-                /// The treasury ATA to close. The ATA constraint pins it to
-/// `ata(market, mint, token_program)`, so a non-canonical account is
-/// rejected before the handler runs. Must be drained to zero.
-
-    
-              
-          pub treasury: solana_pubkey::Pubkey,
-                /// Receives the treasury's rent lamports on close.
-/// CHECK: rent destination only; no constraints required — the admin
-/// chooses where reclaimed rent lands.
-
-    
-              
-          pub rent_recipient: solana_pubkey::Pubkey,
-      }
+    /// Registry admin — authorized via the registry admin set.
+    pub admin: solana_pubkey::Pubkey,
+    /// Singleton registry, read for the admin-membership check.
+    pub registry: solana_pubkey::Pubkey,
+    /// Market owning the treasury. Read-only — closing a treasury does
+    /// not mutate market state (the market is closed separately, after
+    /// both treasuries are gone). The market PDA still signs the
+    /// `CloseAccount` CPI via its `(base_mint, quote_mint)` seeds,
+    /// recovered from `market.bump`. Taken bare (no `seeds` constraint),
+    /// matching every other handler: the `associated_token::authority =
+    /// market` constraint on `treasury` already binds the ATA to this
+    /// market, and the CPI signature fails if a non-matching market is
+    /// passed.
+    pub market: solana_pubkey::Pubkey,
+    /// One of the market's two leg mints. The ATA constraint below binds
+    /// `treasury` to the canonical `(market, mint)` ATA; the handler
+    /// additionally rejects any mint that isn't one of the market legs.
+    pub mint: solana_pubkey::Pubkey,
+    /// Token program owning `mint`.
+    pub token_program: solana_pubkey::Pubkey,
+    /// The treasury ATA to close. The ATA constraint pins it to
+    /// `ata(market, mint, token_program)`, so a non-canonical account is
+    /// rejected before the handler runs. Must be drained to zero.
+    pub treasury: solana_pubkey::Pubkey,
+    /// Receives the treasury's rent lamports on close.
+    /// CHECK: rent destination only; no constraints required — the admin
+    /// chooses where reclaimed rent lands.
+    pub rent_recipient: solana_pubkey::Pubkey,
+}
 
 impl CloseMarketTreasury {
-  pub fn instruction(&self) -> solana_instruction::Instruction {
-    self.instruction_with_remaining_accounts(&[])
-  }
-  #[allow(clippy::arithmetic_side_effects)]
-  #[allow(clippy::vec_init_then_push)]
-  pub fn instruction_with_remaining_accounts(&self, remaining_accounts: &[solana_instruction::AccountMeta]) -> solana_instruction::Instruction {
-    let mut accounts = Vec::with_capacity(7+ remaining_accounts.len());
-                            accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.admin,
-            true
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.registry,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.market,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.mint,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.token_program,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new(
-            self.treasury,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new(
-            self.rent_recipient,
-            false
-          ));
-                      accounts.extend_from_slice(remaining_accounts);
-    let data = CloseMarketTreasuryInstructionData::new().try_to_vec().unwrap();
-    
-    solana_instruction::Instruction {
-      program_id: crate::DROPSET_ID,
-      accounts,
-      data,
+    pub fn instruction(&self) -> solana_instruction::Instruction {
+        self.instruction_with_remaining_accounts(&[])
     }
-  }
+    #[allow(clippy::arithmetic_side_effects)]
+    #[allow(clippy::vec_init_then_push)]
+    pub fn instruction_with_remaining_accounts(
+        &self,
+        remaining_accounts: &[solana_instruction::AccountMeta],
+    ) -> solana_instruction::Instruction {
+        let mut accounts = Vec::with_capacity(7 + remaining_accounts.len());
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.admin, true,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.registry,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.market,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.mint, false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.token_program,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(self.treasury, false));
+        accounts.push(solana_instruction::AccountMeta::new(
+            self.rent_recipient,
+            false,
+        ));
+        accounts.extend_from_slice(remaining_accounts);
+        let data = CloseMarketTreasuryInstructionData::new()
+            .try_to_vec()
+            .unwrap();
+
+        solana_instruction::Instruction {
+            program_id: crate::DROPSET_ID,
+            accounts,
+            data,
+        }
+    }
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
- pub struct CloseMarketTreasuryInstructionData {
-            discriminator: [u8; 1],
-      }
-
-impl CloseMarketTreasuryInstructionData {
-  pub fn new() -> Self {
-    Self {
-                        discriminator: [18],
-                  }
-  }
-
-    pub(crate) fn try_to_vec(&self) -> Result<Vec<u8>, std::io::Error> {
-    borsh::to_vec(self)
-  }
-  }
-
-impl Default for CloseMarketTreasuryInstructionData {
-  fn default() -> Self {
-    Self::new()
-  }
+pub struct CloseMarketTreasuryInstructionData {
+    discriminator: [u8; 1],
 }
 
+impl CloseMarketTreasuryInstructionData {
+    pub fn new() -> Self {
+        Self {
+            discriminator: [18],
+        }
+    }
 
+    pub(crate) fn try_to_vec(&self) -> Result<Vec<u8>, std::io::Error> {
+        borsh::to_vec(self)
+    }
+}
+
+impl Default for CloseMarketTreasuryInstructionData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Instruction builder for `CloseMarketTreasury`.
 ///
 /// ### Accounts:
 ///
-                ///   0. `[signer]` admin
-          ///   1. `[]` registry
-          ///   2. `[]` market
-          ///   3. `[]` mint
-                ///   4. `[optional]` token_program (default to `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`)
-                ///   5. `[writable]` treasury
-                ///   6. `[writable]` rent_recipient
+///   0. `[signer]` admin
+///   1. `[]` registry
+///   2. `[]` market
+///   3. `[]` mint
+///   4. `[optional]` token_program (default to `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`)
+///   5. `[writable]` treasury
+///   6. `[writable]` rent_recipient
 #[derive(Clone, Debug, Default)]
 pub struct CloseMarketTreasuryBuilder {
-            admin: Option<solana_pubkey::Pubkey>,
-                registry: Option<solana_pubkey::Pubkey>,
-                market: Option<solana_pubkey::Pubkey>,
-                mint: Option<solana_pubkey::Pubkey>,
-                token_program: Option<solana_pubkey::Pubkey>,
-                treasury: Option<solana_pubkey::Pubkey>,
-                rent_recipient: Option<solana_pubkey::Pubkey>,
-                __remaining_accounts: Vec<solana_instruction::AccountMeta>,
+    admin: Option<solana_pubkey::Pubkey>,
+    registry: Option<solana_pubkey::Pubkey>,
+    market: Option<solana_pubkey::Pubkey>,
+    mint: Option<solana_pubkey::Pubkey>,
+    token_program: Option<solana_pubkey::Pubkey>,
+    treasury: Option<solana_pubkey::Pubkey>,
+    rent_recipient: Option<solana_pubkey::Pubkey>,
+    __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
 
 impl CloseMarketTreasuryBuilder {
-  pub fn new() -> Self {
-    Self::default()
-  }
-            /// Registry admin — authorized via the registry admin set.
-#[inline(always)]
+    pub fn new() -> Self {
+        Self::default()
+    }
+    /// Registry admin — authorized via the registry admin set.
+    #[inline(always)]
     pub fn admin(&mut self, admin: solana_pubkey::Pubkey) -> &mut Self {
-                        self.admin = Some(admin);
-                    self
+        self.admin = Some(admin);
+        self
     }
-            /// Singleton registry, read for the admin-membership check.
-#[inline(always)]
+    /// Singleton registry, read for the admin-membership check.
+    #[inline(always)]
     pub fn registry(&mut self, registry: solana_pubkey::Pubkey) -> &mut Self {
-                        self.registry = Some(registry);
-                    self
+        self.registry = Some(registry);
+        self
     }
-            /// Market owning the treasury. Read-only — closing a treasury does
-/// not mutate market state (the market is closed separately, after
-/// both treasuries are gone). The market PDA still signs the
-/// `CloseAccount` CPI via its `(base_mint, quote_mint)` seeds,
-/// recovered from `market.bump`. Taken bare (no `seeds` constraint),
-/// matching every other handler: the `associated_token::authority =
-/// market` constraint on `treasury` already binds the ATA to this
-/// market, and the CPI signature fails if a non-matching market is
-/// passed.
-#[inline(always)]
+    /// Market owning the treasury. Read-only — closing a treasury does
+    /// not mutate market state (the market is closed separately, after
+    /// both treasuries are gone). The market PDA still signs the
+    /// `CloseAccount` CPI via its `(base_mint, quote_mint)` seeds,
+    /// recovered from `market.bump`. Taken bare (no `seeds` constraint),
+    /// matching every other handler: the `associated_token::authority =
+    /// market` constraint on `treasury` already binds the ATA to this
+    /// market, and the CPI signature fails if a non-matching market is
+    /// passed.
+    #[inline(always)]
     pub fn market(&mut self, market: solana_pubkey::Pubkey) -> &mut Self {
-                        self.market = Some(market);
-                    self
+        self.market = Some(market);
+        self
     }
-            /// One of the market's two leg mints. The ATA constraint below binds
-/// `treasury` to the canonical `(market, mint)` ATA; the handler
-/// additionally rejects any mint that isn't one of the market legs.
-#[inline(always)]
+    /// One of the market's two leg mints. The ATA constraint below binds
+    /// `treasury` to the canonical `(market, mint)` ATA; the handler
+    /// additionally rejects any mint that isn't one of the market legs.
+    #[inline(always)]
     pub fn mint(&mut self, mint: solana_pubkey::Pubkey) -> &mut Self {
-                        self.mint = Some(mint);
-                    self
+        self.mint = Some(mint);
+        self
     }
-            /// `[optional account, default to 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA']`
-/// Token program owning `mint`.
-#[inline(always)]
+    /// `[optional account, default to 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA']`
+    /// Token program owning `mint`.
+    #[inline(always)]
     pub fn token_program(&mut self, token_program: solana_pubkey::Pubkey) -> &mut Self {
-                        self.token_program = Some(token_program);
-                    self
+        self.token_program = Some(token_program);
+        self
     }
-            /// The treasury ATA to close. The ATA constraint pins it to
-/// `ata(market, mint, token_program)`, so a non-canonical account is
-/// rejected before the handler runs. Must be drained to zero.
-#[inline(always)]
+    /// The treasury ATA to close. The ATA constraint pins it to
+    /// `ata(market, mint, token_program)`, so a non-canonical account is
+    /// rejected before the handler runs. Must be drained to zero.
+    #[inline(always)]
     pub fn treasury(&mut self, treasury: solana_pubkey::Pubkey) -> &mut Self {
-                        self.treasury = Some(treasury);
-                    self
+        self.treasury = Some(treasury);
+        self
     }
-            /// Receives the treasury's rent lamports on close.
-/// CHECK: rent destination only; no constraints required — the admin
-/// chooses where reclaimed rent lands.
-#[inline(always)]
+    /// Receives the treasury's rent lamports on close.
+    /// CHECK: rent destination only; no constraints required — the admin
+    /// chooses where reclaimed rent lands.
+    #[inline(always)]
     pub fn rent_recipient(&mut self, rent_recipient: solana_pubkey::Pubkey) -> &mut Self {
-                        self.rent_recipient = Some(rent_recipient);
-                    self
+        self.rent_recipient = Some(rent_recipient);
+        self
     }
-            /// Add an additional account to the instruction.
-  #[inline(always)]
-  pub fn add_remaining_account(&mut self, account: solana_instruction::AccountMeta) -> &mut Self {
-    self.__remaining_accounts.push(account);
-    self
-  }
-  /// Add additional accounts to the instruction.
-  #[inline(always)]
-  pub fn add_remaining_accounts(&mut self, accounts: &[solana_instruction::AccountMeta]) -> &mut Self {
-    self.__remaining_accounts.extend_from_slice(accounts);
-    self
-  }
-  #[allow(clippy::clone_on_copy)]
-  pub fn instruction(&self) -> solana_instruction::Instruction {
-    let accounts = CloseMarketTreasury {
-                              admin: self.admin.expect("admin is not set"),
-                                        registry: self.registry.expect("registry is not set"),
-                                        market: self.market.expect("market is not set"),
-                                        mint: self.mint.expect("mint is not set"),
-                                        token_program: self.token_program.unwrap_or(solana_pubkey::pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")),
-                                        treasury: self.treasury.expect("treasury is not set"),
-                                        rent_recipient: self.rent_recipient.expect("rent_recipient is not set"),
-                      };
-    
-    accounts.instruction_with_remaining_accounts(&self.__remaining_accounts)
-  }
+    /// Add an additional account to the instruction.
+    #[inline(always)]
+    pub fn add_remaining_account(&mut self, account: solana_instruction::AccountMeta) -> &mut Self {
+        self.__remaining_accounts.push(account);
+        self
+    }
+    /// Add additional accounts to the instruction.
+    #[inline(always)]
+    pub fn add_remaining_accounts(
+        &mut self,
+        accounts: &[solana_instruction::AccountMeta],
+    ) -> &mut Self {
+        self.__remaining_accounts.extend_from_slice(accounts);
+        self
+    }
+    #[allow(clippy::clone_on_copy)]
+    pub fn instruction(&self) -> solana_instruction::Instruction {
+        let accounts = CloseMarketTreasury {
+            admin: self.admin.expect("admin is not set"),
+            registry: self.registry.expect("registry is not set"),
+            market: self.market.expect("market is not set"),
+            mint: self.mint.expect("mint is not set"),
+            token_program: self.token_program.unwrap_or(solana_pubkey::pubkey!(
+                "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+            )),
+            treasury: self.treasury.expect("treasury is not set"),
+            rent_recipient: self.rent_recipient.expect("rent_recipient is not set"),
+        };
+
+        accounts.instruction_with_remaining_accounts(&self.__remaining_accounts)
+    }
 }
 
-  /// `close_market_treasury` CPI accounts.
-  pub struct CloseMarketTreasuryCpiAccounts<'a, 'b> {
-                  /// Registry admin — authorized via the registry admin set.
-
-      
-                    
-              pub admin: &'b solana_account_info::AccountInfo<'a>,
-                        /// Singleton registry, read for the admin-membership check.
-
-      
-                    
-              pub registry: &'b solana_account_info::AccountInfo<'a>,
-                        /// Market owning the treasury. Read-only — closing a treasury does
-/// not mutate market state (the market is closed separately, after
-/// both treasuries are gone). The market PDA still signs the
-/// `CloseAccount` CPI via its `(base_mint, quote_mint)` seeds,
-/// recovered from `market.bump`. Taken bare (no `seeds` constraint),
-/// matching every other handler: the `associated_token::authority =
-/// market` constraint on `treasury` already binds the ATA to this
-/// market, and the CPI signature fails if a non-matching market is
-/// passed.
-
-      
-                    
-              pub market: &'b solana_account_info::AccountInfo<'a>,
-                        /// One of the market's two leg mints. The ATA constraint below binds
-/// `treasury` to the canonical `(market, mint)` ATA; the handler
-/// additionally rejects any mint that isn't one of the market legs.
-
-      
-                    
-              pub mint: &'b solana_account_info::AccountInfo<'a>,
-                        /// Token program owning `mint`.
-
-      
-                    
-              pub token_program: &'b solana_account_info::AccountInfo<'a>,
-                        /// The treasury ATA to close. The ATA constraint pins it to
-/// `ata(market, mint, token_program)`, so a non-canonical account is
-/// rejected before the handler runs. Must be drained to zero.
-
-      
-                    
-              pub treasury: &'b solana_account_info::AccountInfo<'a>,
-                        /// Receives the treasury's rent lamports on close.
-/// CHECK: rent destination only; no constraints required — the admin
-/// chooses where reclaimed rent lands.
-
-      
-                    
-              pub rent_recipient: &'b solana_account_info::AccountInfo<'a>,
-            }
+/// `close_market_treasury` CPI accounts.
+pub struct CloseMarketTreasuryCpiAccounts<'a, 'b> {
+    /// Registry admin — authorized via the registry admin set.
+    pub admin: &'b solana_account_info::AccountInfo<'a>,
+    /// Singleton registry, read for the admin-membership check.
+    pub registry: &'b solana_account_info::AccountInfo<'a>,
+    /// Market owning the treasury. Read-only — closing a treasury does
+    /// not mutate market state (the market is closed separately, after
+    /// both treasuries are gone). The market PDA still signs the
+    /// `CloseAccount` CPI via its `(base_mint, quote_mint)` seeds,
+    /// recovered from `market.bump`. Taken bare (no `seeds` constraint),
+    /// matching every other handler: the `associated_token::authority =
+    /// market` constraint on `treasury` already binds the ATA to this
+    /// market, and the CPI signature fails if a non-matching market is
+    /// passed.
+    pub market: &'b solana_account_info::AccountInfo<'a>,
+    /// One of the market's two leg mints. The ATA constraint below binds
+    /// `treasury` to the canonical `(market, mint)` ATA; the handler
+    /// additionally rejects any mint that isn't one of the market legs.
+    pub mint: &'b solana_account_info::AccountInfo<'a>,
+    /// Token program owning `mint`.
+    pub token_program: &'b solana_account_info::AccountInfo<'a>,
+    /// The treasury ATA to close. The ATA constraint pins it to
+    /// `ata(market, mint, token_program)`, so a non-canonical account is
+    /// rejected before the handler runs. Must be drained to zero.
+    pub treasury: &'b solana_account_info::AccountInfo<'a>,
+    /// Receives the treasury's rent lamports on close.
+    /// CHECK: rent destination only; no constraints required — the admin
+    /// chooses where reclaimed rent lands.
+    pub rent_recipient: &'b solana_account_info::AccountInfo<'a>,
+}
 
 /// `close_market_treasury` CPI instruction.
 pub struct CloseMarketTreasuryCpi<'a, 'b> {
-  /// The program to invoke.
-  pub __program: &'b solana_account_info::AccountInfo<'a>,
-            /// Registry admin — authorized via the registry admin set.
-
-    
-              
-          pub admin: &'b solana_account_info::AccountInfo<'a>,
-                /// Singleton registry, read for the admin-membership check.
-
-    
-              
-          pub registry: &'b solana_account_info::AccountInfo<'a>,
-                /// Market owning the treasury. Read-only — closing a treasury does
-/// not mutate market state (the market is closed separately, after
-/// both treasuries are gone). The market PDA still signs the
-/// `CloseAccount` CPI via its `(base_mint, quote_mint)` seeds,
-/// recovered from `market.bump`. Taken bare (no `seeds` constraint),
-/// matching every other handler: the `associated_token::authority =
-/// market` constraint on `treasury` already binds the ATA to this
-/// market, and the CPI signature fails if a non-matching market is
-/// passed.
-
-    
-              
-          pub market: &'b solana_account_info::AccountInfo<'a>,
-                /// One of the market's two leg mints. The ATA constraint below binds
-/// `treasury` to the canonical `(market, mint)` ATA; the handler
-/// additionally rejects any mint that isn't one of the market legs.
-
-    
-              
-          pub mint: &'b solana_account_info::AccountInfo<'a>,
-                /// Token program owning `mint`.
-
-    
-              
-          pub token_program: &'b solana_account_info::AccountInfo<'a>,
-                /// The treasury ATA to close. The ATA constraint pins it to
-/// `ata(market, mint, token_program)`, so a non-canonical account is
-/// rejected before the handler runs. Must be drained to zero.
-
-    
-              
-          pub treasury: &'b solana_account_info::AccountInfo<'a>,
-                /// Receives the treasury's rent lamports on close.
-/// CHECK: rent destination only; no constraints required — the admin
-/// chooses where reclaimed rent lands.
-
-    
-              
-          pub rent_recipient: &'b solana_account_info::AccountInfo<'a>,
-        }
+    /// The program to invoke.
+    pub __program: &'b solana_account_info::AccountInfo<'a>,
+    /// Registry admin — authorized via the registry admin set.
+    pub admin: &'b solana_account_info::AccountInfo<'a>,
+    /// Singleton registry, read for the admin-membership check.
+    pub registry: &'b solana_account_info::AccountInfo<'a>,
+    /// Market owning the treasury. Read-only — closing a treasury does
+    /// not mutate market state (the market is closed separately, after
+    /// both treasuries are gone). The market PDA still signs the
+    /// `CloseAccount` CPI via its `(base_mint, quote_mint)` seeds,
+    /// recovered from `market.bump`. Taken bare (no `seeds` constraint),
+    /// matching every other handler: the `associated_token::authority =
+    /// market` constraint on `treasury` already binds the ATA to this
+    /// market, and the CPI signature fails if a non-matching market is
+    /// passed.
+    pub market: &'b solana_account_info::AccountInfo<'a>,
+    /// One of the market's two leg mints. The ATA constraint below binds
+    /// `treasury` to the canonical `(market, mint)` ATA; the handler
+    /// additionally rejects any mint that isn't one of the market legs.
+    pub mint: &'b solana_account_info::AccountInfo<'a>,
+    /// Token program owning `mint`.
+    pub token_program: &'b solana_account_info::AccountInfo<'a>,
+    /// The treasury ATA to close. The ATA constraint pins it to
+    /// `ata(market, mint, token_program)`, so a non-canonical account is
+    /// rejected before the handler runs. Must be drained to zero.
+    pub treasury: &'b solana_account_info::AccountInfo<'a>,
+    /// Receives the treasury's rent lamports on close.
+    /// CHECK: rent destination only; no constraints required — the admin
+    /// chooses where reclaimed rent lands.
+    pub rent_recipient: &'b solana_account_info::AccountInfo<'a>,
+}
 
 impl<'a, 'b> CloseMarketTreasuryCpi<'a, 'b> {
-  pub fn new(
-    program: &'b solana_account_info::AccountInfo<'a>,
-          accounts: CloseMarketTreasuryCpiAccounts<'a, 'b>,
-          ) -> Self {
-    Self {
-      __program: program,
-              admin: accounts.admin,
-              registry: accounts.registry,
-              market: accounts.market,
-              mint: accounts.mint,
-              token_program: accounts.token_program,
-              treasury: accounts.treasury,
-              rent_recipient: accounts.rent_recipient,
-                }
-  }
-  #[inline(always)]
-  pub fn invoke(&self) -> solana_program_error::ProgramResult {
-    self.invoke_signed_with_remaining_accounts(&[], &[])
-  }
-  #[inline(always)]
-  pub fn invoke_with_remaining_accounts(&self, remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)]) -> solana_program_error::ProgramResult {
-    self.invoke_signed_with_remaining_accounts(&[], remaining_accounts)
-  }
-  #[inline(always)]
-  pub fn invoke_signed(&self, signers_seeds: &[&[&[u8]]]) -> solana_program_error::ProgramResult {
-    self.invoke_signed_with_remaining_accounts(signers_seeds, &[])
-  }
-  #[allow(clippy::arithmetic_side_effects)]
-  #[allow(clippy::clone_on_copy)]
-  #[allow(clippy::vec_init_then_push)]
-  pub fn invoke_signed_with_remaining_accounts(
-    &self,
-    signers_seeds: &[&[&[u8]]],
-    remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)]
-  ) -> solana_program_error::ProgramResult {
-    let mut accounts = Vec::with_capacity(7+ remaining_accounts.len());
-                            accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.admin.key,
-            true
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.registry.key,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.market.key,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.mint.key,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.token_program.key,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new(
-            *self.treasury.key,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new(
-            *self.rent_recipient.key,
-            false
-          ));
-                      remaining_accounts.iter().for_each(|remaining_account| {
-      accounts.push(solana_instruction::AccountMeta {
-          pubkey: *remaining_account.0.key,
-          is_signer: remaining_account.1,
-          is_writable: remaining_account.2,
-      })
-    });
-    let data = CloseMarketTreasuryInstructionData::new().try_to_vec().unwrap();
-    
-    let instruction = solana_instruction::Instruction {
-      program_id: crate::DROPSET_ID,
-      accounts,
-      data,
-    };
-    let mut account_infos = Vec::with_capacity(8 + remaining_accounts.len());
-    account_infos.push(self.__program.clone());
-                  account_infos.push(self.admin.clone());
-                        account_infos.push(self.registry.clone());
-                        account_infos.push(self.market.clone());
-                        account_infos.push(self.mint.clone());
-                        account_infos.push(self.token_program.clone());
-                        account_infos.push(self.treasury.clone());
-                        account_infos.push(self.rent_recipient.clone());
-              remaining_accounts.iter().for_each(|remaining_account| account_infos.push(remaining_account.0.clone()));
-
-    if signers_seeds.is_empty() {
-      solana_cpi::invoke(&instruction, &account_infos)
-    } else {
-      solana_cpi::invoke_signed(&instruction, &account_infos, signers_seeds)
+    pub fn new(
+        program: &'b solana_account_info::AccountInfo<'a>,
+        accounts: CloseMarketTreasuryCpiAccounts<'a, 'b>,
+    ) -> Self {
+        Self {
+            __program: program,
+            admin: accounts.admin,
+            registry: accounts.registry,
+            market: accounts.market,
+            mint: accounts.mint,
+            token_program: accounts.token_program,
+            treasury: accounts.treasury,
+            rent_recipient: accounts.rent_recipient,
+        }
     }
-  }
+    #[inline(always)]
+    pub fn invoke(&self) -> solana_program_error::ProgramResult {
+        self.invoke_signed_with_remaining_accounts(&[], &[])
+    }
+    #[inline(always)]
+    pub fn invoke_with_remaining_accounts(
+        &self,
+        remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
+    ) -> solana_program_error::ProgramResult {
+        self.invoke_signed_with_remaining_accounts(&[], remaining_accounts)
+    }
+    #[inline(always)]
+    pub fn invoke_signed(&self, signers_seeds: &[&[&[u8]]]) -> solana_program_error::ProgramResult {
+        self.invoke_signed_with_remaining_accounts(signers_seeds, &[])
+    }
+    #[allow(clippy::arithmetic_side_effects)]
+    #[allow(clippy::clone_on_copy)]
+    #[allow(clippy::vec_init_then_push)]
+    pub fn invoke_signed_with_remaining_accounts(
+        &self,
+        signers_seeds: &[&[&[u8]]],
+        remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
+    ) -> solana_program_error::ProgramResult {
+        let mut accounts = Vec::with_capacity(7 + remaining_accounts.len());
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.admin.key,
+            true,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.registry.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.market.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.mint.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.token_program.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            *self.treasury.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            *self.rent_recipient.key,
+            false,
+        ));
+        remaining_accounts.iter().for_each(|remaining_account| {
+            accounts.push(solana_instruction::AccountMeta {
+                pubkey: *remaining_account.0.key,
+                is_signer: remaining_account.1,
+                is_writable: remaining_account.2,
+            })
+        });
+        let data = CloseMarketTreasuryInstructionData::new()
+            .try_to_vec()
+            .unwrap();
+
+        let instruction = solana_instruction::Instruction {
+            program_id: crate::DROPSET_ID,
+            accounts,
+            data,
+        };
+        let mut account_infos = Vec::with_capacity(8 + remaining_accounts.len());
+        account_infos.push(self.__program.clone());
+        account_infos.push(self.admin.clone());
+        account_infos.push(self.registry.clone());
+        account_infos.push(self.market.clone());
+        account_infos.push(self.mint.clone());
+        account_infos.push(self.token_program.clone());
+        account_infos.push(self.treasury.clone());
+        account_infos.push(self.rent_recipient.clone());
+        remaining_accounts
+            .iter()
+            .for_each(|remaining_account| account_infos.push(remaining_account.0.clone()));
+
+        if signers_seeds.is_empty() {
+            solana_cpi::invoke(&instruction, &account_infos)
+        } else {
+            solana_cpi::invoke_signed(&instruction, &account_infos, signers_seeds)
+        }
+    }
 }
 
 /// Instruction builder for `CloseMarketTreasury` via CPI.
 ///
 /// ### Accounts:
 ///
-                ///   0. `[signer]` admin
-          ///   1. `[]` registry
-          ///   2. `[]` market
-          ///   3. `[]` mint
-          ///   4. `[]` token_program
-                ///   5. `[writable]` treasury
-                ///   6. `[writable]` rent_recipient
+///   0. `[signer]` admin
+///   1. `[]` registry
+///   2. `[]` market
+///   3. `[]` mint
+///   4. `[]` token_program
+///   5. `[writable]` treasury
+///   6. `[writable]` rent_recipient
 #[derive(Clone, Debug)]
 pub struct CloseMarketTreasuryCpiBuilder<'a, 'b> {
-  instruction: Box<CloseMarketTreasuryCpiBuilderInstruction<'a, 'b>>,
+    instruction: Box<CloseMarketTreasuryCpiBuilderInstruction<'a, 'b>>,
 }
 
 impl<'a, 'b> CloseMarketTreasuryCpiBuilder<'a, 'b> {
-  pub fn new(program: &'b solana_account_info::AccountInfo<'a>) -> Self {
-    let instruction = Box::new(CloseMarketTreasuryCpiBuilderInstruction {
-      __program: program,
-              admin: None,
-              registry: None,
-              market: None,
-              mint: None,
-              token_program: None,
-              treasury: None,
-              rent_recipient: None,
-                                __remaining_accounts: Vec::new(),
-    });
-    Self { instruction }
-  }
-      /// Registry admin — authorized via the registry admin set.
-#[inline(always)]
+    pub fn new(program: &'b solana_account_info::AccountInfo<'a>) -> Self {
+        let instruction = Box::new(CloseMarketTreasuryCpiBuilderInstruction {
+            __program: program,
+            admin: None,
+            registry: None,
+            market: None,
+            mint: None,
+            token_program: None,
+            treasury: None,
+            rent_recipient: None,
+            __remaining_accounts: Vec::new(),
+        });
+        Self { instruction }
+    }
+    /// Registry admin — authorized via the registry admin set.
+    #[inline(always)]
     pub fn admin(&mut self, admin: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.admin = Some(admin);
-                    self
+        self.instruction.admin = Some(admin);
+        self
     }
-      /// Singleton registry, read for the admin-membership check.
-#[inline(always)]
+    /// Singleton registry, read for the admin-membership check.
+    #[inline(always)]
     pub fn registry(&mut self, registry: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.registry = Some(registry);
-                    self
+        self.instruction.registry = Some(registry);
+        self
     }
-      /// Market owning the treasury. Read-only — closing a treasury does
-/// not mutate market state (the market is closed separately, after
-/// both treasuries are gone). The market PDA still signs the
-/// `CloseAccount` CPI via its `(base_mint, quote_mint)` seeds,
-/// recovered from `market.bump`. Taken bare (no `seeds` constraint),
-/// matching every other handler: the `associated_token::authority =
-/// market` constraint on `treasury` already binds the ATA to this
-/// market, and the CPI signature fails if a non-matching market is
-/// passed.
-#[inline(always)]
+    /// Market owning the treasury. Read-only — closing a treasury does
+    /// not mutate market state (the market is closed separately, after
+    /// both treasuries are gone). The market PDA still signs the
+    /// `CloseAccount` CPI via its `(base_mint, quote_mint)` seeds,
+    /// recovered from `market.bump`. Taken bare (no `seeds` constraint),
+    /// matching every other handler: the `associated_token::authority =
+    /// market` constraint on `treasury` already binds the ATA to this
+    /// market, and the CPI signature fails if a non-matching market is
+    /// passed.
+    #[inline(always)]
     pub fn market(&mut self, market: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.market = Some(market);
-                    self
+        self.instruction.market = Some(market);
+        self
     }
-      /// One of the market's two leg mints. The ATA constraint below binds
-/// `treasury` to the canonical `(market, mint)` ATA; the handler
-/// additionally rejects any mint that isn't one of the market legs.
-#[inline(always)]
+    /// One of the market's two leg mints. The ATA constraint below binds
+    /// `treasury` to the canonical `(market, mint)` ATA; the handler
+    /// additionally rejects any mint that isn't one of the market legs.
+    #[inline(always)]
     pub fn mint(&mut self, mint: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.mint = Some(mint);
-                    self
+        self.instruction.mint = Some(mint);
+        self
     }
-      /// Token program owning `mint`.
-#[inline(always)]
-    pub fn token_program(&mut self, token_program: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.token_program = Some(token_program);
-                    self
+    /// Token program owning `mint`.
+    #[inline(always)]
+    pub fn token_program(
+        &mut self,
+        token_program: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.token_program = Some(token_program);
+        self
     }
-      /// The treasury ATA to close. The ATA constraint pins it to
-/// `ata(market, mint, token_program)`, so a non-canonical account is
-/// rejected before the handler runs. Must be drained to zero.
-#[inline(always)]
+    /// The treasury ATA to close. The ATA constraint pins it to
+    /// `ata(market, mint, token_program)`, so a non-canonical account is
+    /// rejected before the handler runs. Must be drained to zero.
+    #[inline(always)]
     pub fn treasury(&mut self, treasury: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.treasury = Some(treasury);
-                    self
+        self.instruction.treasury = Some(treasury);
+        self
     }
-      /// Receives the treasury's rent lamports on close.
-/// CHECK: rent destination only; no constraints required — the admin
-/// chooses where reclaimed rent lands.
-#[inline(always)]
-    pub fn rent_recipient(&mut self, rent_recipient: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.rent_recipient = Some(rent_recipient);
-                    self
+    /// Receives the treasury's rent lamports on close.
+    /// CHECK: rent destination only; no constraints required — the admin
+    /// chooses where reclaimed rent lands.
+    #[inline(always)]
+    pub fn rent_recipient(
+        &mut self,
+        rent_recipient: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.rent_recipient = Some(rent_recipient);
+        self
     }
-            /// Add an additional account to the instruction.
-  #[inline(always)]
-  pub fn add_remaining_account(&mut self, account: &'b solana_account_info::AccountInfo<'a>, is_writable: bool, is_signer: bool) -> &mut Self {
-    self.instruction.__remaining_accounts.push((account, is_writable, is_signer));
-    self
-  }
-  /// Add additional accounts to the instruction.
-  ///
-  /// Each account is represented by a tuple of the `AccountInfo`, a `bool` indicating whether the account is writable or not,
-  /// and a `bool` indicating whether the account is a signer or not.
-  #[inline(always)]
-  pub fn add_remaining_accounts(&mut self, accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)]) -> &mut Self {
-    self.instruction.__remaining_accounts.extend_from_slice(accounts);
-    self
-  }
-  #[inline(always)]
-  pub fn invoke(&self) -> solana_program_error::ProgramResult {
-    self.invoke_signed(&[])
-  }
-  #[allow(clippy::clone_on_copy)]
-  #[allow(clippy::vec_init_then_push)]
-  pub fn invoke_signed(&self, signers_seeds: &[&[&[u8]]]) -> solana_program_error::ProgramResult {
+    /// Add an additional account to the instruction.
+    #[inline(always)]
+    pub fn add_remaining_account(
+        &mut self,
+        account: &'b solana_account_info::AccountInfo<'a>,
+        is_writable: bool,
+        is_signer: bool,
+    ) -> &mut Self {
+        self.instruction
+            .__remaining_accounts
+            .push((account, is_writable, is_signer));
+        self
+    }
+    /// Add additional accounts to the instruction.
+    ///
+    /// Each account is represented by a tuple of the `AccountInfo`, a `bool` indicating whether the account is writable or not,
+    /// and a `bool` indicating whether the account is a signer or not.
+    #[inline(always)]
+    pub fn add_remaining_accounts(
+        &mut self,
+        accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
+    ) -> &mut Self {
+        self.instruction
+            .__remaining_accounts
+            .extend_from_slice(accounts);
+        self
+    }
+    #[inline(always)]
+    pub fn invoke(&self) -> solana_program_error::ProgramResult {
+        self.invoke_signed(&[])
+    }
+    #[allow(clippy::clone_on_copy)]
+    #[allow(clippy::vec_init_then_push)]
+    pub fn invoke_signed(&self, signers_seeds: &[&[&[u8]]]) -> solana_program_error::ProgramResult {
         let instruction = CloseMarketTreasuryCpi {
-        __program: self.instruction.__program,
-                  
-          admin: self.instruction.admin.expect("admin is not set"),
-                  
-          registry: self.instruction.registry.expect("registry is not set"),
-                  
-          market: self.instruction.market.expect("market is not set"),
-                  
-          mint: self.instruction.mint.expect("mint is not set"),
-                  
-          token_program: self.instruction.token_program.expect("token_program is not set"),
-                  
-          treasury: self.instruction.treasury.expect("treasury is not set"),
-                  
-          rent_recipient: self.instruction.rent_recipient.expect("rent_recipient is not set"),
-                    };
-    instruction.invoke_signed_with_remaining_accounts(signers_seeds, &self.instruction.__remaining_accounts)
-  }
+            __program: self.instruction.__program,
+
+            admin: self.instruction.admin.expect("admin is not set"),
+
+            registry: self.instruction.registry.expect("registry is not set"),
+
+            market: self.instruction.market.expect("market is not set"),
+
+            mint: self.instruction.mint.expect("mint is not set"),
+
+            token_program: self
+                .instruction
+                .token_program
+                .expect("token_program is not set"),
+
+            treasury: self.instruction.treasury.expect("treasury is not set"),
+
+            rent_recipient: self
+                .instruction
+                .rent_recipient
+                .expect("rent_recipient is not set"),
+        };
+        instruction.invoke_signed_with_remaining_accounts(
+            signers_seeds,
+            &self.instruction.__remaining_accounts,
+        )
+    }
 }
 
 #[derive(Clone, Debug)]
 struct CloseMarketTreasuryCpiBuilderInstruction<'a, 'b> {
-  __program: &'b solana_account_info::AccountInfo<'a>,
-            admin: Option<&'b solana_account_info::AccountInfo<'a>>,
-                registry: Option<&'b solana_account_info::AccountInfo<'a>>,
-                market: Option<&'b solana_account_info::AccountInfo<'a>>,
-                mint: Option<&'b solana_account_info::AccountInfo<'a>>,
-                token_program: Option<&'b solana_account_info::AccountInfo<'a>>,
-                treasury: Option<&'b solana_account_info::AccountInfo<'a>>,
-                rent_recipient: Option<&'b solana_account_info::AccountInfo<'a>>,
-                /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
-  __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,
+    __program: &'b solana_account_info::AccountInfo<'a>,
+    admin: Option<&'b solana_account_info::AccountInfo<'a>>,
+    registry: Option<&'b solana_account_info::AccountInfo<'a>>,
+    market: Option<&'b solana_account_info::AccountInfo<'a>>,
+    mint: Option<&'b solana_account_info::AccountInfo<'a>>,
+    token_program: Option<&'b solana_account_info::AccountInfo<'a>>,
+    treasury: Option<&'b solana_account_info::AccountInfo<'a>>,
+    rent_recipient: Option<&'b solana_account_info::AccountInfo<'a>>,
+    /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
+    __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,
 }
-

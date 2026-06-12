@@ -5,928 +5,937 @@
 //! <https://github.com/codama-idl/codama>
 //!
 
-use borsh::BorshSerialize;
 use borsh::BorshDeserialize;
+use borsh::BorshSerialize;
 
 pub const FORCE_WITHDRAW_LEADER_DISCRIMINATOR: [u8; 1] = [17];
 
 /// Accounts.
 #[derive(Debug)]
 pub struct ForceWithdrawLeader {
-            /// Registry admin. Funds the leader payout ATAs when `init_if_needed`
-/// has to allocate them.
+    /// Registry admin. Funds the leader payout ATAs when `init_if_needed`
+    /// has to allocate them.
+    pub admin: solana_pubkey::Pubkey,
+    /// Singleton registry, read for the admin-membership check.
+    pub registry: solana_pubkey::Pubkey,
+    /// Market the vault lives on.
+    pub market: solana_pubkey::Pubkey,
+    /// The vault's leader — the payout target. Not a signer. Verified
+    /// in-handler against `vault.leader`.
+    /// CHECK: matched against `vault.leader` in the handler and bound as
+    /// the `associated_token::authority` of the payout ATAs below.
+    pub leader: solana_pubkey::Pubkey,
 
-    
-              
-          pub admin: solana_pubkey::Pubkey,
-                /// Singleton registry, read for the admin-membership check.
+    pub base_mint: solana_pubkey::Pubkey,
 
-    
-              
-          pub registry: solana_pubkey::Pubkey,
-                /// Market the vault lives on.
+    pub quote_mint: solana_pubkey::Pubkey,
 
-    
-              
-          pub market: solana_pubkey::Pubkey,
-                /// The vault's leader — the payout target. Not a signer. Verified
-/// in-handler against `vault.leader`.
-/// CHECK: matched against `vault.leader` in the handler and bound as
-/// the `associated_token::authority` of the payout ATAs below.
+    pub base_token_program: solana_pubkey::Pubkey,
 
-    
-              
-          pub leader: solana_pubkey::Pubkey,
-          
-              
-          pub base_mint: solana_pubkey::Pubkey,
-          
-              
-          pub quote_mint: solana_pubkey::Pubkey,
-          
-              
-          pub base_token_program: solana_pubkey::Pubkey,
-          
-              
-          pub quote_token_program: solana_pubkey::Pubkey,
-                /// Leader's base payout ATA — created (admin-funded) if absent.
+    pub quote_token_program: solana_pubkey::Pubkey,
+    /// Leader's base payout ATA — created (admin-funded) if absent.
+    pub leader_base_ata: solana_pubkey::Pubkey,
+    /// Leader's quote payout ATA — created (admin-funded) if absent.
+    pub leader_quote_ata: solana_pubkey::Pubkey,
 
-    
-              
-          pub leader_base_ata: solana_pubkey::Pubkey,
-                /// Leader's quote payout ATA — created (admin-funded) if absent.
+    pub market_base_treasury: solana_pubkey::Pubkey,
 
-    
-              
-          pub leader_quote_ata: solana_pubkey::Pubkey,
-          
-              
-          pub market_base_treasury: solana_pubkey::Pubkey,
-          
-              
-          pub market_quote_treasury: solana_pubkey::Pubkey,
-          
-              
-          pub associated_token_program: solana_pubkey::Pubkey,
-          
-              
-          pub system_program: solana_pubkey::Pubkey,
-                /// CHECK: Only the event authority can invoke self-CPI
+    pub market_quote_treasury: solana_pubkey::Pubkey,
 
-    
-              
-          pub event_authority: solana_pubkey::Pubkey,
-                /// CHECK: Kept for v1-compatible account ordering and IDL shape
+    pub associated_token_program: solana_pubkey::Pubkey,
 
-    
-              
-          pub program: solana_pubkey::Pubkey,
-      }
+    pub system_program: solana_pubkey::Pubkey,
+    /// CHECK: Only the event authority can invoke self-CPI
+    pub event_authority: solana_pubkey::Pubkey,
+    /// CHECK: Kept for v1-compatible account ordering and IDL shape
+    pub program: solana_pubkey::Pubkey,
+}
 
 impl ForceWithdrawLeader {
-  pub fn instruction(&self, args: ForceWithdrawLeaderInstructionArgs) -> solana_instruction::Instruction {
-    self.instruction_with_remaining_accounts(args, &[])
-  }
-  #[allow(clippy::arithmetic_side_effects)]
-  #[allow(clippy::vec_init_then_push)]
-  pub fn instruction_with_remaining_accounts(&self, args: ForceWithdrawLeaderInstructionArgs, remaining_accounts: &[solana_instruction::AccountMeta]) -> solana_instruction::Instruction {
-    let mut accounts = Vec::with_capacity(16+ remaining_accounts.len());
-                            accounts.push(solana_instruction::AccountMeta::new(
-            self.admin,
-            true
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.registry,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new(
-            self.market,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.leader,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.base_mint,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.quote_mint,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.base_token_program,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.quote_token_program,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new(
-            self.leader_base_ata,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new(
-            self.leader_quote_ata,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new(
-            self.market_base_treasury,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new(
-            self.market_quote_treasury,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.associated_token_program,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.system_program,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.event_authority,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.program,
-            false
-          ));
-                      accounts.extend_from_slice(remaining_accounts);
-    let mut data = ForceWithdrawLeaderInstructionData::new().try_to_vec().unwrap();
-          let mut args = args.try_to_vec().unwrap();
-      data.append(&mut args);
-    
-    solana_instruction::Instruction {
-      program_id: crate::DROPSET_ID,
-      accounts,
-      data,
+    pub fn instruction(
+        &self,
+        args: ForceWithdrawLeaderInstructionArgs,
+    ) -> solana_instruction::Instruction {
+        self.instruction_with_remaining_accounts(args, &[])
     }
-  }
+    #[allow(clippy::arithmetic_side_effects)]
+    #[allow(clippy::vec_init_then_push)]
+    pub fn instruction_with_remaining_accounts(
+        &self,
+        args: ForceWithdrawLeaderInstructionArgs,
+        remaining_accounts: &[solana_instruction::AccountMeta],
+    ) -> solana_instruction::Instruction {
+        let mut accounts = Vec::with_capacity(16 + remaining_accounts.len());
+        accounts.push(solana_instruction::AccountMeta::new(self.admin, true));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.registry,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(self.market, false));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.leader,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.base_mint,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.quote_mint,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.base_token_program,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.quote_token_program,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            self.leader_base_ata,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            self.leader_quote_ata,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            self.market_base_treasury,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            self.market_quote_treasury,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.associated_token_program,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.system_program,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.event_authority,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.program,
+            false,
+        ));
+        accounts.extend_from_slice(remaining_accounts);
+        let mut data = ForceWithdrawLeaderInstructionData::new()
+            .try_to_vec()
+            .unwrap();
+        let mut args = args.try_to_vec().unwrap();
+        data.append(&mut args);
+
+        solana_instruction::Instruction {
+            program_id: crate::DROPSET_ID,
+            accounts,
+            data,
+        }
+    }
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
- pub struct ForceWithdrawLeaderInstructionData {
-            discriminator: [u8; 1],
-            }
+pub struct ForceWithdrawLeaderInstructionData {
+    discriminator: [u8; 1],
+}
 
 impl ForceWithdrawLeaderInstructionData {
-  pub fn new() -> Self {
-    Self {
-                        discriminator: [17],
-                                }
-  }
+    pub fn new() -> Self {
+        Self {
+            discriminator: [17],
+        }
+    }
 
     pub(crate) fn try_to_vec(&self) -> Result<Vec<u8>, std::io::Error> {
-    borsh::to_vec(self)
-  }
-  }
+        borsh::to_vec(self)
+    }
+}
 
 impl Default for ForceWithdrawLeaderInstructionData {
-  fn default() -> Self {
-    Self::new()
-  }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
- pub struct ForceWithdrawLeaderInstructionArgs {
-                  pub vault_idx: u32,
-      }
-
-impl ForceWithdrawLeaderInstructionArgs {
-  pub(crate) fn try_to_vec(&self) -> Result<Vec<u8>, std::io::Error> {
-    borsh::to_vec(self)
-  }
+pub struct ForceWithdrawLeaderInstructionArgs {
+    pub vault_idx: u32,
 }
 
+impl ForceWithdrawLeaderInstructionArgs {
+    pub(crate) fn try_to_vec(&self) -> Result<Vec<u8>, std::io::Error> {
+        borsh::to_vec(self)
+    }
+}
 
 /// Instruction builder for `ForceWithdrawLeader`.
 ///
 /// ### Accounts:
 ///
-                      ///   0. `[writable, signer]` admin
-          ///   1. `[]` registry
-                ///   2. `[writable]` market
-          ///   3. `[]` leader
-          ///   4. `[]` base_mint
-          ///   5. `[]` quote_mint
-          ///   6. `[]` base_token_program
-          ///   7. `[]` quote_token_program
-                ///   8. `[writable]` leader_base_ata
-                ///   9. `[writable]` leader_quote_ata
-                ///   10. `[writable]` market_base_treasury
-                ///   11. `[writable]` market_quote_treasury
-                ///   12. `[optional]` associated_token_program (default to `ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL`)
-                ///   13. `[optional]` system_program (default to `11111111111111111111111111111111`)
-          ///   14. `[]` event_authority
-          ///   15. `[]` program
+///   0. `[writable, signer]` admin
+///   1. `[]` registry
+///   2. `[writable]` market
+///   3. `[]` leader
+///   4. `[]` base_mint
+///   5. `[]` quote_mint
+///   6. `[]` base_token_program
+///   7. `[]` quote_token_program
+///   8. `[writable]` leader_base_ata
+///   9. `[writable]` leader_quote_ata
+///   10. `[writable]` market_base_treasury
+///   11. `[writable]` market_quote_treasury
+///   12. `[optional]` associated_token_program (default to `ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL`)
+///   13. `[optional]` system_program (default to `11111111111111111111111111111111`)
+///   14. `[]` event_authority
+///   15. `[]` program
 #[derive(Clone, Debug, Default)]
 pub struct ForceWithdrawLeaderBuilder {
-            admin: Option<solana_pubkey::Pubkey>,
-                registry: Option<solana_pubkey::Pubkey>,
-                market: Option<solana_pubkey::Pubkey>,
-                leader: Option<solana_pubkey::Pubkey>,
-                base_mint: Option<solana_pubkey::Pubkey>,
-                quote_mint: Option<solana_pubkey::Pubkey>,
-                base_token_program: Option<solana_pubkey::Pubkey>,
-                quote_token_program: Option<solana_pubkey::Pubkey>,
-                leader_base_ata: Option<solana_pubkey::Pubkey>,
-                leader_quote_ata: Option<solana_pubkey::Pubkey>,
-                market_base_treasury: Option<solana_pubkey::Pubkey>,
-                market_quote_treasury: Option<solana_pubkey::Pubkey>,
-                associated_token_program: Option<solana_pubkey::Pubkey>,
-                system_program: Option<solana_pubkey::Pubkey>,
-                event_authority: Option<solana_pubkey::Pubkey>,
-                program: Option<solana_pubkey::Pubkey>,
-                        vault_idx: Option<u32>,
-        __remaining_accounts: Vec<solana_instruction::AccountMeta>,
+    admin: Option<solana_pubkey::Pubkey>,
+    registry: Option<solana_pubkey::Pubkey>,
+    market: Option<solana_pubkey::Pubkey>,
+    leader: Option<solana_pubkey::Pubkey>,
+    base_mint: Option<solana_pubkey::Pubkey>,
+    quote_mint: Option<solana_pubkey::Pubkey>,
+    base_token_program: Option<solana_pubkey::Pubkey>,
+    quote_token_program: Option<solana_pubkey::Pubkey>,
+    leader_base_ata: Option<solana_pubkey::Pubkey>,
+    leader_quote_ata: Option<solana_pubkey::Pubkey>,
+    market_base_treasury: Option<solana_pubkey::Pubkey>,
+    market_quote_treasury: Option<solana_pubkey::Pubkey>,
+    associated_token_program: Option<solana_pubkey::Pubkey>,
+    system_program: Option<solana_pubkey::Pubkey>,
+    event_authority: Option<solana_pubkey::Pubkey>,
+    program: Option<solana_pubkey::Pubkey>,
+    vault_idx: Option<u32>,
+    __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
 
 impl ForceWithdrawLeaderBuilder {
-  pub fn new() -> Self {
-    Self::default()
-  }
-            /// Registry admin. Funds the leader payout ATAs when `init_if_needed`
-/// has to allocate them.
-#[inline(always)]
+    pub fn new() -> Self {
+        Self::default()
+    }
+    /// Registry admin. Funds the leader payout ATAs when `init_if_needed`
+    /// has to allocate them.
+    #[inline(always)]
     pub fn admin(&mut self, admin: solana_pubkey::Pubkey) -> &mut Self {
-                        self.admin = Some(admin);
-                    self
+        self.admin = Some(admin);
+        self
     }
-            /// Singleton registry, read for the admin-membership check.
-#[inline(always)]
+    /// Singleton registry, read for the admin-membership check.
+    #[inline(always)]
     pub fn registry(&mut self, registry: solana_pubkey::Pubkey) -> &mut Self {
-                        self.registry = Some(registry);
-                    self
+        self.registry = Some(registry);
+        self
     }
-            /// Market the vault lives on.
-#[inline(always)]
+    /// Market the vault lives on.
+    #[inline(always)]
     pub fn market(&mut self, market: solana_pubkey::Pubkey) -> &mut Self {
-                        self.market = Some(market);
-                    self
+        self.market = Some(market);
+        self
     }
-            /// The vault's leader — the payout target. Not a signer. Verified
-/// in-handler against `vault.leader`.
-/// CHECK: matched against `vault.leader` in the handler and bound as
-/// the `associated_token::authority` of the payout ATAs below.
-#[inline(always)]
+    /// The vault's leader — the payout target. Not a signer. Verified
+    /// in-handler against `vault.leader`.
+    /// CHECK: matched against `vault.leader` in the handler and bound as
+    /// the `associated_token::authority` of the payout ATAs below.
+    #[inline(always)]
     pub fn leader(&mut self, leader: solana_pubkey::Pubkey) -> &mut Self {
-                        self.leader = Some(leader);
-                    self
+        self.leader = Some(leader);
+        self
     }
-            #[inline(always)]
+    #[inline(always)]
     pub fn base_mint(&mut self, base_mint: solana_pubkey::Pubkey) -> &mut Self {
-                        self.base_mint = Some(base_mint);
-                    self
+        self.base_mint = Some(base_mint);
+        self
     }
-            #[inline(always)]
+    #[inline(always)]
     pub fn quote_mint(&mut self, quote_mint: solana_pubkey::Pubkey) -> &mut Self {
-                        self.quote_mint = Some(quote_mint);
-                    self
+        self.quote_mint = Some(quote_mint);
+        self
     }
-            #[inline(always)]
+    #[inline(always)]
     pub fn base_token_program(&mut self, base_token_program: solana_pubkey::Pubkey) -> &mut Self {
-                        self.base_token_program = Some(base_token_program);
-                    self
+        self.base_token_program = Some(base_token_program);
+        self
     }
-            #[inline(always)]
+    #[inline(always)]
     pub fn quote_token_program(&mut self, quote_token_program: solana_pubkey::Pubkey) -> &mut Self {
-                        self.quote_token_program = Some(quote_token_program);
-                    self
+        self.quote_token_program = Some(quote_token_program);
+        self
     }
-            /// Leader's base payout ATA — created (admin-funded) if absent.
-#[inline(always)]
+    /// Leader's base payout ATA — created (admin-funded) if absent.
+    #[inline(always)]
     pub fn leader_base_ata(&mut self, leader_base_ata: solana_pubkey::Pubkey) -> &mut Self {
-                        self.leader_base_ata = Some(leader_base_ata);
-                    self
+        self.leader_base_ata = Some(leader_base_ata);
+        self
     }
-            /// Leader's quote payout ATA — created (admin-funded) if absent.
-#[inline(always)]
+    /// Leader's quote payout ATA — created (admin-funded) if absent.
+    #[inline(always)]
     pub fn leader_quote_ata(&mut self, leader_quote_ata: solana_pubkey::Pubkey) -> &mut Self {
-                        self.leader_quote_ata = Some(leader_quote_ata);
-                    self
+        self.leader_quote_ata = Some(leader_quote_ata);
+        self
     }
-            #[inline(always)]
-    pub fn market_base_treasury(&mut self, market_base_treasury: solana_pubkey::Pubkey) -> &mut Self {
-                        self.market_base_treasury = Some(market_base_treasury);
-                    self
+    #[inline(always)]
+    pub fn market_base_treasury(
+        &mut self,
+        market_base_treasury: solana_pubkey::Pubkey,
+    ) -> &mut Self {
+        self.market_base_treasury = Some(market_base_treasury);
+        self
     }
-            #[inline(always)]
-    pub fn market_quote_treasury(&mut self, market_quote_treasury: solana_pubkey::Pubkey) -> &mut Self {
-                        self.market_quote_treasury = Some(market_quote_treasury);
-                    self
+    #[inline(always)]
+    pub fn market_quote_treasury(
+        &mut self,
+        market_quote_treasury: solana_pubkey::Pubkey,
+    ) -> &mut Self {
+        self.market_quote_treasury = Some(market_quote_treasury);
+        self
     }
-            /// `[optional account, default to 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL']`
-#[inline(always)]
-    pub fn associated_token_program(&mut self, associated_token_program: solana_pubkey::Pubkey) -> &mut Self {
-                        self.associated_token_program = Some(associated_token_program);
-                    self
+    /// `[optional account, default to 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL']`
+    #[inline(always)]
+    pub fn associated_token_program(
+        &mut self,
+        associated_token_program: solana_pubkey::Pubkey,
+    ) -> &mut Self {
+        self.associated_token_program = Some(associated_token_program);
+        self
     }
-            /// `[optional account, default to '11111111111111111111111111111111']`
-#[inline(always)]
+    /// `[optional account, default to '11111111111111111111111111111111']`
+    #[inline(always)]
     pub fn system_program(&mut self, system_program: solana_pubkey::Pubkey) -> &mut Self {
-                        self.system_program = Some(system_program);
-                    self
+        self.system_program = Some(system_program);
+        self
     }
-            /// CHECK: Only the event authority can invoke self-CPI
-#[inline(always)]
+    /// CHECK: Only the event authority can invoke self-CPI
+    #[inline(always)]
     pub fn event_authority(&mut self, event_authority: solana_pubkey::Pubkey) -> &mut Self {
-                        self.event_authority = Some(event_authority);
-                    self
+        self.event_authority = Some(event_authority);
+        self
     }
-            /// CHECK: Kept for v1-compatible account ordering and IDL shape
-#[inline(always)]
+    /// CHECK: Kept for v1-compatible account ordering and IDL shape
+    #[inline(always)]
     pub fn program(&mut self, program: solana_pubkey::Pubkey) -> &mut Self {
-                        self.program = Some(program);
-                    self
+        self.program = Some(program);
+        self
     }
-                    #[inline(always)]
-      pub fn vault_idx(&mut self, vault_idx: u32) -> &mut Self {
+    #[inline(always)]
+    pub fn vault_idx(&mut self, vault_idx: u32) -> &mut Self {
         self.vault_idx = Some(vault_idx);
         self
-      }
-        /// Add an additional account to the instruction.
-  #[inline(always)]
-  pub fn add_remaining_account(&mut self, account: solana_instruction::AccountMeta) -> &mut Self {
-    self.__remaining_accounts.push(account);
-    self
-  }
-  /// Add additional accounts to the instruction.
-  #[inline(always)]
-  pub fn add_remaining_accounts(&mut self, accounts: &[solana_instruction::AccountMeta]) -> &mut Self {
-    self.__remaining_accounts.extend_from_slice(accounts);
-    self
-  }
-  #[allow(clippy::clone_on_copy)]
-  pub fn instruction(&self) -> solana_instruction::Instruction {
-    let accounts = ForceWithdrawLeader {
-                              admin: self.admin.expect("admin is not set"),
-                                        registry: self.registry.expect("registry is not set"),
-                                        market: self.market.expect("market is not set"),
-                                        leader: self.leader.expect("leader is not set"),
-                                        base_mint: self.base_mint.expect("base_mint is not set"),
-                                        quote_mint: self.quote_mint.expect("quote_mint is not set"),
-                                        base_token_program: self.base_token_program.expect("base_token_program is not set"),
-                                        quote_token_program: self.quote_token_program.expect("quote_token_program is not set"),
-                                        leader_base_ata: self.leader_base_ata.expect("leader_base_ata is not set"),
-                                        leader_quote_ata: self.leader_quote_ata.expect("leader_quote_ata is not set"),
-                                        market_base_treasury: self.market_base_treasury.expect("market_base_treasury is not set"),
-                                        market_quote_treasury: self.market_quote_treasury.expect("market_quote_treasury is not set"),
-                                        associated_token_program: self.associated_token_program.unwrap_or(solana_pubkey::pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")),
-                                        system_program: self.system_program.unwrap_or(solana_pubkey::pubkey!("11111111111111111111111111111111")),
-                                        event_authority: self.event_authority.expect("event_authority is not set"),
-                                        program: self.program.expect("program is not set"),
-                      };
-          let args = ForceWithdrawLeaderInstructionArgs {
-                                                              vault_idx: self.vault_idx.clone().expect("vault_idx is not set"),
-                                    };
-    
-    accounts.instruction_with_remaining_accounts(args, &self.__remaining_accounts)
-  }
+    }
+    /// Add an additional account to the instruction.
+    #[inline(always)]
+    pub fn add_remaining_account(&mut self, account: solana_instruction::AccountMeta) -> &mut Self {
+        self.__remaining_accounts.push(account);
+        self
+    }
+    /// Add additional accounts to the instruction.
+    #[inline(always)]
+    pub fn add_remaining_accounts(
+        &mut self,
+        accounts: &[solana_instruction::AccountMeta],
+    ) -> &mut Self {
+        self.__remaining_accounts.extend_from_slice(accounts);
+        self
+    }
+    #[allow(clippy::clone_on_copy)]
+    pub fn instruction(&self) -> solana_instruction::Instruction {
+        let accounts = ForceWithdrawLeader {
+            admin: self.admin.expect("admin is not set"),
+            registry: self.registry.expect("registry is not set"),
+            market: self.market.expect("market is not set"),
+            leader: self.leader.expect("leader is not set"),
+            base_mint: self.base_mint.expect("base_mint is not set"),
+            quote_mint: self.quote_mint.expect("quote_mint is not set"),
+            base_token_program: self
+                .base_token_program
+                .expect("base_token_program is not set"),
+            quote_token_program: self
+                .quote_token_program
+                .expect("quote_token_program is not set"),
+            leader_base_ata: self.leader_base_ata.expect("leader_base_ata is not set"),
+            leader_quote_ata: self.leader_quote_ata.expect("leader_quote_ata is not set"),
+            market_base_treasury: self
+                .market_base_treasury
+                .expect("market_base_treasury is not set"),
+            market_quote_treasury: self
+                .market_quote_treasury
+                .expect("market_quote_treasury is not set"),
+            associated_token_program: self.associated_token_program.unwrap_or(
+                solana_pubkey::pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"),
+            ),
+            system_program: self
+                .system_program
+                .unwrap_or(solana_pubkey::pubkey!("11111111111111111111111111111111")),
+            event_authority: self.event_authority.expect("event_authority is not set"),
+            program: self.program.expect("program is not set"),
+        };
+        let args = ForceWithdrawLeaderInstructionArgs {
+            vault_idx: self.vault_idx.clone().expect("vault_idx is not set"),
+        };
+
+        accounts.instruction_with_remaining_accounts(args, &self.__remaining_accounts)
+    }
 }
 
-  /// `force_withdraw_leader` CPI accounts.
-  pub struct ForceWithdrawLeaderCpiAccounts<'a, 'b> {
-                  /// Registry admin. Funds the leader payout ATAs when `init_if_needed`
-/// has to allocate them.
+/// `force_withdraw_leader` CPI accounts.
+pub struct ForceWithdrawLeaderCpiAccounts<'a, 'b> {
+    /// Registry admin. Funds the leader payout ATAs when `init_if_needed`
+    /// has to allocate them.
+    pub admin: &'b solana_account_info::AccountInfo<'a>,
+    /// Singleton registry, read for the admin-membership check.
+    pub registry: &'b solana_account_info::AccountInfo<'a>,
+    /// Market the vault lives on.
+    pub market: &'b solana_account_info::AccountInfo<'a>,
+    /// The vault's leader — the payout target. Not a signer. Verified
+    /// in-handler against `vault.leader`.
+    /// CHECK: matched against `vault.leader` in the handler and bound as
+    /// the `associated_token::authority` of the payout ATAs below.
+    pub leader: &'b solana_account_info::AccountInfo<'a>,
 
-      
-                    
-              pub admin: &'b solana_account_info::AccountInfo<'a>,
-                        /// Singleton registry, read for the admin-membership check.
+    pub base_mint: &'b solana_account_info::AccountInfo<'a>,
 
-      
-                    
-              pub registry: &'b solana_account_info::AccountInfo<'a>,
-                        /// Market the vault lives on.
+    pub quote_mint: &'b solana_account_info::AccountInfo<'a>,
 
-      
-                    
-              pub market: &'b solana_account_info::AccountInfo<'a>,
-                        /// The vault's leader — the payout target. Not a signer. Verified
-/// in-handler against `vault.leader`.
-/// CHECK: matched against `vault.leader` in the handler and bound as
-/// the `associated_token::authority` of the payout ATAs below.
+    pub base_token_program: &'b solana_account_info::AccountInfo<'a>,
 
-      
-                    
-              pub leader: &'b solana_account_info::AccountInfo<'a>,
-                
-                    
-              pub base_mint: &'b solana_account_info::AccountInfo<'a>,
-                
-                    
-              pub quote_mint: &'b solana_account_info::AccountInfo<'a>,
-                
-                    
-              pub base_token_program: &'b solana_account_info::AccountInfo<'a>,
-                
-                    
-              pub quote_token_program: &'b solana_account_info::AccountInfo<'a>,
-                        /// Leader's base payout ATA — created (admin-funded) if absent.
+    pub quote_token_program: &'b solana_account_info::AccountInfo<'a>,
+    /// Leader's base payout ATA — created (admin-funded) if absent.
+    pub leader_base_ata: &'b solana_account_info::AccountInfo<'a>,
+    /// Leader's quote payout ATA — created (admin-funded) if absent.
+    pub leader_quote_ata: &'b solana_account_info::AccountInfo<'a>,
 
-      
-                    
-              pub leader_base_ata: &'b solana_account_info::AccountInfo<'a>,
-                        /// Leader's quote payout ATA — created (admin-funded) if absent.
+    pub market_base_treasury: &'b solana_account_info::AccountInfo<'a>,
 
-      
-                    
-              pub leader_quote_ata: &'b solana_account_info::AccountInfo<'a>,
-                
-                    
-              pub market_base_treasury: &'b solana_account_info::AccountInfo<'a>,
-                
-                    
-              pub market_quote_treasury: &'b solana_account_info::AccountInfo<'a>,
-                
-                    
-              pub associated_token_program: &'b solana_account_info::AccountInfo<'a>,
-                
-                    
-              pub system_program: &'b solana_account_info::AccountInfo<'a>,
-                        /// CHECK: Only the event authority can invoke self-CPI
+    pub market_quote_treasury: &'b solana_account_info::AccountInfo<'a>,
 
-      
-                    
-              pub event_authority: &'b solana_account_info::AccountInfo<'a>,
-                        /// CHECK: Kept for v1-compatible account ordering and IDL shape
+    pub associated_token_program: &'b solana_account_info::AccountInfo<'a>,
 
-      
-                    
-              pub program: &'b solana_account_info::AccountInfo<'a>,
-            }
+    pub system_program: &'b solana_account_info::AccountInfo<'a>,
+    /// CHECK: Only the event authority can invoke self-CPI
+    pub event_authority: &'b solana_account_info::AccountInfo<'a>,
+    /// CHECK: Kept for v1-compatible account ordering and IDL shape
+    pub program: &'b solana_account_info::AccountInfo<'a>,
+}
 
 /// `force_withdraw_leader` CPI instruction.
 pub struct ForceWithdrawLeaderCpi<'a, 'b> {
-  /// The program to invoke.
-  pub __program: &'b solana_account_info::AccountInfo<'a>,
-            /// Registry admin. Funds the leader payout ATAs when `init_if_needed`
-/// has to allocate them.
+    /// The program to invoke.
+    pub __program: &'b solana_account_info::AccountInfo<'a>,
+    /// Registry admin. Funds the leader payout ATAs when `init_if_needed`
+    /// has to allocate them.
+    pub admin: &'b solana_account_info::AccountInfo<'a>,
+    /// Singleton registry, read for the admin-membership check.
+    pub registry: &'b solana_account_info::AccountInfo<'a>,
+    /// Market the vault lives on.
+    pub market: &'b solana_account_info::AccountInfo<'a>,
+    /// The vault's leader — the payout target. Not a signer. Verified
+    /// in-handler against `vault.leader`.
+    /// CHECK: matched against `vault.leader` in the handler and bound as
+    /// the `associated_token::authority` of the payout ATAs below.
+    pub leader: &'b solana_account_info::AccountInfo<'a>,
 
-    
-              
-          pub admin: &'b solana_account_info::AccountInfo<'a>,
-                /// Singleton registry, read for the admin-membership check.
+    pub base_mint: &'b solana_account_info::AccountInfo<'a>,
 
-    
-              
-          pub registry: &'b solana_account_info::AccountInfo<'a>,
-                /// Market the vault lives on.
+    pub quote_mint: &'b solana_account_info::AccountInfo<'a>,
 
-    
-              
-          pub market: &'b solana_account_info::AccountInfo<'a>,
-                /// The vault's leader — the payout target. Not a signer. Verified
-/// in-handler against `vault.leader`.
-/// CHECK: matched against `vault.leader` in the handler and bound as
-/// the `associated_token::authority` of the payout ATAs below.
+    pub base_token_program: &'b solana_account_info::AccountInfo<'a>,
 
-    
-              
-          pub leader: &'b solana_account_info::AccountInfo<'a>,
-          
-              
-          pub base_mint: &'b solana_account_info::AccountInfo<'a>,
-          
-              
-          pub quote_mint: &'b solana_account_info::AccountInfo<'a>,
-          
-              
-          pub base_token_program: &'b solana_account_info::AccountInfo<'a>,
-          
-              
-          pub quote_token_program: &'b solana_account_info::AccountInfo<'a>,
-                /// Leader's base payout ATA — created (admin-funded) if absent.
+    pub quote_token_program: &'b solana_account_info::AccountInfo<'a>,
+    /// Leader's base payout ATA — created (admin-funded) if absent.
+    pub leader_base_ata: &'b solana_account_info::AccountInfo<'a>,
+    /// Leader's quote payout ATA — created (admin-funded) if absent.
+    pub leader_quote_ata: &'b solana_account_info::AccountInfo<'a>,
 
-    
-              
-          pub leader_base_ata: &'b solana_account_info::AccountInfo<'a>,
-                /// Leader's quote payout ATA — created (admin-funded) if absent.
+    pub market_base_treasury: &'b solana_account_info::AccountInfo<'a>,
 
-    
-              
-          pub leader_quote_ata: &'b solana_account_info::AccountInfo<'a>,
-          
-              
-          pub market_base_treasury: &'b solana_account_info::AccountInfo<'a>,
-          
-              
-          pub market_quote_treasury: &'b solana_account_info::AccountInfo<'a>,
-          
-              
-          pub associated_token_program: &'b solana_account_info::AccountInfo<'a>,
-          
-              
-          pub system_program: &'b solana_account_info::AccountInfo<'a>,
-                /// CHECK: Only the event authority can invoke self-CPI
+    pub market_quote_treasury: &'b solana_account_info::AccountInfo<'a>,
 
-    
-              
-          pub event_authority: &'b solana_account_info::AccountInfo<'a>,
-                /// CHECK: Kept for v1-compatible account ordering and IDL shape
+    pub associated_token_program: &'b solana_account_info::AccountInfo<'a>,
 
-    
-              
-          pub program: &'b solana_account_info::AccountInfo<'a>,
-            /// The arguments for the instruction.
+    pub system_program: &'b solana_account_info::AccountInfo<'a>,
+    /// CHECK: Only the event authority can invoke self-CPI
+    pub event_authority: &'b solana_account_info::AccountInfo<'a>,
+    /// CHECK: Kept for v1-compatible account ordering and IDL shape
+    pub program: &'b solana_account_info::AccountInfo<'a>,
+    /// The arguments for the instruction.
     pub __args: ForceWithdrawLeaderInstructionArgs,
-  }
+}
 
 impl<'a, 'b> ForceWithdrawLeaderCpi<'a, 'b> {
-  pub fn new(
-    program: &'b solana_account_info::AccountInfo<'a>,
-          accounts: ForceWithdrawLeaderCpiAccounts<'a, 'b>,
-              args: ForceWithdrawLeaderInstructionArgs,
-      ) -> Self {
-    Self {
-      __program: program,
-              admin: accounts.admin,
-              registry: accounts.registry,
-              market: accounts.market,
-              leader: accounts.leader,
-              base_mint: accounts.base_mint,
-              quote_mint: accounts.quote_mint,
-              base_token_program: accounts.base_token_program,
-              quote_token_program: accounts.quote_token_program,
-              leader_base_ata: accounts.leader_base_ata,
-              leader_quote_ata: accounts.leader_quote_ata,
-              market_base_treasury: accounts.market_base_treasury,
-              market_quote_treasury: accounts.market_quote_treasury,
-              associated_token_program: accounts.associated_token_program,
-              system_program: accounts.system_program,
-              event_authority: accounts.event_authority,
-              program: accounts.program,
-                    __args: args,
-          }
-  }
-  #[inline(always)]
-  pub fn invoke(&self) -> solana_program_error::ProgramResult {
-    self.invoke_signed_with_remaining_accounts(&[], &[])
-  }
-  #[inline(always)]
-  pub fn invoke_with_remaining_accounts(&self, remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)]) -> solana_program_error::ProgramResult {
-    self.invoke_signed_with_remaining_accounts(&[], remaining_accounts)
-  }
-  #[inline(always)]
-  pub fn invoke_signed(&self, signers_seeds: &[&[&[u8]]]) -> solana_program_error::ProgramResult {
-    self.invoke_signed_with_remaining_accounts(signers_seeds, &[])
-  }
-  #[allow(clippy::arithmetic_side_effects)]
-  #[allow(clippy::clone_on_copy)]
-  #[allow(clippy::vec_init_then_push)]
-  pub fn invoke_signed_with_remaining_accounts(
-    &self,
-    signers_seeds: &[&[&[u8]]],
-    remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)]
-  ) -> solana_program_error::ProgramResult {
-    let mut accounts = Vec::with_capacity(16+ remaining_accounts.len());
-                            accounts.push(solana_instruction::AccountMeta::new(
-            *self.admin.key,
-            true
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.registry.key,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new(
-            *self.market.key,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.leader.key,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.base_mint.key,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.quote_mint.key,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.base_token_program.key,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.quote_token_program.key,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new(
-            *self.leader_base_ata.key,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new(
-            *self.leader_quote_ata.key,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new(
-            *self.market_base_treasury.key,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new(
-            *self.market_quote_treasury.key,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.associated_token_program.key,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.system_program.key,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.event_authority.key,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.program.key,
-            false
-          ));
-                      remaining_accounts.iter().for_each(|remaining_account| {
-      accounts.push(solana_instruction::AccountMeta {
-          pubkey: *remaining_account.0.key,
-          is_signer: remaining_account.1,
-          is_writable: remaining_account.2,
-      })
-    });
-    let mut data = ForceWithdrawLeaderInstructionData::new().try_to_vec().unwrap();
-          let mut args = self.__args.try_to_vec().unwrap();
-      data.append(&mut args);
-    
-    let instruction = solana_instruction::Instruction {
-      program_id: crate::DROPSET_ID,
-      accounts,
-      data,
-    };
-    let mut account_infos = Vec::with_capacity(17 + remaining_accounts.len());
-    account_infos.push(self.__program.clone());
-                  account_infos.push(self.admin.clone());
-                        account_infos.push(self.registry.clone());
-                        account_infos.push(self.market.clone());
-                        account_infos.push(self.leader.clone());
-                        account_infos.push(self.base_mint.clone());
-                        account_infos.push(self.quote_mint.clone());
-                        account_infos.push(self.base_token_program.clone());
-                        account_infos.push(self.quote_token_program.clone());
-                        account_infos.push(self.leader_base_ata.clone());
-                        account_infos.push(self.leader_quote_ata.clone());
-                        account_infos.push(self.market_base_treasury.clone());
-                        account_infos.push(self.market_quote_treasury.clone());
-                        account_infos.push(self.associated_token_program.clone());
-                        account_infos.push(self.system_program.clone());
-                        account_infos.push(self.event_authority.clone());
-                        account_infos.push(self.program.clone());
-              remaining_accounts.iter().for_each(|remaining_account| account_infos.push(remaining_account.0.clone()));
-
-    if signers_seeds.is_empty() {
-      solana_cpi::invoke(&instruction, &account_infos)
-    } else {
-      solana_cpi::invoke_signed(&instruction, &account_infos, signers_seeds)
+    pub fn new(
+        program: &'b solana_account_info::AccountInfo<'a>,
+        accounts: ForceWithdrawLeaderCpiAccounts<'a, 'b>,
+        args: ForceWithdrawLeaderInstructionArgs,
+    ) -> Self {
+        Self {
+            __program: program,
+            admin: accounts.admin,
+            registry: accounts.registry,
+            market: accounts.market,
+            leader: accounts.leader,
+            base_mint: accounts.base_mint,
+            quote_mint: accounts.quote_mint,
+            base_token_program: accounts.base_token_program,
+            quote_token_program: accounts.quote_token_program,
+            leader_base_ata: accounts.leader_base_ata,
+            leader_quote_ata: accounts.leader_quote_ata,
+            market_base_treasury: accounts.market_base_treasury,
+            market_quote_treasury: accounts.market_quote_treasury,
+            associated_token_program: accounts.associated_token_program,
+            system_program: accounts.system_program,
+            event_authority: accounts.event_authority,
+            program: accounts.program,
+            __args: args,
+        }
     }
-  }
+    #[inline(always)]
+    pub fn invoke(&self) -> solana_program_error::ProgramResult {
+        self.invoke_signed_with_remaining_accounts(&[], &[])
+    }
+    #[inline(always)]
+    pub fn invoke_with_remaining_accounts(
+        &self,
+        remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
+    ) -> solana_program_error::ProgramResult {
+        self.invoke_signed_with_remaining_accounts(&[], remaining_accounts)
+    }
+    #[inline(always)]
+    pub fn invoke_signed(&self, signers_seeds: &[&[&[u8]]]) -> solana_program_error::ProgramResult {
+        self.invoke_signed_with_remaining_accounts(signers_seeds, &[])
+    }
+    #[allow(clippy::arithmetic_side_effects)]
+    #[allow(clippy::clone_on_copy)]
+    #[allow(clippy::vec_init_then_push)]
+    pub fn invoke_signed_with_remaining_accounts(
+        &self,
+        signers_seeds: &[&[&[u8]]],
+        remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
+    ) -> solana_program_error::ProgramResult {
+        let mut accounts = Vec::with_capacity(16 + remaining_accounts.len());
+        accounts.push(solana_instruction::AccountMeta::new(*self.admin.key, true));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.registry.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            *self.market.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.leader.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.base_mint.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.quote_mint.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.base_token_program.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.quote_token_program.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            *self.leader_base_ata.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            *self.leader_quote_ata.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            *self.market_base_treasury.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            *self.market_quote_treasury.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.associated_token_program.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.system_program.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.event_authority.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.program.key,
+            false,
+        ));
+        remaining_accounts.iter().for_each(|remaining_account| {
+            accounts.push(solana_instruction::AccountMeta {
+                pubkey: *remaining_account.0.key,
+                is_signer: remaining_account.1,
+                is_writable: remaining_account.2,
+            })
+        });
+        let mut data = ForceWithdrawLeaderInstructionData::new()
+            .try_to_vec()
+            .unwrap();
+        let mut args = self.__args.try_to_vec().unwrap();
+        data.append(&mut args);
+
+        let instruction = solana_instruction::Instruction {
+            program_id: crate::DROPSET_ID,
+            accounts,
+            data,
+        };
+        let mut account_infos = Vec::with_capacity(17 + remaining_accounts.len());
+        account_infos.push(self.__program.clone());
+        account_infos.push(self.admin.clone());
+        account_infos.push(self.registry.clone());
+        account_infos.push(self.market.clone());
+        account_infos.push(self.leader.clone());
+        account_infos.push(self.base_mint.clone());
+        account_infos.push(self.quote_mint.clone());
+        account_infos.push(self.base_token_program.clone());
+        account_infos.push(self.quote_token_program.clone());
+        account_infos.push(self.leader_base_ata.clone());
+        account_infos.push(self.leader_quote_ata.clone());
+        account_infos.push(self.market_base_treasury.clone());
+        account_infos.push(self.market_quote_treasury.clone());
+        account_infos.push(self.associated_token_program.clone());
+        account_infos.push(self.system_program.clone());
+        account_infos.push(self.event_authority.clone());
+        account_infos.push(self.program.clone());
+        remaining_accounts
+            .iter()
+            .for_each(|remaining_account| account_infos.push(remaining_account.0.clone()));
+
+        if signers_seeds.is_empty() {
+            solana_cpi::invoke(&instruction, &account_infos)
+        } else {
+            solana_cpi::invoke_signed(&instruction, &account_infos, signers_seeds)
+        }
+    }
 }
 
 /// Instruction builder for `ForceWithdrawLeader` via CPI.
 ///
 /// ### Accounts:
 ///
-                      ///   0. `[writable, signer]` admin
-          ///   1. `[]` registry
-                ///   2. `[writable]` market
-          ///   3. `[]` leader
-          ///   4. `[]` base_mint
-          ///   5. `[]` quote_mint
-          ///   6. `[]` base_token_program
-          ///   7. `[]` quote_token_program
-                ///   8. `[writable]` leader_base_ata
-                ///   9. `[writable]` leader_quote_ata
-                ///   10. `[writable]` market_base_treasury
-                ///   11. `[writable]` market_quote_treasury
-          ///   12. `[]` associated_token_program
-          ///   13. `[]` system_program
-          ///   14. `[]` event_authority
-          ///   15. `[]` program
+///   0. `[writable, signer]` admin
+///   1. `[]` registry
+///   2. `[writable]` market
+///   3. `[]` leader
+///   4. `[]` base_mint
+///   5. `[]` quote_mint
+///   6. `[]` base_token_program
+///   7. `[]` quote_token_program
+///   8. `[writable]` leader_base_ata
+///   9. `[writable]` leader_quote_ata
+///   10. `[writable]` market_base_treasury
+///   11. `[writable]` market_quote_treasury
+///   12. `[]` associated_token_program
+///   13. `[]` system_program
+///   14. `[]` event_authority
+///   15. `[]` program
 #[derive(Clone, Debug)]
 pub struct ForceWithdrawLeaderCpiBuilder<'a, 'b> {
-  instruction: Box<ForceWithdrawLeaderCpiBuilderInstruction<'a, 'b>>,
+    instruction: Box<ForceWithdrawLeaderCpiBuilderInstruction<'a, 'b>>,
 }
 
 impl<'a, 'b> ForceWithdrawLeaderCpiBuilder<'a, 'b> {
-  pub fn new(program: &'b solana_account_info::AccountInfo<'a>) -> Self {
-    let instruction = Box::new(ForceWithdrawLeaderCpiBuilderInstruction {
-      __program: program,
-              admin: None,
-              registry: None,
-              market: None,
-              leader: None,
-              base_mint: None,
-              quote_mint: None,
-              base_token_program: None,
-              quote_token_program: None,
-              leader_base_ata: None,
-              leader_quote_ata: None,
-              market_base_treasury: None,
-              market_quote_treasury: None,
-              associated_token_program: None,
-              system_program: None,
-              event_authority: None,
-              program: None,
-                                            vault_idx: None,
-                    __remaining_accounts: Vec::new(),
-    });
-    Self { instruction }
-  }
-      /// Registry admin. Funds the leader payout ATAs when `init_if_needed`
-/// has to allocate them.
-#[inline(always)]
+    pub fn new(program: &'b solana_account_info::AccountInfo<'a>) -> Self {
+        let instruction = Box::new(ForceWithdrawLeaderCpiBuilderInstruction {
+            __program: program,
+            admin: None,
+            registry: None,
+            market: None,
+            leader: None,
+            base_mint: None,
+            quote_mint: None,
+            base_token_program: None,
+            quote_token_program: None,
+            leader_base_ata: None,
+            leader_quote_ata: None,
+            market_base_treasury: None,
+            market_quote_treasury: None,
+            associated_token_program: None,
+            system_program: None,
+            event_authority: None,
+            program: None,
+            vault_idx: None,
+            __remaining_accounts: Vec::new(),
+        });
+        Self { instruction }
+    }
+    /// Registry admin. Funds the leader payout ATAs when `init_if_needed`
+    /// has to allocate them.
+    #[inline(always)]
     pub fn admin(&mut self, admin: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.admin = Some(admin);
-                    self
+        self.instruction.admin = Some(admin);
+        self
     }
-      /// Singleton registry, read for the admin-membership check.
-#[inline(always)]
+    /// Singleton registry, read for the admin-membership check.
+    #[inline(always)]
     pub fn registry(&mut self, registry: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.registry = Some(registry);
-                    self
+        self.instruction.registry = Some(registry);
+        self
     }
-      /// Market the vault lives on.
-#[inline(always)]
+    /// Market the vault lives on.
+    #[inline(always)]
     pub fn market(&mut self, market: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.market = Some(market);
-                    self
+        self.instruction.market = Some(market);
+        self
     }
-      /// The vault's leader — the payout target. Not a signer. Verified
-/// in-handler against `vault.leader`.
-/// CHECK: matched against `vault.leader` in the handler and bound as
-/// the `associated_token::authority` of the payout ATAs below.
-#[inline(always)]
+    /// The vault's leader — the payout target. Not a signer. Verified
+    /// in-handler against `vault.leader`.
+    /// CHECK: matched against `vault.leader` in the handler and bound as
+    /// the `associated_token::authority` of the payout ATAs below.
+    #[inline(always)]
     pub fn leader(&mut self, leader: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.leader = Some(leader);
-                    self
+        self.instruction.leader = Some(leader);
+        self
     }
-      #[inline(always)]
+    #[inline(always)]
     pub fn base_mint(&mut self, base_mint: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.base_mint = Some(base_mint);
-                    self
+        self.instruction.base_mint = Some(base_mint);
+        self
     }
-      #[inline(always)]
-    pub fn quote_mint(&mut self, quote_mint: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.quote_mint = Some(quote_mint);
-                    self
+    #[inline(always)]
+    pub fn quote_mint(
+        &mut self,
+        quote_mint: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.quote_mint = Some(quote_mint);
+        self
     }
-      #[inline(always)]
-    pub fn base_token_program(&mut self, base_token_program: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.base_token_program = Some(base_token_program);
-                    self
+    #[inline(always)]
+    pub fn base_token_program(
+        &mut self,
+        base_token_program: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.base_token_program = Some(base_token_program);
+        self
     }
-      #[inline(always)]
-    pub fn quote_token_program(&mut self, quote_token_program: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.quote_token_program = Some(quote_token_program);
-                    self
+    #[inline(always)]
+    pub fn quote_token_program(
+        &mut self,
+        quote_token_program: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.quote_token_program = Some(quote_token_program);
+        self
     }
-      /// Leader's base payout ATA — created (admin-funded) if absent.
-#[inline(always)]
-    pub fn leader_base_ata(&mut self, leader_base_ata: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.leader_base_ata = Some(leader_base_ata);
-                    self
+    /// Leader's base payout ATA — created (admin-funded) if absent.
+    #[inline(always)]
+    pub fn leader_base_ata(
+        &mut self,
+        leader_base_ata: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.leader_base_ata = Some(leader_base_ata);
+        self
     }
-      /// Leader's quote payout ATA — created (admin-funded) if absent.
-#[inline(always)]
-    pub fn leader_quote_ata(&mut self, leader_quote_ata: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.leader_quote_ata = Some(leader_quote_ata);
-                    self
+    /// Leader's quote payout ATA — created (admin-funded) if absent.
+    #[inline(always)]
+    pub fn leader_quote_ata(
+        &mut self,
+        leader_quote_ata: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.leader_quote_ata = Some(leader_quote_ata);
+        self
     }
-      #[inline(always)]
-    pub fn market_base_treasury(&mut self, market_base_treasury: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.market_base_treasury = Some(market_base_treasury);
-                    self
+    #[inline(always)]
+    pub fn market_base_treasury(
+        &mut self,
+        market_base_treasury: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.market_base_treasury = Some(market_base_treasury);
+        self
     }
-      #[inline(always)]
-    pub fn market_quote_treasury(&mut self, market_quote_treasury: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.market_quote_treasury = Some(market_quote_treasury);
-                    self
+    #[inline(always)]
+    pub fn market_quote_treasury(
+        &mut self,
+        market_quote_treasury: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.market_quote_treasury = Some(market_quote_treasury);
+        self
     }
-      #[inline(always)]
-    pub fn associated_token_program(&mut self, associated_token_program: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.associated_token_program = Some(associated_token_program);
-                    self
+    #[inline(always)]
+    pub fn associated_token_program(
+        &mut self,
+        associated_token_program: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.associated_token_program = Some(associated_token_program);
+        self
     }
-      #[inline(always)]
-    pub fn system_program(&mut self, system_program: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.system_program = Some(system_program);
-                    self
+    #[inline(always)]
+    pub fn system_program(
+        &mut self,
+        system_program: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.system_program = Some(system_program);
+        self
     }
-      /// CHECK: Only the event authority can invoke self-CPI
-#[inline(always)]
-    pub fn event_authority(&mut self, event_authority: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.event_authority = Some(event_authority);
-                    self
+    /// CHECK: Only the event authority can invoke self-CPI
+    #[inline(always)]
+    pub fn event_authority(
+        &mut self,
+        event_authority: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.event_authority = Some(event_authority);
+        self
     }
-      /// CHECK: Kept for v1-compatible account ordering and IDL shape
-#[inline(always)]
+    /// CHECK: Kept for v1-compatible account ordering and IDL shape
+    #[inline(always)]
     pub fn program(&mut self, program: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.program = Some(program);
-                    self
+        self.instruction.program = Some(program);
+        self
     }
-                    #[inline(always)]
-      pub fn vault_idx(&mut self, vault_idx: u32) -> &mut Self {
+    #[inline(always)]
+    pub fn vault_idx(&mut self, vault_idx: u32) -> &mut Self {
         self.instruction.vault_idx = Some(vault_idx);
         self
-      }
-        /// Add an additional account to the instruction.
-  #[inline(always)]
-  pub fn add_remaining_account(&mut self, account: &'b solana_account_info::AccountInfo<'a>, is_writable: bool, is_signer: bool) -> &mut Self {
-    self.instruction.__remaining_accounts.push((account, is_writable, is_signer));
-    self
-  }
-  /// Add additional accounts to the instruction.
-  ///
-  /// Each account is represented by a tuple of the `AccountInfo`, a `bool` indicating whether the account is writable or not,
-  /// and a `bool` indicating whether the account is a signer or not.
-  #[inline(always)]
-  pub fn add_remaining_accounts(&mut self, accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)]) -> &mut Self {
-    self.instruction.__remaining_accounts.extend_from_slice(accounts);
-    self
-  }
-  #[inline(always)]
-  pub fn invoke(&self) -> solana_program_error::ProgramResult {
-    self.invoke_signed(&[])
-  }
-  #[allow(clippy::clone_on_copy)]
-  #[allow(clippy::vec_init_then_push)]
-  pub fn invoke_signed(&self, signers_seeds: &[&[&[u8]]]) -> solana_program_error::ProgramResult {
-          let args = ForceWithdrawLeaderInstructionArgs {
-                                                              vault_idx: self.instruction.vault_idx.clone().expect("vault_idx is not set"),
-                                    };
+    }
+    /// Add an additional account to the instruction.
+    #[inline(always)]
+    pub fn add_remaining_account(
+        &mut self,
+        account: &'b solana_account_info::AccountInfo<'a>,
+        is_writable: bool,
+        is_signer: bool,
+    ) -> &mut Self {
+        self.instruction
+            .__remaining_accounts
+            .push((account, is_writable, is_signer));
+        self
+    }
+    /// Add additional accounts to the instruction.
+    ///
+    /// Each account is represented by a tuple of the `AccountInfo`, a `bool` indicating whether the account is writable or not,
+    /// and a `bool` indicating whether the account is a signer or not.
+    #[inline(always)]
+    pub fn add_remaining_accounts(
+        &mut self,
+        accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
+    ) -> &mut Self {
+        self.instruction
+            .__remaining_accounts
+            .extend_from_slice(accounts);
+        self
+    }
+    #[inline(always)]
+    pub fn invoke(&self) -> solana_program_error::ProgramResult {
+        self.invoke_signed(&[])
+    }
+    #[allow(clippy::clone_on_copy)]
+    #[allow(clippy::vec_init_then_push)]
+    pub fn invoke_signed(&self, signers_seeds: &[&[&[u8]]]) -> solana_program_error::ProgramResult {
+        let args = ForceWithdrawLeaderInstructionArgs {
+            vault_idx: self
+                .instruction
+                .vault_idx
+                .clone()
+                .expect("vault_idx is not set"),
+        };
         let instruction = ForceWithdrawLeaderCpi {
-        __program: self.instruction.__program,
-                  
-          admin: self.instruction.admin.expect("admin is not set"),
-                  
-          registry: self.instruction.registry.expect("registry is not set"),
-                  
-          market: self.instruction.market.expect("market is not set"),
-                  
-          leader: self.instruction.leader.expect("leader is not set"),
-                  
-          base_mint: self.instruction.base_mint.expect("base_mint is not set"),
-                  
-          quote_mint: self.instruction.quote_mint.expect("quote_mint is not set"),
-                  
-          base_token_program: self.instruction.base_token_program.expect("base_token_program is not set"),
-                  
-          quote_token_program: self.instruction.quote_token_program.expect("quote_token_program is not set"),
-                  
-          leader_base_ata: self.instruction.leader_base_ata.expect("leader_base_ata is not set"),
-                  
-          leader_quote_ata: self.instruction.leader_quote_ata.expect("leader_quote_ata is not set"),
-                  
-          market_base_treasury: self.instruction.market_base_treasury.expect("market_base_treasury is not set"),
-                  
-          market_quote_treasury: self.instruction.market_quote_treasury.expect("market_quote_treasury is not set"),
-                  
-          associated_token_program: self.instruction.associated_token_program.expect("associated_token_program is not set"),
-                  
-          system_program: self.instruction.system_program.expect("system_program is not set"),
-                  
-          event_authority: self.instruction.event_authority.expect("event_authority is not set"),
-                  
-          program: self.instruction.program.expect("program is not set"),
-                          __args: args,
-            };
-    instruction.invoke_signed_with_remaining_accounts(signers_seeds, &self.instruction.__remaining_accounts)
-  }
+            __program: self.instruction.__program,
+
+            admin: self.instruction.admin.expect("admin is not set"),
+
+            registry: self.instruction.registry.expect("registry is not set"),
+
+            market: self.instruction.market.expect("market is not set"),
+
+            leader: self.instruction.leader.expect("leader is not set"),
+
+            base_mint: self.instruction.base_mint.expect("base_mint is not set"),
+
+            quote_mint: self.instruction.quote_mint.expect("quote_mint is not set"),
+
+            base_token_program: self
+                .instruction
+                .base_token_program
+                .expect("base_token_program is not set"),
+
+            quote_token_program: self
+                .instruction
+                .quote_token_program
+                .expect("quote_token_program is not set"),
+
+            leader_base_ata: self
+                .instruction
+                .leader_base_ata
+                .expect("leader_base_ata is not set"),
+
+            leader_quote_ata: self
+                .instruction
+                .leader_quote_ata
+                .expect("leader_quote_ata is not set"),
+
+            market_base_treasury: self
+                .instruction
+                .market_base_treasury
+                .expect("market_base_treasury is not set"),
+
+            market_quote_treasury: self
+                .instruction
+                .market_quote_treasury
+                .expect("market_quote_treasury is not set"),
+
+            associated_token_program: self
+                .instruction
+                .associated_token_program
+                .expect("associated_token_program is not set"),
+
+            system_program: self
+                .instruction
+                .system_program
+                .expect("system_program is not set"),
+
+            event_authority: self
+                .instruction
+                .event_authority
+                .expect("event_authority is not set"),
+
+            program: self.instruction.program.expect("program is not set"),
+            __args: args,
+        };
+        instruction.invoke_signed_with_remaining_accounts(
+            signers_seeds,
+            &self.instruction.__remaining_accounts,
+        )
+    }
 }
 
 #[derive(Clone, Debug)]
 struct ForceWithdrawLeaderCpiBuilderInstruction<'a, 'b> {
-  __program: &'b solana_account_info::AccountInfo<'a>,
-            admin: Option<&'b solana_account_info::AccountInfo<'a>>,
-                registry: Option<&'b solana_account_info::AccountInfo<'a>>,
-                market: Option<&'b solana_account_info::AccountInfo<'a>>,
-                leader: Option<&'b solana_account_info::AccountInfo<'a>>,
-                base_mint: Option<&'b solana_account_info::AccountInfo<'a>>,
-                quote_mint: Option<&'b solana_account_info::AccountInfo<'a>>,
-                base_token_program: Option<&'b solana_account_info::AccountInfo<'a>>,
-                quote_token_program: Option<&'b solana_account_info::AccountInfo<'a>>,
-                leader_base_ata: Option<&'b solana_account_info::AccountInfo<'a>>,
-                leader_quote_ata: Option<&'b solana_account_info::AccountInfo<'a>>,
-                market_base_treasury: Option<&'b solana_account_info::AccountInfo<'a>>,
-                market_quote_treasury: Option<&'b solana_account_info::AccountInfo<'a>>,
-                associated_token_program: Option<&'b solana_account_info::AccountInfo<'a>>,
-                system_program: Option<&'b solana_account_info::AccountInfo<'a>>,
-                event_authority: Option<&'b solana_account_info::AccountInfo<'a>>,
-                program: Option<&'b solana_account_info::AccountInfo<'a>>,
-                        vault_idx: Option<u32>,
-        /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
-  __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,
+    __program: &'b solana_account_info::AccountInfo<'a>,
+    admin: Option<&'b solana_account_info::AccountInfo<'a>>,
+    registry: Option<&'b solana_account_info::AccountInfo<'a>>,
+    market: Option<&'b solana_account_info::AccountInfo<'a>>,
+    leader: Option<&'b solana_account_info::AccountInfo<'a>>,
+    base_mint: Option<&'b solana_account_info::AccountInfo<'a>>,
+    quote_mint: Option<&'b solana_account_info::AccountInfo<'a>>,
+    base_token_program: Option<&'b solana_account_info::AccountInfo<'a>>,
+    quote_token_program: Option<&'b solana_account_info::AccountInfo<'a>>,
+    leader_base_ata: Option<&'b solana_account_info::AccountInfo<'a>>,
+    leader_quote_ata: Option<&'b solana_account_info::AccountInfo<'a>>,
+    market_base_treasury: Option<&'b solana_account_info::AccountInfo<'a>>,
+    market_quote_treasury: Option<&'b solana_account_info::AccountInfo<'a>>,
+    associated_token_program: Option<&'b solana_account_info::AccountInfo<'a>>,
+    system_program: Option<&'b solana_account_info::AccountInfo<'a>>,
+    event_authority: Option<&'b solana_account_info::AccountInfo<'a>>,
+    program: Option<&'b solana_account_info::AccountInfo<'a>>,
+    vault_idx: Option<u32>,
+    /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
+    __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,
 }
-
