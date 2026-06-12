@@ -28,6 +28,13 @@ pub const PPM: u64 = 1_000_000;
 pub const BPS: u64 = 10_000;
 /// Anchor account discriminator length.
 pub const ACCOUNT_DISCRIMINATOR_LEN: usize = 8;
+/// On-chain `align_of::<Vault>()`. The program's `Vault` embeds `Price`
+/// (a `#[repr(transparent)] u32`, align 4), so the slab aligns the first
+/// sector to 4 — even though every field in this mirror is alignment-1.
+/// The first sector therefore starts at `align_up(8 +
+/// size_of::<MarketHeader>() + 4, 4)`, not flush against the slab length.
+/// Pinned by programs/dropset/tests/sdk_conformance.rs.
+pub const VAULT_ALIGN: usize = 4;
 
 // ── Little-endian, alignment-1 integer wrappers ──────────────────────
 
@@ -158,6 +165,9 @@ pub struct Vault {
 // misdecoding the slab.
 const _: () = assert!(core::mem::size_of::<MarketHeader>() == 237);
 const _: () = assert!(core::mem::size_of::<Vault>() == 560);
+// Sectors stay aligned across the slab: stride must be a multiple of the
+// on-chain Vault alignment (see VAULT_ALIGN / MarketView::load).
+const _: () = assert!(core::mem::size_of::<Vault>() % VAULT_ALIGN == 0);
 const _: () = assert!(core::mem::size_of::<LiquidityProfile>() == 2 * N_LEVELS * 10);
 const _: () = assert!(core::mem::size_of::<Remaining>() == 2 * N_LEVELS * 16);
 
@@ -210,25 +220,29 @@ impl<'a> MarketView<'a> {
     /// Decode a market account's full data buffer (including the 8-byte
     /// discriminator) into a zero-copy view.
     pub fn load(data: &'a [u8]) -> Result<Self, LayoutError> {
-        let body = data
-            .get(ACCOUNT_DISCRIMINATOR_LEN..)
-            .ok_or(LayoutError::TooSmall)?;
         let hdr_len = core::mem::size_of::<MarketHeader>();
-        if body.len() < hdr_len + 4 {
+        let len_at = ACCOUNT_DISCRIMINATOR_LEN + hdr_len;
+        if data.len() < len_at + 4 {
             return Err(LayoutError::TooSmall);
         }
-        let header: &MarketHeader =
-            bytemuck::try_from_bytes(&body[..hdr_len]).map_err(|_| LayoutError::Cast)?;
-        let len = u32::from_le_bytes(body[hdr_len..hdr_len + 4].try_into().unwrap()) as usize;
-        let sectors_bytes = &body[hdr_len + 4..];
+        let header: &MarketHeader = bytemuck::try_from_bytes(&data[ACCOUNT_DISCRIMINATOR_LEN..len_at])
+            .map_err(|_| LayoutError::Cast)?;
+        let len = u32::from_le_bytes(data[len_at..len_at + 4].try_into().unwrap()) as usize;
+        // The slab aligns the first sector to the on-chain Vault align
+        // (see VAULT_ALIGN); subsequent sectors are size_of::<Vault>()
+        // apart, which is a multiple of VAULT_ALIGN so they stay aligned.
+        let items_start = (len_at + 4 + VAULT_ALIGN - 1) & !(VAULT_ALIGN - 1);
         let need = len
             .checked_mul(core::mem::size_of::<Vault>())
             .ok_or(LayoutError::SectorOverflow)?;
-        if sectors_bytes.len() < need {
+        let end = items_start
+            .checked_add(need)
+            .ok_or(LayoutError::SectorOverflow)?;
+        if data.len() < end {
             return Err(LayoutError::SectorOverflow);
         }
         let sectors: &[Vault] =
-            bytemuck::try_cast_slice(&sectors_bytes[..need]).map_err(|_| LayoutError::Cast)?;
+            bytemuck::try_cast_slice(&data[items_start..end]).map_err(|_| LayoutError::Cast)?;
         Ok(Self { header, sectors })
     }
 

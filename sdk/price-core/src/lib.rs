@@ -4,7 +4,7 @@
 //! mirror, and the just-in-time book reconstruction in [`matching`] — the
 //! math the IDL can't describe (the `Vault` slab is opaque to it). It has
 //! no Solana dependency, so the Rust SDK uses it directly and the same code
-//! compiles to WASM (the `wasm` feature) for the TypeScript/Python clients,
+//! compiles to WASM (the `wasm` feature) for the TypeScript client,
 //! instead of each language hand-mirroring the engine.
 //!
 //! Correctness is pinned to the on-chain engine by the shared conformance

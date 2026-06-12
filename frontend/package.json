@@ -39,11 +39,6 @@
   },
   "name": "dropset-frontend",
   "packageManager": "pnpm@10.30.3",
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "sharp"
-    ]
-  },
   "private": true,
   "scripts": {
     "build": "next build",

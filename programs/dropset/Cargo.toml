@@ -12,6 +12,9 @@ wincode.workspace = true
 # `src/`. Dev-dependencies are NOT included in `cargo build-sbf`
 # (anchor build) — the production .so never ships the testing scaffold.
 [dev-dependencies]
+# The off-chain SDK, used by tests/sdk_conformance.rs to verify its layout
+# decoder + matching simulator against the real engine running in litesvm.
+dropset-sdk = {path = "../../sdk/rs"}
 anchor-lang-v2 = {workspace = true, features = ["testing"]}
 anchor-v2-testing.workspace = true
 litesvm.workspace = true

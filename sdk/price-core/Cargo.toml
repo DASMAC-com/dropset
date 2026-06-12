@@ -3,7 +3,7 @@
 # interface.md § SDK (spine B): the on-chain crates can't target wasm32 and
 # a hand-mirrored TS port is rejected, so the `Price` codec and just-in-time
 # book reconstruction live here once — consumed directly by the Rust SDK and
-# compiled to WASM (the `wasm` feature) for the TS/Python clients. Both sides
+# compiled to WASM (the `wasm` feature) for the TS client. Both sides
 # are pinned to the engine by shared conformance vectors (see sdk/conformance).
 
 [package]
@@ -15,7 +15,7 @@ publish = false
 
 [features]
 default = []
-# wasm-bindgen exports for the TypeScript / Python clients.
+# wasm-bindgen exports for the TypeScript client.
 wasm = ["dep:wasm-bindgen"]
 
 [dependencies]

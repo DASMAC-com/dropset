@@ -1,4 +1,4 @@
-//! WASM bindings (`wasm` feature) for the TypeScript / Python clients.
+//! WASM bindings (`wasm` feature) for the TypeScript client.
 //!
 //! Exposes the exact `Price` codec and book-reconstruction math so those
 //! clients run the engine's arithmetic instead of a hand-mirror. Build the

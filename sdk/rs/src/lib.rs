@@ -8,7 +8,7 @@
 //! - **Book math** ([`price`], [`layout`], [`matching`]): the `Price`
 //!   codec and just-in-time book reconstruction the IDL can't describe
 //!   (the `Vault` slab is opaque to it). Solana-free, so the same math can
-//!   target `wasm32` for the TS/Python consumers later.
+//!   target `wasm32` for the TS consumer later.
 //!
 //! Router quoting adapters (e.g. DFlow) build on [`matching::simulate_swap`]
 //! for quotes and the generated [`generated::instructions`] builders for

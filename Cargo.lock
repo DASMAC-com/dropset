@@ -1408,6 +1408,7 @@ dependencies = [
  "anchor-lang-v2",
  "anchor-spl-v2",
  "anchor-v2-testing",
+ "dropset-sdk",
  "litesvm",
  "solana-instruction",
  "solana-keypair",

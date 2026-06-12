@@ -14,6 +14,7 @@ import {
   arrayTypeNode,
   bottomUpTransformerVisitor,
   createFromRoot,
+  definedTypeNode,
   fixedCountNode,
   numberTypeNode,
 } from 'codama';
@@ -27,6 +28,28 @@ const idlPath = join(repoRoot, 'sdk', 'idl', 'dropset.json');
 
 const idl = JSON.parse(readFileSync(idlPath, 'utf8'));
 const codama = createFromRoot(rootNodeFromAnchor(idl));
+
+// The renderers emit codecs for `definedTypes` but not for `program.events`,
+// so the 5 `#[event]` structs (Deposit/Withdraw/OpenVault/Realize/Fill)
+// don't get codecs. interface.md §1/§2 puts event decoding in the SDK's
+// remit (the indexer strips the `[tag][discriminator]` envelope, then the
+// Codama struct codec decodes the borsh body). Inject each event's struct
+// as a defined type — dropping the discriminator prefix, since the codec
+// decodes the body only — so `getDepositEventDecoder` etc. are generated.
+codama.update(
+  bottomUpTransformerVisitor([
+    {
+      select: '[programNode]',
+      transform: (program) => {
+        const eventTypes = (program.events ?? []).map((e) => {
+          const struct = e.data.kind === 'hiddenPrefixTypeNode' ? e.data.type : e.data;
+          return definedTypeNode({ name: e.name, type: struct, docs: e.docs ?? [] });
+        });
+        return { ...program, definedTypes: [...program.definedTypes, ...eventTypes] };
+      },
+    },
+  ]),
+);
 
 // `Price` is a u32 decimal-float comparison key, but it does not derive
 // `IdlType`, so the program's IDL surfaces it as a *fieldless* struct.

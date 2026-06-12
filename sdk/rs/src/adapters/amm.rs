@@ -278,15 +278,19 @@ impl DropsetAmm {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::layout::{MarketHeader, Vault, NULL_SECTOR};
+    use crate::layout::{MarketHeader, Vault, NULL_SECTOR, VAULT_ALIGN};
     use bytemuck::Zeroable;
 
     /// Assemble a market account buffer (8-byte discriminator + header +
-    /// slab len + vault sectors) from layout structs.
+    /// slab len + aligned vault sectors) from layout structs, mirroring
+    /// the on-chain slab layout (first sector aligned to VAULT_ALIGN).
     pub(crate) fn build_market(header: MarketHeader, vaults: &[Vault]) -> Vec<u8> {
         let mut buf = vec![0u8; 8]; // discriminator (value unchecked by load)
         buf.extend_from_slice(bytemuck::bytes_of(&header));
         buf.extend_from_slice(&(vaults.len() as u32).to_le_bytes());
+        while buf.len() % VAULT_ALIGN != 0 {
+            buf.push(0); // align the first sector, as the on-chain slab does
+        }
         for v in vaults {
             buf.extend_from_slice(bytemuck::bytes_of(v));
         }

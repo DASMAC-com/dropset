@@ -6,5 +6,10 @@
  * @see https://github.com/codama-idl/codama
  */
 
+export * from './depositEvent';
 export * from './feeConfig';
+export * from './fillEvent';
+export * from './openVaultEvent';
 export * from './price';
+export * from './realizeEvent';
+export * from './withdrawEvent';

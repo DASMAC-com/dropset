@@ -64,11 +64,12 @@ per-router mappings:
   belong in the on-chain `dropset-interface` crate per interface.md §6),
   blocked on a swap-context extension. Tracked: ENG-444.
 
-## Python (AnchorPy) — deferred
+## Verification
 
-Not generated. AnchorPy assumes 8-byte Anchor discriminators, but Dropset
-instructions use single-byte `#[discrim]` discriminators, so a generated
-client would mis-encode instruction data. With no Python consumer today
-(interface.md §6A marks it deferrable), shipping a broken client is worse
-than none. Revisit if a Python consumer appears, or once AnchorPy supports
-custom discriminator widths.
+The generated clients build instruction data that matches the program by
+construction (the IDL is generated from it). The hand-written book math is
+verified two ways: cross-language conformance vectors (above), and
+`programs/dropset/tests/sdk_conformance.rs`, which runs the **real** `swap`
+in litesvm and asserts the SDK's `MarketView` decode + `simulate_swap`
+prediction equal the on-chain realized amounts (it caught the sector
+alignment in `VAULT_ALIGN`). That test runs under `make test`.
