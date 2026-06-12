@@ -24,9 +24,14 @@ jobs:
           ~/.cargo/registry/cache
           ~/.cargo/registry/index
           target
+        restore-keys: 'cargo-test-${{ runner.os }}-${{ runner.arch }}-solana-${{
+                       env.SOLANA_VERSION }}-anchor-${{ env.ANCHOR_REV }}-'
     - name: 'Run tests'
       run: 'make test'
 name: 'Tests'
 'on':
   pull_request: null
+  push:
+    branches:
+    - 'main'
 ...
