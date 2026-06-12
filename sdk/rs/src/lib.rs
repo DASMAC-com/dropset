@@ -20,10 +20,12 @@
 #[allow(unused_imports)]
 pub mod generated;
 pub mod adapters;
-pub mod layout;
-pub mod matching;
-pub mod price;
 pub mod quoting;
+
+// The solana-free arithmetic spine lives in `dropset-price-core` and is
+// re-exported here so `crate::{price,layout,matching}` (used throughout the
+// adapters and quoting) resolve, and downstream users get one import path.
+pub use dropset_price_core::{layout, matching, price};
 
 // The Codama renderer references some siblings as `crate::shared` /
 // `crate::types` (crate-root) and others as `crate::generated::types`.

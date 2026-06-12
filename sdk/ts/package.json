@@ -10,12 +10,14 @@
     "./generated": "./src/generated/index.ts"
   },
   "scripts": {
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test": "node --import tsx --test src/conformance.test.ts"
   },
   "dependencies": {
     "@solana/kit": "^6.9.0"
   },
   "devDependencies": {
+    "tsx": "^4.19.2",
     "typescript": "^5.6.0"
   }
 }

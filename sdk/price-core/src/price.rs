@@ -61,6 +61,21 @@ impl Price {
         self.0
     }
 
+    /// Encode a decimal value (e.g. `1.085`) into a `Price`. Intended for
+    /// the FX value range (`value * 1e7` within f64 integer precision);
+    /// truncates to 8 significant digits. `0.0` maps to [`Price::ZERO`].
+    /// Returns `None` for non-finite/negative input or out-of-range
+    /// exponent. Mirrors the TS `encodePrice`.
+    pub fn from_value(value: f64) -> Option<Self> {
+        if !value.is_finite() || value < 0.0 {
+            return None;
+        }
+        if value == 0.0 {
+            return Some(Self::ZERO);
+        }
+        Self::from_scaled((value * 1e7) as u64, BIAS as i16)
+    }
+
     /// Construct from a validated significand and **biased** exponent.
     #[inline]
     pub const fn new(significand: u32, biased_exponent: u8) -> Option<Self> {

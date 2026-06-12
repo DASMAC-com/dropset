@@ -1,0 +1,31 @@
+# Solana-free Price codec + eCLOB book-reconstruction math.
+#
+# interface.md § SDK (spine B): the on-chain crates can't target wasm32 and
+# a hand-mirrored TS port is rejected, so the `Price` codec and just-in-time
+# book reconstruction live here once — consumed directly by the Rust SDK and
+# compiled to WASM (the `wasm` feature) for the TS/Python clients. Both sides
+# are pinned to the engine by shared conformance vectors (see sdk/conformance).
+
+[package]
+edition = "2021"
+name = "dropset-price-core"
+version = "0.1.0"
+description = "Solana-free Price codec + eCLOB book-reconstruction math, shared by the Rust SDK and (via WASM) the TS client."
+publish = false
+
+[features]
+default = []
+# wasm-bindgen exports for the TypeScript / Python clients.
+wasm = ["dep:wasm-bindgen"]
+
+[dependencies]
+bytemuck = { version = "1", features = ["derive", "min_const_generics"] }
+wasm-bindgen = { version = "0.2", optional = true }
+
+[dev-dependencies]
+# Used only by the conformance generator/verifier (examples + tests); does
+# not leak to consumers or the wasm build.
+serde_json = "1"
+
+[lib]
+crate-type = ["cdylib", "rlib"]

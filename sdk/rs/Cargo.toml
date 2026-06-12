@@ -27,6 +27,7 @@ anchor = []
 anchor-idl-build = []
 
 [dependencies]
+dropset-price-core = { path = "../price-core" }
 borsh = { version = "1", features = ["derive"] }
 bytemuck = { version = "1", features = ["derive", "min_const_generics"] }
 num-derive = "0.4"

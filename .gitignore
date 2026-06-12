@@ -3,6 +3,9 @@ target/
 # Node / pnpm workspace (hoisted to the repo root by pnpm-workspace.yaml).
 node_modules/
 
+# wasm-pack output for the price-core WASM package (built via `make wasm`).
+sdk/price-core/pkg/
+
 # Track the vanity program keypair.
 !/target/
 /target/*

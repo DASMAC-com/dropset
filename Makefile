@@ -6,8 +6,10 @@
 .PHONY: install-anchor-v2
 .PHONY: lint
 .PHONY: sdk
+.PHONY: sdk-test
 .PHONY: test
 .PHONY: test-no-teardown
+.PHONY: wasm
 
 all: lint test
 clean:
@@ -28,6 +30,17 @@ idl: check-toolchain
 # Regenerate the TS + Rust clients from the checked-in IDL via Codama.
 sdk:
 	cd sdk/codama && pnpm install && pnpm generate
+
+# Build the price-core WASM package for the TS client (requires wasm-pack:
+# `cargo install wasm-pack`). Outputs sdk/price-core/pkg.
+wasm:
+	cd sdk/price-core && wasm-pack build --target web --features wasm
+
+# Run the SDK test suites: Rust (price-core + dropset-sdk, incl. the
+# conformance vectors) and the TS conformance check.
+sdk-test:
+	cargo test -p dropset-price-core -p dropset-sdk
+	cd sdk/ts && pnpm test
 
 debugger: program
 	anchor debugger
