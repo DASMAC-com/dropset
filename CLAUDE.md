@@ -73,3 +73,18 @@ Concrete rules:
   then pre-approve the read-only subcommands (`log`, `show`, `diff`,
   `status`, `rev-parse`) once in your local `settings.local.json` so
   they never prompt again.
+- Operate on a *sibling worktree* by its real path, but approve it
+  with a worktree **glob**. A command like
+  `git -C <base-repo-path>/.claude/worktrees/<tag> status --short`
+  has to name the real worktree to run, but the allow-rule it matches
+  against should be the generalized
+  `Bash(git -C <base-repo-path>/.claude/worktrees/* status:*)` — the
+  mid-path `*` covers every sibling tag and the `:*` covers the args,
+  so one rule firms the whole family. Don't approve the per-tag,
+  per-arg variant; it only ever matches that one call.
+- When per-worktree or per-arg approvals have already piled up in
+  `settings.local.json`, run the `firm-perms` skill. It collapses the
+  one-off entries into globs (per the rules above), dedupes them, and
+  writes the firmed allowlist to **both** this worktree and the base
+  repo so future worktrees inherit it — proposing the changes for
+  your approval before it writes.
