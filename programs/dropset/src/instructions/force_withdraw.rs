@@ -193,8 +193,18 @@ impl ForceWithdrawDepositor {
                     && address_eq(&vd.owner, &owner_addr),
                 DropsetError::VaultDepositorMismatch
             );
-            let released_basis =
-                ((vd.net_deposits.get() as u128) * s_in) / (vd.shares.get() as u128);
+            // Defense-in-depth, mirroring the signed `withdraw` path:
+            // `shares_in` is read from `vd.shares` above so this is
+            // currently unreachable, but it guards against a future
+            // change that decouples the two.
+            require!(
+                vd.shares.get() >= shares_in,
+                DropsetError::InsufficientShares
+            );
+            let released_basis = (vd.net_deposits.get() as u128)
+                .checked_mul(s_in)
+                .ok_or(DropsetError::MathOverflow)?
+                / (vd.shares.get() as u128);
             let ref_now_price = crate::Price::from_bits(ref_price_bits);
             let entry_ref_price = vd.entry_ref_price;
             let quote_for_ref_now = ref_now_price
@@ -223,7 +233,12 @@ impl ForceWithdrawDepositor {
 
             let new_shares = vd.shares.get() - shares_in;
             vd.shares = new_shares.into();
-            vd.net_deposits = (vd.net_deposits.get() - (released_basis as u64)).into();
+            vd.net_deposits = vd
+                .net_deposits
+                .get()
+                .checked_sub(released_basis as u64)
+                .ok_or(DropsetError::MathOverflow)?
+                .into();
         }
 
         // Vault inventory + total share burn. `leader_shares` unchanged
@@ -287,6 +302,18 @@ impl ForceWithdrawDepositor {
         self.vault_depositor.close(owner_view)?;
         let prev = self.market.outstanding_vault_depositors.get();
         self.market.outstanding_vault_depositors = prev.saturating_sub(1).into();
+
+        // Mirror the leader path: if this depositor drain empties the
+        // vault — possible when teardown runs out of the documented
+        // order (leader already force-withdrawn, this the last
+        // depositor) — reclaim the sector so the "a drained sector is
+        // reclaimed" invariant holds regardless of drain order. The
+        // sector is still threaded on active/tombstone here (the leader
+        // path only reclaims on its own `new_total == 0`), so
+        // `reclaim_sector`'s list pre-condition is satisfied.
+        if new_total == 0 {
+            self.market.reclaim_sector(vault_idx)?;
+        }
 
         let realize_event = if realize_outcome.shares_minted > 0 {
             Some(RealizeEvent {

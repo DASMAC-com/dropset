@@ -28,6 +28,38 @@ jobs:
                        env.SOLANA_VERSION }}-anchor-${{ env.ANCHOR_REV }}-'
     - name: 'Run tests'
       run: 'make test'
+  test-no-teardown:
+    name: 'Tests (no teardown)'
+    runs-on: 'ubuntu-latest'
+    steps:
+    - uses: 'actions/checkout@v6'
+    - uses: 'dtolnay/rust-toolchain@stable'
+    - uses: './.github/actions/install-toolchain'
+      with:
+        anchor-revision: '${{ env.ANCHOR_REV }}'
+        solana-version: '${{ env.SOLANA_VERSION }}'
+    - name: 'Cache cargo dependencies'
+      uses: 'actions/cache@v5'
+      with:
+        key: 'cargo-test-no-teardown-${{ runner.os }}-${{
+              runner.arch }}-solana-${{ env.SOLANA_VERSION
+              }}-anchor-${{ env.ANCHOR_REV }}-${{
+              hashFiles(''Cargo.lock'') }}'
+        path: |
+          ~/.cargo/git/db
+          ~/.cargo/registry/cache
+          ~/.cargo/registry/index
+          target
+        # Fall back to this job's own cache first, then to the main
+        # `test` job's cache: the dependency builds (~/.cargo + the dep
+        # artifacts in target/) are identical across the two feature
+        # sets, so a cold no-teardown run warms from the test job's
+        # cache and only the dropset crate is compiled feature-off.
+        restore-keys: |
+          cargo-test-no-teardown-${{ runner.os }}-${{ runner.arch }}-
+          cargo-test-${{ runner.os }}-${{ runner.arch }}-
+    - name: 'Run feature-off teardown-disabled tests'
+      run: 'make test-no-teardown'
 name: 'Tests'
 'on':
   merge_group: null

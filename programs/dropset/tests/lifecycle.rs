@@ -86,3 +86,20 @@ fn freeze_vault_rejects_non_admin() {
         .expect_err("only a registry admin may freeze a vault");
     common::assert_program_error(&err, dropset::DropsetError::Unauthorized);
 }
+
+#[test]
+fn close_vault_rejects_already_tombstoned() {
+    let mut f = Fixture::seeded(1_000_000, 1_085_000);
+    let leader = f.authority.insecure_clone();
+    f.close_vault(&leader, 0)
+        .expect("first close moves the vault to the tombstone list");
+    // A second close must reject as `VaultAlreadyTombstoned`. Advance the
+    // blockhash so the re-sent transaction isn't a byte-identical
+    // duplicate — LiteSVM dedups those as `AlreadyProcessed` before the
+    // program ever runs, which would mask the program-level rejection.
+    f.svm.expire_blockhash();
+    let err = f
+        .close_vault(&leader, 0)
+        .expect_err("a tombstoned vault cannot be closed again");
+    common::assert_program_error(&err, dropset::DropsetError::VaultAlreadyTombstoned);
+}

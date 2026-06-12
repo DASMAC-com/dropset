@@ -990,6 +990,7 @@ dependencies = [
  "anchor-lang-v2",
  "anchor-spl-v2",
  "anchor-v2-testing",
+ "litesvm",
  "solana-instruction",
  "solana-keypair",
  "solana-loader-v3-interface",

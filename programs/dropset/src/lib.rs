@@ -233,7 +233,7 @@ pub mod dropset {
         #[cfg(not(feature = "admin-teardown"))]
         {
             let _ = (&ctx, vault_idx);
-            return Err(DropsetError::TeardownDisabled.into());
+            Err(DropsetError::TeardownDisabled.into())
         }
         #[cfg(feature = "admin-teardown")]
         {
@@ -255,7 +255,7 @@ pub mod dropset {
         #[cfg(not(feature = "admin-teardown"))]
         {
             let _ = (&ctx, vault_idx);
-            return Err(DropsetError::TeardownDisabled.into());
+            Err(DropsetError::TeardownDisabled.into())
         }
         #[cfg(feature = "admin-teardown")]
         {
@@ -273,7 +273,7 @@ pub mod dropset {
         #[cfg(not(feature = "admin-teardown"))]
         {
             let _ = &ctx;
-            return Err(DropsetError::TeardownDisabled.into());
+            Err(DropsetError::TeardownDisabled.into())
         }
         #[cfg(feature = "admin-teardown")]
         {
@@ -286,7 +286,7 @@ pub mod dropset {
         #[cfg(not(feature = "admin-teardown"))]
         {
             let _ = &ctx;
-            return Err(DropsetError::TeardownDisabled.into());
+            Err(DropsetError::TeardownDisabled.into())
         }
         #[cfg(feature = "admin-teardown")]
         {
@@ -299,7 +299,7 @@ pub mod dropset {
         #[cfg(not(feature = "admin-teardown"))]
         {
             let _ = &ctx;
-            return Err(DropsetError::TeardownDisabled.into());
+            Err(DropsetError::TeardownDisabled.into())
         }
         #[cfg(feature = "admin-teardown")]
         {
@@ -312,7 +312,7 @@ pub mod dropset {
         #[cfg(not(feature = "admin-teardown"))]
         {
             let _ = &ctx;
-            return Err(DropsetError::TeardownDisabled.into());
+            Err(DropsetError::TeardownDisabled.into())
         }
         #[cfg(feature = "admin-teardown")]
         {

@@ -2,6 +2,7 @@ use anchor_lang_v2::{bytemuck, Discriminator};
 use anchor_v2_testing::{
     Keypair, LiteSVM, Message, Signer, VersionedMessage, VersionedTransaction,
 };
+use litesvm::types::TransactionMetadata;
 use solana_instruction::{AccountMeta, Instruction};
 use solana_loader_v3_interface::{instruction as loader_v3, state::UpgradeableLoaderState};
 use solana_native_token::LAMPORTS_PER_SOL;
@@ -12,6 +13,10 @@ pub use dropset::ID as PROGRAM_ID;
 /// Shared market bootstrap + per-instruction ix-builders. See
 /// [`fixture::Fixture`].
 pub mod fixture;
+
+/// Decoders for the `emit_cpi!` event records carried in a
+/// transaction's inner instructions. See [`events`].
+pub mod events;
 
 const PROGRAM_SO_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -89,11 +94,21 @@ pub fn deploy_with_authority(authority: &Keypair) -> LiteSVM {
 /// Send a single instruction signed by `signer` (also the fee payer).
 /// Returns the debug-formatted runtime error on failure.
 pub fn send_ixn(svm: &mut LiteSVM, signer: &Keypair, ixn: Instruction) -> Result<(), String> {
+    send_ixn_meta(svm, signer, ixn).map(|_| ())
+}
+
+/// Like [`send_ixn`] but yields the [`TransactionMetadata`] on success —
+/// tests that decode emitted events need the inner instructions it
+/// carries (see [`fixture`]'s `*_meta` senders and `common::events`).
+pub fn send_ixn_meta(
+    svm: &mut LiteSVM,
+    signer: &Keypair,
+    ixn: Instruction,
+) -> Result<TransactionMetadata, String> {
     let blockhash = svm.latest_blockhash();
     let msg = Message::new_with_blockhash(&[ixn], Some(&signer.pubkey()), &blockhash);
     let txn = VersionedTransaction::try_new(VersionedMessage::Legacy(msg), &[signer]).unwrap();
     svm.send_transaction(txn)
-        .map(|_| ())
         .map_err(|e| format!("{:?}", e.err))
 }
 
