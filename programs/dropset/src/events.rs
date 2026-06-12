@@ -23,6 +23,28 @@ pub struct OpenVaultEvent {
     pub allow_outside_depositors: bool,
 }
 
+/// Emitted by `close_vault` when a leader moves their vault from the
+/// active DLL to the tombstone DLL. Matching stops; depositor flows
+/// stay open until the vault drains. See the spec's **CloseVault**.
+#[event]
+pub struct CloseVaultEvent {
+    pub market: Address,
+    pub sector_idx: u32,
+    pub leader: Address,
+    /// Active-DLL length after the move.
+    pub active_count_after: u32,
+}
+
+/// Emitted by `freeze_vault` when an admin freezes a vault. The vault
+/// stays on the active DLL (existing levels still match until expiry)
+/// but can no longer be re-quoted. See the spec's **FreezeVault**.
+#[event]
+pub struct FreezeVaultEvent {
+    pub market: Address,
+    pub sector_idx: u32,
+    pub leader: Address,
+}
+
 /// Emitted by `deposit` after share accounting + basis math.
 #[event]
 pub struct DepositEvent {

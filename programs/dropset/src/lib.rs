@@ -199,4 +199,124 @@ pub mod dropset {
     ) -> Result<()> {
         ctx.accounts.set_outside_deposits_approved(vault_idx, flag)
     }
+
+    #[discrim = 14]
+    pub fn close_vault(ctx: &mut Context<CloseVault>, vault_idx: u32) -> Result<()> {
+        let event = ctx.accounts.close_vault(vault_idx)?;
+        emit_cpi!(event);
+        Ok(())
+    }
+
+    #[discrim = 15]
+    pub fn freeze_vault(ctx: &mut Context<FreezeVault>, vault_idx: u32) -> Result<()> {
+        let event = ctx.accounts.freeze_vault(vault_idx)?;
+        emit_cpi!(event);
+        Ok(())
+    }
+
+    // ── Teardown surface ─────────────────────────────────────────────
+    // Always wired into the program, but each handler short-circuits to
+    // `DropsetError::TeardownDisabled` unless the `admin-teardown`
+    // feature is on. The feature is on for testnet / early-mainnet
+    // builds and off for the final immutable deploy, which keeps the
+    // instructions present-but-inert there. anchor v2's `#[program]`
+    // macro doesn't propagate `#[cfg]` onto its generated dispatch glue,
+    // so a per-instruction compile-out isn't available — this runtime
+    // guard is the supported alternative. See the architecture spec,
+    // § Account lifecycle and rent reclamation.
+
+    #[discrim = 16]
+    pub fn force_withdraw_depositor(
+        ctx: &mut Context<ForceWithdrawDepositor>,
+        vault_idx: u32,
+    ) -> Result<()> {
+        #[cfg(not(feature = "admin-teardown"))]
+        {
+            let _ = (&ctx, vault_idx);
+            return Err(DropsetError::TeardownDisabled.into());
+        }
+        #[cfg(feature = "admin-teardown")]
+        {
+            let (realize_event, withdraw_event) =
+                ctx.accounts.force_withdraw_depositor(vault_idx)?;
+            if let Some(re) = realize_event {
+                emit_cpi!(re);
+            }
+            emit_cpi!(withdraw_event);
+            Ok(())
+        }
+    }
+
+    #[discrim = 17]
+    pub fn force_withdraw_leader(
+        ctx: &mut Context<ForceWithdrawLeader>,
+        vault_idx: u32,
+    ) -> Result<()> {
+        #[cfg(not(feature = "admin-teardown"))]
+        {
+            let _ = (&ctx, vault_idx);
+            return Err(DropsetError::TeardownDisabled.into());
+        }
+        #[cfg(feature = "admin-teardown")]
+        {
+            let (realize_event, withdraw_event) = ctx.accounts.force_withdraw_leader(vault_idx)?;
+            if let Some(re) = realize_event {
+                emit_cpi!(re);
+            }
+            emit_cpi!(withdraw_event);
+            Ok(())
+        }
+    }
+
+    #[discrim = 18]
+    pub fn close_market_treasury(ctx: &mut Context<CloseMarketTreasury>) -> Result<()> {
+        #[cfg(not(feature = "admin-teardown"))]
+        {
+            let _ = &ctx;
+            return Err(DropsetError::TeardownDisabled.into());
+        }
+        #[cfg(feature = "admin-teardown")]
+        {
+            ctx.accounts.close_market_treasury()
+        }
+    }
+
+    #[discrim = 19]
+    pub fn close_market(ctx: &mut Context<CloseMarket>) -> Result<()> {
+        #[cfg(not(feature = "admin-teardown"))]
+        {
+            let _ = &ctx;
+            return Err(DropsetError::TeardownDisabled.into());
+        }
+        #[cfg(feature = "admin-teardown")]
+        {
+            ctx.accounts.close_market()
+        }
+    }
+
+    #[discrim = 20]
+    pub fn close_registry_fee_vault(ctx: &mut Context<CloseRegistryFeeVault>) -> Result<()> {
+        #[cfg(not(feature = "admin-teardown"))]
+        {
+            let _ = &ctx;
+            return Err(DropsetError::TeardownDisabled.into());
+        }
+        #[cfg(feature = "admin-teardown")]
+        {
+            ctx.accounts.close_registry_fee_vault()
+        }
+    }
+
+    #[discrim = 21]
+    pub fn close_registry(ctx: &mut Context<CloseRegistry>) -> Result<()> {
+        #[cfg(not(feature = "admin-teardown"))]
+        {
+            let _ = &ctx;
+            return Err(DropsetError::TeardownDisabled.into());
+        }
+        #[cfg(feature = "admin-teardown")]
+        {
+            ctx.accounts.close_registry()
+        }
+    }
 }

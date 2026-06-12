@@ -113,8 +113,8 @@ fn rejects_unauthorized_signer() {
 #[test]
 fn rejects_frozen_vault() {
     let mut f = fixture_with_priced_vault();
-    f.poke_frozen(0, true);
     let signer = f.authority.insecure_clone();
+    f.freeze_vault(&signer, 0).expect("admin freezes vault");
     let err = f
         .set_liquidity_profile(&signer, 0, simple_profile(5_000, 10_000, u32::MAX))
         .expect_err("frozen vault must reject a profile update");
