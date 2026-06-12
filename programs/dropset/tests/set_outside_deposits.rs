@@ -11,8 +11,8 @@ use solana_pubkey::Pubkey;
 /// both `f.authority`. Both outside flags start `false`.
 fn fixture_with_vault() -> Fixture {
     let mut f = Fixture::bootstrap();
-    f.register_vault(0, f.authority.pubkey(), false, Pubkey::default())
-        .expect("register_vault");
+    f.create_vault(0, f.authority.pubkey(), false, Pubkey::default())
+        .expect("create_vault");
     f
 }
 

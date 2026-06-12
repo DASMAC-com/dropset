@@ -8,7 +8,7 @@
 //!    `total_shares == leader_shares + Σ VaultDepositor.shares`.
 //!
 //! `end_to_end_single_leader_pipeline` covers the leader-only path
-//! (init → register_market → register_vault → set_reference_price →
+//! (init → create_market → create_vault → set_reference_price →
 //! set_liquidity_profile → deposit_leader → withdraw_leader);
 //! `outside_depositor_full_lifecycle` adds the two-key gate, outside
 //! deposit, and the PDA-closing withdraw.
@@ -20,7 +20,7 @@ use common::fixture::Fixture;
 
 #[test]
 fn end_to_end_single_leader_pipeline() {
-    // `Fixture::seeded` runs init → register_market → register_vault →
+    // `Fixture::seeded` runs init → create_market → create_vault →
     // set_reference_price → set_liquidity_profile → deposit_leader.
     let mut f = Fixture::seeded(1_000_000, 1_085_000);
 

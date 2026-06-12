@@ -114,7 +114,7 @@ pub struct Deposit {
 
 impl Deposit {
     /// Returns `(Option<RealizeEvent>, DepositEvent)` for `lib.rs` to
-    /// dispatch through `emit_cpi!`. See [`super::register_vault`] for
+    /// dispatch through `emit_cpi!`. See [`super::create_vault`] for
     /// the rationale on emitting outside the handler. `bump` is the
     /// `VaultDepositor` PDA bump from `ctx.bumps.vault_depositor` —
     /// stamped so `withdraw`'s `bump = vault_depositor.bump`

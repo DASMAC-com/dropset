@@ -405,6 +405,311 @@
       ]
     },
     {
+      "name": "create_market",
+      "discriminator": [
+        3
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "docs": [
+            "Funds rent for the market PDA and the two treasury ATAs, and",
+            "signs the fee transfer unless waived for an admin signer."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "registry",
+          "docs": [
+            "Singleton registry. Mutated to bump `market_count`, and read",
+            "for the fee config, admin set, and stamped defaults."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "base_mint",
+          "docs": [
+            "Base leg mint. `InterfaceAccount<Mint>` accepts SPL Token and",
+            "Token-2022 by relaxing the owner check; the deserialization",
+            "rejects non-mint payloads (token accounts, multisigs, etc.)."
+          ]
+        },
+        {
+          "name": "quote_mint",
+          "docs": [
+            "Quote leg mint. Same deal as `base_mint`."
+          ]
+        },
+        {
+          "name": "base_token_program",
+          "docs": [
+            "SPL Token or Token-2022 — whichever owns `base_mint`.",
+            "`Interface<TokenInterface>` rejects any other address up front",
+            "with `IncorrectProgramId`; an actual `(mint, token_program)`",
+            "owner mismatch surfaces later when the ATA program CPIs through",
+            "to it."
+          ]
+        },
+        {
+          "name": "quote_token_program",
+          "docs": [
+            "Same for the quote leg."
+          ]
+        },
+        {
+          "name": "market",
+          "docs": [
+            "Market PDA seeded by `(base_mint, quote_mint)`. The slab tail",
+            "holds the vault sectors; we open with zero capacity here and",
+            "let `CreateVault` grow it. The `init` constraint enforces",
+            "single-shot creation — a second `create_market` against the",
+            "same pair is rejected by the runtime before our handler runs."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "base_mint"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "base_treasury",
+          "docs": [
+            "Pooled base inventory for every vault on this market. The ATA",
+            "program is the only path that creates it, and its",
+            "`InitializeAccount3` CPI to the token program is what enforces",
+            "`base_mint` is a real mint under the supplied token program."
+          ],
+          "writable": true
+        },
+        {
+          "name": "quote_treasury",
+          "docs": [
+            "Pooled quote inventory. See `base_treasury`."
+          ],
+          "writable": true
+        },
+        {
+          "name": "fee_mint",
+          "docs": [
+            "Mint the create-market fee is charged in. The `address` constraint",
+            "binds it to whatever was stamped onto the registry at `init`,",
+            "so a wrong mint here yields `ConstraintAddress` before the",
+            "handler runs."
+          ],
+          "address": "registry.default_fee_config.mint"
+        },
+        {
+          "name": "fee_token_program",
+          "docs": [
+            "Token program that owns `fee_mint`. Pinned to the value the",
+            "registry stamped at `init`, so a caller-supplied mismatch is",
+            "rejected up front. The `Interface<TokenInterface>` bound is",
+            "belt-and-braces — the address check already implies it."
+          ],
+          "address": "registry.default_fee_config.token_program"
+        },
+        {
+          "name": "payer_fee_source",
+          "docs": [
+            "Caller's source ATA holding the fee mint. Only read on the",
+            "non-admin path — admins skip the transfer entirely, so the",
+            "unchecked passthrough is safe: any account here is ignored on",
+            "the admin branch."
+          ],
+          "writable": true
+        },
+        {
+          "name": "registry_fee_treasury",
+          "docs": [
+            "Registry's fee vault — created at `init` time. The",
+            "`associated_token::*` constraints re-validate it against",
+            "`(registry, fee_mint, fee_token_program)` so a non-canonical",
+            "destination is rejected by `ConstraintAddress`."
+          ],
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "create_vault",
+      "discriminator": [
+        4
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "docs": [
+            "Pays sector-rent top-up (if the slab realloc grows the",
+            "account) and the create-vault fee (unless waived for an admin).",
+            "Becomes the vault's `leader` unless an admin supplied a",
+            "distinct `leader_override` — see the handler."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "registry",
+          "docs": [
+            "Singleton registry — read for admin check + the",
+            "`max_vaults_per_market` cap."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "market",
+          "docs": [
+            "Market the vault lives on. `mut` because the slab tail grows",
+            "(or pops from the free list) and `active_count` increments."
+          ],
+          "writable": true
+        },
+        {
+          "name": "fee_mint",
+          "docs": [
+            "Mint the create-vault fee is paid in. Pinned to the value",
+            "`create_market` stamped into `market.fee_config.mint`."
+          ],
+          "address": "market.fee_config.mint"
+        },
+        {
+          "name": "fee_token_program",
+          "docs": [
+            "Token program owning `fee_mint`. Pinned to the value stamped at",
+            "market creation."
+          ],
+          "address": "market.fee_config.token_program"
+        },
+        {
+          "name": "payer_fee_source",
+          "docs": [
+            "Caller's source ATA for the fee mint. Only read on the",
+            "non-admin path; admin path skips the transfer entirely."
+          ],
+          "writable": true
+        },
+        {
+          "name": "registry_fee_treasury",
+          "docs": [
+            "Registry's fee ATA. ATA constraint validates",
+            "`(registry, fee_mint, fee_token_program)` so a wrong destination",
+            "is rejected before the transfer CPI runs."
+          ],
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "docs": [
+            "CHECK: Only the event authority can invoke self-CPI"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "docs": [
+            "CHECK: Kept for v1-compatible account ordering and IDL shape"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "perf_fee_rate",
+          "type": "u32"
+        },
+        {
+          "name": "quote_authority",
+          "type": "pubkey"
+        },
+        {
+          "name": "allow_outside_depositors",
+          "type": "bool"
+        },
+        {
+          "name": "leader_override",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
       "name": "deposit",
       "discriminator": [
         7
@@ -1217,7 +1522,7 @@
         {
           "name": "fee_vault",
           "docs": [
-            "Registry-owned fee vault for the per-`OpenVault` charge. Created",
+            "Registry-owned fee vault for the per-`CreateVault` charge. Created",
             "here by CPI to the ATA program; its address is the canonical",
             "ATA over `(registry, token_program, fee_mint)`, and the ATA",
             "program rejects any `(mint, token_program)` pair whose owners",
@@ -1252,311 +1557,6 @@
         {
           "name": "fee_atoms",
           "type": "u64"
-        }
-      ]
-    },
-    {
-      "name": "register_market",
-      "discriminator": [
-        3
-      ],
-      "accounts": [
-        {
-          "name": "payer",
-          "docs": [
-            "Funds rent for the market PDA and the two treasury ATAs, and",
-            "signs the fee transfer unless waived for an admin signer."
-          ],
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "registry",
-          "docs": [
-            "Singleton registry. Mutated to bump `market_count`, and read",
-            "for the fee config, admin set, and stamped defaults."
-          ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  103,
-                  105,
-                  115,
-                  116,
-                  114,
-                  121
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "base_mint",
-          "docs": [
-            "Base leg mint. `InterfaceAccount<Mint>` accepts SPL Token and",
-            "Token-2022 by relaxing the owner check; the deserialization",
-            "rejects non-mint payloads (token accounts, multisigs, etc.)."
-          ]
-        },
-        {
-          "name": "quote_mint",
-          "docs": [
-            "Quote leg mint. Same deal as `base_mint`."
-          ]
-        },
-        {
-          "name": "base_token_program",
-          "docs": [
-            "SPL Token or Token-2022 — whichever owns `base_mint`.",
-            "`Interface<TokenInterface>` rejects any other address up front",
-            "with `IncorrectProgramId`; an actual `(mint, token_program)`",
-            "owner mismatch surfaces later when the ATA program CPIs through",
-            "to it."
-          ]
-        },
-        {
-          "name": "quote_token_program",
-          "docs": [
-            "Same for the quote leg."
-          ]
-        },
-        {
-          "name": "market",
-          "docs": [
-            "Market PDA seeded by `(base_mint, quote_mint)`. The slab tail",
-            "holds the vault sectors; we open with zero capacity here and",
-            "let `OpenVault` grow it. The `init` constraint enforces",
-            "single-shot creation — a second `register_market` against the",
-            "same pair is rejected by the runtime before our handler runs."
-          ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "account",
-                "path": "base_mint"
-              },
-              {
-                "kind": "account",
-                "path": "quote_mint"
-              }
-            ]
-          }
-        },
-        {
-          "name": "base_treasury",
-          "docs": [
-            "Pooled base inventory for every vault on this market. The ATA",
-            "program is the only path that creates it, and its",
-            "`InitializeAccount3` CPI to the token program is what enforces",
-            "`base_mint` is a real mint under the supplied token program."
-          ],
-          "writable": true
-        },
-        {
-          "name": "quote_treasury",
-          "docs": [
-            "Pooled quote inventory. See `base_treasury`."
-          ],
-          "writable": true
-        },
-        {
-          "name": "fee_mint",
-          "docs": [
-            "Mint the open-market fee is charged in. The `address` constraint",
-            "binds it to whatever was stamped onto the registry at `init`,",
-            "so a wrong mint here yields `ConstraintAddress` before the",
-            "handler runs."
-          ],
-          "address": "registry.default_fee_config.mint"
-        },
-        {
-          "name": "fee_token_program",
-          "docs": [
-            "Token program that owns `fee_mint`. Pinned to the value the",
-            "registry stamped at `init`, so a caller-supplied mismatch is",
-            "rejected up front. The `Interface<TokenInterface>` bound is",
-            "belt-and-braces — the address check already implies it."
-          ],
-          "address": "registry.default_fee_config.token_program"
-        },
-        {
-          "name": "payer_fee_source",
-          "docs": [
-            "Caller's source ATA holding the fee mint. Only read on the",
-            "non-admin path — admins skip the transfer entirely, so the",
-            "unchecked passthrough is safe: any account here is ignored on",
-            "the admin branch."
-          ],
-          "writable": true
-        },
-        {
-          "name": "registry_fee_treasury",
-          "docs": [
-            "Registry's fee vault — created at `init` time. The",
-            "`associated_token::*` constraints re-validate it against",
-            "`(registry, fee_mint, fee_token_program)` so a non-canonical",
-            "destination is rejected by `ConstraintAddress`."
-          ],
-          "writable": true
-        },
-        {
-          "name": "system_program",
-          "address": "11111111111111111111111111111111"
-        },
-        {
-          "name": "associated_token_program",
-          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
-        }
-      ],
-      "args": []
-    },
-    {
-      "name": "register_vault",
-      "discriminator": [
-        4
-      ],
-      "accounts": [
-        {
-          "name": "payer",
-          "docs": [
-            "Pays sector-rent top-up (if the slab realloc grows the",
-            "account) and the open-vault fee (unless waived for an admin).",
-            "Becomes the vault's `leader` unless an admin supplied a",
-            "distinct `leader_override` — see the handler."
-          ],
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "registry",
-          "docs": [
-            "Singleton registry — read for admin check + the",
-            "`max_vaults_per_market` cap."
-          ],
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  103,
-                  105,
-                  115,
-                  116,
-                  114,
-                  121
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "market",
-          "docs": [
-            "Market the vault lives on. `mut` because the slab tail grows",
-            "(or pops from the free list) and `active_count` increments."
-          ],
-          "writable": true
-        },
-        {
-          "name": "fee_mint",
-          "docs": [
-            "Mint the open-vault fee is paid in. Pinned to the value",
-            "`register_market` stamped into `market.fee_config.mint`."
-          ],
-          "address": "market.fee_config.mint"
-        },
-        {
-          "name": "fee_token_program",
-          "docs": [
-            "Token program owning `fee_mint`. Pinned to the value stamped at",
-            "market creation."
-          ],
-          "address": "market.fee_config.token_program"
-        },
-        {
-          "name": "payer_fee_source",
-          "docs": [
-            "Caller's source ATA for the fee mint. Only read on the",
-            "non-admin path; admin path skips the transfer entirely."
-          ],
-          "writable": true
-        },
-        {
-          "name": "registry_fee_treasury",
-          "docs": [
-            "Registry's fee ATA. ATA constraint validates",
-            "`(registry, fee_mint, fee_token_program)` so a wrong destination",
-            "is rejected before the transfer CPI runs."
-          ],
-          "writable": true
-        },
-        {
-          "name": "system_program",
-          "address": "11111111111111111111111111111111"
-        },
-        {
-          "name": "event_authority",
-          "docs": [
-            "CHECK: Only the event authority can invoke self-CPI"
-          ],
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  95,
-                  95,
-                  101,
-                  118,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "program",
-          "docs": [
-            "CHECK: Kept for v1-compatible account ordering and IDL shape"
-          ]
-        }
-      ],
-      "args": [
-        {
-          "name": "perf_fee_rate",
-          "type": "u32"
-        },
-        {
-          "name": "quote_authority",
-          "type": "pubkey"
-        },
-        {
-          "name": "allow_outside_depositors",
-          "type": "bool"
-        },
-        {
-          "name": "leader_override",
-          "type": "pubkey"
         }
       ]
     },
@@ -1734,7 +1734,7 @@
           "name": "signer",
           "docs": [
             "Quote authority — the only signer the spec accepts here. Set at",
-            "`OpenVault` (defaults to the leader)."
+            "`CreateVault` (defaults to the leader)."
           ],
           "signer": true
         },
@@ -2237,6 +2237,19 @@
       ]
     },
     {
+      "name": "CreateVaultEvent",
+      "discriminator": [
+        42,
+        221,
+        241,
+        92,
+        177,
+        139,
+        118,
+        240
+      ]
+    },
+    {
       "name": "DepositEvent",
       "discriminator": [
         120,
@@ -2273,19 +2286,6 @@
         20,
         1,
         74
-      ]
-    },
-    {
-      "name": "OpenVaultEvent",
-      "discriminator": [
-        122,
-        120,
-        130,
-        32,
-        250,
-        83,
-        144,
-        252
       ]
     },
     {
@@ -2566,6 +2566,45 @@
       }
     },
     {
+      "name": "CreateVaultEvent",
+      "docs": [
+        "Emitted by `create_vault`."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "sector_idx",
+            "type": "u32"
+          },
+          {
+            "name": "leader",
+            "type": "pubkey"
+          },
+          {
+            "name": "quote_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "perf_fee_rate",
+            "type": "u32"
+          },
+          {
+            "name": "min_leader_share",
+            "type": "u32"
+          },
+          {
+            "name": "allow_outside_depositors",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
       "name": "DepositEvent",
       "docs": [
         "Emitted by `deposit` after share accounting + basis math."
@@ -2841,7 +2880,7 @@
           {
             "name": "free_head",
             "docs": [
-              "Head of the free DLL: sectors available for reuse on `OpenVault`.",
+              "Head of the free DLL: sectors available for reuse on `CreateVault`.",
               "Singly linked via `next`; `prev` is ignored."
             ],
             "type": "u32"
@@ -2872,7 +2911,7 @@
           {
             "name": "fee_config",
             "docs": [
-              "Per-market open-vault fee: mint and amount. Seeded from",
+              "Per-market create-vault fee: mint and amount. Seeded from",
               "`Registry.default_fee_config` at market creation."
             ],
             "type": {
@@ -2946,45 +2985,6 @@
               "Bump for the quote treasury ATA derivation."
             ],
             "type": "u8"
-          }
-        ]
-      }
-    },
-    {
-      "name": "OpenVaultEvent",
-      "docs": [
-        "Emitted by `register_vault` (spec's `OpenVault`)."
-      ],
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "market",
-            "type": "pubkey"
-          },
-          {
-            "name": "sector_idx",
-            "type": "u32"
-          },
-          {
-            "name": "leader",
-            "type": "pubkey"
-          },
-          {
-            "name": "quote_authority",
-            "type": "pubkey"
-          },
-          {
-            "name": "perf_fee_rate",
-            "type": "u32"
-          },
-          {
-            "name": "min_leader_share",
-            "type": "u32"
-          },
-          {
-            "name": "allow_outside_depositors",
-            "type": "bool"
           }
         ]
       }
@@ -3083,7 +3083,7 @@
           {
             "name": "default_fee_config",
             "docs": [
-              "Default fee for the per-`OpenVault` charge, stamped into",
+              "Default fee for the per-`CreateVault` charge, stamped into",
               "`MarketHeader.fee_config` at market creation."
             ],
             "type": {

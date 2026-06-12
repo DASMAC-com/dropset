@@ -11,30 +11,30 @@ import { findMarketPda, findRegistryPda } from '../pdas';
 import { DROPSET_PROGRAM_ADDRESS } from '../programs';
 import { expectAddress, getAccountMetaFactory, type ResolvedAccount } from '../shared';
 
-export const REGISTER_MARKET_DISCRIMINATOR = new Uint8Array([3]);
+export const CREATE_MARKET_DISCRIMINATOR = new Uint8Array([3]);
 
-export function getRegisterMarketDiscriminatorBytes() { return fixEncoderSize(getBytesEncoder(), 1).encode(REGISTER_MARKET_DISCRIMINATOR); }
+export function getCreateMarketDiscriminatorBytes() { return fixEncoderSize(getBytesEncoder(), 1).encode(CREATE_MARKET_DISCRIMINATOR); }
 
-export type RegisterMarketInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountPayer extends string | AccountMeta<string> = string, TAccountRegistry extends string | AccountMeta<string> = string, TAccountBaseMint extends string | AccountMeta<string> = string, TAccountQuoteMint extends string | AccountMeta<string> = string, TAccountBaseTokenProgram extends string | AccountMeta<string> = string, TAccountQuoteTokenProgram extends string | AccountMeta<string> = string, TAccountMarket extends string | AccountMeta<string> = string, TAccountBaseTreasury extends string | AccountMeta<string> = string, TAccountQuoteTreasury extends string | AccountMeta<string> = string, TAccountFeeMint extends string | AccountMeta<string> = "registry.default_fee_config.mint", TAccountFeeTokenProgram extends string | AccountMeta<string> = "registry.default_fee_config.token_program", TAccountPayerFeeSource extends string | AccountMeta<string> = string, TAccountRegistryFeeTreasury extends string | AccountMeta<string> = string, TAccountSystemProgram extends string | AccountMeta<string> = "11111111111111111111111111111111", TAccountAssociatedTokenProgram extends string | AccountMeta<string> = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL", TRemainingAccounts extends readonly AccountMeta<string>[] = []> =
+export type CreateMarketInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountPayer extends string | AccountMeta<string> = string, TAccountRegistry extends string | AccountMeta<string> = string, TAccountBaseMint extends string | AccountMeta<string> = string, TAccountQuoteMint extends string | AccountMeta<string> = string, TAccountBaseTokenProgram extends string | AccountMeta<string> = string, TAccountQuoteTokenProgram extends string | AccountMeta<string> = string, TAccountMarket extends string | AccountMeta<string> = string, TAccountBaseTreasury extends string | AccountMeta<string> = string, TAccountQuoteTreasury extends string | AccountMeta<string> = string, TAccountFeeMint extends string | AccountMeta<string> = "registry.default_fee_config.mint", TAccountFeeTokenProgram extends string | AccountMeta<string> = "registry.default_fee_config.token_program", TAccountPayerFeeSource extends string | AccountMeta<string> = string, TAccountRegistryFeeTreasury extends string | AccountMeta<string> = string, TAccountSystemProgram extends string | AccountMeta<string> = "11111111111111111111111111111111", TAccountAssociatedTokenProgram extends string | AccountMeta<string> = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL", TRemainingAccounts extends readonly AccountMeta<string>[] = []> =
 Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array> & InstructionWithAccounts<[TAccountPayer extends string ? WritableSignerAccount<TAccountPayer> & AccountSignerMeta<TAccountPayer> : TAccountPayer, TAccountRegistry extends string ? WritableAccount<TAccountRegistry> : TAccountRegistry, TAccountBaseMint extends string ? ReadonlyAccount<TAccountBaseMint> : TAccountBaseMint, TAccountQuoteMint extends string ? ReadonlyAccount<TAccountQuoteMint> : TAccountQuoteMint, TAccountBaseTokenProgram extends string ? ReadonlyAccount<TAccountBaseTokenProgram> : TAccountBaseTokenProgram, TAccountQuoteTokenProgram extends string ? ReadonlyAccount<TAccountQuoteTokenProgram> : TAccountQuoteTokenProgram, TAccountMarket extends string ? WritableAccount<TAccountMarket> : TAccountMarket, TAccountBaseTreasury extends string ? WritableAccount<TAccountBaseTreasury> : TAccountBaseTreasury, TAccountQuoteTreasury extends string ? WritableAccount<TAccountQuoteTreasury> : TAccountQuoteTreasury, TAccountFeeMint extends string ? ReadonlyAccount<TAccountFeeMint> : TAccountFeeMint, TAccountFeeTokenProgram extends string ? ReadonlyAccount<TAccountFeeTokenProgram> : TAccountFeeTokenProgram, TAccountPayerFeeSource extends string ? WritableAccount<TAccountPayerFeeSource> : TAccountPayerFeeSource, TAccountRegistryFeeTreasury extends string ? WritableAccount<TAccountRegistryFeeTreasury> : TAccountRegistryFeeTreasury, TAccountSystemProgram extends string ? ReadonlyAccount<TAccountSystemProgram> : TAccountSystemProgram, TAccountAssociatedTokenProgram extends string ? ReadonlyAccount<TAccountAssociatedTokenProgram> : TAccountAssociatedTokenProgram, ...TRemainingAccounts]>;
 
-export type RegisterMarketInstructionData = { discriminator: ReadonlyUint8Array;  };
+export type CreateMarketInstructionData = { discriminator: ReadonlyUint8Array;  };
 
-export type RegisterMarketInstructionDataArgs = {  };
+export type CreateMarketInstructionDataArgs = {  };
 
-export function getRegisterMarketInstructionDataEncoder(): FixedSizeEncoder<RegisterMarketInstructionDataArgs> {
-    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 1)]]), (value) => ({ ...value, discriminator: REGISTER_MARKET_DISCRIMINATOR }));
+export function getCreateMarketInstructionDataEncoder(): FixedSizeEncoder<CreateMarketInstructionDataArgs> {
+    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 1)]]), (value) => ({ ...value, discriminator: CREATE_MARKET_DISCRIMINATOR }));
 }
 
-export function getRegisterMarketInstructionDataDecoder(): FixedSizeDecoder<RegisterMarketInstructionData> {
+export function getCreateMarketInstructionDataDecoder(): FixedSizeDecoder<CreateMarketInstructionData> {
     return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 1)]]);
 }
 
-export function getRegisterMarketInstructionDataCodec(): FixedSizeCodec<RegisterMarketInstructionDataArgs, RegisterMarketInstructionData> {
-    return combineCodec(getRegisterMarketInstructionDataEncoder(), getRegisterMarketInstructionDataDecoder());
+export function getCreateMarketInstructionDataCodec(): FixedSizeCodec<CreateMarketInstructionDataArgs, CreateMarketInstructionData> {
+    return combineCodec(getCreateMarketInstructionDataEncoder(), getCreateMarketInstructionDataDecoder());
 }
 
-export type RegisterMarketAsyncInput<TAccountPayer extends string = string, TAccountRegistry extends string = string, TAccountBaseMint extends string = string, TAccountQuoteMint extends string = string, TAccountBaseTokenProgram extends string = string, TAccountQuoteTokenProgram extends string = string, TAccountMarket extends string = string, TAccountBaseTreasury extends string = string, TAccountQuoteTreasury extends string = string, TAccountFeeMint extends string = string, TAccountFeeTokenProgram extends string = string, TAccountPayerFeeSource extends string = string, TAccountRegistryFeeTreasury extends string = string, TAccountSystemProgram extends string = string, TAccountAssociatedTokenProgram extends string = string> =  {
+export type CreateMarketAsyncInput<TAccountPayer extends string = string, TAccountRegistry extends string = string, TAccountBaseMint extends string = string, TAccountQuoteMint extends string = string, TAccountBaseTokenProgram extends string = string, TAccountQuoteTokenProgram extends string = string, TAccountMarket extends string = string, TAccountBaseTreasury extends string = string, TAccountQuoteTreasury extends string = string, TAccountFeeMint extends string = string, TAccountFeeTokenProgram extends string = string, TAccountPayerFeeSource extends string = string, TAccountRegistryFeeTreasury extends string = string, TAccountSystemProgram extends string = string, TAccountAssociatedTokenProgram extends string = string> =  {
   /**
  * Funds rent for the market PDA and the two treasury ATAs, and
  * signs the fee transfer unless waived for an admin signer.
@@ -66,8 +66,8 @@ quoteTokenProgram: Address<TAccountQuoteTokenProgram>;
 /**
  * Market PDA seeded by `(base_mint, quote_mint)`. The slab tail
  * holds the vault sectors; we open with zero capacity here and
- * let `OpenVault` grow it. The `init` constraint enforces
- * single-shot creation — a second `register_market` against the
+ * let `CreateVault` grow it. The `init` constraint enforces
+ * single-shot creation — a second `create_market` against the
  * same pair is rejected by the runtime before our handler runs.
  */
 market?: Address<TAccountMarket>;
@@ -81,7 +81,7 @@ baseTreasury: Address<TAccountBaseTreasury>;
 /** Pooled quote inventory. See `base_treasury`. */
 quoteTreasury: Address<TAccountQuoteTreasury>;
 /**
- * Mint the open-market fee is charged in. The `address` constraint
+ * Mint the create-market fee is charged in. The `address` constraint
  * binds it to whatever was stamped onto the registry at `init`,
  * so a wrong mint here yields `ConstraintAddress` before the
  * handler runs.
@@ -112,7 +112,7 @@ systemProgram?: Address<TAccountSystemProgram>;
 associatedTokenProgram?: Address<TAccountAssociatedTokenProgram>;
 }
 
-export async function getRegisterMarketInstructionAsync<TAccountPayer extends string, TAccountRegistry extends string, TAccountBaseMint extends string, TAccountQuoteMint extends string, TAccountBaseTokenProgram extends string, TAccountQuoteTokenProgram extends string, TAccountMarket extends string, TAccountBaseTreasury extends string, TAccountQuoteTreasury extends string, TAccountFeeMint extends string, TAccountFeeTokenProgram extends string, TAccountPayerFeeSource extends string, TAccountRegistryFeeTreasury extends string, TAccountSystemProgram extends string, TAccountAssociatedTokenProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: RegisterMarketAsyncInput<TAccountPayer, TAccountRegistry, TAccountBaseMint, TAccountQuoteMint, TAccountBaseTokenProgram, TAccountQuoteTokenProgram, TAccountMarket, TAccountBaseTreasury, TAccountQuoteTreasury, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountAssociatedTokenProgram>, config?: { programAddress?: TProgramAddress } ): Promise<RegisterMarketInstruction<TProgramAddress, TAccountPayer, TAccountRegistry, TAccountBaseMint, TAccountQuoteMint, TAccountBaseTokenProgram, TAccountQuoteTokenProgram, TAccountMarket, TAccountBaseTreasury, TAccountQuoteTreasury, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountAssociatedTokenProgram>> {
+export async function getCreateMarketInstructionAsync<TAccountPayer extends string, TAccountRegistry extends string, TAccountBaseMint extends string, TAccountQuoteMint extends string, TAccountBaseTokenProgram extends string, TAccountQuoteTokenProgram extends string, TAccountMarket extends string, TAccountBaseTreasury extends string, TAccountQuoteTreasury extends string, TAccountFeeMint extends string, TAccountFeeTokenProgram extends string, TAccountPayerFeeSource extends string, TAccountRegistryFeeTreasury extends string, TAccountSystemProgram extends string, TAccountAssociatedTokenProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: CreateMarketAsyncInput<TAccountPayer, TAccountRegistry, TAccountBaseMint, TAccountQuoteMint, TAccountBaseTokenProgram, TAccountQuoteTokenProgram, TAccountMarket, TAccountBaseTreasury, TAccountQuoteTreasury, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountAssociatedTokenProgram>, config?: { programAddress?: TProgramAddress } ): Promise<CreateMarketInstruction<TProgramAddress, TAccountPayer, TAccountRegistry, TAccountBaseMint, TAccountQuoteMint, TAccountBaseTokenProgram, TAccountQuoteTokenProgram, TAccountMarket, TAccountBaseTreasury, TAccountQuoteTreasury, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountAssociatedTokenProgram>> {
   // Program address.
 const programAddress = config?.programAddress ?? DROPSET_PROGRAM_ADDRESS;
 
@@ -142,10 +142,10 @@ accounts.associatedTokenProgram.value = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJ
 }
 
 const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
-return Object.freeze({ accounts: [getAccountMeta(accounts.payer), getAccountMeta(accounts.registry), getAccountMeta(accounts.baseMint), getAccountMeta(accounts.quoteMint), getAccountMeta(accounts.baseTokenProgram), getAccountMeta(accounts.quoteTokenProgram), getAccountMeta(accounts.market), getAccountMeta(accounts.baseTreasury), getAccountMeta(accounts.quoteTreasury), getAccountMeta(accounts.feeMint), getAccountMeta(accounts.feeTokenProgram), getAccountMeta(accounts.payerFeeSource), getAccountMeta(accounts.registryFeeTreasury), getAccountMeta(accounts.systemProgram), getAccountMeta(accounts.associatedTokenProgram)], data: getRegisterMarketInstructionDataEncoder().encode({}), programAddress } as RegisterMarketInstruction<TProgramAddress, TAccountPayer, TAccountRegistry, TAccountBaseMint, TAccountQuoteMint, TAccountBaseTokenProgram, TAccountQuoteTokenProgram, TAccountMarket, TAccountBaseTreasury, TAccountQuoteTreasury, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountAssociatedTokenProgram>);
+return Object.freeze({ accounts: [getAccountMeta(accounts.payer), getAccountMeta(accounts.registry), getAccountMeta(accounts.baseMint), getAccountMeta(accounts.quoteMint), getAccountMeta(accounts.baseTokenProgram), getAccountMeta(accounts.quoteTokenProgram), getAccountMeta(accounts.market), getAccountMeta(accounts.baseTreasury), getAccountMeta(accounts.quoteTreasury), getAccountMeta(accounts.feeMint), getAccountMeta(accounts.feeTokenProgram), getAccountMeta(accounts.payerFeeSource), getAccountMeta(accounts.registryFeeTreasury), getAccountMeta(accounts.systemProgram), getAccountMeta(accounts.associatedTokenProgram)], data: getCreateMarketInstructionDataEncoder().encode({}), programAddress } as CreateMarketInstruction<TProgramAddress, TAccountPayer, TAccountRegistry, TAccountBaseMint, TAccountQuoteMint, TAccountBaseTokenProgram, TAccountQuoteTokenProgram, TAccountMarket, TAccountBaseTreasury, TAccountQuoteTreasury, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountAssociatedTokenProgram>);
 }
 
-export type RegisterMarketInput<TAccountPayer extends string = string, TAccountRegistry extends string = string, TAccountBaseMint extends string = string, TAccountQuoteMint extends string = string, TAccountBaseTokenProgram extends string = string, TAccountQuoteTokenProgram extends string = string, TAccountMarket extends string = string, TAccountBaseTreasury extends string = string, TAccountQuoteTreasury extends string = string, TAccountFeeMint extends string = string, TAccountFeeTokenProgram extends string = string, TAccountPayerFeeSource extends string = string, TAccountRegistryFeeTreasury extends string = string, TAccountSystemProgram extends string = string, TAccountAssociatedTokenProgram extends string = string> =  {
+export type CreateMarketInput<TAccountPayer extends string = string, TAccountRegistry extends string = string, TAccountBaseMint extends string = string, TAccountQuoteMint extends string = string, TAccountBaseTokenProgram extends string = string, TAccountQuoteTokenProgram extends string = string, TAccountMarket extends string = string, TAccountBaseTreasury extends string = string, TAccountQuoteTreasury extends string = string, TAccountFeeMint extends string = string, TAccountFeeTokenProgram extends string = string, TAccountPayerFeeSource extends string = string, TAccountRegistryFeeTreasury extends string = string, TAccountSystemProgram extends string = string, TAccountAssociatedTokenProgram extends string = string> =  {
   /**
  * Funds rent for the market PDA and the two treasury ATAs, and
  * signs the fee transfer unless waived for an admin signer.
@@ -177,8 +177,8 @@ quoteTokenProgram: Address<TAccountQuoteTokenProgram>;
 /**
  * Market PDA seeded by `(base_mint, quote_mint)`. The slab tail
  * holds the vault sectors; we open with zero capacity here and
- * let `OpenVault` grow it. The `init` constraint enforces
- * single-shot creation — a second `register_market` against the
+ * let `CreateVault` grow it. The `init` constraint enforces
+ * single-shot creation — a second `create_market` against the
  * same pair is rejected by the runtime before our handler runs.
  */
 market: Address<TAccountMarket>;
@@ -192,7 +192,7 @@ baseTreasury: Address<TAccountBaseTreasury>;
 /** Pooled quote inventory. See `base_treasury`. */
 quoteTreasury: Address<TAccountQuoteTreasury>;
 /**
- * Mint the open-market fee is charged in. The `address` constraint
+ * Mint the create-market fee is charged in. The `address` constraint
  * binds it to whatever was stamped onto the registry at `init`,
  * so a wrong mint here yields `ConstraintAddress` before the
  * handler runs.
@@ -223,7 +223,7 @@ systemProgram?: Address<TAccountSystemProgram>;
 associatedTokenProgram?: Address<TAccountAssociatedTokenProgram>;
 }
 
-export function getRegisterMarketInstruction<TAccountPayer extends string, TAccountRegistry extends string, TAccountBaseMint extends string, TAccountQuoteMint extends string, TAccountBaseTokenProgram extends string, TAccountQuoteTokenProgram extends string, TAccountMarket extends string, TAccountBaseTreasury extends string, TAccountQuoteTreasury extends string, TAccountFeeMint extends string, TAccountFeeTokenProgram extends string, TAccountPayerFeeSource extends string, TAccountRegistryFeeTreasury extends string, TAccountSystemProgram extends string, TAccountAssociatedTokenProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: RegisterMarketInput<TAccountPayer, TAccountRegistry, TAccountBaseMint, TAccountQuoteMint, TAccountBaseTokenProgram, TAccountQuoteTokenProgram, TAccountMarket, TAccountBaseTreasury, TAccountQuoteTreasury, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountAssociatedTokenProgram>, config?: { programAddress?: TProgramAddress } ): RegisterMarketInstruction<TProgramAddress, TAccountPayer, TAccountRegistry, TAccountBaseMint, TAccountQuoteMint, TAccountBaseTokenProgram, TAccountQuoteTokenProgram, TAccountMarket, TAccountBaseTreasury, TAccountQuoteTreasury, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountAssociatedTokenProgram> {
+export function getCreateMarketInstruction<TAccountPayer extends string, TAccountRegistry extends string, TAccountBaseMint extends string, TAccountQuoteMint extends string, TAccountBaseTokenProgram extends string, TAccountQuoteTokenProgram extends string, TAccountMarket extends string, TAccountBaseTreasury extends string, TAccountQuoteTreasury extends string, TAccountFeeMint extends string, TAccountFeeTokenProgram extends string, TAccountPayerFeeSource extends string, TAccountRegistryFeeTreasury extends string, TAccountSystemProgram extends string, TAccountAssociatedTokenProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: CreateMarketInput<TAccountPayer, TAccountRegistry, TAccountBaseMint, TAccountQuoteMint, TAccountBaseTokenProgram, TAccountQuoteTokenProgram, TAccountMarket, TAccountBaseTreasury, TAccountQuoteTreasury, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountAssociatedTokenProgram>, config?: { programAddress?: TProgramAddress } ): CreateMarketInstruction<TProgramAddress, TAccountPayer, TAccountRegistry, TAccountBaseMint, TAccountQuoteMint, TAccountBaseTokenProgram, TAccountQuoteTokenProgram, TAccountMarket, TAccountBaseTreasury, TAccountQuoteTreasury, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountAssociatedTokenProgram> {
   // Program address.
 const programAddress = config?.programAddress ?? DROPSET_PROGRAM_ADDRESS;
 
@@ -247,10 +247,10 @@ accounts.associatedTokenProgram.value = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJ
 }
 
 const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
-return Object.freeze({ accounts: [getAccountMeta(accounts.payer), getAccountMeta(accounts.registry), getAccountMeta(accounts.baseMint), getAccountMeta(accounts.quoteMint), getAccountMeta(accounts.baseTokenProgram), getAccountMeta(accounts.quoteTokenProgram), getAccountMeta(accounts.market), getAccountMeta(accounts.baseTreasury), getAccountMeta(accounts.quoteTreasury), getAccountMeta(accounts.feeMint), getAccountMeta(accounts.feeTokenProgram), getAccountMeta(accounts.payerFeeSource), getAccountMeta(accounts.registryFeeTreasury), getAccountMeta(accounts.systemProgram), getAccountMeta(accounts.associatedTokenProgram)], data: getRegisterMarketInstructionDataEncoder().encode({}), programAddress } as RegisterMarketInstruction<TProgramAddress, TAccountPayer, TAccountRegistry, TAccountBaseMint, TAccountQuoteMint, TAccountBaseTokenProgram, TAccountQuoteTokenProgram, TAccountMarket, TAccountBaseTreasury, TAccountQuoteTreasury, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountAssociatedTokenProgram>);
+return Object.freeze({ accounts: [getAccountMeta(accounts.payer), getAccountMeta(accounts.registry), getAccountMeta(accounts.baseMint), getAccountMeta(accounts.quoteMint), getAccountMeta(accounts.baseTokenProgram), getAccountMeta(accounts.quoteTokenProgram), getAccountMeta(accounts.market), getAccountMeta(accounts.baseTreasury), getAccountMeta(accounts.quoteTreasury), getAccountMeta(accounts.feeMint), getAccountMeta(accounts.feeTokenProgram), getAccountMeta(accounts.payerFeeSource), getAccountMeta(accounts.registryFeeTreasury), getAccountMeta(accounts.systemProgram), getAccountMeta(accounts.associatedTokenProgram)], data: getCreateMarketInstructionDataEncoder().encode({}), programAddress } as CreateMarketInstruction<TProgramAddress, TAccountPayer, TAccountRegistry, TAccountBaseMint, TAccountQuoteMint, TAccountBaseTokenProgram, TAccountQuoteTokenProgram, TAccountMarket, TAccountBaseTreasury, TAccountQuoteTreasury, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountAssociatedTokenProgram>);
 }
 
-export type ParsedRegisterMarketInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountMetas extends readonly AccountMeta[] = readonly AccountMeta[]> = { programAddress: Address<TProgram>;
+export type ParsedCreateMarketInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountMetas extends readonly AccountMeta[] = readonly AccountMeta[]> = { programAddress: Address<TProgram>;
 accounts: {
 /**
  * Funds rent for the market PDA and the two treasury ATAs, and
@@ -283,8 +283,8 @@ quoteTokenProgram: TAccountMetas[5];
 /**
  * Market PDA seeded by `(base_mint, quote_mint)`. The slab tail
  * holds the vault sectors; we open with zero capacity here and
- * let `OpenVault` grow it. The `init` constraint enforces
- * single-shot creation — a second `register_market` against the
+ * let `CreateVault` grow it. The `init` constraint enforces
+ * single-shot creation — a second `create_market` against the
  * same pair is rejected by the runtime before our handler runs.
  */
 market: TAccountMetas[6];
@@ -298,7 +298,7 @@ baseTreasury: TAccountMetas[7];
 /** Pooled quote inventory. See `base_treasury`. */
 quoteTreasury: TAccountMetas[8];
 /**
- * Mint the open-market fee is charged in. The `address` constraint
+ * Mint the create-market fee is charged in. The `address` constraint
  * binds it to whatever was stamped onto the registry at `init`,
  * so a wrong mint here yields `ConstraintAddress` before the
  * handler runs.
@@ -328,9 +328,9 @@ registryFeeTreasury: TAccountMetas[12];
 systemProgram: TAccountMetas[13];
 associatedTokenProgram: TAccountMetas[14];
 };
-data: RegisterMarketInstructionData; };
+data: CreateMarketInstructionData; };
 
-export function parseRegisterMarketInstruction<TProgram extends string, TAccountMetas extends readonly AccountMeta[]>(instruction: Instruction<TProgram> & InstructionWithAccounts<TAccountMetas> & InstructionWithData<ReadonlyUint8Array>): ParsedRegisterMarketInstruction<TProgram, TAccountMetas> {
+export function parseCreateMarketInstruction<TProgram extends string, TAccountMetas extends readonly AccountMeta[]>(instruction: Instruction<TProgram> & InstructionWithAccounts<TAccountMetas> & InstructionWithData<ReadonlyUint8Array>): ParsedCreateMarketInstruction<TProgram, TAccountMetas> {
   if (instruction.accounts.length < 15) {
   // TODO: Coded error.
   throw new Error('Not enough accounts');
@@ -341,5 +341,5 @@ const getNextAccount = () => {
   accountIndex += 1;
   return accountMeta;
 }
-  return { programAddress: instruction.programAddress, accounts: { payer: getNextAccount(), registry: getNextAccount(), baseMint: getNextAccount(), quoteMint: getNextAccount(), baseTokenProgram: getNextAccount(), quoteTokenProgram: getNextAccount(), market: getNextAccount(), baseTreasury: getNextAccount(), quoteTreasury: getNextAccount(), feeMint: getNextAccount(), feeTokenProgram: getNextAccount(), payerFeeSource: getNextAccount(), registryFeeTreasury: getNextAccount(), systemProgram: getNextAccount(), associatedTokenProgram: getNextAccount() }, data: getRegisterMarketInstructionDataDecoder().decode(instruction.data) };
+  return { programAddress: instruction.programAddress, accounts: { payer: getNextAccount(), registry: getNextAccount(), baseMint: getNextAccount(), quoteMint: getNextAccount(), baseTokenProgram: getNextAccount(), quoteTokenProgram: getNextAccount(), market: getNextAccount(), baseTreasury: getNextAccount(), quoteTreasury: getNextAccount(), feeMint: getNextAccount(), feeTokenProgram: getNextAccount(), payerFeeSource: getNextAccount(), registryFeeTreasury: getNextAccount(), systemProgram: getNextAccount(), associatedTokenProgram: getNextAccount() }, data: getCreateMarketInstructionDataDecoder().decode(instruction.data) };
 }

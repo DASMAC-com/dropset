@@ -174,10 +174,10 @@ pub struct Vault {
     pub leader_shares: PodU64,
     /// High-water mark of `L / total_shares` as Q32.32.
     pub hwm: PodU64,
-    /// Performance fee rate in ppm. Set at `OpenVault`; immutable.
+    /// Performance fee rate in ppm. Set at `CreateVault`; immutable.
     pub perf_fee_rate: PodU32,
     /// Floor on `leader_shares / total_shares` in ppm. Stamped at
-    /// `OpenVault` from `MarketHeader.default_min_leader_share`.
+    /// `CreateVault` from `MarketHeader.default_min_leader_share`.
     pub min_leader_share: PodU32,
     /// True when an admin has frozen this vault. Alignment-1
     /// `PodBool` so the field stays at the same on-chain offset as
@@ -216,7 +216,7 @@ pub struct MarketHeader {
     /// Head of the tombstone DLL: sectors that have been `CloseVault`'d
     /// but still hold outstanding shares. Not visited by matching.
     pub tombstone_head: PodU32,
-    /// Head of the free DLL: sectors available for reuse on `OpenVault`.
+    /// Head of the free DLL: sectors available for reuse on `CreateVault`.
     /// Singly linked via `next`; `prev` is ignored.
     pub free_head: PodU32,
     /// Active-DLL length. Bounded by `registry.max_vaults_per_market`.
@@ -232,7 +232,7 @@ pub struct MarketHeader {
     /// PDAs to verify by enumeration. See the architecture spec,
     /// **Account lifecycle and rent reclamation**.
     pub outstanding_vault_depositors: PodU32,
-    /// Per-market open-vault fee: mint and amount. Seeded from
+    /// Per-market create-vault fee: mint and amount. Seeded from
     /// `Registry.default_fee_config` at market creation.
     pub fee_config: FeeConfig,
     /// Taker fee rate, capped at ~6.55% (`Ppm16` max).
@@ -611,7 +611,7 @@ impl VaultDll for Market {
 /// `allocate_sector`'s tail-growth branch calls `resize_to_capacity` +
 /// `top_up` (a system-program transfer CPI), neither of which has a
 /// host-side mock in this scaffold. That branch is covered by the
-/// `OpenVault` integration tests in a downstream PR — every other
+/// `CreateVault` integration tests in a downstream PR — every other
 /// `VaultDll` line lives here.
 #[cfg(test)]
 mod tests {
@@ -696,7 +696,7 @@ mod tests {
 
     #[test]
     fn space_for_zero_matches_init_space() {
-        // `space_for(0)` is the byte count used by `register_market`'s
+        // `space_for(0)` is the byte count used by `create_market`'s
         // `#[account(init, space = Market::space_for(0))]`; `INIT_SPACE`
         // is the same value surfaced through the `Space` trait that
         // anchor's derive consults during initialization. Pinning their
@@ -926,7 +926,7 @@ mod tests {
     fn reclaim_then_reopen_cross_list_lifecycle() {
         // End-to-end exercise of the sector lifecycle the spec
         // describes: an active vault is reclaimed (active → free),
-        // a subsequent `OpenVault` reuses it (free → active), and
+        // a subsequent `CreateVault` reuses it (free → active), and
         // the second occupant's view of the active DLL is consistent
         // with the first occupant having gone through the free list.
         let buf = setup();

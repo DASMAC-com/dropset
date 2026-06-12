@@ -14,8 +14,8 @@ use solana_pubkey::Pubkey;
 /// leader and quote authority. No reference price set yet.
 fn fixture_with_vault() -> Fixture {
     let mut f = Fixture::bootstrap();
-    f.register_vault(0, f.authority.pubkey(), false, Pubkey::default())
-        .expect("register_vault");
+    f.create_vault(0, f.authority.pubkey(), false, Pubkey::default())
+        .expect("create_vault");
     f
 }
 

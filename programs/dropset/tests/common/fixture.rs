@@ -1,7 +1,7 @@
 //! Shared market-bootstrap fixture and per-instruction ix-builders.
 //!
 //! Every integration test that needs a live market repeated the same
-//! `init → register_market → register_vault → set_reference_price →
+//! `init → create_market → create_vault → set_reference_price →
 //! set_liquidity_profile → seed` plumbing (150-300 lines apiece). This
 //! module collapses that to a handful of calls on a [`Fixture`] that
 //! owns the `LiteSVM` and every derived handle, plus thin ix-builders
@@ -21,7 +21,7 @@
 use super::{
     associated_token_address, create_associated_token_account, create_mock_usdc_mint,
     create_spl_mint, deploy_with_authority, mint_to, send_ixn, send_ixn_meta, ATA_PROGRAM_ID,
-    PROGRAM_ID, REGISTER_MARKET_FEE_ATOMS, SIGNER_FUNDING_LAMPORTS, SPL_TOKEN_PROGRAM_ID,
+    CREATE_MARKET_FEE_ATOMS, PROGRAM_ID, SIGNER_FUNDING_LAMPORTS, SPL_TOKEN_PROGRAM_ID,
 };
 use anchor_lang_v2::{bytemuck, programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, LiteSVM, Signer};
@@ -29,10 +29,10 @@ use dropset::{
     instruction::{
         CloseMarket as CloseMarketIx, CloseMarketTreasury as CloseMarketTreasuryIx,
         CloseRegistry as CloseRegistryIx, CloseRegistryFeeVault as CloseRegistryFeeVaultIx,
-        CloseVault as CloseVaultIx, Deposit as DepositIx, DepositLeader as DepositLeaderIx,
+        CloseVault as CloseVaultIx, CreateMarket as CreateMarketIx, CreateVault as CreateVaultIx,
+        Deposit as DepositIx, DepositLeader as DepositLeaderIx,
         ForceWithdrawDepositor as ForceWithdrawDepositorIx,
         ForceWithdrawLeader as ForceWithdrawLeaderIx, FreezeVault as FreezeVaultIx, Init as InitIx,
-        RegisterMarket as RegisterMarketIx, RegisterVault as RegisterVaultIx,
         SetAllowOutsideDepositors as SetAllowOutsideDepositorsIx,
         SetLiquidityProfile as SetLiquidityProfileIx,
         SetOutsideDepositsApproved as SetOutsideDepositsApprovedIx,
@@ -129,8 +129,8 @@ pub struct Fixture {
 }
 
 impl Fixture {
-    /// `init` the registry and `register_market` a fresh
-    /// base/quote pair. No vault yet — call [`Self::register_vault`].
+    /// `init` the registry and `create_market` a fresh
+    /// base/quote pair. No vault yet — call [`Self::create_vault`].
     pub fn bootstrap() -> Self {
         let authority = Keypair::new();
         let mut svm = deploy_with_authority(&authority);
@@ -144,7 +144,7 @@ impl Fixture {
             PROGRAM_ID,
             &InitIx {
                 genesis_admin: authority.pubkey(),
-                fee_atoms: REGISTER_MARKET_FEE_ATOMS,
+                fee_atoms: CREATE_MARKET_FEE_ATOMS,
             }
             .data(),
             vec![
@@ -160,7 +160,7 @@ impl Fixture {
         );
         send_ixn(&mut svm, &authority, init_ix).expect("init");
 
-        // register_market.
+        // create_market.
         let base_mint = create_spl_mint(&mut svm, &authority);
         let quote_mint = create_spl_mint(&mut svm, &authority);
         let market = market_pda(&base_mint, &quote_mint);
@@ -171,7 +171,7 @@ impl Fixture {
             .unwrap();
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
-            &RegisterMarketIx {}.data(),
+            &CreateMarketIx {}.data(),
             vec![
                 AccountMeta::new(authority.pubkey(), true),
                 AccountMeta::new(registry, false),
@@ -190,7 +190,7 @@ impl Fixture {
                 AccountMeta::new_readonly(ATA_PROGRAM_ID, false),
             ],
         );
-        send_ixn(&mut svm, &authority, ix).expect("register_market");
+        send_ixn(&mut svm, &authority, ix).expect("create_market");
 
         Fixture {
             svm,
@@ -214,8 +214,8 @@ impl Fixture {
     /// both `authority`.
     pub fn seeded(base: u64, quote: u64) -> Self {
         let mut f = Self::bootstrap();
-        f.register_vault(0, f.authority.pubkey(), false, Pubkey::default())
-            .expect("register_vault");
+        f.create_vault(0, f.authority.pubkey(), false, Pubkey::default())
+            .expect("create_vault");
         let ref_price = Price::encode(10_850_000, 0).unwrap();
         f.set_reference_price(&f.authority.insecure_clone(), 0, ref_price.as_u32(), 0)
             .expect("set_reference_price");
@@ -243,7 +243,7 @@ impl Fixture {
     pub fn with_outside_depositor(&mut self) -> (Keypair, Keypair) {
         let admin = self.authority.insecure_clone();
         let leader = self.funded_keypair(10 * SIGNER_FUNDING_LAMPORTS);
-        self.register_vault(0, leader.pubkey(), true, leader.pubkey())
+        self.create_vault(0, leader.pubkey(), true, leader.pubkey())
             .expect("admin opens leader's vault");
         let px = Price::encode(10_850_000, 0).unwrap();
         self.set_reference_price(&leader, 0, px.as_u32(), 0)
@@ -321,16 +321,16 @@ impl Fixture {
 
     // ── instruction senders ──────────────────────────────────────────
 
-    /// `register_vault` via the admin path (payer = `authority`, fee
+    /// `create_vault` via the admin path (payer = `authority`, fee
     /// waived). Returns `Err(debug-string)` on program rejection.
-    pub fn register_vault(
+    pub fn create_vault(
         &mut self,
         perf_fee_rate: u32,
         quote_authority: Pubkey,
         allow_outside_depositors: bool,
         leader_override: Pubkey,
     ) -> Result<(), String> {
-        self.register_vault_meta(
+        self.create_vault_meta(
             perf_fee_rate,
             quote_authority,
             allow_outside_depositors,
@@ -339,9 +339,9 @@ impl Fixture {
         .map(|_| ())
     }
 
-    /// Like [`Self::register_vault`] but yields the transaction metadata
-    /// so a test can decode the emitted `OpenVaultEvent`.
-    pub fn register_vault_meta(
+    /// Like [`Self::create_vault`] but yields the transaction metadata
+    /// so a test can decode the emitted `CreateVaultEvent`.
+    pub fn create_vault_meta(
         &mut self,
         perf_fee_rate: u32,
         quote_authority: Pubkey,
@@ -350,7 +350,7 @@ impl Fixture {
     ) -> Result<TransactionMetadata, String> {
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
-            &RegisterVaultIx {
+            &CreateVaultIx {
                 perf_fee_rate,
                 quote_authority,
                 allow_outside_depositors,
@@ -374,11 +374,11 @@ impl Fixture {
         send_ixn_meta(&mut self.svm, &auth, ix)
     }
 
-    /// `register_vault` via the **non-admin** fee path: `payer` signs
-    /// and pays the per-market open-vault fee out of its fee-mint ATA
+    /// `create_vault` via the **non-admin** fee path: `payer` signs
+    /// and pays the per-market create-vault fee out of its fee-mint ATA
     /// (funded here with exactly the fee amount). Returns
     /// `Err(debug-string)` on program rejection.
-    pub fn register_vault_as(
+    pub fn create_vault_as(
         &mut self,
         payer: &Keypair,
         perf_fee_rate: u32,
@@ -402,11 +402,11 @@ impl Fixture {
             &auth,
             &self.fee_mint,
             &fee_src,
-            REGISTER_MARKET_FEE_ATOMS,
+            CREATE_MARKET_FEE_ATOMS,
         );
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
-            &RegisterVaultIx {
+            &CreateVaultIx {
                 perf_fee_rate,
                 quote_authority,
                 allow_outside_depositors,
@@ -429,7 +429,7 @@ impl Fixture {
         send_ixn(&mut self.svm, payer, ix)
     }
 
-    /// ATA holding the open-vault fee mint for `owner`.
+    /// ATA holding the create-vault fee mint for `owner`.
     pub fn fee_ata(&self, owner: &Pubkey) -> Pubkey {
         associated_token_address(owner, &self.fee_mint, &SPL_TOKEN_PROGRAM_ID)
     }

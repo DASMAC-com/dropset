@@ -95,8 +95,8 @@ fn rejects_leader_as_depositor() {
 fn rejects_unseeded_vault() {
     // Register + price + enable flags, but never seed: total_shares == 0.
     let mut f = Fixture::bootstrap();
-    f.register_vault(0, f.authority.pubkey(), true, Pubkey::default())
-        .expect("register_vault (allow_outside = true)");
+    f.create_vault(0, f.authority.pubkey(), true, Pubkey::default())
+        .expect("create_vault (allow_outside = true)");
     let px = Price::encode(10_850_000, 0).unwrap();
     f.set_reference_price(&f.authority.insecure_clone(), 0, px.as_u32(), 0)
         .unwrap();
@@ -142,8 +142,8 @@ fn rejects_when_reference_price_zero() {
     // open the gate. The depositor's basis would anchor to the ZERO
     // sentinel, so the deposit is rejected.
     let mut f = Fixture::bootstrap();
-    f.register_vault(0, f.authority.pubkey(), true, Pubkey::default())
-        .expect("register_vault");
+    f.create_vault(0, f.authority.pubkey(), true, Pubkey::default())
+        .expect("create_vault");
     f.deposit_leader(0, SEED_BASE, SEED_QUOTE, SEED_BASE, SEED_QUOTE)
         .expect("seed without a reference price");
     let admin = f.authority.insecure_clone();

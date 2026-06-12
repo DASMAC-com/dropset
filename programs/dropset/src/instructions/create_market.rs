@@ -1,11 +1,11 @@
-//! `register_market` — bring a new (base, quote) pair online.
+//! `create_market` — bring a new (base, quote) pair online.
 //!
 //! Allocates the `MarketHeader` PDA seeded by `(base_mint, quote_mint)`,
 //! creates the base and quote treasury ATAs (owned by the market PDA),
 //! and (unless the caller is an admin) transfers the registry's
-//! open-market fee from the caller's source ATA to the registry's fee
+//! create-market fee from the caller's source ATA to the registry's fee
 //! vault. The slab tail starts at zero capacity — vaults are added
-//! separately by `OpenVault`.
+//! separately by `CreateVault`.
 //!
 //! The registry fee vault was created at `init` time, so this
 //! instruction only validates that the supplied destination is the
@@ -32,12 +32,12 @@ use crate::{
     AdminSet, FeeConfig, Registry,
 };
 
-/// Accounts for the `register_market` instruction: a fresh
+/// Accounts for the `create_market` instruction: a fresh
 /// `(base_mint, quote_mint)` market PDA plus its two treasury ATAs,
-/// charged against the registry's per-`OpenVault` fee (waived for
+/// charged against the registry's per-`CreateVault` fee (waived for
 /// admins). See the module doc for the spec-level intent.
 #[derive(Accounts)]
-pub struct RegisterMarket {
+pub struct CreateMarket {
     /// Funds rent for the market PDA and the two treasury ATAs, and
     /// signs the fee transfer unless waived for an admin signer.
     #[account(mut)]
@@ -66,8 +66,8 @@ pub struct RegisterMarket {
 
     /// Market PDA seeded by `(base_mint, quote_mint)`. The slab tail
     /// holds the vault sectors; we open with zero capacity here and
-    /// let `OpenVault` grow it. The `init` constraint enforces
-    /// single-shot creation — a second `register_market` against the
+    /// let `CreateVault` grow it. The `init` constraint enforces
+    /// single-shot creation — a second `create_market` against the
     /// same pair is rejected by the runtime before our handler runs.
     #[account(
         init,
@@ -100,7 +100,7 @@ pub struct RegisterMarket {
     )]
     pub quote_treasury: InterfaceAccount<TokenAccount>,
 
-    /// Mint the open-market fee is charged in. The `address` constraint
+    /// Mint the create-market fee is charged in. The `address` constraint
     /// binds it to whatever was stamped onto the registry at `init`,
     /// so a wrong mint here yields `ConstraintAddress` before the
     /// handler runs.
@@ -134,9 +134,9 @@ pub struct RegisterMarket {
     pub associated_token_program: Program<AssociatedToken>,
 }
 
-impl RegisterMarket {
+impl CreateMarket {
     #[inline(always)]
-    pub fn register_market(&mut self, bump: u8) -> Result<()> {
+    pub fn create_market(&mut self, bump: u8) -> Result<()> {
         // Reject same-mint markets — the PDA would still derive, but a
         // single-mint book is meaningless.
         require!(

@@ -9,13 +9,13 @@ use borsh::BorshDeserialize;
 use borsh::BorshSerialize;
 use solana_pubkey::Pubkey;
 
-pub const REGISTER_VAULT_DISCRIMINATOR: [u8; 1] = [4];
+pub const CREATE_VAULT_DISCRIMINATOR: [u8; 1] = [4];
 
 /// Accounts.
 #[derive(Debug)]
-pub struct RegisterVault {
+pub struct CreateVault {
     /// Pays sector-rent top-up (if the slab realloc grows the
-    /// account) and the open-vault fee (unless waived for an admin).
+    /// account) and the create-vault fee (unless waived for an admin).
     /// Becomes the vault's `leader` unless an admin supplied a
     /// distinct `leader_override` — see the handler.
     pub payer: solana_pubkey::Pubkey,
@@ -25,8 +25,8 @@ pub struct RegisterVault {
     /// Market the vault lives on. `mut` because the slab tail grows
     /// (or pops from the free list) and `active_count` increments.
     pub market: solana_pubkey::Pubkey,
-    /// Mint the open-vault fee is paid in. Pinned to the value
-    /// `register_market` stamped into `market.fee_config.mint`.
+    /// Mint the create-vault fee is paid in. Pinned to the value
+    /// `create_market` stamped into `market.fee_config.mint`.
     pub fee_mint: solana_pubkey::Pubkey,
     /// Token program owning `fee_mint`. Pinned to the value stamped at
     /// market creation.
@@ -46,18 +46,15 @@ pub struct RegisterVault {
     pub program: solana_pubkey::Pubkey,
 }
 
-impl RegisterVault {
-    pub fn instruction(
-        &self,
-        args: RegisterVaultInstructionArgs,
-    ) -> solana_instruction::Instruction {
+impl CreateVault {
+    pub fn instruction(&self, args: CreateVaultInstructionArgs) -> solana_instruction::Instruction {
         self.instruction_with_remaining_accounts(args, &[])
     }
     #[allow(clippy::arithmetic_side_effects)]
     #[allow(clippy::vec_init_then_push)]
     pub fn instruction_with_remaining_accounts(
         &self,
-        args: RegisterVaultInstructionArgs,
+        args: CreateVaultInstructionArgs,
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
         let mut accounts = Vec::with_capacity(10 + remaining_accounts.len());
@@ -96,7 +93,7 @@ impl RegisterVault {
             false,
         ));
         accounts.extend_from_slice(remaining_accounts);
-        let mut data = RegisterVaultInstructionData::new().try_to_vec().unwrap();
+        let mut data = CreateVaultInstructionData::new().try_to_vec().unwrap();
         let mut args = args.try_to_vec().unwrap();
         data.append(&mut args);
 
@@ -110,11 +107,11 @@ impl RegisterVault {
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct RegisterVaultInstructionData {
+pub struct CreateVaultInstructionData {
     discriminator: [u8; 1],
 }
 
-impl RegisterVaultInstructionData {
+impl CreateVaultInstructionData {
     pub fn new() -> Self {
         Self { discriminator: [4] }
     }
@@ -124,7 +121,7 @@ impl RegisterVaultInstructionData {
     }
 }
 
-impl Default for RegisterVaultInstructionData {
+impl Default for CreateVaultInstructionData {
     fn default() -> Self {
         Self::new()
     }
@@ -132,20 +129,20 @@ impl Default for RegisterVaultInstructionData {
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct RegisterVaultInstructionArgs {
+pub struct CreateVaultInstructionArgs {
     pub perf_fee_rate: u32,
     pub quote_authority: Pubkey,
     pub allow_outside_depositors: bool,
     pub leader_override: Pubkey,
 }
 
-impl RegisterVaultInstructionArgs {
+impl CreateVaultInstructionArgs {
     pub(crate) fn try_to_vec(&self) -> Result<Vec<u8>, std::io::Error> {
         borsh::to_vec(self)
     }
 }
 
-/// Instruction builder for `RegisterVault`.
+/// Instruction builder for `CreateVault`.
 ///
 /// ### Accounts:
 ///
@@ -160,7 +157,7 @@ impl RegisterVaultInstructionArgs {
 ///   8. `[]` event_authority
 ///   9. `[]` program
 #[derive(Clone, Debug, Default)]
-pub struct RegisterVaultBuilder {
+pub struct CreateVaultBuilder {
     payer: Option<solana_pubkey::Pubkey>,
     registry: Option<solana_pubkey::Pubkey>,
     market: Option<solana_pubkey::Pubkey>,
@@ -178,12 +175,12 @@ pub struct RegisterVaultBuilder {
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
 
-impl RegisterVaultBuilder {
+impl CreateVaultBuilder {
     pub fn new() -> Self {
         Self::default()
     }
     /// Pays sector-rent top-up (if the slab realloc grows the
-    /// account) and the open-vault fee (unless waived for an admin).
+    /// account) and the create-vault fee (unless waived for an admin).
     /// Becomes the vault's `leader` unless an admin supplied a
     /// distinct `leader_override` — see the handler.
     #[inline(always)]
@@ -206,8 +203,8 @@ impl RegisterVaultBuilder {
         self
     }
     /// `[optional account, default to 'market.fee_config.mint']`
-    /// Mint the open-vault fee is paid in. Pinned to the value
-    /// `register_market` stamped into `market.fee_config.mint`.
+    /// Mint the create-vault fee is paid in. Pinned to the value
+    /// `create_market` stamped into `market.fee_config.mint`.
     #[inline(always)]
     pub fn fee_mint(&mut self, fee_mint: solana_pubkey::Pubkey) -> &mut Self {
         self.fee_mint = Some(fee_mint);
@@ -294,7 +291,7 @@ impl RegisterVaultBuilder {
     }
     #[allow(clippy::clone_on_copy)]
     pub fn instruction(&self) -> solana_instruction::Instruction {
-        let accounts = RegisterVault {
+        let accounts = CreateVault {
             payer: self.payer.expect("payer is not set"),
             registry: self.registry.expect("registry is not set"),
             market: self.market.expect("market is not set"),
@@ -314,7 +311,7 @@ impl RegisterVaultBuilder {
             event_authority: self.event_authority.expect("event_authority is not set"),
             program: self.program.expect("program is not set"),
         };
-        let args = RegisterVaultInstructionArgs {
+        let args = CreateVaultInstructionArgs {
             perf_fee_rate: self
                 .perf_fee_rate
                 .clone()
@@ -337,10 +334,10 @@ impl RegisterVaultBuilder {
     }
 }
 
-/// `register_vault` CPI accounts.
-pub struct RegisterVaultCpiAccounts<'a, 'b> {
+/// `create_vault` CPI accounts.
+pub struct CreateVaultCpiAccounts<'a, 'b> {
     /// Pays sector-rent top-up (if the slab realloc grows the
-    /// account) and the open-vault fee (unless waived for an admin).
+    /// account) and the create-vault fee (unless waived for an admin).
     /// Becomes the vault's `leader` unless an admin supplied a
     /// distinct `leader_override` — see the handler.
     pub payer: &'b solana_account_info::AccountInfo<'a>,
@@ -350,8 +347,8 @@ pub struct RegisterVaultCpiAccounts<'a, 'b> {
     /// Market the vault lives on. `mut` because the slab tail grows
     /// (or pops from the free list) and `active_count` increments.
     pub market: &'b solana_account_info::AccountInfo<'a>,
-    /// Mint the open-vault fee is paid in. Pinned to the value
-    /// `register_market` stamped into `market.fee_config.mint`.
+    /// Mint the create-vault fee is paid in. Pinned to the value
+    /// `create_market` stamped into `market.fee_config.mint`.
     pub fee_mint: &'b solana_account_info::AccountInfo<'a>,
     /// Token program owning `fee_mint`. Pinned to the value stamped at
     /// market creation.
@@ -371,12 +368,12 @@ pub struct RegisterVaultCpiAccounts<'a, 'b> {
     pub program: &'b solana_account_info::AccountInfo<'a>,
 }
 
-/// `register_vault` CPI instruction.
-pub struct RegisterVaultCpi<'a, 'b> {
+/// `create_vault` CPI instruction.
+pub struct CreateVaultCpi<'a, 'b> {
     /// The program to invoke.
     pub __program: &'b solana_account_info::AccountInfo<'a>,
     /// Pays sector-rent top-up (if the slab realloc grows the
-    /// account) and the open-vault fee (unless waived for an admin).
+    /// account) and the create-vault fee (unless waived for an admin).
     /// Becomes the vault's `leader` unless an admin supplied a
     /// distinct `leader_override` — see the handler.
     pub payer: &'b solana_account_info::AccountInfo<'a>,
@@ -386,8 +383,8 @@ pub struct RegisterVaultCpi<'a, 'b> {
     /// Market the vault lives on. `mut` because the slab tail grows
     /// (or pops from the free list) and `active_count` increments.
     pub market: &'b solana_account_info::AccountInfo<'a>,
-    /// Mint the open-vault fee is paid in. Pinned to the value
-    /// `register_market` stamped into `market.fee_config.mint`.
+    /// Mint the create-vault fee is paid in. Pinned to the value
+    /// `create_market` stamped into `market.fee_config.mint`.
     pub fee_mint: &'b solana_account_info::AccountInfo<'a>,
     /// Token program owning `fee_mint`. Pinned to the value stamped at
     /// market creation.
@@ -406,14 +403,14 @@ pub struct RegisterVaultCpi<'a, 'b> {
     /// CHECK: Kept for v1-compatible account ordering and IDL shape
     pub program: &'b solana_account_info::AccountInfo<'a>,
     /// The arguments for the instruction.
-    pub __args: RegisterVaultInstructionArgs,
+    pub __args: CreateVaultInstructionArgs,
 }
 
-impl<'a, 'b> RegisterVaultCpi<'a, 'b> {
+impl<'a, 'b> CreateVaultCpi<'a, 'b> {
     pub fn new(
         program: &'b solana_account_info::AccountInfo<'a>,
-        accounts: RegisterVaultCpiAccounts<'a, 'b>,
-        args: RegisterVaultInstructionArgs,
+        accounts: CreateVaultCpiAccounts<'a, 'b>,
+        args: CreateVaultInstructionArgs,
     ) -> Self {
         Self {
             __program: program,
@@ -498,7 +495,7 @@ impl<'a, 'b> RegisterVaultCpi<'a, 'b> {
                 is_writable: remaining_account.2,
             })
         });
-        let mut data = RegisterVaultInstructionData::new().try_to_vec().unwrap();
+        let mut data = CreateVaultInstructionData::new().try_to_vec().unwrap();
         let mut args = self.__args.try_to_vec().unwrap();
         data.append(&mut args);
 
@@ -531,7 +528,7 @@ impl<'a, 'b> RegisterVaultCpi<'a, 'b> {
     }
 }
 
-/// Instruction builder for `RegisterVault` via CPI.
+/// Instruction builder for `CreateVault` via CPI.
 ///
 /// ### Accounts:
 ///
@@ -546,13 +543,13 @@ impl<'a, 'b> RegisterVaultCpi<'a, 'b> {
 ///   8. `[]` event_authority
 ///   9. `[]` program
 #[derive(Clone, Debug)]
-pub struct RegisterVaultCpiBuilder<'a, 'b> {
-    instruction: Box<RegisterVaultCpiBuilderInstruction<'a, 'b>>,
+pub struct CreateVaultCpiBuilder<'a, 'b> {
+    instruction: Box<CreateVaultCpiBuilderInstruction<'a, 'b>>,
 }
 
-impl<'a, 'b> RegisterVaultCpiBuilder<'a, 'b> {
+impl<'a, 'b> CreateVaultCpiBuilder<'a, 'b> {
     pub fn new(program: &'b solana_account_info::AccountInfo<'a>) -> Self {
-        let instruction = Box::new(RegisterVaultCpiBuilderInstruction {
+        let instruction = Box::new(CreateVaultCpiBuilderInstruction {
             __program: program,
             payer: None,
             registry: None,
@@ -573,7 +570,7 @@ impl<'a, 'b> RegisterVaultCpiBuilder<'a, 'b> {
         Self { instruction }
     }
     /// Pays sector-rent top-up (if the slab realloc grows the
-    /// account) and the open-vault fee (unless waived for an admin).
+    /// account) and the create-vault fee (unless waived for an admin).
     /// Becomes the vault's `leader` unless an admin supplied a
     /// distinct `leader_override` — see the handler.
     #[inline(always)]
@@ -595,8 +592,8 @@ impl<'a, 'b> RegisterVaultCpiBuilder<'a, 'b> {
         self.instruction.market = Some(market);
         self
     }
-    /// Mint the open-vault fee is paid in. Pinned to the value
-    /// `register_market` stamped into `market.fee_config.mint`.
+    /// Mint the create-vault fee is paid in. Pinned to the value
+    /// `create_market` stamped into `market.fee_config.mint`.
     #[inline(always)]
     pub fn fee_mint(&mut self, fee_mint: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
         self.instruction.fee_mint = Some(fee_mint);
@@ -710,7 +707,7 @@ impl<'a, 'b> RegisterVaultCpiBuilder<'a, 'b> {
     #[allow(clippy::clone_on_copy)]
     #[allow(clippy::vec_init_then_push)]
     pub fn invoke_signed(&self, signers_seeds: &[&[&[u8]]]) -> solana_program_error::ProgramResult {
-        let args = RegisterVaultInstructionArgs {
+        let args = CreateVaultInstructionArgs {
             perf_fee_rate: self
                 .instruction
                 .perf_fee_rate
@@ -732,7 +729,7 @@ impl<'a, 'b> RegisterVaultCpiBuilder<'a, 'b> {
                 .clone()
                 .expect("leader_override is not set"),
         };
-        let instruction = RegisterVaultCpi {
+        let instruction = CreateVaultCpi {
             __program: self.instruction.__program,
 
             payer: self.instruction.payer.expect("payer is not set"),
@@ -779,7 +776,7 @@ impl<'a, 'b> RegisterVaultCpiBuilder<'a, 'b> {
 }
 
 #[derive(Clone, Debug)]
-struct RegisterVaultCpiBuilderInstruction<'a, 'b> {
+struct CreateVaultCpiBuilderInstruction<'a, 'b> {
     __program: &'b solana_account_info::AccountInfo<'a>,
     payer: Option<&'b solana_account_info::AccountInfo<'a>>,
     registry: Option<&'b solana_account_info::AccountInfo<'a>>,

@@ -11,9 +11,9 @@ use anchor_lang_v2::prelude::*;
 
 use crate::Price;
 
-/// Emitted by `register_vault` (spec's `OpenVault`).
+/// Emitted by `create_vault`.
 #[event]
-pub struct OpenVaultEvent {
+pub struct CreateVaultEvent {
     pub market: Address,
     pub sector_idx: u32,
     pub leader: Address,

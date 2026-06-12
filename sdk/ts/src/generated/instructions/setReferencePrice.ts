@@ -36,7 +36,7 @@ export function getSetReferencePriceInstructionDataCodec(): FixedSizeCodec<SetRe
 export type SetReferencePriceInput<TAccountSigner extends string = string, TAccountMarket extends string = string, TAccountClock extends string = string> =  {
   /**
  * Quote authority — the only signer the spec accepts here. Set at
- * `OpenVault` (defaults to the leader).
+ * `CreateVault` (defaults to the leader).
  */
 signer: TransactionSigner<TAccountSigner>;
 /** Market account holding the target vault. */
@@ -77,7 +77,7 @@ export type ParsedSetReferencePriceInstruction<TProgram extends string = typeof 
 accounts: {
 /**
  * Quote authority — the only signer the spec accepts here. Set at
- * `OpenVault` (defaults to the leader).
+ * `CreateVault` (defaults to the leader).
  */
 signer: TAccountMetas[0];
 /** Market account holding the target vault. */

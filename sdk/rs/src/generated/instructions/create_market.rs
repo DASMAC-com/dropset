@@ -8,11 +8,11 @@
 use borsh::BorshDeserialize;
 use borsh::BorshSerialize;
 
-pub const REGISTER_MARKET_DISCRIMINATOR: [u8; 1] = [3];
+pub const CREATE_MARKET_DISCRIMINATOR: [u8; 1] = [3];
 
 /// Accounts.
 #[derive(Debug)]
-pub struct RegisterMarket {
+pub struct CreateMarket {
     /// Funds rent for the market PDA and the two treasury ATAs, and
     /// signs the fee transfer unless waived for an admin signer.
     pub payer: solana_pubkey::Pubkey,
@@ -35,8 +35,8 @@ pub struct RegisterMarket {
     pub quote_token_program: solana_pubkey::Pubkey,
     /// Market PDA seeded by `(base_mint, quote_mint)`. The slab tail
     /// holds the vault sectors; we open with zero capacity here and
-    /// let `OpenVault` grow it. The `init` constraint enforces
-    /// single-shot creation — a second `register_market` against the
+    /// let `CreateVault` grow it. The `init` constraint enforces
+    /// single-shot creation — a second `create_market` against the
     /// same pair is rejected by the runtime before our handler runs.
     pub market: solana_pubkey::Pubkey,
     /// Pooled base inventory for every vault on this market. The ATA
@@ -46,7 +46,7 @@ pub struct RegisterMarket {
     pub base_treasury: solana_pubkey::Pubkey,
     /// Pooled quote inventory. See `base_treasury`.
     pub quote_treasury: solana_pubkey::Pubkey,
-    /// Mint the open-market fee is charged in. The `address` constraint
+    /// Mint the create-market fee is charged in. The `address` constraint
     /// binds it to whatever was stamped onto the registry at `init`,
     /// so a wrong mint here yields `ConstraintAddress` before the
     /// handler runs.
@@ -72,7 +72,7 @@ pub struct RegisterMarket {
     pub associated_token_program: solana_pubkey::Pubkey,
 }
 
-impl RegisterMarket {
+impl CreateMarket {
     pub fn instruction(&self) -> solana_instruction::Instruction {
         self.instruction_with_remaining_accounts(&[])
     }
@@ -135,7 +135,7 @@ impl RegisterMarket {
             false,
         ));
         accounts.extend_from_slice(remaining_accounts);
-        let data = RegisterMarketInstructionData::new().try_to_vec().unwrap();
+        let data = CreateMarketInstructionData::new().try_to_vec().unwrap();
 
         solana_instruction::Instruction {
             program_id: crate::DROPSET_ID,
@@ -147,11 +147,11 @@ impl RegisterMarket {
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct RegisterMarketInstructionData {
+pub struct CreateMarketInstructionData {
     discriminator: [u8; 1],
 }
 
-impl RegisterMarketInstructionData {
+impl CreateMarketInstructionData {
     pub fn new() -> Self {
         Self { discriminator: [3] }
     }
@@ -161,13 +161,13 @@ impl RegisterMarketInstructionData {
     }
 }
 
-impl Default for RegisterMarketInstructionData {
+impl Default for CreateMarketInstructionData {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// Instruction builder for `RegisterMarket`.
+/// Instruction builder for `CreateMarket`.
 ///
 /// ### Accounts:
 ///
@@ -187,7 +187,7 @@ impl Default for RegisterMarketInstructionData {
 ///   13. `[optional]` system_program (default to `11111111111111111111111111111111`)
 ///   14. `[optional]` associated_token_program (default to `ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL`)
 #[derive(Clone, Debug, Default)]
-pub struct RegisterMarketBuilder {
+pub struct CreateMarketBuilder {
     payer: Option<solana_pubkey::Pubkey>,
     registry: Option<solana_pubkey::Pubkey>,
     base_mint: Option<solana_pubkey::Pubkey>,
@@ -206,7 +206,7 @@ pub struct RegisterMarketBuilder {
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
 
-impl RegisterMarketBuilder {
+impl CreateMarketBuilder {
     pub fn new() -> Self {
         Self::default()
     }
@@ -256,8 +256,8 @@ impl RegisterMarketBuilder {
     }
     /// Market PDA seeded by `(base_mint, quote_mint)`. The slab tail
     /// holds the vault sectors; we open with zero capacity here and
-    /// let `OpenVault` grow it. The `init` constraint enforces
-    /// single-shot creation — a second `register_market` against the
+    /// let `CreateVault` grow it. The `init` constraint enforces
+    /// single-shot creation — a second `create_market` against the
     /// same pair is rejected by the runtime before our handler runs.
     #[inline(always)]
     pub fn market(&mut self, market: solana_pubkey::Pubkey) -> &mut Self {
@@ -280,7 +280,7 @@ impl RegisterMarketBuilder {
         self
     }
     /// `[optional account, default to 'registry.default_fee_config.mint']`
-    /// Mint the open-market fee is charged in. The `address` constraint
+    /// Mint the create-market fee is charged in. The `address` constraint
     /// binds it to whatever was stamped onto the registry at `init`,
     /// so a wrong mint here yields `ConstraintAddress` before the
     /// handler runs.
@@ -352,7 +352,7 @@ impl RegisterMarketBuilder {
     }
     #[allow(clippy::clone_on_copy)]
     pub fn instruction(&self) -> solana_instruction::Instruction {
-        let accounts = RegisterMarket {
+        let accounts = CreateMarket {
             payer: self.payer.expect("payer is not set"),
             registry: self.registry.expect("registry is not set"),
             base_mint: self.base_mint.expect("base_mint is not set"),
@@ -388,8 +388,8 @@ impl RegisterMarketBuilder {
     }
 }
 
-/// `register_market` CPI accounts.
-pub struct RegisterMarketCpiAccounts<'a, 'b> {
+/// `create_market` CPI accounts.
+pub struct CreateMarketCpiAccounts<'a, 'b> {
     /// Funds rent for the market PDA and the two treasury ATAs, and
     /// signs the fee transfer unless waived for an admin signer.
     pub payer: &'b solana_account_info::AccountInfo<'a>,
@@ -412,8 +412,8 @@ pub struct RegisterMarketCpiAccounts<'a, 'b> {
     pub quote_token_program: &'b solana_account_info::AccountInfo<'a>,
     /// Market PDA seeded by `(base_mint, quote_mint)`. The slab tail
     /// holds the vault sectors; we open with zero capacity here and
-    /// let `OpenVault` grow it. The `init` constraint enforces
-    /// single-shot creation — a second `register_market` against the
+    /// let `CreateVault` grow it. The `init` constraint enforces
+    /// single-shot creation — a second `create_market` against the
     /// same pair is rejected by the runtime before our handler runs.
     pub market: &'b solana_account_info::AccountInfo<'a>,
     /// Pooled base inventory for every vault on this market. The ATA
@@ -423,7 +423,7 @@ pub struct RegisterMarketCpiAccounts<'a, 'b> {
     pub base_treasury: &'b solana_account_info::AccountInfo<'a>,
     /// Pooled quote inventory. See `base_treasury`.
     pub quote_treasury: &'b solana_account_info::AccountInfo<'a>,
-    /// Mint the open-market fee is charged in. The `address` constraint
+    /// Mint the create-market fee is charged in. The `address` constraint
     /// binds it to whatever was stamped onto the registry at `init`,
     /// so a wrong mint here yields `ConstraintAddress` before the
     /// handler runs.
@@ -449,8 +449,8 @@ pub struct RegisterMarketCpiAccounts<'a, 'b> {
     pub associated_token_program: &'b solana_account_info::AccountInfo<'a>,
 }
 
-/// `register_market` CPI instruction.
-pub struct RegisterMarketCpi<'a, 'b> {
+/// `create_market` CPI instruction.
+pub struct CreateMarketCpi<'a, 'b> {
     /// The program to invoke.
     pub __program: &'b solana_account_info::AccountInfo<'a>,
     /// Funds rent for the market PDA and the two treasury ATAs, and
@@ -475,8 +475,8 @@ pub struct RegisterMarketCpi<'a, 'b> {
     pub quote_token_program: &'b solana_account_info::AccountInfo<'a>,
     /// Market PDA seeded by `(base_mint, quote_mint)`. The slab tail
     /// holds the vault sectors; we open with zero capacity here and
-    /// let `OpenVault` grow it. The `init` constraint enforces
-    /// single-shot creation — a second `register_market` against the
+    /// let `CreateVault` grow it. The `init` constraint enforces
+    /// single-shot creation — a second `create_market` against the
     /// same pair is rejected by the runtime before our handler runs.
     pub market: &'b solana_account_info::AccountInfo<'a>,
     /// Pooled base inventory for every vault on this market. The ATA
@@ -486,7 +486,7 @@ pub struct RegisterMarketCpi<'a, 'b> {
     pub base_treasury: &'b solana_account_info::AccountInfo<'a>,
     /// Pooled quote inventory. See `base_treasury`.
     pub quote_treasury: &'b solana_account_info::AccountInfo<'a>,
-    /// Mint the open-market fee is charged in. The `address` constraint
+    /// Mint the create-market fee is charged in. The `address` constraint
     /// binds it to whatever was stamped onto the registry at `init`,
     /// so a wrong mint here yields `ConstraintAddress` before the
     /// handler runs.
@@ -512,10 +512,10 @@ pub struct RegisterMarketCpi<'a, 'b> {
     pub associated_token_program: &'b solana_account_info::AccountInfo<'a>,
 }
 
-impl<'a, 'b> RegisterMarketCpi<'a, 'b> {
+impl<'a, 'b> CreateMarketCpi<'a, 'b> {
     pub fn new(
         program: &'b solana_account_info::AccountInfo<'a>,
-        accounts: RegisterMarketCpiAccounts<'a, 'b>,
+        accounts: CreateMarketCpiAccounts<'a, 'b>,
     ) -> Self {
         Self {
             __program: program,
@@ -624,7 +624,7 @@ impl<'a, 'b> RegisterMarketCpi<'a, 'b> {
                 is_writable: remaining_account.2,
             })
         });
-        let data = RegisterMarketInstructionData::new().try_to_vec().unwrap();
+        let data = CreateMarketInstructionData::new().try_to_vec().unwrap();
 
         let instruction = solana_instruction::Instruction {
             program_id: crate::DROPSET_ID,
@@ -660,7 +660,7 @@ impl<'a, 'b> RegisterMarketCpi<'a, 'b> {
     }
 }
 
-/// Instruction builder for `RegisterMarket` via CPI.
+/// Instruction builder for `CreateMarket` via CPI.
 ///
 /// ### Accounts:
 ///
@@ -680,13 +680,13 @@ impl<'a, 'b> RegisterMarketCpi<'a, 'b> {
 ///   13. `[]` system_program
 ///   14. `[]` associated_token_program
 #[derive(Clone, Debug)]
-pub struct RegisterMarketCpiBuilder<'a, 'b> {
-    instruction: Box<RegisterMarketCpiBuilderInstruction<'a, 'b>>,
+pub struct CreateMarketCpiBuilder<'a, 'b> {
+    instruction: Box<CreateMarketCpiBuilderInstruction<'a, 'b>>,
 }
 
-impl<'a, 'b> RegisterMarketCpiBuilder<'a, 'b> {
+impl<'a, 'b> CreateMarketCpiBuilder<'a, 'b> {
     pub fn new(program: &'b solana_account_info::AccountInfo<'a>) -> Self {
-        let instruction = Box::new(RegisterMarketCpiBuilderInstruction {
+        let instruction = Box::new(CreateMarketCpiBuilderInstruction {
             __program: program,
             payer: None,
             registry: None,
@@ -762,8 +762,8 @@ impl<'a, 'b> RegisterMarketCpiBuilder<'a, 'b> {
     }
     /// Market PDA seeded by `(base_mint, quote_mint)`. The slab tail
     /// holds the vault sectors; we open with zero capacity here and
-    /// let `OpenVault` grow it. The `init` constraint enforces
-    /// single-shot creation — a second `register_market` against the
+    /// let `CreateVault` grow it. The `init` constraint enforces
+    /// single-shot creation — a second `create_market` against the
     /// same pair is rejected by the runtime before our handler runs.
     #[inline(always)]
     pub fn market(&mut self, market: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
@@ -791,7 +791,7 @@ impl<'a, 'b> RegisterMarketCpiBuilder<'a, 'b> {
         self.instruction.quote_treasury = Some(quote_treasury);
         self
     }
-    /// Mint the open-market fee is charged in. The `address` constraint
+    /// Mint the create-market fee is charged in. The `address` constraint
     /// binds it to whatever was stamped onto the registry at `init`,
     /// so a wrong mint here yields `ConstraintAddress` before the
     /// handler runs.
@@ -886,7 +886,7 @@ impl<'a, 'b> RegisterMarketCpiBuilder<'a, 'b> {
     #[allow(clippy::clone_on_copy)]
     #[allow(clippy::vec_init_then_push)]
     pub fn invoke_signed(&self, signers_seeds: &[&[&[u8]]]) -> solana_program_error::ProgramResult {
-        let instruction = RegisterMarketCpi {
+        let instruction = CreateMarketCpi {
             __program: self.instruction.__program,
 
             payer: self.instruction.payer.expect("payer is not set"),
@@ -954,7 +954,7 @@ impl<'a, 'b> RegisterMarketCpiBuilder<'a, 'b> {
 }
 
 #[derive(Clone, Debug)]
-struct RegisterMarketCpiBuilderInstruction<'a, 'b> {
+struct CreateMarketCpiBuilderInstruction<'a, 'b> {
     __program: &'b solana_account_info::AccountInfo<'a>,
     payer: Option<&'b solana_account_info::AccountInfo<'a>>,
     registry: Option<&'b solana_account_info::AccountInfo<'a>>,

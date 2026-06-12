@@ -15,8 +15,8 @@ use solana_pubkey::Pubkey;
 /// so `set_liquidity_profile` clears its `ReferencePriceNotSet` gate.
 fn fixture_with_priced_vault() -> Fixture {
     let mut f = Fixture::bootstrap();
-    f.register_vault(0, f.authority.pubkey(), false, Pubkey::default())
-        .expect("register_vault");
+    f.create_vault(0, f.authority.pubkey(), false, Pubkey::default())
+        .expect("create_vault");
     let px = Price::encode(10_850_000, 0).unwrap();
     f.set_reference_price(&f.authority.insecure_clone(), 0, px.as_u32(), 0)
         .expect("set_reference_price");
@@ -40,8 +40,8 @@ fn rejects_when_reference_price_not_set() {
     // ppm offsets, so applying it before an anchor price is set would
     // flush to garbage absolute prices. The gate rejects it.
     let mut f = Fixture::bootstrap();
-    f.register_vault(0, f.authority.pubkey(), false, Pubkey::default())
-        .expect("register_vault");
+    f.create_vault(0, f.authority.pubkey(), false, Pubkey::default())
+        .expect("create_vault");
     let err = f
         .set_liquidity_profile(
             &f.authority.insecure_clone(),

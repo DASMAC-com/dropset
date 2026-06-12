@@ -1,8 +1,8 @@
 //! Teardown / rent-reclamation integration tests (the `admin-teardown`
 //! feature surface, ENG-433).
 //!
-//! The headline test drives a full build-up — `init` → `register_market`
-//! → `register_vault` → seed → outside `deposit` — and then the complete
+//! The headline test drives a full build-up — `init` → `create_market`
+//! → `create_vault` → seed → outside `deposit` — and then the complete
 //! teardown in the spec's prescribed order
 //! (architecture.md § Account lifecycle and rent reclamation → Teardown
 //! ordering):
@@ -53,7 +53,7 @@ fn full_buildup_teardown_reclaims_all_rent() {
 
     // Admin opens the vault on the leader's behalf (leader_override),
     // with the leader as quote authority and outside deposits enabled.
-    f.register_vault(0, leader.pubkey(), true, leader.pubkey())
+    f.create_vault(0, leader.pubkey(), true, leader.pubkey())
         .expect("admin opens leader's vault");
     let px = Price::encode(10_850_000, 0).unwrap();
     f.set_reference_price(&leader, 0, px.as_u32(), 0)

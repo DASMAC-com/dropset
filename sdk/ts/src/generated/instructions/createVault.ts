@@ -11,33 +11,33 @@ import { findEventAuthorityPda, findRegistryPda } from '../pdas';
 import { DROPSET_PROGRAM_ADDRESS } from '../programs';
 import { getAccountMetaFactory, type ResolvedAccount } from '../shared';
 
-export const REGISTER_VAULT_DISCRIMINATOR = new Uint8Array([4]);
+export const CREATE_VAULT_DISCRIMINATOR = new Uint8Array([4]);
 
-export function getRegisterVaultDiscriminatorBytes() { return fixEncoderSize(getBytesEncoder(), 1).encode(REGISTER_VAULT_DISCRIMINATOR); }
+export function getCreateVaultDiscriminatorBytes() { return fixEncoderSize(getBytesEncoder(), 1).encode(CREATE_VAULT_DISCRIMINATOR); }
 
-export type RegisterVaultInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountPayer extends string | AccountMeta<string> = string, TAccountRegistry extends string | AccountMeta<string> = string, TAccountMarket extends string | AccountMeta<string> = string, TAccountFeeMint extends string | AccountMeta<string> = "market.fee_config.mint", TAccountFeeTokenProgram extends string | AccountMeta<string> = "market.fee_config.token_program", TAccountPayerFeeSource extends string | AccountMeta<string> = string, TAccountRegistryFeeTreasury extends string | AccountMeta<string> = string, TAccountSystemProgram extends string | AccountMeta<string> = "11111111111111111111111111111111", TAccountEventAuthority extends string | AccountMeta<string> = string, TAccountProgram extends string | AccountMeta<string> = string, TRemainingAccounts extends readonly AccountMeta<string>[] = []> =
+export type CreateVaultInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountPayer extends string | AccountMeta<string> = string, TAccountRegistry extends string | AccountMeta<string> = string, TAccountMarket extends string | AccountMeta<string> = string, TAccountFeeMint extends string | AccountMeta<string> = "market.fee_config.mint", TAccountFeeTokenProgram extends string | AccountMeta<string> = "market.fee_config.token_program", TAccountPayerFeeSource extends string | AccountMeta<string> = string, TAccountRegistryFeeTreasury extends string | AccountMeta<string> = string, TAccountSystemProgram extends string | AccountMeta<string> = "11111111111111111111111111111111", TAccountEventAuthority extends string | AccountMeta<string> = string, TAccountProgram extends string | AccountMeta<string> = string, TRemainingAccounts extends readonly AccountMeta<string>[] = []> =
 Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array> & InstructionWithAccounts<[TAccountPayer extends string ? WritableSignerAccount<TAccountPayer> & AccountSignerMeta<TAccountPayer> : TAccountPayer, TAccountRegistry extends string ? ReadonlyAccount<TAccountRegistry> : TAccountRegistry, TAccountMarket extends string ? WritableAccount<TAccountMarket> : TAccountMarket, TAccountFeeMint extends string ? ReadonlyAccount<TAccountFeeMint> : TAccountFeeMint, TAccountFeeTokenProgram extends string ? ReadonlyAccount<TAccountFeeTokenProgram> : TAccountFeeTokenProgram, TAccountPayerFeeSource extends string ? WritableAccount<TAccountPayerFeeSource> : TAccountPayerFeeSource, TAccountRegistryFeeTreasury extends string ? WritableAccount<TAccountRegistryFeeTreasury> : TAccountRegistryFeeTreasury, TAccountSystemProgram extends string ? ReadonlyAccount<TAccountSystemProgram> : TAccountSystemProgram, TAccountEventAuthority extends string ? ReadonlyAccount<TAccountEventAuthority> : TAccountEventAuthority, TAccountProgram extends string ? ReadonlyAccount<TAccountProgram> : TAccountProgram, ...TRemainingAccounts]>;
 
-export type RegisterVaultInstructionData = { discriminator: ReadonlyUint8Array; perfFeeRate: number; quoteAuthority: Address; allowOutsideDepositors: boolean; leaderOverride: Address;  };
+export type CreateVaultInstructionData = { discriminator: ReadonlyUint8Array; perfFeeRate: number; quoteAuthority: Address; allowOutsideDepositors: boolean; leaderOverride: Address;  };
 
-export type RegisterVaultInstructionDataArgs = { perfFeeRate: number; quoteAuthority: Address; allowOutsideDepositors: boolean; leaderOverride: Address;  };
+export type CreateVaultInstructionDataArgs = { perfFeeRate: number; quoteAuthority: Address; allowOutsideDepositors: boolean; leaderOverride: Address;  };
 
-export function getRegisterVaultInstructionDataEncoder(): FixedSizeEncoder<RegisterVaultInstructionDataArgs> {
-    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 1)], ['perfFeeRate', getU32Encoder()], ['quoteAuthority', getAddressEncoder()], ['allowOutsideDepositors', getBooleanEncoder()], ['leaderOverride', getAddressEncoder()]]), (value) => ({ ...value, discriminator: REGISTER_VAULT_DISCRIMINATOR }));
+export function getCreateVaultInstructionDataEncoder(): FixedSizeEncoder<CreateVaultInstructionDataArgs> {
+    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 1)], ['perfFeeRate', getU32Encoder()], ['quoteAuthority', getAddressEncoder()], ['allowOutsideDepositors', getBooleanEncoder()], ['leaderOverride', getAddressEncoder()]]), (value) => ({ ...value, discriminator: CREATE_VAULT_DISCRIMINATOR }));
 }
 
-export function getRegisterVaultInstructionDataDecoder(): FixedSizeDecoder<RegisterVaultInstructionData> {
+export function getCreateVaultInstructionDataDecoder(): FixedSizeDecoder<CreateVaultInstructionData> {
     return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 1)], ['perfFeeRate', getU32Decoder()], ['quoteAuthority', getAddressDecoder()], ['allowOutsideDepositors', getBooleanDecoder()], ['leaderOverride', getAddressDecoder()]]);
 }
 
-export function getRegisterVaultInstructionDataCodec(): FixedSizeCodec<RegisterVaultInstructionDataArgs, RegisterVaultInstructionData> {
-    return combineCodec(getRegisterVaultInstructionDataEncoder(), getRegisterVaultInstructionDataDecoder());
+export function getCreateVaultInstructionDataCodec(): FixedSizeCodec<CreateVaultInstructionDataArgs, CreateVaultInstructionData> {
+    return combineCodec(getCreateVaultInstructionDataEncoder(), getCreateVaultInstructionDataDecoder());
 }
 
-export type RegisterVaultAsyncInput<TAccountPayer extends string = string, TAccountRegistry extends string = string, TAccountMarket extends string = string, TAccountFeeMint extends string = string, TAccountFeeTokenProgram extends string = string, TAccountPayerFeeSource extends string = string, TAccountRegistryFeeTreasury extends string = string, TAccountSystemProgram extends string = string, TAccountEventAuthority extends string = string, TAccountProgram extends string = string> =  {
+export type CreateVaultAsyncInput<TAccountPayer extends string = string, TAccountRegistry extends string = string, TAccountMarket extends string = string, TAccountFeeMint extends string = string, TAccountFeeTokenProgram extends string = string, TAccountPayerFeeSource extends string = string, TAccountRegistryFeeTreasury extends string = string, TAccountSystemProgram extends string = string, TAccountEventAuthority extends string = string, TAccountProgram extends string = string> =  {
   /**
  * Pays sector-rent top-up (if the slab realloc grows the
- * account) and the open-vault fee (unless waived for an admin).
+ * account) and the create-vault fee (unless waived for an admin).
  * Becomes the vault's `leader` unless an admin supplied a
  * distinct `leader_override` — see the handler.
  */
@@ -53,8 +53,8 @@ registry?: Address<TAccountRegistry>;
  */
 market: Address<TAccountMarket>;
 /**
- * Mint the open-vault fee is paid in. Pinned to the value
- * `register_market` stamped into `market.fee_config.mint`.
+ * Mint the create-vault fee is paid in. Pinned to the value
+ * `create_market` stamped into `market.fee_config.mint`.
  */
 feeMint?: Address<TAccountFeeMint>;
 /**
@@ -78,13 +78,13 @@ systemProgram?: Address<TAccountSystemProgram>;
 eventAuthority?: Address<TAccountEventAuthority>;
 /** CHECK: Kept for v1-compatible account ordering and IDL shape */
 program: Address<TAccountProgram>;
-perfFeeRate: RegisterVaultInstructionDataArgs["perfFeeRate"];
-quoteAuthority: RegisterVaultInstructionDataArgs["quoteAuthority"];
-allowOutsideDepositors: RegisterVaultInstructionDataArgs["allowOutsideDepositors"];
-leaderOverride: RegisterVaultInstructionDataArgs["leaderOverride"];
+perfFeeRate: CreateVaultInstructionDataArgs["perfFeeRate"];
+quoteAuthority: CreateVaultInstructionDataArgs["quoteAuthority"];
+allowOutsideDepositors: CreateVaultInstructionDataArgs["allowOutsideDepositors"];
+leaderOverride: CreateVaultInstructionDataArgs["leaderOverride"];
 }
 
-export async function getRegisterVaultInstructionAsync<TAccountPayer extends string, TAccountRegistry extends string, TAccountMarket extends string, TAccountFeeMint extends string, TAccountFeeTokenProgram extends string, TAccountPayerFeeSource extends string, TAccountRegistryFeeTreasury extends string, TAccountSystemProgram extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: RegisterVaultAsyncInput<TAccountPayer, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram>, config?: { programAddress?: TProgramAddress } ): Promise<RegisterVaultInstruction<TProgramAddress, TAccountPayer, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram>> {
+export async function getCreateVaultInstructionAsync<TAccountPayer extends string, TAccountRegistry extends string, TAccountMarket extends string, TAccountFeeMint extends string, TAccountFeeTokenProgram extends string, TAccountPayerFeeSource extends string, TAccountRegistryFeeTreasury extends string, TAccountSystemProgram extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: CreateVaultAsyncInput<TAccountPayer, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram>, config?: { programAddress?: TProgramAddress } ): Promise<CreateVaultInstruction<TProgramAddress, TAccountPayer, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram>> {
   // Program address.
 const programAddress = config?.programAddress ?? DROPSET_PROGRAM_ADDRESS;
 
@@ -115,13 +115,13 @@ accounts.eventAuthority.value = await findEventAuthorityPda();
 }
 
 const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
-return Object.freeze({ accounts: [getAccountMeta(accounts.payer), getAccountMeta(accounts.registry), getAccountMeta(accounts.market), getAccountMeta(accounts.feeMint), getAccountMeta(accounts.feeTokenProgram), getAccountMeta(accounts.payerFeeSource), getAccountMeta(accounts.registryFeeTreasury), getAccountMeta(accounts.systemProgram), getAccountMeta(accounts.eventAuthority), getAccountMeta(accounts.program)], data: getRegisterVaultInstructionDataEncoder().encode(args as RegisterVaultInstructionDataArgs), programAddress } as RegisterVaultInstruction<TProgramAddress, TAccountPayer, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram>);
+return Object.freeze({ accounts: [getAccountMeta(accounts.payer), getAccountMeta(accounts.registry), getAccountMeta(accounts.market), getAccountMeta(accounts.feeMint), getAccountMeta(accounts.feeTokenProgram), getAccountMeta(accounts.payerFeeSource), getAccountMeta(accounts.registryFeeTreasury), getAccountMeta(accounts.systemProgram), getAccountMeta(accounts.eventAuthority), getAccountMeta(accounts.program)], data: getCreateVaultInstructionDataEncoder().encode(args as CreateVaultInstructionDataArgs), programAddress } as CreateVaultInstruction<TProgramAddress, TAccountPayer, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram>);
 }
 
-export type RegisterVaultInput<TAccountPayer extends string = string, TAccountRegistry extends string = string, TAccountMarket extends string = string, TAccountFeeMint extends string = string, TAccountFeeTokenProgram extends string = string, TAccountPayerFeeSource extends string = string, TAccountRegistryFeeTreasury extends string = string, TAccountSystemProgram extends string = string, TAccountEventAuthority extends string = string, TAccountProgram extends string = string> =  {
+export type CreateVaultInput<TAccountPayer extends string = string, TAccountRegistry extends string = string, TAccountMarket extends string = string, TAccountFeeMint extends string = string, TAccountFeeTokenProgram extends string = string, TAccountPayerFeeSource extends string = string, TAccountRegistryFeeTreasury extends string = string, TAccountSystemProgram extends string = string, TAccountEventAuthority extends string = string, TAccountProgram extends string = string> =  {
   /**
  * Pays sector-rent top-up (if the slab realloc grows the
- * account) and the open-vault fee (unless waived for an admin).
+ * account) and the create-vault fee (unless waived for an admin).
  * Becomes the vault's `leader` unless an admin supplied a
  * distinct `leader_override` — see the handler.
  */
@@ -137,8 +137,8 @@ registry: Address<TAccountRegistry>;
  */
 market: Address<TAccountMarket>;
 /**
- * Mint the open-vault fee is paid in. Pinned to the value
- * `register_market` stamped into `market.fee_config.mint`.
+ * Mint the create-vault fee is paid in. Pinned to the value
+ * `create_market` stamped into `market.fee_config.mint`.
  */
 feeMint?: Address<TAccountFeeMint>;
 /**
@@ -162,13 +162,13 @@ systemProgram?: Address<TAccountSystemProgram>;
 eventAuthority: Address<TAccountEventAuthority>;
 /** CHECK: Kept for v1-compatible account ordering and IDL shape */
 program: Address<TAccountProgram>;
-perfFeeRate: RegisterVaultInstructionDataArgs["perfFeeRate"];
-quoteAuthority: RegisterVaultInstructionDataArgs["quoteAuthority"];
-allowOutsideDepositors: RegisterVaultInstructionDataArgs["allowOutsideDepositors"];
-leaderOverride: RegisterVaultInstructionDataArgs["leaderOverride"];
+perfFeeRate: CreateVaultInstructionDataArgs["perfFeeRate"];
+quoteAuthority: CreateVaultInstructionDataArgs["quoteAuthority"];
+allowOutsideDepositors: CreateVaultInstructionDataArgs["allowOutsideDepositors"];
+leaderOverride: CreateVaultInstructionDataArgs["leaderOverride"];
 }
 
-export function getRegisterVaultInstruction<TAccountPayer extends string, TAccountRegistry extends string, TAccountMarket extends string, TAccountFeeMint extends string, TAccountFeeTokenProgram extends string, TAccountPayerFeeSource extends string, TAccountRegistryFeeTreasury extends string, TAccountSystemProgram extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: RegisterVaultInput<TAccountPayer, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram>, config?: { programAddress?: TProgramAddress } ): RegisterVaultInstruction<TProgramAddress, TAccountPayer, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram> {
+export function getCreateVaultInstruction<TAccountPayer extends string, TAccountRegistry extends string, TAccountMarket extends string, TAccountFeeMint extends string, TAccountFeeTokenProgram extends string, TAccountPayerFeeSource extends string, TAccountRegistryFeeTreasury extends string, TAccountSystemProgram extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: CreateVaultInput<TAccountPayer, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram>, config?: { programAddress?: TProgramAddress } ): CreateVaultInstruction<TProgramAddress, TAccountPayer, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram> {
   // Program address.
 const programAddress = config?.programAddress ?? DROPSET_PROGRAM_ADDRESS;
 
@@ -193,14 +193,14 @@ accounts.systemProgram.value = '11111111111111111111111111111111' as Address<'11
 }
 
 const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
-return Object.freeze({ accounts: [getAccountMeta(accounts.payer), getAccountMeta(accounts.registry), getAccountMeta(accounts.market), getAccountMeta(accounts.feeMint), getAccountMeta(accounts.feeTokenProgram), getAccountMeta(accounts.payerFeeSource), getAccountMeta(accounts.registryFeeTreasury), getAccountMeta(accounts.systemProgram), getAccountMeta(accounts.eventAuthority), getAccountMeta(accounts.program)], data: getRegisterVaultInstructionDataEncoder().encode(args as RegisterVaultInstructionDataArgs), programAddress } as RegisterVaultInstruction<TProgramAddress, TAccountPayer, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram>);
+return Object.freeze({ accounts: [getAccountMeta(accounts.payer), getAccountMeta(accounts.registry), getAccountMeta(accounts.market), getAccountMeta(accounts.feeMint), getAccountMeta(accounts.feeTokenProgram), getAccountMeta(accounts.payerFeeSource), getAccountMeta(accounts.registryFeeTreasury), getAccountMeta(accounts.systemProgram), getAccountMeta(accounts.eventAuthority), getAccountMeta(accounts.program)], data: getCreateVaultInstructionDataEncoder().encode(args as CreateVaultInstructionDataArgs), programAddress } as CreateVaultInstruction<TProgramAddress, TAccountPayer, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram>);
 }
 
-export type ParsedRegisterVaultInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountMetas extends readonly AccountMeta[] = readonly AccountMeta[]> = { programAddress: Address<TProgram>;
+export type ParsedCreateVaultInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountMetas extends readonly AccountMeta[] = readonly AccountMeta[]> = { programAddress: Address<TProgram>;
 accounts: {
 /**
  * Pays sector-rent top-up (if the slab realloc grows the
- * account) and the open-vault fee (unless waived for an admin).
+ * account) and the create-vault fee (unless waived for an admin).
  * Becomes the vault's `leader` unless an admin supplied a
  * distinct `leader_override` — see the handler.
  */
@@ -216,8 +216,8 @@ registry: TAccountMetas[1];
  */
 market: TAccountMetas[2];
 /**
- * Mint the open-vault fee is paid in. Pinned to the value
- * `register_market` stamped into `market.fee_config.mint`.
+ * Mint the create-vault fee is paid in. Pinned to the value
+ * `create_market` stamped into `market.fee_config.mint`.
  */
 feeMint: TAccountMetas[3];
 /**
@@ -242,9 +242,9 @@ eventAuthority: TAccountMetas[8];
 /** CHECK: Kept for v1-compatible account ordering and IDL shape */
 program: TAccountMetas[9];
 };
-data: RegisterVaultInstructionData; };
+data: CreateVaultInstructionData; };
 
-export function parseRegisterVaultInstruction<TProgram extends string, TAccountMetas extends readonly AccountMeta[]>(instruction: Instruction<TProgram> & InstructionWithAccounts<TAccountMetas> & InstructionWithData<ReadonlyUint8Array>): ParsedRegisterVaultInstruction<TProgram, TAccountMetas> {
+export function parseCreateVaultInstruction<TProgram extends string, TAccountMetas extends readonly AccountMeta[]>(instruction: Instruction<TProgram> & InstructionWithAccounts<TAccountMetas> & InstructionWithData<ReadonlyUint8Array>): ParsedCreateVaultInstruction<TProgram, TAccountMetas> {
   if (instruction.accounts.length < 10) {
   // TODO: Coded error.
   throw new Error('Not enough accounts');
@@ -255,5 +255,5 @@ const getNextAccount = () => {
   accountIndex += 1;
   return accountMeta;
 }
-  return { programAddress: instruction.programAddress, accounts: { payer: getNextAccount(), registry: getNextAccount(), market: getNextAccount(), feeMint: getNextAccount(), feeTokenProgram: getNextAccount(), payerFeeSource: getNextAccount(), registryFeeTreasury: getNextAccount(), systemProgram: getNextAccount(), eventAuthority: getNextAccount(), program: getNextAccount() }, data: getRegisterVaultInstructionDataDecoder().decode(instruction.data) };
+  return { programAddress: instruction.programAddress, accounts: { payer: getNextAccount(), registry: getNextAccount(), market: getNextAccount(), feeMint: getNextAccount(), feeTokenProgram: getNextAccount(), payerFeeSource: getNextAccount(), registryFeeTreasury: getNextAccount(), systemProgram: getNextAccount(), eventAuthority: getNextAccount(), program: getNextAccount() }, data: getCreateVaultInstructionDataDecoder().decode(instruction.data) };
 }
