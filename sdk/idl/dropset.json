@@ -1,0 +1,3340 @@
+{
+  "address": "TESTnXwv2eHoftsSd5NEdpH4zEu7XRC8jviuoNPdB2Q",
+  "metadata": {
+    "name": "dropset",
+    "version": "0.1.0",
+    "spec": "0.1.0"
+  },
+  "instructions": [
+    {
+      "name": "add_admin",
+      "discriminator": [
+        1
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "registry",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "new_admin",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "close_market",
+      "discriminator": [
+        19
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "docs": [
+            "Registry admin — authorized via the registry admin set."
+          ],
+          "signer": true
+        },
+        {
+          "name": "registry",
+          "docs": [
+            "Singleton registry. `mut` to decrement `market_count` — the",
+            "witness `close_registry` later checks is zero."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "market",
+          "docs": [
+            "The market being closed. `mut` so its lamports can be drained and",
+            "its discriminator scrubbed by `Slab::close`. Taken bare, matching",
+            "every other handler; the treasury `address` constraints below",
+            "reference this market's stored treasury addresses, so a",
+            "mismatched market is rejected before the close."
+          ],
+          "writable": true
+        },
+        {
+          "name": "base_treasury",
+          "docs": [
+            "The base treasury — must already be closed (zero lamports).",
+            "CHECK: pinned to `market.base_treasury` and required closed."
+          ],
+          "relations": [
+            "market"
+          ]
+        },
+        {
+          "name": "quote_treasury",
+          "docs": [
+            "The quote treasury — must already be closed (zero lamports).",
+            "CHECK: pinned to `market.quote_treasury` and required closed."
+          ],
+          "relations": [
+            "market"
+          ]
+        },
+        {
+          "name": "rent_recipient",
+          "docs": [
+            "Receives the market account's rent lamports on close.",
+            "CHECK: rent destination only."
+          ],
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "close_market_treasury",
+      "discriminator": [
+        18
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "docs": [
+            "Registry admin — authorized via the registry admin set."
+          ],
+          "signer": true
+        },
+        {
+          "name": "registry",
+          "docs": [
+            "Singleton registry, read for the admin-membership check."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "market",
+          "docs": [
+            "Market owning the treasury. Read-only — closing a treasury does",
+            "not mutate market state (the market is closed separately, after",
+            "both treasuries are gone). The market PDA still signs the",
+            "`CloseAccount` CPI via its `(base_mint, quote_mint)` seeds,",
+            "recovered from `market.bump`. Taken bare (no `seeds` constraint),",
+            "matching every other handler: the `associated_token::authority =",
+            "market` constraint on `treasury` already binds the ATA to this",
+            "market, and the CPI signature fails if a non-matching market is",
+            "passed."
+          ]
+        },
+        {
+          "name": "mint",
+          "docs": [
+            "One of the market's two leg mints. The ATA constraint below binds",
+            "`treasury` to the canonical `(market, mint)` ATA; the handler",
+            "additionally rejects any mint that isn't one of the market legs."
+          ]
+        },
+        {
+          "name": "token_program",
+          "docs": [
+            "Token program owning `mint`."
+          ]
+        },
+        {
+          "name": "treasury",
+          "docs": [
+            "The treasury ATA to close. The ATA constraint pins it to",
+            "`ata(market, mint, token_program)`, so a non-canonical account is",
+            "rejected before the handler runs. Must be drained to zero."
+          ],
+          "writable": true
+        },
+        {
+          "name": "rent_recipient",
+          "docs": [
+            "Receives the treasury's rent lamports on close.",
+            "CHECK: rent destination only; no constraints required — the admin",
+            "chooses where reclaimed rent lands."
+          ],
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "close_registry",
+      "discriminator": [
+        21
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "docs": [
+            "The last remaining registry admin — the only signer this accepts,",
+            "and the one whose authority the close is performed under."
+          ],
+          "signer": true
+        },
+        {
+          "name": "registry",
+          "docs": [
+            "The registry being closed. `mut` so its lamports can be drained",
+            "and its discriminator scrubbed by `Slab::close`."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "rent_recipient",
+          "docs": [
+            "Receives the registry account's rent lamports on close.",
+            "CHECK: rent destination only."
+          ],
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "close_registry_fee_vault",
+      "discriminator": [
+        20
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "docs": [
+            "Registry admin — authorized via the registry admin set."
+          ],
+          "signer": true
+        },
+        {
+          "name": "registry",
+          "docs": [
+            "Singleton registry. Read-only — the registry account itself is",
+            "closed separately by `close_registry`. The registry PDA signs the",
+            "`CloseAccount` CPI via its `[b\"registry\"]` seed."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "fee_mint",
+          "docs": [
+            "Mint of the fee vault being closed. The program may have charged",
+            "fees in more than one mint over its life; the admin closes each",
+            "fee ATA in turn (the historical set is tracked off-chain)."
+          ]
+        },
+        {
+          "name": "token_program",
+          "docs": [
+            "Token program owning `fee_mint`."
+          ]
+        },
+        {
+          "name": "fee_vault",
+          "docs": [
+            "The fee ATA to close — pinned to `ata(registry, fee_mint,",
+            "token_program)` by the constraint. Must be drained to zero (via",
+            "the existing admin fee sweep) first."
+          ],
+          "writable": true
+        },
+        {
+          "name": "rent_recipient",
+          "docs": [
+            "Receives the fee vault's rent lamports on close.",
+            "CHECK: rent destination only."
+          ],
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "close_vault",
+      "discriminator": [
+        14
+      ],
+      "accounts": [
+        {
+          "name": "signer",
+          "docs": [
+            "Must equal `vault.leader` — verified in-handler."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market",
+          "docs": [
+            "Market holding the target vault. `mut` because the active /",
+            "tombstone list heads and `active_count` change."
+          ],
+          "writable": true
+        },
+        {
+          "name": "event_authority",
+          "docs": [
+            "CHECK: Only the event authority can invoke self-CPI"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "docs": [
+            "CHECK: Kept for v1-compatible account ordering and IDL shape"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "vault_idx",
+          "type": "u32"
+        }
+      ]
+    },
+    {
+      "name": "deposit",
+      "discriminator": [
+        7
+      ],
+      "accounts": [
+        {
+          "name": "signer",
+          "docs": [
+            "Either the vault's leader (seeding or top-up of leader_shares)",
+            "or an outside depositor (creates / tops off `vault_depositor`)."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "market",
+          "docs": [
+            "Market the vault lives on. Mut for share + inventory writes."
+          ],
+          "writable": true
+        },
+        {
+          "name": "vault_depositor",
+          "docs": [
+            "`init_if_needed` so a first-time depositor pays rent inline",
+            "and a top-off depositor sees the existing PDA. Seeds bind to",
+            "`(market, sector_idx, signer)` so signer ownership is",
+            "implicit — there is no separate `authority` field to",
+            "reassign. The handler closes this PDA on zero-share exit",
+            "(`withdraw`) so the depositor's rent comes back."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  100,
+                  101,
+                  112,
+                  111,
+                  115,
+                  105,
+                  116,
+                  111,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market"
+              },
+              {
+                "kind": "arg",
+                "path": "vault_idx"
+              },
+              {
+                "kind": "account",
+                "path": "signer"
+              }
+            ]
+          }
+        },
+        {
+          "name": "base_mint",
+          "docs": [
+            "Base mint — pinned to `market.base_mint`."
+          ],
+          "relations": [
+            "market"
+          ]
+        },
+        {
+          "name": "quote_mint",
+          "docs": [
+            "Quote mint — pinned to `market.quote_mint`."
+          ],
+          "relations": [
+            "market"
+          ]
+        },
+        {
+          "name": "base_token_program"
+        },
+        {
+          "name": "quote_token_program"
+        },
+        {
+          "name": "signer_base_ata",
+          "docs": [
+            "Signer's source ATA for base. Anchor's ATA constraint verifies",
+            "`(signer, base_mint, base_token_program)`."
+          ],
+          "writable": true
+        },
+        {
+          "name": "signer_quote_ata",
+          "docs": [
+            "Signer's source ATA for quote."
+          ],
+          "writable": true
+        },
+        {
+          "name": "market_base_treasury",
+          "docs": [
+            "Market base treasury — must match `market.base_treasury`."
+          ],
+          "writable": true
+        },
+        {
+          "name": "market_quote_treasury",
+          "docs": [
+            "Market quote treasury — must match `market.quote_treasury`."
+          ],
+          "writable": true
+        },
+        {
+          "name": "clock",
+          "address": "SysvarC1ock11111111111111111111111111111111"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "event_authority",
+          "docs": [
+            "CHECK: Only the event authority can invoke self-CPI"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "docs": [
+            "CHECK: Kept for v1-compatible account ordering and IDL shape"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "vault_idx",
+          "type": "u32"
+        },
+        {
+          "name": "base_in",
+          "type": "u64"
+        },
+        {
+          "name": "quote_in",
+          "type": "u64"
+        },
+        {
+          "name": "max_base_in",
+          "type": "u64"
+        },
+        {
+          "name": "max_quote_in",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "deposit_leader",
+      "discriminator": [
+        10
+      ],
+      "accounts": [
+        {
+          "name": "signer",
+          "docs": [
+            "Must equal `vault.leader` — verified in-handler."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "market",
+          "docs": [
+            "Market the vault lives on."
+          ],
+          "writable": true
+        },
+        {
+          "name": "base_mint",
+          "relations": [
+            "market"
+          ]
+        },
+        {
+          "name": "quote_mint",
+          "relations": [
+            "market"
+          ]
+        },
+        {
+          "name": "base_token_program"
+        },
+        {
+          "name": "quote_token_program"
+        },
+        {
+          "name": "signer_base_ata",
+          "writable": true
+        },
+        {
+          "name": "signer_quote_ata",
+          "writable": true
+        },
+        {
+          "name": "market_base_treasury",
+          "writable": true
+        },
+        {
+          "name": "market_quote_treasury",
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "event_authority",
+          "docs": [
+            "CHECK: Only the event authority can invoke self-CPI"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "docs": [
+            "CHECK: Kept for v1-compatible account ordering and IDL shape"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "vault_idx",
+          "type": "u32"
+        },
+        {
+          "name": "base_in",
+          "type": "u64"
+        },
+        {
+          "name": "quote_in",
+          "type": "u64"
+        },
+        {
+          "name": "max_base_in",
+          "type": "u64"
+        },
+        {
+          "name": "max_quote_in",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "force_withdraw_depositor",
+      "discriminator": [
+        16
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "docs": [
+            "Registry admin. Funds the `owner` payout ATAs when",
+            "`init_if_needed` has to allocate them."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "registry",
+          "docs": [
+            "Singleton registry, read for the admin-membership check."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "market",
+          "docs": [
+            "Market the vault lives on."
+          ],
+          "writable": true
+        },
+        {
+          "name": "owner",
+          "docs": [
+            "The depositor whose position is being drained. Not a signer —",
+            "that is the whole point of the admin force path. Used as the PDA",
+            "seed and the payout-ATA authority so funds and rent both flow to",
+            "the depositor, never the admin.",
+            "`mut` because the closed `VaultDepositor` PDA refunds its rent",
+            "here — the runtime rejects crediting lamports to a readonly account.",
+            "CHECK: constrained by the `vault_depositor` PDA seeds (which bind",
+            "this key) and the `associated_token::authority` constraints on",
+            "the payout ATAs below."
+          ],
+          "writable": true
+        },
+        {
+          "name": "vault_depositor",
+          "docs": [
+            "The depositor's basis PDA. Closed to `owner` on full drain."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  100,
+                  101,
+                  112,
+                  111,
+                  115,
+                  105,
+                  116,
+                  111,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market"
+              },
+              {
+                "kind": "arg",
+                "path": "vault_idx"
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "base_mint",
+          "relations": [
+            "market"
+          ]
+        },
+        {
+          "name": "quote_mint",
+          "relations": [
+            "market"
+          ]
+        },
+        {
+          "name": "base_token_program"
+        },
+        {
+          "name": "quote_token_program"
+        },
+        {
+          "name": "owner_base_ata",
+          "docs": [
+            "Depositor's base payout ATA — created (admin-funded) if absent."
+          ],
+          "writable": true
+        },
+        {
+          "name": "owner_quote_ata",
+          "docs": [
+            "Depositor's quote payout ATA — created (admin-funded) if absent."
+          ],
+          "writable": true
+        },
+        {
+          "name": "market_base_treasury",
+          "writable": true
+        },
+        {
+          "name": "market_quote_treasury",
+          "writable": true
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "docs": [
+            "CHECK: Only the event authority can invoke self-CPI"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "docs": [
+            "CHECK: Kept for v1-compatible account ordering and IDL shape"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "vault_idx",
+          "type": "u32"
+        }
+      ]
+    },
+    {
+      "name": "force_withdraw_leader",
+      "discriminator": [
+        17
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "docs": [
+            "Registry admin. Funds the leader payout ATAs when `init_if_needed`",
+            "has to allocate them."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "registry",
+          "docs": [
+            "Singleton registry, read for the admin-membership check."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "market",
+          "docs": [
+            "Market the vault lives on."
+          ],
+          "writable": true
+        },
+        {
+          "name": "leader",
+          "docs": [
+            "The vault's leader — the payout target. Not a signer. Verified",
+            "in-handler against `vault.leader`.",
+            "CHECK: matched against `vault.leader` in the handler and bound as",
+            "the `associated_token::authority` of the payout ATAs below."
+          ]
+        },
+        {
+          "name": "base_mint",
+          "relations": [
+            "market"
+          ]
+        },
+        {
+          "name": "quote_mint",
+          "relations": [
+            "market"
+          ]
+        },
+        {
+          "name": "base_token_program"
+        },
+        {
+          "name": "quote_token_program"
+        },
+        {
+          "name": "leader_base_ata",
+          "docs": [
+            "Leader's base payout ATA — created (admin-funded) if absent."
+          ],
+          "writable": true
+        },
+        {
+          "name": "leader_quote_ata",
+          "docs": [
+            "Leader's quote payout ATA — created (admin-funded) if absent."
+          ],
+          "writable": true
+        },
+        {
+          "name": "market_base_treasury",
+          "writable": true
+        },
+        {
+          "name": "market_quote_treasury",
+          "writable": true
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "docs": [
+            "CHECK: Only the event authority can invoke self-CPI"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "docs": [
+            "CHECK: Kept for v1-compatible account ordering and IDL shape"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "vault_idx",
+          "type": "u32"
+        }
+      ]
+    },
+    {
+      "name": "freeze_vault",
+      "discriminator": [
+        15
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "docs": [
+            "Registry admin — the only signer this lever accepts."
+          ],
+          "signer": true
+        },
+        {
+          "name": "registry",
+          "docs": [
+            "Singleton registry, read for the admin-membership check."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "market",
+          "docs": [
+            "Market holding the target vault. `mut` for the `frozen` write."
+          ],
+          "writable": true
+        },
+        {
+          "name": "event_authority",
+          "docs": [
+            "CHECK: Only the event authority can invoke self-CPI"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "docs": [
+            "CHECK: Kept for v1-compatible account ordering and IDL shape"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "vault_idx",
+          "type": "u32"
+        }
+      ]
+    },
+    {
+      "name": "init",
+      "discriminator": [
+        0
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "registry",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program_data",
+          "docs": [
+            "SAFETY: the program's ProgramData account is owned by the BPF",
+            "upgradeable loader, not this program, so it cannot be a typed",
+            "`Account<T>`. `verify_upgrade_authority` re-derives the",
+            "canonical `ProgramData` PDA and only reads its header to",
+            "authenticate the upgrade authority — no data is written and",
+            "no other invariant is assumed. A declarative",
+            "`seeds = [crate::ID.as_ref()], seeds::program = …` would emit",
+            "an opaque `{\"kind\":\"expr\"}` seed that anchor v2's IDL spec",
+            "can't deserialize today; the manual check sidesteps that."
+          ]
+        },
+        {
+          "name": "fee_mint",
+          "docs": [
+            "The mint to charge fees in. `InterfaceAccount<Mint>` validates",
+            "SPL Token / Token-2022 ownership and that the data unpacks as a",
+            "`Mint` — so no separate length / discriminator check is needed."
+          ]
+        },
+        {
+          "name": "fee_vault",
+          "docs": [
+            "Registry-owned fee vault for the per-`OpenVault` charge. Created",
+            "here by CPI to the ATA program; its address is the canonical",
+            "ATA over `(registry, token_program, fee_mint)`, and the ATA",
+            "program rejects any `(mint, token_program)` pair whose owners",
+            "disagree — a second backstop after `InterfaceAccount<Mint>`."
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "docs": [
+            "Token program owning `fee_mint` — SPL Token or Token-2022.",
+            "`Interface<TokenInterface>` rejects any other address up front",
+            "(`IncorrectProgramId`); the ATA seeds bake this in too, so a",
+            "caller-supplied mismatch against `fee_mint`'s owner yields a",
+            "non-canonical ATA and a separate `InvalidSeeds` rejection."
+          ]
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "genesis_admin",
+          "type": "pubkey"
+        },
+        {
+          "name": "fee_atoms",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "register_market",
+      "discriminator": [
+        3
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "docs": [
+            "Funds rent for the market PDA and the two treasury ATAs, and",
+            "signs the fee transfer unless waived for an admin signer."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "registry",
+          "docs": [
+            "Singleton registry. Mutated to bump `market_count`, and read",
+            "for the fee config, admin set, and stamped defaults."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "base_mint",
+          "docs": [
+            "Base leg mint. `InterfaceAccount<Mint>` accepts SPL Token and",
+            "Token-2022 by relaxing the owner check; the deserialization",
+            "rejects non-mint payloads (token accounts, multisigs, etc.)."
+          ]
+        },
+        {
+          "name": "quote_mint",
+          "docs": [
+            "Quote leg mint. Same deal as `base_mint`."
+          ]
+        },
+        {
+          "name": "base_token_program",
+          "docs": [
+            "SPL Token or Token-2022 — whichever owns `base_mint`.",
+            "`Interface<TokenInterface>` rejects any other address up front",
+            "with `IncorrectProgramId`; an actual `(mint, token_program)`",
+            "owner mismatch surfaces later when the ATA program CPIs through",
+            "to it."
+          ]
+        },
+        {
+          "name": "quote_token_program",
+          "docs": [
+            "Same for the quote leg."
+          ]
+        },
+        {
+          "name": "market",
+          "docs": [
+            "Market PDA seeded by `(base_mint, quote_mint)`. The slab tail",
+            "holds the vault sectors; we open with zero capacity here and",
+            "let `OpenVault` grow it. The `init` constraint enforces",
+            "single-shot creation — a second `register_market` against the",
+            "same pair is rejected by the runtime before our handler runs."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "base_mint"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "base_treasury",
+          "docs": [
+            "Pooled base inventory for every vault on this market. The ATA",
+            "program is the only path that creates it, and its",
+            "`InitializeAccount3` CPI to the token program is what enforces",
+            "`base_mint` is a real mint under the supplied token program."
+          ],
+          "writable": true
+        },
+        {
+          "name": "quote_treasury",
+          "docs": [
+            "Pooled quote inventory. See `base_treasury`."
+          ],
+          "writable": true
+        },
+        {
+          "name": "fee_mint",
+          "docs": [
+            "Mint the open-market fee is charged in. The `address` constraint",
+            "binds it to whatever was stamped onto the registry at `init`,",
+            "so a wrong mint here yields `ConstraintAddress` before the",
+            "handler runs."
+          ],
+          "address": "registry.default_fee_config.mint"
+        },
+        {
+          "name": "fee_token_program",
+          "docs": [
+            "Token program that owns `fee_mint`. Pinned to the value the",
+            "registry stamped at `init`, so a caller-supplied mismatch is",
+            "rejected up front. The `Interface<TokenInterface>` bound is",
+            "belt-and-braces — the address check already implies it."
+          ],
+          "address": "registry.default_fee_config.token_program"
+        },
+        {
+          "name": "payer_fee_source",
+          "docs": [
+            "Caller's source ATA holding the fee mint. Only read on the",
+            "non-admin path — admins skip the transfer entirely, so the",
+            "unchecked passthrough is safe: any account here is ignored on",
+            "the admin branch."
+          ],
+          "writable": true
+        },
+        {
+          "name": "registry_fee_treasury",
+          "docs": [
+            "Registry's fee vault — created at `init` time. The",
+            "`associated_token::*` constraints re-validate it against",
+            "`(registry, fee_mint, fee_token_program)` so a non-canonical",
+            "destination is rejected by `ConstraintAddress`."
+          ],
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "register_vault",
+      "discriminator": [
+        4
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "docs": [
+            "Pays sector-rent top-up (if the slab realloc grows the",
+            "account) and the open-vault fee (unless waived for an admin).",
+            "Becomes the vault's `leader` unless an admin supplied a",
+            "distinct `leader_override` — see the handler."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "registry",
+          "docs": [
+            "Singleton registry — read for admin check + the",
+            "`max_vaults_per_market` cap."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "market",
+          "docs": [
+            "Market the vault lives on. `mut` because the slab tail grows",
+            "(or pops from the free list) and `active_count` increments."
+          ],
+          "writable": true
+        },
+        {
+          "name": "fee_mint",
+          "docs": [
+            "Mint the open-vault fee is paid in. Pinned to the value",
+            "`register_market` stamped into `market.fee_config.mint`."
+          ],
+          "address": "market.fee_config.mint"
+        },
+        {
+          "name": "fee_token_program",
+          "docs": [
+            "Token program owning `fee_mint`. Pinned to the value stamped at",
+            "market creation."
+          ],
+          "address": "market.fee_config.token_program"
+        },
+        {
+          "name": "payer_fee_source",
+          "docs": [
+            "Caller's source ATA for the fee mint. Only read on the",
+            "non-admin path; admin path skips the transfer entirely."
+          ],
+          "writable": true
+        },
+        {
+          "name": "registry_fee_treasury",
+          "docs": [
+            "Registry's fee ATA. ATA constraint validates",
+            "`(registry, fee_mint, fee_token_program)` so a wrong destination",
+            "is rejected before the transfer CPI runs."
+          ],
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "docs": [
+            "CHECK: Only the event authority can invoke self-CPI"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "docs": [
+            "CHECK: Kept for v1-compatible account ordering and IDL shape"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "perf_fee_rate",
+          "type": "u32"
+        },
+        {
+          "name": "quote_authority",
+          "type": "pubkey"
+        },
+        {
+          "name": "allow_outside_depositors",
+          "type": "bool"
+        },
+        {
+          "name": "leader_override",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "remove_admin",
+      "discriminator": [
+        2
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "registry",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "target",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "set_allow_outside_depositors",
+      "discriminator": [
+        12
+      ],
+      "accounts": [
+        {
+          "name": "signer",
+          "docs": [
+            "The vault's leader — the only signer this setter accepts."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market",
+          "docs": [
+            "Market holding the target vault."
+          ],
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "vault_idx",
+          "type": "u32"
+        },
+        {
+          "name": "flag",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "set_liquidity_profile",
+      "discriminator": [
+        6
+      ],
+      "accounts": [
+        {
+          "name": "signer",
+          "docs": [
+            "Quote authority — same gate as `set_reference_price`."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market",
+          "docs": [
+            "Market account holding the target vault."
+          ],
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "vault_idx",
+          "type": "u32"
+        },
+        {
+          "name": "profile_bytes",
+          "type": {
+            "array": [
+              "u8",
+              0
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "set_outside_deposits_approved",
+      "discriminator": [
+        13
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "docs": [
+            "Registry admin — authorized via the registry admin set."
+          ],
+          "signer": true
+        },
+        {
+          "name": "registry",
+          "docs": [
+            "Singleton registry, read for the admin-membership check."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "market",
+          "docs": [
+            "Market holding the target vault."
+          ],
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "vault_idx",
+          "type": "u32"
+        },
+        {
+          "name": "flag",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "set_reference_price",
+      "discriminator": [
+        5
+      ],
+      "accounts": [
+        {
+          "name": "signer",
+          "docs": [
+            "Quote authority — the only signer the spec accepts here. Set at",
+            "`OpenVault` (defaults to the leader)."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market",
+          "docs": [
+            "Market account holding the target vault."
+          ],
+          "writable": true
+        },
+        {
+          "name": "clock",
+          "docs": [
+            "Read for the current slot. The leader-supplied `quote_slot` is",
+            "validated against this (no future-dating, capped backdate)."
+          ],
+          "address": "SysvarC1ock11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "vault_idx",
+          "type": "u32"
+        },
+        {
+          "name": "price_bits",
+          "type": "u32"
+        },
+        {
+          "name": "quote_slot",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "swap",
+      "discriminator": [
+        9
+      ],
+      "accounts": [
+        {
+          "name": "taker",
+          "docs": [
+            "Taker."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "market",
+          "docs": [
+            "Market the target vault lives on."
+          ],
+          "writable": true
+        },
+        {
+          "name": "base_mint",
+          "relations": [
+            "market"
+          ]
+        },
+        {
+          "name": "quote_mint",
+          "relations": [
+            "market"
+          ]
+        },
+        {
+          "name": "base_token_program"
+        },
+        {
+          "name": "quote_token_program"
+        },
+        {
+          "name": "taker_base_ata",
+          "writable": true
+        },
+        {
+          "name": "taker_quote_ata",
+          "writable": true
+        },
+        {
+          "name": "market_base_treasury",
+          "writable": true
+        },
+        {
+          "name": "market_quote_treasury",
+          "writable": true
+        },
+        {
+          "name": "clock",
+          "address": "SysvarC1ock11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "docs": [
+            "CHECK: Only the event authority can invoke self-CPI"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "docs": [
+            "CHECK: Kept for v1-compatible account ordering and IDL shape"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "side",
+          "type": "u8"
+        },
+        {
+          "name": "amount_in",
+          "type": "u64"
+        },
+        {
+          "name": "limit_price_bits",
+          "type": "u32"
+        },
+        {
+          "name": "min_out",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "withdraw",
+      "discriminator": [
+        8
+      ],
+      "accounts": [
+        {
+          "name": "signer",
+          "docs": [
+            "Either the vault's leader (burns `leader_shares`) or an outside",
+            "depositor (burns the PDA's `shares`). PDA seeds bind the",
+            "outside path to this signer."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "market",
+          "docs": [
+            "Market the vault lives on."
+          ],
+          "writable": true
+        },
+        {
+          "name": "vault_depositor",
+          "docs": [
+            "Outside depositor's PDA. Mut so we can decrement `shares` and",
+            "stamp realized PnL. The handler calls",
+            "[`anchor_lang_v2::AnchorAccount::close`] explicitly when",
+            "post-burn `shares == 0`, refunding the rent to the signer",
+            "and decrementing `outstanding_vault_depositors` — a manual",
+            "close keeps the conditional rent-refund logic in one place",
+            "instead of relying on Anchor's unconditional `close = signer`",
+            "attribute."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  100,
+                  101,
+                  112,
+                  111,
+                  115,
+                  105,
+                  116,
+                  111,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market"
+              },
+              {
+                "kind": "arg",
+                "path": "vault_idx"
+              },
+              {
+                "kind": "account",
+                "path": "signer"
+              }
+            ]
+          }
+        },
+        {
+          "name": "base_mint",
+          "relations": [
+            "market"
+          ]
+        },
+        {
+          "name": "quote_mint",
+          "relations": [
+            "market"
+          ]
+        },
+        {
+          "name": "base_token_program"
+        },
+        {
+          "name": "quote_token_program"
+        },
+        {
+          "name": "signer_base_ata",
+          "writable": true
+        },
+        {
+          "name": "signer_quote_ata",
+          "writable": true
+        },
+        {
+          "name": "market_base_treasury",
+          "writable": true
+        },
+        {
+          "name": "market_quote_treasury",
+          "writable": true
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "docs": [
+            "CHECK: Only the event authority can invoke self-CPI"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "docs": [
+            "CHECK: Kept for v1-compatible account ordering and IDL shape"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "vault_idx",
+          "type": "u32"
+        },
+        {
+          "name": "shares_in",
+          "type": "u64"
+        },
+        {
+          "name": "min_base_out",
+          "type": "u64"
+        },
+        {
+          "name": "min_quote_out",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "withdraw_leader",
+      "discriminator": [
+        11
+      ],
+      "accounts": [
+        {
+          "name": "signer",
+          "docs": [
+            "Must equal `vault.leader` — verified in-handler."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "market",
+          "docs": [
+            "Market the vault lives on."
+          ],
+          "writable": true
+        },
+        {
+          "name": "base_mint",
+          "relations": [
+            "market"
+          ]
+        },
+        {
+          "name": "quote_mint",
+          "relations": [
+            "market"
+          ]
+        },
+        {
+          "name": "base_token_program"
+        },
+        {
+          "name": "quote_token_program"
+        },
+        {
+          "name": "signer_base_ata",
+          "writable": true
+        },
+        {
+          "name": "signer_quote_ata",
+          "writable": true
+        },
+        {
+          "name": "market_base_treasury",
+          "writable": true
+        },
+        {
+          "name": "market_quote_treasury",
+          "writable": true
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "docs": [
+            "CHECK: Only the event authority can invoke self-CPI"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "docs": [
+            "CHECK: Kept for v1-compatible account ordering and IDL shape"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "vault_idx",
+          "type": "u32"
+        },
+        {
+          "name": "shares_in",
+          "type": "u64"
+        },
+        {
+          "name": "min_base_out",
+          "type": "u64"
+        },
+        {
+          "name": "min_quote_out",
+          "type": "u64"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "MarketHeader",
+      "discriminator": [
+        56,
+        105,
+        191,
+        242,
+        226,
+        243,
+        198,
+        164
+      ]
+    },
+    {
+      "name": "RegistryHeader",
+      "discriminator": [
+        74,
+        214,
+        198,
+        41,
+        138,
+        211,
+        36,
+        245
+      ]
+    },
+    {
+      "name": "VaultDepositorHeader",
+      "discriminator": [
+        249,
+        190,
+        164,
+        120,
+        230,
+        61,
+        124,
+        175
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "CloseVaultEvent",
+      "discriminator": [
+        35,
+        37,
+        158,
+        74,
+        115,
+        93,
+        175,
+        136
+      ]
+    },
+    {
+      "name": "DepositEvent",
+      "discriminator": [
+        120,
+        248,
+        61,
+        83,
+        31,
+        142,
+        107,
+        144
+      ]
+    },
+    {
+      "name": "FillEvent",
+      "discriminator": [
+        13,
+        89,
+        41,
+        228,
+        105,
+        178,
+        45,
+        112
+      ]
+    },
+    {
+      "name": "FreezeVaultEvent",
+      "discriminator": [
+        9,
+        180,
+        143,
+        223,
+        189,
+        20,
+        1,
+        74
+      ]
+    },
+    {
+      "name": "OpenVaultEvent",
+      "discriminator": [
+        122,
+        120,
+        130,
+        32,
+        250,
+        83,
+        144,
+        252
+      ]
+    },
+    {
+      "name": "RealizeEvent",
+      "discriminator": [
+        255,
+        60,
+        160,
+        248,
+        4,
+        188,
+        32,
+        33
+      ]
+    },
+    {
+      "name": "WithdrawEvent",
+      "discriminator": [
+        22,
+        9,
+        133,
+        26,
+        160,
+        44,
+        71,
+        192
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "InvalidProgramDataAddress",
+      "msg": "program_data account is not the canonical PDA for this program"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidProgramData",
+      "msg": "program_data account contents could not be decoded"
+    },
+    {
+      "code": 6002,
+      "name": "InvalidUpgradeAuthority",
+      "msg": "Init must be signed by the program's upgrade authority"
+    },
+    {
+      "code": 6003,
+      "name": "AdminSetFull",
+      "msg": "the registry admin set has no room for another admin"
+    },
+    {
+      "code": 6004,
+      "name": "AlreadyAdmin",
+      "msg": "the named pubkey is already a registry admin"
+    },
+    {
+      "code": 6005,
+      "name": "Unauthorized",
+      "msg": "signer is not a registry admin"
+    },
+    {
+      "code": 6006,
+      "name": "AdminNotFound",
+      "msg": "the named pubkey is not a registry admin"
+    },
+    {
+      "code": 6007,
+      "name": "CannotRemoveLastAdmin",
+      "msg": "cannot remove the last remaining registry admin"
+    },
+    {
+      "code": 6008,
+      "name": "InvalidFeeMint",
+      "msg": "fee mint does not match the registry's configured fee mint"
+    },
+    {
+      "code": 6009,
+      "name": "DuplicateBaseQuoteMint",
+      "msg": "base and quote mints must differ"
+    },
+    {
+      "code": 6010,
+      "name": "InvalidSectorIndex",
+      "msg": "supplied sector index is out of range"
+    },
+    {
+      "code": 6011,
+      "name": "CorruptVaultList",
+      "msg": "vault list pointers are inconsistent with the list head"
+    },
+    {
+      "code": 6012,
+      "name": "MarketCountOverflow",
+      "msg": "registry market_count cannot exceed u32::MAX"
+    },
+    {
+      "code": 6013,
+      "name": "VaultCapExceeded",
+      "msg": "market vault cap (registry.max_vaults_per_market) is full"
+    },
+    {
+      "code": 6014,
+      "name": "InvalidPerfFeeRate",
+      "msg": "perf_fee_rate exceeds 1_000_000 ppm (100%)"
+    },
+    {
+      "code": 6015,
+      "name": "LeaderOverrideNotAllowed",
+      "msg": "non-admin caller cannot open a vault on someone else's behalf"
+    },
+    {
+      "code": 6016,
+      "name": "VaultEmpty",
+      "msg": "supplied vault sector is not assigned (leader == default)"
+    },
+    {
+      "code": 6017,
+      "name": "VaultFrozen",
+      "msg": "vault is frozen"
+    },
+    {
+      "code": 6018,
+      "name": "InvalidPrice",
+      "msg": "price bit pattern is not a valid encoding"
+    },
+    {
+      "code": 6019,
+      "name": "InvalidQuoteSlot",
+      "msg": "quote_slot is future-dated or backdated past MAX_BACKDATE"
+    },
+    {
+      "code": 6020,
+      "name": "ReferencePriceNotSet",
+      "msg": "set_liquidity_profile requires the vault's reference price to be set first"
+    },
+    {
+      "code": 6021,
+      "name": "LiquidityProfileSizeOverflow",
+      "msg": "liquidity profile size_bps sum exceeds 10_000 on one side"
+    },
+    {
+      "code": 6022,
+      "name": "OutsideDepositorsNotAllowed",
+      "msg": "leader has not enabled outside depositors on this vault"
+    },
+    {
+      "code": 6023,
+      "name": "OutsideDepositorsNotApproved",
+      "msg": "admin has not approved outside deposits on this vault"
+    },
+    {
+      "code": 6024,
+      "name": "SeedingRequiresLeader",
+      "msg": "first deposit to a vault must come from its leader"
+    },
+    {
+      "code": 6025,
+      "name": "SeedingRequiresBothLegs",
+      "msg": "first deposit to a vault must supply both base and quote legs"
+    },
+    {
+      "code": 6026,
+      "name": "SingleLegRequired",
+      "msg": "non-seeding deposit must size exactly one of base_in / quote_in"
+    },
+    {
+      "code": 6027,
+      "name": "BasketSlippage",
+      "msg": "derived basket exceeds caller's slippage bounds"
+    },
+    {
+      "code": 6028,
+      "name": "MinLeaderShareViolated",
+      "msg": "operation would violate the vault's min_leader_share floor"
+    },
+    {
+      "code": 6029,
+      "name": "InsufficientShares",
+      "msg": "requested shares exceed the caller's available stake"
+    },
+    {
+      "code": 6030,
+      "name": "InvalidAmountIn",
+      "msg": "swap amount_in must be greater than zero"
+    },
+    {
+      "code": 6031,
+      "name": "VaultDepositorMismatch",
+      "msg": "supplied VaultDepositor PDA does not match the (market, sector, owner) seeds"
+    },
+    {
+      "code": 6032,
+      "name": "MathOverflow",
+      "msg": "arithmetic overflow in basket / share math"
+    },
+    {
+      "code": 6033,
+      "name": "InvalidSwapSide",
+      "msg": "swap `side` argument is neither Buy nor Sell"
+    },
+    {
+      "code": 6034,
+      "name": "InvalidLimitPrice",
+      "msg": "limit_price sentinel is invalid for this swap side"
+    },
+    {
+      "code": 6035,
+      "name": "VaultAlreadyTombstoned",
+      "msg": "vault is already on the tombstone list"
+    },
+    {
+      "code": 6036,
+      "name": "TokenAccountNotEmpty",
+      "msg": "token account must be drained to zero before it can be closed"
+    },
+    {
+      "code": 6037,
+      "name": "MarketTreasuryNotClosed",
+      "msg": "market treasury must be closed before the market can be closed"
+    },
+    {
+      "code": 6038,
+      "name": "MarketHasDepositors",
+      "msg": "market still has outstanding VaultDepositor PDAs"
+    },
+    {
+      "code": 6039,
+      "name": "RegistryHasMarkets",
+      "msg": "registry still has live markets (market_count != 0)"
+    },
+    {
+      "code": 6040,
+      "name": "RegistryHasOtherAdmins",
+      "msg": "registry still has admins beyond the caller"
+    },
+    {
+      "code": 6041,
+      "name": "NotAMarketTreasury",
+      "msg": "supplied mint is not one of the market's base/quote legs"
+    },
+    {
+      "code": 6042,
+      "name": "TeardownDisabled",
+      "msg": "teardown instructions are disabled in this build (admin-teardown feature off)"
+    }
+  ],
+  "types": [
+    {
+      "name": "CloseVaultEvent",
+      "docs": [
+        "Emitted by `close_vault` when a leader moves their vault from the",
+        "active DLL to the tombstone DLL. Matching stops; depositor flows",
+        "stay open until the vault drains. See the spec's **CloseVault**."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "sector_idx",
+            "type": "u32"
+          },
+          {
+            "name": "leader",
+            "type": "pubkey"
+          },
+          {
+            "name": "active_count_after",
+            "docs": [
+              "Active-DLL length after the move."
+            ],
+            "type": "u32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "DepositEvent",
+      "docs": [
+        "Emitted by `deposit` after share accounting + basis math."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "sector_idx",
+            "type": "u32"
+          },
+          {
+            "name": "depositor",
+            "type": "pubkey"
+          },
+          {
+            "name": "is_leader",
+            "type": "bool"
+          },
+          {
+            "name": "is_seeding",
+            "type": "bool"
+          },
+          {
+            "name": "base_in",
+            "type": "u64"
+          },
+          {
+            "name": "quote_in",
+            "type": "u64"
+          },
+          {
+            "name": "shares_out",
+            "type": "u64"
+          },
+          {
+            "name": "total_shares_after",
+            "type": "u64"
+          },
+          {
+            "name": "leader_shares_after",
+            "type": "u64"
+          },
+          {
+            "name": "base_atoms_after",
+            "type": "u64"
+          },
+          {
+            "name": "quote_atoms_after",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "FeeConfig",
+      "docs": [
+        "A flat fee charged in `mint`, paid to the registry fee ATA. Mirrors",
+        "the `FeeConfig` in the architecture spec; reused per-market by the",
+        "`MarketHeader` once markets exist. Carrying `token_program`",
+        "alongside `mint` lets downstream fee-collection paths derive the",
+        "canonical ATA — `(authority, token_program, mint)` — without",
+        "guessing which token program owns the mint."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "docs": [
+              "Mint accepted for this fee."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "token_program",
+            "docs": [
+              "Token program owning `mint` — SPL Token or Token-2022."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "atoms",
+            "docs": [
+              "Amount in atoms of `mint`."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "FillEvent",
+      "docs": [
+        "Per-leg fill record. Bytemuck-serialized via `emit_cpi!` so the",
+        "inner-instruction data carries the canonical trade record at",
+        "`~1000 CU` + payload size per emit — the hot path can afford it.",
+        "",
+        "Spec § **Events and emission → Granularity**: every leg is recorded,",
+        "no truncation. A sweep that exceeds one self-CPI's instruction-data",
+        "budget splits across multiple `emit_cpi!` calls."
+      ],
+      "serialization": "bytemuck",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "taker",
+            "type": "pubkey"
+          },
+          {
+            "name": "leader",
+            "type": "pubkey"
+          },
+          {
+            "name": "quote_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "side",
+            "docs": [
+              "`0` for ask-side (taker Buy), `1` for bid-side (taker Sell)."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "_pad",
+            "docs": [
+              "Padding so subsequent fields are aligned-1-friendly without",
+              "implicit struct padding the bytemuck check would reject."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                7
+              ]
+            }
+          },
+          {
+            "name": "sector_idx",
+            "type": "u32"
+          },
+          {
+            "name": "level_idx",
+            "type": "u32"
+          },
+          {
+            "name": "fill_base",
+            "type": "u64"
+          },
+          {
+            "name": "fill_quote",
+            "type": "u64"
+          },
+          {
+            "name": "fill_price",
+            "type": {
+              "defined": {
+                "name": "Price"
+              }
+            }
+          },
+          {
+            "name": "_pad2",
+            "docs": [
+              "Padding to keep the next `u64` at an 8-byte boundary in the",
+              "fixed-size repr-C layout. `Price` is `u32`, so 4 bytes of pad",
+              "keep the struct stride well-defined."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                4
+              ]
+            }
+          },
+          {
+            "name": "base_atoms_after",
+            "type": "u64"
+          },
+          {
+            "name": "quote_atoms_after",
+            "type": "u64"
+          },
+          {
+            "name": "nonce_after",
+            "type": "u64"
+          },
+          {
+            "name": "taker_fee_atoms",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "FreezeVaultEvent",
+      "docs": [
+        "Emitted by `freeze_vault` when an admin freezes a vault. The vault",
+        "stays on the active DLL (existing levels still match until expiry)",
+        "but can no longer be re-quoted. See the spec's **FreezeVault**."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "sector_idx",
+            "type": "u32"
+          },
+          {
+            "name": "leader",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MarketHeader",
+      "docs": [
+        "Header of a market account. Followed by a slab tail of [`Vault`]",
+        "sectors. Per-market knobs are seeded from the registry at creation",
+        "and tunable downstream by admins.",
+        "",
+        "All fields are alignment-1 — `Address`, `Pod*` wrappers, `[FeeConfig]`,",
+        "`u8` — so the header is padding-free and casts directly from the",
+        "account bytes."
+      ],
+      "serialization": "bytemuck",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "nonce",
+            "docs": [
+              "Per-fill / per-quote monotonic counter."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "head",
+            "docs": [
+              "Head of the active DLL: sector index or [`NULL_SECTOR`]. Walked",
+              "by the matching engine on every taker."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "tombstone_head",
+            "docs": [
+              "Head of the tombstone DLL: sectors that have been `CloseVault`'d",
+              "but still hold outstanding shares. Not visited by matching."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "free_head",
+            "docs": [
+              "Head of the free DLL: sectors available for reuse on `OpenVault`.",
+              "Singly linked via `next`; `prev` is ignored."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "active_count",
+            "docs": [
+              "Active-DLL length. Bounded by `registry.max_vaults_per_market`."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "outstanding_vault_depositors",
+            "docs": [
+              "Number of live `VaultDepositor` PDAs across every vault on this",
+              "market (active and tombstoned). Incremented when an outside",
+              "`Deposit` opens a fresh `VaultDepositor`, decremented when",
+              "`Withdraw` closes one on `shares == 0` and when",
+              "`force_withdraw_depositor` closes one. **Not** incremented on",
+              "top-off (existing `VaultDepositor`). `close_market` requires",
+              "this to be zero — the only on-chain witness that no orphan",
+              "depositor PDAs remain, since the program cannot iterate all",
+              "PDAs to verify by enumeration. See the architecture spec,",
+              "**Account lifecycle and rent reclamation**."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "fee_config",
+            "docs": [
+              "Per-market open-vault fee: mint and amount. Seeded from",
+              "`Registry.default_fee_config` at market creation."
+            ],
+            "type": {
+              "defined": {
+                "name": "FeeConfig"
+              }
+            }
+          },
+          {
+            "name": "taker_fee",
+            "docs": [
+              "Taker fee rate, capped at ~6.55% (`Ppm16` max)."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "default_min_leader_share",
+            "docs": [
+              "Default min-leader-share for vaults opened on this market.",
+              "Stamped from `Registry.default_min_leader_share` at creation."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "base_mint",
+            "docs": [
+              "Base leg mint."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "quote_mint",
+            "docs": [
+              "Quote leg mint."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "base_treasury",
+            "docs": [
+              "SPL / Token-2022 token account holding pooled base inventory.",
+              "ATA derived from `(market_pda, base_mint, base_token_program)`."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "quote_treasury",
+            "docs": [
+              "Same as `base_treasury`, for the quote leg."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "Market PDA bump."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "base_treasury_bump",
+            "docs": [
+              "Bump for the base treasury ATA derivation. Stored so transfers",
+              "out can sign with the market PDA without re-deriving."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "quote_treasury_bump",
+            "docs": [
+              "Bump for the quote treasury ATA derivation."
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OpenVaultEvent",
+      "docs": [
+        "Emitted by `register_vault` (spec's `OpenVault`)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "sector_idx",
+            "type": "u32"
+          },
+          {
+            "name": "leader",
+            "type": "pubkey"
+          },
+          {
+            "name": "quote_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "perf_fee_rate",
+            "type": "u32"
+          },
+          {
+            "name": "min_leader_share",
+            "type": "u32"
+          },
+          {
+            "name": "allow_outside_depositors",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Price",
+      "docs": [
+        "A `u32` decimal floating-point comparison key.",
+        "",
+        "```text",
+        " [5-bit biased exponent][27-bit normalized significand]",
+        "   bits 31..27             bits 26..0",
+        "```",
+        "",
+        "The significand is normalized to exactly 8 significant digits",
+        "(`10_000_000..=99_999_999`). The exponent is biased by 16 (unbiased",
+        "range `−16..=15`). The represented value is:",
+        "",
+        "```text",
+        "value = significand × 10^(biased_exponent − 23)",
+        "      = significand × 10^(unbiased_exponent − 7)",
+        "```",
+        "",
+        "Two sentinel encodings: [`Price::ZERO`] (`0x0000_0000`, market sell)",
+        "and [`Price::INFINITY`] (`0xFFFF_FFFF`, market buy). All other valid",
+        "bit patterns represent regular prices.",
+        "",
+        "**Integer order is price order.** With the exponent in the high bits",
+        "and the significand normalized to a fixed width, unsigned `u32`",
+        "comparison of two prices matches comparing the values they encode.",
+        "The encoding is canonical: one bit pattern per representable price.",
+        "",
+        "**IDL note:** `Price` does not derive `IdlType`. Add the derive if",
+        "this type appears in an Anchor `#[account]` struct or instruction",
+        "argument that requires IDL generation."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": []
+      }
+    },
+    {
+      "name": "RealizeEvent",
+      "docs": [
+        "Emitted by `deposit` / `withdraw` whenever the implicit `Realize`",
+        "step mints new shares to the leader. Per spec, the hot path never",
+        "touches `Realize`, so swap does not emit this."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "sector_idx",
+            "type": "u32"
+          },
+          {
+            "name": "shares_minted",
+            "type": "u64"
+          },
+          {
+            "name": "leader_shares_after",
+            "type": "u64"
+          },
+          {
+            "name": "total_shares_after",
+            "type": "u64"
+          },
+          {
+            "name": "hwm_after",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RegistryHeader",
+      "docs": [
+        "Header of the global singleton `Registry`. Holds the protocol-wide",
+        "governance defaults stamped onto new markets; the admin allowlist",
+        "(the spec's `Set<Pubkey>`) is the slab tail — see [`Registry`].",
+        "",
+        "All fields are alignment-1 (`Address`, `Pod*` wrappers, `u8`) so the",
+        "header is padding-free and casts directly from the account bytes."
+      ],
+      "serialization": "bytemuck",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "default_fee_config",
+            "docs": [
+              "Default fee for the per-`OpenVault` charge, stamped into",
+              "`MarketHeader.fee_config` at market creation."
+            ],
+            "type": {
+              "defined": {
+                "name": "FeeConfig"
+              }
+            }
+          },
+          {
+            "name": "market_count",
+            "docs": [
+              "Number of live markets created against this registry. Incremented",
+              "by `create_market`, decremented by `close_market`. `close_registry`",
+              "requires this to be zero — the only on-chain witness that no",
+              "orphan markets remain, since the program cannot iterate all PDAs",
+              "to verify by enumeration. See the architecture spec, **Account",
+              "lifecycle and rent reclamation**."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "default_min_leader_share",
+            "docs": [
+              "Default skin-in-the-game floor (ppm, [`Ppm32`]) stamped into markets."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "default_taker_fee",
+            "docs": [
+              "Default taker fee (ppm, [`Ppm16`]) stamped into markets."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "max_vaults_per_market",
+            "docs": [
+              "Default cap on vaults per market."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "Registry PDA bump."
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VaultDepositorHeader",
+      "docs": [
+        "Authoritative on-chain record of one depositor's position in one",
+        "vault — both the share claim and the cost basis the unrealized PnL",
+        "is measured against. All fields are alignment-1 so the struct casts",
+        "directly from the account bytes."
+      ],
+      "serialization": "bytemuck",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market",
+            "docs": [
+              "Market PDA this position is on. The vault is identified by",
+              "`(market, sector_idx)`; the PDA seeds include both so a sector",
+              "reuse across vault lifetimes derives a fresh address."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "sector_idx",
+            "docs": [
+              "Sector index within the market's slab."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "owner",
+            "docs": [
+              "Depositor wallet — bound by the PDA seeds, so the account is",
+              "non-transferable (there is no separate authority field to",
+              "reassign). See the spec's **Shares**."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "shares",
+            "docs": [
+              "Pro-rata claim on the vault — the per-depositor term of",
+              "invariant I6 (`leader_shares + Σ VaultDepositor.shares ==",
+              "total_shares`)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "net_deposits",
+            "docs": [
+              "Quote-denominated principal of the **remaining** position. Spec",
+              "formula (`Deposit` top-off): `Σ (quote_in + base_in × ref_now)`.",
+              "Reduced on `Withdraw` by the floored share-pro-rata slice."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "gross_deposited",
+            "docs": [
+              "Lifetime contributions, monotonic — **never reduced on",
+              "withdraw**. Stable denominator for all-time return %."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "entry_ref_price",
+            "docs": [
+              "Shares-weighted average reference price across deposits."
+            ],
+            "type": {
+              "defined": {
+                "name": "Price"
+              }
+            }
+          },
+          {
+            "name": "entry_vps",
+            "docs": [
+              "Shares-weighted average VPS (`L / total_shares`) across deposits,",
+              "Q32.32. Same encoding and practical bound as [`crate::Vault::hwm`]."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "opened_at",
+            "docs": [
+              "Slot of the first deposit. Captured once at PDA init."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "realized_pnl",
+            "docs": [
+              "Signed quote-denominated PnL crystallized by past withdrawals.",
+              "Discarded when the account is closed at zero shares."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "realized_yield",
+            "docs": [
+              "Signed yield (ex-FX) component of [`Self::realized_pnl`]."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "realized_fx",
+            "docs": [
+              "Signed FX component. Invariant:",
+              "`realized_yield + realized_fx == realized_pnl`."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "PDA bump."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "_reserved",
+            "docs": [
+              "Padding so the on-chain size is a multiple of 8 and the",
+              "`#[account]` derive's discriminator + body length matches the",
+              "const-asserted total below."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                7
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "WithdrawEvent",
+      "docs": [
+        "Emitted by `withdraw` after share burn + basis crystallization."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "sector_idx",
+            "type": "u32"
+          },
+          {
+            "name": "depositor",
+            "type": "pubkey"
+          },
+          {
+            "name": "is_leader",
+            "type": "bool"
+          },
+          {
+            "name": "shares_in",
+            "type": "u64"
+          },
+          {
+            "name": "base_out",
+            "type": "u64"
+          },
+          {
+            "name": "quote_out",
+            "type": "u64"
+          },
+          {
+            "name": "total_shares_after",
+            "type": "u64"
+          },
+          {
+            "name": "leader_shares_after",
+            "type": "u64"
+          },
+          {
+            "name": "base_atoms_after",
+            "type": "u64"
+          },
+          {
+            "name": "quote_atoms_after",
+            "type": "u64"
+          },
+          {
+            "name": "realized_pnl_delta",
+            "docs": [
+              "Signed PnL delta crystallized on this withdrawal (outside path)."
+            ],
+            "type": "i64"
+          }
+        ]
+      }
+    }
+  ]
+}

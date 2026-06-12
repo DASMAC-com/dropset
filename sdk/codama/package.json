@@ -1,0 +1,16 @@
+{
+  "description": "Codama codegen: dropset IDL -> TS (@solana/kit) + Rust clients.",
+  "devDependencies": {
+    "@codama/nodes-from-anchor": "^1.2.4",
+    "@codama/renderers-js": "^1.3.2",
+    "@codama/renderers-rust": "^1.2.2",
+    "codama": "^1.3.2"
+  },
+  "name": "@dropset/codama",
+  "private": true,
+  "scripts": {
+    "generate": "node generate.mjs"
+  },
+  "type": "module",
+  "version": "0.1.0"
+}

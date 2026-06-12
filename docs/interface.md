@@ -207,9 +207,7 @@ Two independent codegen spines:
 
 **(A) IDL → clients.** `anchor-next` emits the IDL → **Codama** generates the
 TypeScript (`@solana/kit`) and Rust clients (instruction builders, account /
-event codecs, PDA helpers); **AnchorPy** is the Python path (spike against a
-real `anchor-next` IDL, or defer — no listed consumer needs Python yet). CI
-discipline:
+event codecs, PDA helpers). CI discipline:
 
 - **Pin `anchor-next` to an exact rev**, and **pin `anchor-cli` (the IDL
   generator) to the same rev** — otherwise the IDL-diff baseline drifts.
@@ -221,7 +219,7 @@ discipline:
 
 **(B) Price / book math → WASM.** A **new solana-free `price-core` crate** (the
 `Price` codec + book-reconstruction math) compiled to **WASM** for any
-TypeScript/Python consumer that must run the exact arithmetic. (The on-chain
+TypeScript consumer that must run the exact arithmetic. (The on-chain
 crates cannot target `wasm32`; a hand-mirrored port is rejected.) Correctness is
 enforced by **shared conformance vectors run in both Rust and TS CI**, generated
 from the engine's reference traces; the vectors pin **both** the numeric outputs

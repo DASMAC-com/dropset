@@ -25,10 +25,10 @@ jobs:
     - uses: 'actions/setup-node@v6'
       with:
         cache: 'pnpm'
-        cache-dependency-path: 'frontend/pnpm-lock.yaml'
+        cache-dependency-path: 'pnpm-lock.yaml'
         node-version: '${{ env.NODE_VERSION }}'
+    # Root install: the frontend + SDK packages share one pnpm workspace.
     - run: 'pnpm install --frozen-lockfile'
-      working-directory: 'frontend'
     - uses: 'actions/setup-python@v6'
       with:
         cache: 'pip'

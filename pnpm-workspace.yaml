@@ -1,0 +1,11 @@
+---
+# `onlyBuiltDependencies` allow-lists deps whose install scripts may run
+# (e.g. sharp's native build for Next); it must live at the workspace root
+# to take effect. The frontend + SDK packages share this one workspace.
+onlyBuiltDependencies:
+- 'sharp'
+packages:
+- 'frontend'
+- 'sdk/ts'
+- 'sdk/codama'
+...

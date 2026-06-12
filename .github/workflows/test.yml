@@ -26,8 +26,17 @@ jobs:
           target
         restore-keys: 'cargo-test-${{ runner.os }}-${{ runner.arch }}-solana-${{
                        env.SOLANA_VERSION }}-anchor-${{ env.ANCHOR_REV }}-'
+    # Builds the program (.so) and runs the whole Rust workspace test
+    # suite — including the price-core conformance vectors and the
+    # engine-vs-SDK litesvm conformance (tests/sdk_conformance.rs).
     - name: 'Run tests'
       run: 'make test'
+    # IDL-diff gate (interface.md § SDK): the checked-in IDL must match
+    # what the pinned anchor-cli regenerates from the program.
+    - name: 'Verify IDL is up to date'
+      run: |
+        make idl
+        git diff --exit-code -- sdk/idl/dropset.json
   test-no-teardown:
     name: 'Tests (no teardown)'
     runs-on: 'ubuntu-latest'

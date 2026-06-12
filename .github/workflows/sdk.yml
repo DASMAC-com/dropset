@@ -1,0 +1,51 @@
+---
+env:
+  NODE_VERSION: '25'
+jobs:
+  sdk:
+    name: 'SDK'
+    runs-on: 'ubuntu-latest'
+    steps:
+    - uses: 'actions/checkout@v6'
+    - uses: 'dtolnay/rust-toolchain@stable'
+      with:
+        targets: 'wasm32-unknown-unknown'
+    - uses: 'Swatinem/rust-cache@v2'
+      with:
+        cache-on-failure: true
+        shared-key: 'rust-sdk-${{ runner.os }}'
+    - uses: 'pnpm/action-setup@v6'
+      with:
+        package_json_file: 'frontend/package.json'
+    - uses: 'actions/setup-node@v6'
+      with:
+        cache: 'pnpm'
+        cache-dependency-path: 'pnpm-lock.yaml'
+        node-version: '${{ env.NODE_VERSION }}'
+    - run: 'pnpm install --frozen-lockfile'
+    # The generated TS + Rust clients must match a fresh codegen from the
+    # checked-in IDL — no manual edits, no drift (cf. the CPI-bindings
+    # check on dropset-beta). Regenerate, then stage + diff so additions
+    # and deletions fail the gate too, not just in-place modifications.
+    - name: 'Generated clients match the IDL'
+      run: |
+        make sdk
+        git add -A -- sdk/ts/src/generated sdk/rs/src/generated
+        git diff --cached --exit-code -- \
+        sdk/ts/src/generated sdk/rs/src/generated
+    # TypeScript SDK: typecheck + cross-language conformance vectors.
+    - run: 'pnpm --filter @dropset/sdk run check'
+    - run: 'pnpm --filter @dropset/sdk test'
+    # Off-chain Rust crates (no program .so needed): unit tests + the
+    # price-core conformance vectors, plus the WASM target builds.
+    - run: 'cargo test -p dropset-price-core -p dropset-sdk'
+    - run: 'cargo build -p dropset-price-core --features wasm --target
+            wasm32-unknown-unknown'
+name: 'SDK'
+'on':
+  merge_group: null
+  pull_request: null
+  push:
+    branches:
+    - 'main'
+...

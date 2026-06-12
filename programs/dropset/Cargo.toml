@@ -13,6 +13,9 @@ wincode.workspace = true
 # (anchor build) — the production .so never ships the testing scaffold.
 [dev-dependencies]
 anchor-lang-v2 = {workspace = true, features = ["testing"]}
+# The off-chain SDK, used by tests/sdk_conformance.rs to verify its layout
+# decoder + matching simulator against the real engine running in litesvm.
+dropset-sdk = {path = "../../sdk/rs"}
 anchor-v2-testing.workspace = true
 litesvm.workspace = true
 solana-instruction.workspace = true

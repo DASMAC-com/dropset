@@ -8,6 +8,7 @@ audd
 audm
 barthelemy
 barthélemy
+bindgen
 birdeye
 blockhash
 borsh
@@ -15,6 +16,7 @@ bpf
 brale
 bytemuck
 cadc
+cdylib
 cfgs
 clippy
 clmm
@@ -40,6 +42,7 @@ eurc
 eurcv
 eurozone
 exfiltration
+fieldless
 forex
 fxpractice
 guéant
@@ -49,6 +52,7 @@ helvetiker
 hyperliquid
 idempotently
 idrx
+impls
 inlines
 jito
 kapsule
@@ -62,6 +66,7 @@ localnet
 luhansk
 macropod
 metas
+misdecoding
 multisigs
 mxne
 navigations
@@ -69,6 +74,7 @@ oanda
 ohlcv
 parameterizes
 paytrie
+pdas
 permissionless
 prebuild
 predev
@@ -77,9 +83,11 @@ pubkeys
 raydium
 reentrancy
 repr
+rlib
 rollups
 réunion
 sbpf
+serde
 sessioning
 significand
 société
@@ -97,12 +105,14 @@ syscalls
 sysvar
 tapia
 tgbp
+thiserror
 toggleable
 tokenised
 tombstoned
 topoff
 topojson
 transfero
+transpiles
 tryb
 unmirrored
 usdg
