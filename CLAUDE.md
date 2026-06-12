@@ -4,6 +4,11 @@
 
 ## Commits and PRs
 
+- **Run `init-pr` first.** At the start of a worktree session,
+  if the `init-pr` skill hasn't been run yet, suggest running it
+  before other work — it pushes a draft PR that warms the CI
+  caches (Rust, pnpm, pre-commit), so the later lint and test
+  runs land on warm caches instead of building from cold.
 - **Never add AI attribution to commits or PRs.** Do not include a
   `Co-Authored-By:` trailer (e.g. `Co-Authored-By: Claude …`), a
   "🤖 Generated with Claude Code" footer, or any other attribution.

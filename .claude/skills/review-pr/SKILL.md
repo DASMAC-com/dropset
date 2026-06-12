@@ -1,7 +1,6 @@
 ---
 name: review-pr
 description: Adversarial pre-review — lint, catalogue issues, fix what's mechanical, and ready the PR for human review.
-disable-model-invocation: true
 user-invocable: true
 ---
 
@@ -130,6 +129,29 @@ all changes are committed and pushed.
    those fixes. Apply the same fix-and-retry
    logic as step 3.
 
+1. **Run the test suite (mirror CI).** The `Tests`
+   workflow runs `make test` and
+   `make test-no-teardown`; run both locally so the
+   green checks GitHub needs for auto-merge are
+   already verified here:
+
+   ```sh
+   make test
+   make test-no-teardown
+   ```
+
+   - Both depend on the Solana/Anchor toolchain via
+     `check-toolchain`. If the toolchain is absent
+     and a target aborts before any test runs, you
+     **cannot** verify that workflow locally — say
+     so explicitly in the report (do not claim CI
+     will pass), rather than counting it as green.
+   - If a test fails, fix it when the fix is
+     mechanical (commit signed, then re-run the
+     failed target), otherwise catalogue it as a
+     **blocking** issue. Never mark the PR ready
+     with a failing or unverified test target.
+
 1. **Push all fix commits:**
 
    ```sh
@@ -141,18 +163,69 @@ all changes are committed and pushed.
    and body reflect the final state of the branch
    (after lint and review fixes).
 
-1. **Gate.** If there are **zero blocking issues**
-   and lint passes, mark the PR ready:
+1. **Verify the PR title passes `Semantic PR`.**
+   The `semantic-pr` workflow rejects the PR unless
+   the title has a Conventional-Commits type, a
+   scope matching `^ENG-[0-9]+$`, and a subject
+   matching `^[A-Z].*$` (capitalized first letter).
+   Confirm the final title looks like
+   `feat(ENG-451): Add …`; if it doesn't conform,
+   re-run `/pr-title-description` to fix it. The
+   workflow also sets `validateSingleCommit`, so if
+   the branch has exactly one commit, that commit's
+   message must itself match the title — squash or
+   reword so they agree.
+
+1. **Check for merge conflicts with `main`.** A
+   branch can be lint-clean and review-clean yet
+   still conflict with `main` if `main` advanced
+   while the work was in flight. Fetch the latest
+   base and ask GitHub whether the PR still merges
+   cleanly:
+
+   ```sh
+   git fetch origin main
+   gh pr view <number> --json mergeable,mergeStateStatus
+   ```
+
+   - `mergeable: "MERGEABLE"` → no conflicts;
+     proceed to the gate.
+   - `mergeable: "CONFLICTING"` → the PR has merge
+     conflicts. Catalogue this as a **blocking**
+     issue and do **not** mark the PR ready. Tell
+     the user to rebase onto `main` and resolve the
+     conflicts (this skill does not auto-resolve
+     them), then re-run `/review-pr`.
+   - `mergeable: "UNKNOWN"` → GitHub has not finished
+     computing mergeability yet. Wait a few seconds
+     and re-run the `gh pr view` command until it
+     resolves to `MERGEABLE` or `CONFLICTING`.
+
+1. **Gate.** Mark the PR ready only when **every**
+   CI-mirroring check is green so the human can
+   safely approve auto-merge: **zero blocking
+   issues**, `make lint` passes, `make test` and
+   `make test-no-teardown` pass (or are honestly
+   reported as unverifiable locally), the title
+   passes `Semantic PR`, and `mergeable` is
+   `MERGEABLE`:
 
    ```sh
    gh pr ready <number>
    ```
 
-   If blocking issues remain, leave it in draft.
+   If any blocking issue remains — failing or
+   unverified tests, a non-conforming title, or a
+   merge conflict with `main` — leave it in draft.
 
 1. **Report.** Print a structured summary:
 
    - Lint status: pass or fail with details.
+   - Test status: `make test` and
+     `make test-no-teardown` — pass, fail, or
+     unverified locally (toolchain absent).
+   - Title status: passes `Semantic PR` or not.
+   - Merge status: `MERGEABLE` or `CONFLICTING`.
    - Issues found / fixed / remaining.
    - Remaining warnings and nits for human review,
      each with `file:line` and rationale.

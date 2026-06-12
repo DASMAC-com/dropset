@@ -1,7 +1,6 @@
 ---
 name: linear-task
 description: File a follow-up to-do into Linear (Engineering team, Dropset project, assigned to Alex) via the Linear MCP. Use for deferring blockers and clean-ups uncovered during a PR to do after it merges.
-disable-model-invocation: true
 user-invocable: true
 ---
 

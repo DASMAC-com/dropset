@@ -1,7 +1,6 @@
 ---
 name: commit-changes
 description: Stage, commit, and push changes from this worktree with a clean hand-authored commit message.
-disable-model-invocation: true
 user-invocable: true
 ---
 
