@@ -28,6 +28,7 @@ cooldown
 cpis
 custodying
 dasmac
+dedup
 dedups
 dflow
 discordapp
@@ -59,6 +60,7 @@ kapsule
 keypair
 kripto
 lamports
+landable
 lehalle
 lemy
 litesvm
@@ -115,6 +117,7 @@ transfero
 transpiles
 tryb
 unmirrored
+unvalidated
 usdg
 usize
 vchf
