@@ -82,7 +82,7 @@ impl Default for SetLiquidityProfileInstructionData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
  pub struct SetLiquidityProfileInstructionArgs {
                   pub vault_idx: u32,
-                pub profile_bytes: [u8; 0],
+                pub profile_bytes: [u8; 160],
       }
 
 impl SetLiquidityProfileInstructionArgs {
@@ -103,7 +103,7 @@ pub struct SetLiquidityProfileBuilder {
             signer: Option<solana_pubkey::Pubkey>,
                 market: Option<solana_pubkey::Pubkey>,
                         vault_idx: Option<u32>,
-                profile_bytes: Option<[u8; 0]>,
+                profile_bytes: Option<[u8; 160]>,
         __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
 
@@ -129,7 +129,7 @@ impl SetLiquidityProfileBuilder {
         self
       }
                 #[inline(always)]
-      pub fn profile_bytes(&mut self, profile_bytes: [u8; 0]) -> &mut Self {
+      pub fn profile_bytes(&mut self, profile_bytes: [u8; 160]) -> &mut Self {
         self.profile_bytes = Some(profile_bytes);
         self
       }
@@ -305,7 +305,7 @@ impl<'a, 'b> SetLiquidityProfileCpiBuilder<'a, 'b> {
         self
       }
                 #[inline(always)]
-      pub fn profile_bytes(&mut self, profile_bytes: [u8; 0]) -> &mut Self {
+      pub fn profile_bytes(&mut self, profile_bytes: [u8; 160]) -> &mut Self {
         self.instruction.profile_bytes = Some(profile_bytes);
         self
       }
@@ -353,7 +353,7 @@ struct SetLiquidityProfileCpiBuilderInstruction<'a, 'b> {
             signer: Option<&'b solana_account_info::AccountInfo<'a>>,
                 market: Option<&'b solana_account_info::AccountInfo<'a>>,
                         vault_idx: Option<u32>,
-                profile_bytes: Option<[u8; 0]>,
+                profile_bytes: Option<[u8; 160]>,
         /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
   __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,
 }

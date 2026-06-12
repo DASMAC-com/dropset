@@ -23,6 +23,7 @@ pub mod adapters;
 pub mod layout;
 pub mod matching;
 pub mod price;
+pub mod quoting;
 
 // The Codama renderer references some siblings as `crate::shared` /
 // `crate::types` (crate-root) and others as `crate::generated::types`.

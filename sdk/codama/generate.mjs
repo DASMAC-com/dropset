@@ -11,8 +11,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  arrayTypeNode,
   bottomUpTransformerVisitor,
   createFromRoot,
+  fixedCountNode,
   numberTypeNode,
 } from 'codama';
 import { rootNodeFromAnchor } from '@codama/nodes-from-anchor';
@@ -39,6 +41,18 @@ codama.update(
     {
       select: '[definedTypeNode]price',
       transform: (node) => ({ ...node, type: numberTypeNode('u32') }),
+    },
+    {
+      // `set_liquidity_profile`'s `profile_bytes: [u8; PROFILE_BYTES]`
+      // surfaces as a zero-length array — anchor-next can't const-eval
+      // `PROFILE_BYTES` (= size_of::<LiquidityProfile>() = 160). Restore
+      // the real length so the generated arg is `[u8; 160]`, matching the
+      // serialized LiquidityProfile the instruction expects.
+      select: '[instructionArgumentNode]profileBytes',
+      transform: (node) => ({
+        ...node,
+        type: arrayTypeNode(numberTypeNode('u8'), fixedCountNode(160)),
+      }),
     },
   ]),
 );

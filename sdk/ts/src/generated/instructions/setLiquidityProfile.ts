@@ -6,7 +6,7 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { combineCodec, fixDecoderSize, fixEncoderSize, getBytesDecoder, getBytesEncoder, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlySignerAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount } from '@solana/kit';
+import { combineCodec, fixDecoderSize, fixEncoderSize, getArrayDecoder, getArrayEncoder, getBytesDecoder, getBytesEncoder, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, getU8Decoder, getU8Encoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlySignerAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount } from '@solana/kit';
 import { DROPSET_PROGRAM_ADDRESS } from '../programs';
 import { getAccountMetaFactory, type ResolvedAccount } from '../shared';
 
@@ -17,16 +17,16 @@ export function getSetLiquidityProfileDiscriminatorBytes() { return fixEncoderSi
 export type SetLiquidityProfileInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountSigner extends string | AccountMeta<string> = string, TAccountMarket extends string | AccountMeta<string> = string, TRemainingAccounts extends readonly AccountMeta<string>[] = []> =
 Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array> & InstructionWithAccounts<[TAccountSigner extends string ? ReadonlySignerAccount<TAccountSigner> & AccountSignerMeta<TAccountSigner> : TAccountSigner, TAccountMarket extends string ? WritableAccount<TAccountMarket> : TAccountMarket, ...TRemainingAccounts]>;
 
-export type SetLiquidityProfileInstructionData = { discriminator: ReadonlyUint8Array; vaultIdx: number; profileBytes: ReadonlyUint8Array;  };
+export type SetLiquidityProfileInstructionData = { discriminator: ReadonlyUint8Array; vaultIdx: number; profileBytes: Array<number>;  };
 
-export type SetLiquidityProfileInstructionDataArgs = { vaultIdx: number; profileBytes: ReadonlyUint8Array;  };
+export type SetLiquidityProfileInstructionDataArgs = { vaultIdx: number; profileBytes: Array<number>;  };
 
 export function getSetLiquidityProfileInstructionDataEncoder(): FixedSizeEncoder<SetLiquidityProfileInstructionDataArgs> {
-    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 1)], ['vaultIdx', getU32Encoder()], ['profileBytes', fixEncoderSize(getBytesEncoder(), 0)]]), (value) => ({ ...value, discriminator: SET_LIQUIDITY_PROFILE_DISCRIMINATOR }));
+    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 1)], ['vaultIdx', getU32Encoder()], ['profileBytes', getArrayEncoder(getU8Encoder(), { size: 160 })]]), (value) => ({ ...value, discriminator: SET_LIQUIDITY_PROFILE_DISCRIMINATOR }));
 }
 
 export function getSetLiquidityProfileInstructionDataDecoder(): FixedSizeDecoder<SetLiquidityProfileInstructionData> {
-    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 1)], ['vaultIdx', getU32Decoder()], ['profileBytes', fixDecoderSize(getBytesDecoder(), 0)]]);
+    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 1)], ['vaultIdx', getU32Decoder()], ['profileBytes', getArrayDecoder(getU8Decoder(), { size: 160 })]]);
 }
 
 export function getSetLiquidityProfileInstructionDataCodec(): FixedSizeCodec<SetLiquidityProfileInstructionDataArgs, SetLiquidityProfileInstructionData> {
