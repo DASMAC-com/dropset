@@ -59,29 +59,30 @@ more verb than it used to.
    `git -C <base>/.claude/worktrees/<tag> status --short`
    → `git -C <base>/.claude/worktrees/* status:*`.
 
-2. **Generalize trailing args with the `:*`
+1. **Generalize trailing args with the `:*`
    suffix.** A rule pinned to concrete args loses
    them in favor of `:*` (the canonical "any args"
    form Claude Code itself writes — equivalent to a
-   trailing ` *`, with the space boundary that keeps
-   `status:*` from matching `statusfoo`). So
+   space followed by `*`, whose word boundary keeps
+   `status:*` matching `status` as a whole word and
+   not as a prefix of some longer command). So
    `… status --short` → `… status:*`,
    `git add -A` → `git add:*`,
    `tee /tmp/eng447_nt2.txt` → `tee /tmp/*`.
 
-3. **Keep the subcommand.** Generalize args, never
+1. **Keep the subcommand.** Generalize args, never
    the verb. `git -C … status --short` firms to
    `git -C … status:*`, **not** `git -C … :*` or
    `git *`. The literal `git -C <path> <subcommand>`
    prefix stays.
 
-4. **Dedupe.** After generalizing, collapse exact
+1. **Dedupe.** After generalizing, collapse exact
    duplicates and any narrow rule now subsumed by a
    broader one (e.g. drop `… worktrees/eng-447 status:*`
    once `… worktrees/* status:*` exists). Preserve
    first-occurrence order otherwise.
 
-5. **Leave the rest untouched.** `WebFetch(domain:…)`,
+1. **Leave the rest untouched.** `WebFetch(domain:…)`,
    `mcp__…`, `Skill(…)`, `Read(…)`, and the
    `additionalDirectories` array are copied through
    verbatim.
@@ -122,19 +123,19 @@ call, not a reason to widen rules.)
    worktree has `main` checked out, warn the user and
    firm only this worktree's file.
 
-2. **Read both allowlists** with the Read tool (per
+1. **Read both allowlists** with the Read tool (per
    the CLAUDE.md shell conventions — never shell out
    to `jq`/`node`/`python` to read or edit JSON):
 
    - this worktree's `.claude/settings.local.json`
    - `<base>/.claude/settings.local.json`
 
-3. **Build the firmed allowlist.** Take the union of
+1. **Build the firmed allowlist.** Take the union of
    both `allow` arrays, apply the generalization
    rules above, and dedupe. This is the single
    canonical array both files will get.
 
-4. **Propose, then wait for the user.** Before
+1. **Propose, then wait for the user.** Before
    writing **anything**, show the user exactly what
    will change and why, and stop for their go-ahead.
    Present it as a concrete diff against the current
@@ -155,10 +156,10 @@ call, not a reason to widen rules.)
    the base-repo (meta-level) file, since it seeds
    every future worktree.
 
-5. **Write it to both files** once approved, with
+1. **Write it to both files** once approved, with
    Edit/Write — replacing only the `allow` array and
    leaving `additionalDirectories` (and any other
    keys) intact. Both files end byte-identical.
 
-6. **Report.** Confirm what was written and that both
+1. **Report.** Confirm what was written and that both
    the worktree and base-repo copies now match.

@@ -116,6 +116,7 @@ vwap
 wincode
 wordmark
 worktree
+worktrees
 worldlibertyfi
 zarp
 zaru
