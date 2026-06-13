@@ -100,3 +100,46 @@ fn partial_exit_violating_floor_rejects() {
         .expect_err("withdrawal below the leader-share floor must reject");
     common::assert_program_error(&err, dropset::DropsetError::MinLeaderShareViolated);
 }
+
+#[test]
+fn tombstoned_vault_bypasses_floor() {
+    // Same setup as `partial_exit_violating_floor_rejects` — an outside
+    // depositor and a floor pinned at the post-deposit ratio so a large
+    // leader withdrawal would otherwise trip `MinLeaderShareViolated`.
+    // Tombstoning the vault (the leader's orderly wind-down) must lift
+    // the skin-in-the-game floor so the leader can exit their stake,
+    // matching the spec's frozen/tombstoned bypass. Tombstone status is
+    // tracked independently of `frozen`, so the floor guard has to read
+    // it too.
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+    let admin = f.authority.insecure_clone();
+    let leader = f.authority.insecure_clone();
+    f.set_outside_deposits_approved(&admin, 0, true).unwrap();
+    f.set_allow_outside_depositors(&leader, 0, true).unwrap();
+
+    let alice = f.funded_depositor(200_000, 200_000);
+    f.deposit(&alice, 0, 100_000, 0, 200_000, 200_000)
+        .expect("outside deposit");
+
+    let v = f.vault(0);
+    let (l, t) = (v.leader_shares.get() as u128, v.total_shares.get() as u128);
+    assert!(l < t, "leader is no longer the sole shareholder");
+    let ratio_ppm = (l * 1_000_000 / t) as u32;
+    f.poke_min_leader_share(0, ratio_ppm);
+
+    // Move the vault to the tombstone DLL — the leader's wind-down path.
+    f.close_vault(&leader, 0)
+        .expect("leader tombstones the vault");
+
+    // The same 90% withdrawal that rejects on an active vault now
+    // succeeds: tombstoning lifts the floor.
+    let big = (l * 9 / 10) as u64;
+    f.withdraw_leader(0, big, 0, 0)
+        .expect("tombstoned vault must bypass the leader-share floor");
+
+    assert_eq!(
+        f.vault(0).leader_shares.get(),
+        (l as u64) - big,
+        "leader stake burned despite the floor"
+    );
+}
