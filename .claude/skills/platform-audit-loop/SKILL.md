@@ -327,11 +327,13 @@ system); it fires once every three iterations.
   cursor to exactly that PR's number (step 11) means
   no PR between the old cursor and the newest is ever
   skipped; PR mode walks the merge history in order.
-  The `--limit 50` window is wide enough that the
-  FIFO frontier never falls off the fetch; if the
-  backlog ever exceeds it, the oldest unaudited PR is
-  still the minimum `number` in the window, so the
-  cursor keeps advancing one PR at a time.
+  Note `--limit 50` fetches the 50 *most-recently*
+  merged PRs, so the oldest PR above the cursor must
+  fall within that window for FIFO to see it. The
+  cursor advances one PR per `pr` cycle, so a modest
+  backlog stays in view — but if merges ever outrun
+  the loop by more than ~50, raise `--limit` (or page
+  the list) so the oldest unaudited PR isn't missed.
 - If **no** PR is newer than the cursor, there is
   nothing to audit in PR mode: treat this iteration
   as FILE mode instead (step 3), but in step 11 still
@@ -512,14 +514,19 @@ deterministically). Then, in order:
 - **Layer 2 — live Linear (open and resolved).**
   Otherwise query live Linear with
   `mcp__claude_ai_Linear__list_issues`, scoped to the
-  Dropset project and a `<basename + topic>` query
-  (same team / project IDs as step 9), **without**
-  filtering to Backlog/open — include resolved states
-  so a finding closed since the last ledger rebuild
-  is still caught. If any audit-loop subtask (parent
+  Dropset project (same team / project IDs as step 9),
+  **without** filtering to Backlog/open — include
+  resolved states so a finding closed since the last
+  ledger rebuild is still caught. Key the query by the
+  same dimensions the fingerprint uses: for FILE / PR
+  findings a `<basename + topic>` query; for ARCH
+  findings a `<lens + topic>` query (there is no
+  basename). If any audit-loop subtask (parent
   ENG-452), **open or resolved**, already covers the
-  same file + topic, record its id and current status
-  into `findings.json` and **skip filing**.
+  same subject + topic — equivalently, carries a
+  matching `**Fingerprint**:` line — record its id and
+  current status into `findings.json` and **skip
+  filing**.
 
 Only findings that survive both layers proceed.
 
@@ -621,10 +628,14 @@ nothing was filed, send no notification.
   setting the cursor to that number leaves every
   later PR still `> cursor`, so none is skipped.
 - **PR fallback** (no PR newer than the cursor, so
-  this ran as FILE mode) — leave `pr_cursor`
-  unchanged but set `last_mode: "pr"` anyway, so the
-  rotation advances to `arch` next cycle and the PR
-  slot can't trap the loop in file mode.
+  this ran as FILE mode) — mark the audited file
+  covered exactly as the FILE-mode branch above (it
+  *was* a file audit, so record its `audited_at` and
+  `commit_sha` or it'll be re-picked), leave
+  `pr_cursor` unchanged, but set `last_mode: "pr"`
+  anyway, so the rotation advances to `arch` next
+  cycle and the PR slot can't trap the loop in file
+  mode.
 - ARCH mode records no per-file coverage (it scans
   the whole system, and dedup prevents refiling).
 
@@ -707,9 +718,11 @@ terminal step: it does no auditing.
     (doc/spec) precedes code that depends on it;
     `arch:` proposals that subsume single-file nits
     come before those nits.
-  - **Exclude** findings in a resolved state and the
-    consolidated skill-fix issues (ENG-469–474, now
-    folded into ENG-461) — they are not work items.
+  - **Exclude** anything that isn't open work: the
+    resolved issues already dropped above (this also
+    covers findings consolidated elsewhere and closed
+    as Duplicate), so the plan lists only the live
+    remaining work.
 
 - Write the plan onto **ENG-452** by updating its
   description (`mcp__claude_ai_Linear__save_issue`
