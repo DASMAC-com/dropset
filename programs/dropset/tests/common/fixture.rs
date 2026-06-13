@@ -106,6 +106,28 @@ pub fn simple_profile(offset_ppm: u32, size_bps: u16, expiry_offset: u32) -> [u8
     bytes
 }
 
+/// Build a multi-level profile from explicit per-level
+/// `(offset_ppm, size_bps, expiry_offset)` tuples — asks and bids fill from
+/// level 0, unused slots stay zeroed. The ladder generalization of
+/// [`simple_profile`], for matcher scenarios that need more than one live
+/// level a side.
+pub fn ladder_profile(asks: &[(u32, u16, u32)], bids: &[(u32, u16, u32)]) -> [u8; PROFILE_BYTES] {
+    let mut profile: LiquidityProfile = bytemuck::Zeroable::zeroed();
+    for (i, &(offset_ppm, size_bps, expiry_offset)) in asks.iter().enumerate() {
+        profile.asks[i].price_offset = offset_ppm.into();
+        profile.asks[i].size_bps = size_bps.into();
+        profile.asks[i].expiry_offset = expiry_offset.into();
+    }
+    for (i, &(offset_ppm, size_bps, expiry_offset)) in bids.iter().enumerate() {
+        profile.bids[i].price_offset = offset_ppm.into();
+        profile.bids[i].size_bps = size_bps.into();
+        profile.bids[i].expiry_offset = expiry_offset.into();
+    }
+    let mut bytes = [0u8; PROFILE_BYTES];
+    bytes.copy_from_slice(bytemuck::bytes_of(&profile));
+    bytes
+}
+
 // ── Fixture ──────────────────────────────────────────────────────────
 
 /// A live market on a `LiteSVM`. `authority` is the genesis admin, the
@@ -213,18 +235,22 @@ impl Fixture {
     /// / withdraw test starts from. `quote_authority` and `leader` are
     /// both `authority`.
     pub fn seeded(base: u64, quote: u64) -> Self {
+        Self::seeded_with(base, quote, simple_profile(5_000, 10_000, u32::MAX))
+    }
+
+    /// Like [`Self::seeded`] but with a caller-supplied liquidity profile —
+    /// for matcher scenarios that need a multi-level ladder (see
+    /// [`ladder_profile`]). Same 1.0850 reference anchor and `quote_slot` 0;
+    /// seeds `(base, quote)` via `deposit_leader`.
+    pub fn seeded_with(base: u64, quote: u64, profile: [u8; PROFILE_BYTES]) -> Self {
         let mut f = Self::bootstrap();
         f.create_vault(0, f.authority.pubkey(), false, Pubkey::default())
             .expect("create_vault");
         let ref_price = Price::encode(10_850_000, 0).unwrap();
         f.set_reference_price(&f.authority.insecure_clone(), 0, ref_price.as_u32(), 0)
             .expect("set_reference_price");
-        f.set_liquidity_profile(
-            &f.authority.insecure_clone(),
-            0,
-            simple_profile(5_000, 10_000, u32::MAX),
-        )
-        .expect("set_liquidity_profile");
+        f.set_liquidity_profile(&f.authority.insecure_clone(), 0, profile)
+            .expect("set_liquidity_profile");
         f.deposit_leader(0, base, quote, base, quote)
             .expect("seed deposit_leader");
         f

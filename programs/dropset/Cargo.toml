@@ -16,6 +16,9 @@ anchor-lang-v2 = {workspace = true, features = ["testing"]}
 # The off-chain SDK, used by tests/sdk_conformance.rs to verify its layout
 # decoder + matching simulator against the real engine running in litesvm.
 dropset-sdk = {path = "../../sdk/rs"}
+# Reads the shared sdk/conformance/price_vectors.json in
+# tests/price_conformance.rs (the program-side codec pin).
+serde_json = "1"
 anchor-v2-testing.workspace = true
 litesvm.workspace = true
 solana-instruction.workspace = true
