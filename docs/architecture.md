@@ -1461,31 +1461,36 @@ Both `Deposit` and `Withdraw` realize the vault first — see
 
 Caller sizes the deposit by **one leg** — a base amount *or* a quote
 amount — and passes a max basket `(max_base_in, max_quote_in)` for
-slippage protection. The argument is a tagged
-`amount_in: { Base(u64) | Quote(u64) }`: the depositor commits the
-leg they hold ("add 1,000 USDC") and the other leg follows from the
-vault's current ratio, mirroring the linked inputs in the deposit UI.
+slippage protection. The args are two scalar legs `base_in: u64,
+quote_in: u64` (plus `max_base_in: u64, max_quote_in: u64`): the
+depositor commits the leg they hold by setting it non-zero and leaves
+the other at `0` ("add 1,000 USDC" → `quote_in = 1_000e6, base_in =
+0`), and the matching leg follows from the vault's current ratio,
+mirroring the linked inputs in the deposit UI. Single-leg-ness is a
+**runtime** invariant, not a type-level enum: the handler enforces
+`require!((base_in > 0) ^ (quote_in > 0), SingleLegRequired)`, so
+exactly one leg must be non-zero on a (non-seeding) outside deposit.
 The sized leg fixes `shares_out`, and the basket is then derived from
 `shares_out` at the current ratio:
 
 ```text
 shares_out =
-  floor(amount_in × total_shares / base_atoms)   // amount_in = Base(_)
-  floor(amount_in × total_shares / quote_atoms)  // amount_in = Quote(_)
+  floor(base_in  × total_shares / base_atoms)    // base_in  > 0
+  floor(quote_in × total_shares / quote_atoms)   // quote_in > 0
 
-base_in  = ceil(shares_out × base_atoms  / total_shares)
-quote_in = ceil(shares_out × quote_atoms / total_shares)
+base_in_final  = ceil(shares_out × base_atoms  / total_shares)
+quote_in_final = ceil(shares_out × quote_atoms / total_shares)
 ```
 
 `shares_out` is rounded **down** and the basket **up**, so the
 depositor always backs their minted shares with a full pro-rata
 basket; any rounding dust stays on the depositor's side (their sized
-leg is an upper bound — `base_in ≤ amount_in` when sizing by base,
+leg is an upper bound — `base_in_final ≤ base_in` when sizing by base,
 and symmetrically for quote), preserving VPS for existing depositors
-(invariant I1). The instruction reverts if `base_in > max_base_in`
-or `quote_in > max_quote_in` — the ratio moved beyond the caller's
-tolerance. The basket is transferred from the depositor to the
-treasuries, then:
+(invariant I1). The instruction reverts with `BasketSlippage` if
+`base_in_final > max_base_in` or `quote_in_final > max_quote_in` — the
+ratio moved beyond the caller's tolerance. The basket is transferred
+from the depositor to the treasuries, then:
 
 - **Leader path** (`signer == vault.leader`): increment
   `Vault.leader_shares` by `shares_out`. No `VaultDepositor`.
