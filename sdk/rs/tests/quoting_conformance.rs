@@ -52,15 +52,39 @@ fn quoting_vectors() {
 
         for (i, v) in asks.iter().enumerate() {
             let lvl = &profile.asks[i];
-            assert_eq!(lvl.price_offset.get(), u32_of(v, "price_offset"), "ask[{i}] offset");
-            assert_eq!(lvl.size_bps.get() as u32, u32_of(v, "size_bps"), "ask[{i}] size_bps");
-            assert_eq!(lvl.expiry_offset.get(), u32_of(v, "expiry_offset"), "ask[{i}] expiry");
+            assert_eq!(
+                lvl.price_offset.get(),
+                u32_of(v, "price_offset"),
+                "ask[{i}] offset"
+            );
+            assert_eq!(
+                lvl.size_bps.get() as u32,
+                u32_of(v, "size_bps"),
+                "ask[{i}] size_bps"
+            );
+            assert_eq!(
+                lvl.expiry_offset.get(),
+                u32_of(v, "expiry_offset"),
+                "ask[{i}] expiry"
+            );
         }
         for (i, v) in bids.iter().enumerate() {
             let lvl = &profile.bids[i];
-            assert_eq!(lvl.price_offset.get(), u32_of(v, "price_offset"), "bid[{i}] offset");
-            assert_eq!(lvl.size_bps.get() as u32, u32_of(v, "size_bps"), "bid[{i}] size_bps");
-            assert_eq!(lvl.expiry_offset.get(), u32_of(v, "expiry_offset"), "bid[{i}] expiry");
+            assert_eq!(
+                lvl.price_offset.get(),
+                u32_of(v, "price_offset"),
+                "bid[{i}] offset"
+            );
+            assert_eq!(
+                lvl.size_bps.get() as u32,
+                u32_of(v, "size_bps"),
+                "bid[{i}] size_bps"
+            );
+            assert_eq!(
+                lvl.expiry_offset.get(),
+                u32_of(v, "expiry_offset"),
+                "bid[{i}] expiry"
+            );
         }
     }
 }

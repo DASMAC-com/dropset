@@ -74,7 +74,10 @@ fn predict_and_execute(
         ),
     };
 
-    assert_eq!(predicted.out_amount, realized_out, "SDK out != on-chain out");
+    assert_eq!(
+        predicted.out_amount, realized_out,
+        "SDK out != on-chain out"
+    );
     assert_eq!(predicted.in_amount, realized_in, "SDK in != on-chain in");
     predicted
 }
@@ -135,7 +138,11 @@ fn sdk_simulate_swap_multi_level_buy() {
     let taker = f.funded_depositor(0, 1_000_000);
 
     let q = predict_and_execute(&mut f, &taker, SwapSide::Buy, 500_000, Price::INFINITY, 1);
-    assert!(q.legs >= 2, "expected a fill across both ask levels, got {}", q.legs);
+    assert!(
+        q.legs >= 2,
+        "expected a fill across both ask levels, got {}",
+        q.legs
+    );
 }
 
 #[test]
@@ -146,7 +153,11 @@ fn sdk_simulate_swap_multi_level_sell() {
     let taker = f.funded_depositor(1_000_000, 0);
 
     let q = predict_and_execute(&mut f, &taker, SwapSide::Sell, 600_000, Price::ZERO, 1);
-    assert!(q.legs >= 2, "expected a fill across both bid levels, got {}", q.legs);
+    assert!(
+        q.legs >= 2,
+        "expected a fill across both bid levels, got {}",
+        q.legs
+    );
 }
 
 #[test]
@@ -159,7 +170,10 @@ fn sdk_simulate_swap_partial_fill_caps_input() {
 
     let q = predict_and_execute(&mut f, &taker, SwapSide::Buy, amount_in, Price::INFINITY, 1);
     assert!(q.out_amount > 0, "expected a fill");
-    assert!(q.in_amount < amount_in, "input should be capped at book depth");
+    assert!(
+        q.in_amount < amount_in,
+        "input should be capped at book depth"
+    );
 }
 
 #[test]
@@ -172,8 +186,14 @@ fn sdk_simulate_swap_limit_price_stops_fill() {
     let limit = Price::encode(11_000_000, 0).unwrap(); // 1.10
 
     let q = predict_and_execute(&mut f, &taker, SwapSide::Buy, 1_000_000, limit, 1);
-    assert_eq!(q.legs, 1, "limit should stop the fill after the first level");
-    assert!(q.in_amount < 1_000_000, "second level crossed, input not exhausted");
+    assert_eq!(
+        q.legs, 1,
+        "limit should stop the fill after the first level"
+    );
+    assert!(
+        q.in_amount < 1_000_000,
+        "second level crossed, input not exhausted"
+    );
 }
 
 #[test]

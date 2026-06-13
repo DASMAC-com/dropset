@@ -111,10 +111,7 @@ pub fn simple_profile(offset_ppm: u32, size_bps: u16, expiry_offset: u32) -> [u8
 /// level 0, unused slots stay zeroed. The ladder generalization of
 /// [`simple_profile`], for matcher scenarios that need more than one live
 /// level a side.
-pub fn ladder_profile(
-    asks: &[(u32, u16, u32)],
-    bids: &[(u32, u16, u32)],
-) -> [u8; PROFILE_BYTES] {
+pub fn ladder_profile(asks: &[(u32, u16, u32)], bids: &[(u32, u16, u32)]) -> [u8; PROFILE_BYTES] {
     let mut profile: LiquidityProfile = bytemuck::Zeroable::zeroed();
     for (i, &(offset_ppm, size_bps, expiry_offset)) in asks.iter().enumerate() {
         profile.asks[i].price_offset = offset_ppm.into();
