@@ -72,6 +72,11 @@ and the transaction coordinates below):
 - **`Deposit` / `Withdraw`** — inventory deltas (join/exit liquidity; feed TVL
   and per-depositor cost-basis).
 - **`CreateVault`** — a new vault/leader enters a market.
+- **`CloseVault`** — a leader moves their vault from the active DLL to the
+  tombstone DLL: matching stops, but depositor flows stay open until the vault
+  drains.
+- **`FreezeVault`** — an admin freezes a vault: it stays on the active DLL
+  (existing levels still match until expiry) but can no longer be re-quoted.
 - **`Realize`** — performance-fee accrual (leader economics).
 
 ### Dedupe / primary key
