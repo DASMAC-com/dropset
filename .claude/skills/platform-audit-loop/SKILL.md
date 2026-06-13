@@ -303,18 +303,18 @@ system); it fires once every three iterations.
      break ties. The risk weighting orders the
      bucket; it is not a gate — every tracked source
      file is eligible.
-  2. **Then changed-since-audit files** — those whose
+  1. **Then changed-since-audit files** — those whose
      current `git log -1 --format=%H -- <path>` commit
      SHA differs from the recorded `commit_sha`.
-     Order by least-recently-audited (`covered[path]
-     .audited_at` oldest first), tie-broken by path.
-  3. **Otherwise** (everything covered and unchanged),
+     Order by least-recently-audited (oldest
+     `audited_at` first), tie-broken by path.
+  1. **Otherwise** (everything covered and unchanged),
      fall back to the least-recently-audited file
      overall (`audited_at` oldest first, tie-broken
      by path).
-  This ordering is total and reproducible, so the
-  tail of each bucket is reached instead of being
-  starved by `git ls-files` ordering.
+     This ordering is total and reproducible, so the
+     tail of each bucket is reached instead of being
+     starved by `git ls-files` ordering.
 - The subject is that one file; go to step 6.
 
 **4. PR mode — oldest unaudited PR (FIFO).**
@@ -673,10 +673,12 @@ terminal step: it does no auditing.
   the same full read step 1 does. Drop issues in a
   resolved state (Done / Won't-fix / Canceled /
   Duplicate): the checklist is the remaining work.
+
 - Arrange the findings for **concurrent Claude
   sessions** — the plan's whole purpose is to show
   Alex *what can run in parallel*, not just a linear
   order. Match the structure ENG-452 already uses:
+
   - **Sessions** are the unit of parallelism. Each
     session owns a **disjoint set of files**; sessions
     with non-overlapping file sets run **at the same
@@ -708,6 +710,7 @@ terminal step: it does no auditing.
   - **Exclude** findings in a resolved state and the
     consolidated skill-fix issues (ENG-469–474, now
     folded into ENG-461) — they are not work items.
+
 - Write the plan onto **ENG-452** by updating its
   description (`mcp__claude_ai_Linear__save_issue`
   with `id: "ENG-452"`). ENG-452's description **is**
@@ -732,6 +735,7 @@ terminal step: it does no auditing.
   Use real issue links and literal newlines (not
   `\n`). Close with a one-line severity-tag legend as
   ENG-452 already does.
+
 - **Stop the loop.** Print a final line —
   `DONE platform-audit-loop | filed_total <t> | fix plan written to ENG-452`
   — and do **not** begin another iteration. The loop
