@@ -12,9 +12,11 @@ and never references this file. The canonical event schema is the program's
 Anchor `#[event]` structs as surfaced in the IDL — the field lists below
 **mirror** that schema for human readers.
 
-**Status.** The program is currently an init-only skeleton; this spec defines
-the target contract. Items marked **(open: x)** depend on a decision tracked in
-the plan's open-decisions list.
+**Status.** The core flows — `create_vault` / `deposit` / `withdraw` / `swap` —
+are implemented and emit the events below; this spec is the consumer contract
+for those events plus the not-yet-built integrator, REST, and SDK surfaces
+(§3–§5). Items marked **(open: x)** depend on a decision tracked in the plan's
+open-decisions list.
 
 ______________________________________________________________________
 
@@ -26,35 +28,44 @@ Events are emitted on cold paths only; the hot path
 across many vaults; **every leg is recorded — full fidelity, never dropped**,
 which is why fills ride as `emit_cpi!` inner-instruction data rather than logs
 (`sol_log_data` silently truncates past the ~10 KB-per-tx ceiling, which a
-level-blasting sweep would hit). A fill is emitted **per matched
-`(vault, level)`** plus one **take-level summary**.
+level-blasting sweep would hit). A single combined **`FillEvent`** is emitted
+**per matched `(sector_idx, level_idx)` leg** — one `emit_cpi!` per leg, in
+heap-pop (match) order. Each leg carries both the per-leg fill *and* the
+take-level context (`market` / `taker` / `side` / `taker_fee_atoms`), so the
+indexer reconstructs a take by grouping the legs of one transaction; there is
+**no separate take-level event**.
 
-### `MakerFill` — one per matched (vault, level)
+### `FillEvent` — one per matched (sector_idx, level_idx) leg
 
-| field                                            | meaning                                                                                                         |
-| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
-| `leg_price`                                      | the level's absolute `Price` this leg filled at                                                                 |
-| `fill_base`                                      | base atoms moved on this leg                                                                                    |
-| `fill_quote`                                     | quote atoms moved on this leg                                                                                   |
-| `vault`                                          | the matched vault — a **stable id**, not the reusable sector index                                              |
-| `leader`                                         | the vault's economic owner (carried directly — sectors are reused, so an index is not a stable attribution key) |
-| `quote_authority`                                | the delegated quoting wallet (for off-chain wash clustering)                                                    |
-| `level_idx`                                      | which `LiquidityProfile` level                                                                                  |
-| `nonce`                                          | the level's stamped `market.nonce` (price-time priority)                                                        |
-| `post_fill_vault_base` / `post_fill_vault_quote` | vault inventory after this leg                                                                                  |
+Fixed-size, `#[event(bytemuck)]`. Fields (in wire order; the `_pad` / `_pad2`
+gaps are bytemuck alignment padding and carry no data):
 
-### Take-level envelope — one per take
+| field                                    | meaning                                                                                                         |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `market`                                 | the market account                                                                                              |
+| `taker`                                  | the transaction initiator                                                                                       |
+| `leader`                                 | the vault's economic owner (carried directly — sectors are reused, so an index is not a stable attribution key) |
+| `quote_authority`                        | the delegated quoting wallet (for off-chain wash clustering)                                                    |
+| `side`                                   | taker side: `0` = ask-side (taker **Buy**), `1` = bid-side (taker **Sell**)                                     |
+| `sector_idx`                             | the matched vault's sector index — **reused** across vault lifecycles, so attribute via `leader` / `quote_authority`, not this index |
+| `level_idx`                              | which `LiquidityProfile` level on that vault                                                                    |
+| `fill_base`                              | base atoms moved on this leg                                                                                    |
+| `fill_quote`                             | quote atoms moved on this leg                                                                                   |
+| `fill_price`                             | the level's absolute `Price` this leg filled at                                                                 |
+| `base_atoms_after` / `quote_atoms_after` | the vault's inventory after this leg                                                                            |
+| `nonce_after`                            | `market.nonce` after this leg's per-leg bump (price-time priority / dedupe ordering)                            |
+| `taker_fee_atoms`                        | protocol taker fee charged on this leg, retained in the output asset                                            |
 
-| field                                  | meaning                    |
-| -------------------------------------- | -------------------------- |
-| `market`                               | the market account         |
-| `taker`                                | the transaction initiator  |
-| `side`                                 | buy/sell (base)            |
-| `total_fill_base` / `total_fill_quote` | summed across all legs     |
-| `taker_fee_atoms`                      | protocol taker fee charged |
-| `signature` / `slot` / `txn_index`     | transaction coordinates    |
+### Take-level aggregation — derived, not emitted
 
-`avg_price` is **derived** (`total_fill_quote / total_fill_base`), not emitted.
+There is no take-level event. The indexer recovers per-take figures by grouping
+the `FillEvent` legs of one transaction (they share `market` / `taker` / `side`
+and the transaction coordinates below):
+
+- `total_fill_base` / `total_fill_quote` — sum `fill_base` / `fill_quote` across
+  the take's legs;
+- total taker fee — sum `taker_fee_atoms` across the legs;
+- `avg_price` — derived (`total_fill_quote / total_fill_base`).
 
 ### Lifecycle / liquidity events
 
@@ -67,16 +78,14 @@ level-blasting sweep would hit). A fill is emitted **per matched
 
 The event primary key is **`(slot, txn_index, signature, event_ordinal)`**.
 `event_ordinal` is assigned in **heap-pop (match) order**, independent of flush
-boundaries; `post_fill_vault_*` is the snapshot after that leg. Its concrete
-source depends on the emit model **(open: a)**:
+boundaries; `base_atoms_after` / `quote_atoms_after` are the vault snapshot after
+that leg. The emit model is **per-leg emit** (one `emit_cpi!` per `FillEvent` —
+`lib.rs` dispatches the matcher's `Vec<FillEvent>` one at a time), so
+`event_ordinal` is the inner-instruction index within the transaction, counting
+**all** Dropset self-CPI inner instructions (stable across replay).
 
-- *per-leg emit* → the inner-instruction index within the transaction, counting
-  **all** Dropset self-CPI inner instructions (stable across replay);
-- *packed batch* → the leg index within the decoded batch.
-
-**Locking the emit model is a prerequisite to freezing this key / writing any
-rows.** Plain `(slot, txn_index, signature)` is insufficient: it collides across
-the N legs of one take.
+Plain `(slot, txn_index, signature)` is insufficient: it collides across the N
+legs of one take.
 
 ### Volume integrity
 
