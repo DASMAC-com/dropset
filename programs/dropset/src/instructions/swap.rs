@@ -394,6 +394,15 @@ impl Swap {
         }
         let mut snapshots: alloc::vec::Vec<LegSnapshot> = alloc::vec::Vec::new();
         let nonce_at_start = self.market.nonce.get();
+        // Set if a per-leg `market.nonce` bump would overflow `u64`.
+        // Practically unreachable (the spec sizes `nonce` to never wrap
+        // over a market's lifetime), but we reject it as a hard error
+        // to stay consistent with the quote paths
+        // (`set_reference_price.rs`, `set_liquidity_profile.rs`), which
+        // both `checked_add(1).ok_or(MathOverflow)?`. The shared revert
+        // block below restores the pre-swap state before we error, so a
+        // wrap leaves no partial fill behind.
+        let mut nonce_overflow = false;
 
         for &(sector_idx, level_idx, price, level_size, _nonce) in levels.iter().take(live_count) {
             // Limit-price filter — also the review's "early-exit when
@@ -553,9 +562,16 @@ impl Swap {
             };
 
             // Bump market.nonce per leg (header borrow after the tail
-            // mutation completes).
+            // mutation completes). Reject an overflowing bump the same
+            // way the quote paths do; the current leg's inventory
+            // mutation is already snapshotted above, so breaking here
+            // lets the shared revert block roll it (and every prior
+            // leg) back before we return the error.
             let nonce = self.market.nonce.get();
-            let new_nonce = nonce.saturating_add(1);
+            let Some(new_nonce) = nonce.checked_add(1) else {
+                nonce_overflow = true;
+                break;
+            };
             self.market.nonce = new_nonce.into();
 
             // Decrement the taker's remaining input.
@@ -605,7 +621,7 @@ impl Swap {
         // legacy fail-on-zero-fill behavior is recovered by passing
         // any non-zero `min_out`).
         let achievable_net_out = total_out.saturating_sub(total_fee).min(u64::MAX as u128) as u64;
-        if filled_legs == 0 || achievable_net_out < min_out {
+        if nonce_overflow || filled_legs == 0 || achievable_net_out < min_out {
             // Walk snapshots in reverse so two legs that touched the
             // same sector's inventory restore to the earliest
             // captured value.
@@ -630,6 +646,13 @@ impl Swap {
                 v.reference_price.stamp = (cur | FLUSH_BIT).into();
             }
             self.market.nonce = nonce_at_start.into();
+            // A nonce overflow is a hard error, not a soft revert: the
+            // state is fully restored above, but the swap could not be
+            // applied, so surface it like the quote paths do rather
+            // than silently returning an empty fill.
+            if nonce_overflow {
+                return Err(DropsetError::MathOverflow.into());
+            }
             return Ok(alloc::vec::Vec::new());
         }
 
