@@ -167,10 +167,12 @@ struct HeapEntry {
     sector_idx: u32,
     /// Level index within the source vault.
     level_idx: u32,
-    /// Materialized level size at heap-build time. The fill loop
-    /// re-reads the live `remaining[i].size` so it sees prior-leg
-    /// decrements; this snapshot is only the upper bound at first
-    /// visit, used to skip dead levels.
+    /// Materialized level size at heap-build time, used directly as
+    /// the per-leg level cap (`cap_by_level`) in the fill loop. Each
+    /// `(vault, level)` pair is pushed once and visited once, so the
+    /// snapshot needs no re-read; only the vault inventory
+    /// (`base_atoms`/`quote_atoms`) is re-read per leg to reflect
+    /// prior-leg decrements.
     size: u64,
 }
 
