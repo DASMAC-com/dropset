@@ -90,15 +90,24 @@ impl DepositLeader {
         require!((vault_idx as usize) < len, DropsetError::InvalidSectorIndex);
 
         let signer_addr = *self.signer.address();
-        let (leader, frozen, total_shares) = {
+        let (leader, frozen, tombstoned, total_shares) = {
             let v = &self.market.as_slice()[vault_idx as usize];
-            (v.leader, v.frozen.get(), v.total_shares.get())
+            (
+                v.leader,
+                v.frozen.get(),
+                v.tombstoned.get(),
+                v.total_shares.get(),
+            )
         };
         require!(
             !address_eq(&leader, &Address::default()),
             DropsetError::VaultEmpty
         );
         require!(!frozen, DropsetError::VaultFrozen);
+        // Tombstoned vaults are winding down: even the leader cannot
+        // top up a closed vault (spec: deposits against frozen or
+        // tombstoned vaults are rejected).
+        require!(!tombstoned, DropsetError::VaultTombstoned);
         // The PDA-free path is strictly for the vault's leader. Any
         // other signer must use `deposit` (the outside variant).
         require!(

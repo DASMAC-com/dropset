@@ -27,12 +27,17 @@ fn close_vault_moves_active_to_tombstone() {
     assert_eq!(h.tombstone_head.get(), dropset::NULL_SECTOR);
 
     let shares_before = f.vault(0).total_shares.get();
+    assert!(!f.vault(0).tombstoned.get(), "vault starts un-tombstoned");
     f.close_vault(&leader, 0).expect("leader closes the vault");
 
     let h = f.market_header();
     assert_eq!(h.active_count.get(), 0, "active count decremented");
     assert_eq!(h.head.get(), dropset::NULL_SECTOR, "active list now empty");
     assert_eq!(h.tombstone_head.get(), 0, "vault 0 moved to tombstone");
+    assert!(
+        f.vault(0).tombstoned.get(),
+        "tombstoned flag set so handlers can read it without a list walk"
+    );
 
     // The sector keeps its data — depositor flows stay open until it
     // drains; only the list membership changed.

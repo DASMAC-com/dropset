@@ -154,7 +154,8 @@ pub struct Vault {
     pub frozen: u8,
     pub allow_outside_depositors: u8,
     pub outside_deposits_approved: u8,
-    pub _reserved: [u8; 5],
+    pub tombstoned: u8,
+    pub _reserved: [u8; 4],
     pub profile: LiquidityProfile,
     pub remaining: Remaining,
 }

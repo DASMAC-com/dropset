@@ -189,10 +189,22 @@ pub struct Vault {
     pub allow_outside_depositors: PodBool,
     /// True when an admin approved outside deposits.
     pub outside_deposits_approved: PodBool,
+    /// True when the leader has `CloseVault`'d this vault, moving it
+    /// from the active DLL to the tombstone DLL. Mirrors how `frozen`
+    /// works: the flag makes "this vault is dead" a cheap local read
+    /// for handlers (`realize_in_place`, both deposit paths) instead
+    /// of an O(n) `vault_list_of` walk — and is the signal
+    /// `withdraw_leader`'s `min_leader_share` floor will read once
+    /// ENG-463 lands. Set in `close_vault` alongside the list move;
+    /// cleared implicitly when the sector is reclaimed and reused
+    /// (`allocate_sector` zeroes the whole struct). `PodBool` so the
+    /// field is alignment-1 and slots into the former `_reserved`
+    /// space without shifting any other offset.
+    pub tombstoned: PodBool,
     /// Explicit reserved bytes so [`Vault`] stays Pod-friendly (no
     /// implicit padding) and leaves a small slot for future flag
     /// additions without changing the on-chain size.
-    pub _reserved: [u8; 5],
+    pub _reserved: [u8; 4],
     /// Bids / asks ladder as offsets from the reference price.
     pub profile: LiquidityProfile,
     /// Materialized per-level state (computed at flush time).
@@ -285,7 +297,8 @@ const _: () = assert!(core::mem::size_of::<Remaining>() == 2 * N_LEVELS * 16);
 const _: () = assert!(core::mem::offset_of!(Vault, next) == 0);
 const _: () = assert!(core::mem::offset_of!(Vault, prev) == 4);
 const _: () = assert!(core::mem::offset_of!(Vault, leader) == 8);
-const _: () = assert!(core::mem::offset_of!(Vault, _reserved) == 139);
+const _: () = assert!(core::mem::offset_of!(Vault, tombstoned) == 139);
+const _: () = assert!(core::mem::offset_of!(Vault, _reserved) == 140);
 const _: () = assert!(core::mem::offset_of!(MarketHeader, head) == 8);
 const _: () = assert!(core::mem::offset_of!(MarketHeader, tombstone_head) == 12);
 const _: () = assert!(core::mem::offset_of!(MarketHeader, free_head) == 16);
@@ -389,6 +402,8 @@ pub struct RealizeOutcome {
 /// HWM. No-op when:
 /// - `total_shares == 0` (vault is unseeded — no shares to dilute);
 /// - `vault.frozen != 0` (per spec, HWM is pinned at freeze time);
+/// - `vault.tombstoned != 0` (closed vault; HWM pinned at close time —
+///   no perf fee may accrue to a leader who has already exited);
 /// - `vault.perf_fee_rate == 0` (no fee to accrue);
 /// - `VPS <= HWM` (no excess to fee).
 ///
@@ -398,7 +413,7 @@ pub struct RealizeOutcome {
 pub fn realize_in_place(vault: &mut Vault) -> RealizeOutcome {
     let s = vault.total_shares.get();
     let hwm = vault.hwm.get();
-    if s == 0 || vault.frozen.get() {
+    if s == 0 || vault.frozen.get() || vault.tombstoned.get() {
         return RealizeOutcome {
             shares_minted: 0,
             hwm_after: hwm,
@@ -1065,6 +1080,19 @@ mod tests {
         v.frozen = true.into();
         let r = realize_in_place(&mut v);
         assert_eq!(r.shares_minted, 0);
+    }
+
+    #[test]
+    fn realize_noop_when_tombstoned() {
+        // A tombstoned vault has exited — no perf fee may accrue to a
+        // leader who has already closed, even with VPS above HWM. This
+        // guards the `withdraw`-against-tombstone path from minting
+        // perf-fee shares to an exited leader.
+        let mut v = seeded_vault(200, 200, 100, 100, Q32_32_ONE, 100_000);
+        v.tombstoned = true.into();
+        let r = realize_in_place(&mut v);
+        assert_eq!(r.shares_minted, 0);
+        assert_eq!(v.hwm.get(), Q32_32_ONE, "HWM stays pinned at close time");
     }
 
     #[test]

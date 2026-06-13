@@ -92,6 +92,23 @@ fn rejects_leader_as_depositor() {
 }
 
 #[test]
+fn rejects_tombstoned_vault() {
+    // A vault the leader has `CloseVault`'d is winding down: it no
+    // longer quotes and accrues no fee, so an outside depositor cannot
+    // mint into it. The tombstone gate fires before the outside-deposit
+    // opt-in gates.
+    let mut f = seeded_open();
+    let leader = f.authority.insecure_clone();
+    let alice = f.funded_depositor(200_000, 200_000);
+    f.close_vault(&leader, 0)
+        .expect("leader tombstones the vault");
+    let err = f
+        .deposit(&alice, 0, 50_000, 0, 200_000, 200_000)
+        .expect_err("tombstoned vault must reject outside deposit");
+    common::assert_program_error(&err, dropset::DropsetError::VaultTombstoned);
+}
+
+#[test]
 fn rejects_unseeded_vault() {
     // Register + price + enable flags, but never seed: total_shares == 0.
     let mut f = Fixture::bootstrap();

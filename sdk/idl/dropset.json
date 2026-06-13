@@ -2530,6 +2530,11 @@
       "code": 6042,
       "name": "TeardownDisabled",
       "msg": "teardown instructions are disabled in this build (admin-teardown feature off)"
+    },
+    {
+      "code": 6043,
+      "name": "VaultTombstoned",
+      "msg": "vault has been closed and moved to the tombstone list"
     }
   ],
   "types": [
