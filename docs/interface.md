@@ -47,7 +47,7 @@ gaps are bytemuck alignment padding and carry no data):
 | `leader`                                 | the vault's economic owner (carried directly — sectors are reused, so an index is not a stable attribution key) |
 | `quote_authority`                        | the delegated quoting wallet (for off-chain wash clustering)                                                    |
 | `side`                                   | taker side: `0` = ask-side (taker **Buy**), `1` = bid-side (taker **Sell**)                                     |
-| `sector_idx`                             | the matched vault's sector index — **reused** across vault lifecycles, so attribute via `leader` / `quote_authority`, not this index |
+| `sector_idx`                             | the matched vault's sector slot — reused, so attribute via `leader` / `quote_authority`, not the index          |
 | `level_idx`                              | which `LiquidityProfile` level on that vault                                                                    |
 | `fill_base`                              | base atoms moved on this leg                                                                                    |
 | `fill_quote`                             | quote atoms moved on this leg                                                                                   |
@@ -83,7 +83,7 @@ and the transaction coordinates below):
 
 The event primary key is **`(slot, txn_index, signature, event_ordinal)`**.
 `event_ordinal` is assigned in **heap-pop (match) order**, independent of flush
-boundaries; `base_atoms_after` / `quote_atoms_after` are the vault snapshot after
+boundaries; `base_atoms_after` / `quote_atoms_after` snapshot the vault after
 that leg. The emit model is **per-leg emit** (one `emit_cpi!` per `FillEvent` —
 `lib.rs` dispatches the matcher's `Vec<FillEvent>` one at a time), so
 `event_ordinal` is the inner-instruction index within the transaction, counting
