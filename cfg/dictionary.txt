@@ -126,6 +126,7 @@ vertible
 veur
 vgbp
 vwap
+wakeup
 wincode
 wordmark
 worktree
