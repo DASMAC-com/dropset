@@ -1461,8 +1461,9 @@ Both `Deposit` and `Withdraw` realize the vault first — see
 
 Caller sizes the deposit by **one leg** — a base amount *or* a quote
 amount — and passes a max basket `(max_base_in, max_quote_in)` for
-slippage protection. The args are two scalar legs
-`base_in: u64, quote_in: u64` (plus `max_base_in: u64, max_quote_in: u64`):
+slippage protection. The args are `vault_idx: u32` (which vault on
+the market) plus two scalar legs `base_in: u64, quote_in: u64` (and
+`max_base_in: u64, max_quote_in: u64`):
 the depositor commits the leg they hold by setting it non-zero and
 leaves the other at `0` ("add 1,000 USDC" →
 `quote_in = 1_000e6, base_in = 0`), and the matching leg follows from
