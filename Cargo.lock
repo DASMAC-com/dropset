@@ -1410,6 +1410,7 @@ dependencies = [
  "anchor-v2-testing",
  "dropset-sdk",
  "litesvm",
+ "serde_json",
  "solana-instruction",
  "solana-keypair",
  "solana-loader-v3-interface",
