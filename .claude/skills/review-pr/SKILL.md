@@ -1,6 +1,6 @@
 ---
 name: review-pr
-description: Adversarial pre-review — lint, catalogue issues, fix what's mechanical, and ready the PR for human review.
+description: Adversarial pre-review — verify the Linear task's checklist is fully addressed, lint, catalogue issues, fix what's mechanical, and ready the PR for human review.
 user-invocable: true
 ---
 
@@ -36,6 +36,54 @@ all changes are committed and pushed.
    changes, stop and tell the user to commit
    first (or run `/commit-changes`).
 
+1. **Check the Linear task is fully addressed.**
+   The PR exists to satisfy a Linear issue, and
+   autonomous runs have a habit of shipping a diff
+   that covers only *some* of the task's checklist.
+   Establish what the task asked for and confirm the
+   diff delivers all of it before reviewing anything
+   else.
+
+   - Resolve the tag from the PR title scope (the
+     `ENG-###` inside `type(ENG-###): …`), falling
+     back to the branch name. If neither yields an
+     `ENG-###`, skip this step and note in the report
+     that no Linear task was checked.
+
+   - Fetch the issue with the `mcp__claude_ai_Linear__get_issue`
+     tool, passing the tag as `id` (e.g. `"ENG-490"`).
+     Read the description, and also pull
+     `mcp__claude_ai_Linear__list_comments` for the
+     issue — checklist items and acceptance criteria
+     sometimes live in an inline (anchored) comment,
+     not the body.
+
+   - Extract every actionable requirement: markdown
+     checkboxes (`- [ ]` open, `- [x]` already done),
+     plus any acceptance-criteria or scope bullets
+     phrased as requirements even if not checkbox
+     syntax. Treat an already-`[x]`-checked box as a
+     claim to verify, not a given — confirm the diff
+     actually contains it.
+
+   - For each requirement, decide from the diff
+     (`git diff main..HEAD`) and the branch's commits
+     whether it is **addressed**, **partial**, or
+     **missing**. A requirement that is out of scope
+     for this PR by design (e.g. explicitly deferred,
+     or split into a follow-up issue) counts as
+     addressed *only if* the deferral is recorded —
+     a commit, a PR-body note, or a linked follow-up
+     filed via `/linear-task`. Silent omission is
+     **missing**.
+
+   - Catalogue every **partial** or **missing**
+     requirement as a **blocking** issue (step 7),
+     quoting the checklist text and the `file:line`
+     (or absence) that decides it. Do **not** tick
+     the boxes in Linear or otherwise mutate the
+     issue — this step only verifies and reports.
+
 1. **Run lint:**
 
    ```sh
@@ -61,7 +109,7 @@ all changes are committed and pushed.
 
    - If lint still fails after the fix attempt,
      catalogue the remaining failures as
-     **blocking** issues (step 6) and do **not**
+     **blocking** issues (step 7) and do **not**
      mark the PR ready.
 
 1. **Adversarial diff review.** Get the full diff:
@@ -127,7 +175,7 @@ all changes are committed and pushed.
    were made in the previous step, re-run
    `make lint` to catch violations introduced by
    those fixes. Apply the same fix-and-retry
-   logic as step 3.
+   logic as the lint step (step 4).
 
 1. **Run the test suite (mirror CI).** The `Tests`
    workflow runs `make test` and
@@ -204,7 +252,8 @@ all changes are committed and pushed.
 1. **Gate.** Mark the PR ready only when **every**
    CI-mirroring check is green so the human can
    safely approve auto-merge: **zero blocking
-   issues**, `make lint` passes, `make test` and
+   issues** (including every Linear checklist item
+   addressed), `make lint` passes, `make test` and
    `make test-no-teardown` pass (or are honestly
    reported as unverifiable locally), the title
    passes `Semantic PR`, and `mergeable` is
@@ -214,9 +263,10 @@ all changes are committed and pushed.
    gh pr ready <number>
    ```
 
-   If any blocking issue remains — failing or
-   unverified tests, a non-conforming title, or a
-   merge conflict with `main` — leave it in draft.
+   If any blocking issue remains — an unaddressed
+   Linear checklist item, failing or unverified
+   tests, a non-conforming title, or a merge
+   conflict with `main` — leave it in draft.
 
 1. **Firm up the permission allowlist.** A review
    run approves a lot of one-off commands, so it is
@@ -232,6 +282,10 @@ all changes are committed and pushed.
 
 1. **Report.** Print a structured summary:
 
+   - Linear coverage: the resolved tag, and each
+     checklist item marked addressed / partial /
+     missing (or "no Linear task checked" if none
+     was resolvable).
    - Lint status: pass or fail with details.
    - Test status: `make test` and
      `make test-no-teardown` — pass, fail, or
