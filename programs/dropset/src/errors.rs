@@ -88,4 +88,6 @@ pub enum DropsetError {
     NotAMarketTreasury,
     #[msg("teardown instructions are disabled in this build (admin-teardown feature off)")]
     TeardownDisabled,
+    #[msg("vault has been closed and moved to the tombstone list")]
+    VaultTombstoned,
 }

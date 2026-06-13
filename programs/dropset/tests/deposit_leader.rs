@@ -126,3 +126,19 @@ fn rejects_frozen_vault() {
         .expect_err("frozen vault must reject leader deposit");
     common::assert_program_error(&err, dropset::DropsetError::VaultFrozen);
 }
+
+#[test]
+fn rejects_tombstoned_vault() {
+    // Seed, then `CloseVault` (active → tombstone). Even the leader
+    // cannot top up a closed vault — it no longer quotes or accrues.
+    let mut f = fixture_with_unseeded_vault();
+    let leader = f.authority.insecure_clone();
+    f.deposit_leader(0, 1_000_000, 1_085_000, 1_000_000, 1_085_000)
+        .expect("seed");
+    f.close_vault(&leader, 0)
+        .expect("leader tombstones the vault");
+    let err = f
+        .deposit_leader(0, 100_000, 0, 100_000, 200_000)
+        .expect_err("tombstoned vault must reject leader deposit");
+    common::assert_program_error(&err, dropset::DropsetError::VaultTombstoned);
+}

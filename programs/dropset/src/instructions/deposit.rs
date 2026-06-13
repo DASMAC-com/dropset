@@ -143,6 +143,7 @@ impl Deposit {
             allow_outside,
             outside_approved,
             frozen,
+            tombstoned,
             total_shares,
             _leader_shares,
             _base_atoms,
@@ -156,6 +157,7 @@ impl Deposit {
                 v.allow_outside_depositors.get(),
                 v.outside_deposits_approved.get(),
                 v.frozen.get(),
+                v.tombstoned.get(),
                 v.total_shares.get(),
                 v.leader_shares.get(),
                 v.base_atoms.get(),
@@ -169,6 +171,11 @@ impl Deposit {
             DropsetError::VaultEmpty
         );
         require!(!frozen, DropsetError::VaultFrozen);
+        // A tombstoned vault is winding down — it no longer quotes and
+        // accrues no fee, so minting fresh shares into it is rejected
+        // (spec: deposits against frozen or tombstoned vaults are
+        // rejected).
+        require!(!tombstoned, DropsetError::VaultTombstoned);
 
         let signer_addr = *self.signer.address();
         // This handler is the outside-depositor path. The leader's

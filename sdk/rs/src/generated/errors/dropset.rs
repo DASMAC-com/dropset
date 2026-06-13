@@ -139,6 +139,9 @@ pub enum DropsetError {
     /// 6042 - teardown instructions are disabled in this build (admin-teardown feature off)
     #[error("teardown instructions are disabled in this build (admin-teardown feature off)")]
     TeardownDisabled = 0x179A,
+    /// 6043 - vault has been closed and moved to the tombstone list
+    #[error("vault has been closed and moved to the tombstone list")]
+    VaultTombstoned = 0x179B,
 }
 
 impl From<DropsetError> for solana_program_error::ProgramError {

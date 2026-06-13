@@ -75,6 +75,13 @@ impl CloseVault {
         self.market.active_count = active_count_after.into();
         self.market.link_head(DllList::Tombstone, vault_idx)?;
 
+        // Flag the vault tombstoned so deposit / realize handlers can
+        // treat it as dead with a cheap local read rather than an O(n)
+        // `vault_list_of` walk. Mirrors how `freeze_vault` sets
+        // `vault.frozen`. Cleared implicitly on reclaim+reuse, since
+        // `allocate_sector` re-zeroes the whole struct.
+        self.market.as_mut_slice()[vault_idx as usize].tombstoned = true.into();
+
         Ok(CloseVaultEvent {
             market: *self.market.address(),
             sector_idx: vault_idx,
