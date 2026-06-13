@@ -1461,10 +1461,13 @@ Both `Deposit` and `Withdraw` realize the vault first — see
 
 Caller sizes the deposit by **one leg** — a base amount *or* a quote
 amount — and passes a max basket `(max_base_in, max_quote_in)` for
-slippage protection. The args are two scalar legs `base_in: u64, quote_in: u64` (plus `max_base_in: u64, max_quote_in: u64`): the
-depositor commits the leg they hold by setting it non-zero and leaves
-the other at `0` ("add 1,000 USDC" → `quote_in = 1_000e6, base_in = 0`), and the matching leg follows from the vault's current ratio,
-mirroring the linked inputs in the deposit UI. Single-leg-ness is a
+slippage protection. The args are two scalar legs
+`base_in: u64, quote_in: u64` (plus `max_base_in: u64, max_quote_in: u64`):
+the depositor commits the leg they hold by setting it non-zero and
+leaves the other at `0` ("add 1,000 USDC" →
+`quote_in = 1_000e6, base_in = 0`), and the matching leg follows from
+the vault's current ratio, mirroring the linked inputs in the deposit
+UI. Single-leg-ness is a
 **runtime** invariant, not a type-level enum: the handler enforces
 `require!((base_in > 0) ^ (quote_in > 0), SingleLegRequired)`, so
 exactly one leg must be non-zero on a (non-seeding) outside deposit.
