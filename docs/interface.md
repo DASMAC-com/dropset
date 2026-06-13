@@ -15,7 +15,7 @@ Anchor `#[event]` structs as surfaced in the IDL — the field lists below
 **Status.** The core flows — `create_vault` / `deposit` / `withdraw` / `swap` —
 are implemented and emit the events below; this spec is the consumer contract
 for those events plus the not-yet-built integrator, REST, and SDK surfaces
-(§3–§5). Items marked **(open: x)** depend on a decision tracked in the plan's
+(§4–§6). Items marked **(open: x)** depend on a decision tracked in the plan's
 open-decisions list.
 
 ______________________________________________________________________
@@ -47,7 +47,7 @@ gaps are bytemuck alignment padding and carry no data):
 | `leader`                                 | the vault's economic owner (carried directly — sectors are reused, so an index is not a stable attribution key) |
 | `quote_authority`                        | the delegated quoting wallet (for off-chain wash clustering)                                                    |
 | `side`                                   | taker side: `0` = ask-side (taker **Buy**), `1` = bid-side (taker **Sell**)                                     |
-| `sector_idx`                             | the matched vault's sector slot — reused, so attribute via `leader` / `quote_authority`, not the index          |
+| `sector_idx`                             | the matched vault's sector index — reused across vaults, so attribute via `leader` / `quote_authority`          |
 | `level_idx`                              | which `LiquidityProfile` level on that vault                                                                    |
 | `fill_base`                              | base atoms moved on this leg                                                                                    |
 | `fill_quote`                             | quote atoms moved on this leg                                                                                   |
@@ -84,10 +84,10 @@ and the transaction coordinates below):
 The event primary key is **`(slot, txn_index, signature, event_ordinal)`**.
 `event_ordinal` is assigned in **heap-pop (match) order**, independent of flush
 boundaries; `base_atoms_after` / `quote_atoms_after` snapshot the vault after
-that leg. The emit model is **per-leg emit** (one `emit_cpi!` per `FillEvent` —
-`lib.rs` dispatches the matcher's `Vec<FillEvent>` one at a time), so
-`event_ordinal` is the inner-instruction index within the transaction, counting
-**all** Dropset self-CPI inner instructions (stable across replay).
+that leg. The emit model is **per-leg emit** — each matched leg is its own
+`emit_cpi!` `FillEvent`, dispatched one at a time — so `event_ordinal` is the
+inner-instruction index within the transaction, counting **all** Dropset
+self-CPI inner instructions (stable across replay).
 
 Plain `(slot, txn_index, signature)` is insufficient: it collides across the N
 legs of one take.
@@ -252,9 +252,9 @@ ______________________________________________________________________
 
 These are tracked in full in the plan; the consumer-facing ones:
 
-- **(a)** Emit model (packed `FillBatch`-per-take vs per-leg) — sets
-  `event_ordinal` provenance and the `#[event]` struct shape. **Blocks freezing
-  the event PK.**
+- **(a)** Emit model — **resolved: per-leg emit.** Each matched leg is its own
+  `emit_cpi!` `FillEvent` (see §1), so `event_ordinal` is the inner-instruction
+  index and the PK `(slot, txn_index, signature, event_ordinal)` is frozen.
 - **(f)** Price/amount wire representation — shared by events, SDK, OpenAPI.
 - **(h)** Price-feed conditional trigger — required once any non-USD-quote
   market is listed on an aggregator.
