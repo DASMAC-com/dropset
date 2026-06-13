@@ -86,11 +86,12 @@ impl WithdrawLeader {
         require!((vault_idx as usize) < len, DropsetError::InvalidSectorIndex);
 
         let signer_addr = *self.signer.address();
-        let (leader, frozen, total_shares, min_leader_share) = {
+        let (leader, frozen, tombstoned, total_shares, min_leader_share) = {
             let v = &self.market.as_slice()[vault_idx as usize];
             (
                 v.leader,
                 v.frozen.get(),
+                v.tombstoned.get(),
                 v.total_shares.get(),
                 v.min_leader_share.get(),
             )
@@ -134,9 +135,11 @@ impl WithdrawLeader {
 
         require!(leader_shares >= shares_in, DropsetError::InsufficientShares);
         let new_leader = leader_shares - shares_in;
-        // Skin-in-the-game floor on active vaults — bypassed for
-        // frozen / tombstoned per spec.
-        if !frozen {
+        // Skin-in-the-game floor on active vaults — bypassed once the
+        // vault is winding down (frozen or tombstoned) per spec, so the
+        // leader can drain their final stake on the exit path.
+        let winding_down = frozen || tombstoned;
+        if !winding_down {
             let new_total = total_shares - shares_in;
             if new_total > 0 {
                 let lhs = (new_leader as u128) * (PPM as u128);
