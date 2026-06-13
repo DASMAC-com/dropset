@@ -208,7 +208,11 @@ fn nonce_overflow_hard_reverts_and_errors() {
     // (otherwise unreachable) overflow by poking the nonce to its max.
     let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
     f.poke_nonce(u64::MAX);
-    assert_eq!(f.market_header().nonce.get(), u64::MAX, "nonce armed at max");
+    assert_eq!(
+        f.market_header().nonce.get(),
+        u64::MAX,
+        "nonce armed at max"
+    );
 
     let taker = f.funded_depositor(0, 200_000);
     let quote_ata = f.quote_ata(&taker.pubkey());
