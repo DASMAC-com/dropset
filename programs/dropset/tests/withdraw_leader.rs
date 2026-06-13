@@ -128,7 +128,8 @@ fn tombstoned_vault_bypasses_floor() {
     f.poke_min_leader_share(0, ratio_ppm);
 
     // Move the vault to the tombstone DLL — the leader's wind-down path.
-    f.close_vault(&leader, 0).expect("leader tombstones the vault");
+    f.close_vault(&leader, 0)
+        .expect("leader tombstones the vault");
 
     // The same 90% withdrawal that rejects on an active vault now
     // succeeds: tombstoning lifts the floor.
