@@ -200,6 +200,55 @@ fn min_out_boundary_commits_at_equal_and_reverts_one_over() {
 }
 
 #[test]
+fn nonce_overflow_hard_reverts_and_errors() {
+    // The per-leg `market.nonce` bump uses `checked_add(1)` — at
+    // `u64::MAX` the next fill can't advance it, so the swap must
+    // hard-error `MathOverflow` (like the quote paths) after fully
+    // rolling back the leg it had already applied. Drive the
+    // (otherwise unreachable) overflow by poking the nonce to its max.
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+    f.poke_nonce(u64::MAX);
+    assert_eq!(f.market_header().nonce.get(), u64::MAX, "nonce armed at max");
+
+    let taker = f.funded_depositor(0, 200_000);
+    let quote_ata = f.quote_ata(&taker.pubkey());
+    let q_before = f.token_balance(&quote_ata);
+
+    // A Buy that would otherwise fill — the first leg's bump overflows.
+    let err = f
+        .swap(&taker, 0, 100_000, Price::INFINITY.as_u32(), 1)
+        .expect_err("nonce overflow must hard-error");
+    common::assert_program_error(&err, dropset::DropsetError::MathOverflow);
+
+    // No transfers fired — the taker is made whole.
+    assert_eq!(f.token_balance(&quote_ata), q_before, "no quote spent");
+    assert_eq!(
+        f.token_balance(&f.base_ata(&taker.pubkey())),
+        0,
+        "no base received"
+    );
+
+    // Vault inventory and nonce restored exactly; FLUSH_BIT re-armed so
+    // the next legitimate taker re-materializes against current state.
+    let v = f.vault(0);
+    assert_eq!(v.base_atoms.get(), SEED_BASE, "vault base restored");
+    assert_eq!(v.quote_atoms.get(), SEED_QUOTE, "vault quote restored");
+    assert_eq!(
+        f.market_header().nonce.get(),
+        u64::MAX,
+        "nonce reset to its pre-swap value"
+    );
+    assert!(
+        v.reference_price.stamp.get() & FLUSH_BIT != 0,
+        "FLUSH_BIT re-armed after the hard revert"
+    );
+
+    // Treasury invariant intact across the failed swap.
+    assert_eq!(f.token_balance(&f.base_treasury), v.base_atoms.get());
+    assert_eq!(f.token_balance(&f.quote_treasury), v.quote_atoms.get());
+}
+
+#[test]
 fn taker_fee_retained_in_vault() {
     // Same swap with and without a taker fee — the fee'd taker receives
     // strictly less base, and the difference stays in the vault.

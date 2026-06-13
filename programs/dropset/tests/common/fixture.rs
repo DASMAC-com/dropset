@@ -1182,4 +1182,15 @@ impl Fixture {
         acct.data[off..off + 2].copy_from_slice(&fee_ppm.to_le_bytes());
         self.svm.set_account(self.market, acct).expect("set market");
     }
+
+    /// Set `MarketHeader.nonce` directly. The nonce only advances one
+    /// per quote/fill through normal instructions, so it can't reach
+    /// `u64::MAX` in a test the honest way — poke it to drive the
+    /// per-leg `checked_add(1)` overflow branch in `swap`.
+    pub fn poke_nonce(&mut self, nonce: u64) {
+        let mut acct = self.svm.get_account(&self.market).expect("market");
+        let off = 8 + core::mem::offset_of!(MarketHeader, nonce);
+        acct.data[off..off + 8].copy_from_slice(&nonce.to_le_bytes());
+        self.svm.set_account(self.market, acct).expect("set market");
+    }
 }
