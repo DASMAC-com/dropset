@@ -111,6 +111,7 @@ thiserror
 toggleable
 tokenised
 tombstoned
+tombstoning
 topoff
 topojson
 transfero
