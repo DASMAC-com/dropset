@@ -25,6 +25,11 @@ solana-program-error = "3"
 solana-pubkey = {version = "3", features = ["borsh", "curve25519"]}
 thiserror = "1"
 
+[dev-dependencies]
+# Reads the shared sdk/conformance/quoting_vectors.json in
+# tests/quoting_conformance.rs (the quoting-translation pin).
+serde_json = "1"
+
 [features]
 # Codama emits `#[cfg(feature = "anchor")]` / `"anchor-idl-build"` gates
 # for optional anchor-compat impls. Declared here so the flags are known
