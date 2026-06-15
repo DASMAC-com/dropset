@@ -1,11 +1,11 @@
 ---
-name: platform-audit-loop
-description: One iteration of a continuous background platform audit — pick a unit of work (a non-generated file, the oldest unaudited PR, or a whole-system architecture pass), run the relevant sub-agents (security / comment-accuracy / doc-freshness / design-quality / naming for files; layering / invariant-coverage / paradigm / data-flow / duplication / cross-platform-seams / spec-health for architecture) with an adversarial cross-check, dedup against prior findings and open or resolved Linear issues, then file Linear subtasks under the umbrella issue and announce. Stops itself after 20 filings and writes a parallel-session fix plan (waves of disjoint-file sessions) onto the umbrella issue. Drive it with `/loop platform-audit-loop`.
+name: audit-loop
+description: One iteration of a continuous background platform audit — pick a unit of work (a non-generated file, the oldest unaudited PR, or a whole-system architecture pass), run the relevant sub-agents (security / comment-accuracy / doc-freshness / design-quality / naming for files; layering / invariant-coverage / paradigm / data-flow / duplication / cross-platform-seams / spec-health for architecture) with an adversarial cross-check, dedup against prior findings and open or resolved Linear issues, then file Linear subtasks under the umbrella issue and announce. Stops itself after 20 filings and writes a parallel-session fix plan (waves of disjoint-file sessions) onto the umbrella issue. Drive it with `/loop audit-loop`.
 disable-model-invocation: false
 user-invocable: true
 ---
 
-# `platform-audit-loop`
+# `audit-loop`
 
 Run **one iteration** of a continuous, unattended
 platform audit and exit. Each iteration picks a
@@ -19,7 +19,7 @@ This skill is meant to be driven by the built-in
 loop harness:
 
 ```sh
-/loop platform-audit-loop
+/loop audit-loop
 ```
 
 Invoked with no interval, `/loop` re-invokes this
@@ -61,12 +61,12 @@ gitignored `.audit-loop/` state and the Linear
 subtasks it files. It produces no source diff of its
 own, so it must never commit or push. The one repo
 operation it does perform is fast-forwarding the
-throwaway worktree to upstream `main` between
-iterations (step 11) — that pulls in others' merged
-work but introduces no change the loop wrote, and it
-never commits, pushes, or force-updates.
+throwaway worktree to upstream `main` at the **start
+of each iteration** (step 1) — that pulls in others'
+merged work but introduces no change the loop wrote,
+and it never commits, pushes, or force-updates.
 
-**Where to run it.** Run `/loop platform-audit-loop`
+**Where to run it.** Run `/loop audit-loop`
 from a dedicated, throwaway worktree you never commit
 in. The `.audit-loop/` state lives and accumulates
 inside whatever worktree you run it from, and because
@@ -203,9 +203,25 @@ through `jq` / `python` / `sed`.
 
 ## Steps
 
-**1. Ensure state exists, rebuild the ledger from
-Linear, and refresh discovery.**
-Glob for `.audit-loop/state.json`. If the
+**1. Sync to main, ensure state exists, rebuild the
+ledger from Linear, and refresh discovery.**
+First, fast-forward the throwaway worktree to upstream
+`main` so this iteration audits current code — this is
+what makes even the **very first** iteration start
+from the latest merged work, and what lets a file's
+`commit_sha` change and re-trigger its audit after a
+merge. Run two bare commands (no compound, no `$(…)`):
+
+```sh
+git fetch origin main
+git merge --ff-only origin/main
+```
+
+If the fast-forward fails (the throwaway worktree has
+drifted), warn and continue — never force or rebase;
+this loop never mutates source.
+
+Then glob for `.audit-loop/state.json`. If the
 directory is missing, Write the four state files
 with empty skeletons (`iteration: 0`,
 `last_mode: "arch"`, `filed_total: 0`, empty
@@ -485,6 +501,23 @@ with `file`, `line`, `dimension`, `severity`
 FILE and PR mode run all six dimensions above; ARCH
 mode uses its own lenses (step 5).
 
+**Linter coverage (FILE / PR mode).** A finding a
+linter already catches is noise, and a finding a
+linter *could* catch is better fixed by a rule than a
+one-off issue. So screen every FILE / PR finding
+against the project's linters — the suite `make lint`
+runs and the configs it drives (clippy, eslint,
+prettier, cspell, etc.):
+
+- If an **existing** lint rule already flags the issue,
+  it is not a finding — `make lint` will surface it in
+  the normal flow; **drop it**.
+- If the issue is a **class** a linter could enforce
+  but doesn't yet, still file it, and add a `**Lint**:`
+  line to the body (step 9) proposing the rule or
+  config that would catch the family — so the fix
+  prevents recurrence instead of being a one-off.
+
 **7. Adversarial cross-check.** Spawn a fresh
 skeptic sub-agent with the collected findings and
 the subject. It must kill false positives,
@@ -533,7 +566,7 @@ Only findings that survive both layers proceed.
 **9. File one Linear subtask per finding.** Reuse
 the `linear-task` destination. **Every finding is
 filed as a Backlog subtask of the umbrella issue
-ENG-452** ("platform-audit-loop findings") so they
+ENG-452** ("audit-loop findings") so they
 collect in one place Alex can scan. Call
 `mcp__claude_ai_Linear__save_issue` (no `id`):
 
@@ -564,13 +597,17 @@ its own worktree (literal newlines, not `\n`):
 - `**Evidence**:` the offending snippet (+ the doc
   or comment it contradicts, for those dimensions).
 - `**Fix sketch**:` the concrete suggested change.
+- `**Lint**:` *(when applicable)* the lint rule or
+  config that would catch this class going forward, per
+  the linter-coverage screen in step 6 — so the fix
+  prevents recurrence rather than being a one-off.
 - `**Fingerprint**: <fingerprint>` — the exact dedup
   key (e.g. `swap.rs:slippage:no-min-out`). This line
   is **mandatory**: it is what makes dedup durable.
   Step 1 reads it back to rebuild the ledger, so a
   wiped/throwaway worktree recovers dedup state from
   Linear instead of refiling everything.
-- `**Discovered by**: platform-audit-loop iteration <n> @ <commit SHA>`
+- `**Discovered by**: audit-loop iteration <n> @ <commit SHA>`
 
 After each `save_issue`, append the finding
 (`fingerprint`, `file`, `dimension`, `linear_id`,
@@ -601,7 +638,7 @@ use this body instead:
 - `**Fingerprint**: <fingerprint>` — the `arch:<lens>:<topic-slug>`
   dedup key (mandatory, same role as for FILE / PR
   findings: step 1 rebuilds the ledger from it).
-- `**Discovered by**: platform-audit-loop iteration <n> @ <commit SHA>`
+- `**Discovered by**: audit-loop iteration <n> @ <commit SHA>`
 
 Priority 3; these are proposals for Alex to triage,
 not pre-approved work. Title them by area, e.g.
@@ -644,20 +681,10 @@ Set `last_mode` to this iteration's **intended** mode
 `iteration`. `filed_total` was already incremented
 per filing in step 9.
 
-Then **sync the worktree to latest main** so the next
-iteration audits current code — this is what lets a
-file's `commit_sha` change and re-trigger its audit
-after a merge. Run two bare commands (no compound, no
-`$(…)`):
-
-```sh
-git fetch origin main
-git merge --ff-only origin/main
-```
-
-If the fast-forward fails (the throwaway worktree has
-drifted), warn in the tally and continue — never
-force or rebase; this loop never mutates source.
+The next iteration's step 1 fast-forwards the worktree
+to latest `main` before it audits, so a file's
+`commit_sha` changes and re-triggers its audit after a
+merge — this step does not sync again here.
 
 Then print the tally:
 
@@ -701,6 +728,17 @@ terminal step: it does no auditing.
   - **Items inside a session are serial** — they touch
     the same files, so they're listed in the order to
     do them within that one session.
+  - **Each session is one PR — compress to the fewest
+    PRs.** A session maps to a single PR; its serial
+    items are commits within that one PR, never a PR
+    apiece. So fold every finding whose files fall in a
+    session into that session (subject to the
+    disjoint-file rule) rather than spinning up a new
+    session — the goal is the minimum number of PRs
+    that still keeps parallel sessions file-disjoint.
+    Don't merge findings whose file sets *don't*
+    overlap just to cut the count, though: that would
+    serialize work that could have run in parallel.
   - **Waves** are barriers. A later wave's work that
     touches the same handlers as an earlier wave must
     not start until that earlier session has merged.
@@ -724,6 +762,30 @@ terminal step: it does no auditing.
     as Duplicate), so the plan lists only the live
     remaining work.
 
+- **Adversarially cross-check the staged plan before
+  writing it.** The grouping is the part most likely to
+  be silently wrong, and a bad grouping costs a merge
+  conflict or a serialized session. Spawn a fresh
+  skeptic sub-agent with the drafted waves / sessions
+  and each finding's files, told to hunt for:
+
+  - two "parallel" sessions in the same wave that
+    actually share a file (a hidden collision that
+    would conflict on merge);
+  - a dependency ordered backwards — a fix placed
+    before the foundational change or contract
+    (doc/spec) it relies on;
+  - a finding in the wrong wave — one that could run a
+    wave earlier, or one that will collide with file
+    sets still in flight if it runs where it's placed;
+  - over- or under-compression — findings split across
+    PRs that should share one (per the minimal-PR rule
+    above), or disjoint findings merged into one
+    session that needlessly serializes them.
+
+  Apply what survives; iterate at most 2 rounds, then
+  write the plan.
+
 - Write the plan onto **ENG-452** by updating its
   description (`mcp__claude_ai_Linear__save_issue`
   with `id: "ENG-452"`). ENG-452's description **is**
@@ -732,8 +794,8 @@ terminal step: it does no auditing.
   than appending — that keeps it idempotent and never
   stacks duplicates. Match the existing shape: a
   short *"How to read it"* preamble (Wave = barrier;
-  Sessions in a wave = parallel, disjoint files; items
-  in a session = serial), then:
+  Sessions in a wave = parallel, disjoint files; a
+  session = one PR; items in a session = serial), then:
 
   ```txt
   ### Wave 1 — start now · <N> parallel sessions (disjoint files)
@@ -750,7 +812,7 @@ terminal step: it does no auditing.
   ENG-452 already does.
 
 - **Stop the loop.** Print a final line —
-  `DONE platform-audit-loop | filed_total <t> | fix plan written to ENG-452`
+  `DONE audit-loop | filed_total <t> | fix plan written to ENG-452`
   — and do **not** begin another iteration. The loop
   is complete; `/loop` should not re-invoke. (To run
   another audit campaign later, reset `filed_total`
