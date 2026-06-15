@@ -16,10 +16,10 @@ use anchor_lang_v2::{address_eq, prelude::*};
 #[allow(unused_imports)]
 use anchor_spl_v2::{
     associated_token::AssociatedToken,
-    token_2022::{transfer_checked, TransferChecked},
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
 
+use super::transfer_in_leg;
 use crate::{
     errors::DropsetError,
     events::{DepositEvent, RealizeEvent},
@@ -153,33 +153,27 @@ impl DepositLeader {
             )?
         };
 
-        // Transfer base + quote into the treasuries.
-        if base_in_final > 0 {
-            let decimals = self.base_mint.decimals();
-            let cpi = CpiContext::new(
-                self.base_token_program.address(),
-                TransferChecked {
-                    from: self.signer_base_ata.cpi_handle_mut(),
-                    mint: self.base_mint.cpi_handle(),
-                    to: self.market_base_treasury.cpi_handle_mut(),
-                    authority: self.signer.cpi_handle(),
-                },
-            );
-            transfer_checked(cpi, base_in_final, decimals)?;
-        }
-        if quote_in_final > 0 {
-            let decimals = self.quote_mint.decimals();
-            let cpi = CpiContext::new(
-                self.quote_token_program.address(),
-                TransferChecked {
-                    from: self.signer_quote_ata.cpi_handle_mut(),
-                    mint: self.quote_mint.cpi_handle(),
-                    to: self.market_quote_treasury.cpi_handle_mut(),
-                    authority: self.signer.cpi_handle(),
-                },
-            );
-            transfer_checked(cpi, quote_in_final, decimals)?;
-        }
+        // Transfer base + quote into the treasuries. `transfer_in_leg`
+        // skips the CPI on a zero leg (`transfer_checked` rejects zero
+        // amounts on classic SPL Token).
+        transfer_in_leg(
+            self.base_token_program.address(),
+            self.signer_base_ata.cpi_handle_mut(),
+            self.base_mint.cpi_handle(),
+            self.market_base_treasury.cpi_handle_mut(),
+            self.signer.cpi_handle(),
+            base_in_final,
+            self.base_mint.decimals(),
+        )?;
+        transfer_in_leg(
+            self.quote_token_program.address(),
+            self.signer_quote_ata.cpi_handle_mut(),
+            self.quote_mint.cpi_handle(),
+            self.market_quote_treasury.cpi_handle_mut(),
+            self.signer.cpi_handle(),
+            quote_in_final,
+            self.quote_mint.decimals(),
+        )?;
 
         // Apply vault mutations.
         let market_addr = *self.market.address();

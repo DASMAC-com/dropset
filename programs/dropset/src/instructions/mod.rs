@@ -25,6 +25,44 @@ pub mod close_market;
 pub mod close_registry;
 pub mod force_withdraw;
 
+use anchor_lang_v2::prelude::*;
+use anchor_spl_v2::token_2022::{transfer_checked, TransferChecked};
+
+/// Inbound single-leg deposit transfer: move `amount` of one mint from
+/// the signer's ATA into the market treasury via `transfer_checked`,
+/// authorized by the signer itself (`CpiContext::new`, no PDA seeds).
+///
+/// Shared by `deposit` and `deposit_leader` so the zero-skip and CPI
+/// shape stay identical across both. `transfer_checked` rejects zero
+/// amounts on classic SPL Token, so a zero leg is skipped here rather
+/// than at each call site. This is the **inbound** family (authority =
+/// the signer); the outbound treasury→user pair uses
+/// `new_with_signer` with the market PDA seeds.
+#[allow(clippy::too_many_arguments)]
+pub fn transfer_in_leg<'a>(
+    token_program: &'a Address,
+    from_signer_ata: CpiHandleMut<'a>,
+    mint: CpiHandle<'a>,
+    treasury: CpiHandleMut<'a>,
+    authority: CpiHandle<'a>,
+    amount: u64,
+    decimals: u8,
+) -> core::result::Result<(), ProgramError> {
+    if amount == 0 {
+        return Ok(());
+    }
+    let cpi = CpiContext::new(
+        token_program,
+        TransferChecked {
+            from: from_signer_ata,
+            mint,
+            to: treasury,
+            authority,
+        },
+    );
+    transfer_checked(cpi, amount, decimals)
+}
+
 pub use admin::*;
 pub use close_market::*;
 pub use close_registry::*;
