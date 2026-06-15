@@ -28,7 +28,7 @@ use crate::{
     errors::DropsetError,
     events::{DepositEvent, RealizeEvent},
     state::{isqrt_u128, realize_in_place, single_leg_basket, Market, PPM},
-    VaultDepositorHeader, Q32_32_ONE,
+    VaultDepositorHeader,
 };
 
 #[event_cpi]
@@ -305,11 +305,12 @@ impl Deposit {
             // top-offs merge against `VPS_now` evaluated at the
             // post-deposit state.
             let l_after = isqrt_u128((new_base_atoms as u128) * (new_quote_atoms as u128));
-            let vps_after = if new_total == 0 {
-                Q32_32_ONE
-            } else {
-                ((l_after << 32) / new_total as u128) as u64
-            };
+            // `new_total > 0` always on this outside-only path: seeding is
+            // rejected at `SeedingRequiresLeader` (so `total_shares > 0`)
+            // and `single_leg_basket` guards `shares_out > 0`, hence
+            // `new_total ≥ 2`. No zero-divisor guard needed here — the
+            // seeding case it would cover is unreachable from `deposit`.
+            let vps_after = ((l_after << 32) / new_total as u128) as u64;
             // Decoded reference price for cost-basis math.
             let ref_now_price = crate::Price::from_bits(ref_price_bits);
             // Quote-denominated lot value: `quote_in + base_in × ref`
