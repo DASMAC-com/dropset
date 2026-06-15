@@ -19,13 +19,18 @@ all changes are committed and pushed.
 
 ## Steps
 
-1. **Locate the PR.** Identify the current branch
-   and its PR:
+1. **Locate the PR.** Identify the current branch,
+   then look up its PR — run the branch listing on
+   its own and pass the name to `gh pr view`
+   literally (no command substitution, so the call
+   reduces to a stable allow-rule):
 
    ```sh
-   branch=$(git branch --show-current)
-   gh pr view "$branch" \
-     --json number,title,state,isDraft
+   git branch --show-current
+   ```
+
+   ```sh
+   gh pr view <branch> --json number,title,state,isDraft
    ```
 
    If no PR exists, stop and tell the user to
@@ -136,6 +141,18 @@ all changes are committed and pushed.
      left behind, partial implementations,
      unused imports or dead code introduced by
      the diff.
+   - **`CLAUDE.md` freshness** — does anything in
+     the project's `CLAUDE.md` still match reality
+     after this diff? Read `CLAUDE.md` and check its
+     rules, command examples, paths, and tooling
+     references against the current codebase and the
+     diff. Flag guidance the diff outdates (a
+     command, path, target, or convention it renames,
+     moves, or removes) and any rule that has silently
+     gone stale. Treat a rule the diff **directly
+     violates or invalidates** as **blocking**;
+     merely-stale prose as a **warning** with the
+     suggested correction.
 
    Each sub-agent must return findings with file
    path, line number, severity (**blocking** /
@@ -292,6 +309,9 @@ all changes are committed and pushed.
      unverified locally (toolchain absent).
    - Title status: passes `Semantic PR` or not.
    - Merge status: `MERGEABLE` or `CONFLICTING`.
+   - `CLAUDE.md` freshness: in sync, or each stale
+     rule / reference the diff outdated, with the
+     suggested correction.
    - Issues found / fixed / remaining.
    - Remaining warnings and nits for human review,
      each with `file:line` and rationale.
