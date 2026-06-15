@@ -1506,7 +1506,15 @@ from the depositor to the treasuries, then:
   `Vault.allow_outside_depositors == 1` (leader opt-in) and
   `Vault.outside_deposits_approved == 1` (admin approval); either
   flag unset rejects the deposit. See
-  **Leader operations → SetOutsideDepositsApproved**.
+  **Leader operations → SetOutsideDepositsApproved**. The outside
+  path also requires the vault's `ReferencePrice` to be set —
+  `reference_price.price` must not be the unset sentinel (`0` or
+  `u32::MAX`), else the deposit reverts with `ReferencePriceNotSet`.
+  The depositor's `entry_ref_price` basis is captured from that
+  price; entering against an unset reference would silently collapse
+  the cost-basis math (`quote_for_base(ZERO, base) == 0`), so it is
+  rejected up front. The leader path has no such gate — seeding sets
+  the inventory ratio directly without recording a depositor basis.
 
 **Instruction split.** The two paths are wired as separate
 instructions in the program: `deposit_leader` / `withdraw_leader`
@@ -1545,7 +1553,8 @@ Deposits against frozen or tombstoned vaults are rejected.
 
 ### Withdraw
 
-Caller specifies `shares_in` to burn. The vault delivers a pro-rata
+Caller specifies `shares_in` to burn alongside slippage bounds
+`(min_base_out, min_quote_out)`. The vault delivers a pro-rata
 basket:
 
 ```text
@@ -1554,7 +1563,13 @@ slice_quote = floor(shares_in × quote_atoms / total_shares)
 ```
 
 Rounding down keeps any dust in the vault for the benefit of
-remaining depositors. Then:
+remaining depositors. The instruction reverts with `BasketSlippage`
+if `slice_base < min_base_out` or `slice_quote < min_quote_out` — the
+floored basket undershot the caller's tolerance because the vault's
+ratio or `total_shares` moved (this mirrors the Deposit
+`max_base_in` / `max_quote_in` guard above). Both withdraw variants
+(`withdraw` and `withdraw_leader`) enforce the same two bounds.
+Then:
 
 - **Leader path** (`signer == vault.leader`): decrement
   `Vault.leader_shares` by `shares_in`. The leader has no
