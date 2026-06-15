@@ -492,6 +492,63 @@ pub fn realize_in_place(vault: &mut Vault) -> RealizeOutcome {
     }
 }
 
+/// Single-leg subsequent-deposit sizing — spec invariant I1
+/// (VPS-preserving). Shared by `deposit` (outside) and
+/// `deposit_leader`'s non-seeding top-up arm so the rounding direction
+/// and slippage semantics stay identical across both; a divergence here
+/// is a silent value-leak, not a compile error.
+///
+/// Exactly one leg is supplied (`base_in XOR quote_in`); the matching
+/// leg is derived from the vault's current ratio. Shares are **floored**
+/// (`shares_out = leg × total_shares / atoms`) and the basket is rounded
+/// **up** (`ceil(shares_out × atoms / total_shares)`) so the vault never
+/// under-collects. Both finals are bounded by the caller's `max_*_in`
+/// (`BasketSlippage`).
+///
+/// Returns `(shares_out, base_in_final, quote_in_final)`. Requires
+/// `total_shares > 0` — callers reject seeding before this point (the
+/// seeding share formula is the `isqrt` basket, not this path).
+pub fn single_leg_basket(
+    total_shares: u64,
+    base_atoms: u64,
+    quote_atoms: u64,
+    base_in: u64,
+    quote_in: u64,
+    max_base_in: u64,
+    max_quote_in: u64,
+) -> Result<(u64, u64, u64)> {
+    require!(
+        (base_in > 0) ^ (quote_in > 0),
+        DropsetError::SingleLegRequired
+    );
+    let ts = total_shares as u128;
+    let b = base_atoms as u128;
+    let q = quote_atoms as u128;
+    let shares_out_u128 = if base_in > 0 {
+        ((base_in as u128) * ts) / b
+    } else {
+        ((quote_in as u128) * ts) / q
+    };
+    require!(
+        shares_out_u128 > 0 && shares_out_u128 <= u64::MAX as u128,
+        DropsetError::MathOverflow
+    );
+    // Basket = ceil(shares_out × leg / total_shares). u128 intermediates;
+    // the final values fit in u64 by construction (basket ≤ caller's
+    // input + 1).
+    let base_in_final = (shares_out_u128 * b).div_ceil(ts);
+    let quote_in_final = (shares_out_u128 * q).div_ceil(ts);
+    require!(
+        base_in_final <= max_base_in as u128 && quote_in_final <= max_quote_in as u128,
+        DropsetError::BasketSlippage
+    );
+    Ok((
+        shares_out_u128 as u64,
+        base_in_final as u64,
+        quote_in_final as u64,
+    ))
+}
+
 impl VaultDll for Market {
     fn allocate_sector(&mut self, payer: &AccountView) -> Result<u32> {
         // Free list first — reuse a reclaimed sector if any.

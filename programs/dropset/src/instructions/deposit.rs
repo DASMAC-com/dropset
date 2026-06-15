@@ -27,7 +27,7 @@ use anchor_spl_v2::{
 use crate::{
     errors::DropsetError,
     events::{DepositEvent, RealizeEvent},
-    state::{isqrt_u128, realize_in_place, Market, PPM},
+    state::{isqrt_u128, realize_in_place, single_leg_basket, Market, PPM},
     VaultDepositorHeader, Q32_32_ONE,
 };
 
@@ -226,39 +226,15 @@ impl Deposit {
         // Compute the basket + shares_out. Seeding is rejected
         // earlier (this is the outside path), so `total_shares > 0`
         // by the time we get here — only the single-leg path runs.
-        let (shares_out, base_in_final, quote_in_final) = {
-            // Subsequent deposit: exactly one leg is sized.
-            require!(
-                (base_in > 0) ^ (quote_in > 0),
-                DropsetError::SingleLegRequired
-            );
-            let ts = total_shares as u128;
-            let b = base_atoms as u128;
-            let q = quote_atoms as u128;
-            let shares_out_u128 = if base_in > 0 {
-                ((base_in as u128) * ts) / b
-            } else {
-                ((quote_in as u128) * ts) / q
-            };
-            require!(
-                shares_out_u128 > 0 && shares_out_u128 <= u64::MAX as u128,
-                DropsetError::MathOverflow
-            );
-            // Basket = ceil(shares_out × leg / total_shares). u128
-            // intermediates; the final values fit in u64 by construction
-            // (basket ≤ caller's input + 1).
-            let base_in_final = (shares_out_u128 * b).div_ceil(ts);
-            let quote_in_final = (shares_out_u128 * q).div_ceil(ts);
-            require!(
-                base_in_final <= max_base_in as u128 && quote_in_final <= max_quote_in as u128,
-                DropsetError::BasketSlippage
-            );
-            (
-                shares_out_u128 as u64,
-                base_in_final as u64,
-                quote_in_final as u64,
-            )
-        };
+        let (shares_out, base_in_final, quote_in_final) = single_leg_basket(
+            total_shares,
+            base_atoms,
+            quote_atoms,
+            base_in,
+            quote_in,
+            max_base_in,
+            max_quote_in,
+        )?;
 
         // Skin-in-the-game floor: post-deposit
         // `leader_shares / total_shares >= min_leader_share / PPM`.
