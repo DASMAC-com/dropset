@@ -41,8 +41,9 @@ use crate::{
     max_quote_in: u64,
 )]
 pub struct Deposit {
-    /// Either the vault's leader (seeding or top-up of leader_shares)
-    /// or an outside depositor (creates / tops off `vault_depositor`).
+    /// The outside depositor (creates / tops off `vault_depositor`).
+    /// The leader is rejected here — their deposits go through
+    /// `deposit_leader`, which carries no `VaultDepositor` PDA.
     #[account(mut)]
     pub signer: Signer,
     /// Market the vault lives on. Mut for share + inventory writes.
@@ -206,8 +207,10 @@ impl Deposit {
             DropsetError::ReferencePriceNotSet
         );
 
-        // Realize first (spec). No-op when seeding (total_shares == 0).
-        // Capture outcome so we can emit a RealizeEvent if shares minted.
+        // Realize first (spec). Seeding is rejected above, so
+        // `total_shares > 0` always holds here and `realize_in_place`
+        // never short-circuits on the unseeded guard. Capture the
+        // outcome so we can emit a RealizeEvent if shares minted.
         let realize_outcome = {
             let v = &mut self.market.as_mut_slice()[vault_idx as usize];
             realize_in_place(v)
@@ -306,7 +309,8 @@ impl Deposit {
             // Decoded reference price for cost-basis math.
             let ref_now_price = crate::Price::from_bits(ref_price_bits);
             // Quote-denominated lot value: `quote_in + base_in × ref`
-            // (spec L944). Uses `quote_for_base` to decode the price.
+            // (spec § Depositor positions and cost basis → Top-off).
+            // Uses `quote_for_base` to decode the price.
             let lot_quote_value = (quote_in_final as u128)
                 .saturating_add(ref_now_price.quote_for_base(base_in_final));
             let lot_quote_value_u64 = lot_quote_value.min(u64::MAX as u128) as u64;
