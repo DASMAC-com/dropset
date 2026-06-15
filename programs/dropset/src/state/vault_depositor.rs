@@ -62,6 +62,73 @@ pub struct VaultDepositorHeader {
     pub _reserved: [u8; 7],
 }
 
+impl VaultDepositorHeader {
+    /// Establish or extend this depositor's cost basis after a deposit of
+    /// `shares_out` shares carrying `lot_quote_value` quote-denominated
+    /// principal, entering at `vps_after` (Q32.32) and reference price
+    /// `ref_now`.
+    ///
+    /// Owns the basis invariants for every field this type holds
+    /// (`shares`, `net_deposits`, `gross_deposited`, `entry_ref_price`,
+    /// `entry_vps`, `opened_at`) so the handler no longer carries the
+    /// first-deposit-vs-top-off branching inline. `realized_*` and `bump`
+    /// are untouched — they default at PDA init / are stamped by the
+    /// handler.
+    ///
+    /// Returns `true` when this was the **first** deposit into the PDA,
+    /// signalling the caller to bump `Market::outstanding_vault_depositors`
+    /// — that counter is `Market` state, not depositor state, and stays in
+    /// the handler.
+    ///
+    /// On a top-off it shares-weighted-merges `entry_vps` (Q32.32, so a raw
+    /// u128 weighted average is exact) and routes `entry_ref_price` through
+    /// [`Price::weighted_average`] (a custom decimal-float that must
+    /// decode / average / re-encode). See the spec's **Depositor positions
+    /// and cost basis → Top-off**.
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_deposit(
+        &mut self,
+        market: Address,
+        sector_idx: u32,
+        owner: Address,
+        shares_out: u64,
+        lot_quote_value: u64,
+        vps_after: u64,
+        ref_now: Price,
+        opened_at: u64,
+    ) -> bool {
+        let prior_shares = self.shares.get();
+        let new_shares = prior_shares + shares_out;
+        if prior_shares == 0 {
+            // First deposit into this PDA — stamp all basis fields.
+            self.market = market;
+            self.sector_idx = sector_idx.into();
+            self.owner = owner;
+            self.shares = new_shares.into();
+            self.net_deposits = lot_quote_value.into();
+            self.gross_deposited = lot_quote_value.into();
+            self.entry_ref_price = ref_now;
+            self.entry_vps = vps_after.into();
+            self.opened_at = opened_at.into();
+            true
+        } else {
+            // Top-off: merge shares-weighted averages.
+            let s = prior_shares as u128;
+            let ds = shares_out as u128;
+            let denom = s + ds;
+            let entry_vps_prev = self.entry_vps.get() as u128;
+            let entry_vps_new = (s * entry_vps_prev + ds * (vps_after as u128)) / denom;
+            let entry_ref_new = self.entry_ref_price.weighted_average(ref_now, s, ds);
+            self.shares = new_shares.into();
+            self.net_deposits = (self.net_deposits.get() + lot_quote_value).into();
+            self.gross_deposited = (self.gross_deposited.get() + lot_quote_value).into();
+            self.entry_vps = (entry_vps_new as u64).into();
+            self.entry_ref_price = entry_ref_new;
+            false
+        }
+    }
+}
+
 // Pin the on-chain layout — same offset-guard pattern as `MarketHeader`
 // / `Vault`. A reorder that preserves the total size would silently
 // shift fields without these.
