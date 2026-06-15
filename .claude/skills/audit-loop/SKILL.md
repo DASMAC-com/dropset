@@ -652,7 +652,7 @@ this iteration, send exactly **one**
 `PushNotification` summarizing the top one. If
 nothing was filed, send no notification.
 
-**11. Close out, sync main, and continue.** Update
+**11. Close out and continue.** Update
 `state.json`:
 
 - **FILE mode** — mark the subject covered, recording
