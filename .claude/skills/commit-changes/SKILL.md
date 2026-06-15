@@ -56,8 +56,22 @@ changes here belong to this session.
 1. Push to the branch's upstream:
 
    ```sh
-   git push 2>/dev/null || \
-     git push -u origin "$(git branch --show-current)"
+   git push
+   ```
+
+   If that fails because the branch has no
+   upstream yet, get the branch name on its own
+   and pass it to `git push -u` literally (no
+   command substitution, no redirect, no `||`
+   compound — each call reduces to a stable
+   allow-rule):
+
+   ```sh
+   git branch --show-current
+   ```
+
+   ```sh
+   git push -u origin <branch>
    ```
 
 1. Print the commit hash, short summary, and push
