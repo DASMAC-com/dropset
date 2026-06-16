@@ -21,10 +21,10 @@ use anchor_lang_v2::{address_eq, prelude::*};
 #[allow(unused_imports)]
 use anchor_spl_v2::{
     associated_token::AssociatedToken,
-    token_2022::{transfer_checked, TransferChecked},
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
 
+use super::transfer_out_leg;
 use crate::{
     errors::DropsetError,
     events::{RealizeEvent, WithdrawEvent},
@@ -232,37 +232,28 @@ impl Withdraw {
         let signer_seeds_inner: [&[u8]; 3] = [base_seed, quote_seed, bump_seed];
         let signer_seeds: [&[&[u8]]; 1] = [&signer_seeds_inner];
 
-        // Transfer base + quote from treasuries → caller. `transfer_checked`
-        // requires non-zero amounts on classic SPL Token; skip the CPI
-        // when the leg is zero.
-        if slice_base_u64 > 0 {
-            let decimals = self.base_mint.decimals();
-            let cpi = CpiContext::new_with_signer(
-                self.base_token_program.address(),
-                TransferChecked {
-                    from: self.market_base_treasury.cpi_handle_mut(),
-                    mint: self.base_mint.cpi_handle(),
-                    to: self.signer_base_ata.cpi_handle_mut(),
-                    authority: self.market.cpi_handle(),
-                },
-                &signer_seeds,
-            );
-            transfer_checked(cpi, slice_base_u64, decimals)?;
-        }
-        if slice_quote_u64 > 0 {
-            let decimals = self.quote_mint.decimals();
-            let cpi = CpiContext::new_with_signer(
-                self.quote_token_program.address(),
-                TransferChecked {
-                    from: self.market_quote_treasury.cpi_handle_mut(),
-                    mint: self.quote_mint.cpi_handle(),
-                    to: self.signer_quote_ata.cpi_handle_mut(),
-                    authority: self.market.cpi_handle(),
-                },
-                &signer_seeds,
-            );
-            transfer_checked(cpi, slice_quote_u64, decimals)?;
-        }
+        // Transfer base + quote from treasuries → caller via the shared
+        // outbound helper (skips the CPI on a zero leg).
+        transfer_out_leg(
+            self.base_token_program.address(),
+            self.market_base_treasury.cpi_handle_mut(),
+            self.base_mint.cpi_handle(),
+            self.signer_base_ata.cpi_handle_mut(),
+            self.market.cpi_handle(),
+            slice_base_u64,
+            self.base_mint.decimals(),
+            &signer_seeds,
+        )?;
+        transfer_out_leg(
+            self.quote_token_program.address(),
+            self.market_quote_treasury.cpi_handle_mut(),
+            self.quote_mint.cpi_handle(),
+            self.signer_quote_ata.cpi_handle_mut(),
+            self.market.cpi_handle(),
+            slice_quote_u64,
+            self.quote_mint.decimals(),
+            &signer_seeds,
+        )?;
 
         // Close the VaultDepositor PDA when an outside depositor's
         // shares hit zero — refund rent to the depositor and
