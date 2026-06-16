@@ -220,7 +220,7 @@ Use literal newlines, not `\n`. Shape:
   per-session sub-blocks:
 
   ```txt
-  ### Wave 1 — start now
+  ### Wave 1
 
   - ENG-### — <imperative summary>. `<file globs>`. <dependency / "Absorbs ENG-###…" note, if any>
   ...
@@ -233,12 +233,15 @@ Use literal newlines, not `\n`. Shape:
   Done / …); a `[ENG-###](url)` markdown link does not.
   This applies everywhere, including "Absorbs ENG-### …"
   notes.
-- Don't annotate waves with how many sessions are
-  parallel or that files are disjoint — that's the
-  expected default and just adds noise. State a
-  dependency only when one genuinely exists ("After
-  ENG-###").
-- Close with a one-line severity / compression footer.
+- Keep wave headings bare (`### Wave 1`, `### Wave 2`, …).
+  Don't suffix them with "start now" / "after Wave 1" —
+  the ordering is implicit — and don't annotate how many
+  sessions are parallel or that files are disjoint; that's
+  the expected default. State a dependency only when one
+  genuinely exists ("After ENG-###").
+- No footer — drop the severity / compression summary
+  lines; the issue tags carry severity, and the bullet
+  count speaks for itself.
 
 **Open issues only.** A closed / resolved issue (Done /
 Won't-fix / Canceled / Duplicate) is **omitted
