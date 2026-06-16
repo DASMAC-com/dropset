@@ -32,10 +32,12 @@ use anchor_spl_v2::{
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
 
+use dropset_price_core::matching_math::{flush_level_price, level_fill_atoms, sort_key};
+
 use crate::{
     errors::DropsetError,
     events::FillEvent,
-    state::{Market, BPS, FLUSH_BIT, PPM},
+    state::{Market, FLUSH_BIT, PPM},
     Price, N_LEVELS,
 };
 
@@ -100,11 +102,7 @@ impl SwapSide {
     /// this yields the spec's price-time priority from a single sort.
     #[inline]
     fn price_sort_key(self, price: Price) -> u32 {
-        if self.consumes_asks() {
-            price.as_u32()
-        } else {
-            price.bid_key()
-        }
+        sort_key(price, self.consumes_asks())
     }
 
     /// True when `price` is worse than the taker's `limit`, so the leg
@@ -255,45 +253,21 @@ pub struct Swap {
     pub clock: Sysvar<Clock>,
 }
 
-/// Materialize an absolute-price `Price` from a reference price and a
-/// ppm offset. For asks: `ref × (PPM + offset) / PPM`. For bids:
-/// `ref × max(PPM − offset, 0) / PPM` (saturating; bids with offset ≥
-/// PPM produce `Price::ZERO`, which the limit-price filter then
-/// excludes).
-fn flush_level_price(reference: Price, offset_ppm: u32, is_ask: bool) -> Price {
-    if reference.is_zero() || reference.is_infinity() {
-        return reference;
-    }
-    let sig = reference.significand() as u128;
-    let exp = reference.biased_exponent() as i16;
-    let factor: u128 = if is_ask {
-        PPM as u128 + offset_ppm as u128
-    } else {
-        (PPM as u128).saturating_sub(offset_ppm as u128)
-    };
-    if factor == 0 {
-        return Price::ZERO;
-    }
-    let scaled = (sig * factor) / (PPM as u128);
-    Price::from_scaled(scaled as u64, exp).unwrap_or(Price::ZERO)
-}
-
-/// `level.size_bps` × the matching leg, in atoms.
+/// `level.size_bps` × the matching leg, in atoms — the program-side
+/// wrapper over [`level_fill_atoms`] that maps its `size_bps > BPS`
+/// rejection to a hard `DropsetError`.
 ///
 /// `size_bps <= BPS` is enforced at `set_liquidity_profile`, so the
-/// guard below never fires on a profile written through the normal
-/// path. It is load-bearing only against a future instruction that
-/// reshapes a profile without that validation: with the invariant held
-/// the product is at most `leg_atoms * BPS`, which divided by `BPS` is
-/// `<= leg_atoms <= u64::MAX`, so the cast is lossless. We `require!`
-/// the invariant rather than silently `.min(u64::MAX)`-clamping, which
-/// would mask the bug by shrinking the level's materialized size.
+/// rejection never fires on a profile written through the normal path.
+/// It is load-bearing only against a future instruction that reshapes a
+/// profile without that validation. We reject rather than silently
+/// clamp, which would mask the bug by shrinking the level's materialized
+/// size. The pricing (`flush_level_price`) and the cap itself are shared
+/// with the off-chain simulator via [`dropset_price_core::matching_math`]
+/// so the two can't drift.
 fn flush_level_size(size_bps: u16, leg_atoms: u64) -> Result<u64> {
-    require!(
-        size_bps as u64 <= BPS,
-        DropsetError::LiquidityProfileSizeOverflow
-    );
-    Ok((leg_atoms as u128 * size_bps as u128 / BPS as u128) as u64)
+    level_fill_atoms(size_bps, leg_atoms)
+        .ok_or_else(|| DropsetError::LiquidityProfileSizeOverflow.into())
 }
 
 /// One entry on the ephemeral matching heap. Built per-`(vault,

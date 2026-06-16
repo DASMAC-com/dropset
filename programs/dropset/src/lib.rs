@@ -4,14 +4,18 @@ use anchor_lang_v2::prelude::*;
 mod errors;
 mod events;
 mod instructions;
-mod price;
 mod state;
 
 pub use errors::*;
 pub use events::*;
 use instructions::*;
-pub use price::*;
 pub use state::*;
+
+// The `Price` codec lives in the solana-free `dropset-price-core` crate
+// (interface.md § SDK) so the on-chain engine, the Rust SDK, and the WASM
+// client all share one implementation. Re-exported at the crate root so
+// existing `crate::Price` paths keep resolving.
+pub use dropset_price_core::Price;
 
 declare_id!("TESTnXwv2eHoftsSd5NEdpH4zEu7XRC8jviuoNPdB2Q");
 

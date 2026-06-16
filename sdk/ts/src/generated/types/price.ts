@@ -34,9 +34,11 @@ import { combineCodec, getU32Decoder, getU32Encoder, type FixedSizeCodec, type F
  * comparison of two prices matches comparing the values they encode.
  * The encoding is canonical: one bit pattern per representable price.
  *
- * **IDL note:** `Price` does not derive `IdlType`. Add the derive if
- * this type appears in an Anchor `#[account]` struct or instruction
- * argument that requires IDL generation.
+ * **IDL note:** the Anchor `IdlType` derive is gated behind this crate's
+ * `idl` feature (enabled by the on-chain program), so when `Price`
+ * appears in an `#[account]` struct or instruction argument it emits as
+ * raw `u32` bits. The off-chain / WASM builds leave `idl` off so the
+ * crate stays solana-free.
  */
 export type Price = number;
 
