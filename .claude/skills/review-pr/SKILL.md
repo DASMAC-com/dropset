@@ -145,15 +145,40 @@ all changes are committed and pushed.
    make lint
    ```
 
-   If lint fails:
+   If lint fails, first separate **environmental**
+   failures from **real violations** — they're not the
+   same problem:
 
-   - Parse the output and fix every issue that
-     can be fixed mechanically (formatting,
-     import order, trailing whitespace, spelling,
-     etc.).
+   - A hook that fails because its binary isn't
+     installed is **not** a diff problem. The
+     frontend hooks — `biome`, `tsc` — report
+     "Command … not found" whenever this worktree has
+     no frontend `node_modules` (each worktree is a
+     fresh checkout, so deps aren't installed until you
+     ask). Install them once and re-run, so the hooks
+     actually evaluate the diff:
 
-   - Stage the fixes by explicit path and commit
-     as a single signed commit:
+     ```sh
+     pnpm --dir frontend install
+     ```
+
+     If the deps still can't be installed, treat those
+     hooks as **unverifiable locally** — exactly like an
+     absent Solana toolchain (steps 9–10), not as a
+     blocking failure. When the diff touches none of the
+     files such a stalled hook covers (e.g. a docs-only
+     change vs. `biome` / `tsc`, which only target
+     JS / TS / CSS), note in the report that they'll
+     pass in CI and move on. **Never gate the PR on a
+     hook that couldn't run.**
+
+   - For genuine violations, parse the output and fix
+     every issue that can be fixed mechanically
+     (formatting, import order, trailing whitespace,
+     spelling, etc.).
+
+   - Stage the fixes by explicit path and commit as a
+     single signed commit:
 
      ```sh
      git add <fixed files...>
@@ -162,10 +187,10 @@ all changes are committed and pushed.
 
    - Re-run `make lint` to confirm it passes.
 
-   - If lint still fails after the fix attempt,
-     catalogue the remaining failures as
-     **blocking** issues (step 7) and do **not**
-     mark the PR ready.
+   - If real violations still fail after the fix
+     attempt, catalogue the remaining failures as
+     **blocking** issues (step 7) and do **not** mark
+     the PR ready.
 
 1. **Adversarial diff review.** Get the full diff:
 
@@ -400,7 +425,10 @@ all changes are committed and pushed.
    CI-mirroring check is green so the human can
    safely approve auto-merge: **zero blocking
    issues** (including every Linear checklist item
-   addressed), `make lint` passes, the generated
+   addressed), `make lint` passes — real violations
+   resolved, with any hook that couldn't run locally
+   (e.g. `biome` / `tsc` without frontend deps) noted as
+   unverifiable, not gated — the generated
    artifacts are fresh and committed (IDL — or honestly
    reported unverifiable if the toolchain is absent — SDK
    clients, conformance vectors), `make test` and
@@ -452,7 +480,9 @@ all changes are committed and pushed.
      checklist item marked addressed / partial /
      missing (or "no Linear task checked" if none
      was resolvable).
-   - Lint status: pass or fail with details.
+   - Lint status: pass, fail with details, or which
+     hooks were unverifiable locally (deps not
+     installed) and why that's safe for this diff.
    - Generated artifacts: IDL / SDK clients /
      conformance vectors — regenerated clean, committed a
      refresh, or (IDL only) unverifiable without the
