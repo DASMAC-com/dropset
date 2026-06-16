@@ -33,6 +33,13 @@ jobs:
         git add -A -- sdk/ts/src/generated sdk/rs/src/generated
         git diff --cached --exit-code -- \
         sdk/ts/src/generated sdk/rs/src/generated
+    # The checked-in conformance vectors are generated artifacts that only
+    # get *consumed* by the tests below — nothing re-derives them.
+    # Regenerate from the price-core examples and fail on drift, so a
+    # hand-edited vector or an un-regenerated generator / `Price` change
+    # can't pin stale expectations while CI stays green.
+    - name: 'Conformance vectors are fresh'
+      run: 'make check-conformance-vectors'
     # TypeScript SDK: typecheck + cross-language conformance vectors.
     - run: 'pnpm --filter @dropset/sdk run check'
     - run: 'pnpm --filter @dropset/sdk test'
