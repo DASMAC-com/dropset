@@ -131,4 +131,21 @@ match `eng-###` (case-insensitive), stop and ask.
      --body ""
    ```
 
-1. Print the new PR URL.
+1. Mark the Linear issue **In Progress** so the board
+   reflects that work on this worktree has started.
+   Update it by identifier (the uppercased tag) via the
+   `claude.ai Linear` MCP:
+
+   ```txt
+   mcp__claude_ai_Linear__save_issue(
+     id: "<ENG-###>",
+     state: "In Progress"
+   )
+   ```
+
+   If the issue doesn't exist or the update fails, warn
+   and continue — bootstrapping shouldn't be blocked by
+   Linear.
+
+1. Print the new PR URL and confirm the Linear issue was
+   moved to In Progress.

@@ -211,27 +211,34 @@ implementation-sequence document in full:
 "dbc36954-3269-4ea6-8651-c4d6ef5344bf", content: "…")`.
 Use literal newlines, not `\n`. Shape:
 
-- A short **"How to read it"** preamble: Wave = barrier;
-  Sessions in a wave = parallel, disjoint files; a
-  session = one PR; items in a session = serial.
-- Then the waves (usually just Wave 1):
+- A short one-line **"How to read it"** preamble: each
+  line is one issue = one PR; Wave = barrier (don't start
+  a wave until the prior wave's overlapping PRs merge);
+  open issues only, delete a line once its PR lands.
+- Then the waves (usually just Wave 1), as a **plain
+  bullet list** — one bullet per PR, no checkboxes, no
+  per-session sub-blocks:
 
   ```txt
-  ### Wave 1 — start now · <N> parallel sessions (disjoint files)
+  ### Wave 1 — start now
 
-  **Session 1 — <name>** (one PR)
-  Files: `<glob/paths this session owns>`
-
-  - [ ] [ENG-###](https://linear.app/dasmac/issue/ENG-###) — <imperative summary>. <dependency note, if any>
+  - ENG-### — <imperative summary>. `<file globs>`. <dependency / "Absorbs ENG-###…" note, if any>
   ...
   ```
 
-- Every issue reference is a markdown link in exactly
-  this format —
-  `[ENG-###](https://linear.app/dasmac/issue/ENG-###)` —
-  so Linear renders the issue's **live status** (In
-  Progress / Done / …) inline in the document.
-- Close with a one-line severity-tag legend.
+- **Write every issue reference as the bare tag `ENG-###`
+  in plaintext — never a markdown link.** Linear
+  auto-resolves a bare identifier into a live issue
+  mention that renders its current status (In Progress /
+  Done / …); a `[ENG-###](url)` markdown link does not.
+  This applies everywhere, including "Absorbs ENG-### …"
+  notes.
+- Don't annotate waves with how many sessions are
+  parallel or that files are disjoint — that's the
+  expected default and just adds noise. State a
+  dependency only when one genuinely exists ("After
+  ENG-###").
+- Close with a one-line severity / compression footer.
 
 **Open issues only.** A closed / resolved issue (Done /
 Won't-fix / Canceled / Duplicate) is **omitted
