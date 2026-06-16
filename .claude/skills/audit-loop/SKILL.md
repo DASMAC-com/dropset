@@ -1,6 +1,6 @@
 ---
 name: audit-loop
-description: One iteration of a continuous background platform audit — pick a unit of work (a non-generated file, the oldest unaudited PR, or a whole-system architecture pass), run the relevant sub-agents (security / comment-accuracy / doc-freshness / design-quality / naming for files; layering / invariant-coverage / paradigm / data-flow / duplication / cross-platform-seams / spec-health for architecture) with an adversarial cross-check, dedup against prior findings and open or resolved Linear issues, then file Linear subtasks under the umbrella issue and announce. Stops itself after 20 filings and writes a parallel-session fix plan (waves of disjoint-file sessions) onto the umbrella issue. Drive it with `/loop audit-loop`.
+description: One iteration of a continuous background platform audit — pick a unit of work (a non-generated file, the oldest unaudited PR, or a whole-system architecture pass), run the relevant sub-agents (security / comment-accuracy / doc-freshness / design-quality / naming for files; layering / invariant-coverage / paradigm / data-flow / duplication / cross-platform-seams / spec-health for architecture) with an adversarial cross-check, dedup against prior findings and open or resolved Linear issues, then file one self-contained Backlog issue per finding and announce. Stops itself after 20 filings and hands staging to `stage-backlog`. Drive it with `/loop audit-loop`.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -11,9 +11,12 @@ Run **one iteration** of a continuous, unattended
 platform audit and exit. Each iteration picks a
 single unit of work, audits it across several
 dimensions with adversarial cross-checking, and
-files one self-contained Linear subtask per
-confirmed finding so the work can be picked up in
-parallel without blocking the repo.
+files one self-contained **Backlog** issue per
+confirmed finding (no parent — the same parentless
+Backlog `linear-task` files into) so the work can be
+picked up in parallel without blocking the repo.
+Staging those issues into a PR plan is a separate
+job, owned by `stage-backlog`, not this loop.
 
 This skill is meant to be driven by the built-in
 loop harness:
@@ -46,8 +49,8 @@ work as written.)
 `audit-codebase` is one-shot, user-scoped,
 plan-gated, and writes a gitignored checklist.
 This loop is unattended, self-selects scope one
-unit at a time, files Linear subtasks instead of a
-checklist, and persists coverage + dedup state
+unit at a time, files plain Backlog issues instead of
+a checklist, and persists coverage + dedup state
 across iterations. It **reuses** that skill's
 parallel-sub-agent + adversarial-cross-check
 engine and `linear-task`'s fixed filing
@@ -58,7 +61,7 @@ destination.
 Like `audit-codebase`, this loop **never authors
 source edits**. The only writes it makes are the
 gitignored `.audit-loop/` state and the Linear
-subtasks it files. It produces no source diff of its
+issues it files. It produces no source diff of its
 own, so it must never commit or push. The one repo
 operation it does perform is fast-forwarding the
 throwaway worktree to upstream `main` at the **start
@@ -72,7 +75,7 @@ in. The `.audit-loop/` state lives and accumulates
 inside whatever worktree you run it from, and because
 it is gitignored nothing is ever staged or pushed —
 so the worktree stays pure scratch space while
-findings land in Linear under the umbrella issue.
+findings land in the Dropset Linear Backlog.
 
 ## State
 
@@ -234,18 +237,24 @@ with empty skeletons (`iteration: 0`,
 Then **rebuild and refresh the dedup ledger from
 Linear** — the ledger is a cache, and the durable
 record lives on the issues themselves (so a wiped
-worktree recovers). List every subtask of the
-umbrella issue ENG-452 with
-`mcp__claude_ai_Linear__list_issues`
-(`parentId: "ENG-452"`, `includeArchived: true`).
-For each, parse the `**Fingerprint**:` line out of
-its description (step 9 writes it onto every filed
-issue) and read its current state. Reconcile into
+worktree recovers). List **all Dropset-project
+issues** with `mcp__claude_ai_Linear__list_issues`
+(same team / project IDs as step 9,
+`includeArchived: true`) and keep those whose
+description carries a `**Fingerprint**:` line — those
+are the audit-filed issues (step 9 writes the line
+onto every one). For each kept issue, parse **every**
+`**Fingerprint**:` line — a normal issue has one, but
+an issue that `stage-backlog` merged carries the
+**union** of its group's fingerprints, so read them
+all — and read its current state. Reconcile into
 `findings.json`:
 
-- Any Linear issue whose fingerprint is **missing**
-  from the ledger → add it, with `status` =
-  `closed` if the issue is in a resolved state
+- Any **fingerprint** (on any kept issue, including
+  each one in a merged issue's union) that is
+  **missing** from the ledger → add it, with the
+  owning issue's `linear_id` and `status` =
+  `closed` if that issue is in a resolved state
   (Done / Won't-fix / Canceled / Duplicate) else
   `open`.
 - Any ledger entry that **does** have a `linear_id`
@@ -269,8 +278,8 @@ the platform list.
 iteration's mode.** Read `state.json`. **If
 `filed_total >= 20`, stop the loop**: do no auditing
 this iteration and jump straight to the wind-down in
-step 12 (write the parallel-session fix plan onto
-ENG-452 and terminate). Otherwise advance a fixed
+step 12 (hand staging to `stage-backlog` and
+terminate). Otherwise advance a fixed
 3-way rotation off `last_mode` so every job runs
 regularly without randomness in the control flow:
 
@@ -554,20 +563,22 @@ deterministically). Then, in order:
   same dimensions the fingerprint uses: for FILE / PR
   findings a `<basename + topic>` query; for ARCH
   findings a `<lens + topic>` query (there is no
-  basename). If any audit-loop subtask (parent
-  ENG-452), **open or resolved**, already covers the
-  same subject + topic — equivalently, carries a
-  matching `**Fingerprint**:` line — record its id and
-  current status into `findings.json` and **skip
-  filing**.
+  basename). If any project issue, **open or
+  resolved**, already covers the same subject + topic —
+  equivalently, carries a matching `**Fingerprint**:`
+  line (check **every** fingerprint line, since a
+  `stage-backlog`-merged issue holds several) — record
+  its id and current status into `findings.json` and
+  **skip filing**.
 
 Only findings that survive both layers proceed.
 
-**9. File one Linear subtask per finding.** Reuse
-the `linear-task` destination. **Every finding is
-filed as a Backlog subtask of the umbrella issue
-ENG-452** ("audit-loop findings") so they
-collect in one place Alex can scan. Call
+**9. File one Linear issue per finding.** File
+exactly as the `linear-task` skill does: a **plain
+Backlog issue with no parent**, assigned to Alex, into
+the shared destination. There is **no umbrella issue** —
+the project Backlog is the queue, and `stage-backlog`
+turns it into a PR plan later. Call
 `mcp__claude_ai_Linear__save_issue` (no `id`):
 
 ```txt
@@ -575,7 +586,6 @@ mcp__claude_ai_Linear__save_issue(
   team: "84659a7c-5ea3-47b1-b2bd-c531e3721d6b",
   project: "d505fe50-cc8b-41ca-be93-6215d9adcea0",
   assignee: "b3ec6d9f-3c78-48da-8b4e-042176e8c579",
-  parentId: "ENG-452",
   state: "Backlog",
   title: "<file>: <imperative fix, no trailing period>",
   description: "<markdown body, literal newlines>",
@@ -583,6 +593,20 @@ mcp__claude_ai_Linear__save_issue(
   links: [{ url: "<pr-url>", title: "<pr-title>" }]  // PR mode only
 )
 ```
+
+**File obviously-coupled findings together up front.**
+If this iteration surfaced more than one finding that
+plainly belongs in the **same PR** — same file or
+symbol, the work would obviously land as one change —
+file them as **one combined Backlog issue** instead of
+several: one title, the per-finding notes under
+per-source sub-headings, and a `**Fingerprint**:` line
+for **each** finding (the union). You already hold the
+context here, so combining now saves `stage-backlog`
+from re-deriving the grouping and re-merging later.
+Count each fingerprint toward `filed_total`. Findings
+that don't obviously share a PR stay separate — let
+`stage-backlog` decide those.
 
 The description must let a cold agent act on it in
 its own worktree (literal newlines, not `\n`):
@@ -616,8 +640,8 @@ increment `state.json`'s `filed_total` by one (Read
 then Edit/Write) — `filed_total` drives the
 stop-after-20 condition in step 2.
 
-**ARCH-mode findings** are filed the same way
-(Backlog subtask of ENG-452, same IDs) but as **one
+**ARCH-mode findings** are filed the same way (plain
+Backlog issue, same IDs, no parent) but as **one
 detailed proposal issue each** — they are not
 atomically fixable, so don't pretend otherwise.
 Don't include the "safe to fix in isolation" line;
@@ -644,7 +668,7 @@ Priority 3; these are proposals for Alex to triage,
 not pre-approved work. Title them by area, e.g.
 `arch: decouple the matcher from Market storage layout`.
 
-**10. Announce.** For each newly filed subtask,
+**10. Announce.** For each newly filed issue,
 print a prominent line:
 `FILED ENG-### [<dimension>/<severity>] <file> — <title>`.
 If at least one **high-severity** issue was filed
@@ -698,121 +722,24 @@ If `filed_total >= 20`, proceed to step 12 now
 so `/loop` re-invokes immediately for the next
 iteration — no timer, no wait.
 
-**12. Wind down — write the parallel-session fix plan
-onto ENG-452 and stop.** Reached only when
-`filed_total >= 20` (from
+**12. Wind down — hand staging to `stage-backlog` and
+stop.** Reached only when `filed_total >= 20` (from
 the step 2 gate, or directly from step 11 when the
-20th filing just landed). This is the loop's
-terminal step: it does no auditing.
+20th filing just landed). This is the loop's terminal
+step: it does no auditing, and it does **not** author
+the PR plan itself — staging is `stage-backlog`'s job.
 
-- List **every** subtask of ENG-452 (open and
-  resolved) with `mcp__claude_ai_Linear__list_issues`
-  (`parentId: "ENG-452"`, `includeArchived: true`) —
-  the same full read step 1 does. Drop issues in a
-  resolved state (Done / Won't-fix / Canceled /
-  Duplicate): the checklist is the remaining work.
-
-- Arrange the findings for **concurrent Claude
-  sessions** — the plan's whole purpose is to show
-  Alex *what can run in parallel*, not just a linear
-  order. Match the structure ENG-452 already uses:
-
-  - **Sessions** are the unit of parallelism. Each
-    session owns a **disjoint set of files**; sessions
-    with non-overlapping file sets run **at the same
-    time**, one Claude session each. Group findings
-    into a session by the files they touch (read each
-    finding's `**File**:` line / arch `**Evidence**:`
-    anchors) so two parallel sessions never edit the
-    same file.
-  - **Items inside a session are serial** — they touch
-    the same files, so they're listed in the order to
-    do them within that one session.
-  - **Each session is one PR — compress to the fewest
-    PRs.** A session maps to a single PR; its serial
-    items are commits within that one PR, never a PR
-    apiece. So fold every finding whose files fall in a
-    session into that session (subject to the
-    disjoint-file rule) rather than spinning up a new
-    session — the goal is the minimum number of PRs
-    that still keeps parallel sessions file-disjoint.
-    Don't merge findings whose file sets *don't*
-    overlap just to cut the count, though: that would
-    serialize work that could have run in parallel.
-  - **Waves** are barriers. A later wave's work that
-    touches the same handlers as an earlier wave must
-    not start until that earlier session has merged.
-    Put a finding in a later wave (rather than a
-    parallel session) precisely when it would collide
-    with file sets still in flight — e.g. DRY
-    extractions over handlers that a Wave-1
-    correctness fix is still editing, or a big
-    cross-cutting refactor (`arch:` / slab-layout /
-    de-fork) that touches nearly everything must run
-    solo in its own late wave.
-  - Within that structure still honour dependencies:
-    a foundational fix others build on goes first and
-    is flagged; a finding that defines a contract
-    (doc/spec) precedes code that depends on it;
-    `arch:` proposals that subsume single-file nits
-    come before those nits.
-  - **Exclude** anything that isn't open work: the
-    resolved issues already dropped above (this also
-    covers findings consolidated elsewhere and closed
-    as Duplicate), so the plan lists only the live
-    remaining work.
-
-- **Adversarially cross-check the staged plan before
-  writing it.** The grouping is the part most likely to
-  be silently wrong, and a bad grouping costs a merge
-  conflict or a serialized session. Spawn a fresh
-  skeptic sub-agent with the drafted waves / sessions
-  and each finding's files, told to hunt for:
-
-  - two "parallel" sessions in the same wave that
-    actually share a file (a hidden collision that
-    would conflict on merge);
-  - a dependency ordered backwards — a fix placed
-    before the foundational change or contract
-    (doc/spec) it relies on;
-  - a finding in the wrong wave — one that could run a
-    wave earlier, or one that will collide with file
-    sets still in flight if it runs where it's placed;
-  - over- or under-compression — findings split across
-    PRs that should share one (per the minimal-PR rule
-    above), or disjoint findings merged into one
-    session that needlessly serializes them.
-
-  Apply what survives; iterate at most 2 rounds, then
-  write the plan.
-
-- Write the plan onto **ENG-452** by updating its
-  description (`mcp__claude_ai_Linear__save_issue`
-  with `id: "ENG-452"`). ENG-452's description **is**
-  this plan (it has no other content), so **replace
-  the description** with the regenerated plan rather
-  than appending — that keeps it idempotent and never
-  stacks duplicates. Match the existing shape: a
-  short *"How to read it"* preamble (Wave = barrier;
-  Sessions in a wave = parallel, disjoint files; a
-  session = one PR; items in a session = serial), then:
-
-  ```txt
-  ### Wave 1 — start now · <N> parallel sessions (disjoint files)
-
-  **Session 1 — <name>** (serial chain)
-  Files: `<glob/paths this session owns>`
-
-  - [ ] ENG-### — <imperative summary>. <dependency note, if any>
-  ...
-  ```
-
-  Use real issue links and literal newlines (not
-  `\n`). Close with a one-line severity-tag legend as
-  ENG-452 already does.
+- **Invoke the `stage-backlog` skill** (via the Skill
+  tool) to (re)stage the Backlog onto the
+  implementation-sequence document: it reads every
+  Backlog issue — including the ones this campaign just
+  filed — groups them into the fewest parallel,
+  file-disjoint PR sessions, merges the issues that
+  belong in one PR, and rewrites the document. All the
+  wave/session/merge logic lives there now, not here.
 
 - **Stop the loop.** Print a final line —
-  `DONE audit-loop | filed_total <t> | fix plan written to ENG-452`
+  `DONE audit-loop | filed_total <t> | staged via stage-backlog`
   — and do **not** begin another iteration. The loop
   is complete; `/loop` should not re-invoke. (To run
   another audit campaign later, reset `filed_total`
@@ -864,7 +791,7 @@ future iterations skip them by path alone.
   one unit of work per iteration, and high-severity-
   only push notifications (step 10).
 - Filing is autonomous by design — it must be, to
-  run unattended. ENG-452's Backlog is the review
+  run unattended. The project Backlog is the review
   queue; triage there, not at file time.
 - Shell discipline (per `CLAUDE.md`): every command
   here is a single bare call that reduces to an
