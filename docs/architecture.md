@@ -1515,12 +1515,12 @@ On every taker instruction:
    and level index as a final deterministic tiebreak. A single
    `sort_by_key` over this materialized snapshot reproduces the spec's
    cross-vault price-time priority. A binary min-heap with `pop_min`
-   was the originally-researched structure (see
-   **docs/research/svm-heap-emit-cpi.md**), but at `N_LEVELS = 8` the
-   whole book is at most `max_vaults_per_market × 8` entries, so one
-   sort of a flat `Vec` is simpler than maintaining heap order and
-   carries no meaningful CU cost at this scale; the heap design is
-   retained there only as a rejected alternative.
+   was the originally-researched structure (see **Implementation notes**
+   below), but at `N_LEVELS = 8` the whole book is at most
+   `max_vaults_per_market × 8` entries, so one sort of a flat `Vec` is
+   simpler than maintaining heap order and carries no meaningful CU cost
+   at this scale; the heap design is retained only as a rejected
+   alternative.
 
 1. **Walk** the sorted `Vec` front-to-back and compute each fill.
    Units depend on side:
@@ -1554,6 +1554,42 @@ On every taker instruction:
    chain. Takers bump `market.nonce` per fill but never touch
    `reference_price.stamp` beyond clearing `FLUSH_BIT`, and never
    touch `Vault.remaining.price` or `Vault.remaining.expires_at`.
+
+### Implementation notes — heap and capacity
+
+The ephemeral book is **heap-allocated**, not stacked: its length isn't
+known until the active-DLL walk finishes, and even a worst-case buffer
+would overflow the ~4 KiB SBPF stack frame. These constraints bound the
+design:
+
+- **Entry size.** Each collected entry (step 5 above) is ~32 B at
+  8-byte alignment — the `price_key` (`u32`) plus the original `price`
+  (kept for the fill math, so the sort reads the key and never decodes a
+  `Price` twice), the masked `nonce` (`u64`), `sector_idx` / `level_idx`
+  (`u32` each), and `size` (`u64`).
+- **Capacity.** The book is bounded at `max_vaults_per_market × N_LEVELS`
+  entries. At the default cap (10 vaults × `N_LEVELS = 8` = 80 entries ×
+  ~32 B ≈ **2.5 KiB**) it sits comfortably inside the **32 KiB default
+  program heap** — no `RequestHeapFrame` is needed. Only a market
+  configured near the `u8` vault ceiling (255 × 8 × 32 B ≈ 64 KiB) would
+  exceed the default heap and need a frame request (8 CU per extra
+  32 KiB page).
+- **Bump allocator, no reclaim.** The runtime's default allocator is a
+  bump allocator whose `dealloc` is a no-op, so each `Vec` doubling
+  permanently leaks the old buffer for the rest of the instruction —
+  tolerable here only because the entry count is small and bounded. If
+  the book ever grew large, pre-size with
+  `Vec::with_capacity(vaults × N_LEVELS)` for one up-front allocation.
+- **Tear-down is free.** The `Vec` is dropped when the VM tears down the
+  entire heap region at instruction return — zero work, zero CU.
+
+The source-grounded version of these constraints — SVM heap mechanics,
+the allocator, the matching recipe, and the runtime limits that govern
+emit fidelity (see **Events and emission**), each with a file:line
+permalink — lives in
+[`docs/research/svm-heap-emit-cpi.md`](research/svm-heap-emit-cpi.md),
+which also keeps the rejected `BinaryHeap`/`pop_min` matcher as a
+considered alternative.
 
 ### Crossed leader quotes
 
