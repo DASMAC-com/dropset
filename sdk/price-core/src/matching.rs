@@ -9,11 +9,15 @@
 //! crossed.
 //!
 //! Used by the router quoting adapters (e.g. DFlow) and any depth/quote
-//! endpoint. It is a hand-mirror of the program logic; per interface.md
-//! § SDK it must be pinned to the engine via shared conformance vectors
-//! (a CI follow-up) before it is trusted as authoritative.
+//! endpoint. The consensus-critical arithmetic — flush-level pricing, the
+//! size-bps fill cap, the price-time sort key — is shared with the
+//! on-chain engine via [`crate::matching_math`], so only the iteration /
+//! IO around it (reconstructing a book vs. walking the live slab) is
+//! distinct here. That residual seam is pinned to the engine by the
+//! shared conformance vectors (see `sdk/conformance`).
 
-use crate::layout::{MarketView, Vault, BPS, N_LEVELS, PPM};
+use crate::layout::{MarketView, Vault, N_LEVELS, PPM};
+use crate::matching_math::{flush_level_price, level_fill_atoms, sort_key};
 use crate::price::Price;
 
 /// Taker side. `Buy` consumes asks (pays quote, receives base); `Sell`
@@ -39,26 +43,6 @@ pub struct Quote {
     pub fee_amount: u64,
     /// Number of `(vault, level)` legs that filled.
     pub legs: u32,
-}
-
-/// Materialize an absolute level price from a reference price and a ppm
-/// offset — mirrors `swap::flush_level_price`.
-fn flush_level_price(reference: Price, offset_ppm: u32, is_ask: bool) -> Price {
-    if reference.is_zero() || reference.is_infinity() {
-        return reference;
-    }
-    let sig = reference.significand() as u128;
-    let exp = reference.biased_exponent() as i16;
-    let factor: u128 = if is_ask {
-        PPM as u128 + offset_ppm as u128
-    } else {
-        (PPM as u128).saturating_sub(offset_ppm as u128)
-    };
-    if factor == 0 {
-        return Price::ZERO;
-    }
-    let scaled = (sig * factor) / (PPM as u128);
-    Price::from_scaled(scaled as u64, exp).unwrap_or(Price::ZERO)
 }
 
 /// A live, matchable level pulled from a vault during book construction.
@@ -126,11 +110,7 @@ pub fn simulate_swap(
             {
                 continue;
             }
-            let key = if is_buy {
-                price.as_u32()
-            } else {
-                price.bid_key()
-            };
+            let key = sort_key(price, is_buy);
             levels.push(Lvl {
                 key,
                 price,
@@ -266,13 +246,16 @@ fn level_state(
         if is_buy {
             let a = v.profile.asks[i];
             let price = flush_level_price(reference, a.price_offset.get(), true);
-            let size = (base_atoms as u128 * a.size_bps.get() as u128 / BPS as u128) as u64;
+            // A profile written through `set_liquidity_profile` always has
+            // `size_bps <= BPS`; a malformed one drops the level (size 0),
+            // matching the on-chain handler's hard reject.
+            let size = level_fill_atoms(a.size_bps.get(), base_atoms).unwrap_or(0);
             let expires_at = ref_slot.saturating_add(a.expiry_offset.get());
             (price, size, expires_at)
         } else {
             let b = v.profile.bids[i];
             let price = flush_level_price(reference, b.price_offset.get(), false);
-            let size = (quote_atoms as u128 * b.size_bps.get() as u128 / BPS as u128) as u64;
+            let size = level_fill_atoms(b.size_bps.get(), quote_atoms).unwrap_or(0);
             let expires_at = ref_slot.saturating_add(b.expiry_offset.get());
             (price, size, expires_at)
         }

@@ -1425,6 +1425,7 @@ dependencies = [
 name = "dropset-price-core"
 version = "0.1.0"
 dependencies = [
+ "anchor-lang-v2",
  "bytemuck",
  "serde_json",
  "wasm-bindgen",

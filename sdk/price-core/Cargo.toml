@@ -6,7 +6,11 @@
 # compiled to WASM (the `wasm` feature) for the TS client. Both sides
 # are pinned to the engine by shared conformance vectors (see sdk/conformance).
 
+# `anchor-lang-v2` is optional and pulled in only by the `idl` feature
+# (the on-chain program's IDL build). It is NOT solana-free, so it must
+# never be enabled for the WASM build — keep it gated.
 [dependencies]
+anchor-lang-v2 = {workspace = true, optional = true}
 bytemuck = {version = "1", features = ["derive", "min_const_generics"]}
 wasm-bindgen = {version = "0.2", optional = true}
 
@@ -16,9 +20,26 @@ wasm-bindgen = {version = "0.2", optional = true}
 serde_json = "1"
 
 [features]
-default = []
-# wasm-bindgen exports for the TypeScript client.
-wasm = ["dep:wasm-bindgen"]
+default = ["simulate"]
+# Anchor `IdlType` derive on `Price`, for the on-chain program's IDL
+# generation. Pulls `anchor-lang-v2` (not solana-free), so it is off by
+# default and must never be combined with `wasm`. The program enables it
+# via `default-features = false, features = ["idl"]`.
+idl = ["dep:anchor-lang-v2"]
+# Anchor's `IdlType` derive emits `cfg(feature = "idl-build")`-gated impls
+# (the same pattern the program crate handles for its own derives). When
+# `anchor idl build` enables `idl-build` on the program, the program
+# forwards it here via `dropset-price-core/idl-build` so `Price`'s impl
+# compiles. Implies `idl` so the derive is actually applied.
+idl-build = ["idl"]
+# Off-chain book reconstruction (`matching::simulate_swap`), which pulls
+# `std` collections. On for the Rust SDK and WASM consumers; off for the
+# on-chain program, which needs only the `Price` codec + the pure matcher
+# math in `matching_math`.
+simulate = []
+# wasm-bindgen exports for the TypeScript client. Implies `simulate`
+# (the bindings expose `simulate_swap`).
+wasm = ["dep:wasm-bindgen", "simulate"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
