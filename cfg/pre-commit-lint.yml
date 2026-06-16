@@ -54,11 +54,13 @@ repos:
     id: 'file-contents-sorter'
   - id: 'mixed-line-ending'
   # JSON under frontend/ is handled by biome.
-  # `sdk/idl/` is the anchor-generated IDL — leave it byte-for-byte as
-  # `anchor idl build` emits it so the IDL-diff CI gate stays meaningful.
+  # `sdk/idl/` is the anchor-generated IDL and `sdk/conformance/` are the
+  # generator-emitted conformance vectors — leave both byte-for-byte as
+  # their generators emit them so the diff-based freshness CI gates
+  # (`make idl`, `make check-conformance-vectors`) stay meaningful.
   - args:
     - '--autofix'
-    exclude: '(^frontend/|^sdk/idl/|package-lock\.json)'
+    exclude: '(^frontend/|^sdk/idl/|^sdk/conformance/|package-lock\.json)'
     id: 'pretty-format-json'
   repo: 'https://github.com/pre-commit/pre-commit-hooks'
   rev: 'v6.0.0'

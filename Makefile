@@ -49,11 +49,14 @@ conformance-vectors:
 	cargo run -p dropset-price-core --example gen_conformance -- --write
 	cargo run -p dropset-price-core --example gen_quoting -- --write
 
-# Freshness gate (CI): regenerate the vectors, then fail if the checked-in
-# bytes drift. Catches a hand-edited vector, or a generator / `Price` math
-# change that wasn't followed by `make conformance-vectors`.
+# Freshness gate (CI): regenerate the vectors, then stage + diff against
+# HEAD so a hand-edited or stale vector — and an added or removed one —
+# all fail the gate, not just in-place edits (mirrors the IDL/clients gate
+# in .github/workflows/sdk.yml). A generator / `Price` math change not
+# followed by `make conformance-vectors` is exactly what this catches.
 check-conformance-vectors: conformance-vectors
-	git diff --exit-code -- sdk/conformance/
+	git add -A -- sdk/conformance/
+	git diff --cached --exit-code -- sdk/conformance/
 
 # Run the SDK test suites: Rust (price-core + dropset-sdk, incl. the
 # conformance vectors) and the TS conformance check.
