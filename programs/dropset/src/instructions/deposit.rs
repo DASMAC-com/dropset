@@ -20,15 +20,15 @@ use anchor_lang_v2::{address_eq, prelude::*};
 #[allow(unused_imports)]
 use anchor_spl_v2::{
     associated_token::AssociatedToken,
-    token_2022::{transfer_checked, TransferChecked},
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
 
+use super::transfer_in_leg;
 use crate::{
     errors::DropsetError,
     events::{DepositEvent, RealizeEvent},
-    state::{isqrt_u128, realize_in_place, Market, PPM},
-    VaultDepositorHeader, Q32_32_ONE,
+    state::{isqrt_u128, realize_in_place, single_leg_basket, Market, PPM},
+    VaultDepositorHeader,
 };
 
 #[event_cpi]
@@ -41,8 +41,9 @@ use crate::{
     max_quote_in: u64,
 )]
 pub struct Deposit {
-    /// Either the vault's leader (seeding or top-up of leader_shares)
-    /// or an outside depositor (creates / tops off `vault_depositor`).
+    /// The outside depositor (creates / tops off `vault_depositor`).
+    /// The leader is rejected here — their deposits go through
+    /// `deposit_leader`, which carries no `VaultDepositor` PDA.
     #[account(mut)]
     pub signer: Signer,
     /// Market the vault lives on. Mut for share + inventory writes.
@@ -206,8 +207,10 @@ impl Deposit {
             DropsetError::ReferencePriceNotSet
         );
 
-        // Realize first (spec). No-op when seeding (total_shares == 0).
-        // Capture outcome so we can emit a RealizeEvent if shares minted.
+        // Realize first (spec). Seeding is rejected above, so
+        // `total_shares > 0` always holds here and `realize_in_place`
+        // never short-circuits on the unseeded guard. Capture the
+        // outcome so we can emit a RealizeEvent if shares minted.
         let realize_outcome = {
             let v = &mut self.market.as_mut_slice()[vault_idx as usize];
             realize_in_place(v)
@@ -226,39 +229,15 @@ impl Deposit {
         // Compute the basket + shares_out. Seeding is rejected
         // earlier (this is the outside path), so `total_shares > 0`
         // by the time we get here — only the single-leg path runs.
-        let (shares_out, base_in_final, quote_in_final) = {
-            // Subsequent deposit: exactly one leg is sized.
-            require!(
-                (base_in > 0) ^ (quote_in > 0),
-                DropsetError::SingleLegRequired
-            );
-            let ts = total_shares as u128;
-            let b = base_atoms as u128;
-            let q = quote_atoms as u128;
-            let shares_out_u128 = if base_in > 0 {
-                ((base_in as u128) * ts) / b
-            } else {
-                ((quote_in as u128) * ts) / q
-            };
-            require!(
-                shares_out_u128 > 0 && shares_out_u128 <= u64::MAX as u128,
-                DropsetError::MathOverflow
-            );
-            // Basket = ceil(shares_out × leg / total_shares). u128
-            // intermediates; the final values fit in u64 by construction
-            // (basket ≤ caller's input + 1).
-            let base_in_final = (shares_out_u128 * b).div_ceil(ts);
-            let quote_in_final = (shares_out_u128 * q).div_ceil(ts);
-            require!(
-                base_in_final <= max_base_in as u128 && quote_in_final <= max_quote_in as u128,
-                DropsetError::BasketSlippage
-            );
-            (
-                shares_out_u128 as u64,
-                base_in_final as u64,
-                quote_in_final as u64,
-            )
-        };
+        let (shares_out, base_in_final, quote_in_final) = single_leg_basket(
+            total_shares,
+            base_atoms,
+            quote_atoms,
+            base_in,
+            quote_in,
+            max_base_in,
+            max_quote_in,
+        )?;
 
         // Skin-in-the-game floor: post-deposit
         // `leader_shares / total_shares >= min_leader_share / PPM`.
@@ -271,35 +250,27 @@ impl Deposit {
             require!(lhs >= rhs, DropsetError::MinLeaderShareViolated);
         }
 
-        // Transfer base + quote into the treasuries. `transfer_checked`
-        // requires non-zero amounts on classic SPL Token; skip the CPI
-        // when the leg is zero.
-        if base_in_final > 0 {
-            let decimals = self.base_mint.decimals();
-            let cpi = CpiContext::new(
-                self.base_token_program.address(),
-                TransferChecked {
-                    from: self.signer_base_ata.cpi_handle_mut(),
-                    mint: self.base_mint.cpi_handle(),
-                    to: self.market_base_treasury.cpi_handle_mut(),
-                    authority: self.signer.cpi_handle(),
-                },
-            );
-            transfer_checked(cpi, base_in_final, decimals)?;
-        }
-        if quote_in_final > 0 {
-            let decimals = self.quote_mint.decimals();
-            let cpi = CpiContext::new(
-                self.quote_token_program.address(),
-                TransferChecked {
-                    from: self.signer_quote_ata.cpi_handle_mut(),
-                    mint: self.quote_mint.cpi_handle(),
-                    to: self.market_quote_treasury.cpi_handle_mut(),
-                    authority: self.signer.cpi_handle(),
-                },
-            );
-            transfer_checked(cpi, quote_in_final, decimals)?;
-        }
+        // Transfer base + quote into the treasuries. `transfer_in_leg`
+        // skips the CPI on a zero leg (`transfer_checked` rejects zero
+        // amounts on classic SPL Token).
+        transfer_in_leg(
+            self.base_token_program.address(),
+            self.signer_base_ata.cpi_handle_mut(),
+            self.base_mint.cpi_handle(),
+            self.market_base_treasury.cpi_handle_mut(),
+            self.signer.cpi_handle(),
+            base_in_final,
+            self.base_mint.decimals(),
+        )?;
+        transfer_in_leg(
+            self.quote_token_program.address(),
+            self.signer_quote_ata.cpi_handle_mut(),
+            self.quote_mint.cpi_handle(),
+            self.market_quote_treasury.cpi_handle_mut(),
+            self.signer.cpi_handle(),
+            quote_in_final,
+            self.quote_mint.decimals(),
+        )?;
 
         // Apply share + inventory mutations to the vault. Outside
         // path: `Vault.leader_shares` is unchanged; the depositor's
@@ -319,63 +290,48 @@ impl Deposit {
             )
         };
 
-        // Update the VaultDepositor basis fields.
+        // Update the VaultDepositor basis fields. The first-deposit vs
+        // top-off branching and the basis invariants live on
+        // `VaultDepositorHeader::record_deposit`; the handler computes the
+        // inputs and owns the `Market`-level counter bump.
         {
-            let vd = &mut self.vault_depositor;
-            let prior_shares = vd.shares.get();
-            let new_vd_shares = prior_shares + shares_out;
             // Post-deposit VPS = L / total_shares, Q32.32. Spec's
             // **Depositor positions and cost basis → Top-off** says
             // top-offs merge against `VPS_now` evaluated at the
             // post-deposit state.
             let l_after = isqrt_u128((new_base_atoms as u128) * (new_quote_atoms as u128));
-            let vps_after = if new_total == 0 {
-                Q32_32_ONE
-            } else {
-                ((l_after << 32) / new_total as u128) as u64
-            };
+            // `new_total > 0` always on this outside-only path: seeding is
+            // rejected at `SeedingRequiresLeader` (so `total_shares > 0`)
+            // and `single_leg_basket` guards `shares_out > 0`, hence
+            // `new_total ≥ 2`. No zero-divisor guard needed here — the
+            // seeding case it would cover is unreachable from `deposit`.
+            let vps_after = ((l_after << 32) / new_total as u128) as u64;
             // Decoded reference price for cost-basis math.
             let ref_now_price = crate::Price::from_bits(ref_price_bits);
             // Quote-denominated lot value: `quote_in + base_in × ref`
-            // (spec L944). Uses `quote_for_base` to decode the price.
+            // (spec § Depositor positions and cost basis → Top-off).
+            // Uses `quote_for_base` to decode the price.
             let lot_quote_value = (quote_in_final as u128)
                 .saturating_add(ref_now_price.quote_for_base(base_in_final));
             let lot_quote_value_u64 = lot_quote_value.min(u64::MAX as u128) as u64;
 
-            if prior_shares == 0 {
-                // First deposit into this PDA — stamp all basis fields.
-                vd.market = market_addr;
-                vd.sector_idx = vault_idx.into();
-                vd.owner = signer_addr;
-                vd.shares = (new_vd_shares).into();
-                vd.net_deposits = lot_quote_value_u64.into();
-                vd.gross_deposited = lot_quote_value_u64.into();
-                vd.entry_ref_price = ref_now_price;
-                vd.entry_vps = vps_after.into();
-                vd.opened_at = self.clock.slot.into();
-                // realized_* default to zero; bump captured by Anchor.
-                // Bump the market's outstanding depositor counter — this
-                // is a fresh `VaultDepositor` PDA.
+            let is_first = self.vault_depositor.record_deposit(
+                market_addr,
+                vault_idx,
+                signer_addr,
+                shares_out,
+                lot_quote_value_u64,
+                vps_after,
+                ref_now_price,
+                self.clock.slot,
+            );
+            if is_first {
+                // Fresh `VaultDepositor` PDA — bump the market's
+                // outstanding depositor counter (Market state, not
+                // depositor state).
                 let prev = self.market.outstanding_vault_depositors.get();
                 let next = prev.checked_add(1).ok_or(DropsetError::MathOverflow)?;
                 self.market.outstanding_vault_depositors = next.into();
-            } else {
-                // Top-off: merge shares-weighted averages. `entry_vps`
-                // is Q32.32 so a raw u128 weighted-avg is exact;
-                // `entry_ref_price` is a custom decimal-float so we
-                // route through `Price::weighted_average` which
-                // decodes / averages / re-encodes.
-                let s = prior_shares as u128;
-                let ds = shares_out as u128;
-                let denom = s + ds;
-                let entry_vps_prev = vd.entry_vps.get() as u128;
-                let entry_vps_new = (s * entry_vps_prev + ds * (vps_after as u128)) / denom;
-                let entry_ref_new = vd.entry_ref_price.weighted_average(ref_now_price, s, ds);
-                vd.shares = new_vd_shares.into();
-                vd.net_deposits = (vd.net_deposits.get() + lot_quote_value_u64).into();
-                vd.gross_deposited = (vd.gross_deposited.get() + lot_quote_value_u64).into();
-                vd.entry_vps = (entry_vps_new as u64).into();
-                vd.entry_ref_price = entry_ref_new;
             }
         }
 

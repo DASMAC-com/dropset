@@ -36,8 +36,9 @@ export function getDepositInstructionDataCodec(): FixedSizeCodec<DepositInstruct
 
 export type DepositAsyncInput<TAccountSigner extends string = string, TAccountMarket extends string = string, TAccountVaultDepositor extends string = string, TAccountBaseMint extends string = string, TAccountQuoteMint extends string = string, TAccountBaseTokenProgram extends string = string, TAccountQuoteTokenProgram extends string = string, TAccountSignerBaseAta extends string = string, TAccountSignerQuoteAta extends string = string, TAccountMarketBaseTreasury extends string = string, TAccountMarketQuoteTreasury extends string = string, TAccountClock extends string = string, TAccountSystemProgram extends string = string, TAccountAssociatedTokenProgram extends string = string, TAccountEventAuthority extends string = string, TAccountProgram extends string = string> =  {
   /**
- * Either the vault's leader (seeding or top-up of leader_shares)
- * or an outside depositor (creates / tops off `vault_depositor`).
+ * The outside depositor (creates / tops off `vault_depositor`).
+ * The leader is rejected here — their deposits go through
+ * `deposit_leader`, which carries no `VaultDepositor` PDA.
  */
 signer: TransactionSigner<TAccountSigner>;
 /** Market the vault lives on. Mut for share + inventory writes. */
@@ -118,8 +119,9 @@ return Object.freeze({ accounts: [getAccountMeta(accounts.signer), getAccountMet
 
 export type DepositInput<TAccountSigner extends string = string, TAccountMarket extends string = string, TAccountVaultDepositor extends string = string, TAccountBaseMint extends string = string, TAccountQuoteMint extends string = string, TAccountBaseTokenProgram extends string = string, TAccountQuoteTokenProgram extends string = string, TAccountSignerBaseAta extends string = string, TAccountSignerQuoteAta extends string = string, TAccountMarketBaseTreasury extends string = string, TAccountMarketQuoteTreasury extends string = string, TAccountClock extends string = string, TAccountSystemProgram extends string = string, TAccountAssociatedTokenProgram extends string = string, TAccountEventAuthority extends string = string, TAccountProgram extends string = string> =  {
   /**
- * Either the vault's leader (seeding or top-up of leader_shares)
- * or an outside depositor (creates / tops off `vault_depositor`).
+ * The outside depositor (creates / tops off `vault_depositor`).
+ * The leader is rejected here — their deposits go through
+ * `deposit_leader`, which carries no `VaultDepositor` PDA.
  */
 signer: TransactionSigner<TAccountSigner>;
 /** Market the vault lives on. Mut for share + inventory writes. */
@@ -195,8 +197,9 @@ return Object.freeze({ accounts: [getAccountMeta(accounts.signer), getAccountMet
 export type ParsedDepositInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountMetas extends readonly AccountMeta[] = readonly AccountMeta[]> = { programAddress: Address<TProgram>;
 accounts: {
 /**
- * Either the vault's leader (seeding or top-up of leader_shares)
- * or an outside depositor (creates / tops off `vault_depositor`).
+ * The outside depositor (creates / tops off `vault_depositor`).
+ * The leader is rejected here — their deposits go through
+ * `deposit_leader`, which carries no `VaultDepositor` PDA.
  */
 signer: TAccountMetas[0];
 /** Market the vault lives on. Mut for share + inventory writes. */

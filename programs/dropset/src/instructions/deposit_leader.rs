@@ -16,14 +16,14 @@ use anchor_lang_v2::{address_eq, prelude::*};
 #[allow(unused_imports)]
 use anchor_spl_v2::{
     associated_token::AssociatedToken,
-    token_2022::{transfer_checked, TransferChecked},
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
 
+use super::transfer_in_leg;
 use crate::{
     errors::DropsetError,
     events::{DepositEvent, RealizeEvent},
-    state::{isqrt_u128, realize_in_place, Market},
+    state::{isqrt_u128, realize_in_place, single_leg_basket, Market},
     Q32_32_ONE,
 };
 
@@ -142,62 +142,38 @@ impl DepositLeader {
             require!(s > 0 && s <= u64::MAX as u128, DropsetError::MathOverflow);
             (s as u64, base_in, quote_in)
         } else {
-            require!(
-                (base_in > 0) ^ (quote_in > 0),
-                DropsetError::SingleLegRequired
-            );
-            let ts = total_shares as u128;
-            let b = base_atoms as u128;
-            let q = quote_atoms as u128;
-            let shares_out_u128 = if base_in > 0 {
-                ((base_in as u128) * ts) / b
-            } else {
-                ((quote_in as u128) * ts) / q
-            };
-            require!(
-                shares_out_u128 > 0 && shares_out_u128 <= u64::MAX as u128,
-                DropsetError::MathOverflow
-            );
-            let base_in_final = (shares_out_u128 * b).div_ceil(ts);
-            let quote_in_final = (shares_out_u128 * q).div_ceil(ts);
-            require!(
-                base_in_final <= max_base_in as u128 && quote_in_final <= max_quote_in as u128,
-                DropsetError::BasketSlippage
-            );
-            (
-                shares_out_u128 as u64,
-                base_in_final as u64,
-                quote_in_final as u64,
-            )
+            single_leg_basket(
+                total_shares,
+                base_atoms,
+                quote_atoms,
+                base_in,
+                quote_in,
+                max_base_in,
+                max_quote_in,
+            )?
         };
 
-        // Transfer base + quote into the treasuries.
-        if base_in_final > 0 {
-            let decimals = self.base_mint.decimals();
-            let cpi = CpiContext::new(
-                self.base_token_program.address(),
-                TransferChecked {
-                    from: self.signer_base_ata.cpi_handle_mut(),
-                    mint: self.base_mint.cpi_handle(),
-                    to: self.market_base_treasury.cpi_handle_mut(),
-                    authority: self.signer.cpi_handle(),
-                },
-            );
-            transfer_checked(cpi, base_in_final, decimals)?;
-        }
-        if quote_in_final > 0 {
-            let decimals = self.quote_mint.decimals();
-            let cpi = CpiContext::new(
-                self.quote_token_program.address(),
-                TransferChecked {
-                    from: self.signer_quote_ata.cpi_handle_mut(),
-                    mint: self.quote_mint.cpi_handle(),
-                    to: self.market_quote_treasury.cpi_handle_mut(),
-                    authority: self.signer.cpi_handle(),
-                },
-            );
-            transfer_checked(cpi, quote_in_final, decimals)?;
-        }
+        // Transfer base + quote into the treasuries. `transfer_in_leg`
+        // skips the CPI on a zero leg (`transfer_checked` rejects zero
+        // amounts on classic SPL Token).
+        transfer_in_leg(
+            self.base_token_program.address(),
+            self.signer_base_ata.cpi_handle_mut(),
+            self.base_mint.cpi_handle(),
+            self.market_base_treasury.cpi_handle_mut(),
+            self.signer.cpi_handle(),
+            base_in_final,
+            self.base_mint.decimals(),
+        )?;
+        transfer_in_leg(
+            self.quote_token_program.address(),
+            self.signer_quote_ata.cpi_handle_mut(),
+            self.quote_mint.cpi_handle(),
+            self.market_quote_treasury.cpi_handle_mut(),
+            self.signer.cpi_handle(),
+            quote_in_final,
+            self.quote_mint.decimals(),
+        )?;
 
         // Apply vault mutations.
         let market_addr = *self.market.address();
@@ -207,14 +183,22 @@ impl DepositLeader {
             v.quote_atoms = (quote_atoms + quote_in_final).into();
             let new_total = total_shares + shares_out;
             v.total_shares = new_total.into();
-            let new_leader = v.leader_shares.get() + shares_out;
-            v.leader_shares = new_leader.into();
+            let new_leader_shares = v.leader_shares.get() + shares_out;
+            v.leader_shares = new_leader_shares.into();
             if is_seeding {
-                v.hwm = Q32_32_ONE.into();
+                // `hwm` is owned by `create_vault`, which stamps it to
+                // `Q32_32_ONE` at sector allocation; it provably cannot
+                // change before this first (seeding) deposit, since
+                // `realize_in_place` early-returns at `total_shares == 0`
+                // without touching it. Re-stamping here would duplicate
+                // the initialization across two instructions, so only
+                // assert the invariant (no-op in the on-chain release
+                // build).
+                debug_assert_eq!(v.hwm.get(), Q32_32_ONE);
             }
             (
                 new_total,
-                new_leader,
+                new_leader_shares,
                 v.base_atoms.get(),
                 v.quote_atoms.get(),
             )
