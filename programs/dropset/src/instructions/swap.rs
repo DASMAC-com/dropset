@@ -59,6 +59,154 @@ impl SwapSide {
             _ => None,
         }
     }
+
+    // ── Side-keyed matching helpers ──────────────────────────────────
+    //
+    // The `swap` matching loop and settlement branch on `Buy`/`Sell` in
+    // ~a dozen places — level selection, sort key, limit-cross test,
+    // fill math, fee leg, snapshot, inventory mutation, taker
+    // accounting. These `#[inline]` helpers fold every such decision
+    // back to a single `match` so the Buy and Sell paths can't drift out
+    // of lockstep: change a matching rule once here and both sides move
+    // together. They're inlined and branch on the same runtime `side`
+    // the caller already holds, so they add no per-leg dispatch cost
+    // over the original inline matches — the CU profile is unchanged.
+
+    /// A `Buy` taker consumes the resting **ask** side (pays quote, gets
+    /// base); a `Sell` taker consumes the **bid** side (pays base, gets
+    /// quote). This single predicate drives level selection, the
+    /// snapshot's `is_ask_side`, and which `remaining[*]` slot the fill
+    /// decrements.
+    #[inline]
+    fn consumes_asks(self) -> bool {
+        matches!(self, SwapSide::Buy)
+    }
+
+    /// Up-front limit-price sentinel check. `Buy` rejects `ZERO` (it
+    /// would reject every ask — a likely caller mistake); `Sell` rejects
+    /// `INFINITY` symmetrically. Each accepts the open-ended sentinel for
+    /// its own side and any regular price.
+    #[inline]
+    fn limit_price_ok(self, limit: Price) -> bool {
+        match self {
+            SwapSide::Buy => !limit.is_zero(),
+            SwapSide::Sell => !limit.is_infinity(),
+        }
+    }
+
+    /// Sort key for the matching heap: asks order by raw `as_u32()`
+    /// (cheapest ask fills first); bids order by `bid_key()` (highest
+    /// bid fills first). Combined with `(nonce, sector_idx, level_idx)`
+    /// this yields the spec's price-time priority from a single sort.
+    #[inline]
+    fn price_sort_key(self, price: Price) -> u32 {
+        if self.consumes_asks() {
+            price.as_u32()
+        } else {
+            price.bid_key()
+        }
+    }
+
+    /// True when `price` is worse than the taker's `limit`, so the leg
+    /// must be skipped. Because `levels` is sorted best-first, the first
+    /// crossing leg means every later one crosses too, so the caller
+    /// `break`s. A `Buy` crosses when the ask exceeds the limit; a
+    /// `Sell` crosses when the bid falls below it. The open-ended
+    /// sentinel for the side never crosses.
+    #[inline]
+    fn crosses_limit(self, price: Price, limit: Price) -> bool {
+        match self {
+            SwapSide::Buy => price.as_u32() > limit.as_u32() && !limit.is_infinity(),
+            SwapSide::Sell => price.as_u32() < limit.as_u32() && !limit.is_zero(),
+        }
+    }
+
+    /// The leg the taker **receives** and the vault pays out: base on a
+    /// Buy, quote on a Sell. The taker fee is charged on this leg and
+    /// `total_out` accumulates it.
+    #[inline]
+    fn output_atoms(self, fill_base: u64, fill_quote: u64) -> u64 {
+        match self {
+            SwapSide::Buy => fill_base,
+            SwapSide::Sell => fill_quote,
+        }
+    }
+
+    /// The leg the taker **pays in** and the vault books: quote on a
+    /// Buy, base on a Sell. Decrements `taker_unfilled_in`.
+    #[inline]
+    fn input_atoms(self, fill_base: u64, fill_quote: u64) -> u64 {
+        match self {
+            SwapSide::Buy => fill_quote,
+            SwapSide::Sell => fill_base,
+        }
+    }
+
+    /// Compute the `(fill_base, fill_quote)` for one matched leg, or
+    /// `Ok(None)` when it fills zero (the caller `continue`s). The Buy
+    /// and Sell arms are mirror images: size the **output** leg the
+    /// taker receives as `min(taker input converted to output, level
+    /// cap, vault output inventory)`, reverse-convert to the **input**
+    /// leg, then apply two guards.
+    ///
+    /// * **1d (overflow):** a huge price can push the reverse-converted
+    ///   input leg past `u64::MAX`. Reject explicitly instead of
+    ///   silently truncating — a clamped input would debit the taker
+    ///   (and book the vault) less than the price implies, shattering
+    ///   the treasury invariant.
+    /// * **1c (round-trip cap):** the decoders truncate toward zero in
+    ///   both directions, so `out→in→` can exceed the taker's remaining
+    ///   input by a few atoms. Capping the input leg at
+    ///   `taker_unfilled_in` keeps the per-leg vault credit equal to
+    ///   what the taker actually pays and stops `taker_unfilled_in` from
+    ///   saturating to 0 and billing the full budget for a partial fill.
+    #[inline]
+    fn compute_fill(
+        self,
+        price: Price,
+        taker_unfilled_in: u128,
+        level_size: u64,
+        base_atoms: u64,
+        quote_atoms: u64,
+    ) -> Result<Option<(u64, u64)>> {
+        let taker_in = taker_unfilled_in.min(u64::MAX as u128) as u64;
+        match self {
+            SwapSide::Buy => {
+                // level.size is in base; convert the taker's quote
+                // budget to base via the level price, then take the
+                // tightest of the taker, level, and vault-base caps.
+                let fill_b = price
+                    .base_for_quote(taker_in)
+                    .min(level_size as u128)
+                    .min(base_atoms as u128);
+                if fill_b == 0 {
+                    return Ok(None);
+                }
+                let fill_b_u64 = fill_b.min(u64::MAX as u128) as u64;
+                let fill_q = price.quote_for_base(fill_b_u64);
+                require!(fill_q <= u64::MAX as u128, DropsetError::MathOverflow);
+                let fill_q = fill_q.min(taker_unfilled_in);
+                Ok(Some((fill_b_u64, fill_q as u64)))
+            }
+            SwapSide::Sell => {
+                // level.size is in quote; convert the taker's unfilled
+                // base to quote via the level price, then take the
+                // tightest of the taker, level, and vault-quote caps.
+                let fill_q = price
+                    .quote_for_base(taker_in)
+                    .min(level_size as u128)
+                    .min(quote_atoms as u128);
+                if fill_q == 0 {
+                    return Ok(None);
+                }
+                let fill_q_u64 = fill_q.min(u64::MAX as u128) as u64;
+                let fill_b = price.base_for_quote(fill_q_u64);
+                require!(fill_b <= u64::MAX as u128, DropsetError::MathOverflow);
+                let fill_b = fill_b.min(taker_unfilled_in);
+                Ok(Some((fill_b as u64, fill_q_u64)))
+            }
+        }
+    }
 }
 
 #[event_cpi]
@@ -201,11 +349,10 @@ impl Swap {
         //   * `Sell` accepts `ZERO` (no lower bound on bid price)
         //     and any regular price; `INFINITY` would reject every
         //     bid and is rejected symmetrically.
-        let limit_ok = match side {
-            SwapSide::Buy => !limit_price.is_zero(),
-            SwapSide::Sell => !limit_price.is_infinity(),
-        };
-        require!(limit_ok, DropsetError::InvalidLimitPrice);
+        require!(
+            side.limit_price_ok(limit_price),
+            DropsetError::InvalidLimitPrice
+        );
         require!(amount_in > 0, DropsetError::InvalidAmountIn);
 
         // Snapshot market-wide constants the loop needs.
@@ -310,9 +457,10 @@ impl Swap {
             {
                 let v = &self.market.as_slice()[cur as usize];
                 for i in 0..N_LEVELS {
-                    let lvl = match side {
-                        SwapSide::Buy => v.remaining.asks[i],
-                        SwapSide::Sell => v.remaining.bids[i],
+                    let lvl = if side.consumes_asks() {
+                        v.remaining.asks[i]
+                    } else {
+                        v.remaining.bids[i]
                     };
                     let size = lvl.size.get();
                     let expires_at = lvl.expires_at.get();
@@ -325,10 +473,7 @@ impl Swap {
                     {
                         continue;
                     }
-                    let price_key = match side {
-                        SwapSide::Buy => price.as_u32(),
-                        SwapSide::Sell => price.bid_key(),
-                    };
+                    let price_key = side.price_sort_key(price);
                     heap.push(HeapEntry {
                         price_key,
                         price,
@@ -416,13 +561,7 @@ impl Swap {
             // which crosses zero levels and walks the whole book —
             // that needs a soft-revert fee or per-slot cooldown,
             // tracked separately.)
-            let crosses = match side {
-                SwapSide::Buy => {
-                    price.as_u32() > limit_price.as_u32() && !limit_price.is_infinity()
-                }
-                SwapSide::Sell => price.as_u32() < limit_price.as_u32() && !limit_price.is_zero(),
-            };
-            if crosses {
+            if side.crosses_limit(price, limit_price) {
                 break;
             }
             if taker_unfilled_in == 0 {
@@ -436,129 +575,87 @@ impl Swap {
                 (v.base_atoms.get(), v.quote_atoms.get())
             };
 
-            let (fill_base, fill_quote): (u64, u64) = match side {
-                SwapSide::Buy => {
-                    // level.size is in base; convert the taker's
-                    // quote budget to base via the level price.
-                    let cap_by_taker_quote =
-                        price.base_for_quote(taker_unfilled_in.min(u64::MAX as u128) as u64);
-                    let cap_by_level = level_size as u128;
-                    let cap_by_vault = base_atoms as u128;
-                    let fill_b = cap_by_taker_quote.min(cap_by_level).min(cap_by_vault);
-                    if fill_b == 0 {
-                        continue;
-                    }
-                    let fill_b_u64 = fill_b.min(u64::MAX as u128) as u64;
-                    let fill_q = price.quote_for_base(fill_b_u64);
-                    // 1d: a huge price can push the quote leg past
-                    // u64::MAX. Reject explicitly instead of silently
-                    // truncating — a clamped quote would debit the
-                    // taker (and book the vault) less than the price
-                    // implies, shattering the treasury invariant.
-                    require!(fill_q <= u64::MAX as u128, DropsetError::MathOverflow);
-                    // 1c: never charge the taker more than their
-                    // remaining input. The decoders truncate toward
-                    // zero in both directions, so
-                    // `quote_for_base(base_for_quote(q))` can exceed
-                    // `q` by a few atoms; capping the quote leg (the
-                    // taker's input on a Buy) keeps the per-leg vault
-                    // credit equal to what the taker actually pays and
-                    // stops `taker_unfilled_in` from saturating to 0
-                    // and billing the full budget for a partial fill.
-                    let fill_q = fill_q.min(taker_unfilled_in);
-                    (fill_b_u64, fill_q as u64)
-                }
-                SwapSide::Sell => {
-                    // level.size is in quote; convert the taker's
-                    // unfilled base to quote via the level price.
-                    let taker_implied_quote =
-                        price.quote_for_base(taker_unfilled_in.min(u64::MAX as u128) as u64);
-                    let cap_by_level = level_size as u128;
-                    let cap_by_vault = quote_atoms as u128;
-                    let fill_q = taker_implied_quote.min(cap_by_level).min(cap_by_vault);
-                    if fill_q == 0 {
-                        continue;
-                    }
-                    let fill_q_u64 = fill_q.min(u64::MAX as u128) as u64;
-                    let fill_b = price.base_for_quote(fill_q_u64);
-                    // 1d: symmetric overflow guard on the base leg.
-                    require!(fill_b <= u64::MAX as u128, DropsetError::MathOverflow);
-                    // 1c: cap the base leg (the taker's input on a
-                    // Sell) to the remaining input for the same
-                    // round-trip-rounding reason as the Buy side.
-                    let fill_b = fill_b.min(taker_unfilled_in);
-                    (fill_b as u64, fill_q_u64)
-                }
+            // Size the leg (mirror-symmetric across sides; see
+            // `compute_fill`). A zero fill skips the leg entirely.
+            let (fill_base, fill_quote): (u64, u64) = match side.compute_fill(
+                price,
+                taker_unfilled_in,
+                level_size,
+                base_atoms,
+                quote_atoms,
+            )? {
+                Some(fill) => fill,
+                None => continue,
             };
 
-            // Apply taker fee on the *output* leg, retained in the
-            // matched vault for the depositors' benefit.
-            let fee = match side {
-                SwapSide::Buy => ((fill_base as u128) * (taker_fee_ppm as u128)) / (PPM as u128),
-                SwapSide::Sell => ((fill_quote as u128) * (taker_fee_ppm as u128)) / (PPM as u128),
-            };
+            // Apply taker fee on the *output* leg (base on a Buy, quote
+            // on a Sell), retained in the matched vault for the
+            // depositors' benefit.
+            let fee = (side.output_atoms(fill_base, fill_quote) as u128) * (taker_fee_ppm as u128)
+                / (PPM as u128);
             let fee_u64 = fee.min(u64::MAX as u128) as u64;
 
             // Snapshot the pre-leg state so the `min_out` soft-revert
-            // at the end can roll back every mutation cleanly.
+            // at the end can roll back every mutation cleanly. The
+            // consumed side (asks on a Buy, bids on a Sell) is the only
+            // level array this leg touches, so it's the only one to
+            // record.
+            let is_ask_side = side.consumes_asks();
             {
                 let v = &self.market.as_slice()[sector_idx as usize];
-                let size_before = match side {
-                    SwapSide::Buy => v.remaining.asks[level_idx as usize].size.get(),
-                    SwapSide::Sell => v.remaining.bids[level_idx as usize].size.get(),
+                let size_before = if is_ask_side {
+                    v.remaining.asks[level_idx as usize].size.get()
+                } else {
+                    v.remaining.bids[level_idx as usize].size.get()
                 };
                 snapshots.push(LegSnapshot {
                     sector_idx,
                     level_idx,
-                    is_ask_side: matches!(side, SwapSide::Buy),
+                    is_ask_side,
                     base_before: v.base_atoms.get(),
                     quote_before: v.quote_atoms.get(),
                     size_before,
                 });
             }
 
-            // Update vault inventory and level remaining size. The
-            // fee is retained in the vault on the output leg — so the
-            // inventory debit is `fill_<out> - fee_u64`, matching the
-            // `net_out` actually transferred to the taker. This keeps
-            // the treasury-vs-vault invariant
-            // `treasury.amount == Σ vault.<leg>_atoms` holding per
-            // leg: treasury sends `net_out`, vault books `-(net_out)`.
+            // Update vault inventory and the consumed level's remaining
+            // size, written once in input/output terms. The fee is
+            // retained in the vault on the output leg, so the output
+            // inventory debit is `output - fee` (`net_out`), matching
+            // what the treasury actually sends the taker; the input
+            // inventory is credited the full input leg. This keeps the
+            // treasury-vs-vault invariant `treasury.amount == Σ
+            // vault.<leg>_atoms` holding per leg. The level's remaining
+            // size shrinks by the gross output fill (pre-fee), since the
+            // fee slice was still liquidity the taker consumed.
+            let output_atoms = side.output_atoms(fill_base, fill_quote);
+            let input_atoms = side.input_atoms(fill_base, fill_quote);
+            let net_output_out = output_atoms.saturating_sub(fee_u64);
             let (new_base, new_quote) = {
                 let v = &mut self.market.as_mut_slice()[sector_idx as usize];
-                let (b_new, q_new) = match side {
-                    SwapSide::Buy => {
-                        // Taker buys base, pays quote. Fee retained in base.
-                        let net_base_out = fill_base.saturating_sub(fee_u64);
-                        let b = v.base_atoms.get().saturating_sub(net_base_out);
-                        let q = v.quote_atoms.get().saturating_add(fill_quote);
-                        v.base_atoms = b.into();
-                        v.quote_atoms = q.into();
-                        v.remaining.asks[level_idx as usize].size = (v.remaining.asks
-                            [level_idx as usize]
-                            .size
-                            .get()
-                            .saturating_sub(fill_base))
-                        .into();
-                        (b, q)
-                    }
-                    SwapSide::Sell => {
-                        // Taker sells base, receives quote. Fee retained in quote.
-                        let net_quote_out = fill_quote.saturating_sub(fee_u64);
-                        let b = v.base_atoms.get().saturating_add(fill_base);
-                        let q = v.quote_atoms.get().saturating_sub(net_quote_out);
-                        v.base_atoms = b.into();
-                        v.quote_atoms = q.into();
-                        v.remaining.bids[level_idx as usize].size = (v.remaining.bids
-                            [level_idx as usize]
-                            .size
-                            .get()
-                            .saturating_sub(fill_quote))
-                        .into();
-                        (b, q)
-                    }
+                // On a Buy the output leg is base and the input leg is
+                // quote; on a Sell the legs swap. `is_ask_side` (Buy)
+                // selects which.
+                let (b, q) = if is_ask_side {
+                    (
+                        v.base_atoms.get().saturating_sub(net_output_out),
+                        v.quote_atoms.get().saturating_add(input_atoms),
+                    )
+                } else {
+                    (
+                        v.base_atoms.get().saturating_add(input_atoms),
+                        v.quote_atoms.get().saturating_sub(net_output_out),
+                    )
                 };
-                (b_new, q_new)
+                v.base_atoms = b.into();
+                v.quote_atoms = q.into();
+                let level = if is_ask_side {
+                    &mut v.remaining.asks[level_idx as usize]
+                } else {
+                    &mut v.remaining.bids[level_idx as usize]
+                };
+                level.size = level.size.get().saturating_sub(output_atoms).into();
+                (b, q)
             };
 
             // Bump market.nonce per leg (header borrow after the tail
@@ -574,16 +671,10 @@ impl Swap {
             };
             self.market.nonce = new_nonce.into();
 
-            // Decrement the taker's remaining input.
-            let consumed_in: u128 = match side {
-                SwapSide::Buy => fill_quote as u128,
-                SwapSide::Sell => fill_base as u128,
-            };
-            taker_unfilled_in = taker_unfilled_in.saturating_sub(consumed_in);
-            total_out += match side {
-                SwapSide::Buy => fill_base as u128,
-                SwapSide::Sell => fill_quote as u128,
-            };
+            // Decrement the taker's remaining input by the input leg
+            // and accumulate the output leg they receive.
+            taker_unfilled_in = taker_unfilled_in.saturating_sub(input_atoms as u128);
+            total_out += output_atoms as u128;
             total_fee = total_fee.saturating_add(fee);
             filled_legs = filled_legs.saturating_add(1);
 
@@ -658,19 +749,20 @@ impl Swap {
 
         // Net taker transfer: pay the input leg in, receive the output
         // leg out. Both legs are aggregated across all matched levels
-        // — one SPL transfer per side.
-        let (taker_in_atoms, taker_out_atoms) = match side {
-            SwapSide::Buy => (
-                (amount_in as u128 - taker_unfilled_in) as u64, // quote spent
-                total_out as u64,                               // base received
-            ),
-            SwapSide::Sell => (
-                (amount_in as u128 - taker_unfilled_in) as u64, // base spent
-                total_out as u64,                               // quote received
-            ),
-        };
+        // — one SPL transfer per side. The atom counts are side-agnostic
+        // here (input = budget consumed, output = `total_out`); only the
+        // CPI account selection below is keyed on `side`.
+        let taker_in_atoms = (amount_in as u128 - taker_unfilled_in) as u64;
+        let taker_out_atoms = total_out as u64;
 
-        // Input leg: taker → treasury.
+        // Input leg: taker → treasury. The two settlement CPIs (this
+        // and the output leg below) are kept as explicit `match side`
+        // arms rather than folded behind a helper: each arm selects a
+        // distinct set of token accounts (quote vs base ATA, mint,
+        // treasury, program), so the duplication is account wiring, not
+        // matching logic, and is clearest read inline. The Buy and Sell
+        // arms here MUST stay mirror images — Buy pays quote in / base
+        // out, Sell pays base in / quote out.
         if taker_in_atoms > 0 {
             match side {
                 SwapSide::Buy => {
