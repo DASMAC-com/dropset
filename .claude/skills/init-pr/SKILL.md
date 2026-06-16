@@ -27,7 +27,7 @@ tag (or nothing), and no task instructions in the
 session — treat the linked Linear issue as the full
 specification for this worktree. After
 bootstrapping, surface that issue's description and
-checklist as the plan of work (step 10) so the
+checklist as the plan of work (final step) so the
 session can proceed straight into the task without
 asking what to build. Instructions the user *did*
 give take precedence over the issue.
