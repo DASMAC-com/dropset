@@ -28,6 +28,27 @@
 - Sign commits (`git commit -S`); branch protection requires verified
   signatures.
 
+## Linear automation
+
+Skills that file or update Linear issues (`linear-task`,
+`stage-backlog`, `audit-loop`, `review-pr`, `init-pr`) resolve the
+filing destination — team, project, assignee — from **environment
+variables**, never hard-coded UUIDs. Set them once in your shell
+profile (`~/.zshrc`):
+
+```sh
+export LINEAR_TEAM_ID=…
+export LINEAR_PROJECT_ID=…
+export LINEAR_ASSIGNEE_ID=…
+```
+
+Skills read them at run time with a single bare
+`printenv LINEAR_TEAM_ID LINEAR_PROJECT_ID LINEAR_ASSIGNEE_ID` — which
+reduces to a `Bash(printenv:*)` allow-rule, so it never re-prompts. A
+new Linear-filing skill must follow the same pattern: reference the
+variable **names**, and keep the resolved UUIDs out of every committed
+file.
+
 ## Shell commands
 
 The guiding rule: **every Bash invocation should reduce to a

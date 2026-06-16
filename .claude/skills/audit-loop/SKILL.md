@@ -578,14 +578,24 @@ exactly as the `linear-task` skill does: a **plain
 Backlog issue with no parent**, assigned to Alex, into
 the shared destination. There is **no umbrella issue** —
 the project Backlog is the queue, and `stage-backlog`
-turns it into a PR plan later. Call
-`mcp__claude_ai_Linear__save_issue` (no `id`):
+turns it into a PR plan later. Resolve the
+destination IDs from the environment exactly as
+`linear-task` does — never hard-code them — with one
+bare command (reduces to a `Bash(printenv:*)`
+allow-rule):
+
+```sh
+printenv LINEAR_TEAM_ID LINEAR_PROJECT_ID LINEAR_ASSIGNEE_ID
+```
+
+Then call `mcp__claude_ai_Linear__save_issue` (no
+`id`):
 
 ```txt
 mcp__claude_ai_Linear__save_issue(
-  team: "84659a7c-5ea3-47b1-b2bd-c531e3721d6b",
-  project: "d505fe50-cc8b-41ca-be93-6215d9adcea0",
-  assignee: "b3ec6d9f-3c78-48da-8b4e-042176e8c579",
+  team: "<$LINEAR_TEAM_ID>",
+  project: "<$LINEAR_PROJECT_ID>",
+  assignee: "<$LINEAR_ASSIGNEE_ID>",
   state: "Backlog",
   title: "<file>: <imperative fix, no trailing period>",
   description: "<markdown body, literal newlines>",

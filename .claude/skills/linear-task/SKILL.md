@@ -12,18 +12,27 @@ working a PR you uncover a blocker, follow-up, or
 clean-up that shouldn't hold up the current change —
 capture it as its own issue to pick up later.
 
-Every issue is filed into the same fixed
-destination (do **not** ask the user for these):
+Every issue is filed into one fixed destination —
+a single team, project, and assignee. Do **not**
+hard-code the IDs and do **not** ask the user for
+them: resolve them at run time from the environment
+with a single bare command, so the call reduces to
+a stable `Bash(printenv:*)` allow-rule:
 
-| Field    | Value       | ID                                     |
-| -------- | ----------- | -------------------------------------- |
-| Team     | Engineering | `84659a7c-5ea3-47b1-b2bd-c531e3721d6b` |
-| Project  | Dropset     | `d505fe50-cc8b-41ca-be93-6215d9adcea0` |
-| Assignee | Alex        | `b3ec6d9f-3c78-48da-8b4e-042176e8c579` |
+```sh
+printenv LINEAR_TEAM_ID LINEAR_PROJECT_ID LINEAR_ASSIGNEE_ID
+```
 
-Use the IDs, not the names — there are also
-completed "Dropset beta" and "Dropset alpha"
-projects that a name match could hit by mistake.
+| Field    | Env var              |
+| -------- | -------------------- |
+| Team     | `LINEAR_TEAM_ID`     |
+| Project  | `LINEAR_PROJECT_ID`  |
+| Assignee | `LINEAR_ASSIGNEE_ID` |
+
+Pass the **IDs** these resolve to. If any variable
+is empty, stop and tell the user to export it in
+their shell profile (`~/.zshrc`); don't guess the
+value.
 
 Every issue is filed **into the Backlog with no
 parent** (`state: "Backlog"`, no `parentId`). There is
@@ -67,9 +76,9 @@ what to file.
 
    ```txt
    mcp__claude_ai_Linear__save_issue(
-     team: "84659a7c-5ea3-47b1-b2bd-c531e3721d6b",
-     project: "d505fe50-cc8b-41ca-be93-6215d9adcea0",
-     assignee: "b3ec6d9f-3c78-48da-8b4e-042176e8c579",
+     team: "<$LINEAR_TEAM_ID>",
+     project: "<$LINEAR_PROJECT_ID>",
+     assignee: "<$LINEAR_ASSIGNEE_ID>",
      state: "Backlog",
      title: "<title>",
      description: "<markdown body>",
