@@ -61,6 +61,23 @@ fn min_leader_share_rejects_above_ppm() {
 }
 
 #[test]
+fn min_leader_share_retunes_frozen_vault() {
+    // A frozen vault bypasses the floor for the leader and rejects all
+    // outside deposits, so the stored value is inert there — but the
+    // setter only gates on sector liveness (`leader != default`), not
+    // the frozen flag, so retuning a frozen vault still succeeds. Pin
+    // that: freezing is not a precondition the setter checks.
+    let mut f = fixture_with_vault();
+    let admin = f.authority.insecure_clone();
+    f.freeze_vault(&admin, 0).expect("admin freezes the vault");
+    assert!(f.vault(0).frozen.get());
+
+    f.set_min_leader_share(&admin, 0, 100_000)
+        .expect("a frozen vault still accepts a floor retune");
+    assert_eq!(f.vault(0).min_leader_share.get(), 100_000);
+}
+
+#[test]
 fn min_leader_share_rejects_non_admin() {
     let mut f = fixture_with_vault();
     let stranger = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
