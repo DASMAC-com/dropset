@@ -125,14 +125,14 @@ alignment (the original research used a tighter
 under `#[repr(C)]`). The book is **`N_LEVELS = 8`** levels/side
 (`state/market.rs`), not the 32/side the original draft assumed. At
 `DEFAULT_MAX_VAULTS_PER_MARKET = 10`
-([`programs/dropset/src/state/registry.rs:19`](https://github.com/DASMAC-com/dropset/blob/7891ebc071a0aec0332237970d4ab6f39033ad6f/programs/dropset/src/state/registry.rs#L19))
+([`programs/dropset/src/state/registry.rs:19`](https://github.com/DASMAC-com/dropset/blob/399148c5025044c88bd3fa7f6f3b5a941e8af4ac/programs/dropset/src/state/registry.rs#L19))
 × 8 levels/side = 80 entries × 32 B = **2,560 B** — comfortably
 inside the 32 KiB default heap even with the `Vec::new()` doubling
 churn (peak live + leaked ≈ a few KiB).
 
 **When to `request_heap_frame`.** Not needed at the default cap.
 `max_vaults_per_market` is a `u8`
-([`programs/dropset/src/state/registry.rs:60`](https://github.com/DASMAC-com/dropset/blob/7891ebc071a0aec0332237970d4ab6f39033ad6f/programs/dropset/src/state/registry.rs#L60));
+([`programs/dropset/src/state/registry.rs:67`](https://github.com/DASMAC-com/dropset/blob/399148c5025044c88bd3fa7f6f3b5a941e8af4ac/programs/dropset/src/state/registry.rs#L67));
 even the worst case of 255 × 8 levels/side × 32 B ≈ 64 KiB would
 exceed the 32 KiB default, but the realistic cap (10 vaults) sits at
 ~2.5 KiB. Only a market configured near the `u8` ceiling would need a
