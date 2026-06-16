@@ -28,7 +28,7 @@ use anchor_spl_v2::{
 use crate::{
     errors::DropsetError,
     events::{RealizeEvent, WithdrawEvent},
-    state::{realize_in_place, Market},
+    state::{realize_in_place, Market, VaultDll},
     VaultDepositorHeader,
 };
 
@@ -330,6 +330,23 @@ impl Withdraw {
             self.vault_depositor.close(signer_view)?;
             let prev = self.market.outstanding_vault_depositors.get();
             self.market.outstanding_vault_depositors = prev.saturating_sub(1).into();
+        }
+
+        // If this outside withdraw drained the sector's last share,
+        // return it to the free list. Reachable on a winding-down vault:
+        // the leader has already exited to zero (the `withdraw_leader`
+        // floor is bypassed once frozen/tombstoned), so the last outside
+        // depositor's exit zeroes `total_shares`. Sequenced after the
+        // `VaultDepositor` close so the two `self.market` borrows don't
+        // overlap. Without this the drained sector leaks: it stays
+        // threaded on the active/tombstone DLL with a non-default
+        // `leader`, the slab slot is never recycled by `CreateVault`'s
+        // free-list pop, and the `active_count` it holds against
+        // `max_vaults_per_market` is never decremented — both freed only
+        // inside `reclaim_sector`. Mirrors `force_withdraw.rs` (spec §
+        // Withdraw and § Storage layout).
+        if new_total == 0 {
+            self.market.reclaim_sector(vault_idx)?;
         }
 
         let realize_event = if realize_outcome.shares_minted > 0 {

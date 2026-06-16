@@ -7,6 +7,7 @@ mod common;
 
 use anchor_v2_testing::Signer;
 use common::fixture::Fixture;
+use solana_pubkey::Pubkey;
 
 const SEED_BASE: u64 = 1_000_000;
 const SEED_QUOTE: u64 = 1_085_000;
@@ -37,6 +38,45 @@ fn full_exit_drains_inventory_to_leader() {
     // Treasury invariant: emptied alongside the vault.
     assert_eq!(f.token_balance(&f.base_treasury), 0);
     assert_eq!(f.token_balance(&f.quote_treasury), 0);
+}
+
+#[test]
+fn full_exit_reclaims_sector() {
+    // A leader who is the sole shareholder and burns their entire stake
+    // drives `total_shares` to 0, which must return the sector to the
+    // free DLL — mirroring `force_withdraw_leader`. Before the ENG-462
+    // fix the signed leader path left the drained sector threaded on the
+    // active list with a non-default `leader`, leaking the slab slot and
+    // never decrementing the `active_count` it held.
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+    assert_eq!(f.market_header().active_count.get(), 1, "one active vault");
+    let leader_shares = f.vault(0).leader_shares.get();
+    assert!(leader_shares > 0);
+
+    f.withdraw_leader(0, leader_shares, 0, 0)
+        .expect("leader fully exits");
+
+    let v = f.vault(0);
+    assert_eq!(v.total_shares.get(), 0, "vault fully drained");
+    // Sector reclaimed to the free DLL: zeroed leader, off the active
+    // list, free head pointing at it.
+    assert_eq!(
+        v.leader,
+        Pubkey::default().to_bytes().into(),
+        "reclaim zeroes the leader marker"
+    );
+    let h = f.market_header();
+    assert_eq!(
+        h.active_count.get(),
+        0,
+        "active count decremented on reclaim"
+    );
+    assert_eq!(h.head.get(), dropset::NULL_SECTOR, "active list now empty");
+    assert_eq!(
+        h.free_head.get(),
+        0,
+        "sector 0 reclaimed onto the free list"
+    );
 }
 
 #[test]
