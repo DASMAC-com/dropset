@@ -297,11 +297,11 @@ regularly without randomness in the control flow:
 `arch` is the heaviest pass (it scans the whole
 system); it fires once every three iterations.
 
-**Dictionary hygiene (periodic).** Dictionary drift is
-slow, so don't check it every cycle: when `iteration` is
-a multiple of 10, additionally invoke the `cspell-audit`
-skill in **delegated** mode (read-only — it returns
-violations, edits nothing). For each returned violation
+**Dictionary hygiene (periodic).** Independently of the
+rotation above — dictionary drift is slow, so not every
+cycle — when `iteration` is a multiple of 10, also invoke
+the `cspell-audit` skill in **delegated** mode (read-only
+— it returns violations, edits nothing). For each returned violation
 (a `cfg/dictionary.txt` word used in fewer than two
 files), file a Backlog issue through the same
 `linear-task` flow as step 9 — env-resolved destination,

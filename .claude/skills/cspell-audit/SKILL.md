@@ -70,17 +70,33 @@ matching entries (still report the rest).
 
 1. **Count usage per word.** For each dictionary word,
    find the distinct files that use it with one bare
-   `git grep` per word — whole-word (`-w`), case-insensitive
-   (`-i`), names only (`-l`), excluding the dictionary
-   itself (so the entry doesn't count as its own usage):
+   `git grep` per word — whole-word (`-w`),
+   case-insensitive (`-i`), names only (`-l`), excluding
+   the dictionary itself:
 
    ```sh
    git grep -ilw <word> -- ':!cfg/dictionary.txt'
    ```
 
-   Drop any hit under an `ignorePaths` glob. The surviving
-   file count is what the policy keys on. Keep it one bare
-   `git grep` per word so each call stays a
+   Then narrow to the files that **actually need the
+   allow-list** — `git grep` over-counts:
+
+   - Drop any hit under an `ignorePaths` glob.
+   - Drop **generated / vendored** files: lock files
+     (`Cargo.lock`, `*-lock.yaml`), `target/`,
+     `node_modules/`, generated SDK / IDL trees. A
+     hyphenated crate name in `Cargo.lock` can make
+     `git grep` match one of its parts as a whole word,
+     but cspell already accepts those (bundled
+     dictionaries) and a regenerated file can't hold an
+     escape anyway — so they must not inflate the count.
+
+   The remaining count — hand-authored files where cspell
+   would otherwise flag the word — is what the policy keys
+   on. When unsure whether a file genuinely needs the
+   word, the authoritative test is whether cspell flags it
+   there with the word removed from the dictionary. Keep
+   it one bare `git grep` per word so each call stays a
    `Bash(git grep:*)` allow-rule — don't pipe or chain.
 
 1. **Classify each word** by the policy above: keep,

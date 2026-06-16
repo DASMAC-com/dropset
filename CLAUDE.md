@@ -2,6 +2,8 @@
 
 <!-- cspell:word PIPESTATUS -->
 
+<!-- cspell:word rustc -->
+
 ## Commits and PRs
 
 - **Run `init-pr` first.** At the start of a worktree session,
@@ -30,11 +32,12 @@
 
 ## Linear automation
 
-Skills that file or update Linear issues (`linear-task`,
-`stage-backlog`, `audit-loop`, `review-pr`, `init-pr`) resolve the
-filing destination — team, project, assignee — from **environment
-variables**, never hard-coded UUIDs. Set them once in your shell
-profile (`~/.zshrc`):
+Skills that **file** Linear issues (`linear-task`, `stage-backlog`,
+`audit-loop`, `audit-scope`) resolve the filing destination — team,
+project, assignee — from **environment variables**, never hard-coded
+UUIDs. (Skills that only **update** an existing issue by id —
+`init-pr`, `review-pr` — need no destination.) Set them once in your
+shell profile (`~/.zshrc`):
 
 ```sh
 export LINEAR_TEAM_ID=…
