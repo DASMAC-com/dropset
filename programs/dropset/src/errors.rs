@@ -32,6 +32,8 @@ pub enum DropsetError {
     VaultCapExceeded,
     #[msg("perf_fee_rate exceeds 1_000_000 ppm (100%)")]
     InvalidPerfFeeRate,
+    #[msg("min_leader_share exceeds 1_000_000 ppm (100%)")]
+    InvalidMinLeaderShare,
     #[msg("non-admin caller cannot open a vault on someone else's behalf")]
     LeaderOverrideNotAllowed,
     #[msg("supplied vault sector is not assigned (leader == default)")]

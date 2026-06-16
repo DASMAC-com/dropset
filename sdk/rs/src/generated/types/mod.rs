@@ -13,6 +13,8 @@ pub(crate) mod r#fill_event;
 pub(crate) mod r#freeze_vault_event;
 pub(crate) mod r#price;
 pub(crate) mod r#realize_event;
+pub(crate) mod r#set_market_fee_config_event;
+pub(crate) mod r#set_min_leader_share_event;
 pub(crate) mod r#withdraw_event;
 
 pub use self::r#close_vault_event::*;
@@ -23,4 +25,6 @@ pub use self::r#fill_event::*;
 pub use self::r#freeze_vault_event::*;
 pub use self::r#price::*;
 pub use self::r#realize_event::*;
+pub use self::r#set_market_fee_config_event::*;
+pub use self::r#set_min_leader_share_event::*;
 pub use self::r#withdraw_event::*;

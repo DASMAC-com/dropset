@@ -8,13 +8,14 @@
 //! so a test reads as intent ("deposit, then withdraw half") rather
 //! than `AccountMeta` lists.
 //!
-//! Production handlers can't yet set some fields a negative test needs
-//! (`min_leader_share`, `taker_fee`). The `poke_*` helpers rewrite those
-//! fields directly on the account and reinstall it. Each `poke_*` call
-//! site should be replaced with the real admin instruction once it
-//! lands; they exist only to reach states the on-chain code can't yet
-//! produce on its own. (`frozen` graduated to the real `freeze_vault`
-//! instruction — see [`Fixture::freeze_vault`].)
+//! The `poke_*` helpers rewrite a single field directly on the account
+//! and reinstall it, reaching states without threading a full
+//! instruction. Some now have a real admin instruction
+//! (`min_leader_share` → [`Fixture::set_min_leader_share`], `frozen` →
+//! [`Fixture::freeze_vault`]); the pokes stay for the cases that still
+//! need an out-of-band write — e.g. arming `min_leader_share` to an
+//! arbitrary value without exercising the admin gate, or `taker_fee`,
+//! which has no setter.
 
 #![allow(dead_code)]
 
@@ -35,6 +36,7 @@ use dropset::{
         ForceWithdrawLeader as ForceWithdrawLeaderIx, FreezeVault as FreezeVaultIx, Init as InitIx,
         SetAllowOutsideDepositors as SetAllowOutsideDepositorsIx,
         SetLiquidityProfile as SetLiquidityProfileIx,
+        SetMarketFeeConfig as SetMarketFeeConfigIx, SetMinLeaderShare as SetMinLeaderShareIx,
         SetOutsideDepositsApproved as SetOutsideDepositsApprovedIx,
         SetReferencePrice as SetReferencePriceIx, Swap as SwapIx, Withdraw as WithdrawIx,
         WithdrawLeader as WithdrawLeaderIx,
@@ -539,6 +541,83 @@ impl Fixture {
             ],
         );
         send_ixn(&mut self.svm, admin, ix)
+    }
+
+    /// `set_min_leader_share` — admin retunes a vault's skin-in-the-game
+    /// floor (ppm). Returns `Err(debug-string)` on program rejection.
+    pub fn set_min_leader_share(
+        &mut self,
+        admin: &Keypair,
+        vault_idx: u32,
+        min_leader_share: u32,
+    ) -> Result<(), String> {
+        self.set_min_leader_share_meta(admin, vault_idx, min_leader_share)
+            .map(|_| ())
+    }
+
+    /// Like [`Self::set_min_leader_share`] but yields the transaction
+    /// metadata so a test can decode the emitted `SetMinLeaderShareEvent`.
+    pub fn set_min_leader_share_meta(
+        &mut self,
+        admin: &Keypair,
+        vault_idx: u32,
+        min_leader_share: u32,
+    ) -> Result<TransactionMetadata, String> {
+        let ix = Instruction::new_with_bytes(
+            PROGRAM_ID,
+            &SetMinLeaderShareIx {
+                vault_idx,
+                min_leader_share,
+            }
+            .data(),
+            vec![
+                AccountMeta::new_readonly(admin.pubkey(), true),
+                AccountMeta::new_readonly(self.registry, false),
+                AccountMeta::new(self.market, false),
+                AccountMeta::new_readonly(event_authority(), false),
+                AccountMeta::new_readonly(PROGRAM_ID, false),
+            ],
+        );
+        send_ixn_meta(&mut self.svm, admin, ix)
+    }
+
+    /// `set_market_fee_config` — admin retunes the market's per-`CreateVault`
+    /// fee. `fee_mint` / `fee_token_program` are passed explicitly so a
+    /// negative test can drive the `mint::token_program` mismatch.
+    pub fn set_market_fee_config(
+        &mut self,
+        admin: &Keypair,
+        fee_mint: &Pubkey,
+        fee_token_program: &Pubkey,
+        atoms: u64,
+    ) -> Result<(), String> {
+        self.set_market_fee_config_meta(admin, fee_mint, fee_token_program, atoms)
+            .map(|_| ())
+    }
+
+    /// Like [`Self::set_market_fee_config`] but yields the transaction
+    /// metadata so a test can decode the emitted `SetMarketFeeConfigEvent`.
+    pub fn set_market_fee_config_meta(
+        &mut self,
+        admin: &Keypair,
+        fee_mint: &Pubkey,
+        fee_token_program: &Pubkey,
+        atoms: u64,
+    ) -> Result<TransactionMetadata, String> {
+        let ix = Instruction::new_with_bytes(
+            PROGRAM_ID,
+            &SetMarketFeeConfigIx { atoms }.data(),
+            vec![
+                AccountMeta::new_readonly(admin.pubkey(), true),
+                AccountMeta::new_readonly(self.registry, false),
+                AccountMeta::new(self.market, false),
+                AccountMeta::new_readonly(*fee_mint, false),
+                AccountMeta::new_readonly(*fee_token_program, false),
+                AccountMeta::new_readonly(event_authority(), false),
+                AccountMeta::new_readonly(PROGRAM_ID, false),
+            ],
+        );
+        send_ixn_meta(&mut self.svm, admin, ix)
     }
 
     /// Leader seed / top-up. Creates + funds the leader's ATAs for the
@@ -1195,9 +1274,9 @@ impl Fixture {
         self.poke_vault_bytes(sector_idx, field_offset, &size_bps.to_le_bytes());
     }
 
-    /// Set `Vault.min_leader_share` (ppm) directly (no
-    /// `SetMinLeaderShare` ix yet) — lets a test arm the
-    /// skin-in-the-game floor without threading an admin instruction.
+    /// Set `Vault.min_leader_share` (ppm) directly — lets a test arm the
+    /// skin-in-the-game floor without exercising the admin gate or the
+    /// `<= PPM` cap the real [`Fixture::set_min_leader_share`] enforces.
     pub fn poke_min_leader_share(&mut self, sector_idx: u32, ppm: u32) {
         self.poke_vault_bytes(
             sector_idx,
@@ -1227,8 +1306,9 @@ impl Fixture {
         );
     }
 
-    /// Set `MarketHeader.taker_fee` directly (no `SetMarketFeeConfig`
-    /// ix yet).
+    /// Set `MarketHeader.taker_fee` directly — `taker_fee` has no admin
+    /// setter (`SetMarketFeeConfig` retunes the create-vault `fee_config`,
+    /// a separate field), so this poke is the only way to arm it.
     pub fn poke_taker_fee(&mut self, fee_ppm: u16) {
         let mut acct = self.svm.get_account(&self.market).expect("market");
         let off = 8 + core::mem::offset_of!(MarketHeader, taker_fee);

@@ -39,70 +39,72 @@ export const DROPSET_ERROR__MARKET_COUNT_OVERFLOW = 0x177c; // 6012
 export const DROPSET_ERROR__VAULT_CAP_EXCEEDED = 0x177d; // 6013
 /** InvalidPerfFeeRate: perf_fee_rate exceeds 1_000_000 ppm (100%) */
 export const DROPSET_ERROR__INVALID_PERF_FEE_RATE = 0x177e; // 6014
+/** InvalidMinLeaderShare: min_leader_share exceeds 1_000_000 ppm (100%) */
+export const DROPSET_ERROR__INVALID_MIN_LEADER_SHARE = 0x177f; // 6015
 /** LeaderOverrideNotAllowed: non-admin caller cannot open a vault on someone else's behalf */
-export const DROPSET_ERROR__LEADER_OVERRIDE_NOT_ALLOWED = 0x177f; // 6015
+export const DROPSET_ERROR__LEADER_OVERRIDE_NOT_ALLOWED = 0x1780; // 6016
 /** VaultEmpty: supplied vault sector is not assigned (leader == default) */
-export const DROPSET_ERROR__VAULT_EMPTY = 0x1780; // 6016
+export const DROPSET_ERROR__VAULT_EMPTY = 0x1781; // 6017
 /** VaultFrozen: vault is frozen */
-export const DROPSET_ERROR__VAULT_FROZEN = 0x1781; // 6017
+export const DROPSET_ERROR__VAULT_FROZEN = 0x1782; // 6018
 /** InvalidPrice: price bit pattern is not a valid encoding */
-export const DROPSET_ERROR__INVALID_PRICE = 0x1782; // 6018
+export const DROPSET_ERROR__INVALID_PRICE = 0x1783; // 6019
 /** InvalidQuoteSlot: quote_slot is future-dated or backdated past MAX_BACKDATE */
-export const DROPSET_ERROR__INVALID_QUOTE_SLOT = 0x1783; // 6019
+export const DROPSET_ERROR__INVALID_QUOTE_SLOT = 0x1784; // 6020
 /** ReferencePriceNotSet: set_liquidity_profile requires the vault's reference price to be set first */
-export const DROPSET_ERROR__REFERENCE_PRICE_NOT_SET = 0x1784; // 6020
+export const DROPSET_ERROR__REFERENCE_PRICE_NOT_SET = 0x1785; // 6021
 /** LiquidityProfileSizeOverflow: liquidity profile size_bps sum exceeds 10_000 on one side */
-export const DROPSET_ERROR__LIQUIDITY_PROFILE_SIZE_OVERFLOW = 0x1785; // 6021
+export const DROPSET_ERROR__LIQUIDITY_PROFILE_SIZE_OVERFLOW = 0x1786; // 6022
 /** OutsideDepositorsNotAllowed: leader has not enabled outside depositors on this vault */
-export const DROPSET_ERROR__OUTSIDE_DEPOSITORS_NOT_ALLOWED = 0x1786; // 6022
+export const DROPSET_ERROR__OUTSIDE_DEPOSITORS_NOT_ALLOWED = 0x1787; // 6023
 /** OutsideDepositorsNotApproved: admin has not approved outside deposits on this vault */
-export const DROPSET_ERROR__OUTSIDE_DEPOSITORS_NOT_APPROVED = 0x1787; // 6023
+export const DROPSET_ERROR__OUTSIDE_DEPOSITORS_NOT_APPROVED = 0x1788; // 6024
 /** SeedingRequiresLeader: first deposit to a vault must come from its leader */
-export const DROPSET_ERROR__SEEDING_REQUIRES_LEADER = 0x1788; // 6024
+export const DROPSET_ERROR__SEEDING_REQUIRES_LEADER = 0x1789; // 6025
 /** SeedingRequiresBothLegs: first deposit to a vault must supply both base and quote legs */
-export const DROPSET_ERROR__SEEDING_REQUIRES_BOTH_LEGS = 0x1789; // 6025
+export const DROPSET_ERROR__SEEDING_REQUIRES_BOTH_LEGS = 0x178a; // 6026
 /** SingleLegRequired: non-seeding deposit must size exactly one of base_in / quote_in */
-export const DROPSET_ERROR__SINGLE_LEG_REQUIRED = 0x178a; // 6026
+export const DROPSET_ERROR__SINGLE_LEG_REQUIRED = 0x178b; // 6027
 /** BasketSlippage: derived basket exceeds caller's slippage bounds */
-export const DROPSET_ERROR__BASKET_SLIPPAGE = 0x178b; // 6027
+export const DROPSET_ERROR__BASKET_SLIPPAGE = 0x178c; // 6028
 /** MinLeaderShareViolated: operation would violate the vault's min_leader_share floor */
-export const DROPSET_ERROR__MIN_LEADER_SHARE_VIOLATED = 0x178c; // 6028
+export const DROPSET_ERROR__MIN_LEADER_SHARE_VIOLATED = 0x178d; // 6029
 /** InsufficientShares: requested shares exceed the caller's available stake */
-export const DROPSET_ERROR__INSUFFICIENT_SHARES = 0x178d; // 6029
+export const DROPSET_ERROR__INSUFFICIENT_SHARES = 0x178e; // 6030
 /** InvalidAmountIn: swap amount_in must be greater than zero */
-export const DROPSET_ERROR__INVALID_AMOUNT_IN = 0x178e; // 6030
+export const DROPSET_ERROR__INVALID_AMOUNT_IN = 0x178f; // 6031
 /** VaultDepositorMismatch: supplied VaultDepositor PDA does not match the (market, sector, owner) seeds */
-export const DROPSET_ERROR__VAULT_DEPOSITOR_MISMATCH = 0x178f; // 6031
+export const DROPSET_ERROR__VAULT_DEPOSITOR_MISMATCH = 0x1790; // 6032
 /** MathOverflow: arithmetic overflow in basket / share math */
-export const DROPSET_ERROR__MATH_OVERFLOW = 0x1790; // 6032
+export const DROPSET_ERROR__MATH_OVERFLOW = 0x1791; // 6033
 /** InvalidSwapSide: swap `side` argument is neither Buy nor Sell */
-export const DROPSET_ERROR__INVALID_SWAP_SIDE = 0x1791; // 6033
+export const DROPSET_ERROR__INVALID_SWAP_SIDE = 0x1792; // 6034
 /** InvalidLimitPrice: limit_price sentinel is invalid for this swap side */
-export const DROPSET_ERROR__INVALID_LIMIT_PRICE = 0x1792; // 6034
+export const DROPSET_ERROR__INVALID_LIMIT_PRICE = 0x1793; // 6035
 /** VaultAlreadyTombstoned: vault is already on the tombstone list */
-export const DROPSET_ERROR__VAULT_ALREADY_TOMBSTONED = 0x1793; // 6035
+export const DROPSET_ERROR__VAULT_ALREADY_TOMBSTONED = 0x1794; // 6036
 /** TokenAccountNotEmpty: token account must be drained to zero before it can be closed */
-export const DROPSET_ERROR__TOKEN_ACCOUNT_NOT_EMPTY = 0x1794; // 6036
+export const DROPSET_ERROR__TOKEN_ACCOUNT_NOT_EMPTY = 0x1795; // 6037
 /** MarketTreasuryNotClosed: market treasury must be closed before the market can be closed */
-export const DROPSET_ERROR__MARKET_TREASURY_NOT_CLOSED = 0x1795; // 6037
+export const DROPSET_ERROR__MARKET_TREASURY_NOT_CLOSED = 0x1796; // 6038
 /** MarketHasDepositors: market still has outstanding VaultDepositor PDAs */
-export const DROPSET_ERROR__MARKET_HAS_DEPOSITORS = 0x1796; // 6038
+export const DROPSET_ERROR__MARKET_HAS_DEPOSITORS = 0x1797; // 6039
 /** RegistryHasMarkets: registry still has live markets (market_count != 0) */
-export const DROPSET_ERROR__REGISTRY_HAS_MARKETS = 0x1797; // 6039
+export const DROPSET_ERROR__REGISTRY_HAS_MARKETS = 0x1798; // 6040
 /** RegistryHasOtherAdmins: registry still has admins beyond the caller */
-export const DROPSET_ERROR__REGISTRY_HAS_OTHER_ADMINS = 0x1798; // 6040
+export const DROPSET_ERROR__REGISTRY_HAS_OTHER_ADMINS = 0x1799; // 6041
 /** NotAMarketTreasury: supplied mint is not one of the market's base/quote legs */
-export const DROPSET_ERROR__NOT_A_MARKET_TREASURY = 0x1799; // 6041
+export const DROPSET_ERROR__NOT_A_MARKET_TREASURY = 0x179a; // 6042
 /** TeardownDisabled: teardown instructions are disabled in this build (admin-teardown feature off) */
-export const DROPSET_ERROR__TEARDOWN_DISABLED = 0x179a; // 6042
+export const DROPSET_ERROR__TEARDOWN_DISABLED = 0x179b; // 6043
 /** VaultTombstoned: vault has been closed and moved to the tombstone list */
-export const DROPSET_ERROR__VAULT_TOMBSTONED = 0x179b; // 6043
+export const DROPSET_ERROR__VAULT_TOMBSTONED = 0x179c; // 6044
 
-export type DropsetError = typeof DROPSET_ERROR__ADMIN_NOT_FOUND | typeof DROPSET_ERROR__ADMIN_SET_FULL | typeof DROPSET_ERROR__ALREADY_ADMIN | typeof DROPSET_ERROR__BASKET_SLIPPAGE | typeof DROPSET_ERROR__CANNOT_REMOVE_LAST_ADMIN | typeof DROPSET_ERROR__CORRUPT_VAULT_LIST | typeof DROPSET_ERROR__DUPLICATE_BASE_QUOTE_MINT | typeof DROPSET_ERROR__INSUFFICIENT_SHARES | typeof DROPSET_ERROR__INVALID_AMOUNT_IN | typeof DROPSET_ERROR__INVALID_FEE_MINT | typeof DROPSET_ERROR__INVALID_LIMIT_PRICE | typeof DROPSET_ERROR__INVALID_PERF_FEE_RATE | typeof DROPSET_ERROR__INVALID_PRICE | typeof DROPSET_ERROR__INVALID_PROGRAM_DATA | typeof DROPSET_ERROR__INVALID_PROGRAM_DATA_ADDRESS | typeof DROPSET_ERROR__INVALID_QUOTE_SLOT | typeof DROPSET_ERROR__INVALID_SECTOR_INDEX | typeof DROPSET_ERROR__INVALID_SWAP_SIDE | typeof DROPSET_ERROR__INVALID_UPGRADE_AUTHORITY | typeof DROPSET_ERROR__LEADER_OVERRIDE_NOT_ALLOWED | typeof DROPSET_ERROR__LIQUIDITY_PROFILE_SIZE_OVERFLOW | typeof DROPSET_ERROR__MARKET_COUNT_OVERFLOW | typeof DROPSET_ERROR__MARKET_HAS_DEPOSITORS | typeof DROPSET_ERROR__MARKET_TREASURY_NOT_CLOSED | typeof DROPSET_ERROR__MATH_OVERFLOW | typeof DROPSET_ERROR__MIN_LEADER_SHARE_VIOLATED | typeof DROPSET_ERROR__NOT_A_MARKET_TREASURY | typeof DROPSET_ERROR__OUTSIDE_DEPOSITORS_NOT_ALLOWED | typeof DROPSET_ERROR__OUTSIDE_DEPOSITORS_NOT_APPROVED | typeof DROPSET_ERROR__REFERENCE_PRICE_NOT_SET | typeof DROPSET_ERROR__REGISTRY_HAS_MARKETS | typeof DROPSET_ERROR__REGISTRY_HAS_OTHER_ADMINS | typeof DROPSET_ERROR__SEEDING_REQUIRES_BOTH_LEGS | typeof DROPSET_ERROR__SEEDING_REQUIRES_LEADER | typeof DROPSET_ERROR__SINGLE_LEG_REQUIRED | typeof DROPSET_ERROR__TEARDOWN_DISABLED | typeof DROPSET_ERROR__TOKEN_ACCOUNT_NOT_EMPTY | typeof DROPSET_ERROR__UNAUTHORIZED | typeof DROPSET_ERROR__VAULT_ALREADY_TOMBSTONED | typeof DROPSET_ERROR__VAULT_CAP_EXCEEDED | typeof DROPSET_ERROR__VAULT_DEPOSITOR_MISMATCH | typeof DROPSET_ERROR__VAULT_EMPTY | typeof DROPSET_ERROR__VAULT_FROZEN | typeof DROPSET_ERROR__VAULT_TOMBSTONED;
+export type DropsetError = typeof DROPSET_ERROR__ADMIN_NOT_FOUND | typeof DROPSET_ERROR__ADMIN_SET_FULL | typeof DROPSET_ERROR__ALREADY_ADMIN | typeof DROPSET_ERROR__BASKET_SLIPPAGE | typeof DROPSET_ERROR__CANNOT_REMOVE_LAST_ADMIN | typeof DROPSET_ERROR__CORRUPT_VAULT_LIST | typeof DROPSET_ERROR__DUPLICATE_BASE_QUOTE_MINT | typeof DROPSET_ERROR__INSUFFICIENT_SHARES | typeof DROPSET_ERROR__INVALID_AMOUNT_IN | typeof DROPSET_ERROR__INVALID_FEE_MINT | typeof DROPSET_ERROR__INVALID_LIMIT_PRICE | typeof DROPSET_ERROR__INVALID_MIN_LEADER_SHARE | typeof DROPSET_ERROR__INVALID_PERF_FEE_RATE | typeof DROPSET_ERROR__INVALID_PRICE | typeof DROPSET_ERROR__INVALID_PROGRAM_DATA | typeof DROPSET_ERROR__INVALID_PROGRAM_DATA_ADDRESS | typeof DROPSET_ERROR__INVALID_QUOTE_SLOT | typeof DROPSET_ERROR__INVALID_SECTOR_INDEX | typeof DROPSET_ERROR__INVALID_SWAP_SIDE | typeof DROPSET_ERROR__INVALID_UPGRADE_AUTHORITY | typeof DROPSET_ERROR__LEADER_OVERRIDE_NOT_ALLOWED | typeof DROPSET_ERROR__LIQUIDITY_PROFILE_SIZE_OVERFLOW | typeof DROPSET_ERROR__MARKET_COUNT_OVERFLOW | typeof DROPSET_ERROR__MARKET_HAS_DEPOSITORS | typeof DROPSET_ERROR__MARKET_TREASURY_NOT_CLOSED | typeof DROPSET_ERROR__MATH_OVERFLOW | typeof DROPSET_ERROR__MIN_LEADER_SHARE_VIOLATED | typeof DROPSET_ERROR__NOT_A_MARKET_TREASURY | typeof DROPSET_ERROR__OUTSIDE_DEPOSITORS_NOT_ALLOWED | typeof DROPSET_ERROR__OUTSIDE_DEPOSITORS_NOT_APPROVED | typeof DROPSET_ERROR__REFERENCE_PRICE_NOT_SET | typeof DROPSET_ERROR__REGISTRY_HAS_MARKETS | typeof DROPSET_ERROR__REGISTRY_HAS_OTHER_ADMINS | typeof DROPSET_ERROR__SEEDING_REQUIRES_BOTH_LEGS | typeof DROPSET_ERROR__SEEDING_REQUIRES_LEADER | typeof DROPSET_ERROR__SINGLE_LEG_REQUIRED | typeof DROPSET_ERROR__TEARDOWN_DISABLED | typeof DROPSET_ERROR__TOKEN_ACCOUNT_NOT_EMPTY | typeof DROPSET_ERROR__UNAUTHORIZED | typeof DROPSET_ERROR__VAULT_ALREADY_TOMBSTONED | typeof DROPSET_ERROR__VAULT_CAP_EXCEEDED | typeof DROPSET_ERROR__VAULT_DEPOSITOR_MISMATCH | typeof DROPSET_ERROR__VAULT_EMPTY | typeof DROPSET_ERROR__VAULT_FROZEN | typeof DROPSET_ERROR__VAULT_TOMBSTONED;
 
 let dropsetErrorMessages: Record<DropsetError, string> | undefined;
 if (process.env.NODE_ENV !== 'production') {
-  dropsetErrorMessages = { [DROPSET_ERROR__ADMIN_NOT_FOUND]: `the named pubkey is not a registry admin`, [DROPSET_ERROR__ADMIN_SET_FULL]: `the registry admin set has no room for another admin`, [DROPSET_ERROR__ALREADY_ADMIN]: `the named pubkey is already a registry admin`, [DROPSET_ERROR__BASKET_SLIPPAGE]: `derived basket exceeds caller's slippage bounds`, [DROPSET_ERROR__CANNOT_REMOVE_LAST_ADMIN]: `cannot remove the last remaining registry admin`, [DROPSET_ERROR__CORRUPT_VAULT_LIST]: `vault list pointers are inconsistent with the list head`, [DROPSET_ERROR__DUPLICATE_BASE_QUOTE_MINT]: `base and quote mints must differ`, [DROPSET_ERROR__INSUFFICIENT_SHARES]: `requested shares exceed the caller's available stake`, [DROPSET_ERROR__INVALID_AMOUNT_IN]: `swap amount_in must be greater than zero`, [DROPSET_ERROR__INVALID_FEE_MINT]: `fee mint does not match the registry's configured fee mint`, [DROPSET_ERROR__INVALID_LIMIT_PRICE]: `limit_price sentinel is invalid for this swap side`, [DROPSET_ERROR__INVALID_PERF_FEE_RATE]: `perf_fee_rate exceeds 1_000_000 ppm (100%)`, [DROPSET_ERROR__INVALID_PRICE]: `price bit pattern is not a valid encoding`, [DROPSET_ERROR__INVALID_PROGRAM_DATA]: `program_data account contents could not be decoded`, [DROPSET_ERROR__INVALID_PROGRAM_DATA_ADDRESS]: `program_data account is not the canonical PDA for this program`, [DROPSET_ERROR__INVALID_QUOTE_SLOT]: `quote_slot is future-dated or backdated past MAX_BACKDATE`, [DROPSET_ERROR__INVALID_SECTOR_INDEX]: `supplied sector index is out of range`, [DROPSET_ERROR__INVALID_SWAP_SIDE]: `swap \`side\` argument is neither Buy nor Sell`, [DROPSET_ERROR__INVALID_UPGRADE_AUTHORITY]: `Init must be signed by the program's upgrade authority`, [DROPSET_ERROR__LEADER_OVERRIDE_NOT_ALLOWED]: `non-admin caller cannot open a vault on someone else's behalf`, [DROPSET_ERROR__LIQUIDITY_PROFILE_SIZE_OVERFLOW]: `liquidity profile size_bps sum exceeds 10_000 on one side`, [DROPSET_ERROR__MARKET_COUNT_OVERFLOW]: `registry market_count cannot exceed u32::MAX`, [DROPSET_ERROR__MARKET_HAS_DEPOSITORS]: `market still has outstanding VaultDepositor PDAs`, [DROPSET_ERROR__MARKET_TREASURY_NOT_CLOSED]: `market treasury must be closed before the market can be closed`, [DROPSET_ERROR__MATH_OVERFLOW]: `arithmetic overflow in basket / share math`, [DROPSET_ERROR__MIN_LEADER_SHARE_VIOLATED]: `operation would violate the vault's min_leader_share floor`, [DROPSET_ERROR__NOT_A_MARKET_TREASURY]: `supplied mint is not one of the market's base/quote legs`, [DROPSET_ERROR__OUTSIDE_DEPOSITORS_NOT_ALLOWED]: `leader has not enabled outside depositors on this vault`, [DROPSET_ERROR__OUTSIDE_DEPOSITORS_NOT_APPROVED]: `admin has not approved outside deposits on this vault`, [DROPSET_ERROR__REFERENCE_PRICE_NOT_SET]: `set_liquidity_profile requires the vault's reference price to be set first`, [DROPSET_ERROR__REGISTRY_HAS_MARKETS]: `registry still has live markets (market_count != 0)`, [DROPSET_ERROR__REGISTRY_HAS_OTHER_ADMINS]: `registry still has admins beyond the caller`, [DROPSET_ERROR__SEEDING_REQUIRES_BOTH_LEGS]: `first deposit to a vault must supply both base and quote legs`, [DROPSET_ERROR__SEEDING_REQUIRES_LEADER]: `first deposit to a vault must come from its leader`, [DROPSET_ERROR__SINGLE_LEG_REQUIRED]: `non-seeding deposit must size exactly one of base_in / quote_in`, [DROPSET_ERROR__TEARDOWN_DISABLED]: `teardown instructions are disabled in this build (admin-teardown feature off)`, [DROPSET_ERROR__TOKEN_ACCOUNT_NOT_EMPTY]: `token account must be drained to zero before it can be closed`, [DROPSET_ERROR__UNAUTHORIZED]: `signer is not a registry admin`, [DROPSET_ERROR__VAULT_ALREADY_TOMBSTONED]: `vault is already on the tombstone list`, [DROPSET_ERROR__VAULT_CAP_EXCEEDED]: `market vault cap (registry.max_vaults_per_market) is full`, [DROPSET_ERROR__VAULT_DEPOSITOR_MISMATCH]: `supplied VaultDepositor PDA does not match the (market, sector, owner) seeds`, [DROPSET_ERROR__VAULT_EMPTY]: `supplied vault sector is not assigned (leader == default)`, [DROPSET_ERROR__VAULT_FROZEN]: `vault is frozen`, [DROPSET_ERROR__VAULT_TOMBSTONED]: `vault has been closed and moved to the tombstone list` };
+  dropsetErrorMessages = { [DROPSET_ERROR__ADMIN_NOT_FOUND]: `the named pubkey is not a registry admin`, [DROPSET_ERROR__ADMIN_SET_FULL]: `the registry admin set has no room for another admin`, [DROPSET_ERROR__ALREADY_ADMIN]: `the named pubkey is already a registry admin`, [DROPSET_ERROR__BASKET_SLIPPAGE]: `derived basket exceeds caller's slippage bounds`, [DROPSET_ERROR__CANNOT_REMOVE_LAST_ADMIN]: `cannot remove the last remaining registry admin`, [DROPSET_ERROR__CORRUPT_VAULT_LIST]: `vault list pointers are inconsistent with the list head`, [DROPSET_ERROR__DUPLICATE_BASE_QUOTE_MINT]: `base and quote mints must differ`, [DROPSET_ERROR__INSUFFICIENT_SHARES]: `requested shares exceed the caller's available stake`, [DROPSET_ERROR__INVALID_AMOUNT_IN]: `swap amount_in must be greater than zero`, [DROPSET_ERROR__INVALID_FEE_MINT]: `fee mint does not match the registry's configured fee mint`, [DROPSET_ERROR__INVALID_LIMIT_PRICE]: `limit_price sentinel is invalid for this swap side`, [DROPSET_ERROR__INVALID_MIN_LEADER_SHARE]: `min_leader_share exceeds 1_000_000 ppm (100%)`, [DROPSET_ERROR__INVALID_PERF_FEE_RATE]: `perf_fee_rate exceeds 1_000_000 ppm (100%)`, [DROPSET_ERROR__INVALID_PRICE]: `price bit pattern is not a valid encoding`, [DROPSET_ERROR__INVALID_PROGRAM_DATA]: `program_data account contents could not be decoded`, [DROPSET_ERROR__INVALID_PROGRAM_DATA_ADDRESS]: `program_data account is not the canonical PDA for this program`, [DROPSET_ERROR__INVALID_QUOTE_SLOT]: `quote_slot is future-dated or backdated past MAX_BACKDATE`, [DROPSET_ERROR__INVALID_SECTOR_INDEX]: `supplied sector index is out of range`, [DROPSET_ERROR__INVALID_SWAP_SIDE]: `swap \`side\` argument is neither Buy nor Sell`, [DROPSET_ERROR__INVALID_UPGRADE_AUTHORITY]: `Init must be signed by the program's upgrade authority`, [DROPSET_ERROR__LEADER_OVERRIDE_NOT_ALLOWED]: `non-admin caller cannot open a vault on someone else's behalf`, [DROPSET_ERROR__LIQUIDITY_PROFILE_SIZE_OVERFLOW]: `liquidity profile size_bps sum exceeds 10_000 on one side`, [DROPSET_ERROR__MARKET_COUNT_OVERFLOW]: `registry market_count cannot exceed u32::MAX`, [DROPSET_ERROR__MARKET_HAS_DEPOSITORS]: `market still has outstanding VaultDepositor PDAs`, [DROPSET_ERROR__MARKET_TREASURY_NOT_CLOSED]: `market treasury must be closed before the market can be closed`, [DROPSET_ERROR__MATH_OVERFLOW]: `arithmetic overflow in basket / share math`, [DROPSET_ERROR__MIN_LEADER_SHARE_VIOLATED]: `operation would violate the vault's min_leader_share floor`, [DROPSET_ERROR__NOT_A_MARKET_TREASURY]: `supplied mint is not one of the market's base/quote legs`, [DROPSET_ERROR__OUTSIDE_DEPOSITORS_NOT_ALLOWED]: `leader has not enabled outside depositors on this vault`, [DROPSET_ERROR__OUTSIDE_DEPOSITORS_NOT_APPROVED]: `admin has not approved outside deposits on this vault`, [DROPSET_ERROR__REFERENCE_PRICE_NOT_SET]: `set_liquidity_profile requires the vault's reference price to be set first`, [DROPSET_ERROR__REGISTRY_HAS_MARKETS]: `registry still has live markets (market_count != 0)`, [DROPSET_ERROR__REGISTRY_HAS_OTHER_ADMINS]: `registry still has admins beyond the caller`, [DROPSET_ERROR__SEEDING_REQUIRES_BOTH_LEGS]: `first deposit to a vault must supply both base and quote legs`, [DROPSET_ERROR__SEEDING_REQUIRES_LEADER]: `first deposit to a vault must come from its leader`, [DROPSET_ERROR__SINGLE_LEG_REQUIRED]: `non-seeding deposit must size exactly one of base_in / quote_in`, [DROPSET_ERROR__TEARDOWN_DISABLED]: `teardown instructions are disabled in this build (admin-teardown feature off)`, [DROPSET_ERROR__TOKEN_ACCOUNT_NOT_EMPTY]: `token account must be drained to zero before it can be closed`, [DROPSET_ERROR__UNAUTHORIZED]: `signer is not a registry admin`, [DROPSET_ERROR__VAULT_ALREADY_TOMBSTONED]: `vault is already on the tombstone list`, [DROPSET_ERROR__VAULT_CAP_EXCEEDED]: `market vault cap (registry.max_vaults_per_market) is full`, [DROPSET_ERROR__VAULT_DEPOSITOR_MISMATCH]: `supplied VaultDepositor PDA does not match the (market, sector, owner) seeds`, [DROPSET_ERROR__VAULT_EMPTY]: `supplied vault sector is not assigned (leader == default)`, [DROPSET_ERROR__VAULT_FROZEN]: `vault is frozen`, [DROPSET_ERROR__VAULT_TOMBSTONED]: `vault has been closed and moved to the tombstone list` };
 }
 
 export function getDropsetErrorMessage(code: DropsetError): string {

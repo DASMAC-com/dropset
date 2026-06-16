@@ -14,4 +14,6 @@ export * from './fillEvent';
 export * from './freezeVaultEvent';
 export * from './price';
 export * from './realizeEvent';
+export * from './setMarketFeeConfigEvent';
+export * from './setMinLeaderShareEvent';
 export * from './withdrawEvent';

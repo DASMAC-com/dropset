@@ -323,4 +323,36 @@ pub mod dropset {
             ctx.accounts.close_registry()
         }
     }
+
+    // ── Post-create admin retuning levers ────────────────────────────
+    // Always-on admin mutators (not teardown-gated) that retune values
+    // stamped once at create time — a vault's `min_leader_share` floor
+    // and a market's create-vault `fee_config`. Appended after the
+    // teardown surface so discriminants 0–21 keep their numbers: clients
+    // key instructions on the discriminant, so inserting mid-list would
+    // break every existing client. See the architecture spec,
+    // § SetMinLeaderShare and § SetMarketFeeConfig.
+
+    #[discrim = 22]
+    pub fn set_min_leader_share(
+        ctx: &mut Context<SetMinLeaderShare>,
+        vault_idx: u32,
+        min_leader_share: u32,
+    ) -> Result<()> {
+        let event = ctx
+            .accounts
+            .set_min_leader_share(vault_idx, min_leader_share)?;
+        emit_cpi!(event);
+        Ok(())
+    }
+
+    #[discrim = 23]
+    pub fn set_market_fee_config(
+        ctx: &mut Context<SetMarketFeeConfig>,
+        atoms: u64,
+    ) -> Result<()> {
+        let event = ctx.accounts.set_market_fee_config(atoms)?;
+        emit_cpi!(event);
+        Ok(())
+    }
 }

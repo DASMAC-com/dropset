@@ -46,6 +46,29 @@ pub struct FreezeVaultEvent {
     pub leader: Address,
 }
 
+/// Emitted by `set_min_leader_share` when an admin retunes a vault's
+/// skin-in-the-game floor after creation. See the spec's
+/// **SetMinLeaderShare**.
+#[event]
+pub struct SetMinLeaderShareEvent {
+    pub market: Address,
+    pub sector_idx: u32,
+    pub min_leader_share: u32,
+}
+
+/// Emitted by `set_market_fee_config` when an admin retunes a market's
+/// per-`CreateVault` fee. Load-bearing for teardown: the chain does not
+/// enumerate the set of historical fee mints, so the admin reconstructs
+/// it off-chain from these events to sweep every fee ATA. See the spec's
+/// **SetMarketFeeConfig** and **Account lifecycle and rent reclamation**.
+#[event]
+pub struct SetMarketFeeConfigEvent {
+    pub market: Address,
+    pub mint: Address,
+    pub token_program: Address,
+    pub atoms: u64,
+}
+
 /// Emitted by `deposit` after share accounting + basis math.
 #[event]
 pub struct DepositEvent {

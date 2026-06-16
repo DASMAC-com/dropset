@@ -177,7 +177,8 @@ pub struct Vault {
     /// Performance fee rate in ppm. Set at `CreateVault`; immutable.
     pub perf_fee_rate: PodU32,
     /// Floor on `leader_shares / total_shares` in ppm. Stamped at
-    /// `CreateVault` from `MarketHeader.default_min_leader_share`.
+    /// `CreateVault` from `MarketHeader.default_min_leader_share`, then
+    /// admin-retunable per vault via `SetMinLeaderShare`.
     pub min_leader_share: PodU32,
     /// True when an admin has frozen this vault. Alignment-1
     /// `PodBool` so the field stays at the same on-chain offset as
@@ -245,7 +246,8 @@ pub struct MarketHeader {
     /// **Account lifecycle and rent reclamation**.
     pub outstanding_vault_depositors: PodU32,
     /// Per-market create-vault fee: mint and amount. Seeded from
-    /// `Registry.default_fee_config` at market creation.
+    /// `Registry.default_fee_config` at market creation, then
+    /// admin-retunable via `SetMarketFeeConfig`.
     pub fee_config: FeeConfig,
     /// Taker fee rate, capped at ~6.55% (`Ppm16` max).
     pub taker_fee: PodU16,

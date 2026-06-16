@@ -1666,8 +1666,10 @@ authenticated off-chain by program id + instruction binding. Default to
 standard `emit_cpi!` for IDL/tooling compatibility.
 
 **Emission points.** The **taker fill** (at book tear-down), `Deposit`,
-`Withdraw`, `CreateVault`, and `Realize` emit. The leader quote-refresh
-instructions do not.
+`Withdraw`, `CreateVault`, and `Realize` emit, as do the lifecycle and
+admin-config changes — `CloseVault`, `FreezeVault`, `SetMinLeaderShare`,
+and `SetMarketFeeConfig`. The leader quote-refresh instructions
+(`SetReferencePrice`, `SetLiquidityProfile`) do not.
 
 **Per-emit cost.** Each `emit_cpi!` runs as a self-CPI: ~1000 CU
 invocation overhead + `data_len/250` CU for the payload. The hard
