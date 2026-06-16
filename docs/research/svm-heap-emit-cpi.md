@@ -100,18 +100,23 @@ depth = 64, total stack = 256 KiB ([`sbpf/src/vm.rs:107-110`](https://github.com
 [`vm.rs:99-101`](https://github.com/anza-xyz/sbpf/blob/239cb0bb771224bc49ca679c6a93ee7a876e8cbc/src/vm.rs#L99-L101)). Any single allocation > ~3 KiB in a frame risks
 overflow; recursion bounded at 64.
 
-→ **The ephemeral book MUST be heap-allocated.** Even a
-320-entry × 24 B book (7.7 KiB) blows the 4 KiB frame.
+→ **The ephemeral book is heap-allocated.** It's a dynamically-sized
+`Vec` whose length isn't known until the active-DLL walk finishes, and
+at the `max_vaults_per_market` ceiling it reaches ~64 KiB
+(255 × `N_LEVELS = 8` × 32 B) — far past the 4 KiB frame. Even at the
+default cap (~2.5 KiB, see below) a stack buffer would have to be
+worst-case-sized and would crowd the frame's other locals, so the heap
+is the right home regardless.
 
 **Allocation idioms ranked.**
 
-| idiom                          | when                                                                                                                                                                                                |
-| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Vec` + `sort_by_key`          | **the shipped matching engine** — collect all live levels, sort once; cheapest when the whole book fits in one buffer                                                                               |
-| `BinaryHeap::with_capacity(N)` | incremental `pop_min` without a full sort; considered for the matcher but not shipped (a single sort is simpler at `N_LEVELS = 8`)                                                                  |
-| `Box<[T; N]>`                  | fixed-size slab, no pop-min semantics; you'd reimplement sift-down                                                                                                                                  |
-| `Vec::with_capacity(N)`        | pre-sized collect-then-sort — avoids the realloc churn of `Vec::new()` if the book ever grows large                                                                                                 |
-| `Vec::new()` + push            | what shipped: each doubling leaks the old buffer on the bump allocator, so it is only safe when the entry count is small and bounded (≤ `max_vaults_per_market × N_LEVELS`, ~80 at the default cap) |
+| idiom                          | when                                                                                                                                                                                                                                            |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Vec` + `sort_by_key`          | **the shipped matching engine** — collect all live levels, sort once; cheapest when the whole book fits in one buffer                                                                                                                           |
+| `BinaryHeap::with_capacity(N)` | incremental `pop_min` without a full sort; considered for the matcher but not shipped (a single sort is simpler at `N_LEVELS = 8`)                                                                                                              |
+| `Box<[T; N]>`                  | fixed-size slab, no pop-min semantics; you'd reimplement sift-down                                                                                                                                                                              |
+| `Vec::with_capacity(N)`        | pre-sized collect-then-sort — avoids the realloc churn of `Vec::new()` if the book ever grows large                                                                                                                                             |
+| `Vec::new()` + push            | how the shipped `Vec` above is grown — starts empty and doubles; each doubling leaks the old buffer on the bump allocator, tolerable only because the count is small and bounded (≤ `max_vaults_per_market × N_LEVELS`, ~80 at the default cap) |
 
 **Capacity math.** The shipped `HeapEntry` (`swap.rs`) carries
 `(price_key:u32, price:Price, nonce:u64, sector_idx:u32, level_idx:u32, size:u64)` — roughly **32 B/entry** at 8-byte
@@ -125,7 +130,7 @@ under `#[repr(C)]`). The book is **`N_LEVELS = 8`** levels/side
 inside the 32 KiB default heap even with the `Vec::new()` doubling
 churn (peak live + leaked ≈ a few KiB).
 
-**When to `request_heap_frame`.** Not needed at any configured scale.
+**When to `request_heap_frame`.** Not needed at the default cap.
 `max_vaults_per_market` is a `u8`
 ([`programs/dropset/src/state/registry.rs:60`](https://github.com/DASMAC-com/dropset/blob/7891ebc071a0aec0332237970d4ab6f39033ad6f/programs/dropset/src/state/registry.rs#L60));
 even the worst case of 255 × 8 levels/side × 32 B ≈ 64 KiB would
