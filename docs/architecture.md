@@ -248,9 +248,9 @@ sectors.
 +----------------+----------+----------+----------+----------+-----+
 ```
 
-Each `Vault` carries two opaque pointer fields (`next`, `prev`) not
-shown in its struct (see **Vault**) — they thread whichever list the
-vault is currently on (active, tombstone, or free). `MarketHeader`
+Each `Vault` carries two pointer fields (`next`, `prev`; see **Vault**) —
+they thread whichever list the vault is currently on (active,
+tombstone, or free). `MarketHeader`
 separately stores three list heads (`head`, `tombstone_head`,
 `free_head`). These are stored as offsets into the sector region
 (durable across transactions); each instruction resolves them to
