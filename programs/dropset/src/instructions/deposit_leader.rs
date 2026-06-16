@@ -183,14 +183,22 @@ impl DepositLeader {
             v.quote_atoms = (quote_atoms + quote_in_final).into();
             let new_total = total_shares + shares_out;
             v.total_shares = new_total.into();
-            let new_leader = v.leader_shares.get() + shares_out;
-            v.leader_shares = new_leader.into();
+            let new_leader_shares = v.leader_shares.get() + shares_out;
+            v.leader_shares = new_leader_shares.into();
             if is_seeding {
-                v.hwm = Q32_32_ONE.into();
+                // `hwm` is owned by `create_vault`, which stamps it to
+                // `Q32_32_ONE` at sector allocation; it provably cannot
+                // change before this first (seeding) deposit, since
+                // `realize_in_place` early-returns at `total_shares == 0`
+                // without touching it. Re-stamping here would duplicate
+                // the initialization across two instructions, so only
+                // assert the invariant (no-op in the on-chain release
+                // build).
+                debug_assert_eq!(v.hwm.get(), Q32_32_ONE);
             }
             (
                 new_total,
-                new_leader,
+                new_leader_shares,
                 v.base_atoms.get(),
                 v.quote_atoms.get(),
             )
