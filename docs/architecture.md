@@ -1676,7 +1676,7 @@ ceiling is **64 inner instructions per transaction**
 `emit_cpi!` per matched leg; see **Granularity** below), this count —
 not the per-CPI 10 KiB data cap — is what bounds a take: it can record
 at most `64 − (top-level ix + token CPIs)` legs in one transaction (a
-single `FillEvent` is ~120 B, nowhere near the data cap).
+single `FillEvent` is ~208 B, nowhere near the data cap).
 
 **Why fills must be events, not account diffs.** `market.nonce` is
 bumped on every fill and every quote update, and a geyser stream
@@ -1729,8 +1729,7 @@ dynamic fields and emit too rarely for bytemuck to pay back.
 the event *schema* (the field-by-field layouts) is owned by the
 program's `#[event]` structs and **canonicalized in the generated IDL**,
 which off-chain clients are generated from and the self-CPI instruction
-data decodes against. The consumer-facing mirror of that schema lives in
-the interface spec, downstream of this document and the IDL. Default-mode events
+data decodes against. Default-mode events
 encode borsh-wire-compatible, so existing borsh-decoder tooling keeps
 working unchanged; bytemuck events surface in the IDL as a `repr(C)`
 blob (tagged `{serialization:"bytemuck",repr:{kind:"c"}}`) and decode
