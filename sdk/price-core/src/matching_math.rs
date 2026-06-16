@@ -98,10 +98,7 @@ mod tests {
     #[test]
     fn flush_bid_offset_at_or_above_ppm_is_zero() {
         let reference = Price::encode(50_000_000, 0).unwrap();
-        assert_eq!(
-            flush_level_price(reference, PPM as u32, false),
-            Price::ZERO
-        );
+        assert_eq!(flush_level_price(reference, PPM as u32, false), Price::ZERO);
     }
 
     #[test]

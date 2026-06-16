@@ -1,13 +1,13 @@
 # cspell:word cdylib
 
 [dependencies]
-anchor-lang-v2.workspace = true
-anchor-spl-v2.workspace = true
 # Canonical `Price` codec + pure matcher math (interface.md § SDK). Pulled
 # with `default-features = false` so the std-heavy off-chain `simulate`
 # surface stays out of the on-chain build; `idl` turns on Anchor's
 # `IdlType` derive for `Price` so the generated IDL still emits it.
 dropset-price-core = {path = "../../sdk/price-core", default-features = false, features = ["idl"]}
+anchor-lang-v2.workspace = true
+anchor-spl-v2.workspace = true
 solana-program-log.workspace = true
 solana-sdk-ids.workspace = true
 wincode.workspace = true
