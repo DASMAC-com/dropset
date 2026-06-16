@@ -36,9 +36,11 @@ export function getWithdrawInstructionDataCodec(): FixedSizeCodec<WithdrawInstru
 
 export type WithdrawAsyncInput<TAccountSigner extends string = string, TAccountMarket extends string = string, TAccountVaultDepositor extends string = string, TAccountBaseMint extends string = string, TAccountQuoteMint extends string = string, TAccountBaseTokenProgram extends string = string, TAccountQuoteTokenProgram extends string = string, TAccountSignerBaseAta extends string = string, TAccountSignerQuoteAta extends string = string, TAccountMarketBaseTreasury extends string = string, TAccountMarketQuoteTreasury extends string = string, TAccountAssociatedTokenProgram extends string = string, TAccountSystemProgram extends string = string, TAccountEventAuthority extends string = string, TAccountProgram extends string = string> =  {
   /**
- * Either the vault's leader (burns `leader_shares`) or an outside
- * depositor (burns the PDA's `shares`). PDA seeds bind the
- * outside path to this signer.
+ * The outside depositor exiting the vault — the PDA seeds bind this
+ * signer to the `VaultDepositor` whose `shares` are burned here. The
+ * leader is rejected (`DropsetError::Unauthorized`) and exits via
+ * [`super::withdraw_leader`], which burns `leader_shares` directly
+ * and carries no `VaultDepositor` PDA.
  */
 signer: TransactionSigner<TAccountSigner>;
 /** Market the vault lives on. */
@@ -107,9 +109,11 @@ return Object.freeze({ accounts: [getAccountMeta(accounts.signer), getAccountMet
 
 export type WithdrawInput<TAccountSigner extends string = string, TAccountMarket extends string = string, TAccountVaultDepositor extends string = string, TAccountBaseMint extends string = string, TAccountQuoteMint extends string = string, TAccountBaseTokenProgram extends string = string, TAccountQuoteTokenProgram extends string = string, TAccountSignerBaseAta extends string = string, TAccountSignerQuoteAta extends string = string, TAccountMarketBaseTreasury extends string = string, TAccountMarketQuoteTreasury extends string = string, TAccountAssociatedTokenProgram extends string = string, TAccountSystemProgram extends string = string, TAccountEventAuthority extends string = string, TAccountProgram extends string = string> =  {
   /**
- * Either the vault's leader (burns `leader_shares`) or an outside
- * depositor (burns the PDA's `shares`). PDA seeds bind the
- * outside path to this signer.
+ * The outside depositor exiting the vault — the PDA seeds bind this
+ * signer to the `VaultDepositor` whose `shares` are burned here. The
+ * leader is rejected (`DropsetError::Unauthorized`) and exits via
+ * [`super::withdraw_leader`], which burns `leader_shares` directly
+ * and carries no `VaultDepositor` PDA.
  */
 signer: TransactionSigner<TAccountSigner>;
 /** Market the vault lives on. */
@@ -173,9 +177,11 @@ return Object.freeze({ accounts: [getAccountMeta(accounts.signer), getAccountMet
 export type ParsedWithdrawInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountMetas extends readonly AccountMeta[] = readonly AccountMeta[]> = { programAddress: Address<TProgram>;
 accounts: {
 /**
- * Either the vault's leader (burns `leader_shares`) or an outside
- * depositor (burns the PDA's `shares`). PDA seeds bind the
- * outside path to this signer.
+ * The outside depositor exiting the vault — the PDA seeds bind this
+ * signer to the `VaultDepositor` whose `shares` are burned here. The
+ * leader is rejected (`DropsetError::Unauthorized`) and exits via
+ * [`super::withdraw_leader`], which burns `leader_shares` directly
+ * and carries no `VaultDepositor` PDA.
  */
 signer: TAccountMetas[0];
 /** Market the vault lives on. */

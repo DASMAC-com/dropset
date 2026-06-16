@@ -41,9 +41,11 @@ use crate::{
     min_quote_out: u64,
 )]
 pub struct Withdraw {
-    /// Either the vault's leader (burns `leader_shares`) or an outside
-    /// depositor (burns the PDA's `shares`). PDA seeds bind the
-    /// outside path to this signer.
+    /// The outside depositor exiting the vault — the PDA seeds bind this
+    /// signer to the `VaultDepositor` whose `shares` are burned here. The
+    /// leader is rejected (`DropsetError::Unauthorized`) and exits via
+    /// [`super::withdraw_leader`], which burns `leader_shares` directly
+    /// and carries no `VaultDepositor` PDA.
     #[account(mut)]
     pub signer: Signer,
     /// Market the vault lives on.
