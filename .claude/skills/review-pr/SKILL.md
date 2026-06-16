@@ -280,10 +280,25 @@ all changes are committed and pushed.
    gh pr ready <number>
    ```
 
+   When — and only when — the PR is marked ready, move
+   the Linear issue (the tag resolved in step 3) to
+   **In Review** so the board reflects it's awaiting human
+   review. Skip if no tag was resolvable; this is the one
+   issue mutation the skill makes (step 3 only verifies):
+
+   ```txt
+   mcp__claude_ai_Linear__save_issue(
+     id: "<ENG-###>",
+     state: "In Review"
+   )
+   ```
+
    If any blocking issue remains — an unaddressed
    Linear checklist item, failing or unverified
    tests, a non-conforming title, or a merge
-   conflict with `main` — leave it in draft.
+   conflict with `main` — leave the PR in draft and the
+   issue in its current state (do **not** move it to
+   In Review).
 
 1. **Firm up the permission allowlist.** A review
    run approves a lot of one-off commands, so it is
@@ -309,6 +324,8 @@ all changes are committed and pushed.
      unverified locally (toolchain absent).
    - Title status: passes `Semantic PR` or not.
    - Merge status: `MERGEABLE` or `CONFLICTING`.
+   - Linear status: moved to **In Review** (PR marked
+     ready), or left unchanged (still draft / no tag).
    - `CLAUDE.md` freshness: in sync, or each stale
      rule / reference the diff outdated, with the
      suggested correction.
