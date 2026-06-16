@@ -1169,8 +1169,9 @@ impl Fixture {
         self.svm.set_account(self.market, acct).expect("set market");
     }
 
-    /// Overwrite one profile level's `size_bps` for vault `sector_idx`,
-    /// bypassing the `set_liquidity_profile` per-side Σ ≤ BPS bound. No
+    /// Overwrite `Vault.profile.{asks,bids}[level].size_bps` for vault
+    /// `sector_idx`, bypassing the `set_liquidity_profile` per-side Σ ≤ BPS
+    /// bound (`is_ask` selects the side). No
     /// instruction writes a `size_bps > BPS`, so this is the only way to
     /// reach the matcher's out-of-range flush-size branch — the on-chain
     /// hard-reject (`LiquidityProfileSizeOverflow`) and the simulator's
