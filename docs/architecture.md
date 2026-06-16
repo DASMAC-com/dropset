@@ -1647,24 +1647,35 @@ On every taker instruction:
 1. Iterate the relevant side of `remaining` (asks for a buy taker,
    bids for a sell taker).
 
-1. **Push** each
-   `(remaining.price, remaining.size, stamp & !FLUSH_BIT, vault_ptr, level_idx)`
-   tuple onto a binary heap allocated on the program heap, skipping
-   levels where `remaining.size == 0` or
-   `current_slot >= remaining.expires_at`. The heap is keyed so the
-   next-to-pop is the best price with the oldest nonce on ties. For
-   asks, "best" is lowest price — a min-heap on `(price, nonce)`
-   works directly. For bids, "best" is highest price — use a
-   min-heap on `(Price::MAX − price, nonce)` (or equivalently invert
-   the price comparator while leaving nonce ascending). A naïve
-   max-heap on `(price, nonce)`
-   for bids would flip the nonce comparison and let *newer* quotes
-   win on equal-price ties, violating price-time priority.
-   `FLUSH_BIT` is masked off the stamp before keying so a
-   just-flushed vault doesn't sort younger than a previously-flushed
-   one with the same underlying nonce.
+1. **Collect** each live level as a
+   `(price_key, price, stamp & !FLUSH_BIT, sector_idx, level_idx, size)`
+   entry, pushing it onto a `Vec` allocated on the program heap and
+   skipping levels where `remaining.size == 0`,
+   `current_slot >= remaining.expires_at`, or the price is a sentinel
+   (`ZERO` / `INFINITY` / invalid). `price_key` is the `u32` sort key:
+   `price.as_u32()` for asks (lowest price is best) and
+   `price.bid_key()` for bids (which maps the highest price to the
+   lowest key, so a single ascending sort serves both sides without a
+   per-compare branch). `FLUSH_BIT` is masked off the stamp before it
+   becomes the `nonce` key, so a just-flushed vault doesn't sort
+   younger than a previously-flushed one with the same underlying
+   nonce.
 
-1. **Pop** from the heap and compute the fill. Units depend on side:
+1. **Sort** the collected `Vec` once by
+   `(price_key, nonce, sector_idx, level_idx)`: best price first, then
+   oldest quote (lowest nonce) on equal-price ties, then lowest sector
+   and level index as a final deterministic tiebreak. A single
+   `sort_by_key` over this materialized snapshot reproduces the spec's
+   cross-vault price-time priority. A binary min-heap with `pop_min`
+   was the originally-researched structure (see
+   **docs/research/svm-heap-emit-cpi.md**), but at `N_LEVELS = 8` the
+   whole book is at most `max_vaults_per_market × 8` entries, so one
+   sort of a flat `Vec` is simpler than maintaining heap order and
+   carries no meaningful CU cost at this scale; the heap design is
+   retained there only as a rejected alternative.
+
+1. **Walk** the sorted `Vec` front-to-back and compute each fill.
+   Units depend on side:
    ask `level.size` is in base, bid `level.size` is in quote (see
    **LiquidityProfile → Flush**), so the min runs in whichever unit
    the maker's leg is denominated in.
@@ -1680,14 +1691,16 @@ On every taker instruction:
      `base_atoms += fill_quote / level.price`.
 
    In both cases the trade never debits more inventory than the
-   vault holds. (A popped entry with `vault_leg == 0` yields a
-   zero fill; the loop moves on.) Decrement the taker's unfilled
-   amount, decrement the popped level's `Vault.remaining.<side>[i].size`
-   by the fill, and accrue the taker fee from `market.taker_fee`.
-   Continue until the taker is filled, the next heap top exceeds the
-   taker's limit price, or the heap is drained.
+   vault holds. (An entry with `vault_leg == 0` yields a zero fill;
+   the loop moves on.) Decrement the taker's unfilled amount,
+   decrement the level's `Vault.remaining.<side>[i].size` by the fill,
+   and accrue the taker fee from `market.taker_fee`. Because the `Vec`
+   is sorted best-price-first, the first entry whose price crosses the
+   taker's limit lets the walk `break` immediately — every later entry
+   crosses too. Continue until the taker is filled, a level crosses
+   the limit price, or the `Vec` is exhausted.
 
-1. **Tear down.** The heap buffer is freed with the transaction;
+1. **Tear down.** The `Vec` buffer is freed with the transaction;
    debited inventory, `Vault.remaining.size` decrements, the cleared
    `FLUSH_BIT` on any flushed vault, and `market.nonce` persist to
    chain. Takers bump `market.nonce` per fill but never touch
@@ -1798,9 +1811,9 @@ classification is left to off-chain consumers, which have the
 maker/taker identities to cluster on.
 
 **Granularity — every leg recorded, never truncated.** A single take can
-sweep many levels across many vaults (the heap pop loop in **Order
-matching**), and **every leg is recorded** — no truncation, no revert for
-an event-size reason. The per-leg `(vault, level)` records and the
+sweep many levels across many vaults (the sorted-`Vec` fill loop in
+**Order matching**), and **every leg is recorded** — no truncation, no
+revert for an event-size reason. The per-leg `(vault, level)` records and the
 take-level summary ride as inner-instruction data. A single CPI's
 instruction data is itself bounded (~10 KB per call), but there is **no
 cumulative cap** on inner-instruction data across a transaction, so a
