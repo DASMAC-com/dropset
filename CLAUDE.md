@@ -127,3 +127,32 @@ Concrete rules:
   writes the firmed allowlist to **both** this worktree and the base
   repo so future worktrees inherit it — proposing the changes for
   your approval before it writes.
+
+### Patterns that always re-prompt — never author these
+
+The rules above each rule out a class of command. These are the
+specific forms that have actually slipped through and forced a manual
+approval *every time*, because none can reduce to an allow-rule —
+don't write them, in ad-hoc shell or in committed skills/scripts:
+
+- **Heredocs** (`cat > file << 'EOF' … EOF`, `python3 << 'EOF' … EOF`).
+  A heredoc is a redirect plus inline content; when the body contains
+  braces it also trips the "brace with quote character (expansion
+  obfuscation)" guard, which forces approval regardless of the
+  allowlist. To **create a file**, use the Write tool. To **read or
+  parse** one (including JSON/IDL), use Read / Grep — never `python3` /
+  `node` / `jq`.
+- **Ad-hoc compile-and-run scratch** (`cat > /tmp/x.rs << EOF …; rustc
+  /tmp/x.rs -o /tmp/x && /tmp/x`). To check a language/layout question,
+  Write a throwaway file and drive it with the normal target
+  (`cargo test`, a `#[test]`), or reason it out — don't synthesize a
+  one-off program through a heredoc-and-`&&` chain.
+- **`cd <path> && <cmd>`** (e.g. `cd <repo> && git -C <worktree> …`).
+  The `cd &&` compound re-prompts as a path-resolution bypass. Run
+  bare from the cwd, or address another checkout with `git -C <path>`
+  alone — no `cd`, no `&&`.
+
+If a one-off like these still gets approved during a session, do
+**not** allow-list it (a `*` can't generalize a compound): the
+`firm-perms` skill flags it and points back here so the source stops
+emitting it.

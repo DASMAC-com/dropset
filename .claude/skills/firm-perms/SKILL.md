@@ -1,6 +1,6 @@
 ---
 name: firm-perms
-description: Generalize the local permission allowlist into reusable globs and propagate it to the base-repo settings so future worktrees inherit it. Use after you've had to approve per-worktree or per-arg `git -C …/worktrees/<tag> …` (or similar) variants and want to collapse them so they stop re-prompting.
+description: Generalize the local permission allowlist into reusable globs — Bash commands and file-access/`Read` paths alike — harvesting everything you had to approve this session, and propagate it to the base-repo settings so future worktrees inherit it. Use at the end of a session or during a review-pr run that piled up per-worktree or per-arg approvals.
 user-invocable: true
 ---
 
@@ -14,10 +14,25 @@ repo so the rules survive into future worktrees.
 
 This is the cleanup pass for the allowlist churn
 that builds up as you approve commands by hand. It
-is the sibling of the built-in `fewer-permission-prompts`
-skill: that one *discovers new* read-only rules to
-add from your transcripts; this one *generalizes
-and propagates* the rules you already have.
+both **harvests** every approval you had to grant
+this session — Bash commands *and* file-access
+(`Read`) paths and `additionalDirectories`, not just
+the rules already written to disk — and
+**generalizes and propagates** them. It overlaps the
+built-in `fewer-permission-prompts` skill (which
+discovers new *read-only Bash* rules from your
+transcripts) but is broader: it folds in file-access
+approvals too and writes the firmed result to the
+base repo so future worktrees inherit it.
+
+Some approvals **can't** be firmed into a safe rule —
+a heredoc, a `cd … &&` compound, a `python3`/`jq`
+one-liner, anything CLAUDE.md's shell rules prohibit.
+Those re-prompt because they're malformed, not
+because a glob is missing; never allow-list them.
+Surface them in the summary and point at the
+offending pattern so the *author* (a skill, a script,
+or you) stops emitting it.
 
 ## Why both files
 
@@ -57,6 +72,9 @@ more verb than it used to.
    `.claude/worktrees/*`. E.g.
    `git -C <base>/.claude/worktrees/<tag> status --short`
    → `git -C <base>/.claude/worktrees/* status:*`.
+   This applies to file-access rules too:
+   `Read(//<base>/.claude/worktrees/<tag>/**)` →
+   `Read(//<base>/.claude/worktrees/**)`.
 
 1. **Generalize trailing args with the `:*`
    suffix.** A rule pinned to concrete args loses
@@ -81,9 +99,14 @@ more verb than it used to.
    once `… worktrees/* status:*` exists). Preserve
    first-occurrence order otherwise.
 
-1. **Leave the rest untouched.** `WebFetch(domain:…)`,
-   `mcp__…`, `Skill(…)`, `Read(…)`, and the
-   `additionalDirectories` array are copied through
+1. **File-access rules get the same treatment.**
+   `Read(…)` path rules and `additionalDirectories`
+   entries are firmed exactly like Bash paths —
+   collapse any `worktrees/<tag>` segment to
+   `worktrees/*` (rule 1) and dedupe — so a path
+   approved in one worktree covers them all.
+   `WebFetch(domain:…)`, `mcp__…`, and `Skill(…)` rules
+   carry no per-worktree path, so copy those through
    verbatim.
 
 ### Safety floor — do not over-widen
@@ -122,6 +145,26 @@ call, not a reason to widen rules.)
    worktree has `main` checked out, warn the user and
    firm only this worktree's file.
 
+1. **Harvest this session's approvals.** Beyond what's
+   already on disk, scan the current session for every
+   permission you had to approve by hand — not just
+   piled-up Bash globs. `fewer-permission-prompts` does
+   this for read-only Bash; here include **all** of it:
+   Bash commands, `Read(…)` file-access paths, and
+   `additionalDirectories` grants (e.g. an "always allow
+   access to …" you clicked through). For each, derive
+   the generalized rule it *should* have been (per the
+   rules above) and add it to the working set.
+
+   Exception: an approval that re-prompts because it's
+   **malformed** — a heredoc, a `cd … &&` compound, a
+   `python3` / `jq` one-liner, anything CLAUDE.md's
+   shell rules forbid — does **not** become a rule. A
+   `*` can't rescue a compound (Claude Code re-validates
+   each sub-command), so allow-listing it wouldn't even
+   stop the prompt. Set these aside for the summary
+   instead (see the intro).
+
 1. **Read both allowlists** with the Read tool (per
    the CLAUDE.md shell conventions — never shell out
    to `jq`/`node`/`python` to read or edit JSON):
@@ -130,8 +173,9 @@ call, not a reason to widen rules.)
    - `<base>/.claude/settings.local.json`
 
 1. **Build the firmed allowlist.** Union both `allow`
-   arrays, apply the generalization rules above, and
-   dedupe — this is the single canonical array both
+   arrays with the session-harvested rules from the
+   harvest step, apply the generalization rules above,
+   and dedupe — this is the single canonical array both
    files will get. Two cautions on the union:
 
    - **Watch entries that live in only one file.** The
@@ -184,4 +228,10 @@ call, not a reason to widen rules.)
    they weren't.
 
 1. **Report.** Confirm what was written and that both
-   the worktree and base-repo copies now match.
+   the worktree and base-repo copies now match. List
+   the session approvals you firmed in (Bash and
+   file-access alike), and separately the **malformed**
+   approvals you set aside — name the offending pattern
+   (heredoc, `cd … &&`, `python3`/`jq` one-liner) and
+   point at its source so the author stops emitting it,
+   rather than allow-listing it.
