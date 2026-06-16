@@ -25,6 +25,14 @@ Use the IDs, not the names — there are also
 completed "Dropset beta" and "Dropset alpha"
 projects that a name match could hit by mistake.
 
+Every issue is filed **into the Backlog with no
+parent** (`state: "Backlog"`, no `parentId`). There is
+no umbrella issue: the staging plan — which issues
+group into which PR, and in what order — is owned by
+the `stage-backlog` skill, which reads this Backlog
+and writes the implementation-sequence document. So
+just file the to-do; don't attach it to a parent.
+
 ## Input
 
 Free-text describing the to-do. If invoked with no
@@ -62,6 +70,7 @@ what to file.
      team: "84659a7c-5ea3-47b1-b2bd-c531e3721d6b",
      project: "d505fe50-cc8b-41ca-be93-6215d9adcea0",
      assignee: "b3ec6d9f-3c78-48da-8b4e-042176e8c579",
+     state: "Backlog",
      title: "<title>",
      description: "<markdown body>",
      priority: 3,  // 2 if the user calls it urgent

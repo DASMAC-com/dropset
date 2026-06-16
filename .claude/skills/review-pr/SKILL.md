@@ -194,6 +194,84 @@ all changes are committed and pushed.
    those fixes. Apply the same fix-and-retry
    logic as the lint step (step 4).
 
+1. **Regenerate committed generated artifacts
+   (mirror the IDL / SDK / vectors CI gates).** Three
+   workflows fail the PR if a committed generated file is
+   stale relative to its source: `test.yml` regenerates
+   the **IDL**, and `sdk.yml` regenerates the **SDK
+   clients** and the **conformance vectors** — each via a
+   `git diff --exit-code` that fails on a dirty tree. The
+   author's diff (or a fix from step 8) may have changed
+   the program without regenerating these, so refresh them
+   here and commit any diff; otherwise the ready PR fails
+   CI on a stale artifact. Regenerate **in dependency
+   order** — the SDK is generated from the IDL, which is
+   built from the program:
+
+   - **IDL** (needs the Solana/Anchor toolchain):
+
+     ```sh
+     make idl
+     ```
+
+     ```sh
+     git diff --exit-code -- sdk/idl/dropset.json
+     ```
+
+     If the toolchain is absent and `make idl` aborts at
+     `check-toolchain`, you **cannot** refresh the IDL
+     locally — say so in the report (the `test.yml` IDL
+     gate is then unverifiable, like the test targets) and
+     continue with the committed IDL. If the diff is
+     non-empty, commit it:
+
+     ```sh
+     git add sdk/idl/dropset.json
+     git commit -S -m "Rebuild IDL"
+     ```
+
+   - **SDK clients** (Node + pnpm + Rust; no Solana
+     toolchain needed, so always runnable):
+
+     ```sh
+     make sdk
+     ```
+
+     ```sh
+     git add -A -- sdk/ts/src/generated sdk/rs/src/generated
+     ```
+
+     ```sh
+     git diff --cached --exit-code -- sdk/ts/src/generated sdk/rs/src/generated
+     ```
+
+     If staged changes remain, commit them:
+
+     ```sh
+     git commit -S -m "Regenerate SDK clients"
+     ```
+
+   - **Conformance vectors** (Rust only; no Solana
+     toolchain needed):
+
+     ```sh
+     make check-conformance-vectors
+     ```
+
+     That target regenerates the price/quoting vectors,
+     stages `sdk/conformance/`, then
+     `git diff --cached --exit-code`s it — so a **non-zero
+     exit means the vectors were stale and are now
+     staged**. Commit them:
+
+     ```sh
+     git commit -S -m "Regenerate conformance vectors"
+     ```
+
+   If any artifact commit was made, re-run `make lint`
+   (a regenerated-file commit can still trip whitespace /
+   EOF hooks), applying the step-4 fix-and-retry logic.
+
 1. **Run the test suite (mirror CI).** The `Tests`
    workflow runs `make test` and
    `make test-no-teardown`; run both locally so the
@@ -270,7 +348,10 @@ all changes are committed and pushed.
    CI-mirroring check is green so the human can
    safely approve auto-merge: **zero blocking
    issues** (including every Linear checklist item
-   addressed), `make lint` passes, `make test` and
+   addressed), `make lint` passes, the generated
+   artifacts are fresh and committed (IDL — or honestly
+   reported unverifiable if the toolchain is absent — SDK
+   clients, conformance vectors), `make test` and
    `make test-no-teardown` pass (or are honestly
    reported as unverifiable locally), the title
    passes `Semantic PR`, and `mergeable` is
@@ -280,10 +361,25 @@ all changes are committed and pushed.
    gh pr ready <number>
    ```
 
+   When — and only when — the PR is marked ready, move
+   the Linear issue (the tag resolved in step 3) to
+   **In Review** so the board reflects it's awaiting human
+   review. Skip if no tag was resolvable; this is the one
+   issue mutation the skill makes (step 3 only verifies):
+
+   ```txt
+   mcp__claude_ai_Linear__save_issue(
+     id: "<ENG-###>",
+     state: "In Review"
+   )
+   ```
+
    If any blocking issue remains — an unaddressed
    Linear checklist item, failing or unverified
    tests, a non-conforming title, or a merge
-   conflict with `main` — leave it in draft.
+   conflict with `main` — leave the PR in draft and the
+   issue in its current state (do **not** move it to
+   In Review).
 
 1. **Firm up the permission allowlist.** A review
    run approves a lot of one-off commands, so it is
@@ -304,11 +400,17 @@ all changes are committed and pushed.
      missing (or "no Linear task checked" if none
      was resolvable).
    - Lint status: pass or fail with details.
+   - Generated artifacts: IDL / SDK clients /
+     conformance vectors — regenerated clean, committed a
+     refresh, or (IDL only) unverifiable without the
+     toolchain.
    - Test status: `make test` and
      `make test-no-teardown` — pass, fail, or
      unverified locally (toolchain absent).
    - Title status: passes `Semantic PR` or not.
    - Merge status: `MERGEABLE` or `CONFLICTING`.
+   - Linear status: moved to **In Review** (PR marked
+     ready), or left unchanged (still draft / no tag).
    - `CLAUDE.md` freshness: in sync, or each stale
      rule / reference the diff outdated, with the
      suggested correction.
