@@ -525,3 +525,130 @@ fn min_out_soft_revert_restores_multiple_legs_and_rearms_flush() {
     );
     assert_eq!(v.base_atoms.get(), 1_000_000, "vault inventory restored");
 }
+
+/// Two-ask-level vault seeded with 1_000_000 base / 1_085_000 quote at
+/// the 1.0850 reference. The two 5_000-bps ask levels each materialize
+/// to 500_000 base, so a Buy large enough to cross both fills exactly
+/// two legs — one `market.nonce` bump per leg.
+fn seeded_two_ask_levels() -> Fixture {
+    let mut f = Fixture::bootstrap();
+    let auth = f.authority.insecure_clone();
+    f.create_vault(0, f.authority.pubkey(), false, Pubkey::default())
+        .expect("register");
+    f.set_reference_price(&auth, 0, Price::encode(10_850_000, 0).unwrap().as_u32(), 0)
+        .expect("ref");
+    f.set_liquidity_profile(&auth, 0, two_ask_level_profile())
+        .expect("two-level profile");
+    f.deposit_leader(0, 1_000_000, 1_085_000, 1_000_000, 1_085_000)
+        .expect("seed");
+    f
+}
+
+#[test]
+fn nonce_overflow_on_second_leg_hard_reverts_the_committed_first_leg() {
+    // `nonce_overflow_hard_reverts_and_errors` pokes `nonce = u64::MAX`,
+    // so the *first* leg overflows and only one leg is ever committed —
+    // the multi-leg overflow path (a leg commits, bumps the nonce, then a
+    // later leg overflows and the loop breaks into the shared revert with
+    // more than one snapshot in hand) is never exercised. Pin it here
+    // with a two-ask-level vault and a Buy large enough to cross both
+    // levels, so the fill loop does exactly two per-leg `nonce` bumps.
+    //
+    // The contrast between the two arms below proves the bumps are
+    // per-leg and the overflow lands on the *second* one:
+    //   * armed at `u64::MAX - 2`: leg 0 bumps to `u64::MAX - 1`, leg 1
+    //     bumps to `u64::MAX` — both fit, so the swap commits.
+    //   * armed at `u64::MAX - 1`: leg 0 bumps to `u64::MAX`, then leg 1's
+    //     `checked_add(1)` overflows and the swap hard-errors.
+    // A handler that bumped once-per-swap (or overflowed on leg 0) could
+    // not produce this exact boundary.
+
+    // Arm one below the wrap point: both per-leg bumps fit, swap commits.
+    {
+        let mut f = seeded_two_ask_levels();
+        f.poke_nonce(u64::MAX - 2);
+        let taker = f.funded_depositor(0, 5_000_000);
+        f.swap(&taker, 0, 2_000_000, Price::INFINITY.as_u32(), 1)
+            .expect("both per-leg bumps fit (u64::MAX-2 → u64::MAX)");
+        assert!(
+            f.token_balance(&f.base_ata(&taker.pubkey())) > 0,
+            "taker received base across both committed legs"
+        );
+        assert_eq!(
+            f.market_header().nonce.get(),
+            u64::MAX,
+            "two legs advanced the nonce by exactly two (u64::MAX-2 → u64::MAX)"
+        );
+    }
+
+    // Arm at the wrap point: leg 0 commits and bumps to u64::MAX, leg 1
+    // overflows. The erroring instruction discards the whole transaction,
+    // so every committed-leg mutation is rolled back to the pre-swap seed
+    // — exactly what `nonce_overflow_hard_reverts_and_errors` asserts for
+    // the single-leg case, now with a committed leg ahead of the failing
+    // one.
+    {
+        let mut f = seeded_two_ask_levels();
+        f.poke_nonce(u64::MAX - 1);
+
+        let taker = f.funded_depositor(0, 5_000_000);
+        let q_before = f.token_balance(&f.quote_ata(&taker.pubkey()));
+        // Snapshot the full pre-swap vault state to assert against.
+        let v_before = f.vault(0);
+
+        let err = f
+            .swap(&taker, 0, 2_000_000, Price::INFINITY.as_u32(), 1)
+            .expect_err("second-leg nonce overflow must hard-error");
+        common::assert_program_error(&err, dropset::DropsetError::MathOverflow);
+
+        // Taker untouched — no input spent, no output received.
+        assert_eq!(
+            f.token_balance(&f.quote_ata(&taker.pubkey())),
+            q_before,
+            "no quote spent"
+        );
+        assert_eq!(
+            f.token_balance(&f.base_ata(&taker.pubkey())),
+            0,
+            "no base received"
+        );
+
+        // Every field is back at its pre-swap value: the committed leg 0
+        // (inventory debit + level decrement + nonce bump to u64::MAX) and
+        // the partially-applied leg 1 are both gone.
+        let v = f.vault(0);
+        assert_eq!(
+            v.base_atoms.get(),
+            v_before.base_atoms.get(),
+            "vault base restored to pre-swap"
+        );
+        assert_eq!(
+            v.quote_atoms.get(),
+            v_before.quote_atoms.get(),
+            "vault quote restored to pre-swap"
+        );
+        assert_eq!(
+            v.remaining.asks[0].size.get(),
+            v_before.remaining.asks[0].size.get(),
+            "level 0 (committed leg) restored to pre-swap"
+        );
+        assert_eq!(
+            v.remaining.asks[1].size.get(),
+            v_before.remaining.asks[1].size.get(),
+            "level 1 (partially-applied leg) restored to pre-swap"
+        );
+        assert_eq!(
+            f.market_header().nonce.get(),
+            u64::MAX - 1,
+            "nonce reset to its pre-swap value, not the leg-0-bumped u64::MAX"
+        );
+        // FLUSH_BIT armed so the next legitimate taker re-materializes.
+        assert!(
+            v.reference_price.stamp.get() & FLUSH_BIT != 0,
+            "FLUSH_BIT still armed after the rolled-back swap"
+        );
+        // Treasury invariant intact across the failed multi-leg swap.
+        assert_eq!(f.token_balance(&f.base_treasury), v.base_atoms.get());
+        assert_eq!(f.token_balance(&f.quote_treasury), v.quote_atoms.get());
+    }
+}
