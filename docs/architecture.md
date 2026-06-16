@@ -91,60 +91,37 @@ the cost to reconstruct the ephemeral order book during each take
 and can be tuned across the protocol's lifecycle as CU budgets and
 runtime performance evolve.
 
-```rust
-struct FeeConfig {
-    /// Mint accepted for this fee.
-    mint: Pubkey,
-    /// Amount in atoms of `mint`.
-    atoms: u64,
-}
+The byte-exact layout of both records is owned by
+[`state/registry.rs`](../programs/dropset/src/state/registry.rs)
+(`FeeConfig`, and the `RegistryHeader` + admin-`Set` slab tail that make
+up `Registry`) and is canonicalized in the IDL. This section keeps only
+the invariants and rationale, not the field-by-field types:
 
-struct Registry {
-    /// Hard cap on how many vaults any one market may allocate
-    /// (up to 255). Enforced at `CreateVault` time.
-    max_vaults_per_market: u8,
-    /// Taker fee rate stamped into `MarketHeader.taker_fee`
-    /// at market creation. Admins may change a market's fee
-    /// later; this field only sets the initial value.
-    default_taker_fee: Ppm16,
-    /// Minimum fraction of vault shares the leader must hold,
-    /// in ppm (1,000,000 = 100%). Stamped into
-    /// `MarketHeader.default_min_leader_share` at market creation,
-    /// which in turn stamps each vault's `min_leader_share` at
-    /// `CreateVault`. This field only sets the protocol-wide initial
-    /// value; admins tune the floor per market and per vault
-    /// downstream. Default 50_000 = 5%.
-    /// See **Vault → Skin-in-the-game floor**.
-    default_min_leader_share: Ppm32,
-    /// Default `FeeConfig` for the per-`CreateVault` fee, **stamped into
-    /// `MarketHeader.fee_config` at market creation**. This field only
-    /// seeds the initial per-market value; admins tune each market's
-    /// create-vault fee downstream via `SetMarketFeeConfig`. The fee is
-    /// paid to the **Registry fee ATA** for the configured mint
-    /// (`get_associated_token_address_with_program_id(registry_pda,
-    /// fee_config.mint, token_program)`, the token program taken from
-    /// the mint's account owner; see the **Registry** overview above),
-    /// waived when the signer is an admin. (This fee
-    /// account is distinct from a market's
-    /// `base_treasury`/`quote_treasury`, which custody pooled trading
-    /// inventory, not protocol fees.)
-    default_fee_config: FeeConfig,
-    /// Number of live markets created against this registry.
-    /// Incremented by `create_market`, decremented by `close_market`.
-    /// `close_registry` requires `market_count == 0` — the only
-    /// on-chain witness that no orphan markets remain (the program
-    /// cannot iterate all PDAs to verify by enumeration). See
-    /// **Account lifecycle and rent reclamation**.
-    market_count: u32,
-    /// Admins authorized to mutate the `Registry`, change a market's
-    /// `taker_fee`, `default_min_leader_share`, and `fee_config`
-    /// (the last via `SetMarketFeeConfig`), override a vault's
-    /// `min_leader_share` via `SetMinLeaderShare`, call `FreezeVault`,
-    /// approve outside deposits via `SetOutsideDepositsApproved`, and
-    /// open vaults without paying the per-market create-vault fee.
-    admins: Set<Pubkey>,
-}
-```
+- **`FeeConfig`** pairs the fee `mint` with its owning `token_program`
+  and an `atoms` amount. Carrying `token_program` alongside the mint is
+  load-bearing: the registry fee ATA is derived by
+  `get_associated_token_address_with_program_id` over
+  `(registry_pda, fee_config.mint, token_program)`, and classic SPL Token and
+  Token-2022 derive different ATAs for the same mint, so the owning
+  program cannot be guessed — it is taken from the fee mint's account
+  `owner` and validated `token_program == fee_config.mint.owner` at
+  `CreateVault`. This fee account is distinct from a market's
+  `base_treasury` / `quote_treasury`, which custody pooled trading
+  inventory, not protocol fees.
+- **`Registry`** holds the protocol-wide defaults stamped onto new
+  markets — `default_fee_config`, `default_taker_fee`,
+  `default_min_leader_share` (default `50_000` = 5%; see **Vault →
+  Skin-in-the-game floor**), and `max_vaults_per_market` (hard cap up
+  to 255, enforced at `CreateVault`) — plus a live `market_count` and
+  the admin allowlist (`Set<Pubkey>`). Each default only **seeds** the
+  corresponding per-market value at `create_market`; admins tune
+  markets and vaults downstream (`SetMarketFeeConfig`,
+  `SetMinLeaderShare`, `FreezeVault`, `SetOutsideDepositsApproved`) and
+  may open vaults without paying the per-market create-vault fee.
+  **Invariant:** `close_registry` requires `market_count == 0` — the
+  only on-chain witness that no orphan markets remain, since the
+  program cannot iterate all PDAs to verify by enumeration (see
+  **Account lifecycle and rent reclamation**).
 
 Notably absent: there is **no leader allowlist**. Banning a pubkey
 would be trivially defeated by registering a fresh wallet, so the
@@ -183,79 +160,46 @@ account. It holds the market-wide counters and the active set of
 vaults; the physical sector array sits immediately after the header
 (see **Storage layout**).
 
-```rust
-struct MarketHeader {
-    /// Market-wide monotonic counter. Stamped onto the vault on
-    /// every `SetReferencePrice` and `SetLiquidityProfile`; also advanced
-    /// on every taker fill. A `u64`, wide enough to never wrap over
-    /// the market's lifetime.
-    nonce: u64,
-    /// Active vaults on this market — bounded by
-    /// `registry.max_vaults_per_market`.
-    vaults: Set<Vault>,
-    /// Number of live `VaultDepositor` PDAs across every vault on
-    /// this market (active and tombstoned). Incremented when an
-    /// outside `Deposit` opens a fresh `VaultDepositor`, decremented
-    /// when `Withdraw` closes one on `shares == 0` and when
-    /// `force_withdraw_depositor` closes one. **Not** incremented on
-    /// top-off (existing `VaultDepositor`). `close_market` requires
-    /// `outstanding_vault_depositors == 0` — without it, a
-    /// `VaultDepositor` PDA could be left orphaned against a closed
-    /// market sector (the depositor's rent is still theirs to
-    /// reclaim by closing their own PDA, but their on-chain claim
-    /// would silently zero on any subsequent `Withdraw`). See
-    /// **Account lifecycle and rent reclamation**.
-    outstanding_vault_depositors: u32,
-    /// Taker fee rate, capped at ~6.55% (`Ppm16` max). Mutable by an
-    /// admin.
-    taker_fee: Ppm16,
-    /// Default minimum fraction of vault shares the leader must hold,
-    /// in ppm (1,000,000 = 100%). Stamped into `Vault.min_leader_share`
-    /// at each `CreateVault` on this market. Seeded from
-    /// `Registry.default_min_leader_share` at market creation; mutable
-    /// by an admin, affecting only vaults opened after the change
-    /// (existing vaults keep their stamped value). See
-    /// **Vault → Skin-in-the-game floor**.
-    default_min_leader_share: Ppm32,
-    /// This market's per-`CreateVault` fee: mint and amount (see
-    /// `FeeConfig`). Seeded from
-    /// `Registry.default_fee_config` at market creation; mutable by an
-    /// admin via `SetMarketFeeConfig`. The fee is paid to the
-    /// **Registry fee ATA** for `fee_config.mint`
-    /// (`get_associated_token_address_with_program_id(registry_pda,
-    /// fee_config.mint, token_program)`, the token program taken from
-    /// the mint's account owner), not to this market's treasuries, and
-    /// is waived for admin signers. Changing
-    /// the mint routes future fees to a fresh registry ATA — admins
-    /// sweep both old and new.
-    fee_config: FeeConfig,
+The byte-exact layout is owned by
+[`state/market.rs`](../programs/dropset/src/state/market.rs)
+(`MarketHeader`) and canonicalized in the IDL. Conceptually the header
+carries the market-wide `nonce`, the three DLL heads + `active_count`
+that thread the vault sectors (see **Storage layout**), the
+`outstanding_vault_depositors` counter, the per-market knobs
+(`taker_fee`, `default_min_leader_share`, `fee_config`) seeded from the
+registry at creation and tunable downstream by admins, the base/quote
+mints, and the two treasury accounts with their PDA bumps. The
+load-bearing invariants and rationale:
 
-    // Pubkeys and bumps.
-    base_mint: Pubkey,
-    quote_mint: Pubkey,
-    /// SPL token account holding the **pooled** base inventory
-    /// for every vault on this market. Authority is a PDA derived
-    /// from the market account (`base_treasury_bump`).
-    /// **Invariant:** `base_treasury.amount ==
-    /// Σ vault.base_atoms` across every vault on the market
-    /// (active and tombstoned). Each `Deposit`, `Withdraw`, and
-    /// fill moves atoms between this treasury and the caller's
-    /// ATA while adjusting the matching vault's `base_atoms` by
-    /// the same delta — the two must stay aligned per instruction.
-    /// The treasury is the SPL **custody account**; its `.amount`
-    /// is the market's *reserves* quantity. Note this sums active
-    /// **and tombstoned** vaults, so it is total inventory held
-    /// in custody, not matchable liquidity.
-    base_treasury: Pubkey,
-    /// Same as `base_treasury`, for the quote leg.
-    /// **Invariant:** `quote_treasury.amount ==
-    /// Σ vault.quote_atoms`.
-    quote_treasury: Pubkey,
-    bump: u8,
-    base_treasury_bump: u8,
-    quote_treasury_bump: u8,
-}
-```
+- **Treasury custody invariant.** `base_treasury.amount == Σ vault.base_atoms`
+  and `quote_treasury.amount == Σ vault.quote_atoms` across **every** vault on
+  the market — active **and** tombstoned. Each
+  `Deposit`, `Withdraw`, and fill moves atoms between a treasury and the
+  caller's ATA while adjusting the matching vault's `base_atoms` /
+  `quote_atoms` by the same delta — the two must stay aligned per
+  instruction. The treasury is the SPL **custody account**; its
+  `.amount` is the market's *reserves* quantity. Because it sums active
+  and tombstoned vaults, it is total inventory in custody, **not**
+  matchable liquidity.
+- **Depositor-count witness.** `outstanding_vault_depositors` counts
+  live `VaultDepositor` PDAs across every vault (active and tombstoned):
+  incremented when an outside `Deposit` opens a fresh one, decremented
+  when `Withdraw` (at `shares == 0`) or `force_withdraw_depositor`
+  closes one — **not** on top-off. `close_market` requires it to be `0`;
+  otherwise a `VaultDepositor` PDA could be orphaned against a closed
+  market sector and its on-chain claim would silently zero on any
+  subsequent `Withdraw` (see **Account lifecycle and rent
+  reclamation**).
+- **Per-market fee.** `fee_config` is seeded from
+  `Registry.default_fee_config` and tunable via `SetMarketFeeConfig`;
+  the fee is paid to the **Registry fee ATA** (not this market's
+  treasuries) and waived for admin signers. Changing the mint routes
+  future fees to a fresh registry ATA — admins sweep both.
+- **Fee cap / floor seeding.** `taker_fee` is capped at ~6.55%
+  (`Ppm16` max) and admin-mutable. `default_min_leader_share` is stamped
+  into each `Vault.min_leader_share` at `CreateVault`; mutating it
+  affects only vaults opened afterward (see **Vault → Skin-in-the-game
+  floor**).
 
 Every quote a vault produces is identified by `MarketHeader.nonce`
 at the moment of stamping — a global counter incremented on every
@@ -304,9 +248,9 @@ sectors.
 +----------------+----------+----------+----------+----------+-----+
 ```
 
-Each `Vault` carries two opaque pointer fields (`next`, `prev`) not
-shown in its struct (see **Vault**) — they thread whichever list the
-vault is currently on (active, tombstone, or free). `MarketHeader`
+Each `Vault` carries two pointer fields (`next`, `prev`; see **Vault**) —
+they thread whichever list the vault is currently on (active,
+tombstone, or free). `MarketHeader`
 separately stores three list heads (`head`, `tombstone_head`,
 `free_head`). These are stored as offsets into the sector region
 (durable across transactions); each instruction resolves them to
@@ -369,127 +313,72 @@ Leader-supplied prices are **not** validated on write — takers
 range-check at match time, so a nonsense reference price just
 renders that vault unmatchable.
 
-```rust
-struct Vault {
-    leader: Pubkey,
-    /// Authority for quote-mutating ix (`SetReferencePrice`,
-    /// `SetLiquidityProfile`). Always populated — at `CreateVault` time
-    /// the caller may pass `Some(pubkey)`; if `None`, the protocol
-    /// stamps `leader`. Hot-path auth check is a single compare.
-    /// Rotated via `SetQuoteAuthority` (leader-only).
-    quote_authority: Pubkey,
-    /// Packed `(stamp, price, expiry)`. Hot path —
-    /// overwritten as two aligned u64 stores.
-    reference_price: ReferencePrice,
-    /// Base tokens (atoms) backing this vault's asks. Pooled
-    /// inventory across the leader and outside depositors. Physical
-    /// balance lives in the market-wide `base_treasury`; see
-    /// treasury invariant in **MarketHeader**.
-    base_atoms: u64,
-    /// Quote tokens (atoms) backing this vault's bids. Pooled
-    /// inventory across the leader and outside depositors. Physical
-    /// balance lives in the market-wide `quote_treasury`; see
-    /// treasury invariant in **MarketHeader**.
-    quote_atoms: u64,
-    /// Total vault shares outstanding (= leader_shares +
-    /// Σ VaultDepositor.shares).
-    total_shares: u64,
-    /// Leader's stake. Non-SPL, protocol-tracked. Increments on
-    /// leader `Deposit` and on `Realize` perf-fee accrual;
-    /// decrements on leader `Withdraw`. See
-    /// **Skin-in-the-game floor**.
-    leader_shares: u64,
-    /// High-water mark of value-per-share (`L / total_shares`),
-    /// stored as Q32.32 fixed-point `u64` — VPS up to ~4.29×10⁹×
-    /// the seed value is representable (practically unreachable
-    /// in normal operation). Never decreases — performance fee
-    /// accrues only when VPS exceeds this mark.
-    hwm: u64,
-    /// Performance fee rate the leader charges on profits above
-    /// HWM, in ppm (1,000,000 = 100%). Set at `CreateVault` time.
-    perf_fee_rate: Ppm32,
-    /// Minimum fraction of vault shares the leader must hold, in ppm
-    /// (1,000,000 = 100%). The value actually enforced at `Deposit`
-    /// and leader `Withdraw` against this active vault. Stamped from
-    /// `MarketHeader.default_min_leader_share` at `CreateVault`; an
-    /// admin can override it per vault via `SetMinLeaderShare` (e.g.
-    /// to seat an issuer-funded vault at a lower floor than the
-    /// market default). See **Skin-in-the-game floor**.
-    min_leader_share: Ppm32,
-    /// Set to 1 when an admin freezes the vault. See
-    /// **Frozen and tombstoned vaults**.
-    frozen: u8,
-    /// Set to 1 if outside depositors are permitted. When 0, only
-    /// the leader may `Deposit`; existing outside depositors (from
-    /// before the flag was flipped) can still `Withdraw`. Mutable
-    /// by the leader via `SetAllowOutsideDepositors`.
-    allow_outside_depositors: u8,
-    /// Set to 1 when an admin has approved this vault to take
-    /// outside deposits. An outside `Deposit` requires **both**
-    /// this flag and `allow_outside_depositors` to be 1: the leader
-    /// opts in, and an admin must independently sign off. Default 0
-    /// at `CreateVault` — a fresh vault cannot take outside baskets
-    /// until an admin approves it. Existing outside depositors (from
-    /// before approval was revoked) can still `Withdraw`. Mutable by
-    /// an admin via `SetOutsideDepositsApproved`.
-    outside_deposits_approved: u8,
-    /// Bids and asks as `(price_offset, size_bps, expiry_offset)`
-    /// per level: ppm offset from `reference_price.price`, bps
-    /// fraction of inventory, and slot offset after `quote_slot`.
-    /// See **LiquidityProfile**.
-    profile: LiquidityProfile,
-    /// Materialized per-level state — absolute price, atom-sized
-    /// allowance, and absolute expiry — computed from `profile`
-    /// and the current inventory by the first taker to match this
-    /// vault after a `SetReferencePrice` or `SetLiquidityProfile` (see
-    /// `reference_price.stamp`). Subsequent takers read these
-    /// values directly and decrement `size` on fills.
-    remaining: Remaining,
-}
+The byte-exact layout of the vault sector and its inline records
+(`ReferencePrice`, `LiquidityProfile`, the materialized `Remaining` /
+`Position`) is owned by
+[`state/market.rs`](../programs/dropset/src/state/market.rs)
+(`Vault`, `ReferencePrice`, `Remaining`, `Position`) and canonicalized
+in the IDL. A vault carries the `leader` and `quote_authority`, the
+`reference_price`, pooled `base_atoms` / `quote_atoms`, the share
+bookkeeping (`total_shares`, `leader_shares`, `hwm`, `perf_fee_rate`,
+`min_leader_share`), the `frozen` / `allow_outside_depositors` /
+`outside_deposits_approved` / `tombstoned` flags, the `profile` ladder,
+and the materialized `remaining`. DLL pointers (`next` / `prev`) thread
+it into one of three lists (see **Storage layout**). The load-bearing
+invariants and rationale:
 
-struct ReferencePrice {
-    /// `market.nonce` stamped at the last `SetReferencePrice` or
-    /// `SetLiquidityProfile`, OR'd with `FLUSH_BIT` (`1 << 63`) as a
-    /// "flush pending" flag. `FLUSH_BIT` is armed by both
-    /// `SetReferencePrice` and `SetLiquidityProfile`; the first taker
-    /// to match this vault materializes `LiquidityProfile` and inventory
-    /// into `Vault.remaining` and clears the flag. Low 63 bits
-    /// hold the nonce; takers mask off `FLUSH_BIT` before comparing
-    /// for price-time priority. The 63-bit field is wide enough to
-    /// never wrap over the market's lifetime (~10¹¹ years at one
-    /// event per slot).
-    stamp: u64,
-    /// Reference price the leader's book profile is anchored to.
-    /// A `Price` (see **Price**); range-checked by the taker at
-    /// match time.
-    price: Price,
-    /// Slot the quote was "as of" — supplied by the leader,
-    /// validated `<= current_slot` (no future-dating) and
-    /// `>= current_slot − MAX_BACKDATE` (default 50 slots).
-    /// Per-level effective expiry is
-    /// `quote_slot + level.expiry_offset`.
-    quote_slot: u32,
-}
+- **Inventory backs the book; treasury holds the atoms.** `base_atoms`
+  backs asks, `quote_atoms` backs bids; both are pooled across the
+  leader and outside depositors. The physical balance lives in the
+  market-wide treasuries under the custody invariant (see
+  **MarketHeader**) — the vault field is the per-vault bookkeeping
+  share of it.
+- **Share-accounting invariant (I6).**
+  `leader_shares + Σ VaultDepositor.shares == total_shares`. Both stakes are
+  non-SPL protocol bookkeeping (see **Shares**); `leader_shares` increments on
+  leader `Deposit` and on `Realize` perf-fee accrual and decrements on
+  leader `Withdraw`.
+- **HWM monotonicity.** `hwm` is value-per-share (`L / total_shares`)
+  as Q32.32 and **never decreases** — the performance fee accrues only
+  when VPS exceeds the mark (see **High-water mark and performance
+  fee**). `perf_fee_rate` is set at `CreateVault` and immutable.
+- **Skin-in-the-game floor.** `min_leader_share` is the value enforced
+  at `Deposit` / leader `Withdraw`; stamped from
+  `MarketHeader.default_min_leader_share` at `CreateVault`, admin-
+  overridable per vault via `SetMinLeaderShare` (see **Skin-in-the-game
+  floor**).
+- **Two-key outside-deposit gate.** An outside `Deposit` requires
+  **both** `allow_outside_depositors` (leader opt-in,
+  `SetAllowOutsideDepositors`) **and** `outside_deposits_approved`
+  (admin sign-off, `SetOutsideDepositsApproved`); a fresh vault has the
+  latter off, so it cannot take outside baskets until an admin approves
+  it. Flipping either flag off still lets pre-existing outside
+  depositors `Withdraw`. `frozen` and `tombstoned` are covered in
+  **Frozen and tombstoned vaults**.
+- **`quote_authority` is always populated.** At `CreateVault` the
+  caller may pass one; otherwise the protocol stamps `leader`, so the
+  hot-path auth check is a single compare. Rotated via
+  `SetQuoteAuthority` (leader-only).
 
-struct Remaining {
-    bids: [Position; N_LEVELS],
-    asks: [Position; N_LEVELS],
-}
+**`ReferencePrice` — stamp encoding.** `stamp` packs `market.nonce` at
+the last `SetReferencePrice` / `SetLiquidityProfile`, OR'd with
+`FLUSH_BIT` (`1 << 63`) as the "flush pending" flag. Both quote-mutating
+instructions arm the bit; the first taker to match this vault
+materializes the ladder + inventory into `remaining` and clears it.
+Takers mask off `FLUSH_BIT` before comparing the low 63 bits for
+price-time priority (63 bits never wrap over the market's lifetime). The
+`price` is range-checked by the taker at match time (leader prices are
+**not** validated on write). `quote_slot` is leader-supplied and
+validated `<= current_slot` (no future-dating) and
+`>= current_slot − MAX_BACKDATE` (default 50 slots); per-level effective
+expiry is `quote_slot + level.expiry_offset`.
 
-struct Position {
-    /// Absolute price for this level. Materialized at flush; see
-    /// **LiquidityProfile → Flush** for the formula.
-    price: Price,
-    /// Live allowance in atoms (base for asks, quote for bids).
-    /// Materialized at flush from the level's `size_bps` against
-    /// the matching inventory leg; decremented on fills.
-    size: u64,
-    /// Absolute slot this level expires at. Materialized at flush
-    /// from `ref_price.quote_slot + level.expiry_offset`. Takers
-    /// skip levels where `current_slot >= expires_at`.
-    expires_at: u32,
-}
-```
+**`Remaining` / `Position` — materialized levels.** Per-side arrays of
+`N_LEVELS` `Position`s (absolute `price`, atom-sized `size`,
+absolute `expires_at`), computed from `profile` + current inventory by
+the first taker after a flush (see **LiquidityProfile → Flush** for the
+formulas); subsequent takers read them directly and decrement `size` on
+fills.
 
 ### Price
 
@@ -756,34 +645,25 @@ fills, subsequent flushes auto-rescale the level sizes to the
 current `(base_atoms, quote_atoms)` without any further input from
 the leader.
 
-```rust
-struct LiquidityProfile {
-    /// Bid levels, top of book first.
-    bids: [Level; N_LEVELS],
-    /// Ask levels, top of book first.
-    asks: [Level; N_LEVELS],
-}
+The byte-exact layout is owned by
+[`state/market.rs`](../programs/dropset/src/state/market.rs)
+(`LiquidityProfile`, `Level`) and canonicalized in the IDL: per-side
+arrays of `N_LEVELS` `Level`s, each a
+`(price_offset, size_bps, expiry_offset)` triple, top of book first. The
+load-bearing invariants:
 
-struct Level {
-    /// Spread from `reference_price.price`. Direction is implicit:
-    /// subtract for bids, add for asks. Materialized to an absolute
-    /// price at flush.
-    price_offset: Ppm32,
-    /// Per-flush allowance as a fraction of the corresponding
-    /// inventory leg, in basis points (10000 = 100%). The leg is
-    /// `base_atoms` for asks and `quote_atoms` for bids, so a
-    /// materialized bid size is denominated in **quote atoms** —
-    /// the leader is allocating their quote pool across bid prices.
-    /// **Invariant:** `Σ size_bps ≤ 10000` per side, enforced at
-    /// `SetLiquidityProfile`. Setting the sum to exactly 10000
-    /// fully commits that leg; lower sums leave a reserve.
-    size_bps: u16,
-    /// Per-level expiry in slots after `quote_slot`. Materialized
-    /// to an absolute slot at flush. Takers skip levels where
-    /// `current_slot >= expires_at`.
-    expiry_offset: u32,
-}
-```
+- **Per-side size cap.** `Σ size_bps ≤ 10000` per side, enforced at
+  `SetLiquidityProfile`. The sum at exactly `10000` fully commits that
+  leg; a lower sum leaves a reserve.
+- **Unit asymmetry.** `size_bps` is a fraction of the matching
+  inventory leg — `base_atoms` for asks, `quote_atoms` for bids — so a
+  materialized **bid** size is denominated in quote atoms (the leader
+  allocates their quote pool across bid prices), an **ask** size in
+  base atoms.
+- **Implicit direction.** `price_offset` is a ppm spread from
+  `reference_price.price` whose sign is implicit: bids subtract, asks
+  add. `expiry_offset` is slots after `quote_slot`. Both materialize to
+  absolute values at flush (see below).
 
 ### Flush
 
@@ -879,63 +759,31 @@ a sector recycled across vault lifetimes derives a fresh
 `VaultDepositor` address. It is the authoritative on-chain record of
 both the depositor's claim and what they paid for it:
 
-```rust
-struct VaultDepositor {
-    /// The market the vault lives on. With `sector_idx`, identifies
-    /// the vault — the two are seed inputs, so the position is bound
-    /// to one sector of one market.
-    market: Pubkey,
-    /// Sector index of the vault within the market's slab.
-    sector_idx: u32,
-    /// The depositor. Bound by the PDA seeds
-    /// (`"vault_depositor", market, sector_idx, owner`), so the
-    /// account is non-transferable — there is no authority field to
-    /// reassign.
-    owner: Pubkey,
-    /// Pro-rata claim on the vault — the per-depositor term of the
-    /// I6 invariant (`leader_shares + Σ VaultDepositor.shares ==
-    /// total_shares`).
-    shares: u64,
-    /// Quote-denominated principal of the **remaining** position:
-    /// `Σ (quote_in + base_in × entry_ref)` over deposits, reduced by
-    /// the withdrawn slice's `released_basis` on withdraw. The basis of
-    /// what is still in the vault — the cost basis the unrealized
-    /// `net_pnl` is measured against.
-    net_deposits: u64,
-    /// Monotonic lifetime contributions: incremented by each deposit's
-    /// `(quote_in + base_in × ref_now)`, **never reduced on withdraw**.
-    /// This is "total deposited" and the stable denominator for an
-    /// all-time return percentage (unlike `net_deposits`, it doesn't
-    /// shrink when a depositor takes profit).
-    gross_deposited: u64,
-    /// Shares-weighted average reference price (quote per base)
-    /// across deposits. A `Price`, same as `ReferencePrice.price`;
-    /// stored canonical and decoded to a scaled value to compute PnL
-    /// and to re-average on top-off (all cold-path). Re-encoding to an
-    /// 8-significant-figure `Price` each top-off adds negligible drift
-    /// to the running average.
-    entry_ref_price: Price,
-    /// Shares-weighted average VPS (`L / total_shares`) across
-    /// deposits, as Q32.32 fixed-point `u64` — same encoding and
-    /// practical bound as `Vault.hwm`. Basis for the "yield since
-    /// open" figure.
-    entry_vps: u64,
-    /// Slot of the first deposit.
-    opened_at: u64,
-    /// **Signed** quote-denominated PnL crystallized by past
-    /// withdrawals (a withdrawal can realize a loss). Discarded when
-    /// the account is closed at zero shares. `i64` holds per-depositor
-    /// PnL; widen to `i128` if a quote mint's atom scale could exceed
-    /// it.
-    realized_pnl: i64,
-    /// Signed yield (ex-FX) component of `realized_pnl`.
-    realized_yield: i64,
-    /// Signed FX component of `realized_pnl`.
-    /// Invariant: `realized_yield + realized_fx == realized_pnl`.
-    realized_fx: i64,
-}
-```
+The byte-exact layout is owned by
+[`state/vault_depositor.rs`](../programs/dropset/src/state/vault_depositor.rs)
+(`VaultDepositorHeader`) and canonicalized in the IDL. It binds
+`(market, sector_idx, owner)` — all PDA-seed inputs, so the account is
+**non-transferable** (no authority field to reassign) — and carries the
+`shares` claim plus the cost-basis fields. The load-bearing invariants:
 
+- **Share claim (I6 term).** `shares` is this depositor's term of the
+  vault invariant `leader_shares + Σ VaultDepositor.shares == total_shares`.
+- **Two principal measures.** `net_deposits` is the quote-denominated
+  basis of the **remaining** position
+  (`Σ (quote_in + base_in × entry_ref)` over deposits, reduced by the
+  withdrawn slice on `Withdraw`) — the basis the unrealized PnL is measured
+  against.
+  `gross_deposited` is **monotonic** lifetime contributions, **never
+  reduced on withdraw** — the stable denominator for an all-time
+  return %.
+- **Realized-PnL decomposition.** `realized_pnl` (signed — a withdrawal
+  can realize a loss) splits as
+  `realized_yield + realized_fx == realized_pnl`. Discarded when the account
+  closes at zero shares.
+
+The cost basis is a shares-weighted average over deposits:
+`entry_ref_price` (a `Price`, the average reference quote-per-base) and
+`entry_vps` (average VPS, `L / total_shares`, Q32.32 like `Vault.hwm`).
 Every basis field is captured from **on-chain** state at deposit
 time — `entry_vps` from the vault's `L / total_shares`,
 `entry_ref_price` from the leader's live `ReferencePrice`. No oracle
@@ -1667,12 +1515,12 @@ On every taker instruction:
    and level index as a final deterministic tiebreak. A single
    `sort_by_key` over this materialized snapshot reproduces the spec's
    cross-vault price-time priority. A binary min-heap with `pop_min`
-   was the originally-researched structure (see
-   **docs/research/svm-heap-emit-cpi.md**), but at `N_LEVELS = 8` the
-   whole book is at most `max_vaults_per_market × 8` entries, so one
-   sort of a flat `Vec` is simpler than maintaining heap order and
-   carries no meaningful CU cost at this scale; the heap design is
-   retained there only as a rejected alternative.
+   was the originally-researched structure (see **Implementation notes**
+   below), but at `N_LEVELS = 8` the whole book is at most
+   `max_vaults_per_market × 8` entries, so one sort of a flat `Vec` is
+   simpler than maintaining heap order and carries no meaningful CU cost
+   at this scale; the heap design is retained only as a rejected
+   alternative.
 
 1. **Walk** the sorted `Vec` front-to-back and compute each fill.
    Units depend on side:
@@ -1706,6 +1554,42 @@ On every taker instruction:
    chain. Takers bump `market.nonce` per fill but never touch
    `reference_price.stamp` beyond clearing `FLUSH_BIT`, and never
    touch `Vault.remaining.price` or `Vault.remaining.expires_at`.
+
+### Implementation notes — heap and capacity
+
+The ephemeral book is **heap-allocated**, not stacked: its length isn't
+known until the active-DLL walk finishes, and even a worst-case buffer
+would overflow the ~4 KiB SBPF stack frame. These constraints bound the
+design:
+
+- **Entry size.** Each collected entry (step 5 above) is ~32 B at
+  8-byte alignment — the `price_key` (`u32`) plus the original `price`
+  (kept for the fill math, so the sort reads the key and never decodes a
+  `Price` twice), the masked `nonce` (`u64`), `sector_idx` / `level_idx`
+  (`u32` each), and `size` (`u64`).
+- **Capacity.** The book is bounded at `max_vaults_per_market × N_LEVELS`
+  entries. At the default cap (10 vaults × `N_LEVELS = 8` = 80 entries ×
+  ~32 B ≈ **2.5 KiB**) it sits comfortably inside the **32 KiB default
+  program heap** — no `RequestHeapFrame` is needed. Only a market
+  configured near the `u8` vault ceiling (255 × 8 × 32 B ≈ 64 KiB) would
+  exceed the default heap and need a frame request (8 CU per extra
+  32 KiB page).
+- **Bump allocator, no reclaim.** The runtime's default allocator is a
+  bump allocator whose `dealloc` is a no-op, so each `Vec` doubling
+  permanently leaks the old buffer for the rest of the instruction —
+  tolerable here only because the entry count is small and bounded. If
+  the book ever grew large, pre-size with
+  `Vec::with_capacity(vaults × N_LEVELS)` for one up-front allocation.
+- **Tear-down is free.** The `Vec` is dropped when the VM tears down the
+  entire heap region at instruction return — zero work, zero CU.
+
+The source-grounded version of these constraints — SVM heap mechanics,
+the allocator, the matching recipe, and the runtime limits that govern
+emit fidelity (see **Events and emission**), each with a file:line
+permalink — lives in
+[`docs/research/svm-heap-emit-cpi.md`](research/svm-heap-emit-cpi.md),
+which also keeps the rejected `BinaryHeap`/`pop_min` matcher as a
+considered alternative.
 
 ### Crossed leader quotes
 
@@ -1788,10 +1672,11 @@ instructions do not.
 **Per-emit cost.** Each `emit_cpi!` runs as a self-CPI: ~1000 CU
 invocation overhead + `data_len/250` CU for the payload. The hard
 ceiling is **64 inner instructions per transaction**
-(`MAX_INSTRUCTION_TRACE_LENGTH`), not bytes — so emit budgeting at
-sweep time is against `64 − (top-level ix + token CPIs)`, not the
-per-CPI 10 KiB cap. A sweep that exhausts both axes packs into
-multiple aggregated-event CPIs rather than one emit per leg.
+(`MAX_INSTRUCTION_TRACE_LENGTH`), not bytes. With per-leg emit (one
+`emit_cpi!` per matched leg; see **Granularity** below), this count —
+not the per-CPI 10 KiB data cap — is what bounds a take: it can record
+at most `64 − (top-level ix + token CPIs)` legs in one transaction (a
+single `FillEvent` is ~208 B, nowhere near the data cap).
 
 **Why fills must be events, not account diffs.** `market.nonce` is
 bumped on every fill and every quote update, and a geyser stream
@@ -1810,19 +1695,22 @@ and the deliberately-minimized match loop should not carry it. Wash
 classification is left to off-chain consumers, which have the
 maker/taker identities to cluster on.
 
-**Granularity — every leg recorded, never truncated.** A single take can
+**Granularity — per-leg emit, every leg recorded.** A single take can
 sweep many levels across many vaults (the sorted-`Vec` fill loop in
-**Order matching**), and **every leg is recorded** — no truncation, no
-revert for an event-size reason. The per-leg `(vault, level)` records and the
-take-level summary ride as inner-instruction data. A single CPI's
-instruction data is itself bounded (~10 KB per call), but there is **no
-cumulative cap** on inner-instruction data across a transaction, so a
-sweep too large for one self-CPI simply **splits across multiple
-self-CPIs** — full fidelity is preserved either way. Whether to emit one
-aggregated `FillBatch` per self-CPI (fewer CPIs, less CU, must chunk when
-a sweep exceeds one CPI) or one event per leg (simplest, always fits,
-more CPIs / CU) is a **CU/byte optimization** that does not affect
-fidelity; see the plan's open decision.
+**Order matching**). The emit model is **resolved: per-leg emit** —
+every matched `(sector_idx, level_idx)` leg is its own `emit_cpi!`
+`FillEvent`, accumulated by the matcher and dispatched one at a time in
+heap-pop (match) order, so a leg's inner-instruction index is a stable
+ordinal. There is **no separate take-level event**: per-take figures
+(total fill, average price, total fee) are derived off-chain by grouping
+the legs of one transaction. An aggregated `FillBatch` was considered
+and rejected — per-leg emit is the simplest fixed-size record, each
+`FillEvent` sits far inside the per-CPI 10 KiB data cap so a leg never
+splits, and the only ceiling is the 64-instruction trace count above
+(not event size). Because fills ride as inner-instruction data rather
+than logs, no leg is ever silently truncated; a sweep that would exceed
+the trace-count ceiling fails deterministically rather than dropping a
+leg.
 
 **Serialization mode.** Anchor v2's `#[event]` macro picks between two
 serializers: the default (`wincode` with a borsh-wire-compatible
@@ -1837,10 +1725,11 @@ macro site matter. The cold-path events (`Deposit`, `Withdraw`,
 `CreateVault`, `Realize`) use the default `#[event]` — they benefit from
 dynamic fields and emit too rarely for bytemuck to pay back.
 
-**Schema source of truth.** The event field layouts are the program's
-`#[event]` structs, surfaced verbatim in the generated IDL; the IDL is
-the canonical schema that off-chain clients are generated from, and the
-self-CPI instruction data decodes against it. Default-mode events
+**Schema source of truth.** This section specifies the emit *mechanism*;
+the event *schema* (the field-by-field layouts) is owned by the
+program's `#[event]` structs and **canonicalized in the generated IDL**,
+which off-chain clients are generated from and the self-CPI instruction
+data decodes against. Default-mode events
 encode borsh-wire-compatible, so existing borsh-decoder tooling keeps
 working unchanged; bytemuck events surface in the IDL as a `repr(C)`
 blob (tagged `{serialization:"bytemuck",repr:{kind:"c"}}`) and decode
