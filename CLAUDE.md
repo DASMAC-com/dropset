@@ -49,6 +49,13 @@ new Linear-filing skill must follow the same pattern: reference the
 variable **names**, and keep the resolved UUIDs out of every committed
 file.
 
+A worktree branch and its Linear issue **share one `ENG-###`
+number**: branch `eng-499` ↔ issue `ENG-499`. Skills resolve the
+issue from the branch (or the PR title scope) on that basis —
+`init-pr` moves it to In Progress at bootstrap, `review-pr` ticks the
+delivered checklist items and moves it to In Review when the PR is
+ready.
+
 ## Shell commands
 
 The guiding rule: **every Bash invocation should reduce to a

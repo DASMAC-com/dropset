@@ -36,32 +36,71 @@ all changes are committed and pushed.
    If no PR exists, stop and tell the user to
    run `/init-pr` first.
 
-1. **Check for uncommitted work.** Run
-   `git status` — if there are uncommitted
-   changes, stop and tell the user to commit
-   first (or run `/commit-changes`).
+1. **Clean tree, then rebase onto `main`.** First run
+   `git status` — if there are uncommitted changes,
+   stop and tell the user to commit first (or run
+   `/commit-changes`). Then rebase onto the latest
+   `main` so the review runs on the state the branch
+   will actually merge as, instead of a base that has
+   drifted while the work was in flight — this is what
+   minimizes file conflicts at merge time:
 
-1. **Check the Linear task is fully addressed.**
-   The PR exists to satisfy a Linear issue, and
-   autonomous runs have a habit of shipping a diff
-   that covers only *some* of the task's checklist.
-   Establish what the task asked for and confirm the
+   ```sh
+   git fetch origin main
+   git rebase origin/main
+   ```
+
+   - If the rebase **conflicts**, abort it
+     (`git rebase --abort`), catalogue the conflict as
+     a **blocking** issue (step 7), and tell the user
+     to rebase and resolve manually, then re-run — this
+     skill does not auto-resolve conflicts.
+   - If it **succeeds but integrated new commits from
+     `main`**, the diff now reflects that integration.
+     A clean *textual* rebase can still leave a
+     *semantic* conflict (main renamed or changed
+     something this branch still calls), so flag those
+     for the adversarial review (step 5) and the test
+     run (step 10) to catch. The rebase rewrote history,
+     so the branch must be force-pushed — step 11 does
+     this with `--force-with-lease`.
+
+1. **Check the Linear task, mark it In Progress, and
+   tick what's done.** The PR exists to satisfy a
+   Linear issue, and autonomous runs have a habit of
+   shipping a diff that covers only *some* of the
+   task's checklist. Establish what the task asked
+   for, record progress on the issue, and confirm the
    diff delivers all of it before reviewing anything
    else.
 
-   - Resolve the tag from the PR title scope (the
-     `ENG-###` inside `type(ENG-###): …`), falling
-     back to the branch name. If neither yields an
-     `ENG-###`, skip this step and note in the report
-     that no Linear task was checked.
+   - Resolve the tag. The branch and its Linear issue
+     **share one `ENG-###` number** by convention
+     (branch `eng-499` ↔ issue `ENG-499`; see
+     `CLAUDE.md`), so take the `ENG-###` from the PR
+     title scope (`type(ENG-###): …`), falling back to
+     the branch name. If neither yields an `ENG-###`,
+     skip this step and note in the report that no
+     Linear task was checked.
 
-   - Fetch the issue with the `mcp__claude_ai_Linear__get_issue`
-     tool, passing the tag as `id` (e.g. `"ENG-490"`).
-     Read the description, and also pull
-     `mcp__claude_ai_Linear__list_comments` for the
-     issue — checklist items and acceptance criteria
-     sometimes live in an inline (anchored) comment,
-     not the body.
+   - Fetch the issue with `mcp__claude_ai_Linear__get_issue`
+     (id = the uppercase tag, e.g. `"ENG-490"`). Read
+     the description, and also pull
+     `mcp__claude_ai_Linear__list_comments` — checklist
+     items and acceptance criteria sometimes live in an
+     inline (anchored) comment, not the body.
+
+   - If the issue is still **unstarted** (Todo /
+     Backlog), move it to **In Progress** so the board
+     reflects that work is underway. Don't regress an
+     issue already In Review / Done:
+
+     ```txt
+     mcp__claude_ai_Linear__save_issue(
+       id: "<ENG-###>",
+       state: "In Progress"
+     )
+     ```
 
    - Extract every actionable requirement: markdown
      checkboxes (`- [ ]` open, `- [x]` already done),
@@ -82,12 +121,21 @@ all changes are committed and pushed.
      filed via `/linear-task`. Silent omission is
      **missing**.
 
+   - **Tick the addressed items.** For every
+     requirement the diff genuinely delivers, check its
+     box (`- [ ]` → `- [x]`) and write the updated
+     description back with `save_issue` (id + the full
+     edited `description`). Leave **partial** and
+     **missing** boxes unchecked, and don't invent
+     boxes for non-checkbox requirements. Diff against
+     the live body you just fetched so you never clobber
+     a box the author already ticked or other edits made
+     since.
+
    - Catalogue every **partial** or **missing**
      requirement as a **blocking** issue (step 7),
      quoting the checklist text and the `file:line`
-     (or absence) that decides it. Do **not** tick
-     the boxes in Linear or otherwise mutate the
-     issue — this step only verifies and reports.
+     (or absence) that decides it.
 
 1. **Run lint:**
 
@@ -295,10 +343,13 @@ all changes are committed and pushed.
      **blocking** issue. Never mark the PR ready
      with a failing or unverified test target.
 
-1. **Push all fix commits:**
+1. **Push the branch.** The step-1 rebase rewrote
+   history, so push with lease — this lands the rebased
+   history together with any review-fix commits, and
+   refuses to clobber a concurrent push:
 
    ```sh
-   git push
+   git push --force-with-lease
    ```
 
 1. **Update the PR title and description.** Invoke
@@ -319,12 +370,11 @@ all changes are committed and pushed.
    message must itself match the title — squash or
    reword so they agree.
 
-1. **Check for merge conflicts with `main`.** A
-   branch can be lint-clean and review-clean yet
-   still conflict with `main` if `main` advanced
-   while the work was in flight. Fetch the latest
-   base and ask GitHub whether the PR still merges
-   cleanly:
+1. **Confirm the PR still merges cleanly.** Step 1
+   already rebased onto `main`, so this is normally
+   `MERGEABLE` — but `main` can advance again during a
+   long review, so confirm rather than assume. Fetch
+   the latest base and ask GitHub:
 
    ```sh
    git fetch origin main
@@ -364,8 +414,9 @@ all changes are committed and pushed.
    When — and only when — the PR is marked ready, move
    the Linear issue (the tag resolved in step 3) to
    **In Review** so the board reflects it's awaiting human
-   review. Skip if no tag was resolvable; this is the one
-   issue mutation the skill makes (step 3 only verifies):
+   review — the final transition after step 3 set it In
+   Progress and ticked the delivered items. Skip if no
+   tag was resolvable:
 
    ```txt
    mcp__claude_ai_Linear__save_issue(
