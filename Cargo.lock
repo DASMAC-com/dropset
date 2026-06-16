@@ -1408,6 +1408,7 @@ dependencies = [
  "anchor-lang-v2",
  "anchor-spl-v2",
  "anchor-v2-testing",
+ "dropset-price-core",
  "dropset-sdk",
  "litesvm",
  "serde_json",
