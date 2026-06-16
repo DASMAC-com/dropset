@@ -347,10 +347,7 @@ pub mod dropset {
     }
 
     #[discrim = 23]
-    pub fn set_market_fee_config(
-        ctx: &mut Context<SetMarketFeeConfig>,
-        atoms: u64,
-    ) -> Result<()> {
+    pub fn set_market_fee_config(ctx: &mut Context<SetMarketFeeConfig>, atoms: u64) -> Result<()> {
         let event = ctx.accounts.set_market_fee_config(atoms)?;
         emit_cpi!(event);
         Ok(())

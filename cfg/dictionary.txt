@@ -86,6 +86,10 @@ pubkeys
 raydium
 reentrancy
 repr
+retunable
+retune
+retuned
+retunes
 rlib
 rollups
 réunion
