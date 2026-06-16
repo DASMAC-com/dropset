@@ -718,8 +718,9 @@
         {
           "name": "signer",
           "docs": [
-            "Either the vault's leader (seeding or top-up of leader_shares)",
-            "or an outside depositor (creates / tops off `vault_depositor`)."
+            "The outside depositor (creates / tops off `vault_depositor`).",
+            "The leader is rejected here — their deposits go through",
+            "`deposit_leader`, which carries no `VaultDepositor` PDA."
           ],
           "writable": true,
           "signer": true

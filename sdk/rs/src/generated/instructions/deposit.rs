@@ -13,8 +13,9 @@ pub const DEPOSIT_DISCRIMINATOR: [u8; 1] = [7];
 /// Accounts.
 #[derive(Debug)]
 pub struct Deposit {
-    /// Either the vault's leader (seeding or top-up of leader_shares)
-    /// or an outside depositor (creates / tops off `vault_depositor`).
+    /// The outside depositor (creates / tops off `vault_depositor`).
+    /// The leader is rejected here — their deposits go through
+    /// `deposit_leader`, which carries no `VaultDepositor` PDA.
     pub signer: solana_pubkey::Pubkey,
     /// Market the vault lives on. Mut for share + inventory writes.
     pub market: solana_pubkey::Pubkey,
@@ -224,8 +225,9 @@ impl DepositBuilder {
     pub fn new() -> Self {
         Self::default()
     }
-    /// Either the vault's leader (seeding or top-up of leader_shares)
-    /// or an outside depositor (creates / tops off `vault_depositor`).
+    /// The outside depositor (creates / tops off `vault_depositor`).
+    /// The leader is rejected here — their deposits go through
+    /// `deposit_leader`, which carries no `VaultDepositor` PDA.
     #[inline(always)]
     pub fn signer(&mut self, signer: solana_pubkey::Pubkey) -> &mut Self {
         self.signer = Some(signer);
@@ -422,8 +424,9 @@ impl DepositBuilder {
 
 /// `deposit` CPI accounts.
 pub struct DepositCpiAccounts<'a, 'b> {
-    /// Either the vault's leader (seeding or top-up of leader_shares)
-    /// or an outside depositor (creates / tops off `vault_depositor`).
+    /// The outside depositor (creates / tops off `vault_depositor`).
+    /// The leader is rejected here — their deposits go through
+    /// `deposit_leader`, which carries no `VaultDepositor` PDA.
     pub signer: &'b solana_account_info::AccountInfo<'a>,
     /// Market the vault lives on. Mut for share + inventory writes.
     pub market: &'b solana_account_info::AccountInfo<'a>,
@@ -467,8 +470,9 @@ pub struct DepositCpiAccounts<'a, 'b> {
 pub struct DepositCpi<'a, 'b> {
     /// The program to invoke.
     pub __program: &'b solana_account_info::AccountInfo<'a>,
-    /// Either the vault's leader (seeding or top-up of leader_shares)
-    /// or an outside depositor (creates / tops off `vault_depositor`).
+    /// The outside depositor (creates / tops off `vault_depositor`).
+    /// The leader is rejected here — their deposits go through
+    /// `deposit_leader`, which carries no `VaultDepositor` PDA.
     pub signer: &'b solana_account_info::AccountInfo<'a>,
     /// Market the vault lives on. Mut for share + inventory writes.
     pub market: &'b solana_account_info::AccountInfo<'a>,
@@ -722,8 +726,9 @@ impl<'a, 'b> DepositCpiBuilder<'a, 'b> {
         });
         Self { instruction }
     }
-    /// Either the vault's leader (seeding or top-up of leader_shares)
-    /// or an outside depositor (creates / tops off `vault_depositor`).
+    /// The outside depositor (creates / tops off `vault_depositor`).
+    /// The leader is rejected here — their deposits go through
+    /// `deposit_leader`, which carries no `VaultDepositor` PDA.
     #[inline(always)]
     pub fn signer(&mut self, signer: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
         self.instruction.signer = Some(signer);
