@@ -20,7 +20,7 @@ use anchor_spl_v2::{
 use crate::{
     errors::DropsetError,
     events::{RealizeEvent, WithdrawEvent},
-    state::{realize_in_place, Market, PPM},
+    state::{realize_in_place, Market, VaultDll, PPM},
 };
 
 #[event_cpi]
@@ -200,6 +200,18 @@ impl WithdrawLeader {
                 &signer_seeds,
             );
             transfer_checked(cpi, slice_quote_u64, decimals)?;
+        }
+
+        // Reclaim the sector when the leader's exit drains it to zero.
+        // Reachable when the leader is the sole holder (no outside
+        // depositors) and burns their full stake — the min-leader-share
+        // floor only guards `new_total > 0`, so a full drain is allowed
+        // on active and winding-down vaults alike. Leaving it unreclaimed
+        // leaks the slab slot and its `active_count` reservation, both
+        // released only inside `reclaim_sector`. Mirrors
+        // `force_withdraw.rs` (spec § Withdraw and § Storage layout).
+        if new_total == 0 {
+            self.market.reclaim_sector(vault_idx)?;
         }
 
         let realize_event = if realize_outcome.shares_minted > 0 {

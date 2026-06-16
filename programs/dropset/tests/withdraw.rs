@@ -15,6 +15,7 @@ mod common;
 use anchor_v2_testing::{Keypair, Signer};
 use common::fixture::Fixture;
 use dropset::Price;
+use solana_pubkey::Pubkey;
 
 const SEED_BASE: u64 = 1_000_000;
 const SEED_QUOTE: u64 = 1_085_000;
@@ -73,6 +74,141 @@ fn full_exit_closes_pda_and_decrements_counter() {
         f.market_header().outstanding_vault_depositors.get(),
         0,
         "counter decremented on close"
+    );
+}
+
+#[test]
+fn last_outside_exit_on_winding_down_vault_reclaims_sector() {
+    // The headline ENG-462 path: an admin freezes the vault, the leader
+    // fully exits via `withdraw_leader` (the min-leader-share floor is
+    // bypassed once frozen), leaving outside shares behind with
+    // `leader_shares == 0`. The last outside depositor's exit then drives
+    // `total_shares` to 0, which must reclaim the sector to the free DLL.
+    // Before the fix the signed `withdraw` path never reclaimed, leaking
+    // the slab slot and the `active_count` it held.
+    let (mut f, alice) = open_with_depositor(100_000);
+    let admin = f.authority.insecure_clone();
+    assert_eq!(f.market_header().active_count.get(), 1);
+
+    // Freeze, then drain the leader to zero (floor bypassed while frozen).
+    f.freeze_vault(&admin, 0).expect("freeze vault");
+    let leader_shares = f.vault(0).leader_shares.get();
+    f.withdraw_leader(0, leader_shares, 0, 0)
+        .expect("leader exits fully on the frozen vault");
+    assert_eq!(f.vault(0).leader_shares.get(), 0, "leader fully out");
+    assert!(
+        f.vault(0).total_shares.get() > 0,
+        "outside shares still hold the vault open"
+    );
+    assert_eq!(
+        f.market_header().active_count.get(),
+        1,
+        "not yet reclaimed — outside shares remain"
+    );
+
+    // The last outside depositor drains the remainder → reclaim.
+    let alice_shares = f.vault_depositor(0, &alice.pubkey()).unwrap().shares.get();
+    f.withdraw(&alice, 0, alice_shares, 0, 0)
+        .expect("last outside exit drains the vault");
+
+    let v = f.vault(0);
+    assert_eq!(v.total_shares.get(), 0, "vault fully drained");
+    assert_eq!(
+        v.leader,
+        Pubkey::default().to_bytes().into(),
+        "reclaim zeroes the leader marker"
+    );
+    let h = f.market_header();
+    assert_eq!(
+        h.active_count.get(),
+        0,
+        "active count decremented on reclaim"
+    );
+    assert_eq!(h.head.get(), dropset::NULL_SECTOR, "active list now empty");
+    assert_eq!(
+        h.free_head.get(),
+        0,
+        "sector 0 reclaimed onto the free list"
+    );
+    assert!(
+        f.vault_depositor(0, &alice.pubkey()).is_none(),
+        "depositor PDA closed at zero shares"
+    );
+    assert_eq!(
+        h.outstanding_vault_depositors.get(),
+        0,
+        "depositor counter back to zero"
+    );
+}
+
+#[test]
+fn last_outside_exit_on_tombstoned_vault_reclaims_sector() {
+    // Tombstone variant of the reclaim path — the active-list case is
+    // covered by `last_outside_exit_on_winding_down_vault_reclaims_sector`
+    // (a frozen vault stays on the active DLL). Here the leader tombstones
+    // the vault via `close_vault`, moving it to the *tombstone* DLL and
+    // dropping `active_count` to 0; the leader then fully exits (floor
+    // bypassed while tombstoned) and the last outside depositor drains the
+    // remainder through signed `withdraw`. That final burn must unlink the
+    // sector from the tombstone list — the `DllList::Tombstone` branch of
+    // `reclaim_sector`, which (unlike the active branch) does not touch
+    // `active_count` — and return it to the free list.
+    let (mut f, alice) = open_with_depositor(100_000);
+    let leader = f.authority.insecure_clone();
+
+    f.close_vault(&leader, 0)
+        .expect("leader tombstones the vault");
+    assert_eq!(
+        f.market_header().active_count.get(),
+        0,
+        "tombstoning drops the active count"
+    );
+
+    // Leader exits fully (floor bypassed while tombstoned); outside shares remain.
+    let leader_shares = f.vault(0).leader_shares.get();
+    f.withdraw_leader(0, leader_shares, 0, 0)
+        .expect("leader exits fully on the tombstoned vault");
+    assert!(
+        f.vault(0).total_shares.get() > 0,
+        "outside shares still hold the vault open"
+    );
+
+    // The last outside depositor drains the remainder → reclaim from tombstone.
+    let alice_shares = f.vault_depositor(0, &alice.pubkey()).unwrap().shares.get();
+    f.withdraw(&alice, 0, alice_shares, 0, 0)
+        .expect("last outside exit drains the tombstoned vault");
+
+    let v = f.vault(0);
+    assert_eq!(v.total_shares.get(), 0, "vault fully drained");
+    assert_eq!(
+        v.leader,
+        Pubkey::default().to_bytes().into(),
+        "reclaim zeroes the leader marker"
+    );
+    let h = f.market_header();
+    assert_eq!(
+        h.active_count.get(),
+        0,
+        "active count stays zero — already decremented at tombstone time"
+    );
+    assert_eq!(
+        h.tombstone_head.get(),
+        dropset::NULL_SECTOR,
+        "tombstone list now empty"
+    );
+    assert_eq!(
+        h.free_head.get(),
+        0,
+        "sector 0 reclaimed onto the free list"
+    );
+    assert!(
+        f.vault_depositor(0, &alice.pubkey()).is_none(),
+        "depositor PDA closed at zero shares"
+    );
+    assert_eq!(
+        h.outstanding_vault_depositors.get(),
+        0,
+        "depositor counter back to zero"
     );
 }
 

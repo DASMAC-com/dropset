@@ -7,6 +7,7 @@ mod common;
 
 use anchor_v2_testing::Signer;
 use common::fixture::Fixture;
+use solana_pubkey::Pubkey;
 
 const SEED_BASE: u64 = 1_000_000;
 const SEED_QUOTE: u64 = 1_085_000;
@@ -37,6 +38,89 @@ fn full_exit_drains_inventory_to_leader() {
     // Treasury invariant: emptied alongside the vault.
     assert_eq!(f.token_balance(&f.base_treasury), 0);
     assert_eq!(f.token_balance(&f.quote_treasury), 0);
+}
+
+#[test]
+fn full_exit_reclaims_sector() {
+    // A leader who is the sole shareholder and burns their entire stake
+    // drives `total_shares` to 0, which must return the sector to the
+    // free DLL — mirroring `force_withdraw_leader`. Before the ENG-462
+    // fix the signed leader path left the drained sector threaded on the
+    // active list with a non-default `leader`, leaking the slab slot and
+    // never decrementing the `active_count` it held.
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+    assert_eq!(f.market_header().active_count.get(), 1, "one active vault");
+    let leader_shares = f.vault(0).leader_shares.get();
+    assert!(leader_shares > 0);
+
+    f.withdraw_leader(0, leader_shares, 0, 0)
+        .expect("leader fully exits");
+
+    let v = f.vault(0);
+    assert_eq!(v.total_shares.get(), 0, "vault fully drained");
+    // Sector reclaimed to the free DLL: zeroed leader, off the active
+    // list, free head pointing at it.
+    assert_eq!(
+        v.leader,
+        Pubkey::default().to_bytes().into(),
+        "reclaim zeroes the leader marker"
+    );
+    let h = f.market_header();
+    assert_eq!(
+        h.active_count.get(),
+        0,
+        "active count decremented on reclaim"
+    );
+    assert_eq!(h.head.get(), dropset::NULL_SECTOR, "active list now empty");
+    assert_eq!(
+        h.free_head.get(),
+        0,
+        "sector 0 reclaimed onto the free list"
+    );
+}
+
+#[test]
+fn tombstoned_full_exit_reclaims_sector() {
+    // Tombstone variant of `full_exit_reclaims_sector`: the leader is the
+    // sole shareholder, tombstones the vault (active_count → 0, sector on
+    // the tombstone DLL), then fully exits with the floor bypassed. The
+    // final burn zeroes `total_shares`, which must reclaim the sector off
+    // the *tombstone* list — the `DllList::Tombstone` branch of
+    // `reclaim_sector`, where `active_count` is not decremented again.
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+    let leader = f.authority.insecure_clone();
+
+    f.close_vault(&leader, 0)
+        .expect("leader tombstones the vault");
+    assert_eq!(
+        f.market_header().active_count.get(),
+        0,
+        "tombstoning drops the active count"
+    );
+
+    let leader_shares = f.vault(0).leader_shares.get();
+    f.withdraw_leader(0, leader_shares, 0, 0)
+        .expect("leader fully exits the tombstoned vault");
+
+    let v = f.vault(0);
+    assert_eq!(v.total_shares.get(), 0, "vault fully drained");
+    assert_eq!(
+        v.leader,
+        Pubkey::default().to_bytes().into(),
+        "reclaim zeroes the leader marker"
+    );
+    let h = f.market_header();
+    assert_eq!(h.active_count.get(), 0, "active count stays zero");
+    assert_eq!(
+        h.tombstone_head.get(),
+        dropset::NULL_SECTOR,
+        "tombstone list now empty"
+    );
+    assert_eq!(
+        h.free_head.get(),
+        0,
+        "sector 0 reclaimed onto the free list"
+    );
 }
 
 #[test]
