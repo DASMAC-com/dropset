@@ -202,18 +202,13 @@ impl WithdrawLeader {
             self.market.reclaim_sector(vault_idx)?;
         }
 
-        let realize_event = if realize_outcome.shares_minted > 0 {
-            Some(RealizeEvent {
-                market: market_addr,
-                sector_idx: vault_idx,
-                shares_minted: realize_outcome.shares_minted,
-                leader_shares_after: new_leader,
-                total_shares_after: new_total,
-                hwm_after: realize_outcome.hwm_after,
-            })
-        } else {
-            None
-        };
+        let realize_event = RealizeEvent::from_outcome(
+            &realize_outcome,
+            market_addr,
+            vault_idx,
+            new_leader,
+            new_total,
+        );
         let withdraw_event = WithdrawEvent {
             market: market_addr,
             sector_idx: vault_idx,

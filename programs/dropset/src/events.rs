@@ -9,6 +9,7 @@
 
 use anchor_lang_v2::prelude::*;
 
+use crate::state::RealizeOutcome;
 use crate::Price;
 
 /// Emitted by `create_vault`.
@@ -91,6 +92,32 @@ pub struct RealizeEvent {
     pub leader_shares_after: u64,
     pub total_shares_after: u64,
     pub hwm_after: u64,
+}
+
+impl RealizeEvent {
+    /// Build the conditional `RealizeEvent` shared by every deposit /
+    /// withdraw handler. The implicit `Realize` step only mints shares
+    /// when `VPS` clears the high-water mark, so each handler emits
+    /// `Some` solely on that case and `None` otherwise. `shares_minted`
+    /// and `hwm_after` come off the `realize_in_place` outcome; the
+    /// caller supplies its post-state `leader_shares_after` /
+    /// `total_shares_after` (the local share totals differ per handler).
+    pub fn from_outcome(
+        outcome: &RealizeOutcome,
+        market: Address,
+        sector_idx: u32,
+        leader_shares_after: u64,
+        total_shares_after: u64,
+    ) -> Option<Self> {
+        (outcome.shares_minted > 0).then_some(RealizeEvent {
+            market,
+            sector_idx,
+            shares_minted: outcome.shares_minted,
+            leader_shares_after,
+            total_shares_after,
+            hwm_after: outcome.hwm_after,
+        })
+    }
 }
 
 /// Per-leg fill record. Bytemuck-serialized via `emit_cpi!` so the
