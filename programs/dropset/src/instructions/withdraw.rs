@@ -24,7 +24,7 @@ use anchor_spl_v2::{
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
 
-use super::transfer_out_leg;
+use super::{close_depositor_and_decrement, transfer_out_leg};
 use crate::{
     errors::DropsetError,
     events::{RealizeEvent, WithdrawEvent},
@@ -256,18 +256,16 @@ impl Withdraw {
         )?;
 
         // Close the VaultDepositor PDA when an outside depositor's
-        // shares hit zero — refund rent to the depositor and
-        // decrement `MarketHeader.outstanding_vault_depositors`. The
-        // counter is the spec's only on-chain witness that
-        // `close_market` can safely proceed (architecture.md §
-        // Account lifecycle and rent reclamation), so it must come
-        // back to zero on every clean exit.
+        // shares hit zero, refunding rent to the depositor. The shared
+        // helper keeps the close and the `outstanding_vault_depositors`
+        // decrement together (see its doc).
         if self.vault_depositor.shares.get() == 0 {
-            use anchor_lang_v2::AnchorAccount;
             let signer_view = *self.signer.as_ref();
-            self.vault_depositor.close(signer_view)?;
-            let prev = self.market.outstanding_vault_depositors.get();
-            self.market.outstanding_vault_depositors = prev.saturating_sub(1).into();
+            close_depositor_and_decrement(
+                &mut self.market,
+                &mut self.vault_depositor,
+                signer_view,
+            )?;
         }
 
         // If this outside withdraw drained the sector's last share,

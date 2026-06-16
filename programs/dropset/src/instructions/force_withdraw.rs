@@ -25,14 +25,14 @@
 //! leader exits to zero. Draining the last leader share is exactly the
 //! point of the instruction.
 
-use anchor_lang_v2::{address_eq, prelude::*, AnchorAccount};
+use anchor_lang_v2::{address_eq, prelude::*};
 #[allow(unused_imports)]
 use anchor_spl_v2::{
     associated_token::AssociatedToken,
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
 
-use super::transfer_out_leg;
+use super::{close_depositor_and_decrement, transfer_out_leg};
 use crate::{
     errors::DropsetError,
     events::{RealizeEvent, WithdrawEvent},
@@ -240,12 +240,10 @@ impl ForceWithdrawDepositor {
         )?;
 
         // Full drain by construction → close the PDA back to the
-        // depositor and decrement the outstanding counter, exactly as
-        // the signed close-on-empty path does.
+        // depositor via the shared helper (close + counter decrement),
+        // exactly as the signed close-on-empty path does.
         let owner_view = *self.owner.account();
-        self.vault_depositor.close(owner_view)?;
-        let prev = self.market.outstanding_vault_depositors.get();
-        self.market.outstanding_vault_depositors = prev.saturating_sub(1).into();
+        close_depositor_and_decrement(&mut self.market, &mut self.vault_depositor, owner_view)?;
 
         // Mirror the leader path: if this depositor drain empties the
         // vault — possible when teardown runs out of the documented

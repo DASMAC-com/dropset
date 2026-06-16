@@ -25,8 +25,10 @@ pub mod close_market;
 pub mod close_registry;
 pub mod force_withdraw;
 
-use anchor_lang_v2::prelude::*;
+use anchor_lang_v2::{prelude::*, AnchorAccount};
 use anchor_spl_v2::token_2022::{transfer_checked, TransferChecked};
+
+use crate::{state::Market, VaultDepositorHeader};
 
 /// Inbound single-leg deposit transfer: move `amount` of one mint from
 /// the signer's ATA into the market treasury via `transfer_checked`,
@@ -98,6 +100,30 @@ pub fn transfer_out_leg<'a>(
         signer_seeds,
     );
     transfer_checked(cpi, amount, decimals)
+}
+
+/// Close a `VaultDepositor` PDA and decrement the market's
+/// `outstanding_vault_depositors` counter — the two must always move
+/// together. That counter is the spec's only on-chain witness that
+/// `close_market` can safely proceed (no orphan depositor PDAs remain,
+/// since the program can't enumerate all PDAs), so a close that skips
+/// the decrement — or vice versa — would break `close_market`
+/// reachability. Rent is refunded to `refund_to`.
+///
+/// Shared by `withdraw` (under its `shares == 0` guard) and
+/// `force_withdraw_depositor` (unconditional, full drain). The refund
+/// recipient — the signer on the signed path, the position `owner` on
+/// the force path — is the caller's choice. See the architecture spec,
+/// § Account lifecycle and rent reclamation.
+pub fn close_depositor_and_decrement(
+    market: &mut Market,
+    vault_depositor: &mut Account<VaultDepositorHeader>,
+    refund_to: AccountView,
+) -> Result<()> {
+    vault_depositor.close(refund_to)?;
+    let prev = market.outstanding_vault_depositors.get();
+    market.outstanding_vault_depositors = prev.saturating_sub(1).into();
+    Ok(())
 }
 
 pub use admin::*;
