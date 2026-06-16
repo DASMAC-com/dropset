@@ -1636,10 +1636,11 @@ instructions do not.
 **Per-emit cost.** Each `emit_cpi!` runs as a self-CPI: ~1000 CU
 invocation overhead + `data_len/250` CU for the payload. The hard
 ceiling is **64 inner instructions per transaction**
-(`MAX_INSTRUCTION_TRACE_LENGTH`), not bytes — so emit budgeting at
-sweep time is against `64 − (top-level ix + token CPIs)`, not the
-per-CPI 10 KiB cap. A sweep that exhausts both axes packs into
-multiple aggregated-event CPIs rather than one emit per leg.
+(`MAX_INSTRUCTION_TRACE_LENGTH`), not bytes. With per-leg emit (one
+`emit_cpi!` per matched leg; see **Granularity** below), this count —
+not the per-CPI 10 KiB data cap — is what bounds a take: it can record
+at most `64 − (top-level ix + token CPIs)` legs in one transaction (a
+single `FillEvent` is ~120 B, nowhere near the data cap).
 
 **Why fills must be events, not account diffs.** `market.nonce` is
 bumped on every fill and every quote update, and a geyser stream
@@ -1658,19 +1659,22 @@ and the deliberately-minimized match loop should not carry it. Wash
 classification is left to off-chain consumers, which have the
 maker/taker identities to cluster on.
 
-**Granularity — every leg recorded, never truncated.** A single take can
+**Granularity — per-leg emit, every leg recorded.** A single take can
 sweep many levels across many vaults (the sorted-`Vec` fill loop in
-**Order matching**), and **every leg is recorded** — no truncation, no
-revert for an event-size reason. The per-leg `(vault, level)` records and the
-take-level summary ride as inner-instruction data. A single CPI's
-instruction data is itself bounded (~10 KB per call), but there is **no
-cumulative cap** on inner-instruction data across a transaction, so a
-sweep too large for one self-CPI simply **splits across multiple
-self-CPIs** — full fidelity is preserved either way. Whether to emit one
-aggregated `FillBatch` per self-CPI (fewer CPIs, less CU, must chunk when
-a sweep exceeds one CPI) or one event per leg (simplest, always fits,
-more CPIs / CU) is a **CU/byte optimization** that does not affect
-fidelity; see the plan's open decision.
+**Order matching**). The emit model is **resolved: per-leg emit** —
+every matched `(sector_idx, level_idx)` leg is its own `emit_cpi!`
+`FillEvent`, accumulated by the matcher and dispatched one at a time in
+heap-pop (match) order, so a leg's inner-instruction index is a stable
+ordinal. There is **no separate take-level event**: per-take figures
+(total fill, average price, total fee) are derived off-chain by grouping
+the legs of one transaction. An aggregated `FillBatch` was considered
+and rejected — per-leg emit is the simplest fixed-size record, each
+`FillEvent` sits far inside the per-CPI 10 KiB data cap so a leg never
+splits, and the only ceiling is the 64-instruction trace count above
+(not event size). Because fills ride as inner-instruction data rather
+than logs, no leg is ever silently truncated; a sweep that would exceed
+the trace-count ceiling fails deterministically rather than dropping a
+leg.
 
 **Serialization mode.** Anchor v2's `#[event]` macro picks between two
 serializers: the default (`wincode` with a borsh-wire-compatible
@@ -1685,10 +1689,12 @@ macro site matter. The cold-path events (`Deposit`, `Withdraw`,
 `CreateVault`, `Realize`) use the default `#[event]` — they benefit from
 dynamic fields and emit too rarely for bytemuck to pay back.
 
-**Schema source of truth.** The event field layouts are the program's
-`#[event]` structs, surfaced verbatim in the generated IDL; the IDL is
-the canonical schema that off-chain clients are generated from, and the
-self-CPI instruction data decodes against it. Default-mode events
+**Schema source of truth.** This section specifies the emit *mechanism*;
+the event *schema* (the field-by-field layouts) is owned by the
+program's `#[event]` structs and **canonicalized in the generated IDL**,
+which off-chain clients are generated from and the self-CPI instruction
+data decodes against. The consumer-facing mirror of that schema lives in
+the interface spec, downstream of this document and the IDL. Default-mode events
 encode borsh-wire-compatible, so existing borsh-decoder tooling keeps
 working unchanged; bytemuck events surface in the IDL as a `repr(C)`
 blob (tagged `{serialization:"bytemuck",repr:{kind:"c"}}`) and decode

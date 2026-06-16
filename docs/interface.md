@@ -15,8 +15,8 @@ Anchor `#[event]` structs as surfaced in the IDL — the field lists below
 **Status.** The core flows — `create_vault` / `deposit` / `withdraw` / `swap` —
 are implemented and emit the events below; this spec is the consumer contract
 for those events plus the not-yet-built integrator, REST, and SDK surfaces
-(§4–§6). Items marked **(open: x)** depend on a decision tracked in the plan's
-open-decisions list.
+(§4–§6). Items marked **(open: x)** depend on a decision tracked in
+**§7, Open decisions affecting this contract**.
 
 ______________________________________________________________________
 
@@ -250,7 +250,10 @@ ______________________________________________________________________
 
 ## 7. Open decisions affecting this contract
 
-These are tracked in full in the plan; the consumer-facing ones:
+This is the open-decisions list for the consumer contract — the **(open:
+x)** markers elsewhere in this document point here. (Letters are
+non-contiguous because they share a labelling scheme with protocol-level
+decisions that do not affect this contract.)
 
 - **(a)** Emit model — **resolved: per-leg emit.** Each matched leg is its own
   `emit_cpi!` `FillEvent` (see §1), so `event_ordinal` is the inner-instruction
