@@ -36,22 +36,23 @@ export function getWithdrawInstructionDataCodec(): FixedSizeCodec<WithdrawInstru
 
 export type WithdrawAsyncInput<TAccountSigner extends string = string, TAccountMarket extends string = string, TAccountVaultDepositor extends string = string, TAccountBaseMint extends string = string, TAccountQuoteMint extends string = string, TAccountBaseTokenProgram extends string = string, TAccountQuoteTokenProgram extends string = string, TAccountSignerBaseAta extends string = string, TAccountSignerQuoteAta extends string = string, TAccountMarketBaseTreasury extends string = string, TAccountMarketQuoteTreasury extends string = string, TAccountAssociatedTokenProgram extends string = string, TAccountSystemProgram extends string = string, TAccountEventAuthority extends string = string, TAccountProgram extends string = string> =  {
   /**
- * Either the vault's leader (burns `leader_shares`) or an outside
- * depositor (burns the PDA's `shares`). PDA seeds bind the
- * outside path to this signer.
+ * The outside depositor exiting the vault — the PDA seeds bind this
+ * signer to the `VaultDepositor` whose `shares` are burned here. The
+ * leader is rejected (`DropsetError::Unauthorized`) and exits via
+ * [`super::withdraw_leader`], which burns `leader_shares` directly
+ * and carries no `VaultDepositor` PDA.
  */
 signer: TransactionSigner<TAccountSigner>;
 /** Market the vault lives on. */
 market: Address<TAccountMarket>;
 /**
  * Outside depositor's PDA. Mut so we can decrement `shares` and
- * stamp realized PnL. The handler calls
- * [`anchor_lang_v2::AnchorAccount::close`] explicitly when
- * post-burn `shares == 0`, refunding the rent to the signer
- * and decrementing `outstanding_vault_depositors` — a manual
- * close keeps the conditional rent-refund logic in one place
- * instead of relying on Anchor's unconditional `close = signer`
- * attribute.
+ * stamp realized PnL. When post-burn `shares == 0` the handler
+ * closes it explicitly via `close_depositor_and_decrement` —
+ * refunding the rent to the signer and decrementing
+ * `outstanding_vault_depositors`. A conditional manual close (vs.
+ * Anchor's unconditional `close = signer` attribute) is what lets
+ * the PDA survive a partial withdrawal.
  */
 vaultDepositor?: Address<TAccountVaultDepositor>;
 baseMint: Address<TAccountBaseMint>;
@@ -107,22 +108,23 @@ return Object.freeze({ accounts: [getAccountMeta(accounts.signer), getAccountMet
 
 export type WithdrawInput<TAccountSigner extends string = string, TAccountMarket extends string = string, TAccountVaultDepositor extends string = string, TAccountBaseMint extends string = string, TAccountQuoteMint extends string = string, TAccountBaseTokenProgram extends string = string, TAccountQuoteTokenProgram extends string = string, TAccountSignerBaseAta extends string = string, TAccountSignerQuoteAta extends string = string, TAccountMarketBaseTreasury extends string = string, TAccountMarketQuoteTreasury extends string = string, TAccountAssociatedTokenProgram extends string = string, TAccountSystemProgram extends string = string, TAccountEventAuthority extends string = string, TAccountProgram extends string = string> =  {
   /**
- * Either the vault's leader (burns `leader_shares`) or an outside
- * depositor (burns the PDA's `shares`). PDA seeds bind the
- * outside path to this signer.
+ * The outside depositor exiting the vault — the PDA seeds bind this
+ * signer to the `VaultDepositor` whose `shares` are burned here. The
+ * leader is rejected (`DropsetError::Unauthorized`) and exits via
+ * [`super::withdraw_leader`], which burns `leader_shares` directly
+ * and carries no `VaultDepositor` PDA.
  */
 signer: TransactionSigner<TAccountSigner>;
 /** Market the vault lives on. */
 market: Address<TAccountMarket>;
 /**
  * Outside depositor's PDA. Mut so we can decrement `shares` and
- * stamp realized PnL. The handler calls
- * [`anchor_lang_v2::AnchorAccount::close`] explicitly when
- * post-burn `shares == 0`, refunding the rent to the signer
- * and decrementing `outstanding_vault_depositors` — a manual
- * close keeps the conditional rent-refund logic in one place
- * instead of relying on Anchor's unconditional `close = signer`
- * attribute.
+ * stamp realized PnL. When post-burn `shares == 0` the handler
+ * closes it explicitly via `close_depositor_and_decrement` —
+ * refunding the rent to the signer and decrementing
+ * `outstanding_vault_depositors`. A conditional manual close (vs.
+ * Anchor's unconditional `close = signer` attribute) is what lets
+ * the PDA survive a partial withdrawal.
  */
 vaultDepositor: Address<TAccountVaultDepositor>;
 baseMint: Address<TAccountBaseMint>;
@@ -173,22 +175,23 @@ return Object.freeze({ accounts: [getAccountMeta(accounts.signer), getAccountMet
 export type ParsedWithdrawInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountMetas extends readonly AccountMeta[] = readonly AccountMeta[]> = { programAddress: Address<TProgram>;
 accounts: {
 /**
- * Either the vault's leader (burns `leader_shares`) or an outside
- * depositor (burns the PDA's `shares`). PDA seeds bind the
- * outside path to this signer.
+ * The outside depositor exiting the vault — the PDA seeds bind this
+ * signer to the `VaultDepositor` whose `shares` are burned here. The
+ * leader is rejected (`DropsetError::Unauthorized`) and exits via
+ * [`super::withdraw_leader`], which burns `leader_shares` directly
+ * and carries no `VaultDepositor` PDA.
  */
 signer: TAccountMetas[0];
 /** Market the vault lives on. */
 market: TAccountMetas[1];
 /**
  * Outside depositor's PDA. Mut so we can decrement `shares` and
- * stamp realized PnL. The handler calls
- * [`anchor_lang_v2::AnchorAccount::close`] explicitly when
- * post-burn `shares == 0`, refunding the rent to the signer
- * and decrementing `outstanding_vault_depositors` — a manual
- * close keeps the conditional rent-refund logic in one place
- * instead of relying on Anchor's unconditional `close = signer`
- * attribute.
+ * stamp realized PnL. When post-burn `shares == 0` the handler
+ * closes it explicitly via `close_depositor_and_decrement` —
+ * refunding the rent to the signer and decrementing
+ * `outstanding_vault_depositors`. A conditional manual close (vs.
+ * Anchor's unconditional `close = signer` attribute) is what lets
+ * the PDA survive a partial withdrawal.
  */
 vaultDepositor: TAccountMetas[2];
 baseMint: TAccountMetas[3];

@@ -25,18 +25,18 @@
 //! leader exits to zero. Draining the last leader share is exactly the
 //! point of the instruction.
 
-use anchor_lang_v2::{address_eq, prelude::*, AnchorAccount};
+use anchor_lang_v2::{address_eq, prelude::*};
 #[allow(unused_imports)]
 use anchor_spl_v2::{
     associated_token::AssociatedToken,
-    token_2022::{transfer_checked, TransferChecked},
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
 
+use super::{close_depositor_and_decrement, transfer_out_leg};
 use crate::{
     errors::DropsetError,
     events::{RealizeEvent, WithdrawEvent},
-    state::{realize_in_place, Market, VaultDll},
+    state::{compute_pro_rata_slice, realize_in_place, Market, VaultDll},
     AdminSet, Registry, VaultDepositorHeader,
 };
 
@@ -173,19 +173,16 @@ impl ForceWithdrawDepositor {
             )
         };
 
-        // Pro-rata basket — floor.
-        let ts = total_shares as u128;
-        let s_in = shares_in as u128;
-        let slice_base = (s_in * (base_atoms as u128)) / ts;
-        let slice_quote = (s_in * (quote_atoms as u128)) / ts;
-        let slice_base_u64 = slice_base as u64;
-        let slice_quote_u64 = slice_quote as u64;
+        // Pro-rata basket — floored slice, shared across withdraw paths.
+        let (slice_base_u64, slice_quote_u64) =
+            compute_pro_rata_slice(shares_in, total_shares, base_atoms, quote_atoms);
 
-        // Crystallize realized PnL into the depositor's accumulators —
-        // identical math to the signed `withdraw` path (spec L1513-1519).
-        let realized_pnl_delta: i64;
+        // Crystallize realized PnL + burn shares + reduce basis via the
+        // shared helper — identical accounting to the signed `withdraw`
+        // path.
         let market_addr_check = *self.market.address();
-        {
+        let ref_now_price = crate::Price::from_bits(ref_price_bits);
+        let realized_pnl_delta = {
             let vd = &mut self.vault_depositor;
             require!(
                 address_eq(&vd.market, &market_addr_check)
@@ -193,53 +190,8 @@ impl ForceWithdrawDepositor {
                     && address_eq(&vd.owner, &owner_addr),
                 DropsetError::VaultDepositorMismatch
             );
-            // Defense-in-depth, mirroring the signed `withdraw` path:
-            // `shares_in` is read from `vd.shares` above so this is
-            // currently unreachable, but it guards against a future
-            // change that decouples the two.
-            require!(
-                vd.shares.get() >= shares_in,
-                DropsetError::InsufficientShares
-            );
-            let released_basis = (vd.net_deposits.get() as u128)
-                .checked_mul(s_in)
-                .ok_or(DropsetError::MathOverflow)?
-                / (vd.shares.get() as u128);
-            let ref_now_price = crate::Price::from_bits(ref_price_bits);
-            let entry_ref_price = vd.entry_ref_price;
-            let quote_for_ref_now = ref_now_price
-                .quote_for_base(slice_base_u64)
-                .min(i128::MAX as u128) as i128;
-            let quote_for_ref_entry = entry_ref_price
-                .quote_for_base(slice_base_u64)
-                .min(i128::MAX as u128) as i128;
-            let slice_quote_i = slice_quote as i128;
-            let released_i = released_basis as i128;
-            let fx_delta: i128 = quote_for_ref_now.saturating_sub(quote_for_ref_entry);
-            let yield_delta: i128 = slice_quote_i
-                .saturating_add(quote_for_ref_entry)
-                .saturating_sub(released_i);
-            let pnl_delta: i128 = slice_quote_i
-                .saturating_add(quote_for_ref_now)
-                .saturating_sub(released_i);
-            vd.realized_fx = (((vd.realized_fx.get() as i128).saturating_add(fx_delta))
-                .clamp(i64::MIN as i128, i64::MAX as i128) as i64)
-                .into();
-            let new_pnl = (vd.realized_pnl.get() as i128).saturating_add(pnl_delta);
-            let new_yield = (vd.realized_yield.get() as i128).saturating_add(yield_delta);
-            vd.realized_pnl = (new_pnl.clamp(i64::MIN as i128, i64::MAX as i128) as i64).into();
-            vd.realized_yield = (new_yield.clamp(i64::MIN as i128, i64::MAX as i128) as i64).into();
-            realized_pnl_delta = pnl_delta.clamp(i64::MIN as i128, i64::MAX as i128) as i64;
-
-            let new_shares = vd.shares.get() - shares_in;
-            vd.shares = new_shares.into();
-            vd.net_deposits = vd
-                .net_deposits
-                .get()
-                .checked_sub(released_basis as u64)
-                .ok_or(DropsetError::MathOverflow)?
-                .into();
-        }
+            vd.crystallize_realized_pnl(shares_in, slice_base_u64, slice_quote_u64, ref_now_price)?
+        };
 
         // Vault inventory + total share burn. `leader_shares` unchanged
         // (this is the depositor path).
@@ -266,42 +218,32 @@ impl ForceWithdrawDepositor {
         let signer_seeds_inner: [&[u8]; 3] = [base_seed, quote_seed, bump_seed];
         let signer_seeds: [&[&[u8]]; 1] = [&signer_seeds_inner];
 
-        if slice_base_u64 > 0 {
-            let decimals = self.base_mint.decimals();
-            let cpi = CpiContext::new_with_signer(
-                self.base_token_program.address(),
-                TransferChecked {
-                    from: self.market_base_treasury.cpi_handle_mut(),
-                    mint: self.base_mint.cpi_handle(),
-                    to: self.owner_base_ata.cpi_handle_mut(),
-                    authority: self.market.cpi_handle(),
-                },
-                &signer_seeds,
-            );
-            transfer_checked(cpi, slice_base_u64, decimals)?;
-        }
-        if slice_quote_u64 > 0 {
-            let decimals = self.quote_mint.decimals();
-            let cpi = CpiContext::new_with_signer(
-                self.quote_token_program.address(),
-                TransferChecked {
-                    from: self.market_quote_treasury.cpi_handle_mut(),
-                    mint: self.quote_mint.cpi_handle(),
-                    to: self.owner_quote_ata.cpi_handle_mut(),
-                    authority: self.market.cpi_handle(),
-                },
-                &signer_seeds,
-            );
-            transfer_checked(cpi, slice_quote_u64, decimals)?;
-        }
+        transfer_out_leg(
+            self.base_token_program.address(),
+            self.market_base_treasury.cpi_handle_mut(),
+            self.base_mint.cpi_handle(),
+            self.owner_base_ata.cpi_handle_mut(),
+            self.market.cpi_handle(),
+            slice_base_u64,
+            self.base_mint.decimals(),
+            &signer_seeds,
+        )?;
+        transfer_out_leg(
+            self.quote_token_program.address(),
+            self.market_quote_treasury.cpi_handle_mut(),
+            self.quote_mint.cpi_handle(),
+            self.owner_quote_ata.cpi_handle_mut(),
+            self.market.cpi_handle(),
+            slice_quote_u64,
+            self.quote_mint.decimals(),
+            &signer_seeds,
+        )?;
 
         // Full drain by construction → close the PDA back to the
-        // depositor and decrement the outstanding counter, exactly as
-        // the signed close-on-empty path does.
+        // depositor via the shared helper (close + counter decrement),
+        // exactly as the signed close-on-empty path does.
         let owner_view = *self.owner.account();
-        self.vault_depositor.close(owner_view)?;
-        let prev = self.market.outstanding_vault_depositors.get();
-        self.market.outstanding_vault_depositors = prev.saturating_sub(1).into();
+        close_depositor_and_decrement(&mut self.market, &mut self.vault_depositor, owner_view)?;
 
         // Mirror the leader path: if this depositor drain empties the
         // vault — possible when teardown runs out of the documented
@@ -458,14 +400,11 @@ impl ForceWithdrawLeader {
         let shares_in = leader_shares;
         require!(shares_in > 0, DropsetError::InsufficientShares);
 
-        // Pro-rata basket — floor. The `min_leader_share` floor is
-        // intentionally not enforced (see the module doc).
-        let ts = total_shares as u128;
-        let s_in = shares_in as u128;
-        let slice_base = (s_in * (base_atoms as u128)) / ts;
-        let slice_quote = (s_in * (quote_atoms as u128)) / ts;
-        let slice_base_u64 = slice_base as u64;
-        let slice_quote_u64 = slice_quote as u64;
+        // Pro-rata basket — floored slice, shared across withdraw paths.
+        // The `min_leader_share` floor is intentionally not enforced (see
+        // the module doc).
+        let (slice_base_u64, slice_quote_u64) =
+            compute_pro_rata_slice(shares_in, total_shares, base_atoms, quote_atoms);
 
         let market_addr = *self.market.address();
         let market_bump = self.market.bump;
@@ -491,34 +430,26 @@ impl ForceWithdrawLeader {
         let signer_seeds_inner: [&[u8]; 3] = [base_seed, quote_seed, bump_seed];
         let signer_seeds: [&[&[u8]]; 1] = [&signer_seeds_inner];
 
-        if slice_base_u64 > 0 {
-            let decimals = self.base_mint.decimals();
-            let cpi = CpiContext::new_with_signer(
-                self.base_token_program.address(),
-                TransferChecked {
-                    from: self.market_base_treasury.cpi_handle_mut(),
-                    mint: self.base_mint.cpi_handle(),
-                    to: self.leader_base_ata.cpi_handle_mut(),
-                    authority: self.market.cpi_handle(),
-                },
-                &signer_seeds,
-            );
-            transfer_checked(cpi, slice_base_u64, decimals)?;
-        }
-        if slice_quote_u64 > 0 {
-            let decimals = self.quote_mint.decimals();
-            let cpi = CpiContext::new_with_signer(
-                self.quote_token_program.address(),
-                TransferChecked {
-                    from: self.market_quote_treasury.cpi_handle_mut(),
-                    mint: self.quote_mint.cpi_handle(),
-                    to: self.leader_quote_ata.cpi_handle_mut(),
-                    authority: self.market.cpi_handle(),
-                },
-                &signer_seeds,
-            );
-            transfer_checked(cpi, slice_quote_u64, decimals)?;
-        }
+        transfer_out_leg(
+            self.base_token_program.address(),
+            self.market_base_treasury.cpi_handle_mut(),
+            self.base_mint.cpi_handle(),
+            self.leader_base_ata.cpi_handle_mut(),
+            self.market.cpi_handle(),
+            slice_base_u64,
+            self.base_mint.decimals(),
+            &signer_seeds,
+        )?;
+        transfer_out_leg(
+            self.quote_token_program.address(),
+            self.market_quote_treasury.cpi_handle_mut(),
+            self.quote_mint.cpi_handle(),
+            self.leader_quote_ata.cpi_handle_mut(),
+            self.market.cpi_handle(),
+            slice_quote_u64,
+            self.quote_mint.decimals(),
+            &signer_seeds,
+        )?;
 
         // Once the vault is fully drained, reclaim the sector to the
         // free DLL (spec's **Reclaim** step). This is an in-slab pointer

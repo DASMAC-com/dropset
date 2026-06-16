@@ -549,6 +549,38 @@ pub fn single_leg_basket(
     ))
 }
 
+/// Floored pro-rata basket slice for a withdrawal of `shares_in` out of
+/// `total_shares` against a `(base_atoms, quote_atoms)` inventory:
+///
+/// ```text
+/// slice_base  = floor(shares_in × base_atoms  / total_shares)
+/// slice_quote = floor(shares_in × quote_atoms / total_shares)
+/// ```
+///
+/// Rounding **down** keeps the dust in the vault for the benefit of the
+/// remaining depositors (spec § Depositor operations → Withdraw). Shared
+/// by every withdraw path (`withdraw`, `withdraw_leader`, and both
+/// `force_withdraw` arms) so the rounding direction stays identical — a
+/// divergence here would be a silent value-leak, not a compile error.
+/// Callers apply their own `min_*_out` slippage check on the returned
+/// slices.
+///
+/// `total_shares > 0` is the caller's precondition — every path rejects
+/// an empty vault upstream. Each result is bounded by its atom input
+/// (`shares_in ≤ total_shares`), so both fit back into `u64`.
+pub fn compute_pro_rata_slice(
+    shares_in: u64,
+    total_shares: u64,
+    base_atoms: u64,
+    quote_atoms: u64,
+) -> (u64, u64) {
+    let ts = total_shares as u128;
+    let s_in = shares_in as u128;
+    let slice_base = (s_in * (base_atoms as u128)) / ts;
+    let slice_quote = (s_in * (quote_atoms as u128)) / ts;
+    (slice_base as u64, slice_quote as u64)
+}
+
 impl VaultDll for Market {
     fn allocate_sector(&mut self, payer: &AccountView) -> Result<u32> {
         // Free list first — reuse a reclaimed sector if any.
@@ -1183,5 +1215,44 @@ mod tests {
         assert!(r.hwm_after > Q32_32_ONE);
         assert_eq!(v.leader_shares.get(), 100);
         assert_eq!(v.total_shares.get(), 100);
+    }
+
+    #[test]
+    fn pro_rata_slice_exact_division() {
+        // Half the shares → exactly half of each leg, no remainder.
+        assert_eq!(compute_pro_rata_slice(50, 100, 1_000, 2_000), (500, 1_000));
+    }
+
+    #[test]
+    fn pro_rata_slice_full_withdraw_drains_both_legs() {
+        // Burning every share takes the whole inventory.
+        assert_eq!(
+            compute_pro_rata_slice(100, 100, 1_000, 2_000),
+            (1_000, 2_000)
+        );
+    }
+
+    #[test]
+    fn pro_rata_slice_floors_and_leaves_dust() {
+        // 1 of 3 shares against 10 atoms → floor(10/3) = 3, leaving the
+        // 1-atom remainder in the vault for the other depositors.
+        assert_eq!(compute_pro_rata_slice(1, 3, 10, 10), (3, 3));
+    }
+
+    #[test]
+    fn pro_rata_slice_zero_leg_stays_zero() {
+        // A vault holding only quote slices an empty base leg as zero.
+        assert_eq!(compute_pro_rata_slice(25, 100, 0, 4_000), (0, 1_000));
+    }
+
+    #[test]
+    fn pro_rata_slice_no_overflow_at_atom_ceiling() {
+        // `shares_in × atoms` is computed in u128, so a u64-ceiling
+        // inventory withdrawn in full does not overflow and round-trips
+        // back into u64.
+        assert_eq!(
+            compute_pro_rata_slice(u64::MAX, u64::MAX, u64::MAX, u64::MAX),
+            (u64::MAX, u64::MAX)
+        );
     }
 }

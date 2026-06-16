@@ -10,7 +10,7 @@
 
 use anchor_lang_v2::prelude::*;
 
-use crate::Price;
+use crate::{errors::DropsetError, Price};
 
 /// Authoritative on-chain record of one depositor's position in one
 /// vault — both the share claim and the cost basis the unrealized PnL
@@ -127,6 +127,87 @@ impl VaultDepositorHeader {
             false
         }
     }
+
+    /// Crystallize the realized PnL of withdrawing `shares_in` shares that
+    /// deliver the `(slice_base, slice_quote)` basket, then burn the
+    /// shares and reduce the cost basis. Returns the `realized_pnl` delta
+    /// for the `WithdrawEvent`.
+    ///
+    /// Shared by `withdraw` (outside path) and `force_withdraw_depositor`
+    /// so the program's most delicate accounting stays single-sourced; a
+    /// divergent `min`/`max` or rounding change applied to only one copy
+    /// would be high-impact and hard to spot. The caller validates the
+    /// `VaultDepositor` identity and the slippage bounds before calling.
+    ///
+    /// The `shares >= shares_in` guard is reachable on the signed path
+    /// (a depositor can request more than they hold) and defense-in-depth
+    /// on the force path (which reads `shares_in` from `shares`, so the
+    /// two are equal there today).
+    ///
+    /// Realized PnL math, per docs/architecture.md
+    /// § Depositor operations → Withdraw (the realized-PnL formula block):
+    ///   realized_fx    += slice_base × (ref_now − entry_ref)
+    ///   realized_yield += slice_quote + slice_base × entry_ref − released_basis
+    ///   realized_pnl   += slice_quote + slice_base × ref_now    − released_basis
+    ///
+    /// `ref_now × slice_base` and `entry_ref × slice_base` are decoded via
+    /// [`Price::quote_for_base`] — both produce a quote-atom value, so the
+    /// deltas are well-typed in quote-denominated units. All math is in
+    /// `u128`/`i128` to avoid intermediate overflow; the signed
+    /// accumulators clamp into `i64` at the store. `entry_vps`,
+    /// `entry_ref_price`, and `gross_deposited` are intentionally left
+    /// unchanged — a proportional reduction preserves the shares-weighted
+    /// averages, and `gross_deposited` only ever grows (on deposit).
+    pub fn crystallize_realized_pnl(
+        &mut self,
+        shares_in: u64,
+        slice_base: u64,
+        slice_quote: u64,
+        ref_now: Price,
+    ) -> Result<i64> {
+        require!(
+            self.shares.get() >= shares_in,
+            DropsetError::InsufficientShares
+        );
+        let s_in = shares_in as u128;
+        let released_basis = (self.net_deposits.get() as u128)
+            .checked_mul(s_in)
+            .ok_or(DropsetError::MathOverflow)?
+            / (self.shares.get() as u128);
+        let quote_for_ref_now = ref_now.quote_for_base(slice_base).min(i128::MAX as u128) as i128;
+        let quote_for_ref_entry = self
+            .entry_ref_price
+            .quote_for_base(slice_base)
+            .min(i128::MAX as u128) as i128;
+        let slice_quote_i = slice_quote as i128;
+        let released_i = released_basis as i128;
+        let fx_delta: i128 = quote_for_ref_now.saturating_sub(quote_for_ref_entry);
+        let yield_delta: i128 = slice_quote_i
+            .saturating_add(quote_for_ref_entry)
+            .saturating_sub(released_i);
+        let pnl_delta: i128 = slice_quote_i
+            .saturating_add(quote_for_ref_now)
+            .saturating_sub(released_i);
+        self.realized_fx = (((self.realized_fx.get() as i128).saturating_add(fx_delta))
+            .clamp(i64::MIN as i128, i64::MAX as i128) as i64)
+            .into();
+        let new_pnl = (self.realized_pnl.get() as i128).saturating_add(pnl_delta);
+        let new_yield = (self.realized_yield.get() as i128).saturating_add(yield_delta);
+        self.realized_pnl = (new_pnl.clamp(i64::MIN as i128, i64::MAX as i128) as i64).into();
+        self.realized_yield = (new_yield.clamp(i64::MIN as i128, i64::MAX as i128) as i64).into();
+
+        // Burn the withdrawn shares and reduce the cost basis by the
+        // released slice (`net_deposits' = net_deposits − released_basis`).
+        self.shares = (self.shares.get() - shares_in).into();
+        self.net_deposits = self
+            .net_deposits
+            .get()
+            .checked_sub(released_basis as u64)
+            .ok_or(DropsetError::MathOverflow)?
+            .into();
+
+        Ok(pnl_delta.clamp(i64::MIN as i128, i64::MAX as i128) as i64)
+    }
 }
 
 // Pin the on-chain layout — same offset-guard pattern as `MarketHeader`
@@ -149,3 +230,122 @@ const _: () = assert!(core::mem::offset_of!(VaultDepositorHeader, _reserved) == 
 // `IdlInstructionAccountItem` deserializer then rejects. There is no
 // runtime path that needs the seed as a value, so no constant is
 // exported; if a client-helper crate ever needs one, define it there.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a bare `VaultDepositorHeader` carrying just the fields the
+    /// crystallization math reads — `shares`, `net_deposits`, and
+    /// `entry_ref_price`. Identity / averaging fields are irrelevant
+    /// here and left zeroed; the `realized_*` accumulators start at 0.
+    fn vd(shares: u64, net_deposits: u64, entry_ref: Price) -> VaultDepositorHeader {
+        VaultDepositorHeader {
+            market: Address::default(),
+            sector_idx: 0u32.into(),
+            owner: Address::default(),
+            shares: shares.into(),
+            net_deposits: net_deposits.into(),
+            gross_deposited: net_deposits.into(),
+            entry_ref_price: entry_ref,
+            entry_vps: 0u64.into(),
+            opened_at: 0u64.into(),
+            realized_pnl: 0i64.into(),
+            realized_yield: 0i64.into(),
+            realized_fx: 0i64.into(),
+            bump: 0,
+            _reserved: [0u8; 7],
+        }
+    }
+
+    /// Reference price `value = 1.0` — `quote_for_base(b) == b`.
+    fn price_one() -> Price {
+        Price::encode(10_000_000, 0).unwrap()
+    }
+
+    /// Reference price `value = 2.0` — `quote_for_base(b) == 2b`.
+    fn price_two() -> Price {
+        Price::encode(20_000_000, 0).unwrap()
+    }
+
+    #[test]
+    fn crystallize_splits_fx_and_yield_and_reduces_basis() {
+        // Enter at ref 1.0, withdraw half (50 of 100 shares) with the
+        // reference now at 2.0 and an all-base slice of 100.
+        //   released_basis = floor(1000 × 50 / 100)      = 500
+        //   fx     = 2×100 − 1×100                        = +100
+        //   yield  = 0 + 1×100 − 500                      = −400
+        //   pnl    = 0 + 2×100 − 500                      = −300
+        let mut v = vd(100, 1_000, price_one());
+        let delta = v.crystallize_realized_pnl(50, 100, 0, price_two()).unwrap();
+        assert_eq!(delta, -300, "returned delta is the realized_pnl move");
+        assert_eq!(v.realized_fx.get(), 100);
+        assert_eq!(v.realized_yield.get(), -400);
+        assert_eq!(v.realized_pnl.get(), -300);
+        // Invariant: realized_yield + realized_fx == realized_pnl.
+        assert_eq!(
+            v.realized_yield.get() + v.realized_fx.get(),
+            v.realized_pnl.get()
+        );
+        // Shares burned and basis reduced by exactly the released slice.
+        assert_eq!(v.shares.get(), 50);
+        assert_eq!(v.net_deposits.get(), 500);
+    }
+
+    #[test]
+    fn crystallize_full_drain_zeroes_shares_and_basis() {
+        let mut v = vd(100, 1_000, price_one());
+        v.crystallize_realized_pnl(100, 0, 1_000, price_one())
+            .unwrap();
+        assert_eq!(v.shares.get(), 0);
+        assert_eq!(v.net_deposits.get(), 0);
+        // Flat reference and slice_quote == basis → no realized move.
+        assert_eq!(v.realized_pnl.get(), 0);
+    }
+
+    #[test]
+    fn crystallize_accumulates_across_calls() {
+        // Two successive partial withdrawals at a flat 1.0 reference.
+        // Each: slice_quote = released_basis, slice_base = 0 → no move.
+        // Then a profitable third leg pushes realized_pnl positive.
+        let mut v = vd(100, 1_000, price_one());
+        v.crystallize_realized_pnl(25, 0, 250, price_one()).unwrap();
+        assert_eq!(v.shares.get(), 75);
+        assert_eq!(v.net_deposits.get(), 750);
+        // Reference doubled: an all-base slice of 100 against released
+        // basis floor(750 × 25 / 75) = 250 → pnl = 2×100 − 250 = −50.
+        let delta = v.crystallize_realized_pnl(25, 100, 0, price_two()).unwrap();
+        assert_eq!(delta, -50);
+        assert_eq!(v.realized_pnl.get(), -50);
+        assert_eq!(v.shares.get(), 50);
+        assert_eq!(v.net_deposits.get(), 500);
+    }
+
+    #[test]
+    fn crystallize_rejects_overdraw() {
+        let mut v = vd(10, 100, price_one());
+        assert!(v.crystallize_realized_pnl(20, 0, 0, price_one()).is_err());
+    }
+
+    #[test]
+    fn crystallize_saturates_at_i64_ceiling() {
+        // A slice_quote near u64::MAX yields a pnl/yield delta far beyond
+        // i64::MAX (zero basis, flat reference). The accumulators and the
+        // returned delta must saturate at the ceiling, not wrap or panic.
+        let mut v = vd(2, 0, price_one());
+        let delta = v
+            .crystallize_realized_pnl(1, 0, u64::MAX, price_one())
+            .unwrap();
+        assert_eq!(delta, i64::MAX, "returned delta saturates at i64::MAX");
+        assert_eq!(v.realized_pnl.get(), i64::MAX);
+        assert_eq!(v.realized_yield.get(), i64::MAX);
+        assert_eq!(v.realized_fx.get(), 0);
+        // A second positive move stays pinned at the ceiling rather than
+        // overflowing past it.
+        let delta2 = v
+            .crystallize_realized_pnl(1, 0, u64::MAX, price_one())
+            .unwrap();
+        assert_eq!(delta2, i64::MAX);
+        assert_eq!(v.realized_pnl.get(), i64::MAX);
+    }
+}

@@ -1896,9 +1896,11 @@
         {
           "name": "signer",
           "docs": [
-            "Either the vault's leader (burns `leader_shares`) or an outside",
-            "depositor (burns the PDA's `shares`). PDA seeds bind the",
-            "outside path to this signer."
+            "The outside depositor exiting the vault — the PDA seeds bind this",
+            "signer to the `VaultDepositor` whose `shares` are burned here. The",
+            "leader is rejected (`DropsetError::Unauthorized`) and exits via",
+            "[`super::withdraw_leader`], which burns `leader_shares` directly",
+            "and carries no `VaultDepositor` PDA."
           ],
           "writable": true,
           "signer": true
@@ -1914,13 +1916,12 @@
           "name": "vault_depositor",
           "docs": [
             "Outside depositor's PDA. Mut so we can decrement `shares` and",
-            "stamp realized PnL. The handler calls",
-            "[`anchor_lang_v2::AnchorAccount::close`] explicitly when",
-            "post-burn `shares == 0`, refunding the rent to the signer",
-            "and decrementing `outstanding_vault_depositors` — a manual",
-            "close keeps the conditional rent-refund logic in one place",
-            "instead of relying on Anchor's unconditional `close = signer`",
-            "attribute."
+            "stamp realized PnL. When post-burn `shares == 0` the handler",
+            "closes it explicitly via `close_depositor_and_decrement` —",
+            "refunding the rent to the signer and decrementing",
+            "`outstanding_vault_depositors`. A conditional manual close (vs.",
+            "Anchor's unconditional `close = signer` attribute) is what lets",
+            "the PDA survive a partial withdrawal."
           ],
           "writable": true,
           "pda": {

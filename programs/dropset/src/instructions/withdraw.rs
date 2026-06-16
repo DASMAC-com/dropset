@@ -21,14 +21,14 @@ use anchor_lang_v2::{address_eq, prelude::*};
 #[allow(unused_imports)]
 use anchor_spl_v2::{
     associated_token::AssociatedToken,
-    token_2022::{transfer_checked, TransferChecked},
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
 
+use super::{close_depositor_and_decrement, transfer_out_leg};
 use crate::{
     errors::DropsetError,
     events::{RealizeEvent, WithdrawEvent},
-    state::{realize_in_place, Market, VaultDll},
+    state::{compute_pro_rata_slice, realize_in_place, Market, VaultDll},
     VaultDepositorHeader,
 };
 
@@ -41,22 +41,23 @@ use crate::{
     min_quote_out: u64,
 )]
 pub struct Withdraw {
-    /// Either the vault's leader (burns `leader_shares`) or an outside
-    /// depositor (burns the PDA's `shares`). PDA seeds bind the
-    /// outside path to this signer.
+    /// The outside depositor exiting the vault — the PDA seeds bind this
+    /// signer to the `VaultDepositor` whose `shares` are burned here. The
+    /// leader is rejected (`DropsetError::Unauthorized`) and exits via
+    /// [`super::withdraw_leader`], which burns `leader_shares` directly
+    /// and carries no `VaultDepositor` PDA.
     #[account(mut)]
     pub signer: Signer,
     /// Market the vault lives on.
     #[account(mut)]
     pub market: Market,
     /// Outside depositor's PDA. Mut so we can decrement `shares` and
-    /// stamp realized PnL. The handler calls
-    /// [`anchor_lang_v2::AnchorAccount::close`] explicitly when
-    /// post-burn `shares == 0`, refunding the rent to the signer
-    /// and decrementing `outstanding_vault_depositors` — a manual
-    /// close keeps the conditional rent-refund logic in one place
-    /// instead of relying on Anchor's unconditional `close = signer`
-    /// attribute.
+    /// stamp realized PnL. When post-burn `shares == 0` the handler
+    /// closes it explicitly via `close_depositor_and_decrement` —
+    /// refunding the rent to the signer and decrementing
+    /// `outstanding_vault_depositors`. A conditional manual close (vs.
+    /// Anchor's unconditional `close = signer` attribute) is what lets
+    /// the PDA survive a partial withdrawal.
     #[account(
         mut,
         seeds = [
@@ -168,27 +169,24 @@ impl Withdraw {
             )
         };
 
-        // Pro-rata basket — floor.
-        let ts = total_shares as u128;
-        let s_in = shares_in as u128;
-        let slice_base = (s_in * (base_atoms as u128)) / ts;
-        let slice_quote = (s_in * (quote_atoms as u128)) / ts;
+        // Pro-rata basket — floored slice, shared across withdraw paths.
+        let (slice_base_u64, slice_quote_u64) =
+            compute_pro_rata_slice(shares_in, total_shares, base_atoms, quote_atoms);
         require!(
-            slice_base >= min_base_out as u128 && slice_quote >= min_quote_out as u128,
+            slice_base_u64 >= min_base_out && slice_quote_u64 >= min_quote_out,
             DropsetError::BasketSlippage
         );
-        let slice_base_u64 = slice_base as u64;
-        let slice_quote_u64 = slice_quote as u64;
 
-        // Outside path: PDA seeds already bound to signer; just
-        // verify shares balance and crystallize PnL. Leader-path
-        // burns live in `withdraw_leader.rs`.
-        let realized_pnl_delta: i64;
+        // Outside path: PDA seeds already bound to signer; verify the
+        // stored identity, then crystallize realized PnL + burn the
+        // shares + reduce basis via the shared helper. Leader-path burns
+        // live in `withdraw_leader.rs`.
         // Snapshot the market address before the `vault_depositor`
-        // mutable borrow so the defensive identity check below can
-        // compare against it without re-borrowing `self.market`.
+        // mutable borrow so the defensive identity check can compare
+        // against it without re-borrowing `self.market`.
         let market_addr_check = *self.market.address();
-        let new_leader_shares = {
+        let ref_now_price = crate::Price::from_bits(ref_price_bits);
+        let realized_pnl_delta = {
             let vd = &mut self.vault_depositor;
             // Defensive: the PDA seeds (market, vault_idx, signer)
             // already bind this account, so its stored identity fields
@@ -202,62 +200,12 @@ impl Withdraw {
                     && address_eq(&vd.owner, &signer_addr),
                 DropsetError::VaultDepositorMismatch
             );
-            require!(
-                vd.shares.get() >= shares_in,
-                DropsetError::InsufficientShares
-            );
-            let released_basis = (vd.net_deposits.get() as u128)
-                .checked_mul(s_in)
-                .ok_or(DropsetError::MathOverflow)?
-                / (vd.shares.get() as u128);
-            // Realized PnL math, per spec L1513-1519:
-            //   realized_fx    += slice_base × (ref_now − entry_ref)
-            //   realized_yield += slice_quote + slice_base × entry_ref − released_basis
-            //   realized_pnl   += slice_quote + slice_base × ref_now    − released_basis
-            //
-            // `ref_now × slice_base` and `entry_ref × slice_base` are
-            // decoded via `Price::quote_for_base` — both produce a
-            // quote-atom value, so the deltas are well-typed in
-            // quote-denominated units. All math in `u128`/`i128` to
-            // avoid intermediate overflow; the signed accumulators
-            // clamp into `i64` at the store.
-            let ref_now_price = crate::Price::from_bits(ref_price_bits);
-            let entry_ref_price = vd.entry_ref_price;
-            let quote_for_ref_now = ref_now_price
-                .quote_for_base(slice_base_u64)
-                .min(i128::MAX as u128) as i128;
-            let quote_for_ref_entry = entry_ref_price
-                .quote_for_base(slice_base_u64)
-                .min(i128::MAX as u128) as i128;
-            let slice_quote_i = slice_quote as i128;
-            let released_i = released_basis as i128;
-            let fx_delta: i128 = quote_for_ref_now.saturating_sub(quote_for_ref_entry);
-            let yield_delta: i128 = slice_quote_i
-                .saturating_add(quote_for_ref_entry)
-                .saturating_sub(released_i);
-            let pnl_delta: i128 = slice_quote_i
-                .saturating_add(quote_for_ref_now)
-                .saturating_sub(released_i);
-            vd.realized_fx = (((vd.realized_fx.get() as i128).saturating_add(fx_delta))
-                .clamp(i64::MIN as i128, i64::MAX as i128) as i64)
-                .into();
-            let new_pnl = (vd.realized_pnl.get() as i128).saturating_add(pnl_delta);
-            let new_yield = (vd.realized_yield.get() as i128).saturating_add(yield_delta);
-            vd.realized_pnl = (new_pnl.clamp(i64::MIN as i128, i64::MAX as i128) as i64).into();
-            vd.realized_yield = (new_yield.clamp(i64::MIN as i128, i64::MAX as i128) as i64).into();
-            realized_pnl_delta = pnl_delta.clamp(i64::MIN as i128, i64::MAX as i128) as i64;
-
-            let new_shares = vd.shares.get() - shares_in;
-            vd.shares = new_shares.into();
-            vd.net_deposits = vd
-                .net_deposits
-                .get()
-                .checked_sub(released_basis as u64)
-                .ok_or(DropsetError::MathOverflow)?
-                .into();
             // Counter decrement + PDA close happens after the transfer.
-            leader_shares
+            vd.crystallize_realized_pnl(shares_in, slice_base_u64, slice_quote_u64, ref_now_price)?
         };
+        // Outside path: `leader_shares` is unchanged. The leader-only
+        // branch lives in `withdraw_leader.rs`.
+        let new_leader_shares = leader_shares;
 
         // Vault inventory + total share burn.
         let market_addr = *self.market.address();
@@ -285,51 +233,40 @@ impl Withdraw {
         let signer_seeds_inner: [&[u8]; 3] = [base_seed, quote_seed, bump_seed];
         let signer_seeds: [&[&[u8]]; 1] = [&signer_seeds_inner];
 
-        // Transfer base + quote from treasuries → caller. `transfer_checked`
-        // requires non-zero amounts on classic SPL Token; skip the CPI
-        // when the leg is zero.
-        if slice_base_u64 > 0 {
-            let decimals = self.base_mint.decimals();
-            let cpi = CpiContext::new_with_signer(
-                self.base_token_program.address(),
-                TransferChecked {
-                    from: self.market_base_treasury.cpi_handle_mut(),
-                    mint: self.base_mint.cpi_handle(),
-                    to: self.signer_base_ata.cpi_handle_mut(),
-                    authority: self.market.cpi_handle(),
-                },
-                &signer_seeds,
-            );
-            transfer_checked(cpi, slice_base_u64, decimals)?;
-        }
-        if slice_quote_u64 > 0 {
-            let decimals = self.quote_mint.decimals();
-            let cpi = CpiContext::new_with_signer(
-                self.quote_token_program.address(),
-                TransferChecked {
-                    from: self.market_quote_treasury.cpi_handle_mut(),
-                    mint: self.quote_mint.cpi_handle(),
-                    to: self.signer_quote_ata.cpi_handle_mut(),
-                    authority: self.market.cpi_handle(),
-                },
-                &signer_seeds,
-            );
-            transfer_checked(cpi, slice_quote_u64, decimals)?;
-        }
+        // Transfer base + quote from treasuries → caller via the shared
+        // outbound helper (skips the CPI on a zero leg).
+        transfer_out_leg(
+            self.base_token_program.address(),
+            self.market_base_treasury.cpi_handle_mut(),
+            self.base_mint.cpi_handle(),
+            self.signer_base_ata.cpi_handle_mut(),
+            self.market.cpi_handle(),
+            slice_base_u64,
+            self.base_mint.decimals(),
+            &signer_seeds,
+        )?;
+        transfer_out_leg(
+            self.quote_token_program.address(),
+            self.market_quote_treasury.cpi_handle_mut(),
+            self.quote_mint.cpi_handle(),
+            self.signer_quote_ata.cpi_handle_mut(),
+            self.market.cpi_handle(),
+            slice_quote_u64,
+            self.quote_mint.decimals(),
+            &signer_seeds,
+        )?;
 
         // Close the VaultDepositor PDA when an outside depositor's
-        // shares hit zero — refund rent to the depositor and
-        // decrement `MarketHeader.outstanding_vault_depositors`. The
-        // counter is the spec's only on-chain witness that
-        // `close_market` can safely proceed (architecture.md §
-        // Account lifecycle and rent reclamation), so it must come
-        // back to zero on every clean exit.
+        // shares hit zero, refunding rent to the depositor. The shared
+        // helper keeps the close and the `outstanding_vault_depositors`
+        // decrement together (see its doc).
         if self.vault_depositor.shares.get() == 0 {
-            use anchor_lang_v2::AnchorAccount;
             let signer_view = *self.signer.as_ref();
-            self.vault_depositor.close(signer_view)?;
-            let prev = self.market.outstanding_vault_depositors.get();
-            self.market.outstanding_vault_depositors = prev.saturating_sub(1).into();
+            close_depositor_and_decrement(
+                &mut self.market,
+                &mut self.vault_depositor,
+                signer_view,
+            )?;
         }
 
         // If this outside withdraw drained the sector's last share,

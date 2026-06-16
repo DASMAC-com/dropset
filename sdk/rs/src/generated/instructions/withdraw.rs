@@ -13,20 +13,21 @@ pub const WITHDRAW_DISCRIMINATOR: [u8; 1] = [8];
 /// Accounts.
 #[derive(Debug)]
 pub struct Withdraw {
-    /// Either the vault's leader (burns `leader_shares`) or an outside
-    /// depositor (burns the PDA's `shares`). PDA seeds bind the
-    /// outside path to this signer.
+    /// The outside depositor exiting the vault — the PDA seeds bind this
+    /// signer to the `VaultDepositor` whose `shares` are burned here. The
+    /// leader is rejected (`DropsetError::Unauthorized`) and exits via
+    /// [`super::withdraw_leader`], which burns `leader_shares` directly
+    /// and carries no `VaultDepositor` PDA.
     pub signer: solana_pubkey::Pubkey,
     /// Market the vault lives on.
     pub market: solana_pubkey::Pubkey,
     /// Outside depositor's PDA. Mut so we can decrement `shares` and
-    /// stamp realized PnL. The handler calls
-    /// [`anchor_lang_v2::AnchorAccount::close`] explicitly when
-    /// post-burn `shares == 0`, refunding the rent to the signer
-    /// and decrementing `outstanding_vault_depositors` — a manual
-    /// close keeps the conditional rent-refund logic in one place
-    /// instead of relying on Anchor's unconditional `close = signer`
-    /// attribute.
+    /// stamp realized PnL. When post-burn `shares == 0` the handler
+    /// closes it explicitly via `close_depositor_and_decrement` —
+    /// refunding the rent to the signer and decrementing
+    /// `outstanding_vault_depositors`. A conditional manual close (vs.
+    /// Anchor's unconditional `close = signer` attribute) is what lets
+    /// the PDA survive a partial withdrawal.
     pub vault_depositor: solana_pubkey::Pubkey,
 
     pub base_mint: solana_pubkey::Pubkey,
@@ -217,9 +218,11 @@ impl WithdrawBuilder {
     pub fn new() -> Self {
         Self::default()
     }
-    /// Either the vault's leader (burns `leader_shares`) or an outside
-    /// depositor (burns the PDA's `shares`). PDA seeds bind the
-    /// outside path to this signer.
+    /// The outside depositor exiting the vault — the PDA seeds bind this
+    /// signer to the `VaultDepositor` whose `shares` are burned here. The
+    /// leader is rejected (`DropsetError::Unauthorized`) and exits via
+    /// [`super::withdraw_leader`], which burns `leader_shares` directly
+    /// and carries no `VaultDepositor` PDA.
     #[inline(always)]
     pub fn signer(&mut self, signer: solana_pubkey::Pubkey) -> &mut Self {
         self.signer = Some(signer);
@@ -232,13 +235,12 @@ impl WithdrawBuilder {
         self
     }
     /// Outside depositor's PDA. Mut so we can decrement `shares` and
-    /// stamp realized PnL. The handler calls
-    /// [`anchor_lang_v2::AnchorAccount::close`] explicitly when
-    /// post-burn `shares == 0`, refunding the rent to the signer
-    /// and decrementing `outstanding_vault_depositors` — a manual
-    /// close keeps the conditional rent-refund logic in one place
-    /// instead of relying on Anchor's unconditional `close = signer`
-    /// attribute.
+    /// stamp realized PnL. When post-burn `shares == 0` the handler
+    /// closes it explicitly via `close_depositor_and_decrement` —
+    /// refunding the rent to the signer and decrementing
+    /// `outstanding_vault_depositors`. A conditional manual close (vs.
+    /// Anchor's unconditional `close = signer` attribute) is what lets
+    /// the PDA survive a partial withdrawal.
     #[inline(always)]
     pub fn vault_depositor(&mut self, vault_depositor: solana_pubkey::Pubkey) -> &mut Self {
         self.vault_depositor = Some(vault_depositor);
@@ -399,20 +401,21 @@ impl WithdrawBuilder {
 
 /// `withdraw` CPI accounts.
 pub struct WithdrawCpiAccounts<'a, 'b> {
-    /// Either the vault's leader (burns `leader_shares`) or an outside
-    /// depositor (burns the PDA's `shares`). PDA seeds bind the
-    /// outside path to this signer.
+    /// The outside depositor exiting the vault — the PDA seeds bind this
+    /// signer to the `VaultDepositor` whose `shares` are burned here. The
+    /// leader is rejected (`DropsetError::Unauthorized`) and exits via
+    /// [`super::withdraw_leader`], which burns `leader_shares` directly
+    /// and carries no `VaultDepositor` PDA.
     pub signer: &'b solana_account_info::AccountInfo<'a>,
     /// Market the vault lives on.
     pub market: &'b solana_account_info::AccountInfo<'a>,
     /// Outside depositor's PDA. Mut so we can decrement `shares` and
-    /// stamp realized PnL. The handler calls
-    /// [`anchor_lang_v2::AnchorAccount::close`] explicitly when
-    /// post-burn `shares == 0`, refunding the rent to the signer
-    /// and decrementing `outstanding_vault_depositors` — a manual
-    /// close keeps the conditional rent-refund logic in one place
-    /// instead of relying on Anchor's unconditional `close = signer`
-    /// attribute.
+    /// stamp realized PnL. When post-burn `shares == 0` the handler
+    /// closes it explicitly via `close_depositor_and_decrement` —
+    /// refunding the rent to the signer and decrementing
+    /// `outstanding_vault_depositors`. A conditional manual close (vs.
+    /// Anchor's unconditional `close = signer` attribute) is what lets
+    /// the PDA survive a partial withdrawal.
     pub vault_depositor: &'b solana_account_info::AccountInfo<'a>,
 
     pub base_mint: &'b solana_account_info::AccountInfo<'a>,
@@ -444,20 +447,21 @@ pub struct WithdrawCpiAccounts<'a, 'b> {
 pub struct WithdrawCpi<'a, 'b> {
     /// The program to invoke.
     pub __program: &'b solana_account_info::AccountInfo<'a>,
-    /// Either the vault's leader (burns `leader_shares`) or an outside
-    /// depositor (burns the PDA's `shares`). PDA seeds bind the
-    /// outside path to this signer.
+    /// The outside depositor exiting the vault — the PDA seeds bind this
+    /// signer to the `VaultDepositor` whose `shares` are burned here. The
+    /// leader is rejected (`DropsetError::Unauthorized`) and exits via
+    /// [`super::withdraw_leader`], which burns `leader_shares` directly
+    /// and carries no `VaultDepositor` PDA.
     pub signer: &'b solana_account_info::AccountInfo<'a>,
     /// Market the vault lives on.
     pub market: &'b solana_account_info::AccountInfo<'a>,
     /// Outside depositor's PDA. Mut so we can decrement `shares` and
-    /// stamp realized PnL. The handler calls
-    /// [`anchor_lang_v2::AnchorAccount::close`] explicitly when
-    /// post-burn `shares == 0`, refunding the rent to the signer
-    /// and decrementing `outstanding_vault_depositors` — a manual
-    /// close keeps the conditional rent-refund logic in one place
-    /// instead of relying on Anchor's unconditional `close = signer`
-    /// attribute.
+    /// stamp realized PnL. When post-burn `shares == 0` the handler
+    /// closes it explicitly via `close_depositor_and_decrement` —
+    /// refunding the rent to the signer and decrementing
+    /// `outstanding_vault_depositors`. A conditional manual close (vs.
+    /// Anchor's unconditional `close = signer` attribute) is what lets
+    /// the PDA survive a partial withdrawal.
     pub vault_depositor: &'b solana_account_info::AccountInfo<'a>,
 
     pub base_mint: &'b solana_account_info::AccountInfo<'a>,
@@ -690,9 +694,11 @@ impl<'a, 'b> WithdrawCpiBuilder<'a, 'b> {
         });
         Self { instruction }
     }
-    /// Either the vault's leader (burns `leader_shares`) or an outside
-    /// depositor (burns the PDA's `shares`). PDA seeds bind the
-    /// outside path to this signer.
+    /// The outside depositor exiting the vault — the PDA seeds bind this
+    /// signer to the `VaultDepositor` whose `shares` are burned here. The
+    /// leader is rejected (`DropsetError::Unauthorized`) and exits via
+    /// [`super::withdraw_leader`], which burns `leader_shares` directly
+    /// and carries no `VaultDepositor` PDA.
     #[inline(always)]
     pub fn signer(&mut self, signer: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
         self.instruction.signer = Some(signer);
@@ -705,13 +711,12 @@ impl<'a, 'b> WithdrawCpiBuilder<'a, 'b> {
         self
     }
     /// Outside depositor's PDA. Mut so we can decrement `shares` and
-    /// stamp realized PnL. The handler calls
-    /// [`anchor_lang_v2::AnchorAccount::close`] explicitly when
-    /// post-burn `shares == 0`, refunding the rent to the signer
-    /// and decrementing `outstanding_vault_depositors` — a manual
-    /// close keeps the conditional rent-refund logic in one place
-    /// instead of relying on Anchor's unconditional `close = signer`
-    /// attribute.
+    /// stamp realized PnL. When post-burn `shares == 0` the handler
+    /// closes it explicitly via `close_depositor_and_decrement` —
+    /// refunding the rent to the signer and decrementing
+    /// `outstanding_vault_depositors`. A conditional manual close (vs.
+    /// Anchor's unconditional `close = signer` attribute) is what lets
+    /// the PDA survive a partial withdrawal.
     #[inline(always)]
     pub fn vault_depositor(
         &mut self,
