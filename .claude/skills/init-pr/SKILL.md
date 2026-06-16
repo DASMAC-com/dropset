@@ -22,6 +22,16 @@ directory name (the last component of the current
 working directory). If the inferred name doesn't
 match `eng-###` (case-insensitive), stop and ask.
 
+**When invoked with no other context** — just the
+tag (or nothing), and no task instructions in the
+session — treat the linked Linear issue as the full
+specification for this worktree. After
+bootstrapping, surface that issue's description and
+checklist as the plan of work (step 10) so the
+session can proceed straight into the task without
+asking what to build. Instructions the user *did*
+give take precedence over the issue.
+
 ## Steps
 
 1. Validate that the resolved tag matches the
@@ -149,3 +159,17 @@ match `eng-###` (case-insensitive), stop and ask.
 
 1. Print the new PR URL and confirm the Linear issue was
    moved to In Progress.
+
+1. **Surface the task when no other context was
+   given.** If the session was started with no
+   instructions beyond the tag, the linked Linear
+   issue *is* the spec. Fetch it with
+   `mcp__claude_ai_Linear__get_issue` (id = the
+   uppercase tag) and pull
+   `mcp__claude_ai_Linear__list_comments` too —
+   acceptance criteria sometimes live in an anchored
+   comment, not the body. Present its description and
+   any checklist as the plan of work so the session
+   can proceed straight into the task. If the user
+   provided their own instructions, those win; don't
+   override them with the issue.
