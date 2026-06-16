@@ -56,6 +56,23 @@ issue from the branch (or the PR title scope) on that basis —
 delivered checklist items and moves it to In Review when the PR is
 ready.
 
+## Spelling (cspell)
+
+`cfg/dictionary.txt` is the **project-wide** spelling allow-list —
+reserve it for terms that recur across the codebase. The rule: a word
+belongs in `dictionary.txt` only if it appears in **≥ 2 files**. A term
+used in just one file gets an inline escape in that file instead, by
+comment style:
+
+- Rust / TS / JS — `// cspell:word foo`
+- Markdown — `<!-- cspell:word foo -->`
+- YAML / TOML / shell — `# cspell:word foo`
+
+The lone exception is a file that can't carry a comment (e.g.
+`.json`), where the dictionary is the only option. The `cspell-audit`
+skill reconciles the dictionary against actual usage on this rule; run
+it when the dictionary grows.
+
 ## Shell commands
 
 The guiding rule: **every Bash invocation should reduce to a
@@ -142,11 +159,12 @@ don't write them, in ad-hoc shell or in committed skills/scripts:
   allowlist. To **create a file**, use the Write tool. To **read or
   parse** one (including JSON/IDL), use Read / Grep — never `python3` /
   `node` / `jq`.
-- **Ad-hoc compile-and-run scratch** (`cat > /tmp/x.rs << EOF …; rustc
-  /tmp/x.rs -o /tmp/x && /tmp/x`). To check a language/layout question,
-  Write a throwaway file and drive it with the normal target
-  (`cargo test`, a `#[test]`), or reason it out — don't synthesize a
-  one-off program through a heredoc-and-`&&` chain.
+- **Ad-hoc compile-and-run scratch** — e.g. a
+  `cat > /tmp/x.rs << EOF` heredoc piped into
+  `rustc … && /tmp/x`. To check a language or layout question, Write a
+  throwaway file and drive it with the normal target (`cargo test`, a
+  `#[test]`), or reason it out — don't synthesize a one-off program
+  through a heredoc-and-`&&` chain.
 - **`cd <path> && <cmd>`** (e.g. `cd <repo> && git -C <worktree> …`).
   The `cd &&` compound re-prompts as a path-resolution bypass. Run
   bare from the cwd, or address another checkout with `git -C <path>`

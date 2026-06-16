@@ -171,6 +171,7 @@ Optional (ask on a direct run if not provided):
      (their `fingerprint_slug`s, titles, bodies, and
      severities) to `audit-loop`. Do **not** file — the
      loop dedups against its ledger first. Stop here.
+
    - **Direct run:** file each surviving finding as its
      own Linear **Backlog** issue, exactly as `linear-task`
      does. Resolve the destination IDs from the

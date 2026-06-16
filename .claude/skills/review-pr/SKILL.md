@@ -6,6 +6,8 @@ user-invocable: true
 
 <!-- cspell:word oneline -->
 
+<!-- cspell:word unstarted -->
+
 # `review-pr`
 
 Act as an adversarial reviewer before the human
