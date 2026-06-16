@@ -402,7 +402,8 @@ impl Swap {
             // the active DLL must have a non-default leader by
             // construction (free-list sectors live elsewhere). An
             // invalid / sentinel reference price skips the vault
-            // (rather than aborting) — spec L1554-1563.
+            // (rather than aborting) — spec § Order matching → Book
+            // construction.
             let (vault_active, stamp, ref_price, ref_slot, base_atoms, quote_atoms) = {
                 let v = &self.market.as_slice()[cur as usize];
                 let p = v.reference_price.price;
