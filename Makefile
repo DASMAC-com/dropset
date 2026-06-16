@@ -1,6 +1,8 @@
 .PHONY: all
+.PHONY: check-conformance-vectors
 .PHONY: check-toolchain
 .PHONY: clean
+.PHONY: conformance-vectors
 .PHONY: frontend
 .PHONY: idl
 .PHONY: install-anchor-v2
@@ -38,6 +40,23 @@ sdk:
 # `cargo install wasm-pack`). Outputs sdk/price-core/pkg.
 wasm:
 	cd sdk/price-core && wasm-pack build --target web --features wasm
+
+# Regenerate the checked-in conformance vectors from their generators.
+# The `--write` flag makes each example write its canonical JSON straight
+# to sdk/conformance/*.json (instead of stdout, avoiding a shell redirect),
+# so the generators stay the single source of truth.
+conformance-vectors:
+	cargo run -p dropset-price-core --example gen_conformance -- --write
+	cargo run -p dropset-price-core --example gen_quoting -- --write
+
+# Freshness gate (CI): regenerate the vectors, then stage + diff against
+# HEAD so a hand-edited or stale vector — and an added or removed one —
+# all fail the gate, not just in-place edits (mirrors the IDL/clients gate
+# in .github/workflows/sdk.yml). A generator / `Price` math change not
+# followed by `make conformance-vectors` is exactly what this catches.
+check-conformance-vectors: conformance-vectors
+	git add -A -- sdk/conformance/
+	git diff --cached --exit-code -- sdk/conformance/
 
 # Run the SDK test suites: Rust (price-core + dropset-sdk, incl. the
 # conformance vectors) and the TS conformance check.
