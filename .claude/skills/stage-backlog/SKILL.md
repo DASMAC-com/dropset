@@ -87,7 +87,7 @@ issues with `mcp__claude_ai_Linear__list_issues`
   (`includeArchived: true`) is read only for awareness
   (so a merge never picks a canonical issue that's
   already closed, and so already-merged duplicates are
-  recognised).
+  recognized).
 
 For every issue, parse from its description:
 
@@ -112,9 +112,11 @@ what can run in parallel, not just a linear order:
   one Claude session each. Group issues into a session
   by the files they touch so two parallel sessions never
   edit the same file.
+
 - **Items inside a session are serial** — they touch the
   same files, so they're ordered for one session to do
   in sequence.
+
 - **Each session is one PR — compress to the fewest
   PRs.** A session maps to a single PR; its serial items
   are commits within that one PR, never a PR apiece.
@@ -124,6 +126,7 @@ what can run in parallel, not just a linear order:
   issues whose file sets *don't* overlap just to cut the
   count, though — that would serialize work that could
   have run in parallel.
+
 - **Honour dependencies.** A foundational fix others
   build on goes first and is flagged; an issue that
   defines a contract (doc/spec) precedes code that
@@ -134,8 +137,8 @@ what can run in parallel, not just a linear order:
   group into numbered waves — that barriers a whole level
   behind the slowest item. Instead build a **dependency
   tree**: a session with no open blocker is a **top-level**
-  node (startable now); a session blocked by another is a
-  **child** nested under the single blocker it most
+  node (ready to start now); a session blocked by another
+  is a **child** nested under the single blocker it most
   directly follows. A child can start the moment its
   parent's PR merges — independent of the parent's
   siblings — which is the point of nesting over waves. A
@@ -159,6 +162,7 @@ issue). For each such session:
 - **Pick the canonical issue**: the lowest ENG number in
   the session (stable across reruns). Its priority
   becomes the **max** priority of the group.
+
 - **First, fold everything into the canonical issue and
   save it.** Rewrite the canonical issue's description
   (`mcp__claude_ai_Linear__save_issue` with
@@ -171,13 +175,21 @@ issue). For each such session:
   safety guarantee: if the run is interrupted here, the
   member issues still exist and still hold their own
   state, so nothing is lost.
+
 - **Then, and only then, close the other members.** For
-  each non-canonical member call
-  `mcp__claude_ai_Linear__save_issue(id: "<member>",
-  duplicateOf: "<canonical>")` — this marks it Duplicate
-  (a resolved state) and links it to the survivor. Do
-  this **after** the canonical save is confirmed, never
-  before.
+  each non-canonical member, mark it a duplicate of the
+  canonical issue:
+
+  ```txt
+  mcp__claude_ai_Linear__save_issue(
+    id: "<member>",
+    duplicateOf: "<canonical>",
+  )
+  ```
+
+  This marks it Duplicate (a resolved state) and links it
+  to the survivor — do it **after** the canonical save is
+  confirmed, never before.
 
 A single-issue session needs no merge — it already maps
 to one PR.
@@ -194,7 +206,7 @@ tree and each issue's files, told to hunt for:
   nest under the other;
 - a **spurious** nesting — a child whose files are
   disjoint from its parent's, so it was never blocked and
-  should be top-level (startable now);
+  should be top-level (ready to start now);
 - a dependency ordered backwards — a fix nested above the
   foundational change or contract (doc/spec) it relies on;
 - a **missing** cross-branch blocker — a child with
@@ -212,9 +224,16 @@ affected sessions (write-before-close) before writing
 the document.
 
 **5. Rewrite the document.** Replace the
-implementation-sequence document in full:
-`mcp__claude_ai_Linear__save_document(id:
-"dbc36954-3269-4ea6-8651-c4d6ef5344bf", content: "…")`.
+implementation-sequence document in full (replace
+`content`, never append):
+
+```txt
+mcp__claude_ai_Linear__save_document(
+  id: "dbc36954-3269-4ea6-8651-c4d6ef5344bf",
+  content: "…",
+)
+```
+
 Use literal newlines, not `\n`. Shape:
 
 - A short **"How to read it"** preamble: each line is one
@@ -224,13 +243,14 @@ Use literal newlines, not `\n`. Shape:
   parent's siblings needn't be done); a trailing note
   flags any extra cross-branch blocker; delete a line once
   its PR lands.
+
 - Then the **dependency tree** as a nested bullet list —
   one bullet per PR, no headings, no checkboxes. Indent a
   blocked session under its blocker (4 spaces per level):
 
   ```txt
-  - ENG-### — <imperative summary>. `<file globs>`. <"Absorbs ENG-###…" note, if any>
-      - ENG-### — <blocked-by-the-parent summary>. `<file globs>`. <why it's blocked / "also after ENG-###">
+  - ENG-### — <summary>. `<file globs>`. <"Absorbs ENG-###" note, if any>
+      - ENG-### — <summary>. `<file globs>`. <why blocked; also after ENG-###>
   ```
 
 - **Write every issue reference as the bare tag `ENG-###`
@@ -240,6 +260,7 @@ Use literal newlines, not `\n`. Shape:
   Done / …); a `[ENG-###](url)` markdown link does not.
   This applies everywhere, including "Absorbs ENG-### …"
   and "also after ENG-### …" notes.
+
 - The nesting **is** the ordering — don't add "Wave N"
   headings, "start now" / "after Wave 1" labels, or
   parallel/disjoint annotations. The dependency a child
@@ -247,6 +268,7 @@ Use literal newlines, not `\n`. Shape:
   ("shares the withdraw handlers") or an "also after
   ENG-###" when a second blocker isn't visible from the
   tree.
+
 - No footer — drop the severity / compression summary
   lines; the issue tags carry severity, and the tree
   speaks for itself.
@@ -271,7 +293,7 @@ Print a tally and stop so `/loop` re-invokes immediately
 (no timer, no wait):
 
 ```txt
-stage-backlog | backlog <b> open | sessions <s> | merged <m> issues → <k> canonical | top-level <t> · blocked <bl>
+stage-backlog | <b> backlog | <s> PRs | merged <m>→<k> | <t> top, <bl> blocked
 ```
 
 When invoked once by hand (not under `/loop`), the same
@@ -283,7 +305,7 @@ single iteration runs and the skill simply exits.
   ordering means the union of fingerprints lands on the
   survivor before any member is closed, so `audit-loop`
   dedup (which reads every `**Fingerprint**:` line on
-  every project issue) keeps recognising a folded-in
+  every project issue) keeps recognizing a folded-in
   finding and never refiles it.
 - **No umbrella issue.** This skill, plus the plain
   Backlog and the document, fully replace the old ENG-452

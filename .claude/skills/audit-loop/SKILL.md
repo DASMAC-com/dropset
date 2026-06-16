@@ -12,7 +12,7 @@ platform audit and exit. Each iteration picks a
 single unit of work, audits it across several
 dimensions with adversarial cross-checking, and
 files one self-contained **Backlog** issue per
-confirmed finding (no parent — the same parentless
+confirmed finding (no parent — the same no-parent
 Backlog `linear-task` files into) so the work can be
 picked up in parallel without blocking the repo.
 Staging those issues into a PR plan is a separate

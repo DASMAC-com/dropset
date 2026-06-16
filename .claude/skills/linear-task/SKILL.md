@@ -25,10 +25,10 @@ Use the IDs, not the names — there are also
 completed "Dropset beta" and "Dropset alpha"
 projects that a name match could hit by mistake.
 
-Every issue is filed **parentless into the Backlog**
-(`state: "Backlog"`, no `parentId`). There is no
-umbrella issue: the staging plan — which issues
-group into which PR, in what wave order — is owned by
+Every issue is filed **into the Backlog with no
+parent** (`state: "Backlog"`, no `parentId`). There is
+no umbrella issue: the staging plan — which issues
+group into which PR, and in what order — is owned by
 the `stage-backlog` skill, which reads this Backlog
 and writes the implementation-sequence document. So
 just file the to-do; don't attach it to a parent.

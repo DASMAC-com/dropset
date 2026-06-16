@@ -259,17 +259,18 @@ all changes are committed and pushed.
      ```
 
      That target regenerates the price/quoting vectors,
-     stages `sdk/conformance/`, and `git diff --cached
-     --exit-code`s it — so a **non-zero exit means the
-     vectors were stale and are now staged**. Commit them:
+     stages `sdk/conformance/`, then
+     `git diff --cached --exit-code`s it — so a **non-zero
+     exit means the vectors were stale and are now
+     staged**. Commit them:
 
      ```sh
      git commit -S -m "Regenerate conformance vectors"
      ```
 
    If any artifact commit was made, re-run `make lint`
-   (a regen commit can still trip whitespace / EOF hooks),
-   applying the step-4 fix-and-retry logic.
+   (a regenerated-file commit can still trip whitespace /
+   EOF hooks), applying the step-4 fix-and-retry logic.
 
 1. **Run the test suite (mirror CI).** The `Tests`
    workflow runs `make test` and

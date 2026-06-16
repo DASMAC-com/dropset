@@ -133,7 +133,7 @@ match `eng-###` (case-insensitive), stop and ask.
 
 1. Mark the Linear issue **In Progress** so the board
    reflects that work on this worktree has started.
-   Update it by identifier (the uppercased tag) via the
+   Update it by identifier (the uppercase tag) via the
    `claude.ai Linear` MCP:
 
    ```txt
