@@ -87,6 +87,19 @@ pub fn simulate_swap(
         }
         let nonce = v.reference_price.nonce();
         let flush = v.reference_price.flush_armed();
+        // Engine parity on out-of-range flush sizes. `swap.rs` builds the
+        // whole book before it fills: it materializes every active,
+        // flush-armed vault's profile — both sides — and
+        // `flush_level_size` hard-rejects the entire `swap` tx if any
+        // level's `size_bps > BPS`. So a single corrupt level aborts the
+        // take regardless of which side or how deep it sits. Mirror that
+        // by refusing to quote rather than dropping the level and filling
+        // the rest: a router must never quote a fill the engine rejects.
+        // (Only reachable from account bytes the program never wrote — see
+        // `vault_has_oversize_flush_level`.)
+        if flush && vault_has_oversize_flush_level(v) {
+            return Quote::default();
+        }
         let ref_slot = v.reference_price.quote_slot.get();
         let base_atoms = v.base_atoms.get();
         let quote_atoms = v.quote_atoms.get();
@@ -228,6 +241,25 @@ pub fn simulate_swap(
     }
 }
 
+/// True when any level in `v`'s flush profile sizes past its full leg
+/// (`size_bps > BPS`), on either side — i.e. [`level_fill_atoms`] would
+/// reject it. `set_liquidity_profile` bounds the per-side Σ `size_bps` to
+/// `BPS`, and each `size_bps` is a non-negative `u16`, so every individual
+/// level is `<= BPS` for any profile the program wrote — this only fires
+/// on corrupted account bytes (or a hypothetical future profile-writing
+/// path that skips the sum check). The on-chain matcher reacts to the same
+/// condition in `flush_level_size` by hard-rejecting the whole `swap`
+/// (`LiquidityProfileSizeOverflow`), so the simulator refuses to quote when
+/// it holds — see `simulate_swap`.
+fn vault_has_oversize_flush_level(v: &Vault) -> bool {
+    let base_atoms = v.base_atoms.get();
+    let quote_atoms = v.quote_atoms.get();
+    (0..N_LEVELS).any(|i| {
+        level_fill_atoms(v.profile.asks[i].size_bps.get(), base_atoms).is_none()
+            || level_fill_atoms(v.profile.bids[i].size_bps.get(), quote_atoms).is_none()
+    })
+}
+
 /// Resolve a single level's `(price, size, expires_at)` for the chosen
 /// side: materialize from the `LiquidityProfile` if a flush is armed
 /// (mirroring `swap.rs`), else read the stored `remaining` state.
@@ -246,9 +278,11 @@ fn level_state(
         if is_buy {
             let a = v.profile.asks[i];
             let price = flush_level_price(reference, a.price_offset.get(), true);
-            // A profile written through `set_liquidity_profile` always has
-            // `size_bps <= BPS`; a malformed one drops the level (size 0),
-            // matching the on-chain handler's hard reject.
+            // An out-of-range `size_bps` (only from corrupted bytes) is
+            // caught up front by `vault_has_oversize_flush_level`, which
+            // makes `simulate_swap` reject the whole quote to match the
+            // engine's hard abort — so `unwrap_or(0)` here is an
+            // unreachable total-function fallback, not a silent level drop.
             let size = level_fill_atoms(a.size_bps.get(), base_atoms).unwrap_or(0);
             let expires_at = ref_slot.saturating_add(a.expiry_offset.get());
             (price, size, expires_at)

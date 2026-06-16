@@ -39,7 +39,8 @@ use dropset::{
         SetReferencePrice as SetReferencePriceIx, Swap as SwapIx, Withdraw as WithdrawIx,
         WithdrawLeader as WithdrawLeaderIx,
     },
-    LiquidityProfile, MarketHeader, Price, RegistryHeader, Vault, VaultDepositorHeader, N_LEVELS,
+    Level, LiquidityProfile, MarketHeader, Price, RegistryHeader, Vault, VaultDepositorHeader,
+    N_LEVELS,
 };
 use litesvm::types::TransactionMetadata;
 use solana_instruction::{AccountMeta, Instruction};
@@ -1166,6 +1167,31 @@ impl Fixture {
         let off = vault_byte_offset(sector_idx) + field_offset;
         acct.data[off..off + bytes.len()].copy_from_slice(bytes);
         self.svm.set_account(self.market, acct).expect("set market");
+    }
+
+    /// Overwrite one profile level's `size_bps` for vault `sector_idx`,
+    /// bypassing the `set_liquidity_profile` per-side Σ ≤ BPS bound. No
+    /// instruction writes a `size_bps > BPS`, so this is the only way to
+    /// reach the matcher's out-of-range flush-size branch — the on-chain
+    /// hard-reject (`LiquidityProfileSizeOverflow`) and the simulator's
+    /// empty-quote mirror.
+    pub fn poke_level_size_bps(
+        &mut self,
+        sector_idx: u32,
+        is_ask: bool,
+        level: usize,
+        size_bps: u16,
+    ) {
+        let side_off = if is_ask {
+            core::mem::offset_of!(LiquidityProfile, asks)
+        } else {
+            core::mem::offset_of!(LiquidityProfile, bids)
+        };
+        let field_offset = core::mem::offset_of!(Vault, profile)
+            + side_off
+            + level * core::mem::size_of::<Level>()
+            + core::mem::offset_of!(Level, size_bps);
+        self.poke_vault_bytes(sector_idx, field_offset, &size_bps.to_le_bytes());
     }
 
     /// Set `Vault.min_leader_share` (ppm) directly (no
