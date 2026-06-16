@@ -1,6 +1,6 @@
 ---
 name: audit-loop
-description: One iteration of a continuous background platform audit — pick a unit of work (a non-generated file, the oldest unaudited PR, or a whole-system architecture pass), run the relevant sub-agents (security / comment-accuracy / doc-freshness / design-quality / naming for files; layering / invariant-coverage / paradigm / data-flow / duplication / cross-platform-seams / spec-health for architecture) with an adversarial cross-check, dedup against prior findings and open or resolved Linear issues, then file one self-contained Backlog issue per finding and announce. Stops itself after 20 filings and hands staging to `stage-backlog`. Drive it with `/loop audit-loop`.
+description: One iteration of a continuous background platform audit — pick a unit of work (a non-generated file, the oldest unaudited PR, or a whole-system architecture pass), audit files/PRs by delegating to the `audit-scope` engine and run whole-system lenses (layering / invariant-coverage / paradigm / data-flow / duplication / cross-platform-seams / spec-health) for architecture, all with an adversarial cross-check, dedup against prior findings and open or resolved Linear issues, then file one self-contained Backlog issue per finding and announce. Stops itself after 20 filings and hands staging to `stage-backlog`. Drive it with `/loop audit-loop`.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -44,21 +44,26 @@ which forced the loop to hand-execute the steps;
 enabling invocation makes the `/loop` entry point
 work as written.)
 
-## How it differs from `audit-codebase`
+## How it relates to `audit-scope`
 
-`audit-codebase` is one-shot, user-scoped,
-plan-gated, and writes a gitignored checklist.
-This loop is unattended, self-selects scope one
-unit at a time, files plain Backlog issues instead of
-a checklist, and persists coverage + dedup state
-across iterations. It **reuses** that skill's
-parallel-sub-agent + adversarial-cross-check
-engine and `linear-task`'s fixed filing
-destination.
+`audit-scope` is the shared audit engine: given a
+scope, it classifies the platform kind, fans out the
+dimensions, and adversarially cross-checks. This loop
+is the unattended **driver** around it — it
+self-selects scope one unit at a time, calls
+`audit-scope` to audit that unit (FILE / PR mode),
+then dedups the returned findings against its ledger
+and files them, persisting coverage + dedup state
+across iterations. Run directly, `audit-scope` is
+one-shot, plan-gated, and files its own findings;
+driven here it skips the gate and hands findings back
+for the loop to dedup and file. ARCH mode keeps its
+own whole-system lenses (step 5) — those aren't scoped
+to one unit, so they don't go through `audit-scope`.
 
 ## Read-only guarantee
 
-Like `audit-codebase`, this loop **never authors
+Like `audit-scope`, this loop **never authors
 source edits**. The only writes it makes are the
 gitignored `.audit-loop/` state and the Linear
 issues it files. It produces no source diff of its
@@ -79,8 +84,8 @@ findings land in the Dropset Linear Backlog.
 
 ## State
 
-All state lives under `.audit-loop/` (gitignored,
-alongside `.audits/`). Read and write it only with
+All state lives under `.audit-loop/` (gitignored).
+Read and write it only with
 the Read / Edit / Write tools — never shell it
 through `jq` / `python` / `sed`.
 
@@ -442,100 +447,42 @@ format above — no basename, since arch findings span
 files), a `title`, and the proposal material step 9
 files. Go to step 7 with these.
 
-**6. Run the file dimensions in parallel (FILE / PR
-mode).** ARCH mode does its fan-out in step 5 and
-skips here. First **classify the subject** by
-matching its path to a component in
-`components.json` — its `kind` (on-chain program /
-frontend / indexer or backend / infra / docs)
-selects the checklist — and run each dimension with
-the checklist that fits it.
-Spawn sub-agents via the `Agent` tool (single
-message, multiple calls), each scoped to the subject
-and told the repo conventions. Each returns findings
-with `file`, `line`, `dimension`, `severity`
-(high/med/low), `fingerprint_slug`, `title`,
-`rationale`, and `fix_sketch`. Dimensions:
+**6. Audit the unit via `audit-scope` (FILE / PR
+mode).** ARCH mode does its own fan-out in step 5 and
+skips here. Invoke the `audit-scope` skill (through
+the Skill tool) on the subject — the one file, or the
+PR's non-generated files reviewed in the context of
+the diff — in its **delegated** mode. It classifies
+the subject's platform kind against `components.json`,
+runs the per-kind dimensions (security / comment
+accuracy / magic-numbers-DRY / modularity /
+hierarchical-organization / naming / doc-freshness),
+adversarially cross-checks, screens the findings
+against the linters (dropping anything `make lint`
+already catches, tagging a `**Lint**:` line on a class
+a linter *could* catch), and **returns the confirmed
+findings** — each with `file`, `line`, `dimension`,
+`severity` (high/med/low), `fingerprint_slug`,
+`title`, `rationale`, and `fix_sketch`. In delegated
+mode it does **not** file; this loop dedups and files
+(steps 8–9). In PR mode, tell it the subject is in PR
+context so the PR link rides along.
 
-- **Security / pen-testing** — pick the checklist
-  for the subject's platform.
-  Program (Rust): missing signer / owner / PDA /
-  `has_one` checks, unchecked arithmetic, CPI to
-  unverified programs, slippage / min-out gaps,
-  freeze / authority gating, integer truncation,
-  reinitialization (may consult
-  `mcp__solana-mcp__Solana_Expert__Ask_For_Help`).
-  Frontend: unvalidated input into swap params,
-  secret leakage, unsafe HTML, trusting RPC
-  responses. Indexer / backend: reorg & finality
-  handling, idempotent / exactly-once event
-  processing, dedup-key correctness, SQL / command
-  injection, unsafe deserialization, secret handling,
-  schema-migration safety. Infra (Docker / CI):
-  unpinned base images or actions, secrets baked into
-  layers or logs, running as root, non-reproducible
-  builds, over-broad token scopes.
-- **Comment accuracy** — comments and doc-comments
-  that contradict, overstate, or no longer match
-  the code they annotate.
-- **Doc-freshness vs code** — when the subject is a
-  `docs/**` file (or source referenced by a doc):
-  Grep the doc's named symbols (structs / fields /
-  invariants / events / endpoints / env vars)
-  against the code they describe — in whatever
-  platform owns them — and flag drift (renamed
-  field, changed size assert, dropped event field,
-  stale status line).
-- **Magic numbers / DRY / modularity** — unnamed
-  constants that should be named, duplicated logic,
-  abstractions in the wrong layer. Flag premature
-  abstractions too.
-- **Pragmatic-Programmer design quality** — ETC
-  (is this easy to change?), orthogonality /
-  decoupling, reversibility, avoiding speculative
-  abstraction.
-- **Naming conventions** — verify names are sensible
-  and consistent: types / functions / fields / files
-  / modules follow the casing and idioms already
-  established elsewhere in the repo (compare against
-  sibling files, don't invent a house style); names
-  describe what the thing *is or does* rather than
-  how it's implemented; no misleading, abbreviated-
-  past-recognition, or stale-after-refactor names
-  (e.g. a `*_temp` / `*_new` / `*_v2` that outlived
-  its reason, or a name whose referent changed). Flag
-  a rename only when it genuinely improves clarity or
-  restores consistency — not as taste.
+This is the abstraction boundary: the per-unit audit
+engine lives in `audit-scope`, and the loop owns only
+selection, dedup, filing, and state.
 
-FILE and PR mode run all six dimensions above; ARCH
-mode uses its own lenses (step 5).
-
-**Linter coverage (FILE / PR mode).** A finding a
-linter already catches is noise, and a finding a
-linter *could* catch is better fixed by a rule than a
-one-off issue. So screen every FILE / PR finding
-against the project's linters — the suite `make lint`
-runs and the configs it drives (clippy, eslint,
-prettier, cspell, etc.):
-
-- If an **existing** lint rule already flags the issue,
-  it is not a finding — `make lint` will surface it in
-  the normal flow; **drop it**.
-- If the issue is a **class** a linter could enforce
-  but doesn't yet, still file it, and add a `**Lint**:`
-  line to the body (step 9) proposing the rule or
-  config that would catch the family — so the fix
-  prevents recurrence instead of being a one-off.
-
-**7. Adversarial cross-check.** Spawn a fresh
-skeptic sub-agent with the collected findings and
-the subject. It must kill false positives,
-challenge weak rationale, and surface anything the
-first pass missed. If it produces material
-disagreements, re-spawn the relevant dimension
-agent to defend or retract. Iterate at most 2 more
-rounds, then accept the survivors. This is the
-primary noise gate before anything reaches Linear.
+**7. Adversarial cross-check (ARCH mode).** FILE / PR
+findings were already cross-checked inside
+`audit-scope` (step 6), so this step applies to ARCH
+mode's lens findings: spawn a fresh skeptic sub-agent
+with the collected findings and the subject. It must
+kill false positives, challenge weak rationale, and
+surface anything the first pass missed. On material
+disagreement, re-spawn the relevant lens agent to
+defend or retract. Iterate at most 2 more rounds, then
+accept the survivors. This is the primary noise gate
+before anything reaches Linear.
 
 **8. Dedup (two layers).** For each surviving
 finding, compute its `fingerprint` with the
