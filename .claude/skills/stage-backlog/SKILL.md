@@ -130,21 +130,25 @@ what can run in parallel, not just a linear order:
   depends on it; an `arch:` proposal that subsumes
   single-file nits comes before those nits.
 
-- **Keep the wave count minimal.** **Waves** are
-  barriers — a later wave must not start until an earlier
-  one merges. But waves are expensive to read and the top
-  of the plan gets trimmed constantly as PRs land, so
-  **default to a single wave** of parallel, file-disjoint
-  sessions. Introduce a Wave 2 / 3 **only** when a
-  genuine barrier exists — a later session would collide
-  with files an earlier session must merge first (e.g. a
-  DRY extraction over handlers a Wave-1 correctness fix
-  is still editing, or a big cross-cutting refactor —
-  `arch:` / slab-layout / de-fork — that touches nearly
-  everything and must run solo in its own late wave).
-  Never segment into waves for tidiness; deep wave
-  numbering churns every time the front of the plan is
-  trimmed.
+- **Express dependencies as a tree, not waves.** Don't
+  group into numbered waves — that barriers a whole level
+  behind the slowest item. Instead build a **dependency
+  tree**: a session with no open blocker is a **top-level**
+  node (startable now); a session blocked by another is a
+  **child** nested under the single blocker it most
+  directly follows. A child can start the moment its
+  parent's PR merges — independent of the parent's
+  siblings — which is the point of nesting over waves. A
+  blocker is real only when the two sessions' file sets
+  collide (e.g. a DRY extraction over handlers a
+  correctness fix is still editing) or one defines a
+  contract the other consumes; if file sets are disjoint,
+  they're both top-level. When a session has **several**
+  blockers across different branches, nest it under the
+  last-to-settle one and note the others inline ("also
+  after ENG-###"); a big cross-cutting refactor
+  (`arch:` / slab-layout / de-fork) that touches nearly
+  everything is the deepest leaf, run solo and last.
 
 **3. Merge each multi-issue session into one canonical
 issue — write-before-close so no state is ever
@@ -181,23 +185,25 @@ to one PR.
 **4. Adversarially cross-check the grouping.** The
 grouping is the part most likely to be silently wrong,
 and a bad grouping costs a merge conflict or a
-serialized session. Spawn a fresh skeptic sub-agent
-(`Agent` tool) with the drafted waves / sessions and
-each issue's files, told to hunt for:
+needlessly serialized session. Spawn a fresh skeptic
+sub-agent (`Agent` tool) with the drafted dependency
+tree and each issue's files, told to hunt for:
 
-- two "parallel" sessions in the same wave that actually
-  share a file (a hidden collision that would conflict on
-  merge);
-- a dependency ordered backwards — a fix placed before
-  the foundational change or contract (doc/spec) it
-  relies on;
-- an issue in the wrong wave — one that could run a wave
-  earlier, or one that will collide with file sets still
-  in flight if it runs where it's placed;
+- two **top-level** (or sibling) sessions that actually
+  share a file — they'd conflict on merge, so one must
+  nest under the other;
+- a **spurious** nesting — a child whose files are
+  disjoint from its parent's, so it was never blocked and
+  should be top-level (startable now);
+- a dependency ordered backwards — a fix nested above the
+  foundational change or contract (doc/spec) it relies on;
+- a **missing** cross-branch blocker — a child with
+  another open blocker not captured by its nesting or an
+  "also after ENG-###" note;
 - over- or under-compression — issues split across PRs
   that should share one (per the minimal-PR rule), or
   disjoint issues merged into one session that needlessly
-  serializes them, or an unnecessary extra wave.
+  serializes them.
 
 Apply what survives; iterate at most 2 rounds, then
 write the plan. If the cross-check forces a regrouping
@@ -211,19 +217,20 @@ implementation-sequence document in full:
 "dbc36954-3269-4ea6-8651-c4d6ef5344bf", content: "…")`.
 Use literal newlines, not `\n`. Shape:
 
-- A short one-line **"How to read it"** preamble: each
-  line is one issue = one PR; Wave = barrier (don't start
-  a wave until the prior wave's overlapping PRs merge);
-  open issues only, delete a line once its PR lands.
-- Then the waves (usually just Wave 1), as a **plain
-  bullet list** — one bullet per PR, no checkboxes, no
-  per-session sub-blocks:
+- A short **"How to read it"** preamble: each line is one
+  issue = one PR; **start any top-level item now**; an
+  indented item is blocked by the one it sits under —
+  start it as soon as that parent's PR merges (its
+  parent's siblings needn't be done); a trailing note
+  flags any extra cross-branch blocker; delete a line once
+  its PR lands.
+- Then the **dependency tree** as a nested bullet list —
+  one bullet per PR, no headings, no checkboxes. Indent a
+  blocked session under its blocker (4 spaces per level):
 
   ```txt
-  ### Wave 1
-
-  - ENG-### — <imperative summary>. `<file globs>`. <dependency / "Absorbs ENG-###…" note, if any>
-  ...
+  - ENG-### — <imperative summary>. `<file globs>`. <"Absorbs ENG-###…" note, if any>
+      - ENG-### — <blocked-by-the-parent summary>. `<file globs>`. <why it's blocked / "also after ENG-###">
   ```
 
 - **Write every issue reference as the bare tag `ENG-###`
@@ -232,16 +239,17 @@ Use literal newlines, not `\n`. Shape:
   mention that renders its current status (In Progress /
   Done / …); a `[ENG-###](url)` markdown link does not.
   This applies everywhere, including "Absorbs ENG-### …"
-  notes.
-- Keep wave headings bare (`### Wave 1`, `### Wave 2`, …).
-  Don't suffix them with "start now" / "after Wave 1" —
-  the ordering is implicit — and don't annotate how many
-  sessions are parallel or that files are disjoint; that's
-  the expected default. State a dependency only when one
-  genuinely exists ("After ENG-###").
+  and "also after ENG-### …" notes.
+- The nesting **is** the ordering — don't add "Wave N"
+  headings, "start now" / "after Wave 1" labels, or
+  parallel/disjoint annotations. The dependency a child
+  expresses is the nesting itself; only add a short why
+  ("shares the withdraw handlers") or an "also after
+  ENG-###" when a second blocker isn't visible from the
+  tree.
 - No footer — drop the severity / compression summary
-  lines; the issue tags carry severity, and the bullet
-  count speaks for itself.
+  lines; the issue tags carry severity, and the tree
+  speaks for itself.
 
 **Open issues only.** A closed / resolved issue (Done /
 Won't-fix / Canceled / Duplicate) is **omitted
@@ -263,7 +271,7 @@ Print a tally and stop so `/loop` re-invokes immediately
 (no timer, no wait):
 
 ```txt
-stage-backlog | backlog <b> open | sessions <s> | merged <m> issues → <k> canonical | waves <w>
+stage-backlog | backlog <b> open | sessions <s> | merged <m> issues → <k> canonical | top-level <t> · blocked <bl>
 ```
 
 When invoked once by hand (not under `/loop`), the same
