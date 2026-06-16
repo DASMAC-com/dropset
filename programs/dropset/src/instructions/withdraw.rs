@@ -28,7 +28,7 @@ use anchor_spl_v2::{
 use crate::{
     errors::DropsetError,
     events::{RealizeEvent, WithdrawEvent},
-    state::{realize_in_place, Market, VaultDll},
+    state::{compute_pro_rata_slice, realize_in_place, Market, VaultDll},
     VaultDepositorHeader,
 };
 
@@ -168,27 +168,24 @@ impl Withdraw {
             )
         };
 
-        // Pro-rata basket — floor.
-        let ts = total_shares as u128;
-        let s_in = shares_in as u128;
-        let slice_base = (s_in * (base_atoms as u128)) / ts;
-        let slice_quote = (s_in * (quote_atoms as u128)) / ts;
+        // Pro-rata basket — floored slice, shared across withdraw paths.
+        let (slice_base_u64, slice_quote_u64) =
+            compute_pro_rata_slice(shares_in, total_shares, base_atoms, quote_atoms);
         require!(
-            slice_base >= min_base_out as u128 && slice_quote >= min_quote_out as u128,
+            slice_base_u64 >= min_base_out && slice_quote_u64 >= min_quote_out,
             DropsetError::BasketSlippage
         );
-        let slice_base_u64 = slice_base as u64;
-        let slice_quote_u64 = slice_quote as u64;
 
-        // Outside path: PDA seeds already bound to signer; just
-        // verify shares balance and crystallize PnL. Leader-path
-        // burns live in `withdraw_leader.rs`.
-        let realized_pnl_delta: i64;
+        // Outside path: PDA seeds already bound to signer; verify the
+        // stored identity, then crystallize realized PnL + burn the
+        // shares + reduce basis via the shared helper. Leader-path burns
+        // live in `withdraw_leader.rs`.
         // Snapshot the market address before the `vault_depositor`
-        // mutable borrow so the defensive identity check below can
-        // compare against it without re-borrowing `self.market`.
+        // mutable borrow so the defensive identity check can compare
+        // against it without re-borrowing `self.market`.
         let market_addr_check = *self.market.address();
-        let new_leader_shares = {
+        let ref_now_price = crate::Price::from_bits(ref_price_bits);
+        let realized_pnl_delta = {
             let vd = &mut self.vault_depositor;
             // Defensive: the PDA seeds (market, vault_idx, signer)
             // already bind this account, so its stored identity fields
@@ -202,62 +199,12 @@ impl Withdraw {
                     && address_eq(&vd.owner, &signer_addr),
                 DropsetError::VaultDepositorMismatch
             );
-            require!(
-                vd.shares.get() >= shares_in,
-                DropsetError::InsufficientShares
-            );
-            let released_basis = (vd.net_deposits.get() as u128)
-                .checked_mul(s_in)
-                .ok_or(DropsetError::MathOverflow)?
-                / (vd.shares.get() as u128);
-            // Realized PnL math, per spec L1513-1519:
-            //   realized_fx    += slice_base × (ref_now − entry_ref)
-            //   realized_yield += slice_quote + slice_base × entry_ref − released_basis
-            //   realized_pnl   += slice_quote + slice_base × ref_now    − released_basis
-            //
-            // `ref_now × slice_base` and `entry_ref × slice_base` are
-            // decoded via `Price::quote_for_base` — both produce a
-            // quote-atom value, so the deltas are well-typed in
-            // quote-denominated units. All math in `u128`/`i128` to
-            // avoid intermediate overflow; the signed accumulators
-            // clamp into `i64` at the store.
-            let ref_now_price = crate::Price::from_bits(ref_price_bits);
-            let entry_ref_price = vd.entry_ref_price;
-            let quote_for_ref_now = ref_now_price
-                .quote_for_base(slice_base_u64)
-                .min(i128::MAX as u128) as i128;
-            let quote_for_ref_entry = entry_ref_price
-                .quote_for_base(slice_base_u64)
-                .min(i128::MAX as u128) as i128;
-            let slice_quote_i = slice_quote as i128;
-            let released_i = released_basis as i128;
-            let fx_delta: i128 = quote_for_ref_now.saturating_sub(quote_for_ref_entry);
-            let yield_delta: i128 = slice_quote_i
-                .saturating_add(quote_for_ref_entry)
-                .saturating_sub(released_i);
-            let pnl_delta: i128 = slice_quote_i
-                .saturating_add(quote_for_ref_now)
-                .saturating_sub(released_i);
-            vd.realized_fx = (((vd.realized_fx.get() as i128).saturating_add(fx_delta))
-                .clamp(i64::MIN as i128, i64::MAX as i128) as i64)
-                .into();
-            let new_pnl = (vd.realized_pnl.get() as i128).saturating_add(pnl_delta);
-            let new_yield = (vd.realized_yield.get() as i128).saturating_add(yield_delta);
-            vd.realized_pnl = (new_pnl.clamp(i64::MIN as i128, i64::MAX as i128) as i64).into();
-            vd.realized_yield = (new_yield.clamp(i64::MIN as i128, i64::MAX as i128) as i64).into();
-            realized_pnl_delta = pnl_delta.clamp(i64::MIN as i128, i64::MAX as i128) as i64;
-
-            let new_shares = vd.shares.get() - shares_in;
-            vd.shares = new_shares.into();
-            vd.net_deposits = vd
-                .net_deposits
-                .get()
-                .checked_sub(released_basis as u64)
-                .ok_or(DropsetError::MathOverflow)?
-                .into();
             // Counter decrement + PDA close happens after the transfer.
-            leader_shares
+            vd.crystallize_realized_pnl(shares_in, slice_base_u64, slice_quote_u64, ref_now_price)?
         };
+        // Outside path: `leader_shares` is unchanged. The leader-only
+        // branch lives in `withdraw_leader.rs`.
+        let new_leader_shares = leader_shares;
 
         // Vault inventory + total share burn.
         let market_addr = *self.market.address();
