@@ -3,11 +3,23 @@
 # SVM heap + Anchor event-cpi: deep-research synthesis
 
 Source-grounded notes feeding the **Order matching** and **Events and
-emission** sections of `docs/architecture.md` (lines ~1370–1545).
-Every load-bearing claim cites a GitHub permalink to a specific
-file:line range in `anza-xyz/agave`, `anza-xyz/sbpf`,
-`anza-xyz/pinocchio`, `solana-foundation/anchor`, or a published
-crate at a pinned tag.
+emission** sections of `docs/architecture.md`. Every load-bearing
+claim cites a GitHub permalink to a specific file:line range in
+`anza-xyz/agave`, `anza-xyz/sbpf`, `anza-xyz/pinocchio`,
+`solana-foundation/anchor`, or a published crate at a pinned tag.
+
+> **Status (reconciled to shipped code).** The matching engine shipped
+> as a **flat `Vec` sorted once** (`swap.rs`: `Vec<HeapEntry>` +
+> `sort_by_key`), **not** the `BinaryHeap`/`pop_min` design these
+> notes originally recommended. At the shipped `N_LEVELS = 8`
+> (`state/market.rs`), the whole book is small enough that a single
+> sort is simpler and costs no meaningful CU, and the spec's
+> price-time priority falls out of one `sort_by_key`. The
+> `BinaryHeap` analysis below (§2 idioms, §3 recipe) is kept as a
+> **considered-and-rejected** alternative — the heap-mechanics,
+> `emit_cpi!`, and runtime-limit research in §1 and §4–§6 stays
+> authoritative. The `MAX_LEVELS_PER_SIDE` constant referenced by the
+> original capacity math was never added; reads as `N_LEVELS = 8`.
 
 ## 1. SVM heap mechanics (what we're actually getting)
 
@@ -88,89 +100,118 @@ depth = 64, total stack = 256 KiB ([`sbpf/src/vm.rs:107-110`](https://github.com
 [`vm.rs:99-101`](https://github.com/anza-xyz/sbpf/blob/239cb0bb771224bc49ca679c6a93ee7a876e8cbc/src/vm.rs#L99-L101)). Any single allocation > ~3 KiB in a frame risks
 overflow; recursion bounded at 64.
 
-→ **The ephemeral book MUST be heap-allocated.** Even a
-320-entry × 24 B book (7.7 KiB) blows the 4 KiB frame.
+→ **The ephemeral book is heap-allocated.** It's a dynamically-sized
+`Vec` whose length isn't known until the active-DLL walk finishes, and
+at the `max_vaults_per_market` ceiling it reaches ~64 KiB
+(255 × `N_LEVELS = 8` × 32 B) — far past the 4 KiB frame. Even at the
+default cap (~2.5 KiB, see below) a stack buffer would have to be
+worst-case-sized and would crowd the frame's other locals, so the heap
+is the right home regardless.
 
 **Allocation idioms ranked.**
 
-| idiom                          | when                                                                                      |
-| ------------------------------ | ----------------------------------------------------------------------------------------- |
-| `BinaryHeap::with_capacity(N)` | needs `pop_min` — this is the matching engine                                             |
-| `Box<[T; N]>`                  | fixed-size slab, no pop-min semantics; you'd reimplement sift-down                        |
-| `Vec::with_capacity(N)`        | not enough by itself for matching                                                         |
-| `Vec::new()` + push            | **forbidden** in matching loop — every realloc leaks the old buffer on the bump allocator |
+| idiom                          | when                                                                                                                                                                                                                                            |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Vec` + `sort_by_key`          | **the shipped matching engine** — collect all live levels, sort once; cheapest when the whole book fits in one buffer                                                                                                                           |
+| `BinaryHeap::with_capacity(N)` | incremental `pop_min` without a full sort; considered for the matcher but not shipped (a single sort is simpler at `N_LEVELS = 8`)                                                                                                              |
+| `Box<[T; N]>`                  | fixed-size slab, no pop-min semantics; you'd reimplement sift-down                                                                                                                                                                              |
+| `Vec::with_capacity(N)`        | pre-sized collect-then-sort — avoids the realloc churn of `Vec::new()` if the book ever grows large                                                                                                                                             |
+| `Vec::new()` + push            | how the shipped `Vec` above is grown — starts empty and doubles; each doubling leaks the old buffer on the bump allocator, tolerable only because the count is small and bounded (≤ `max_vaults_per_market × N_LEVELS`, ~80 at the default cap) |
 
-**Capacity math.** Spec entry is
-`(key:u32, nonce:u64, size:u64, vault_idx:u16, level_idx:u8)`. With
-`#[repr(C)]` and the field order in §3 (key first so derived `Ord`
-sorts lexicographically), the layout pads to **32 B/entry**: u32@0
-(+4 pad), u64@8, u64@16, u16@24, u8@26, +5 trailing pad (struct
-align = 8). At `DEFAULT_MAX_VAULTS_PER_MARKET = 10`
+**Capacity math.** The shipped `HeapEntry` (`swap.rs`) carries
+`(price_key:u32, price:Price, nonce:u64, sector_idx:u32, level_idx:u32, size:u64)` — roughly **32 B/entry** at 8-byte
+alignment (the original research used a tighter
+`(key, nonce, size, vault_idx:u16, level_idx:u8)` tuple, also ~32 B
+under `#[repr(C)]`). The book is **`N_LEVELS = 8`** levels/side
+(`state/market.rs`), not the 32/side the original draft assumed. At
+`DEFAULT_MAX_VAULTS_PER_MARKET = 10`
 ([`programs/dropset/src/state/registry.rs:19`](https://github.com/DASMAC-com/dropset/blob/7891ebc071a0aec0332237970d4ab6f39033ad6f/programs/dropset/src/state/registry.rs#L19))
-× 32 levels/side = 320 entries × 32 B = **10,240 B**. Fits the
-32 KiB default heap with ~3× headroom.
+× 8 levels/side = 80 entries × 32 B = **2,560 B** — comfortably
+inside the 32 KiB default heap even with the `Vec::new()` doubling
+churn (peak live + leaked ≈ a few KiB).
 
-**When to `request_heap_frame`.** Only when
-`vaults × levels × 32 B + other_alloc_pressure` approaches ~24 KiB
-usable. For dropset's documented scale: not needed. `max_vaults_per_market`
-is a `u8` ([`programs/dropset/src/state/registry.rs:60`](https://github.com/DASMAC-com/dropset/blob/7891ebc071a0aec0332237970d4ab6f39033ad6f/programs/dropset/src/state/registry.rs#L60));
-worst case at 255 × 32 × 32 B = 255 KiB fits the 256 KiB max heap
-with margin. Markets configured well below the cap scale the frame
-request accordingly (8 CU per extra 32 KiB).
+**When to `request_heap_frame`.** Not needed at the default cap.
+`max_vaults_per_market` is a `u8`
+([`programs/dropset/src/state/registry.rs:60`](https://github.com/DASMAC-com/dropset/blob/7891ebc071a0aec0332237970d4ab6f39033ad6f/programs/dropset/src/state/registry.rs#L60));
+even the worst case of 255 × 8 levels/side × 32 B ≈ 64 KiB would
+exceed the 32 KiB default, but the realistic cap (10 vaults) sits at
+~2.5 KiB. Only a market configured near the `u8` ceiling would need a
+frame request (8 CU per extra 32 KiB), and the `Vec::new()` doubling
+would warrant pre-sizing with `Vec::with_capacity` at that point.
 
 **v2 import note.** `lang-v2` is `#![no_std]`
-([`anchor/lang-v2/src/lib.rs:5-6`](https://github.com/solana-foundation/anchor/blob/2a191379020f15c1d384bdadd41f23949734ce98/lang-v2/src/lib.rs#L5-L6)). Use `alloc::collections::BinaryHeap`,
-not `std::collections::BinaryHeap`.
+([`anchor/lang-v2/src/lib.rs:5-6`](https://github.com/solana-foundation/anchor/blob/2a191379020f15c1d384bdadd41f23949734ce98/lang-v2/src/lib.rs#L5-L6)). The shipped matcher uses
+`alloc::vec::Vec`; a heap variant would use
+`alloc::collections::BinaryHeap`, not the `std` one.
 
 ## 3. The matching engine on the heap (concrete recipe)
 
-**The keyed-entry shape.** Translate prices to u32 at push time so
-derived `Ord` does the work without a per-compare branch:
+**The keyed-entry shape (shipped).** Collect every live level into a
+flat `Vec`, translating the price to a `u32` sort key at push time so
+a single `sort_by_key` orders both sides without a per-compare
+branch:
 
 ```rust
-use alloc::collections::BinaryHeap;
-use core::cmp::Reverse;
+extern crate alloc;
 
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
-#[repr(C)]
+#[derive(Copy, Clone)]
 struct HeapEntry {
-    // Field order = lexicographic comparison order.
-    key: u32,        // bid: Price::bid_key(p); ask: p.as_u32()
+    price_key: u32,  // ask: price.as_u32(); bid: price.bid_key()
+    price: Price,    // original price, kept for the fill math
     nonce: u64,      // (stamp & !FLUSH_BIT) — masked at push
+    sector_idx: u32,
+    level_idx: u32,
     size: u64,
-    vault_idx: u16,
-    level_idx: u8,
 }
 
-let cap = (header.vaults as usize) * MAX_LEVELS_PER_SIDE;
-let mut heap: BinaryHeap<Reverse<HeapEntry>> = BinaryHeap::with_capacity(cap);
+let mut heap: alloc::vec::Vec<HeapEntry> = alloc::vec::Vec::new();
+// ... walk the active DLL, push one entry per live level ...
+heap.sort_by_key(|e| (e.price_key, e.nonce, e.sector_idx, e.level_idx));
 ```
 
 `Price::bid_key()` already exists at
-[`programs/dropset/src/price.rs:231-237`](https://github.com/DASMAC-com/dropset/blob/7891ebc071a0aec0332237970d4ab6f39033ad6f/programs/dropset/src/price.rs#L231-L237). Asks use `as_u32()` directly.
-Both sides feed the *same* min-heap shape.
+[`programs/dropset/src/price.rs:231-237`](https://github.com/DASMAC-com/dropset/blob/7891ebc071a0aec0332237970d4ab6f39033ad6f/programs/dropset/src/price.rs#L231-L237) and maps the highest bid
+price to the lowest `u32`, so the ascending `sort_by_key` puts the
+best price first on both sides; asks use `as_u32()` directly. The
+struct keeps the original `Price` alongside the key because the fill
+loop needs it for the quote/base conversion — the sort reads
+`price_key`, not `price`, so the "key inversion" pitfall below is
+sidestepped. `sector_idx` / `level_idx` are appended to the sort key
+as a deterministic final tiebreak after `(price_key, nonce)`.
 
-**Sizing.** `with_capacity(header.vaults × MAX_LEVELS_PER_SIDE)`.
-Single up-front allocation. **Never push past capacity** —
-`BinaryHeap` (backed by `Vec`) doubles on overflow and the bump
-allocator never reclaims the old buffer
+**Sizing.** The shipped code starts from `Vec::new()` and lets it
+grow. At `N_LEVELS = 8` the entry count is bounded at
+`max_vaults_per_market × 8` (~80 at the default cap), so the doubling
+churn stays within a few KiB of the 32 KiB heap. If the engine ever
+matched a much larger book, switch to
+`Vec::with_capacity(vaults × N_LEVELS)` for a single up-front
+allocation — the bump allocator never reclaims a doubled-away buffer
 ([`pinocchio/sdk/src/entrypoint/mod.rs:832-833`](https://github.com/anza-xyz/pinocchio/blob/009301423f920fd105bd32a25560d127b6f0bf4f/sdk/src/entrypoint/mod.rs#L832-L833)).
 
-**Tear-down.** Heap is dropped at instruction return when the VM
+**Why a sorted `Vec` over a `BinaryHeap` (considered, rejected).** A
+min-heap with `pop_min` avoids materializing a fully-sorted order
+when the taker consumes only the first few levels. At `N_LEVELS = 8`
+the book is tiny, the taker often sweeps most of it, and a flat sort
+is simpler to read and free of the `Reverse`/comparator bookkeeping —
+so the heap was dropped in favor of one `sort_by_key`. Revisit if
+`N_LEVELS` or `max_vaults_per_market` grow by an order of magnitude.
+
+**Tear-down.** The `Vec` is dropped at instruction return when the VM
 tears down the entire heap region. No explicit `dealloc` is run
 (bump allocator's `dealloc` is a no-op anyway). Zero work; zero CU.
 
 **Pitfalls.**
 
-- **Grow-time realloc leak.** Pre-size, don't push-past-capacity.
-  Each doubling permanently consumes `old + new` bytes for the rest
-  of the instruction.
-- **Key inversion mistake.** Don't put `Price` in the tuple and flip
-  the comparator — translate to `u32` at push time. Lexicographic
-  field order does the rest.
-- **FLUSH_BIT masking.** Spec line 1417: `stamp & !FLUSH_BIT`. Mask
-  at push time, not at compare time.
-- **Stack pressure from event literal.** `emit_cpi!(EclobFill { .. })`
+- **Grow-time realloc leak.** Each `Vec` doubling permanently
+  consumes `old + new` bytes for the rest of the instruction; bounded
+  but real. Pre-size with `Vec::with_capacity` if the book grows.
+- **Key inversion mistake.** Don't sort on `Price` directly and flip
+  the comparator — translate to a `u32` key (`as_u32()` / `bid_key()`)
+  at push time and sort on the key, as the shipped `HeapEntry` does.
+- **FLUSH_BIT masking.** Per **architecture.md → Order matching →
+  Book construction**: mask `stamp & !FLUSH_BIT` at push time (when
+  the `nonce` key is captured), not at compare time.
+- **Stack pressure from event literal.** `emit_cpi!(FillEvent { .. })`
   puts the struct literal on the stack at the macro site
   ([`anchor/lang/attribute/event/src/lib.rs:166-195`](https://github.com/solana-foundation/anchor/blob/2a191379020f15c1d384bdadd41f23949734ce98/lang/attribute/event/src/lib.rs#L166-L195)). Keep
   fill-event structs small (fixed-size primitives only).
@@ -405,15 +446,15 @@ Build the next CPI when adding the next leg would exceed
 
 ## 7. Architecture-spec coherence checks
 
-| Spec claim (line)                                                           | Status                                     | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| --------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Ephemeral book on SVM program heap (1375)                                   | **CONFIRMED**                              | Default 32 KiB heap covers the 10-vault × 32-level case at the §3 entry layout (10,240 B; ~3× headroom).                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| Min-heap on `(Price::MAX − price, nonce)` for bids (1405-1418)              | **CONFIRMED — with refinement**            | Use `Price::bid_key()` (already at [`price.rs:231-237`](https://github.com/DASMAC-com/dropset/blob/7891ebc071a0aec0332237970d4ab6f39033ad6f/programs/dropset/src/price.rs#L231-L237)) producing `u32`, packed into a `#[repr(C)]` `HeapEntry` whose derived `Ord` is lexicographic. Avoid storing `Price` directly + flipped comparator.                                                                                                                                                                                                                                       |
-| Inner-ix data not subject to `LOG_MESSAGES_BYTES_LIMIT` (1477-1479)         | **CONFIRMED**                              | LogCollector path ([`svm-log-collector/src/lib.rs:5`](https://github.com/anza-xyz/agave/blob/1ad187441b53d2ffb8f41a99e06f44ae27fda219/svm-log-collector/src/lib.rs#L5), [`:26-42`](https://github.com/anza-xyz/agave/blob/1ad187441b53d2ffb8f41a99e06f44ae27fda219/svm-log-collector/src/lib.rs#L26-L42)) is wholly separate from `instruction_trace` ([`transaction_processor.rs:1089-1139`](https://github.com/anza-xyz/agave/blob/1ad187441b53d2ffb8f41a99e06f44ae27fda219/svm/src/transaction_processor.rs#L1089-L1139)).                                                  |
-| `emit_cpi!` appends `event_authority` and `program` accounts (1483-1485)    | **CONFIRMED — outer Accounts struct only** | [`lang-v2/derive/src/lib.rs:5459-5470`](https://github.com/solana-foundation/anchor/blob/2a191379020f15c1d384bdadd41f23949734ce98/lang-v2/derive/src/lib.rs#L5459-L5470) — order is `event_authority` then `program`. The self-CPI invocation itself takes only `event_authority` as a readonly signer ([`lang-v2/derive/src/lib.rs:5370-5395`](https://github.com/solana-foundation/anchor/blob/2a191379020f15c1d384bdadd41f23949734ce98/lang-v2/derive/src/lib.rs#L5370-L5395)); `program` is on the outer struct so the runtime can supply its `AccountInfo` to the invoke. |
-| Bare self-CPI carries event in ix-data, drops `event_authority` (1496-1500) | **CONFIRMED**                              | Off-chain origin proof reduces to `programId == self`. Acceptable for indexer-only channel. Must use a non-`EVENT_IX_TAG` prefix to avoid Anchor's dispatcher hijack.                                                                                                                                                                                                                                                                                                                                                                                                          |
-| No cumulative cap on inner-ix data across a tx (1528-1530)                  | **CONFIRMED**                              | Only the per-CPI 10 KiB and the 64-instruction trace count constrain.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| Single CPI ix-data ~10 KB (1528)                                            | **CONFIRMED**                              | Exactly 10,240 B ([`transaction-context/src/lib.rs:18`](https://github.com/anza-xyz/agave/blob/1ad187441b53d2ffb8f41a99e06f44ae27fda219/transaction-context/src/lib.rs#L18)). Effective event-payload budget = 10,224 B after 16 B tag+disc overhead.                                                                                                                                                                                                                                                                                                                          |
+| Spec claim (architecture.md section)                                                      | Status                                     | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ----------------------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Ephemeral book on SVM program heap (**Order matching**)                                   | **CONFIRMED**                              | Default 32 KiB heap covers the 10-vault × `N_LEVELS = 8` case at the §3 entry layout (~2.5 KiB; wide margin).                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Cross-vault price-time priority for bids (**Order matching → Book construction**)         | **CONFIRMED — shipped as a sorted `Vec`**  | Shipped builds a flat `Vec<HeapEntry>` and runs one `sort_by_key((price_key, nonce, sector_idx, level_idx))`, where `price_key` is `price.bid_key()` for bids / `price.as_u32()` for asks ([`price.rs:231-237`](https://github.com/DASMAC-com/dropset/blob/7891ebc071a0aec0332237970d4ab6f39033ad6f/programs/dropset/src/price.rs#L231-L237)) — **not** the `BinaryHeap`/`pop_min` originally drafted in §2–§3, which is kept there as a rejected alternative. The `bid_key` trick still keeps both sides on one ascending comparator.                                         |
+| Inner-ix data not subject to `LOG_MESSAGES_BYTES_LIMIT` (**Events and emission**)         | **CONFIRMED**                              | LogCollector path ([`svm-log-collector/src/lib.rs:5`](https://github.com/anza-xyz/agave/blob/1ad187441b53d2ffb8f41a99e06f44ae27fda219/svm-log-collector/src/lib.rs#L5), [`:26-42`](https://github.com/anza-xyz/agave/blob/1ad187441b53d2ffb8f41a99e06f44ae27fda219/svm-log-collector/src/lib.rs#L26-L42)) is wholly separate from `instruction_trace` ([`transaction_processor.rs:1089-1139`](https://github.com/anza-xyz/agave/blob/1ad187441b53d2ffb8f41a99e06f44ae27fda219/svm/src/transaction_processor.rs#L1089-L1139)).                                                  |
+| `emit_cpi!` appends `event_authority` and `program` accounts (**Events and emission**)    | **CONFIRMED — outer Accounts struct only** | [`lang-v2/derive/src/lib.rs:5459-5470`](https://github.com/solana-foundation/anchor/blob/2a191379020f15c1d384bdadd41f23949734ce98/lang-v2/derive/src/lib.rs#L5459-L5470) — order is `event_authority` then `program`. The self-CPI invocation itself takes only `event_authority` as a readonly signer ([`lang-v2/derive/src/lib.rs:5370-5395`](https://github.com/solana-foundation/anchor/blob/2a191379020f15c1d384bdadd41f23949734ce98/lang-v2/derive/src/lib.rs#L5370-L5395)); `program` is on the outer struct so the runtime can supply its `AccountInfo` to the invoke. |
+| Bare self-CPI carries event in ix-data, drops `event_authority` (**Events and emission**) | **CONFIRMED**                              | Off-chain origin proof reduces to `programId == self`. Acceptable for indexer-only channel. Must use a non-`EVENT_IX_TAG` prefix to avoid Anchor's dispatcher hijack.                                                                                                                                                                                                                                                                                                                                                                                                          |
+| No cumulative cap on inner-ix data across a tx (**Events and emission**)                  | **CONFIRMED**                              | Only the per-CPI 10 KiB and the 64-instruction trace count constrain.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Single CPI ix-data ~10 KB (**Events and emission**)                                       | **CONFIRMED**                              | Exactly 10,240 B ([`transaction-context/src/lib.rs:18`](https://github.com/anza-xyz/agave/blob/1ad187441b53d2ffb8f41a99e06f44ae27fda219/transaction-context/src/lib.rs#L18)). Effective event-payload budget = 10,224 B after 16 B tag+disc overhead.                                                                                                                                                                                                                                                                                                                          |
 
 **Add to spec (not currently called out):**
 
@@ -436,14 +477,16 @@ Build the next CPI when adding the next leg would exceed
 
 **To verify before implementing:**
 
-1. **`MAX_LEVELS_PER_SIDE` constant.** The capacity math in §2 and
-   the recipe in §3 reference `MAX_LEVELS_PER_SIDE` but no such
-   constant exists in `programs/dropset/src/` yet. Pick a value
-   (the spec narrative implies 32) and add it to `state.rs`. Add
-   `assert_eq!(size_of::<HeapEntry>(), 32)` and
-   \`assert!(MAX_LEVELS_PER_SIDE * DEFAULT_MAX_VAULTS_PER_MARKET as usize
-   - size_of::<HeapEntry>() \<= 32 * 1024)\` as build-time checks so
-     the heap fit stays explicit.
+1. **`MAX_LEVELS_PER_SIDE` constant — RESOLVED.** The original
+   capacity math in §2 and recipe in §3 referenced
+   `MAX_LEVELS_PER_SIDE` (assumed 32). No such constant was ever
+   added; the program ships `N_LEVELS = 8` (`state/market.rs`) as the
+   per-side level count, and the matcher is a sorted `Vec`, not a
+   capacity-sized `BinaryHeap`, so there is no `with_capacity` arg to
+   pin. The book is ≤ `max_vaults_per_market × N_LEVELS` (~80 at the
+   default cap of 10), ~2.5 KiB — well inside the 32 KiB heap, so no
+   build-time heap-fit assertion is wired. Use `N_LEVELS` anywhere the
+   old notes say `MAX_LEVELS_PER_SIDE`.
 1. **Bare self-CPI under v2's dispatcher.** v2's entrypoint matches
    the full 8-byte `EVENT_IX_TAG` before user dispatch
    ([`lang-v2/derive/src/lib.rs:4510-4546`](https://github.com/solana-foundation/anchor/blob/2a191379020f15c1d384bdadd41f23949734ce98/lang-v2/derive/src/lib.rs#L4510-L4546)). A bare self-CPI must use
