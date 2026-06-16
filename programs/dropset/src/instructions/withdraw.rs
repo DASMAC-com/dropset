@@ -52,13 +52,12 @@ pub struct Withdraw {
     #[account(mut)]
     pub market: Market,
     /// Outside depositor's PDA. Mut so we can decrement `shares` and
-    /// stamp realized PnL. The handler calls
-    /// [`anchor_lang_v2::AnchorAccount::close`] explicitly when
-    /// post-burn `shares == 0`, refunding the rent to the signer
-    /// and decrementing `outstanding_vault_depositors` — a manual
-    /// close keeps the conditional rent-refund logic in one place
-    /// instead of relying on Anchor's unconditional `close = signer`
-    /// attribute.
+    /// stamp realized PnL. When post-burn `shares == 0` the handler
+    /// closes it explicitly via `close_depositor_and_decrement` —
+    /// refunding the rent to the signer and decrementing
+    /// `outstanding_vault_depositors`. A conditional manual close (vs.
+    /// Anchor's unconditional `close = signer` attribute) is what lets
+    /// the PDA survive a partial withdrawal.
     #[account(
         mut,
         seeds = [

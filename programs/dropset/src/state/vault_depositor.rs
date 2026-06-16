@@ -326,4 +326,26 @@ mod tests {
         let mut v = vd(10, 100, price_one());
         assert!(v.crystallize_realized_pnl(20, 0, 0, price_one()).is_err());
     }
+
+    #[test]
+    fn crystallize_saturates_at_i64_ceiling() {
+        // A slice_quote near u64::MAX yields a pnl/yield delta far beyond
+        // i64::MAX (zero basis, flat reference). The accumulators and the
+        // returned delta must saturate at the ceiling, not wrap or panic.
+        let mut v = vd(2, 0, price_one());
+        let delta = v
+            .crystallize_realized_pnl(1, 0, u64::MAX, price_one())
+            .unwrap();
+        assert_eq!(delta, i64::MAX, "returned delta saturates at i64::MAX");
+        assert_eq!(v.realized_pnl.get(), i64::MAX);
+        assert_eq!(v.realized_yield.get(), i64::MAX);
+        assert_eq!(v.realized_fx.get(), 0);
+        // A second positive move stays pinned at the ceiling rather than
+        // overflowing past it.
+        let delta2 = v
+            .crystallize_realized_pnl(1, 0, u64::MAX, price_one())
+            .unwrap();
+        assert_eq!(delta2, i64::MAX);
+        assert_eq!(v.realized_pnl.get(), i64::MAX);
+    }
 }
