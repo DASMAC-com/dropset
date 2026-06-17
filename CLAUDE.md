@@ -127,7 +127,13 @@ Concrete rules:
   `sed -n 'X,Yp'`, `awk 'NR>=X'`, `head`, or `tail`. Never shell out to
   `python3` / `node` / `jq` to read or edit JSON/config (including
   `.claude/settings.local.json`) — use Read + Edit/Write. Each such
-  one-liner is unique and re-prompts forever.
+  one-liner is unique and re-prompts forever. To find **over-length
+  lines** for the MD013 80-col rule, don't reach for
+  `awk 'length>80'` / `sed` either — run the markdownlint hook
+  (`pre-commit run markdownlint-fix … --files <path>`, with
+  `--config cfg/pre-commit-lint.yml`); it reports every MD013
+  violation with its line number and reduces to the existing
+  `Bash(pre-commit run:*)` rule.
 - One command per Bash call. Avoid `&&`, `;`, and pipes when separate
   calls work; a chained command can't be generalized into a glob and
   always re-prompts.
