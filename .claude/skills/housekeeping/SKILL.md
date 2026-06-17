@@ -154,7 +154,7 @@ mcp__claude_ai_Linear__save_issue(
   assignee: "<$LINEAR_ASSIGNEE_ID>",
   state: "Backlog",
   title: "cfg/dictionary.txt: move <word> inline / drop dead entry",
-  description: "<finding + recommended action>\n\n**Fingerprint**: dictionary:<word>",
+  description: "<finding + action>\n\n**Fingerprint**: dictionary:<word>",
   priority: 3,
 )
 ```

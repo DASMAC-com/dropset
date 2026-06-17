@@ -35,8 +35,9 @@
 Skills that **file** Linear issues (`linear-task`, `stage-backlog`,
 `audit-loop`, `audit-scope`, `housekeeping`) resolve the filing
 destination — team, project, assignee — from **environment
-variables**, never hard-coded UUIDs. (Skills that only **update** an existing issue by id —
-`init-pr`, `review-pr` — need no destination.) Set them once in your
+variables**, never hard-coded UUIDs. (Skills that only **update**
+an existing issue by id — `init-pr`, `review-pr` — need no
+destination.) Set them once in your
 shell profile (`~/.zshrc`):
 
 ```sh
@@ -48,12 +49,13 @@ export LINEAR_TASK_STAGING_DOC_ID=…
 ```
 
 Skills read these at run time with a bare `printenv`, **one variable
-per call** — `printenv LINEAR_TEAM_ID`, then `printenv
-LINEAR_PROJECT_ID`, then `printenv LINEAR_ASSIGNEE_ID`. Do **not**
-fold them into one `printenv LINEAR_TEAM_ID LINEAR_PROJECT_ID
-LINEAR_ASSIGNEE_ID`: macOS / BSD `printenv` honors only its **first**
-operand, so the combined form returns just `LINEAR_TEAM_ID` and the
-skill wrongly concludes the other two are unset and halts. Each bare
+per call** — `printenv LINEAR_TEAM_ID`, then
+`printenv LINEAR_PROJECT_ID`, then `printenv LINEAR_ASSIGNEE_ID`. Do
+**not** fold them into one
+`printenv LINEAR_TEAM_ID LINEAR_PROJECT_ID LINEAR_ASSIGNEE_ID`: macOS /
+BSD `printenv` honors only its **first** operand, so the combined form
+returns just `LINEAR_TEAM_ID` and the skill wrongly concludes the
+other two are unset and halts. Each bare
 call still matches the same `Bash(printenv:*)` allow-rule, so none of
 them re-prompt. A new Linear-filing skill must follow the same
 pattern: reference the variable **names**, and keep the resolved
