@@ -13,19 +13,17 @@ jobs:
       with:
         anchor-revision: '${{ env.ANCHOR_REV }}'
         solana-version: '${{ env.SOLANA_VERSION }}'
-    - name: 'Cache cargo dependencies'
-      uses: 'actions/cache@v5'
+    # rust-cache caches ~/.cargo/{registry,git} plus only the *dependency*
+    # build artifacts in target/ (workspace crates are pruned), and re-saves
+    # whenever the lockfile/toolchain change — so the cache never freezes at a
+    # first-run snapshot and the restored target/ stays small. The shared-key
+    # is intentionally the same as the no-teardown job's: their dependency
+    # builds are identical across the two feature sets, so they share one
+    # dep-artifact cache instead of each saving a full multi-GB target/.
+    - uses: 'Swatinem/rust-cache@v2'
       with:
-        key: 'cargo-test-${{ runner.os }}-${{ runner.arch }}-solana-${{
-              env.SOLANA_VERSION }}-anchor-${{ env.ANCHOR_REV }}-${{
-              hashFiles(''Cargo.lock'') }}'
-        path: |
-          ~/.cargo/git/db
-          ~/.cargo/registry/cache
-          ~/.cargo/registry/index
-          target
-        restore-keys: 'cargo-test-${{ runner.os }}-${{ runner.arch }}-solana-${{
-                       env.SOLANA_VERSION }}-anchor-${{ env.ANCHOR_REV }}-'
+        cache-on-failure: true
+        shared-key: 'rust-test-${{ runner.os }}'
     # Builds the program (.so) and runs the whole Rust workspace test
     # suite — including the price-core conformance vectors and the
     # engine-vs-SDK litesvm conformance (tests/sdk_conformance.rs).
@@ -47,26 +45,17 @@ jobs:
       with:
         anchor-revision: '${{ env.ANCHOR_REV }}'
         solana-version: '${{ env.SOLANA_VERSION }}'
-    - name: 'Cache cargo dependencies'
-      uses: 'actions/cache@v5'
+    # Shares the `test` job's dep-artifact cache via the same shared-key:
+    # the dependency builds are identical across the two feature sets, so a
+    # cold no-teardown run warms from that cache and only the dropset crate
+    # is recompiled feature-off. rust-cache prunes the workspace crates from
+    # target/ before saving, so restoring here no longer drags in the full
+    # default-feature target/ that previously doubled the on-disk footprint
+    # and crashed the runner with "No space left on device".
+    - uses: 'Swatinem/rust-cache@v2'
       with:
-        key: 'cargo-test-no-teardown-${{ runner.os }}-${{
-              runner.arch }}-solana-${{ env.SOLANA_VERSION
-              }}-anchor-${{ env.ANCHOR_REV }}-${{
-              hashFiles(''Cargo.lock'') }}'
-        path: |
-          ~/.cargo/git/db
-          ~/.cargo/registry/cache
-          ~/.cargo/registry/index
-          target
-        # Fall back to this job's own cache first, then to the main
-        # `test` job's cache: the dependency builds (~/.cargo + the dep
-        # artifacts in target/) are identical across the two feature
-        # sets, so a cold no-teardown run warms from the test job's
-        # cache and only the dropset crate is compiled feature-off.
-        restore-keys: |
-          cargo-test-no-teardown-${{ runner.os }}-${{ runner.arch }}-
-          cargo-test-${{ runner.os }}-${{ runner.arch }}-
+        cache-on-failure: true
+        shared-key: 'rust-test-${{ runner.os }}'
     - name: 'Run feature-off teardown-disabled tests'
       run: 'make test-no-teardown'
 name: 'Tests'
