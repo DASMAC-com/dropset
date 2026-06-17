@@ -33,9 +33,9 @@
 ## Linear automation
 
 Skills that **file** Linear issues (`linear-task`, `stage-backlog`,
-`audit-loop`, `audit-scope`) resolve the filing destination — team,
-project, assignee — from **environment variables**, never hard-coded
-UUIDs. (Skills that only **update** an existing issue by id —
+`audit-loop`, `audit-scope`, `housekeeping`) resolve the filing
+destination — team, project, assignee — from **environment
+variables**, never hard-coded UUIDs. (Skills that only **update** an existing issue by id —
 `init-pr`, `review-pr` — need no destination.) Set them once in your
 shell profile (`~/.zshrc`):
 
