@@ -18,8 +18,8 @@ clean:
 
 # Required toolchain: anchor-cli 2.x, the Solana SBF toolchain, and a
 # solana-cli / solana-test-validator on the 3.1 minor — matching the SDK's
-# solana-client 3.1 so the TUI's RpcClient and the local validator agree on
-# wire/RPC (see sdk/rs/Cargo.toml). The Makefile linter caps this recipe
+# solana-client 3.1 so its `fetch` RpcClient and the local validator agree
+# on wire/RPC (see sdk/rs/Cargo.toml). The Makefile linter caps this recipe
 # body at 5 lines, so each check stays on one line.
 check-toolchain:
 	@anchor --version | grep -q " 2\." || { echo "anchor-cli 2.x required"; exit 1; }

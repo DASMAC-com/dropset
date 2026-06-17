@@ -22,7 +22,7 @@ solana-account-info = "3"
 # `RpcClient`, and the locally installed `solana-test-validator` it talks
 # to must agree on the same minor for wire/RPC compatibility. The
 # `check-toolchain` make target gates the validator to 3.1.x to match.
-solana-client = {version = "3.1", optional = true}
+solana-client = {version = "~3.1", optional = true}
 solana-cpi = "3"
 solana-instruction = "3"
 solana-program-error = "3"
