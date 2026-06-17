@@ -13,6 +13,7 @@
 #
 # Dependency is one-way: this crate depends on `dropset-math-core`, never
 # the reverse.
+
 [dependencies]
 bytemuck = {version = "1", features = ["derive", "min_const_generics"]}
 dropset-math-core = {path = "../math-core"}

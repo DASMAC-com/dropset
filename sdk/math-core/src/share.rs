@@ -600,7 +600,11 @@ mod tests {
         // i64::MAX (zero basis, flat reference). The accumulators and the
         // returned delta must saturate at the ceiling, not wrap or panic.
         let r = crystallize_pnl(1, 2, 0, 0, u64::MAX, price_one(), price_one(), 0, 0, 0).unwrap();
-        assert_eq!(r.pnl_delta, i64::MAX, "returned delta saturates at i64::MAX");
+        assert_eq!(
+            r.pnl_delta,
+            i64::MAX,
+            "returned delta saturates at i64::MAX"
+        );
         assert_eq!(r.realized_pnl, i64::MAX);
         assert_eq!(r.realized_yield, i64::MAX);
         assert_eq!(r.realized_fx, 0);
