@@ -22,6 +22,12 @@ check-toolchain:
 	@command -v cargo-build-sbf >/dev/null \
 		|| { echo "cargo build-sbf not found (install Solana toolchain)"; \
 			exit 1; }
+	@solana --version | grep -q " 3\.1\." \
+		|| { echo "solana-cli 3.1.x required (matches SDK solana-client 3.1)"; \
+			exit 1; }
+	@solana-test-validator --version | grep -q " 3\.1\." \
+		|| { echo "solana-test-validator 3.1.x required (wire/RPC compat with SDK solana-client 3.1)"; \
+			exit 1; }
 
 # Regenerate the checked-in IDL from the program. Pin anchor-cli to the
 # same anchor-next rev as the program crate (see install-anchor-v2) so
