@@ -540,13 +540,20 @@ the shared destination. There is **no umbrella issue** —
 the project Backlog is the queue, and `stage-backlog`
 turns it into a PR plan later. Resolve the
 destination IDs from the environment exactly as
-`linear-task` does — never hard-code them — with one
-bare command (reduces to a `Bash(printenv:*)`
-allow-rule):
+`linear-task` does — never hard-code them — with a
+bare `printenv` per variable (each reduces to the
+same `Bash(printenv:*)` allow-rule):
 
 ```sh
-printenv LINEAR_TEAM_ID LINEAR_PROJECT_ID LINEAR_ASSIGNEE_ID
+printenv LINEAR_TEAM_ID
+printenv LINEAR_PROJECT_ID
+printenv LINEAR_ASSIGNEE_ID
 ```
+
+Query each variable on its own line — macOS / BSD
+`printenv` honors only its first operand, so a
+combined `printenv A B C` returns just `A` and you'd
+wrongly conclude the rest are unset.
 
 Then call `mcp__claude_ai_Linear__save_issue` (no
 `id`):
@@ -701,7 +708,7 @@ the PR plan itself — staging is `stage-backlog`'s job.
 
 - **Invoke the `stage-backlog` skill** (via the Skill
   tool) to (re)stage the Backlog onto the
-  implementation-sequence document: it reads every
+  **Task Staging** document: it reads every
   Backlog issue — including the ones this campaign just
   filed — groups them into the fewest parallel,
   file-disjoint PR sessions, merges the issues that

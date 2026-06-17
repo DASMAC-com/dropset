@@ -16,12 +16,23 @@ Every issue is filed into one fixed destination —
 a single team, project, and assignee. Do **not**
 hard-code the IDs and do **not** ask the user for
 them: resolve them at run time from the environment
-with a single bare command, so the call reduces to
-a stable `Bash(printenv:*)` allow-rule:
+with a bare `printenv` per variable — each call
+reduces to the same stable `Bash(printenv:*)`
+allow-rule:
 
 ```sh
-printenv LINEAR_TEAM_ID LINEAR_PROJECT_ID LINEAR_ASSIGNEE_ID
+printenv LINEAR_TEAM_ID
+printenv LINEAR_PROJECT_ID
+printenv LINEAR_ASSIGNEE_ID
 ```
+
+Query each variable on **its own** `printenv` line.
+Do **not** combine them into one
+`printenv LINEAR_TEAM_ID LINEAR_PROJECT_ID LINEAR_ASSIGNEE_ID`:
+macOS / BSD `printenv` honors only its **first**
+operand, so the combined form prints just
+`LINEAR_TEAM_ID` and you'd wrongly conclude the
+other two are unset.
 
 | Field    | Env var              |
 | -------- | -------------------- |
@@ -39,7 +50,7 @@ parent** (`state: "Backlog"`, no `parentId`). There is
 no umbrella issue: the staging plan — which issues
 group into which PR, and in what order — is owned by
 the `stage-backlog` skill, which reads this Backlog
-and writes the implementation-sequence document. So
+and writes the **Task Staging** document. So
 just file the to-do; don't attach it to a parent.
 
 ## Input

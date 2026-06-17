@@ -175,12 +175,19 @@ Optional (ask on a direct run if not provided):
    - **Direct run:** file each surviving finding as its
      own Linear **Backlog** issue, exactly as `linear-task`
      does. Resolve the destination IDs from the
-     environment (never hard-code them) with one bare
-     command (reduces to a `Bash(printenv:*)` allow-rule):
+     environment (never hard-code them) with a bare
+     `printenv` per variable (each reduces to the same
+     `Bash(printenv:*)` allow-rule):
 
      ```sh
-     printenv LINEAR_TEAM_ID LINEAR_PROJECT_ID LINEAR_ASSIGNEE_ID
+     printenv LINEAR_TEAM_ID
+     printenv LINEAR_PROJECT_ID
+     printenv LINEAR_ASSIGNEE_ID
      ```
+
+     Query each on its own line — macOS / BSD `printenv`
+     honors only its first operand, so a combined
+     `printenv A B C` returns just `A`.
 
      Before filing, dedup against the live Backlog with
      `mcp__claude_ai_Linear__list_issues` (same
