@@ -13,10 +13,7 @@ sdk/price-core/pkg/
 /target/deploy/*
 !/target/deploy/dropset_gamma-keypair.json
 
-# Local audit findings (see .claude/skills/audit-codebase).
-.audits/
-
-# Background audit-loop state (see .claude/skills/platform-audit-loop).
+# Background audit-loop state (see .claude/skills/audit-loop).
 .audit-loop/
 
 # macOS metadata.

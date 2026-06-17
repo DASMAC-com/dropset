@@ -2,6 +2,8 @@
 
 <!-- cspell:word PIPESTATUS -->
 
+<!-- cspell:word rustc -->
+
 ## Commits and PRs
 
 - **Run `init-pr` first.** At the start of a worktree session,
@@ -27,6 +29,52 @@
   chars.
 - Sign commits (`git commit -S`); branch protection requires verified
   signatures.
+
+## Linear automation
+
+Skills that **file** Linear issues (`linear-task`, `stage-backlog`,
+`audit-loop`, `audit-scope`) resolve the filing destination — team,
+project, assignee — from **environment variables**, never hard-coded
+UUIDs. (Skills that only **update** an existing issue by id —
+`init-pr`, `review-pr` — need no destination.) Set them once in your
+shell profile (`~/.zshrc`):
+
+```sh
+export LINEAR_TEAM_ID=…
+export LINEAR_PROJECT_ID=…
+export LINEAR_ASSIGNEE_ID=…
+```
+
+Skills read them at run time with a single bare
+`printenv LINEAR_TEAM_ID LINEAR_PROJECT_ID LINEAR_ASSIGNEE_ID` — which
+reduces to a `Bash(printenv:*)` allow-rule, so it never re-prompts. A
+new Linear-filing skill must follow the same pattern: reference the
+variable **names**, and keep the resolved UUIDs out of every committed
+file.
+
+A worktree branch and its Linear issue **share one `ENG-###`
+number**: branch `eng-499` ↔ issue `ENG-499`. Skills resolve the
+issue from the branch (or the PR title scope) on that basis —
+`init-pr` moves it to In Progress at bootstrap, `review-pr` ticks the
+delivered checklist items and moves it to In Review when the PR is
+ready.
+
+## Spelling (cspell)
+
+`cfg/dictionary.txt` is the **project-wide** spelling allow-list —
+reserve it for terms that recur across the codebase. The rule: a word
+belongs in `dictionary.txt` only if it appears in **≥ 2 files**. A term
+used in just one file gets an inline escape in that file instead, by
+comment style:
+
+- Rust / TS / JS — `// cspell:word foo`
+- Markdown — `<!-- cspell:word foo -->`
+- YAML / TOML / shell — `# cspell:word foo`
+
+The lone exception is a file that can't carry a comment (e.g.
+`.json`), where the dictionary is the only option. The `cspell-audit`
+skill reconciles the dictionary against actual usage on this rule; run
+it when the dictionary grows.
 
 ## Shell commands
 
@@ -99,3 +147,33 @@ Concrete rules:
   writes the firmed allowlist to **both** this worktree and the base
   repo so future worktrees inherit it — proposing the changes for
   your approval before it writes.
+
+### Patterns that always re-prompt — never author these
+
+The rules above each rule out a class of command. These are the
+specific forms that have actually slipped through and forced a manual
+approval *every time*, because none can reduce to an allow-rule —
+don't write them, in ad-hoc shell or in committed skills/scripts:
+
+- **Heredocs** (`cat > file << 'EOF' … EOF`, `python3 << 'EOF' … EOF`).
+  A heredoc is a redirect plus inline content; when the body contains
+  braces it also trips the "brace with quote character (expansion
+  obfuscation)" guard, which forces approval regardless of the
+  allowlist. To **create a file**, use the Write tool. To **read or
+  parse** one (including JSON/IDL), use Read / Grep — never `python3` /
+  `node` / `jq`.
+- **Ad-hoc compile-and-run scratch** — e.g. a
+  `cat > /tmp/x.rs << EOF` heredoc piped into
+  `rustc … && /tmp/x`. To check a language or layout question, Write a
+  throwaway file and drive it with the normal target (`cargo test`, a
+  `#[test]`), or reason it out — don't synthesize a one-off program
+  through a heredoc-and-`&&` chain.
+- **`cd <path> && <cmd>`** (e.g. `cd <repo> && git -C <worktree> …`).
+  The `cd &&` compound re-prompts as a path-resolution bypass. Run
+  bare from the cwd, or address another checkout with `git -C <path>`
+  alone — no `cd`, no `&&`.
+
+If a one-off like these still gets approved during a session, do
+**not** allow-list it (a `*` can't generalize a compound): the
+`firm-perms` skill flags it and points back here so the source stops
+emitting it.

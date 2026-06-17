@@ -50,6 +50,7 @@ guéant
 gyen
 générale
 helvetiker
+heredocs
 hyperliquid
 idempotently
 idrx

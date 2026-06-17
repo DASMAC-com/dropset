@@ -36,14 +36,24 @@ idempotent and never stacks duplicates.
 
 ## Filing destination (shared with `linear-task`)
 
-The same fixed destination every Dropset issue uses —
-use the IDs, not the names:
+The same fixed destination every issue uses. Resolve
+the IDs at run time from the environment exactly as
+`linear-task` does — never hard-code them — with one
+bare command (reduces to a `Bash(printenv:*)`
+allow-rule):
 
-| Field    | Value       | ID                                     |
-| -------- | ----------- | -------------------------------------- |
-| Team     | Engineering | `84659a7c-5ea3-47b1-b2bd-c531e3721d6b` |
-| Project  | Dropset     | `d505fe50-cc8b-41ca-be93-6215d9adcea0` |
-| Assignee | Alex        | `b3ec6d9f-3c78-48da-8b4e-042176e8c579` |
+```sh
+printenv LINEAR_TEAM_ID LINEAR_PROJECT_ID LINEAR_ASSIGNEE_ID
+```
+
+| Field    | Env var              |
+| -------- | -------------------- |
+| Team     | `LINEAR_TEAM_ID`     |
+| Project  | `LINEAR_PROJECT_ID`  |
+| Assignee | `LINEAR_ASSIGNEE_ID` |
+
+If any variable is empty, stop and tell the user to
+export it in their shell profile (`~/.zshrc`).
 
 ## How it's driven
 
