@@ -23,7 +23,8 @@
 use anchor_lang_v2::{bytemuck, event::EVENT_IX_TAG_LE, Discriminator};
 use dropset::{
     CloseVaultEvent, CreateVaultEvent, DepositEvent, FillEvent, FreezeVaultEvent, RealizeEvent,
-    SetMarketFeeConfigEvent, SetMinLeaderShareEvent, WithdrawEvent,
+    SetMarketFeeConfigEvent, SetMinLeaderShareEvent, SetRegistryDefaultsEvent, SetTakerFeeEvent,
+    WithdrawEvent,
 };
 use litesvm::types::TransactionMetadata;
 
@@ -87,6 +88,9 @@ impl<'a> Cursor<'a> {
     }
     fn pubkey(&mut self) -> [u8; 32] {
         self.take(32).try_into().unwrap()
+    }
+    fn u16(&mut self) -> u16 {
+        u16::from_le_bytes(self.take(2).try_into().unwrap())
     }
     fn u32(&mut self) -> u32 {
         u32::from_le_bytes(self.take(4).try_into().unwrap())
@@ -214,6 +218,40 @@ pub fn set_market_fee_config(meta: &TransactionMetadata) -> SetMarketFeeConfig {
         mint: c.pubkey(),
         token_program: c.pubkey(),
         atoms: c.u64(),
+    };
+    c.finish();
+    d
+}
+
+#[derive(Debug)]
+pub struct SetTakerFee {
+    pub market: [u8; 32],
+    pub taker_fee: u16,
+}
+
+pub fn set_taker_fee(meta: &TransactionMetadata) -> SetTakerFee {
+    let body = one_body::<SetTakerFeeEvent>(meta);
+    let mut c = Cursor::new(&body);
+    let d = SetTakerFee {
+        market: c.pubkey(),
+        taker_fee: c.u16(),
+    };
+    c.finish();
+    d
+}
+
+#[derive(Debug)]
+pub struct SetRegistryDefaults {
+    pub default_taker_fee: u16,
+    pub default_min_leader_share: u32,
+}
+
+pub fn set_registry_defaults(meta: &TransactionMetadata) -> SetRegistryDefaults {
+    let body = one_body::<SetRegistryDefaultsEvent>(meta);
+    let mut c = Cursor::new(&body);
+    let d = SetRegistryDefaults {
+        default_taker_fee: c.u16(),
+        default_min_leader_share: c.u32(),
     };
     c.finish();
     d

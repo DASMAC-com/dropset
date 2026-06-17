@@ -23,9 +23,7 @@
 
 use anchor_lang_v2::prelude::*;
 
-use crate::{
-    errors::DropsetError, events::SetRegistryDefaultsEvent, AdminSet, Registry, PPM,
-};
+use crate::{errors::DropsetError, events::SetRegistryDefaultsEvent, AdminSet, Registry, PPM};
 
 #[event_cpi]
 #[derive(Accounts)]
