@@ -78,11 +78,28 @@ Optional, and accepts three shapes:
   you granted live. A line that **can't** reduce to a
   safe rule — a heredoc, a `cd … &&` compound, a
   `python3` / `jq` one-liner, anything CLAUDE.md's shell
-  rules forbid — is malformed, not missing a glob: set
-  it aside for the summary (don't allow-list it), and
-  point at the source so the pattern stops recurring.
+  rules forbid — is malformed, not missing a glob: a `*`
+  can't rescue it and allow-listing wouldn't even stop
+  the prompt. So for those, **fix the source instead of
+  the allowlist** — which is the other half of "stop
+  being asked":
+
+  - If the pattern traces to a **committed skill,
+    script, Makefile target, or doc** (its shell is
+    baked in, so it re-emits every run), edit that
+    source so it stops producing the malformed command —
+    e.g. replace a `python3 … | yaml` parse with the
+    Read tool, split a `cd … &&` compound into bare
+    commands. Propose that edit alongside the allowlist
+    diff (next steps) and apply it on approval.
+  - If it was a **one-off** you (or a sub-agent) typed
+    ad-hoc — no committed source emits it — there's
+    nothing to edit; name it in the summary, cite the
+    CLAUDE.md rule it broke, and move on.
+
   Then run the normal generalize / dedupe / propose /
-  write flow over the whole array.
+  write flow over the lines that can be firmed and the
+  whole array.
 
 ## Generalization rules
 

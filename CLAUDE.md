@@ -109,6 +109,16 @@ a sequence of bare commands that each reduce to a glob (or "run X,
 read its output, then run Y with the value inline") over a clever
 one-liner.
 
+It applies to work you hand to a **sub-agent**, too. The whole
+objective is **the fewest permission prompts possible** across the
+session, and a spawned agent's Bash calls surface to you for approval
+exactly like your own — but the agent doesn't inherit this file, so it
+will reach for the forbidden compounds unless told not to. Brief every
+agent you spawn on these rules (see "Briefing sub-agents" below) so its
+calls reduce to allow-rules too. A session that follows the rules and
+briefs its agents on them prompts only for a genuinely novel command —
+which `firm-perms` then memorializes so it never prompts again.
+
 Concrete rules:
 
 - Prefer the dedicated tools — Read, Grep, Glob — over `cat`, `grep`,
