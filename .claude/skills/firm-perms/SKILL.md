@@ -1,6 +1,6 @@
 ---
 name: firm-perms
-description: Generalize the local permission allowlist into reusable globs — Bash commands and file-access/`Read` paths alike — harvesting everything you had to approve this session, and propagate it to the base-repo settings so future worktrees inherit it. Use at the end of a session or during a review-pr run that piled up per-worktree or per-arg approvals.
+description: Generalize the local permission allowlist into reusable globs — Bash commands and file-access/`Read` paths alike — harvesting everything you had to approve this session (or a pasted block of permission strings you want memorialized), and propagate it to the base-repo settings so future worktrees inherit it. Use at the end of a session, during a review-pr run that piled up per-worktree or per-arg approvals, or with a pasted permissions block to escape prompts you keep hitting.
 user-invocable: true
 ---
 
@@ -53,11 +53,36 @@ folder (e.g. `eng-447`).
 
 ## Input
 
-Optional. With no argument, firm the **entire**
-allow array. If given a fragment (e.g. a rule that
-just got added, or a command you keep approving),
-focus the generalization on the matching entries but
-still dedupe and write the whole array.
+Optional, and accepts three shapes:
+
+- **No argument** — firm the **entire** allow array
+  (plus this session's harvested approvals, per the
+  steps below).
+
+- **A fragment** (e.g. a rule that just got added, or a
+  command you keep approving) — focus the generalization
+  on the matching entries but still dedupe and write the
+  whole array.
+
+- **A pasted permissions block** — one or more raw
+  command / rule strings, typically the ones a
+  permission prompt just surfaced, often under a
+  `# Permissions` heading or in a fenced block. This is
+  the "memorialize these so I stop being asked"
+  entry-point (you can drop such a block straight into a
+  Linear task and run `/firm-perms` against it). Treat
+  **each line** as a session approval to fold in: derive
+  the generalized rule it *should* have been (per the
+  generalization rules below) and add it to the working
+  set, exactly as the harvest step does for approvals
+  you granted live. A line that **can't** reduce to a
+  safe rule — a heredoc, a `cd … &&` compound, a
+  `python3` / `jq` one-liner, anything CLAUDE.md's shell
+  rules forbid — is malformed, not missing a glob: set
+  it aside for the summary (don't allow-list it), and
+  point at the source so the pattern stops recurring.
+  Then run the normal generalize / dedupe / propose /
+  write flow over the whole array.
 
 ## Generalization rules
 
