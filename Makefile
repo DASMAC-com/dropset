@@ -36,18 +36,21 @@ sdk:
 	cd sdk/codama && pnpm install && pnpm generate
 	cargo fmt -p dropset-sdk
 
-# Build the price-core WASM package for the TS client (requires wasm-pack:
-# `cargo install wasm-pack`). Outputs sdk/price-core/pkg.
+# Build the WASM package for the TS client (requires wasm-pack:
+# `cargo install wasm-pack`). Built over `dropset-interface`, whose `wasm`
+# feature turns on `dropset-math-core`'s, so the one package exports both the
+# `simulate_swap` binding and the `Price` codec bindings. Outputs
+# sdk/interface/pkg.
 wasm:
-	cd sdk/price-core && wasm-pack build --target web --features wasm
+	cd sdk/interface && wasm-pack build --target web --features wasm
 
 # Regenerate the checked-in conformance vectors from their generators.
 # The `--write` flag makes each example write its canonical JSON straight
 # to sdk/conformance/*.json (instead of stdout, avoiding a shell redirect),
 # so the generators stay the single source of truth.
 conformance-vectors:
-	cargo run -p dropset-price-core --example gen_conformance -- --write
-	cargo run -p dropset-price-core --example gen_quoting -- --write
+	cargo run -p dropset-math-core --example gen_conformance -- --write
+	cargo run -p dropset-math-core --example gen_quoting -- --write
 
 # Freshness gate (CI): regenerate the vectors, then stage + diff against
 # HEAD so a hand-edited or stale vector — and an added or removed one —
@@ -58,10 +61,10 @@ check-conformance-vectors: conformance-vectors
 	git add -A -- sdk/conformance/
 	git diff --cached --exit-code -- sdk/conformance/
 
-# Run the SDK test suites: Rust (price-core + dropset-sdk, incl. the
-# conformance vectors) and the TS conformance check.
+# Run the SDK test suites: Rust (math-core + interface + dropset-sdk, incl.
+# the conformance vectors) and the TS conformance check.
 sdk-test:
-	cargo test -p dropset-price-core -p dropset-sdk
+	cargo test -p dropset-math-core -p dropset-interface -p dropset-sdk
 	cd sdk/ts && pnpm test
 
 debugger: program

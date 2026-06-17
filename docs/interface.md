@@ -233,20 +233,37 @@ event codecs, PDA helpers). CI discipline:
   single metadata string catches **neither** field/type/discriminator changes;
   diff the whole document.
 
-**(B) Price / book math → WASM.** A **new solana-free `price-core` crate** (the
-`Price` codec + book-reconstruction math) compiled to **WASM** for any
-TypeScript consumer that must run the exact arithmetic. (The on-chain
-crates cannot target `wasm32`; a hand-mirrored port is rejected.) Correctness is
-enforced by **shared conformance vectors run in both Rust and TS CI**, generated
-from the engine's reference traces; the vectors pin **both** the numeric outputs
-**and** the chosen wire encoding (open: f) — or scope the first freeze to math
-and defer wire-encoding conformance until (f) lands.
+**(B) Consensus math + book math → WASM.** Two solana-free crates, split by
+audit severity. **`dropset-math-core`** holds the consensus-critical
+arithmetic that **runs on-chain** — the `Price` codec, the pure matcher math,
+and the share/NAV/PnL kernels (the seeding `isqrt`, single-leg deposit
+sizing, the pro-rata withdrawal slice, and the perf-fee + realized-PnL
+formulas). The on-chain program depends on it directly (the `Price` codec via
+the `idl` feature; the matcher + share kernels through thin `&mut Vault`
+wrappers), so a bug here is an on-chain bug — keeping the crate small focuses
+the must-audit surface. **`dropset-interface`** holds the off-chain-only
+half — the account-layout mirror and the just-in-time book reconstruction
+(`simulate_swap`) that decode raw account bytes for routers, the `/orderbook`
+depth endpoint, and the WASM client. It **depends one-way on
+`dropset-math-core`** (no cycle) and never runs on-chain, so a bug there
+mis-predicts a quote rather than corrupting state — lower audit priority,
+parity-pinned by the conformance vectors rather than by the engine running
+the code.
 
-CPIs themselves live in a separate **on-chain `dropset-interface` crate**
-(`no_std`, entrypoint-free: instruction builders + account layouts + the
-`price-core` math), shared bit-for-bit across the engine, the router quoting
-adapters, the `/orderbook` depth endpoint, and any CPI parser. The SDK above is
-the off-chain artifact; CPIs do not live there.
+Both compile to **WASM** for any TypeScript consumer that must run the exact
+arithmetic. (The on-chain crates cannot target `wasm32`; a hand-mirrored port
+is rejected.) `make wasm` builds one package over `dropset-interface` whose
+`wasm` feature turns on math-core's, so it exports both the `simulate_swap`
+binding and the `Price` codec bindings. Correctness is enforced by **shared
+conformance vectors run in both Rust and TS CI**, generated from the engine's
+reference traces; the vectors pin **both** the numeric outputs **and** the
+chosen wire encoding (open: f) — or scope the first freeze to math and defer
+wire-encoding conformance until (f) lands.
+
+On-chain CPI builders (instruction builders + account layouts for a `no_std`,
+entrypoint-free CPI parser, shared with the engine and any router doing an
+on-chain integration) remain a separate future concern; the SDK above is the
+off-chain artifact and CPIs do not live there.
 
 ______________________________________________________________________
 

@@ -35,7 +35,7 @@ jobs:
         sdk/ts/src/generated sdk/rs/src/generated
     # The checked-in conformance vectors are generated artifacts that only
     # get *consumed* by the tests below — nothing re-derives them.
-    # Regenerate from the price-core examples and fail on drift, so a
+    # Regenerate from the math-core examples and fail on drift, so a
     # hand-edited vector or an un-regenerated generator / `Price` change
     # can't pin stale expectations while CI stays green.
     - name: 'Conformance vectors are fresh'
@@ -44,9 +44,10 @@ jobs:
     - run: 'pnpm --filter @dropset/sdk run check'
     - run: 'pnpm --filter @dropset/sdk test'
     # Off-chain Rust crates (no program .so needed): unit tests + the
-    # price-core conformance vectors, plus the WASM target builds.
-    - run: 'cargo test -p dropset-price-core -p dropset-sdk'
-    - run: 'cargo build -p dropset-price-core --features wasm --target
+    # math-core conformance vectors, plus the WASM target build over
+    # `dropset-interface` (its `wasm` feature pulls in math-core's).
+    - run: 'cargo test -p dropset-math-core -p dropset-interface -p dropset-sdk'
+    - run: 'cargo build -p dropset-interface --features wasm --target
             wasm32-unknown-unknown'
 name: 'SDK'
 'on':

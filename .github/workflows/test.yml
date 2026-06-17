@@ -86,7 +86,7 @@ jobs:
       name: 'Restore committed program keypair'
       run: 'git checkout -- target/deploy/dropset-keypair.json'
     # Builds the program (.so) and runs the whole Rust workspace test
-    # suite — including the price-core conformance vectors and the
+    # suite — including the math-core conformance vectors and the
     # engine-vs-SDK litesvm conformance (tests/sdk_conformance.rs).
     - if: |
         needs.changes.outputs.code == 'true'

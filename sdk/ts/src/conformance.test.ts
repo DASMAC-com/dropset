@@ -1,7 +1,7 @@
 /**
  * Verify the TS `Price` codec against the shared conformance vectors —
  * the same `sdk/conformance/price_vectors.json` the Rust side checks
- * (sdk/price-core/tests/conformance.rs). This pins the TS hand-written
+ * (sdk/math-core/tests/conformance.rs). This pins the TS hand-written
  * codec to the engine's arithmetic.
  *
  * Run: `pnpm --filter @dropset/sdk test`.
