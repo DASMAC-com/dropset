@@ -199,9 +199,42 @@ all changes are committed and pushed.
    git log main..HEAD --oneline
    ```
 
+   **Brief every sub-agent on the shell rules.**
+   Sub-agents don't inherit this project's `CLAUDE.md`
+   shell conventions, so left to themselves they reach
+   for `find / …`, `sed -n '…p' … | grep`, `cat`, and
+   other compounds that can't reduce to an allow-rule
+   and re-prompt on **every** run — the exact churn
+   this skill exists to avoid. Prepend this standing
+   brief to **each** Agent prompt (the review agents
+   here *and* the cross-check agent in step 6):
+
+   > - You are a **read-only reviewer**. The full diff
+   >   and commit log are included below — review from
+   >   them; you rarely need a shell at all.
+   > - To inspect repo files, use the **Read / Grep /
+   >   Glob** tools — never `cat` / `head` / `tail` /
+   >   `sed` / `awk` / `find` / `grep` in Bash.
+   > - Stay **inside the repo**. Never search the
+   >   filesystem (`find / …`, `~/.cargo`,
+   >   `~/.claude/projects/…`) or slice transcript /
+   >   tool-result files; toolchain and dependency
+   >   sources are out of scope for a diff review. If
+   >   you genuinely need a library's source, say so in
+   >   your findings — don't scan for it.
+   > - **One bare command per Bash call** — no pipes,
+   >   `&&`, `;`, command substitution `$(…)`,
+   >   redirects, or heredocs. Each call must reduce to
+   >   a `prefix:*` allow-rule.
+
+   Pass the `git diff main..HEAD` and `git log` output
+   you already collected **inline** in each prompt, so
+   no agent re-fetches them by shelling out.
+
    Spawn parallel sub-agents via the `Agent` tool
    (single message, multiple calls) to review the
-   diff. At minimum:
+   diff — each with the brief above prepended. At
+   minimum:
 
    - **Correctness** — logic errors, off-by-ones,
      unhandled edge cases, incorrect assumptions,
@@ -236,8 +269,9 @@ all changes are committed and pushed.
 
 1. **Adversarial cross-check.** Spawn a fresh
    sub-agent that receives the collected findings
-   and the diff, and is told to act
-   adversarially:
+   and the diff (prepend the step-5 reviewer brief to
+   its prompt too, and pass the diff inline), and is
+   told to act adversarially:
 
    - Challenge weak or speculative findings.
      Flag false positives.
@@ -474,6 +508,26 @@ all changes are committed and pushed.
    affect the PR diff or its ready state, so run it
    regardless of the gate outcome.
 
+   **Account for what the review agents requested.**
+   The diff-review and cross-check agents (steps 5–6)
+   run in this session, so every command they made you
+   approve is part of this run's churn. Tell
+   `/firm-perms` to fold those in too — its harvest
+   covers sub-agent approvals, not just commands you
+   typed. Two outcomes, and report both:
+
+   - A request that **can** be firmed (a bare command
+     that just needed a `:*` glob) gets generalized
+     and propagated like any other.
+   - A request that **can't** — a `find / … | head`, a
+     `sed … | grep`, a heredoc — is malformed, not
+     missing a glob; `/firm-perms` sets it aside. When
+     it does, that's a signal the **step-5 reviewer
+     brief leaked**: an agent emitted shell the brief
+     forbids. Tighten the brief (or the prompt) so the
+     pattern stops recurring, rather than trying to
+     allow-list it.
+
 1. **Report.** Print a structured summary:
 
    - Linear coverage: the resolved tag, and each
@@ -498,6 +552,10 @@ all changes are committed and pushed.
      rule / reference the diff outdated, with the
      suggested correction.
    - Issues found / fixed / remaining.
+   - Permissions: rules `/firm-perms` generalized this
+     run, and any malformed request it set aside —
+     naming the review agent that emitted it (step 5
+     brief leak) so the prompt can be tightened.
    - Remaining warnings and nits for human review,
      each with `file:line` and rationale.
    - Whether the PR was marked ready.

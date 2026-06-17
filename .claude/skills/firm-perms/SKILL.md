@@ -156,6 +156,16 @@ call, not a reason to widen rules.)
    the generalized rule it *should* have been (per the
    rules above) and add it to the working set.
 
+   **Sub-agent approvals count too.** A command a
+   spawned sub-agent ran (e.g. `review-pr`'s diff-review
+   and cross-check agents) still surfaced to *you* for
+   approval, so it's part of this session's churn —
+   harvest it exactly like a command you typed. When
+   such an approval is **malformed** and gets set aside
+   (below), name the agent that emitted it in the
+   summary, so its prompt or brief can be tightened at
+   the source.
+
    Exception: an approval that re-prompts because it's
    **malformed** — a heredoc, a `cd … &&` compound, a
    `python3` / `jq` one-liner, anything CLAUDE.md's
