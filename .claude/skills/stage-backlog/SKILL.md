@@ -129,6 +129,15 @@ For every issue, parse from its description:
   reversible-safe and what `audit-loop` reads back for
   dedup.
 
+Also read each issue's **declared blocking relations** —
+the native `blockedBy` and `blocks` edges Linear stores
+on the issue (request `includeRelations: true` when
+reading). These are *authoritative* dependencies a human
+or a filing skill asserted on purpose, distinct from any
+ordering step 2 infers from overlapping files. Keep the
+full set per issue — step 2 nests the tree on them and
+step 3 carries them across a merge.
+
 **2. Group into the fewest parallel, file-disjoint
 sessions.** Arrange the open issues for **concurrent
 Claude sessions** — the plan's whole purpose is to show
@@ -159,7 +168,13 @@ what can run in parallel, not just a linear order:
   build on goes first and is flagged; an issue that
   defines a contract (doc/spec) precedes code that
   depends on it; an `arch:` proposal that subsumes
-  single-file nits comes before those nits.
+  single-file nits comes before those nits. A
+  **declared** `blockedBy` / `blocks` relation (step 1)
+  is the strongest signal of all: it's an authoritative
+  edge, so honour it **even when the two sessions' file
+  sets are disjoint** — a human or filing skill asserted
+  the order on purpose, and unlike file-overlap it
+  doesn't go away just because the work doesn't collide.
 
 - **Express dependencies as a tree, not waves.** Don't
   group into numbered waves — that barriers a whole level
@@ -170,11 +185,15 @@ what can run in parallel, not just a linear order:
   directly follows. A child can start the moment its
   parent's PR merges — independent of the parent's
   siblings — which is the point of nesting over waves. A
-  blocker is real only when the two sessions' file sets
-  collide (e.g. a DRY extraction over handlers a
-  correctness fix is still editing) or one defines a
-  contract the other consumes; if file sets are disjoint,
-  they're both top-level. When a session has **several**
+  blocker is real when **any** of three holds: the two
+  sessions' file sets collide (e.g. a DRY extraction over
+  handlers a correctness fix is still editing), one
+  defines a contract the other consumes, or one issue
+  carries a **declared** `blockedBy` / `blocks` edge to
+  the other (step 1). A declared edge nests regardless of
+  files; absent all three — disjoint files, no contract,
+  no declared edge — they're both top-level. When a
+  session has **several**
   blockers across different branches, nest it under the
   last-to-settle one and note the others inline ("also
   after ENG-###"); a big cross-cutting refactor
@@ -198,11 +217,20 @@ issue). For each such session:
   under a per-source sub-heading (e.g.
   `### From ENG-465`) **and a `**Fingerprint**:` line for
   every fingerprint across the whole group** (the union —
-  one line each, deduped). Confirm the save succeeded
-  before touching any other issue. This ordering is the
-  safety guarantee: if the run is interrupted here, the
-  member issues still exist and still hold their own
-  state, so nothing is lost.
+  one line each, deduped). In the **same** save, fold in
+  the group's **declared blocking relations** (step 1):
+  union every member's `blockedBy` / `blocks` edges onto
+  the canonical issue (`blockedBy: [...]`, `blocks: [...]`
+  — both append-only), so an edge a member carried isn't
+  silently lost when that member becomes a Duplicate. Drop
+  any edge that points *within* the same session (member
+  A blocking member B when both merge here) — it would
+  become a self-edge once they're one issue; keep only
+  edges to issues outside the group. Confirm the save
+  succeeded before touching any other issue. This ordering
+  is the safety guarantee: if the run is interrupted here,
+  the member issues still exist and still hold their own
+  state and relations, so nothing is lost.
 
 - **Then, and only then, close the other members.** For
   each non-canonical member, mark it a duplicate of the
@@ -231,22 +259,28 @@ sub-agent brief from `CLAUDE.md`** (→ "Briefing
 sub-agents") to its prompt — the skeptic doesn't
 inherit `CLAUDE.md`, so without the brief it reaches
 for the `find` / `sed … | grep` / `cat` compounds that
-re-prompt every run. Pass the drafted dependency tree
-and each issue's files **inline** in the prompt (as the
-brief requires), so it never shells out to re-fetch
-them. Tell it to hunt for:
+re-prompt every run. Pass the drafted dependency tree,
+each issue's files, **and each issue's declared
+`blockedBy` / `blocks` edges** (step 1), **inline** in the
+prompt (as the brief requires), so it never shells out to
+re-fetch them. Tell it to hunt for:
 
 - two **top-level** (or sibling) sessions that actually
   share a file — they'd conflict on merge, so one must
   nest under the other;
 - a **spurious** nesting — a child whose files are
-  disjoint from its parent's, so it was never blocked and
-  should be top-level (ready to start now);
+  disjoint from its parent's **and** that carries no
+  declared `blockedBy` edge to it, so it was never blocked
+  and should be top-level (ready to start now). A declared
+  edge is authoritative: a disjoint-file child is **not**
+  spurious when it declares the parent as a blocker;
 - a dependency ordered backwards — a fix nested above the
-  foundational change or contract (doc/spec) it relies on;
+  foundational change or contract (doc/spec) it relies on,
+  or nested opposite to a declared `blockedBy` edge;
 - a **missing** cross-branch blocker — a child with
   another open blocker not captured by its nesting or an
-  "also after ENG-###" note;
+  "also after ENG-###" note, including a **declared**
+  `blockedBy` edge the tree failed to nest on;
 - over- or under-compression — issues split across PRs
   that should share one (per the minimal-PR rule), or
   disjoint issues merged into one session that needlessly
@@ -301,9 +335,13 @@ Use literal newlines, not `\n`. Shape:
   headings, "start now" / "after Wave 1" labels, or
   parallel/disjoint annotations. The dependency a child
   expresses is the nesting itself; only add a short why
-  ("shares the withdraw handlers") or an "also after
-  ENG-###" when a second blocker isn't visible from the
-  tree.
+  when it isn't self-evident from the tree. Distinguish
+  the **kind** of blocker in that why: a **declared**
+  `blockedBy` edge reads "blocked by ENG-### (declared)",
+  an inferred one names the cause ("shares the withdraw
+  handlers", "consumes the interface.md contract"). Use
+  "also after ENG-###" when a second blocker isn't visible
+  from the tree.
 
 - No footer — drop the severity / compression summary
   lines; the issue tags carry severity, and the tree
@@ -338,11 +376,26 @@ single iteration runs and the skill simply exits.
 ## Notes
 
 - **Reversible-safe merges.** Step 3's write-before-close
-  ordering means the union of fingerprints lands on the
-  survivor before any member is closed, so `audit-loop`
-  dedup (which reads every `**Fingerprint**:` line on
-  every project issue) keeps recognizing a folded-in
-  finding and never refiles it.
+  ordering means the union of fingerprints **and declared
+  relations** lands on the survivor before any member is
+  closed, so `audit-loop` dedup (which reads every
+  `**Fingerprint**:` line on every project issue) keeps
+  recognizing a folded-in finding and never refiles it,
+  and no `blockedBy` / `blocks` edge is dropped when a
+  member becomes a Duplicate.
+- **Relations are read, honoured, and preserved — never
+  manufactured.** This skill treats a declared `blockedBy`
+  / `blocks` edge as authoritative input to the tree
+  (step 2) and carries edges across a merge (step 3), but
+  it does **not** write its *inferred* nesting back as
+  relations. File-overlap nesting ("these two can't run
+  concurrently") is a scheduling artifact, not a true
+  dependency, so persisting it as a Linear `blockedBy`
+  would assert a blocker that doesn't really exist. The
+  durable record of real dependencies is what the filing
+  skills (`linear-task`, `audit-scope`, `audit-loop`) set
+  at file time; the tree is this document's rendering of
+  them, not their source.
 - **No umbrella issue.** This skill, plus the plain
   Backlog and the document, fully replace the old ENG-452
   parent. Nothing here parents issues to anything.
