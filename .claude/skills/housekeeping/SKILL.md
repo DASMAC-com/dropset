@@ -1,6 +1,6 @@
 ---
 name: housekeeping
-description: One pass of day-to-day repo upkeep, run from the base repo root — prune the worktrees of already-merged PRs, run the cspell dictionary check and file any drift as a Backlog task, and restage the backlog. Drive it with `/loop 30m housekeeping` while developing, or run it once at the start of the day.
+description: One pass of day-to-day repo upkeep, run from the base repo root — fast-forward main so the run uses the latest skills, prune the worktrees of already-merged PRs, run the cspell dictionary check and file any drift as a Backlog task, and restage the backlog. Drive it with `/loop 30m housekeeping` while developing, or run it once at the start of the day.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -9,7 +9,9 @@ user-invocable: true
 
 A single iteration of routine repo upkeep — the
 chores that pile up while you develop but don't
-belong to any one PR. It does three things:
+belong to any one PR. It first fast-forwards `main`
+so the pass runs on the latest committed skills, then
+does three things:
 
 1. **Prune merged worktrees** — remove the local
    worktree (and branch) of every PR that has
@@ -69,9 +71,10 @@ so; don't guess an id.
 
 ## Steps
 
-**1. Confirm you're at the base repo root.** List the
-worktrees and read the paths out of the output
-yourself (no command substitution):
+**1. Confirm you're at the base repo root, then
+fast-forward `main`.** List the worktrees and read the
+paths out of the output yourself (no command
+substitution):
 
 ```sh
 git worktree list --porcelain
@@ -84,6 +87,28 @@ tell the user to run `housekeeping` from the base
 repo root — do not `cd` there yourself (a `cd … &&`
 compound can't reduce to an allow-rule). Keep the
 parsed worktree list; step 2 reuses it.
+
+Once confirmed, fast-forward `main` so the pass runs
+on the latest committed code — the up-to-date version
+of **this** skill and of the sub-skills it invokes
+(`cspell-audit`, `stage-backlog`), rather than whatever
+was current when the worktree was last synced. The base
+repo has `main` checked out, so pull it in place (a bare
+`git pull` reduces to the `Bash(git pull:*)` allow-rule):
+
+```sh
+git pull --ff-only
+```
+
+If the fast-forward fails (the base repo has diverging
+local commits or a dirty tree), warn and continue with
+what's checked out — never force or reset; this skill
+makes no source edits. One honest caveat: the running
+invocation already loaded its own instructions before
+the pull, so a change to *this* skill takes effect on
+the **next** iteration; the sub-skills invoked later in
+this same pass (via the Skill tool) are read fresh and
+do pick up the refreshed version immediately.
 
 **2. Prune merged worktrees.** For every worktree in
 the list **other than** the `refs/heads/main` base,
