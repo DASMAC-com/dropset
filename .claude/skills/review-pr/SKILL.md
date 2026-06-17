@@ -1,6 +1,6 @@
 ---
 name: review-pr
-description: Adversarial pre-review — verify the Linear task's checklist is fully addressed, lint, catalogue issues, fix what's mechanical, and ready the PR for human review.
+description: Adversarial pre-review — verify the Linear task's checklist is fully addressed, lint, catalogue issues, fix what's mechanical, ready the PR, and wait for GitHub CI to pass before marking the Linear issue In Review so the human can merge with nothing left to check.
 user-invocable: true
 ---
 
@@ -14,7 +14,11 @@ Act as an adversarial reviewer before the human
 looks at the PR. Run lint, audit the diff,
 catalogue every issue, fix what can be fixed
 mechanically, and mark the PR ready only when
-it's clean.
+it's clean. Then wait for the real GitHub CI to go
+green before moving the Linear issue to In Review and
+reporting done — so when this skill finishes, the
+human can merge (or let "Merge when ready" land it)
+with nothing left to check.
 
 Run this after autonomous work is complete and
 all changes are committed and pushed.
@@ -199,9 +203,42 @@ all changes are committed and pushed.
    git log main..HEAD --oneline
    ```
 
+   **Brief every sub-agent on the shell rules.**
+   Sub-agents don't inherit this project's `CLAUDE.md`
+   shell conventions, so left to themselves they reach
+   for `find / …`, `sed -n '…p' … | grep`, `cat`, and
+   other compounds that can't reduce to an allow-rule
+   and re-prompt on **every** run — the exact churn
+   this skill exists to avoid. Prepend this standing
+   brief to **each** Agent prompt (the review agents
+   here *and* the cross-check agent in step 6):
+
+   > - You are a **read-only reviewer**. The full diff
+   >   and commit log are included below — review from
+   >   them; you rarely need a shell at all.
+   > - To inspect repo files, use the **Read / Grep /
+   >   Glob** tools — never `cat` / `head` / `tail` /
+   >   `sed` / `awk` / `find` / `grep` in Bash.
+   > - Stay **inside the repo**. Never search the
+   >   filesystem (`find / …`, `~/.cargo`,
+   >   `~/.claude/projects/…`) or slice transcript /
+   >   tool-result files; toolchain and dependency
+   >   sources are out of scope for a diff review. If
+   >   you genuinely need a library's source, say so in
+   >   your findings — don't scan for it.
+   > - **One bare command per Bash call** — no pipes,
+   >   `&&`, `;`, command substitution `$(…)`,
+   >   redirects, or heredocs. Each call must reduce to
+   >   a `prefix:*` allow-rule.
+
+   Pass the `git diff main..HEAD` and `git log` output
+   you already collected **inline** in each prompt, so
+   no agent re-fetches them by shelling out.
+
    Spawn parallel sub-agents via the `Agent` tool
    (single message, multiple calls) to review the
-   diff. At minimum:
+   diff — each with the brief above prepended. At
+   minimum:
 
    - **Correctness** — logic errors, off-by-ones,
      unhandled edge cases, incorrect assumptions,
@@ -236,8 +273,9 @@ all changes are committed and pushed.
 
 1. **Adversarial cross-check.** Spawn a fresh
    sub-agent that receives the collected findings
-   and the diff, and is told to act
-   adversarially:
+   and the diff (prepend the step-5 reviewer brief to
+   its prompt too, and pass the diff inline), and is
+   told to act adversarially:
 
    - Challenge weak or speculative findings.
      Flag false positives.
@@ -422,8 +460,7 @@ all changes are committed and pushed.
      resolves to `MERGEABLE` or `CONFLICTING`.
 
 1. **Gate.** Mark the PR ready only when **every**
-   CI-mirroring check is green so the human can
-   safely approve auto-merge: **zero blocking
+   local CI-mirroring check is green: **zero blocking
    issues** (including every Linear checklist item
    addressed), `make lint` passes — real violations
    resolved, with any hook that couldn't run locally
@@ -441,26 +478,82 @@ all changes are committed and pushed.
    gh pr ready <number>
    ```
 
-   When — and only when — the PR is marked ready, move
-   the Linear issue (the tag resolved in step 3) to
-   **In Review** so the board reflects it's awaiting human
-   review — the final transition after step 3 set it In
-   Progress and ticked the delivered items. Skip if no
-   tag was resolvable:
-
-   ```txt
-   mcp__claude_ai_Linear__save_issue(
-     id: "<ENG-###>",
-     state: "In Review"
-   )
-   ```
+   Marking it ready (out of draft) is what lets the
+   human enable GitHub's **"Merge when ready"**
+   auto-merge while the real CI finishes. But ready is
+   **not** the end of this skill: the Linear issue does
+   **not** move to In Review, and the run does **not**
+   report success, until the actual CI is green — that's
+   the next step.
 
    If any blocking issue remains — an unaddressed
    Linear checklist item, failing or unverified
    tests, a non-conforming title, or a merge
-   conflict with `main` — leave the PR in draft and the
-   issue in its current state (do **not** move it to
-   In Review).
+   conflict with `main` — do **not** mark the PR ready.
+   Leave it in draft and the issue in its current state,
+   **skip the CI wait below**, and report the blockers.
+
+1. **Wait for GitHub CI to pass, then move the issue
+   to In Review.** The local checks only *mirror* CI;
+   the authoritative signal is the real run on the
+   pushed commits — and when the toolchain was absent
+   locally (tests / IDL reported unverifiable), CI is
+   the *only* signal. This repo runs CI on the PR even
+   while it was a draft (that's how `init-pr` warms the
+   caches), so the checks are already in flight. Watch
+   them to completion, polling on an interval so the
+   output stays quiet:
+
+   ```sh
+   gh pr checks <number> --watch --interval 30
+   ```
+
+   `--watch` blocks until every check finishes and exits
+   **non-zero if any failed**. Two operational notes:
+
+   - CI can outlast a single Bash timeout. If the call
+     is killed before the checks settle, just run it
+     again — watching is resumable and idempotent, so
+     re-invoke until it returns a final result.
+   - If `gh` reports **no checks** on the branch, there
+     is nothing to wait on — note that in the report and
+     treat it as green rather than blocking forever.
+
+   Then branch on the outcome:
+
+   - **All checks green** → move the Linear issue (the
+     tag resolved in step 3) to **In Review** so the
+     board reflects it's awaiting human review — the
+     final transition after step 3 set it In Progress
+     and ticked the delivered items. Skip only if no tag
+     was resolvable:
+
+     ```txt
+     mcp__claude_ai_Linear__save_issue(
+       id: "<ENG-###>",
+       state: "In Review"
+     )
+     ```
+
+     The PR is now ready **and** CI-green: the human can
+     merge it (or let "Merge when ready" land it) without
+     waiting on anything else.
+
+   - **Any check failed** → the PR is not actually clean,
+     so don't leave it reading as merge-ready. Catalogue
+     each failing check as **blocking** (name it and its
+     log URL from the `gh pr checks` output), convert the
+     PR back to draft — which also cancels any pending
+     "Merge when ready" — and leave the Linear issue in
+     its current state (do **not** move it to In Review):
+
+     ```sh
+     gh pr ready <number> --undo
+     ```
+
+     Report the failures and do **not** report the run
+     as finished; the user fixes them and re-runs
+     `/review-pr`.
 
 1. **Firm up the permission allowlist.** A review
    run approves a lot of one-off commands, so it is
@@ -472,7 +565,27 @@ all changes are committed and pushed.
    housekeeping on the gitignored
    `.claude/settings.local.json` — it does **not**
    affect the PR diff or its ready state, so run it
-   regardless of the gate outcome.
+   regardless of the gate or CI outcome.
+
+   **Account for what the review agents requested.**
+   The diff-review and cross-check agents (steps 5–6)
+   run in this session, so every command they made you
+   approve is part of this run's churn. Tell
+   `/firm-perms` to fold those in too — its harvest
+   covers sub-agent approvals, not just commands you
+   typed. Two outcomes, and report both:
+
+   - A request that **can** be firmed (a bare command
+     that just needed a `:*` glob) gets generalized
+     and propagated like any other.
+   - A request that **can't** — a `find / … | head`, a
+     `sed … | grep`, a heredoc — is malformed, not
+     missing a glob; `/firm-perms` sets it aside. When
+     it does, that's a signal the **step-5 reviewer
+     brief leaked**: an agent emitted shell the brief
+     forbids. Tighten the brief (or the prompt) so the
+     pattern stops recurring, rather than trying to
+     allow-list it.
 
 1. **Report.** Print a structured summary:
 
@@ -492,12 +605,21 @@ all changes are committed and pushed.
      unverified locally (toolchain absent).
    - Title status: passes `Semantic PR` or not.
    - Merge status: `MERGEABLE` or `CONFLICTING`.
-   - Linear status: moved to **In Review** (PR marked
-     ready), or left unchanged (still draft / no tag).
+   - CI status: all GitHub checks green, or each failed
+     check with its log URL, or "no checks" / still
+     pending — the run is **not** finished until CI is
+     green.
+   - Linear status: moved to **In Review** (PR ready and
+     CI green), or left unchanged (blockers, CI failing
+     or pending, or no tag resolvable).
    - `CLAUDE.md` freshness: in sync, or each stale
      rule / reference the diff outdated, with the
      suggested correction.
    - Issues found / fixed / remaining.
+   - Permissions: rules `/firm-perms` generalized this
+     run, and any malformed request it set aside —
+     naming the review agent that emitted it (step 5
+     brief leak) so the prompt can be tightened.
    - Remaining warnings and nits for human review,
      each with `file:line` and rationale.
    - Whether the PR was marked ready.

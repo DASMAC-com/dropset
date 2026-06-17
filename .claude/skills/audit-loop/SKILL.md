@@ -297,18 +297,13 @@ regularly without randomness in the control flow:
 `arch` is the heaviest pass (it scans the whole
 system); it fires once every three iterations.
 
-**Dictionary hygiene (periodic).** Independently of the
-rotation above — dictionary drift is slow, so not every
-cycle — when `iteration` is a multiple of 10, also invoke
-the `cspell-audit` skill in **delegated** mode (read-only
-— it returns violations, edits nothing). For each returned violation
-(a `cfg/dictionary.txt` word used in fewer than two
-files), file a Backlog issue through the same
-`linear-task` flow as step 9 — env-resolved destination,
-priority 3, and a `**Fingerprint**: dictionary:<word>`
-line so it dedups (step 8) and counts toward
-`filed_total`. Then continue with this iteration's
-rotation mode as normal.
+**Dictionary hygiene is not part of this loop.** The
+periodic `cspell-audit` check moved to the
+`housekeeping` skill, which runs it read-only and
+files the drift as Backlog tasks. Do **not** re-add a
+cspell pass here — `audit-loop` audits source files,
+PRs, and architecture; dictionary upkeep is
+`housekeeping`'s job.
 
 **3. FILE mode — one non-generated file (deterministic pick).**
 
@@ -540,13 +535,20 @@ the shared destination. There is **no umbrella issue** —
 the project Backlog is the queue, and `stage-backlog`
 turns it into a PR plan later. Resolve the
 destination IDs from the environment exactly as
-`linear-task` does — never hard-code them — with one
-bare command (reduces to a `Bash(printenv:*)`
-allow-rule):
+`linear-task` does — never hard-code them — with a
+bare `printenv` per variable (each reduces to the
+same `Bash(printenv:*)` allow-rule):
 
 ```sh
-printenv LINEAR_TEAM_ID LINEAR_PROJECT_ID LINEAR_ASSIGNEE_ID
+printenv LINEAR_TEAM_ID
+printenv LINEAR_PROJECT_ID
+printenv LINEAR_ASSIGNEE_ID
 ```
+
+Query each variable on its own line — macOS / BSD
+`printenv` honors only its first operand, so a
+combined `printenv A B C` returns just `A` and you'd
+wrongly conclude the rest are unset.
 
 Then call `mcp__claude_ai_Linear__save_issue` (no
 `id`):
@@ -701,7 +703,7 @@ the PR plan itself — staging is `stage-backlog`'s job.
 
 - **Invoke the `stage-backlog` skill** (via the Skill
   tool) to (re)stage the Backlog onto the
-  implementation-sequence document: it reads every
+  **Task Staging** document: it reads every
   Backlog issue — including the ones this campaign just
   filed — groups them into the fewest parallel,
   file-disjoint PR sessions, merges the issues that

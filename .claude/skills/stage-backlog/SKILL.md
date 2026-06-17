@@ -1,6 +1,6 @@
 ---
 name: stage-backlog
-description: One iteration of keeping the Dropset implementation-sequence document in sync with the Linear Backlog — read every Backlog issue, group them into the fewest parallel, file-disjoint PR sessions, merge issues that belong in one PR into a single canonical issue (write-before-close so no state is dropped), adversarially cross-check the grouping, then rewrite the implementation-sequence document with live-status issue links. Open issues only; closed ones drop off. Drive it with `/loop stage-backlog` or run it once.
+description: One iteration of keeping the Dropset Task Staging document in sync with the Linear Backlog — read every Backlog issue, group them into the fewest parallel, file-disjoint PR sessions, merge issues that belong in one PR into a single canonical issue (write-before-close so no state is dropped), adversarially cross-check the grouping, then rewrite the Task Staging document with live-status issue links. Open issues only; closed ones drop off. Drive it with `/loop stage-backlog` or run it once.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -8,9 +8,9 @@ user-invocable: true
 # `stage-backlog`
 
 Run **one iteration** of staging the Dropset Linear
-Backlog onto the **implementation-sequence document**
-and exit. Agent-filed findings (`audit-loop`) and
-hand-filed to-dos (`linear-task`) all land as plain
+Backlog onto the **Task Staging** document and exit.
+Agent-filed findings (`audit-loop`) and hand-filed
+to-dos (`linear-task`) all land as plain
 **Backlog** issues with no parent. This skill is the
 thing that turns that flat queue into a plan: it
 groups the issues into the fewest parallel,
@@ -25,32 +25,50 @@ document is the plan.
 
 ## Where the plan lives
 
-The plan is the Linear document **implementation-sequence**:
+The plan is the Linear document **Task Staging**. Its
+id is **not** hard-coded here —
+resolve it at run time from the environment, on the
+same bare-`printenv` rule as the filing destination
+(see "Filing destination" below):
 
-- URL: `https://linear.app/dasmac/document/implementation-sequence-9564c1e7cb56`
-- id: `dbc36954-3269-4ea6-8651-c4d6ef5344bf`
+```sh
+printenv LINEAR_TASK_STAGING_DOC_ID
+```
+
+If it's empty, stop and tell the user to export it in
+their shell profile (`~/.zshrc`); don't guess the id.
 
 It is rewritten in full each run (`save_document` with
-that `id`) — never appended to, so the skill is
+that id) — never appended to, so the skill is
 idempotent and never stacks duplicates.
 
 ## Filing destination (shared with `linear-task`)
 
 The same fixed destination every issue uses. Resolve
 the IDs at run time from the environment exactly as
-`linear-task` does — never hard-code them — with one
-bare command (reduces to a `Bash(printenv:*)`
-allow-rule):
+`linear-task` does — never hard-code them — with a
+bare `printenv` per variable (each reduces to the
+same `Bash(printenv:*)` allow-rule):
 
 ```sh
-printenv LINEAR_TEAM_ID LINEAR_PROJECT_ID LINEAR_ASSIGNEE_ID
+printenv LINEAR_TEAM_ID
+printenv LINEAR_PROJECT_ID
+printenv LINEAR_ASSIGNEE_ID
+printenv LINEAR_TASK_STAGING_DOC_ID
 ```
 
-| Field    | Env var              |
-| -------- | -------------------- |
-| Team     | `LINEAR_TEAM_ID`     |
-| Project  | `LINEAR_PROJECT_ID`  |
-| Assignee | `LINEAR_ASSIGNEE_ID` |
+| Field       | Env var                      |
+| ----------- | ---------------------------- |
+| Team        | `LINEAR_TEAM_ID`             |
+| Project     | `LINEAR_PROJECT_ID`          |
+| Assignee    | `LINEAR_ASSIGNEE_ID`         |
+| Staging doc | `LINEAR_TASK_STAGING_DOC_ID` |
+
+Query each variable on **its own** `printenv` line.
+Do **not** combine them into one `printenv A B C`:
+macOS / BSD `printenv` honors only its **first**
+operand, so the combined form prints just the first
+value and you'd wrongly conclude the rest are unset.
 
 If any variable is empty, stop and tell the user to
 export it in their shell profile (`~/.zshrc`).
@@ -81,8 +99,8 @@ commit in; it never authors a source edit.
 This skill **never authors source edits** and never
 commits or pushes. Its only writes are to Linear: it
 merges Backlog issues (updating descriptions and
-marking duplicates) and rewrites the
-implementation-sequence document. It produces no source
+marking duplicates) and rewrites the **Task
+Staging** document. It produces no source
 diff of its own.
 
 ## Steps
@@ -233,13 +251,14 @@ that changes which issues merge, redo step 3 for the
 affected sessions (write-before-close) before writing
 the document.
 
-**5. Rewrite the document.** Replace the
-implementation-sequence document in full (replace
-`content`, never append):
+**5. Rewrite the document.** Replace the **Task
+Staging** document in full (replace `content`,
+never append), passing the id resolved from
+`LINEAR_TASK_STAGING_DOC_ID`:
 
 ```txt
 mcp__claude_ai_Linear__save_document(
-  id: "dbc36954-3269-4ea6-8651-c4d6ef5344bf",
+  id: "<$LINEAR_TASK_STAGING_DOC_ID>",
   content: "…",
 )
 ```

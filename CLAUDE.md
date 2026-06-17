@@ -33,24 +33,38 @@
 ## Linear automation
 
 Skills that **file** Linear issues (`linear-task`, `stage-backlog`,
-`audit-loop`, `audit-scope`) resolve the filing destination — team,
-project, assignee — from **environment variables**, never hard-coded
-UUIDs. (Skills that only **update** an existing issue by id —
-`init-pr`, `review-pr` — need no destination.) Set them once in your
+`audit-loop`, `audit-scope`, `housekeeping`) resolve the filing
+destination — team, project, assignee — from **environment
+variables**, never hard-coded UUIDs. (Skills that only **update**
+an existing issue by id — `init-pr`, `review-pr` — need no
+destination.) Set them once in your
 shell profile (`~/.zshrc`):
 
 ```sh
 export LINEAR_TEAM_ID=…
 export LINEAR_PROJECT_ID=…
 export LINEAR_ASSIGNEE_ID=…
+# Used only by stage-backlog — the "Task Staging" document:
+export LINEAR_TASK_STAGING_DOC_ID=…
 ```
 
-Skills read them at run time with a single bare
-`printenv LINEAR_TEAM_ID LINEAR_PROJECT_ID LINEAR_ASSIGNEE_ID` — which
-reduces to a `Bash(printenv:*)` allow-rule, so it never re-prompts. A
-new Linear-filing skill must follow the same pattern: reference the
-variable **names**, and keep the resolved UUIDs out of every committed
-file.
+Skills read these at run time with a bare `printenv`, **one variable
+per call** — `printenv LINEAR_TEAM_ID`, then
+`printenv LINEAR_PROJECT_ID`, then `printenv LINEAR_ASSIGNEE_ID`. Do
+**not** fold them into one
+`printenv LINEAR_TEAM_ID LINEAR_PROJECT_ID LINEAR_ASSIGNEE_ID`: macOS /
+BSD `printenv` honors only its **first** operand, so the combined form
+returns just `LINEAR_TEAM_ID` and the skill wrongly concludes the
+other two are unset and halts. Each bare
+call still matches the same `Bash(printenv:*)` allow-rule, so none of
+them re-prompt. A new Linear-filing skill must follow the same
+pattern: reference the variable **names**, and keep the resolved
+UUIDs out of every committed file.
+
+`stage-backlog` additionally resolves `LINEAR_TASK_STAGING_DOC_ID`
+— the id of the Linear document it rewrites each run (the "Task
+Staging" document) — with its own bare `printenv`, on the same rule.
+It is not a filing destination, so the other skills don't need it.
 
 A worktree branch and its Linear issue **share one `ENG-###`
 number**: branch `eng-499` ↔ issue `ENG-499`. Skills resolve the

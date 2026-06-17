@@ -1,6 +1,6 @@
 ---
 name: cspell-audit
-description: Enforce dictionary hygiene — every word in cfg/dictionary.txt must be used in at least two files; a word used in only one file is moved to an inline cspell escape in that file and dropped from the global dictionary, unless the sole file can't host a comment (e.g. JSON). Fixes directly when invoked; audit-loop runs the same check read-only and files linear-task issues.
+description: Enforce dictionary hygiene — every word in cfg/dictionary.txt must be used in at least two files; a word used in only one file is moved to an inline cspell escape in that file and dropped from the global dictionary, unless the sole file can't host a comment (e.g. JSON). Fixes directly when invoked; housekeeping runs the same check read-only and files linear-task issues.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -111,10 +111,11 @@ matching entries (still report the rest).
      to drop the line (removing lines preserves the file's
      existing alphabetical order). If the plan is large,
      show it to the user before applying.
-   - **Delegated run (`audit-loop`):** edit **nothing**.
+   - **Delegated run (`housekeeping`):** edit **nothing**.
      Return the violations — word, file count, the sole
-     file, and the recommended action — so the loop files
-     them via `linear-task`. See "Use from audit-loop".
+     file, and the recommended action — so the caller
+     files them via `linear-task`. See "Use from
+     housekeeping".
 
 1. **Verify.** Run the spell check to confirm the tree is
    still clean after reconciliation — an escape in the
@@ -132,15 +133,15 @@ matching entries (still report the rest).
    words left in the dictionary because their file can't
    host a comment (JSON).
 
-## Use from `audit-loop`
+## Use from `housekeeping`
 
-`audit-loop` runs this check **occasionally** — dictionary
-drift is slow, so not every iteration. When it does, it
-invokes `cspell-audit` in delegated mode (read-only, no
-edits) and files each violation as its own Backlog issue
-through the `linear-task` flow (env-resolved destination,
-a `**Fingerprint**:` line so it dedups). Use
-`dictionary:<word>` as the fingerprint — stable across
-runs. This preserves `audit-loop`'s read-only guarantee:
-the loop never edits source, it just files the finding for
-a normal PR to fix.
+The `housekeeping` skill runs this check on its periodic
+pass — dictionary drift is slow, so it's upkeep, not part
+of the audit loop. It invokes `cspell-audit` in delegated
+mode (read-only, no edits) and files each violation as its
+own Backlog issue through the `linear-task` flow
+(env-resolved destination, a `**Fingerprint**:` line so it
+dedups). Use `dictionary:<word>` as the fingerprint —
+stable across runs. This keeps the housekeeping pass
+non-editing: it never touches source, it just files the
+finding for a normal PR to fix.
