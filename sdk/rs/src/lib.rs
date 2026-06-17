@@ -22,10 +22,13 @@ pub mod adapters;
 pub mod generated;
 pub mod quoting;
 
-// The solana-free arithmetic spine lives in `dropset-price-core` and is
-// re-exported here so `crate::{price,layout,matching}` (used throughout the
-// adapters and quoting) resolve, and downstream users get one import path.
-pub use dropset_price_core::{layout, matching, price};
+// The solana-free shared math is re-exported here so `crate::{price,
+// layout,matching}` (used throughout the adapters and quoting) resolve, and
+// downstream users get one import path. The `Price` codec + consensus math
+// live in `dropset-math-core`; the off-chain account-layout mirror + book
+// simulator live in `dropset-interface` (which depends on math-core).
+pub use dropset_interface::{layout, matching};
+pub use dropset_math_core::price;
 
 // The Codama renderer references some siblings as `crate::shared` /
 // `crate::types` (crate-root) and others as `crate::generated::types`.

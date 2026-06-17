@@ -1,18 +1,18 @@
 //! Pure, consensus-critical matcher math — the pieces the on-chain engine
 //! (`programs/dropset/src/instructions/swap.rs`) and the off-chain
-//! simulator ([`crate::matching`]) must compute byte-identically or a
-//! router quoting off the simulator produces fills the live engine won't
-//! honor.
+//! simulator (`dropset_interface::matching`) must compute byte-identically
+//! or a router quoting off the simulator produces fills the live engine
+//! won't honor.
 //!
 //! Only the *pure* arithmetic lives here: flush-level pricing, the
 //! size-bps fill cap, and the price-time sort key. The iteration / IO
 //! around them — walking the on-chain slab vs. reconstructing a book —
 //! stays distinct in each caller. This module is `core`-only (it pulls no
 //! `std`), so the on-chain program depends on it without the off-chain
-//! `simulate` surface.
+//! book-reconstruction surface in `dropset-interface`.
 
-use crate::layout::{BPS, PPM};
 use crate::price::Price;
+use crate::{BPS, PPM};
 
 /// Materialize an absolute-price `Price` from a reference price and a ppm
 /// offset. For asks: `ref × (PPM + offset) / PPM`. For bids:

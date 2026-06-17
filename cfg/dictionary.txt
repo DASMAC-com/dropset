@@ -64,6 +64,7 @@ retunable
 retune
 retuned
 retunes
+rlib
 sbpf
 serde
 significand

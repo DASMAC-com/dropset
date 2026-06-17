@@ -33,7 +33,7 @@ use anchor_spl_v2::{
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
 
-use dropset_price_core::matching_math::{flush_level_price, level_fill_atoms, sort_key};
+use dropset_math_core::matching_math::{flush_level_price, level_fill_atoms, sort_key};
 
 use crate::{
     errors::DropsetError,
@@ -267,7 +267,7 @@ pub struct Swap {
 /// check). We reject rather than silently clamp, which would mask the bug
 /// by shrinking the level's materialized size. The pricing
 /// (`flush_level_price`) and the cap itself are shared with the off-chain
-/// simulator via [`dropset_price_core::matching_math`] so the two can't
+/// simulator via [`dropset_math_core::matching_math`] so the two can't
 /// drift; the simulator pins the same contract from the other direction —
 /// on `size_bps > BPS` it yields an empty quote instead of a fill this
 /// handler would abort (conformance test in `tests/sdk_conformance.rs`).
