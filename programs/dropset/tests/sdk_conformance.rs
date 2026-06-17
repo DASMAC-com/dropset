@@ -263,6 +263,79 @@ fn sdk_simulate_swap_rejects_oversize_size_bps_other_side() {
 }
 
 #[test]
+fn sdk_simulate_swap_rejects_cyclic_vault_list() {
+    // A `Vault.next` that points back into the active DLL forms a cycle.
+    // The list ops keep the active list acyclic, so this is only reachable
+    // from corrupt account bytes — here a self-referential `next` on the
+    // seeded vault. The engine bounds its walk by `market.len()` steps and
+    // hard-rejects the whole `swap` with `CorruptVaultList`; the SDK's
+    // bounded `active_vaults` iterator would instead silently truncate and
+    // quote the levels it collected before the budget ran out. The
+    // simulator must refuse to quote, mirroring the engine's abort.
+    let mut f = Fixture::seeded(1_000_000, 1_000_000);
+    f.poke_vault_next(0, 0); // sector 0 -> sector 0
+
+    let data = market_bytes(&f);
+    let view = MarketView::load(&data).expect("SDK decodes the market account");
+    let q = simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1);
+    assert_eq!(
+        q,
+        Quote::default(),
+        "simulator must reject a cyclic vault list, not quote a partial fill"
+    );
+
+    let taker = f.funded_depositor(0, 500_000);
+    let err = f
+        .swap(
+            &taker,
+            SwapSide::Buy as u8,
+            500_000,
+            Price::INFINITY.as_u32(),
+            0,
+        )
+        .expect_err("engine must hard-reject a cyclic vault list");
+    common::assert_program_error(&err, dropset::DropsetError::CorruptVaultList);
+}
+
+#[test]
+fn sdk_simulate_swap_rejects_out_of_range_vault_next() {
+    // The other corruption class: a `next` that dangles past the slab tail
+    // rather than cycling. Pre-fix, the SDK's `active_vaults` walks the
+    // seeded vault, then stops dead when the out-of-range index misses the
+    // slab — quoting the one leg it already collected while the engine
+    // aborts. On this single-sector slab the dangling step also spends the
+    // one-step budget, so both sides actually trip the over-length guard
+    // (`steps_remaining > 0` / `steps == 0`) before the separate in-bounds
+    // check fires; either way the contract is identical — empty quote vs.
+    // `CorruptVaultList`. (`active_dll_is_corrupt`'s in-bounds branch
+    // mirrors the engine's own `require!((cur as usize) < len)`, which only
+    // a multi-sector list reaches first.)
+    let mut f = Fixture::seeded(1_000_000, 1_000_000);
+    f.poke_vault_next(0, 9_999); // far past any test slab, and not NULL_SECTOR
+
+    let data = market_bytes(&f);
+    let view = MarketView::load(&data).expect("SDK decodes the market account");
+    let q = simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1);
+    assert_eq!(
+        q,
+        Quote::default(),
+        "simulator must reject an out-of-range vault pointer"
+    );
+
+    let taker = f.funded_depositor(0, 500_000);
+    let err = f
+        .swap(
+            &taker,
+            SwapSide::Buy as u8,
+            500_000,
+            Price::INFINITY.as_u32(),
+            0,
+        )
+        .expect_err("engine must hard-reject an out-of-range vault pointer");
+    common::assert_program_error(&err, dropset::DropsetError::CorruptVaultList);
+}
+
+#[test]
 fn sdk_simulate_swap_with_taker_fee() {
     // A non-zero taker fee is retained on the output leg. The SDK reads it
     // from the market header and must net it out exactly as the engine does

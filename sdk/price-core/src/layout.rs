@@ -273,4 +273,40 @@ impl<'a> MarketView<'a> {
             Some((idx as u32, v))
         })
     }
+
+    /// Whether the active DLL is corrupt: a `next` pointer that runs out
+    /// of bounds, or a cycle / over-length chain that exhausts the
+    /// slab-length step budget before reaching [`NULL_SECTOR`]. Walks the
+    /// list exactly as [`active_vaults`](Self::active_vaults) does, but
+    /// *reports* the truncation that iterator hides — where `active_vaults`
+    /// silently ends on a bad pointer (and a caller would quote whatever
+    /// levels it had already collected), this surfaces it as a boolean.
+    ///
+    /// Mirrors the on-chain engine's two `CorruptVaultList` guards in
+    /// `swap.rs` (the `steps_remaining > 0` budget and the in-bounds
+    /// `(cur as usize) < len` check), so a caller can refuse to act on a
+    /// list the engine would abort the whole `swap` over — see
+    /// `crate::matching::simulate_swap`. Only fires on account bytes the
+    /// program never wrote: the DLL ops keep the active list acyclic and
+    /// in-bounds, so a cycle or dangling pointer requires corruption.
+    pub fn active_dll_is_corrupt(&self) -> bool {
+        let sectors = self.sectors;
+        let mut cur = self.header.head.get();
+        let mut steps = sectors.len();
+        while cur != NULL_SECTOR {
+            if steps == 0 {
+                // Step budget spent before NULL: a cycle or a chain longer
+                // than the slab. Engine: `require!(steps_remaining > 0)`.
+                return true;
+            }
+            steps -= 1;
+            if cur as usize >= sectors.len() {
+                // `next` points past the slab tail. Engine:
+                // `require!((cur as usize) < len)`.
+                return true;
+            }
+            cur = sectors[cur as usize].next.get();
+        }
+        false
+    }
 }
