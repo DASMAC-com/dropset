@@ -143,7 +143,7 @@ Concrete rules:
   allow-listed. Write the content to a throwaway file with the Write
   tool (e.g. under `/tmp`) and hand the command its path via the
   matching `--*-file` flag — `gh pr edit <n> --body-file /tmp/<f>.md`,
-  `git commit -F /tmp/<f>.txt` — so only a stable, glob-able path rides
+  `git commit -F /tmp/<f>.txt` — so only a stable, globbable path rides
   the command line and the call reduces to a `prefix:*` rule.
 - Keep a stable command + subcommand prefix (`pnpm lint …`,
   `cargo test …`, `git log …`) and put only the variable parts in the

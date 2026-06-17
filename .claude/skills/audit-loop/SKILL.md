@@ -406,9 +406,10 @@ whole-system pass explores widely, so the brief's
 shell discipline (Read/Grep/Glob, one bare globbable
 command per Bash call) is what keeps that exploration
 from re-prompting. Don't narrow it — ARCH mode is
-*meant* to range over every component. The lenses below use the program as the
-running example, but apply each to whatever
-components the registry lists:
+*meant* to range over every component. The lenses
+below use the program as the running example, but
+apply each to whatever components the registry
+lists:
 
 - **Layering & dependencies** — dependency
   direction, leaky abstractions, a layer reaching

@@ -75,7 +75,7 @@ pass.
    file). Instead, **Write** the description to a
    throwaway file under `/tmp` (e.g.
    `/tmp/pr-body-<branch>.md`) and hand `gh` its path
-   with `--body-file`, so only a stable, glob-able path
+   with `--body-file`, so only a stable, globbable path
    rides the command line:
 
    ```sh
