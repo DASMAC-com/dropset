@@ -4,6 +4,8 @@
 
 <!-- cspell:word rustc -->
 
+<!-- cspell:word globbable -->
+
 ## Commits and PRs
 
 - **Run `init-pr` first.** At the start of a worktree session,
@@ -226,17 +228,22 @@ own copy, so the wording stays in one place.
 
 **Prepend this standing brief to *every* `Agent` prompt:**
 
-> - You are a **read-only** agent. Everything you need to reason over
->   — a diff, a commit log, a set of issues — is included in this
->   prompt; work from it. You rarely need a shell at all.
-> - To inspect repo files, use the **Read / Grep / Glob** tools —
->   never `cat` / `head` / `tail` / `sed` / `awk` / `find` / `grep`
->   in Bash.
-> - Stay **inside the repo**. Never search the filesystem
->   (`find / …`, `~/.cargo`, `~/.claude/projects/…`) or slice
->   transcript / tool-result files; anything outside the repo is out
->   of scope. If you genuinely need something out of reach, say so in
->   your findings — don't scan for it.
+> - You are a **read-only** agent. The material you need to reason
+>   over — a diff, a commit log, a set of issues — is included in this
+>   prompt; start there, and you often won't need a shell at all.
+> - To inspect files, prefer the **Read / Grep / Glob** tools over
+>   `cat` / `head` / `tail` / `sed` / `awk` / `find` / `grep` in Bash —
+>   they don't prompt for in-workspace paths, and they search other
+>   directories too.
+> - **Exploring another repo or path is fine** — reach outside this
+>   worktree when the task needs it; approving a one-off read of a
+>   different repo is expected, not something to avoid. Just keep each
+>   access **globbable** so it approves once and won't re-prompt:
+>   address another checkout with `git -C <path> <subcommand>` (the
+>   subcommand immediately after the path, no `cd`), or use Read /
+>   Grep / Glob. What to avoid is the **un-globbable** shape — a
+>   `find / …` sweep, or several `git -C …` calls strung together with
+>   `&&` / `|` / `;` into one compound that can't reduce to a rule.
 > - **One bare command per Bash call** — no pipes, `&&`, `;`, command
 >   substitution `$(…)`, redirects, or heredocs. Each call must reduce
 >   to a `prefix:*` allow-rule.
