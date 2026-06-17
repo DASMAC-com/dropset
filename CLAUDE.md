@@ -125,6 +125,16 @@ Concrete rules:
   compute the value in a prior step (or a tool) and pass it literally.
 - Avoid redirects (`>`, `<`, here-strings). Use the Write tool to
   create files rather than `echo … > file`.
+- Pass large or special-character arguments through a **file**, not
+  inline on the command line. A PR body full of markdown, a
+  multi-paragraph message — its backticks, braces, and quotes trip the
+  "brace with quote character (expansion obfuscation)" guard and force
+  manual approval *every time*, even though the command prefix is
+  allow-listed. Write the content to a throwaway file with the Write
+  tool (e.g. under `/tmp`) and hand the command its path via the
+  matching `--*-file` flag — `gh pr edit <n> --body-file /tmp/<f>.md`,
+  `git commit -F /tmp/<f>.txt` — so only a stable, glob-able path rides
+  the command line and the call reduces to a `prefix:*` rule.
 - Keep a stable command + subcommand prefix (`pnpm lint …`,
   `cargo test …`, `git log …`) and put only the variable parts in the
   arguments, so the call matches a `:*` allow-glob.
@@ -191,3 +201,44 @@ If a one-off like these still gets approved during a session, do
 **not** allow-list it (a `*` can't generalize a compound): the
 `firm-perms` skill flags it and points back here so the source stops
 emitting it.
+
+## Briefing sub-agents
+
+A sub-agent you spawn (via the `Agent` tool) does **not** inherit this
+`CLAUDE.md`, so left to itself it reaches for `find / …`,
+`sed -n '…p' … | grep`, `cat`, and other compounds that can't reduce
+to an allow-rule and re-prompt on **every** run — the exact churn the
+shell rules above exist to avoid. So whenever a skill spawns a
+sub-agent, it must carry the conventions into the agent itself. This
+is the single canonical brief; skills reference it by name ("prepend
+the sub-agent brief from `CLAUDE.md`") rather than each pasting their
+own copy, so the wording stays in one place.
+
+**Prepend this standing brief to *every* `Agent` prompt:**
+
+> - You are a **read-only** agent. Everything you need to reason over
+>   — a diff, a commit log, a set of issues — is included in this
+>   prompt; work from it. You rarely need a shell at all.
+> - To inspect repo files, use the **Read / Grep / Glob** tools —
+>   never `cat` / `head` / `tail` / `sed` / `awk` / `find` / `grep`
+>   in Bash.
+> - Stay **inside the repo**. Never search the filesystem
+>   (`find / …`, `~/.cargo`, `~/.claude/projects/…`) or slice
+>   transcript / tool-result files; anything outside the repo is out
+>   of scope. If you genuinely need something out of reach, say so in
+>   your findings — don't scan for it.
+> - **One bare command per Bash call** — no pipes, `&&`, `;`, command
+>   substitution `$(…)`, redirects, or heredocs. Each call must reduce
+>   to a `prefix:*` allow-rule.
+
+**Pass the material inline.** Whatever the agent must reason over —
+the diff, the commit log, the issue set — goes **in the prompt**, so
+no agent re-fetches it by shelling out. (For content too large or
+special-character-laden to sit inline cleanly, use the file-handoff
+pattern from the shell rules — write it out and pass the path.)
+
+A sub-agent approval that still re-prompts despite this brief means
+the brief **leaked** — the agent emitted shell the brief forbids.
+That's a prompt to tighten, not a rule to allow-list; `firm-perms`
+sets such approvals aside and names the emitting agent so its prompt
+gets fixed at the source.
