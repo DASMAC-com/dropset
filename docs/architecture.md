@@ -83,8 +83,9 @@ seeded from `Registry.default_fee_config` at market creation and
 tuned per market by an admin via `SetMarketFeeConfig`. Admins may
 call `CreateVault` without paying, including on behalf of others (useful
 for protocol-onboarded market makers). If a market's `fee_config.mint`
-later changes, a fresh registry ATA is used going forward and prior
-fees stay in the old ATA; admins sweep both.
+later changes, `SetMarketFeeConfig` creates the registry ATA for the
+new mint going forward and prior fees stay in the old ATA; admins
+sweep both.
 
 The per-market cap on vault count (`max_vaults_per_market`) is set by
 the cost to reconstruct the ephemeral order book during each take
@@ -193,8 +194,9 @@ load-bearing invariants and rationale:
 - **Per-market fee.** `fee_config` is seeded from
   `Registry.default_fee_config` and tunable via `SetMarketFeeConfig`;
   the fee is paid to the **Registry fee ATA** (not this market's
-  treasuries) and waived for admin signers. Changing the mint routes
-  future fees to a fresh registry ATA — admins sweep both.
+  treasuries) and waived for admin signers. Changing the mint makes
+  `SetMarketFeeConfig` create the fresh registry ATA fees route to —
+  admins sweep both.
 - **Fee cap / floor seeding.** `taker_fee` is capped at ~6.55%
   (`Ppm16` max) and admin-mutable. `default_min_leader_share` is stamped
   into each `Vault.min_leader_share` at `CreateVault`; mutating it
@@ -1283,10 +1285,17 @@ less than `atoms` into the registry fee ATA.
 
 Changing the mint routes future fees to a fresh registry ATA
 (`get_associated_token_address_with_program_id` over
-`(registry_pda, mint, token_program)`); fees already collected stay in
-the prior ATA and
-admins sweep both. Takes effect on the next `CreateVault`; vaults
-already open are unaffected (the fee is charged only at open time).
+`(registry_pda, mint, token_program)`). `CreateVault` charges into that
+ATA but does **not** create it, so the instruction creates it here
+eagerly — `init_if_needed`, admin as rent payer — meaning the fee
+destination provably exists the moment the config is set; without it the
+next `CreateVault` on the market would fail to load the missing account.
+The ATA program's `InitializeAccount3` CPI also rejects a non-mint /
+wrong-program payload outright, a stronger backstop than the
+`mint::token_program` constraint. Fees already collected stay in the
+prior ATA and admins sweep both. Takes effect on the next `CreateVault`;
+vaults already open are unaffected (the fee is charged only at open
+time).
 
 ## Depositor operations
 

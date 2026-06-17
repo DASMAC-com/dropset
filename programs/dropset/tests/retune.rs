@@ -159,7 +159,7 @@ fn market_fee_config_switch_then_create_vault_succeeds() {
     let admin = f.authority.insecure_clone();
     let new_mint = create_spl_mint(&mut f.svm, &admin);
     f.set_market_fee_config(&admin, &new_mint, &SPL_TOKEN_PROGRAM_ID, 42_000)
-        .expect("admin repoints the market fee at a fresh mint");
+        .expect("admin re-points the market fee at a fresh mint");
 
     f.create_vault_with_fee(
         0,
