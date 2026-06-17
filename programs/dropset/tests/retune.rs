@@ -5,7 +5,9 @@ mod common;
 
 use anchor_v2_testing::Signer;
 use common::fixture::Fixture;
-use common::{create_spl_mint, SPL_TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID};
+use common::{
+    associated_token_address, create_spl_mint, SPL_TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID,
+};
 use solana_pubkey::Pubkey;
 
 /// Bootstrap + one admin vault on sector 0 (leader + quote authority both
@@ -131,11 +133,44 @@ fn market_fee_config_admin_retunes_fee() {
     assert_eq!(after.token_program, SPL_TOKEN_PROGRAM_ID.to_bytes().into());
     assert_eq!(after.atoms.get(), 42_000);
 
+    // The instruction eagerly created the registry fee ATA for the new
+    // mint, so the fee destination `create_vault` charges into now exists.
+    let new_treasury = associated_token_address(&f.registry, &new_mint, &SPL_TOKEN_PROGRAM_ID);
+    assert!(
+        f.svm.get_account(&new_treasury).is_some(),
+        "set_market_fee_config must create the registry fee ATA for the new mint"
+    );
+
     let ev = common::events::set_market_fee_config(&meta);
     assert_eq!(ev.market, f.market.to_bytes());
     assert_eq!(ev.mint, new_mint.to_bytes());
     assert_eq!(ev.token_program, SPL_TOKEN_PROGRAM_ID.to_bytes());
     assert_eq!(ev.atoms, 42_000);
+}
+
+#[test]
+fn market_fee_config_switch_then_create_vault_succeeds() {
+    // Regression (ENG-508): switching a market's fee mint must not brick
+    // the next `create_vault`. `create_vault` loads the registry fee ATA
+    // for `market.fee_config.mint` but never creates it, so before the
+    // fix this failed — the ATA for the freshly-pointed mint did not
+    // exist. `set_market_fee_config` now creates it, so the open succeeds.
+    let mut f = Fixture::bootstrap();
+    let admin = f.authority.insecure_clone();
+    let new_mint = create_spl_mint(&mut f.svm, &admin);
+    f.set_market_fee_config(&admin, &new_mint, &SPL_TOKEN_PROGRAM_ID, 42_000)
+        .expect("admin re-points the market fee at a fresh mint");
+
+    f.create_vault_with_fee(
+        0,
+        f.authority.pubkey(),
+        false,
+        Pubkey::default(),
+        &new_mint,
+        &SPL_TOKEN_PROGRAM_ID,
+    )
+    .expect("create_vault must succeed once the new mint's fee ATA exists");
+    assert_eq!(f.market_header().active_count.get(), 1);
 }
 
 #[test]
@@ -154,15 +189,18 @@ fn market_fee_config_rejects_non_admin() {
 #[test]
 fn market_fee_config_rejects_mint_program_mismatch() {
     // `fee_mint` is an SPL Token mint; passing the Token-2022 program as
-    // its owner must fail the `mint::token_program` constraint before any
-    // write lands.
+    // its owner must reject before any write lands. Creating the registry
+    // fee ATA now front-runs the `mint::token_program` constraint: the ATA
+    // program CPIs `InitializeAccount3` into Token-2022 for an SPL-owned
+    // mint, which the token program rejects with `IncorrectProgramId` — the
+    // stronger validation the eager-ATA design buys (spec § SetMarketFeeConfig).
     let mut f = Fixture::bootstrap();
     let admin = f.authority.insecure_clone();
     let mint = f.fee_mint;
     let err = f
         .set_market_fee_config(&admin, &mint, &TOKEN_2022_PROGRAM_ID, 42_000)
         .expect_err("a mint/token-program mismatch must reject");
-    common::assert_instruction_error(&err, "IllegalOwner");
+    common::assert_instruction_error(&err, "IncorrectProgramId");
     assert_eq!(
         f.market_header().fee_config.token_program,
         SPL_TOKEN_PROGRAM_ID.to_bytes().into()
