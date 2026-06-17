@@ -226,8 +226,15 @@ to one PR.
 grouping is the part most likely to be silently wrong,
 and a bad grouping costs a merge conflict or a
 needlessly serialized session. Spawn a fresh skeptic
-sub-agent (`Agent` tool) with the drafted dependency
-tree and each issue's files, told to hunt for:
+sub-agent (`Agent` tool), **prepending the standing
+sub-agent brief from `CLAUDE.md`** (→ "Briefing
+sub-agents") to its prompt — the skeptic doesn't
+inherit `CLAUDE.md`, so without the brief it reaches
+for the `find` / `sed … | grep` / `cat` compounds that
+re-prompt every run. Pass the drafted dependency tree
+and each issue's files **inline** in the prompt (as the
+brief requires), so it never shells out to re-fetch
+them. Tell it to hunt for:
 
 - two **top-level** (or sibling) sessions that actually
   share a file — they'd conflict on merge, so one must

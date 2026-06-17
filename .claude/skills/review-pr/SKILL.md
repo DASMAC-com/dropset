@@ -203,37 +203,21 @@ all changes are committed and pushed.
    git log main..HEAD --oneline
    ```
 
-   **Brief every sub-agent on the shell rules.**
-   Sub-agents don't inherit this project's `CLAUDE.md`
-   shell conventions, so left to themselves they reach
-   for `find / …`, `sed -n '…p' … | grep`, `cat`, and
-   other compounds that can't reduce to an allow-rule
-   and re-prompt on **every** run — the exact churn
-   this skill exists to avoid. Prepend this standing
-   brief to **each** Agent prompt (the review agents
-   here *and* the cross-check agent in step 6):
-
-   > - You are a **read-only reviewer**. The full diff
-   >   and commit log are included below — review from
-   >   them; you rarely need a shell at all.
-   > - To inspect repo files, use the **Read / Grep /
-   >   Glob** tools — never `cat` / `head` / `tail` /
-   >   `sed` / `awk` / `find` / `grep` in Bash.
-   > - Stay **inside the repo**. Never search the
-   >   filesystem (`find / …`, `~/.cargo`,
-   >   `~/.claude/projects/…`) or slice transcript /
-   >   tool-result files; toolchain and dependency
-   >   sources are out of scope for a diff review. If
-   >   you genuinely need a library's source, say so in
-   >   your findings — don't scan for it.
-   > - **One bare command per Bash call** — no pipes,
-   >   `&&`, `;`, command substitution `$(…)`,
-   >   redirects, or heredocs. Each call must reduce to
-   >   a `prefix:*` allow-rule.
+   **Brief every sub-agent on the shell rules.** Prepend
+   the standing sub-agent brief from `CLAUDE.md` (→
+   "Briefing sub-agents") to **each** Agent prompt — the
+   review agents here *and* the cross-check agent in
+   step 6. That brief is the canonical wording (read-only
+   framing, Read/Grep/Glob over shell, stay inside the
+   repo, one bare command per Bash call); it exists so
+   sub-agents — which don't inherit `CLAUDE.md` — don't
+   reach for the `find` / `sed … | grep` / `cat` compounds
+   that re-prompt on every run.
 
    Pass the `git diff main..HEAD` and `git log` output
-   you already collected **inline** in each prompt, so
-   no agent re-fetches them by shelling out.
+   you already collected **inline** in each prompt (as
+   the brief requires), so no agent re-fetches them by
+   shelling out.
 
    Spawn parallel sub-agents via the `Agent` tool
    (single message, multiple calls) to review the
@@ -273,9 +257,9 @@ all changes are committed and pushed.
 
 1. **Adversarial cross-check.** Spawn a fresh
    sub-agent that receives the collected findings
-   and the diff (prepend the step-5 reviewer brief to
-   its prompt too, and pass the diff inline), and is
-   told to act adversarially:
+   and the diff (prepend the same `CLAUDE.md`
+   sub-agent brief to its prompt too, and pass the
+   diff inline), and is told to act adversarially:
 
    - Challenge weak or speculative findings.
      Flag false positives.
