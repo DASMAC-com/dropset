@@ -625,4 +625,31 @@ mod tests {
         assert_eq!(r2.pnl_delta, i64::MAX);
         assert_eq!(r2.realized_pnl, i64::MAX);
     }
+
+    // ── merge_entry_basis ───────────────────────────────────────────
+
+    #[test]
+    fn merge_entry_basis_shares_weighted_average() {
+        // Equal-weight top-off: 100 prior shares entered at VPS 1.0 / ref
+        // 1.0, 100 fresh shares entering at VPS 2.0 / ref 2.0. The merged
+        // entry VPS is the shares-weighted mean (100·1 + 100·2) / 200 = 1.5
+        // in Q32.32, and the merged entry ref blends strictly between the
+        // two references.
+        let (entry_vps, entry_ref) =
+            merge_entry_basis(100, 100, Q32_32_ONE, 2 * Q32_32_ONE, price_one(), price_two());
+        assert_eq!(entry_vps, Q32_32_ONE + Q32_32_ONE / 2);
+        assert!(entry_ref > price_one() && entry_ref < price_two());
+    }
+
+    #[test]
+    fn merge_entry_basis_weights_by_share_count() {
+        // A tiny fresh lot barely moves a large prior position's basis:
+        // 999 prior shares at VPS 1.0, 1 fresh share at VPS 2.0 →
+        // (999·1 + 1·2) / 1000 = 1.001, still essentially 1.0.
+        let (entry_vps, _) =
+            merge_entry_basis(999, 1, Q32_32_ONE, 2 * Q32_32_ONE, price_one(), price_two());
+        // (999 + 2) / 1000 of Q32_32_ONE, floored.
+        let expected = (999 * (Q32_32_ONE as u128) + 2 * (Q32_32_ONE as u128)) / 1000;
+        assert_eq!(entry_vps, expected as u64);
+    }
 }
