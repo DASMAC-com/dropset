@@ -257,14 +257,19 @@ pub struct Swap {
 /// wrapper over [`level_fill_atoms`] that maps its `size_bps > BPS`
 /// rejection to a hard `DropsetError`.
 ///
-/// `size_bps <= BPS` is enforced at `set_liquidity_profile`, so the
-/// rejection never fires on a profile written through the normal path.
-/// It is load-bearing only against a future instruction that reshapes a
-/// profile without that validation. We reject rather than silently
-/// clamp, which would mask the bug by shrinking the level's materialized
-/// size. The pricing (`flush_level_price`) and the cap itself are shared
-/// with the off-chain simulator via [`dropset_price_core::matching_math`]
-/// so the two can't drift.
+/// `set_liquidity_profile` bounds the per-side Σ `size_bps` to `BPS`, and
+/// each `size_bps` is a non-negative `u16`, so every *individual* level is
+/// `<= BPS` for any profile written through that path — the rejection is
+/// implied by the sum check and never fires on the normal path. It is
+/// load-bearing only against account bytes the program never wrote
+/// (corruption, or a future profile-writing instruction that skips the sum
+/// check). We reject rather than silently clamp, which would mask the bug
+/// by shrinking the level's materialized size. The pricing
+/// (`flush_level_price`) and the cap itself are shared with the off-chain
+/// simulator via [`dropset_price_core::matching_math`] so the two can't
+/// drift; the simulator pins the same contract from the other direction —
+/// on `size_bps > BPS` it yields an empty quote instead of a fill this
+/// handler would abort (conformance test in `tests/sdk_conformance.rs`).
 fn flush_level_size(size_bps: u16, leg_atoms: u64) -> Result<u64> {
     level_fill_atoms(size_bps, leg_atoms)
         .ok_or_else(|| DropsetError::LiquidityProfileSizeOverflow.into())

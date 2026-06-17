@@ -197,6 +197,72 @@ fn sdk_simulate_swap_limit_price_stops_fill() {
 }
 
 #[test]
+fn sdk_simulate_swap_rejects_oversize_size_bps_consumed_side() {
+    // A flush profile with `size_bps > BPS` can't be written through
+    // `set_liquidity_profile` (it bounds the per-side Σ to BPS), but a
+    // corrupt account could hold one. The engine materializes the book up
+    // front and `flush_level_size` hard-rejects the whole `swap`; the SDK
+    // simulator must refuse to quote rather than predict a fill the engine
+    // will abort. Here the corruption is on the consumed side (a Buy
+    // consumes asks). BPS = 10_000, so 20_000 bps is 200% of the leg.
+    let mut f = Fixture::seeded(1_000_000, 1_000_000);
+    f.poke_level_size_bps(0, true, 0, 20_000);
+
+    let data = market_bytes(&f);
+    let view = MarketView::load(&data).expect("SDK decodes the market account");
+    let q = simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1);
+    assert_eq!(
+        q,
+        Quote::default(),
+        "simulator must reject a corrupt book, not quote a partial fill"
+    );
+
+    let taker = f.funded_depositor(0, 500_000);
+    let err = f
+        .swap(
+            &taker,
+            SwapSide::Buy as u8,
+            500_000,
+            Price::INFINITY.as_u32(),
+            0,
+        )
+        .expect_err("engine must hard-reject size_bps > BPS");
+    common::assert_program_error(&err, dropset::DropsetError::LiquidityProfileSizeOverflow);
+}
+
+#[test]
+fn sdk_simulate_swap_rejects_oversize_size_bps_other_side() {
+    // Same contract, corruption on the side the take does *not* consume: a
+    // Buy consumes asks, but here a bid level is out of range. The engine
+    // flushes both sides during book construction, so it still aborts — and
+    // the simulator must too. This guards against a consumed-side-only
+    // check that would quote a fill the engine rejects.
+    let mut f = Fixture::seeded(1_000_000, 1_000_000);
+    f.poke_level_size_bps(0, false, 0, 20_000);
+
+    let data = market_bytes(&f);
+    let view = MarketView::load(&data).expect("SDK decodes the market account");
+    let q = simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1);
+    assert_eq!(
+        q,
+        Quote::default(),
+        "simulator must reject on a bad bid even for a Buy"
+    );
+
+    let taker = f.funded_depositor(0, 500_000);
+    let err = f
+        .swap(
+            &taker,
+            SwapSide::Buy as u8,
+            500_000,
+            Price::INFINITY.as_u32(),
+            0,
+        )
+        .expect_err("engine aborts on a bad bid even for a Buy");
+    common::assert_program_error(&err, dropset::DropsetError::LiquidityProfileSizeOverflow);
+}
+
+#[test]
 fn sdk_simulate_swap_with_taker_fee() {
     // A non-zero taker fee is retained on the output leg. The SDK reads it
     // from the market header and must net it out exactly as the engine does
