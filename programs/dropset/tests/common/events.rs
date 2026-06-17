@@ -23,7 +23,7 @@
 use anchor_lang_v2::{bytemuck, event::EVENT_IX_TAG_LE, Discriminator};
 use dropset::{
     CloseVaultEvent, CreateVaultEvent, DepositEvent, FillEvent, FreezeVaultEvent, RealizeEvent,
-    WithdrawEvent,
+    SetMarketFeeConfigEvent, SetMinLeaderShareEvent, WithdrawEvent,
 };
 use litesvm::types::TransactionMetadata;
 
@@ -174,6 +174,46 @@ pub fn freeze_vault(meta: &TransactionMetadata) -> FreezeVault {
         market: c.pubkey(),
         sector_idx: c.u32(),
         leader: c.pubkey(),
+    };
+    c.finish();
+    d
+}
+
+#[derive(Debug)]
+pub struct SetMinLeaderShare {
+    pub market: [u8; 32],
+    pub sector_idx: u32,
+    pub min_leader_share: u32,
+}
+
+pub fn set_min_leader_share(meta: &TransactionMetadata) -> SetMinLeaderShare {
+    let body = one_body::<SetMinLeaderShareEvent>(meta);
+    let mut c = Cursor::new(&body);
+    let d = SetMinLeaderShare {
+        market: c.pubkey(),
+        sector_idx: c.u32(),
+        min_leader_share: c.u32(),
+    };
+    c.finish();
+    d
+}
+
+#[derive(Debug)]
+pub struct SetMarketFeeConfig {
+    pub market: [u8; 32],
+    pub mint: [u8; 32],
+    pub token_program: [u8; 32],
+    pub atoms: u64,
+}
+
+pub fn set_market_fee_config(meta: &TransactionMetadata) -> SetMarketFeeConfig {
+    let body = one_body::<SetMarketFeeConfigEvent>(meta);
+    let mut c = Cursor::new(&body);
+    let d = SetMarketFeeConfig {
+        market: c.pubkey(),
+        mint: c.pubkey(),
+        token_program: c.pubkey(),
+        atoms: c.u64(),
     };
     c.finish();
     d

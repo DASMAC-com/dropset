@@ -1272,11 +1272,12 @@ different mint — while every other market stays at its own value.
 
 The admin passes the new mint **and its owning token program**, which
 the instruction validates as `token_program == mint.owner` so the
-stored mint is always backed by a real, classifiable token program
-(classic SPL Token or Token-2022). The token program is not stored —
-it is re-derived from the mint's owner on each `CreateVault` (see there)
-— so this check exists only to reject a mint/program mismatch at
-configuration time. Admins should configure only mints **without** the
+stored pair is always a mint backed by its real, classifiable token
+program (classic SPL Token or Token-2022). Both are written into
+`fee_config`, and `CreateVault` pins its `fee_token_program` account to
+the stored `token_program` — so this check keeps the stored pair
+self-consistent, rejecting a mint/program mismatch at configuration
+time. Admins should configure only mints **without** the
 Token-2022 transfer-fee extension, since that extension would deliver
 less than `atoms` into the registry fee ATA.
 
@@ -1666,8 +1667,10 @@ authenticated off-chain by program id + instruction binding. Default to
 standard `emit_cpi!` for IDL/tooling compatibility.
 
 **Emission points.** The **taker fill** (at book tear-down), `Deposit`,
-`Withdraw`, `CreateVault`, and `Realize` emit. The leader quote-refresh
-instructions do not.
+`Withdraw`, `CreateVault`, and `Realize` emit, as do the lifecycle and
+admin-config changes — `CloseVault`, `FreezeVault`, `SetMinLeaderShare`,
+and `SetMarketFeeConfig`. The leader quote-refresh instructions
+(`SetReferencePrice`, `SetLiquidityProfile`) do not.
 
 **Per-emit cost.** Each `emit_cpi!` runs as a self-CPI: ~1000 CU
 invocation overhead + `data_len/250` CU for the payload. The hard

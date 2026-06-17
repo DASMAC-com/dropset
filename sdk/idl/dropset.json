@@ -1671,6 +1671,207 @@
       ]
     },
     {
+      "name": "set_market_fee_config",
+      "discriminator": [
+        23
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "docs": [
+            "Registry admin — the only signer this lever accepts."
+          ],
+          "signer": true
+        },
+        {
+          "name": "registry",
+          "docs": [
+            "Singleton registry, read for the admin-membership check."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "market",
+          "docs": [
+            "Market whose `fee_config` is being retuned. `mut` for the write."
+          ],
+          "writable": true
+        },
+        {
+          "name": "fee_mint",
+          "docs": [
+            "New fee mint. `mint::token_program = fee_token_program` ties it to",
+            "the supplied program, so the stored `(mint, token_program)` pair",
+            "is always a mint backed by its real owner — the check the spec",
+            "states as `token_program == mint.owner`. `InterfaceAccount<Mint>`",
+            "additionally rejects a non-mint payload."
+          ]
+        },
+        {
+          "name": "fee_token_program",
+          "docs": [
+            "Token program owning `fee_mint` — SPL Token or Token-2022.",
+            "`Interface<TokenInterface>` rejects any non-token-program address",
+            "up front; the `mint::token_program` constraint above then pins it",
+            "to `fee_mint`'s actual owner."
+          ]
+        },
+        {
+          "name": "event_authority",
+          "docs": [
+            "CHECK: Only the event authority can invoke self-CPI"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "docs": [
+            "CHECK: Kept for v1-compatible account ordering and IDL shape"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "atoms",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "set_min_leader_share",
+      "discriminator": [
+        22
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "docs": [
+            "Registry admin — the only signer this lever accepts."
+          ],
+          "signer": true
+        },
+        {
+          "name": "registry",
+          "docs": [
+            "Singleton registry, read for the admin-membership check."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "market",
+          "docs": [
+            "Market holding the target vault. `mut` for the floor write."
+          ],
+          "writable": true
+        },
+        {
+          "name": "event_authority",
+          "docs": [
+            "CHECK: Only the event authority can invoke self-CPI"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "docs": [
+            "CHECK: Kept for v1-compatible account ordering and IDL shape"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "vault_idx",
+          "type": "u32"
+        },
+        {
+          "name": "min_leader_share",
+          "type": "u32"
+        }
+      ]
+    },
+    {
       "name": "set_outside_deposits_approved",
       "discriminator": [
         13
@@ -2304,6 +2505,32 @@
       ]
     },
     {
+      "name": "SetMarketFeeConfigEvent",
+      "discriminator": [
+        29,
+        171,
+        38,
+        30,
+        62,
+        131,
+        204,
+        214
+      ]
+    },
+    {
+      "name": "SetMinLeaderShareEvent",
+      "discriminator": [
+        159,
+        194,
+        164,
+        181,
+        227,
+        131,
+        179,
+        105
+      ]
+    },
+    {
       "name": "WithdrawEvent",
       "discriminator": [
         22,
@@ -2395,146 +2622,151 @@
     },
     {
       "code": 6015,
+      "name": "InvalidMinLeaderShare",
+      "msg": "min_leader_share exceeds 1_000_000 ppm (100%)"
+    },
+    {
+      "code": 6016,
       "name": "LeaderOverrideNotAllowed",
       "msg": "non-admin caller cannot open a vault on someone else's behalf"
     },
     {
-      "code": 6016,
+      "code": 6017,
       "name": "VaultEmpty",
       "msg": "supplied vault sector is not assigned (leader == default)"
     },
     {
-      "code": 6017,
+      "code": 6018,
       "name": "VaultFrozen",
       "msg": "vault is frozen"
     },
     {
-      "code": 6018,
+      "code": 6019,
       "name": "InvalidPrice",
       "msg": "price bit pattern is not a valid encoding"
     },
     {
-      "code": 6019,
+      "code": 6020,
       "name": "InvalidQuoteSlot",
       "msg": "quote_slot is future-dated or backdated past MAX_BACKDATE"
     },
     {
-      "code": 6020,
+      "code": 6021,
       "name": "ReferencePriceNotSet",
       "msg": "set_liquidity_profile requires the vault's reference price to be set first"
     },
     {
-      "code": 6021,
+      "code": 6022,
       "name": "LiquidityProfileSizeOverflow",
       "msg": "liquidity profile size_bps sum exceeds 10_000 on one side"
     },
     {
-      "code": 6022,
+      "code": 6023,
       "name": "OutsideDepositorsNotAllowed",
       "msg": "leader has not enabled outside depositors on this vault"
     },
     {
-      "code": 6023,
+      "code": 6024,
       "name": "OutsideDepositorsNotApproved",
       "msg": "admin has not approved outside deposits on this vault"
     },
     {
-      "code": 6024,
+      "code": 6025,
       "name": "SeedingRequiresLeader",
       "msg": "first deposit to a vault must come from its leader"
     },
     {
-      "code": 6025,
+      "code": 6026,
       "name": "SeedingRequiresBothLegs",
       "msg": "first deposit to a vault must supply both base and quote legs"
     },
     {
-      "code": 6026,
+      "code": 6027,
       "name": "SingleLegRequired",
       "msg": "non-seeding deposit must size exactly one of base_in / quote_in"
     },
     {
-      "code": 6027,
+      "code": 6028,
       "name": "BasketSlippage",
       "msg": "derived basket exceeds caller's slippage bounds"
     },
     {
-      "code": 6028,
+      "code": 6029,
       "name": "MinLeaderShareViolated",
       "msg": "operation would violate the vault's min_leader_share floor"
     },
     {
-      "code": 6029,
+      "code": 6030,
       "name": "InsufficientShares",
       "msg": "requested shares exceed the caller's available stake"
     },
     {
-      "code": 6030,
+      "code": 6031,
       "name": "InvalidAmountIn",
       "msg": "swap amount_in must be greater than zero"
     },
     {
-      "code": 6031,
+      "code": 6032,
       "name": "VaultDepositorMismatch",
       "msg": "supplied VaultDepositor PDA does not match the (market, sector, owner) seeds"
     },
     {
-      "code": 6032,
+      "code": 6033,
       "name": "MathOverflow",
       "msg": "arithmetic overflow in basket / share math"
     },
     {
-      "code": 6033,
+      "code": 6034,
       "name": "InvalidSwapSide",
       "msg": "swap `side` argument is neither Buy nor Sell"
     },
     {
-      "code": 6034,
+      "code": 6035,
       "name": "InvalidLimitPrice",
       "msg": "limit_price sentinel is invalid for this swap side"
     },
     {
-      "code": 6035,
+      "code": 6036,
       "name": "VaultAlreadyTombstoned",
       "msg": "vault is already on the tombstone list"
     },
     {
-      "code": 6036,
+      "code": 6037,
       "name": "TokenAccountNotEmpty",
       "msg": "token account must be drained to zero before it can be closed"
     },
     {
-      "code": 6037,
+      "code": 6038,
       "name": "MarketTreasuryNotClosed",
       "msg": "market treasury must be closed before the market can be closed"
     },
     {
-      "code": 6038,
+      "code": 6039,
       "name": "MarketHasDepositors",
       "msg": "market still has outstanding VaultDepositor PDAs"
     },
     {
-      "code": 6039,
+      "code": 6040,
       "name": "RegistryHasMarkets",
       "msg": "registry still has live markets (market_count != 0)"
     },
     {
-      "code": 6040,
+      "code": 6041,
       "name": "RegistryHasOtherAdmins",
       "msg": "registry still has admins beyond the caller"
     },
     {
-      "code": 6041,
+      "code": 6042,
       "name": "NotAMarketTreasury",
       "msg": "supplied mint is not one of the market's base/quote legs"
     },
     {
-      "code": 6042,
+      "code": 6043,
       "name": "TeardownDisabled",
       "msg": "teardown instructions are disabled in this build (admin-teardown feature off)"
     },
     {
-      "code": 6043,
+      "code": 6044,
       "name": "VaultTombstoned",
       "msg": "vault has been closed and moved to the tombstone list"
     }
@@ -2919,7 +3151,8 @@
             "name": "fee_config",
             "docs": [
               "Per-market create-vault fee: mint and amount. Seeded from",
-              "`Registry.default_fee_config` at market creation."
+              "`Registry.default_fee_config` at market creation, then",
+              "admin-retunable via `SetMarketFeeConfig`."
             ],
             "type": {
               "defined": {
@@ -3140,6 +3373,62 @@
               "Registry PDA bump."
             ],
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SetMarketFeeConfigEvent",
+      "docs": [
+        "Emitted by `set_market_fee_config` when an admin retunes a market's",
+        "per-`CreateVault` fee. Load-bearing for teardown: the chain does not",
+        "enumerate the set of historical fee mints, so the admin reconstructs",
+        "it off-chain from these events to sweep every fee ATA. See the spec's",
+        "**SetMarketFeeConfig** and **Account lifecycle and rent reclamation**."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "token_program",
+            "type": "pubkey"
+          },
+          {
+            "name": "atoms",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SetMinLeaderShareEvent",
+      "docs": [
+        "Emitted by `set_min_leader_share` when an admin retunes a vault's",
+        "skin-in-the-game floor after creation. See the spec's",
+        "**SetMinLeaderShare**."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "sector_idx",
+            "type": "u32"
+          },
+          {
+            "name": "min_leader_share",
+            "type": "u32"
           }
         ]
       }

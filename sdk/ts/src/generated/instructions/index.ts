@@ -23,6 +23,8 @@ export * from './init';
 export * from './removeAdmin';
 export * from './setAllowOutsideDepositors';
 export * from './setLiquidityProfile';
+export * from './setMarketFeeConfig';
+export * from './setMinLeaderShare';
 export * from './setOutsideDepositsApproved';
 export * from './setReferencePrice';
 export * from './swap';

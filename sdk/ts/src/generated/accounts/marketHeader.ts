@@ -48,7 +48,8 @@ activeCount: number;
 outstandingVaultDepositors: number; 
 /**
  * Per-market create-vault fee: mint and amount. Seeded from
- * `Registry.default_fee_config` at market creation.
+ * `Registry.default_fee_config` at market creation, then
+ * admin-retunable via `SetMarketFeeConfig`.
  */
 feeConfig: FeeConfig; 
 /** Taker fee rate, capped at ~6.55% (`Ppm16` max). */
@@ -114,7 +115,8 @@ activeCount: number;
 outstandingVaultDepositors: number; 
 /**
  * Per-market create-vault fee: mint and amount. Seeded from
- * `Registry.default_fee_config` at market creation.
+ * `Registry.default_fee_config` at market creation, then
+ * admin-retunable via `SetMarketFeeConfig`.
  */
 feeConfig: FeeConfigArgs; 
 /** Taker fee rate, capped at ~6.55% (`Ppm16` max). */

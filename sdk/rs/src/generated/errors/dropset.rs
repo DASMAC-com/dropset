@@ -55,93 +55,96 @@ pub enum DropsetError {
     /// 6014 - perf_fee_rate exceeds 1_000_000 ppm (100%)
     #[error("perf_fee_rate exceeds 1_000_000 ppm (100%)")]
     InvalidPerfFeeRate = 0x177E,
-    /// 6015 - non-admin caller cannot open a vault on someone else's behalf
+    /// 6015 - min_leader_share exceeds 1_000_000 ppm (100%)
+    #[error("min_leader_share exceeds 1_000_000 ppm (100%)")]
+    InvalidMinLeaderShare = 0x177F,
+    /// 6016 - non-admin caller cannot open a vault on someone else's behalf
     #[error("non-admin caller cannot open a vault on someone else's behalf")]
-    LeaderOverrideNotAllowed = 0x177F,
-    /// 6016 - supplied vault sector is not assigned (leader == default)
+    LeaderOverrideNotAllowed = 0x1780,
+    /// 6017 - supplied vault sector is not assigned (leader == default)
     #[error("supplied vault sector is not assigned (leader == default)")]
-    VaultEmpty = 0x1780,
-    /// 6017 - vault is frozen
+    VaultEmpty = 0x1781,
+    /// 6018 - vault is frozen
     #[error("vault is frozen")]
-    VaultFrozen = 0x1781,
-    /// 6018 - price bit pattern is not a valid encoding
+    VaultFrozen = 0x1782,
+    /// 6019 - price bit pattern is not a valid encoding
     #[error("price bit pattern is not a valid encoding")]
-    InvalidPrice = 0x1782,
-    /// 6019 - quote_slot is future-dated or backdated past MAX_BACKDATE
+    InvalidPrice = 0x1783,
+    /// 6020 - quote_slot is future-dated or backdated past MAX_BACKDATE
     #[error("quote_slot is future-dated or backdated past MAX_BACKDATE")]
-    InvalidQuoteSlot = 0x1783,
-    /// 6020 - set_liquidity_profile requires the vault's reference price to be set first
+    InvalidQuoteSlot = 0x1784,
+    /// 6021 - set_liquidity_profile requires the vault's reference price to be set first
     #[error("set_liquidity_profile requires the vault's reference price to be set first")]
-    ReferencePriceNotSet = 0x1784,
-    /// 6021 - liquidity profile size_bps sum exceeds 10_000 on one side
+    ReferencePriceNotSet = 0x1785,
+    /// 6022 - liquidity profile size_bps sum exceeds 10_000 on one side
     #[error("liquidity profile size_bps sum exceeds 10_000 on one side")]
-    LiquidityProfileSizeOverflow = 0x1785,
-    /// 6022 - leader has not enabled outside depositors on this vault
+    LiquidityProfileSizeOverflow = 0x1786,
+    /// 6023 - leader has not enabled outside depositors on this vault
     #[error("leader has not enabled outside depositors on this vault")]
-    OutsideDepositorsNotAllowed = 0x1786,
-    /// 6023 - admin has not approved outside deposits on this vault
+    OutsideDepositorsNotAllowed = 0x1787,
+    /// 6024 - admin has not approved outside deposits on this vault
     #[error("admin has not approved outside deposits on this vault")]
-    OutsideDepositorsNotApproved = 0x1787,
-    /// 6024 - first deposit to a vault must come from its leader
+    OutsideDepositorsNotApproved = 0x1788,
+    /// 6025 - first deposit to a vault must come from its leader
     #[error("first deposit to a vault must come from its leader")]
-    SeedingRequiresLeader = 0x1788,
-    /// 6025 - first deposit to a vault must supply both base and quote legs
+    SeedingRequiresLeader = 0x1789,
+    /// 6026 - first deposit to a vault must supply both base and quote legs
     #[error("first deposit to a vault must supply both base and quote legs")]
-    SeedingRequiresBothLegs = 0x1789,
-    /// 6026 - non-seeding deposit must size exactly one of base_in / quote_in
+    SeedingRequiresBothLegs = 0x178A,
+    /// 6027 - non-seeding deposit must size exactly one of base_in / quote_in
     #[error("non-seeding deposit must size exactly one of base_in / quote_in")]
-    SingleLegRequired = 0x178A,
-    /// 6027 - derived basket exceeds caller's slippage bounds
+    SingleLegRequired = 0x178B,
+    /// 6028 - derived basket exceeds caller's slippage bounds
     #[error("derived basket exceeds caller's slippage bounds")]
-    BasketSlippage = 0x178B,
-    /// 6028 - operation would violate the vault's min_leader_share floor
+    BasketSlippage = 0x178C,
+    /// 6029 - operation would violate the vault's min_leader_share floor
     #[error("operation would violate the vault's min_leader_share floor")]
-    MinLeaderShareViolated = 0x178C,
-    /// 6029 - requested shares exceed the caller's available stake
+    MinLeaderShareViolated = 0x178D,
+    /// 6030 - requested shares exceed the caller's available stake
     #[error("requested shares exceed the caller's available stake")]
-    InsufficientShares = 0x178D,
-    /// 6030 - swap amount_in must be greater than zero
+    InsufficientShares = 0x178E,
+    /// 6031 - swap amount_in must be greater than zero
     #[error("swap amount_in must be greater than zero")]
-    InvalidAmountIn = 0x178E,
-    /// 6031 - supplied VaultDepositor PDA does not match the (market, sector, owner) seeds
+    InvalidAmountIn = 0x178F,
+    /// 6032 - supplied VaultDepositor PDA does not match the (market, sector, owner) seeds
     #[error("supplied VaultDepositor PDA does not match the (market, sector, owner) seeds")]
-    VaultDepositorMismatch = 0x178F,
-    /// 6032 - arithmetic overflow in basket / share math
+    VaultDepositorMismatch = 0x1790,
+    /// 6033 - arithmetic overflow in basket / share math
     #[error("arithmetic overflow in basket / share math")]
-    MathOverflow = 0x1790,
-    /// 6033 - swap `side` argument is neither Buy nor Sell
+    MathOverflow = 0x1791,
+    /// 6034 - swap `side` argument is neither Buy nor Sell
     #[error("swap `side` argument is neither Buy nor Sell")]
-    InvalidSwapSide = 0x1791,
-    /// 6034 - limit_price sentinel is invalid for this swap side
+    InvalidSwapSide = 0x1792,
+    /// 6035 - limit_price sentinel is invalid for this swap side
     #[error("limit_price sentinel is invalid for this swap side")]
-    InvalidLimitPrice = 0x1792,
-    /// 6035 - vault is already on the tombstone list
+    InvalidLimitPrice = 0x1793,
+    /// 6036 - vault is already on the tombstone list
     #[error("vault is already on the tombstone list")]
-    VaultAlreadyTombstoned = 0x1793,
-    /// 6036 - token account must be drained to zero before it can be closed
+    VaultAlreadyTombstoned = 0x1794,
+    /// 6037 - token account must be drained to zero before it can be closed
     #[error("token account must be drained to zero before it can be closed")]
-    TokenAccountNotEmpty = 0x1794,
-    /// 6037 - market treasury must be closed before the market can be closed
+    TokenAccountNotEmpty = 0x1795,
+    /// 6038 - market treasury must be closed before the market can be closed
     #[error("market treasury must be closed before the market can be closed")]
-    MarketTreasuryNotClosed = 0x1795,
-    /// 6038 - market still has outstanding VaultDepositor PDAs
+    MarketTreasuryNotClosed = 0x1796,
+    /// 6039 - market still has outstanding VaultDepositor PDAs
     #[error("market still has outstanding VaultDepositor PDAs")]
-    MarketHasDepositors = 0x1796,
-    /// 6039 - registry still has live markets (market_count != 0)
+    MarketHasDepositors = 0x1797,
+    /// 6040 - registry still has live markets (market_count != 0)
     #[error("registry still has live markets (market_count != 0)")]
-    RegistryHasMarkets = 0x1797,
-    /// 6040 - registry still has admins beyond the caller
+    RegistryHasMarkets = 0x1798,
+    /// 6041 - registry still has admins beyond the caller
     #[error("registry still has admins beyond the caller")]
-    RegistryHasOtherAdmins = 0x1798,
-    /// 6041 - supplied mint is not one of the market's base/quote legs
+    RegistryHasOtherAdmins = 0x1799,
+    /// 6042 - supplied mint is not one of the market's base/quote legs
     #[error("supplied mint is not one of the market's base/quote legs")]
-    NotAMarketTreasury = 0x1799,
-    /// 6042 - teardown instructions are disabled in this build (admin-teardown feature off)
+    NotAMarketTreasury = 0x179A,
+    /// 6043 - teardown instructions are disabled in this build (admin-teardown feature off)
     #[error("teardown instructions are disabled in this build (admin-teardown feature off)")]
-    TeardownDisabled = 0x179A,
-    /// 6043 - vault has been closed and moved to the tombstone list
+    TeardownDisabled = 0x179B,
+    /// 6044 - vault has been closed and moved to the tombstone list
     #[error("vault has been closed and moved to the tombstone list")]
-    VaultTombstoned = 0x179B,
+    VaultTombstoned = 0x179C,
 }
 
 impl From<DropsetError> for solana_program_error::ProgramError {

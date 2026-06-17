@@ -39,7 +39,8 @@ pub struct MarketHeader {
     /// **Account lifecycle and rent reclamation**.
     pub outstanding_vault_depositors: u32,
     /// Per-market create-vault fee: mint and amount. Seeded from
-    /// `Registry.default_fee_config` at market creation.
+    /// `Registry.default_fee_config` at market creation, then
+    /// admin-retunable via `SetMarketFeeConfig`.
     pub fee_config: FeeConfig,
     /// Taker fee rate, capped at ~6.55% (`Ppm16` max).
     pub taker_fee: u16,
