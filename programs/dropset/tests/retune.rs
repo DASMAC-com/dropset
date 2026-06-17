@@ -1,5 +1,6 @@
 //! Integration tests for the post-create admin retuning levers
-//! (`set_min_leader_share`, `set_market_fee_config`).
+//! (`set_min_leader_share`, `set_market_fee_config`, `set_taker_fee`,
+//! `set_registry_defaults`).
 
 mod common;
 
