@@ -23,7 +23,14 @@ jobs:
       pull-requests: 'read'
     runs-on: 'ubuntu-latest'
     steps:
-    - id: 'filter'
+    # Fail-safe: a transient paths-filter/API error must not fail this job.
+    # If it did, `needs: changes` would *skip* the test jobs (not run them
+    # with steps gated), and a required check skipped via a failed `needs`
+    # reports as pending — hanging branch protection, the very thing this
+    # design avoids. On error the step's `code` output is empty, so the
+    # job output defaults to true (`'' != 'false'`) and the full suite runs.
+    - continue-on-error: true
+      id: 'filter'
       if: |
         github.event_name == 'pull_request'
       uses: 'dorny/paths-filter@v3'
