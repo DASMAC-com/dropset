@@ -326,12 +326,14 @@ pub mod dropset {
 
     // ── Post-create admin retuning levers ────────────────────────────
     // Always-on admin mutators (not teardown-gated) that retune values
-    // stamped once at create time — a vault's `min_leader_share` floor
-    // and a market's create-vault `fee_config`. Appended after the
+    // stamped once at create time — a vault's `min_leader_share` floor, a
+    // market's create-vault `fee_config` and `taker_fee`, and the
+    // registry-wide defaults future markets inherit. Appended after the
     // teardown surface so discriminants 0–21 keep their numbers: clients
     // key instructions on the discriminant, so inserting mid-list would
     // break every existing client. See the architecture spec,
-    // § SetMinLeaderShare and § SetMarketFeeConfig.
+    // § SetMinLeaderShare, § SetMarketFeeConfig, § SetTakerFee, and
+    // § SetRegistryDefaults.
 
     #[discrim = 22]
     pub fn set_min_leader_share(
@@ -349,6 +351,26 @@ pub mod dropset {
     #[discrim = 23]
     pub fn set_market_fee_config(ctx: &mut Context<SetMarketFeeConfig>, atoms: u64) -> Result<()> {
         let event = ctx.accounts.set_market_fee_config(atoms)?;
+        emit_cpi!(event);
+        Ok(())
+    }
+
+    #[discrim = 24]
+    pub fn set_taker_fee(ctx: &mut Context<SetTakerFee>, taker_fee: u16) -> Result<()> {
+        let event = ctx.accounts.set_taker_fee(taker_fee)?;
+        emit_cpi!(event);
+        Ok(())
+    }
+
+    #[discrim = 25]
+    pub fn set_registry_defaults(
+        ctx: &mut Context<SetRegistryDefaults>,
+        taker_fee: Option<u16>,
+        min_leader_share: Option<u32>,
+    ) -> Result<()> {
+        let event = ctx
+            .accounts
+            .set_registry_defaults(taker_fee, min_leader_share)?;
         emit_cpi!(event);
         Ok(())
     }
