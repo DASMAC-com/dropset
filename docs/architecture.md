@@ -116,9 +116,11 @@ the invariants and rationale, not the field-by-field types:
   to 255, enforced at `CreateVault`) — plus a live `market_count` and
   the admin allowlist (`Set<Pubkey>`). Each default only **seeds** the
   corresponding per-market value at `create_market`; admins tune
-  markets and vaults downstream (`SetMarketFeeConfig`,
+  markets and vaults downstream (`SetMarketFeeConfig`, `SetTakerFee`,
   `SetMinLeaderShare`, `FreezeVault`, `SetOutsideDepositsApproved`) and
-  may open vaults without paying the per-market create-vault fee.
+  retune the scalar defaults themselves — for future markets — via
+  `SetRegistryDefaults`. Admins may also open vaults without paying the
+  per-market create-vault fee.
   **Invariant:** `close_registry` requires `market_count == 0` — the
   only on-chain witness that no orphan markets remain, since the
   program cannot iterate all PDAs to verify by enumeration (see
@@ -198,10 +200,10 @@ load-bearing invariants and rationale:
   `SetMarketFeeConfig` create the fresh registry ATA fees route to —
   admins sweep both.
 - **Fee cap / floor seeding.** `taker_fee` is capped at ~6.55%
-  (`Ppm16` max) and admin-mutable. `default_min_leader_share` is stamped
-  into each `Vault.min_leader_share` at `CreateVault`; mutating it
-  affects only vaults opened afterward (see **Vault → Skin-in-the-game
-  floor**).
+  (`Ppm16` max) and admin-mutable per market via `SetTakerFee`.
+  `default_min_leader_share` is stamped into each `Vault.min_leader_share`
+  at `CreateVault`; mutating it affects only vaults opened afterward (see
+  **Vault → Skin-in-the-game floor**).
 
 Every quote a vault produces is identified by `MarketHeader.nonce`
 at the moment of stamping — a global counter incremented on every
@@ -1296,6 +1298,37 @@ wrong-program payload outright, a stronger backstop than the
 prior ATA and admins sweep both. Takes effect on the next `CreateVault`;
 vaults already open are unaffected (the fee is charged only at open
 time).
+
+### SetTakerFee
+
+Admin-only. Writes `MarketHeader.taker_fee = value` (ppm, `Ppm16`),
+overriding the rate stamped from `Registry.default_taker_fee` at
+`create_market`. The taker fee is read on the swap hot path, so this is
+the lever that retunes a live market's taker schedule after launch. It
+is a market-wide knob — not per-vault — so it takes no `vault_idx`.
+`Ppm16` is a `u16`, so the ~6.55% cap is the type's own maximum: no
+value can exceed it and the instruction performs no range check. Takes
+effect on the next swap; in-flight quotes are unaffected.
+
+### SetRegistryDefaults
+
+Admin-only. Retunes the registry-wide defaults stamped onto **future**
+markets — `default_taker_fee` (`Ppm16`) and `default_min_leader_share`
+(`Ppm32`) — each passed as an `Option`, so an admin can move one default
+without restating the other (`None` leaves a field untouched). Like
+`SetMarketFeeConfig`, the write is **non-retroactive**: it changes only
+what the next `create_market` stamps, never the values live markets were
+created with. Retune those per market via `SetTakerFee` /
+`SetMinLeaderShare`. `default_min_leader_share` is range-checked
+(`<= 1_000_000` ppm, exactly `PPM` allowed for a leader-only book),
+mirroring `SetMinLeaderShare`; `default_taker_fee` needs no check for
+the `Ppm16` reason above.
+
+The registry's third default, `default_fee_config`, is **not** covered
+here: mutating a fee config must eagerly create the registry fee ATA for
+a new mint (see `SetMarketFeeConfig`), so it belongs in its own
+ATA-bearing instruction rather than as an `Option` field on a
+pure-header writer.
 
 ## Depositor operations
 
