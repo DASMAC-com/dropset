@@ -11,7 +11,7 @@ sdk/price-core/pkg/
 /target/*
 !/target/deploy/
 /target/deploy/*
-!/target/deploy/dropset_gamma-keypair.json
+!/target/deploy/dropset-keypair.json
 
 # Background audit-loop state (see .claude/skills/audit-loop).
 .audit-loop/
