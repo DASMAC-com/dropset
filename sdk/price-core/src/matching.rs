@@ -74,6 +74,20 @@ pub fn simulate_swap(
     let taker_fee_ppm = market.header.taker_fee.get() as u128;
     let is_buy = side == SwapSide::Buy;
 
+    // Engine parity on a corrupt active DLL. `swap.rs` bounds its walk by
+    // `market.len()` steps and hard-rejects the whole `swap` tx
+    // (`CorruptVaultList`) when a `Vault.next` pointer cycles — the step
+    // budget runs out before `NULL_SECTOR` — or points out of bounds. The
+    // bounded `active_vaults` iterator instead *silently truncates* at the
+    // same budget and would quote whatever levels it collected before the
+    // truncation. Detect the corruption up front and refuse to quote, the
+    // way the oversize-flush guard below does: a router must never quote a
+    // fill the engine rejects. (Only reachable from account bytes the
+    // program never wrote — see `MarketView::active_dll_is_corrupt`.)
+    if market.active_dll_is_corrupt() {
+        return Quote::default();
+    }
+
     // ── Book construction: collect live levels of the chosen side. ──
     let mut levels: Vec<Lvl> = Vec::new();
     for (sector, v) in market.active_vaults() {

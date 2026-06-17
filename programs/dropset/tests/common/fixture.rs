@@ -1274,6 +1274,20 @@ impl Fixture {
         self.poke_vault_bytes(sector_idx, field_offset, &size_bps.to_le_bytes());
     }
 
+    /// Overwrite `Vault.next` (the active-DLL forward pointer) for vault
+    /// `sector_idx`. The list ops keep `next` acyclic and in-bounds, so a
+    /// cyclic (e.g. self-referential) or out-of-range pointer is only
+    /// reachable by poking corrupt bytes — the way to drive the matcher's
+    /// `CorruptVaultList` walk guard and the simulator's empty-quote
+    /// mirror.
+    pub fn poke_vault_next(&mut self, sector_idx: u32, next: u32) {
+        self.poke_vault_bytes(
+            sector_idx,
+            core::mem::offset_of!(Vault, next),
+            &next.to_le_bytes(),
+        );
+    }
+
     /// Set `Vault.min_leader_share` (ppm) directly — lets a test arm the
     /// skin-in-the-game floor without exercising the admin gate or the
     /// `<= PPM` cap the real [`Fixture::set_min_leader_share`] enforces.
