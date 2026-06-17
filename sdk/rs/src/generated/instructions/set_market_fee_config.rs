@@ -13,9 +13,12 @@ pub const SET_MARKET_FEE_CONFIG_DISCRIMINATOR: [u8; 1] = [23];
 /// Accounts.
 #[derive(Debug)]
 pub struct SetMarketFeeConfig {
-    /// Registry admin — the only signer this lever accepts.
+    /// Registry admin — the only signer this lever accepts. `mut`
+    /// because it funds the rent for the new mint's registry fee ATA
+    /// when `registry_fee_treasury` is created below.
     pub admin: solana_pubkey::Pubkey,
-    /// Singleton registry, read for the admin-membership check.
+    /// Singleton registry, read for the admin-membership check and as
+    /// the authority of the fee ATA created below.
     pub registry: solana_pubkey::Pubkey,
     /// Market whose `fee_config` is being retuned. `mut` for the write.
     pub market: solana_pubkey::Pubkey,
@@ -30,6 +33,21 @@ pub struct SetMarketFeeConfig {
     /// up front; the `mint::token_program` constraint above then pins it
     /// to `fee_mint`'s actual owner.
     pub fee_token_program: solana_pubkey::Pubkey,
+    /// Registry's fee ATA for the new mint. `CreateVault` charges the
+    /// per-vault fee into this account but does **not** create it, so we
+    /// create it here, eagerly, at config time — `init_if_needed` so
+    /// re-pointing a market back to a mint whose ATA already exists is a
+    /// no-op. The ATA program's `InitializeAccount3` CPI rejects a
+    /// non-mint / wrong-program payload outright, a stronger backstop than
+    /// the `mint::token_program` constraint above. Without this, switching
+    /// a market to a fresh mint would brick the next `CreateVault` on it
+    /// until the ATA was created out-of-band (architecture spec
+    /// § SetMarketFeeConfig).
+    pub registry_fee_treasury: solana_pubkey::Pubkey,
+
+    pub associated_token_program: solana_pubkey::Pubkey,
+
+    pub system_program: solana_pubkey::Pubkey,
     /// CHECK: Only the event authority can invoke self-CPI
     pub event_authority: solana_pubkey::Pubkey,
     /// CHECK: Kept for v1-compatible account ordering and IDL shape
@@ -50,10 +68,8 @@ impl SetMarketFeeConfig {
         args: SetMarketFeeConfigInstructionArgs,
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
-        let mut accounts = Vec::with_capacity(7 + remaining_accounts.len());
-        accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.admin, true,
-        ));
+        let mut accounts = Vec::with_capacity(10 + remaining_accounts.len());
+        accounts.push(solana_instruction::AccountMeta::new(self.admin, true));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.registry,
             false,
@@ -65,6 +81,18 @@ impl SetMarketFeeConfig {
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.fee_token_program,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            self.registry_fee_treasury,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.associated_token_program,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.system_program,
             false,
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
@@ -130,13 +158,16 @@ impl SetMarketFeeConfigInstructionArgs {
 ///
 /// ### Accounts:
 ///
-///   0. `[signer]` admin
+///   0. `[writable, signer]` admin
 ///   1. `[]` registry
 ///   2. `[writable]` market
 ///   3. `[]` fee_mint
 ///   4. `[]` fee_token_program
-///   5. `[]` event_authority
-///   6. `[]` program
+///   5. `[writable]` registry_fee_treasury
+///   6. `[optional]` associated_token_program (default to `ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL`)
+///   7. `[optional]` system_program (default to `11111111111111111111111111111111`)
+///   8. `[]` event_authority
+///   9. `[]` program
 #[derive(Clone, Debug, Default)]
 pub struct SetMarketFeeConfigBuilder {
     admin: Option<solana_pubkey::Pubkey>,
@@ -144,6 +175,9 @@ pub struct SetMarketFeeConfigBuilder {
     market: Option<solana_pubkey::Pubkey>,
     fee_mint: Option<solana_pubkey::Pubkey>,
     fee_token_program: Option<solana_pubkey::Pubkey>,
+    registry_fee_treasury: Option<solana_pubkey::Pubkey>,
+    associated_token_program: Option<solana_pubkey::Pubkey>,
+    system_program: Option<solana_pubkey::Pubkey>,
     event_authority: Option<solana_pubkey::Pubkey>,
     program: Option<solana_pubkey::Pubkey>,
     atoms: Option<u64>,
@@ -154,13 +188,16 @@ impl SetMarketFeeConfigBuilder {
     pub fn new() -> Self {
         Self::default()
     }
-    /// Registry admin — the only signer this lever accepts.
+    /// Registry admin — the only signer this lever accepts. `mut`
+    /// because it funds the rent for the new mint's registry fee ATA
+    /// when `registry_fee_treasury` is created below.
     #[inline(always)]
     pub fn admin(&mut self, admin: solana_pubkey::Pubkey) -> &mut Self {
         self.admin = Some(admin);
         self
     }
-    /// Singleton registry, read for the admin-membership check.
+    /// Singleton registry, read for the admin-membership check and as
+    /// the authority of the fee ATA created below.
     #[inline(always)]
     pub fn registry(&mut self, registry: solana_pubkey::Pubkey) -> &mut Self {
         self.registry = Some(registry);
@@ -189,6 +226,39 @@ impl SetMarketFeeConfigBuilder {
     #[inline(always)]
     pub fn fee_token_program(&mut self, fee_token_program: solana_pubkey::Pubkey) -> &mut Self {
         self.fee_token_program = Some(fee_token_program);
+        self
+    }
+    /// Registry's fee ATA for the new mint. `CreateVault` charges the
+    /// per-vault fee into this account but does **not** create it, so we
+    /// create it here, eagerly, at config time — `init_if_needed` so
+    /// re-pointing a market back to a mint whose ATA already exists is a
+    /// no-op. The ATA program's `InitializeAccount3` CPI rejects a
+    /// non-mint / wrong-program payload outright, a stronger backstop than
+    /// the `mint::token_program` constraint above. Without this, switching
+    /// a market to a fresh mint would brick the next `CreateVault` on it
+    /// until the ATA was created out-of-band (architecture spec
+    /// § SetMarketFeeConfig).
+    #[inline(always)]
+    pub fn registry_fee_treasury(
+        &mut self,
+        registry_fee_treasury: solana_pubkey::Pubkey,
+    ) -> &mut Self {
+        self.registry_fee_treasury = Some(registry_fee_treasury);
+        self
+    }
+    /// `[optional account, default to 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL']`
+    #[inline(always)]
+    pub fn associated_token_program(
+        &mut self,
+        associated_token_program: solana_pubkey::Pubkey,
+    ) -> &mut Self {
+        self.associated_token_program = Some(associated_token_program);
+        self
+    }
+    /// `[optional account, default to '11111111111111111111111111111111']`
+    #[inline(always)]
+    pub fn system_program(&mut self, system_program: solana_pubkey::Pubkey) -> &mut Self {
+        self.system_program = Some(system_program);
         self
     }
     /// CHECK: Only the event authority can invoke self-CPI
@@ -233,6 +303,15 @@ impl SetMarketFeeConfigBuilder {
             fee_token_program: self
                 .fee_token_program
                 .expect("fee_token_program is not set"),
+            registry_fee_treasury: self
+                .registry_fee_treasury
+                .expect("registry_fee_treasury is not set"),
+            associated_token_program: self.associated_token_program.unwrap_or(
+                solana_pubkey::pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"),
+            ),
+            system_program: self
+                .system_program
+                .unwrap_or(solana_pubkey::pubkey!("11111111111111111111111111111111")),
             event_authority: self.event_authority.expect("event_authority is not set"),
             program: self.program.expect("program is not set"),
         };
@@ -246,9 +325,12 @@ impl SetMarketFeeConfigBuilder {
 
 /// `set_market_fee_config` CPI accounts.
 pub struct SetMarketFeeConfigCpiAccounts<'a, 'b> {
-    /// Registry admin — the only signer this lever accepts.
+    /// Registry admin — the only signer this lever accepts. `mut`
+    /// because it funds the rent for the new mint's registry fee ATA
+    /// when `registry_fee_treasury` is created below.
     pub admin: &'b solana_account_info::AccountInfo<'a>,
-    /// Singleton registry, read for the admin-membership check.
+    /// Singleton registry, read for the admin-membership check and as
+    /// the authority of the fee ATA created below.
     pub registry: &'b solana_account_info::AccountInfo<'a>,
     /// Market whose `fee_config` is being retuned. `mut` for the write.
     pub market: &'b solana_account_info::AccountInfo<'a>,
@@ -263,6 +345,21 @@ pub struct SetMarketFeeConfigCpiAccounts<'a, 'b> {
     /// up front; the `mint::token_program` constraint above then pins it
     /// to `fee_mint`'s actual owner.
     pub fee_token_program: &'b solana_account_info::AccountInfo<'a>,
+    /// Registry's fee ATA for the new mint. `CreateVault` charges the
+    /// per-vault fee into this account but does **not** create it, so we
+    /// create it here, eagerly, at config time — `init_if_needed` so
+    /// re-pointing a market back to a mint whose ATA already exists is a
+    /// no-op. The ATA program's `InitializeAccount3` CPI rejects a
+    /// non-mint / wrong-program payload outright, a stronger backstop than
+    /// the `mint::token_program` constraint above. Without this, switching
+    /// a market to a fresh mint would brick the next `CreateVault` on it
+    /// until the ATA was created out-of-band (architecture spec
+    /// § SetMarketFeeConfig).
+    pub registry_fee_treasury: &'b solana_account_info::AccountInfo<'a>,
+
+    pub associated_token_program: &'b solana_account_info::AccountInfo<'a>,
+
+    pub system_program: &'b solana_account_info::AccountInfo<'a>,
     /// CHECK: Only the event authority can invoke self-CPI
     pub event_authority: &'b solana_account_info::AccountInfo<'a>,
     /// CHECK: Kept for v1-compatible account ordering and IDL shape
@@ -273,9 +370,12 @@ pub struct SetMarketFeeConfigCpiAccounts<'a, 'b> {
 pub struct SetMarketFeeConfigCpi<'a, 'b> {
     /// The program to invoke.
     pub __program: &'b solana_account_info::AccountInfo<'a>,
-    /// Registry admin — the only signer this lever accepts.
+    /// Registry admin — the only signer this lever accepts. `mut`
+    /// because it funds the rent for the new mint's registry fee ATA
+    /// when `registry_fee_treasury` is created below.
     pub admin: &'b solana_account_info::AccountInfo<'a>,
-    /// Singleton registry, read for the admin-membership check.
+    /// Singleton registry, read for the admin-membership check and as
+    /// the authority of the fee ATA created below.
     pub registry: &'b solana_account_info::AccountInfo<'a>,
     /// Market whose `fee_config` is being retuned. `mut` for the write.
     pub market: &'b solana_account_info::AccountInfo<'a>,
@@ -290,6 +390,21 @@ pub struct SetMarketFeeConfigCpi<'a, 'b> {
     /// up front; the `mint::token_program` constraint above then pins it
     /// to `fee_mint`'s actual owner.
     pub fee_token_program: &'b solana_account_info::AccountInfo<'a>,
+    /// Registry's fee ATA for the new mint. `CreateVault` charges the
+    /// per-vault fee into this account but does **not** create it, so we
+    /// create it here, eagerly, at config time — `init_if_needed` so
+    /// re-pointing a market back to a mint whose ATA already exists is a
+    /// no-op. The ATA program's `InitializeAccount3` CPI rejects a
+    /// non-mint / wrong-program payload outright, a stronger backstop than
+    /// the `mint::token_program` constraint above. Without this, switching
+    /// a market to a fresh mint would brick the next `CreateVault` on it
+    /// until the ATA was created out-of-band (architecture spec
+    /// § SetMarketFeeConfig).
+    pub registry_fee_treasury: &'b solana_account_info::AccountInfo<'a>,
+
+    pub associated_token_program: &'b solana_account_info::AccountInfo<'a>,
+
+    pub system_program: &'b solana_account_info::AccountInfo<'a>,
     /// CHECK: Only the event authority can invoke self-CPI
     pub event_authority: &'b solana_account_info::AccountInfo<'a>,
     /// CHECK: Kept for v1-compatible account ordering and IDL shape
@@ -311,6 +426,9 @@ impl<'a, 'b> SetMarketFeeConfigCpi<'a, 'b> {
             market: accounts.market,
             fee_mint: accounts.fee_mint,
             fee_token_program: accounts.fee_token_program,
+            registry_fee_treasury: accounts.registry_fee_treasury,
+            associated_token_program: accounts.associated_token_program,
+            system_program: accounts.system_program,
             event_authority: accounts.event_authority,
             program: accounts.program,
             __args: args,
@@ -339,11 +457,8 @@ impl<'a, 'b> SetMarketFeeConfigCpi<'a, 'b> {
         signers_seeds: &[&[&[u8]]],
         remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
     ) -> solana_program_error::ProgramResult {
-        let mut accounts = Vec::with_capacity(7 + remaining_accounts.len());
-        accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.admin.key,
-            true,
-        ));
+        let mut accounts = Vec::with_capacity(10 + remaining_accounts.len());
+        accounts.push(solana_instruction::AccountMeta::new(*self.admin.key, true));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.registry.key,
             false,
@@ -358,6 +473,18 @@ impl<'a, 'b> SetMarketFeeConfigCpi<'a, 'b> {
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.fee_token_program.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            *self.registry_fee_treasury.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.associated_token_program.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.system_program.key,
             false,
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
@@ -386,13 +513,16 @@ impl<'a, 'b> SetMarketFeeConfigCpi<'a, 'b> {
             accounts,
             data,
         };
-        let mut account_infos = Vec::with_capacity(8 + remaining_accounts.len());
+        let mut account_infos = Vec::with_capacity(11 + remaining_accounts.len());
         account_infos.push(self.__program.clone());
         account_infos.push(self.admin.clone());
         account_infos.push(self.registry.clone());
         account_infos.push(self.market.clone());
         account_infos.push(self.fee_mint.clone());
         account_infos.push(self.fee_token_program.clone());
+        account_infos.push(self.registry_fee_treasury.clone());
+        account_infos.push(self.associated_token_program.clone());
+        account_infos.push(self.system_program.clone());
         account_infos.push(self.event_authority.clone());
         account_infos.push(self.program.clone());
         remaining_accounts
@@ -411,13 +541,16 @@ impl<'a, 'b> SetMarketFeeConfigCpi<'a, 'b> {
 ///
 /// ### Accounts:
 ///
-///   0. `[signer]` admin
+///   0. `[writable, signer]` admin
 ///   1. `[]` registry
 ///   2. `[writable]` market
 ///   3. `[]` fee_mint
 ///   4. `[]` fee_token_program
-///   5. `[]` event_authority
-///   6. `[]` program
+///   5. `[writable]` registry_fee_treasury
+///   6. `[]` associated_token_program
+///   7. `[]` system_program
+///   8. `[]` event_authority
+///   9. `[]` program
 #[derive(Clone, Debug)]
 pub struct SetMarketFeeConfigCpiBuilder<'a, 'b> {
     instruction: Box<SetMarketFeeConfigCpiBuilderInstruction<'a, 'b>>,
@@ -432,6 +565,9 @@ impl<'a, 'b> SetMarketFeeConfigCpiBuilder<'a, 'b> {
             market: None,
             fee_mint: None,
             fee_token_program: None,
+            registry_fee_treasury: None,
+            associated_token_program: None,
+            system_program: None,
             event_authority: None,
             program: None,
             atoms: None,
@@ -439,13 +575,16 @@ impl<'a, 'b> SetMarketFeeConfigCpiBuilder<'a, 'b> {
         });
         Self { instruction }
     }
-    /// Registry admin — the only signer this lever accepts.
+    /// Registry admin — the only signer this lever accepts. `mut`
+    /// because it funds the rent for the new mint's registry fee ATA
+    /// when `registry_fee_treasury` is created below.
     #[inline(always)]
     pub fn admin(&mut self, admin: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
         self.instruction.admin = Some(admin);
         self
     }
-    /// Singleton registry, read for the admin-membership check.
+    /// Singleton registry, read for the admin-membership check and as
+    /// the authority of the fee ATA created below.
     #[inline(always)]
     pub fn registry(&mut self, registry: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
         self.instruction.registry = Some(registry);
@@ -477,6 +616,40 @@ impl<'a, 'b> SetMarketFeeConfigCpiBuilder<'a, 'b> {
         fee_token_program: &'b solana_account_info::AccountInfo<'a>,
     ) -> &mut Self {
         self.instruction.fee_token_program = Some(fee_token_program);
+        self
+    }
+    /// Registry's fee ATA for the new mint. `CreateVault` charges the
+    /// per-vault fee into this account but does **not** create it, so we
+    /// create it here, eagerly, at config time — `init_if_needed` so
+    /// re-pointing a market back to a mint whose ATA already exists is a
+    /// no-op. The ATA program's `InitializeAccount3` CPI rejects a
+    /// non-mint / wrong-program payload outright, a stronger backstop than
+    /// the `mint::token_program` constraint above. Without this, switching
+    /// a market to a fresh mint would brick the next `CreateVault` on it
+    /// until the ATA was created out-of-band (architecture spec
+    /// § SetMarketFeeConfig).
+    #[inline(always)]
+    pub fn registry_fee_treasury(
+        &mut self,
+        registry_fee_treasury: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.registry_fee_treasury = Some(registry_fee_treasury);
+        self
+    }
+    #[inline(always)]
+    pub fn associated_token_program(
+        &mut self,
+        associated_token_program: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.associated_token_program = Some(associated_token_program);
+        self
+    }
+    #[inline(always)]
+    pub fn system_program(
+        &mut self,
+        system_program: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.system_program = Some(system_program);
         self
     }
     /// CHECK: Only the event authority can invoke self-CPI
@@ -552,6 +725,21 @@ impl<'a, 'b> SetMarketFeeConfigCpiBuilder<'a, 'b> {
                 .fee_token_program
                 .expect("fee_token_program is not set"),
 
+            registry_fee_treasury: self
+                .instruction
+                .registry_fee_treasury
+                .expect("registry_fee_treasury is not set"),
+
+            associated_token_program: self
+                .instruction
+                .associated_token_program
+                .expect("associated_token_program is not set"),
+
+            system_program: self
+                .instruction
+                .system_program
+                .expect("system_program is not set"),
+
             event_authority: self
                 .instruction
                 .event_authority
@@ -575,6 +763,9 @@ struct SetMarketFeeConfigCpiBuilderInstruction<'a, 'b> {
     market: Option<&'b solana_account_info::AccountInfo<'a>>,
     fee_mint: Option<&'b solana_account_info::AccountInfo<'a>>,
     fee_token_program: Option<&'b solana_account_info::AccountInfo<'a>>,
+    registry_fee_treasury: Option<&'b solana_account_info::AccountInfo<'a>>,
+    associated_token_program: Option<&'b solana_account_info::AccountInfo<'a>>,
+    system_program: Option<&'b solana_account_info::AccountInfo<'a>>,
     event_authority: Option<&'b solana_account_info::AccountInfo<'a>>,
     program: Option<&'b solana_account_info::AccountInfo<'a>>,
     atoms: Option<u64>,

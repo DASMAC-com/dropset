@@ -1679,14 +1679,18 @@
         {
           "name": "admin",
           "docs": [
-            "Registry admin — the only signer this lever accepts."
+            "Registry admin — the only signer this lever accepts. `mut`",
+            "because it funds the rent for the new mint's registry fee ATA",
+            "when `registry_fee_treasury` is created below."
           ],
+          "writable": true,
           "signer": true
         },
         {
           "name": "registry",
           "docs": [
-            "Singleton registry, read for the admin-membership check."
+            "Singleton registry, read for the admin-membership check and as",
+            "the authority of the fee ATA created below."
           ],
           "pda": {
             "seeds": [
@@ -1731,6 +1735,30 @@
             "up front; the `mint::token_program` constraint above then pins it",
             "to `fee_mint`'s actual owner."
           ]
+        },
+        {
+          "name": "registry_fee_treasury",
+          "docs": [
+            "Registry's fee ATA for the new mint. `CreateVault` charges the",
+            "per-vault fee into this account but does **not** create it, so we",
+            "create it here, eagerly, at config time — `init_if_needed` so",
+            "re-pointing a market back to a mint whose ATA already exists is a",
+            "no-op. The ATA program's `InitializeAccount3` CPI rejects a",
+            "non-mint / wrong-program payload outright, a stronger backstop than",
+            "the `mint::token_program` constraint above. Without this, switching",
+            "a market to a fresh mint would brick the next `CreateVault` on it",
+            "until the ATA was created out-of-band (architecture spec",
+            "§ SetMarketFeeConfig)."
+          ],
+          "writable": true
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
         },
         {
           "name": "event_authority",

@@ -6,7 +6,7 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { combineCodec, fixDecoderSize, fixEncoderSize, getBytesDecoder, getBytesEncoder, getStructDecoder, getStructEncoder, getU64Decoder, getU64Encoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlySignerAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount } from '@solana/kit';
+import { combineCodec, fixDecoderSize, fixEncoderSize, getBytesDecoder, getBytesEncoder, getStructDecoder, getStructEncoder, getU64Decoder, getU64Encoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount, type WritableSignerAccount } from '@solana/kit';
 import { findEventAuthorityPda, findRegistryPda } from '../pdas';
 import { DROPSET_PROGRAM_ADDRESS } from '../programs';
 import { getAccountMetaFactory, type ResolvedAccount } from '../shared';
@@ -15,8 +15,8 @@ export const SET_MARKET_FEE_CONFIG_DISCRIMINATOR = new Uint8Array([23]);
 
 export function getSetMarketFeeConfigDiscriminatorBytes() { return fixEncoderSize(getBytesEncoder(), 1).encode(SET_MARKET_FEE_CONFIG_DISCRIMINATOR); }
 
-export type SetMarketFeeConfigInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountAdmin extends string | AccountMeta<string> = string, TAccountRegistry extends string | AccountMeta<string> = string, TAccountMarket extends string | AccountMeta<string> = string, TAccountFeeMint extends string | AccountMeta<string> = string, TAccountFeeTokenProgram extends string | AccountMeta<string> = string, TAccountEventAuthority extends string | AccountMeta<string> = string, TAccountProgram extends string | AccountMeta<string> = string, TRemainingAccounts extends readonly AccountMeta<string>[] = []> =
-Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array> & InstructionWithAccounts<[TAccountAdmin extends string ? ReadonlySignerAccount<TAccountAdmin> & AccountSignerMeta<TAccountAdmin> : TAccountAdmin, TAccountRegistry extends string ? ReadonlyAccount<TAccountRegistry> : TAccountRegistry, TAccountMarket extends string ? WritableAccount<TAccountMarket> : TAccountMarket, TAccountFeeMint extends string ? ReadonlyAccount<TAccountFeeMint> : TAccountFeeMint, TAccountFeeTokenProgram extends string ? ReadonlyAccount<TAccountFeeTokenProgram> : TAccountFeeTokenProgram, TAccountEventAuthority extends string ? ReadonlyAccount<TAccountEventAuthority> : TAccountEventAuthority, TAccountProgram extends string ? ReadonlyAccount<TAccountProgram> : TAccountProgram, ...TRemainingAccounts]>;
+export type SetMarketFeeConfigInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountAdmin extends string | AccountMeta<string> = string, TAccountRegistry extends string | AccountMeta<string> = string, TAccountMarket extends string | AccountMeta<string> = string, TAccountFeeMint extends string | AccountMeta<string> = string, TAccountFeeTokenProgram extends string | AccountMeta<string> = string, TAccountRegistryFeeTreasury extends string | AccountMeta<string> = string, TAccountAssociatedTokenProgram extends string | AccountMeta<string> = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL", TAccountSystemProgram extends string | AccountMeta<string> = "11111111111111111111111111111111", TAccountEventAuthority extends string | AccountMeta<string> = string, TAccountProgram extends string | AccountMeta<string> = string, TRemainingAccounts extends readonly AccountMeta<string>[] = []> =
+Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array> & InstructionWithAccounts<[TAccountAdmin extends string ? WritableSignerAccount<TAccountAdmin> & AccountSignerMeta<TAccountAdmin> : TAccountAdmin, TAccountRegistry extends string ? ReadonlyAccount<TAccountRegistry> : TAccountRegistry, TAccountMarket extends string ? WritableAccount<TAccountMarket> : TAccountMarket, TAccountFeeMint extends string ? ReadonlyAccount<TAccountFeeMint> : TAccountFeeMint, TAccountFeeTokenProgram extends string ? ReadonlyAccount<TAccountFeeTokenProgram> : TAccountFeeTokenProgram, TAccountRegistryFeeTreasury extends string ? WritableAccount<TAccountRegistryFeeTreasury> : TAccountRegistryFeeTreasury, TAccountAssociatedTokenProgram extends string ? ReadonlyAccount<TAccountAssociatedTokenProgram> : TAccountAssociatedTokenProgram, TAccountSystemProgram extends string ? ReadonlyAccount<TAccountSystemProgram> : TAccountSystemProgram, TAccountEventAuthority extends string ? ReadonlyAccount<TAccountEventAuthority> : TAccountEventAuthority, TAccountProgram extends string ? ReadonlyAccount<TAccountProgram> : TAccountProgram, ...TRemainingAccounts]>;
 
 export type SetMarketFeeConfigInstructionData = { discriminator: ReadonlyUint8Array; atoms: bigint;  };
 
@@ -34,10 +34,17 @@ export function getSetMarketFeeConfigInstructionDataCodec(): FixedSizeCodec<SetM
     return combineCodec(getSetMarketFeeConfigInstructionDataEncoder(), getSetMarketFeeConfigInstructionDataDecoder());
 }
 
-export type SetMarketFeeConfigAsyncInput<TAccountAdmin extends string = string, TAccountRegistry extends string = string, TAccountMarket extends string = string, TAccountFeeMint extends string = string, TAccountFeeTokenProgram extends string = string, TAccountEventAuthority extends string = string, TAccountProgram extends string = string> =  {
-  /** Registry admin — the only signer this lever accepts. */
+export type SetMarketFeeConfigAsyncInput<TAccountAdmin extends string = string, TAccountRegistry extends string = string, TAccountMarket extends string = string, TAccountFeeMint extends string = string, TAccountFeeTokenProgram extends string = string, TAccountRegistryFeeTreasury extends string = string, TAccountAssociatedTokenProgram extends string = string, TAccountSystemProgram extends string = string, TAccountEventAuthority extends string = string, TAccountProgram extends string = string> =  {
+  /**
+ * Registry admin — the only signer this lever accepts. `mut`
+ * because it funds the rent for the new mint's registry fee ATA
+ * when `registry_fee_treasury` is created below.
+ */
 admin: TransactionSigner<TAccountAdmin>;
-/** Singleton registry, read for the admin-membership check. */
+/**
+ * Singleton registry, read for the admin-membership check and as
+ * the authority of the fee ATA created below.
+ */
 registry?: Address<TAccountRegistry>;
 /** Market whose `fee_config` is being retuned. `mut` for the write. */
 market: Address<TAccountMarket>;
@@ -56,6 +63,21 @@ feeMint: Address<TAccountFeeMint>;
  * to `fee_mint`'s actual owner.
  */
 feeTokenProgram: Address<TAccountFeeTokenProgram>;
+/**
+ * Registry's fee ATA for the new mint. `CreateVault` charges the
+ * per-vault fee into this account but does **not** create it, so we
+ * create it here, eagerly, at config time — `init_if_needed` so
+ * re-pointing a market back to a mint whose ATA already exists is a
+ * no-op. The ATA program's `InitializeAccount3` CPI rejects a
+ * non-mint / wrong-program payload outright, a stronger backstop than
+ * the `mint::token_program` constraint above. Without this, switching
+ * a market to a fresh mint would brick the next `CreateVault` on it
+ * until the ATA was created out-of-band (architecture spec
+ * § SetMarketFeeConfig).
+ */
+registryFeeTreasury: Address<TAccountRegistryFeeTreasury>;
+associatedTokenProgram?: Address<TAccountAssociatedTokenProgram>;
+systemProgram?: Address<TAccountSystemProgram>;
 /** CHECK: Only the event authority can invoke self-CPI */
 eventAuthority?: Address<TAccountEventAuthority>;
 /** CHECK: Kept for v1-compatible account ordering and IDL shape */
@@ -63,12 +85,12 @@ program: Address<TAccountProgram>;
 atoms: SetMarketFeeConfigInstructionDataArgs["atoms"];
 }
 
-export async function getSetMarketFeeConfigInstructionAsync<TAccountAdmin extends string, TAccountRegistry extends string, TAccountMarket extends string, TAccountFeeMint extends string, TAccountFeeTokenProgram extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SetMarketFeeConfigAsyncInput<TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountEventAuthority, TAccountProgram>, config?: { programAddress?: TProgramAddress } ): Promise<SetMarketFeeConfigInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountEventAuthority, TAccountProgram>> {
+export async function getSetMarketFeeConfigInstructionAsync<TAccountAdmin extends string, TAccountRegistry extends string, TAccountMarket extends string, TAccountFeeMint extends string, TAccountFeeTokenProgram extends string, TAccountRegistryFeeTreasury extends string, TAccountAssociatedTokenProgram extends string, TAccountSystemProgram extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SetMarketFeeConfigAsyncInput<TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountRegistryFeeTreasury, TAccountAssociatedTokenProgram, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram>, config?: { programAddress?: TProgramAddress } ): Promise<SetMarketFeeConfigInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountRegistryFeeTreasury, TAccountAssociatedTokenProgram, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram>> {
   // Program address.
 const programAddress = config?.programAddress ?? DROPSET_PROGRAM_ADDRESS;
 
  // Original accounts.
-const originalAccounts = { admin: { value: input.admin ?? null, isWritable: false }, registry: { value: input.registry ?? null, isWritable: false }, market: { value: input.market ?? null, isWritable: true }, feeMint: { value: input.feeMint ?? null, isWritable: false }, feeTokenProgram: { value: input.feeTokenProgram ?? null, isWritable: false }, eventAuthority: { value: input.eventAuthority ?? null, isWritable: false }, program: { value: input.program ?? null, isWritable: false } }
+const originalAccounts = { admin: { value: input.admin ?? null, isWritable: true }, registry: { value: input.registry ?? null, isWritable: false }, market: { value: input.market ?? null, isWritable: true }, feeMint: { value: input.feeMint ?? null, isWritable: false }, feeTokenProgram: { value: input.feeTokenProgram ?? null, isWritable: false }, registryFeeTreasury: { value: input.registryFeeTreasury ?? null, isWritable: true }, associatedTokenProgram: { value: input.associatedTokenProgram ?? null, isWritable: false }, systemProgram: { value: input.systemProgram ?? null, isWritable: false }, eventAuthority: { value: input.eventAuthority ?? null, isWritable: false }, program: { value: input.program ?? null, isWritable: false } }
 const accounts = originalAccounts as Record<keyof typeof originalAccounts, ResolvedAccount>;
 
 
@@ -80,18 +102,31 @@ const args = { ...input,  };
 if (!accounts.registry.value) {
 accounts.registry.value = await findRegistryPda();
 }
+if (!accounts.associatedTokenProgram.value) {
+accounts.associatedTokenProgram.value = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL' as Address<'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL'>;
+}
+if (!accounts.systemProgram.value) {
+accounts.systemProgram.value = '11111111111111111111111111111111' as Address<'11111111111111111111111111111111'>;
+}
 if (!accounts.eventAuthority.value) {
 accounts.eventAuthority.value = await findEventAuthorityPda();
 }
 
 const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
-return Object.freeze({ accounts: [getAccountMeta(accounts.admin), getAccountMeta(accounts.registry), getAccountMeta(accounts.market), getAccountMeta(accounts.feeMint), getAccountMeta(accounts.feeTokenProgram), getAccountMeta(accounts.eventAuthority), getAccountMeta(accounts.program)], data: getSetMarketFeeConfigInstructionDataEncoder().encode(args as SetMarketFeeConfigInstructionDataArgs), programAddress } as SetMarketFeeConfigInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountEventAuthority, TAccountProgram>);
+return Object.freeze({ accounts: [getAccountMeta(accounts.admin), getAccountMeta(accounts.registry), getAccountMeta(accounts.market), getAccountMeta(accounts.feeMint), getAccountMeta(accounts.feeTokenProgram), getAccountMeta(accounts.registryFeeTreasury), getAccountMeta(accounts.associatedTokenProgram), getAccountMeta(accounts.systemProgram), getAccountMeta(accounts.eventAuthority), getAccountMeta(accounts.program)], data: getSetMarketFeeConfigInstructionDataEncoder().encode(args as SetMarketFeeConfigInstructionDataArgs), programAddress } as SetMarketFeeConfigInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountRegistryFeeTreasury, TAccountAssociatedTokenProgram, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram>);
 }
 
-export type SetMarketFeeConfigInput<TAccountAdmin extends string = string, TAccountRegistry extends string = string, TAccountMarket extends string = string, TAccountFeeMint extends string = string, TAccountFeeTokenProgram extends string = string, TAccountEventAuthority extends string = string, TAccountProgram extends string = string> =  {
-  /** Registry admin — the only signer this lever accepts. */
+export type SetMarketFeeConfigInput<TAccountAdmin extends string = string, TAccountRegistry extends string = string, TAccountMarket extends string = string, TAccountFeeMint extends string = string, TAccountFeeTokenProgram extends string = string, TAccountRegistryFeeTreasury extends string = string, TAccountAssociatedTokenProgram extends string = string, TAccountSystemProgram extends string = string, TAccountEventAuthority extends string = string, TAccountProgram extends string = string> =  {
+  /**
+ * Registry admin — the only signer this lever accepts. `mut`
+ * because it funds the rent for the new mint's registry fee ATA
+ * when `registry_fee_treasury` is created below.
+ */
 admin: TransactionSigner<TAccountAdmin>;
-/** Singleton registry, read for the admin-membership check. */
+/**
+ * Singleton registry, read for the admin-membership check and as
+ * the authority of the fee ATA created below.
+ */
 registry: Address<TAccountRegistry>;
 /** Market whose `fee_config` is being retuned. `mut` for the write. */
 market: Address<TAccountMarket>;
@@ -110,6 +145,21 @@ feeMint: Address<TAccountFeeMint>;
  * to `fee_mint`'s actual owner.
  */
 feeTokenProgram: Address<TAccountFeeTokenProgram>;
+/**
+ * Registry's fee ATA for the new mint. `CreateVault` charges the
+ * per-vault fee into this account but does **not** create it, so we
+ * create it here, eagerly, at config time — `init_if_needed` so
+ * re-pointing a market back to a mint whose ATA already exists is a
+ * no-op. The ATA program's `InitializeAccount3` CPI rejects a
+ * non-mint / wrong-program payload outright, a stronger backstop than
+ * the `mint::token_program` constraint above. Without this, switching
+ * a market to a fresh mint would brick the next `CreateVault` on it
+ * until the ATA was created out-of-band (architecture spec
+ * § SetMarketFeeConfig).
+ */
+registryFeeTreasury: Address<TAccountRegistryFeeTreasury>;
+associatedTokenProgram?: Address<TAccountAssociatedTokenProgram>;
+systemProgram?: Address<TAccountSystemProgram>;
 /** CHECK: Only the event authority can invoke self-CPI */
 eventAuthority: Address<TAccountEventAuthority>;
 /** CHECK: Kept for v1-compatible account ordering and IDL shape */
@@ -117,12 +167,12 @@ program: Address<TAccountProgram>;
 atoms: SetMarketFeeConfigInstructionDataArgs["atoms"];
 }
 
-export function getSetMarketFeeConfigInstruction<TAccountAdmin extends string, TAccountRegistry extends string, TAccountMarket extends string, TAccountFeeMint extends string, TAccountFeeTokenProgram extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SetMarketFeeConfigInput<TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountEventAuthority, TAccountProgram>, config?: { programAddress?: TProgramAddress } ): SetMarketFeeConfigInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountEventAuthority, TAccountProgram> {
+export function getSetMarketFeeConfigInstruction<TAccountAdmin extends string, TAccountRegistry extends string, TAccountMarket extends string, TAccountFeeMint extends string, TAccountFeeTokenProgram extends string, TAccountRegistryFeeTreasury extends string, TAccountAssociatedTokenProgram extends string, TAccountSystemProgram extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SetMarketFeeConfigInput<TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountRegistryFeeTreasury, TAccountAssociatedTokenProgram, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram>, config?: { programAddress?: TProgramAddress } ): SetMarketFeeConfigInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountRegistryFeeTreasury, TAccountAssociatedTokenProgram, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram> {
   // Program address.
 const programAddress = config?.programAddress ?? DROPSET_PROGRAM_ADDRESS;
 
  // Original accounts.
-const originalAccounts = { admin: { value: input.admin ?? null, isWritable: false }, registry: { value: input.registry ?? null, isWritable: false }, market: { value: input.market ?? null, isWritable: true }, feeMint: { value: input.feeMint ?? null, isWritable: false }, feeTokenProgram: { value: input.feeTokenProgram ?? null, isWritable: false }, eventAuthority: { value: input.eventAuthority ?? null, isWritable: false }, program: { value: input.program ?? null, isWritable: false } }
+const originalAccounts = { admin: { value: input.admin ?? null, isWritable: true }, registry: { value: input.registry ?? null, isWritable: false }, market: { value: input.market ?? null, isWritable: true }, feeMint: { value: input.feeMint ?? null, isWritable: false }, feeTokenProgram: { value: input.feeTokenProgram ?? null, isWritable: false }, registryFeeTreasury: { value: input.registryFeeTreasury ?? null, isWritable: true }, associatedTokenProgram: { value: input.associatedTokenProgram ?? null, isWritable: false }, systemProgram: { value: input.systemProgram ?? null, isWritable: false }, eventAuthority: { value: input.eventAuthority ?? null, isWritable: false }, program: { value: input.program ?? null, isWritable: false } }
 const accounts = originalAccounts as Record<keyof typeof originalAccounts, ResolvedAccount>;
 
 
@@ -130,17 +180,30 @@ const accounts = originalAccounts as Record<keyof typeof originalAccounts, Resol
 const args = { ...input,  };
 
 
-
+// Resolve default values.
+if (!accounts.associatedTokenProgram.value) {
+accounts.associatedTokenProgram.value = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL' as Address<'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL'>;
+}
+if (!accounts.systemProgram.value) {
+accounts.systemProgram.value = '11111111111111111111111111111111' as Address<'11111111111111111111111111111111'>;
+}
 
 const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
-return Object.freeze({ accounts: [getAccountMeta(accounts.admin), getAccountMeta(accounts.registry), getAccountMeta(accounts.market), getAccountMeta(accounts.feeMint), getAccountMeta(accounts.feeTokenProgram), getAccountMeta(accounts.eventAuthority), getAccountMeta(accounts.program)], data: getSetMarketFeeConfigInstructionDataEncoder().encode(args as SetMarketFeeConfigInstructionDataArgs), programAddress } as SetMarketFeeConfigInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountEventAuthority, TAccountProgram>);
+return Object.freeze({ accounts: [getAccountMeta(accounts.admin), getAccountMeta(accounts.registry), getAccountMeta(accounts.market), getAccountMeta(accounts.feeMint), getAccountMeta(accounts.feeTokenProgram), getAccountMeta(accounts.registryFeeTreasury), getAccountMeta(accounts.associatedTokenProgram), getAccountMeta(accounts.systemProgram), getAccountMeta(accounts.eventAuthority), getAccountMeta(accounts.program)], data: getSetMarketFeeConfigInstructionDataEncoder().encode(args as SetMarketFeeConfigInstructionDataArgs), programAddress } as SetMarketFeeConfigInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountRegistryFeeTreasury, TAccountAssociatedTokenProgram, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram>);
 }
 
 export type ParsedSetMarketFeeConfigInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountMetas extends readonly AccountMeta[] = readonly AccountMeta[]> = { programAddress: Address<TProgram>;
 accounts: {
-/** Registry admin — the only signer this lever accepts. */
+/**
+ * Registry admin — the only signer this lever accepts. `mut`
+ * because it funds the rent for the new mint's registry fee ATA
+ * when `registry_fee_treasury` is created below.
+ */
 admin: TAccountMetas[0];
-/** Singleton registry, read for the admin-membership check. */
+/**
+ * Singleton registry, read for the admin-membership check and as
+ * the authority of the fee ATA created below.
+ */
 registry: TAccountMetas[1];
 /** Market whose `fee_config` is being retuned. `mut` for the write. */
 market: TAccountMetas[2];
@@ -159,15 +222,30 @@ feeMint: TAccountMetas[3];
  * to `fee_mint`'s actual owner.
  */
 feeTokenProgram: TAccountMetas[4];
+/**
+ * Registry's fee ATA for the new mint. `CreateVault` charges the
+ * per-vault fee into this account but does **not** create it, so we
+ * create it here, eagerly, at config time — `init_if_needed` so
+ * re-pointing a market back to a mint whose ATA already exists is a
+ * no-op. The ATA program's `InitializeAccount3` CPI rejects a
+ * non-mint / wrong-program payload outright, a stronger backstop than
+ * the `mint::token_program` constraint above. Without this, switching
+ * a market to a fresh mint would brick the next `CreateVault` on it
+ * until the ATA was created out-of-band (architecture spec
+ * § SetMarketFeeConfig).
+ */
+registryFeeTreasury: TAccountMetas[5];
+associatedTokenProgram: TAccountMetas[6];
+systemProgram: TAccountMetas[7];
 /** CHECK: Only the event authority can invoke self-CPI */
-eventAuthority: TAccountMetas[5];
+eventAuthority: TAccountMetas[8];
 /** CHECK: Kept for v1-compatible account ordering and IDL shape */
-program: TAccountMetas[6];
+program: TAccountMetas[9];
 };
 data: SetMarketFeeConfigInstructionData; };
 
 export function parseSetMarketFeeConfigInstruction<TProgram extends string, TAccountMetas extends readonly AccountMeta[]>(instruction: Instruction<TProgram> & InstructionWithAccounts<TAccountMetas> & InstructionWithData<ReadonlyUint8Array>): ParsedSetMarketFeeConfigInstruction<TProgram, TAccountMetas> {
-  if (instruction.accounts.length < 7) {
+  if (instruction.accounts.length < 10) {
   // TODO: Coded error.
   throw new Error('Not enough accounts');
 }
@@ -177,5 +255,5 @@ const getNextAccount = () => {
   accountIndex += 1;
   return accountMeta;
 }
-  return { programAddress: instruction.programAddress, accounts: { admin: getNextAccount(), registry: getNextAccount(), market: getNextAccount(), feeMint: getNextAccount(), feeTokenProgram: getNextAccount(), eventAuthority: getNextAccount(), program: getNextAccount() }, data: getSetMarketFeeConfigInstructionDataDecoder().decode(instruction.data) };
+  return { programAddress: instruction.programAddress, accounts: { admin: getNextAccount(), registry: getNextAccount(), market: getNextAccount(), feeMint: getNextAccount(), feeTokenProgram: getNextAccount(), registryFeeTreasury: getNextAccount(), associatedTokenProgram: getNextAccount(), systemProgram: getNextAccount(), eventAuthority: getNextAccount(), program: getNextAccount() }, data: getSetMarketFeeConfigInstructionDataDecoder().decode(instruction.data) };
 }

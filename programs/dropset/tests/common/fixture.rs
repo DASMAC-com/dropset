@@ -403,6 +403,49 @@ impl Fixture {
         send_ixn_meta(&mut self.svm, &auth, ix)
     }
 
+    /// `create_vault` via the admin path, but charging against an
+    /// explicit `(fee_mint, fee_token_program)` rather than the bootstrap
+    /// default — for asserting that after `set_market_fee_config` points a
+    /// market at a fresh mint, the matching registry fee ATA already
+    /// exists and `create_vault` loads it. The fee is waived (admin), so
+    /// `payer_fee_source` is the never-read `dummy`.
+    pub fn create_vault_with_fee(
+        &mut self,
+        perf_fee_rate: u32,
+        quote_authority: Pubkey,
+        allow_outside_depositors: bool,
+        leader_override: Pubkey,
+        fee_mint: &Pubkey,
+        fee_token_program: &Pubkey,
+    ) -> Result<(), String> {
+        let registry_fee_treasury =
+            associated_token_address(&self.registry, fee_mint, fee_token_program);
+        let ix = Instruction::new_with_bytes(
+            PROGRAM_ID,
+            &CreateVaultIx {
+                perf_fee_rate,
+                quote_authority,
+                allow_outside_depositors,
+                leader_override,
+            }
+            .data(),
+            vec![
+                AccountMeta::new(self.authority.pubkey(), true),
+                AccountMeta::new(self.registry, false),
+                AccountMeta::new(self.market, false),
+                AccountMeta::new_readonly(*fee_mint, false),
+                AccountMeta::new_readonly(*fee_token_program, false),
+                AccountMeta::new(self.dummy.pubkey(), false),
+                AccountMeta::new(registry_fee_treasury, false),
+                AccountMeta::new_readonly(System::id(), false),
+                AccountMeta::new_readonly(event_authority(), false),
+                AccountMeta::new_readonly(PROGRAM_ID, false),
+            ],
+        );
+        let auth = self.authority.insecure_clone();
+        send_ixn(&mut self.svm, &auth, ix)
+    }
+
     /// `create_vault` via the **non-admin** fee path: `payer` signs
     /// and pays the per-market create-vault fee out of its fee-mint ATA
     /// (funded here with exactly the fee amount). Returns
@@ -604,15 +647,23 @@ impl Fixture {
         fee_token_program: &Pubkey,
         atoms: u64,
     ) -> Result<TransactionMetadata, String> {
+        // Registry fee ATA for the new mint — the instruction creates it
+        // (`init_if_needed`) so the fee destination exists before the next
+        // `create_vault` charges into it.
+        let registry_fee_treasury =
+            associated_token_address(&self.registry, fee_mint, fee_token_program);
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
             &SetMarketFeeConfigIx { atoms }.data(),
             vec![
-                AccountMeta::new_readonly(admin.pubkey(), true),
+                AccountMeta::new(admin.pubkey(), true),
                 AccountMeta::new_readonly(self.registry, false),
                 AccountMeta::new(self.market, false),
                 AccountMeta::new_readonly(*fee_mint, false),
                 AccountMeta::new_readonly(*fee_token_program, false),
+                AccountMeta::new(registry_fee_treasury, false),
+                AccountMeta::new_readonly(ATA_PROGRAM_ID, false),
+                AccountMeta::new_readonly(System::id(), false),
                 AccountMeta::new_readonly(event_authority(), false),
                 AccountMeta::new_readonly(PROGRAM_ID, false),
             ],

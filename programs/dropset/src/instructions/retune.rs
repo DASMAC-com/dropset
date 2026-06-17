@@ -11,7 +11,10 @@
 //!   sign-off that opens a vault to outside baskets can relax its floor.
 //! * `set_market_fee_config` — rewrite a market's per-`CreateVault` fee
 //!   (mint + owning token program + atoms). Takes effect on the next
-//!   `CreateVault`; vaults already open are unaffected.
+//!   `CreateVault`; vaults already open are unaffected. Eagerly creates
+//!   the registry's fee ATA for the new mint (`init_if_needed`, admin
+//!   pays rent) so the fee destination provably exists the moment the
+//!   config is set — `CreateVault` loads that ATA but never creates it.
 //!
 //! Both authorize through the registry admin set — the same gate as
 //! `set_outside_deposits_approved` / `freeze_vault` — and emit a
@@ -21,12 +24,14 @@
 //! **Account lifecycle and rent reclamation**).
 
 use anchor_lang_v2::{address_eq, prelude::*};
-// `mint` stays in scope so the `mint::token_program` constraint on
-// `fee_mint` expands to `anchor_spl_v2::mint::TokenProgramConstraint`.
+// `mint` / `associated_token` stay in scope so the `mint::token_program`
+// constraint on `fee_mint` and the `associated_token::*` constraints on
+// `registry_fee_treasury` expand to their `anchor_spl_v2` markers.
 #[allow(unused_imports)]
 use anchor_spl_v2::{
+    associated_token::{self, AssociatedToken},
     mint,
-    token_interface::{Mint, TokenInterface},
+    token_interface::{Mint, TokenAccount, TokenInterface},
 };
 
 use crate::{
@@ -102,9 +107,13 @@ impl SetMinLeaderShare {
 #[event_cpi]
 #[derive(Accounts)]
 pub struct SetMarketFeeConfig {
-    /// Registry admin — the only signer this lever accepts.
+    /// Registry admin — the only signer this lever accepts. `mut`
+    /// because it funds the rent for the new mint's registry fee ATA
+    /// when `registry_fee_treasury` is created below.
+    #[account(mut)]
     pub admin: Signer,
-    /// Singleton registry, read for the admin-membership check.
+    /// Singleton registry, read for the admin-membership check and as
+    /// the authority of the fee ATA created below.
     #[account(seeds = [b"registry"], bump = registry.bump)]
     pub registry: Registry,
     /// Market whose `fee_config` is being retuned. `mut` for the write.
@@ -122,6 +131,26 @@ pub struct SetMarketFeeConfig {
     /// up front; the `mint::token_program` constraint above then pins it
     /// to `fee_mint`'s actual owner.
     pub fee_token_program: Interface<'static, TokenInterface>,
+    /// Registry's fee ATA for the new mint. `CreateVault` charges the
+    /// per-vault fee into this account but does **not** create it, so we
+    /// create it here, eagerly, at config time — `init_if_needed` so
+    /// re-pointing a market back to a mint whose ATA already exists is a
+    /// no-op. The ATA program's `InitializeAccount3` CPI rejects a
+    /// non-mint / wrong-program payload outright, a stronger backstop than
+    /// the `mint::token_program` constraint above. Without this, switching
+    /// a market to a fresh mint would brick the next `CreateVault` on it
+    /// until the ATA was created out-of-band (architecture spec
+    /// § SetMarketFeeConfig).
+    #[account(
+        init_if_needed,
+        payer = admin,
+        associated_token::mint = fee_mint,
+        associated_token::authority = registry,
+        associated_token::token_program = fee_token_program,
+    )]
+    pub registry_fee_treasury: InterfaceAccount<TokenAccount>,
+    pub associated_token_program: Program<AssociatedToken>,
+    pub system_program: Program<System>,
 }
 
 impl SetMarketFeeConfig {
