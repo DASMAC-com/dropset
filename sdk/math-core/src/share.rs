@@ -635,8 +635,14 @@ mod tests {
         // entry VPS is the shares-weighted mean (100·1 + 100·2) / 200 = 1.5
         // in Q32.32, and the merged entry ref blends strictly between the
         // two references.
-        let (entry_vps, entry_ref) =
-            merge_entry_basis(100, 100, Q32_32_ONE, 2 * Q32_32_ONE, price_one(), price_two());
+        let (entry_vps, entry_ref) = merge_entry_basis(
+            100,
+            100,
+            Q32_32_ONE,
+            2 * Q32_32_ONE,
+            price_one(),
+            price_two(),
+        );
         assert_eq!(entry_vps, Q32_32_ONE + Q32_32_ONE / 2);
         assert!(entry_ref > price_one() && entry_ref < price_two());
     }
