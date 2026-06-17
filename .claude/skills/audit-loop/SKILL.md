@@ -398,7 +398,15 @@ sub-agents, one per lens, **across the whole repo —
 every component in `components.json`** (for this
 repo: the on-chain program, the frontend, any
 indexer / backend, infra such as Docker and CI, and
-the docs). The lenses below use the program as the
+the docs). **Prepend the standing sub-agent brief from
+`CLAUDE.md`** (→ "Briefing sub-agents") to each lens
+prompt, and to the synthesis and cross-check agents
+below — they don't inherit `CLAUDE.md`, and a
+whole-system pass explores widely, so the brief's
+shell discipline (Read/Grep/Glob, one bare globbable
+command per Bash call) is what keeps that exploration
+from re-prompting. Don't narrow it — ARCH mode is
+*meant* to range over every component. The lenses below use the program as the
 running example, but apply each to whatever
 components the registry lists:
 
@@ -484,8 +492,9 @@ selection, dedup, filing, and state.
 findings were already cross-checked inside
 `audit-scope` (step 6), so this step applies to ARCH
 mode's lens findings: spawn a fresh skeptic sub-agent
-with the collected findings and the subject. It must
-kill false positives, challenge weak rationale, and
+(brief it with the same `CLAUDE.md` sub-agent brief, per
+step 5) with the collected findings and the subject. It
+must kill false positives, challenge weak rationale, and
 surface anything the first pass missed. On material
 disagreement, re-spawn the relevant lens agent to
 defend or retract. Iterate at most 2 more rounds, then

@@ -4,8 +4,6 @@
 
 <!-- cspell:word rustc -->
 
-<!-- cspell:word globbable -->
-
 ## Commits and PRs
 
 - **Run `init-pr` first.** At the start of a worktree session,
@@ -253,6 +251,16 @@ the diff, the commit log, the issue set — goes **in the prompt**, so
 no agent re-fetches it by shelling out. (For content too large or
 special-character-laden to sit inline cleanly, use the file-handoff
 pattern from the shell rules — write it out and pass the path.)
+
+**A skill may narrow this scope, never loosen it.** The brief is the
+floor: shell discipline plus the freedom to explore. A spawning skill
+is free to add a tighter *subject* scope on top — a diff reviewer, for
+instance, should be told to "review only from the diff and commit log
+below; dependency and toolchain sources are out of scope — flag it in
+your findings instead of scanning." That narrows *where the agent
+looks*; the shell rules stay exactly as written. An audit agent, by
+contrast, is *meant* to range over the whole codebase, so it gets the
+brief without any narrowing.
 
 A sub-agent approval that still re-prompts despite this brief means
 the brief **leaked** — the agent emitted shell the brief forbids.

@@ -83,8 +83,16 @@ Optional (ask on a direct run if not provided):
 
 1. **Run the dimensions in parallel.** Spawn sub-agents
    via the `Agent` tool (single message, multiple calls),
-   each scoped to the subject and told the repo
-   conventions. At minimum:
+   each scoped to the subject. **Prepend the standing
+   sub-agent brief from `CLAUDE.md`** (→ "Briefing
+   sub-agents") to every one — these agents don't inherit
+   `CLAUDE.md`, and an audit legitimately ranges across
+   the codebase, so they need the brief's shell discipline
+   (Read/Grep/Glob over shell, one bare globbable command
+   per Bash call) precisely *because* they explore widely.
+   Don't narrow the brief — unlike a diff review, an
+   audit is meant to look anywhere in the repo. At
+   minimum:
 
    - **Security / pen-testing** — use the checklist for
      the scope's kind:
@@ -151,9 +159,10 @@ Optional (ask on a direct run if not provided):
    `fix_sketch`.
 
 1. **Adversarial cross-check.** Spawn a fresh skeptic
-   sub-agent with the collected findings and the scope. It
-   kills false positives, challenges weak rationale, and
-   surfaces anything the first pass missed. On material
+   sub-agent (brief it with the same `CLAUDE.md`
+   sub-agent brief) with the collected findings and the
+   scope. It kills false positives, challenges weak
+   rationale, and surfaces anything the first pass missed. On material
    disagreement, re-spawn the relevant dimension agent to
    defend or retract; iterate at most 2 more rounds, then
    accept the survivors. This is the primary noise gate.

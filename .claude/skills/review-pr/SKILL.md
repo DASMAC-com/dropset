@@ -208,11 +208,23 @@ all changes are committed and pushed.
    "Briefing sub-agents") to **each** Agent prompt — the
    review agents here *and* the cross-check agent in
    step 6. That brief is the canonical wording (read-only
-   framing, Read/Grep/Glob over shell, stay inside the
-   repo, one bare command per Bash call); it exists so
-   sub-agents — which don't inherit `CLAUDE.md` — don't
-   reach for the `find` / `sed … | grep` / `cat` compounds
-   that re-prompt on every run.
+   framing, Read/Grep/Glob over shell, one bare command
+   per Bash call, each reducible to an allow-rule); it
+   exists so sub-agents — which don't inherit `CLAUDE.md` —
+   don't reach for the `find` / `sed … | grep` / `cat`
+   compounds that re-prompt on every run.
+
+   **Then narrow the scope for these reviewers.** The
+   brief deliberately lets an agent explore other repos
+   and paths, but a *diff review* doesn't need that —
+   tell each reviewer to work **only from the diff and
+   commit log provided below**. Dependency and toolchain
+   sources (`~/.cargo`, `node_modules`, another repo) are
+   out of scope here; if a reviewer thinks it needs a
+   library's source, it should say so in its findings
+   rather than scanning for it. This narrows *where the
+   agent looks* on top of the brief — it does not relax
+   the shell rules.
 
    Pass the `git diff main..HEAD` and `git log` output
    you already collected **inline** in each prompt (as
