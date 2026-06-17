@@ -212,9 +212,26 @@ Optional (ask on a direct run if not provided):
        state: "Backlog",
        title: "<file>: <imperative fix, no trailing period>",
        description: "<markdown body, literal newlines>",
-       priority: 3  // 2 for high-severity security
+       priority: 3,  // 2 for high-severity security
+       blockedBy: ["<ENG-###>"]  // omit unless a real dependency (see below)
      )
      ```
+
+     **Dependencies — concrete evidence only.** This
+     is an autonomous filer, so it must not invent
+     blockers. Set a `blockedBy` (or `blocks`) edge
+     **only** when there is concrete evidence one
+     finding's fix genuinely cannot land until
+     another issue resolves — e.g. a nit whose fix
+     depends on an `arch:` proposal filed in the same
+     run, or an existing open issue that must merge
+     first. Never a speculative "these feel related"
+     edge; coupling that means *one PR* is handled by
+     combining into a single issue (see Notes), not a
+     relation. When the blocker is a finding filed in
+     **this same run**, file the blocker first so its
+     `ENG-###` exists, then reference it. The fields
+     take issue identifiers and are append-only.
 
      The body must let a cold agent act on it in its own
      worktree (literal newlines, not `\n`):

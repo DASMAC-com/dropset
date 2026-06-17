@@ -572,9 +572,29 @@ mcp__claude_ai_Linear__save_issue(
   title: "<file>: <imperative fix, no trailing period>",
   description: "<markdown body, literal newlines>",
   priority: 3,  // 2 for high-severity security
-  links: [{ url: "<pr-url>", title: "<pr-title>" }]  // PR mode only
+  links: [{ url: "<pr-url>", title: "<pr-title>" }],  // PR mode only
+  blockedBy: ["<ENG-###>"]  // omit unless a real dependency (see below)
 )
 ```
+
+**Dependencies — concrete evidence only.** The loop
+files autonomously, so it must not invent blockers.
+Set a `blockedBy` (or `blocks`) edge **only** when
+there is concrete evidence a finding's fix genuinely
+cannot land until another issue resolves — e.g. a nit
+whose fix depends on an `arch:` proposal filed in the
+same campaign, or an existing open issue that must
+merge first. Never a speculative edge. This is
+distinct from coupling that belongs in **one PR** —
+that's handled by combining into a single issue
+(below), not a relation. When the blocker is filed in
+this same campaign, file it first so its `ENG-###`
+exists, then reference it (the fields take identifiers
+and are append-only). A finding that carries a
+`blockedBy` is **not** "safe to fix in isolation": drop
+that body line and replace it with
+`**Depends on**: <ENG-###> — <one line why>` so the
+description doesn't contradict the relation.
 
 **File obviously-coupled findings together up front.**
 If this iteration surfaced more than one finding that
