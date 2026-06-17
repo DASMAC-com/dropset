@@ -109,6 +109,16 @@ a sequence of bare commands that each reduce to a glob (or "run X,
 read its output, then run Y with the value inline") over a clever
 one-liner.
 
+It applies to work you hand to a **sub-agent**, too. The whole
+objective is **the fewest permission prompts possible** across the
+session, and a spawned agent's Bash calls surface to you for approval
+exactly like your own — but the agent doesn't inherit this file, so it
+will reach for the forbidden compounds unless told not to. Brief every
+agent you spawn on these rules (see "Briefing sub-agents" below) so its
+calls reduce to allow-rules too. A session that follows the rules and
+briefs its agents on them prompts only for a genuinely novel command —
+which `firm-perms` then memorializes so it never prompts again.
+
 Concrete rules:
 
 - Prefer the dedicated tools — Read, Grep, Glob — over `cat`, `grep`,
@@ -125,6 +135,16 @@ Concrete rules:
   compute the value in a prior step (or a tool) and pass it literally.
 - Avoid redirects (`>`, `<`, here-strings). Use the Write tool to
   create files rather than `echo … > file`.
+- Pass large or special-character arguments through a **file**, not
+  inline on the command line. A PR body full of markdown, a
+  multi-paragraph message — its backticks, braces, and quotes trip the
+  "brace with quote character (expansion obfuscation)" guard and force
+  manual approval *every time*, even though the command prefix is
+  allow-listed. Write the content to a throwaway file with the Write
+  tool (e.g. under `/tmp`) and hand the command its path via the
+  matching `--*-file` flag — `gh pr edit <n> --body-file /tmp/<f>.md`,
+  `git commit -F /tmp/<f>.txt` — so only a stable, globbable path rides
+  the command line and the call reduces to a `prefix:*` rule.
 - Keep a stable command + subcommand prefix (`pnpm lint …`,
   `cargo test …`, `git log …`) and put only the variable parts in the
   arguments, so the call matches a `:*` allow-glob.
@@ -191,3 +211,59 @@ If a one-off like these still gets approved during a session, do
 **not** allow-list it (a `*` can't generalize a compound): the
 `firm-perms` skill flags it and points back here so the source stops
 emitting it.
+
+## Briefing sub-agents
+
+A sub-agent you spawn (via the `Agent` tool) does **not** inherit this
+`CLAUDE.md`, so left to itself it reaches for `find / …`,
+`sed -n '…p' … | grep`, `cat`, and other compounds that can't reduce
+to an allow-rule and re-prompt on **every** run — the exact churn the
+shell rules above exist to avoid. So whenever a skill spawns a
+sub-agent, it must carry the conventions into the agent itself. This
+is the single canonical brief; skills reference it by name ("prepend
+the sub-agent brief from `CLAUDE.md`") rather than each pasting their
+own copy, so the wording stays in one place.
+
+**Prepend this standing brief to *every* `Agent` prompt:**
+
+> - You are a **read-only** agent. The material you need to reason
+>   over — a diff, a commit log, a set of issues — is included in this
+>   prompt; start there, and you often won't need a shell at all.
+> - To inspect files, prefer the **Read / Grep / Glob** tools over
+>   `cat` / `head` / `tail` / `sed` / `awk` / `find` / `grep` in Bash —
+>   they don't prompt for in-workspace paths, and they search other
+>   directories too.
+> - **Exploring another repo or path is fine** — reach outside this
+>   worktree when the task needs it; approving a one-off read of a
+>   different repo is expected, not something to avoid. Just keep each
+>   access **globbable** so it approves once and won't re-prompt:
+>   address another checkout with `git -C <path> <subcommand>` (the
+>   subcommand immediately after the path, no `cd`), or use Read /
+>   Grep / Glob. What to avoid is the **un-globbable** shape — a
+>   `find / …` sweep, or several `git -C …` calls strung together with
+>   `&&` / `|` / `;` into one compound that can't reduce to a rule.
+> - **One bare command per Bash call** — no pipes, `&&`, `;`, command
+>   substitution `$(…)`, redirects, or heredocs. Each call must reduce
+>   to a `prefix:*` allow-rule.
+
+**Pass the material inline.** Whatever the agent must reason over —
+the diff, the commit log, the issue set — goes **in the prompt**, so
+no agent re-fetches it by shelling out. (For content too large or
+special-character-laden to sit inline cleanly, use the file-handoff
+pattern from the shell rules — write it out and pass the path.)
+
+**A skill may narrow this scope, never loosen it.** The brief is the
+floor: shell discipline plus the freedom to explore. A spawning skill
+is free to add a tighter *subject* scope on top — a diff reviewer, for
+instance, should be told to "review only from the diff and commit log
+below; dependency and toolchain sources are out of scope — flag it in
+your findings instead of scanning." That narrows *where the agent
+looks*; the shell rules stay exactly as written. An audit agent, by
+contrast, is *meant* to range over the whole codebase, so it gets the
+brief without any narrowing.
+
+A sub-agent approval that still re-prompts despite this brief means
+the brief **leaked** — the agent emitted shell the brief forbids.
+That's a prompt to tighten, not a rule to allow-list; `firm-perms`
+sets such approvals aside and names the emitting agent so its prompt
+gets fixed at the source.
