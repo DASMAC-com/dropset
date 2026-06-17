@@ -299,12 +299,17 @@ fn sdk_simulate_swap_rejects_cyclic_vault_list() {
 
 #[test]
 fn sdk_simulate_swap_rejects_out_of_range_vault_next() {
-    // The other corrupt-walk corner: a `next` that dangles past the slab
-    // tail rather than cycling. The engine guards it with a separate
-    // in-bounds `require!((cur as usize) < len)` (also `CorruptVaultList`);
-    // the SDK's `active_vaults` would walk the seeded vault, then stop dead
-    // when the out-of-range index misses the slab — quoting the one leg it
-    // already collected. The simulator must reject here too.
+    // The other corruption class: a `next` that dangles past the slab tail
+    // rather than cycling. Pre-fix, the SDK's `active_vaults` walks the
+    // seeded vault, then stops dead when the out-of-range index misses the
+    // slab — quoting the one leg it already collected while the engine
+    // aborts. On this single-sector slab the dangling step also spends the
+    // one-step budget, so both sides actually trip the over-length guard
+    // (`steps_remaining > 0` / `steps == 0`) before the separate in-bounds
+    // check fires; either way the contract is identical — empty quote vs.
+    // `CorruptVaultList`. (`active_dll_is_corrupt`'s in-bounds branch
+    // mirrors the engine's own `require!((cur as usize) < len)`, which only
+    // a multi-sector list reaches first.)
     let mut f = Fixture::seeded(1_000_000, 1_000_000);
     f.poke_vault_next(0, 9_999); // far past any test slab, and not NULL_SECTOR
 
