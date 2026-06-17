@@ -131,8 +131,11 @@ For every issue, parse from its description:
 
 Also read each issue's **declared blocking relations** —
 the native `blockedBy` and `blocks` edges Linear stores
-on the issue (request `includeRelations: true` when
-reading). These are *authoritative* dependencies a human
+on the issue. `list_issues` does **not** return relations,
+so fetch them per issue with
+`mcp__claude_ai_Linear__get_issue` passing
+`includeRelations: true` (for the open issues being
+staged). These are *authoritative* dependencies a human
 or a filing skill asserted on purpose, distinct from any
 ordering step 2 infers from overlapping files. Keep the
 full set per issue — step 2 nests the tree on them and
@@ -222,11 +225,18 @@ issue). For each such session:
   union every member's `blockedBy` / `blocks` edges onto
   the canonical issue (`blockedBy: [...]`, `blocks: [...]`
   — both append-only), so an edge a member carried isn't
-  silently lost when that member becomes a Duplicate. Drop
-  any edge that points *within* the same session (member
-  A blocking member B when both merge here) — it would
-  become a self-edge once they're one issue; keep only
-  edges to issues outside the group. Confirm the save
+  silently lost when that member becomes a Duplicate.
+  Because a block is **symmetric** (member B `blockedBy`
+  outsider X *is* the same edge as X `blocks` B), unioning
+  each member's own `blockedBy` **and** `blocks` already
+  captures every edge incident to the group — including
+  ones pointing *at* a member from outside it, which land
+  on the canonical as the surviving endpoint. Drop only
+  the pairs whose **other** endpoint is *also* in the
+  group (both halves of an intra-group edge) — they'd
+  become self-edges once the members are one issue. (A
+  stale edge left on the closed Duplicate itself is
+  harmless: a resolved issue never blocks.) Confirm the save
   succeeded before touching any other issue. This ordering
   is the safety guarantee: if the run is interrupted here,
   the member issues still exist and still hold their own

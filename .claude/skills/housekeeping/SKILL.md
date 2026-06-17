@@ -199,6 +199,10 @@ just triggers it.
 
 **5. Report.** Print a short summary:
 
+- `main`: fast-forwarded to the latest, or left at its
+  current commit (with the reason) if the pull couldn't
+  fast-forward — so a pass that ran on a stale checkout
+  is never silent.
 - Worktrees pruned (path + branch), and any left in
   place with the reason (PR open/closed-unmerged, no
   PR, or dirty tree).
