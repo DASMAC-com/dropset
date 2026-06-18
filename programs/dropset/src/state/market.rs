@@ -234,8 +234,9 @@ impl Vault {
     /// The matching loop does **not** call this: it walks the active
     /// DLL, where occupancy and non-tombstoned status already hold by
     /// construction (free-list and tombstoned sectors live on other
-    /// lists), so it inlines only the residual gate
-    /// `has_valid_reference_price() && !frozen` and stays zero-cost.
+    /// lists), so it checks only the residual gate
+    /// `has_valid_reference_price() && !frozen` inline and stays
+    /// zero-cost.
     /// Reach for `is_matchable` from a cold path that has a bare sector
     /// reference instead.
     #[inline(always)]
