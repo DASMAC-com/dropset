@@ -1,0 +1,41 @@
+# Solana-free, off-chain account-layout mirror + eCLOB book simulator.
+#
+# interface.md § SDK: the off-chain half of the shared math. `layout`
+# mirrors the on-chain market account so a client can zero-copy decode the
+# `Vault` slab the IDL can't describe, and `matching::simulate_swap`
+# reconstructs the book and simulates a fill for routers / depth endpoints.
+# Both consume the consensus arithmetic from `dropset-math-core` (the
+# `Price` codec + pure matcher math), so the simulator runs the exact same
+# numbers as the on-chain engine — pinned by the shared conformance vectors
+# (see sdk/conformance). Nothing here runs on-chain: a bug mis-predicts a
+# quote rather than corrupting state, so the audit priority is lower than
+# math-core's.
+#
+# Dependency is one-way: this crate depends on `dropset-math-core`, never
+# the reverse.
+
+[dependencies]
+bytemuck = {version = "1", features = ["derive", "min_const_generics"]}
+dropset-math-core = {path = "../math-core"}
+wasm-bindgen = {version = "0.2", optional = true}
+
+[features]
+default = ["simulate"]
+# Off-chain book reconstruction (`matching::simulate_swap`), which pulls
+# `std` collections. On by default for the Rust SDK and WASM consumers.
+simulate = []
+# wasm-bindgen exports for the TypeScript client — the `simulate_swap`
+# binding here plus the `Price` codec bindings forwarded from
+# `dropset-math-core`. A single wasm-pack build over this crate emits both
+# sets. Implies `simulate` (the binding exposes `simulate_swap`).
+wasm = ["dep:wasm-bindgen", "simulate", "dropset-math-core/wasm"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[package]
+description = "Solana-free off-chain account-layout mirror + eCLOB book simulator, built on dropset-math-core; shared by the Rust SDK and (via WASM) the TS client."
+edition = "2021"
+name = "dropset-interface"
+publish = false
+version = "0.1.0"

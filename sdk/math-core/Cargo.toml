@@ -1,11 +1,13 @@
-# cspell:word rlib
-# Solana-free Price codec + eCLOB book-reconstruction math.
+# Solana-free, consensus-critical eCLOB arithmetic.
 #
 # interface.md § SDK (spine B): the on-chain crates can't target wasm32 and
-# a hand-mirrored TS port is rejected, so the `Price` codec and just-in-time
-# book reconstruction live here once — consumed directly by the Rust SDK and
-# compiled to WASM (the `wasm` feature) for the TS client. Both sides
-# are pinned to the engine by shared conformance vectors (see sdk/conformance).
+# a hand-mirrored TS port is rejected, so the consensus math — the `Price`
+# codec, the pure matcher arithmetic, and the share/NAV/PnL kernels — lives
+# here once, consumed directly by the on-chain program AND the Rust SDK and
+# compiled to WASM (the `wasm` feature) for the TS client. Every consumer
+# runs byte-identical code; correctness is pinned to the engine by shared
+# conformance vectors (see sdk/conformance). The off-chain account-layout
+# mirror + book simulator that consume this math live in `dropset-interface`.
 
 # `anchor-lang-v2` is optional and pulled in only by the `idl` feature
 # (the on-chain program's IDL build). It is NOT solana-free, so it must
@@ -21,7 +23,7 @@ wasm-bindgen = {version = "0.2", optional = true}
 serde_json = "1"
 
 [features]
-default = ["simulate"]
+default = []
 # Anchor `IdlType` derive on `Price`, for the on-chain program's IDL
 # generation. Pulls `anchor-lang-v2` (not solana-free), so it is off by
 # default and must never be combined with `wasm`. The program enables it
@@ -30,24 +32,21 @@ idl = ["dep:anchor-lang-v2"]
 # Anchor's `IdlType` derive emits `cfg(feature = "idl-build")`-gated impls
 # (the same pattern the program crate handles for its own derives). When
 # `anchor idl build` enables `idl-build` on the program, the program
-# forwards it here via `dropset-price-core/idl-build` so `Price`'s impl
+# forwards it here via `dropset-math-core/idl-build` so `Price`'s impl
 # compiles. Implies `idl` so the derive is actually applied.
 idl-build = ["idl"]
-# Off-chain book reconstruction (`matching::simulate_swap`), which pulls
-# `std` collections. On for the Rust SDK and WASM consumers; off for the
-# on-chain program, which needs only the `Price` codec + the pure matcher
-# math in `matching_math`.
-simulate = []
-# wasm-bindgen exports for the TypeScript client. Implies `simulate`
-# (the bindings expose `simulate_swap`).
-wasm = ["dep:wasm-bindgen", "simulate"]
+# wasm-bindgen exports for the TypeScript client — the `Price` codec
+# bindings. The book-simulator binding (`simulate_swap`) lives in
+# `dropset-interface`, which turns this feature on transitively so a single
+# wasm-pack build over `dropset-interface` emits both binding sets.
+wasm = ["dep:wasm-bindgen"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [package]
-description = "Solana-free Price codec + eCLOB book-reconstruction math, shared by the Rust SDK and (via WASM) the TS client."
+description = "Solana-free consensus eCLOB math (Price codec, matcher arithmetic, share/NAV/PnL kernels), shared by the on-chain program, the Rust SDK, and (via WASM) the TS client."
 edition = "2021"
-name = "dropset-price-core"
+name = "dropset-math-core"
 publish = false
 version = "0.1.0"

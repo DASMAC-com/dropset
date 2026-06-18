@@ -8,8 +8,18 @@ use anchor_lang_v2::{
     bytemuck::{Pod, Zeroable},
     prelude::*,
 };
+use dropset_math_core::share::{self, BasketError};
 
 use crate::{errors::DropsetError, FeeConfig, Price};
+
+// The pure seeding / withdrawal kernels are solana-free, so they live in
+// `dropset-math-core` and are re-exported here unchanged — every
+// `crate::state::{isqrt_u128, compute_pro_rata_slice}` call site keeps
+// resolving, and the on-chain program runs byte-identical math to the
+// off-chain consumers. The perf-fee accrual and single-leg sizing keep a
+// thin wrapper below (one maps the math-core error back onto `DropsetError`,
+// the other reads/writes `&mut Vault` state around the pure formula).
+pub use dropset_math_core::share::{compute_pro_rata_slice, isqrt_u128};
 
 /// Number of bid / ask levels in a [`LiquidityProfile`]. Chosen small for
 /// the initial bring-up; widen once the matching engine lands and CU
@@ -46,26 +56,6 @@ pub const PPM: u64 = 1_000_000;
 
 /// Basis-points denominator (`10_000 = 100%`).
 pub const BPS: u64 = 10_000;
-
-/// Integer square root via Newton's method, on `u128` to give the
-/// matching-engine math headroom. Used for the seeding-deposit share
-/// formula `total_shares := isqrt(base × quote)` and for `Realize`
-/// (`L = isqrt(base × quote)`).
-#[inline]
-pub fn isqrt_u128(n: u128) -> u128 {
-    if n < 2 {
-        return n;
-    }
-    // Initial estimate: half the bit-width of `n` shifted up by one —
-    // gives an over-estimate that Newton's method then refines down.
-    let mut x = n;
-    let mut y = x.div_ceil(2);
-    while y < x {
-        x = y;
-        y = (x + n / x) / 2;
-    }
-    x
-}
 
 /// Reference-price record stamped onto every vault. See the spec's
 /// **Vault → ReferencePrice**.
@@ -413,84 +403,33 @@ pub struct RealizeOutcome {
 /// the perf-fee formula precise without overflow on realistic atom
 /// scales. The final `m` is clamped back into `u64`.
 pub fn realize_in_place(vault: &mut Vault) -> RealizeOutcome {
-    let s = vault.total_shares.get();
     let hwm = vault.hwm.get();
-    if s == 0 || vault.frozen.get() || vault.tombstoned.get() {
+    // Frozen / tombstoned vaults pin the HWM at freeze / close time and
+    // accrue no perf fee. These read on-chain flags, so the guard stays in
+    // the program; the solana-free kernel sees only the scalar share state.
+    if vault.frozen.get() || vault.tombstoned.get() {
         return RealizeOutcome {
             shares_minted: 0,
             hwm_after: hwm,
         };
     }
-    let f_ppm = vault.perf_fee_rate.get() as u128;
-    let b = vault.base_atoms.get() as u128;
-    let q = vault.quote_atoms.get() as u128;
-    let l = isqrt_u128(b.saturating_mul(q));
-    if l == 0 {
-        return RealizeOutcome {
-            shares_minted: 0,
-            hwm_after: hwm,
-        };
-    }
-    // `vps` in Q32.32, same encoding as `hwm`.
-    let vps = (l << 32) / (s as u128);
-    if vps <= hwm as u128 {
-        return RealizeOutcome {
-            shares_minted: 0,
-            hwm_after: hwm,
-        };
-    }
-    if f_ppm == 0 {
-        // No perf fee — HWM still trails VPS upwards so a later fee
-        // change can't claw back past historical highs.
-        let hwm_after = vps as u64;
-        vault.hwm = hwm_after.into();
-        return RealizeOutcome {
-            shares_minted: 0,
-            hwm_after,
-        };
-    }
-    // m = f · s · (L − hwm·s) / ((1 − f) · L + f · hwm·s)
-    //
-    // Working in Q32.32 for the `hwm × s` term, then shifting back
-    // before the division so we don't compound the Q32.32 scale across
-    // numerator and denominator.
-    let s_u = s as u128;
-    let hwm_u = hwm as u128;
-    let hwm_s = (hwm_u * s_u) >> 32; // back to atom scale
-    if l <= hwm_s {
-        // VPS rose by sub-quantum (rounding error) — skip.
-        vault.hwm = (vps as u64).into();
-        return RealizeOutcome {
-            shares_minted: 0,
-            hwm_after: vps as u64,
-        };
-    }
-    let num = f_ppm * s_u * (l - hwm_s);
-    let one_minus_f = PPM as u128 - f_ppm;
-    let denom = one_minus_f * l + f_ppm * hwm_s;
-    if denom == 0 {
-        return RealizeOutcome {
-            shares_minted: 0,
-            hwm_after: hwm,
-        };
-    }
-    let m = (num / denom).min(u64::MAX as u128) as u64;
-    if m == 0 {
-        vault.hwm = (vps as u64).into();
-        return RealizeOutcome {
-            shares_minted: 0,
-            hwm_after: vps as u64,
-        };
-    }
-    let s_after = s.saturating_add(m);
-    let leader_after = vault.leader_shares.get().saturating_add(m);
-    let hwm_after = ((l << 32) / s_after as u128) as u64;
-    vault.total_shares = s_after.into();
-    vault.leader_shares = leader_after.into();
-    vault.hwm = hwm_after.into();
+    // Pure perf-fee accrual lives in `dropset-math-core` so the off-chain
+    // NAV consumers reuse it; the kernel echoes the inputs back unchanged
+    // in its no-op branches, so writing the result is always correct.
+    let r = share::realize_perf_fee(
+        vault.base_atoms.get(),
+        vault.quote_atoms.get(),
+        vault.total_shares.get(),
+        vault.leader_shares.get(),
+        hwm,
+        vault.perf_fee_rate.get(),
+    );
+    vault.total_shares = r.total_shares_after.into();
+    vault.leader_shares = r.leader_shares_after.into();
+    vault.hwm = r.hwm_after.into();
     RealizeOutcome {
-        shares_minted: m,
-        hwm_after,
+        shares_minted: r.shares_minted,
+        hwm_after: r.hwm_after,
     }
 }
 
@@ -510,6 +449,10 @@ pub fn realize_in_place(vault: &mut Vault) -> RealizeOutcome {
 /// Returns `(shares_out, base_in_final, quote_in_final)`. Requires
 /// `total_shares > 0` — callers reject seeding before this point (the
 /// seeding share formula is the `isqrt` basket, not this path).
+///
+/// Thin wrapper over the solana-free [`share::single_leg_basket`] kernel,
+/// mapping its [`BasketError`] back onto the program's `DropsetError` so the
+/// on-chain error surface is unchanged.
 pub fn single_leg_basket(
     total_shares: u64,
     base_atoms: u64,
@@ -519,68 +462,23 @@ pub fn single_leg_basket(
     max_base_in: u64,
     max_quote_in: u64,
 ) -> Result<(u64, u64, u64)> {
-    require!(
-        (base_in > 0) ^ (quote_in > 0),
-        DropsetError::SingleLegRequired
-    );
-    let ts = total_shares as u128;
-    let b = base_atoms as u128;
-    let q = quote_atoms as u128;
-    let shares_out_u128 = if base_in > 0 {
-        ((base_in as u128) * ts) / b
-    } else {
-        ((quote_in as u128) * ts) / q
-    };
-    require!(
-        shares_out_u128 > 0 && shares_out_u128 <= u64::MAX as u128,
-        DropsetError::MathOverflow
-    );
-    // Basket = ceil(shares_out × leg / total_shares). u128 intermediates;
-    // the final values fit in u64 by construction (basket ≤ caller's
-    // input + 1).
-    let base_in_final = (shares_out_u128 * b).div_ceil(ts);
-    let quote_in_final = (shares_out_u128 * q).div_ceil(ts);
-    require!(
-        base_in_final <= max_base_in as u128 && quote_in_final <= max_quote_in as u128,
-        DropsetError::BasketSlippage
-    );
-    Ok((
-        shares_out_u128 as u64,
-        base_in_final as u64,
-        quote_in_final as u64,
-    ))
-}
-
-/// Floored pro-rata basket slice for a withdrawal of `shares_in` out of
-/// `total_shares` against a `(base_atoms, quote_atoms)` inventory:
-///
-/// ```text
-/// slice_base  = floor(shares_in × base_atoms  / total_shares)
-/// slice_quote = floor(shares_in × quote_atoms / total_shares)
-/// ```
-///
-/// Rounding **down** keeps the dust in the vault for the benefit of the
-/// remaining depositors (spec § Depositor operations → Withdraw). Shared
-/// by every withdraw path (`withdraw`, `withdraw_leader`, and both
-/// `force_withdraw` arms) so the rounding direction stays identical — a
-/// divergence here would be a silent value-leak, not a compile error.
-/// Callers apply their own `min_*_out` slippage check on the returned
-/// slices.
-///
-/// `total_shares > 0` is the caller's precondition — every path rejects
-/// an empty vault upstream. Each result is bounded by its atom input
-/// (`shares_in ≤ total_shares`), so both fit back into `u64`.
-pub fn compute_pro_rata_slice(
-    shares_in: u64,
-    total_shares: u64,
-    base_atoms: u64,
-    quote_atoms: u64,
-) -> (u64, u64) {
-    let ts = total_shares as u128;
-    let s_in = shares_in as u128;
-    let slice_base = (s_in * (base_atoms as u128)) / ts;
-    let slice_quote = (s_in * (quote_atoms as u128)) / ts;
-    (slice_base as u64, slice_quote as u64)
+    share::single_leg_basket(
+        total_shares,
+        base_atoms,
+        quote_atoms,
+        base_in,
+        quote_in,
+        max_base_in,
+        max_quote_in,
+    )
+    .map_err(|e| {
+        match e {
+            BasketError::SingleLegRequired => DropsetError::SingleLegRequired,
+            BasketError::MathOverflow => DropsetError::MathOverflow,
+            BasketError::BasketSlippage => DropsetError::BasketSlippage,
+        }
+        .into()
+    })
 }
 
 impl VaultDll for Market {
@@ -1126,13 +1024,15 @@ mod tests {
         assert!(walk(&market, DllList::Free).is_empty());
     }
 
-    // ── realize_in_place ────────────────────────────────────────────
+    // ── realize_in_place wrapper ─────────────────────────────────────
     //
-    // These exercise the perf-fee accrual formula directly on a
-    // stack-allocated `Vault` — no slab, no AccountBuffer, no SVM. The
-    // function is pure on its &mut Vault argument, so unit tests can
-    // construct any (b, q, total_shares, leader_shares, hwm, fee)
-    // state and assert the outcome.
+    // The pure perf-fee formula (unseeded / VPS-vs-HWM / mint / zero-fee
+    // scalar cases) is tested in `dropset_math_core::share`. These exercise
+    // the program's `&mut Vault` wrapper specifically: the on-chain
+    // `frozen` / `tombstoned` flag guards that short-circuit before the
+    // kernel, and the write-through of the kernel's result onto the vault.
+    // They run on a stack-allocated `Vault` — no slab, no AccountBuffer,
+    // no SVM.
 
     fn seeded_vault(b: u64, q: u64, total: u64, leader: u64, hwm: u64, fee_ppm: u32) -> Vault {
         let mut v = Vault::zeroed();
@@ -1146,27 +1046,9 @@ mod tests {
     }
 
     #[test]
-    fn realize_noop_on_unseeded_vault() {
-        let mut v = Vault::zeroed();
-        let r = realize_in_place(&mut v);
-        assert_eq!(r.shares_minted, 0);
-        assert_eq!(r.hwm_after, 0);
-    }
-
-    #[test]
-    fn realize_noop_when_vps_at_or_below_hwm() {
-        // Seeded at VPS = 1.0 (Q32_32_ONE), HWM also = 1.0.
-        // b * q = 10_000 → L = 100, total_shares = 100, VPS = 1.0.
-        let mut v = seeded_vault(100, 100, 100, 100, Q32_32_ONE, 100_000);
-        let r = realize_in_place(&mut v);
-        assert_eq!(r.shares_minted, 0);
-        assert_eq!(v.total_shares.get(), 100);
-        assert_eq!(v.leader_shares.get(), 100);
-    }
-
-    #[test]
     fn realize_noop_when_frozen() {
-        // Even with VPS above HWM, frozen vaults must not accrue.
+        // Even with VPS above HWM, frozen vaults must not accrue — the
+        // guard lives in the wrapper, not the kernel.
         let mut v = seeded_vault(200, 200, 100, 100, Q32_32_ONE, 100_000);
         v.frozen = true.into();
         let r = realize_in_place(&mut v);
@@ -1187,12 +1069,11 @@ mod tests {
     }
 
     #[test]
-    fn realize_mints_shares_when_vps_exceeds_hwm() {
-        // Seed with VPS = 1.0, then push b·q up so VPS > 1.0 and the
-        // 10% perf fee should mint new shares to the leader.
+    fn realize_writes_kernel_result_through_to_vault() {
+        // VPS = 4.0 > HWM 1.0 with a 10% fee mints shares; assert the
+        // wrapper writes the kernel's `total_shares` / `leader_shares` /
+        // `hwm` back onto the vault.
         let mut v = seeded_vault(400, 400, 100, 100, Q32_32_ONE, 100_000);
-        // L = isqrt(400 * 400) = 400, total_shares = 100 → VPS = 4.0
-        // (Q32.32 = 4 * 2^32).
         let r = realize_in_place(&mut v);
         assert!(r.shares_minted > 0, "expected perf-fee mint at VPS > HWM");
         // total_shares and leader_shares moved by the same `m`.
@@ -1204,57 +1085,5 @@ mod tests {
         // HWM advanced to the post-mint VPS.
         assert_eq!(v.hwm.get(), r.hwm_after);
         assert!(r.hwm_after > Q32_32_ONE);
-    }
-
-    #[test]
-    fn realize_zero_fee_advances_hwm_only() {
-        // With perf_fee_rate = 0 the leader earns no shares, but HWM
-        // still trails up so a later fee bump cannot retroactively
-        // accrue against historical highs.
-        let mut v = seeded_vault(400, 400, 100, 100, Q32_32_ONE, 0);
-        let r = realize_in_place(&mut v);
-        assert_eq!(r.shares_minted, 0);
-        assert!(r.hwm_after > Q32_32_ONE);
-        assert_eq!(v.leader_shares.get(), 100);
-        assert_eq!(v.total_shares.get(), 100);
-    }
-
-    #[test]
-    fn pro_rata_slice_exact_division() {
-        // Half the shares → exactly half of each leg, no remainder.
-        assert_eq!(compute_pro_rata_slice(50, 100, 1_000, 2_000), (500, 1_000));
-    }
-
-    #[test]
-    fn pro_rata_slice_full_withdraw_drains_both_legs() {
-        // Burning every share takes the whole inventory.
-        assert_eq!(
-            compute_pro_rata_slice(100, 100, 1_000, 2_000),
-            (1_000, 2_000)
-        );
-    }
-
-    #[test]
-    fn pro_rata_slice_floors_and_leaves_dust() {
-        // 1 of 3 shares against 10 atoms → floor(10/3) = 3, leaving the
-        // 1-atom remainder in the vault for the other depositors.
-        assert_eq!(compute_pro_rata_slice(1, 3, 10, 10), (3, 3));
-    }
-
-    #[test]
-    fn pro_rata_slice_zero_leg_stays_zero() {
-        // A vault holding only quote slices an empty base leg as zero.
-        assert_eq!(compute_pro_rata_slice(25, 100, 0, 4_000), (0, 1_000));
-    }
-
-    #[test]
-    fn pro_rata_slice_no_overflow_at_atom_ceiling() {
-        // `shares_in × atoms` is computed in u128, so a u64-ceiling
-        // inventory withdrawn in full does not overflow and round-trips
-        // back into u64.
-        assert_eq!(
-            compute_pro_rata_slice(u64::MAX, u64::MAX, u64::MAX, u64::MAX),
-            (u64::MAX, u64::MAX)
-        );
     }
 }

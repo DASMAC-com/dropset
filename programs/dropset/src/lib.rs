@@ -11,11 +11,11 @@ pub use events::*;
 use instructions::*;
 pub use state::*;
 
-// The `Price` codec lives in the solana-free `dropset-price-core` crate
+// The `Price` codec lives in the solana-free `dropset-math-core` crate
 // (interface.md § SDK) so the on-chain engine, the Rust SDK, and the WASM
 // client all share one implementation. Re-exported at the crate root so
 // existing `crate::Price` paths keep resolving.
-pub use dropset_price_core::Price;
+pub use dropset_math_core::Price;
 
 declare_id!("TESTnXwv2eHoftsSd5NEdpH4zEu7XRC8jviuoNPdB2Q");
 

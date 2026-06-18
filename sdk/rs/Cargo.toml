@@ -2,15 +2,17 @@
 #
 # Spine A (interface.md § SDK): the Codama-generated client under
 # `src/generated` (instruction builders, account codecs, PDA helpers).
-# Spine B: the solana-free `price` + `layout` + `matching` modules — the
-# `Price` codec and just-in-time book reconstruction, which the IDL does
-# not describe (the `Vault` slab is opaque to it). Those modules carry no
+# Spine B: the solana-free shared math — the `Price` codec + consensus
+# arithmetic in `dropset-math-core`, and the off-chain account-layout mirror
+# + book simulator (`layout` + `matching`) in `dropset-interface`, which the
+# IDL does not describe (the `Vault` slab is opaque to it). Both carry no
 # Solana dependency so the same math can target wasm32 later.
 
 [dependencies]
 borsh = {version = "1", features = ["derive"]}
 bytemuck = {version = "1", features = ["derive", "min_const_generics"]}
-dropset-price-core = {path = "../price-core"}
+dropset-interface = {path = "../interface"}
+dropset-math-core = {path = "../math-core"}
 num-derive = "0.4"
 num-traits = "0.2"
 serde = {version = "1", optional = true, features = ["derive"]}

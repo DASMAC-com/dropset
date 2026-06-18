@@ -4,7 +4,7 @@
 //! hand-mirrored in `quoting.ts`; the TS client verifies the same
 //! `sdk/conformance/quoting_vectors.json` (`quoting.conformance.test.ts`).
 //! Together they pin both forks to the one reference encoded in the
-//! generator (`sdk/price-core/examples/gen_quoting.rs`) — ENG-476 hole 2.
+//! generator (`sdk/math-core/examples/gen_quoting.rs`) — ENG-476 hole 2.
 
 use dropset_sdk::price::Price;
 use dropset_sdk::quoting::{NativeBook, NativeLevel};

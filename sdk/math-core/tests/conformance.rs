@@ -2,7 +2,7 @@
 //! The TS client verifies the same file (sdk/ts/src/conformance.test.ts);
 //! together they pin both implementations to one source of truth.
 
-use dropset_price_core::price::Price;
+use dropset_math_core::price::Price;
 use serde_json::Value;
 
 fn vectors() -> Value {

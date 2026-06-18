@@ -1,8 +1,8 @@
 //! Program `Price` ⇄ shared conformance vectors.
 //!
 //! The cross-language codec vectors in `sdk/conformance/price_vectors.json`
-//! are generated from `dropset-price-core` and verified by the price-core
-//! Rust (`sdk/price-core/tests/conformance.rs`) and the TS client
+//! are generated from `dropset-math-core` and verified by the math-core
+//! Rust (`sdk/math-core/tests/conformance.rs`) and the TS client
 //! (`sdk/ts/src/conformance.test.ts`). The **program's own** `Price` — the
 //! copy in `programs/dropset/src/price.rs` that actually moves funds — is a
 //! hand-mirror of that math, so it must be pinned to the same source of

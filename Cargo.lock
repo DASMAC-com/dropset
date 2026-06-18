@@ -1408,7 +1408,7 @@ dependencies = [
  "anchor-lang-v2",
  "anchor-spl-v2",
  "anchor-v2-testing",
- "dropset-price-core",
+ "dropset-math-core",
  "dropset-sdk",
  "litesvm",
  "serde_json",
@@ -1423,7 +1423,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "dropset-price-core"
+name = "dropset-interface"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "dropset-math-core",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "dropset-math-core"
 version = "0.1.0"
 dependencies = [
  "anchor-lang-v2",
@@ -1438,7 +1447,8 @@ version = "0.1.0"
 dependencies = [
  "borsh",
  "bytemuck",
- "dropset-price-core",
+ "dropset-interface",
+ "dropset-math-core",
  "num-derive",
  "num-traits",
  "serde",
