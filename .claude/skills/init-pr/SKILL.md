@@ -89,19 +89,30 @@ give take precedence over the issue.
    If main isn't checked out anywhere (previous
    step), skip this one too.
 
-1. Ensure the current branch is named after the
-   Linear tag. Check the current branch:
+1. Normalize the branch name to the bare Linear tag.
+   The `aps` shell helper starts worktree sessions with
+   `claude -w <tag>`, which names the worktree directory
+   `eng-###` but the **branch** `worktree-eng-###` —
+   there's no CLI flag to drop the `worktree-` prefix, so
+   the skill strips it here rather than leaving each
+   session to rename it by hand. Check the current branch:
 
    ```sh
    git branch --show-current
    ```
 
-   If the name doesn't already match the tag,
-   rename it:
+   - If it's `worktree-eng-###` (the `aps` default),
+     rename it to the bare `eng-###` that matches the
+     Linear issue identifier — pass both names literally
+     so the call reduces to a stable allow-rule:
 
-   ```sh
-   git branch -m <eng-###>
-   ```
+     ```sh
+     git branch -m worktree-eng-### eng-###
+     ```
+
+   - If it's already `eng-###` (or any other non-`worktree-`
+     name), this is a **no-op** — leave it alone. Only the
+     `worktree-`-prefixed default is rewritten.
 
 1. Rebase onto the freshly-pulled main so the
    worktree starts from the latest code:

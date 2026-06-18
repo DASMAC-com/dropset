@@ -112,14 +112,17 @@ through the **GitHub MCP server** (`mcp__github__*`), not the `gh`
 CLI. The skills (`init-pr`, `pr-title-description`, `review-pr`,
 `housekeeping`, `audit-loop`, `linear-task`) are written against it.
 `gh` is no longer required; it survives only at the `review-pr`
-**merge-queue handoff** — the enqueue (a `gh pr merge --squash --auto`
-write) and a read-only dequeue probe
-(`gh pr view --json …,autoMergeRequest`). The enqueue stays on `gh`
+**merge-queue handoff** — the enqueue (a `gh pr merge --auto` write,
+**no** strategy flag: this repo's merge queue sets the strategy, so a
+`--squash` only warns) and a read-only dequeue probe (a
+`gh api graphql … mergeQueueEntry` read). The enqueue stays on `gh`
 because the server exposes no auto-merge / merge-queue tool
 (`merge_pull_request` does an *immediate* merge, which bypasses the
 queue); the probe stays on `gh` because the hosted MCP's
-`pull_request_read` omits the `auto_merge` field needed to tell a
-still-queued PR from one that was dequeued.
+`pull_request_read` omits the merge-queue state — and on a merge-queue
+repo a still-queued PR reports `autoMergeRequest: null`, so the probe
+must read `mergeQueueEntry` (non-null while queued) over GraphQL to
+tell a still-queued PR from one that was dequeued.
 
 Every tool takes `owner` and `repo`. This repo is
 `DASMAC-com/dropset`, so pass `owner: "DASMAC-com"`, `repo: "dropset"`

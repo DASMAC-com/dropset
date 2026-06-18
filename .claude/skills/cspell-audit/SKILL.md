@@ -1,6 +1,6 @@
 ---
 name: cspell-audit
-description: Enforce spelling-escape hygiene — every word in cfg/dictionary.txt must be used in at least two files (a word used in only one file is moved to an inline cspell escape in that file and dropped from the global dictionary, unless the sole file can't host a comment, e.g. JSON), and every file's inline escapes sit in one contiguous block at the top. Fixes directly when invoked; housekeeping runs the same check read-only and files linear-task issues.
+description: Enforce spelling-escape hygiene — every word in cfg/dictionary.txt must be used in at least two files (a word used in only one file is moved to an inline cspell escape in that file and dropped from the global dictionary, unless the sole file can't host a comment, e.g. JSON), and every file's inline escapes sit in one contiguous block at the top. Fixes directly when invoked; housekeeping runs the same check read-only and files the drift as one aggregated Backlog issue.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -194,8 +194,8 @@ matching entries (still report the rest).
      Return the violations — for a dictionary word: the
      word, file count, sole file, and recommended action;
      for a mis-placed file: its path and that its escapes
-     need regrouping — so the caller files them via
-     `linear-task`. See "Use from housekeeping".
+     need regrouping — so the caller files them as one
+     aggregated issue. See "Use from housekeeping".
 
 1. **Verify.** Run the spell check to confirm the tree is
    still clean after reconciliation — an escape in the
@@ -220,15 +220,23 @@ matching entries (still report the rest).
 The `housekeeping` skill runs this check on its periodic
 pass — escape drift is slow, so it's upkeep, not part of
 the audit loop. It invokes `cspell-audit` in delegated
-mode (read-only, no edits) and files each violation as its
-own Backlog issue through the `linear-task` flow
-(env-resolved destination, a `**Fingerprint**:` line so it
-dedups). The fingerprint is stable across runs and keyed
-by the violation kind:
+mode (read-only, no edits) and files the run's violations
+as a **single aggregated** Backlog issue — **not** one
+issue per finding, because cspell fixes are trivial,
+file-disjoint, and belong in one PR. Each finding is a
+bullet carrying its own `**Fingerprint**:` line, so one
+issue = one PR while later passes still dedup each finding
+individually. The fingerprint is stable across runs and
+keyed by the violation kind:
 
 - dictionary drift → `dictionary:<word>`
 - mis-placed escapes → `cspell-placement:<path>`
 
-This keeps the housekeeping pass non-editing: it never
-touches source, it just files the finding — a word to move
-or a file's escapes to regroup — for a normal PR to fix.
+Across passes, `housekeeping` files only **new** findings
+(fingerprints not already open) and **appends** them to the
+existing aggregated issue when one is open, opening a fresh
+one only when none exists — so a 30-minute loop never
+duplicates work. This keeps the housekeeping pass
+non-editing: it never touches source, it just files the
+finding — a word to move or a file's escapes to regroup —
+for a normal PR to fix.
