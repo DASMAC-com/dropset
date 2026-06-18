@@ -20,7 +20,11 @@
 
 use anchor_lang_v2::{address_eq, prelude::*};
 
-use crate::{errors::DropsetError, state::Market, AdminSet, Registry};
+use crate::{
+    errors::DropsetError,
+    state::{Market, VaultAccess},
+    AdminSet, Registry,
+};
 
 #[derive(Accounts)]
 pub struct SetAllowOutsideDepositors {
@@ -34,9 +38,6 @@ pub struct SetAllowOutsideDepositors {
 impl SetAllowOutsideDepositors {
     #[inline(always)]
     pub fn set_allow_outside_depositors(&mut self, vault_idx: u32, flag: bool) -> Result<()> {
-        let len = self.market.len();
-        require!((vault_idx as usize) < len, DropsetError::InvalidSectorIndex);
-
         // Validate the target vault through an immutable borrow before
         // taking the mutable one — the house pattern shared with
         // `set_reference_price` / `set_liquidity_profile`. Authorization
@@ -44,14 +45,11 @@ impl SetAllowOutsideDepositors {
         // mutable borrow narrows to the single store below.
         let signer_addr = *self.signer.address();
         {
-            let vault = &self.market.as_slice()[vault_idx as usize];
+            let vault = self.market.read_vault(vault_idx)?;
             // A free-list sector carries `leader == default`; reject it
             // first so the error names the real cause rather than
             // surfacing as an authorization failure.
-            require!(
-                !address_eq(&vault.leader, &Address::default()),
-                DropsetError::VaultEmpty
-            );
+            require!(vault.is_occupied(), DropsetError::VaultEmpty);
             // Leader-only — deliberately distinct from the
             // `quote_authority` gate on the quoting setters. Opening a
             // vault to outside capital is a custody decision, so it
@@ -62,7 +60,7 @@ impl SetAllowOutsideDepositors {
             );
         }
 
-        self.market.as_mut_slice()[vault_idx as usize].allow_outside_depositors = flag.into();
+        self.market.mutate_vault(vault_idx)?.allow_outside_depositors = flag.into();
         Ok(())
     }
 }
@@ -89,21 +87,15 @@ impl SetOutsideDepositsApproved {
             self.registry.admin_contains(self.admin.address()),
             DropsetError::Unauthorized
         );
-        let len = self.market.len();
-        require!((vault_idx as usize) < len, DropsetError::InvalidSectorIndex);
-
         // Same validate-then-mutate shape as the leader setter above:
         // confirm the sector is live through an immutable borrow, then
         // narrow to the single store.
-        {
-            let vault = &self.market.as_slice()[vault_idx as usize];
-            require!(
-                !address_eq(&vault.leader, &Address::default()),
-                DropsetError::VaultEmpty
-            );
-        }
+        require!(
+            self.market.read_vault(vault_idx)?.is_occupied(),
+            DropsetError::VaultEmpty
+        );
 
-        self.market.as_mut_slice()[vault_idx as usize].outside_deposits_approved = flag.into();
+        self.market.mutate_vault(vault_idx)?.outside_deposits_approved = flag.into();
         Ok(())
     }
 }

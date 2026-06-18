@@ -17,7 +17,7 @@ use anchor_lang_v2::{address_eq, bytemuck, prelude::*};
 
 use crate::{
     errors::DropsetError,
-    state::{Market, BPS, FLUSH_BIT},
+    state::{Market, VaultAccess, BPS, FLUSH_BIT},
     LiquidityProfile, N_LEVELS,
 };
 
@@ -46,8 +46,6 @@ impl SetLiquidityProfile {
         profile_bytes: [u8; PROFILE_BYTES],
     ) -> Result<()> {
         let profile: &LiquidityProfile = bytemuck::from_bytes(&profile_bytes);
-        let len = self.market.len();
-        require!((vault_idx as usize) < len, DropsetError::InvalidSectorIndex);
 
         // Per-side `Σ size_bps ≤ 10_000`. `u32` accumulator: at
         // N_LEVELS = 8 the upper bound is `8 × u16::MAX = 524_280`,
@@ -68,11 +66,8 @@ impl SetLiquidityProfile {
         // not advance the header counter.
         let signer_addr = *self.signer.address();
         {
-            let vault = &self.market.as_slice()[vault_idx as usize];
-            require!(
-                !address_eq(&vault.leader, &Address::default()),
-                DropsetError::VaultEmpty
-            );
+            let vault = self.market.read_vault(vault_idx)?;
+            require!(vault.is_occupied(), DropsetError::VaultEmpty);
             require!(
                 address_eq(&vault.quote_authority, &signer_addr),
                 DropsetError::Unauthorized
@@ -93,7 +88,7 @@ impl SetLiquidityProfile {
         self.market.nonce = new_nonce.into();
 
         // Re-borrow the vault mutably and stamp the new profile.
-        let vault = &mut self.market.as_mut_slice()[vault_idx as usize];
+        let vault = self.market.mutate_vault(vault_idx)?;
         vault.profile = *profile;
         // Stamp the new nonce | FLUSH_BIT; leave `price` and
         // `quote_slot` untouched — that's the SetLiquidityProfile

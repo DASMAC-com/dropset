@@ -19,7 +19,7 @@ use anchor_lang_v2::{address_eq, prelude::*};
 use crate::{
     errors::DropsetError,
     events::CloseVaultEvent,
-    state::{DllList, Market, VaultDll},
+    state::{DllList, Market, VaultAccess, VaultDll},
 };
 
 #[event_cpi]
@@ -39,20 +39,14 @@ impl CloseVault {
     /// emit lives in the dispatcher rather than the handler).
     #[inline(always)]
     pub fn close_vault(&mut self, vault_idx: u32) -> Result<CloseVaultEvent> {
-        let len = self.market.len();
-        require!((vault_idx as usize) < len, DropsetError::InvalidSectorIndex);
-
         let signer_addr = *self.signer.address();
         let leader = {
-            let v = &self.market.as_slice()[vault_idx as usize];
+            let v = self.market.read_vault(vault_idx)?;
+            // Free-list sectors carry the default leader — reject before
+            // the leader check so the error is specific.
+            require!(v.is_occupied(), DropsetError::VaultEmpty);
             v.leader
         };
-        // Free-list sectors carry the default leader — reject before the
-        // leader check so the error is specific.
-        require!(
-            !address_eq(&leader, &Address::default()),
-            DropsetError::VaultEmpty
-        );
         require!(
             address_eq(&leader, &signer_addr),
             DropsetError::Unauthorized
@@ -80,7 +74,7 @@ impl CloseVault {
         // `vault_list_of` walk. Mirrors how `freeze_vault` sets
         // `vault.frozen`. Cleared implicitly on reclaim+reuse, since
         // `allocate_sector` re-zeroes the whole struct.
-        self.market.as_mut_slice()[vault_idx as usize].tombstoned = true.into();
+        self.market.mutate_vault(vault_idx)?.tombstoned = true.into();
 
         Ok(CloseVaultEvent {
             market: *self.market.address(),
