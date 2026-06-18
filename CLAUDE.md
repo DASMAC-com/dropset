@@ -46,6 +46,9 @@ export LINEAR_PROJECT_ID=…
 export LINEAR_ASSIGNEE_ID=…
 # Used only by stage-backlog — the "Task Staging" document:
 export LINEAR_TASK_STAGING_DOC_ID=…
+# Used only by firm-perms (and housekeeping, which calls it) —
+# the "Permissions" inbox document it drains:
+export LINEAR_PERMISSIONS_DOC_ID=…
 ```
 
 Skills read these at run time with a bare `printenv`, **one variable
@@ -65,6 +68,12 @@ UUIDs out of every committed file.
 — the id of the Linear document it rewrites each run (the "Task
 Staging" document) — with its own bare `printenv`, on the same rule.
 It is not a filing destination, so the other skills don't need it.
+
+`firm-perms` likewise resolves `LINEAR_PERMISSIONS_DOC_ID` — the id
+of the "Permissions" inbox document it drains in its `doc` mode (and
+that `housekeeping` drains via `firm-perms` each pass) — with its own
+bare `printenv`, on the same rule. It too is not a filing
+destination.
 
 A worktree branch and its Linear issue **share one `ENG-###`
 number**: branch `eng-499` ↔ issue `ENG-499`. Skills resolve the

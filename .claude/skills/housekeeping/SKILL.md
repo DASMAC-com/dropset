@@ -1,6 +1,6 @@
 ---
 name: housekeeping
-description: One pass of day-to-day repo upkeep, run from the base repo root — fast-forward main so the run uses the latest skills, prune the worktrees of already-merged PRs, run the cspell dictionary check and file any drift as a Backlog task, and restage the backlog. Drive it with `/loop 30m housekeeping` while developing, or run it once at the start of the day.
+description: One pass of day-to-day repo upkeep, run from the base repo root — fast-forward main so the run uses the latest skills, prune the worktrees of already-merged PRs, run the cspell dictionary check and file any drift as a Backlog task, drain the Linear Permissions inbox doc via firm-perms (propose-only), and restage the backlog. Drive it with `/loop 30m housekeeping` while developing, or run it once at the start of the day.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -11,7 +11,7 @@ A single iteration of routine repo upkeep — the
 chores that pile up while you develop but don't
 belong to any one PR. It first fast-forwards `main`
 so the pass runs on the latest committed skills, then
-does three things:
+does four things:
 
 1. **Prune merged worktrees** — remove the local
    worktree (and branch) of every PR that has
@@ -21,6 +21,11 @@ does three things:
    `cfg/dictionary.txt` drift as a Backlog task to
    fix later (this is the *only* place cspell runs
    on a schedule; `audit-loop` no longer does it).
+1. **Drain the Permissions inbox** — invoke
+   `firm-perms` in **propose-only** mode against the
+   Linear Permissions doc, so each captured prompt gets
+   a recommended disposition (and malformed ones a
+   source-fix task) without writing settings unattended.
 1. **Restage the backlog** — hand off to
    `stage-backlog` so the Task Staging document
    reflects everything currently open.
@@ -36,7 +41,10 @@ wrong place.
 
 It is safe to run repeatedly and makes **no source
 edits** of its own: its only writes are removing
-merged worktrees and filing / staging Linear issues.
+merged worktrees, filing / staging Linear issues, and
+annotating the Linear Permissions doc with recommended
+dispositions (it never writes `settings.local.json`
+unattended).
 Drive it on a timer while you work, or run it by
 hand:
 
@@ -51,11 +59,11 @@ clean up on demand.
 
 ## Linear destination
 
-Steps 2 and 3 file and stage Backlog issues, so they
-use the same env-resolved Linear destination as
-`linear-task` / `stage-backlog`. Resolve each
-variable with its **own** bare `printenv` (one
-`Bash(printenv:*)` allow-rule covers them all) —
+Steps 2–4 file and stage Backlog issues and drain the
+Permissions doc, so they use the same env-resolved
+Linear destination as `linear-task` / `stage-backlog`.
+Resolve each variable with its **own** bare `printenv`
+(one `Bash(printenv:*)` allow-rule covers them all) —
 never a combined `printenv A B C`, which on macOS /
 BSD prints only the first value:
 
@@ -64,10 +72,13 @@ printenv LINEAR_TEAM_ID
 printenv LINEAR_PROJECT_ID
 printenv LINEAR_ASSIGNEE_ID
 printenv LINEAR_TASK_STAGING_DOC_ID
+printenv LINEAR_PERMISSIONS_DOC_ID
 ```
 
 If any is empty, skip the step that needs it and say
-so; don't guess an id.
+so; don't guess an id. (`firm-perms` resolves
+`LINEAR_PERMISSIONS_DOC_ID` itself in step 4; it's
+listed here only so the whole set lives in one place.)
 
 ## Steps
 
@@ -190,14 +201,30 @@ a normal PR. (To fix the dictionary directly instead,
 run `cspell-audit` on its own; that's its default
 mode.)
 
-**4. Restage the backlog.** Invoke the
+**4. Drain the Permissions inbox.** Invoke the
+`firm-perms` skill (via the Skill tool) in
+**propose-only** mode against the Linear Permissions
+doc — pass it `doc propose-only`. It resolves
+`LINEAR_PERMISSIONS_DOC_ID` itself, reads the doc
+live, adjudicates each unchecked entry, annotates it
+with the rule it *recommends* firming (or files a
+source-fix task for a malformed one), and writes those
+notes back into the doc. Because this pass is
+unattended, `firm-perms` in this mode **never writes
+`settings.local.json` and never ticks a checkbox** —
+it only proposes. The actual firming is left for an
+attended `/firm-perms doc` run. If
+`LINEAR_PERMISSIONS_DOC_ID` is unset, `firm-perms`
+says so and this step is a no-op.
+
+**5. Restage the backlog.** Invoke the
 `stage-backlog` skill (via the Skill tool) to rewrite
 the Task Staging document from the current open
-Backlog — including anything step 3 just filed. All
+Backlog — including anything steps 3–4 just filed. All
 the grouping / merge logic lives there; this skill
 just triggers it.
 
-**5. Report.** Print a short summary:
+**6. Report.** Print a short summary:
 
 - `main`: fast-forwarded to the latest, or left at its
   current commit (with the reason) if the pull couldn't
@@ -208,5 +235,9 @@ just triggers it.
   PR, or dirty tree).
 - Dictionary drift: violations filed (with their
   words), and any skipped as already-open duplicates.
+- Permissions inbox: entries annotated with a
+  recommended firm, source-fix tasks filed (with their
+  ENG-###), and any skipped as already-handled — or
+  why the step was skipped (e.g. a missing env var).
 - Backlog staging: that `stage-backlog` ran, or why
   it was skipped (e.g. a missing env var).
