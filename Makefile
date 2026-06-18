@@ -1,5 +1,8 @@
 .PHONY: all
+.PHONY: check-anchor
 .PHONY: check-conformance-vectors
+.PHONY: check-sbf
+.PHONY: check-solana
 .PHONY: check-toolchain
 .PHONY: clean
 .PHONY: conformance-vectors
@@ -19,13 +22,24 @@ clean:
 # Required toolchain: anchor-cli 2.x, the Solana SBF toolchain, and a
 # solana-cli / solana-test-validator on the 3.1 minor — matching the SDK's
 # solana-client 3.1 so its `fetch` RpcClient and the local validator agree
-# on wire/RPC (see sdk/rs/Cargo.toml). The Makefile linter caps this recipe
-# body at 5 lines, so each check stays on one line.
-check-toolchain:
-	@anchor --version | grep -q " 2\." || { echo "anchor-cli 2.x required"; exit 1; }
-	@command -v cargo-build-sbf >/dev/null || { echo "cargo build-sbf not found (install Solana toolchain)"; exit 1; }
-	@solana --version | grep -q " 3\.1\." || { echo "solana-cli 3.1.x required (matches SDK solana-client 3.1)"; exit 1; }
-	@solana-test-validator --version | grep -q " 3\.1\." || { echo "solana-test-validator 3.1.x required (wire/RPC compat with solana-client 3.1)"; exit 1; }
+# on wire/RPC (see sdk/rs/Cargo.toml). One prerequisite per tool keeps each
+# recipe body small enough to wrap under the Makefile linter's length cap.
+check-toolchain: check-anchor check-sbf check-solana
+
+check-anchor:
+	@anchor --version | grep -q " 2\." \
+		|| { echo "anchor-cli 2.x required"; exit 1; }
+
+check-sbf:
+	@command -v cargo-build-sbf >/dev/null \
+		|| { echo "cargo build-sbf not found (install Solana toolchain)"; \
+			exit 1; }
+
+check-solana:
+	@solana --version | grep -q " 3\.1\." \
+		|| { echo "solana-cli 3.1.x required"; exit 1; }
+	@solana-test-validator --version | grep -q " 3\.1\." \
+		|| { echo "solana-test-validator 3.1.x required"; exit 1; }
 
 # Regenerate the checked-in IDL from the program. Pin anchor-cli to the
 # same anchor-next rev as the program crate (see install-anchor-v2) so
