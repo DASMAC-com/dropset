@@ -1,3 +1,4 @@
+// cspell:word topoff
 //! `deposit` integration tests — the outside-depositor PDA path.
 //! Covers the happy open (PDA + basis stamp + counter), the
 //! shares-weighted top-off merge, and every rejection gate

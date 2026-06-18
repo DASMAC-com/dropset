@@ -1,5 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 
+<!-- cspell:word inlines reentrancy syscall syscalls -->
+
 # SVM heap + Anchor event-cpi: deep-research synthesis
 
 Source-grounded notes feeding the **Order matching** and **Events and

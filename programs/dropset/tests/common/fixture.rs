@@ -1,3 +1,4 @@
+// cspell:word idempotently
 //! Shared market-bootstrap fixture and per-instruction ix-builders.
 //!
 //! Every integration test that needs a live market repeated the same

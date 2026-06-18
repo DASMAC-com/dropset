@@ -1,3 +1,5 @@
+<!-- cspell:word clmm custodying drawdowns hyperliquid toggleable -->
+
 # Ephemeral Central Limit Order Book (eCLOB) Architecture
 
 This sketch presents an ephemeral central limit order book (eCLOB) design that

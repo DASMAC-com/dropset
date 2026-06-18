@@ -1,3 +1,4 @@
+# cspell:word rlib
 # Solana-free Price codec + eCLOB book-reconstruction math.
 #
 # interface.md § SDK (spine B): the on-chain crates can't target wasm32 and

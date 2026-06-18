@@ -1,5 +1,7 @@
 "use client";
 
+// cspell:word jito
+
 import type { SolanaClientRuntime, WalletSession } from "@solana/client";
 import {
   getBase64Encoder,

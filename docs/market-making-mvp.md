@@ -1,3 +1,7 @@
+<!-- cspell:word fxpractice guéant lehalle navigations parameterizes -->
+
+<!-- cspell:word raydium stablecorp stoikov tapia oanda -->
+
 # Market Making MVP — CADC/USDC
 
 The **operating spec** for Dropset's first market-making vault: how a

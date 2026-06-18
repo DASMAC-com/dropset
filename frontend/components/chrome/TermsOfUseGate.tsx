@@ -1,4 +1,4 @@
-//cspell: word noninteractive
+// cspell:word noninteractive luhansk
 "use client";
 
 import * as Dialog from "@radix-ui/react-dialog";

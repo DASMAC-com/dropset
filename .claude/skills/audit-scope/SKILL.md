@@ -5,6 +5,8 @@ disable-model-invocation: false
 user-invocable: true
 ---
 
+<!-- cspell:word unvalidated -->
+
 # `audit-scope`
 
 Audit a defined scope of the codebase and file each
