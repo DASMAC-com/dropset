@@ -1,7 +1,6 @@
 # Project instructions
 
-<!-- cspell:word PIPESTATUS -->
-<!-- cspell:word rustc -->
+<!-- cspell:word PIPESTATUS rustc Toolsets -->
 
 ## Commits and PRs
 
@@ -104,6 +103,82 @@ belongs in *one PR* — is handled by combining into a single issue,
 not a relation. When the blocker is filed in the same run, file it
 first so its `ENG-###` exists, then reference it.
 
+## GitHub via MCP
+
+All GitHub operations — opening PRs, updating titles and bodies,
+reading the diff, watching checks, pulling failing-job logs — go
+through the **GitHub MCP server** (`mcp__github__*`), not the `gh`
+CLI. The skills (`init-pr`, `pr-title-description`, `review-pr`,
+`housekeeping`, `audit-loop`, `linear-task`) are written against it.
+`gh` is no longer required; it survives in exactly **one** place — the
+`review-pr` merge-queue step runs `gh pr merge --squash --auto`,
+because the server exposes no auto-merge / merge-queue tool
+(`merge_pull_request` does an *immediate* merge, which bypasses the
+queue).
+
+Every tool takes `owner` and `repo`. This repo is
+`DASMAC-com/dropset`, so pass `owner: "DASMAC-com"`, `repo: "dropset"`
+on every call. The server collapses most reads into a single tool
+dispatched by a `method` enum — `pull_request_read` covers `get` /
+`get_diff` / `get_files` / `get_check_runs` / …, and `actions_list` /
+`actions_get` do the same for Actions — so one tool name covers many
+reads.
+
+### Authentication (PAT header, not OAuth)
+
+The server is added at **user scope** with a PAT in an `Authorization`
+header, on the same env-var convention as the `LINEAR_*` ids — the
+token lives in `~/.zshrc`, never in a committed file or
+`~/.claude.json`:
+
+```sh
+export GITHUB_MCP_PAT=…
+```
+
+```sh
+claude mcp add --transport http --scope user github \
+  https://api.githubcopilot.com/mcp/ \
+  --header 'Authorization: Bearer ${GITHUB_MCP_PAT}' \
+  --header 'X-MCP-Toolsets: all'
+```
+
+Two gotchas, both learned the hard way:
+
+- **OAuth doesn't work.** Claude Code's built-in OAuth needs dynamic
+  client registration, which this server doesn't support
+  (`does not support dynamic client registration`). The PAT header is
+  the only path; a classic `repo` token already covers PRs and Actions
+  read+write, so nothing extra is needed.
+- **A newly added or reconfigured server loads on the next
+  conversation, not mid-session.** After `claude mcp add` (or any
+  header change), relaunch and start a fresh chat before the
+  `mcp__github__*` tools appear.
+
+The `X-MCP-Toolsets: all` header exposes the `actions` toolset (check
+runs, job logs) alongside the defaults. The tradeoff: it also surfaces
+write tools across every toolset (Dependabot, secret-scanning,
+notifications, …); per-tool permission prompts are the backstop.
+
+### Permission rules
+
+Pre-approve the **read** tools so they don't re-prompt, and leave the
+**write** tools to confirm-on-use:
+
+- **Pre-approve (read):** `pull_request_read`, `list_pull_requests`,
+  `actions_list`, `actions_get`, `get_job_logs`, `get_me`, and the
+  `search_*` family.
+- **Confirm-on-use (write):** `create_pull_request`,
+  `update_pull_request`, `merge_pull_request`, `issue_write`,
+  `push_files`, `create_or_update_file`, `delete_file`,
+  `actions_run_trigger`.
+
+These are `mcp__github__<tool>` permission entries, not `Bash(…)`
+globs — and because of the single-tool-many-methods shape, one
+allow-rule per read tool covers all of its methods. Propagate the read
+allow-rules to the **base-repo** settings so future worktrees inherit
+them (per the per-worktree settings rule); `firm-perms` does this at
+session end.
+
 ## Spelling (cspell)
 
 `cfg/dictionary.txt` is the **project-wide** spelling allow-list —
@@ -119,15 +194,20 @@ comment style:
 The lone exception is a file that can't carry a comment (e.g.
 `.json`), where the dictionary is the only option.
 
-**Placement: one contiguous block at the top of the file.** All of a
-file's inline escapes go together in a single block at the very top —
-one `cspell:word` directive per word, one word per line — never
-scattered beside each usage and never split by blank lines. "Top" means
-the first line, except where syntax forces something else to lead:
-after a `---` YAML frontmatter block, after a `#!` shebang, or after a
-leading module doc-comment / inner-attribute header. One known place
-means a reader — and the audit — finds every escape at a glance instead
-of hunting the file.
+**Placement: one block at the top of the file.** All of a file's
+inline escapes go together in a single block at the very top, never
+scattered beside each usage. The block's shape depends on the comment
+style: in **line-comment** files (Rust / TS / JS `//`, YAML / TOML /
+shell `#`) it's one directive per word, one word per line, on
+consecutive lines with no blank lines between; in **Markdown**,
+mdformat forces a blank line between adjacent HTML comments, so use a
+**single** `<!-- cspell:word w1 w2 … -->` comment with every word
+space-separated on one line — that one comment *is* the block. "Top"
+means the first line, except where syntax forces something else to
+lead: after a `---` YAML frontmatter block, after a `#!` shebang, or
+after a leading module doc-comment / inner-attribute header. One known
+place means a reader — and the audit — finds every escape at a glance
+instead of hunting the file.
 
 The `cspell-audit` skill reconciles the dictionary against actual usage
 **and** normalizes escape placement on this rule; run it when the
@@ -187,15 +267,17 @@ Concrete rules:
 - Avoid redirects (`>`, `<`, here-strings). Use the Write tool to
   create files rather than `echo … > file`.
 - Pass large or special-character arguments through a **file**, not
-  inline on the command line. A PR body full of markdown, a
-  multi-paragraph message — its backticks, braces, and quotes trip the
-  "brace with quote character (expansion obfuscation)" guard and force
-  manual approval *every time*, even though the command prefix is
-  allow-listed. Write the content to a throwaway file with the Write
-  tool (e.g. under `/tmp`) and hand the command its path via the
-  matching `--*-file` flag — `gh pr edit <n> --body-file /tmp/<f>.md`,
+  inline on the command line. A multi-paragraph commit message — its
+  backticks, braces, and quotes trip the "brace with quote character
+  (expansion obfuscation)" guard and force manual approval *every
+  time*, even though the command prefix is allow-listed. Write the
+  content to a throwaway file with the Write tool (e.g. under `/tmp`)
+  and hand the command its path via the matching `--*-file` flag —
   `git commit -F /tmp/<f>.txt` — so only a stable, globbable path rides
-  the command line and the call reduces to a `prefix:*` rule.
+  the command line and the call reduces to a `prefix:*` rule. (PR
+  titles and bodies are **no longer** a shell concern: they go through
+  the GitHub MCP as structured tool arguments — see "GitHub via MCP" —
+  so there is no `--body-file` workaround to manage.)
 - Keep a stable command + subcommand prefix (`pnpm lint …`,
   `cargo test …`, `git log …`) and put only the variable parts in the
   arguments, so the call matches a `:*` allow-glob.
