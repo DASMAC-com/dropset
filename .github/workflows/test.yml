@@ -3,13 +3,64 @@ env:
   ANCHOR_REV: '2a191379'
   SOLANA_VERSION: 'v3.1.9'
 jobs:
+  # Decide whether the changed files can affect the Rust test suite. On a
+  # pull_request we diff the touched paths against the filter below; a PR that
+  # touches only the frontend, docs, or other non-Rust trees skips the build +
+  # test work entirely. On merge_group and push-to-main the filter step is
+  # skipped and `code` defaults to true, so the queue's final gate and the main
+  # branch always run the full suite. The test jobs still RUN in every case
+  # (only their expensive steps are gated), so the required "Tests" and "Tests
+  # (no teardown)" checks always report success — a trigger-level `paths`
+  # filter would instead leave them unreported and hang branch protection and
+  # the merge queue forever.
+  # cspell:word dorny
+  changes:
+    name: 'Detect changes'
+    outputs:
+      code: '${{ steps.filter.outputs.code != ''false'' }}'
+    permissions:
+      contents: 'read'
+      pull-requests: 'read'
+    runs-on: 'ubuntu-latest'
+    steps:
+    # Fail-safe: a transient paths-filter/API error must not fail this job.
+    # If it did, `needs: changes` would *skip* the test jobs (not run them
+    # with steps gated), and a required check skipped via a failed `needs`
+    # reports as pending — hanging branch protection, the very thing this
+    # design avoids. On error the step's `code` output is empty, so the
+    # job output defaults to true (`'' != 'false'`) and the full suite runs.
+    - continue-on-error: true
+      id: 'filter'
+      if: |
+        github.event_name == 'pull_request'
+      uses: 'dorny/paths-filter@v3'
+      with:
+        filters: |
+          code:
+          - '**/*.rs'
+          - '**/Cargo.toml'
+          - 'Cargo.lock'
+          - 'Anchor.toml'
+          - 'Makefile'
+          - 'programs/**'
+          - 'sdk/price-core/**'
+          - 'sdk/rs/**'
+          - 'sdk/idl/**'
+          - 'sdk/conformance/**'
+          - '.github/workflows/test.yml'
+          - '.github/actions/**'
   test:
     name: 'Tests'
+    needs: 'changes'
     runs-on: 'ubuntu-latest'
     steps:
     - uses: 'actions/checkout@v6'
-    - uses: 'dtolnay/rust-toolchain@stable'
-    - uses: './.github/actions/install-toolchain'
+    - if: |
+        needs.changes.outputs.code == 'true'
+      uses: 'dtolnay/rust-toolchain@stable'
+    - if: |
+        needs.changes.outputs.code == 'true'
+      uses: './.github/actions/install-toolchain'
       with:
         anchor-revision: '${{ env.ANCHOR_REV }}'
         solana-version: '${{ env.SOLANA_VERSION }}'
@@ -20,28 +71,39 @@ jobs:
     # is intentionally the same as the no-teardown job's: their dependency
     # builds are identical across the two feature sets, so they share one
     # dep-artifact cache instead of each saving a full multi-GB target/.
-    - uses: 'Swatinem/rust-cache@v2'
+    - if: |
+        needs.changes.outputs.code == 'true'
+      uses: 'Swatinem/rust-cache@v2'
       with:
         cache-on-failure: true
         shared-key: 'rust-test-${{ runner.os }}'
     # Builds the program (.so) and runs the whole Rust workspace test
     # suite — including the price-core conformance vectors and the
     # engine-vs-SDK litesvm conformance (tests/sdk_conformance.rs).
-    - name: 'Run tests'
+    - if: |
+        needs.changes.outputs.code == 'true'
+      name: 'Run tests'
       run: 'make test'
     # IDL-diff gate (interface.md § SDK): the checked-in IDL must match
     # what the pinned anchor-cli regenerates from the program.
-    - name: 'Verify IDL is up to date'
+    - if: |
+        needs.changes.outputs.code == 'true'
+      name: 'Verify IDL is up to date'
       run: |
         make idl
         git diff --exit-code -- sdk/idl/dropset.json
   test-no-teardown:
     name: 'Tests (no teardown)'
+    needs: 'changes'
     runs-on: 'ubuntu-latest'
     steps:
     - uses: 'actions/checkout@v6'
-    - uses: 'dtolnay/rust-toolchain@stable'
-    - uses: './.github/actions/install-toolchain'
+    - if: |
+        needs.changes.outputs.code == 'true'
+      uses: 'dtolnay/rust-toolchain@stable'
+    - if: |
+        needs.changes.outputs.code == 'true'
+      uses: './.github/actions/install-toolchain'
       with:
         anchor-revision: '${{ env.ANCHOR_REV }}'
         solana-version: '${{ env.SOLANA_VERSION }}'
@@ -52,11 +114,15 @@ jobs:
     # target/ before saving, so restoring here no longer drags in the full
     # default-feature target/ that previously doubled the on-disk footprint
     # and crashed the runner with "No space left on device".
-    - uses: 'Swatinem/rust-cache@v2'
+    - if: |
+        needs.changes.outputs.code == 'true'
+      uses: 'Swatinem/rust-cache@v2'
       with:
         cache-on-failure: true
         shared-key: 'rust-test-${{ runner.os }}'
-    - name: 'Run feature-off teardown-disabled tests'
+    - if: |
+        needs.changes.outputs.code == 'true'
+      name: 'Run feature-off teardown-disabled tests'
       run: 'make test-no-teardown'
 name: 'Tests'
 'on':
