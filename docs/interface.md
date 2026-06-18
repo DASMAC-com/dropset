@@ -1,3 +1,5 @@
+<!-- cspell:word birdeye rollups -->
+
 # Dropset Interface Spec
 
 The **consumer/client contract** for Dropset: the on-chain events the indexer

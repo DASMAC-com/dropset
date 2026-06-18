@@ -1,3 +1,4 @@
+// cspell:word misdecoding
 //! Zero-copy mirror of the on-chain market account layout.
 //!
 //! The program stores a market as `Slab<MarketHeader, Vault>`: an 8-byte

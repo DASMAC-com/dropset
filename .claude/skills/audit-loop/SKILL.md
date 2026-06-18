@@ -5,6 +5,8 @@ disable-model-invocation: false
 user-invocable: true
 ---
 
+<!-- cspell:word landable -->
+
 # `audit-loop`
 
 Run **one iteration** of a continuous, unattended

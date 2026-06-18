@@ -1,3 +1,4 @@
+// cspell:word transpiles
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {

@@ -1,3 +1,4 @@
+// cspell:word réunion
 // Mirror Twemoji's country-flag SVGs into public/flag-icons, renamed by ISO
 // 3166-1 alpha-2. Run via pnpm predev / prebuild. We use Twemoji rather than
 // flag-icons because Twemoji ships the unofficial regional designs people

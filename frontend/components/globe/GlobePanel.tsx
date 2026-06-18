@@ -1,5 +1,7 @@
 "use client";
 
+// cspell:word helvetiker barthélemy barthelemy lemy
+
 import dynamic from "next/dynamic";
 import {
   Component,
