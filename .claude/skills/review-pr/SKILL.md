@@ -4,9 +4,7 @@ description: Adversarial pre-review — verify the Linear task's checklist is fu
 user-invocable: true
 ---
 
-<!-- cspell:word oneline -->
-
-<!-- cspell:word unstarted -->
+<!-- cspell:word oneline unstarted -->
 
 # `review-pr`
 

@@ -61,25 +61,39 @@ Add the escape in a comment, following the repo's
 | YAML / TOML / shell | `# cspell:word <w>`                      |
 | JSON                | *(no comment form — keep in dictionary)* |
 
-### Placement: one contiguous block at the top
+### Placement: one block at the top
 
 A file's escapes all live together in a **single block at
-the very top** — one directive per word, one word per
-line, no blank lines between them:
+the very top**. The exact shape depends on the comment
+style:
 
-```txt
-// cspell:word luhansk
-// cspell:word noninteractive
-```
+- **Line-comment files** (Rust / TS / JS `//`,
+  YAML / TOML / shell `#`): one directive per word, one
+  word per line, consecutive lines with no blank lines
+  between. Don't pack several words onto one line — one
+  per line keeps the block diff-friendly:
+
+  ```txt
+  // cspell:word luhansk
+  // cspell:word noninteractive
+  ```
+
+- **Markdown** (`<!-- … -->`): mdformat inserts a blank
+  line between adjacent HTML comments, which would break a
+  multi-line block, so use a **single** comment with every
+  word space-separated on one line — that one comment
+  *is* the block:
+
+  ```txt
+  <!-- cspell:word oneline unstarted -->
+  ```
 
 "Top" means the first line, except where syntax forces
 something else to lead — put the block immediately
 **after**: a `---` YAML frontmatter block (Markdown skill
 files, workflow YAML), a `#!` shebang (shell scripts), or
 a leading module doc-comment / inner-attribute header
-(Rust). Don't write `// cspell:word foo bar` (several
-words on one line) — one word per line keeps the block
-diff-friendly and matches the convention everywhere.
+(Rust).
 
 ## Input
 
@@ -137,13 +151,16 @@ matching entries (still report the rest).
    ```
 
    Read each hit and flag it as **mis-placed** when its
-   escapes aren't already one contiguous block at the top
-   (per "Placement" above): escapes scattered beside their
-   usages, split by blank lines, several words on one
-   line, or the block sitting below the first position
-   syntax allows (frontmatter / shebang / module header).
-   A file whose escapes are already a clean top block is
-   fine — leave it untouched.
+   escapes aren't already the single top block its comment
+   style calls for (per "Placement" above): escapes
+   scattered beside their usages, a line-comment block
+   split by blank lines or packing several words on one
+   line, a Markdown file using several `<!-- … -->`
+   comments instead of one combined comment, or the block
+   sitting below the first position syntax allows
+   (frontmatter / shebang / module header). A file whose
+   escapes are already a clean top block is fine — leave
+   it untouched.
 
 1. **Act by mode.**
 
@@ -155,9 +172,11 @@ matching entries (still report the rest).
      *dead* word, Edit `cfg/dictionary.txt` to drop the
      line (removing lines preserves the file's existing
      alphabetical order). For each **mis-placed** file,
-     Edit it to gather its escapes into one contiguous
-     top block (one word per line), removing the old
-     scattered copies. If the plan is large, show it to the
+     Edit it to gather its escapes into one top block in
+     the file's comment style (one word per line for
+     line-comment files; a single combined `<!-- … -->`
+     for Markdown), removing the old scattered copies. If
+     the plan is large, show it to the
      user before applying.
    - **Delegated run (`housekeeping`):** edit **nothing**.
      Return the violations — for a dictionary word: the
