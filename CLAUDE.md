@@ -161,23 +161,35 @@ notifications, …); per-tool permission prompts are the backstop.
 
 ### Permission rules
 
-Pre-approve the **read** tools so they don't re-prompt, and leave the
-**write** tools to confirm-on-use:
+Pre-approve the **reads** *and* the routine **PR-authoring writes** so
+they don't re-prompt, and leave the genuinely destructive / irreversible
+writes to confirm-on-use:
 
-- **Pre-approve (read):** `pull_request_read`, `list_pull_requests`,
+- **Pre-approve (reads):** `pull_request_read`, `list_pull_requests`,
   `actions_list`, `actions_get`, `get_job_logs`, `get_me`, and the
   `search_*` family.
-- **Confirm-on-use (write):** `create_pull_request`,
-  `update_pull_request`, `merge_pull_request`, `issue_write`,
-  `push_files`, `create_or_update_file`, `delete_file`,
-  `actions_run_trigger`.
+- **Pre-approve (routine PR-authoring writes):** `create_pull_request`
+  (init-pr) and `update_pull_request` (pr-title-description, review-pr).
+  The skills call these on every run to open and maintain the draft PR,
+  and they touch only the PR's own title / body / draft-state — low
+  blast radius — so gating them behind a confirm prompt each run buys no
+  safety. Pre-approving them is deliberate.
+- **Confirm-on-use (merges, deletes, pushes, issue/actions
+  mutations):** `merge_pull_request`, `delete_file`, `push_files`,
+  `create_or_update_file`, `issue_write`, `actions_run_trigger`. These
+  either land code, delete content, or mutate issues/workflows — the
+  irreversible or far-reaching writes that warrant a per-use confirm.
+
+The split, in one line: **pre-approve reads + the routine PR-authoring
+writes; confirm-on-use for merges, deletes, pushes, and issue/actions
+mutations.**
 
 These are `mcp__github__<tool>` permission entries, not `Bash(…)`
 globs — and because of the single-tool-many-methods shape, one
-allow-rule per read tool covers all of its methods. Propagate the read
-allow-rules to the **base-repo** settings so future worktrees inherit
-them (per the per-worktree settings rule); `firm-perms` does this at
-session end.
+allow-rule per read tool covers all of its methods. Propagate the
+pre-approved allow-rules (reads *and* the PR-authoring writes) to the
+**base-repo** settings so future worktrees inherit them (per the
+per-worktree settings rule); `firm-perms` does this at session end.
 
 ## Spelling (cspell)
 

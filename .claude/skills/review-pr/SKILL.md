@@ -1,6 +1,6 @@
 ---
 name: review-pr
-description: Adversarial pre-review — verify the Linear task's checklist is fully addressed, lint, catalogue issues, fix what's mechanical, ready the PR, wait for GitHub CI to pass, mark the Linear issue In Review, then offer to add the PR to the merge queue and report if it gets taken out.
+description: Adversarial pre-review — verify the Linear task's checklist is fully addressed, lint, catalogue issues, fix what's mechanical, ready the PR, wait for GitHub CI to pass, print the review summary, then at the merge-queue handoff move the Linear issue In Review, offer to enqueue the PR, and firm up permissions while it sits in the queue.
 user-invocable: true
 ---
 
@@ -13,9 +13,12 @@ looks at the PR. Run lint, audit the diff,
 catalogue every issue, fix what can be fixed
 mechanically, and mark the PR ready only when
 it's clean. Then wait for the real GitHub CI to go
-green before moving the Linear issue to In Review and
-reporting done — so when this skill finishes, the
-human can merge (or let "Merge when ready" land it)
+green and print the review summary — the issue stays
+In Progress through all of this. It moves to In Review
+only at the merge-queue handoff, the point at which
+it's the human's turn to look at the ready, CI-green PR
+and approve enqueueing it — so when this skill prompts,
+the human can merge (or let "Merge when ready" land it)
 with nothing left to check.
 
 Run this after autonomous work is complete and
@@ -533,10 +536,12 @@ server exposes no auto-merge tool. This repo is
    Marking it ready (out of draft) is what lets the
    human enable GitHub's **"Merge when ready"**
    auto-merge while the real CI finishes. But ready is
-   **not** the end of this skill: the Linear issue does
-   **not** move to In Review, and the run does **not**
-   report success, until the actual CI is green — that's
-   the next step.
+   **not** the end of this skill: the Linear issue stays
+   **In Progress** (it does *not* move to In Review here),
+   and the run does **not** report success, until the
+   actual CI is green and the review summary is in front
+   of the human — the next steps. In Review comes later
+   still, at the merge-queue handoff.
 
    If any blocking issue remains — an unaddressed
    Linear checklist item, failing or unverified
@@ -545,8 +550,12 @@ server exposes no auto-merge tool. This repo is
    Leave it in draft and the issue in its current state,
    **skip the CI wait below**, and report the blockers.
 
-1. **Wait for GitHub CI to pass, then move the issue
-   to In Review.** The local checks only *mirror* CI;
+1. **Wait for GitHub CI to pass.** The issue stays
+   **In Progress** throughout this step — it does *not*
+   move to In Review at CI-green; that transition belongs
+   to the merge-queue handoff a few steps down, once the
+   review summary is in front of the human. The local
+   checks only *mirror* CI;
    the authoritative signal is the real run on the
    pushed commits — and when the toolchain was absent
    locally (tests / IDL reported unverifiable), CI is
@@ -583,23 +592,11 @@ server exposes no auto-merge tool. This repo is
    `failure` / `timed_out` / `cancelled` / `action_required`
    (failing):
 
-   - **All checks green** → move the Linear issue (the
-     tag resolved in step 3) to **In Review** so the
-     board reflects it's awaiting human review — the
-     final transition after step 3 set it In Progress
-     and ticked the delivered items. Skip only if no tag
-     was resolvable:
-
-     ```txt
-     mcp__claude_ai_Linear__save_issue(
-       id: "<ENG-###>",
-       state: "In Review"
-     )
-     ```
-
-     The PR is now ready **and** CI-green: the human can
-     merge it (or let "Merge when ready" land it) without
-     waiting on anything else.
+   - **All checks green** → the PR is now ready **and**
+     CI-green. Leave the Linear issue **In Progress** (it
+     moves to In Review at the merge-queue handoff, not
+     here) and proceed to print the review summary — the
+     human reviews that summary, then approves enqueueing.
 
    - **Any check failed** → the PR is not actually clean,
      so don't leave it reading as merge-ready. Catalogue
@@ -639,15 +636,73 @@ server exposes no auto-merge tool. This repo is
      as finished; the user fixes them and re-runs
      `/review-pr`.
 
-1. **Offer to add the PR to the merge queue.** Run this
-   step **only** when the previous step took the
-   **all-checks-green** path — the PR is ready, CI is
-   green, and the issue moved to In Review. (If CI failed,
-   no checks ran, or the gate was never reached, skip
-   this entirely.) Every automated signal now says the PR
-   is mergeable, so offer to enqueue it rather than
-   leaving the human to click. Ask with `AskUserQuestion`
-   — approve, or skip and merge later by hand.
+1. **Print the review summary.** With CI green, print the
+   structured summary now — *before* the merge-queue
+   prompt — so the human reviews the full picture at the
+   moment they decide whether to enqueue. The merge-queue
+   outcome and the `firm-perms` results aren't known yet
+   (both resolve in the steps below); they're surfaced
+   separately as they land, not folded in here.
+
+   - Linear coverage: the resolved tag, and each
+     checklist item marked addressed / partial /
+     missing (or "no Linear task checked" if none
+     was resolvable).
+   - Lint status: pass, fail with details, or which
+     hooks were unverifiable locally (deps not
+     installed) and why that's safe for this diff.
+   - Generated artifacts: IDL / SDK clients /
+     conformance vectors — regenerated clean, committed a
+     refresh, or (IDL only) unverifiable without the
+     toolchain.
+   - Test status: `make test` and
+     `make test-no-teardown` — pass, fail, or
+     unverified locally (toolchain absent).
+   - Title status: passes `Semantic PR` or not.
+   - Merge status: `mergeable_state` — `dirty`
+     (conflicting) vs. any non-`dirty` value (no conflict).
+   - CI status: all GitHub checks green, or "no checks"
+     treated as green — by this point CI has passed (a
+     failure would have stopped the run at the CI wait).
+   - Linear status: currently **In Progress**; it moves to
+     **In Review** at the merge-queue handoff that follows
+     (or stays put if no tag was resolvable).
+   - `CLAUDE.md` freshness: in sync, or each stale
+     rule / reference the diff outdated, with the
+     suggested correction.
+   - CI skip-list freshness: the `test.yml` `code`-filter
+     exclude-list is in sync, or each test-irrelevant tree
+     the diff added/renamed that should be excluded, with
+     the suggested one-line edit (warning only).
+   - Issues found / fixed / remaining.
+   - Remaining warnings and nits for human review,
+     each with `file:line` and rationale.
+   - Whether the PR was marked ready.
+
+1. **Move the issue to In Review and offer to add the PR
+   to the merge queue.** Run this step **only** when the
+   CI wait took the **all-checks-green** path and the
+   review summary above has been printed — the PR is
+   ready, CI is green, and the human has the full picture
+   in front of them. (If CI failed, no checks ran, or the
+   gate was never reached, skip this entirely.)
+
+   This prompt is the handoff: per `CLAUDE.md`, **In
+   Review** means "okay for the human to look at the PR
+   and approve enqueueing it." So move the Linear issue
+   (the tag resolved in step 3) to **In Review** here —
+   with, or just before, the prompt — not earlier. Skip
+   only if no tag was resolvable:
+
+   ```txt
+   mcp__claude_ai_Linear__save_issue(
+     id: "<ENG-###>",
+     state: "In Review"
+   )
+   ```
+
+   Then ask with `AskUserQuestion` — approve enqueueing,
+   or skip and merge later by hand.
 
    - **If the user approves**, add it to the merge queue.
      This is the **one** GitHub action that stays on
@@ -661,33 +716,28 @@ server exposes no auto-merge tool. This repo is
      gh pr merge <number> --squash --auto
      ```
 
-     Then watch whether it stays queued or gets kicked
-     out, polling `mcp__github__pull_request_read`
-     (`method: "get"`) about every 30 seconds (resumable,
-     like the CI wait). First confirm the enqueue took —
-     wait for `auto_merge` to read non-null at least once
-     (it can lag a poll or two behind the `gh` call) — then
-     watch for the outcome:
-
-     - `merged_at` set / `state: "closed"` → it landed;
-       report the merge.
-     - `auto_merge` flips back to `null` while still
-       `open` (after having been non-null) → it was
-       **taken out** of the queue (a required check went
-       red on the queue branch, a conflict appeared, or
-       someone dequeued it). Report that it was removed,
-       and name the cause from a fresh `get_check_runs` if
-       a check failed.
-     - `auto_merge` non-null and still `open` → still
-       queued; keep polling.
+     **Confirm the enqueue from the `gh` exit, not from a
+     polled field.** A zero exit means "Merge when ready"
+     is now enabled — the enqueue took. (The hosted GitHub
+     MCP's `pull_request_read` `get` response does **not**
+     carry `auto_merge`, so there is no MCP field to poll
+     for the enqueue; the `gh` exit is the signal.) Report
+     the enqueue and move on — the queue *outcome* (landed
+     vs. taken out) lands asynchronously and is surfaced by
+     the final step, after `firm-perms`; do **not** block
+     here waiting for the merge.
 
    - **If the user declines**, leave the PR ready and the
      issue In Review, and note that they can merge it (or
      enable "Merge when ready") themselves.
 
-1. **Firm up the permission allowlist.** A review
-   run approves a lot of one-off commands, so it is
-   the natural moment to generalize them. Invoke
+1. **Firm up the permission allowlist** (while the PR
+   sits in the queue). A review run approves a lot of
+   one-off commands, so it is the natural moment to
+   generalize them. Run this **after** the enqueue,
+   **not** gated on the merge landing — the merge resolves
+   asynchronously in the queue, so this is the productive
+   thing to do while it does. Invoke
    `/firm-perms` to collapse the per-worktree and
    per-arg `permissions.allow` entries into reusable
    globs and propagate them to the base repo so
@@ -717,47 +767,51 @@ server exposes no auto-merge tool. This repo is
      pattern stops recurring, rather than trying to
      allow-list it.
 
-1. **Report.** Print a structured summary:
+1. **Surface the merge-queue outcome** (separately). Run
+   this **only** if the user approved the enqueue (skip it
+   if they declined — there's nothing queued to watch). The
+   merge lands asynchronously, so this is its own note,
+   printed after `firm-perms` and after the review summary
+   above — the summary couldn't know this outcome yet.
 
-   - Linear coverage: the resolved tag, and each
-     checklist item marked addressed / partial /
-     missing (or "no Linear task checked" if none
-     was resolvable).
-   - Lint status: pass, fail with details, or which
-     hooks were unverifiable locally (deps not
-     installed) and why that's safe for this diff.
-   - Generated artifacts: IDL / SDK clients /
-     conformance vectors — regenerated clean, committed a
-     refresh, or (IDL only) unverifiable without the
-     toolchain.
-   - Test status: `make test` and
-     `make test-no-teardown` — pass, fail, or
-     unverified locally (toolchain absent).
-   - Title status: passes `Semantic PR` or not.
-   - Merge status: `mergeable_state` — `dirty`
-     (conflicting) vs. any non-`dirty` value (no conflict).
-   - CI status: all GitHub checks green, or each failed
-     check with its log URL, or "no checks" / still
-     pending — the run is **not** finished until CI is
-     green.
-   - Linear status: moved to **In Review** (PR ready and
-     CI green), or left unchanged (blockers, CI failing
-     or pending, or no tag resolvable).
-   - Merge queue: not offered (gate/CI not green), or
-     offered and — enqueued (then merged, or taken out
-     with the cause), or declined by the user.
-   - `CLAUDE.md` freshness: in sync, or each stale
-     rule / reference the diff outdated, with the
-     suggested correction.
-   - CI skip-list freshness: the `test.yml` `code`-filter
-     exclude-list is in sync, or each test-irrelevant tree
-     the diff added/renamed that should be excluded, with
-     the suggested one-line edit (warning only).
-   - Issues found / fixed / remaining.
-   - Permissions: rules `/firm-perms` generalized this
-     run, and any malformed request it set aside —
-     naming the review agent that emitted it (step 5
-     brief leak) so the prompt can be tightened.
-   - Remaining warnings and nits for human review,
-     each with `file:line` and rationale.
-   - Whether the PR was marked ready.
+   Watch whether the PR lands or gets kicked back out,
+   polling about every 30 seconds (resumable, like the CI
+   wait). Key on fields the hosted GitHub MCP actually
+   returns — its `pull_request_read` `get` response carries
+   `state`, `merged`, and `mergeable_state`, but **not**
+   `auto_merge` or `merged_at`:
+
+   ```txt
+   mcp__github__pull_request_read(
+     owner: "DASMAC-com",
+     repo: "dropset",
+     pullNumber: <number>,
+     method: "get",
+   )
+   ```
+
+   - `merged: true` (or `state: "closed"`) → it landed;
+     report the merge. Key on `merged` / `state`, **not**
+     `merged_at` — the MCP `get` response omits it.
+   - still `open`, but a fresh `get_check_runs` shows a
+     required check with `conclusion` of `failure` /
+     `timed_out` / `cancelled` → it was **taken out** of
+     the queue (the red check tripped it); report that,
+     naming the failing check as the cause.
+   - still `open` with all checks green → still queued;
+     keep polling.
+
+   `auto_merge` would be the cleanest dequeue signal — it
+   flips to `null` when a PR leaves the queue — but the MCP
+   `get` response doesn't expose it. For a dequeue **not**
+   accompanied by a red check (a manual removal, a late
+   conflict), fall back to the one `gh` read that does see
+   it (consistent with the enqueue already being the `gh`
+   exception):
+
+   ```sh
+   gh pr view <number> --json state,mergedAt,autoMergeRequest
+   ```
+
+   `autoMergeRequest: null` while `state` is `OPEN` means it
+   was removed from the queue.
