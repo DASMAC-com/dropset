@@ -77,6 +77,14 @@ jobs:
       with:
         cache-on-failure: true
         shared-key: 'rust-test-${{ runner.os }}'
+    # rust-cache restores target/ on top of the checkout, which can shadow
+    # the committed program keypair with a stale cached copy and break
+    # anchor's build-time program-ID check. Restore the tracked keypair so
+    # anchor always sees keypair == declare_id!.
+    - if: |
+        needs.changes.outputs.code == 'true'
+      name: 'Restore committed program keypair'
+      run: 'git checkout -- target/deploy/dropset-keypair.json'
     # Builds the program (.so) and runs the whole Rust workspace test
     # suite — including the price-core conformance vectors and the
     # engine-vs-SDK litesvm conformance (tests/sdk_conformance.rs).
@@ -120,6 +128,14 @@ jobs:
       with:
         cache-on-failure: true
         shared-key: 'rust-test-${{ runner.os }}'
+    # rust-cache restores target/ on top of the checkout, which can shadow
+    # the committed program keypair with a stale cached copy and break
+    # anchor's build-time program-ID check. Restore the tracked keypair so
+    # anchor always sees keypair == declare_id!.
+    - if: |
+        needs.changes.outputs.code == 'true'
+      name: 'Restore committed program keypair'
+      run: 'git checkout -- target/deploy/dropset-keypair.json'
     - if: |
         needs.changes.outputs.code == 'true'
       name: 'Run feature-off teardown-disabled tests'
