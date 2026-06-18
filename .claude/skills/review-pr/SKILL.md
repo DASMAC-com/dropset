@@ -28,9 +28,10 @@ All GitHub reads and writes go through the **GitHub
 MCP**, with one exception at the merge-queue handoff near
 the end — both the enqueue (a `gh` write) and a read-only
 dequeue probe (a `gh` read) stay on `gh`, because the MCP
-server exposes no auto-merge tool and its `pull_request_read`
-omits the `auto_merge` field the probe needs. This repo is
-`DASMAC-com/dropset`, so every MCP call takes
+server exposes no auto-merge / merge-queue tool and its
+`pull_request_read` omits the merge-queue state
+(`mergeQueueEntry`) the probe reads over GraphQL. This repo
+is `DASMAC-com/dropset`, so every MCP call takes
 `owner: "DASMAC-com"`, `repo: "dropset"`.
 
 ## Steps
@@ -716,8 +717,16 @@ omits the `auto_merge` field the probe needs. This repo is
      when ready" / enqueues behind the required checks:
 
      ```sh
-     gh pr merge <number> --squash --auto
+     gh pr merge <number> --auto
      ```
+
+     **Pass no merge-strategy flag** (no `--squash` /
+     `--merge` / `--rebase`). This repo is governed by a
+     GitHub **merge queue**, which sets the strategy itself;
+     an explicit `--squash` conflicts with it and `gh` warns
+     that the merge strategy for `main` is set by the merge
+     queue. The enqueue still takes (exit 0), but the flag is
+     pure noise — omit it and let the queue decide.
 
      **Confirm the enqueue from the `gh` exit, not from a
      polled field.** A zero exit means "Merge when ready"
@@ -804,21 +813,57 @@ omits the `auto_merge` field the probe needs. This repo is
 
    - still `open` → run the dequeue probe. This is the one
      `gh` **read** the skill makes (mirror of the enqueue
-     write): `auto_merge` would be the cleanest dequeue
-     signal — it flips to `null` when a PR leaves the queue
-     — but the MCP `get` doesn't expose it, and `gh` is the
-     only thing that sees queue state:
+     write). The signal to key on is the PR's
+     **`mergeQueueEntry`**: it is non-null exactly while the
+     PR sits in the merge queue and flips to `null` the
+     moment it leaves. **Do not** key on `autoMergeRequest`
+     here — on a merge-queue repo a genuinely-queued PR
+     reports `autoMergeRequest: null` (and a `CLEAN`
+     `mergeStateStatus`, not `QUEUED`), so the old
+     `autoMergeRequest`-null test was a **false positive**
+     that announced "taken out of the queue" on every run.
+     `mergeQueueEntry` isn't exposed by the MCP `get` (nor
+     by `gh pr view --json`), so query it over GraphQL,
+     where the same query also returns `autoMergeRequest`
+     to keep the **classic-auto-merge** path (repos with no
+     merge queue) working.
 
-     ```sh
-     gh pr view <number> --json state,mergedAt,autoMergeRequest
+     Keep the command globbable: the query body has braces
+     and quotes that trip the brace-with-quote guard, so
+     write it to a file with the **Write** tool rather than
+     inlining it, then pass the PR number as a typed variable
+     and the file on a stable command line (per the
+     file-handoff rule in `CLAUDE.md`). The query (write it
+     to e.g. `/tmp/mq-probe.graphql`):
+
+     ```graphql
+     query($number: Int!) {
+       repository(owner: "DASMAC-com", name: "dropset") {
+         pullRequest(number: $number) {
+           state
+           merged
+           mergeQueueEntry { state }
+           autoMergeRequest { enabledAt }
+         }
+       }
+     }
      ```
 
-     - `autoMergeRequest` non-null → still queued; keep
-       polling.
-     - `autoMergeRequest: null` (while `state` is `OPEN`) →
-       it was **taken out** of the queue (a required check
-       went red, a conflict appeared, or someone dequeued
-       it). Report the removal, naming the cause from a
-       fresh `get_check_runs` if a required check shows a
-       `conclusion` of `failure` / `timed_out` /
+     ```sh
+     gh api graphql -F number=<number> -F query=@/tmp/mq-probe.graphql
+     ```
+
+     This reduces to a `Bash(gh api graphql:*)` allow-rule —
+     only `<number>` varies; the brace-heavy query rides in
+     the file, not the command line. Branch on the result:
+
+     - `mergeQueueEntry` non-null (or, on a classic-auto-merge
+       repo, `autoMergeRequest` non-null) → still queued;
+       keep polling.
+     - both `mergeQueueEntry` **and** `autoMergeRequest` null
+       while `state` is `OPEN` → it was **taken out** of the
+       queue (a required check went red, a conflict appeared,
+       or someone dequeued it). Report the removal, naming the
+       cause from a fresh `get_check_runs` if a required check
+       shows a `conclusion` of `failure` / `timed_out` /
        `cancelled`.
