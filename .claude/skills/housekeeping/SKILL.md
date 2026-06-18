@@ -179,9 +179,9 @@ git worktree prune
 ```
 
 **3. Spelling-escape hygiene — run cspell, file the
-drift.** Invoke the `cspell-audit` skill in
-**delegated** (read-only) mode via the Skill tool —
-it returns two kinds of violation and **edits
+drift as one aggregated issue.** Invoke the `cspell-audit`
+skill in **delegated** (read-only) mode via the Skill
+tool — it returns two kinds of violation and **edits
 nothing**: a `cfg/dictionary.txt` word used in fewer
 than two files (with its sole file and recommended
 action), and a file whose inline escapes aren't in one
@@ -189,30 +189,50 @@ contiguous block at the top (with its path). This skill
 is now the home of that periodic check; `audit-loop` no
 longer runs it.
 
-For each returned violation, file a Backlog task the
-same way `linear-task` does — env-resolved
-destination (above), `state: "Backlog"`, no parent,
-priority 3 — with a fingerprint line so re-runs
-dedup. The fingerprint `<key>` is keyed by kind:
-`dictionary:<word>` for a dictionary entry, or
-`cspell-placement:<path>` for a mis-placed file.
-Before filing, list the open Backlog
-(`mcp__claude_ai_Linear__list_issues`, same
-destination) and skip any issue already carrying the
-same `**Fingerprint**:` line, so a 30-minute loop
-doesn't refile what's still open:
+cspell fixes are all trivial and file-disjoint, so they
+belong in **one PR** — file the run's drift as a **single
+aggregated** Backlog issue, **not** one issue per finding.
+(The old per-finding behavior scattered them into separate
+parallel sessions that `stage-backlog` then had to
+hand-consolidate.) Each finding is a **bullet carrying its
+own `**Fingerprint**:` line**, so one issue = one PR while
+later passes still dedup each finding individually. The
+fingerprint `<key>` is keyed by kind: `dictionary:<word>`
+for a dictionary entry, or `cspell-placement:<path>` for a
+mis-placed file.
 
-```txt
-mcp__claude_ai_Linear__save_issue(
-  team: "<$LINEAR_TEAM_ID>",
-  project: "<$LINEAR_PROJECT_ID>",
-  assignee: "<$LINEAR_ASSIGNEE_ID>",
-  state: "Backlog",
-  title: "cspell: move <word> inline / regroup escapes in <path>",
-  description: "<finding + action>\n\n**Fingerprint**: <key>",
-  priority: 3,
-)
-```
+Dedup and refile so a 30-minute loop never duplicates work:
+
+- Before filing, list the open Backlog
+  (`mcp__claude_ai_Linear__list_issues`, same destination)
+  and collect every `**Fingerprint**:` line already present
+  across the open cspell issues. Only **new** findings —
+  fingerprints not already open — are filed; drop the rest.
+- If an **open aggregated cspell issue already exists** (an
+  open Backlog issue carrying any `dictionary:` /
+  `cspell-placement:` fingerprint — going forward there is
+  at most one), **append** the new findings to its
+  description and re-save it (`save_issue` with that issue's
+  `id` and the full edited `description`), rather than
+  opening a second aggregated issue. Diff against the live
+  body you just read so existing bullets aren't clobbered.
+- Otherwise **create** one aggregated issue, one bullet per
+  new finding:
+
+  ```txt
+  mcp__claude_ai_Linear__save_issue(
+    team: "<$LINEAR_TEAM_ID>",
+    project: "<$LINEAR_PROJECT_ID>",
+    assignee: "<$LINEAR_ASSIGNEE_ID>",
+    state: "Backlog",
+    title: "cspell hygiene: move words inline / regroup escape blocks",
+    description: "<one bullet per finding, each w/ a **Fingerprint**: line>",
+    priority: 3,
+  )
+  ```
+
+- If every finding is already open (nothing new), file
+  **nothing** — neither create nor append.
 
 Flagging the drift as a task — not fixing it here —
 keeps this pass non-editing and lets the fix land in
@@ -251,9 +271,12 @@ just triggers it.
 - Worktrees pruned (path + branch), and any left in
   place with the reason (PR open/closed-unmerged, no
   PR, or dirty tree).
-- Spelling-escape drift: violations filed (dictionary
-  words to move and files whose escapes need regrouping),
-  and any skipped as already-open duplicates.
+- Spelling-escape drift: the aggregated cspell issue —
+  whether new findings were filed into a fresh one or
+  appended to the open one (with its ENG-###), how many
+  (dictionary words to move and files whose escapes need
+  regrouping), and any skipped as already-open duplicates;
+  or that no drift was found.
 - Permissions inbox: entries annotated with a
   recommended firm, source-fix tasks filed (with their
   ENG-###), and any skipped as already-handled — or
