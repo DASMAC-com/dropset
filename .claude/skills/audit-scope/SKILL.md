@@ -217,21 +217,13 @@ Optional (ask on a direct run if not provided):
      )
      ```
 
-     **Dependencies — concrete evidence only.** This
-     is an autonomous filer, so it must not invent
-     blockers. Set a `blockedBy` (or `blocks`) edge
-     **only** when there is concrete evidence one
-     finding's fix genuinely cannot land until
-     another issue resolves — e.g. a nit whose fix
-     depends on an `arch:` proposal filed in the same
-     run, or an existing open issue that must merge
-     first. Never a speculative "these feel related"
-     edge; coupling that means *one PR* is handled by
-     combining into a single issue (see Notes), not a
-     relation. When the blocker is a finding filed in
-     **this same run**, file the blocker first so its
-     `ENG-###` exists, then reference it. The fields
-     take issue identifiers and are append-only.
+     **Dependencies.** Set a `blockedBy` / `blocks`
+     edge per the **Blocking relations** brief in
+     `CLAUDE.md` (→ "Linear automation") — as an
+     autonomous filer, only on concrete evidence of a
+     real ordering dependency, never speculatively.
+     (Coupling that means *one PR* is the merged-issue
+     case in Notes, not a relation.)
 
      The body must let a cold agent act on it in its own
      worktree (literal newlines, not `\n`):

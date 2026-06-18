@@ -577,23 +577,15 @@ mcp__claude_ai_Linear__save_issue(
 )
 ```
 
-**Dependencies — concrete evidence only.** The loop
-files autonomously, so it must not invent blockers.
-Set a `blockedBy` (or `blocks`) edge **only** when
-there is concrete evidence a finding's fix genuinely
-cannot land until another issue resolves — e.g. a nit
-whose fix depends on an `arch:` proposal filed in the
-same campaign, or an existing open issue that must
-merge first. Never a speculative edge. This is
-distinct from coupling that belongs in **one PR** —
-that's handled by combining into a single issue
-(below), not a relation. When the blocker is filed in
-this same campaign, file it first so its `ENG-###`
-exists, then reference it (the fields take identifiers
-and are append-only). A finding that carries a
-`blockedBy` is **not** "safe to fix in isolation": drop
-that body line and replace it with
-`**Depends on**: <ENG-###> — <one line why>` so the
+**Dependencies.** Set a `blockedBy` / `blocks` edge per
+the **Blocking relations** brief in `CLAUDE.md`
+(→ "Linear automation") — autonomous, so only on
+concrete evidence, never speculatively, and coupling
+that belongs in **one PR** is the combined-issue case
+below, not a relation. One audit-loop-specific detail: a
+finding that carries a `blockedBy` is **not** "safe to
+fix in isolation", so drop that body line and replace it
+with `**Depends on**: <ENG-###> — <one line why>` so the
 description doesn't contradict the relation.
 
 **File obviously-coupled findings together up front.**

@@ -73,6 +73,29 @@ issue from the branch (or the PR title scope) on that basis —
 delivered checklist items and moves it to In Review when the PR is
 ready.
 
+### Blocking relations
+
+When one issue genuinely depends on another, record it as a **native
+Linear relation**, not just prose. `save_issue` takes `blockedBy`
+(the `ENG-###`s that must land first) and `blocks` (the `ENG-###`s
+this one gates), both by identifier; they are **append-only** — they
+add edges and never clear existing ones, so use `removeBlockedBy` /
+`removeBlocks` to drop one. Recording a real edge keeps the blocker
+visible and prioritized so dependent work doesn't rot waiting on an
+upstream nobody remembers, and `stage-backlog` reads these edges and
+nests its dependency tree on them. Assert only a dependency you
+actually know to be real; omit it when unsure.
+
+`linear-task` sets these from a person's call. The **autonomous**
+auditors (`audit-scope`, `audit-loop`) work under a tighter rule:
+they may assert a relation **only on concrete evidence** that one
+finding's fix cannot land until another issue resolves (e.g. a nit
+that depends on an `arch:` proposal filed the same run), never a
+speculative "these feel related" edge. Mere coupling — work that
+belongs in *one PR* — is handled by combining into a single issue,
+not a relation. When the blocker is filed in the same run, file it
+first so its `ENG-###` exists, then reference it.
+
 ## Spelling (cspell)
 
 `cfg/dictionary.txt` is the **project-wide** spelling allow-list —

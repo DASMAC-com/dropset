@@ -79,19 +79,13 @@ what to file.
      traces back to where the blocker surfaced. Get
      the PR URL with `gh pr view --json url -q .url`
      if one exists for the current branch.
-   - **Dependencies** — if this to-do can't be
-     started until another issue lands, or if it
-     gates other work, capture that as a native
-     relation: the `ENG-###`(s) that **block** it
-     (must merge first) and the `ENG-###`(s) it
-     **blocks** (can't start until this one lands).
-     Recording the edge keeps the blocker visible
-     and prioritized so the dependent work doesn't
-     rot waiting on something nobody remembers is
-     upstream. Only assert a relation you actually
-     know to be real — leave it off when unsure.
-     `stage-backlog` reads these edges and nests the
-     dependency tree on them.
+   - **Dependencies** — if this to-do depends on or
+     gates another issue, set the relation per the
+     **Blocking relations** brief in `CLAUDE.md`
+     (→ "Linear automation"): the `ENG-###`(s) that
+     **block** it and/or that it **blocks**. You're
+     judging by hand here, so use what you know of the
+     work; omit when unsure.
    - **Priority** — default to 3 (Medium). Bump to
      2 (High) only if the user calls it urgent.
 
@@ -112,12 +106,6 @@ what to file.
      blocks: ["<ENG-###>"]      // omit if none — this one gates them
    )
    ```
-
-   `blockedBy` / `blocks` take issue identifiers
-   (e.g. `ENG-512`) and are **append-only** — they
-   add edges, never clear existing ones. Pass them
-   only when step 1 found a real dependency; omit
-   both otherwise.
 
 1. Print the new issue's identifier (e.g. ENG-123)
    and URL so the user can jump to it.
