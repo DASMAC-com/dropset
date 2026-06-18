@@ -1708,11 +1708,26 @@ data but drops the `event_authority` auth PDA (saving one account — the
 authenticated off-chain by program id + instruction binding. Default to
 standard `emit_cpi!` for IDL/tooling compatibility.
 
-**Emission points.** The **taker fill** (at book tear-down), `Deposit`,
-`Withdraw`, `CreateVault`, and `Realize` emit, as do the lifecycle and
-admin-config changes — `CloseVault`, `FreezeVault`, `SetMinLeaderShare`,
-and `SetMarketFeeConfig`. The leader quote-refresh instructions
-(`SetReferencePrice`, `SetLiquidityProfile`) do not.
+**Emission points.** Whether an instruction emits follows from what it
+does, not from a hand-kept roster — the `emit_cpi!` call sites in
+[`lib.rs`](../programs/dropset/src/lib.rs) are the source of truth, and
+each instruction's own spec section above records whether it emits. The
+governing principle: an instruction emits exactly when it changes
+economically-material state that an off-chain indexer **cannot**
+reconstruct from end-of-slot coalesced account diffs. That is every
+token-moving or share-changing flow (`CreateVault`, the deposit and
+withdraw family — leader and force-withdraw variants included, each
+paired with a `Realize` when it crystallizes fees), the per-leg
+`FillEvent` that is the take's only event, the vault-lifecycle changes
+(`CloseVault`, `FreezeVault`), and the admin retuning levers
+(`SetMinLeaderShare`, `SetMarketFeeConfig`, `SetTakerFee`,
+`SetRegistryDefaults`). Everything whose entire effect is already
+recoverable from a single account diff emits **nothing**: the leader
+quote-refresh pair (`SetReferencePrice`, `SetLiquidityProfile`) on the
+hot path, the vault-config flag setters (`SetAllowOutsideDepositors`,
+`SetOutsideDepositsApproved`), the registry and market bootstrap
+(`Init`, `AddAdmin`, `RemoveAdmin`, `CreateMarket`), and the
+rent-returning `close_*` teardown instructions.
 
 **Per-emit cost.** Each `emit_cpi!` runs as a self-CPI: ~1000 CU
 invocation overhead + `data_len/250` CU for the payload. The hard
