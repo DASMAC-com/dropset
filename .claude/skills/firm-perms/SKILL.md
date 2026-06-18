@@ -207,9 +207,11 @@ call, not a reason to widen rules.)
    permission you had to approve by hand — not just
    piled-up Bash globs. `fewer-permission-prompts` does
    this for read-only Bash; here include **all** of it:
-   Bash commands, `Read(…)` file-access paths, and
+   Bash commands, `Read(…)` file-access paths,
    `additionalDirectories` grants (e.g. an "always allow
-   access to …" you clicked through). For each, derive
+   access to …" or "allow reading from `alex/`" you
+   clicked through), and URL approvals
+   (`WebFetch(domain:…)`). For each, derive
    the generalized rule it *should* have been (per the
    rules above) and add it to the working set.
 
