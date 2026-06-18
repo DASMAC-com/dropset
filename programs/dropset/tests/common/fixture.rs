@@ -37,6 +37,7 @@ use dropset::{
         ForceWithdrawDepositor as ForceWithdrawDepositorIx,
         ForceWithdrawLeader as ForceWithdrawLeaderIx, FreezeVault as FreezeVaultIx, Init as InitIx,
         SetAllowOutsideDepositors as SetAllowOutsideDepositorsIx,
+        SetDefaultFeeConfig as SetDefaultFeeConfigIx,
         SetLiquidityProfile as SetLiquidityProfileIx, SetMarketFeeConfig as SetMarketFeeConfigIx,
         SetMinLeaderShare as SetMinLeaderShareIx,
         SetOutsideDepositsApproved as SetOutsideDepositsApprovedIx,
@@ -737,6 +738,97 @@ impl Fixture {
             ],
         );
         send_ixn_meta(&mut self.svm, admin, ix)
+    }
+
+    /// `set_default_fee_config` — admin retunes the registry's
+    /// `default_fee_config` (the create-vault fee future markets inherit).
+    /// `fee_mint` / `fee_token_program` are passed explicitly so a negative
+    /// test can drive the `mint::token_program` mismatch.
+    pub fn set_default_fee_config(
+        &mut self,
+        admin: &Keypair,
+        fee_mint: &Pubkey,
+        fee_token_program: &Pubkey,
+        atoms: u64,
+    ) -> Result<(), String> {
+        self.set_default_fee_config_meta(admin, fee_mint, fee_token_program, atoms)
+            .map(|_| ())
+    }
+
+    /// Like [`Self::set_default_fee_config`] but yields the transaction
+    /// metadata so a test can decode the emitted `SetDefaultFeeConfigEvent`.
+    pub fn set_default_fee_config_meta(
+        &mut self,
+        admin: &Keypair,
+        fee_mint: &Pubkey,
+        fee_token_program: &Pubkey,
+        atoms: u64,
+    ) -> Result<TransactionMetadata, String> {
+        // Registry fee ATA for the new mint — the instruction creates it
+        // (`init_if_needed`) so the fee destination exists before the next
+        // `create_market` charges into it.
+        let registry_fee_treasury =
+            associated_token_address(&self.registry, fee_mint, fee_token_program);
+        let ix = Instruction::new_with_bytes(
+            PROGRAM_ID,
+            &SetDefaultFeeConfigIx { atoms }.data(),
+            vec![
+                AccountMeta::new(admin.pubkey(), true),
+                AccountMeta::new(self.registry, false),
+                AccountMeta::new_readonly(*fee_mint, false),
+                AccountMeta::new_readonly(*fee_token_program, false),
+                AccountMeta::new(registry_fee_treasury, false),
+                AccountMeta::new_readonly(ATA_PROGRAM_ID, false),
+                AccountMeta::new_readonly(System::id(), false),
+                AccountMeta::new_readonly(event_authority(), false),
+                AccountMeta::new_readonly(PROGRAM_ID, false),
+            ],
+        );
+        send_ixn_meta(&mut self.svm, admin, ix)
+    }
+
+    /// `create_market` for a **fresh** base/quote pair charged against the
+    /// registry's *current* `default_fee_config` mint — for asserting that
+    /// after `set_default_fee_config` re-points the default at a new mint,
+    /// the matching registry fee ATA already exists and `create_market`
+    /// loads it (the registry-level ENG-508 regression). The fee is waived
+    /// (admin payer), so `payer_fee_source` is the never-read `dummy`.
+    /// Returns the new market PDA.
+    pub fn create_market_with_default_fee(
+        &mut self,
+        fee_mint: &Pubkey,
+        fee_token_program: &Pubkey,
+    ) -> Result<Pubkey, String> {
+        let admin = self.authority.insecure_clone();
+        let base_mint = create_spl_mint(&mut self.svm, &admin);
+        let quote_mint = create_spl_mint(&mut self.svm, &admin);
+        let market = market_pda(&base_mint, &quote_mint);
+        let base_treasury = associated_token_address(&market, &base_mint, &SPL_TOKEN_PROGRAM_ID);
+        let quote_treasury = associated_token_address(&market, &quote_mint, &SPL_TOKEN_PROGRAM_ID);
+        let registry_fee_treasury =
+            associated_token_address(&self.registry, fee_mint, fee_token_program);
+        let ix = Instruction::new_with_bytes(
+            PROGRAM_ID,
+            &CreateMarketIx {}.data(),
+            vec![
+                AccountMeta::new(admin.pubkey(), true),
+                AccountMeta::new(self.registry, false),
+                AccountMeta::new_readonly(base_mint, false),
+                AccountMeta::new_readonly(quote_mint, false),
+                AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
+                AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
+                AccountMeta::new(market, false),
+                AccountMeta::new(base_treasury, false),
+                AccountMeta::new(quote_treasury, false),
+                AccountMeta::new_readonly(*fee_mint, false),
+                AccountMeta::new_readonly(*fee_token_program, false),
+                AccountMeta::new(self.dummy.pubkey(), false),
+                AccountMeta::new(registry_fee_treasury, false),
+                AccountMeta::new_readonly(System::id(), false),
+                AccountMeta::new_readonly(ATA_PROGRAM_ID, false),
+            ],
+        );
+        send_ixn(&mut self.svm, &admin, ix).map(|_| market)
     }
 
     /// Leader seed / top-up. Creates + funds the leader's ATAs for the
