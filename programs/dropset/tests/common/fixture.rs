@@ -1427,9 +1427,13 @@ impl Fixture {
     }
 
     /// Zero a vault's `leader` (the free-list emptiness marker) so a
-    /// live, in-range sector reads as empty — there is no `CloseVault`
-    /// ix yet to vacate a sector the normal way, so this is how a test
-    /// reaches the `VaultEmpty` rejection branch.
+    /// live, in-range sector reads as empty — how a test reaches the
+    /// `VaultEmpty` rejection branch. The honest way to a
+    /// `leader == default` sector is `CloseVault` → full drain →
+    /// `reclaim_sector` (which zeroes `leader` and returns the sector to
+    /// the free DLL); no single instruction leaves a live-indexed sector
+    /// reading empty. That close + drain + reclaim plumbing is heavier
+    /// than a rejection test needs, so this poke is a deliberate shortcut.
     pub fn poke_leader_empty(&mut self, sector_idx: u32) {
         self.poke_vault_bytes(sector_idx, core::mem::offset_of!(Vault, leader), &[0u8; 32]);
     }
