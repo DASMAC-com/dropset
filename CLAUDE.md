@@ -386,15 +386,27 @@ own copy, so the wording stays in one place.
 >   `cat` / `head` / `tail` / `sed` / `awk` / `find` / `grep` in Bash —
 >   they don't prompt for in-workspace paths, and they search other
 >   directories too.
+> - **Searching file *contents* — always the Grep tool, never
+>   `git grep`.** This holds in-workspace *and* cross-path: Grep reads
+>   any directory you point it at, takes a real regex (so an
+>   alternation is `a|b|c`, not a shell-quoted `a\|b\|c`), and prompts
+>   **zero** times. Do **not** reach for `git -C <path> grep …` to
+>   search contents — `grep` is a git subcommand, so it looks blessed
+>   by the cross-checkout rule below, but it isn't: a clean single
+>   pattern only re-prompts until firmed, and a quoted `\|` alternation
+>   trips the harness's per-subcommand `|` guard and **can't be firmed
+>   at all**. Grep sidesteps both.
 > - **Exploring another repo or path is fine** — reach outside this
 >   worktree when the task needs it; approving a one-off read of a
 >   different repo is expected, not something to avoid. Just keep each
->   access **globbable** so it approves once and won't re-prompt:
->   address another checkout with `git -C <path> <subcommand>` (the
->   subcommand immediately after the path, no `cd`), or use Read /
->   Grep / Glob. What to avoid is the **un-globbable** shape — a
->   `find / …` sweep, or several `git -C …` calls strung together with
->   `&&` / `|` / `;` into one compound that can't reduce to a rule.
+>   access **globbable** so it approves once and won't re-prompt: use
+>   Read / Grep / Glob for files and their contents, or read another
+>   checkout's **metadata** with `git -C <path> <subcommand>` — `log` /
+>   `show` / `diff` / `status` / `ls-files`, *not* `grep` (the subcommand
+>   immediately after the path, no `cd`). What to avoid is the
+>   **un-globbable** shape — a `find / …` sweep, or several `git -C …`
+>   calls strung together with `&&` / `|` / `;` into one compound that
+>   can't reduce to a rule.
 > - **One bare command per Bash call** — no pipes, `&&`, `;`, command
 >   substitution `$(…)`, redirects, or heredocs. Each call must reduce
 >   to a `prefix:*` allow-rule.
