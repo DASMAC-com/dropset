@@ -1,6 +1,6 @@
 ---
 name: cspell-audit
-description: Enforce spelling-escape hygiene — every word in cfg/dictionary.txt must be used in at least two files (a word used in only one file is moved to an inline cspell escape in that file and dropped from the global dictionary, unless the sole file can't host a comment, e.g. JSON), and every file's inline escapes sit in one contiguous block at the top. Fixes directly when invoked; housekeeping runs the same check read-only and files linear-task issues.
+description: Enforce spelling-escape hygiene — every word in cfg/dictionary.txt must be used in at least two files (a word used in only one file is moved to an inline cspell escape in that file and dropped from the global dictionary, unless the sole file can't host a comment, e.g. JSON), and every file's inline escapes sit in one contiguous block at the top. Fixes directly when invoked; housekeeping runs the same check read-only and files the drift as one aggregated Backlog issue.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -194,8 +194,8 @@ matching entries (still report the rest).
      Return the violations — for a dictionary word: the
      word, file count, sole file, and recommended action;
      for a mis-placed file: its path and that its escapes
-     need regrouping — so the caller files them via
-     `linear-task`. See "Use from housekeeping".
+     need regrouping — so the caller files them as one
+     aggregated issue. See "Use from housekeeping".
 
 1. **Verify.** Run the spell check to confirm the tree is
    still clean after reconciliation — an escape in the

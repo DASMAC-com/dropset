@@ -361,8 +361,8 @@ shows what blocks what. Shape:
   right away; otherwise **start any top-level chip now**; an
   indented chip is blocked by the one it sits under — start
   it as soon as that parent's PR merges (its parent's
-  siblings needn't be done); a **heading** is a blocker
-  shared by more than two dependents — it groups them and is
+  siblings needn't be done); a **heading** is a blocker with
+  more than two **direct** dependents — it groups them and is
   not itself a PR line to start; a trailing
   `(also after ENG-###)` flags any extra cross-branch
   blocker; delete a line once its PR lands.

@@ -216,7 +216,11 @@ Dedup and refile so a 30-minute loop never duplicates work:
   description and re-save it (`save_issue` with that issue's
   `id` and the full edited `description`), rather than
   opening a second aggregated issue. Diff against the live
-  body you just read so existing bullets aren't clobbered.
+  body you just read so existing bullets aren't clobbered. If
+  more than one such issue somehow exists (e.g. a legacy
+  per-finding issue alongside an aggregated one), append to
+  the **lowest-ENG** one and note the others in the report so
+  they can be hand-consolidated.
 
 - Otherwise **create** one aggregated issue, one bullet per
   new finding:
