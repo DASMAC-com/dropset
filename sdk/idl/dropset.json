@@ -1634,6 +1634,139 @@
       ]
     },
     {
+      "name": "set_default_fee_config",
+      "discriminator": [
+        26
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "docs": [
+            "Registry admin — the only signer this lever accepts. `mut`",
+            "because it funds the rent for the new mint's registry fee ATA",
+            "when `registry_fee_treasury` is created below."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "registry",
+          "docs": [
+            "Singleton registry. `mut` to overwrite `default_fee_config`; also",
+            "read for the admin-membership check and as the authority of the",
+            "fee ATA created below."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "fee_mint",
+          "docs": [
+            "New default fee mint. `mint::token_program = fee_token_program`",
+            "ties it to the supplied program, so the stored",
+            "`(mint, token_program)` pair is always a mint backed by its real",
+            "owner — the check the spec states as `token_program == mint.owner`.",
+            "`InterfaceAccount<Mint>` additionally rejects a non-mint payload."
+          ]
+        },
+        {
+          "name": "fee_token_program",
+          "docs": [
+            "Token program owning `fee_mint` — SPL Token or Token-2022.",
+            "`Interface<TokenInterface>` rejects any non-token-program address",
+            "up front; the `mint::token_program` constraint above then pins it",
+            "to `fee_mint`'s actual owner."
+          ]
+        },
+        {
+          "name": "registry_fee_treasury",
+          "docs": [
+            "Registry's fee ATA for the new default mint. `create_market` loads",
+            "the registry fee ATA for `registry.default_fee_config.mint` (`mut`,",
+            "not `init`) but never creates it, so we create it here, eagerly, at",
+            "config time — `init_if_needed` so re-pointing the default back to a",
+            "mint whose ATA already exists is a no-op. The ATA program's",
+            "`InitializeAccount3` CPI rejects a non-mint / wrong-program payload",
+            "outright, a stronger backstop than the `mint::token_program`",
+            "constraint above. Without this, switching the default to a fresh",
+            "mint would brick the next `create_market` against it until the ATA",
+            "was created out-of-band — the same ENG-508 hazard",
+            "`SetMarketFeeConfig` guards at the market level (architecture spec",
+            "§ SetDefaultFeeConfig)."
+          ],
+          "writable": true
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "docs": [
+            "CHECK: Only the event authority can invoke self-CPI"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "docs": [
+            "CHECK: Kept for v1-compatible account ordering and IDL shape"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "atoms",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "set_liquidity_profile",
       "discriminator": [
         6
@@ -2714,6 +2847,19 @@
       ]
     },
     {
+      "name": "SetDefaultFeeConfigEvent",
+      "discriminator": [
+        173,
+        121,
+        245,
+        191,
+        189,
+        52,
+        211,
+        216
+      ]
+    },
+    {
       "name": "SetMarketFeeConfigEvent",
       "discriminator": [
         29,
@@ -3608,6 +3754,36 @@
               "Registry PDA bump."
             ],
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SetDefaultFeeConfigEvent",
+      "docs": [
+        "Emitted by `set_default_fee_config` when an admin retunes the",
+        "registry's `default_fee_config` — the create-vault fee future markets",
+        "inherit at `create_market`. Load-bearing for teardown for the same",
+        "reason as [`SetMarketFeeConfigEvent`]: this lever creates a fresh",
+        "registry fee ATA for the new mint, so the off-chain historical-fee-mint",
+        "set the admin sweeps at teardown is reconstructed from these events",
+        "alongside `SetMarketFeeConfig`'s. See the spec's **SetDefaultFeeConfig**",
+        "and **Account lifecycle and rent reclamation**."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "token_program",
+            "type": "pubkey"
+          },
+          {
+            "name": "atoms",
+            "type": "u64"
           }
         ]
       }
