@@ -51,7 +51,6 @@ macropod
 metas
 multisigs
 mxne
-oanda
 ohlcv
 paytrie
 pdas
