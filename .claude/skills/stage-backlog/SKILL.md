@@ -5,6 +5,8 @@ disable-model-invocation: false
 user-invocable: true
 ---
 
+<!-- cspell:word startable -->
+
 # `stage-backlog`
 
 Run **one iteration** of staging the Dropset Linear
@@ -166,6 +168,22 @@ what can run in parallel, not just a linear order:
   issues whose file sets *don't* overlap just to cut the
   count, though — that would serialize work that could
   have run in parallel.
+
+- **Consolidate skill-suite work into one PR, ordered
+  first.** Issues that touch **only** the skill suite —
+  files under `.claude/skills/**` and/or `CLAUDE.md`, with
+  no product code — are merged into a **single** session
+  even though their files are disjoint, and that session is
+  ordered **first** in the tree (a top-level node, before
+  the rest). This is a deliberate **exception** to the
+  disjoint-file / don't-over-compress rules above, scoped to
+  skill-doc housekeeping: such edits are trivial markdown,
+  don't need parallel sessions, and Alex wants them
+  startable in one sitting right at the top. Merge them via
+  step 3 (write-before-close) into the lowest-ENG canonical
+  issue, exactly like any other multi-issue session. A
+  skill-suite issue that **also** touches product code is
+  *not* pure skill work — group it by its files as usual.
 
 - **Honour dependencies.** A foundational fix others
   build on goes first and is flagged; an issue that
@@ -338,21 +356,47 @@ renders the issue's live title and status, and the nesting
 shows what blocks what. Shape:
 
 - A short **"How to read it"** preamble: each line is one
-  issue = one PR, shown as its bare `ENG-###` chip;
-  **start any top-level chip now**; an indented chip is
-  blocked by the one it sits under — start it as soon as
-  that parent's PR merges (its parent's siblings needn't be
-  done); a trailing `(also after ENG-###)` flags any extra
-  cross-branch blocker; delete a line once its PR lands.
+  issue = one PR, shown as its bare `ENG-###` chip; the
+  **consolidated skill-suite PR sits first** — start it
+  right away; otherwise **start any top-level chip now**; an
+  indented chip is blocked by the one it sits under — start
+  it as soon as that parent's PR merges (its parent's
+  siblings needn't be done); a **heading** is a blocker
+  shared by more than two dependents — it groups them and is
+  not itself a PR line to start; a trailing
+  `(also after ENG-###)` flags any extra cross-branch
+  blocker; delete a line once its PR lands.
 
 - Then the **dependency tree** as a nested bullet list —
-  one bullet per PR, **just the chip**, no headings, no
-  checkboxes, no summary text. Indent a blocked session
-  under its blocker (4 spaces per level):
+  one bullet per PR, **just the chip**, no checkboxes, no
+  summary text. Indent a blocked session under its blocker
+  (4 spaces per level). The consolidated skill-suite PR
+  (step 2) is the **first** top-level bullet:
 
   ```txt
   - ENG-###
       - ENG-### (also after ENG-###)
+  ```
+
+- **Promote a heavily-shared blocker to a heading.** When
+  **more than two** sessions nest directly under the *same*
+  blocker, render that blocker as a section **heading** —
+  its bare `ENG-###` chip (Linear resolves a bare tag in a
+  `##` heading to a live chip, the same as in a bullet) —
+  with its dependents as the nested bullet sub-tree beneath.
+  A task that gates three-plus others is acting as a
+  grouping parent, so it renders as the **heading only**,
+  never also as a startable bullet: it shouldn't carry its
+  own PR, since merging that PR would close the parent while
+  its dependents are still open. Two or fewer dependents
+  keep the plain nested-bullet form above.
+
+  ```txt
+  ## ENG-###
+  - ENG-###
+  - ENG-###
+      - ENG-### (also after ENG-###)
+  - ENG-###
   ```
 
 - **Write every issue reference as the bare tag `ENG-###`
@@ -368,10 +412,12 @@ shows what blocks what. Shape:
   headings, "start now" / "after Wave 1" labels, or
   parallel/disjoint annotations, and don't reintroduce a
   per-issue summary or file-glob to explain a node. The
-  dependency a child expresses is the nesting itself; the
-  only inline annotation allowed is a trailing
-  `(also after ENG-###)` for a second blocker that isn't
-  visible from the tree.
+  **only** heading allowed is the grouping-parent chip above
+  (a blocker with more than two dependents); status- or
+  wave-style headings stay forbidden. The dependency a child
+  expresses is the nesting itself; the only inline
+  annotation allowed is a trailing `(also after ENG-###)`
+  for a second blocker that isn't visible from the tree.
 
 - No footer — drop the severity / compression summary
   lines; the issue chips carry severity and status, and
