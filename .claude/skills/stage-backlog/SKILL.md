@@ -227,8 +227,8 @@ issue). For each such session:
   — both append-only), so an edge a member carried isn't
   silently lost when that member becomes a Duplicate.
   Because a block is **symmetric** (member B `blockedBy`
-  outsider X *is* the same edge as X `blocks` B), unioning
-  each member's own `blockedBy` **and** `blocks` already
+  outsider X *is* the same edge as X `blocks` B), folding
+  in each member's own `blockedBy` **and** `blocks` already
   captures every edge incident to the group — including
   ones pointing *at* a member from outside it, which land
   on the canonical as the surviving endpoint. Drop only
