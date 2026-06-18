@@ -1,7 +1,6 @@
 # Project instructions
 
 <!-- cspell:word PIPESTATUS -->
-
 <!-- cspell:word rustc -->
 
 ## Commits and PRs
@@ -118,9 +117,23 @@ comment style:
 - YAML / TOML / shell — `# cspell:word foo`
 
 The lone exception is a file that can't carry a comment (e.g.
-`.json`), where the dictionary is the only option. The `cspell-audit`
-skill reconciles the dictionary against actual usage on this rule; run
-it when the dictionary grows.
+`.json`), where the dictionary is the only option.
+
+**Placement: one contiguous block at the top of the file.** All of a
+file's inline escapes go together in a single block at the very top —
+one `cspell:word` directive per word, one word per line — never
+scattered beside each usage and never split by blank lines. "Top" means
+the first line, except where syntax forces something else to lead:
+after a `---` YAML frontmatter block, after a `#!` shebang, or after a
+leading module doc-comment / inner-attribute header. One known place
+means a reader — and the audit — finds every escape at a glance instead
+of hunting the file.
+
+The `cspell-audit` skill reconciles the dictionary against actual usage
+**and** normalizes escape placement on this rule; run it when the
+dictionary grows or escapes drift. `housekeeping` runs the same check
+read-only and files any drift — a dictionary entry to move, or
+mis-placed escapes to regroup — as a Backlog task.
 
 ## Shell commands
 
