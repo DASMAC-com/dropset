@@ -827,8 +827,8 @@ future iterations skip them by path alone.
 - Shell discipline (per `CLAUDE.md`): every command
   here is a single bare call that reduces to an
   allow-glob — no `&&`, pipes, `$(...)`, or
-  redirects. Use Glob / Grep / Read for file
-  discovery and slicing.
+  redirects; content search routes to the Grep tool
+  (never `git grep`), per the sub-agent brief.
 - To graduate this to a fully detached schedule
   (cron cloud routine) later, first confirm the
   `claude.ai` Linear MCP authenticates in headless

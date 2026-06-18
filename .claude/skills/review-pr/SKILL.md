@@ -239,6 +239,16 @@ is `DASMAC-com/dropset`, so every MCP call takes
    agent looks* on top of the brief — it does not relax
    the shell rules.
 
+   The two **freshness** lenses below are the deliberate
+   exception: they *do* read a handful of named
+   in-workspace files (`CLAUDE.md`, the skill files under
+   `.claude/skills/`, `.github/workflows/test.yml`).
+   Tell those two reviewers to open and search those files
+   **only through the Read / Grep tools** — never shell
+   `grep` or `git grep` (including `git -C <path> grep`),
+   which re-prompt and, with a quoted `\|` alternation,
+   can't even be firmed.
+
    Pass the `git diff main..HEAD` and `git log` output
    you already collected **inline** in each prompt (as
    the brief requires), so no agent re-fetches them by
