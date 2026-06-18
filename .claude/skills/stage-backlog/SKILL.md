@@ -1,6 +1,6 @@
 ---
 name: stage-backlog
-description: One iteration of keeping the Dropset Task Staging document in sync with the Linear Backlog — read every Backlog issue, group them into the fewest parallel, file-disjoint PR sessions, merge issues that belong in one PR into a single canonical issue (write-before-close so no state is dropped), adversarially cross-check the grouping, then rewrite the Task Staging document with live-status issue links. Open issues only; closed ones drop off. Drive it with `/loop stage-backlog` or run it once.
+description: One iteration of keeping the Dropset Task Staging document in sync with the Linear Backlog — read every Backlog issue, group them into the fewest parallel, file-disjoint PR sessions, merge issues that belong in one PR into a single canonical issue (write-before-close so no state is dropped), adversarially cross-check the grouping, then rewrite the Task Staging document as a chips-only dependency tree (bare ENG-### tags nested by blocker, no summaries). Open issues only; closed ones drop off. Drive it with `/loop stage-backlog` or run it once.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -314,48 +314,52 @@ mcp__claude_ai_Linear__save_document(
 )
 ```
 
-Use literal newlines, not `\n`. Shape:
+Use literal newlines, not `\n`. The document is **chips
+and blocking only** — bare `ENG-###` tags nested by
+blocker, with **no per-issue summary, file globs, or merge
+notes**. The chip and the tree carry everything: the chip
+renders the issue's live title and status, and the nesting
+shows what blocks what. Shape:
 
 - A short **"How to read it"** preamble: each line is one
-  issue = one PR; **start any top-level item now**; an
-  indented item is blocked by the one it sits under —
-  start it as soon as that parent's PR merges (its
-  parent's siblings needn't be done); a trailing note
-  flags any extra cross-branch blocker; delete a line once
-  its PR lands.
+  issue = one PR, shown as its bare `ENG-###` chip;
+  **start any top-level chip now**; an indented chip is
+  blocked by the one it sits under — start it as soon as
+  that parent's PR merges (its parent's siblings needn't be
+  done); a trailing `(also after ENG-###)` flags any extra
+  cross-branch blocker; delete a line once its PR lands.
 
 - Then the **dependency tree** as a nested bullet list —
-  one bullet per PR, no headings, no checkboxes. Indent a
-  blocked session under its blocker (4 spaces per level):
+  one bullet per PR, **just the chip**, no headings, no
+  checkboxes, no summary text. Indent a blocked session
+  under its blocker (4 spaces per level):
 
   ```txt
-  - ENG-### — <summary>. `<file globs>`. <"Absorbs ENG-###" note, if any>
-      - ENG-### — <summary>. `<file globs>`. <why blocked; also after ENG-###>
+  - ENG-###
+      - ENG-### (also after ENG-###)
   ```
 
 - **Write every issue reference as the bare tag `ENG-###`
   in plaintext — never a markdown link.** Linear
   auto-resolves a bare identifier into a live issue
-  mention that renders its current status (In Progress /
-  Done / …); a `[ENG-###](url)` markdown link does not.
-  This applies everywhere, including "Absorbs ENG-### …"
-  and "also after ENG-### …" notes.
+  mention that renders its current title and status (In
+  Progress / Done / …); a `[ENG-###](url)` markdown link
+  does not. This is what lets the chip stand in for the
+  summary. It applies everywhere, including any
+  `(also after ENG-###)` note.
 
 - The nesting **is** the ordering — don't add "Wave N"
   headings, "start now" / "after Wave 1" labels, or
-  parallel/disjoint annotations. The dependency a child
-  expresses is the nesting itself; only add a short why
-  when it isn't self-evident from the tree. Distinguish
-  the **kind** of blocker in that why: a **declared**
-  `blockedBy` edge reads "blocked by ENG-### (declared)",
-  an inferred one names the cause ("shares the withdraw
-  handlers", "consumes the interface.md contract"). Use
-  "also after ENG-###" when a second blocker isn't visible
-  from the tree.
+  parallel/disjoint annotations, and don't reintroduce a
+  per-issue summary or file-glob to explain a node. The
+  dependency a child expresses is the nesting itself; the
+  only inline annotation allowed is a trailing
+  `(also after ENG-###)` for a second blocker that isn't
+  visible from the tree.
 
 - No footer — drop the severity / compression summary
-  lines; the issue tags carry severity, and the tree
-  speaks for itself.
+  lines; the issue chips carry severity and status, and
+  the tree speaks for itself.
 
 **Open issues only.** A closed / resolved issue (Done /
 Won't-fix / Canceled / Duplicate) is **omitted

@@ -16,11 +16,13 @@ does four things:
 1. **Prune merged worktrees** — remove the local
    worktree (and branch) of every PR that has
    already merged.
-1. **Dictionary hygiene** — run the `cspell-audit`
-   check read-only and **file** any
-   `cfg/dictionary.txt` drift as a Backlog task to
-   fix later (this is the *only* place cspell runs
-   on a schedule; `audit-loop` no longer does it).
+1. **Spelling-escape hygiene** — run the `cspell-audit`
+   check read-only and **file** any drift — a
+   `cfg/dictionary.txt` entry to move, or a file whose
+   inline escapes need regrouping into a top block — as a
+   Backlog task to fix later (this is the *only* place
+   cspell runs on a schedule; `audit-loop` no longer does
+   it).
 1. **Drain the Permissions inbox** — invoke
    `firm-perms` in **propose-only** mode against the
    Linear Permissions doc, so each captured prompt gets
@@ -124,15 +126,26 @@ do pick up the refreshed version immediately.
 **2. Prune merged worktrees.** For every worktree in
 the list **other than** the `refs/heads/main` base,
 take its literal path and branch from the porcelain
-output and check whether its PR has merged — pass the
-branch inline so the call stays a `Bash(gh pr view:*)`
-allow-rule:
+output and check whether its PR has merged through the
+GitHub MCP. This repo is `DASMAC-com/dropset`, and the
+`head` filter is `owner:branch`; query **all** states so
+a closed-and-merged PR is visible:
 
-```sh
-gh pr view <branch> --json number,state,title
+```txt
+mcp__github__list_pull_requests(
+  owner: "DASMAC-com",
+  repo: "dropset",
+  head: "DASMAC-com:<branch>",
+  state: "all",
+)
 ```
 
-- `state` is `MERGED` → the branch is done. Remove
+Read the matching PR's `merged_at`: a **non-null**
+`merged_at` means it merged (GitHub reports a merged PR as
+`state: "closed"` with `merged_at` set, so key on
+`merged_at`, not `state`).
+
+- `merged_at` is set → the branch is done. Remove
   the worktree (bare command, no `--force` — a
   worktree with uncommitted changes refuses, which is
   the safe outcome; leave it and note it):
@@ -151,11 +164,12 @@ gh pr view <branch> --json number,state,title
   git branch -D <branch>
   ```
 
-- `state` is `OPEN` / `CLOSED` (unmerged), or no PR
-  exists, or the removal refused on a dirty worktree →
-  **leave it**. Closed-without-merge and dirty
-  worktrees are not safe to drop automatically; list
-  them in the report so the user can decide.
+- `merged_at` is null (PR still open, or closed
+  without merging), or no PR exists, or the removal
+  refused on a dirty worktree → **leave it**.
+  Closed-without-merge and dirty worktrees are not safe
+  to drop automatically; list them in the report so the
+  user can decide.
 
 After processing them all, tidy any stale worktree
 admin entries:
@@ -164,24 +178,29 @@ admin entries:
 git worktree prune
 ```
 
-**3. Dictionary hygiene — run cspell, file the
+**3. Spelling-escape hygiene — run cspell, file the
 drift.** Invoke the `cspell-audit` skill in
 **delegated** (read-only) mode via the Skill tool —
-it returns each `cfg/dictionary.txt` violation (a
-word used in fewer than two files, with its sole
-file and recommended action) and **edits nothing**.
-This skill is now the home of that periodic check;
-`audit-loop` no longer runs it.
+it returns two kinds of violation and **edits
+nothing**: a `cfg/dictionary.txt` word used in fewer
+than two files (with its sole file and recommended
+action), and a file whose inline escapes aren't in one
+contiguous block at the top (with its path). This skill
+is now the home of that periodic check; `audit-loop` no
+longer runs it.
 
 For each returned violation, file a Backlog task the
 same way `linear-task` does — env-resolved
 destination (above), `state: "Backlog"`, no parent,
 priority 3 — with a fingerprint line so re-runs
-dedup. Before filing, list the open Backlog
+dedup. The fingerprint `<key>` is keyed by kind:
+`dictionary:<word>` for a dictionary entry, or
+`cspell-placement:<path>` for a mis-placed file.
+Before filing, list the open Backlog
 (`mcp__claude_ai_Linear__list_issues`, same
 destination) and skip any issue already carrying the
-same `**Fingerprint**: dictionary:<word>` line, so a
-30-minute loop doesn't refile what's still open:
+same `**Fingerprint**:` line, so a 30-minute loop
+doesn't refile what's still open:
 
 ```txt
 mcp__claude_ai_Linear__save_issue(
@@ -189,17 +208,16 @@ mcp__claude_ai_Linear__save_issue(
   project: "<$LINEAR_PROJECT_ID>",
   assignee: "<$LINEAR_ASSIGNEE_ID>",
   state: "Backlog",
-  title: "cfg/dictionary.txt: move <word> inline / drop dead entry",
-  description: "<finding + action>\n\n**Fingerprint**: dictionary:<word>",
+  title: "cspell: move <word> inline / regroup escapes in <path>",
+  description: "<finding + action>\n\n**Fingerprint**: <key>",
   priority: 3,
 )
 ```
 
 Flagging the drift as a task — not fixing it here —
 keeps this pass non-editing and lets the fix land in
-a normal PR. (To fix the dictionary directly instead,
-run `cspell-audit` on its own; that's its default
-mode.)
+a normal PR. (To fix it directly instead, run
+`cspell-audit` on its own; that's its default mode.)
 
 **4. Drain the Permissions inbox.** Invoke the
 `firm-perms` skill (via the Skill tool) in
@@ -233,8 +251,9 @@ just triggers it.
 - Worktrees pruned (path + branch), and any left in
   place with the reason (PR open/closed-unmerged, no
   PR, or dirty tree).
-- Dictionary drift: violations filed (with their
-  words), and any skipped as already-open duplicates.
+- Spelling-escape drift: violations filed (dictionary
+  words to move and files whose escapes need regrouping),
+  and any skipped as already-open duplicates.
 - Permissions inbox: entries annotated with a
   recommended firm, source-fix tasks filed (with their
   ENG-###), and any skipped as already-handled — or

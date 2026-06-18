@@ -1,12 +1,10 @@
 ---
 name: review-pr
-description: Adversarial pre-review — verify the Linear task's checklist is fully addressed, lint, catalogue issues, fix what's mechanical, ready the PR, and wait for GitHub CI to pass before marking the Linear issue In Review so the human can merge with nothing left to check.
+description: Adversarial pre-review — verify the Linear task's checklist is fully addressed, lint, catalogue issues, fix what's mechanical, ready the PR, wait for GitHub CI to pass, mark the Linear issue In Review, then offer to add the PR to the merge queue and report if it gets taken out.
 user-invocable: true
 ---
 
-<!-- cspell:word oneline -->
-
-<!-- cspell:word unstarted -->
+<!-- cspell:word oneline unstarted -->
 
 # `review-pr`
 
@@ -23,23 +21,32 @@ with nothing left to check.
 Run this after autonomous work is complete and
 all changes are committed and pushed.
 
+All GitHub reads and writes go through the **GitHub
+MCP**, with one exception called out in the merge-queue
+step near the end, which still uses `gh` because the MCP
+server exposes no auto-merge tool. This repo is
+`DASMAC-com/dropset`, so every MCP call takes
+`owner: "DASMAC-com"`, `repo: "dropset"`.
+
 ## Steps
 
-1. **Locate the PR.** Identify the current branch,
-   then look up its PR — run the branch listing on
-   its own and pass the name to `gh pr view`
-   literally (no command substitution, so the call
-   reduces to a stable allow-rule):
+1. **Locate the PR.** Identify the current branch
+   (`git branch --show-current`), then look it up with
+   `mcp__github__list_pull_requests` — the `head` filter
+   is `owner:branch`:
 
-   ```sh
-   git branch --show-current
+   ```txt
+   mcp__github__list_pull_requests(
+     owner: "DASMAC-com",
+     repo: "dropset",
+     head: "DASMAC-com:<branch>",
+     state: "open",
+   )
    ```
 
-   ```sh
-   gh pr view <branch> --json number,title,state,isDraft
-   ```
-
-   If no PR exists, stop and tell the user to
+   The returned PR object carries `number`, `title`,
+   `state`, and `draft` — everything the later steps
+   need. If no PR exists, stop and tell the user to
    run `/init-pr` first.
 
 1. **Clean tree, then rebase onto `main`.** First run
@@ -458,27 +465,44 @@ all changes are committed and pushed.
 
 1. **Confirm the PR still merges cleanly.** Step 1
    already rebased onto `main`, so this is normally
-   `MERGEABLE` — but `main` can advance again during a
+   clean — but `main` can advance again during a
    long review, so confirm rather than assume. Fetch
-   the latest base and ask GitHub:
+   the latest base, then ask GitHub via
+   `mcp__github__pull_request_read` (`method: "get"`).
+   Key the decision on **`mergeable_state`** — the `get`
+   response leads with it, and the tri-state `mergeable`
+   boolean is often absent until GitHub has computed it,
+   so don't rely on `mergeable` being present:
 
    ```sh
    git fetch origin main
-   gh pr view <number> --json mergeable,mergeStateStatus
    ```
 
-   - `mergeable: "MERGEABLE"` → no conflicts;
-     proceed to the gate.
-   - `mergeable: "CONFLICTING"` → the PR has merge
-     conflicts. Catalogue this as a **blocking**
-     issue and do **not** mark the PR ready. Tell
-     the user to rebase onto `main` and resolve the
-     conflicts (this skill does not auto-resolve
-     them), then re-run `/review-pr`.
-   - `mergeable: "UNKNOWN"` → GitHub has not finished
-     computing mergeability yet. Wait a few seconds
-     and re-run the `gh pr view` command until it
-     resolves to `MERGEABLE` or `CONFLICTING`.
+   ```txt
+   mcp__github__pull_request_read(
+     owner: "DASMAC-com",
+     repo: "dropset",
+     pullNumber: <number>,
+     method: "get",
+   )
+   ```
+
+   - `mergeable_state: "dirty"` → the PR has merge
+     conflicts. Catalogue this as a **blocking** issue and
+     do **not** mark the PR ready. Tell the user to rebase
+     onto `main` and resolve the conflicts (this skill does
+     not auto-resolve them), then re-run `/review-pr`.
+   - `mergeable_state: "unknown"` → GitHub hasn't finished
+     computing mergeability yet. Wait a few seconds and
+     re-run the `get` call until it settles.
+   - any other value (`clean`, `blocked`, `behind`,
+     `unstable`, `has_hooks`) → **no merge conflict** —
+     proceed to the gate. `blocked` / `unstable` just mean
+     branch protection, the required checks, or human
+     review haven't cleared yet (expected for a draft PR
+     mid-review); `behind` means `main` moved (the step-1
+     rebase already handled it). None of these are a
+     conflict, and the gate + CI wait below cover them.
 
 1. **Gate.** Mark the PR ready only when **every**
    local CI-mirroring check is green: **zero blocking
@@ -492,11 +516,18 @@ all changes are committed and pushed.
    clients, conformance vectors), `make test` and
    `make test-no-teardown` pass (or are honestly
    reported as unverifiable locally), the title
-   passes `Semantic PR`, and `mergeable` is
-   `MERGEABLE`:
+   passes `Semantic PR`, and `mergeable_state` is not
+   `dirty` (no merge conflict). Take the PR out of draft
+   with
+   `mcp__github__update_pull_request` (`draft: false`):
 
-   ```sh
-   gh pr ready <number>
+   ```txt
+   mcp__github__update_pull_request(
+     owner: "DASMAC-com",
+     repo: "dropset",
+     pullNumber: <number>,
+     draft: false,
+   )
    ```
 
    Marking it ready (out of draft) is what lets the
@@ -521,26 +552,36 @@ all changes are committed and pushed.
    locally (tests / IDL reported unverifiable), CI is
    the *only* signal. This repo runs CI on the PR even
    while it was a draft (that's how `init-pr` warms the
-   caches), so the checks are already in flight. Watch
-   them to completion, polling on an interval so the
-   output stays quiet:
+   caches), so the checks are already in flight. The MCP
+   server has no streaming `--watch`, so **poll** the
+   check runs (`pull_request_read` with
+   `method: "get_check_runs"`) on an interval until every
+   check run reports `status: "completed"`:
 
-   ```sh
-   gh pr checks <number> --watch --interval 30
+   ```txt
+   mcp__github__pull_request_read(
+     owner: "DASMAC-com",
+     repo: "dropset",
+     pullNumber: <number>,
+     method: "get_check_runs",
+   )
    ```
 
-   `--watch` blocks until every check finishes and exits
-   **non-zero if any failed**. Two operational notes:
+   Re-call about every 30 seconds while any check run is
+   still `queued` or `in_progress`. Two operational notes:
 
-   - CI can outlast a single Bash timeout. If the call
-     is killed before the checks settle, just run it
-     again — watching is resumable and idempotent, so
-     re-invoke until it returns a final result.
-   - If `gh` reports **no checks** on the branch, there
-     is nothing to wait on — note that in the report and
-     treat it as green rather than blocking forever.
+   - Polling is naturally resumable: each call returns the
+     current snapshot, so if a wait is interrupted, just
+     call again until every run is `completed`.
+   - If `get_check_runs` returns **no checks** on the head
+     commit, there is nothing to wait on — note that in
+     the report and treat it as green rather than polling
+     forever.
 
-   Then branch on the outcome:
+   Then branch on the outcome — a check run's `conclusion`
+   is `success` / `neutral` / `skipped` (passing) versus
+   `failure` / `timed_out` / `cancelled` / `action_required`
+   (failing):
 
    - **All checks green** → move the Linear issue (the
      tag resolved in step 3) to **In Review** so the
@@ -562,19 +603,87 @@ all changes are committed and pushed.
 
    - **Any check failed** → the PR is not actually clean,
      so don't leave it reading as merge-ready. Catalogue
-     each failing check as **blocking** (name it and its
-     log URL from the `gh pr checks` output), convert the
-     PR back to draft — which also cancels any pending
-     "Merge when ready" — and leave the Linear issue in
-     its current state (do **not** move it to In Review):
+     each failing check as **blocking**, naming it and its
+     `details_url` (the log URL from the `get_check_runs`
+     entry). To pull the actual failing-job output in one
+     call, take the workflow run id — the `details_url` is
+     `…/actions/runs/<run_id>/job/<job_id>` — and fetch
+     every failed job's log together:
 
-     ```sh
-     gh pr ready <number> --undo
+     ```txt
+     mcp__github__get_job_logs(
+       owner: "DASMAC-com",
+       repo: "dropset",
+       run_id: <run_id>,
+       failed_only: true,
+       return_content: true,
+       tail_lines: 100,
+     )
+     ```
+
+     Then convert the PR back to draft — which also
+     cancels any pending "Merge when ready" — and leave
+     the Linear issue in its current state (do **not**
+     move it to In Review):
+
+     ```txt
+     mcp__github__update_pull_request(
+       owner: "DASMAC-com",
+       repo: "dropset",
+       pullNumber: <number>,
+       draft: true,
+     )
      ```
 
      Report the failures and do **not** report the run
      as finished; the user fixes them and re-runs
      `/review-pr`.
+
+1. **Offer to add the PR to the merge queue.** Run this
+   step **only** when the previous step took the
+   **all-checks-green** path — the PR is ready, CI is
+   green, and the issue moved to In Review. (If CI failed,
+   no checks ran, or the gate was never reached, skip
+   this entirely.) Every automated signal now says the PR
+   is mergeable, so offer to enqueue it rather than
+   leaving the human to click. Ask with `AskUserQuestion`
+   — approve, or skip and merge later by hand.
+
+   - **If the user approves**, add it to the merge queue.
+     This is the **one** GitHub action that stays on
+     `gh`: the MCP server exposes no auto-merge /
+     merge-queue tool (`merge_pull_request` does an
+     *immediate* merge, which bypasses the queue), so use
+     `gh pr merge` with `--auto`, which enables "Merge
+     when ready" / enqueues behind the required checks:
+
+     ```sh
+     gh pr merge <number> --squash --auto
+     ```
+
+     Then watch whether it stays queued or gets kicked
+     out, polling `mcp__github__pull_request_read`
+     (`method: "get"`) about every 30 seconds (resumable,
+     like the CI wait). First confirm the enqueue took —
+     wait for `auto_merge` to read non-null at least once
+     (it can lag a poll or two behind the `gh` call) — then
+     watch for the outcome:
+
+     - `merged_at` set / `state: "closed"` → it landed;
+       report the merge.
+     - `auto_merge` flips back to `null` while still
+       `open` (after having been non-null) → it was
+       **taken out** of the queue (a required check went
+       red on the queue branch, a conflict appeared, or
+       someone dequeued it). Report that it was removed,
+       and name the cause from a fresh `get_check_runs` if
+       a check failed.
+     - `auto_merge` non-null and still `open` → still
+       queued; keep polling.
+
+   - **If the user declines**, leave the PR ready and the
+     issue In Review, and note that they can merge it (or
+     enable "Merge when ready") themselves.
 
 1. **Firm up the permission allowlist.** A review
    run approves a lot of one-off commands, so it is
@@ -625,7 +734,8 @@ all changes are committed and pushed.
      `make test-no-teardown` — pass, fail, or
      unverified locally (toolchain absent).
    - Title status: passes `Semantic PR` or not.
-   - Merge status: `MERGEABLE` or `CONFLICTING`.
+   - Merge status: `mergeable_state` — `dirty`
+     (conflicting) vs. any non-`dirty` value (no conflict).
    - CI status: all GitHub checks green, or each failed
      check with its log URL, or "no checks" / still
      pending — the run is **not** finished until CI is
@@ -633,6 +743,9 @@ all changes are committed and pushed.
    - Linear status: moved to **In Review** (PR ready and
      CI green), or left unchanged (blockers, CI failing
      or pending, or no tag resolvable).
+   - Merge queue: not offered (gate/CI not green), or
+     offered and — enqueued (then merged, or taken out
+     with the cause), or declined by the user.
    - `CLAUDE.md` freshness: in sync, or each stale
      rule / reference the diff outdated, with the
      suggested correction.

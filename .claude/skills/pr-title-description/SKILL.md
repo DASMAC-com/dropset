@@ -16,22 +16,57 @@ mark the PR as ready — that is handled by
 `/review-pr` after lint and adversarial review
 pass.
 
+All GitHub reads and writes go through the **GitHub
+MCP**. This repo is `DASMAC-com/dropset`, so every call
+takes `owner: "DASMAC-com"`, `repo: "dropset"`.
+
 ## Steps
 
-1. Identify the current branch and its PR
-   (if one exists) using
-   `gh pr list --head <branch>`.
+1. Identify the current branch
+   (`git branch --show-current`) and its PR, if one
+   exists, with `mcp__github__list_pull_requests` —
+   the `head` filter is `owner:branch`:
+
+   ```txt
+   mcp__github__list_pull_requests(
+     owner: "DASMAC-com",
+     repo: "dropset",
+     head: "DASMAC-com:<branch>",
+     state: "open",
+   )
+   ```
 
 1. Get the full diff against `main`:
    `git diff main..HEAD` and
    `git log main..HEAD --oneline`.
 
-1. Fetch the body of the 3 most recent merged
-   PRs to match their style:
+1. Fetch the 3 most recent merged PRs to match their
+   style. `list_pull_requests` has no "merged" filter, so
+   list **closed** PRs newest-first and take the first
+   three with a non-null `merged_at` (a closed-unmerged PR
+   has `merged_at: null`):
 
-   ```sh
-   gh pr list --state merged --limit 3 \
-     --json number,title,body
+   ```txt
+   mcp__github__list_pull_requests(
+     owner: "DASMAC-com",
+     repo: "dropset",
+     state: "closed",
+     sort: "updated",
+     direction: "desc",
+   )
+   ```
+
+   The list response gives each PR's `number` and `title`
+   but **not** its `body`, so fetch the body for each of
+   the three with `pull_request_read` (`method: "get"`):
+
+   ```txt
+   mcp__github__pull_request_read(
+     owner: "DASMAC-com",
+     repo: "dropset",
+     pullNumber: <number>,
+     method: "get",
+   )
    ```
 
 1. Write the PR title using the **Semantic PR /
@@ -65,25 +100,34 @@ pass.
    section only if the changes need non-obvious
    context.
 
-1. If a PR already exists for the branch, update it.
-   **Don't pass the body inline** — a description full
-   of markdown (backticks, code fences, braces) trips
-   the shell "expansion obfuscation" guard and forces a
-   manual approval every run, even though `gh pr edit`
-   is allow-listed (see `CLAUDE.md` → "Shell commands":
-   pass large/special-character arguments through a
-   file). Instead, **Write** the description to a
-   throwaway file under `/tmp` (e.g.
-   `/tmp/pr-body-<branch>.md`) and hand `gh` its path
-   with `--body-file`, so only a stable, globbable path
-   rides the command line:
+1. If a PR already exists for the branch, update it with
+   `mcp__github__update_pull_request`. The title and body
+   are **structured tool arguments**, so the whole
+   description — backticks, code fences, braces and all —
+   passes straight through; there is no shell quoting to
+   trip and no `/tmp` body-file workaround:
 
-   ```sh
-   gh pr edit <number> --title "..." --body-file /tmp/pr-body-<branch>.md
+   ```txt
+   mcp__github__update_pull_request(
+     owner: "DASMAC-com",
+     repo: "dropset",
+     pullNumber: <number>,
+     title: "<conventional title>",
+     body: "<full markdown description>",
+   )
    ```
 
-   The title stays inline — it's short, conventional,
-   and carries no markdown. If no PR exists, report the
-   title and description so the user can create one.
+   One caveat, learned the hard way: the MCP write path
+   **strips raw angle-bracket sequences** from the body —
+   a literal `<!-- … -->` HTML comment or an unknown
+   `<tag>` (e.g. a `<path>` placeholder), **even inside
+   backticks**, vanishes from the stored body. So don't
+   put literal `<…>` in the description: write placeholders
+   without angle brackets (`PATH`, `N`) and describe HTML
+   comments in prose rather than pasting a literal
+   `<!-- … -->`.
+
+   If no PR exists, report the title and description so
+   the user can create one.
 
 1. Show the user the PR URL when done.

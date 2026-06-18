@@ -69,16 +69,32 @@ what to file.
    - **Title** — concise, imperative, no trailing
      period (e.g. "Harden vault swap against
      partial fills").
+
    - **Description** — Markdown. Capture *why* this
      is deferred and enough context to act on it
      cold: what was uncovered, where in the code,
      and what the fix likely involves. Pass literal
      newlines, not `\n` escapes.
+
    - If the to-do came out of an open PR or branch,
      add a `links` entry to that PR so the issue
-     traces back to where the blocker surfaced. Get
-     the PR URL with `gh pr view --json url -q .url`
-     if one exists for the current branch.
+     traces back to where the blocker surfaced. Resolve
+     the PR's `html_url` through the GitHub MCP — this
+     repo is `DASMAC-com/dropset`, and the `head` filter
+     is `owner:branch`:
+
+     ```txt
+     mcp__github__list_pull_requests(
+       owner: "DASMAC-com",
+       repo: "dropset",
+       head: "DASMAC-com:<branch>",
+       state: "open",
+     )
+     ```
+
+     Take the matching PR's `html_url`; skip the link if
+     no PR exists for the branch.
+
    - **Dependencies** — if this to-do depends on or
      gates another issue, set the relation per the
      **Blocking relations** brief in `CLAUDE.md`
@@ -86,6 +102,7 @@ what to file.
      **block** it and/or that it **blocks**. You're
      judging by hand here, so use what you know of the
      work; omit when unsure.
+
    - **Priority** — default to 3 (Medium). Bump to
      2 (High) only if the user calls it urgent.
 
