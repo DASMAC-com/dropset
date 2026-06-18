@@ -208,6 +208,7 @@ Dedup and refile so a 30-minute loop never duplicates work:
   and collect every `**Fingerprint**:` line already present
   across the open cspell issues. Only **new** findings —
   fingerprints not already open — are filed; drop the rest.
+
 - If an **open aggregated cspell issue already exists** (an
   open Backlog issue carrying any `dictionary:` /
   `cspell-placement:` fingerprint — going forward there is
@@ -216,6 +217,7 @@ Dedup and refile so a 30-minute loop never duplicates work:
   `id` and the full edited `description`), rather than
   opening a second aggregated issue. Diff against the live
   body you just read so existing bullets aren't clobbered.
+
 - Otherwise **create** one aggregated issue, one bullet per
   new finding:
 
