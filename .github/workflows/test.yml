@@ -17,18 +17,25 @@ jobs:
   changes:
     name: 'Detect changes'
     outputs:
-      code: '${{ steps.filter.outputs.code != ''false'' }}'
+      code: '${{ steps.filter.outputs.skippable != ''true'' }}'
     permissions:
       contents: 'read'
       pull-requests: 'read'
     runs-on: 'ubuntu-latest'
     steps:
-    # Fail-safe: a transient paths-filter/API error must not fail this job.
-    # If it did, `needs: changes` would *skip* the test jobs (not run them
-    # with steps gated), and a required check skipped via a failed `needs`
-    # reports as pending — hanging branch protection, the very thing this
-    # design avoids. On error the step's `code` output is empty, so the
-    # job output defaults to true (`'' != 'false'`) and the full suite runs.
+    # Fail-CLOSED deny-list: `skippable` matches only when EVERY changed file
+    # lands in a known test-irrelevant tree (predicate-quantifier 'every'), so
+    # the suite skips solely on an all-irrelevant PR. A new or renamed crate
+    # path is not on this list, so it defaults to RUNNING the suite — forgetting
+    # to extend the list only over-runs (safe), never under-runs. Maintain this
+    # list as test-irrelevant trees are added/renamed.
+    #
+    # Fail-safe: a transient paths-filter/API error must not fail this job. If
+    # it did, `needs: changes` would *skip* the test jobs (not run them with
+    # steps gated), and a required check skipped via a failed `needs` reports as
+    # pending — hanging branch protection, the very thing this design avoids. On
+    # error the step's `skippable` output is empty, so the job output defaults
+    # to true (`'' != 'true'`) and the full suite runs.
     - continue-on-error: true
       id: 'filter'
       if: |
@@ -36,19 +43,20 @@ jobs:
       uses: 'dorny/paths-filter@v3'
       with:
         filters: |
-          code:
-          - '**/*.rs'
-          - '**/Cargo.toml'
-          - 'Cargo.lock'
-          - 'Anchor.toml'
-          - 'Makefile'
-          - 'programs/**'
-          - 'sdk/price-core/**'
-          - 'sdk/rs/**'
-          - 'sdk/idl/**'
-          - 'sdk/conformance/**'
-          - '.github/workflows/test.yml'
-          - '.github/actions/**'
+          skippable:
+          - 'frontend/**'
+          - 'docs/**'
+          - '**/*.md'
+          - 'sdk/ts/**'
+          - 'sdk/codama/**'
+          - '.github/workflows/lint.yml'
+          - '.github/workflows/sdk.yml'
+          - '.github/workflows/semantic-pr.yml'
+          - 'pnpm-lock.yaml'
+          - 'pnpm-workspace.yaml'
+          - 'cfg/**'
+          - 'LICENSE.md'
+        predicate-quantifier: 'every'
   test:
     name: 'Tests'
     needs: 'changes'
