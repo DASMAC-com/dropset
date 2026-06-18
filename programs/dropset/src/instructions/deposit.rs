@@ -27,7 +27,7 @@ use super::transfer_in_leg;
 use crate::{
     errors::DropsetError,
     events::{DepositEvent, RealizeEvent},
-    state::{isqrt_u128, realize_in_place, single_leg_basket, Market, PPM},
+    state::{isqrt_u128, realize_in_place, single_leg_basket, Market, VaultAccess, PPM},
     VaultDepositorHeader,
 };
 
@@ -134,9 +134,6 @@ impl Deposit {
         // `bump = vault_depositor.bump` reverification works.
         self.vault_depositor.bump = bump;
 
-        let len = self.market.len();
-        require!((vault_idx as usize) < len, DropsetError::InvalidSectorIndex);
-
         // Snapshot pre-state we need post-mutation. Borrow the vault
         // immutably to read fields, drop the borrow, then re-borrow mut.
         let (
@@ -152,7 +149,8 @@ impl Deposit {
             min_leader_share,
             ref_price_bits,
         ) = {
-            let v = &self.market.as_slice()[vault_idx as usize];
+            let v = self.market.read_vault(vault_idx)?;
+            require!(v.is_occupied(), DropsetError::VaultEmpty);
             (
                 v.leader,
                 v.allow_outside_depositors.get(),
@@ -167,10 +165,6 @@ impl Deposit {
                 v.reference_price.price.as_u32(),
             )
         };
-        require!(
-            !address_eq(&leader, &Address::default()),
-            DropsetError::VaultEmpty
-        );
         require!(!frozen, DropsetError::VaultFrozen);
         // A tombstoned vault is winding down — it no longer quotes and
         // accrues no fee, so minting fresh shares into it is rejected
@@ -212,12 +206,12 @@ impl Deposit {
         // never short-circuits on the unseeded guard. Capture the
         // outcome so we can emit a RealizeEvent if shares minted.
         let realize_outcome = {
-            let v = &mut self.market.as_mut_slice()[vault_idx as usize];
+            let v = self.market.mutate_vault(vault_idx)?;
             realize_in_place(v)
         };
         // Re-read post-realize values for the share math below.
         let (total_shares, leader_shares, base_atoms, quote_atoms) = {
-            let v = &self.market.as_slice()[vault_idx as usize];
+            let v = self.market.read_vault(vault_idx)?;
             (
                 v.total_shares.get(),
                 v.leader_shares.get(),
@@ -277,7 +271,7 @@ impl Deposit {
         // shares-out lands on the `VaultDepositor` PDA below.
         let market_addr = *self.market.address();
         let (new_total, new_leader_shares, new_base_atoms, new_quote_atoms) = {
-            let v = &mut self.market.as_mut_slice()[vault_idx as usize];
+            let v = self.market.mutate_vault(vault_idx)?;
             v.base_atoms = (base_atoms + base_in_final).into();
             v.quote_atoms = (quote_atoms + quote_in_final).into();
             let new_total = total_shares + shares_out;

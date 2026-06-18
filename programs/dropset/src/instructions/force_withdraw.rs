@@ -36,7 +36,7 @@ use super::{close_depositor_and_decrement, transfer_out_leg};
 use crate::{
     errors::DropsetError,
     events::{RealizeEvent, WithdrawEvent},
-    state::{compute_pro_rata_slice, realize_in_place, Market, VaultDll},
+    state::{compute_pro_rata_slice, realize_in_place, Market, VaultAccess, VaultDll},
     AdminSet, Registry, VaultDepositorHeader,
 };
 
@@ -133,24 +133,14 @@ impl ForceWithdrawDepositor {
             self.registry.admin_contains(self.admin.address()),
             DropsetError::Unauthorized
         );
-        let len = self.market.len();
-        require!((vault_idx as usize) < len, DropsetError::InvalidSectorIndex);
-
         let owner_addr = *self.owner.address();
-        let (leader, total_shares, ref_price_bits) = {
-            let v = &self.market.as_slice()[vault_idx as usize];
-            (
-                v.leader,
-                v.total_shares.get(),
-                v.reference_price.price.as_u32(),
-            )
+        let (total_shares, ref_price_bits) = {
+            let v = self.market.read_vault(vault_idx)?;
+            // Reclaimed (free-list) sectors carry no depositors by the
+            // teardown invariant — reject as defense-in-depth.
+            require!(v.is_occupied(), DropsetError::VaultEmpty);
+            (v.total_shares.get(), v.reference_price.price.as_u32())
         };
-        // Reclaimed (free-list) sectors carry no depositors by the
-        // teardown invariant — reject as defense-in-depth.
-        require!(
-            !address_eq(&leader, &Address::default()),
-            DropsetError::VaultEmpty
-        );
         require!(total_shares > 0, DropsetError::InsufficientShares);
 
         // Drain the depositor's whole position in one shot.
@@ -160,11 +150,11 @@ impl ForceWithdrawDepositor {
         // Realize first (spec) — accrues any pending perf fee to the
         // leader before the basket is sliced.
         let realize_outcome = {
-            let v = &mut self.market.as_mut_slice()[vault_idx as usize];
+            let v = self.market.mutate_vault(vault_idx)?;
             realize_in_place(v)
         };
         let (total_shares, leader_shares, base_atoms, quote_atoms) = {
-            let v = &self.market.as_slice()[vault_idx as usize];
+            let v = self.market.read_vault(vault_idx)?;
             (
                 v.total_shares.get(),
                 v.leader_shares.get(),
@@ -200,7 +190,7 @@ impl ForceWithdrawDepositor {
         let base_mint_addr = self.market.base_mint;
         let quote_mint_addr = self.market.quote_mint;
         let (new_total, new_base_atoms, new_quote_atoms) = {
-            let v = &mut self.market.as_mut_slice()[vault_idx as usize];
+            let v = self.market.mutate_vault(vault_idx)?;
             let new_total = total_shares - shares_in;
             let new_base = base_atoms - slice_base_u64;
             let new_quote = quote_atoms - slice_quote_u64;
@@ -356,19 +346,13 @@ impl ForceWithdrawLeader {
             self.registry.admin_contains(self.admin.address()),
             DropsetError::Unauthorized
         );
-        let len = self.market.len();
-        require!((vault_idx as usize) < len, DropsetError::InvalidSectorIndex);
-
         let leader_addr = *self.leader.address();
         let (leader, total_shares) = {
-            let v = &self.market.as_slice()[vault_idx as usize];
+            let v = self.market.read_vault(vault_idx)?;
+            // Reclaimed sectors have a zeroed leader — reject.
+            require!(v.is_occupied(), DropsetError::VaultEmpty);
             (v.leader, v.total_shares.get())
         };
-        // Reclaimed sectors have a zeroed leader — reject.
-        require!(
-            !address_eq(&leader, &Address::default()),
-            DropsetError::VaultEmpty
-        );
         // The passed payout account must be the actual leader, so funds
         // can never be redirected to the calling admin.
         require!(
@@ -379,11 +363,11 @@ impl ForceWithdrawLeader {
 
         // Realize first (spec). No-op on frozen vaults (HWM pinned).
         let realize_outcome = {
-            let v = &mut self.market.as_mut_slice()[vault_idx as usize];
+            let v = self.market.mutate_vault(vault_idx)?;
             realize_in_place(v)
         };
         let (total_shares, leader_shares, base_atoms, quote_atoms) = {
-            let v = &self.market.as_slice()[vault_idx as usize];
+            let v = self.market.read_vault(vault_idx)?;
             (
                 v.total_shares.get(),
                 v.leader_shares.get(),
@@ -406,7 +390,7 @@ impl ForceWithdrawLeader {
         let base_mint_addr = self.market.base_mint;
         let quote_mint_addr = self.market.quote_mint;
         let (new_total, new_leader, new_base_atoms, new_quote_atoms) = {
-            let v = &mut self.market.as_mut_slice()[vault_idx as usize];
+            let v = self.market.mutate_vault(vault_idx)?;
             let new_total = total_shares - shares_in;
             let new_leader = leader_shares - shares_in;
             let new_base = base_atoms - slice_base_u64;
