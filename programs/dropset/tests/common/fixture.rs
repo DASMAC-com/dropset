@@ -10,13 +10,14 @@
 //! than `AccountMeta` lists.
 //!
 //! The `poke_*` helpers rewrite a single field directly on the account
-//! and reinstall it, reaching states without threading a full
-//! instruction. Some now have a real admin instruction
-//! (`min_leader_share` → [`Fixture::set_min_leader_share`], `frozen` →
-//! [`Fixture::freeze_vault`]); the pokes stay for the cases that still
-//! need an out-of-band write — e.g. arming `min_leader_share` to an
-//! arbitrary value without exercising the admin gate. `taker_fee` now
-//! has a real lever ([`Fixture::set_taker_fee`]), so its poke is gone.
+//! and reinstall it, reaching states no honest instruction can produce
+//! — a cyclic `next` pointer, a `u64::MAX` nonce, an HWM lagging NAV.
+//! Fields that have a real admin lever are driven through it instead, so
+//! their pokes are gone: `min_leader_share` →
+//! [`Fixture::set_min_leader_share`], `taker_fee` →
+//! [`Fixture::set_taker_fee`], `frozen` → [`Fixture::freeze_vault`]. The
+//! remaining pokes exist only for the out-of-band states no instruction
+//! can reach.
 
 #![allow(dead_code)]
 
@@ -1413,17 +1414,6 @@ impl Fixture {
             sector_idx,
             core::mem::offset_of!(Vault, next),
             &next.to_le_bytes(),
-        );
-    }
-
-    /// Set `Vault.min_leader_share` (ppm) directly — lets a test arm the
-    /// skin-in-the-game floor without exercising the admin gate or the
-    /// `<= PPM` cap the real [`Fixture::set_min_leader_share`] enforces.
-    pub fn poke_min_leader_share(&mut self, sector_idx: u32, ppm: u32) {
-        self.poke_vault_bytes(
-            sector_idx,
-            core::mem::offset_of!(Vault, min_leader_share),
-            &ppm.to_le_bytes(),
         );
     }
 
