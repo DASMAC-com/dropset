@@ -359,7 +359,27 @@ PRs, and architecture; dictionary upkeep is
 
 **4. PR mode — oldest unaudited PR (FIFO).**
 
-- `gh pr list --state merged --limit 50 --json number,title,url,files`
+All GitHub reads go through the **GitHub MCP**; this repo
+is `DASMAC-com/dropset`, so every call takes
+`owner: "DASMAC-com"`, `repo: "dropset"`.
+
+- List merged PRs with
+  `mcp__github__list_pull_requests`. There's no "merged"
+  filter, so list **closed** PRs newest-first and keep
+  only those with a non-null `merged_at`
+  (a closed-unmerged PR has `merged_at: null`):
+
+  ```txt
+  mcp__github__list_pull_requests(
+    owner: "DASMAC-com",
+    repo: "dropset",
+    state: "closed",
+    sort: "updated",
+    direction: "desc",
+    perPage: 50,
+  )
+  ```
+
 - Pick the **oldest** PR whose number exceeds
   `pr_cursor.last_pr_number` — i.e. the *minimum*
   `number` among those `> last_pr_number`, **not**
@@ -367,13 +387,15 @@ PRs, and architecture; dictionary upkeep is
   cursor to exactly that PR's number (step 11) means
   no PR between the old cursor and the newest is ever
   skipped; PR mode walks the merge history in order.
-  Note `--limit 50` fetches the 50 *most-recently*
-  merged PRs, so the oldest PR above the cursor must
-  fall within that window for FIFO to see it. The
+  Note `perPage: 50` fetches the 50 *most-recently*
+  updated closed PRs, so the oldest PR above the cursor
+  must fall within that window for FIFO to see it. The
   cursor advances one PR per `pr` cycle, so a modest
   backlog stays in view — but if merges ever outrun
-  the loop by more than ~50, raise `--limit` (or page
-  the list) so the oldest unaudited PR isn't missed.
+  the loop by more than ~50, raise `perPage` (or page
+  with `page: 2`, …) so the oldest unaudited PR isn't
+  missed.
+
 - If **no** PR is newer than the cursor, there is
   nothing to audit in PR mode: treat this iteration
   as FILE mode instead (step 3), but in step 11 still
@@ -383,9 +405,22 @@ PRs, and architecture; dictionary upkeep is
   still fires next cycle — otherwise a PR slot that
   always falls back to file would trap the loop in
   file mode and `arch` would never run again.
-- `gh pr diff <number>` for the diff. The subject is
-  the non-generated files that PR touched, reviewed
-  in the context of the diff. Go to step 6 (the
+
+- Fetch the diff with `mcp__github__pull_request_read`
+  (`method: "get_diff"`; `method: "get_files"` gives the
+  changed-file list if you want it separately):
+
+  ```txt
+  mcp__github__pull_request_read(
+    owner: "DASMAC-com",
+    repo: "dropset",
+    pullNumber: <number>,
+    method: "get_diff",
+  )
+  ```
+
+  The subject is the non-generated files that PR touched,
+  reviewed in the context of the diff. Go to step 6 (the
   audit shared with FILE mode).
 
 **5. ARCH mode — holistic, whole-system audit.**

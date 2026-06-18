@@ -126,15 +126,26 @@ do pick up the refreshed version immediately.
 **2. Prune merged worktrees.** For every worktree in
 the list **other than** the `refs/heads/main` base,
 take its literal path and branch from the porcelain
-output and check whether its PR has merged — pass the
-branch inline so the call stays a `Bash(gh pr view:*)`
-allow-rule:
+output and check whether its PR has merged through the
+GitHub MCP. This repo is `DASMAC-com/dropset`, and the
+`head` filter is `owner:branch`; query **all** states so
+a closed-and-merged PR is visible:
 
-```sh
-gh pr view <branch> --json number,state,title
+```txt
+mcp__github__list_pull_requests(
+  owner: "DASMAC-com",
+  repo: "dropset",
+  head: "DASMAC-com:<branch>",
+  state: "all",
+)
 ```
 
-- `state` is `MERGED` → the branch is done. Remove
+Read the matching PR's `merged_at`: a **non-null**
+`merged_at` means it merged (GitHub reports a merged PR as
+`state: "closed"` with `merged_at` set, so key on
+`merged_at`, not `state`).
+
+- `merged_at` is set → the branch is done. Remove
   the worktree (bare command, no `--force` — a
   worktree with uncommitted changes refuses, which is
   the safe outcome; leave it and note it):
@@ -153,11 +164,12 @@ gh pr view <branch> --json number,state,title
   git branch -D <branch>
   ```
 
-- `state` is `OPEN` / `CLOSED` (unmerged), or no PR
-  exists, or the removal refused on a dirty worktree →
-  **leave it**. Closed-without-merge and dirty
-  worktrees are not safe to drop automatically; list
-  them in the report so the user can decide.
+- `merged_at` is null (PR still open, or closed
+  without merging), or no PR exists, or the removal
+  refused on a dirty worktree → **leave it**.
+  Closed-without-merge and dirty worktrees are not safe
+  to drop automatically; list them in the report so the
+  user can decide.
 
 After processing them all, tidy any stale worktree
 admin entries:

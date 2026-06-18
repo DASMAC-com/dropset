@@ -133,13 +133,25 @@ give take precedence over the issue.
    ```
 
 1. Create a draft PR with the Linear tag as the
-   title and an empty body:
+   title and an empty body, via the GitHub MCP. This
+   repo is `DASMAC-com/dropset`, so pass
+   `owner: "DASMAC-com"`, `repo: "dropset"`; the head
+   is the branch you just pushed and the base is `main`:
 
-   ```sh
-   gh pr create --draft \
-     --title "<ENG-###>" \
-     --body ""
+   ```txt
+   mcp__github__create_pull_request(
+     owner: "DASMAC-com",
+     repo: "dropset",
+     title: "<ENG-###>",
+     head: "<eng-###>",
+     base: "main",
+     body: "",
+     draft: true,
+   )
    ```
+
+   The call returns the PR object, including its
+   `html_url` — keep it for the final step.
 
 1. Mark the Linear issue **In Progress** so the board
    reflects that work on this worktree has started.
