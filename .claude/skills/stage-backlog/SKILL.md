@@ -477,8 +477,9 @@ single iteration runs and the skill simply exits.
   parent. Nothing here parents issues to anything.
 - Shell discipline (per `CLAUDE.md`): every command is a
   single bare call that reduces to an allow-glob — no
-  `&&`, pipes, `$(...)`, or redirects. Use Glob / Grep /
-  Read for any file discovery.
+  `&&`, pipes, `$(...)`, or redirects; content search
+  routes to the Grep tool (never `git grep`), per the
+  sub-agent brief.
 - To graduate this to a fully detached schedule (cron
   cloud routine) later, first confirm the `claude.ai`
   Linear MCP authenticates in headless runs — if it
