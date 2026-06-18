@@ -261,6 +261,31 @@ all changes are committed and pushed.
      violates or invalidates** as **blocking**;
      merely-stale prose as a **warning** with the
      suggested correction.
+   - **CI skip-list freshness** — the `Tests` workflow
+     (`.github/workflows/test.yml`) skips the Rust suite
+     only when **every** changed file lands in a known
+     test-irrelevant tree. Its `changes` job encodes that
+     as a fail-**closed** `code` filter: a catch-all
+     `'**'` minus a list of **negated** exclude patterns
+     (`'!frontend/**'`, `'!docs/**'`, …) under
+     `predicate-quantifier: 'every'`, so an unlisted new
+     path counts as relevant and **runs** the suite
+     automatically (safe, no maintenance needed). This
+     lens is therefore **not** about Rust/manifest
+     additions. It is about the opposite — a diff that
+     **adds or renames a test-IRRELEVANT tree** (a new
+     frontend-like dir, a TS-only SDK package, a docs or
+     config tree, a non-test workflow) leaves the
+     exclude-list stale: PRs touching only that tree will
+     needlessly run the full suite, and a renamed exclude
+     points at a path that no longer exists. Read
+     `.github/workflows/test.yml`, compare the `code`
+     filter's `'!…'` excludes against the trees the diff
+     adds or renames, and if one is not yet excluded (or
+     now misnamed) flag the one-line `'!tree/**'` exclude
+     addition/rename. Severity is **warning**, never
+     blocking — a stale exclude-list only over-runs tests
+     (the safe direction), never under-runs.
 
    Each sub-agent must return findings with file
    path, line number, severity (**blocking** /
@@ -611,6 +636,10 @@ all changes are committed and pushed.
    - `CLAUDE.md` freshness: in sync, or each stale
      rule / reference the diff outdated, with the
      suggested correction.
+   - CI skip-list freshness: the `test.yml` `code`-filter
+     exclude-list is in sync, or each test-irrelevant tree
+     the diff added/renamed that should be excluded, with
+     the suggested one-line edit (warning only).
    - Issues found / fixed / remaining.
    - Permissions: rules `/firm-perms` generalized this
      run, and any malformed request it set aside —

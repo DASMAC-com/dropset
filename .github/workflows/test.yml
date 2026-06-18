@@ -4,11 +4,12 @@ env:
   SOLANA_VERSION: 'v3.1.9'
 jobs:
   # Decide whether the changed files can affect the Rust test suite. On a
-  # pull_request we diff the touched paths against the filter below; a PR that
-  # touches only the frontend, docs, or other non-Rust trees skips the build +
-  # test work entirely. On merge_group and push-to-main the filter step is
-  # skipped and `code` defaults to true, so the queue's final gate and the main
-  # branch always run the full suite. The test jobs still RUN in every case
+  # pull_request the filter below marks a PR `code`-relevant unless EVERY
+  # touched file lands in a known test-irrelevant tree; a PR that touches only
+  # the frontend, docs, or other irrelevant trees skips the build + test work
+  # entirely. On merge_group and push-to-main the filter step is skipped and
+  # `code` defaults to true, so the queue's final gate and the main branch
+  # always run the full suite. The test jobs still RUN in every case
   # (only their expensive steps are gated), so the required "Tests" and "Tests
   # (no teardown)" checks always report success — a trigger-level `paths`
   # filter would instead leave them unreported and hang branch protection and
@@ -23,12 +24,27 @@ jobs:
       pull-requests: 'read'
     runs-on: 'ubuntu-latest'
     steps:
-    # Fail-safe: a transient paths-filter/API error must not fail this job.
-    # If it did, `needs: changes` would *skip* the test jobs (not run them
-    # with steps gated), and a required check skipped via a failed `needs`
-    # reports as pending — hanging branch protection, the very thing this
-    # design avoids. On error the step's `code` output is empty, so the
-    # job output defaults to true (`'' != 'false'`) and the full suite runs.
+    # Fail-CLOSED deny-list. The `code` filter is a catch-all `'**'` minus a
+    # negated list of known test-irrelevant trees, with predicate-quantifier
+    # 'every': a changed file matches `code` only when it matches EVERY
+    # predicate — i.e. it is some file (`'**'`) AND lands in none of the
+    # excluded trees. paths-filter's output is existential (true if ANY changed
+    # file matches), so `code` is true whenever at least one changed file is
+    # test-RELEVANT, and false only when EVERY changed file is irrelevant — the
+    # all-irrelevant PR that may skip. A new or renamed tree is, by default, not
+    # on the exclude list, so it counts as relevant and RUNS the suite;
+    # forgetting to exclude a genuinely-irrelevant tree only over-runs (safe),
+    # never under-runs. Maintain the exclude list as irrelevant trees are
+    # added/renamed. (A positive allow-list would instead fail OPEN — an
+    # unlisted new test input would silently skip.)
+    #
+    # Fail-safe: a transient paths-filter/API error must not fail this job. If
+    # it did, `needs: changes` would *skip* the test jobs (not run them with
+    # steps gated), and a required check skipped via a failed `needs` reports as
+    # pending — hanging branch protection, the very thing this design avoids. On
+    # error — and on merge_group / push:main, where the step's `if` is false —
+    # the step's `code` output is empty, so the job output defaults to true
+    # (`'' != 'false'`) and the full suite runs.
     - continue-on-error: true
       id: 'filter'
       if: |
@@ -37,18 +53,20 @@ jobs:
       with:
         filters: |
           code:
-          - '**/*.rs'
-          - '**/Cargo.toml'
-          - 'Cargo.lock'
-          - 'Anchor.toml'
-          - 'Makefile'
-          - 'programs/**'
-          - 'sdk/price-core/**'
-          - 'sdk/rs/**'
-          - 'sdk/idl/**'
-          - 'sdk/conformance/**'
-          - '.github/workflows/test.yml'
-          - '.github/actions/**'
+          - '**'
+          - '!frontend/**'
+          - '!docs/**'
+          - '!**/*.md'
+          - '!sdk/ts/**'
+          - '!sdk/codama/**'
+          - '!.claude/**'
+          - '!.github/workflows/lint.yml'
+          - '!.github/workflows/sdk.yml'
+          - '!.github/workflows/semantic-pr.yml'
+          - '!pnpm-lock.yaml'
+          - '!pnpm-workspace.yaml'
+          - '!cfg/**'
+        predicate-quantifier: 'every'
   test:
     name: 'Tests'
     needs: 'changes'
