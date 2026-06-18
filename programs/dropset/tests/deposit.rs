@@ -189,9 +189,10 @@ fn rejects_basket_slippage() {
 #[test]
 fn rejects_min_leader_share_violation() {
     let mut f = seeded_open();
+    let admin = f.authority.insecure_clone();
     // Pin the floor at 99% — any meaningful outside deposit drops the
     // leader's ratio below it.
-    f.poke_min_leader_share(0, 990_000);
+    f.set_min_leader_share(&admin, 0, 990_000).unwrap();
     let alice = f.funded_depositor(200_000, 200_000);
     let err = f
         .deposit(&alice, 0, 50_000, 0, 200_000, 200_000)

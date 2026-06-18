@@ -171,10 +171,10 @@ fn partial_exit_violating_floor_rejects() {
     let v = f.vault(0);
     let (l, t) = (v.leader_shares.get() as u128, v.total_shares.get() as u128);
     assert!(l < t, "leader is no longer the sole shareholder");
-    // Pin the floor at the current ratio (poked after the deposit so
-    // the deposit's own floor check isn't affected).
+    // Pin the floor at the current ratio (set after the deposit so the
+    // deposit's own floor check isn't affected).
     let ratio_ppm = (l * 1_000_000 / t) as u32;
-    f.poke_min_leader_share(0, ratio_ppm);
+    f.set_min_leader_share(&admin, 0, ratio_ppm).unwrap();
 
     // Withdraw 90% of the leader's stake — the post-burn ratio drops
     // well below `ratio_ppm`.
@@ -209,7 +209,7 @@ fn tombstoned_vault_bypasses_floor() {
     let (l, t) = (v.leader_shares.get() as u128, v.total_shares.get() as u128);
     assert!(l < t, "leader is no longer the sole shareholder");
     let ratio_ppm = (l * 1_000_000 / t) as u32;
-    f.poke_min_leader_share(0, ratio_ppm);
+    f.set_min_leader_share(&admin, 0, ratio_ppm).unwrap();
 
     // Move the vault to the tombstone DLL — the leader's wind-down path.
     f.close_vault(&leader, 0)
