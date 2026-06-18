@@ -117,6 +117,16 @@ takes `owner: "DASMAC-com"`, `repo: "dropset"`.
    )
    ```
 
+   One caveat, learned the hard way: the MCP write path
+   **strips raw angle-bracket sequences** from the body —
+   a literal `<!-- … -->` HTML comment or an unknown
+   `<tag>` (e.g. a `<path>` placeholder), **even inside
+   backticks**, vanishes from the stored body. So don't
+   put literal `<…>` in the description: write placeholders
+   without angle brackets (`PATH`, `N`) and describe HTML
+   comments in prose rather than pasting a literal
+   `<!-- … -->`.
+
    If no PR exists, report the title and description so
    the user can create one.
 
