@@ -77,8 +77,9 @@ A worktree branch and its Linear issue **share one `ENG-###`
 number**: branch `eng-499` ↔ issue `ENG-499`. Skills resolve the
 issue from the branch (or the PR title scope) on that basis —
 `init-pr` moves it to In Progress at bootstrap, `review-pr` ticks the
-delivered checklist items and moves it to In Review when the PR is
-ready.
+delivered checklist items and moves it to In Review at the merge-queue
+handoff — once the PR is ready, CI is green, and the review summary has
+been printed for the human.
 
 ### Blocking relations
 
@@ -110,11 +111,15 @@ reading the diff, watching checks, pulling failing-job logs — go
 through the **GitHub MCP server** (`mcp__github__*`), not the `gh`
 CLI. The skills (`init-pr`, `pr-title-description`, `review-pr`,
 `housekeeping`, `audit-loop`, `linear-task`) are written against it.
-`gh` is no longer required; it survives in exactly **one** place — the
-`review-pr` merge-queue step runs `gh pr merge --squash --auto`,
+`gh` is no longer required; it survives only at the `review-pr`
+**merge-queue handoff** — the enqueue (a `gh pr merge --squash --auto`
+write) and a read-only dequeue probe
+(`gh pr view --json …,autoMergeRequest`). The enqueue stays on `gh`
 because the server exposes no auto-merge / merge-queue tool
 (`merge_pull_request` does an *immediate* merge, which bypasses the
-queue).
+queue); the probe stays on `gh` because the hosted MCP's
+`pull_request_read` omits the `auto_merge` field needed to tell a
+still-queued PR from one that was dequeued.
 
 Every tool takes `owner` and `repo`. This repo is
 `DASMAC-com/dropset`, so pass `owner: "DASMAC-com"`, `repo: "dropset"`

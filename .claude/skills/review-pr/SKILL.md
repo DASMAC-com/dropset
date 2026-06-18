@@ -1,6 +1,6 @@
 ---
 name: review-pr
-description: Adversarial pre-review — verify the Linear task's checklist is fully addressed, lint, catalogue issues, fix what's mechanical, ready the PR, wait for GitHub CI to pass, print the review summary, then at the merge-queue handoff move the Linear issue In Review, offer to enqueue the PR, and firm up permissions while it sits in the queue.
+description: Adversarial pre-review — verify the Linear task's checklist is fully addressed, lint, catalogue issues, fix what's mechanical, ready the PR, wait for GitHub CI to pass, print the review summary, then at the merge-queue handoff move the Linear issue In Review, offer to enqueue the PR, firm up permissions while it sits in the queue, and report whether it merges or gets taken back out.
 user-invocable: true
 ---
 
@@ -25,9 +25,11 @@ Run this after autonomous work is complete and
 all changes are committed and pushed.
 
 All GitHub reads and writes go through the **GitHub
-MCP**, with one exception called out in the merge-queue
-step near the end, which still uses `gh` because the MCP
-server exposes no auto-merge tool. This repo is
+MCP**, with one exception at the merge-queue handoff near
+the end — both the enqueue (a `gh` write) and a read-only
+dequeue probe (a `gh` read) stay on `gh`, because the MCP
+server exposes no auto-merge tool and its `pull_request_read`
+omits the `auto_merge` field the probe needs. This repo is
 `DASMAC-com/dropset`, so every MCP call takes
 `owner: "DASMAC-com"`, `repo: "dropset"`.
 
@@ -705,8 +707,9 @@ server exposes no auto-merge tool. This repo is
    or skip and merge later by hand.
 
    - **If the user approves**, add it to the merge queue.
-     This is the **one** GitHub action that stays on
-     `gh`: the MCP server exposes no auto-merge /
+     Enqueueing is the one `gh` **write** the skill makes
+     (the dequeue probe in the final step is the one `gh`
+     **read**): the MCP server exposes no auto-merge /
      merge-queue tool (`merge_pull_request` does an
      *immediate* merge, which bypasses the queue), so use
      `gh pr merge` with `--auto`, which enables "Merge
@@ -790,28 +793,32 @@ server exposes no auto-merge tool. This repo is
    )
    ```
 
+   On each poll, branch on the `get` result — and when the
+   PR is still `open`, run the `gh` probe below to tell
+   "still queued" from "silently removed", which the MCP
+   `get` can't (it omits `auto_merge`):
+
    - `merged: true` (or `state: "closed"`) → it landed;
      report the merge. Key on `merged` / `state`, **not**
      `merged_at` — the MCP `get` response omits it.
-   - still `open`, but a fresh `get_check_runs` shows a
-     required check with `conclusion` of `failure` /
-     `timed_out` / `cancelled` → it was **taken out** of
-     the queue (the red check tripped it); report that,
-     naming the failing check as the cause.
-   - still `open` with all checks green → still queued;
-     keep polling.
 
-   `auto_merge` would be the cleanest dequeue signal — it
-   flips to `null` when a PR leaves the queue — but the MCP
-   `get` response doesn't expose it. For a dequeue **not**
-   accompanied by a red check (a manual removal, a late
-   conflict), fall back to the one `gh` read that does see
-   it (consistent with the enqueue already being the `gh`
-   exception):
+   - still `open` → run the dequeue probe. This is the one
+     `gh` **read** the skill makes (mirror of the enqueue
+     write): `auto_merge` would be the cleanest dequeue
+     signal — it flips to `null` when a PR leaves the queue
+     — but the MCP `get` doesn't expose it, and `gh` is the
+     only thing that sees queue state:
 
-   ```sh
-   gh pr view <number> --json state,mergedAt,autoMergeRequest
-   ```
+     ```sh
+     gh pr view <number> --json state,mergedAt,autoMergeRequest
+     ```
 
-   `autoMergeRequest: null` while `state` is `OPEN` means it
-   was removed from the queue.
+     - `autoMergeRequest` non-null → still queued; keep
+       polling.
+     - `autoMergeRequest: null` (while `state` is `OPEN`) →
+       it was **taken out** of the queue (a required check
+       went red, a conflict appeared, or someone dequeued
+       it). Report the removal, naming the cause from a
+       fresh `get_check_runs` if a required check shows a
+       `conclusion` of `failure` / `timed_out` /
+       `cancelled`.
