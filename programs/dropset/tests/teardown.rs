@@ -228,29 +228,38 @@ fn teardown_sweeps_every_historical_fee_mint() {
         "the re-point yields a distinct second fee ATA"
     );
 
-    // Every build-up call was admin-signed, so the open fee was waived and
-    // both fee vaults are empty — the close pre-condition holds for each.
+    // No market activity ran against either fee mint — no `create_vault`
+    // ever charged a fee — so both fee vaults are empty and the close
+    // pre-condition (`amount == 0`) holds for each.
     assert_eq!(f.token_balance(&default_fee_vault), 0);
     assert_eq!(f.token_balance(&new_fee_vault), 0);
 
     // ── The sweep: close *both* historical fee ATAs ──────────────────
-    let rr_before = lamports(&f.svm, &rr);
+    // Close each in turn, asserting the operator's balance climbs on
+    // *each* close — so both ATAs' rent is individually accounted for,
+    // not just one. (`rr` signs nothing, so its balance can only rise.)
+    let rr_before_default = lamports(&f.svm, &rr);
     f.close_registry_fee_vault(&admin, &rr)
         .expect("close the bootstrap default fee ATA");
-    f.close_registry_fee_vault_for(&admin, &new_mint, &common::SPL_TOKEN_PROGRAM_ID, &rr)
-        .expect("close the re-pointed mint's fee ATA");
-
+    let rr_after_default = lamports(&f.svm, &rr);
     assert!(
         !exists(&f.svm, &default_fee_vault),
         "default fee ATA closed by the sweep"
     );
     assert!(
+        rr_after_default > rr_before_default,
+        "default fee ATA rent landed with the operator"
+    );
+
+    f.close_registry_fee_vault_for(&admin, &new_mint, &common::SPL_TOKEN_PROGRAM_ID, &rr)
+        .expect("close the re-pointed mint's fee ATA");
+    assert!(
         !exists(&f.svm, &new_fee_vault),
         "re-pointed mint's fee ATA closed by the sweep"
     );
     assert!(
-        lamports(&f.svm, &rr) > rr_before,
-        "both fee ATAs' rent landed with the operator"
+        lamports(&f.svm, &rr) > rr_after_default,
+        "re-pointed mint's fee ATA rent landed with the operator"
     );
 }
 
