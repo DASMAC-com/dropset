@@ -1717,11 +1717,12 @@ economically-material state that an off-chain indexer **cannot**
 reconstruct from end-of-slot coalesced account diffs. That is every
 token-moving or share-changing flow (`CreateVault`, the deposit and
 withdraw family — leader and force-withdraw variants included, each
-paired with a `Realize` when it crystallizes fees), the per-leg
-`FillEvent` that is the take's only event, the vault-lifecycle changes
-(`CloseVault`, `FreezeVault`), and the admin retuning levers
-(`SetMinLeaderShare`, `SetMarketFeeConfig`, `SetTakerFee`,
-`SetRegistryDefaults`). Everything whose entire effect is already
+paired with a `Realize` when it crystallizes fees; the force-withdraw
+pair only on `admin-teardown` builds, inert on the immutable deploy),
+the per-leg `FillEvent` that is the take's only event, the
+vault-lifecycle changes (`CloseVault`, `FreezeVault`), and the admin
+retuning levers (`SetMinLeaderShare`, `SetMarketFeeConfig`,
+`SetTakerFee`, `SetRegistryDefaults`). Everything whose entire effect is already
 recoverable from a single account diff emits **nothing**: the leader
 quote-refresh pair (`SetReferencePrice`, `SetLiquidityProfile`) on the
 hot path, the vault-config flag setters (`SetAllowOutsideDepositors`,
