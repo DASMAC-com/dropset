@@ -261,6 +261,27 @@ all changes are committed and pushed.
      violates or invalidates** as **blocking**;
      merely-stale prose as a **warning** with the
      suggested correction.
+   - **CI skip-list freshness** — the `Tests` workflow
+     (`.github/workflows/test.yml`) skips the Rust suite
+     only when **every** changed file matches the
+     `skippable` deny-list in its `changes` job. That
+     list is fail-**closed**: a new *test-relevant* path
+     runs the suite automatically (safe, no maintenance
+     needed), so this lens is **not** about Rust/manifest
+     additions. It is about the opposite — a diff that
+     **adds or renames a test-IRRELEVANT tree** (a new
+     frontend-like dir, a TS-only SDK package, a docs or
+     config tree, a non-test workflow) leaves the
+     deny-list stale: PRs touching only that tree will
+     needlessly run the full suite, and a renamed entry
+     points at a path that no longer exists. Read
+     `.github/workflows/test.yml`, compare its `skippable`
+     patterns against the trees the diff adds or renames,
+     and if one is unlisted (or now misnamed) flag the
+     one-line `skippable` addition/rename. Severity is
+     **warning**, never blocking — a stale skip-list only
+     over-runs tests (the safe direction), never
+     under-runs.
 
    Each sub-agent must return findings with file
    path, line number, severity (**blocking** /
@@ -611,6 +632,10 @@ all changes are committed and pushed.
    - `CLAUDE.md` freshness: in sync, or each stale
      rule / reference the diff outdated, with the
      suggested correction.
+   - CI skip-list freshness: the `test.yml` `skippable`
+     deny-list is in sync, or each test-irrelevant tree
+     the diff added/renamed that should be listed, with
+     the suggested one-line edit (warning only).
    - Issues found / fixed / remaining.
    - Permissions: rules `/firm-perms` generalized this
      run, and any malformed request it set aside —
