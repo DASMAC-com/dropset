@@ -120,8 +120,10 @@ the invariants and rationale, not the field-by-field types:
   corresponding per-market value at `create_market`; admins tune
   markets and vaults downstream (`SetMarketFeeConfig`, `SetTakerFee`,
   `SetMinLeaderShare`, `FreezeVault`, `SetOutsideDepositsApproved`) and
-  retune the scalar defaults themselves — for future markets — via
-  `SetRegistryDefaults`. Admins may also open vaults without paying the
+  retune the defaults themselves — for future markets — via
+  `SetRegistryDefaults` (the scalar `default_taker_fee` /
+  `default_min_leader_share`) and `SetDefaultFeeConfig` (the ATA-bearing
+  `default_fee_config`). Admins may also open vaults without paying the
   per-market create-vault fee.
   **Invariant:** `close_registry` requires `market_count == 0` — the
   only on-chain witness that no orphan markets remain, since the
@@ -1328,9 +1330,28 @@ the `Ppm16` reason above.
 
 The registry's third default, `default_fee_config`, is **not** covered
 here: mutating a fee config must eagerly create the registry fee ATA for
-a new mint (see `SetMarketFeeConfig`), so it belongs in its own
-ATA-bearing instruction rather than as an `Option` field on a
-pure-header writer.
+a new mint (see `SetMarketFeeConfig`), so it lives in its own ATA-bearing
+instruction — `SetDefaultFeeConfig`, below — rather than as an `Option`
+field on this pure-header writer.
+
+### SetDefaultFeeConfig
+
+Admin-only. Overwrites `Registry.default_fee_config` (the create-vault
+fee future markets inherit: `mint`, owning `token_program`, and `atoms`),
+seeded once at `init`. It is the registry-level mirror of the per-market
+`SetMarketFeeConfig`: same `(mint, token_program)` validation
+(`token_program == mint.owner`, via the `mint::token_program` constraint),
+same eager `init_if_needed` of the registry fee ATA for the new mint
+(admin pays rent). The eager ATA is load-bearing: `create_market` loads
+the registry fee ATA for `default_fee_config.mint` but does **not** create
+it, so re-pointing the default to a fresh mint without its ATA would brick
+the next `create_market` — the same hazard `SetMarketFeeConfig` guards at
+the market level. As with the other registry-default levers the write is
+**non-retroactive**: it changes only what the next `create_market` stamps,
+never the `fee_config` of markets already created (retune those via
+`SetMarketFeeConfig`). Admins should configure only mints **without** the
+Token-2022 transfer-fee extension, for the reason given under
+`SetMarketFeeConfig`.
 
 ## Depositor operations
 
@@ -1967,11 +1988,13 @@ Repeat 1–4 for every market on the registry. Then, once every
 market is gone:
 
 1. **Drain the fee vault.** Existing admin fee sweep moves
-   accumulated fees out of the Registry fee ATA. If the market's
-   `fee_config.mint` changed during the program's life, more than
-   one fee ATA may exist; sweep each. The set of historical fee
-   mints is **not enumerated on-chain** — the admin maintains it
-   off-chain from `SetMarketFeeConfig` events.
+   accumulated fees out of the Registry fee ATA. If a market's
+   `fee_config.mint` or the registry's `default_fee_config.mint`
+   changed during the program's life, more than one fee ATA may
+   exist; sweep each. The set of historical fee mints is **not
+   enumerated on-chain** — the admin maintains it off-chain from
+   `SetMarketFeeConfig` and `SetDefaultFeeConfig` events (both
+   create a registry fee ATA for the new mint).
 1. **Close fee vault(s).** `close_registry_fee_vault` per fee ATA.
 1. **Remove all but one admin.** Existing `remove_admin` enforces
    "never empty" — `close_registry` is the only path that drops
