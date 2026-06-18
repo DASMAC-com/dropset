@@ -38,7 +38,7 @@ use dropset_math_core::matching_math::{flush_level_price, level_fill_atoms, sort
 use crate::{
     errors::DropsetError,
     events::FillEvent,
-    state::{Market, FLUSH_BIT, PPM},
+    state::{Market, VaultAccess, FLUSH_BIT, PPM},
     Price, N_LEVELS,
 };
 
@@ -375,7 +375,10 @@ impl Swap {
                 DropsetError::CorruptVaultList
             );
             let next_sector = {
-                let v = &self.market.as_slice()[cur as usize];
+                // `cur` was just range-checked above (CorruptVaultList),
+                // so the accessor's own bounds check never fires here —
+                // it is the same named borrow the slab index performed.
+                let v = self.market.read_vault(cur)?;
                 v.next.get()
             };
             // Read vault meta + decide whether to flush. A vault on
@@ -385,9 +388,8 @@ impl Swap {
             // (rather than aborting) — spec § Order matching → Book
             // construction.
             let (vault_active, stamp, ref_price, ref_slot, base_atoms, quote_atoms) = {
-                let v = &self.market.as_slice()[cur as usize];
+                let v = self.market.read_vault(cur)?;
                 let p = v.reference_price.price;
-                let valid = p.is_valid() && !p.is_zero() && !p.is_infinity();
                 // Spec § Vault → Frozen and tombstoned vaults: frozen
                 // vaults stay on the active DLL but their levels die
                 // off as `expires_at` passes. Implement that
@@ -398,7 +400,7 @@ impl Swap {
                 // expiry to kick in.
                 let frozen = v.frozen.get();
                 (
-                    valid && !frozen,
+                    v.has_valid_reference_price() && !frozen,
                     v.reference_price.stamp.get(),
                     p,
                     v.reference_price.quote_slot.get(),
@@ -413,7 +415,7 @@ impl Swap {
             if stamp & FLUSH_BIT != 0 {
                 // Materialize Remaining from LiquidityProfile +
                 // current inventory, then clear FLUSH_BIT.
-                let v = &mut self.market.as_mut_slice()[cur as usize];
+                let v = self.market.mutate_vault(cur)?;
                 for i in 0..N_LEVELS {
                     let bid = v.profile.bids[i];
                     let ask = v.profile.asks[i];
@@ -436,7 +438,7 @@ impl Swap {
             // Collect live levels of the chosen side from this vault.
             let nonce = stamp & !FLUSH_BIT;
             {
-                let v = &self.market.as_slice()[cur as usize];
+                let v = self.market.read_vault(cur)?;
                 for i in 0..N_LEVELS {
                     let lvl = if side.consumes_asks() {
                         v.remaining.asks[i]
@@ -552,7 +554,7 @@ impl Swap {
             // Snapshot the matched vault's current inventory — each
             // leg debits/credits it, so we read fresh.
             let (base_atoms, quote_atoms) = {
-                let v = &self.market.as_slice()[sector_idx as usize];
+                let v = self.market.read_vault(sector_idx)?;
                 (v.base_atoms.get(), v.quote_atoms.get())
             };
 
@@ -583,7 +585,7 @@ impl Swap {
             // record.
             let is_ask_side = side.consumes_asks();
             {
-                let v = &self.market.as_slice()[sector_idx as usize];
+                let v = self.market.read_vault(sector_idx)?;
                 let size_before = if is_ask_side {
                     v.remaining.asks[level_idx as usize].size.get()
                 } else {
@@ -613,7 +615,7 @@ impl Swap {
             let input_atoms = side.input_atoms(fill_base, fill_quote);
             let net_output_out = output_atoms.saturating_sub(fee_u64);
             let (new_base, new_quote) = {
-                let v = &mut self.market.as_mut_slice()[sector_idx as usize];
+                let v = self.market.mutate_vault(sector_idx)?;
                 // On a Buy the output leg is base and the input leg is
                 // quote; on a Sell the legs swap. `is_ask_side` (Buy)
                 // selects which.
@@ -661,7 +663,7 @@ impl Swap {
 
             // Emit one event per matched (vault, level) leg.
             let (leader, quote_authority) = {
-                let v = &self.market.as_slice()[sector_idx as usize];
+                let v = self.market.read_vault(sector_idx)?;
                 (v.leader, v.quote_authority)
             };
             fill_events.push(FillEvent {
@@ -698,7 +700,7 @@ impl Swap {
             // same sector's inventory restore to the earliest
             // captured value.
             for snap in snapshots.iter().rev() {
-                let v = &mut self.market.as_mut_slice()[snap.sector_idx as usize];
+                let v = self.market.mutate_vault(snap.sector_idx)?;
                 v.base_atoms = snap.base_before.into();
                 v.quote_atoms = snap.quote_before.into();
                 if snap.is_ask_side {
@@ -713,7 +715,7 @@ impl Swap {
             // failed-`min_out` taker, leaving subsequent legitimate
             // takers reading stale `remaining[*]`.
             for &sector_idx in &flushed_sectors {
-                let v = &mut self.market.as_mut_slice()[sector_idx as usize];
+                let v = self.market.mutate_vault(sector_idx)?;
                 let cur = v.reference_price.stamp.get();
                 v.reference_price.stamp = (cur | FLUSH_BIT).into();
             }
