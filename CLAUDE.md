@@ -73,6 +73,29 @@ issue from the branch (or the PR title scope) on that basis —
 delivered checklist items and moves it to In Review when the PR is
 ready.
 
+### Blocking relations
+
+When one issue genuinely depends on another, record it as a **native
+Linear relation**, not just prose. `save_issue` takes `blockedBy`
+(the `ENG-###`s that must land first) and `blocks` (the `ENG-###`s
+this one gates), both by identifier; they are **append-only** — they
+add edges and never clear existing ones, so use `removeBlockedBy` /
+`removeBlocks` to drop one. Recording a real edge keeps the blocker
+visible and prioritized so dependent work doesn't rot waiting on an
+upstream nobody remembers, and `stage-backlog` reads these edges and
+nests its dependency tree on them. Assert only a dependency you
+actually know to be real; omit it when unsure.
+
+`linear-task` sets these from a person's call. The **autonomous**
+auditors (`audit-scope`, `audit-loop`) work under a tighter rule:
+they may assert a relation **only on concrete evidence** that one
+finding's fix cannot land until another issue resolves (e.g. a nit
+that depends on an `arch:` proposal filed the same run), never a
+speculative "these feel related" edge. Mere coupling — work that
+belongs in *one PR* — is handled by combining into a single issue,
+not a relation. When the blocker is filed in the same run, file it
+first so its `ENG-###` exists, then reference it.
+
 ## Spelling (cspell)
 
 `cfg/dictionary.txt` is the **project-wide** spelling allow-list —
@@ -127,7 +150,13 @@ Concrete rules:
   `sed -n 'X,Yp'`, `awk 'NR>=X'`, `head`, or `tail`. Never shell out to
   `python3` / `node` / `jq` to read or edit JSON/config (including
   `.claude/settings.local.json`) — use Read + Edit/Write. Each such
-  one-liner is unique and re-prompts forever.
+  one-liner is unique and re-prompts forever. To find **over-length
+  lines** for the MD013 80-col rule, don't reach for
+  `awk 'length>80'` / `sed` either — run the markdownlint hook
+  (`pre-commit run markdownlint-fix … --files <path>`, with
+  `--config cfg/pre-commit-lint.yml`); it reports every MD013
+  violation with its line number and reduces to the existing
+  `Bash(pre-commit run:*)` rule.
 - One command per Bash call. Avoid `&&`, `;`, and pipes when separate
   calls work; a chained command can't be generalized into a glob and
   always re-prompts.

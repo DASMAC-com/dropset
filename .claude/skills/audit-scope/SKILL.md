@@ -212,9 +212,18 @@ Optional (ask on a direct run if not provided):
        state: "Backlog",
        title: "<file>: <imperative fix, no trailing period>",
        description: "<markdown body, literal newlines>",
-       priority: 3  // 2 for high-severity security
+       priority: 3,  // 2 for high-severity security
+       blockedBy: ["<ENG-###>"]  // omit unless a real dependency (see below)
      )
      ```
+
+     **Dependencies.** Set a `blockedBy` / `blocks`
+     edge per the **Blocking relations** brief in
+     `CLAUDE.md` (→ "Linear automation") — as an
+     autonomous filer, only on concrete evidence of a
+     real ordering dependency, never speculatively.
+     (Coupling that means *one PR* is the merged-issue
+     case in Notes, not a relation.)
 
      The body must let a cold agent act on it in its own
      worktree (literal newlines, not `\n`):

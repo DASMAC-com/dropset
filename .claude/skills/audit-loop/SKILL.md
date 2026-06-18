@@ -572,9 +572,21 @@ mcp__claude_ai_Linear__save_issue(
   title: "<file>: <imperative fix, no trailing period>",
   description: "<markdown body, literal newlines>",
   priority: 3,  // 2 for high-severity security
-  links: [{ url: "<pr-url>", title: "<pr-title>" }]  // PR mode only
+  links: [{ url: "<pr-url>", title: "<pr-title>" }],  // PR mode only
+  blockedBy: ["<ENG-###>"]  // omit unless a real dependency (see below)
 )
 ```
+
+**Dependencies.** Set a `blockedBy` / `blocks` edge per
+the **Blocking relations** brief in `CLAUDE.md`
+(→ "Linear automation") — autonomous, so only on
+concrete evidence, never speculatively, and coupling
+that belongs in **one PR** is the combined-issue case
+below, not a relation. One audit-loop-specific detail: a
+finding that carries a `blockedBy` is **not** "safe to
+fix in isolation", so drop that body line and replace it
+with `**Depends on**: <ENG-###> — <one line why>` so the
+description doesn't contradict the relation.
 
 **File obviously-coupled findings together up front.**
 If this iteration surfaced more than one finding that

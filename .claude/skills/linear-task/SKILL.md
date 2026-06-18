@@ -79,6 +79,13 @@ what to file.
      traces back to where the blocker surfaced. Get
      the PR URL with `gh pr view --json url -q .url`
      if one exists for the current branch.
+   - **Dependencies** — if this to-do depends on or
+     gates another issue, set the relation per the
+     **Blocking relations** brief in `CLAUDE.md`
+     (→ "Linear automation"): the `ENG-###`(s) that
+     **block** it and/or that it **blocks**. You're
+     judging by hand here, so use what you know of the
+     work; omit when unsure.
    - **Priority** — default to 3 (Medium). Bump to
      2 (High) only if the user calls it urgent.
 
@@ -94,7 +101,9 @@ what to file.
      title: "<title>",
      description: "<markdown body>",
      priority: 3,  // 2 if the user calls it urgent
-     links: [{ url: "<pr-url>", title: "<pr-title>" }]  // omit if no PR
+     links: [{ url: "<pr-url>", title: "<pr-title>" }],  // omit if no PR
+     blockedBy: ["<ENG-###>"],  // omit if none — must land first
+     blocks: ["<ENG-###>"]      // omit if none — this one gates them
    )
    ```
 
