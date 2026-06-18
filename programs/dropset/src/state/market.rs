@@ -227,12 +227,17 @@ impl Vault {
 
     /// True when this vault should participate in matching: occupied,
     /// not frozen, not tombstoned, and carrying a valid reference
-    /// price. Tombstoned vaults sit off the active DLL by construction
-    /// and frozen vaults are skipped from the first instruction after
-    /// the freeze lands (spec § Vault → Frozen and tombstoned vaults),
-    /// so the matching loop expresses that intent through this
-    /// predicate instead of re-deriving the frozen / empty / price
-    /// checks inline.
+    /// price (spec § Vault → Frozen and tombstoned vaults). The full
+    /// gate, for a caller holding a `&Vault` with no other guarantee
+    /// about its provenance.
+    ///
+    /// The matching loop does **not** call this: it walks the active
+    /// DLL, where occupancy and non-tombstoned status already hold by
+    /// construction (free-list and tombstoned sectors live on other
+    /// lists), so it inlines only the residual gate
+    /// `has_valid_reference_price() && !frozen` and stays zero-cost.
+    /// Reach for `is_matchable` from a cold path that has a bare sector
+    /// reference instead.
     #[inline(always)]
     pub fn is_matchable(&self) -> bool {
         self.is_occupied()
@@ -1160,6 +1165,24 @@ mod tests {
         assert!(!v.is_occupied());
         v.leader = [0x11; 32].into();
         assert!(v.is_occupied());
+    }
+
+    #[test]
+    fn has_valid_reference_price_rejects_sentinels_and_garbage() {
+        let mut v = Vault::zeroed();
+        // Accept: a constructed, finite, non-zero price.
+        v.reference_price.price = Price::from_value(1.0).unwrap();
+        assert!(v.has_valid_reference_price());
+        // Reject: the ZERO sentinel (valid encoding, but not a price).
+        v.reference_price.price = Price::from_bits(0);
+        assert!(!v.has_valid_reference_price());
+        // Reject: the INFINITY sentinel.
+        v.reference_price.price = Price::from_bits(u32::MAX);
+        assert!(!v.has_valid_reference_price());
+        // Reject: a non-sentinel with an out-of-range significand —
+        // `is_valid()` is false, so it never anchors a ladder.
+        v.reference_price.price = Price::from_bits(1);
+        assert!(!v.has_valid_reference_price());
     }
 
     #[test]
