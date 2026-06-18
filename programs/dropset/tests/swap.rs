@@ -258,7 +258,8 @@ fn taker_fee_retained_in_vault() {
     // strictly less base, and the difference stays in the vault.
     let run = |fee_ppm: u16| {
         let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
-        f.poke_taker_fee(fee_ppm);
+        let admin = f.authority.insecure_clone();
+        f.set_taker_fee(&admin, fee_ppm).expect("set taker fee");
         let taker = f.funded_depositor(0, 200_000);
         f.swap(&taker, 0, 100_000, Price::INFINITY.as_u32(), 1)
             .expect("swap");

@@ -15,6 +15,11 @@
 //!   the registry's fee ATA for the new mint (`init_if_needed`, admin
 //!   pays rent) so the fee destination provably exists the moment the
 //!   config is set — `CreateVault` loads that ATA but never creates it.
+//! * `set_taker_fee` — rewrite a market's taker fee (ppm, [`Ppm16`]),
+//!   read on the swap hot path. A market-wide knob, not per-vault, so it
+//!   takes no `vault_idx`. `Ppm16` is a `u16`, so the spec's "~6.55%"
+//!   cap is the type bound — no value can exceed it and no range check
+//!   is needed.
 //!
 //! Both authorize through the registry admin set — the same gate as
 //! `set_outside_deposits_approved` / `freeze_vault` — and emit a
@@ -36,7 +41,7 @@ use anchor_spl_v2::{
 
 use crate::{
     errors::DropsetError,
-    events::{SetMarketFeeConfigEvent, SetMinLeaderShareEvent},
+    events::{SetMarketFeeConfigEvent, SetMinLeaderShareEvent, SetTakerFeeEvent},
     state::Market,
     AdminSet, FeeConfig, Registry, PPM,
 };
@@ -181,6 +186,43 @@ impl SetMarketFeeConfig {
             mint,
             token_program,
             atoms,
+        })
+    }
+}
+
+#[event_cpi]
+#[derive(Accounts)]
+pub struct SetTakerFee {
+    /// Registry admin — the only signer this lever accepts.
+    pub admin: Signer,
+    /// Singleton registry, read for the admin-membership check.
+    #[account(seeds = [b"registry"], bump = registry.bump)]
+    pub registry: Registry,
+    /// Market whose `taker_fee` is being retuned. `mut` for the write.
+    #[account(mut)]
+    pub market: Market,
+}
+
+impl SetTakerFee {
+    /// Returns the [`SetTakerFeeEvent`] payload for `lib.rs` to dispatch
+    /// through `emit_cpi!`.
+    #[inline(always)]
+    pub fn set_taker_fee(&mut self, taker_fee: u16) -> Result<SetTakerFeeEvent> {
+        // Admin-only — same gate as `set_market_fee_config`. The registry
+        // account is PDA-pinned (`seeds = [b"registry"]`), so membership
+        // is checked against the canonical admin set.
+        require!(
+            self.registry.admin_contains(self.admin.address()),
+            DropsetError::Unauthorized
+        );
+        // No range check: `taker_fee` is a `u16` (`Ppm16`), so the spec's
+        // ~6.55% ceiling is the type's own max — unreachable to exceed.
+        let market_addr = *self.market.address();
+        self.market.taker_fee = taker_fee.into();
+
+        Ok(SetTakerFeeEvent {
+            market: market_addr,
+            taker_fee,
         })
     }
 }

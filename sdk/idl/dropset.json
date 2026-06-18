@@ -2000,6 +2000,187 @@
       ]
     },
     {
+      "name": "set_registry_defaults",
+      "discriminator": [
+        25
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "docs": [
+            "Registry admin — the only signer this lever accepts."
+          ],
+          "signer": true
+        },
+        {
+          "name": "registry",
+          "docs": [
+            "Singleton registry. `mut` for the default writes; also read for",
+            "the admin-membership check."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "event_authority",
+          "docs": [
+            "CHECK: Only the event authority can invoke self-CPI"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "docs": [
+            "CHECK: Kept for v1-compatible account ordering and IDL shape"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "taker_fee",
+          "type": {
+            "option": "u16"
+          }
+        },
+        {
+          "name": "min_leader_share",
+          "type": {
+            "option": "u32"
+          }
+        }
+      ]
+    },
+    {
+      "name": "set_taker_fee",
+      "discriminator": [
+        24
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "docs": [
+            "Registry admin — the only signer this lever accepts."
+          ],
+          "signer": true
+        },
+        {
+          "name": "registry",
+          "docs": [
+            "Singleton registry, read for the admin-membership check."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "market",
+          "docs": [
+            "Market whose `taker_fee` is being retuned. `mut` for the write."
+          ],
+          "writable": true
+        },
+        {
+          "name": "event_authority",
+          "docs": [
+            "CHECK: Only the event authority can invoke self-CPI"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "docs": [
+            "CHECK: Kept for v1-compatible account ordering and IDL shape"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "taker_fee",
+          "type": "u16"
+        }
+      ]
+    },
+    {
       "name": "swap",
       "discriminator": [
         9
@@ -2556,6 +2737,32 @@
         131,
         179,
         105
+      ]
+    },
+    {
+      "name": "SetRegistryDefaultsEvent",
+      "discriminator": [
+        138,
+        35,
+        107,
+        189,
+        236,
+        175,
+        31,
+        9
+      ]
+    },
+    {
+      "name": "SetTakerFeeEvent",
+      "discriminator": [
+        175,
+        232,
+        242,
+        29,
+        241,
+        48,
+        172,
+        41
       ]
     },
     {
@@ -3457,6 +3664,52 @@
           {
             "name": "min_leader_share",
             "type": "u32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SetRegistryDefaultsEvent",
+      "docs": [
+        "Emitted by `set_registry_defaults` when an admin retunes the",
+        "registry-wide defaults stamped onto *future* markets. Carries the",
+        "resulting values of every default the instruction can touch — not",
+        "just the fields changed on this call — so an indexer sees the full",
+        "post-update default set regardless of which `Option`s were supplied.",
+        "Existing markets are unaffected. See the spec's **SetRegistryDefaults**."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "default_taker_fee",
+            "type": "u16"
+          },
+          {
+            "name": "default_min_leader_share",
+            "type": "u32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SetTakerFeeEvent",
+      "docs": [
+        "Emitted by `set_taker_fee` when an admin retunes a market's taker",
+        "fee (ppm, [`crate::Ppm16`]) after creation. The fee is read on the",
+        "swap hot path; this is the only lever that moves it post-`create_market`.",
+        "See the spec's **SetTakerFee**."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "taker_fee",
+            "type": "u16"
           }
         ]
       }

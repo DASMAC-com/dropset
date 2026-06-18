@@ -69,6 +69,28 @@ pub struct SetMarketFeeConfigEvent {
     pub atoms: u64,
 }
 
+/// Emitted by `set_taker_fee` when an admin retunes a market's taker
+/// fee (ppm, [`crate::Ppm16`]) after creation. The fee is read on the
+/// swap hot path; this is the only lever that moves it post-`create_market`.
+/// See the spec's **SetTakerFee**.
+#[event]
+pub struct SetTakerFeeEvent {
+    pub market: Address,
+    pub taker_fee: u16,
+}
+
+/// Emitted by `set_registry_defaults` when an admin retunes the
+/// registry-wide defaults stamped onto *future* markets. Carries the
+/// resulting values of every default the instruction can touch — not
+/// just the fields changed on this call — so an indexer sees the full
+/// post-update default set regardless of which `Option`s were supplied.
+/// Existing markets are unaffected. See the spec's **SetRegistryDefaults**.
+#[event]
+pub struct SetRegistryDefaultsEvent {
+    pub default_taker_fee: u16,
+    pub default_min_leader_share: u32,
+}
+
 /// Emitted by `deposit` after share accounting + basis math.
 #[event]
 pub struct DepositEvent {

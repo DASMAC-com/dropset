@@ -14,8 +14,8 @@
 //! (`min_leader_share` → [`Fixture::set_min_leader_share`], `frozen` →
 //! [`Fixture::freeze_vault`]); the pokes stay for the cases that still
 //! need an out-of-band write — e.g. arming `min_leader_share` to an
-//! arbitrary value without exercising the admin gate, or `taker_fee`,
-//! which has no setter.
+//! arbitrary value without exercising the admin gate. `taker_fee` now
+//! has a real lever ([`Fixture::set_taker_fee`]), so its poke is gone.
 
 #![allow(dead_code)]
 
@@ -38,7 +38,8 @@ use dropset::{
         SetLiquidityProfile as SetLiquidityProfileIx, SetMarketFeeConfig as SetMarketFeeConfigIx,
         SetMinLeaderShare as SetMinLeaderShareIx,
         SetOutsideDepositsApproved as SetOutsideDepositsApprovedIx,
-        SetReferencePrice as SetReferencePriceIx, Swap as SwapIx, Withdraw as WithdrawIx,
+        SetReferencePrice as SetReferencePriceIx, SetRegistryDefaults as SetRegistryDefaultsIx,
+        SetTakerFee as SetTakerFeeIx, Swap as SwapIx, Withdraw as WithdrawIx,
         WithdrawLeader as WithdrawLeaderIx,
     },
     Level, LiquidityProfile, MarketHeader, Price, RegistryHeader, Vault, VaultDepositorHeader,
@@ -671,6 +672,71 @@ impl Fixture {
         send_ixn_meta(&mut self.svm, admin, ix)
     }
 
+    /// `set_taker_fee` — admin retunes the market's taker fee (ppm,
+    /// `Ppm16`). The real instruction that replaces the old
+    /// `poke_taker_fee` out-of-band write.
+    pub fn set_taker_fee(&mut self, admin: &Keypair, taker_fee: u16) -> Result<(), String> {
+        self.set_taker_fee_meta(admin, taker_fee).map(|_| ())
+    }
+
+    /// Like [`Self::set_taker_fee`] but yields the transaction metadata so
+    /// a test can decode the emitted `SetTakerFeeEvent`.
+    pub fn set_taker_fee_meta(
+        &mut self,
+        admin: &Keypair,
+        taker_fee: u16,
+    ) -> Result<TransactionMetadata, String> {
+        let ix = Instruction::new_with_bytes(
+            PROGRAM_ID,
+            &SetTakerFeeIx { taker_fee }.data(),
+            vec![
+                AccountMeta::new_readonly(admin.pubkey(), true),
+                AccountMeta::new_readonly(self.registry, false),
+                AccountMeta::new(self.market, false),
+                AccountMeta::new_readonly(event_authority(), false),
+                AccountMeta::new_readonly(PROGRAM_ID, false),
+            ],
+        );
+        send_ixn_meta(&mut self.svm, admin, ix)
+    }
+
+    /// `set_registry_defaults` — admin retunes the registry-wide scalar
+    /// defaults future markets inherit. `None` leaves a field untouched.
+    pub fn set_registry_defaults(
+        &mut self,
+        admin: &Keypair,
+        taker_fee: Option<u16>,
+        min_leader_share: Option<u32>,
+    ) -> Result<(), String> {
+        self.set_registry_defaults_meta(admin, taker_fee, min_leader_share)
+            .map(|_| ())
+    }
+
+    /// Like [`Self::set_registry_defaults`] but yields the transaction
+    /// metadata so a test can decode the emitted `SetRegistryDefaultsEvent`.
+    pub fn set_registry_defaults_meta(
+        &mut self,
+        admin: &Keypair,
+        taker_fee: Option<u16>,
+        min_leader_share: Option<u32>,
+    ) -> Result<TransactionMetadata, String> {
+        let ix = Instruction::new_with_bytes(
+            PROGRAM_ID,
+            &SetRegistryDefaultsIx {
+                taker_fee,
+                min_leader_share,
+            }
+            .data(),
+            vec![
+                AccountMeta::new_readonly(admin.pubkey(), true),
+                AccountMeta::new(self.registry, false),
+                AccountMeta::new_readonly(event_authority(), false),
+                AccountMeta::new_readonly(PROGRAM_ID, false),
+            ],
+        );
+        send_ixn_meta(&mut self.svm, admin, ix)
+    }
+
     /// Leader seed / top-up. Creates + funds the leader's ATAs for the
     /// requested legs first, then sends `deposit_leader` as `authority`.
     pub fn deposit_leader(
@@ -1262,6 +1328,16 @@ impl Fixture {
         .get()
     }
 
+    /// Full [`RegistryHeader`] — for asserting the stamped defaults
+    /// (`default_taker_fee`, `default_min_leader_share`) after a
+    /// `set_registry_defaults` call.
+    pub fn registry_header(&self) -> RegistryHeader {
+        let acct = self.svm.get_account(&self.registry).expect("registry");
+        bytemuck::pod_read_unaligned::<RegistryHeader>(
+            &acct.data[8..8 + core::mem::size_of::<RegistryHeader>()],
+        )
+    }
+
     pub fn market_header(&self) -> MarketHeader {
         let acct = self.svm.get_account(&self.market).expect("market");
         bytemuck::pod_read_unaligned::<MarketHeader>(
@@ -1369,16 +1445,6 @@ impl Fixture {
             core::mem::offset_of!(Vault, hwm),
             &hwm.to_le_bytes(),
         );
-    }
-
-    /// Set `MarketHeader.taker_fee` directly — `taker_fee` has no admin
-    /// setter (`SetMarketFeeConfig` retunes the create-vault `fee_config`,
-    /// a separate field), so this poke is the only way to arm it.
-    pub fn poke_taker_fee(&mut self, fee_ppm: u16) {
-        let mut acct = self.svm.get_account(&self.market).expect("market");
-        let off = 8 + core::mem::offset_of!(MarketHeader, taker_fee);
-        acct.data[off..off + 2].copy_from_slice(&fee_ppm.to_le_bytes());
-        self.svm.set_account(self.market, acct).expect("set market");
     }
 
     /// Set `MarketHeader.nonce` directly. The nonce only advances one

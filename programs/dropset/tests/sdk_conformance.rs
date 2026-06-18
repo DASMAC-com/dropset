@@ -341,7 +341,8 @@ fn sdk_simulate_swap_with_taker_fee() {
     // from the market header and must net it out exactly as the engine does
     // (the realized base delta is already net of the retained fee).
     let mut f = Fixture::seeded(10_000_000, 10_000_000);
-    f.poke_taker_fee(1_000); // 0.1%
+    let admin = f.authority.insecure_clone();
+    f.set_taker_fee(&admin, 1_000).expect("set taker fee"); // 0.1%
     let taker = f.funded_depositor(0, 2_000_000);
 
     let q = predict_and_execute(&mut f, &taker, SwapSide::Buy, 1_000_000, Price::INFINITY, 1);

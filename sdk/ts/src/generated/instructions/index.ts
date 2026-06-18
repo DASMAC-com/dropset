@@ -27,6 +27,8 @@ export * from './setMarketFeeConfig';
 export * from './setMinLeaderShare';
 export * from './setOutsideDepositsApproved';
 export * from './setReferencePrice';
+export * from './setRegistryDefaults';
+export * from './setTakerFee';
 export * from './swap';
 export * from './withdraw';
 export * from './withdrawLeader';
