@@ -365,9 +365,28 @@ passes `doc propose-only`; a bare `doc` is attended.
    edits on write-back.
 
 1. **Find the work.** Collect every **unchecked**
-   (`- [ ]`) entry. Skip ticked (`- [x]`) ones — they're
-   already disposed — **except** to detect a contest
-   (below). For each unchecked entry, extract the actual
+   (`- [ ]`) entry; ticked (`- [x]`) ones are already
+   disposed, so skip them. Then triage each unchecked
+   entry by the disposition note (if any) a prior pass
+   left under it — this is what makes the loop converge
+   instead of re-firming the same rules forever:
+
+   - **No disposition note** → fresh work; adjudicate it
+     below.
+   - **`✓ firmed: <rule>`** (an attended firm that Alex
+     re-opened) → a **contest**; handle it per **The
+     contest protocol** below (attended reverts the
+     rule; propose-only skips).
+   - **`⚠ contested — reverted …`** → held for Alex;
+     skip it until he edits the entry (see the contest
+     protocol).
+   - **`recommend firm: …`** or **`⚠ can't firm: …`** (a
+     prior propose-only recommendation) → an attended
+     run executes the recommendation (firm it / confirm
+     the filed task); propose-only skips it as already
+     handled.
+
+   For each entry you do adjudicate, extract the actual
    command from its fenced block: ignore the prompt
    chrome — the `Bash command` header, the description
    line, the `Do you want to proceed?` prompt, and its
@@ -413,7 +432,7 @@ passes `doc propose-only`; a bare `doc` is attended.
    - **Attended (`doc`)**: fold the firmable rules into
      the working set and run them through the normal
      **propose → confirm → write-both-files** flow
-     (steps 5–7 above) — the base-repo write still waits
+     (steps 5–6 above) — the base-repo write still waits
      for your go-ahead. For malformed entries, file the
      source-fix task (below). Then **write the doc back**
      (next step): tick each disposed item and replace its
@@ -426,10 +445,14 @@ passes `doc propose-only`; a bare `doc` is attended.
      task (filing a task is proposing a fix, not widening
      settings — it's allowed unattended). Leave the
      checkbox unchecked so the attended run still sees it
-     as work, but skip any item already carrying a
-     `recommend:`/`filed`/`firmed` note so a 30-minute
-     loop doesn't re-annotate or re-file what it handled
-     last pass.
+     as work, but skip any item that already carries a
+     disposition note — one whose nested line begins with
+     `recommend firm:`, `✓ firmed:`, `⚠ can't firm:`, or
+     `⚠ contested —` — so a 30-minute loop doesn't
+     re-annotate or re-file what it (or an attended run)
+     already handled. Match the actual lead markers the
+     write-back step emits, not a paraphrase, so the skip
+     reliably fires.
 
 1. **Filing a source-fix task** (malformed entries).
    Use the same env-resolved destination as
@@ -507,11 +530,23 @@ reverse one. The protocol uses the checkbox he can see:
   rule from **both** `settings.local.json` copies
   (worktree + base), then replace the note with a
   `⚠ contested — reverted <rule>; needs re-handling`
-  note and leave the item unchecked for
-  re-adjudication. Don't simply re-firm it — that would
-  loop against Alex's objection.
+  note and leave the item unchecked.
+- That `⚠ contested — reverted` note then **holds the
+  item for Alex** — it is *not* fresh work. Don't
+  re-adjudicate or re-firm a contested item on a later
+  pass; that would just re-fire the rule Alex rejected
+  and loop. The item only re-enters adjudication once
+  Alex acts on it: he rewrites the command, deletes the
+  note, or removes the entry. Until then, skip it (the
+  step-3 "find the work" pass excludes it).
 
-Propose-only (housekeeping) never reverts settings; if
-it sees a contested item it just leaves it for the
-attended run, the same as any other unchecked entry it
-has already annotated.
+So an unchecked item resolves unambiguously by its
+note: a `✓ firmed:` note means *contest → revert*; a
+`⚠ contested — reverted` note means *held, skip*; no
+disposition note means *fresh work → adjudicate*.
+
+Propose-only (housekeeping) never reverts settings and
+never re-handles a contested item; it just leaves any
+already-noted entry for the attended run, exactly as
+its skip rule (step "apply the disposition") already
+provides.
