@@ -60,7 +60,9 @@ impl SetAllowOutsideDepositors {
             );
         }
 
-        self.market.mutate_vault(vault_idx)?.allow_outside_depositors = flag.into();
+        self.market
+            .mutate_vault(vault_idx)?
+            .allow_outside_depositors = flag.into();
         Ok(())
     }
 }
@@ -95,7 +97,9 @@ impl SetOutsideDepositsApproved {
             DropsetError::VaultEmpty
         );
 
-        self.market.mutate_vault(vault_idx)?.outside_deposits_approved = flag.into();
+        self.market
+            .mutate_vault(vault_idx)?
+            .outside_deposits_approved = flag.into();
         Ok(())
     }
 }
