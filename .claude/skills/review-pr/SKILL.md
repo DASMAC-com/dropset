@@ -468,9 +468,11 @@ server exposes no auto-merge tool. This repo is
    clean — but `main` can advance again during a
    long review, so confirm rather than assume. Fetch
    the latest base, then ask GitHub via
-   `mcp__github__pull_request_read` (`method: "get"`),
-   which returns the REST `mergeable` flag (a tri-state
-   boolean) and `mergeable_state`:
+   `mcp__github__pull_request_read` (`method: "get"`).
+   Key the decision on **`mergeable_state`** — the `get`
+   response leads with it, and the tri-state `mergeable`
+   boolean is often absent until GitHub has computed it,
+   so don't rely on `mergeable` being present:
 
    ```sh
    git fetch origin main
@@ -485,18 +487,22 @@ server exposes no auto-merge tool. This repo is
    )
    ```
 
-   - `mergeable: true` → no conflicts; proceed to the
-     gate.
-   - `mergeable: false` → the PR has merge conflicts
-     (`mergeable_state: "dirty"`). Catalogue this as a
-     **blocking** issue and do **not** mark the PR ready.
-     Tell the user to rebase onto `main` and resolve the
-     conflicts (this skill does not auto-resolve them),
-     then re-run `/review-pr`.
-   - `mergeable: null` → GitHub has not finished
-     computing mergeability yet. Wait a few seconds
-     and re-run the `get` call until it resolves to
-     `true` or `false`.
+   - `mergeable_state: "dirty"` → the PR has merge
+     conflicts. Catalogue this as a **blocking** issue and
+     do **not** mark the PR ready. Tell the user to rebase
+     onto `main` and resolve the conflicts (this skill does
+     not auto-resolve them), then re-run `/review-pr`.
+   - `mergeable_state: "unknown"` → GitHub hasn't finished
+     computing mergeability yet. Wait a few seconds and
+     re-run the `get` call until it settles.
+   - any other value (`clean`, `blocked`, `behind`,
+     `unstable`, `has_hooks`) → **no merge conflict** —
+     proceed to the gate. `blocked` / `unstable` just mean
+     branch protection, the required checks, or human
+     review haven't cleared yet (expected for a draft PR
+     mid-review); `behind` means `main` moved (the step-1
+     rebase already handled it). None of these are a
+     conflict, and the gate + CI wait below cover them.
 
 1. **Gate.** Mark the PR ready only when **every**
    local CI-mirroring check is green: **zero blocking
@@ -510,8 +516,9 @@ server exposes no auto-merge tool. This repo is
    clients, conformance vectors), `make test` and
    `make test-no-teardown` pass (or are honestly
    reported as unverifiable locally), the title
-   passes `Semantic PR`, and `mergeable` is `true`. Take
-   the PR out of draft with
+   passes `Semantic PR`, and `mergeable_state` is not
+   `dirty` (no merge conflict). Take the PR out of draft
+   with
    `mcp__github__update_pull_request` (`draft: false`):
 
    ```txt
@@ -727,8 +734,8 @@ server exposes no auto-merge tool. This repo is
      `make test-no-teardown` — pass, fail, or
      unverified locally (toolchain absent).
    - Title status: passes `Semantic PR` or not.
-   - Merge status: `mergeable` true (clean) or false
-     (conflicting).
+   - Merge status: `mergeable_state` — `dirty`
+     (conflicting) vs. any non-`dirty` value (no conflict).
    - CI status: all GitHub checks green, or each failed
      check with its log URL, or "no checks" / still
      pending — the run is **not** finished until CI is
