@@ -44,8 +44,7 @@ takes `owner: "DASMAC-com"`, `repo: "dropset"`.
    style. `list_pull_requests` has no "merged" filter, so
    list **closed** PRs newest-first and take the first
    three with a non-null `merged_at` (a closed-unmerged PR
-   has `merged_at: null`); the list response carries each
-   PR's `title` and `body`:
+   has `merged_at: null`):
 
    ```txt
    mcp__github__list_pull_requests(
@@ -54,6 +53,19 @@ takes `owner: "DASMAC-com"`, `repo: "dropset"`.
      state: "closed",
      sort: "updated",
      direction: "desc",
+   )
+   ```
+
+   The list response gives each PR's `number` and `title`
+   but **not** its `body`, so fetch the body for each of
+   the three with `pull_request_read` (`method: "get"`):
+
+   ```txt
+   mcp__github__pull_request_read(
+     owner: "DASMAC-com",
+     repo: "dropset",
+     pullNumber: <number>,
+     method: "get",
    )
    ```
 

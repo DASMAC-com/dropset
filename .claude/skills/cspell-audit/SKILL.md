@@ -165,6 +165,15 @@ matching entries (still report the rest).
    / module header). A file whose escapes are already a
    clean top block is fine — leave it untouched.
 
+   One carve-out: a file that **documents** the
+   `cspell:word` convention (this skill, `CLAUDE.md`'s
+   spelling section) carries example directives inside
+   fenced code blocks. cspell honors those — that's why
+   the example words don't trip the spell check — but they
+   are illustrations, not the file's escape block. Don't
+   flag a file as mis-placed for example directives shown
+   inside a fence; judge only the real top-of-file block.
+
 1. **Act by mode.**
 
    - **Direct run (default):** apply both reconciliations.

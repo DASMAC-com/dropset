@@ -657,16 +657,20 @@ server exposes no auto-merge tool. This repo is
      Then watch whether it stays queued or gets kicked
      out, polling `mcp__github__pull_request_read`
      (`method: "get"`) about every 30 seconds (resumable,
-     like the CI wait):
+     like the CI wait). First confirm the enqueue took —
+     wait for `auto_merge` to read non-null at least once
+     (it can lag a poll or two behind the `gh` call) — then
+     watch for the outcome:
 
      - `merged_at` set / `state: "closed"` → it landed;
        report the merge.
-     - `auto_merge: null` while still `open` → it was
+     - `auto_merge` flips back to `null` while still
+       `open` (after having been non-null) → it was
        **taken out** of the queue (a required check went
        red on the queue branch, a conflict appeared, or
        someone dequeued it). Report that it was removed,
-       and name the cause from a fresh
-       `get_check_runs` if a check failed.
+       and name the cause from a fresh `get_check_runs` if
+       a check failed.
      - `auto_merge` non-null and still `open` → still
        queued; keep polling.
 
