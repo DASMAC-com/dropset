@@ -199,15 +199,15 @@ inline escapes go together in a single block at the very top, never
 scattered beside each usage. The block's shape depends on the comment
 style: in **line-comment** files (Rust / TS / JS `//`, YAML / TOML /
 shell `#`) it's one directive per word, one word per line, on
-consecutive lines with no blank lines between; in **Markdown**,
-mdformat forces a blank line between adjacent HTML comments, so use a
-**single** `<!-- cspell:word w1 w2 … -->` comment with every word
-space-separated on one line — that one comment *is* the block. "Top"
-means the first line, except where syntax forces something else to
-lead: after a `---` YAML frontmatter block, after a `#!` shebang, or
-after a leading module doc-comment / inner-attribute header. One known
-place means a reader — and the audit — finds every escape at a glance
-instead of hunting the file.
+consecutive lines with no blank lines between; in **Markdown**, one per
+line doesn't work — mdformat puts a blank line between adjacent HTML
+comments — so pack the words into as few `<!-- cspell:word … -->`
+comments as fit within the 80-col limit, spilling to a second only when
+a line would overflow. "Top" means the first line, except where syntax
+forces something else to lead: after a `---` YAML frontmatter block,
+after a `#!` shebang, or after a leading module doc-comment /
+inner-attribute header. One known place means a reader — and the
+audit — finds every escape at a glance instead of hunting the file.
 
 The `cspell-audit` skill reconciles the dictionary against actual usage
 **and** normalizes escape placement on this rule; run it when the

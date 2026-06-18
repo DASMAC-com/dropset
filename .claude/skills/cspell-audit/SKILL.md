@@ -19,11 +19,11 @@ escapes tidy. The skill enforces two rules:
    global list. This skill audits the dictionary against
    actual usage and reconciles the two.
 1. **Escape placement.** Every file's inline
-   `cspell:word` escapes must sit in **one contiguous
-   block at the top** of the file — not scattered beside
-   each usage, not split by blank lines. The skill
-   normalizes any file whose escapes have drifted from
-   that shape.
+   `cspell:word` escapes must sit in **one block at the
+   top** of the file — gathered together, not scattered
+   beside each usage. The block's exact shape depends on
+   the comment style (see "Placement" below); the skill
+   normalizes any file whose escapes have drifted from it.
 
 ## The policy
 
@@ -78,11 +78,14 @@ style:
   // cspell:word noninteractive
   ```
 
-- **Markdown** (`<!-- … -->`): mdformat inserts a blank
-  line between adjacent HTML comments, which would break a
-  multi-line block, so use a **single** comment with every
-  word space-separated on one line — that one comment
-  *is* the block:
+- **Markdown** (`<!-- … -->`): one per line doesn't work
+  here — mdformat inserts a blank line between adjacent
+  HTML comments, so separate comments would sprawl. Pack
+  the words instead: as many space-separated words per
+  `<!-- cspell:word … -->` comment as fit within the
+  MD013 80-col limit, spilling to a second comment only
+  when the line would overflow. One comment is ideal; a
+  few packed comments at the top still count as the block:
 
   ```txt
   <!-- cspell:word oneline unstarted -->
@@ -151,16 +154,16 @@ matching entries (still report the rest).
    ```
 
    Read each hit and flag it as **mis-placed** when its
-   escapes aren't already the single top block its comment
-   style calls for (per "Placement" above): escapes
-   scattered beside their usages, a line-comment block
-   split by blank lines or packing several words on one
-   line, a Markdown file using several `<!-- … -->`
-   comments instead of one combined comment, or the block
-   sitting below the first position syntax allows
-   (frontmatter / shebang / module header). A file whose
-   escapes are already a clean top block is fine — leave
-   it untouched.
+   escapes aren't already the top block its comment style
+   calls for (per "Placement" above): escapes scattered
+   beside their usages rather than gathered at the top, a
+   line-comment block split by blank lines or packing
+   several words on one line, a Markdown file whose
+   packed comments could be tightened (more comments than
+   the 80-col limit requires), or the block sitting below
+   the first position syntax allows (frontmatter / shebang
+   / module header). A file whose escapes are already a
+   clean top block is fine — leave it untouched.
 
 1. **Act by mode.**
 
@@ -172,12 +175,12 @@ matching entries (still report the rest).
      *dead* word, Edit `cfg/dictionary.txt` to drop the
      line (removing lines preserves the file's existing
      alphabetical order). For each **mis-placed** file,
-     Edit it to gather its escapes into one top block in
+     Edit it to gather its escapes into the top block in
      the file's comment style (one word per line for
-     line-comment files; a single combined `<!-- … -->`
-     for Markdown), removing the old scattered copies. If
-     the plan is large, show it to the
-     user before applying.
+     line-comment files; packed `<!-- … -->` comments,
+     ≤ 80 cols each, for Markdown), removing the old
+     scattered copies. If the plan is large, show it to
+     the user before applying.
    - **Delegated run (`housekeeping`):** edit **nothing**.
      Return the violations — for a dictionary word: the
      word, file count, sole file, and recommended action;
