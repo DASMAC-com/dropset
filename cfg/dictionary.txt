@@ -52,7 +52,6 @@ macropod
 metas
 multisigs
 mxne
-ohlcv
 paytrie
 pdas
 permissionless

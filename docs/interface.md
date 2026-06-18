@@ -1,4 +1,4 @@
-<!-- cspell:word birdeye rollups -->
+<!-- cspell:word birdeye ohlcv rollups -->
 
 # Dropset Interface Spec
 

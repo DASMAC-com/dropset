@@ -1,6 +1,5 @@
-"use client";
-
 // cspell:word jito
+"use client";
 
 import type { SolanaClientRuntime, WalletSession } from "@solana/client";
 import {
