@@ -1271,22 +1271,38 @@ impl Fixture {
         send_ixn(&mut self.svm, admin, ix)
     }
 
-    /// `close_registry_fee_vault` — close the registry fee ATA, refunding
-    /// rent to `rent_recipient`.
+    /// `close_registry_fee_vault` — close the bootstrap default registry
+    /// fee ATA, refunding rent to `rent_recipient`.
     pub fn close_registry_fee_vault(
         &mut self,
         admin: &Keypair,
         rent_recipient: &Pubkey,
     ) -> Result<(), String> {
+        let fee_mint = self.fee_mint;
+        self.close_registry_fee_vault_for(admin, &fee_mint, &SPL_TOKEN_PROGRAM_ID, rent_recipient)
+    }
+
+    /// Like [`Self::close_registry_fee_vault`] but closes the fee ATA for
+    /// an explicit `(fee_mint, fee_token_program)` — the teardown sweep
+    /// case, where a market re-pointed via `set_market_fee_config` leaves
+    /// a second registry fee ATA to reclaim beyond the bootstrap default.
+    pub fn close_registry_fee_vault_for(
+        &mut self,
+        admin: &Keypair,
+        fee_mint: &Pubkey,
+        fee_token_program: &Pubkey,
+        rent_recipient: &Pubkey,
+    ) -> Result<(), String> {
+        let fee_vault = associated_token_address(&self.registry, fee_mint, fee_token_program);
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
             &CloseRegistryFeeVaultIx {}.data(),
             vec![
                 AccountMeta::new_readonly(admin.pubkey(), true),
                 AccountMeta::new_readonly(self.registry, false),
-                AccountMeta::new_readonly(self.fee_mint, false),
-                AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
-                AccountMeta::new(self.registry_fee_treasury, false),
+                AccountMeta::new_readonly(*fee_mint, false),
+                AccountMeta::new_readonly(*fee_token_program, false),
+                AccountMeta::new(fee_vault, false),
                 AccountMeta::new(*rent_recipient, false),
             ],
         );

@@ -194,6 +194,66 @@ fn full_buildup_teardown_reclaims_all_rent() {
     assert!(f.vault_depositor(0, &alice.pubkey()).is_none());
 }
 
+/// The teardown fee sweep must close *every* historical fee mint's ATA,
+/// not just the bootstrap default. ENG-508 (PR #111) made
+/// `set_market_fee_config` create a registry fee ATA per fee mint via
+/// `init_if_needed`, so re-pointing a market at a fresh mint leaves the
+/// registry holding a *second* fee ATA — exactly the case the sweep doc
+/// comment in `retune.rs` (and the spec's *Account lifecycle and rent
+/// reclamation*) promises is covered. This drives it end-to-end:
+/// re-point the market, then close *both* fee ATAs via
+/// `close_registry_fee_vault`.
+#[test]
+fn teardown_sweeps_every_historical_fee_mint() {
+    let mut f = Fixture::bootstrap();
+    let admin = f.authority.insecure_clone();
+    let rr = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS).pubkey();
+
+    // The bootstrap default fee ATA, created at `init`.
+    let default_fee_vault = f.registry_fee_treasury;
+    assert!(exists(&f.svm, &default_fee_vault), "bootstrap fee ATA live");
+
+    // Re-point the market at a fresh fee mint. `set_market_fee_config`
+    // eagerly creates the matching registry fee ATA (`init_if_needed`),
+    // so the registry now holds *two* fee ATAs — the multi-mint shape the
+    // sweep has to handle.
+    let new_mint = common::create_spl_mint(&mut f.svm, &admin);
+    f.set_market_fee_config(&admin, &new_mint, &common::SPL_TOKEN_PROGRAM_ID, 42_000)
+        .expect("admin re-points the market fee at a fresh mint");
+    let new_fee_vault =
+        common::associated_token_address(&f.registry, &new_mint, &common::SPL_TOKEN_PROGRAM_ID);
+    assert!(exists(&f.svm, &new_fee_vault), "second fee ATA created");
+    assert_ne!(
+        default_fee_vault, new_fee_vault,
+        "the re-point yields a distinct second fee ATA"
+    );
+
+    // Every build-up call was admin-signed, so the open fee was waived and
+    // both fee vaults are empty — the close pre-condition holds for each.
+    assert_eq!(f.token_balance(&default_fee_vault), 0);
+    assert_eq!(f.token_balance(&new_fee_vault), 0);
+
+    // ── The sweep: close *both* historical fee ATAs ──────────────────
+    let rr_before = lamports(&f.svm, &rr);
+    f.close_registry_fee_vault(&admin, &rr)
+        .expect("close the bootstrap default fee ATA");
+    f.close_registry_fee_vault_for(&admin, &new_mint, &common::SPL_TOKEN_PROGRAM_ID, &rr)
+        .expect("close the re-pointed mint's fee ATA");
+
+    assert!(
+        !exists(&f.svm, &default_fee_vault),
+        "default fee ATA closed by the sweep"
+    );
+    assert!(
+        !exists(&f.svm, &new_fee_vault),
+        "re-pointed mint's fee ATA closed by the sweep"
+    );
+    assert!(
+        lamports(&f.svm, &rr) > rr_before,
+        "both fee ATAs' rent landed with the operator"
+    );
+}
+
 /// A non-empty treasury cannot be closed — the rent reclamation order
 /// requires draining (force-withdraw) first.
 #[test]
