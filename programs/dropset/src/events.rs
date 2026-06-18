@@ -69,6 +69,21 @@ pub struct SetMarketFeeConfigEvent {
     pub atoms: u64,
 }
 
+/// Emitted by `set_default_fee_config` when an admin retunes the
+/// registry's `default_fee_config` — the create-vault fee future markets
+/// inherit at `create_market`. Load-bearing for teardown for the same
+/// reason as [`SetMarketFeeConfigEvent`]: this lever creates a fresh
+/// registry fee ATA for the new mint, so the off-chain historical-fee-mint
+/// set the admin sweeps at teardown is reconstructed from these events
+/// alongside `SetMarketFeeConfig`'s. See the spec's **SetDefaultFeeConfig**
+/// and **Account lifecycle and rent reclamation**.
+#[event]
+pub struct SetDefaultFeeConfigEvent {
+    pub mint: Address,
+    pub token_program: Address,
+    pub atoms: u64,
+}
+
 /// Emitted by `set_taker_fee` when an admin retunes a market's taker
 /// fee (ppm, [`crate::Ppm16`]) after creation. The fee is read on the
 /// swap hot path; this is the only lever that moves it post-`create_market`.

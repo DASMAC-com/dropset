@@ -332,8 +332,8 @@ pub mod dropset {
     // teardown surface so discriminants 0–21 keep their numbers: clients
     // key instructions on the discriminant, so inserting mid-list would
     // break every existing client. See the architecture spec,
-    // § SetMinLeaderShare, § SetMarketFeeConfig, § SetTakerFee, and
-    // § SetRegistryDefaults.
+    // § SetMinLeaderShare, § SetMarketFeeConfig, § SetTakerFee,
+    // § SetRegistryDefaults, and § SetDefaultFeeConfig.
 
     #[discrim = 22]
     pub fn set_min_leader_share(
@@ -371,6 +371,16 @@ pub mod dropset {
         let event = ctx
             .accounts
             .set_registry_defaults(taker_fee, min_leader_share)?;
+        emit_cpi!(event);
+        Ok(())
+    }
+
+    #[discrim = 26]
+    pub fn set_default_fee_config(
+        ctx: &mut Context<SetDefaultFeeConfig>,
+        atoms: u64,
+    ) -> Result<()> {
+        let event = ctx.accounts.set_default_fee_config(atoms)?;
         emit_cpi!(event);
         Ok(())
     }
