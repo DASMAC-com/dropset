@@ -273,7 +273,23 @@ re-prompt every run. Pass the drafted dependency tree,
 each issue's files, **and each issue's declared
 `blockedBy` / `blocks` edges** (step 1), **inline** in the
 prompt (as the brief requires), so it never shells out to
-re-fetch them. Tell it to hunt for:
+re-fetch them.
+
+**Narrow the scope on top of the brief.** The skeptic
+reasons about the *grouping* — file-overlap and dependency
+edges — and everything it needs is inline, so it should
+**not** go discovering repos or scanning source. The brief
+permits ranging over other paths; this cross-check does not
+need it. Tell the agent plainly: do **not** locate sibling
+repos or read source to "confirm" a path exists — judge the
+grouping from the inline tree, file lists, and edges. In the
+rare case it genuinely must check a path or a symbol, use the
+**Glob** tool to locate a file and the **Grep** tool to
+search its contents — one bare command each, never `ls`,
+`find`, `ls | grep`, or a bash `grep` (the exact compounds a
+prior run leaked, which can't reduce to an allow-rule).
+
+Tell it to hunt for:
 
 - two **top-level** (or sibling) sessions that actually
   share a file — they'd conflict on merge, so one must
