@@ -140,8 +140,9 @@ pub fn ladder_profile(asks: &[(u32, u16, u32)], bids: &[(u32, u16, u32)]) -> [u8
 /// — the single source of the `Init` account-meta order, so a layout
 /// change is a one-line edit here rather than across every test that
 /// inits a registry. Negative tests drive a malformed `program_data` or
-/// a mismatched `token_program` straight through the params; the
-/// canonical happy path goes through [`canonical_init_ixn`].
+/// `token_program` through these params — directly, or via
+/// [`canonical_init_ixn`], which fills the canonical happy-path
+/// `program_data` and is what every successful `init` uses.
 pub fn init_ixn(
     payer: Pubkey,
     genesis_admin: Pubkey,
