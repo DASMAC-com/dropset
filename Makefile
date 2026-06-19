@@ -112,11 +112,16 @@ program: check-toolchain
 test: program
 	cargo test
 
-# Feature-off coverage: build the program WITHOUT `admin-teardown`
-# (the shape of the final immutable deploy) and assert every teardown
-# instruction returns `TeardownDisabled`. `anchor build`'s trailing args
-# are forwarded to `cargo build-sbf`, so this rebuilds `dropset.so`
-# feature-off; we then run only the feature-off-gated test target.
-test-no-teardown: check-toolchain
+# Build the program .so WITHOUT `admin-teardown` (the shape of the final
+# immutable deploy). `anchor build`'s trailing args are forwarded to
+# `cargo build-sbf`, so this rebuilds `dropset.so` feature-off. Split out
+# from `test-no-teardown` so CI can cache this .so and skip the rebuild on
+# a cache hit (see .github/workflows/test.yml).
+program-no-teardown: check-toolchain
 	anchor build -- --no-default-features
+
+# Feature-off coverage: build the program WITHOUT `admin-teardown` and
+# assert every teardown instruction returns `TeardownDisabled` — only the
+# feature-off-gated test target is run.
+test-no-teardown: program-no-teardown
 	cargo test --no-default-features --test teardown_disabled
