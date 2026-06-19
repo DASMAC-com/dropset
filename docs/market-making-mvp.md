@@ -1,6 +1,22 @@
-<!-- cspell:word fxpractice guéant lehalle navigations parameterizes -->
+<!-- cspell:word fxpractice -->
 
-<!-- cspell:word raydium stablecorp stoikov tapia oanda -->
+<!-- cspell:word guéant -->
+
+<!-- cspell:word lehalle -->
+
+<!-- cspell:word navigations -->
+
+<!-- cspell:word parameterizes -->
+
+<!-- cspell:word raydium -->
+
+<!-- cspell:word stablecorp -->
+
+<!-- cspell:word stoikov -->
+
+<!-- cspell:word tapia -->
+
+<!-- cspell:word oanda -->
 
 # Market Making MVP — CADC/USDC
 

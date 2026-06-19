@@ -1,4 +1,12 @@
-<!-- cspell:word clmm custodying drawdowns hyperliquid toggleable -->
+<!-- cspell:word clmm -->
+
+<!-- cspell:word custodying -->
+
+<!-- cspell:word drawdowns -->
+
+<!-- cspell:word hyperliquid -->
+
+<!-- cspell:word toggleable -->
 
 # Ephemeral Central Limit Order Book (eCLOB) Architecture
 

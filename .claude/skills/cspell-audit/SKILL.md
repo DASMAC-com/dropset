@@ -78,17 +78,18 @@ style:
   // cspell:word noninteractive
   ```
 
-- **Markdown** (`<!-- … -->`): one per line doesn't work
-  here — mdformat inserts a blank line between adjacent
-  HTML comments, so separate comments would sprawl. Pack
-  the words instead: as many space-separated words per
-  `<!-- cspell:word … -->` comment as fit within the
-  MD013 80-col limit, spilling to a second comment only
-  when the line would overflow. One comment is ideal; a
-  few packed comments at the top still count as the block:
+- **Markdown** (`<!-- … -->`): one word per comment, same
+  as everywhere else — never pack several words into one
+  `<!-- cspell:word … -->`. mdformat inserts a blank line
+  between adjacent HTML comments, so the block reads as a
+  blank-line-separated stack of single-word comments;
+  that spacing is mdformat's and is expected — a clean,
+  stable block, not drift:
 
   ```txt
-  <!-- cspell:word oneline unstarted -->
+  <!-- cspell:word oneline -->
+
+  <!-- cspell:word unstarted -->
   ```
 
 "Top" means the first line, except where syntax forces
@@ -156,13 +157,13 @@ matching entries (still report the rest).
    escapes aren't already the top block its comment style
    calls for (per "Placement" above): escapes scattered
    beside their usages rather than gathered at the top, a
-   line-comment block split by blank lines or packing
-   several words on one line, a Markdown file whose
-   packed comments could be tightened (more comments than
-   the 80-col limit requires), or the block sitting below
-   the first position syntax allows (frontmatter / shebang
-   / module header). A file whose escapes are already a
-   clean top block is fine — leave it untouched.
+   line-comment block split by blank lines, **any comment
+   (line-comment or Markdown) packing several words onto
+   one directive** instead of one word per line, or the
+   block sitting below the first position syntax allows
+   (frontmatter / shebang / module header). A file whose
+   escapes are already a clean top block — one word per
+   directive — is fine; leave it untouched.
 
    One carve-out: a file that **documents** the
    `cspell:word` convention (this skill, `CLAUDE.md`'s
@@ -184,11 +185,13 @@ matching entries (still report the rest).
      line (removing lines preserves the file's existing
      alphabetical order). For each **mis-placed** file,
      Edit it to gather its escapes into the top block in
-     the file's comment style (one word per line for
-     line-comment files; packed `<!-- … -->` comments,
-     ≤ 80 cols each, for Markdown), removing the old
-     scattered copies. If the plan is large, show it to
-     the user before applying.
+     the file's comment style — **one word per directive,
+     one per line, in every format** (in Markdown the
+     single-word `<!-- … -->` comments end up
+     blank-line-separated, which is mdformat's doing and
+     expected), removing the old scattered or packed
+     copies. If the plan is large, show it to the user
+     before applying.
    - **Delegated run (`housekeeping`):** edit **nothing**.
      Return the violations — for a dictionary word: the
      word, file count, sole file, and recommended action;
