@@ -13,12 +13,20 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
-import { N_LEVELS, nativeBookToProfileBytes, type NativeBook, type NativeLevel } from './quoting';
+import {
+  N_LEVELS,
+  nativeBookToProfileBytes,
+  QuotingError,
+  type NativeBook,
+  type NativeLevel,
+} from './quoting';
 
-type LevelCase = {
+type NativeLevelCase = {
   price_bits: number;
   size: number;
   expiry_offset: number;
+};
+type LevelCase = NativeLevelCase & {
   price_offset: number;
   size_bps: number;
 };
@@ -29,14 +37,41 @@ type Case = {
   asks: LevelCase[];
   bids: LevelCase[];
 };
+/** A native book that must be rejected, tagged with the QuotingError kind. */
+type Rejection = {
+  name: string;
+  error: string;
+  reference_bits: number;
+  base_atoms: number;
+  quote_atoms: number;
+  asks: NativeLevelCase[];
+  bids: NativeLevelCase[];
+};
 
 const vectors = JSON.parse(
   readFileSync(new URL('../../conformance/quoting_vectors.json', import.meta.url), 'utf8'),
-) as { cases: Case[] };
+) as { cases: Case[]; rejections: Rejection[] };
 
 const LEVEL_BYTES = 10;
 
-function nativeLevel(c: LevelCase): NativeLevel {
+/**
+ * Map each thrown {@link QuotingError} message to the canonical tag the
+ * vectors carry — the same set of variants the Rust fork's `QuotingError`
+ * enum names. A fork that rejected for a different reason maps to a
+ * different tag and fails the assertion.
+ */
+const ERROR_TAGS: Record<string, string> = {
+  'reference price is not a regular price': 'InvalidReference',
+  'ask priced at or below reference': 'AskBelowReference',
+  'bid priced at or above reference': 'BidAboveReference',
+  'price offset overflows u32': 'OffsetOverflow',
+  'inventory leg is zero': 'SizeExceedsInventory',
+  'level size exceeds inventory leg': 'SizeExceedsInventory',
+  'per-side Σ size_bps exceeds 10000': 'SizeExceedsInventory',
+  [`more than ${N_LEVELS} levels on a side`]: 'TooManyLevels',
+};
+
+function nativeLevel(c: NativeLevelCase): NativeLevel {
   return { price: c.price_bits, size: BigInt(c.size), expiryOffset: c.expiry_offset };
 }
 
@@ -77,5 +112,24 @@ test('quoting vectors match', () => {
       assert.equal(got.sizeBps, exp.size_bps, `ask[${i}] size_bps`);
       assert.equal(got.expiryOffset, exp.expiry_offset, `ask[${i}] expiry`);
     });
+  }
+});
+
+test('quoting rejection vectors', () => {
+  for (const r of vectors.rejections) {
+    const book: NativeBook = {
+      asks: r.asks.map(nativeLevel),
+      bids: r.bids.map(nativeLevel),
+    };
+    let thrown: unknown;
+    try {
+      nativeBookToProfileBytes(book, r.reference_bits, BigInt(r.base_atoms), BigInt(r.quote_atoms));
+    } catch (e) {
+      thrown = e;
+    }
+    // The translation must reject — never clamp — so a value (no throw) fails.
+    assert.ok(thrown instanceof QuotingError, `${r.name}: expected a QuotingError`);
+    const message = (thrown as QuotingError).message;
+    assert.equal(ERROR_TAGS[message], r.error, `${r.name}: error kind (message: "${message}")`);
   }
 });
