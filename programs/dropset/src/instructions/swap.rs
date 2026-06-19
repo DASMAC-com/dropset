@@ -541,7 +541,7 @@ impl Swap {
             // work, and the `filled_legs == 0` path below re-arms
             // FLUSH_BIT and returns an empty result. (The INF-limit /
             // MAX-`min_out` soft-revert that crosses zero levels and
-            // walks the whole book is left unmetered by design: the
+            // walks the whole book is deliberately not metered: the
             // walk is bounded by `market.len()`, nothing survives the
             // revert, and the caller pays its full CU + base/priority
             // fees, so the spam is self-funded. A protocol fee or
