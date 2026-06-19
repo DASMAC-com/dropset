@@ -28,7 +28,7 @@ use anchor_spl_v2::{
 use crate::{
     errors::DropsetError,
     events::CreateVaultEvent,
-    state::{DllList, Market, VaultDll},
+    state::{DllList, Market, VaultAccess, VaultDll},
     AdminSet, Registry, PPM, Q32_32_ONE,
 };
 
@@ -172,7 +172,10 @@ impl CreateVault {
         let market_addr = *self.market.address();
         let min_leader_share = self.market.default_min_leader_share.get();
         {
-            let vault = &mut self.market.as_mut_slice()[sector as usize];
+            // `sector` came straight from `allocate_sector`, so it is
+            // in range by construction; the accessor's bounds check is a
+            // no-op here but keeps the stamp off the raw slab layout.
+            let vault = self.market.mutate_vault(sector)?;
             vault.leader = leader;
             vault.quote_authority = quote_authority;
             vault.perf_fee_rate = perf_fee_rate.into();

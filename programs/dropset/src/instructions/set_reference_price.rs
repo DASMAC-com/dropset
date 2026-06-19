@@ -12,7 +12,7 @@ use anchor_lang_v2::{address_eq, prelude::*};
 
 use crate::{
     errors::DropsetError,
-    state::{Market, FLUSH_BIT, MAX_BACKDATE},
+    state::{Market, VaultAccess, FLUSH_BIT, MAX_BACKDATE},
     Price, ReferencePrice,
 };
 
@@ -63,19 +63,13 @@ impl SetReferencePrice {
             DropsetError::InvalidQuoteSlot
         );
 
-        let len = self.market.len();
-        require!((vault_idx as usize) < len, DropsetError::InvalidSectorIndex);
-
         // Validate the target vault BEFORE mutating any header state —
         // a caller targeting a free-list sector or the wrong vault
         // must not advance `market.nonce`.
         let signer_addr = *self.signer.address();
         {
-            let vault = &self.market.as_slice()[vault_idx as usize];
-            require!(
-                !address_eq(&vault.leader, &Address::default()),
-                DropsetError::VaultEmpty
-            );
+            let vault = self.market.read_vault(vault_idx)?;
+            require!(vault.is_occupied(), DropsetError::VaultEmpty);
             require!(
                 address_eq(&vault.quote_authority, &signer_addr),
                 DropsetError::Unauthorized
@@ -89,7 +83,7 @@ impl SetReferencePrice {
         self.market.nonce = new_nonce.into();
 
         // Re-borrow the vault mutably and stamp the new reference price.
-        let vault = &mut self.market.as_mut_slice()[vault_idx as usize];
+        let vault = self.market.mutate_vault(vault_idx)?;
         vault.reference_price = ReferencePrice {
             stamp: (nonce | FLUSH_BIT).into(),
             price,

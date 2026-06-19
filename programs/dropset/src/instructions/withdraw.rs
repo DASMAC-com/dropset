@@ -28,7 +28,7 @@ use super::{close_depositor_and_decrement, transfer_out_leg};
 use crate::{
     errors::DropsetError,
     events::{RealizeEvent, WithdrawEvent},
-    state::{compute_pro_rata_slice, realize_in_place, Market, VaultDll},
+    state::{compute_pro_rata_slice, realize_in_place, Market, VaultAccess, VaultDll},
     VaultDepositorHeader,
 };
 
@@ -119,8 +119,6 @@ impl Withdraw {
         min_quote_out: u64,
     ) -> Result<(Option<RealizeEvent>, WithdrawEvent)> {
         require!(shares_in > 0, DropsetError::InsufficientShares);
-        let len = self.market.len();
-        require!((vault_idx as usize) < len, DropsetError::InvalidSectorIndex);
 
         // Snapshot pre-state. `frozen` and `min_leader_share` were
         // needed by the deleted leader-path branch; the outside path
@@ -128,17 +126,14 @@ impl Withdraw {
         // and doesn't observe `frozen` (the deposit-side gate
         // already rejected outside flows on a frozen vault).
         let (leader, total_shares, ref_price_bits) = {
-            let v = &self.market.as_slice()[vault_idx as usize];
+            let v = self.market.read_vault(vault_idx)?;
+            require!(v.is_occupied(), DropsetError::VaultEmpty);
             (
                 v.leader,
                 v.total_shares.get(),
                 v.reference_price.price.as_u32(),
             )
         };
-        require!(
-            !address_eq(&leader, &Address::default()),
-            DropsetError::VaultEmpty
-        );
         require!(total_shares > 0, DropsetError::InsufficientShares);
 
         let signer_addr = *self.signer.address();
@@ -154,13 +149,13 @@ impl Withdraw {
 
         // Realize first (spec).
         let realize_outcome = {
-            let v = &mut self.market.as_mut_slice()[vault_idx as usize];
+            let v = self.market.mutate_vault(vault_idx)?;
             realize_in_place(v)
         };
         // Re-read after realize — `total_shares` may have grown if the
         // leader minted perf-fee shares.
         let (total_shares, leader_shares, base_atoms, quote_atoms) = {
-            let v = &self.market.as_slice()[vault_idx as usize];
+            let v = self.market.read_vault(vault_idx)?;
             (
                 v.total_shares.get(),
                 v.leader_shares.get(),
@@ -213,7 +208,7 @@ impl Withdraw {
         let base_mint_addr = self.market.base_mint;
         let quote_mint_addr = self.market.quote_mint;
         let (new_total, new_base_atoms, new_quote_atoms) = {
-            let v = &mut self.market.as_mut_slice()[vault_idx as usize];
+            let v = self.market.mutate_vault(vault_idx)?;
             let new_total = total_shares - shares_in;
             let new_base = base_atoms - slice_base_u64;
             let new_quote = quote_atoms - slice_quote_u64;

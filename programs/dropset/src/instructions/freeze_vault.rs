@@ -11,9 +11,14 @@
 //! `set_outside_deposits_approved`. Freezing an already-frozen vault is
 //! an idempotent no-op (the flag is simply re-asserted).
 
-use anchor_lang_v2::{address_eq, prelude::*};
+use anchor_lang_v2::prelude::*;
 
-use crate::{errors::DropsetError, events::FreezeVaultEvent, state::Market, AdminSet, Registry};
+use crate::{
+    errors::DropsetError,
+    events::FreezeVaultEvent,
+    state::{Market, VaultAccess},
+    AdminSet, Registry,
+};
 
 #[event_cpi]
 #[derive(Accounts)]
@@ -37,15 +42,9 @@ impl FreezeVault {
             self.registry.admin_contains(self.admin.address()),
             DropsetError::Unauthorized
         );
-        let len = self.market.len();
-        require!((vault_idx as usize) < len, DropsetError::InvalidSectorIndex);
-
         let market_addr = *self.market.address();
-        let vault = &mut self.market.as_mut_slice()[vault_idx as usize];
-        require!(
-            !address_eq(&vault.leader, &Address::default()),
-            DropsetError::VaultEmpty
-        );
+        let vault = self.market.mutate_vault(vault_idx)?;
+        require!(vault.is_occupied(), DropsetError::VaultEmpty);
         let leader = vault.leader;
         vault.frozen = true.into();
 

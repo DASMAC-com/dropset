@@ -28,7 +28,7 @@
 //! reconstructs the set of historical fee mints from it (see the spec's
 //! **Account lifecycle and rent reclamation**).
 
-use anchor_lang_v2::{address_eq, prelude::*};
+use anchor_lang_v2::prelude::*;
 // `mint` / `associated_token` stay in scope so the `mint::token_program`
 // constraint on `fee_mint` and the `associated_token::*` constraints on
 // `registry_fee_treasury` expand to their `anchor_spl_v2` markers.
@@ -42,7 +42,7 @@ use anchor_spl_v2::{
 use crate::{
     errors::DropsetError,
     events::{SetMarketFeeConfigEvent, SetMinLeaderShareEvent, SetTakerFeeEvent},
-    state::Market,
+    state::{Market, VaultAccess},
     AdminSet, FeeConfig, Registry, PPM,
 };
 
@@ -84,22 +84,16 @@ impl SetMinLeaderShare {
             (min_leader_share as u64) <= PPM,
             DropsetError::InvalidMinLeaderShare
         );
-        let len = self.market.len();
-        require!((vault_idx as usize) < len, DropsetError::InvalidSectorIndex);
-
         let market_addr = *self.market.address();
         // Validate the sector is live through an immutable borrow before
         // taking the mutable one — the house pattern shared with the
         // other vault setters (`set_outside_deposits_approved`,
-        // `freeze_vault`). A free-list sector carries `leader == default`.
-        {
-            let vault = &self.market.as_slice()[vault_idx as usize];
-            require!(
-                !address_eq(&vault.leader, &Address::default()),
-                DropsetError::VaultEmpty
-            );
-        }
-        self.market.as_mut_slice()[vault_idx as usize].min_leader_share = min_leader_share.into();
+        // `freeze_vault`). `is_occupied` is the free-list marker check.
+        require!(
+            self.market.read_vault(vault_idx)?.is_occupied(),
+            DropsetError::VaultEmpty
+        );
+        self.market.mutate_vault(vault_idx)?.min_leader_share = min_leader_share.into();
 
         Ok(SetMinLeaderShareEvent {
             market: market_addr,

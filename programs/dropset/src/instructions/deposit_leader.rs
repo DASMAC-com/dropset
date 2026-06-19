@@ -23,7 +23,7 @@ use super::transfer_in_leg;
 use crate::{
     errors::DropsetError,
     events::{DepositEvent, RealizeEvent},
-    state::{isqrt_u128, realize_in_place, single_leg_basket, Market},
+    state::{isqrt_u128, realize_in_place, single_leg_basket, Market, VaultAccess},
     Q32_32_ONE,
 };
 
@@ -86,12 +86,10 @@ impl DepositLeader {
         max_base_in: u64,
         max_quote_in: u64,
     ) -> Result<(Option<RealizeEvent>, DepositEvent)> {
-        let len = self.market.len();
-        require!((vault_idx as usize) < len, DropsetError::InvalidSectorIndex);
-
         let signer_addr = *self.signer.address();
         let (leader, frozen, tombstoned, total_shares) = {
-            let v = &self.market.as_slice()[vault_idx as usize];
+            let v = self.market.read_vault(vault_idx)?;
+            require!(v.is_occupied(), DropsetError::VaultEmpty);
             (
                 v.leader,
                 v.frozen.get(),
@@ -99,10 +97,6 @@ impl DepositLeader {
                 v.total_shares.get(),
             )
         };
-        require!(
-            !address_eq(&leader, &Address::default()),
-            DropsetError::VaultEmpty
-        );
         require!(!frozen, DropsetError::VaultFrozen);
         // Tombstoned vaults are winding down: even the leader cannot
         // top up a closed vault (spec: deposits against frozen or
@@ -118,11 +112,11 @@ impl DepositLeader {
 
         // Realize first (no-op when seeding since total_shares == 0).
         let realize_outcome = {
-            let v = &mut self.market.as_mut_slice()[vault_idx as usize];
+            let v = self.market.mutate_vault(vault_idx)?;
             realize_in_place(v)
         };
         let (total_shares, base_atoms, quote_atoms) = {
-            let v = &self.market.as_slice()[vault_idx as usize];
+            let v = self.market.read_vault(vault_idx)?;
             (
                 v.total_shares.get(),
                 v.base_atoms.get(),
@@ -178,7 +172,7 @@ impl DepositLeader {
         // Apply vault mutations.
         let market_addr = *self.market.address();
         let (new_total, new_leader_shares, new_base_atoms, new_quote_atoms) = {
-            let v = &mut self.market.as_mut_slice()[vault_idx as usize];
+            let v = self.market.mutate_vault(vault_idx)?;
             v.base_atoms = (base_atoms + base_in_final).into();
             v.quote_atoms = (quote_atoms + quote_in_final).into();
             let new_total = total_shares + shares_out;

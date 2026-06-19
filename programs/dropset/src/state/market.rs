@@ -5,6 +5,7 @@
 
 use anchor_lang_v2::{
     accounts::Slab,
+    address_eq,
     bytemuck::{Pod, Zeroable},
     prelude::*,
 };
@@ -202,6 +203,51 @@ pub struct Vault {
     pub remaining: Remaining,
 }
 
+impl Vault {
+    /// True when this sector currently holds a live vault rather than a
+    /// free-list slot. `leader == Address::default()` is the spec's
+    /// emptiness marker (see [`Vault::leader`]); every handler that
+    /// rejects an empty sector with `VaultEmpty` reads this predicate
+    /// rather than re-deriving the `Address::default()` comparison.
+    #[inline(always)]
+    pub fn is_occupied(&self) -> bool {
+        !address_eq(&self.leader, &Address::default())
+    }
+
+    /// True when the stamped reference price is usable for matching —
+    /// constructed, finite, and non-zero. Single source of truth for
+    /// the book-construction validity gate (spec § Order matching →
+    /// Book construction), shared by the matching loop and any
+    /// cold-path reader that needs the same notion of a live price.
+    #[inline(always)]
+    pub fn has_valid_reference_price(&self) -> bool {
+        let p = self.reference_price.price;
+        p.is_valid() && !p.is_zero() && !p.is_infinity()
+    }
+
+    /// True when this vault should participate in matching: occupied,
+    /// not frozen, not tombstoned, and carrying a valid reference
+    /// price (spec § Vault → Frozen and tombstoned vaults). The full
+    /// gate, for a caller holding a `&Vault` with no other guarantee
+    /// about its provenance.
+    ///
+    /// The matching loop does **not** call this: it walks the active
+    /// DLL, where occupancy and non-tombstoned status already hold by
+    /// construction (free-list and tombstoned sectors live on other
+    /// lists), so it checks only the residual gate
+    /// `has_valid_reference_price() && !frozen` inline and stays
+    /// zero-cost.
+    /// Reach for `is_matchable` from a cold path that has a bare sector
+    /// reference instead.
+    #[inline(always)]
+    pub fn is_matchable(&self) -> bool {
+        self.is_occupied()
+            && !self.frozen.get()
+            && !self.tombstoned.get()
+            && self.has_valid_reference_price()
+    }
+}
+
 /// Header of a market account. Followed by a slab tail of [`Vault`]
 /// sectors. Per-market knobs are seeded from the registry at creation
 /// and tunable downstream by admins.
@@ -294,6 +340,43 @@ const _: () = assert!(core::mem::offset_of!(Vault, _reserved) == 140);
 const _: () = assert!(core::mem::offset_of!(MarketHeader, head) == 8);
 const _: () = assert!(core::mem::offset_of!(MarketHeader, tombstone_head) == 12);
 const _: () = assert!(core::mem::offset_of!(MarketHeader, free_head) == 16);
+
+/// Typed, bounds-checked access to the [`Vault`] sectors in the slab
+/// tail. Centralizes the `u32`-index range check every handler used to
+/// open-code as `require!((idx as usize) < len, InvalidSectorIndex)`
+/// before indexing `as_slice()` / `as_mut_slice()`, so business logic
+/// stops touching the physical slab layout. Both methods are a named
+/// borrow over the same `get` / `get_mut` the slice index already
+/// performs — zero-cost relative to the previous `[idx]` access, which
+/// paid for the identical bounds comparison (it just panicked instead
+/// of returning [`DropsetError::InvalidSectorIndex`]).
+pub trait VaultAccess {
+    /// Borrow sector `sector` immutably, or
+    /// [`DropsetError::InvalidSectorIndex`] when it is past the slab
+    /// tail.
+    fn read_vault(&self, sector: u32) -> Result<&Vault>;
+
+    /// Borrow sector `sector` mutably, or
+    /// [`DropsetError::InvalidSectorIndex`] when it is past the slab
+    /// tail.
+    fn mutate_vault(&mut self, sector: u32) -> Result<&mut Vault>;
+}
+
+impl VaultAccess for Market {
+    #[inline(always)]
+    fn read_vault(&self, sector: u32) -> Result<&Vault> {
+        self.as_slice()
+            .get(sector as usize)
+            .ok_or_else(|| DropsetError::InvalidSectorIndex.into())
+    }
+
+    #[inline(always)]
+    fn mutate_vault(&mut self, sector: u32) -> Result<&mut Vault> {
+        self.as_mut_slice()
+            .get_mut(sector as usize)
+            .ok_or_else(|| DropsetError::InvalidSectorIndex.into())
+    }
+}
 
 /// Doubly-linked-list operations over the [`Vault`] sectors threaded by
 /// `next` / `prev`. The three list heads
@@ -1022,6 +1105,103 @@ mod tests {
         let expected: ProgramError = DropsetError::CorruptVaultList.into();
         assert_eq!(err, expected);
         assert!(walk(&market, DllList::Free).is_empty());
+    }
+
+    // ── VaultAccess bounds path ──────────────────────────────────────
+    //
+    // The accessor's whole job is to convert the slab's panicking
+    // `[idx]` index into a graceful `InvalidSectorIndex`. These pin the
+    // in-range borrow and the one-past-the-end rejection for both the
+    // shared and exclusive paths.
+
+    #[test]
+    fn read_vault_returns_in_range_sector() {
+        let buf = setup();
+        let mut market = load_market(&buf);
+        // Stamp a sentinel so we can confirm the borrow lands on the
+        // requested sector rather than a neighbor.
+        market.as_mut_slice()[2].base_atoms = 7777u64.into();
+        let v = market.read_vault(2).expect("in-range sector must borrow");
+        assert_eq!(v.base_atoms.get(), 7777);
+    }
+
+    #[test]
+    fn read_vault_rejects_out_of_range_sector() {
+        let buf = setup();
+        let market = load_market(&buf);
+        // `Vault` isn't `Debug`, so unwrap the error via `.err()` rather
+        // than `expect_err` (which would format the `Ok` value).
+        let expected: ProgramError = DropsetError::InvalidSectorIndex.into();
+        // Index `SECTORS` is one past the slab tail.
+        assert_eq!(market.read_vault(SECTORS).err().unwrap(), expected);
+        // `NULL_SECTOR` is the worst case — must reject, not wrap.
+        assert_eq!(market.read_vault(NULL_SECTOR).err().unwrap(), expected);
+    }
+
+    #[test]
+    fn mutate_vault_returns_in_range_sector() {
+        let buf = setup();
+        let mut market = load_market(&buf);
+        market
+            .mutate_vault(1)
+            .expect("in-range sector must borrow")
+            .quote_atoms = 4242u64.into();
+        assert_eq!(market.as_slice()[1].quote_atoms.get(), 4242);
+    }
+
+    #[test]
+    fn mutate_vault_rejects_out_of_range_sector() {
+        let buf = setup();
+        let mut market = load_market(&buf);
+        let expected: ProgramError = DropsetError::InvalidSectorIndex.into();
+        assert_eq!(market.mutate_vault(SECTORS).err().unwrap(), expected);
+    }
+
+    // ── Vault predicates ─────────────────────────────────────────────
+
+    #[test]
+    fn is_occupied_tracks_leader_marker() {
+        let mut v = Vault::zeroed();
+        // Free-list slot: default leader.
+        assert!(!v.is_occupied());
+        v.leader = [0x11; 32].into();
+        assert!(v.is_occupied());
+    }
+
+    #[test]
+    fn has_valid_reference_price_rejects_sentinels_and_garbage() {
+        let mut v = Vault::zeroed();
+        // Accept: a constructed, finite, non-zero price.
+        v.reference_price.price = Price::from_value(1.0).unwrap();
+        assert!(v.has_valid_reference_price());
+        // Reject: the ZERO sentinel (valid encoding, but not a price).
+        v.reference_price.price = Price::from_bits(0);
+        assert!(!v.has_valid_reference_price());
+        // Reject: the INFINITY sentinel.
+        v.reference_price.price = Price::from_bits(u32::MAX);
+        assert!(!v.has_valid_reference_price());
+        // Reject: a non-sentinel with an out-of-range significand —
+        // `is_valid()` is false, so it never anchors a ladder.
+        v.reference_price.price = Price::from_bits(1);
+        assert!(!v.has_valid_reference_price());
+    }
+
+    #[test]
+    fn is_matchable_requires_occupied_unfrozen_priced() {
+        let mut v = Vault::zeroed();
+        v.leader = [0x22; 32].into();
+        // A constructed, finite, non-zero price makes the vault matchable.
+        v.reference_price.price = Price::from_value(1.0).unwrap();
+        assert!(v.is_matchable());
+        // Freezing, tombstoning, or emptying each drops it out.
+        v.frozen = true.into();
+        assert!(!v.is_matchable());
+        v.frozen = false.into();
+        v.tombstoned = true.into();
+        assert!(!v.is_matchable());
+        v.tombstoned = false.into();
+        v.leader = Address::default();
+        assert!(!v.is_matchable());
     }
 
     // ── realize_in_place wrapper ─────────────────────────────────────
