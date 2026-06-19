@@ -260,6 +260,18 @@ reference traces; the vectors pin **both** the numeric outputs **and** the
 chosen wire encoding (open: f) — or scope the first freeze to math and defer
 wire-encoding conformance until (f) lands.
 
+Three vector sets are checked in and replayed by both forks:
+`price_vectors.json` (the `Price` codec), `quoting_vectors.json` (the
+native↔relative book translation), and `share_vectors.json` (all six
+share/NAV/PnL kernels above, so the frontend's NAV/PnL fallback reuses the
+engine math instead of re-deriving it). The `Price` vectors also pin the
+**reject contract** via an `encode_reject` set: non-finite and negative
+inputs reject on both forks (Rust `from_value` → `None`, TS `encodePrice`
+→ `RangeError`). One reject case is **deliberately left unpinned** — a huge
+finite value (e.g. `1e300`) normalizes to a valid `Price` under Rust's
+saturating `f64`→`u64` cast but throws in TS, a genuine codec divergence
+tracked separately rather than pinned as agreement.
+
 On-chain CPI builders (instruction builders + account layouts for a `no_std`,
 entrypoint-free CPI parser, shared with the engine and any router doing an
 on-chain integration) remain a separate future concern; the SDK above is the
