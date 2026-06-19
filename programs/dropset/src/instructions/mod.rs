@@ -30,7 +30,27 @@ pub mod force_withdraw;
 use anchor_lang_v2::{prelude::*, AnchorAccount};
 use anchor_spl_v2::token_2022::{transfer_checked, TransferChecked};
 
-use crate::{state::Market, VaultDepositorHeader};
+use crate::{errors::DropsetError, state::Market, AdminSet, Registry, VaultDepositorHeader};
+
+/// Registry-admin precondition shared by every admin-gated instruction.
+/// Rejects with [`DropsetError::Unauthorized`] unless `admin` is a member
+/// of the registry admin set.
+///
+/// The check is a set-membership scan over the registry slab tail
+/// ([`AdminSet::admin_contains`]), so it genuinely cannot be a declarative
+/// `address` / `has_one` constraint (those do single-field equality only).
+/// Hoisting it here lets each dispatcher declare the gate once — via
+/// `#[access_control]` for the always-on levers, or the feature-on arm for
+/// the teardown surface — instead of restating the same `require!` at the
+/// top of every handler body, mirroring how `init` pins its precondition
+/// through `Init::verify_upgrade_authority` (`lib.rs::init`).
+pub fn require_registry_admin(registry: &Registry, admin: &Signer) -> Result<()> {
+    require!(
+        registry.admin_contains(admin.address()),
+        DropsetError::Unauthorized
+    );
+    Ok(())
+}
 
 /// Inbound single-leg deposit transfer: move `amount` of one mint from
 /// the signer's ATA into the market treasury via `transfer_checked`,

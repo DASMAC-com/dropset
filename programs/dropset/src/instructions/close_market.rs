@@ -18,7 +18,7 @@ use anchor_spl_v2::{
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
 
-use crate::{errors::DropsetError, state::Market, AdminSet, Registry};
+use crate::{errors::DropsetError, state::Market, Registry};
 
 // ── close_market_treasury ─────────────────────────────────────────────
 
@@ -66,10 +66,9 @@ pub struct CloseMarketTreasury {
 impl CloseMarketTreasury {
     #[inline(always)]
     pub fn close_market_treasury(&mut self) -> Result<()> {
-        require!(
-            self.registry.admin_contains(self.admin.address()),
-            DropsetError::Unauthorized
-        );
+        // Admin-only — gated at the dispatcher's feature-on arm via
+        // `require_registry_admin` (`lib.rs`), so the caller is already a
+        // known admin here.
         // Defense-in-depth: a market only ever owns its two treasury
         // ATAs, but pin the mint to a real leg so a stray market-owned
         // ATA (none exist today) can't be closed by mistake.
@@ -144,10 +143,9 @@ pub struct CloseMarket {
 impl CloseMarket {
     #[inline(always)]
     pub fn close_market(&mut self) -> Result<()> {
-        require!(
-            self.registry.admin_contains(self.admin.address()),
-            DropsetError::Unauthorized
-        );
+        // Admin-only — gated at the dispatcher's feature-on arm via
+        // `require_registry_admin` (`lib.rs`), so the caller is already a
+        // known admin here.
         // Pre-condition 1: no outstanding depositor PDAs. This counter is
         // the only on-chain witness that no orphan `VaultDepositor` PDAs
         // remain (the program cannot enumerate all PDAs).

@@ -23,7 +23,7 @@ use anchor_lang_v2::{address_eq, prelude::*};
 use crate::{
     errors::DropsetError,
     state::{Market, VaultAccess},
-    AdminSet, Registry,
+    Registry,
 };
 
 #[derive(Accounts)]
@@ -82,13 +82,9 @@ pub struct SetOutsideDepositsApproved {
 impl SetOutsideDepositsApproved {
     #[inline(always)]
     pub fn set_outside_deposits_approved(&mut self, vault_idx: u32, flag: bool) -> Result<()> {
-        // Admin-only — the protocol's half of the two-key gate. The
-        // registry account is PDA-pinned (`seeds = [b"registry"]`), so
-        // membership is checked against the canonical admin set.
-        require!(
-            self.registry.admin_contains(self.admin.address()),
-            DropsetError::Unauthorized
-        );
+        // Admin-only — the protocol's half of the two-key gate. Gated at
+        // the dispatcher via `#[access_control]` (`lib.rs`), so the caller
+        // is already a known admin here.
         // Same validate-then-mutate shape as the leader setter above:
         // confirm the sector is live through an immutable borrow, then
         // narrow to the single store.

@@ -31,11 +31,13 @@ pub mod dropset {
     }
 
     #[discrim = 1]
+    #[access_control(require_registry_admin(&ctx.accounts.registry, &ctx.accounts.admin))]
     pub fn add_admin(ctx: &mut Context<AddAdmin>, new_admin: Address) -> Result<()> {
         ctx.accounts.add_admin(new_admin)
     }
 
     #[discrim = 2]
+    #[access_control(require_registry_admin(&ctx.accounts.registry, &ctx.accounts.admin))]
     pub fn remove_admin(ctx: &mut Context<RemoveAdmin>, target: Address) -> Result<()> {
         ctx.accounts.remove_admin(target)
     }
@@ -196,6 +198,7 @@ pub mod dropset {
     }
 
     #[discrim = 13]
+    #[access_control(require_registry_admin(&ctx.accounts.registry, &ctx.accounts.admin))]
     pub fn set_outside_deposits_approved(
         ctx: &mut Context<SetOutsideDepositsApproved>,
         vault_idx: u32,
@@ -212,6 +215,7 @@ pub mod dropset {
     }
 
     #[discrim = 15]
+    #[access_control(require_registry_admin(&ctx.accounts.registry, &ctx.accounts.admin))]
     pub fn freeze_vault(ctx: &mut Context<FreezeVault>, vault_idx: u32) -> Result<()> {
         let event = ctx.accounts.freeze_vault(vault_idx)?;
         emit_cpi!(event);
@@ -228,6 +232,14 @@ pub mod dropset {
     // so a per-instruction compile-out isn't available — this runtime
     // guard is the supported alternative. See the architecture spec,
     // § Account lifecycle and rent reclamation.
+    //
+    // The shared registry-admin gate (`require_registry_admin`) runs at
+    // the top of the feature-on arm rather than from an `#[access_control]`
+    // attribute like the always-on admin levers below: `#[access_control]`
+    // prepends its check unconditionally and can't be `#[cfg]`-gated, so
+    // firing it ahead of the disabled-build short-circuit would leak
+    // `Unauthorized` to a non-admin on a build where every caller is meant
+    // to see `TeardownDisabled`. Gating in-arm keeps that surface inert.
 
     #[discrim = 16]
     pub fn force_withdraw_depositor(
@@ -241,6 +253,7 @@ pub mod dropset {
         }
         #[cfg(feature = "admin-teardown")]
         {
+            require_registry_admin(&ctx.accounts.registry, &ctx.accounts.admin)?;
             let (realize_event, withdraw_event) =
                 ctx.accounts.force_withdraw_depositor(vault_idx)?;
             if let Some(re) = realize_event {
@@ -263,6 +276,7 @@ pub mod dropset {
         }
         #[cfg(feature = "admin-teardown")]
         {
+            require_registry_admin(&ctx.accounts.registry, &ctx.accounts.admin)?;
             let (realize_event, withdraw_event) = ctx.accounts.force_withdraw_leader(vault_idx)?;
             if let Some(re) = realize_event {
                 emit_cpi!(re);
@@ -281,6 +295,7 @@ pub mod dropset {
         }
         #[cfg(feature = "admin-teardown")]
         {
+            require_registry_admin(&ctx.accounts.registry, &ctx.accounts.admin)?;
             ctx.accounts.close_market_treasury()
         }
     }
@@ -294,6 +309,7 @@ pub mod dropset {
         }
         #[cfg(feature = "admin-teardown")]
         {
+            require_registry_admin(&ctx.accounts.registry, &ctx.accounts.admin)?;
             ctx.accounts.close_market()
         }
     }
@@ -307,6 +323,7 @@ pub mod dropset {
         }
         #[cfg(feature = "admin-teardown")]
         {
+            require_registry_admin(&ctx.accounts.registry, &ctx.accounts.admin)?;
             ctx.accounts.close_registry_fee_vault()
         }
     }
@@ -320,6 +337,7 @@ pub mod dropset {
         }
         #[cfg(feature = "admin-teardown")]
         {
+            require_registry_admin(&ctx.accounts.registry, &ctx.accounts.admin)?;
             ctx.accounts.close_registry()
         }
     }
@@ -336,6 +354,7 @@ pub mod dropset {
     // § SetRegistryDefaults, and § SetDefaultFeeConfig.
 
     #[discrim = 22]
+    #[access_control(require_registry_admin(&ctx.accounts.registry, &ctx.accounts.admin))]
     pub fn set_min_leader_share(
         ctx: &mut Context<SetMinLeaderShare>,
         vault_idx: u32,
@@ -349,6 +368,7 @@ pub mod dropset {
     }
 
     #[discrim = 23]
+    #[access_control(require_registry_admin(&ctx.accounts.registry, &ctx.accounts.admin))]
     pub fn set_market_fee_config(ctx: &mut Context<SetMarketFeeConfig>, atoms: u64) -> Result<()> {
         let event = ctx.accounts.set_market_fee_config(atoms)?;
         emit_cpi!(event);
@@ -356,6 +376,7 @@ pub mod dropset {
     }
 
     #[discrim = 24]
+    #[access_control(require_registry_admin(&ctx.accounts.registry, &ctx.accounts.admin))]
     pub fn set_taker_fee(ctx: &mut Context<SetTakerFee>, taker_fee: u16) -> Result<()> {
         let event = ctx.accounts.set_taker_fee(taker_fee)?;
         emit_cpi!(event);
@@ -363,6 +384,7 @@ pub mod dropset {
     }
 
     #[discrim = 25]
+    #[access_control(require_registry_admin(&ctx.accounts.registry, &ctx.accounts.admin))]
     pub fn set_registry_defaults(
         ctx: &mut Context<SetRegistryDefaults>,
         taker_fee: Option<u16>,
@@ -376,6 +398,7 @@ pub mod dropset {
     }
 
     #[discrim = 26]
+    #[access_control(require_registry_admin(&ctx.accounts.registry, &ctx.accounts.admin))]
     pub fn set_default_fee_config(
         ctx: &mut Context<SetDefaultFeeConfig>,
         atoms: u64,

@@ -43,7 +43,7 @@ use crate::{
     errors::DropsetError,
     events::{SetMarketFeeConfigEvent, SetMinLeaderShareEvent, SetTakerFeeEvent},
     state::{Market, VaultAccess},
-    AdminSet, FeeConfig, Registry, PPM,
+    FeeConfig, Registry, PPM,
 };
 
 #[event_cpi]
@@ -68,13 +68,8 @@ impl SetMinLeaderShare {
         vault_idx: u32,
         min_leader_share: u32,
     ) -> Result<SetMinLeaderShareEvent> {
-        // Admin-only — same gate as `set_outside_deposits_approved`. The
-        // registry account is PDA-pinned (`seeds = [b"registry"]`), so
-        // membership is checked against the canonical admin set.
-        require!(
-            self.registry.admin_contains(self.admin.address()),
-            DropsetError::Unauthorized
-        );
+        // Admin-only — gated at the dispatcher via `#[access_control]`
+        // (`lib.rs`), so the caller is already a known admin here.
         // The floor is a fraction of total shares, so a value above 100%
         // (`PPM`) is unsatisfiable — reject it rather than silently brick
         // every future deposit on the vault. A floor of exactly `PPM` is
@@ -157,11 +152,8 @@ impl SetMarketFeeConfig {
     /// dispatch through `emit_cpi!`.
     #[inline(always)]
     pub fn set_market_fee_config(&mut self, atoms: u64) -> Result<SetMarketFeeConfigEvent> {
-        require!(
-            self.registry.admin_contains(self.admin.address()),
-            DropsetError::Unauthorized
-        );
-
+        // Admin-only — gated at the dispatcher via `#[access_control]`
+        // (`lib.rs`), so the caller is already a known admin here.
         // Read the validated mint/program before the mutable header
         // borrow; the `mint::token_program` constraint already proved the
         // pair is consistent, so the token program is not re-derived here.
@@ -202,13 +194,8 @@ impl SetTakerFee {
     /// through `emit_cpi!`.
     #[inline(always)]
     pub fn set_taker_fee(&mut self, taker_fee: u16) -> Result<SetTakerFeeEvent> {
-        // Admin-only — same gate as `set_market_fee_config`. The registry
-        // account is PDA-pinned (`seeds = [b"registry"]`), so membership
-        // is checked against the canonical admin set.
-        require!(
-            self.registry.admin_contains(self.admin.address()),
-            DropsetError::Unauthorized
-        );
+        // Admin-only — gated at the dispatcher via `#[access_control]`
+        // (`lib.rs`), so the caller is already a known admin here.
         // No range check: `taker_fee` is a `u16` (`Ppm16`), so the spec's
         // ~6.55% ceiling is the type's own max — unreachable to exceed.
         let market_addr = *self.market.address();
