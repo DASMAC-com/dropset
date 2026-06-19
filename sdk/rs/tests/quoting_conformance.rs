@@ -88,3 +88,44 @@ fn quoting_vectors() {
         }
     }
 }
+
+/// Each `rejections` vector is a native book chosen to trip one translation
+/// guard. `to_profile` must reject it with the tagged `QuotingError`
+/// variant — the translation never clamps. The TS fork checks the same
+/// vectors, so a fork that rejected for a different reason (or not at all)
+/// fails here or there.
+#[test]
+fn quoting_rejection_vectors() {
+    let doc = vectors();
+    for case in doc["rejections"].as_array().unwrap() {
+        let name = case["name"].as_str().unwrap();
+        let reference = Price::from_bits(u32_of(case, "reference_bits"));
+        let base_atoms = case["base_atoms"].as_u64().unwrap();
+        let quote_atoms = case["quote_atoms"].as_u64().unwrap();
+        let book = NativeBook {
+            asks: case["asks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(native_level)
+                .collect(),
+            bids: case["bids"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(native_level)
+                .collect(),
+        };
+
+        let err = book
+            .to_profile(reference, base_atoms, quote_atoms)
+            .expect_err(&format!("rejection case `{name}` should not translate"));
+        // `QuotingError` derives `Debug` and its variants are fieldless, so
+        // the debug string is exactly the variant name the vector tags.
+        assert_eq!(
+            format!("{err:?}"),
+            case["error"].as_str().unwrap(),
+            "rejection case `{name}` error kind"
+        );
+    }
+}

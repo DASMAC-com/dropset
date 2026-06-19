@@ -24,6 +24,22 @@
 //!
 //! All arithmetic is integer and truncating, in the exact operation order
 //! the forks use, so the three implementations agree bit-for-bit.
+//!
+//! The happy-path `cases` pin only inputs that translate successfully. The
+//! forks are most likely to drift in their **error** handling — the guards
+//! that *reject* a level rather than emit one — so a second `rejections`
+//! block pins those too (ENG-558): each entry is a native book chosen to
+//! trip one guard, tagged with the canonical error both forks must raise.
+//! The translation never clamps or saturates; every out-of-range input is
+//! rejected, so the vectors assert a rejection (not a clamped output). The
+//! tags mirror `quoting::QuotingError`'s variants:
+//! - `InvalidReference` — reference is the `ZERO` / `INFINITY` sentinel.
+//! - `AskBelowReference` / `BidAboveReference` — `ratio_ppm` lands on the
+//!   wrong side of `PPM` (the guards fire before the unsigned subtraction
+//!   could underflow).
+//! - `OffsetOverflow` — the ppm offset exceeds `u32::MAX`.
+//! - `SizeExceedsInventory` — a per-level `size_bps`, the per-side Σ, or a
+//!   zero inventory leg breaches the `Σ size_bps ≤ 10000` invariant.
 
 use dropset_math_core::price::Price;
 use serde_json::{json, Value};
@@ -101,6 +117,43 @@ fn case_json(c: &Case) -> Value {
     })
 }
 
+/// A native book chosen to trip one translation guard, tagged with the
+/// canonical `QuotingError` variant both forks must raise.
+/// Unlike [`Case`], the levels carry only native inputs — there is no
+/// expected relative output, because the translation rejects.
+struct RejectionCase {
+    name: &'static str,
+    error: &'static str,
+    reference: Price,
+    base_atoms: u64,
+    quote_atoms: u64,
+    asks: Vec<NativeLevel>,
+    bids: Vec<NativeLevel>,
+}
+
+/// Emit one native level as inputs only (no `price_offset` / `size_bps`).
+fn native_level_json(lvl: &NativeLevel) -> Value {
+    json!({
+        "price_bits": lvl.price.as_u32(),
+        "size": lvl.size,
+        "expiry_offset": lvl.expiry_offset,
+    })
+}
+
+fn rejection_json(r: &RejectionCase) -> Value {
+    let asks: Vec<Value> = r.asks.iter().map(native_level_json).collect();
+    let bids: Vec<Value> = r.bids.iter().map(native_level_json).collect();
+    json!({
+        "name": r.name,
+        "error": r.error,
+        "reference_bits": r.reference.as_u32(),
+        "base_atoms": r.base_atoms,
+        "quote_atoms": r.quote_atoms,
+        "asks": asks,
+        "bids": bids,
+    })
+}
+
 fn main() {
     let cases = [
         // Reference 1.0, round offsets and sizes — hand-verifiable.
@@ -145,10 +198,106 @@ fn main() {
             bids: vec![nl(97_020_000, -1, 500_000, 10)], // 0.9702
         },
     ];
+    // Rejection vectors: each native book trips exactly one translation
+    // guard. The forks must reject with the tagged error — the translation
+    // never clamps or saturates. See the module docs for the tag set.
+    let rejections = [
+        // Reference is the ZERO sentinel — no ratio is defined.
+        RejectionCase {
+            name: "zero reference",
+            error: "InvalidReference",
+            reference: Price::ZERO,
+            base_atoms: 1_000_000,
+            quote_atoms: 1_000_000,
+            asks: vec![nl(10_500_000, 0, 1_000, 100)],
+            bids: vec![],
+        },
+        // Reference is the INFINITY sentinel — no ratio is defined.
+        RejectionCase {
+            name: "infinity reference",
+            error: "InvalidReference",
+            reference: Price::INFINITY,
+            base_atoms: 1_000_000,
+            quote_atoms: 1_000_000,
+            asks: vec![nl(10_500_000, 0, 1_000, 100)],
+            bids: vec![],
+        },
+        // Ask priced below the reference — offsets are unsigned, asks sit
+        // above. 0.99 < 1.0.
+        RejectionCase {
+            name: "ask below reference",
+            error: "AskBelowReference",
+            reference: Price::encode(10_000_000, 0).unwrap(), // 1.0
+            base_atoms: 1_000_000,
+            quote_atoms: 1_000_000,
+            asks: vec![nl(99_000_000, -1, 1_000, 100)], // 0.99
+            bids: vec![],
+        },
+        // Bid priced above the reference — the `PPM − ratio_ppm` path the
+        // issue flags; the guard fires before the unsigned subtraction can
+        // underflow. 1.01 > 1.0.
+        RejectionCase {
+            name: "bid above reference",
+            error: "BidAboveReference",
+            reference: Price::encode(10_000_000, 0).unwrap(), // 1.0
+            base_atoms: 1_000_000,
+            quote_atoms: 1_000_000,
+            asks: vec![],
+            bids: vec![nl(10_100_000, 0, 1_000, 100)], // 1.01
+        },
+        // Ask so far above the reference that the ppm offset overflows u32:
+        // 4296× → offset 4_295_000_000 > u32::MAX (4_294_967_295).
+        RejectionCase {
+            name: "offset overflows u32",
+            error: "OffsetOverflow",
+            reference: Price::encode(10_000_000, 0).unwrap(), // 1.0
+            base_atoms: 1_000_000,
+            quote_atoms: 1_000_000,
+            asks: vec![nl(42_960_000, 3, 1_000, 100)], // 4296.0
+            bids: vec![],
+        },
+        // A single level larger than its inventory leg: 1_500_000 of
+        // 1_000_000 base → 15000 bps > the 10000 per-side ceiling.
+        RejectionCase {
+            name: "single level exceeds leg",
+            error: "SizeExceedsInventory",
+            reference: Price::encode(10_000_000, 0).unwrap(), // 1.0
+            base_atoms: 1_000_000,
+            quote_atoms: 1_000_000,
+            asks: vec![nl(10_500_000, 0, 1_500_000, 100)],
+            bids: vec![],
+        },
+        // Two individually-valid levels whose Σ exceeds the per-side
+        // ceiling: 6000 + 6000 = 12000 bps > 10000.
+        RejectionCase {
+            name: "per-side sum exceeds ceiling",
+            error: "SizeExceedsInventory",
+            reference: Price::encode(10_000_000, 0).unwrap(), // 1.0
+            base_atoms: 1_000_000,
+            quote_atoms: 1_000_000,
+            asks: vec![
+                nl(10_500_000, 0, 600_000, 100),
+                nl(11_000_000, 0, 600_000, 100),
+            ],
+            bids: vec![],
+        },
+        // Zero inventory leg — no size fraction is defined.
+        RejectionCase {
+            name: "zero inventory leg",
+            error: "SizeExceedsInventory",
+            reference: Price::encode(10_000_000, 0).unwrap(), // 1.0
+            base_atoms: 0,
+            quote_atoms: 1_000_000,
+            asks: vec![nl(10_500_000, 0, 1_000, 100)],
+            bids: vec![],
+        },
+    ];
     let cases: Vec<Value> = cases.iter().map(case_json).collect();
+    let rejections: Vec<Value> = rejections.iter().map(rejection_json).collect();
     let doc = json!({
-        "_comment": "Generated by `cargo run -p dropset-math-core --example gen_quoting`. Do not edit by hand. Verified against the Rust SDK quoting fork (sdk/rs/tests/quoting_conformance.rs) and the TS fork (sdk/ts/src/quoting.conformance.test.ts). Each level lists its native inputs (price_bits, size, expiry_offset) and the expected relative outputs (price_offset in ppm, size_bps); all integer math is truncating.",
+        "_comment": "Generated by `cargo run -p dropset-math-core --example gen_quoting`. Do not edit by hand. Verified against the Rust SDK quoting fork (sdk/rs/tests/quoting_conformance.rs) and the TS fork (sdk/ts/src/quoting.conformance.test.ts). `cases` pin successful translations: each level lists its native inputs (price_bits, size, expiry_offset) and the expected relative outputs (price_offset in ppm, size_bps). `rejections` pin the error paths: each is a native book that trips one guard, tagged with the QuotingError variant both forks must raise (the translation rejects, never clamps). All integer math is truncating.",
         "cases": cases,
+        "rejections": rejections,
     });
     emit(&doc, "quoting_vectors.json");
 }
