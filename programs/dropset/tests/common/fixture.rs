@@ -134,6 +134,64 @@ pub fn ladder_profile(asks: &[(u32, u16, u32)], bids: &[(u32, u16, u32)]) -> [u8
     bytes
 }
 
+// ── Init ix-builder ──────────────────────────────────────────────────
+
+/// Build an `Init` instruction with every account and argument explicit
+/// — the single source of the `Init` account-meta order, so a layout
+/// change is a one-line edit here rather than across every test that
+/// inits a registry. Negative tests drive a malformed `program_data` or
+/// a mismatched `token_program` straight through the params; the
+/// canonical happy path goes through [`canonical_init_ixn`].
+pub fn init_ixn(
+    payer: Pubkey,
+    genesis_admin: Pubkey,
+    fee_mint: Pubkey,
+    fee_atoms: u64,
+    program_data: Pubkey,
+    token_program: Pubkey,
+) -> Instruction {
+    let registry = registry_pda();
+    let fee_vault = associated_token_address(&registry, &fee_mint, &token_program);
+    Instruction::new_with_bytes(
+        PROGRAM_ID,
+        &InitIx {
+            genesis_admin,
+            fee_atoms,
+        }
+        .data(),
+        vec![
+            AccountMeta::new(payer, true),
+            AccountMeta::new(registry, false),
+            AccountMeta::new_readonly(program_data, false),
+            AccountMeta::new_readonly(fee_mint, false),
+            AccountMeta::new(fee_vault, false),
+            AccountMeta::new_readonly(token_program, false),
+            AccountMeta::new_readonly(ATA_PROGRAM_ID, false),
+            AccountMeta::new_readonly(System::id(), false),
+        ],
+    )
+}
+
+/// [`init_ixn`] with the canonical program-data PDA filled in — the
+/// happy-path builder every successful `init` (and
+/// [`Fixture::bootstrap`]) uses.
+pub fn canonical_init_ixn(
+    payer: Pubkey,
+    genesis_admin: Pubkey,
+    fee_mint: Pubkey,
+    fee_atoms: u64,
+    token_program: Pubkey,
+) -> Instruction {
+    init_ixn(
+        payer,
+        genesis_admin,
+        fee_mint,
+        fee_atoms,
+        get_program_data_address(&PROGRAM_ID),
+        token_program,
+    )
+}
+
 // ── Fixture ──────────────────────────────────────────────────────────
 
 /// A live market on a `LiteSVM`. `authority` is the genesis admin, the
@@ -168,23 +226,12 @@ impl Fixture {
             associated_token_address(&registry, &fee_mint, &SPL_TOKEN_PROGRAM_ID);
 
         // init.
-        let init_ix = Instruction::new_with_bytes(
-            PROGRAM_ID,
-            &InitIx {
-                genesis_admin: authority.pubkey(),
-                fee_atoms: CREATE_MARKET_FEE_ATOMS,
-            }
-            .data(),
-            vec![
-                AccountMeta::new(authority.pubkey(), true),
-                AccountMeta::new(registry, false),
-                AccountMeta::new_readonly(get_program_data_address(&PROGRAM_ID), false),
-                AccountMeta::new_readonly(fee_mint, false),
-                AccountMeta::new(registry_fee_treasury, false),
-                AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
-                AccountMeta::new_readonly(ATA_PROGRAM_ID, false),
-                AccountMeta::new_readonly(System::id(), false),
-            ],
+        let init_ix = canonical_init_ixn(
+            authority.pubkey(),
+            authority.pubkey(),
+            fee_mint,
+            CREATE_MARKET_FEE_ATOMS,
+            SPL_TOKEN_PROGRAM_ID,
         );
         send_ixn(&mut svm, &authority, init_ix).expect("init");
 
@@ -290,6 +337,66 @@ impl Fixture {
         self.deposit(&alice, 0, 50_000, 0, 200_000, 200_000)
             .expect("outside deposit");
         (leader, alice)
+    }
+
+    /// Bootstrap → two admin vaults (sectors 0 then 1), each seeded with
+    /// 1_000_000 base / 1_085_000 quote and a full-inventory ±0.5%
+    /// ladder, anchored at `ref0_bits` / `ref1_bits`. Sector 0 is set up
+    /// first, so its `reference_price.stamp` nonce is strictly older than
+    /// sector 1's — the price-time tiebreaker when prices are equal.
+    pub fn seeded_two_vaults(ref0_bits: u32, ref1_bits: u32) -> Self {
+        let mut f = Self::bootstrap();
+        let auth = f.authority.insecure_clone();
+
+        // Sector 0.
+        f.create_vault(0, f.authority.pubkey(), false, Pubkey::default())
+            .expect("register vault 0");
+        f.set_reference_price(&auth, 0, ref0_bits, 0)
+            .expect("ref 0");
+        f.set_liquidity_profile(&auth, 0, simple_profile(5_000, 10_000, u32::MAX))
+            .expect("profile 0");
+        f.deposit_leader(0, 1_000_000, 1_085_000, 1_000_000, 1_085_000)
+            .expect("seed 0");
+
+        // Advance the blockhash so sector 1's seed mint (same amount, same
+        // ATA as sector 0's) isn't a byte-identical, already-processed txn.
+        f.svm.expire_blockhash();
+
+        // Sector 1. Its register / seed transactions mirror sector 0's
+        // argument-for-argument; the blockhash bump above is what keeps
+        // them from colliding as already-processed duplicates.
+        f.create_vault(1, f.authority.pubkey(), false, Pubkey::default())
+            .expect("register vault 1");
+        f.set_reference_price(&auth, 1, ref1_bits, 0)
+            .expect("ref 1");
+        f.set_liquidity_profile(&auth, 1, simple_profile(5_000, 10_000, u32::MAX))
+            .expect("profile 1");
+        f.deposit_leader(1, 1_000_000, 1_085_000, 1_000_000, 1_085_000)
+            .expect("seed 1");
+        f
+    }
+
+    /// Bootstrap → one admin vault (sector 0) seeded with 1_000_000 base
+    /// / 1_085_000 quote at the 1.0850 reference, quoting two 5_000-bps
+    /// ask levels. The two levels each materialize to 500_000 base, so a
+    /// Buy large enough to cross both fills exactly two legs — one
+    /// `market.nonce` bump per leg.
+    pub fn seeded_two_ask_levels() -> Self {
+        let mut f = Self::bootstrap();
+        let auth = f.authority.insecure_clone();
+        f.create_vault(0, f.authority.pubkey(), false, Pubkey::default())
+            .expect("register");
+        f.set_reference_price(&auth, 0, Price::encode(10_850_000, 0).unwrap().as_u32(), 0)
+            .expect("ref");
+        f.set_liquidity_profile(
+            &auth,
+            0,
+            ladder_profile(&[(5_000, 5_000, u32::MAX), (10_000, 5_000, u32::MAX)], &[]),
+        )
+        .expect("two-level profile");
+        f.deposit_leader(0, 1_000_000, 1_085_000, 1_000_000, 1_085_000)
+            .expect("seed");
+        f
     }
 
     // ── signer / ATA helpers ─────────────────────────────────────────

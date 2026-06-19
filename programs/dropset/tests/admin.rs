@@ -2,45 +2,14 @@ mod common;
 
 use anchor_lang_v2::{programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, LiteSVM, Signer};
-use common::{
-    assert_program_error, associated_token_address, create_spl_mint, decode_slab,
-    deploy_with_authority, send_ixn, ATA_PROGRAM_ID, PROGRAM_ID, SIGNER_FUNDING_LAMPORTS,
-    SPL_TOKEN_PROGRAM_ID,
-};
+use common::fixture::{registry_pda, Fixture};
+use common::{assert_program_error, decode_slab, send_ixn, PROGRAM_ID, SIGNER_FUNDING_LAMPORTS};
 use dropset::{
-    instruction::{AddAdmin as AddAdminIx, Init as InitIx, RemoveAdmin as RemoveAdminIx},
+    instruction::{AddAdmin as AddAdminIx, RemoveAdmin as RemoveAdminIx},
     DropsetError, Registry, RegistryHeader,
 };
 use solana_instruction::{AccountMeta, Instruction};
-use solana_loader_v3_interface::get_program_data_address;
 use solana_pubkey::Pubkey;
-
-fn registry_pda() -> Pubkey {
-    Pubkey::find_program_address(&[b"registry"], &PROGRAM_ID).0
-}
-
-fn init_ixn(payer: Pubkey, genesis_admin: Pubkey, fee_mint: Pubkey) -> Instruction {
-    let registry = registry_pda();
-    let fee_vault = associated_token_address(&registry, &fee_mint, &SPL_TOKEN_PROGRAM_ID);
-    Instruction::new_with_bytes(
-        PROGRAM_ID,
-        &InitIx {
-            genesis_admin,
-            fee_atoms: 1_000_000_000,
-        }
-        .data(),
-        vec![
-            AccountMeta::new(payer, true),
-            AccountMeta::new(registry, false),
-            AccountMeta::new_readonly(get_program_data_address(&PROGRAM_ID), false),
-            AccountMeta::new_readonly(fee_mint, false),
-            AccountMeta::new(fee_vault, false),
-            AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
-            AccountMeta::new_readonly(ATA_PROGRAM_ID, false),
-            AccountMeta::new_readonly(System::id(), false),
-        ],
-    )
-}
 
 fn add_ixn(admin: Pubkey, new_admin: Pubkey) -> Instruction {
     Instruction::new_with_bytes(
@@ -65,19 +34,14 @@ fn remove_ixn(admin: Pubkey, target: Pubkey) -> Instruction {
     )
 }
 
-/// Deploy and `init` the registry with `authority` as both the upgrade
-/// authority and the genesis admin (so it can sign add/remove).
+/// Stand up a fresh registry via [`Fixture::bootstrap`] — `authority`
+/// is both the program's upgrade authority and the genesis admin (so it
+/// can sign add/remove) — and hand back the pieces the admin tests
+/// drive. `bootstrap` also opens a throwaway market, which these tests
+/// ignore: it touches neither the admin slab nor the registry's rent.
 fn setup() -> (LiteSVM, Keypair) {
-    let authority = Keypair::new();
-    let mut svm = deploy_with_authority(&authority);
-    let fee_mint = create_spl_mint(&mut svm, &authority);
-    send_ixn(
-        &mut svm,
-        &authority,
-        init_ixn(authority.pubkey(), authority.pubkey(), fee_mint),
-    )
-    .expect("init should succeed");
-    (svm, authority)
+    let f = Fixture::bootstrap();
+    (f.svm, f.authority)
 }
 
 /// The admin set (as raw 32-byte keys) currently stored in the registry.

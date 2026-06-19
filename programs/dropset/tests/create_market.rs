@@ -7,6 +7,7 @@ mod common;
 
 use anchor_lang_v2::{programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, Signer};
+use common::fixture::{canonical_init_ixn, registry_pda};
 use common::{
     associated_token_address, create_associated_token_account, create_mock_usdc_mint,
     create_spl_mint, create_token2022_mint, decode_slab, deploy_with_authority, mint_to, send_ixn,
@@ -14,11 +15,10 @@ use common::{
     SPL_TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID,
 };
 use dropset::{
-    instruction::{CreateMarket as CreateMarketInstruction, Init as InitInstruction},
-    MarketHeader, RegistryHeader, NULL_SECTOR, N_LEVELS,
+    instruction::CreateMarket as CreateMarketInstruction, MarketHeader, RegistryHeader,
+    NULL_SECTOR, N_LEVELS,
 };
 use solana_instruction::{AccountMeta, Instruction};
-use solana_loader_v3_interface::get_program_data_address;
 use solana_pubkey::Pubkey;
 
 // ── Fixture wiring ───────────────────────────────────────────────────
@@ -35,32 +35,15 @@ fn bootstrap() -> (anchor_v2_testing::LiteSVM, Keypair, Pubkey) {
     // Init the registry. The init handler also stamps
     // `default_fee_config.{atoms, mint, token_program}` and creates
     // the registry's fee vault inline.
-    let registry = registry_pda();
-    let fee_vault = associated_token_address(&registry, &fee_mint, &SPL_TOKEN_PROGRAM_ID);
-    let init_ix = Instruction::new_with_bytes(
-        PROGRAM_ID,
-        &InitInstruction {
-            genesis_admin: authority.pubkey(),
-            fee_atoms: CREATE_MARKET_FEE_ATOMS,
-        }
-        .data(),
-        vec![
-            AccountMeta::new(authority.pubkey(), true),
-            AccountMeta::new(registry, false),
-            AccountMeta::new_readonly(get_program_data_address(&PROGRAM_ID), false),
-            AccountMeta::new_readonly(fee_mint, false),
-            AccountMeta::new(fee_vault, false),
-            AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
-            AccountMeta::new_readonly(ATA_PROGRAM_ID, false),
-            AccountMeta::new_readonly(System::id(), false),
-        ],
+    let init_ix = canonical_init_ixn(
+        authority.pubkey(),
+        authority.pubkey(),
+        fee_mint,
+        CREATE_MARKET_FEE_ATOMS,
+        SPL_TOKEN_PROGRAM_ID,
     );
     send_ixn(&mut svm, &authority, init_ix).expect("registry init must succeed");
     (svm, authority, fee_mint)
-}
-
-fn registry_pda() -> Pubkey {
-    Pubkey::find_program_address(&[b"registry"], &PROGRAM_ID).0
 }
 
 fn market_pda(base_mint: &Pubkey, quote_mint: &Pubkey) -> (Pubkey, u8) {
