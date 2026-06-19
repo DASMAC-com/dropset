@@ -111,47 +111,46 @@ matching entries (still report the rest).
    word list — with the Read tool, never `jq`/`python`.
 
 1. **Count usage per word.** For each dictionary word,
-   find the distinct files that use it with one bare
-   `git grep` per word — whole-word (`-w`),
-   case-insensitive (`-i`), names only (`-l`), excluding
-   the dictionary itself:
+   find the distinct files that use it with the **Grep
+   tool** — searching file contents always goes through
+   Grep, never `git grep` (see `CLAUDE.md` → "Shell
+   commands"). Match whole-word and case-insensitive,
+   returning file names only:
 
-   ```sh
-   git grep -ilw <word> -- ':!cfg/dictionary.txt'
-   ```
+   - pattern `\b<word>\b` (word boundaries; cspell
+     lowercases, so set the Grep `-i` flag and `Borsh`
+     and `borsh` count as one word)
+   - output mode: files with matches
 
    Then narrow to the files that **actually need the
-   allow-list** — `git grep` over-counts:
+   allow-list** — the raw match set over-counts:
 
+   - Drop `cfg/dictionary.txt` itself.
    - Drop any hit under an `ignorePaths` glob.
    - Drop **generated / vendored** files: lock files
      (`Cargo.lock`, `*-lock.yaml`), `target/`,
      `node_modules/`, generated SDK / IDL trees. A
-     hyphenated crate name in `Cargo.lock` can make
-     `git grep` match one of its parts as a whole word,
-     but cspell already accepts those (bundled
-     dictionaries) and a regenerated file can't hold an
-     escape anyway — so they must not inflate the count.
+     hyphenated crate name in `Cargo.lock` can make the
+     match catch one of its parts as a whole word, but
+     cspell already accepts those (bundled dictionaries)
+     and a regenerated file can't hold an escape anyway —
+     so they must not inflate the count.
 
    The remaining count — hand-authored files where cspell
    would otherwise flag the word — is what the policy keys
    on. When unsure whether a file genuinely needs the
    word, the authoritative test is whether cspell flags it
-   there with the word removed from the dictionary. Keep
-   it one bare `git grep` per word so each call stays a
-   `Bash(git grep:*)` allow-rule — don't pipe or chain.
+   there with the word removed from the dictionary.
 
 1. **Classify each word** by the policy above: keep,
    move-inline, or remove-dead.
 
 1. **Scan escape placement.** Independent of the
    dictionary, audit the inline escapes already in the
-   tree. Find every file that carries one with a single
-   bare `git grep` (names only, the literal directive):
-
-   ```sh
-   git grep -l "cspell:word" -- ':!cfg/dictionary.txt'
-   ```
+   tree. Find every file that carries one with the **Grep
+   tool** (names only, the literal directive `cspell:word`),
+   then drop `cfg/dictionary.txt` from the hits. Searching
+   contents goes through Grep, never `git grep`.
 
    Read each hit and flag it as **mis-placed** when its
    escapes aren't already the top block its comment style

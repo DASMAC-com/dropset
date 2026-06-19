@@ -1,6 +1,6 @@
 ---
 name: review-pr
-description: Adversarial pre-review — verify the Linear task's checklist is fully addressed, lint, catalogue issues, fix what's mechanical, ready the PR, wait for GitHub CI to pass, print the review summary, then at the merge-queue handoff move the Linear issue In Review, offer to enqueue the PR, firm up permissions while it sits in the queue, and report whether it merges or gets taken back out.
+description: Adversarial pre-review — mark the Linear issue In Progress on invocation, verify its checklist is fully addressed, lint, catalogue issues, fix what's mechanical, ready the PR, wait for GitHub CI to pass, print the review summary, then at the merge-queue handoff move the issue In Review, offer to enqueue the PR, firm up permissions while it sits in the queue, and report whether it merges or gets taken back out.
 user-invocable: true
 ---
 
@@ -13,8 +13,11 @@ looks at the PR. Run lint, audit the diff,
 catalogue every issue, fix what can be fixed
 mechanically, and mark the PR ready only when
 it's clean. Then wait for the real GitHub CI to go
-green and print the review summary — the issue stays
-In Progress through all of this. It moves to In Review
+green and print the review summary. Invoking this skill
+moves the Linear issue to **In Progress** at the start
+(reclaiming it even from In Review if a prior run
+advanced it), and it stays In Progress through all of
+this. It moves to In Review
 only at the merge-queue handoff, the point at which
 it's the human's turn to look at the ready, CI-green PR
 and approve enqueueing it — so when this skill prompts,
@@ -109,10 +112,16 @@ is `DASMAC-com/dropset`, so every MCP call takes
      items and acceptance criteria sometimes live in an
      inline (anchored) comment, not the body.
 
-   - If the issue is still **unstarted** (Todo /
-     Backlog), move it to **In Progress** so the board
-     reflects that work is underway. Don't regress an
-     issue already In Review / Done:
+   - Mark the issue **In Progress** to reflect that
+     review work is underway — invoking `review-pr` always
+     moves it there, **including reclaiming it from In
+     Review** if a prior `review-pr` run advanced it. In
+     Review now belongs to the merge-queue handoff (the
+     final steps), so a re-run should pull the issue back
+     to In Progress rather than leave it sitting In Review
+     while the review is actively redone. The one thing
+     not to regress is a **Done** / **Canceled** issue —
+     leave those as-is:
 
      ```txt
      mcp__claude_ai_Linear__save_issue(
@@ -577,7 +586,7 @@ is `DASMAC-com/dropset`, so every MCP call takes
    caches), so the checks are already in flight. The MCP
    server has no streaming `--watch`, so **poll** the
    check runs (`pull_request_read` with
-   `method: "get_check_runs"`) on an interval until every
+   `method: "get_check_runs"`) until every
    check run reports `status: "completed"`:
 
    ```txt
@@ -589,8 +598,19 @@ is `DASMAC-com/dropset`, so every MCP call takes
    )
    ```
 
-   Re-call about every 30 seconds while any check run is
-   still `queued` or `in_progress`. Two operational notes:
+   This is a **model-driven** poll, not a shell watcher.
+   Re-issue the single `get_check_runs` call above as a
+   fresh tool call across successive turns — **never** a
+   shell `while … sleep … done` loop or a `jq` filter (a
+   compound that can't reduce to an allow-rule, and
+   foreground `sleep` is blocked anyway). To pace the
+   re-calls across turns rather than busy-looping, schedule
+   a wakeup (e.g. `ScheduleWakeup`) — one probe per wake.
+   Tell the human **once**, up front, that CI is in flight
+   and you're standing by, then stay silent: don't narrate
+   each poll. Ping again only on a **terminal** outcome
+   (every check `completed` — the branch below). Two
+   operational notes:
 
    - Polling is naturally resumable: each call returns the
      current snapshot, so if a wait is interrupted, just
@@ -714,8 +734,15 @@ is `DASMAC-com/dropset`, so every MCP call takes
    )
    ```
 
-   Then ask with `AskUserQuestion` — approve enqueueing,
-   or skip and merge later by hand.
+   Then ask with `AskUserQuestion` — always this tool, so
+   the human gets the little TUI pop-up selector and picks
+   "yes, add it to the merge queue" (or "skip, I'll merge
+   by hand") right in the terminal instead of typing a
+   reply. In the question text, **clearly print both
+   identifiers the human needs to pull up the PR**: the
+   Linear tag (e.g. `ENG-536`) and the GitHub PR number
+   (e.g. `#138`) — so it's unambiguous which PR they're
+   approving.
 
    - **If the user approves**, add it to the merge queue.
      Enqueueing is the one `gh` **write** the skill makes
@@ -796,12 +823,20 @@ is `DASMAC-com/dropset`, so every MCP call takes
    printed after `firm-perms` and after the review summary
    above — the summary couldn't know this outcome yet.
 
-   Watch whether the PR lands or gets kicked back out,
-   polling about every 30 seconds (resumable, like the CI
-   wait). Key on fields the hosted GitHub MCP actually
-   returns — its `pull_request_read` `get` response carries
-   `state`, `merged`, and `mergeable_state`, but **not**
-   `auto_merge` or `merged_at`:
+   Watch whether the PR lands or gets kicked back out with
+   the **same model-driven poll** as the CI wait: re-issue
+   the `get` call (and the `gh` probe below) as fresh tool
+   calls across successive turns, paced with a scheduled
+   wakeup (e.g. `ScheduleWakeup`) — **never** a shell
+   `while … sleep … done` loop or a `jq` filter. Say once,
+   up front, that the PR is queued and you're standing by;
+   then stay silent until a **terminal** outcome (merged,
+   or taken out of the queue), pinging the human only then.
+   Each poll is resumable — a fresh call returns the
+   current snapshot. Key on fields the hosted GitHub MCP
+   actually returns — its `pull_request_read` `get`
+   response carries `state`, `merged`, and `mergeable_state`,
+   but **not** `auto_merge` or `merged_at`:
 
    ```txt
    mcp__github__pull_request_read(
