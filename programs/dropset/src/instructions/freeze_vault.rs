@@ -17,7 +17,7 @@ use crate::{
     errors::DropsetError,
     events::FreezeVaultEvent,
     state::{Market, VaultAccess},
-    AdminSet, Registry,
+    Registry,
 };
 
 #[event_cpi]
@@ -38,10 +38,8 @@ impl FreezeVault {
     /// through `emit_cpi!`.
     #[inline(always)]
     pub fn freeze_vault(&mut self, vault_idx: u32) -> Result<FreezeVaultEvent> {
-        require!(
-            self.registry.admin_contains(self.admin.address()),
-            DropsetError::Unauthorized
-        );
+        // Admin-only — gated at the dispatcher via `#[access_control]`
+        // (`lib.rs`), so the caller is already a known admin here.
         let market_addr = *self.market.address();
         let vault = self.market.mutate_vault(vault_idx)?;
         require!(vault.is_occupied(), DropsetError::VaultEmpty);

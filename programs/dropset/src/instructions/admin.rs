@@ -17,9 +17,8 @@ pub struct AddAdmin {
 impl AddAdmin {
     #[inline(always)]
     pub fn add_admin(&mut self, new_admin: Address) -> Result<()> {
-        if !self.registry.admin_contains(self.admin.address()) {
-            return Err(DropsetError::Unauthorized.into());
-        }
+        // Admin-only — gated at the dispatcher via `#[access_control]`
+        // (`lib.rs`), so the caller is already a known admin here.
         self.registry.admin_insert(new_admin, self.admin.as_ref())?;
         Ok(())
     }
@@ -39,9 +38,8 @@ pub struct RemoveAdmin {
 impl RemoveAdmin {
     #[inline(always)]
     pub fn remove_admin(&mut self, target: Address) -> Result<()> {
-        if !self.registry.admin_contains(self.admin.address()) {
-            return Err(DropsetError::Unauthorized.into());
-        }
+        // Admin-only — gated at the dispatcher via `#[access_control]`
+        // (`lib.rs`), so the caller is already a known admin here.
         // A standalone view onto the signer account so the freed rent
         // can be credited back to it (see `Slab::refund`).
         let mut rent_recipient = *self.admin.as_ref();

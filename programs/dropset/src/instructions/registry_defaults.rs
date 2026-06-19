@@ -37,7 +37,7 @@ use anchor_spl_v2::{
 use crate::{
     errors::DropsetError,
     events::{SetDefaultFeeConfigEvent, SetRegistryDefaultsEvent},
-    AdminSet, FeeConfig, Registry, PPM,
+    FeeConfig, Registry, PPM,
 };
 
 #[event_cpi]
@@ -61,14 +61,8 @@ impl SetRegistryDefaults {
         taker_fee: Option<u16>,
         min_leader_share: Option<u32>,
     ) -> Result<SetRegistryDefaultsEvent> {
-        // Admin-only — same gate as the per-market retuning levers. The
-        // registry is PDA-pinned (`seeds = [b"registry"]`), so membership
-        // is checked against the canonical admin set.
-        require!(
-            self.registry.admin_contains(self.admin.address()),
-            DropsetError::Unauthorized
-        );
-
+        // Admin-only — gated at the dispatcher via `#[access_control]`
+        // (`lib.rs`), so the caller is already a known admin here.
         // `default_taker_fee` is a `u16` (`Ppm16`), so the spec's ~6.55%
         // ceiling is the type bound — no range check is possible to fail.
         if let Some(taker_fee) = taker_fee {
@@ -148,14 +142,8 @@ impl SetDefaultFeeConfig {
     /// dispatch through `emit_cpi!`.
     #[inline(always)]
     pub fn set_default_fee_config(&mut self, atoms: u64) -> Result<SetDefaultFeeConfigEvent> {
-        // Admin-only — same gate as the other registry-default levers. The
-        // registry is PDA-pinned (`seeds = [b"registry"]`), so membership
-        // is checked against the canonical admin set.
-        require!(
-            self.registry.admin_contains(self.admin.address()),
-            DropsetError::Unauthorized
-        );
-
+        // Admin-only — gated at the dispatcher via `#[access_control]`
+        // (`lib.rs`), so the caller is already a known admin here.
         // Read the validated mint/program before the mutable registry
         // borrow; the `mint::token_program` constraint already proved the
         // pair is consistent, so the token program is not re-derived here.

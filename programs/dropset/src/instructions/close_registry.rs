@@ -18,7 +18,7 @@ use anchor_spl_v2::{
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
 
-use crate::{errors::DropsetError, AdminSet, Registry};
+use crate::{errors::DropsetError, Registry};
 
 // ── close_registry_fee_vault ──────────────────────────────────────────
 
@@ -56,10 +56,9 @@ pub struct CloseRegistryFeeVault {
 impl CloseRegistryFeeVault {
     #[inline(always)]
     pub fn close_registry_fee_vault(&mut self) -> Result<()> {
-        require!(
-            self.registry.admin_contains(self.admin.address()),
-            DropsetError::Unauthorized
-        );
+        // Admin-only — gated at the dispatcher's feature-on arm via
+        // `require_registry_admin` (`lib.rs`), so the caller is already a
+        // known admin here.
         require!(
             self.fee_vault.amount() == 0,
             DropsetError::TokenAccountNotEmpty
@@ -104,11 +103,10 @@ pub struct CloseRegistry {
 impl CloseRegistry {
     #[inline(always)]
     pub fn close_registry(&mut self) -> Result<()> {
-        // The caller must be an admin — and, below, the *only* admin.
-        require!(
-            self.registry.admin_contains(self.admin.address()),
-            DropsetError::Unauthorized
-        );
+        // Admin-only — gated at the dispatcher's feature-on arm via
+        // `require_registry_admin` (`lib.rs`), so the caller is already a
+        // known admin here. The caller must additionally be the *only*
+        // admin, enforced by the `len() <= 1` check below.
         // Pre-condition: no live markets. `market_count` is the witness
         // that `close_market` ran for every market the registry created.
         require!(

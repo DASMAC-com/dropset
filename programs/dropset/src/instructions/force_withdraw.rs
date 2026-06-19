@@ -37,7 +37,7 @@ use crate::{
     errors::DropsetError,
     events::{RealizeEvent, WithdrawEvent},
     state::{compute_pro_rata_slice, realize_in_place, Market, VaultAccess, VaultDll},
-    AdminSet, Registry, VaultDepositorHeader,
+    Registry, VaultDepositorHeader,
 };
 
 // ── force_withdraw_depositor ──────────────────────────────────────────
@@ -129,10 +129,9 @@ impl ForceWithdrawDepositor {
         &mut self,
         vault_idx: u32,
     ) -> Result<(Option<RealizeEvent>, WithdrawEvent)> {
-        require!(
-            self.registry.admin_contains(self.admin.address()),
-            DropsetError::Unauthorized
-        );
+        // Admin-only — gated at the dispatcher's feature-on arm via
+        // `require_registry_admin` (`lib.rs`), so the caller is already a
+        // known admin here.
         let owner_addr = *self.owner.address();
         let (total_shares, ref_price_bits) = {
             let v = self.market.read_vault(vault_idx)?;
@@ -342,10 +341,9 @@ impl ForceWithdrawLeader {
         &mut self,
         vault_idx: u32,
     ) -> Result<(Option<RealizeEvent>, WithdrawEvent)> {
-        require!(
-            self.registry.admin_contains(self.admin.address()),
-            DropsetError::Unauthorized
-        );
+        // Admin-only — gated at the dispatcher's feature-on arm via
+        // `require_registry_admin` (`lib.rs`), so the caller is already a
+        // known admin here.
         let leader_addr = *self.leader.address();
         let (leader, total_shares) = {
             let v = self.market.read_vault(vault_idx)?;
