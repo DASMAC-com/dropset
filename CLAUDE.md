@@ -1,6 +1,10 @@
 # Project instructions
 
-<!-- cspell:word PIPESTATUS rustc Toolsets -->
+<!-- cspell:word PIPESTATUS -->
+
+<!-- cspell:word rustc -->
+
+<!-- cspell:word Toolsets -->
 
 ## Commits and PRs
 
@@ -214,20 +218,21 @@ comment style:
 The lone exception is a file that can't carry a comment (e.g.
 `.json`), where the dictionary is the only option.
 
-**Placement: one block at the top of the file.** All of a file's
-inline escapes go together in a single block at the very top, never
-scattered beside each usage. The block's shape depends on the comment
-style: in **line-comment** files (Rust / TS / JS `//`, YAML / TOML /
-shell `#`) it's one directive per word, one word per line, on
-consecutive lines with no blank lines between; in **Markdown**, one per
-line doesn't work — mdformat puts a blank line between adjacent HTML
-comments — so pack the words into as few `<!-- cspell:word … -->`
-comments as fit within the 80-col limit, spilling to a second only when
-a line would overflow. "Top" means the first line, except where syntax
-forces something else to lead: after a `---` YAML frontmatter block,
-after a `#!` shebang, or after a leading module doc-comment /
-inner-attribute header. One known place means a reader — and the
-audit — finds every escape at a glance instead of hunting the file.
+**Placement: one block at the top of the file, one word per line.**
+All of a file's inline escapes go together in a single block at the
+very top, never scattered beside each usage, and **each escaped word
+gets its own directive on its own line** — never pack multiple words
+into one comment. In **line-comment** files (Rust / TS / JS `//`, YAML
+/ TOML / shell `#`) that's one directive per word on consecutive lines
+with no blank lines between. In **Markdown** it's one
+`<!-- cspell:word foo -->` per word, but mdformat inserts a blank line
+between adjacent HTML comments, so the block is a blank-line-separated
+stack of single-word comments — that's expected and stable, not drift.
+"Top" means the first line, except where syntax forces something else
+to lead: after a `---` YAML frontmatter block, after a `#!` shebang, or
+after a leading module doc-comment / inner-attribute header. One known
+place, one word per line, means a reader — and the audit — finds every
+escape at a glance instead of hunting the file.
 
 The `cspell-audit` skill reconciles the dictionary against actual usage
 **and** normalizes escape placement on this rule; run it when the

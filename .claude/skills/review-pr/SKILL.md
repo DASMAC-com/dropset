@@ -4,7 +4,9 @@ description: Adversarial pre-review — mark the Linear issue In Progress on inv
 user-invocable: true
 ---
 
-<!-- cspell:word oneline unstarted -->
+<!-- cspell:word oneline -->
+
+<!-- cspell:word unstarted -->
 
 # `review-pr`
 
