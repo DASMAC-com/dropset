@@ -15,6 +15,7 @@ import { baseForQuote, decodePrice, encodePrice, isValidPrice, quoteForBase } fr
 
 type DecodeCase = { bits: number; valid: boolean; value: number | null };
 type EncodeCase = { value: number; bits: number | null };
+type RejectCase = { value: number | string; bits: null };
 type RatioCase = { bits: number; base?: number; quote?: number; expected: number };
 
 const U64_MAX = (1n << 64n) - 1n;
@@ -24,6 +25,7 @@ const vectors = JSON.parse(
 ) as {
   decode: DecodeCase[];
   encode: EncodeCase[];
+  encode_reject: RejectCase[];
   quote_for_base: RatioCase[];
   base_for_quote: RatioCase[];
 };
@@ -44,6 +46,29 @@ test('decode vectors match', () => {
 test('encode vectors match', () => {
   for (const c of vectors.encode) {
     assert.equal(encodePrice(c.value), c.bits, `encode ${c.value}`);
+  }
+});
+
+// Map a reject-path `value` to its JS number. Finite inputs are JSON
+// numbers; non-finite ones ride as string tags (JSON can't carry NaN/±inf
+// as numbers), mirrored on the Rust side in conformance.rs.
+function rejectValue(v: number | string): number {
+  if (typeof v === 'string') {
+    if (v === 'nan') return NaN;
+    if (v === 'inf') return Infinity;
+    if (v === '-inf') return -Infinity;
+    throw new Error(`unknown reject tag ${v}`);
+  }
+  return v;
+}
+
+test('encode reject vectors throw', () => {
+  for (const c of vectors.encode_reject) {
+    assert.throws(
+      () => encodePrice(rejectValue(c.value)),
+      RangeError,
+      `encode ${c.value} should reject`,
+    );
   }
 });
 

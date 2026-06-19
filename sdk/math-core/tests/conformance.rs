@@ -48,6 +48,33 @@ fn encode_vectors() {
     }
 }
 
+/// Map a reject-path `value` field to its f64. Finite inputs are JSON
+/// numbers; non-finite ones ride as string tags (serde can't emit NaN/±inf
+/// as JSON numbers), mirrored on the TS side in `conformance.test.ts`.
+fn reject_value(v: &Value) -> f64 {
+    match v {
+        Value::String(s) => match s.as_str() {
+            "nan" => f64::NAN,
+            "inf" => f64::INFINITY,
+            "-inf" => f64::NEG_INFINITY,
+            other => panic!("unknown reject tag {other:?}"),
+        },
+        _ => v.as_f64().unwrap(),
+    }
+}
+
+#[test]
+fn encode_reject_vectors() {
+    for c in vectors()["encode_reject"].as_array().unwrap() {
+        let value = reject_value(&c["value"]);
+        assert!(
+            Price::from_value(value).is_none(),
+            "expected reject for {}",
+            c["value"]
+        );
+    }
+}
+
 #[test]
 fn quote_for_base_vectors() {
     for c in vectors()["quote_for_base"].as_array().unwrap() {
