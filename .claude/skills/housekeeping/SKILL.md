@@ -1,6 +1,6 @@
 ---
 name: housekeeping
-description: One pass of day-to-day repo upkeep, run from the base repo root — fast-forward main so the run uses the latest skills, prune the worktrees of already-merged PRs, run the cspell dictionary check and file any drift as a Backlog task, drain the Linear Permissions inbox doc via firm-perms (propose-only), and restage the backlog. Drive it with `/loop 30m housekeeping` while developing, or run it once at the start of the day.
+description: One pass of day-to-day repo upkeep, run from the base repo root — fast-forward main so the run uses the latest skills, prune the worktrees of already-merged PRs, drain the Linear Permissions inbox doc via firm-perms (propose-only), and restage the backlog. The cspell dictionary check is opt-in (pass `cspell`) and off by default. Drive it with `/loop 30m housekeeping` while developing, or run it once at the start of the day.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -11,18 +11,11 @@ A single iteration of routine repo upkeep — the
 chores that pile up while you develop but don't
 belong to any one PR. It first fast-forwards `main`
 so the pass runs on the latest committed skills, then
-does four things:
+does three things:
 
 1. **Prune merged worktrees** — remove the local
    worktree (and branch) of every PR that has
    already merged.
-1. **Spelling-escape hygiene** — run the `cspell-audit`
-   check read-only and **file** any drift — a
-   `cfg/dictionary.txt` entry to move, or a file whose
-   inline escapes need regrouping into a top block — as a
-   Backlog task to fix later (this is the *only* place
-   cspell runs on a schedule; `audit-loop` no longer does
-   it).
 1. **Drain the Permissions inbox** — invoke
    `firm-perms` in **propose-only** mode against the
    Linear Permissions doc, so each captured prompt gets
@@ -31,6 +24,26 @@ does four things:
 1. **Restage the backlog** — hand off to
    `stage-backlog` so the Task Staging document
    reflects everything currently open.
+
+**Opt-in: spelling-escape hygiene.** The `cspell-audit`
+check is **not** part of the default pass — it runs only
+when you invoke `housekeeping cspell` (see "Input").
+Escape drift is slow and just as easy to check by hand
+(`/cspell-audit`), so it's kept out of the 30-minute loop
+unless you ask for it. When the flag is set, the pass
+adds a step: run `cspell-audit` read-only and **file** any
+drift — a `cfg/dictionary.txt` entry to move, or a file
+whose inline escapes need regrouping into a top block — as
+a Backlog task to fix later.
+
+## Input
+
+Optional. The only argument is the **`cspell`** flag:
+when the invocation includes `cspell` (e.g.
+`housekeeping cspell`, or `/loop 30m housekeeping cspell`),
+the pass runs the opt-in spelling-escape check (step 3);
+with no argument it skips that step entirely. Any other
+argument is ignored.
 
 ## Run it from the base repo root
 
@@ -179,15 +192,18 @@ git worktree prune
 ```
 
 **3. Spelling-escape hygiene — run cspell, file the
-drift as one aggregated issue.** Invoke the `cspell-audit`
+drift as one aggregated issue.** **Opt-in — run this step
+only when the invocation passed the `cspell` flag (see
+"Input"); otherwise skip straight to step 4.** When it
+runs: invoke the `cspell-audit`
 skill in **delegated** (read-only) mode via the Skill
 tool — it returns two kinds of violation and **edits
 nothing**: a `cfg/dictionary.txt` word used in fewer
 than two files (with its sole file and recommended
 action), and a file whose inline escapes aren't in one
 contiguous block at the top (with its path). This skill
-is now the home of that periodic check; `audit-loop` no
-longer runs it.
+is the only place the scheduled check lives — opt-in here,
+via the `cspell` flag; `audit-loop` no longer runs it.
 
 cspell fixes are all trivial and file-disjoint, so they
 belong in **one PR** — file the run's drift as a **single
@@ -277,7 +293,9 @@ just triggers it.
 - Worktrees pruned (path + branch), and any left in
   place with the reason (PR open/closed-unmerged, no
   PR, or dirty tree).
-- Spelling-escape drift: the aggregated cspell issue —
+- Spelling-escape drift (only if the `cspell` flag was
+  passed; otherwise note the step was skipped): the
+  aggregated cspell issue —
   whether new findings were filed into a fresh one or
   appended to the open one (with its ENG-###), how many
   (dictionary words to move and files whose escapes need
