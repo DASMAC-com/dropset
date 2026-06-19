@@ -69,6 +69,7 @@ wasm:
 conformance-vectors:
 	cargo run -p dropset-math-core --example gen_conformance -- --write
 	cargo run -p dropset-math-core --example gen_quoting -- --write
+	cargo run -p dropset-math-core --example gen_share -- --write
 
 # Freshness gate (CI): regenerate the vectors, then stage + diff against
 # HEAD so a hand-edited or stale vector — and an added or removed one —

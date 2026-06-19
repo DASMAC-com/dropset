@@ -15,7 +15,7 @@
   "name": "@dropset/sdk",
   "scripts": {
     "check": "tsc --noEmit",
-    "test": "node --import tsx --test src/conformance.test.ts src/quoting.conformance.test.ts"
+    "test": "node --import tsx --test src/conformance.test.ts src/quoting.conformance.test.ts src/share.conformance.test.ts"
   },
   "type": "module",
   "types": "./src/index.ts",
