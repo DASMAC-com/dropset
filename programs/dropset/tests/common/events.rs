@@ -23,8 +23,8 @@
 use anchor_lang_v2::{bytemuck, event::EVENT_IX_TAG_LE, Discriminator};
 use dropset::{
     CloseVaultEvent, CreateVaultEvent, DepositEvent, FillEvent, FreezeVaultEvent, RealizeEvent,
-    SetMarketFeeConfigEvent, SetMinLeaderShareEvent, SetRegistryDefaultsEvent, SetTakerFeeEvent,
-    WithdrawEvent,
+    SetDefaultFeeConfigEvent, SetMarketFeeConfigEvent, SetMinLeaderShareEvent,
+    SetRegistryDefaultsEvent, SetTakerFeeEvent, WithdrawEvent,
 };
 use litesvm::types::TransactionMetadata;
 
@@ -235,6 +235,25 @@ pub fn set_taker_fee(meta: &TransactionMetadata) -> SetTakerFee {
     let d = SetTakerFee {
         market: c.pubkey(),
         taker_fee: c.u16(),
+    };
+    c.finish();
+    d
+}
+
+#[derive(Debug)]
+pub struct SetDefaultFeeConfig {
+    pub mint: [u8; 32],
+    pub token_program: [u8; 32],
+    pub atoms: u64,
+}
+
+pub fn set_default_fee_config(meta: &TransactionMetadata) -> SetDefaultFeeConfig {
+    let body = one_body::<SetDefaultFeeConfigEvent>(meta);
+    let mut c = Cursor::new(&body);
+    let d = SetDefaultFeeConfig {
+        mint: c.pubkey(),
+        token_program: c.pubkey(),
+        atoms: c.u64(),
     };
     c.finish();
     d

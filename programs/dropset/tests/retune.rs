@@ -399,3 +399,101 @@ fn registry_defaults_all_none_is_noop() {
     assert_eq!(ev.default_taker_fee, 0);
     assert_eq!(ev.default_min_leader_share, 50_000);
 }
+
+// ── set_default_fee_config (admin-only) ──────────────────────────────
+
+#[test]
+fn default_fee_config_admin_retunes_default() {
+    let mut f = Fixture::bootstrap();
+    // Seeded at `init`: the registry's create-vault fee default is the
+    // bootstrap fee mint under SPL Token.
+    let before = f.registry_header().default_fee_config;
+    assert_eq!(before.mint, f.fee_mint.to_bytes().into());
+    assert_eq!(before.token_program, SPL_TOKEN_PROGRAM_ID.to_bytes().into());
+
+    // Point the registry default at a fresh mint, with a new amount.
+    let admin = f.authority.insecure_clone();
+    let new_mint = create_spl_mint(&mut f.svm, &admin);
+    let meta = f
+        .set_default_fee_config_meta(&admin, &new_mint, &SPL_TOKEN_PROGRAM_ID, 99_000)
+        .expect("admin may retune the registry default fee config");
+
+    let after = f.registry_header().default_fee_config;
+    assert_eq!(after.mint, new_mint.to_bytes().into());
+    assert_eq!(after.token_program, SPL_TOKEN_PROGRAM_ID.to_bytes().into());
+    assert_eq!(after.atoms.get(), 99_000);
+
+    // The instruction eagerly created the registry fee ATA for the new
+    // mint, so the destination the next `create_market` charges into exists.
+    let new_treasury = associated_token_address(&f.registry, &new_mint, &SPL_TOKEN_PROGRAM_ID);
+    assert!(
+        f.svm.get_account(&new_treasury).is_some(),
+        "set_default_fee_config must create the registry fee ATA for the new mint"
+    );
+
+    let ev = common::events::set_default_fee_config(&meta);
+    assert_eq!(ev.mint, new_mint.to_bytes());
+    assert_eq!(ev.token_program, SPL_TOKEN_PROGRAM_ID.to_bytes());
+    assert_eq!(ev.atoms, 99_000);
+}
+
+#[test]
+fn default_fee_config_switch_then_create_market_succeeds() {
+    // Regression (ENG-508, registry level): re-pointing the registry's
+    // default fee mint must not brick the next `create_market`.
+    // `create_market` loads the registry fee ATA for
+    // `registry.default_fee_config.mint` but never creates it, so without
+    // the eager `init_if_needed` here the open would fail — the ATA for the
+    // freshly-pointed default mint would not exist.
+    let mut f = Fixture::bootstrap();
+    let admin = f.authority.insecure_clone();
+    let new_mint = create_spl_mint(&mut f.svm, &admin);
+    f.set_default_fee_config(&admin, &new_mint, &SPL_TOKEN_PROGRAM_ID, 99_000)
+        .expect("admin re-points the registry default fee at a fresh mint");
+
+    let before = f.registry_header().market_count.get();
+    f.create_market_with_default_fee(&new_mint, &SPL_TOKEN_PROGRAM_ID)
+        .expect("create_market must succeed once the new default mint's fee ATA exists");
+    assert_eq!(
+        f.registry_header().market_count.get(),
+        before + 1,
+        "the new market against the retuned default mint was created"
+    );
+}
+
+#[test]
+fn default_fee_config_rejects_non_admin() {
+    let mut f = Fixture::bootstrap();
+    let stranger = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
+    let mint = f.fee_mint;
+    let err = f
+        .set_default_fee_config(&stranger, &mint, &SPL_TOKEN_PROGRAM_ID, 99_000)
+        .expect_err("non-admin must not retune the registry default fee config");
+    common::assert_program_error(&err, dropset::DropsetError::Unauthorized);
+    // The default is untouched.
+    assert_eq!(
+        f.registry_header().default_fee_config.mint,
+        mint.to_bytes().into()
+    );
+}
+
+#[test]
+fn default_fee_config_rejects_mint_program_mismatch() {
+    // `fee_mint` is an SPL Token mint; passing the Token-2022 program as
+    // its owner must reject before any write lands. Creating the registry
+    // fee ATA front-runs the `mint::token_program` constraint: the ATA
+    // program CPIs `InitializeAccount3` into Token-2022 for an SPL-owned
+    // mint, which the token program rejects with `IncorrectProgramId` — the
+    // stronger validation the eager-ATA design buys (spec § SetDefaultFeeConfig).
+    let mut f = Fixture::bootstrap();
+    let admin = f.authority.insecure_clone();
+    let mint = f.fee_mint;
+    let err = f
+        .set_default_fee_config(&admin, &mint, &TOKEN_2022_PROGRAM_ID, 99_000)
+        .expect_err("a mint/token-program mismatch must reject");
+    common::assert_instruction_error(&err, "IncorrectProgramId");
+    assert_eq!(
+        f.registry_header().default_fee_config.token_program,
+        SPL_TOKEN_PROGRAM_ID.to_bytes().into()
+    );
+}

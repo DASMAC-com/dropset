@@ -7,7 +7,7 @@
  */
 
 import { assertIsInstructionWithAccounts, containsBytes, fixEncoderSize, getBytesEncoder, type Address, type Instruction, type InstructionWithData, type ReadonlyUint8Array } from '@solana/kit';
-import { parseAddAdminInstruction, parseCloseMarketInstruction, parseCloseMarketTreasuryInstruction, parseCloseRegistryFeeVaultInstruction, parseCloseRegistryInstruction, parseCloseVaultInstruction, parseCreateMarketInstruction, parseCreateVaultInstruction, parseDepositInstruction, parseDepositLeaderInstruction, parseForceWithdrawDepositorInstruction, parseForceWithdrawLeaderInstruction, parseFreezeVaultInstruction, parseInitInstruction, parseRemoveAdminInstruction, parseSetAllowOutsideDepositorsInstruction, parseSetLiquidityProfileInstruction, parseSetMarketFeeConfigInstruction, parseSetMinLeaderShareInstruction, parseSetOutsideDepositsApprovedInstruction, parseSetReferencePriceInstruction, parseSetRegistryDefaultsInstruction, parseSetTakerFeeInstruction, parseSwapInstruction, parseWithdrawInstruction, parseWithdrawLeaderInstruction, type ParsedAddAdminInstruction, type ParsedCloseMarketInstruction, type ParsedCloseMarketTreasuryInstruction, type ParsedCloseRegistryFeeVaultInstruction, type ParsedCloseRegistryInstruction, type ParsedCloseVaultInstruction, type ParsedCreateMarketInstruction, type ParsedCreateVaultInstruction, type ParsedDepositInstruction, type ParsedDepositLeaderInstruction, type ParsedForceWithdrawDepositorInstruction, type ParsedForceWithdrawLeaderInstruction, type ParsedFreezeVaultInstruction, type ParsedInitInstruction, type ParsedRemoveAdminInstruction, type ParsedSetAllowOutsideDepositorsInstruction, type ParsedSetLiquidityProfileInstruction, type ParsedSetMarketFeeConfigInstruction, type ParsedSetMinLeaderShareInstruction, type ParsedSetOutsideDepositsApprovedInstruction, type ParsedSetReferencePriceInstruction, type ParsedSetRegistryDefaultsInstruction, type ParsedSetTakerFeeInstruction, type ParsedSwapInstruction, type ParsedWithdrawInstruction, type ParsedWithdrawLeaderInstruction } from '../instructions';
+import { parseAddAdminInstruction, parseCloseMarketInstruction, parseCloseMarketTreasuryInstruction, parseCloseRegistryFeeVaultInstruction, parseCloseRegistryInstruction, parseCloseVaultInstruction, parseCreateMarketInstruction, parseCreateVaultInstruction, parseDepositInstruction, parseDepositLeaderInstruction, parseForceWithdrawDepositorInstruction, parseForceWithdrawLeaderInstruction, parseFreezeVaultInstruction, parseInitInstruction, parseRemoveAdminInstruction, parseSetAllowOutsideDepositorsInstruction, parseSetDefaultFeeConfigInstruction, parseSetLiquidityProfileInstruction, parseSetMarketFeeConfigInstruction, parseSetMinLeaderShareInstruction, parseSetOutsideDepositsApprovedInstruction, parseSetReferencePriceInstruction, parseSetRegistryDefaultsInstruction, parseSetTakerFeeInstruction, parseSwapInstruction, parseWithdrawInstruction, parseWithdrawLeaderInstruction, type ParsedAddAdminInstruction, type ParsedCloseMarketInstruction, type ParsedCloseMarketTreasuryInstruction, type ParsedCloseRegistryFeeVaultInstruction, type ParsedCloseRegistryInstruction, type ParsedCloseVaultInstruction, type ParsedCreateMarketInstruction, type ParsedCreateVaultInstruction, type ParsedDepositInstruction, type ParsedDepositLeaderInstruction, type ParsedForceWithdrawDepositorInstruction, type ParsedForceWithdrawLeaderInstruction, type ParsedFreezeVaultInstruction, type ParsedInitInstruction, type ParsedRemoveAdminInstruction, type ParsedSetAllowOutsideDepositorsInstruction, type ParsedSetDefaultFeeConfigInstruction, type ParsedSetLiquidityProfileInstruction, type ParsedSetMarketFeeConfigInstruction, type ParsedSetMinLeaderShareInstruction, type ParsedSetOutsideDepositsApprovedInstruction, type ParsedSetReferencePriceInstruction, type ParsedSetRegistryDefaultsInstruction, type ParsedSetTakerFeeInstruction, type ParsedSwapInstruction, type ParsedWithdrawInstruction, type ParsedWithdrawLeaderInstruction } from '../instructions';
 
 export const DROPSET_PROGRAM_ADDRESS = 'TESTnXwv2eHoftsSd5NEdpH4zEu7XRC8jviuoNPdB2Q' as Address<'TESTnXwv2eHoftsSd5NEdpH4zEu7XRC8jviuoNPdB2Q'>;
 
@@ -21,7 +21,7 @@ if (containsBytes(data, fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Arr
 throw new Error("The provided account could not be identified as a dropset account.")
 }
 
-export enum DropsetInstruction { AddAdmin, CloseMarket, CloseMarketTreasury, CloseRegistry, CloseRegistryFeeVault, CloseVault, CreateMarket, CreateVault, Deposit, DepositLeader, ForceWithdrawDepositor, ForceWithdrawLeader, FreezeVault, Init, RemoveAdmin, SetAllowOutsideDepositors, SetLiquidityProfile, SetMarketFeeConfig, SetMinLeaderShare, SetOutsideDepositsApproved, SetReferencePrice, SetRegistryDefaults, SetTakerFee, Swap, Withdraw, WithdrawLeader }
+export enum DropsetInstruction { AddAdmin, CloseMarket, CloseMarketTreasury, CloseRegistry, CloseRegistryFeeVault, CloseVault, CreateMarket, CreateVault, Deposit, DepositLeader, ForceWithdrawDepositor, ForceWithdrawLeader, FreezeVault, Init, RemoveAdmin, SetAllowOutsideDepositors, SetDefaultFeeConfig, SetLiquidityProfile, SetMarketFeeConfig, SetMinLeaderShare, SetOutsideDepositsApproved, SetReferencePrice, SetRegistryDefaults, SetTakerFee, Swap, Withdraw, WithdrawLeader }
 
 export function identifyDropsetInstruction(instruction: { data: ReadonlyUint8Array } | ReadonlyUint8Array): DropsetInstruction {
 const data = 'data' in instruction ? instruction.data : instruction;
@@ -41,6 +41,7 @@ if (containsBytes(data, fixEncoderSize(getBytesEncoder(), 1).encode(new Uint8Arr
 if (containsBytes(data, fixEncoderSize(getBytesEncoder(), 1).encode(new Uint8Array([0])), 0)) { return DropsetInstruction.Init; }
 if (containsBytes(data, fixEncoderSize(getBytesEncoder(), 1).encode(new Uint8Array([2])), 0)) { return DropsetInstruction.RemoveAdmin; }
 if (containsBytes(data, fixEncoderSize(getBytesEncoder(), 1).encode(new Uint8Array([12])), 0)) { return DropsetInstruction.SetAllowOutsideDepositors; }
+if (containsBytes(data, fixEncoderSize(getBytesEncoder(), 1).encode(new Uint8Array([26])), 0)) { return DropsetInstruction.SetDefaultFeeConfig; }
 if (containsBytes(data, fixEncoderSize(getBytesEncoder(), 1).encode(new Uint8Array([6])), 0)) { return DropsetInstruction.SetLiquidityProfile; }
 if (containsBytes(data, fixEncoderSize(getBytesEncoder(), 1).encode(new Uint8Array([23])), 0)) { return DropsetInstruction.SetMarketFeeConfig; }
 if (containsBytes(data, fixEncoderSize(getBytesEncoder(), 1).encode(new Uint8Array([22])), 0)) { return DropsetInstruction.SetMinLeaderShare; }
@@ -71,6 +72,7 @@ export type ParsedDropsetInstruction<TProgram extends string = 'TESTnXwv2eHoftsS
 | { instructionType: DropsetInstruction.Init } & ParsedInitInstruction<TProgram>
 | { instructionType: DropsetInstruction.RemoveAdmin } & ParsedRemoveAdminInstruction<TProgram>
 | { instructionType: DropsetInstruction.SetAllowOutsideDepositors } & ParsedSetAllowOutsideDepositorsInstruction<TProgram>
+| { instructionType: DropsetInstruction.SetDefaultFeeConfig } & ParsedSetDefaultFeeConfigInstruction<TProgram>
 | { instructionType: DropsetInstruction.SetLiquidityProfile } & ParsedSetLiquidityProfileInstruction<TProgram>
 | { instructionType: DropsetInstruction.SetMarketFeeConfig } & ParsedSetMarketFeeConfigInstruction<TProgram>
 | { instructionType: DropsetInstruction.SetMinLeaderShare } & ParsedSetMinLeaderShareInstruction<TProgram>
@@ -121,6 +123,8 @@ case DropsetInstruction.RemoveAdmin: { assertIsInstructionWithAccounts(instructi
 return { instructionType: DropsetInstruction.RemoveAdmin, ...parseRemoveAdminInstruction(instruction) }; }
 case DropsetInstruction.SetAllowOutsideDepositors: { assertIsInstructionWithAccounts(instruction);
 return { instructionType: DropsetInstruction.SetAllowOutsideDepositors, ...parseSetAllowOutsideDepositorsInstruction(instruction) }; }
+case DropsetInstruction.SetDefaultFeeConfig: { assertIsInstructionWithAccounts(instruction);
+return { instructionType: DropsetInstruction.SetDefaultFeeConfig, ...parseSetDefaultFeeConfigInstruction(instruction) }; }
 case DropsetInstruction.SetLiquidityProfile: { assertIsInstructionWithAccounts(instruction);
 return { instructionType: DropsetInstruction.SetLiquidityProfile, ...parseSetLiquidityProfileInstruction(instruction) }; }
 case DropsetInstruction.SetMarketFeeConfig: { assertIsInstructionWithAccounts(instruction);
