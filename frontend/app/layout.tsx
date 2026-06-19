@@ -1,4 +1,5 @@
-// cspell:word darkreader forex
+// cspell:word darkreader
+// cspell:word forex
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Footer } from "@/components/chrome/Footer";

@@ -1,6 +1,6 @@
-<!-- markdownlint-disable MD013 -->
-
 <!-- cspell:word inlines reentrancy syscall syscalls -->
+
+<!-- markdownlint-disable MD013 -->
 
 # SVM heap + Anchor event-cpi: deep-research synthesis
 

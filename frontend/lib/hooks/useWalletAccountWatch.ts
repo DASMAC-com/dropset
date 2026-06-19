@@ -1,6 +1,5 @@
-"use client";
-
 // cspell:word sessioning
+"use client";
 
 import { useDisconnectWallet, useWallet } from "@solana/react-hooks";
 import { useEffect } from "react";
