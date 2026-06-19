@@ -542,10 +542,12 @@ impl Swap {
             // FLUSH_BIT and returns an empty result. (The INF-limit /
             // MAX-`min_out` soft-revert that crosses zero levels and
             // walks the whole book is deliberately not metered: the
-            // walk is bounded by `market.len()`, nothing survives the
-            // revert, and the caller pays its full CU + base/priority
-            // fees, so the spam is self-funded. A protocol fee or
-            // per-slot cooldown would tax honest price-moved no-fill
+            // walk is bounded by `market.len()`, the revert restores
+            // inventory and level sizes and re-arms FLUSH_BIT so no
+            // book state advances, and the caller pays its full CU +
+            // base/priority fees, so the spam is self-funded. A
+            // protocol fee or per-slot cooldown would tax honest
+            // price-moved no-fill
             // takers identically and still not address the only
             // residual — Market write-lock contention, which is
             // architectural, not a per-swap concern. Accepted risk:
