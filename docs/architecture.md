@@ -149,8 +149,8 @@ rather than being free.
 
 ### Admin gating of market creation
 
-Markets are **not** permissionless. Any `create_market` /
-`create_market` instruction must verify `signer ∈ registry.admins`
+Markets are **not** permissionless. The `create_market` instruction
+must verify `signer ∈ registry.admins`
 before allocating a `MarketHeader` and its treasuries, and on
 success it increments `registry.market_count` by one (the symmetric
 decrement happens in `close_market`; see **Account lifecycle and
@@ -554,13 +554,22 @@ by `m`, and `hwm := L / (s + m)`.
 Applies the formula above: mints `m` new shares into
 `Vault.leader_shares` (and `Vault.total_shares`) and updates `hwm`.
 
-**Permissionless.** Anyone may call. The leader has the strongest
-economic incentive; indexers and keepers may invoke it to pin HWM
-at a known point in time. `Realize` runs implicitly at the start of
-every `Deposit` and `Withdraw`, so outside flows always cross at a
-post-fee VPS and never transfer leader-owed fee value to or from the
-caller. **Never runs on the taker hot path.** Touches no SPL
-accounts — perf fee accrual is purely on-vault bookkeeping.
+**Not a standalone instruction — an internal step.** There is no
+`realize` discriminant; the program exposes no permissionless
+`Realize` entrypoint. Instead `realize_in_place`
+([`state/market/accrual.rs`](../programs/dropset/src/state/market/accrual.rs))
+runs implicitly at the start of every `Deposit` and `Withdraw`
+(including the leader paths and the feature-gated admin
+force-withdraw paths), so outside flows always cross at a post-fee
+VPS and never transfer leader-owed fee value to or from the caller.
+**Never runs on the taker hot path.** Touches no SPL accounts — perf
+fee accrual is purely on-vault bookkeeping.
+
+A standalone permissionless `realize` — callable by an indexer or
+keeper to pin HWM at an arbitrary moment between basket flows — is
+**not** implemented. The leader and depositors already trigger
+accrual on every `Deposit` / `Withdraw`, so HWM is pinned at each
+flow without a separate entrypoint.
 
 **No-op on frozen and tombstoned vaults.** Once a vault leaves the
 active eCLOB, HWM is pinned and no further perf fee accrues,
@@ -956,18 +965,24 @@ sector reclaims to the free DLL.
 ## Caller mechanics
 
 Every instruction that targets a specific vault — leader-callable,
-outside-depositor-callable, permissionless, and admin — passes a
-pointer into the market account's data region pointing directly at
-the vault, avoiding any list walk. Before touching the vault, the
+outside-depositor-callable, and admin — takes a `vault_idx: u32`
+argument naming the target sector by its index into the market's
+slab tail, avoiding any list walk. Before touching the vault, the
 program performs three checks. The first two are the same for every
 caller; the third is the per-ix authority gate.
 
-1. **Bounds.** The entire vault struct fits within the data region:
-   `vaults_start <= ptr && ptr + size_of::<Vault>() <= account_data_end`,
-   where `vaults_start = account_data_base + size_of::<MarketHeader>()`.
-1. **Alignment.** `(ptr - vaults_start) % size_of::<Vault>() == 0` —
-   guarantees the pointer lands on a real vault boundary, so the
-   cast to `&mut Vault` is well-formed.
+1. **Bounds.** `vault_idx` is resolved through the bounds-checked
+   `VaultAccess` accessor
+   ([`state/market/access.rs`](../programs/dropset/src/state/market/access.rs)):
+   `read_vault` / `mutate_vault` index the slab via
+   `.get(vault_idx as usize)` and reject an out-of-range index with
+   `InvalidSectorIndex`. Because the slab is a `[Vault]` indexed by
+   element, a valid index always lands on a real vault boundary, so
+   no separate pointer-alignment check is needed.
+1. **Occupancy.** `vault.is_occupied()` — the `leader` field doubles
+   as the free-list emptiness marker (`Address::default()` means "on
+   the free list / unassigned"), so an operation against a reclaimed
+   sector is rejected with `VaultEmpty` before any authority compare.
 1. **Authority.** Differs by instruction:
    - **Quote-mutating** (`SetReferencePrice`, `SetLiquidityProfile`):
      `vault.quote_authority == signer && !vault.frozen` — single
@@ -987,38 +1002,32 @@ caller; the third is the per-ix authority gate.
      account to the signer, proving ownership). See
      **Vault → Frozen and tombstoned vaults** for the wind-down
      behavior on non-active vaults.
-   - **Permissionless** (`Realize`): no signer check. The leader
-     has the strongest economic incentive, but anyone may call —
-     useful for indexers and keepers that want to pin HWM at a
-     known point in time.
+   - **Permissionless.** There is no permissionless vault-targeting
+     *instruction*: perf-fee accrual (`realize_in_place`) is an
+     internal step the `Deposit` / `Withdraw` handlers invoke, not a
+     standalone entrypoint with its own discriminant (see
+     **Vault → Realize**).
    - **Admin-only** (`FreezeVault`, `SetOutsideDepositsApproved`,
      `SetMinLeaderShare`, `SetMarketFeeConfig`):
      `signer ∈ registry.admins`.
 
-No discriminant tag is needed: the vault region is homogeneous, so
-(1) + (2) fully determine that `ptr` refers to a valid `Vault`. The
-`leader` field doubles as an emptiness marker — `Pubkey::default()`
-means "on the free list / unassigned," and updates against such
-vaults are rejected by (3).
+No discriminant tag is needed: the slab tail is homogeneous, so a
+bounds-checked index (1) unambiguously identifies a `Vault`, the
+occupancy check (2) rejects a free-list sector, and the per-ix
+authority gate (3) then runs against a known-live vault.
 
-**Zero-data leader accounts.** The pointer scheme assumes the market
-account's data region starts at a known offset in the transaction's
-input memory map. For this to hold under static addressing, the
-leader's signer account must carry **zero account data** — any
-variable-size payload on the leader account would shift downstream
-offsets and break direct addressing.
-
-Simplified input buffer schematic:
-
-```txt
-+---------------+-------------------+----------------+
-| n_accounts    | Leader account    | Market account |
-| (u64)         | (signer, 0 data)  |                |
-+---------------+-------------------+----------------+
-                                    ^
-                                    |
-                             fixed offset
-```
+**Addressing: slab index, not raw pointer.** An earlier design
+addressed the target vault by a raw pointer into the market
+account's input-buffer region. That scheme would have required the
+leader's signer account to carry **zero account data** — any
+variable-size payload on it would shift downstream offsets and break
+the static addressing the pointer math assumed — plus explicit
+in-bounds and alignment checks on every call. It was **dropped** in
+favor of the `vault_idx: u32` slab index above: indexing a `[Vault]`
+is bounds-checked by the slice accessor, lands on a vault boundary
+by construction (no alignment check), and needs no zero-data
+precondition on the leader account. There is therefore no zero-data
+requirement on any account.
 
 ### Admin authority
 
@@ -1049,6 +1058,44 @@ instruction — so that post-init the admin set is the sole
 governance surface, and the only way to grow or shrink that
 surface is `add_admin` / `remove_admin` signed by an existing
 admin.
+
+### Error surface
+
+The behavior-defining preconditions above each map to a named
+`DropsetError` variant ([`errors.rs`](../programs/dropset/src/errors.rs)).
+The variants are part of the stable, IDL-surfaced ABI — clients
+match on them — so the load-bearing ones are listed here against the
+precondition they enforce. This is not the full enum (arithmetic and
+internal-consistency codes such as `MathOverflow` and
+`CorruptVaultList` are omitted); `errors.rs` and the IDL are
+authoritative.
+
+| Precondition that fails                                     | `DropsetError`                 |
+| ----------------------------------------------------------- | ------------------------------ |
+| `vault_idx` past the slab tail                              | `InvalidSectorIndex`           |
+| Target sector is on the free list (`leader == default`)     | `VaultEmpty`                   |
+| Quote-mutating ix against a frozen vault                    | `VaultFrozen`                  |
+| `CloseVault` against an already-tombstoned vault            | `VaultAlreadyTombstoned`       |
+| Operation disallowed against a tombstoned vault             | `VaultTombstoned`              |
+| Signer is not the vault's `quote_authority` / `leader`      | `Unauthorized`                 |
+| First (seeding) deposit not signed by the leader            | `SeedingRequiresLeader`        |
+| Seeding deposit missing the base or quote leg               | `SeedingRequiresBothLegs`      |
+| Non-seeding deposit not sizing exactly one leg              | `SingleLegRequired`            |
+| Derived basket exceeds the caller's slippage bounds         | `BasketSlippage`               |
+| Operation would breach the vault's `min_leader_share` floor | `MinLeaderShareViolated`       |
+| Outside deposit, leader opt-in off                          | `OutsideDepositorsNotAllowed`  |
+| Outside deposit, admin approval off                         | `OutsideDepositorsNotApproved` |
+| Withdraw of more shares than the caller holds               | `InsufficientShares`           |
+| `VaultDepositor` PDA ≠ `(market, sector, owner)` seeds      | `VaultDepositorMismatch`       |
+| Reference price unset where a basis read needs it           | `ReferencePriceNotSet`         |
+| Per-side `Σ size_bps > 10000` at `SetLiquidityProfile`      | `LiquidityProfileSizeOverflow` |
+| `price_bits` not a well-formed / regular `Price`            | `InvalidPrice`                 |
+| `quote_slot` future-dated, over-backdated, or `> u32::MAX`  | `InvalidQuoteSlot`             |
+| Swap `amount_in == 0`                                       | `InvalidAmountIn`              |
+| Swap `side` neither Buy nor Sell                            | `InvalidSwapSide`              |
+| Swap `limit_price` sentinel wrong for the side              | `InvalidLimitPrice`            |
+| Close-mint is not one of the market's base/quote legs       | `NotAMarketTreasury`           |
+| Teardown ix invoked with the `admin-teardown` feature off   | `TeardownDisabled`             |
 
 ## Leader operations
 
@@ -1170,7 +1217,9 @@ and current inventory.
 
 ### SetReferencePrice
 
-Hot path. Takes `(price: Price, quote_slot: u32)` from the leader.
+Hot path. Takes `(vault_idx: u32, price_bits: u32, quote_slot: u64)`
+from the leader; `price_bits` is the raw `Price` encoding,
+reconstructed on entry via `Price::from_bits`.
 `price` is validated up front: it must be a well-formed encoding
 (`Price::is_valid`) **and** a regular price — the `Price::ZERO` and
 `Price::INFINITY` sentinels are rejected with `InvalidPrice`. Those
@@ -1179,8 +1228,14 @@ vault's reference price would corrupt the basis math (the decoders
 return `0` for `ZERO` and saturate to `u64::MAX` for `INFINITY`), so a
 leader cannot stamp them even though they pass the bit-pattern check.
 
-`quote_slot` is validated:
+`quote_slot` is validated (all failures reject with
+`InvalidQuoteSlot`):
 
+- `quote_slot <= u32::MAX` — the argument is a `u64`, but
+  `ReferencePrice.quote_slot` stores a `u32` (it packs with the
+  `u32` `price` into one aligned `u64`; see **Price**). The guard
+  makes the narrowing to `u32` explicit rather than a silent
+  truncation.
 - `quote_slot <= current_slot` — no future-dating (which would
   extend the effective expiry window artificially).
 - `current_slot - quote_slot <= MAX_BACKDATE` — sanity cap;
