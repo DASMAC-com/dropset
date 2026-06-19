@@ -539,11 +539,19 @@ impl Swap {
             // crosses the taker's limit means every remaining level
             // crosses too: `break` bails before any snapshot or fill
             // work, and the `filled_legs == 0` path below re-arms
-            // FLUSH_BIT and returns an empty result. (This does not
-            // meter the INF-limit / MAX-`min_out` soft-revert spam,
-            // which crosses zero levels and walks the whole book —
-            // that needs a soft-revert fee or per-slot cooldown,
-            // tracked separately.)
+            // FLUSH_BIT and returns an empty result. (The INF-limit /
+            // MAX-`min_out` soft-revert that crosses zero levels and
+            // walks the whole book is deliberately not metered: the
+            // walk is bounded by `market.len()`, the revert restores
+            // inventory and level sizes and re-arms FLUSH_BIT so no
+            // book state advances, and the caller pays its full CU +
+            // base/priority fees, so the spam is self-funded. A
+            // protocol fee or per-slot cooldown would tax honest
+            // price-moved no-fill
+            // takers identically and still not address the only
+            // residual — Market write-lock contention, which is
+            // architectural, not a per-swap concern. Accepted risk:
+            // ENG-551.)
             if side.crosses_limit(price, limit_price) {
                 break;
             }
