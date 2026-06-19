@@ -118,7 +118,7 @@ fn case_json(c: &Case) -> Value {
 }
 
 /// A native book chosen to trip one translation guard, tagged with the
-/// canonical [`QuotingError`](dropset_sdk) variant both forks must raise.
+/// canonical `QuotingError` variant both forks must raise.
 /// Unlike [`Case`], the levels carry only native inputs — there is no
 /// expected relative output, because the translation rejects.
 struct RejectionCase {
