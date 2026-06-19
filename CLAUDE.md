@@ -279,6 +279,19 @@ Concrete rules:
   `--config cfg/pre-commit-lint.yml`); it reports every MD013
   violation with its line number and reduces to the existing
   `Bash(pre-commit run:*)` rule.
+- Searching file *contents* — always the **Grep tool**, never `grep`
+  or `git grep`. This is the same rule the sub-agent brief carries
+  (see "Briefing sub-agents" below); it holds for the main agent too,
+  so the convention is one and the same — the brief just restates it
+  because a sub-agent doesn't inherit this file. Grep takes a real
+  regex (alternation is `a|b|c`, not a shell-quoted `a\|b\|c`), reads
+  any path you point it at, and prompts zero times. `git grep` looks
+  blessed — it's a git subcommand, so it seems covered by the
+  `git -C <path> <sub>` cross-checkout rule below — but it isn't: a
+  clean single pattern only re-prompts until firmed, and a quoted `\|`
+  alternation trips the per-subcommand `|` guard and can't be firmed
+  at all. Reserve `git -C <path>` for **metadata** subcommands
+  (`log` / `show` / `diff` / `status` / `ls-files`), never `grep`.
 - One command per Bash call. Avoid `&&`, `;`, and pipes when separate
   calls work; a chained command can't be generalized into a glob and
   always re-prompts.
