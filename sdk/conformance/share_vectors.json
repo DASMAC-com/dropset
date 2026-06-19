@@ -245,6 +245,18 @@
       "shares_minted": "0",
       "total_shares": "100",
       "total_shares_after": "100"
+    },
+    {
+      "base_atoms": "0",
+      "hwm": "4294967296",
+      "hwm_after": "4294967296",
+      "leader_shares": "100",
+      "leader_shares_after": "100",
+      "perf_fee_rate": 100000,
+      "quote_atoms": "100",
+      "shares_minted": "0",
+      "total_shares": "100",
+      "total_shares_after": "100"
     }
   ],
   "single_leg_basket": [

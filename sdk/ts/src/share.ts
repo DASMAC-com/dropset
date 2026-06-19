@@ -128,7 +128,11 @@ export function computeProRataSlice(
   quoteAtoms: bigint,
 ): [bigint, bigint] {
   const ts = totalShares;
-  return [(sharesIn * baseAtoms) / ts, (sharesIn * quoteAtoms) / ts];
+  // Mirror Rust's truncating `as u64` cast on each slice. For valid inputs
+  // (`sharesIn ≤ totalShares`) each slice is ≤ its atom leg, so the mask is a
+  // no-op; it only bites if the precondition is violated, where it keeps the
+  // two forks bit-identical instead of letting TS return an un-truncated value.
+  return [asU64((sharesIn * baseAtoms) / ts), asU64((sharesIn * quoteAtoms) / ts)];
 }
 
 /** New share/HWM state from {@link realizePerfFee} — mirrors Rust `RealizeResult`. */
@@ -282,7 +286,9 @@ export function mergeEntryBasis(
   const s = priorShares;
   const ds = sharesOut;
   const denom = s + ds;
-  const entryVpsNew = (s * entryVpsPrev + ds * vpsAfter) / denom;
+  // `entryVpsNew` is a weighted average of two u64 VPS values, so ≤ u64::MAX
+  // for valid inputs; `asU64` mirrors Rust's `as u64` cast (identity here).
+  const entryVpsNew = asU64((s * entryVpsPrev + ds * vpsAfter) / denom);
   const entryRefNew = weightedAverage(entryRefPrev, refNow, s, ds);
   return [entryVpsNew, entryRefNew];
 }

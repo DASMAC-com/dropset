@@ -199,6 +199,9 @@ fn realize_cases() -> Vec<Value> {
         realize_case(400, 400, 100, 100, Q32_32_ONE, 100_000),
         // Zero fee — HWM advances, no mint.
         realize_case(400, 400, 100, 100, Q32_32_ONE, 0),
+        // Drained leg: total_shares > 0 but base·quote == 0 → L == 0 no-op
+        // (a distinct branch from the unseeded total_shares == 0 case above).
+        realize_case(0, 100, 100, 100, Q32_32_ONE, 100_000),
     ]
 }
 
@@ -260,6 +263,10 @@ fn crystallize_case(
 }
 
 fn crystallize_cases() -> Vec<Value> {
+    // The `MathOverflow` err kind is structurally unreachable for valid u64
+    // inputs — `net_deposits × shares_in` fits in u128, and
+    // `released_basis ≤ net_deposits` whenever `shares_in ≤ shares` — so only
+    // the `InsufficientShares` err path gets a vector here.
     let one = price(10_000_000, 0); // 1.0
     let two = price(20_000_000, 0); // 2.0
     vec![
