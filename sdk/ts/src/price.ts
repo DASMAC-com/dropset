@@ -137,6 +137,7 @@ export function decodePrice(bits: PriceBits): number {
 
 /** `quote_for_base(INFINITY)` / `base_for_quote(ZERO)` sentinel value. */
 const U128_MAX = (1n << 128n) - 1n;
+const U64_MAX = (1n << 64n) - 1n;
 
 /**
  * `base * price`, rounded toward zero — the exact integer math the on-chain
@@ -172,4 +173,45 @@ export function baseForQuote(bits: PriceBits, quote: bigint): bigint {
   if (unb >= 0) for (let i = 0; i < unb; i++) den *= 10n;
   else for (let i = 0; i < -unb; i++) num *= 10n;
   return den === 0n ? 0n : num / den;
+}
+
+/**
+ * Shares-weighted average of two prices in *decoded-value* space (mirrors
+ * Rust `Price::weighted_average`). Both prices are lifted to `value × 10^9`,
+ * averaged by the integer weights, then re-encoded via {@link fromScaled}
+ * (truncating toward zero — one ULP per merge, acceptable for cost-basis
+ * bookkeeping). Backs the depositor cost-basis merge on a top-off deposit
+ * ({@link mergeEntryBasis}).
+ *
+ * Returns `self` when both weights are zero; {@link PRICE_ZERO} if either
+ * input is the ZERO sentinel; {@link PRICE_INFINITY} if either is INFINITY
+ * — the engine's conservative sentinel collapse. Falls back to
+ * {@link PRICE_ZERO} if the re-encode overflows the exponent range (Rust's
+ * `unwrap_or(ZERO)`).
+ */
+export function weightedAverage(
+  self: PriceBits,
+  other: PriceBits,
+  wSelf: bigint,
+  wOther: bigint,
+): PriceBits {
+  if (wSelf === 0n && wOther === 0n) return self >>> 0;
+  if (wSelf === 0n) return other >>> 0;
+  if (wOther === 0n) return self >>> 0;
+  if (isZeroPrice(self) || isZeroPrice(other)) return PRICE_ZERO;
+  if (isInfinityPrice(self) || isInfinityPrice(other)) return PRICE_INFINITY;
+  const SCALE = 1_000_000_000n;
+  const vSelf = quoteForBase(self, SCALE);
+  const vOther = quoteForBase(other, SCALE);
+  const total = wSelf + wOther;
+  let avg = (wSelf * vSelf + wOther * vOther) / total;
+  if (avg > U64_MAX) avg = U64_MAX;
+  // value × 10^9 = sig × 10^(biased − 14) ⟹ the scaled input's biased
+  // exponent is 14. `avg` is in `value × 10^9` units, well within JS
+  // safe-integer range for the FX prices this serves.
+  try {
+    return fromScaled(Number(avg), 14);
+  } catch {
+    return PRICE_ZERO;
+  }
 }
