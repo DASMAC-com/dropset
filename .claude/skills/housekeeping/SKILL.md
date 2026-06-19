@@ -74,7 +74,7 @@ clean up on demand.
 
 ## Linear destination
 
-Steps 2–4 file and stage Backlog issues and drain the
+Steps 3–5 file and stage Backlog issues and drain the
 Permissions doc, so they use the same env-resolved
 Linear destination as `linear-task` / `stage-backlog`.
 Resolve each variable with its **own** bare `printenv`
