@@ -1,3 +1,14 @@
+# Optimize dependencies (and workspace crates pulled in as deps) at
+# opt-level 2 under the dev/test profile, leaving the test crates
+# themselves unoptimized for fast compiles. The integration suite runs the
+# deployed program through the litesvm virtual machine on the host; at
+# opt-level 0 that interpretation dominates test runtime. The added compile
+# cost is a one-time hit amortized by the CI rust-cache, and this does NOT
+# touch the on-chain .so (`cargo build-sbf` builds the release profile).
+
+[profile.dev.package."*"]
+opt-level = 2
+
 [profile.release]
 overflow-checks = true
 

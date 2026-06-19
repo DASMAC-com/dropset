@@ -1,5 +1,8 @@
 ---
+# cspell:word doctests
 # cspell:word dorny
+# cspell:word nextest
+# cspell:word taiki
 env:
   ANCHOR_REV: '2a191379'
   SOLANA_VERSION: 'v3.1.9'
@@ -95,6 +98,25 @@ jobs:
       with:
         cache-on-failure: true
         shared-key: 'rust-test-${{ runner.os }}'
+    # Cache the built program .so itself — rust-cache prunes workspace-crate
+    # artifacts and never restores the SBF target, so without this the .so is
+    # recompiled from scratch every run. The key is content-addressed over
+    # every input that determines the binary (program + math-core sources, the
+    # lockfile, the workspace/build config, and the pinned toolchain), so an
+    # exact hit means the cached .so is valid and the build step below is
+    # skipped; any program change misses and rebuilds. Restored after
+    # rust-cache so it lands on top of the restored target/.
+    - id: 'sbf-cache'
+      if: |
+        needs.changes.outputs.code == 'true'
+      name: 'Cache program .so'
+      uses: 'actions/cache@v5'
+      with:
+        key: 'sbf-default-${{ runner.os }}-${{ env.SOLANA_VERSION }}-${{
+              env.ANCHOR_REV }}-${{ hashFiles(''programs/dropset/**'',
+              ''sdk/math-core/**'', ''Cargo.lock'', ''Cargo.toml'',
+              ''Anchor.toml'') }}'
+        path: 'target/deploy/dropset.so'
     # rust-cache restores target/ on top of the checkout, which can shadow
     # the committed program keypair with a stale cached copy and break
     # anchor's build-time program-ID check. Restore the tracked keypair so
@@ -103,13 +125,27 @@ jobs:
         needs.changes.outputs.code == 'true'
       name: 'Restore committed program keypair'
       run: 'git checkout -- target/deploy/dropset-keypair.json'
-    # Builds the program (.so) and runs the whole Rust workspace test
-    # suite — including the math-core conformance vectors and the
-    # engine-vs-SDK litesvm conformance (tests/sdk_conformance.rs).
+    # Build the program (.so) only on a cache miss — an exact SBF-cache hit
+    # restored a valid binary above, so the expensive `cargo build-sbf` is
+    # skipped. `make program` runs `anchor keys sync && anchor build`.
+    - if: |
+        needs.changes.outputs.code == 'true'
+        && steps.sbf-cache.outputs.cache-hit != 'true'
+      name: 'Build program (.so)'
+      run: 'make program'
+    - if: |
+        needs.changes.outputs.code == 'true'
+      uses: 'taiki-e/install-action@nextest'
+    # Run the whole Rust workspace test suite — including the math-core
+    # conformance vectors and the engine-vs-SDK litesvm conformance
+    # (tests/sdk_conformance.rs). nextest runs the ~20 integration-test
+    # binaries across a shared thread pool instead of serially, the big win
+    # for a suite where each binary spins a fresh LiteSVM and redeploys the
+    # .so. (No doctests are lost: every doc code fence is ```text.)
     - if: |
         needs.changes.outputs.code == 'true'
       name: 'Run tests'
-      run: 'make test'
+      run: 'cargo nextest run'
     # IDL-diff gate (interface.md § SDK): the checked-in IDL must match
     # what the pinned anchor-cli regenerates from the program.
     - if: |
@@ -146,6 +182,21 @@ jobs:
       with:
         cache-on-failure: true
         shared-key: 'rust-test-${{ runner.os }}'
+    # Feature-off counterpart of the `test` job's SBF cache. Keyed with its
+    # own `no-teardown` tag so the two jobs cache distinct binaries (the .so
+    # built without `admin-teardown`) under the same path without clobbering
+    # each other. Exact hit skips the build step below.
+    - id: 'sbf-cache'
+      if: |
+        needs.changes.outputs.code == 'true'
+      name: 'Cache program .so'
+      uses: 'actions/cache@v5'
+      with:
+        key: 'sbf-no-teardown-${{ runner.os }}-${{ env.SOLANA_VERSION }}-${{
+              env.ANCHOR_REV }}-${{ hashFiles(''programs/dropset/**'',
+              ''sdk/math-core/**'', ''Cargo.lock'', ''Cargo.toml'',
+              ''Anchor.toml'') }}'
+        path: 'target/deploy/dropset.so'
     # rust-cache restores target/ on top of the checkout, which can shadow
     # the committed program keypair with a stale cached copy and break
     # anchor's build-time program-ID check. Restore the tracked keypair so
@@ -154,10 +205,21 @@ jobs:
         needs.changes.outputs.code == 'true'
       name: 'Restore committed program keypair'
       run: 'git checkout -- target/deploy/dropset-keypair.json'
+    # Build the feature-off .so only on a cache miss; an exact hit restored a
+    # valid binary above. `make program-no-teardown` runs `anchor build --
+    # --no-default-features`.
+    - if: |
+        needs.changes.outputs.code == 'true'
+        && steps.sbf-cache.outputs.cache-hit != 'true'
+      name: 'Build program (.so, no teardown)'
+      run: 'make program-no-teardown'
+    - if: |
+        needs.changes.outputs.code == 'true'
+      uses: 'taiki-e/install-action@nextest'
     - if: |
         needs.changes.outputs.code == 'true'
       name: 'Run feature-off teardown-disabled tests'
-      run: 'make test-no-teardown'
+      run: 'cargo nextest run --no-default-features --test teardown_disabled'
 name: 'Tests'
 'on':
   merge_group: null
