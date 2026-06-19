@@ -309,6 +309,26 @@ impl Deposit {
                 .saturating_add(ref_now_price.quote_for_base(base_in_final));
             let lot_quote_value_u64 = lot_quote_value.min(u64::MAX as u128) as u64;
 
+            // Defensive: on a top-off the PDA already carries its stored
+            // identity fields, and the seeds (market, vault_idx, signer)
+            // already bind this account — so they must agree. Assert it
+            // explicitly, mirroring the guard `withdraw` and
+            // `force_withdraw` carry on the read path: a future change to
+            // the seed derivation, or an account reconstructed by other
+            // means, is caught here instead of silently merging the
+            // top-off into the wrong position's cost basis. Skipped on the
+            // fresh-init branch, where `record_deposit` is what first
+            // stamps these fields (they are still the zero sentinel here).
+            if self.vault_depositor.shares.get() > 0 {
+                let vd = &self.vault_depositor;
+                require!(
+                    address_eq(&vd.market, &market_addr)
+                        && vd.sector_idx.get() == vault_idx
+                        && address_eq(&vd.owner, &signer_addr),
+                    DropsetError::VaultDepositorMismatch
+                );
+            }
+
             let is_first = self.vault_depositor.record_deposit(
                 market_addr,
                 vault_idx,
