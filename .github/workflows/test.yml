@@ -133,15 +133,17 @@ jobs:
         && steps.sbf-cache.outputs.cache-hit != 'true'
       name: 'Build program (.so)'
       run: 'make program'
+    # Install the nextest runner (downloaded binary, not compiled).
     - if: |
         needs.changes.outputs.code == 'true'
       uses: 'taiki-e/install-action@nextest'
     # Run the whole Rust workspace test suite — including the math-core
     # conformance vectors and the engine-vs-SDK litesvm conformance
-    # (tests/sdk_conformance.rs). nextest runs the ~20 integration-test
-    # binaries across a shared thread pool instead of serially, the big win
-    # for a suite where each binary spins a fresh LiteSVM and redeploys the
-    # .so. (No doctests are lost: every doc code fence is ```text.)
+    # (tests/sdk_conformance.rs). nextest runs tests from all ~20
+    # integration binaries concurrently (process-per-test) instead of the
+    # binary-at-a-time run of `cargo test`, the big win for a suite where
+    # each test spins a fresh LiteSVM and redeploys the .so. (No doctests
+    # are lost: every doc code fence is ```text.)
     - if: |
         needs.changes.outputs.code == 'true'
       name: 'Run tests'
@@ -213,6 +215,7 @@ jobs:
         && steps.sbf-cache.outputs.cache-hit != 'true'
       name: 'Build program (.so, no teardown)'
       run: 'make program-no-teardown'
+    # Install the nextest runner (downloaded binary, not compiled).
     - if: |
         needs.changes.outputs.code == 'true'
       uses: 'taiki-e/install-action@nextest'
