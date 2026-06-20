@@ -500,8 +500,9 @@ to both `leader_shares` and `total_shares` without touching `b` or
 `hwm := L/(s + m)`. ∎
 
 **I4. `leader_shares` only grows from below.** Three paths mutate
-it: `Deposit` (leader path) and `Realize` (permissionless) add;
-`Withdraw` (leader path) subtracts under leader signature. No path
+it: `Deposit` (leader path) and the internal `realize_in_place`
+accrual add; `Withdraw` (leader path) subtracts under leader
+signature. No path
 decreases `leader_shares` as a side-effect of `L` moving —
 drawdowns lower VPS but not the share count. ∎
 
