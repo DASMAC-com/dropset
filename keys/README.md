@@ -17,7 +17,7 @@ every time, in the TUI and in the explorer.
 Each file is a standard Solana CLI keypair — a 64-byte JSON array (the
 32-byte secret followed by the 32-byte public key). Inspect one with
 `solana address -k keys/AAAA.json`, or load it in Rust with
-`Keypair::read_keypair_file`.
+`solana_keypair::read_keypair_file`.
 
 > [!WARNING]
 > These are throwaway **localnet-only** keys. Their secret keys are

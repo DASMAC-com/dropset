@@ -109,9 +109,9 @@ lint:
 
 # Materialize the program keypair into the (git-ignored) build dir from
 # its canonical home, keys/AAAA.json, so anchor's build-time program-ID
-# check — and the litesvm tests that read the file (tests/common/mod.rs)
-# — see keypair == declare_id!. keys/AAAA.json is the single committed
-# source; target/deploy/ is a pure build artifact.
+# check — and the litesvm tests in programs/dropset/tests/common/mod.rs
+# that read the file — see keypair == declare_id!. keys/AAAA.json is the
+# single committed source; target/deploy/ is a pure build artifact.
 program-keypair:
 	mkdir -p target/deploy
 	cp keys/AAAA.json target/deploy/dropset-keypair.json
