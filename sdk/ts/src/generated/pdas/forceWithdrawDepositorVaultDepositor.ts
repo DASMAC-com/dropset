@@ -15,6 +15,6 @@ owner: Address;
 };
 
 export async function findForceWithdrawDepositorVaultDepositorPda(seeds: ForceWithdrawDepositorVaultDepositorSeeds, config: { programAddress?: Address | undefined } = {}): Promise<ProgramDerivedAddress> {
-  const { programAddress = 'TESTnXwv2eHoftsSd5NEdpH4zEu7XRC8jviuoNPdB2Q' as Address<'TESTnXwv2eHoftsSd5NEdpH4zEu7XRC8jviuoNPdB2Q'> } = config;
+  const { programAddress = 'AAAAz3pYUMwhX1bsEtPx9LSWYbpRM8qrFaQgmKVX6oiV' as Address<'AAAAz3pYUMwhX1bsEtPx9LSWYbpRM8qrFaQgmKVX6oiV'> } = config;
   return await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([118, 97, 117, 108, 116, 95, 100, 101, 112, 111, 115, 105, 116, 111, 114])), getAddressEncoder().encode(seeds.market), getU32Encoder().encode(seeds.vaultIdx), getAddressEncoder().encode(seeds.owner)]});
 }

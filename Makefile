@@ -107,7 +107,16 @@ install-anchor-v2:
 lint:
 	pre-commit run --config cfg/pre-commit-lint.yml --all-files
 
-program: check-toolchain
+# Materialize the program keypair into the (git-ignored) build dir from
+# its canonical home, keys/AAAA.json, so anchor's build-time program-ID
+# check — and the litesvm tests in programs/dropset/tests/common/mod.rs
+# that read the file — see keypair == declare_id!. keys/AAAA.json is the
+# single committed source; target/deploy/ is a pure build artifact.
+program-keypair:
+	mkdir -p target/deploy
+	cp keys/AAAA.json target/deploy/dropset-keypair.json
+
+program: check-toolchain program-keypair
 	anchor keys sync && anchor build
 
 test: program
@@ -118,7 +127,7 @@ test: program
 # `cargo build-sbf`, so this rebuilds `dropset.so` feature-off. Split out
 # from `test-no-teardown` so CI can cache this .so and skip the rebuild on
 # a cache hit (see .github/workflows/test.yml).
-program-no-teardown: check-toolchain
+program-no-teardown: check-toolchain program-keypair
 	anchor build -- --no-default-features
 
 # Feature-off coverage: build the program WITHOUT `admin-teardown` and

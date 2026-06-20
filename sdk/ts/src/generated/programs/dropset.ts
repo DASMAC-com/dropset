@@ -9,7 +9,7 @@
 import { assertIsInstructionWithAccounts, containsBytes, fixEncoderSize, getBytesEncoder, type Address, type Instruction, type InstructionWithData, type ReadonlyUint8Array } from '@solana/kit';
 import { parseAddAdminInstruction, parseCloseMarketInstruction, parseCloseMarketTreasuryInstruction, parseCloseRegistryFeeVaultInstruction, parseCloseRegistryInstruction, parseCloseVaultInstruction, parseCreateMarketInstruction, parseCreateVaultInstruction, parseDepositInstruction, parseDepositLeaderInstruction, parseForceWithdrawDepositorInstruction, parseForceWithdrawLeaderInstruction, parseFreezeVaultInstruction, parseInitInstruction, parseRemoveAdminInstruction, parseSetAllowOutsideDepositorsInstruction, parseSetDefaultFeeConfigInstruction, parseSetLiquidityProfileInstruction, parseSetMarketFeeConfigInstruction, parseSetMinLeaderShareInstruction, parseSetOutsideDepositsApprovedInstruction, parseSetReferencePriceInstruction, parseSetRegistryDefaultsInstruction, parseSetTakerFeeInstruction, parseSwapInstruction, parseWithdrawInstruction, parseWithdrawLeaderInstruction, type ParsedAddAdminInstruction, type ParsedCloseMarketInstruction, type ParsedCloseMarketTreasuryInstruction, type ParsedCloseRegistryFeeVaultInstruction, type ParsedCloseRegistryInstruction, type ParsedCloseVaultInstruction, type ParsedCreateMarketInstruction, type ParsedCreateVaultInstruction, type ParsedDepositInstruction, type ParsedDepositLeaderInstruction, type ParsedForceWithdrawDepositorInstruction, type ParsedForceWithdrawLeaderInstruction, type ParsedFreezeVaultInstruction, type ParsedInitInstruction, type ParsedRemoveAdminInstruction, type ParsedSetAllowOutsideDepositorsInstruction, type ParsedSetDefaultFeeConfigInstruction, type ParsedSetLiquidityProfileInstruction, type ParsedSetMarketFeeConfigInstruction, type ParsedSetMinLeaderShareInstruction, type ParsedSetOutsideDepositsApprovedInstruction, type ParsedSetReferencePriceInstruction, type ParsedSetRegistryDefaultsInstruction, type ParsedSetTakerFeeInstruction, type ParsedSwapInstruction, type ParsedWithdrawInstruction, type ParsedWithdrawLeaderInstruction } from '../instructions';
 
-export const DROPSET_PROGRAM_ADDRESS = 'TESTnXwv2eHoftsSd5NEdpH4zEu7XRC8jviuoNPdB2Q' as Address<'TESTnXwv2eHoftsSd5NEdpH4zEu7XRC8jviuoNPdB2Q'>;
+export const DROPSET_PROGRAM_ADDRESS = 'AAAAz3pYUMwhX1bsEtPx9LSWYbpRM8qrFaQgmKVX6oiV' as Address<'AAAAz3pYUMwhX1bsEtPx9LSWYbpRM8qrFaQgmKVX6oiV'>;
 
 export enum DropsetAccount { MarketHeader, RegistryHeader, VaultDepositorHeader }
 
@@ -55,7 +55,7 @@ if (containsBytes(data, fixEncoderSize(getBytesEncoder(), 1).encode(new Uint8Arr
 throw new Error("The provided instruction could not be identified as a dropset instruction.")
 }
 
-export type ParsedDropsetInstruction<TProgram extends string = 'TESTnXwv2eHoftsSd5NEdpH4zEu7XRC8jviuoNPdB2Q'> =
+export type ParsedDropsetInstruction<TProgram extends string = 'AAAAz3pYUMwhX1bsEtPx9LSWYbpRM8qrFaQgmKVX6oiV'> =
 | { instructionType: DropsetInstruction.AddAdmin } & ParsedAddAdminInstruction<TProgram>
 | { instructionType: DropsetInstruction.CloseMarket } & ParsedCloseMarketInstruction<TProgram>
 | { instructionType: DropsetInstruction.CloseMarketTreasury } & ParsedCloseMarketTreasuryInstruction<TProgram>

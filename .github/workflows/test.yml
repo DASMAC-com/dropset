@@ -117,14 +117,15 @@ jobs:
               ''sdk/math-core/**'', ''Cargo.lock'', ''Cargo.toml'',
               ''Anchor.toml'') }}'
         path: 'target/deploy/dropset.so'
-    # rust-cache restores target/ on top of the checkout, which can shadow
-    # the committed program keypair with a stale cached copy and break
-    # anchor's build-time program-ID check. Restore the tracked keypair so
-    # anchor always sees keypair == declare_id!.
+    # target/deploy/ is git-ignored, so materialize the program keypair from
+    # its canonical home (keys/AAAA.json) before the build and tests run.
+    # This step is unconditional — on an SBF-cache hit the build step below
+    # is skipped, but the litesvm tests still read this file, so it must be
+    # present regardless. Replaces the old keypair-restore guard.
     - if: |
         needs.changes.outputs.code == 'true'
-      name: 'Restore committed program keypair'
-      run: 'git checkout -- target/deploy/dropset-keypair.json'
+      name: 'Install program keypair'
+      run: 'make program-keypair'
     # Build the program (.so) only on a cache miss — an exact SBF-cache hit
     # restored a valid binary above, so the expensive `cargo build-sbf` is
     # skipped. `make program` runs `anchor keys sync && anchor build`.
@@ -199,14 +200,15 @@ jobs:
               ''sdk/math-core/**'', ''Cargo.lock'', ''Cargo.toml'',
               ''Anchor.toml'') }}'
         path: 'target/deploy/dropset.so'
-    # rust-cache restores target/ on top of the checkout, which can shadow
-    # the committed program keypair with a stale cached copy and break
-    # anchor's build-time program-ID check. Restore the tracked keypair so
-    # anchor always sees keypair == declare_id!.
+    # target/deploy/ is git-ignored, so materialize the program keypair from
+    # its canonical home (keys/AAAA.json) before the build and tests run.
+    # This step is unconditional — on an SBF-cache hit the build step below
+    # is skipped, but the litesvm tests still read this file, so it must be
+    # present regardless. Replaces the old keypair-restore guard.
     - if: |
         needs.changes.outputs.code == 'true'
-      name: 'Restore committed program keypair'
-      run: 'git checkout -- target/deploy/dropset-keypair.json'
+      name: 'Install program keypair'
+      run: 'make program-keypair'
     # Build the feature-off .so only on a cache miss; an exact hit restored a
     # valid binary above. `make program-no-teardown` runs `anchor build --
     # --no-default-features`.

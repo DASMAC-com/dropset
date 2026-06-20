@@ -57,9 +57,11 @@ repos:
   # generator-emitted conformance vectors — leave both byte-for-byte as
   # their generators emit them so the diff-based freshness CI gates
   # (`make idl`, `make check-conformance-vectors`) stay meaningful.
+  # `keys/` holds Solana CLI keypair files — keep them in their
+  # canonical single-line byte-array form, not pretty-printed.
   - args:
     - '--autofix'
-    exclude: '(^frontend/|^sdk/idl/|^sdk/conformance/|package-lock\.json)'
+    exclude: '^(frontend|keys|sdk/(idl|conformance))/|package-lock\.json'
     id: 'pretty-format-json'
   repo: 'https://github.com/pre-commit/pre-commit-hooks'
   rev: 'v6.0.0'

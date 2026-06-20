@@ -1,3 +1,7 @@
+# The program keypair no longer lives here — it is materialized into
+# target/deploy/ at build time from its canonical home keys/AAAA.json
+# (see the `program-keypair` Makefile target), so target/ is ignored
+# wholesale again.
 target/
 
 # Node / pnpm workspace (hoisted to the repo root by pnpm-workspace.yaml).
@@ -5,13 +9,6 @@ node_modules/
 
 # wasm-pack output for the price-core WASM package (built via `make wasm`).
 sdk/price-core/pkg/
-
-# Track the vanity program keypair.
-!/target/
-/target/*
-!/target/deploy/
-/target/deploy/*
-!/target/deploy/dropset-keypair.json
 
 # Background audit-loop state (see .claude/skills/audit-loop).
 .audit-loop/
