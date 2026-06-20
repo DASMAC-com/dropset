@@ -1,6 +1,6 @@
 ---
 name: stage-backlog
-description: One iteration of keeping the Dropset Task Staging document in sync with the Linear Backlog — read every Backlog issue, group them into the fewest parallel, file-disjoint PR sessions, merge issues that belong in one PR into a single canonical issue (write-before-close so no state is dropped), adversarially cross-check the grouping, then rewrite the Task Staging document as a chips-only dependency tree (bare ENG-### tags nested by blocker, no summaries). Open issues only; closed ones drop off. Drive it with `/loop stage-backlog` or run it once.
+description: One iteration of keeping the Dropset Task Staging document in sync with the Linear Backlog — read every Backlog issue, group them into the fewest parallel, file-disjoint PR sessions, merge issues that belong in one PR into a single canonical issue (write-before-close so no state is dropped), adversarially cross-check the grouping, then rewrite the Task Staging document as a chips-only dependency tree — bare ENG-### tags grouped under parent-initiative headings and nested by blocker, no summaries. Open issues only; closed ones drop off. Drive it with `/loop stage-backlog` or run it once.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -131,6 +131,11 @@ For every issue, parse from its description:
   reversible-safe and what `audit-loop` reads back for
   dedup.
 
+Also read each issue's **Linear parent** (`parentId`).
+`list_issues` returns it directly on each issue (no extra
+fetch), and step 5 groups every set of 2+ open issues that
+share a `parentId` under a parent heading.
+
 Also read each issue's **declared blocking relations** —
 the native `blockedBy` and `blocks` edges Linear stores
 on the issue. `list_issues` does **not** return relations,
@@ -174,8 +179,10 @@ what can run in parallel, not just a linear order:
   files under `.claude/skills/**` and/or `CLAUDE.md`, with
   no product code — are merged into a **single** session
   even though their files are disjoint, and that session is
-  ordered **first** in the tree (a top-level node, before
-  the rest). This is a deliberate **exception** to the
+  ordered **first** — step 5 renders it under its own
+  `# Skills` heading at the very top of the document, not as
+  a bullet in the rest of the tree. This is a deliberate
+  **exception** to the
   disjoint-file / don't-over-compress rules above, scoped to
   skill-doc housekeeping: such edits are trivial markdown,
   don't need parallel sessions, and Alex wants them
@@ -355,49 +362,58 @@ notes**. The chip and the tree carry everything: the chip
 renders the issue's live title and status, and the nesting
 shows what blocks what. Shape:
 
-- A short **"How to read it"** preamble: each line is one
-  issue = one PR, shown as its bare `ENG-###` chip; the
-  **consolidated skill-suite PR sits first** — start it
-  right away; otherwise **start any top-level chip now**; an
-  indented chip is blocked by the one it sits under — start
-  it as soon as that parent's PR merges (its parent's
-  siblings needn't be done); a **heading** is a blocker with
-  more than two **direct** dependents — it groups them and is
-  not itself a PR line to start; a trailing
-  `(also after ENG-###)` flags any extra cross-branch
-  blocker; delete a line once its PR lands.
+- **Open on a `# Skills` heading** for the consolidated
+  skill-suite PR (step 2). It sits at the very top of the
+  document, above every parent-initiative heading, as a
+  single bare `ENG-###` chip — the one issue all pure
+  skill-suite work folds into. Start it right away.
 
-- Then the **dependency tree** as a nested bullet list —
-  one bullet per PR, **just the chip**, no checkboxes, no
-  summary text. Indent a blocked session under its blocker
-  (4 spaces per level). The consolidated skill-suite PR
-  (step 2) is the **first** top-level bullet:
+- **Group 2+ same-parent subtasks under a `# ENG-###`
+  parent heading.** When two or more open Backlog issues
+  share the same Linear parent (`parentId`, read in step
+  1), render that parent as a section heading — its bare
+  `ENG-###` chip, e.g. `# ENG-489` (Linear resolves a bare
+  tag in a heading to a live chip, the same as in a
+  bullet) — and nest those subtasks beneath it. This holds
+  **even when the parent issue is not itself on the
+  Backlog**: parent issues track ongoing initiatives
+  (localnet, SDK audit, architecture audit), so the heading
+  surfaces the initiative even though the parent is not a
+  startable PR line. A parent with only **one** Backlog
+  subtask is not promoted — that lone subtask goes under
+  `# Standalone` (below).
+
+- **Put un-parented tasks under a trailing `# Standalone`
+  heading.** A task with no parent — or whose parent has
+  only one Backlog subtask — renders under a `# Standalone`
+  heading at the end of the document.
+
+- **Parent-issue headings are the ONLY headings.** Headings
+  come solely from `parentId` grouping, plus the fixed
+  `# Skills` and `# Standalone`. A blocker is **never**
+  promoted to a heading by how many dependents it has: a
+  heavily-shared blocker stays a normal chip with its
+  dependents nested under it as bullets (inside whatever
+  parent heading it falls under).
+
+- **Within each heading, render the dependency tree as a
+  nested bullet list** — one bullet per PR, **just the
+  chip**, no checkboxes, no summary text. Indent a blocked
+  session under its blocker (4 spaces per level):
 
   ```txt
+  # ENG-###
   - ENG-###
       - ENG-### (also after ENG-###)
   ```
 
-- **Promote a heavily-shared blocker to a heading.** When
-  **more than two** sessions nest directly under the *same*
-  blocker, render that blocker as a section **heading** —
-  its bare `ENG-###` chip (Linear resolves a bare tag in a
-  `##` heading to a live chip, the same as in a bullet) —
-  with its dependents as the nested bullet sub-tree beneath.
-  A task that gates three-plus others is acting as a
-  grouping parent, so it renders as the **heading only**,
-  never also as a startable bullet: it shouldn't carry its
-  own PR, since merging that PR would close the parent while
-  its dependents are still open. Two or fewer dependents
-  keep the plain nested-bullet form above.
-
-  ```txt
-  ## ENG-###
-  - ENG-###
-  - ENG-###
-      - ENG-### (also after ENG-###)
-  - ENG-###
-  ```
+- **Cross-parent blockers render as a trailing
+  `(after ENG-###)` note**, never physically nesting across
+  headings. When a subtask is blocked by an issue under a
+  *different* parent (or by an un-parented issue), keep it
+  under its own parent heading and add the note rather than
+  moving it. A second blocker within the same heading that
+  the nesting doesn't show gets the same `(also after ENG-###)` note.
 
 - **Write every issue reference as the bare tag `ENG-###`
   in plaintext — never a markdown link.** Linear
@@ -405,23 +421,27 @@ shows what blocks what. Shape:
   mention that renders its current title and status (In
   Progress / Done / …); a `[ENG-###](url)` markdown link
   does not. This is what lets the chip stand in for the
-  summary. It applies everywhere, including any
-  `(also after ENG-###)` note.
+  summary. It applies everywhere, including the `# ENG-###`
+  headings and any `(after ENG-###)` note.
 
 - The nesting **is** the ordering — don't add "Wave N"
   headings, "start now" / "after Wave 1" labels, or
   parallel/disjoint annotations, and don't reintroduce a
   per-issue summary or file-glob to explain a node. The
-  **only** heading allowed is the grouping-parent chip above
-  (a blocker with more than two dependents); status- or
-  wave-style headings stay forbidden. The dependency a child
-  expresses is the nesting itself; the only inline
-  annotation allowed is a trailing `(also after ENG-###)`
-  for a second blocker that isn't visible from the tree.
+  **only** headings are `# Skills`, the `# ENG-###`
+  parent-initiative headings, and `# Standalone`; status-
+  or wave-style headings stay forbidden. The dependency a
+  child expresses is the nesting itself; the only inline
+  annotation allowed is a trailing `(after ENG-###)` /
+  `(also after ENG-###)` for a blocker that isn't visible
+  from the tree.
 
-- No footer — drop the severity / compression summary
-  lines; the issue chips carry severity and status, and
-  the tree speaks for itself.
+- No preamble and no footer — the document opens directly
+  on the `# Skills` heading with **no "How to read it"
+  legend**, and carries no severity / compression summary
+  lines at the end. The heading-and-chip structure is
+  self-explanatory: the chips render live titles and
+  statuses, and the tree speaks for itself.
 
 **Open issues only.** A closed / resolved issue (Done /
 Won't-fix / Canceled / Duplicate) is **omitted

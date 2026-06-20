@@ -48,6 +48,7 @@ keypair
 kripto
 lamports
 litesvm
+localnet
 macropod
 metas
 multisigs

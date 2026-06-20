@@ -351,7 +351,10 @@ Concrete rules:
   one-off entries into globs (per the rules above), dedupes them, and
   writes the firmed allowlist to **both** this worktree and the base
   repo so future worktrees inherit it — proposing the changes for
-  your approval before it writes.
+  your approval before it writes. That's the full sweep; a bare
+  `/firm-perms` run right after a one-time approval instead takes the
+  **fast path** — it firms just that single just-approved command into
+  both files immediately, with no propose-then-confirm gate.
 
 ### Patterns that always re-prompt — never author these
 
