@@ -248,8 +248,8 @@ and it does **not** propose-then-wait.
    `cargo *`, `gh *`, `rm *`), **do not write it** —
    stop and ask Alex how he wants to narrow it. This is
    the one case the fast path is allowed to pause.
-1. **Find the base repo** exactly as the full sweep does
-   (step 1 below: `git worktree list --porcelain`; the
+1. **Find the base repo** exactly as the full sweep's
+   step 1 does (`git worktree list --porcelain`; the
    `refs/heads/main` worktree is `<base>`).
 1. **Read both allowlists** with the Read tool — this
    worktree's `.claude/settings.local.json` and

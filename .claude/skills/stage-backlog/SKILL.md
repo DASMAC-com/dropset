@@ -1,11 +1,9 @@
 ---
 name: stage-backlog
-description: One iteration of keeping the Dropset Task Staging document in sync with the Linear Backlog — read every Backlog issue, group them into the fewest parallel, file-disjoint PR sessions, merge issues that belong in one PR into a single canonical issue (write-before-close so no state is dropped), adversarially cross-check the grouping, then rewrite the Task Staging document as a chips-only dependency tree (bare ENG-### tags nested by blocker, no summaries). Open issues only; closed ones drop off. Drive it with `/loop stage-backlog` or run it once.
+description: One iteration of keeping the Dropset Task Staging document in sync with the Linear Backlog — read every Backlog issue, group them into the fewest parallel, file-disjoint PR sessions, merge issues that belong in one PR into a single canonical issue (write-before-close so no state is dropped), adversarially cross-check the grouping, then rewrite the Task Staging document as a chips-only dependency tree — bare ENG-### tags grouped under parent-initiative headings and nested by blocker, no summaries. Open issues only; closed ones drop off. Drive it with `/loop stage-backlog` or run it once.
 disable-model-invocation: false
 user-invocable: true
 ---
-
-<!-- cspell:word localnet -->
 
 <!-- cspell:word startable -->
 
@@ -181,8 +179,10 @@ what can run in parallel, not just a linear order:
   files under `.claude/skills/**` and/or `CLAUDE.md`, with
   no product code — are merged into a **single** session
   even though their files are disjoint, and that session is
-  ordered **first** in the tree (a top-level node, before
-  the rest). This is a deliberate **exception** to the
+  ordered **first** — step 5 renders it under its own
+  `# Skills` heading at the very top of the document, not as
+  a bullet in the rest of the tree. This is a deliberate
+  **exception** to the
   disjoint-file / don't-over-compress rules above, scoped to
   skill-doc housekeeping: such edits are trivial markdown,
   don't need parallel sessions, and Alex wants them
