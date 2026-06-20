@@ -153,6 +153,26 @@
       "ref_now_bits": 2167483648,
       "shares_out": "1",
       "vps_after": "8589934592"
+    },
+    {
+      "entry_ref_new_bits": 3147007744,
+      "entry_ref_prev_bits": 3147007745,
+      "entry_vps_new": "4294967300",
+      "entry_vps_prev": "4294967296",
+      "prior_shares": "1000000006",
+      "ref_now_bits": 3147007744,
+      "shares_out": "1",
+      "vps_after": "8589934592"
+    },
+    {
+      "entry_ref_new_bits": 3447676920,
+      "entry_ref_prev_bits": 4260749567,
+      "entry_vps_new": "6442450944",
+      "entry_vps_prev": "4294967296",
+      "prior_shares": "18446744073709551615",
+      "ref_now_bits": 4260749567,
+      "shares_out": "18446744073709551615",
+      "vps_after": "8589934592"
     }
   ],
   "pro_rata_slice": [

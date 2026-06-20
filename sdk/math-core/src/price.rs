@@ -151,8 +151,9 @@ impl Price {
     /// Encode a decimal value (e.g. `1.085`) into a `Price`. Intended for
     /// the FX value range (`value * 1e7` within f64 integer precision);
     /// truncates to 8 significant digits. `0.0` maps to [`Price::ZERO`].
-    /// Returns `None` for non-finite/negative input or out-of-range
-    /// exponent. Mirrors the TS `encodePrice`.
+    /// Returns `None` for non-finite/negative input, or for a value so
+    /// large that `value * 1e7` no longer fits in `u64`. Mirrors the TS
+    /// `encodePrice`.
     pub fn from_value(value: f64) -> Option<Self> {
         if !value.is_finite() || value < 0.0 {
             return None;
@@ -160,7 +161,17 @@ impl Price {
         if value == 0.0 {
             return Some(Self::ZERO);
         }
-        Self::from_scaled((value * 1e7) as u64, BIAS as i16)
+        let scaled = value * 1e7;
+        // Reject values that would saturate the `f64`->`u64` cast. Above
+        // this the cast silently clamps to `u64::MAX`, normalizing e.g.
+        // `1e300` into a bogus finite `Price`; rejecting keeps the fork in
+        // lockstep with TS `encodePrice`, which throws on the same inputs.
+        // `u64::MAX as f64` rounds up to 2^64, so every f64 strictly below
+        // it casts losslessly toward zero into range.
+        if scaled >= u64::MAX as f64 {
+            return None;
+        }
+        Self::from_scaled(scaled as u64, BIAS as i16)
     }
 
     /// Normalize a raw significand and biased exponent into a valid

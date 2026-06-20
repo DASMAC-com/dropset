@@ -269,12 +269,15 @@ Three vector sets are checked in and replayed by both forks:
 native↔relative book translation), and `share_vectors.json` (all six
 share/NAV/PnL kernels above, so the frontend's NAV/PnL fallback reuses the
 engine math instead of re-deriving it). The `Price` vectors also pin the
-**reject contract** via an `encode_reject` set: non-finite and negative
-inputs reject on both forks (Rust `from_value` → `None`, TS `encodePrice`
-→ `RangeError`). One reject case is **deliberately left unpinned** — a huge
-finite value (e.g. `1e300`) normalizes to a valid `Price` under Rust's
-saturating `f64`→`u64` cast but throws in TS, a genuine codec divergence
-tracked separately rather than pinned as agreement.
+**reject contract** via an `encode_reject` set: both forks reject non-finite
+and negative inputs (Rust `from_value` → `None`, TS `encodePrice` →
+`RangeError`), and also any finite value so large that `value * 1e7`
+overflows `u64` (e.g. `1e300`, `1e13`). The latter used to diverge — Rust's
+saturating `f64`→`u64` cast normalized huge values to a bogus finite
+`Price` while TS threw — but `from_value` now rejects at that boundary so
+the two forks agree; the `share_vectors.json` `merge_entry_basis` set
+likewise pins the `weighted_average` blend for structurally-valid prices
+above the FX band (exact-bigint precision and `u128` saturation).
 
 On-chain CPI builders (instruction builders + account layouts for a `no_std`,
 entrypoint-free CPI parser, shared with the engine and any router doing an

@@ -322,6 +322,36 @@ fn merge_cases() -> Vec<Value> {
         merge_case(100, 100, Q32_32_ONE, 2 * Q32_32_ONE, one, two),
         // Tiny fresh lot barely moves a large prior position's basis.
         merge_case(999, 1, Q32_32_ONE, 2 * Q32_32_ONE, one, two),
+        // Out-of-FX-band fidelity guards for `weighted_average` (the
+        // `entry_ref` blend). The VPS arm is exact u128 either way; these
+        // pin the Price blend where the TS fork's old `Number(avg)` /
+        // plain-bigint paths diverged from Rust.
+        //
+        // Gap 1 — `Number(avg)` precision. Weights 1_000_000_006 : 1 over
+        // refs 6.0000001e7 and 6.0e7 drive `avg` to 60_000_000_999_999_999
+        // (`value × 10^9` units, > 2^53), which an f64 round nudges across a
+        // 10^9 truncation boundary, flipping the 8th significand digit. The
+        // exact bigint path keeps significand 60_000_000.
+        merge_case(
+            1_000_000_006,
+            1,
+            Q32_32_ONE,
+            2 * Q32_32_ONE,
+            price(60_000_001, 7),
+            price(60_000_000, 7),
+        ),
+        // Gap 2 — `u128` saturation. Max-significand prices at the top
+        // exponent with `u64::MAX` weights make each `w * v` product exceed
+        // `u128::MAX`; Rust's `saturating_mul` clamps it, so the TS fork
+        // must too (plain bigint would not).
+        merge_case(
+            u64::MAX,
+            u64::MAX,
+            Q32_32_ONE,
+            2 * Q32_32_ONE,
+            price(99_999_999, 15),
+            price(99_999_999, 15),
+        ),
     ]
 }
 
