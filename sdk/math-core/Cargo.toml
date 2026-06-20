@@ -45,8 +45,13 @@ wasm = ["dep:wasm-bindgen"]
 crate-type = ["cdylib", "rlib"]
 
 [package]
+categories.workspace = true
 description = "Solana-free consensus eCLOB math (Price codec, matcher arithmetic, share/NAV/PnL kernels), shared by the on-chain program, the Rust SDK, and (via WASM) the TS client."
-edition = "2021"
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
 name = "dropset-math-core"
 publish = false
-version = "0.1.0"
+readme = "README.md"
+repository.workspace = true
+version.workspace = true
