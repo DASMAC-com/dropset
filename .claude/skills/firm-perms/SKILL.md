@@ -1,6 +1,6 @@
 ---
 name: firm-perms
-description: Generalize the local permission allowlist into reusable globs — Bash commands and file-access/`Read` paths alike — harvesting everything you had to approve this session (or a pasted block of permission strings, or the Linear "Permissions" inbox doc), and propagate it to the base-repo settings so future worktrees inherit it. Use at the end of a session, during a review-pr run that piled up per-worktree or per-arg approvals, with a pasted permissions block, or pass `doc` to drain the Linear Permissions inbox.
+description: Generalize the local permission allowlist into reusable globs — Bash commands and file-access/`Read` paths alike. The low-friction default is the fast path: right after you one-time-approve a prompt, a bare `/firm-perms` (or `/firm-perms this`) firms just that one command into both the worktree and base-repo settings immediately — no sweep, no confirm gate. Otherwise it runs the full sweep — harvest everything you approved this session (or a pasted block of permission strings, or the Linear "Permissions" inbox doc) and propagate it to the base-repo settings so future worktrees inherit it. Use the fast path after an approval, the full sweep at the end of a session or during a review-pr run that piled up per-worktree or per-arg approvals, with a pasted permissions block, or pass `doc` to drain the Linear Permissions inbox.
 user-invocable: true
 ---
 
@@ -13,6 +13,14 @@ narrow, one-off `permissions.allow` entries into
 generalized globs, dedupe them, and write the same
 allowlist to **both** this worktree and the base
 repo so the rules survive into future worktrees.
+
+The common case is the **fast path**: right after you
+one-time-approve a prompt, a bare `/firm-perms` (or
+`/firm-perms this`) firms just that one command into
+both files immediately — no session sweep, no
+propose-then-confirm gate. Everything below is the
+**full sweep**, the heavier cleanup the fast path is a
+shortcut around.
 
 This is the cleanup pass for the allowlist churn
 that builds up as you approve commands by hand. It
@@ -55,11 +63,20 @@ folder (e.g. `eng-447`).
 
 ## Input
 
-Optional, and accepts four shapes:
+Optional, and accepts these shapes:
 
-- **No argument** — firm the **entire** allow array
-  (plus this session's harvested approvals, per the
-  steps below).
+- **Bare `/firm-perms` right after a one-time
+  approval**, or **`/firm-perms this`** — the **fast
+  path**: firm just the command you literally just
+  approved into both settings files immediately, no
+  sweep, no confirm gate. This is the primary
+  low-friction entry point; see the **Fast path** under
+  Steps.
+
+- **No argument** (when the previous turn was *not* a
+  one-time approval) — the full sweep: firm the
+  **entire** allow array (plus this session's harvested
+  approvals, per the steps below).
 
 - **A fragment** (e.g. a rule that just got added, or a
   command you keep approving) — focus the generalization
@@ -187,6 +204,90 @@ a reason to keep authoring one bare command per Bash
 call, not a reason to widen rules.)
 
 ## Steps
+
+**Classify the invocation first.** This skill has two
+entry points, and a bare `/firm-perms` picks between
+them by context:
+
+- **Fast path** — fires when either `/firm-perms this`
+  is typed (the word "this", or a fragment matching the
+  just-approved command), **or** a bare `/firm-perms` is
+  invoked and the immediately-preceding turn was a
+  one-time permission approval. It firms exactly that one
+  just-approved command, in place, with no sweep and no
+  confirm gate. See **Fast path** immediately below.
+- **Full sweep** — every other invocation: a bare
+  `/firm-perms` when the previous turn was *not* an
+  approval, a fragment given for general cleanup, a
+  pasted permissions block, or `doc`. It harvests the
+  whole session (or the given source) and runs the
+  propose-then-confirm flow. See **Full sweep** below.
+
+### Fast path (firm the just-approved command)
+
+The low-friction common case: Alex one-time-approves a
+prompt (option 1, because option 2's "don't ask again
+for…" is almost always far too broad — `pnpm *`,
+`git *`), then types `/firm-perms` to memorialize the
+*correct* narrow glob right now. This path does only
+that — it does **not** harvest the rest of the session,
+and it does **not** propose-then-wait.
+
+1. **Identify the target command** — the single Bash
+   command (or `Read` / file-access path, or `WebFetch`
+   domain) from the immediately-preceding approved tool
+   call. That one command is the entire scope; the rest
+   of the session is not touched.
+1. **Generalize it** with the **Generalization rules**
+   above, unchanged — collapse `worktrees/<tag>` to `*`,
+   suffix trailing args with `:*`, keep the command +
+   subcommand literal, dedupe.
+1. **Apply the Safety floor** above, unchanged. If the
+   only safe generalization the rules can produce would
+   be a bare-verb wildcard (`git *`, `pnpm *`,
+   `cargo *`, `gh *`, `rm *`), **do not write it** —
+   stop and ask Alex how he wants to narrow it. This is
+   the one case the fast path is allowed to pause.
+1. **Find the base repo** exactly as the full sweep does
+   (step 1 below: `git worktree list --porcelain`; the
+   `refs/heads/main` worktree is `<base>`).
+1. **Read both allowlists** with the Read tool — this
+   worktree's `.claude/settings.local.json` and
+   `<base>/.claude/settings.local.json`.
+1. **Write the glob into both `allow` arrays
+   immediately**, with Edit/Write — **no
+   propose-then-confirm gate** (the deliberate difference
+   from the other modes). Dedupe against the existing
+   entries; if the glob is already present or subsumed by
+   a broader existing rule, no-op and say so. Leave
+   `additionalDirectories` and every other key intact;
+   both files end byte-identical. If the base-repo write
+   is denied (base not in `additionalDirectories`), say
+   so and report that only the worktree copy was firmed
+   — same caveat as the full sweep.
+1. **Report in one line** what was added and that both
+   copies now match — e.g. "Firmed
+   `Bash(cargo test -p dropset:*)` into worktree + base."
+   Because the report states exactly what was written,
+   the change stays trivially reversible.
+
+**Why no confirm gate here.** The full sweep's
+propose-then-confirm gate exists because a sweep can
+touch many rules at once and resurrect drifted entries
+into the base file. The fast path touches exactly one
+rule that Alex *just* approved by hand and explicitly
+asked to firm, and it reports precisely what it wrote —
+so the human confirmation already happened (the
+one-time approval plus the `/firm-perms`), and the
+safety floor still blocks the one dangerous outcome (a
+bare-verb wildcard). The full-sweep modes keep their
+gate unchanged.
+
+### Full sweep
+
+The remaining modes — no-arg full harvest, fragment,
+pasted block, and `doc` — run the harvest-and-propose
+flow below.
 
 1. **Find the base repo.** List worktrees and read
    the path out of the output yourself (no command
