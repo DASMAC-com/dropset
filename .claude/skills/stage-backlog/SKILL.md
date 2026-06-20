@@ -5,6 +5,8 @@ disable-model-invocation: false
 user-invocable: true
 ---
 
+<!-- cspell:word localnet -->
+
 <!-- cspell:word startable -->
 
 # `stage-backlog`
@@ -411,8 +413,7 @@ shows what blocks what. Shape:
   *different* parent (or by an un-parented issue), keep it
   under its own parent heading and add the note rather than
   moving it. A second blocker within the same heading that
-  the nesting doesn't show gets the same `(also after
-  ENG-###)` note.
+  the nesting doesn't show gets the same `(also after ENG-###)` note.
 
 - **Write every issue reference as the bare tag `ENG-###`
   in plaintext — never a markdown link.** Linear
