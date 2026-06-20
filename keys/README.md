@@ -27,18 +27,24 @@ Each file is a standard Solana CLI keypair — a 64-byte JSON array (the
 
 ## The set
 
-The four-character prefix is the identifier. Role assignment is by
-convention — the consumer (e.g. the dropset TUI) decides which key
-plays which part:
+The four-character prefix is the identifier. Roles are assigned by
+convention, in the order the localnet bootstrap introduces them:
 
-| File        | Address | Conventional role                 |
-| ----------- | ------- | --------------------------------- |
-| `AAAA.json` | `AAAA…` | admin / payer / upgrade authority |
-| `BBBB.json` | `BBBB…` | market maker (vault leader)       |
-| `CCCC.json` | `CCCC…` | market maker                      |
-| `DDDD.json` | `DDDD…` | taker                             |
-| `EEEE.json` | `EEEE…` | taker                             |
-| `FFFF.json` | `FFFF…` | spare participant                 |
+| File        | Address | Conventional role                   |
+| ----------- | ------- | ----------------------------------- |
+| `AAAA.json` | `AAAA…` | the dropset program ID              |
+| `BBBB.json` | `BBBB…` | admin 1 — payer / upgrade authority |
+| `CCCC.json` | `CCCC…` | admin 2                             |
+| `DDDD.json` | `DDDD…` | registrant                          |
+| `EEEE.json` | `EEEE…` | vault leader                        |
+| `FFFF.json` | `FFFF…` | taker                               |
+
+`AAAA.json` is the **program keypair**: it is copied into
+`target/deploy/dropset-keypair.json` at build time (the `program-keypair`
+Makefile target) so `declare_id!` and anchor's build-time program-ID
+check agree. The rest are signer accounts the TUI and bots fund and
+drive. Need more participants (extra takers or makers)? Grind the next
+prefix (`GGGG`, `HHHH`, …) into this directory.
 
 ## Regenerating
 

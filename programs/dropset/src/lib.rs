@@ -17,7 +17,7 @@ pub use state::*;
 // existing `crate::Price` paths keep resolving.
 pub use dropset_math_core::Price;
 
-declare_id!("TESTnXwv2eHoftsSd5NEdpH4zEu7XRC8jviuoNPdB2Q");
+declare_id!("AAAAz3pYUMwhX1bsEtPx9LSWYbpRM8qrFaQgmKVX6oiV");
 
 #[program]
 pub mod dropset {

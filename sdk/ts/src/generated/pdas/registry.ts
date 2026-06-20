@@ -9,6 +9,6 @@
 import { getBytesEncoder, getProgramDerivedAddress, type Address, type ProgramDerivedAddress } from '@solana/kit';
 
 export async function findRegistryPda(config: { programAddress?: Address | undefined } = {}): Promise<ProgramDerivedAddress> {
-  const { programAddress = 'TESTnXwv2eHoftsSd5NEdpH4zEu7XRC8jviuoNPdB2Q' as Address<'TESTnXwv2eHoftsSd5NEdpH4zEu7XRC8jviuoNPdB2Q'> } = config;
+  const { programAddress = 'AAAAz3pYUMwhX1bsEtPx9LSWYbpRM8qrFaQgmKVX6oiV' as Address<'AAAAz3pYUMwhX1bsEtPx9LSWYbpRM8qrFaQgmKVX6oiV'> } = config;
   return await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([114, 101, 103, 105, 115, 116, 114, 121]))]});
 }
