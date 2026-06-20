@@ -16,7 +16,7 @@
 
 [dependencies]
 bytemuck = {version = "1", features = ["derive", "min_const_generics"]}
-dropset-math-core = {path = "../math-core"}
+dropset-math-core = {path = "../math-core", version = "0.1.0"}
 wasm-bindgen = {version = "0.2", optional = true}
 
 [features]
@@ -35,7 +35,12 @@ crate-type = ["cdylib", "rlib"]
 
 [package]
 description = "Solana-free off-chain account-layout mirror + eCLOB book simulator, built on dropset-math-core; shared by the Rust SDK and (via WASM) the TS client."
-edition = "2021"
 name = "dropset-interface"
 publish = false
-version = "0.1.0"
+readme = "README.md"
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true

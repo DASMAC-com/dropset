@@ -11,8 +11,8 @@
 [dependencies]
 borsh = {version = "1", features = ["derive"]}
 bytemuck = {version = "1", features = ["derive", "min_const_generics"]}
-dropset-interface = {path = "../interface"}
-dropset-math-core = {path = "../math-core"}
+dropset-interface = {path = "../interface", version = "0.1.0"}
+dropset-math-core = {path = "../math-core", version = "0.1.0"}
 num-derive = "0.4"
 num-traits = "0.2"
 serde = {version = "1", optional = true, features = ["derive"]}
@@ -50,7 +50,12 @@ serde = ["dep:serde", "dep:serde_with"]
 
 [package]
 description = "Off-chain client + book-math for the Dropset eCLOB program."
-edition = "2021"
 name = "dropset-sdk"
 publish = false
-version = "0.1.0"
+readme = "README.md"
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true

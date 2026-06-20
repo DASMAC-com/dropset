@@ -66,7 +66,7 @@ check-cfg = ['cfg(target_os, values("solana"))']
 level = "warn"
 
 [package]
-edition = "2021"
 name = "dropset"
 publish = false
-version = "0.1.0"
+edition.workspace = true
+version.workspace = true

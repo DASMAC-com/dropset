@@ -27,6 +27,20 @@ solana-pubkey = {version = "4.1", features = ["curve25519"]}
 solana-sdk-ids = "3"
 wincode = {version = "0.5", features = ["derive"]}
 
+# This git fork is why the SDK crates can't `cargo publish` yet — and why
+# they stay `publish = false`. Two facts pin that down. First, the dep can't
+# be dropped: `dropset-math-core` needs `anchor-lang-v2` behind its `idl`
+# feature because `anchor idl build` requires `Price`'s `IdlType` impl, so
+# removing it breaks IDL generation for every type that embeds a `Price`.
+# Second, `cargo package`/`publish` resolves the *whole* dependency graph,
+# optional deps included, so a `git` source here makes the SDK crates
+# unpublishable regardless of whether `idl` is ever activated.
+#
+# The unblock is a migration, not a wait: anchor's next-gen line has shipped
+# to crates.io as `anchor-lang` 1.0.x (this `anchor-next` branch, internally
+# versioned 2.0.0, is its pre-release form). Pointing the workspace at the
+# released crate — confirming the rev matches first — drops the `git` source
+# and lets the SDK crates publish. Until then they stay `publish = false`.
 [workspace.dependencies.anchor-lang-v2]
 branch = "anchor-next"
 git = "https://github.com/solana-foundation/anchor.git"
@@ -38,3 +52,17 @@ git = "https://github.com/solana-foundation/anchor.git"
 [workspace.dependencies.anchor-v2-testing]
 branch = "anchor-next"
 git = "https://github.com/solana-foundation/anchor.git"
+
+# Shared package metadata. The publishable SDK crates (math-core, interface,
+# rs) inherit the publish-required/recommended fields from here with
+# `<field>.workspace = true`; the on-chain `dropset` crate (publish = false)
+# inherits only `edition`/`version`. `description`, `publish`, and `readme`
+# stay per-crate — `readme` because an inherited path resolves against the
+# workspace root, not the crate dir.
+[workspace.package]
+categories = ["cryptography::cryptocurrencies"]
+edition = "2021"
+keywords = ["solana", "dropset", "dex", "eclob", "trading"]
+license = "Apache-2.0"
+repository = "https://github.com/DASMAC-com/dropset"
+version = "0.1.0"
