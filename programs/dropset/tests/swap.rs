@@ -1,14 +1,13 @@
 //! Swap integration tests — the multi-vault heap matcher and `min_out`
 //! soft-revert, end-to-end against the deployed `.so`. All built on the
 //! shared [`Fixture`]: `Fixture::seeded` for the single-vault cases and
-//! `seeded_two_vaults` for cross-vault price-time priority.
+//! `Fixture::seeded_two_vaults` for cross-vault price-time priority.
 
 mod common;
 
 use anchor_v2_testing::Signer;
-use common::fixture::{simple_profile, Fixture, PROFILE_BYTES};
+use common::fixture::{simple_profile, Fixture};
 use dropset::{Price, FLUSH_BIT};
-use solana_pubkey::Pubkey;
 
 /// Default seed used across the swap tests.
 const SEED_BASE: u64 = 1_000_000;
@@ -285,43 +284,6 @@ fn taker_fee_retained_in_vault() {
 
 // ── Multi-vault price-time priority + flush / expiry ─────────────────
 
-/// Build a two-vault market (sectors 0 then 1), each seeded with
-/// 1_000_000 base / 1_085_000 quote and a full-inventory ±0.5% ladder,
-/// but anchored at the given reference prices. Sector 0 is set up
-/// first, so its `reference_price.stamp` nonce is strictly older than
-/// sector 1's — the price-time tiebreaker when prices are equal.
-fn seeded_two_vaults(ref0_bits: u32, ref1_bits: u32) -> Fixture {
-    let mut f = Fixture::bootstrap();
-    let auth = f.authority.insecure_clone();
-
-    // Sector 0.
-    f.create_vault(0, f.authority.pubkey(), false, Pubkey::default())
-        .expect("register vault 0");
-    f.set_reference_price(&auth, 0, ref0_bits, 0)
-        .expect("ref 0");
-    f.set_liquidity_profile(&auth, 0, simple_profile(5_000, 10_000, u32::MAX))
-        .expect("profile 0");
-    f.deposit_leader(0, 1_000_000, 1_085_000, 1_000_000, 1_085_000)
-        .expect("seed 0");
-
-    // Advance the blockhash so sector 1's seed mint (same amount, same
-    // ATA as sector 0's) isn't a byte-identical, already-processed txn.
-    f.svm.expire_blockhash();
-
-    // Sector 1. Its register / seed transactions mirror sector 0's
-    // argument-for-argument; the blockhash bump above is what keeps
-    // them from colliding as already-processed duplicates.
-    f.create_vault(1, f.authority.pubkey(), false, Pubkey::default())
-        .expect("register vault 1");
-    f.set_reference_price(&auth, 1, ref1_bits, 0)
-        .expect("ref 1");
-    f.set_liquidity_profile(&auth, 1, simple_profile(5_000, 10_000, u32::MAX))
-        .expect("profile 1");
-    f.deposit_leader(1, 1_000_000, 1_085_000, 1_000_000, 1_085_000)
-        .expect("seed 1");
-    f
-}
-
 #[test]
 fn multi_vault_cheaper_price_fills_first() {
     // Sector 1 quotes the lower reference (cheaper asks for a Buy), so
@@ -329,7 +291,7 @@ fn multi_vault_cheaper_price_fills_first() {
     // pricier sector 0 untouched.
     let hi = Price::encode(10_900_000, 0).unwrap().as_u32();
     let lo = Price::encode(10_800_000, 0).unwrap().as_u32();
-    let mut f = seeded_two_vaults(hi, lo);
+    let mut f = Fixture::seeded_two_vaults(hi, lo);
 
     let taker = f.funded_depositor(0, 200_000);
     f.swap(&taker, 0, 50_000, Price::INFINITY.as_u32(), 1)
@@ -362,7 +324,7 @@ fn multi_vault_equal_price_older_nonce_wins() {
     // 1 holds the older nonce but the higher index — if `nonce` breaks
     // the tie, sector 1 fills; if `sector_idx` did, sector 0 would.
     let same = Price::encode(10_850_000, 0).unwrap().as_u32();
-    let mut f = seeded_two_vaults(same, same);
+    let mut f = Fixture::seeded_two_vaults(same, same);
     // Distinct blockhash so the re-quote isn't a duplicate of sector 0's
     // original set_reference_price txn.
     f.svm.expire_blockhash();
@@ -394,7 +356,7 @@ fn multi_vault_spills_cheaper_then_pricier() {
     // whole 1_000_000 base) drains to zero before sector 0 is touched.
     let hi = Price::encode(10_900_000, 0).unwrap().as_u32();
     let lo = Price::encode(10_800_000, 0).unwrap().as_u32();
-    let mut f = seeded_two_vaults(hi, lo);
+    let mut f = Fixture::seeded_two_vaults(hi, lo);
 
     // 1_500_000 quote fully drains the cheaper vault's 1_000_000-base
     // ask (~1.0854e6 quote) and spills the rest into the pricier one,
@@ -474,35 +436,12 @@ fn expired_levels_are_skipped() {
     );
 }
 
-/// Two ask levels, 5_000 bps each (Σ = 10_000), at different offsets.
-fn two_ask_level_profile() -> [u8; PROFILE_BYTES] {
-    let mut p: dropset::LiquidityProfile = anchor_lang_v2::bytemuck::Zeroable::zeroed();
-    p.asks[0].price_offset = 5_000u32.into();
-    p.asks[0].size_bps = 5_000u16.into();
-    p.asks[0].expiry_offset = u32::MAX.into();
-    p.asks[1].price_offset = 10_000u32.into();
-    p.asks[1].size_bps = 5_000u16.into();
-    p.asks[1].expiry_offset = u32::MAX.into();
-    let mut bytes = [0u8; PROFILE_BYTES];
-    bytes.copy_from_slice(anchor_lang_v2::bytemuck::bytes_of(&p));
-    bytes
-}
-
 #[test]
 fn min_out_soft_revert_restores_multiple_legs_and_rearms_flush() {
     // A vault with two ask levels. A Buy that crosses both, then fails
     // its `min_out`, must restore *both* levels' remaining size and
     // re-arm FLUSH_BIT.
-    let mut f = Fixture::bootstrap();
-    let auth = f.authority.insecure_clone();
-    f.create_vault(0, f.authority.pubkey(), false, Pubkey::default())
-        .expect("register");
-    f.set_reference_price(&auth, 0, Price::encode(10_850_000, 0).unwrap().as_u32(), 0)
-        .expect("ref");
-    f.set_liquidity_profile(&auth, 0, two_ask_level_profile())
-        .expect("two-level profile");
-    f.deposit_leader(0, 1_000_000, 1_085_000, 1_000_000, 1_085_000)
-        .expect("seed");
+    let mut f = Fixture::seeded_two_ask_levels();
 
     let taker = f.funded_depositor(0, 5_000_000);
     let q_before = f.token_balance(&f.quote_ata(&taker.pubkey()));
@@ -527,24 +466,6 @@ fn min_out_soft_revert_restores_multiple_legs_and_rearms_flush() {
     assert_eq!(v.base_atoms.get(), 1_000_000, "vault inventory restored");
 }
 
-/// Two-ask-level vault seeded with 1_000_000 base / 1_085_000 quote at
-/// the 1.0850 reference. The two 5_000-bps ask levels each materialize
-/// to 500_000 base, so a Buy large enough to cross both fills exactly
-/// two legs — one `market.nonce` bump per leg.
-fn seeded_two_ask_levels() -> Fixture {
-    let mut f = Fixture::bootstrap();
-    let auth = f.authority.insecure_clone();
-    f.create_vault(0, f.authority.pubkey(), false, Pubkey::default())
-        .expect("register");
-    f.set_reference_price(&auth, 0, Price::encode(10_850_000, 0).unwrap().as_u32(), 0)
-        .expect("ref");
-    f.set_liquidity_profile(&auth, 0, two_ask_level_profile())
-        .expect("two-level profile");
-    f.deposit_leader(0, 1_000_000, 1_085_000, 1_000_000, 1_085_000)
-        .expect("seed");
-    f
-}
-
 #[test]
 fn nonce_overflow_on_second_leg_hard_reverts_the_committed_first_leg() {
     // `nonce_overflow_hard_reverts_and_errors` pokes `nonce = u64::MAX`,
@@ -566,7 +487,7 @@ fn nonce_overflow_on_second_leg_hard_reverts_the_committed_first_leg() {
 
     // Arm one below the wrap point: both per-leg bumps fit, swap commits.
     {
-        let mut f = seeded_two_ask_levels();
+        let mut f = Fixture::seeded_two_ask_levels();
         f.poke_nonce(u64::MAX - 2);
         let taker = f.funded_depositor(0, 5_000_000);
         f.swap(&taker, 0, 2_000_000, Price::INFINITY.as_u32(), 1)
@@ -589,7 +510,7 @@ fn nonce_overflow_on_second_leg_hard_reverts_the_committed_first_leg() {
     // the single-leg case, now with a committed leg ahead of the failing
     // one.
     {
-        let mut f = seeded_two_ask_levels();
+        let mut f = Fixture::seeded_two_ask_levels();
         f.poke_nonce(u64::MAX - 1);
 
         let taker = f.funded_depositor(0, 5_000_000);

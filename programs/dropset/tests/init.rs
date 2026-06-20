@@ -2,6 +2,7 @@ mod common;
 
 use anchor_lang_v2::{programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, Signer};
+use common::fixture::{canonical_init_ixn, init_ixn, registry_pda};
 use common::{
     assert_instruction_error, assert_program_error, associated_token_address, create_spl_mint,
     create_token2022_mint, create_token2022_token_account, decode_slab, deploy_with_authority,
@@ -18,57 +19,6 @@ use solana_pubkey::Pubkey;
 
 /// Fee atoms used across init tests (1k with 6 decimals).
 const TEST_FEE_ATOMS: u64 = 1_000_000_000;
-
-fn registry_address() -> Pubkey {
-    Pubkey::find_program_address(&[b"registry"], &PROGRAM_ID).0
-}
-
-fn init_ixn(
-    payer: Pubkey,
-    genesis_admin: Pubkey,
-    fee_mint: Pubkey,
-    fee_atoms: u64,
-    program_data: Pubkey,
-    token_program: Pubkey,
-) -> Instruction {
-    let registry = registry_address();
-    let fee_vault = associated_token_address(&registry, &fee_mint, &token_program);
-    Instruction::new_with_bytes(
-        PROGRAM_ID,
-        &InitInstruction {
-            genesis_admin,
-            fee_atoms,
-        }
-        .data(),
-        vec![
-            AccountMeta::new(payer, true),
-            AccountMeta::new(registry, false),
-            AccountMeta::new_readonly(program_data, false),
-            AccountMeta::new_readonly(fee_mint, false),
-            AccountMeta::new(fee_vault, false),
-            AccountMeta::new_readonly(token_program, false),
-            AccountMeta::new_readonly(ATA_PROGRAM_ID, false),
-            AccountMeta::new_readonly(System::id(), false),
-        ],
-    )
-}
-
-fn canonical_init_ixn(
-    payer: Pubkey,
-    genesis_admin: Pubkey,
-    fee_mint: Pubkey,
-    fee_atoms: u64,
-    token_program: Pubkey,
-) -> Instruction {
-    init_ixn(
-        payer,
-        genesis_admin,
-        fee_mint,
-        fee_atoms,
-        get_program_data_address(&PROGRAM_ID),
-        token_program,
-    )
-}
 
 #[test]
 fn init_rejects_wrong_program_data_address() {
@@ -132,7 +82,7 @@ fn assert_fee_vault_created(
 ) {
     const SPL_TOKEN_ACCOUNT_LEN: usize = 165;
     const TOKEN_2022_ATA_LEN: usize = 170;
-    let vault_addr = associated_token_address(&registry_address(), &fee_mint, &token_program);
+    let vault_addr = associated_token_address(&registry_pda(), &fee_mint, &token_program);
     let vault = svm
         .get_account(&vault_addr)
         .expect("fee vault should be created");
@@ -156,7 +106,7 @@ fn assert_fee_vault_created(
     assert_eq!(mint_field, fee_mint.to_bytes(), "fee vault mint mismatch");
     assert_eq!(
         owner_field,
-        registry_address().to_bytes(),
+        registry_pda().to_bytes(),
         "fee vault SPL owner is not the registry PDA"
     );
 }
@@ -227,9 +177,7 @@ fn init_succeeds_with_token2022_mint() {
     )
     .expect("init with Token-2022 mint should succeed");
 
-    let account = svm
-        .get_account(&registry_address())
-        .expect("registry created");
+    let account = svm.get_account(&registry_pda()).expect("registry created");
     let (header, admins) = decode_slab::<RegistryHeader, [u8; 32]>(&account.data);
     assert_eq!(header.default_fee_config.mint, fee_mint.to_bytes().into());
     assert_eq!(
@@ -328,7 +276,7 @@ fn init_rejects_non_canonical_fee_vault() {
     let mut svm = deploy_with_authority(&authority);
     let mint = create_spl_mint(&mut svm, &authority);
 
-    let registry = registry_address();
+    let registry = registry_pda();
     let bogus_vault = Pubkey::new_unique();
     let ixn = Instruction::new_with_bytes(
         PROGRAM_ID,
