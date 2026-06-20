@@ -34,13 +34,13 @@ wasm = ["dep:wasm-bindgen", "simulate", "dropset-math-core/wasm"]
 crate-type = ["cdylib", "rlib"]
 
 [package]
-categories.workspace = true
 description = "Solana-free off-chain account-layout mirror + eCLOB book simulator, built on dropset-math-core; shared by the Rust SDK and (via WASM) the TS client."
-edition.workspace = true
-keywords.workspace = true
-license.workspace = true
 name = "dropset-interface"
 publish = false
 readme = "README.md"
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
 repository.workspace = true
 version.workspace = true

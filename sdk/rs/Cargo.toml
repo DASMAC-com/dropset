@@ -49,13 +49,13 @@ fetch = ["dep:solana-account", "dep:solana-client"]
 serde = ["dep:serde", "dep:serde_with"]
 
 [package]
-categories.workspace = true
 description = "Off-chain client + book-math for the Dropset eCLOB program."
-edition.workspace = true
-keywords.workspace = true
-license.workspace = true
 name = "dropset-sdk"
 publish = false
 readme = "README.md"
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
 repository.workspace = true
 version.workspace = true
