@@ -44,7 +44,10 @@ check-solana:
 # Regenerate the checked-in IDL from the program. Pin anchor-cli to the
 # same anchor-next rev as the program crate (see install-anchor-v2) so
 # the IDL-diff baseline doesn't drift — interface.md § SDK, CI discipline.
-idl: check-toolchain
+# Depend on program-keypair (like program: does) so the canonical
+# keys/AAAA.json is staged before the build — otherwise anchor syncs
+# declare_id! and the IDL `address` to a throwaway build keypair.
+idl: check-toolchain program-keypair
 	anchor idl build -o sdk/idl/dropset.json
 
 # Regenerate the TS + Rust clients from the checked-in IDL via Codama,
