@@ -32,6 +32,25 @@ session can proceed straight into the task without
 asking what to build. Instructions the user *did*
 give take precedence over the issue.
 
+## Decision points use `AskUserQuestion`
+
+`init-pr` brackets the whole worktree session: it
+bootstraps, surfaces the task, and the session then
+proceeds straight into the work. Wherever that flow
+needs a decision from the user — a design choice, an
+open question, a branching point — ask through the
+**`AskUserQuestion`** TUI selector, not a free-text
+prompt, so the human picks from the little terminal
+pop-up instead of typing a reply. Offer concrete
+options, and where one is the sensible default put it
+**first** and label it "(Recommended)". The closing
+`/review-pr` handoff (final step) is one such decision
+point; the same applies to every other one the session
+surfaces. This mirrors how `review-pr` already prompts
+at its merge-queue handoff — the same TUI-selector
+pattern, applied one stage earlier at the
+init-pr → review-pr boundary.
+
 ## Steps
 
 1. Validate that the resolved tag matches the
@@ -196,3 +215,25 @@ give take precedence over the issue.
    can proceed straight into the task. If the user
    provided their own instructions, those win; don't
    override them with the issue.
+
+1. **Hand off to `/review-pr` when the work is ready.**
+   This is the closing step of the bracketed session.
+   Once the surfaced task's work is complete and every
+   design decision and open question has been resolved
+   (each asked through `AskUserQuestion`, per "Decision
+   points use `AskUserQuestion`" above), announce that
+   the work is ready and ask — again **via
+   `AskUserQuestion`** — whether to run `/review-pr` now.
+   Offer two options: "yes, run /review-pr" (**first**,
+   the recommended default) and "not yet".
+
+   - On **yes**, route straight into `/review-pr`.
+   - On **not yet**, stop and leave the PR as it is.
+
+   Do **not** surface `/pr-title-description` as its own
+   step in this flow: `review-pr` already **calls** it
+   for the final title and body (its steps 13–14), so
+   offering it here would be redundant noise. The two
+   user-facing skills are `/init-pr` then `/review-pr`;
+   `pr-title-description` is a helper `review-pr` drives,
+   not a freestanding stage.

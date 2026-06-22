@@ -1,6 +1,6 @@
 ---
 name: stage-backlog
-description: One iteration of keeping the Dropset Task Staging document in sync with the Linear Backlog — read every Backlog issue, group them into the fewest parallel, file-disjoint PR sessions, merge issues that belong in one PR into a single canonical issue (write-before-close so no state is dropped), adversarially cross-check the grouping, then rewrite the Task Staging document as a chips-only dependency tree — bare ENG-### tags grouped under parent-initiative headings and nested by blocker, no summaries. Open issues only; closed ones drop off. Drive it with `/loop stage-backlog` or run it once.
+description: One iteration of keeping the Dropset Task Staging document in sync with the Linear Backlog — read every Backlog issue, group them into the fewest parallel, file-disjoint PR sessions, merge issues that belong in one PR into a single canonical issue (write-before-close so no state is dropped), adversarially cross-check the grouping, then rewrite the Task Staging document as a chips-only dependency tree — bare ENG-### tags grouped under parent-initiative headings and nested by blocker, no summaries. Open issues only; closed ones drop off. Also runs an incremental mode (given just-filed ENG-### ids) that slots new findings into the current document in place without re-deriving the whole backlog — the fast in-between update audit-loop drives as it files. Drive the full re-stage with `/loop stage-backlog` or run it once.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -25,6 +25,28 @@ It replaces the old umbrella-issue plan: there is no
 ENG-452 anymore. The Backlog is the queue; this
 document is the plan.
 
+## Two modes
+
+This skill runs in one of two modes:
+
+- **Full re-stage** (default — no argument): read the
+  entire Backlog and rewrite the whole **Task Staging**
+  document (steps 1–6 below). This is the **source of
+  truth** — it re-derives the grouping, merges the
+  issues that belong in one PR, and converges the plan.
+- **Incremental** (argument: one or more just-filed
+  `ENG-###` ids): slot each given issue into the
+  **current** document in place — applying the same
+  grouping rules — **without** re-deriving the whole
+  backlog. This is the fast in-between update
+  `audit-loop` calls as it files findings, so the plan
+  stays roughly current between full passes. See
+  **Incremental mode** at the end. Incremental insertion
+  can drift from what a full re-stage would produce
+  (grouping is a global decision), so the **next full
+  re-stage reconciles it** — `housekeeping`'s morning
+  pass runs that full re-stage.
+
 ## Where the plan lives
 
 The plan is the Linear document **Task Staging**. Its
@@ -40,9 +62,12 @@ printenv LINEAR_TASK_STAGING_DOC_ID
 If it's empty, stop and tell the user to export it in
 their shell profile (`~/.zshrc`); don't guess the id.
 
-It is rewritten in full each run (`save_document` with
-that id) — never appended to, so the skill is
-idempotent and never stacks duplicates.
+In **full** mode it is rewritten in full each run
+(`save_document` with that id) — never appended to, so
+the skill is idempotent and never stacks duplicates. In
+**incremental** mode the same document is edited in
+place around the existing tree (see **Incremental
+mode**).
 
 ## Filing destination (shared with `linear-task`)
 
@@ -468,6 +493,82 @@ stage-backlog | <b> backlog | <s> PRs | merged <m>→<k> | <t> top, <bl> blocked
 
 When invoked once by hand (not under `/loop`), the same
 single iteration runs and the skill simply exits.
+
+## Incremental mode
+
+Given one or more just-filed `ENG-###` ids (typically
+from `audit-loop` as it files), fold each into the
+**current** Task Staging document in place. This does
+**not** re-read or regenerate the whole plan — it edits
+the live body around the existing tree, so it's cheap
+enough to run after every finding.
+
+1. **Resolve the staging doc id** from
+   `LINEAR_TASK_STAGING_DOC_ID` (bare `printenv`, per
+   "Where the plan lives"). If empty, stop and say so.
+
+1. **Read the document live** with
+   `mcp__claude_ai_Linear__get_document` (id = the
+   resolved value). Never reuse a stale snapshot — the
+   loop edits it repeatedly, and `housekeeping` may too.
+
+1. **For each given `ENG-###`:** fetch it with
+   `mcp__claude_ai_Linear__get_issue`
+   (`includeRelations: true`) and parse, exactly as the
+   full mode's step 1 does, the **files it touches**
+   (`**File**:` / `**Evidence**:` anchors), its Linear
+   **parent** (`parentId`), and its declared
+   **`blockedBy` / `blocks`** edges. Skip an id that is
+   already a chip in the document, or that isn't open (a
+   just-filed Backlog issue always is).
+
+1. **Place the chip with the same grouping rules**
+   (step 2) — best-effort, since the global regroup is
+   the next full pass's job:
+
+   - **Pure skill-suite work** (touches only
+     `.claude/skills/**` and/or `CLAUDE.md`, no product
+     code) → nest under the `# Skills` heading (the
+     consolidated skill PR). If `# Skills` doesn't exist
+     yet, add it at the very top.
+   - **Shares a `parentId`** with an issue already in the
+     tree → place it under that parent's `# ENG-###`
+     heading (promoting the parent to a heading if this
+     is the second same-parent subtask, per step 5).
+   - **Blocked** by a chip already in the tree — a
+     declared `blockedBy` edge, or a file overlap with it
+     — → nest it under that blocker (4-space indent per
+     level); add an `(also after ENG-###)` note for a
+     second blocker the nesting can't show, and an
+     `(after ENG-###)` note for a cross-heading blocker
+     (never nest across headings).
+   - **Otherwise** → a top-level chip under `# Standalone`
+     (or under its parent heading if one applies).
+
+   Write the reference as the **bare `ENG-###` tag** in
+   plaintext, never a markdown link — same chip rule as
+   the full mode (step 5), so Linear renders the live
+   title and status.
+
+1. **Save the document.** Build the new body from the
+   body you just read, changing only the lines you're
+   inserting — never reorder or rewrite the rest. Save
+   with `mcp__claude_ai_Linear__save_document` (id = the
+   resolved value, literal newlines). If the doc
+   `updatedAt` is newer than when you fetched it,
+   re-fetch and rebuild rather than overwriting a
+   concurrent edit.
+
+This is a **fast, lossy-by-design** update: it places
+chips but does **not** merge issues into one canonical
+PR (step 3) or globally regroup. The **next full
+re-stage reconciles** — it re-derives the grouping and
+merges — and that pass is the source of truth, run by
+`housekeeping` each morning. Print a one-line tally:
+
+```txt
+stage-backlog incremental | +<n> chips placed
+```
 
 ## Notes
 

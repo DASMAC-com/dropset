@@ -440,6 +440,37 @@ is `DASMAC-com/dropset`, so every MCP call takes
    (a regenerated-file commit can still trip whitespace /
    EOF hooks), applying the step-4 fix-and-retry logic.
 
+1. **Refresh the `CLAUDE.md` Audit registry if the diff
+   changed the platform shape.** `audit-loop` reads its
+   subsystems, inter-subsystem interfaces, and skip-globs
+   from the `## Audit registry` section of `CLAUDE.md`
+   (see `CLAUDE.md` → "Audit registry"); that registry is
+   kept current on the PR path — here, on every run.
+   Inspect the diff for any of three additions and, when
+   one is present, **append** the matching entry:
+
+   - a **new subsystem / platform** (a new top-level tree
+     or build manifest the registry doesn't list) → add a
+     `name (kind, risk): roots` line to the subsystems
+     block;
+   - a **new seam between subsystems** (a new contract
+     crossing a boundary — an event schema, a generated
+     surface, a documented interface) → add an
+     `A <-> B: contract` line to the interfaces block;
+   - a **new generated-file family** (a tree or extension
+     the audit should never pick) → add its glob to the
+     skip-globs block.
+
+   **Append only** — never drop an existing entry — and
+   keep the three blocks lint-clean (MD013, mdformat). If
+   the diff introduces none of these, this is a no-op.
+   Commit any change signed:
+
+   ```sh
+   git add CLAUDE.md
+   git commit -S -m "Update audit registry"
+   ```
+
 1. **Run the test suite (mirror CI).** The `Tests`
    workflow runs `make test` and
    `make test-no-teardown`; run both locally so the
@@ -476,6 +507,18 @@ is `DASMAC-com/dropset`, so every MCP call takes
    `/pr-title-description` to ensure the title
    and body reflect the final state of the branch
    (after lint and review fixes).
+
+   **No Linear tags in the body or in any PR comment**
+   (per `CLAUDE.md` → "Keep Linear tags out of PR bodies
+   and comments"): `pr-title-description` already keeps
+   them out of the body, and any comment this skill posts
+   on the PR must do the same — refer to other work by
+   title or a plain GitHub link, never `ENG-###`. The
+   `ENG-###` scope in the **title** is the one exception
+   (required by `Semantic PR`). This rule does **not**
+   touch the terminal `AskUserQuestion` prompts below,
+   which deliberately print the tag + PR number as
+   terminal chrome.
 
 1. **Verify the PR title passes `Semantic PR`.**
    The `semantic-pr` workflow rejects the PR unless
@@ -788,15 +831,30 @@ is `DASMAC-com/dropset`, so every MCP call takes
    generalize them. Run this **after** the enqueue,
    **not** gated on the merge landing — the merge resolves
    asynchronously in the queue, so this is the productive
-   thing to do while it does. Invoke
-   `/firm-perms` to collapse the per-worktree and
-   per-arg `permissions.allow` entries into reusable
-   globs and propagate them to the base repo so
-   future worktrees inherit them. This is
-   housekeeping on the gitignored
-   `.claude/settings.local.json` — it does **not**
-   affect the PR diff or its ready state, so run it
-   regardless of the gate or CI outcome.
+   thing to do while it does.
+
+   **Ask first, via `AskUserQuestion`.** This is a
+   skill-to-skill handoff, so gate it on the same TUI
+   selector the merge-queue prompt uses (per `CLAUDE.md` →
+   "The PR workflow and skill handoffs"): ask whether to
+   firm permissions now, offering "yes, run /firm-perms"
+   (**first**, the recommended default) and "skip". This
+   is a second, lighter gate *in front of* `firm-perms`'
+   own propose-then-confirm gate — intentional: the
+   `AskUserQuestion` decides *whether to firm at all this
+   run*; `firm-perms`' internal gate still governs *what
+   gets written*.
+
+   - On **decline**, skip this step and note in the
+     report that permissions were **not** firmed this run.
+   - On **approve**, invoke `/firm-perms` to collapse the
+     per-worktree and per-arg `permissions.allow` entries
+     into reusable globs and propagate them to the base
+     repo so future worktrees inherit them. This is
+     housekeeping on the gitignored
+     `.claude/settings.local.json` — it does **not** affect
+     the PR diff or its ready state, so run it regardless
+     of the gate or CI outcome.
 
    **Account for what the review agents requested.**
    The diff-review and cross-check agents (steps 5–6)

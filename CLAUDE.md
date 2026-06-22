@@ -32,6 +32,27 @@
 - Sign commits (`git commit -S`); branch protection requires verified
   signatures.
 
+### The PR workflow and skill handoffs
+
+The day-to-day PR flow is **two user-facing skills**: `/init-pr`
+bootstraps the worktree and brackets the session, then `/review-pr`
+runs the adversarial pre-review and drives the merge-queue handoff.
+`pr-title-description` is **not** a freestanding stage in this flow —
+it's a DRY helper that `review-pr` **calls** for the final PR title and
+body (its steps 13–14). It stays independently runnable (still
+user- and model-invocable), but the flow never offers it on its own;
+`init-pr` seeds only the bare `ENG-###` title + empty body, and
+`review-pr` owns the title/body from there.
+
+- **Skill-to-skill handoffs prompt via `AskUserQuestion` with a
+  recommended default.** Wherever one skill hands off to another, or a
+  skill reaches a decision the user should make, ask through the
+  `AskUserQuestion` TUI selector — not a free-text prompt — and where a
+  sensible default exists, put it **first** and label it
+  "(Recommended)". This is the shared pattern behind the
+  init-pr → review-pr handoff, the review-pr → firm-perms gate, and
+  housekeeping's audit-loop kickoff.
+
 ## Linear automation
 
 Skills that **file** Linear issues (`linear-task`, `stage-backlog`,
@@ -85,6 +106,35 @@ delivered checklist items and moves it to In Review at the merge-queue
 handoff — once the PR is ready, CI is green, and the review summary has
 been printed for the human.
 
+### Keep Linear tags out of PR bodies and comments
+
+**Do not put Linear issue tags (`ENG-###`, e.g. `ENG-513`) in PR
+descriptions or PR comments.** Linear's GitHub integration auto-links
+any `ENG-###` it finds in a PR's body or comments, which can attach the
+PR to — and even auto-transition — issues it merely *mentions* (a
+"follow-up to ENG-512" note wrongly pulls that issue into this PR's
+lifecycle). The branch name already carries the tag and links the PR to
+its own issue, so tags in the prose are redundant and risk spurious
+cross-links. Refer to other work by **title** or a **plain GitHub
+link**, never its Linear tag, in PR prose.
+
+Two carve-outs:
+
+- **The PR *title* keeps its scope.** `semantic-pr` requires the title
+  to be `type(ENG-###): Subject`, and the branch ↔ issue convention
+  depends on it, so the `ENG-###` in the **title scope** stays. The
+  rule is about the **body and comments only**, never the title.
+- **Terminal / TUI output is exempt.** `review-pr`'s `AskUserQuestion`
+  prompts deliberately print the Linear tag + PR number so the human
+  can pull up the PR. That's terminal chrome, not PR content, so it's
+  unaffected.
+
+The skills that author PR prose follow this: `pr-title-description`
+(the PR body) and `review-pr` (any PR comment it posts, and the body
+refresh) keep `ENG-###` in the title scope and omit it from
+body/comments; `init-pr` seeds only the bare-`ENG-###` title + an empty
+body, so it already complies.
+
 ### Blocking relations
 
 When one issue genuinely depends on another, record it as a **native
@@ -114,7 +164,7 @@ All GitHub operations — opening PRs, updating titles and bodies,
 reading the diff, watching checks, pulling failing-job logs — go
 through the **GitHub MCP server** (`mcp__github__*`), not the `gh`
 CLI. The skills (`init-pr`, `pr-title-description`, `review-pr`,
-`housekeeping`, `audit-loop`, `linear-task`) are written against it.
+`housekeeping`, `linear-task`) are written against it.
 `gh` is no longer required; it survives only at the `review-pr`
 **merge-queue handoff** — the enqueue (a `gh pr merge --auto` write,
 **no** strategy flag: this repo's merge queue sets the strategy, so a
@@ -453,3 +503,71 @@ the brief **leaked** — the agent emitted shell the brief forbids.
 That's a prompt to tighten, not a rule to allow-list; `firm-perms`
 sets such approvals aside and names the emitting agent so its prompt
 gets fixed at the source.
+
+## Audit registry
+
+`audit-loop` reads its coverage map from here — the **subsystems**
+to range over, the **interfaces** between them where contract drift
+hides, and the **skip-globs** of generated / vendored paths never
+worth auditing (`audit-scope` reads just the subsystem `kind`). These
+lists live in `CLAUDE.md` (committed, shared) rather than in
+per-worktree state, and `review-pr`
+refreshes them on every run: when a diff introduces a new subsystem, a
+new seam between subsystems, or a new generated-file family, it
+appends the entry here so the registry stays current as the system
+grows. Keep all three blocks lint-clean (MD013 80-col, mdformat).
+
+**Subsystems** — `name (kind, risk): roots`. `kind` selects the
+per-platform audit checklist; `risk` weights selection.
+
+```txt
+program (solana-program, high): programs/dropset/src/**
+sdk-math (rust-lib, high): sdk/math-core/src/**, sdk/interface/src/**
+sdk-clients (gen-client, med): sdk/rs/src/**, sdk/ts/src/**, sdk/codama/**
+frontend (web-app, med): frontend/**
+docs (specs, med): docs/**
+ci-infra (ci, low): .github/**, cfg/**, Makefile, Anchor.toml
+```
+
+**Inter-subsystem interfaces** — the seams where contract drift
+hides; `A <-> B: the contract that crosses the boundary`.
+
+```txt
+program <-> sdk-clients: the Anchor IDL (sdk/idl/dropset.json) is
+  generated from the program; the Rust/TS clients are generated from
+  the IDL — accounts, instructions, and on-chain events (FillEvent)
+  must stay in lockstep.
+program <-> sdk-math: the program depends on the shared math
+  (sdk/math-core, sdk/interface) and must compute identically to it;
+  the conformance vectors (sdk/conformance) pin price/share/quoting
+  parity across the boundary.
+program <-> frontend: the on-chain account/instruction contract in
+  docs/interface.md, which the frontend builds transactions against
+  through the generated clients.
+sdk-math <-> frontend: math-core / interface compiled to WASM (their
+  wasm.rs) and consumed by the frontend for quoting; the TS
+  conformance tests pin that WASM surface.
+```
+
+**Skip-globs** — generated / vendored / binary paths the file audit
+never picks. One glob per line.
+
+```txt
+target/**
+**/node_modules/**
+Cargo.lock
+**/pnpm-lock.yaml
+**/package-lock.json
+**/yarn.lock
+**/*.gen.*
+**/generated/**
+**/idl/**
+sdk/conformance/**
+target/types/**
+frontend/lib/data/*.json
+frontend/public/**
+**/*.png
+**/*.svg
+**/*.min.*
+.audits/**
+```
