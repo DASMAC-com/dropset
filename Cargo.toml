@@ -36,11 +36,11 @@ wincode = {version = "0.5", features = ["derive"]}
 # optional deps included, so a `git` source here makes the SDK crates
 # unpublishable regardless of whether `idl` is ever activated.
 #
-# The unblock is a migration, not a wait: anchor's next-gen line has shipped
-# to crates.io as `anchor-lang` 1.0.x (this `anchor-next` branch, internally
-# versioned 2.0.0, is its pre-release form). Pointing the workspace at the
-# released crate — confirming the rev matches first — drops the `git` source
-# and lets the SDK crates publish. Until then they stay `publish = false`.
+# The repo intentionally tracks Anchor v2 (`anchor-lang-v2` 2.0.0, the
+# in-development next major) — newer than the released `anchor-lang` 1.0.x,
+# so do NOT downgrade to it. The unblock is an upstream crates.io release of
+# Anchor v2: `anchor-lang-v2` isn't published yet, so the SDK crates stay
+# `publish = false` until it is.
 [workspace.dependencies.anchor-lang-v2]
 branch = "anchor-next"
 git = "https://github.com/solana-foundation/anchor.git"
