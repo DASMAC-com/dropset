@@ -29,28 +29,31 @@ fn main() {
     ];
     let decode: Vec<Value> = prices.iter().map(|p| decode_case(*p)).collect();
 
-    // value -> bits (None serializes as null).
-    let encode_values = [0.0_f64, 1.0, 1.085, 0.99, 987.0, 0.01];
+    // value -> bits (None serializes as null). `1e12` is far above the FX
+    // band but still fits the `u64` scaling intermediate, so it pins the
+    // accept side of the reject boundary (it must NOT be rejected).
+    let encode_values = [0.0_f64, 1.0, 1.085, 0.99, 987.0, 0.01, 1e12];
     let encode: Vec<Value> = encode_values
         .iter()
         .map(|&v| json!({ "value": v, "bits": Price::from_value(v).map(|p| p.as_u32()) }))
         .collect();
 
     // Reject-path: inputs both forks must reject — `Price::from_value`
-    // returns `None`, TS `encodePrice` throws `RangeError`. The agreed
-    // contract is non-finite and negative input; serde can't emit NaN/±inf
-    // as JSON numbers, so they ride as string tags the replays map back
-    // (`"nan"`, `"inf"`, `"-inf"`). `bits` is always null (the reject
-    // marker). Note what is *deliberately absent*: huge finite values
-    // (e.g. 1e300) are NOT a conformable reject — Rust's saturating
-    // f64->u64 cast normalizes them to a valid `Price` while TS throws, a
-    // real divergence tracked separately, so pinning it here would wrongly
-    // assert agreement.
+    // returns `None`, TS `encodePrice` throws `RangeError`. The contract is
+    // non-finite and negative input, plus any finite value so large that
+    // `value * 1e7` overflows `u64` (e.g. `1e300`, `1e13`): both forks now
+    // reject these rather than Rust silently saturating the `f64`->`u64`
+    // cast to a bogus finite `Price`. serde can't emit NaN/±inf as JSON
+    // numbers, so they ride as string tags the replays map back (`"nan"`,
+    // `"inf"`, `"-inf"`); finite huge values stay JSON numbers. `bits` is
+    // always null (the reject marker).
     let encode_reject = json!([
         { "value": -1.0, "bits": Value::Null },
         { "value": "nan", "bits": Value::Null },
         { "value": "inf", "bits": Value::Null },
         { "value": "-inf", "bits": Value::Null },
+        { "value": 1e13, "bits": Value::Null },
+        { "value": 1e300, "bits": Value::Null },
     ]);
 
     // Ratio math (saturated to u64 for the JS/wasm boundary).

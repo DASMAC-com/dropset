@@ -73,6 +73,10 @@
     {
       "bits": 1889048192,
       "value": 0.01
+    },
+    {
+      "bits": 3768096384,
+      "value": 1000000000000.0
     }
   ],
   "encode_reject": [
@@ -91,6 +95,14 @@
     {
       "bits": null,
       "value": "-inf"
+    },
+    {
+      "bits": null,
+      "value": 10000000000000.0
+    },
+    {
+      "bits": null,
+      "value": 1e+300
     }
   ],
   "quote_for_base": [

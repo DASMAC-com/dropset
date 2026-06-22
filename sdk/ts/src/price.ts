@@ -83,48 +83,64 @@ export function priceFromParts(
   return ((biasedExponent << SIGNIFICAND_BITS) | significand) >>> 0;
 }
 
+const SIGNIFICAND_MIN_BIG = BigInt(SIGNIFICAND_MIN);
+const SIGNIFICAND_MAX_BIG = BigInt(SIGNIFICAND_MAX);
+
 /**
  * Normalize a scaled integer significand + biased exponent into canonical
- * bits, mirroring `Price::from_scaled`. Digits beyond the 8th are
- * truncated toward zero. Throws if the result falls outside the
- * representable exponent range.
+ * bits, mirroring `Price::from_scaled`. The significand is a `bigint` so
+ * the normalization is exact integer math — matching Rust's `u64`
+ * division bit-for-bit even past JS's 2^53 safe-integer range (callers
+ * lift values that can exceed it; see {@link weightedAverage}). Digits
+ * beyond the 8th are truncated toward zero. Throws if the result falls
+ * outside the representable exponent range.
  */
-function fromScaled(sig: number, biasedExp: number): PriceBits {
-  if (sig === 0) return PRICE_ZERO;
-  let s = Math.trunc(sig);
+function fromScaled(sig: bigint, biasedExp: number): PriceBits {
+  if (sig === 0n) return PRICE_ZERO;
+  let s = sig;
   let e = biasedExp;
-  while (s > SIGNIFICAND_MAX) {
-    s = Math.trunc(s / 10);
+  while (s > SIGNIFICAND_MAX_BIG) {
+    s /= 10n;
     e += 1;
   }
-  while (s < SIGNIFICAND_MIN) {
-    s *= 10;
+  while (s < SIGNIFICAND_MIN_BIG) {
+    s *= 10n;
     e -= 1;
   }
   if (e < 0 || e > MAX_BIASED_EXPONENT) {
     throw new RangeError(`Price exponent out of range: biasedExponent=${e}`);
   }
-  return priceFromParts(s, e);
+  // `s` is now in `[10_000_000, 99_999_999]`, well within safe-integer range.
+  return priceFromParts(Number(s), e);
 }
 
 /**
  * Encode a decimal price (e.g. `1.085`) into raw `Price` bits.
  *
  * Intended for the FX value range the protocol targets (roughly
- * `1e-6 .. 1e6`), where `value * 1e7` stays within JS safe-integer
- * precision. Values are truncated to 8 significant digits. For the
- * no-bound sentinels pass {@link PRICE_ZERO} / {@link PRICE_INFINITY}
- * directly.
+ * `1e-6 .. 1e6`); values are truncated to 8 significant digits. Throws a
+ * `RangeError` on non-finite/negative input, and on a value so large that
+ * `value * 1e7` would not fit in a `u64` — the boundary at which the Rust
+ * `from_value` cast would otherwise silently saturate, so both forks
+ * reject the same inputs. For the no-bound sentinels pass
+ * {@link PRICE_ZERO} / {@link PRICE_INFINITY} directly.
  */
 export function encodePrice(value: number): PriceBits {
   if (!Number.isFinite(value) || value < 0) {
     throw new RangeError(`Price must be a finite, non-negative number: ${value}`);
   }
   if (value === 0) return PRICE_ZERO;
+  const scaled = value * 1e7;
+  // Mirror Rust `from_value`: reject what would overflow the `u64` scaling
+  // intermediate. `2 ** 64` is `u64::MAX as f64` (which rounds up to 2^64),
+  // so any `scaled` below it truncates losslessly toward zero into range.
+  if (scaled >= 2 ** 64) {
+    throw new RangeError(`Price out of range: ${value}`);
+  }
   // value = significand * 10^(unbiased - 7); choose unbiased = 0
   // (biased = BIAS) so the scaled integer is value * 1e7, then let
   // fromScaled renormalize the significand into the canonical range.
-  return fromScaled(Math.trunc(value * 1e7), BIAS);
+  return fromScaled(BigInt(Math.trunc(scaled)), BIAS);
 }
 
 /** Decode raw `Price` bits to a JS number. Sentinels map to `0` / `Infinity`. */
@@ -138,6 +154,9 @@ export function decodePrice(bits: PriceBits): number {
 /** `quote_for_base(INFINITY)` / `base_for_quote(ZERO)` sentinel value. */
 const U128_MAX = (1n << 128n) - 1n;
 const U64_MAX = (1n << 64n) - 1n;
+
+/** Clamp to `u128::MAX`, mirroring Rust's `saturating_*` on `u128`. */
+const satU128 = (x: bigint): bigint => (x > U128_MAX ? U128_MAX : x);
 
 /**
  * `base * price`, rounded toward zero — the exact integer math the on-chain
@@ -203,14 +222,20 @@ export function weightedAverage(
   const SCALE = 1_000_000_000n;
   const vSelf = quoteForBase(self, SCALE);
   const vOther = quoteForBase(other, SCALE);
-  const total = wSelf + wOther;
-  let avg = (wSelf * vSelf + wOther * vOther) / total;
-  if (avg > U64_MAX) avg = U64_MAX;
+  // Mirror Rust's `u128` `saturating_mul` / `saturating_add`: clamp each
+  // weighted product, their sum, and the weight total at `u128::MAX`. For
+  // FX-range prices nothing saturates and this is a no-op, but for
+  // structurally-valid prices above that band the products can exceed
+  // `u128`, where plain bigint would otherwise diverge from the engine.
+  const total = satU128(wSelf + wOther);
+  const avg = satU128(satU128(wSelf * vSelf) + satU128(wOther * vOther)) / total;
   // value × 10^9 = sig × 10^(biased − 14) ⟹ the scaled input's biased
-  // exponent is 14. `avg` is in `value × 10^9` units, well within JS
-  // safe-integer range for the FX prices this serves.
+  // exponent is 14. Drive `fromScaled` from the `bigint` directly: `avg`
+  // can exceed 2^53 (price value > ~9e6), where a `Number(avg)` round
+  // would flip the 8th significand digit vs Rust's exact `u64` `from_scaled`.
+  const avgU64 = avg > U64_MAX ? U64_MAX : avg;
   try {
-    return fromScaled(Number(avg), 14);
+    return fromScaled(avgU64, 14);
   } catch {
     return PRICE_ZERO;
   }
