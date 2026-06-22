@@ -21,6 +21,8 @@ export default defineConfig({
   },
   format: ["esm"],
   outDir: "dist",
+  // Neutral platform: the SDK is isomorphic (frontend + Node bots/routers),
+  // so don't bake in Node- or browser-specific resolution or globals.
   platform: "neutral",
   // No source maps: `files` ships dist/ only, so maps would point at
   // `src/` that isn't in the tarball — dead weight for consumers.

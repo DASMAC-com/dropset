@@ -42,6 +42,7 @@
   "scripts": {
     "build": "tsup",
     "check": "tsc --noEmit",
+    "prepack": "tsup",
     "test": "node --import tsx --test src/conformance.test.ts src/quoting.conformance.test.ts src/share.conformance.test.ts"
   },
   "type": "module",
