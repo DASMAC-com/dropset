@@ -10,6 +10,8 @@
 //! registry's stamped default fee config, so nothing depends on mint
 //! keypairs held only in a previous session's memory.
 
+// cspell:word keypairs
+
 use crate::chain;
 use dropset_sdk::accounts::{
     fetch_maybe_registry_header, VaultDepositorHeader, MARKET_HEADER_DISCRIMINATOR,

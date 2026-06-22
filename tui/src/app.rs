@@ -8,6 +8,10 @@
 //! terminal on the way out; the owned [`Validator`] kills the child and
 //! wipes its temp ledger on `Drop`, so quitting leaves no orphan.
 
+// cspell:word Deque
+// cspell:word pasteable
+// cspell:word RAII
+
 use crate::accounts::{self, ChainState};
 use crate::action::{self, Action, JobContext};
 use crate::chain;
