@@ -344,7 +344,10 @@ fn force_withdraw_leader_reclaims_empty_vault() {
     f.close_market_treasury(&admin, &quote_mint, &quote_treasury, &rr)
         .expect("close quote treasury");
     f.close_market(&admin, &rr).expect("close market");
-    assert!(!exists(&f.svm, &market), "market closed after empty reclaim");
+    assert!(
+        !exists(&f.svm, &market),
+        "market closed after empty reclaim"
+    );
     assert_eq!(f.registry_market_count(), 0);
 }
 
