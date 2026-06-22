@@ -6,7 +6,19 @@
 # `default-features = false` to keep the build solana-free; `idl` turns on
 # Anchor's `IdlType` derive for `Price` so the generated IDL still emits it.
 dropset-math-core = {path = "../../sdk/math-core", default-features = false, features = ["idl"]}
-anchor-lang-v2.workspace = true
+# `const-rent` folds `rent_exempt_lamports` to the baked-in
+# `(ACCOUNT_STORAGE_OVERHEAD + space) * DEFAULT_LAMPORTS_PER_BYTE` (6960
+# lamports/byte). The default runtime path instead reads the Rent sysvar via
+# pinocchio's `Rent::get()`, which deserializes only the leading
+# `lamports_per_byte_year` (3480) and never applies the `exemption_threshold`
+# (2.0) — so on every pre-SIMD-0194 cluster it returns exactly half the true
+# rent-exempt minimum and `#[account(init)]` under-funds the PDA, which a real
+# validator's post-execution rent check rejects (litesvm skips that check, so
+# the program tests never saw it). The const rate equals `3480 * 2` today and
+# `6960 * 1` once SIMD-0194 activates, so it is correct across the transition;
+# the only tradeoff is a custom-rent cluster, which neither mainnet nor
+# `solana-test-validator` is.
+anchor-lang-v2 = {workspace = true, features = ["const-rent"]}
 anchor-spl-v2.workspace = true
 solana-program-log.workspace = true
 solana-sdk-ids.workspace = true
