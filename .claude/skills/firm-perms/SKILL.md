@@ -77,10 +77,10 @@ Optional, and accepts these shapes:
 - **Bare `/firm-perms` right after a one-time
   approval**, or **`/firm-perms this`** — the **fast
   path**: firm just the command you literally just
-  approved into both settings files immediately, no
-  sweep, no confirm gate. This is the primary
-  low-friction entry point; see the **Fast path** under
-  Steps.
+  approved into every live worktree's settings
+  immediately, no sweep, no confirm gate. This is the
+  primary low-friction entry point; see the **Fast path**
+  under Steps.
 
 - **No argument** (when the previous turn was *not* a
   one-time approval) — the full sweep: firm the

@@ -506,11 +506,12 @@ gets fixed at the source.
 
 ## Audit registry
 
-`audit-loop` (and `audit-scope`) read their coverage map from here —
-the **subsystems** to range over, the **interfaces** between them
-where contract drift hides, and the **skip-globs** of generated /
-vendored paths never worth auditing. These lists live in `CLAUDE.md`
-(committed, shared) rather than in per-worktree state, and `review-pr`
+`audit-loop` reads its coverage map from here — the **subsystems**
+to range over, the **interfaces** between them where contract drift
+hides, and the **skip-globs** of generated / vendored paths never
+worth auditing (`audit-scope` reads just the subsystem `kind`). These
+lists live in `CLAUDE.md` (committed, shared) rather than in
+per-worktree state, and `review-pr`
 refreshes them on every run: when a diff introduces a new subsystem, a
 new seam between subsystems, or a new generated-file family, it
 appends the entry here so the registry stays current as the system

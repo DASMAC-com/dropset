@@ -27,10 +27,10 @@ so they're picked up as normal PRs (staged by
   scope, confirm the plan, and the skill files the
   surviving findings as Backlog issues itself.
 - **Delegated (`audit-loop` invokes it).** The loop has
-  already picked the unit and owns dedup + state, so
+  already picked the unit and owns selection + dedup, so
   audit-scope skips the plan gate, runs the audit, and
   **returns the confirmed findings** to the loop, which
-  dedups them against its ledger and files. It does
+  dedups them against live Linear and files. It does
   **not** file in this mode — the loop does.
 
 The work in between — classify the scope, fan out the
@@ -181,7 +181,7 @@ Optional (ask on a direct run if not provided):
    - **Delegated run:** return the confirmed findings
      (their `fingerprint_slug`s, titles, bodies, and
      severities) to `audit-loop`. Do **not** file — the
-     loop dedups against its ledger first. Stop here.
+     loop dedups against live Linear first. Stop here.
 
    - **Direct run:** file each surviving finding as its
      own Linear **Backlog** issue, exactly as `linear-task`

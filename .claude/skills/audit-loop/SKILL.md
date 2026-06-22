@@ -72,10 +72,11 @@ unit, so they don't go through `audit-scope`.
 
 This loop **never authors source edits and never
 writes to the worktree**. Its only writes are the
-Linear issues it files (and, at wind-down, the
-**Task Staging** document, via `stage-backlog`). It
-produces no source diff of its own, so it must never
-commit or push. The one repo operation it does perform
+Linear issues it files and the **Task Staging**
+document it folds each finding into incrementally as it
+files (step 8, via `stage-backlog`). It produces no
+source diff of its own, so it must never commit or
+push. The one repo operation it does perform
 is fast-forwarding the throwaway worktree to upstream
 `main` at the **start of each iteration** (step 1) —
 that pulls in others' merged work but introduces no
