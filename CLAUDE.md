@@ -72,6 +72,12 @@ export LINEAR_TASK_STAGING_DOC_ID=…
 # Used only by firm-perms (and housekeeping, which calls it) —
 # the "Permissions" inbox document it drains:
 export LINEAR_PERMISSIONS_DOC_ID=…
+# Used only by the dropset-stage-backlog binary (the deterministic
+# core of the stage-backlog skill) — a personal Linear API key. The
+# headless binary can't use the OAuth-based claude.ai Linear MCP, so
+# it authenticates with this key, sent as the Authorization header.
+# Never commit it.
+export LINEAR_API_KEY=…
 ```
 
 Skills read these at run time with a bare `printenv`, **one variable
@@ -97,6 +103,36 @@ of the "Permissions" inbox document it drains in its `doc` mode (and
 that `housekeeping` drains via `firm-perms` each pass) — with its own
 bare `printenv`, on the same rule. It too is not a filing
 destination.
+
+The `dropset-stage-backlog` **binary** (the deterministic core of the
+`stage-backlog` skill — see "Structured filing fields" below) reads
+`LINEAR_PROJECT_ID` and `LINEAR_TASK_STAGING_DOC_ID` the same way, plus
+its own `LINEAR_API_KEY`: a personal Linear API key, because a headless
+binary can't ride the OAuth-based `claude.ai` Linear MCP. It resolves
+all of these via `std::env::var`, never a hard-coded id, and the key is
+never committed.
+
+### Structured filing fields
+
+Every filed issue carries machine-readable fields the automation reads
+back, on top of the human prose. Keep the field **names** stable — the
+filing skills emit them and `stage-backlog` parses them:
+
+- `**Fingerprint**: <basename>:<slug>` — the dedup key `audit-loop`
+  matches on so a finding is never refiled. Mandatory on audit
+  findings; one line per finding (a merged issue carries several).
+- `**Touches**: <glob>[, <glob>…]` — the path globs the fix will
+  edit, comma-separated. Declare the **directory** when the work
+  spans a dir (`tui/`), the **file** when it's one file
+  (`programs/dropset/src/swap.rs`); list every glob for a multi-file
+  finding. The `stage-backlog` renderer reads this to detect file
+  collisions **deterministically** — a directory glob collides with
+  any path under it, and two issues that collide can't run in
+  parallel, so the higher-numbered one nests under the lower. Moving
+  this structure to **filing time** is what lets the tool skip the
+  prose-reading sub-agent it used to need; an issue that predates the
+  field falls back to declared-edge/parent placement, and the skill's
+  agent step reconciles it.
 
 A worktree branch and its Linear issue **share one `ENG-###`
 number**: branch `eng-499` ↔ issue `ENG-499`. Skills resolve the

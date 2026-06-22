@@ -452,6 +452,12 @@ own worktree (literal newlines, not `\n`):
   reads it back to rebuild the dedup set, so a wiped
   worktree recovers dedup state from Linear instead of
   refiling everything.
+- `**Touches**: <glob>[, <glob>…]` — the machine-readable
+  list of path globs the fix will edit, comma-separated
+  (for a single-file nit, just that file). `stage-backlog`'s
+  renderer reads this to detect file collisions
+  deterministically. **Mandatory** — see `CLAUDE.md` →
+  "Structured filing fields".
 - `**Discovered by**: audit-loop iteration <n> @ <commit SHA>`
 
 After each `save_issue`, increment the in-context
@@ -488,6 +494,11 @@ fixable, so don't pretend otherwise. Don't include the
   `arch:<lens>:<topic-slug>` dedup key (mandatory, same
   role as for FILE findings: step 1 rebuilds the dedup
   set from it).
+- `**Touches**: <glob>[, <glob>…]` — the path globs the
+  proposal's work would span (often several dirs for an
+  `arch:` finding), comma-separated. `stage-backlog` reads
+  it for collision detection. **Mandatory** — see
+  `CLAUDE.md` → "Structured filing fields".
 - `**Discovered by**: audit-loop iteration <n> @ <commit SHA>`
 
 Priority 3; these are proposals for the user to triage, not
