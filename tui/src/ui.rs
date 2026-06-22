@@ -262,7 +262,11 @@ fn draw_log(f: &mut Frame<'_>, app: &App, area: Rect) {
         .collect();
     f.render_widget(
         Paragraph::new(lines)
-            .block(Block::default().title(" log ").borders(Borders::ALL))
+            .block(
+                Block::default()
+                    .title(format!(" log → {} ", app.log_path.display()))
+                    .borders(Borders::ALL),
+            )
             .wrap(Wrap { trim: false }),
         area,
     );

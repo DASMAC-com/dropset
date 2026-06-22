@@ -16,9 +16,7 @@ use crate::ui;
 use crate::validator::Validator;
 use anyhow::Result;
 use crossterm::{
-    event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
-    },
+    event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -26,7 +24,9 @@ use ratatui::{backend::CrosstermBackend, widgets::ListState, Terminal};
 use solana_client::rpc_client::RpcClient;
 use solana_signer::Signer;
 use std::collections::VecDeque;
-use std::io;
+use std::fs::File;
+use std::io::{self, Write};
+use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
@@ -61,8 +61,12 @@ pub struct App {
     pub(crate) menu: ListState,
     pub(crate) log: VecDeque<(LogKind, String)>,
     pub(crate) job_running: bool,
+    /// Path the log is mirrored to on disk (shown in the log pane title).
+    pub(crate) log_path: PathBuf,
     tx: Sender<JobEvent>,
     rx: Receiver<JobEvent>,
+    /// Append handle for the on-disk log mirror, if it opened.
+    log_file: Option<File>,
     last_refresh: Instant,
     dirty: bool,
 }
@@ -77,6 +81,10 @@ impl App {
         let (tx, rx) = mpsc::channel();
         let mut menu = ListState::default();
         menu.select(Some(0));
+        // Mirror the log to a fresh file so the full (untruncated) output —
+        // RPC errors included — survives outside the scrollback.
+        let log_path = std::env::temp_dir().join("dropset-tui.log");
+        let log_file = File::create(&log_path).ok();
         Ok(Self {
             ctx,
             validator,
@@ -85,8 +93,10 @@ impl App {
             menu,
             log: VecDeque::new(),
             job_running: false,
+            log_path,
             tx,
             rx,
+            log_file,
             // Force an immediate first poll.
             last_refresh: Instant::now() - REFRESH_INTERVAL,
             dirty: true,
@@ -225,8 +235,12 @@ impl App {
         }
     }
 
-    /// Append a line to the log, trimming to the capacity.
+    /// Append a line to the log (and mirror it to the on-disk log),
+    /// trimming the in-memory ring to capacity.
     fn log(&mut self, kind: LogKind, text: String) {
+        if let Some(file) = self.log_file.as_mut() {
+            let _ = writeln!(file, "{text}");
+        }
         self.log.push_back((kind, text));
         while self.log.len() > LOG_CAPACITY {
             self.log.pop_front();
@@ -243,7 +257,10 @@ struct TerminalGuard {
 impl TerminalGuard {
     fn new(mut term: Terminal<CrosstermBackend<io::Stdout>>) -> Self {
         let _ = enable_raw_mode();
-        let _ = execute!(term.backend_mut(), EnterAlternateScreen, EnableMouseCapture);
+        // No mouse capture: the panel takes no mouse input, and capturing it
+        // would steal the terminal's native text selection — so leaving it
+        // off keeps the log copy-pasteable.
+        let _ = execute!(term.backend_mut(), EnterAlternateScreen);
         let _ = term.hide_cursor();
         let _ = term.clear();
         Self { term }
@@ -253,11 +270,7 @@ impl TerminalGuard {
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = execute!(
-            self.term.backend_mut(),
-            LeaveAlternateScreen,
-            DisableMouseCapture
-        );
+        let _ = execute!(self.term.backend_mut(), LeaveAlternateScreen);
         let _ = self.term.show_cursor();
     }
 }
