@@ -2,7 +2,7 @@
  * Human-facing `Price` codec.
  *
  * The on-chain `Price` is a `u32` decimal floating-point comparison key
- * (see programs/dropset/src/price.rs and architecture.md § Price). The
+ * (see sdk/math-core/src/price.rs and architecture.md § Price). The
  * IDL exposes it only as raw `u32` bits — the generated `Price` type is
  * `number` (those bits) — so this module layers the bits <-> decimal
  * conversion the frontend needs to display prices and to build
