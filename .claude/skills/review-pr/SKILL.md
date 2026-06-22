@@ -477,6 +477,18 @@ is `DASMAC-com/dropset`, so every MCP call takes
    and body reflect the final state of the branch
    (after lint and review fixes).
 
+   **No Linear tags in the body or in any PR comment**
+   (per `CLAUDE.md` → "Keep Linear tags out of PR bodies
+   and comments"): `pr-title-description` already keeps
+   them out of the body, and any comment this skill posts
+   on the PR must do the same — refer to other work by
+   title or a plain GitHub link, never `ENG-###`. The
+   `ENG-###` scope in the **title** is the one exception
+   (required by `Semantic PR`). This rule does **not**
+   touch the terminal `AskUserQuestion` prompts below,
+   which deliberately print the tag + PR number as
+   terminal chrome.
+
 1. **Verify the PR title passes `Semantic PR`.**
    The `semantic-pr` workflow rejects the PR unless
    the title has a Conventional-Commits type, a

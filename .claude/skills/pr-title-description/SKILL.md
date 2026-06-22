@@ -100,6 +100,17 @@ takes `owner: "DASMAC-com"`, `repo: "dropset"`.
    section only if the changes need non-obvious
    context.
 
+   **Keep Linear tags out of the body** (per
+   `CLAUDE.md` → "Keep Linear tags out of PR bodies
+   and comments"). Don't write `ENG-###` anywhere in
+   the description — Linear auto-links any tag it finds
+   in a PR body and can wrongly pull a merely-mentioned
+   issue into this PR's lifecycle. Refer to other work
+   by **title** or a **plain GitHub link**, never its
+   Linear tag. The `ENG-###` scope in the **title**
+   (step 4) is the one exception — that's required by
+   `semantic-pr` and stays.
+
 1. If a PR already exists for the branch, update it with
    `mcp__github__update_pull_request`. The title and body
    are **structured tool arguments**, so the whole

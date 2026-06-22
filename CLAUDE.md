@@ -106,6 +106,35 @@ delivered checklist items and moves it to In Review at the merge-queue
 handoff — once the PR is ready, CI is green, and the review summary has
 been printed for the human.
 
+### Keep Linear tags out of PR bodies and comments
+
+**Do not put Linear issue tags (`ENG-###`, e.g. `ENG-513`) in PR
+descriptions or PR comments.** Linear's GitHub integration auto-links
+any `ENG-###` it finds in a PR's body or comments, which can attach the
+PR to — and even auto-transition — issues it merely *mentions* (a
+"follow-up to ENG-512" note wrongly pulls that issue into this PR's
+lifecycle). The branch name already carries the tag and links the PR to
+its own issue, so tags in the prose are redundant and risk spurious
+cross-links. Refer to other work by **title** or a **plain GitHub
+link**, never its Linear tag, in PR prose.
+
+Two carve-outs:
+
+- **The PR *title* keeps its scope.** `semantic-pr` requires the title
+  to be `type(ENG-###): Subject`, and the branch ↔ issue convention
+  depends on it, so the `ENG-###` in the **title scope** stays. The
+  rule is about the **body and comments only**, never the title.
+- **Terminal / TUI output is exempt.** `review-pr`'s `AskUserQuestion`
+  prompts deliberately print the Linear tag + PR number so the human
+  can pull up the PR. That's terminal chrome, not PR content, so it's
+  unaffected.
+
+The skills that author PR prose follow this: `pr-title-description`
+(the PR body) and `review-pr` (any PR comment it posts, and the body
+refresh) keep `ENG-###` in the title scope and omit it from
+body/comments; `init-pr` seeds only the bare-`ENG-###` title + an empty
+body, so it already complies.
+
 ### Blocking relations
 
 When one issue genuinely depends on another, record it as a **native
