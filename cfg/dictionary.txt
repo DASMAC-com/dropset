@@ -88,6 +88,7 @@ transfero
 tryb
 tsup
 unmirrored
+ureq
 usdg
 usize
 vchf

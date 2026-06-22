@@ -9,8 +9,8 @@
 anyhow = "1"
 serde = {version = "1", features = ["derive"]}
 serde_json = "1"
-# Blocking HTTP client for the Linear GraphQL calls (rustls TLS by default);
-# `json` enables send_json / into_json. No async runtime is pulled in.
+# Blocking HTTP client for the Linear GraphQL calls (TLS enabled by
+# default); `json` enables send_json / into_json. No async runtime.
 ureq = {version = "2", features = ["json"]}
 
 [package]

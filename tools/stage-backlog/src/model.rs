@@ -39,7 +39,7 @@ impl Issue {
 
 /// Parse the trailing number out of an `ENG-###` identifier.
 pub fn parse_number(id: &str) -> Option<u64> {
-    id.rsplit('-').next()?.parse().ok()
+    id.split('-').next_back()?.parse().ok()
 }
 
 /// Pull every glob off an issue description's `**Touches**:` line(s). A line
