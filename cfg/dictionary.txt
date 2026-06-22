@@ -78,6 +78,7 @@ stablecoins
 straitsx
 swatinem
 sysvar
+taiki
 tgbp
 thiserror
 tokenised

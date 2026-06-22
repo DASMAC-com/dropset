@@ -53,6 +53,17 @@ jobs:
     - run: 'cargo test -p dropset-math-core -p dropset-interface -p dropset-sdk'
     - run: 'cargo build -p dropset-interface --features wasm --target
             wasm32-unknown-unknown'
+    # Execute the WASM `simulate_swap` binding the TS client calls (the step
+    # above only *builds* it). `wasm-pack test --node` runs the binding
+    # through its generated JS glue against the checked-in
+    # simulate_swap_vectors.json, pinning it to the engine-conformant native
+    # matcher — the decode + side dispatch + Quote marshalling no host test
+    # can reach.
+    - uses: 'taiki-e/install-action@v2'
+      with:
+        tool: 'wasm-pack'
+    - run: 'wasm-pack test --node sdk/interface --test wasm_conformance
+            --features wasm'
 name: 'SDK'
 'on':
   merge_group: null

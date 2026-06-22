@@ -2,7 +2,6 @@
 # cspell:word doctests
 # cspell:word dorny
 # cspell:word nextest
-# cspell:word taiki
 env:
   ANCHOR_REV: '2a191379'
   SOLANA_VERSION: 'v3.1.9'
