@@ -1812,8 +1812,9 @@ retuning levers (`SetMinLeaderShare`, `SetMarketFeeConfig`,
 `SetTakerFee`, `SetRegistryDefaults`). Everything whose entire effect is already
 recoverable from a single account diff emits **nothing**: the leader
 quote-refresh pair (`SetReferencePrice`, `SetLiquidityProfile`) on the
-hot path, the vault-config flag setters (`SetAllowOutsideDepositors`,
-`SetOutsideDepositsApproved`), the registry and market bootstrap
+hot path, the vault-config setters (`SetQuoteAuthority`,
+`SetAllowOutsideDepositors`, `SetOutsideDepositsApproved`), the registry
+and market bootstrap
 (`Init`, `AddAdmin`, `RemoveAdmin`, `CreateMarket`), and the
 rent-returning `close_*` teardown instructions.
 

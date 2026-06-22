@@ -407,4 +407,23 @@ pub mod dropset {
         emit_cpi!(event);
         Ok(())
     }
+
+    // ── Post-create leader levers ────────────────────────────────────
+    // Leader-only (not admin) post-open mutators. The leader gate is a
+    // single `vault.leader == signer` compare inside the handler rather
+    // than an `#[access_control]` attribute — the registry admin set
+    // isn't consulted, so there is no shared precondition to hoist (cf.
+    // `set_allow_outside_depositors`, discrim 12). Appended after the
+    // admin levers so discriminants 0–26 keep their numbers: clients key
+    // instructions on the discriminant, so inserting mid-list would break
+    // every existing client. See the architecture spec, § SetQuoteAuthority.
+
+    #[discrim = 27]
+    pub fn set_quote_authority(
+        ctx: &mut Context<SetQuoteAuthority>,
+        vault_idx: u32,
+        new_authority: Address,
+    ) -> Result<()> {
+        ctx.accounts.set_quote_authority(vault_idx, new_authority)
+    }
 }
