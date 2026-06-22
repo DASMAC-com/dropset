@@ -1,5 +1,5 @@
 //! Teardown / rent-reclamation integration tests (the `admin-teardown`
-//! feature surface, ENG-433).
+//! feature surface).
 //!
 //! The headline test drives a full build-up — `init` → `create_market`
 //! → `create_vault` → seed → outside `deposit` — and then the complete
@@ -195,14 +195,13 @@ fn full_buildup_teardown_reclaims_all_rent() {
 }
 
 /// The teardown fee sweep must close *every* historical fee mint's ATA,
-/// not just the bootstrap default. ENG-508 (PR #111) made
-/// `set_market_fee_config` create a registry fee ATA per fee mint via
-/// `init_if_needed`, so re-pointing a market at a fresh mint leaves the
-/// registry holding a *second* fee ATA — exactly the case the sweep doc
-/// comment in `retune.rs` (and the spec's *Account lifecycle and rent
-/// reclamation*) promises is covered. This drives it end-to-end:
-/// re-point the market, then close *both* fee ATAs via
-/// `close_registry_fee_vault`.
+/// not just the bootstrap default. `set_market_fee_config` creates a
+/// registry fee ATA per fee mint via `init_if_needed`, so re-pointing a
+/// market at a fresh mint leaves the registry holding a *second* fee ATA
+/// — exactly the case the sweep doc comment in `retune.rs` (and the
+/// spec's *Account lifecycle and rent reclamation*) promises is covered.
+/// This drives it end-to-end: re-point the market, then close *both* fee
+/// ATAs via `close_registry_fee_vault`.
 #[test]
 fn teardown_sweeps_every_historical_fee_mint() {
     let mut f = Fixture::bootstrap();

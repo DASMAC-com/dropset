@@ -17,8 +17,7 @@
 //! integration, so per interface.md §6 it belongs in the future `no_std`,
 //! entrypoint-free CPI crate (the on-chain CPI tier, a sibling of
 //! `dropset-math-core`), not this off-chain SDK and not `dropset-interface`
-//! (which is off-chain too). It's blocked on a swap-context extension and
-//! tracked in ENG-444.
+//! (which is off-chain too). It's blocked on a swap-context extension.
 
 pub mod amm;
 pub mod dflow;

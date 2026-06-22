@@ -1,4 +1,4 @@
-//! Feature-off coverage (ENG-447): with `admin-teardown` compiled out
+//! Feature-off coverage: with `admin-teardown` compiled out
 //! — the shape of the final immutable deploy — every teardown
 //! instruction's dispatcher short-circuits to `DropsetError::TeardownDisabled`.
 //!

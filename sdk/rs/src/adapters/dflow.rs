@@ -25,7 +25,7 @@
 //!    (`Pubkey::to_bytes()` round-trips), so no logic changes.
 //! 2. **`Swap` enum.** `SwapAndAccountMetas.swap` is DFlow's closed `Swap`
 //!    enum; emitting one for Dropset needs a variant added upstream in
-//!    DFlow's fork (the instruction-level dependency ENG-378 anticipates).
+//!    DFlow's fork (an upstream, instruction-level dependency).
 //!    Until then [`DropsetAmm::swap_instruction`] returns the ready-built
 //!    instruction + account metas directly.
 

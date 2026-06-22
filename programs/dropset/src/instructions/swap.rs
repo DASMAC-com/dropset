@@ -550,8 +550,7 @@ impl Swap {
             // price-moved no-fill
             // takers identically and still not address the only
             // residual — Market write-lock contention, which is
-            // architectural, not a per-swap concern. Accepted risk:
-            // ENG-551.)
+            // architectural, not a per-swap concern. Accepted risk.)
             if side.crosses_limit(price, limit_price) {
                 break;
             }

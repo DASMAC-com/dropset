@@ -79,7 +79,7 @@ fn full_exit_closes_pda_and_decrements_counter() {
 
 #[test]
 fn last_outside_exit_on_winding_down_vault_reclaims_sector() {
-    // The headline ENG-462 path: an admin freezes the vault, the leader
+    // The headline path: an admin freezes the vault, the leader
     // fully exits via `withdraw_leader` (the min-leader-share floor is
     // bypassed once frozen), leaving outside shares behind with
     // `leader_shares == 0`. The last outside depositor's exit then drives

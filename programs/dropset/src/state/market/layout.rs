@@ -144,8 +144,9 @@ pub struct Vault {
     /// works: the flag makes "this vault is dead" a cheap local read
     /// for handlers (`realize_in_place`, both deposit paths) instead
     /// of an O(n) `vault_list_of` walk — and is the signal
-    /// `withdraw_leader`'s `min_leader_share` floor will read once
-    /// ENG-463 lands. Set in `close_vault` alongside the list move;
+    /// `withdraw_leader`'s `min_leader_share` floor will read once that
+    /// floor is taught to honor it. Set in `close_vault` alongside the
+    /// list move;
     /// cleared implicitly when the sector is reclaimed and reused
     /// (`allocate_sector` zeroes the whole struct). `PodBool` so the
     /// field is alignment-1 and slots into the former `_reserved`

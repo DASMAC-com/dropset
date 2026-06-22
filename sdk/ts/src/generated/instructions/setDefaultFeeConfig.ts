@@ -72,7 +72,7 @@ feeTokenProgram: Address<TAccountFeeTokenProgram>;
  * outright, a stronger backstop than the `mint::token_program`
  * constraint above. Without this, switching the default to a fresh
  * mint would brick the next `create_market` against it until the ATA
- * was created out-of-band — the same ENG-508 hazard
+ * was created out-of-band — the same hazard
  * `SetMarketFeeConfig` guards at the market level (architecture spec
  * § SetDefaultFeeConfig).
  */
@@ -155,7 +155,7 @@ feeTokenProgram: Address<TAccountFeeTokenProgram>;
  * outright, a stronger backstop than the `mint::token_program`
  * constraint above. Without this, switching the default to a fresh
  * mint would brick the next `create_market` against it until the ATA
- * was created out-of-band — the same ENG-508 hazard
+ * was created out-of-band — the same hazard
  * `SetMarketFeeConfig` guards at the market level (architecture spec
  * § SetDefaultFeeConfig).
  */
@@ -233,7 +233,7 @@ feeTokenProgram: TAccountMetas[3];
  * outright, a stronger backstop than the `mint::token_program`
  * constraint above. Without this, switching the default to a fresh
  * mint would brick the next `create_market` against it until the ATA
- * was created out-of-band — the same ENG-508 hazard
+ * was created out-of-band — the same hazard
  * `SetMarketFeeConfig` guards at the market level (architecture spec
  * § SetDefaultFeeConfig).
  */

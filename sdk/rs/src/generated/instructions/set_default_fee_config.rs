@@ -41,7 +41,7 @@ pub struct SetDefaultFeeConfig {
     /// outright, a stronger backstop than the `mint::token_program`
     /// constraint above. Without this, switching the default to a fresh
     /// mint would brick the next `create_market` against it until the ATA
-    /// was created out-of-band — the same ENG-508 hazard
+    /// was created out-of-band — the same hazard
     /// `SetMarketFeeConfig` guards at the market level (architecture spec
     /// § SetDefaultFeeConfig).
     pub registry_fee_treasury: solana_pubkey::Pubkey,
@@ -227,7 +227,7 @@ impl SetDefaultFeeConfigBuilder {
     /// outright, a stronger backstop than the `mint::token_program`
     /// constraint above. Without this, switching the default to a fresh
     /// mint would brick the next `create_market` against it until the ATA
-    /// was created out-of-band — the same ENG-508 hazard
+    /// was created out-of-band — the same hazard
     /// `SetMarketFeeConfig` guards at the market level (architecture spec
     /// § SetDefaultFeeConfig).
     #[inline(always)]
@@ -344,7 +344,7 @@ pub struct SetDefaultFeeConfigCpiAccounts<'a, 'b> {
     /// outright, a stronger backstop than the `mint::token_program`
     /// constraint above. Without this, switching the default to a fresh
     /// mint would brick the next `create_market` against it until the ATA
-    /// was created out-of-band — the same ENG-508 hazard
+    /// was created out-of-band — the same hazard
     /// `SetMarketFeeConfig` guards at the market level (architecture spec
     /// § SetDefaultFeeConfig).
     pub registry_fee_treasury: &'b solana_account_info::AccountInfo<'a>,
@@ -390,7 +390,7 @@ pub struct SetDefaultFeeConfigCpi<'a, 'b> {
     /// outright, a stronger backstop than the `mint::token_program`
     /// constraint above. Without this, switching the default to a fresh
     /// mint would brick the next `create_market` against it until the ATA
-    /// was created out-of-band — the same ENG-508 hazard
+    /// was created out-of-band — the same hazard
     /// `SetMarketFeeConfig` guards at the market level (architecture spec
     /// § SetDefaultFeeConfig).
     pub registry_fee_treasury: &'b solana_account_info::AccountInfo<'a>,
@@ -607,7 +607,7 @@ impl<'a, 'b> SetDefaultFeeConfigCpiBuilder<'a, 'b> {
     /// outright, a stronger backstop than the `mint::token_program`
     /// constraint above. Without this, switching the default to a fresh
     /// mint would brick the next `create_market` against it until the ATA
-    /// was created out-of-band — the same ENG-508 hazard
+    /// was created out-of-band — the same hazard
     /// `SetMarketFeeConfig` guards at the market level (architecture spec
     /// § SetDefaultFeeConfig).
     #[inline(always)]

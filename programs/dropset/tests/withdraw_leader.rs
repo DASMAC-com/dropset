@@ -44,10 +44,10 @@ fn full_exit_drains_inventory_to_leader() {
 fn full_exit_reclaims_sector() {
     // A leader who is the sole shareholder and burns their entire stake
     // drives `total_shares` to 0, which must return the sector to the
-    // free DLL — mirroring `force_withdraw_leader`. Before the ENG-462
-    // fix the signed leader path left the drained sector threaded on the
-    // active list with a non-default `leader`, leaking the slab slot and
-    // never decrementing the `active_count` it held.
+    // free DLL — mirroring `force_withdraw_leader`. Before the fix the
+    // signed leader path left the drained sector threaded on the active
+    // list with a non-default `leader`, leaking the slab slot and never
+    // decrementing the `active_count` it held.
     let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
     assert_eq!(f.market_header().active_count.get(), 1, "one active vault");
     let leader_shares = f.vault(0).leader_shares.get();

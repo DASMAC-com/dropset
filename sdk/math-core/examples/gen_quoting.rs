@@ -12,7 +12,7 @@
 //!
 //! The translation a native (absolute-price) book undergoes to become the
 //! program's relative `LiquidityProfile` is hand-mirrored in `sdk/rs` and
-//! `sdk/ts` with no vector pinning it (ENG-476 hole 2). This generator is
+//! `sdk/ts` with no vector pinning it. This generator is
 //! the single reference: it encodes the translation **spec** once, using
 //! math-core's `Price` for the ratio math, and both forks must reproduce
 //! its output.
@@ -28,7 +28,7 @@
 //! The happy-path `cases` pin only inputs that translate successfully. The
 //! forks are most likely to drift in their **error** handling — the guards
 //! that *reject* a level rather than emit one — so a second `rejections`
-//! block pins those too (ENG-558): each entry is a native book chosen to
+//! block pins those too: each entry is a native book chosen to
 //! trip one guard, tagged with the canonical error both forks must raise.
 //! The translation never clamps or saturates; every out-of-range input is
 //! rejected, so the vectors assert a rejection (not a clamped output). The

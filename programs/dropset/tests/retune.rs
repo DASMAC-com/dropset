@@ -151,7 +151,7 @@ fn market_fee_config_admin_retunes_fee() {
 
 #[test]
 fn market_fee_config_switch_then_create_vault_succeeds() {
-    // Regression (ENG-508): switching a market's fee mint must not brick
+    // Regression: switching a market's fee mint must not brick
     // the next `create_vault`. `create_vault` loads the registry fee ATA
     // for `market.fee_config.mint` but never creates it, so before the
     // fix this failed — the ATA for the freshly-pointed mint did not
@@ -439,7 +439,7 @@ fn default_fee_config_admin_retunes_default() {
 
 #[test]
 fn default_fee_config_switch_then_create_market_succeeds() {
-    // Regression (ENG-508, registry level): re-pointing the registry's
+    // Regression (registry level): re-pointing the registry's
     // default fee mint must not brick the next `create_market`.
     // `create_market` loads the registry fee ATA for
     // `registry.default_fee_config.mint` but never creates it, so without

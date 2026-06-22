@@ -4,7 +4,7 @@
  * (sdk/rs/tests/quoting_conformance.rs). This pins the hand-written
  * native-book → relative-profile translation in `quoting.ts` to the one
  * reference encoded in the generator
- * (sdk/math-core/examples/gen_quoting.rs) — ENG-476 hole 2.
+ * (sdk/math-core/examples/gen_quoting.rs).
  *
  * Run: `pnpm --filter @dropset/sdk test`.
  */

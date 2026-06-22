@@ -921,7 +921,7 @@ impl Fixture {
     /// registry's *current* `default_fee_config` mint — for asserting that
     /// after `set_default_fee_config` re-points the default at a new mint,
     /// the matching registry fee ATA already exists and `create_market`
-    /// loads it (the registry-level ENG-508 regression). The fee is waived
+    /// loads it (the registry-level regression). The fee is waived
     /// (admin payer), so `payer_fee_source` is the never-read `dummy`.
     /// Returns the new market PDA.
     pub fn create_market_with_default_fee(
