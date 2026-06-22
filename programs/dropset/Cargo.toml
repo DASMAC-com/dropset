@@ -1,11 +1,6 @@
 # cspell:word cdylib
 
 [dependencies]
-# Canonical consensus arithmetic — `Price` codec, pure matcher math, and
-# the share/NAV/PnL kernels (interface.md § SDK). Pulled with
-# `default-features = false` to keep the build solana-free; `idl` turns on
-# Anchor's `IdlType` derive for `Price` so the generated IDL still emits it.
-dropset-math-core = {path = "../../sdk/math-core", default-features = false, features = ["idl"]}
 # `const-rent` folds `rent_exempt_lamports` to the baked-in
 # `(ACCOUNT_STORAGE_OVERHEAD + space) * DEFAULT_LAMPORTS_PER_BYTE` (6960
 # lamports/byte). The default runtime path instead reads the Rent sysvar via
@@ -19,6 +14,11 @@ dropset-math-core = {path = "../../sdk/math-core", default-features = false, fea
 # the only tradeoff is a custom-rent cluster, which neither mainnet nor
 # `solana-test-validator` is.
 anchor-lang-v2 = {workspace = true, features = ["const-rent"]}
+# Canonical consensus arithmetic — `Price` codec, pure matcher math, and
+# the share/NAV/PnL kernels (interface.md § SDK). Pulled with
+# `default-features = false` to keep the build solana-free; `idl` turns on
+# Anchor's `IdlType` derive for `Price` so the generated IDL still emits it.
+dropset-math-core = {path = "../../sdk/math-core", default-features = false, features = ["idl"]}
 anchor-spl-v2.workspace = true
 solana-program-log.workspace = true
 solana-sdk-ids.workspace = true
