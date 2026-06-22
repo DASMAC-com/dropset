@@ -448,6 +448,26 @@ If a one-off like these still gets approved during a session, do
 `firm-perms` skill flags it and points back here so the source stops
 emitting it.
 
+### The compound-shell guard hook
+
+These rules are enforced **mechanically**, not just by convention. A
+`PreToolUse` Bash hook (`.claude/hooks/no_compound_bash.py`, wired in
+the committed `.claude/settings.json` so every worktree inherits it)
+inspects each Bash command before it runs and **blocks** any that
+contains an unquoted shell compound / redirect operator — a pipe, `>`,
+`<`, `;`, `&&`, `||`, `&`, a backtick, or `$(` — telling the model to
+split the call and use the Write / Read / Grep tools instead. The scan
+is **quote-aware**: an operator inside a single- or double-quoted
+string (a commit message's `;`, a regex's `|`) is legitimate text and
+passes; command substitution (`` ` `` and `$(`) is caught even inside
+double quotes, mirroring real shell. The guard fails *open* — any
+payload it can't parse is allowed — so it never wedges a session.
+
+**Escape hatch.** A genuinely-unavoidable compound (rare) is let
+through by adding the literal marker `#compound-ok` anywhere in the
+command. It's deliberately visible in the transcript so the bypass is
+auditable; reach for it only when the work truly can't be split.
+
 ## Briefing sub-agents
 
 A sub-agent you spawn (via the `Agent` tool) does **not** inherit this
