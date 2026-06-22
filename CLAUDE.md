@@ -319,6 +319,21 @@ calls reduce to allow-rules too. A session that follows the rules and
 briefs its agents on them prompts only for a genuinely novel command —
 which `firm-perms` then memorializes so it never prompts again.
 
+**The dedicated Grep / Glob tools aren't always present.** Native macOS
+Claude Code builds (>= 2.1.117) drop them from the default tool palette
+in favor of embedded Bash search
+(<https://github.com/anthropics/claude-code/issues/52004>), and we do
+**not** force them back on via `--tools` (that flag is replace-not-add,
+so it would mean enumerating the whole built-in set in every launcher —
+too brittle). So the "use the Grep tool" guidance below is conditional:
+use Grep / Glob **when they exist**, but where they don't, fall back to
+a **bare, single** `grep` / `find` Bash command — never a piped
+compound. Bare `grep` / `find` reduce to the retained `Bash(grep:*)` /
+`Bash(find:*)` allow-rules and prompt once; it's the `grep … | head` /
+`find … | xargs` **pipes** that can't generalize and re-prompt forever.
+The `Bash(grep:*)`, `Bash(find:*)`, `Bash(head:*)`, and `Bash(tail:*)`
+allow-rules are kept for exactly this fallback.
+
 Concrete rules:
 
 - Prefer the dedicated tools — Read, Grep, Glob — over `cat`, `grep`,
@@ -334,8 +349,10 @@ Concrete rules:
   `--config cfg/pre-commit-lint.yml`); it reports every MD013
   violation with its line number and reduces to the existing
   `Bash(pre-commit run:*)` rule.
-- Searching file *contents* — always the **Grep tool**, never `grep`
-  or `git grep`. This is the same rule the sub-agent brief carries
+- Searching file *contents* — prefer the **Grep tool**; where it's
+  absent (the Grep / Glob caveat above) a **bare, single** `grep` is
+  the fallback, but **never** `git grep`. This is the same rule the
+  sub-agent brief carries
   (see "Briefing sub-agents" below); it holds for the main agent too,
   so the convention is one and the same — the brief just restates it
   because a sub-agent doesn't inherit this file. Grep takes a real
@@ -457,8 +474,10 @@ own copy, so the wording stays in one place.
 >   `cat` / `head` / `tail` / `sed` / `awk` / `find` / `grep` in Bash —
 >   they don't prompt for in-workspace paths, and they search other
 >   directories too.
-> - **Searching file *contents* — always the Grep tool, never
->   `git grep`.** This holds in-workspace *and* cross-path: Grep reads
+> - **Searching file *contents* — prefer the Grep tool; where it's
+>   absent (native macOS builds), a bare single `grep` is the fallback,
+>   but never a pipe and never `git grep`.** When Grep is present it
+>   holds in-workspace *and* cross-path: Grep reads
 >   any directory you point it at, takes a real regex (so an
 >   alternation is `a|b|c`, not a shell-quoted `a\|b\|c`), and prompts
 >   **zero** times. Do **not** reach for `git -C <path> grep …` to
