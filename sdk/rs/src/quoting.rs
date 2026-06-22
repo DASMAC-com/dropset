@@ -3,7 +3,7 @@
 //! The program quotes *relatively*: a single `reference_price` plus a
 //! [`LiquidityProfile`](crate::layout::LiquidityProfile) of per-level ppm
 //! offsets and bps sizes (architecture.md § LiquidityProfile). This module
-//! adds the **native CLOB** direction ENG-378 asks for — a leader (or MM
+//! adds the **native CLOB** direction — a leader (or MM
 //! bot) specifies a full book of absolute price levels and atom sizes, and
 //! [`NativeBook::to_profile`] translates it into the relative profile the
 //! program stores, anchored to a chosen reference price.

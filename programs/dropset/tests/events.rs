@@ -1,4 +1,4 @@
-//! Event-emission coverage (ENG-447). Every cold-path instruction emits
+//! Event-emission coverage. Every cold-path instruction emits
 //! its structured event via `emit_cpi!`; before this file the suite
 //! asserted none of them. Here we drive each emitter and decode the
 //! event off the transaction's inner instructions (see
@@ -6,7 +6,7 @@
 //! state the instruction just produced.
 //!
 //! These are the always-on events — `CreateVault`, `Deposit`, `Withdraw`,
-//! `Realize`, and `Fill` plus the ENG-433-new `CloseVault` / `Freeze` —
+//! `Realize`, and `Fill` plus the later-added `CloseVault` / `Freeze` —
 //! so this file is not gated behind `admin-teardown`. The teardown
 //! force-withdraw paths re-emit `WithdrawEvent` (same struct, asserted
 //! here via the signed paths).

@@ -11,12 +11,12 @@
 //! from the program, these fail — the guarantee behind "the SDK does what
 //! the engine does".
 //!
-//! `matching.rs` flagged shared matching vectors as an open follow-up
-//! (ENG-476 hole 3): the original coverage was a single seeded ladder with
-//! two single-leg fills. This file replays the matcher across a scenario
-//! set that exercises the paths most likely to drift — cross-level fills,
-//! input capped at book depth, a limit price that stops mid-book, and a
-//! non-zero taker fee — through both the SDK simulator and a litesvm swap.
+//! `matching.rs`'s original coverage was a single seeded ladder with two
+//! single-leg fills, which left the broader matching paths unpinned. This
+//! file replays the matcher across a scenario set that exercises the paths
+//! most likely to drift — cross-level fills, input capped at book depth, a
+//! limit price that stops mid-book, and a non-zero taker fee — through both
+//! the SDK simulator and a litesvm swap.
 
 mod common;
 

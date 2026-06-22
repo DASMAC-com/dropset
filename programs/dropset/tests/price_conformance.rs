@@ -6,7 +6,7 @@
 //! (`sdk/ts/src/conformance.test.ts`). The **program's own** `Price` — the
 //! copy in `programs/dropset/src/price.rs` that actually moves funds — is a
 //! hand-mirror of that math, so it must be pinned to the same source of
-//! truth. This test closes that gap (ENG-476 hole 1): it replays the shared
+//! truth. This test closes that gap: it replays the shared
 //! vectors through `dropset::Price`.
 //!
 //! Scope: the funds-moving paths the program exposes — encoding *validity*
