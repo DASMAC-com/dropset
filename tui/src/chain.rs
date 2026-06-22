@@ -129,9 +129,13 @@ pub fn build_init_ix(payer: &Pubkey, fee_mint: &Pubkey) -> Instruction {
 
 /// `create_market` for a fresh `(base, quote)` pair. `fee_mint` /
 /// `fee_token_program` come from the registry's stamped default fee config;
-/// `payer` (an admin) has its fee waived, so `payer_fee_source` is unread.
+/// `payer` (an admin) has its fee waived, so `fee_source` is never read —
+/// but it must be a **distinct** account from `payer`, since anchor-v2
+/// rejects the same key in two mutable slots
+/// (`ConstraintDuplicateMutableAccount`).
 pub fn build_create_market_ix(
     payer: &Pubkey,
+    fee_source: &Pubkey,
     base_mint: &Pubkey,
     quote_mint: &Pubkey,
     fee_mint: &Pubkey,
@@ -151,9 +155,7 @@ pub fn build_create_market_ix(
         quote_treasury: associated_token_address(&market, quote_mint, &SPL_TOKEN_PROGRAM_ID),
         fee_mint: *fee_mint,
         fee_token_program: *fee_token_program,
-        // Admin path skips the fee transfer, so this account is never read;
-        // the wallet itself is a valid writable stand-in.
-        payer_fee_source: *payer,
+        payer_fee_source: *fee_source,
         registry_fee_treasury: associated_token_address(&registry, fee_mint, fee_token_program),
         system_program: SYSTEM_PROGRAM_ID,
         associated_token_program: ATA_PROGRAM_ID,
@@ -161,14 +163,20 @@ pub fn build_create_market_ix(
     .instruction()
 }
 
-/// `create_vault` on `market` via the admin path (fee waived, `payer`
-/// becomes the leader). `fee_mint` / `fee_token_program` are the market's
-/// stamped fee config.
+/// `create_vault` on `market` via the admin path (fee waived). The vault is
+/// opened for a **distinct** `leader` (via `leader_override`), not the admin
+/// `payer` — admin teardown's `force_withdraw_leader` lists the leader
+/// alongside the admin signer, and anchor-v2 rejects the same key in two
+/// slots when one is mutable. `fee_source` likewise must differ from
+/// `payer`. `fee_mint` / `fee_token_program` are the market's stamped fee
+/// config.
 pub fn build_create_vault_ix(
     payer: &Pubkey,
+    fee_source: &Pubkey,
     market: &Pubkey,
     fee_mint: &Pubkey,
     fee_token_program: &Pubkey,
+    leader: &Pubkey,
 ) -> Instruction {
     let registry = registry_pda();
     CreateVault {
@@ -177,7 +185,7 @@ pub fn build_create_vault_ix(
         market: *market,
         fee_mint: *fee_mint,
         fee_token_program: *fee_token_program,
-        payer_fee_source: *payer,
+        payer_fee_source: *fee_source,
         registry_fee_treasury: associated_token_address(&registry, fee_mint, fee_token_program),
         system_program: SYSTEM_PROGRAM_ID,
         event_authority: event_authority(),
@@ -185,11 +193,9 @@ pub fn build_create_vault_ix(
     }
     .instruction(CreateVaultInstructionArgs {
         perf_fee_rate: DEFAULT_PERF_FEE_RATE,
-        // Leader-only vault: the leader is also the quote authority, no
-        // outside depositors, no distinct leader override.
-        quote_authority: *payer,
+        quote_authority: *leader,
         allow_outside_depositors: false,
-        leader_override: Pubkey::default(),
+        leader_override: *leader,
     })
 }
 
@@ -511,12 +517,20 @@ mod tests {
     #[test]
     fn create_market_ordering_matches_fixture() {
         let payer = Pubkey::new_unique();
+        let fee_source = Pubkey::new_unique();
         let base = Pubkey::new_unique();
         let quote = Pubkey::new_unique();
         let fee_mint = Pubkey::new_unique();
         let registry = registry_pda();
         let market = market_pda(&base, &quote);
-        let ix = build_create_market_ix(&payer, &base, &quote, &fee_mint, &SPL_TOKEN_PROGRAM_ID);
+        let ix = build_create_market_ix(
+            &payer,
+            &fee_source,
+            &base,
+            &quote,
+            &fee_mint,
+            &SPL_TOKEN_PROGRAM_ID,
+        );
         assert_eq!(
             metas(&ix),
             vec![
@@ -539,7 +553,7 @@ mod tests {
                 ),
                 (fee_mint, false, false),
                 (SPL_TOKEN_PROGRAM_ID, false, false),
-                (payer, false, true),
+                (fee_source, false, true),
                 (
                     associated_token_address(&registry, &fee_mint, &SPL_TOKEN_PROGRAM_ID),
                     false,
@@ -549,6 +563,9 @@ mod tests {
                 (ATA_PROGRAM_ID, false, false),
             ]
         );
+        // The fee source must not alias the payer — anchor-v2 rejects the
+        // same key in two mutable slots.
+        assert_ne!(payer, fee_source);
     }
 
     /// Pins the `create_vault` ordering (admin path) against
@@ -557,10 +574,19 @@ mod tests {
     #[test]
     fn create_vault_ordering_matches_fixture() {
         let payer = Pubkey::new_unique();
+        let fee_source = Pubkey::new_unique();
         let market = Pubkey::new_unique();
         let fee_mint = Pubkey::new_unique();
+        let leader = Pubkey::new_unique();
         let registry = registry_pda();
-        let ix = build_create_vault_ix(&payer, &market, &fee_mint, &SPL_TOKEN_PROGRAM_ID);
+        let ix = build_create_vault_ix(
+            &payer,
+            &fee_source,
+            &market,
+            &fee_mint,
+            &SPL_TOKEN_PROGRAM_ID,
+            &leader,
+        );
         assert_eq!(
             metas(&ix),
             vec![
@@ -569,7 +595,7 @@ mod tests {
                 (market, false, true),
                 (fee_mint, false, false),
                 (SPL_TOKEN_PROGRAM_ID, false, false),
-                (payer, false, true),
+                (fee_source, false, true),
                 (
                     associated_token_address(&registry, &fee_mint, &SPL_TOKEN_PROGRAM_ID),
                     false,
@@ -580,5 +606,8 @@ mod tests {
                 (DROPSET_ID, false, false),
             ]
         );
+        // Neither the fee source nor the leader may alias the admin payer.
+        assert_ne!(payer, fee_source);
+        assert_ne!(payer, leader);
     }
 }

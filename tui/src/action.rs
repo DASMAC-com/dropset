@@ -282,8 +282,12 @@ fn do_create_market(
     let quote_mint = chain::create_spl_mint(client, wallet).context("create quote mint")?;
     log.log(format!("base: {base_mint}"));
     log.log(format!("quote: {quote_mint}"));
+    // A distinct (never-read, admin path) fee source — must not alias the
+    // payer, or anchor-v2 rejects it as a duplicate mutable account.
+    let fee_source = Keypair::new().pubkey();
     let ix = chain::build_create_market_ix(
         &wallet.pubkey(),
+        &fee_source,
         &base_mint,
         &quote_mint,
         &registry.fee_mint,
@@ -313,11 +317,21 @@ fn do_create_vault(
     let market = state
         .market
         .context("market not found — create market first")?;
+    // The vault is opened for a distinct leader (not the admin), so admin
+    // teardown's force_withdraw_leader doesn't alias the admin signer; the
+    // fee source likewise must differ from the payer. Neither key needs to
+    // exist on-chain — the leader is stored as an argument and read back
+    // from the slab at teardown.
+    let fee_source = Keypair::new().pubkey();
+    let leader = Keypair::new().pubkey();
+    log.log(format!("vault leader: {leader}"));
     let ix = chain::build_create_vault_ix(
         &wallet.pubkey(),
+        &fee_source,
         &market.address,
         &registry.fee_mint,
         &registry.fee_token_program,
+        &leader,
     );
     // Trailing rent top-up for the market PDA, which create_vault grows —
     // see RENT_TOPUP_LAMPORTS.
@@ -351,9 +365,17 @@ fn do_teardown(
     let state = accounts::poll(client, &admin);
     let before = client.get_balance(&admin).unwrap_or(0);
 
+    // The `rent_recipient` of every close instruction must differ from the
+    // admin signer (anchor-v2's duplicate-mutable-account rule), so reclaimed
+    // rent is routed to an ephemeral sink and swept back to the wallet at the
+    // end. The program close (a loader CLI op, no such check) pays the wallet
+    // directly.
+    let sink = Keypair::new();
+    let sink_key = sink.pubkey();
+
     match &state.market {
         None => log.log("No market to tear down."),
-        Some(market) => do_teardown_market(client, wallet, market, log)?,
+        Some(market) => do_teardown_market(client, wallet, market, &sink_key, log)?,
     }
 
     match &state.registry {
@@ -364,18 +386,29 @@ fn do_teardown(
                 &admin,
                 &registry.fee_mint,
                 &registry.fee_token_program,
-                &admin,
+                &sink_key,
             );
             let sig = chain::send(client, wallet, &[wallet], &[ix])
                 .context("close_registry_fee_vault")?;
             log.log(format!("  {sig}"));
 
             log.log("close_registry");
-            let ix = chain::build_close_registry_ix(&admin, &admin);
+            let ix = chain::build_close_registry_ix(&admin, &sink_key);
             let sig = chain::send(client, wallet, &[wallet], &[ix]).context("close_registry")?;
             log.log(format!("  {sig}"));
             log.accounts_changed();
         }
+    }
+
+    // Sweep the reclaimed rent from the sink back to the wallet.
+    let sink_balance = client.get_balance(&sink_key).unwrap_or(0);
+    if sink_balance > 0 {
+        let ix = chain::system_transfer_ix(&sink_key, &admin, sink_balance);
+        let sig =
+            chain::send(client, wallet, &[wallet, &sink], &[ix]).context("sweep rent sink")?;
+        log.log(format!(
+            "swept {sink_balance} lamports from rent sink: {sig}"
+        ));
     }
 
     if state.program_deployed {
@@ -393,11 +426,12 @@ fn do_teardown(
 }
 
 /// Drain and close a live market: depositors → leaders → treasuries →
-/// `close_market`, refunding all rent to the admin wallet.
+/// `close_market`, sending reclaimed rent to `rent_recipient`.
 fn do_teardown_market(
     client: &solana_client::rpc_client::RpcClient,
     wallet: &Keypair,
     market: &accounts::MarketView,
+    rent_recipient: &Pubkey,
     log: &Logger,
 ) -> Result<()> {
     let admin = wallet.pubkey();
@@ -454,7 +488,7 @@ fn do_teardown_market(
             &market.address,
             &mint,
             &treasury,
-            &admin,
+            rent_recipient,
         );
         let sig = chain::send(client, wallet, &[wallet], &[ix])
             .with_context(|| format!("close_market_treasury {leg}"))?;
@@ -467,7 +501,7 @@ fn do_teardown_market(
         &market.address,
         &market.base_treasury,
         &market.quote_treasury,
-        &admin,
+        rent_recipient,
     );
     let sig = chain::send(client, wallet, &[wallet], &[ix]).context("close_market")?;
     log.log(format!("  {sig}"));
