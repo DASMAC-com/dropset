@@ -1,6 +1,6 @@
 ---
 name: firm-perms
-description: Generalize the local permission allowlist into reusable globs — Bash commands and file-access/`Read` paths alike. The low-friction default is the fast path: right after you one-time-approve a prompt, a bare `/firm-perms` (or `/firm-perms this`) firms just that one command into both the worktree and base-repo settings immediately — no sweep, no confirm gate. Otherwise it runs the full sweep — harvest everything you approved this session (or a pasted block of permission strings, or the Linear "Permissions" inbox doc) and propagate it to the base-repo settings so future worktrees inherit it. Use the fast path after an approval, the full sweep at the end of a session or during a review-pr run that piled up per-worktree or per-arg approvals, with a pasted permissions block, or pass `doc` to drain the Linear Permissions inbox.
+description: Generalize the local permission allowlist into reusable globs — Bash commands and file-access/`Read` paths alike. The low-friction default is the fast path: right after you one-time-approve a prompt, a bare `/firm-perms` (or `/firm-perms this`) firms just that one command into every live worktree's settings immediately — no sweep, no confirm gate. Otherwise it runs the full sweep — harvest everything you approved this session (or a pasted block of permission strings, or the Linear "Permissions" inbox doc) and propagate it to every live worktree's settings (and the base repo, so future worktrees inherit it too). Use the fast path after an approval, the full sweep at the end of a session or during a review-pr run that piled up per-worktree or per-arg approvals, with a pasted permissions block, or pass `doc` to drain the Linear Permissions inbox.
 user-invocable: true
 ---
 
@@ -11,16 +11,18 @@ user-invocable: true
 "Firm up" `.claude/settings.local.json`: rewrite
 narrow, one-off `permissions.allow` entries into
 generalized globs, dedupe them, and write the same
-allowlist to **both** this worktree and the base
-repo so the rules survive into future worktrees.
+allowlist to **every live worktree** — this one, the
+base repo, and every sibling worktree — so the rules
+take effect everywhere *now* and survive into future
+worktrees.
 
 The common case is the **fast path**: right after you
 one-time-approve a prompt, a bare `/firm-perms` (or
 `/firm-perms this`) firms just that one command into
-both files immediately — no session sweep, no
-propose-then-confirm gate. Everything below is the
-**full sweep**, the heavier cleanup the fast path is a
-shortcut around.
+every live worktree's settings immediately — no session
+sweep, no propose-then-confirm gate. Everything below is
+the **full sweep**, the heavier cleanup the fast path is
+a shortcut around.
 
 This is the cleanup pass for the allowlist churn
 that builds up as you approve commands by hand. It
@@ -32,8 +34,9 @@ the rules already written to disk — and
 built-in `fewer-permission-prompts` skill (which
 discovers new *read-only Bash* rules from your
 transcripts) but is broader: it folds in file-access
-approvals too and writes the firmed result to the
-base repo so future worktrees inherit it.
+approvals too and writes the firmed result to every
+live worktree (and the base repo, so future worktrees
+inherit it).
 
 Some approvals **can't** be firmed into a safe rule —
 a heredoc, a `cd … &&` compound, a `python3`/`jq`
@@ -44,22 +47,28 @@ Surface them in the summary and point at the
 offending pattern so the *author* (a skill, a script,
 or you) stops emitting it.
 
-## Why both files
+## Why all worktrees
 
 `.claude/settings.local.json` is gitignored and
 exists as an **independent copy per worktree**, not
-a symlink. A running session reads its *own*
-worktree copy, and new worktrees are seeded from the
-**base repo** file. So a rule has to land in both
-places: the worktree copy to stop prompting *now*,
-and the base copy to reach *future* worktrees. This
-skill always writes the identical, firmed allowlist
-to both.
+a symlink. A running session reads its *own* worktree
+copy, and new worktrees are seeded from the **base
+repo** file. Writing only the current worktree + base
+would leave every *existing* sibling worktree on its
+stale allowlist until it's recreated — so a session
+running there keeps re-prompting for a rule you already
+firmed elsewhere. So this skill writes the identical,
+firmed allowlist to **every live worktree**: the base
+repo and all of `.claude/worktrees/*`, enumerated from
+the `git worktree list --porcelain` it already runs.
+The payoff is twofold — every existing worktree shares
+the same permissions *instantly*, and the base copy
+still seeds *future* ones.
 
 Don't hardcode the base-repo path — discover it at
-run time (step 1). The examples below use
-`<base>` for that path and `<tag>` for a worktree
-folder (e.g. `eng-447`).
+run time (step 1). The examples below use `<base>`
+for that path and `<tag>` for a worktree folder
+(e.g. `eng-447`).
 
 ## Input
 
@@ -248,28 +257,35 @@ and it does **not** propose-then-wait.
    `cargo *`, `gh *`, `rm *`), **do not write it** —
    stop and ask Alex how he wants to narrow it. This is
    the one case the fast path is allowed to pause.
-1. **Find the base repo** exactly as the full sweep's
-   step 1 does (`git worktree list --porcelain`; the
-   `refs/heads/main` worktree is `<base>`).
-1. **Read both allowlists** with the Read tool — this
-   worktree's `.claude/settings.local.json` and
-   `<base>/.claude/settings.local.json`.
-1. **Write the glob into both `allow` arrays
+1. **Find the base repo and enumerate every live
+   worktree** exactly as the full sweep's step 1 does
+   (`git worktree list --porcelain`). The
+   `refs/heads/main` worktree is `<base>`; every other
+   entry is a sibling worktree. Keep the full list of
+   paths — each one gets the glob.
+1. **Read every live worktree's allowlist** with the
+   Read tool — this worktree's
+   `.claude/settings.local.json`, the base's, and each
+   sibling's.
+1. **Write the glob into every `allow` array
    immediately**, with Edit/Write — **no
    propose-then-confirm gate** (the deliberate difference
-   from the other modes). Dedupe against the existing
-   entries; if the glob is already present or subsumed by
-   a broader existing rule, no-op and say so. Leave
-   `additionalDirectories` and every other key intact;
-   both files end byte-identical. If the base-repo write
-   is denied (base not in `additionalDirectories`), say
-   so and report that only the worktree copy was firmed
-   — same caveat as the full sweep.
-1. **Report in one line** what was added and that both
-   copies now match — e.g. "Firmed
-   `Bash(cargo test -p dropset:*)` into worktree + base."
-   Because the report states exactly what was written,
-   the change stays trivially reversible.
+   from the other modes). Dedupe against each file's
+   existing entries; if the glob is already present or
+   subsumed by a broader existing rule there, no-op for
+   that file. Leave `additionalDirectories` and every
+   other key intact; all files end byte-identical for the
+   `allow` array. If a given worktree's write is denied
+   (e.g. the base or a sibling not in this session's
+   `additionalDirectories`), say so and report **which**
+   copies were firmed rather than implying all were —
+   same caveat as the full sweep.
+1. **Report in one line** what was added and that every
+   live copy now matches — e.g. "Firmed
+   `Bash(cargo test -p dropset:*)` into 6 worktrees
+   (worktree + base + 4 siblings)." Because the report
+   states exactly what was written and where, the change
+   stays trivially reversible.
 
 **Why no confirm gate here.** The full sweep's
 propose-then-confirm gate exists because a sweep can
@@ -298,10 +314,13 @@ flow below.
    ```
 
    The worktree whose `branch` line is
-   `refs/heads/main` is the base repo (`<base>`).
-   Take its literal path from the output. If no
+   `refs/heads/main` is the base repo (`<base>`); every
+   other entry is a sibling worktree. Take **all** their
+   literal paths from the output — the firmed allowlist
+   lands in every one (see "Why all worktrees"). If no
    worktree has `main` checked out, warn the user and
-   firm only this worktree's file.
+   firm only the worktrees you can see (at least this
+   one).
 
 1. **Harvest this session's approvals.** Beyond what's
    already on disk, scan the current session for every
@@ -335,24 +354,29 @@ flow below.
    stop the prompt. Set these aside for the summary
    instead (see the intro).
 
-1. **Read both allowlists** with the Read tool (per
-   the CLAUDE.md shell conventions — never shell out
-   to `jq`/`node`/`python` to read or edit JSON):
+1. **Read every live worktree's allowlist** with the
+   Read tool (per the CLAUDE.md shell conventions —
+   never shell out to `jq`/`node`/`python` to read or
+   edit JSON):
 
    - this worktree's `.claude/settings.local.json`
    - `<base>/.claude/settings.local.json`
+   - each sibling worktree's
+     `.claude/settings.local.json`
 
-1. **Build the firmed allowlist.** Union both `allow`
-   arrays with the session-harvested rules from the
-   harvest step, apply the generalization rules above,
-   and dedupe — this is the single canonical array both
-   files will get. Two cautions on the union:
+1. **Build the firmed allowlist.** Union **all** the
+   `allow` arrays you just read with the
+   session-harvested rules from the harvest step, apply
+   the generalization rules above, and dedupe — this is
+   the single canonical array every file will get. Two
+   cautions on the union:
 
-   - **Watch entries that live in only one file.** The
-     two copies can have drifted, and a rule missing
-     from the base may have been *deliberately* dropped
-     there. Don't silently resurrect it into both;
-     treat every one-file-only entry as a distinct diff
+   - **Watch entries that live in only some files.** The
+     copies can have drifted, and a rule missing from
+     the base (or from a sibling) may have been
+     *deliberately* dropped there. Don't silently
+     resurrect it into all of them; treat every
+     entry present in only some files as a distinct diff
      item the user has to approve in the next step.
    - **Run the safety floor over the *result*, not just
      over rules you generalized.** A pre-existing
@@ -373,32 +397,36 @@ flow below.
      per-worktree variants into one");
    - each rule being **removed** as a now-subsumed
      duplicate;
-   - each entry present in **only one** of the two
-     files, so the user can confirm it should land in
-     both (rather than having drifted out on purpose);
+   - each entry present in **only some** of the files,
+     so the user can confirm it should land in all of
+     them (rather than having drifted out on purpose);
    - any over-broad rule you're **flagging** but
      leaving in place (per the safety floor).
 
-   Do not edit either file until the user approves.
+   Do not edit any file until the user approves.
    If they want changes, adjust the proposal and show
    it again. This confirmation gate matters most for
    the base-repo (meta-level) file, since it seeds
    every future worktree.
 
-1. **Write it to both files** once approved, with
-   Edit/Write — replacing only the `allow` array and
-   leaving `additionalDirectories` (and any other
-   keys) intact. Both files end byte-identical.
-   Writing the base copy reaches outside this
-   worktree, so it only works when the base repo is in
-   this session's `additionalDirectories` (it normally
-   is). If that write is denied, say so and report that
-   only the worktree copy was firmed — don't leave the
-   user thinking future worktrees were covered when
-   they weren't.
+1. **Write it to every live worktree's file** once
+   approved, with Edit/Write — replacing only the
+   `allow` array and leaving `additionalDirectories`
+   (and any other keys) intact in each. All files end
+   byte-identical for the `allow` array. Writing the
+   base copy and the siblings reaches outside this
+   worktree, so each only works when that path is in
+   this session's `additionalDirectories` (the base
+   normally is). If a given write is denied, say so and
+   report **which** copies were firmed rather than
+   implying all were — don't leave the user thinking a
+   worktree (or future worktrees) were covered when they
+   weren't.
 
-1. **Report.** Confirm what was written and that both
-   the worktree and base-repo copies now match. List
+1. **Report.** Confirm what was written and that every
+   live worktree's copy (this one, the base, and the
+   siblings) now matches — or, if any write was denied,
+   exactly which copies were firmed. List
    the session approvals you firmed in (Bash and
    file-access alike), and separately the **malformed**
    approvals you set aside — name the offending pattern
@@ -628,8 +656,10 @@ reverse one. The protocol uses the checkbox he can see:
 - On the next **attended** pass, an item that is
   **unchecked but still carries a `✓ firmed: <rule>`
   note** is the contest signal. **Revert** that exact
-  rule from **both** `settings.local.json` copies
-  (worktree + base), then replace the note with a
+  rule from **every live worktree's**
+  `settings.local.json` copy (this one, the base, and
+  the siblings — the same set the firm wrote to), then
+  replace the note with a
   `⚠ contested — reverted <rule>; needs re-handling`
   note and leave the item unchecked.
 - That `⚠ contested — reverted` note then **holds the
