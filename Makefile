@@ -95,7 +95,7 @@ sdk-test:
 debugger: program
 	anchor debugger
 
-# Localnet control-plane TUI (ENG-513). Spawns its own
+# Localnet control-plane TUI. Spawns its own
 # solana-test-validator (ledger in a temp dir), so it needs no running
 # validator first — just the toolchain check-toolchain gates. Named `tui`
 # (not `localnet`) because the same panel will later drive mainnet too.

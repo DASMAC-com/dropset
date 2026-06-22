@@ -1,23 +1,25 @@
-# Localnet control-plane TUI (ENG-513). A ratatui + crossterm panel that
+# Localnet control-plane TUI. A ratatui + crossterm panel that
 # spawns a `solana-test-validator`, gates each bootstrap action on live
 # on-chain state (a derived `Phase`), and drives the eCLOB lifecycle —
 # deploy, init, create-market, create-vault, teardown, wipe — end to end.
 # Rust-only, not published. No tokio: a synchronous event loop services a
 # `std::thread` + `mpsc` background-job harness, and the SDK fetch path is
 # the blocking `RpcClient` (sdk/rs `fetch` feature).
+
+[[bin]]
+name = "dropset-tui"
+path = "src/main.rs"
+
 [dependencies]
 anyhow = "1"
 crossterm = "0.28"
-open = "5"
-ratatui = "0.29"
-tempfile = "3"
-
 # The off-chain client: Codama instruction builders (whose AccountMeta
 # ordering is the single source of truth `chain.rs` builds on), the typed
 # `fetch_*` account decoders, the `layout` slab mirror (active-vault walk
 # for teardown), and the blocking `RpcClient` — all behind `fetch`.
 dropset-sdk = {path = "../sdk/rs", features = ["fetch"]}
-
+open = "5"
+ratatui = "0.29"
 # Pinned to the SDK's 3.x line (sdk/rs/Cargo.toml) so there is one
 # `Pubkey` / `Instruction` / `RpcClient` type across the builder, fetch,
 # and transaction paths — NOT the workspace's solana-pubkey 4.x, which the
@@ -32,6 +34,7 @@ solana-native-token = "3"
 solana-pubkey = "3"
 solana-signer = "3"
 solana-transaction = "3"
+tempfile = "3"
 
 [package]
 description = "Localnet control-plane TUI for the Dropset eCLOB program."
@@ -41,7 +44,3 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 version.workspace = true
-
-[[bin]]
-name = "dropset-tui"
-path = "src/main.rs"

@@ -47,9 +47,15 @@ const DEFAULT_PERF_FEE_RATE: u32 = 0;
 
 // ── RPC ──────────────────────────────────────────────────────────────
 
-/// An `RpcClient` at the `confirmed` commitment, pointed at `url`.
+/// An `RpcClient` at the `confirmed` commitment, pointed at `url`. The
+/// short request timeout keeps a poll issued while the validator is still
+/// booting from stalling the synchronous event loop.
 pub fn rpc(url: &str) -> RpcClient {
-    RpcClient::new_with_commitment(url.to_string(), CommitmentConfig::confirmed())
+    RpcClient::new_with_timeout_and_commitment(
+        url.to_string(),
+        std::time::Duration::from_secs(2),
+        CommitmentConfig::confirmed(),
+    )
 }
 
 // ── PDA / ATA derivations ────────────────────────────────────────────
@@ -136,11 +142,7 @@ pub fn build_create_market_ix(
         // Admin path skips the fee transfer, so this account is never read;
         // the wallet itself is a valid writable stand-in.
         payer_fee_source: *payer,
-        registry_fee_treasury: associated_token_address(
-            &registry,
-            fee_mint,
-            fee_token_program,
-        ),
+        registry_fee_treasury: associated_token_address(&registry, fee_mint, fee_token_program),
         system_program: SYSTEM_PROGRAM_ID,
         associated_token_program: ATA_PROGRAM_ID,
     }
@@ -164,11 +166,7 @@ pub fn build_create_vault_ix(
         fee_mint: *fee_mint,
         fee_token_program: *fee_token_program,
         payer_fee_source: *payer,
-        registry_fee_treasury: associated_token_address(
-            &registry,
-            fee_mint,
-            fee_token_program,
-        ),
+        registry_fee_treasury: associated_token_address(&registry, fee_mint, fee_token_program),
         system_program: SYSTEM_PROGRAM_ID,
         event_authority: event_authority(),
         program: DROPSET_ID,
@@ -188,6 +186,7 @@ pub fn build_create_vault_ix(
 /// `force_withdraw_depositor` — admin drains `owner`'s position on
 /// `vault_idx` and closes their PDA. Only used when a market has outside
 /// depositors; the TUI's own bootstrap never creates one.
+#[allow(clippy::too_many_arguments)]
 pub fn build_force_withdraw_depositor_ix(
     admin: &Pubkey,
     market: &Pubkey,
@@ -384,6 +383,21 @@ pub fn create_spl_mint(client: &RpcClient, authority: &Keypair) -> Result<Pubkey
         .send_and_confirm_transaction(&tx)
         .context("create mint")?;
     Ok(mint.pubkey())
+}
+
+/// Request `lamports` from the validator faucet for `to` and block until
+/// the airdrop confirms (or time out after ~10s). Localnet only.
+pub fn airdrop(client: &RpcClient, to: &Pubkey, lamports: u64) -> Result<()> {
+    let sig = client
+        .request_airdrop(to, lamports)
+        .context("request airdrop")?;
+    for _ in 0..50 {
+        if client.confirm_transaction(&sig).unwrap_or(false) {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    anyhow::bail!("airdrop did not confirm in time")
 }
 
 /// Sign `ixs` with `signers` (fee payer = `payer`) and send, confirming at
