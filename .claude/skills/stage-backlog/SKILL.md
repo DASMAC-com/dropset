@@ -17,7 +17,7 @@ to-dos (`linear-task`) all land as plain
 thing that turns that flat queue into a plan: it
 groups the issues into the fewest parallel,
 file-disjoint PRs, **merges issues that should be one
-PR into one issue**, and rewrites the document so Alex
+PR into one issue**, and rewrites the document so you
 can see — at a glance, with live Linear statuses —
 what can run in parallel right now.
 
@@ -210,7 +210,7 @@ what can run in parallel, not just a linear order:
   **exception** to the
   disjoint-file / don't-over-compress rules above, scoped to
   skill-doc housekeeping: such edits are trivial markdown,
-  don't need parallel sessions, and Alex wants them
+  don't need parallel sessions, and should be
   startable in one sitting right at the top. Merge them via
   step 3 (write-before-close) into the lowest-ENG canonical
   issue, exactly like any other multi-issue session. A
@@ -479,8 +479,8 @@ Backlog fresh and step 5 regenerates the whole document
 from **open** issues each run, the document
 self-maintains: anything closed or merged since the last
 run simply drops off the next time the loop comes
-around. This also makes the document safe for Alex to
-hand-trim — deleting a line for a task he can see has
+around. This also makes the document safe for you to
+hand-trim — deleting a line for a task you can see has
 closed will not be undone, because a closed issue is
 excluded from regeneration anyway.
 

@@ -369,9 +369,10 @@ Only findings that survive the check proceed.
 
 **8. File one Linear issue per finding.** File exactly
 as the `linear-task` skill does: a **plain Backlog issue
-with no parent**, assigned to Alex, into the shared
-destination. There is **no umbrella issue** — the
-project Backlog is the queue, and `stage-backlog` turns
+with no parent**, assigned to the configured assignee,
+into the shared destination. There is **no umbrella
+issue** — the project Backlog is the queue, and
+`stage-backlog` turns
 it into a PR plan later. Resolve the destination IDs
 from the environment exactly as `linear-task` does —
 never hard-code them — with a bare `printenv` per
@@ -489,7 +490,7 @@ fixable, so don't pretend otherwise. Don't include the
   set from it).
 - `**Discovered by**: audit-loop iteration <n> @ <commit SHA>`
 
-Priority 3; these are proposals for Alex to triage, not
+Priority 3; these are proposals for the user to triage, not
 pre-approved work. Title them by area, e.g.
 `arch: decouple the matcher from Market storage layout`.
 
@@ -499,7 +500,7 @@ prominent line:
 If at least one **high-severity** issue was filed this
 iteration, send exactly **one** `PushNotification`
 summarizing the top one — ideal for the background
-morning campaign, so Alex is interrupted only when it
+morning campaign, so you are interrupted only when it
 matters. If nothing was filed, send no notification.
 
 **10. Close out and continue.** Update the in-context

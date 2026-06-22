@@ -7,7 +7,7 @@ user-invocable: true
 
 # `housekeeping`
 
-The **one thing Alex fires up when he arrives**: it
+The **one thing to fire up when you arrive**: it
 does the morning upkeep — the chores that pile up while
 you develop but don't belong to any one PR — then kicks
 off the audit campaign in the background so that, by the
@@ -304,7 +304,7 @@ previous morning's audit-loop folded in incrementally.
 
 **6. Kick off the audit-loop (offer, default yes).**
 The morning's last act: with upkeep done, offer to
-start the background audit campaign so Alex can do
+start the background audit campaign so you can do
 admin / minutia while it runs. Ask via
 **`AskUserQuestion`** — the same TUI-selector handoff
 pattern as `init-pr` / `review-pr` (per `CLAUDE.md` →
@@ -320,7 +320,7 @@ the default) and "skip".
   The campaign files findings, folds each into the Task
   Staging document incrementally (`audit-loop` step 8),
   and fires a high-severity `PushNotification` only when
-  something warrants interrupting him. Then **this
+  something warrants interrupting you. Then **this
   housekeeping pass exits** — it does not wait on the
   campaign.
 - On **skip**, end the pass without launching anything.

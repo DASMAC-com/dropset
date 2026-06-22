@@ -253,6 +253,18 @@ pre-approved allow-rules (reads *and* the PR-authoring writes) to the
 **base-repo** settings so future worktrees inherit them (per the
 per-worktree settings rule); `firm-perms` does this at session end.
 
+## Docs and skills prose
+
+**Refer to users in the abstract, never by name.** Committed docs and
+skills (`.claude/skills/**`, `CLAUDE.md`, `docs/**`) should read as if
+written for any user of the tool, so a particular individual's name
+never appears in the prose — write "the user", "you", or "whoever runs
+it" instead. The skill suite is general-purpose tooling; hard-coding
+one person's name makes it read as bespoke and dates poorly. This is
+about **prose only** — the env-var-resolved assignee / filing-destination
+ids (`LINEAR_ASSIGNEE_ID`, etc.) are configuration, not prose, and are
+unaffected.
+
 ## Spelling (cspell)
 
 `cfg/dictionary.txt` is the **project-wide** spelling allow-list —
