@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "declaration": true,
+    "noEmit": false,
+    "outDir": "dist"
+  },
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/*.conformance.test.ts"
+  ],
+  "extends": "./tsconfig.json"
+}
