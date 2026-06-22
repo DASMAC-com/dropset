@@ -164,7 +164,7 @@ All GitHub operations — opening PRs, updating titles and bodies,
 reading the diff, watching checks, pulling failing-job logs — go
 through the **GitHub MCP server** (`mcp__github__*`), not the `gh`
 CLI. The skills (`init-pr`, `pr-title-description`, `review-pr`,
-`housekeeping`, `audit-loop`, `linear-task`) are written against it.
+`housekeeping`, `linear-task`) are written against it.
 `gh` is no longer required; it survives only at the `review-pr`
 **merge-queue handoff** — the enqueue (a `gh pr merge --auto` write,
 **no** strategy flag: this repo's merge queue sets the strategy, so a
