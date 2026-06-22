@@ -40,9 +40,13 @@ jobs:
     # can't pin stale expectations while CI stays green.
     - name: 'Conformance vectors are fresh'
       run: 'make check-conformance-vectors'
-    # TypeScript SDK: typecheck + cross-language conformance vectors.
+    # TypeScript SDK: typecheck + cross-language conformance vectors, then
+    # the publish build. The build emits dist/ only for the published npm
+    # package (the workspace consumes raw TS), so nothing else exercises it
+    # — run it here so a broken tsup/exports/dts config fails the gate.
     - run: 'pnpm --filter @dropset/sdk run check'
     - run: 'pnpm --filter @dropset/sdk test'
+    - run: 'pnpm --filter @dropset/sdk run build'
     # Off-chain Rust crates (no program .so needed): unit tests + the
     # math-core conformance vectors, plus the WASM target build over
     # `dropset-interface` (its `wasm` feature pulls in math-core's).

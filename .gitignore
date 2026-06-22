@@ -10,6 +10,10 @@ node_modules/
 # wasm-pack output for the price-core WASM package (built via `make wasm`).
 sdk/price-core/pkg/
 
+# TS SDK publish build — emitted by `pnpm --filter @dropset/sdk run build`
+# for the npm tarball only; the workspace consumes raw TS (see sdk/ts).
+sdk/ts/dist/
+
 # Background audit-loop state (see .claude/skills/audit-loop).
 .audit-loop/
 

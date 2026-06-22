@@ -9,7 +9,8 @@ const nextConfig: NextConfig = {
     "globe.gl",
     "three",
     "react-kapsule",
-    // Workspace SDK ships raw TS (no build step); Next transpiles it.
+    // The workspace SDK serves raw TS to consumers (its build step emits
+    // dist/ only for the published npm package); Next transpiles the source.
     "@dropset/sdk",
   ],
 };

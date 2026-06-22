@@ -4,6 +4,7 @@
   },
   "description": "Dropset TypeScript SDK (@solana/kit): instruction builders, account & event codecs, PDA helpers, and the Price codec.",
   "devDependencies": {
+    "tsup": "^8.5.0",
     "tsx": "^4.19.2",
     "typescript": "^5.6.0"
   },
@@ -11,10 +12,37 @@
     ".": "./src/index.ts",
     "./generated": "./src/generated/index.ts"
   },
+  "files": [
+    "dist"
+  ],
+  "keywords": [
+    "solana",
+    "dropset",
+    "dex",
+    "eclob",
+    "trading"
+  ],
+  "license": "Apache-2.0",
   "main": "./src/index.ts",
   "name": "@dropset/sdk",
+  "private": true,
+  "publishConfig": {
+    "exports": {
+      ".": "./dist/index.js",
+      "./generated": "./dist/generated/index.js"
+    },
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts"
+  },
+  "repository": {
+    "directory": "sdk/ts",
+    "type": "git",
+    "url": "https://github.com/DASMAC-com/dropset.git"
+  },
   "scripts": {
+    "build": "tsup",
     "check": "tsc --noEmit",
+    "prepack": "tsup",
     "test": "node --import tsx --test src/conformance.test.ts src/quoting.conformance.test.ts src/share.conformance.test.ts"
   },
   "type": "module",
