@@ -32,6 +32,27 @@
 - Sign commits (`git commit -S`); branch protection requires verified
   signatures.
 
+### The PR workflow and skill handoffs
+
+The day-to-day PR flow is **two user-facing skills**: `/init-pr`
+bootstraps the worktree and brackets the session, then `/review-pr`
+runs the adversarial pre-review and drives the merge-queue handoff.
+`pr-title-description` is **not** a freestanding stage in this flow —
+it's a DRY helper that `review-pr` **calls** for the final PR title and
+body (its steps 13–14). It stays independently runnable (still
+user- and model-invocable), but the flow never offers it on its own;
+`init-pr` seeds only the bare `ENG-###` title + empty body, and
+`review-pr` owns the title/body from there.
+
+- **Skill-to-skill handoffs prompt via `AskUserQuestion` with a
+  recommended default.** Wherever one skill hands off to another, or a
+  skill reaches a decision the user should make, ask through the
+  `AskUserQuestion` TUI selector — not a free-text prompt — and where a
+  sensible default exists, put it **first** and label it
+  "(Recommended)". This is the shared pattern behind the
+  init-pr → review-pr handoff, the review-pr → firm-perms gate, and
+  housekeeping's audit-loop kickoff.
+
 ## Linear automation
 
 Skills that **file** Linear issues (`linear-task`, `stage-backlog`,
