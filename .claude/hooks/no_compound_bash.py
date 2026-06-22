@@ -69,6 +69,11 @@ def find_violation(cmd):
             quote = "'"
         elif c == '"':
             quote = '"'
+        elif c == "#" and (i == 0 or cmd[i - 1].isspace()):
+            # An unquoted '#' at a word boundary starts a shell comment; the
+            # rest of the line is inert. Any operator before it would already
+            # have returned, so the command is clean.
+            return None
         elif c == "`":
             return "a backtick command substitution (`)"
         elif c == "$" and i + 1 < n and cmd[i + 1] == "(":
@@ -85,6 +90,42 @@ def find_violation(cmd):
             return "an input redirect / here-doc (<)"
         i += 1
 
+    return None
+
+
+def unquoted_comment(cmd):
+    """Return the unquoted trailing shell comment (from its `#`), or None.
+
+    A `#` begins a comment only when unquoted and at a word boundary (start
+    of string or after whitespace) — `foo#bar` and a quoted `"#x"` are
+    literal text, not comments. This is what anchors the escape hatch to a
+    genuine comment instead of any substring.
+    """
+    quote = None
+    i = 0
+    n = len(cmd)
+    while i < n:
+        c = cmd[i]
+        if quote == "'":
+            if c == "'":
+                quote = None
+            i += 1
+            continue
+        if c == "\\":
+            i += 2
+            continue
+        if quote == '"':
+            if c == '"':
+                quote = None
+            i += 1
+            continue
+        if c == "'":
+            quote = "'"
+        elif c == '"':
+            quote = '"'
+        elif c == "#" and (i == 0 or cmd[i - 1].isspace()):
+            return cmd[i:]
+        i += 1
     return None
 
 
@@ -117,7 +158,11 @@ def evaluate(payload):
     cmd = tool_input.get("command", "") if isinstance(tool_input, dict) else ""
     if not isinstance(cmd, str) or not cmd.strip():
         return 0, ""
-    if ESCAPE_HATCH in cmd:
+    # Honor the escape hatch only as a genuine unquoted trailing comment, so
+    # a quoted/embedded occurrence (e.g. grepping for the literal string)
+    # can't silently disable the guard.
+    comment = unquoted_comment(cmd)
+    if comment is not None and ESCAPE_HATCH in comment:
         return 0, ""
     op = find_violation(cmd)
     if op is None:
@@ -147,7 +192,14 @@ def _self_test():
         ("cargo build &", True),
         ("foo 2>&1", True),
         ("cmd </tmp/in", True),
-        ("ls && pwd #compound-ok", False),  # escape hatch
+        ("ls && pwd #compound-ok", False),  # escape hatch (real comment)
+        # A quoted/embedded marker must NOT disable the guard.
+        ('grep "#compound-ok" log.txt && rm x', True),
+        # An unquoted comment is inert — operators inside it don't count.
+        ("git log # see notes | here", False),
+        ("echo hi # plain trailing comment", False),
+        # '#' mid-word is literal, not a comment.
+        ("git show HEAD#nope", False),
     ]
     failures = []
     for cmd, should_block in cases:
@@ -172,11 +224,10 @@ def _self_test():
 def main(argv):
     if "--self-test" in argv:
         return _self_test()
-    raw = sys.stdin.read()
     try:
-        payload = json.loads(raw)
-    except (ValueError, TypeError):
-        # Fail open: a payload we can't parse must never wedge the session.
+        payload = json.loads(sys.stdin.read())
+    except Exception:
+        # Fail open: any read or parse problem must never wedge the session.
         return 0
     code, message = evaluate(payload)
     if message:

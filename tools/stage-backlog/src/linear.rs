@@ -13,11 +13,18 @@ use crate::model::{self, Issue};
 
 const ENDPOINT: &str = "https://api.linear.app/graphql";
 
+/// How many Backlog issues a single query reads. The Dropset Backlog is far
+/// under this; `fetch_backlog` errors rather than truncate if it's exceeded.
+const PAGE_SIZE: i64 = 250;
+
+/// Overall per-request timeout, so a hung endpoint can't wedge a `make` run.
+const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 const BACKLOG_QUERY: &str = r#"
-query Backlog($projectId: ID!) {
+query Backlog($projectId: ID!, $first: Int!) {
   issues(
     filter: { project: { id: { eq: $projectId } }, state: { type: { eq: "backlog" } } }
-    first: 250
+    first: $first
   ) {
     pageInfo { hasNextPage }
     nodes {
@@ -51,13 +58,18 @@ impl Client {
     pub fn fetch_backlog(&self, project_id: &str) -> Result<Vec<Issue>> {
         let data: BacklogData = self.post(
             BACKLOG_QUERY,
-            serde_json::json!({ "projectId": project_id }),
+            serde_json::json!({ "projectId": project_id, "first": PAGE_SIZE }),
         )?;
+        // The query reads one page (PAGE_SIZE). Rather than silently stage —
+        // and overwrite the document with — a truncated tree, refuse: a
+        // partial plan is worse than none. (Pagination is a future
+        // enhancement; the Dropset Backlog is far under this cap today.)
         if data.issues.page_info.has_next_page {
-            eprintln!(
-                "warning: project has more than 250 Backlog issues; only the first \
-                 250 were read and staged"
-            );
+            return Err(anyhow!(
+                "project has more than {PAGE_SIZE} open Backlog issues; \
+                 pagination is not yet implemented, so refusing to stage a \
+                 truncated tree"
+            ));
         }
         Ok(data.issues.nodes.into_iter().map(raw_to_issue).collect())
     }
@@ -83,6 +95,7 @@ impl Client {
     ) -> Result<T> {
         let body = serde_json::json!({ "query": query, "variables": variables });
         let response = match ureq::post(ENDPOINT)
+            .timeout(REQUEST_TIMEOUT)
             .set("Authorization", &self.api_key)
             .set("Content-Type", "application/json")
             .send_json(body)

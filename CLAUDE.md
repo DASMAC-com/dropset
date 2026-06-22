@@ -106,11 +106,13 @@ destination.
 
 The `dropset-stage-backlog` **binary** (the deterministic core of the
 `stage-backlog` skill — see "Structured filing fields" below) reads
-`LINEAR_PROJECT_ID` and `LINEAR_TASK_STAGING_DOC_ID` the same way, plus
-its own `LINEAR_API_KEY`: a personal Linear API key, because a headless
-binary can't ride the OAuth-based `claude.ai` Linear MCP. It resolves
-all of these via `std::env::var`, never a hard-coded id, and the key is
-never committed.
+`LINEAR_PROJECT_ID` the same way, plus its own `LINEAR_API_KEY`: a
+personal Linear API key, because a headless binary can't ride the
+OAuth-based `claude.ai` Linear MCP. For a real write it also reads
+`LINEAR_TASK_STAGING_DOC_ID` (the document it rewrites); `--dry-run`
+prints the tree to stdout and doesn't require it. It resolves all of
+these via `std::env::var`, never a hard-coded id, and the key is never
+committed.
 
 ### Structured filing fields
 
@@ -595,6 +597,7 @@ sdk-clients (gen-client, med): sdk/rs/src/**, sdk/ts/src/**, sdk/codama/**
 frontend (web-app, med): frontend/**
 docs (specs, med): docs/**
 ci-infra (ci, low): .github/**, cfg/**, Makefile, Anchor.toml
+tools (rust-tool, low): tools/**
 ```
 
 **Inter-subsystem interfaces** — the seams where contract drift

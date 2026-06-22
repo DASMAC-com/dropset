@@ -63,25 +63,15 @@ pub fn render(issues: &[Issue]) -> String {
     // chain_len = longest in-bucket blocker chain below an issue; the primary
     // blocker (the one to nest under) is the in-bucket blocker that settles
     // last, i.e. the deepest chain, tie-broken by highest number.
-    let mut chain_memo: HashMap<String, usize> = HashMap::new();
     let primary: HashMap<&str, Option<String>> = issues
         .iter()
         .map(|i| {
-            let in_bucket: Vec<&String> = blockers[&i.id]
+            let pick = blockers[&i.id]
                 .iter()
                 .filter(|b| same_bucket(&i.id, b))
-                .collect();
-            let pick = in_bucket
-                .into_iter()
                 .max_by_key(|b| {
                     (
-                        chain_len(
-                            b,
-                            &blockers,
-                            &same_bucket,
-                            &mut chain_memo,
-                            &mut HashSet::new(),
-                        ),
+                        chain_len(b, &blockers, &same_bucket, &mut HashSet::new()),
                         number_of.get(b.as_str()).copied().unwrap_or(0),
                     )
                 })
@@ -170,13 +160,15 @@ fn compute_blockers(
 
     for i in issues {
         for b in &i.blocked_by {
-            if universe.contains(b.as_str()) {
+            // Ignore a blocker outside the read set, and a self-edge (a data
+            // error) that would otherwise drop the issue from the tree.
+            if b != &i.id && universe.contains(b.as_str()) {
                 blockers.get_mut(&i.id).unwrap().insert(b.clone());
             }
         }
         for b in &i.blocks {
             // `i blocks b` is the same edge as `b blockedBy i`.
-            if universe.contains(b.as_str()) {
+            if b != &i.id && universe.contains(b.as_str()) {
                 blockers.get_mut(b).unwrap().insert(i.id.clone());
             }
         }
@@ -188,6 +180,9 @@ fn compute_blockers(
             if !touches_overlap(ia, ic) {
                 continue;
             }
+            // A declared edge between the pair (either direction) wins over
+            // the inferred "higher under lower" overlap edge — the human
+            // asserted the order on purpose — so don't add a second edge.
             let declared = blockers[&ia.id].contains(&ic.id) || blockers[&ic.id].contains(&ia.id);
             if declared {
                 continue;
@@ -238,17 +233,15 @@ fn compute_buckets(issues: &[Issue]) -> HashMap<String, Bucket> {
 }
 
 /// Longest in-bucket blocker chain below `id` (0 if no in-bucket blocker),
-/// memoized, with a cycle guard so a mutual declared edge can't loop.
+/// with a `visiting` cycle guard so a mutual declared edge can't loop. Not
+/// memoized: the backlog is small (≤ a few hundred issues), and a cross-call
+/// memo would cache cycle-truncated values that depend on the entry point.
 fn chain_len(
     id: &str,
     blockers: &HashMap<String, BTreeSet<String>>,
     same_bucket: &impl Fn(&str, &str) -> bool,
-    memo: &mut HashMap<String, usize>,
     visiting: &mut HashSet<String>,
 ) -> usize {
-    if let Some(v) = memo.get(id) {
-        return *v;
-    }
     if !visiting.insert(id.to_string()) {
         return 0; // cycle — stop descending
     }
@@ -256,12 +249,11 @@ fn chain_len(
     if let Some(bs) = blockers.get(id) {
         for b in bs {
             if same_bucket(id, b) {
-                best = best.max(1 + chain_len(b, blockers, same_bucket, memo, visiting));
+                best = best.max(1 + chain_len(b, blockers, same_bucket, visiting));
             }
         }
     }
     visiting.remove(id);
-    memo.insert(id.to_string(), best);
     best
 }
 
@@ -511,6 +503,13 @@ mod tests {
             with("ENG-2", None, &["b/y.rs"], &["ENG-1"]),
         ]);
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn self_blocking_issue_still_renders() {
+        // A data-error self-edge must not drop the issue from the output.
+        let out = render(&[with("ENG-7", None, &["a/b.rs"], &["ENG-7"])]);
+        assert_eq!(out, "# Standalone\n\n- ENG-7\n");
     }
 
     #[test]

@@ -64,9 +64,11 @@ make stage-backlog ARGS=--dry-run
 The binary resolves its configuration from the
 environment via `std::env::var` (never a hard-coded id):
 `LINEAR_API_KEY` (a personal API key — the headless
-binary can't use the OAuth `claude.ai` MCP),
-`LINEAR_PROJECT_ID`, and `LINEAR_TASK_STAGING_DOC_ID`. If
-any is unset it errors and exits; export them in your
+binary can't use the OAuth `claude.ai` MCP) and
+`LINEAR_PROJECT_ID` are needed for every run;
+`LINEAR_TASK_STAGING_DOC_ID` is read only for a real
+write, so `--dry-run` doesn't require it. A missing
+required variable errors and exits; export them in your
 shell profile (`~/.zshrc`) — see `CLAUDE.md` → "Linear
 automation".
 
