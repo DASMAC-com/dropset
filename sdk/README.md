@@ -47,13 +47,26 @@ both binding sets; wiring it into `@dropset/sdk` to retire the TS mirror
 
 ## Conformance
 
-`sdk/conformance/price_vectors.json` is generated from the Rust reference
-(`cargo run -p dropset-math-core --example gen_conformance`) and verified
-in **both** languages — Rust (`math-core/tests/conformance.rs`) and TS
-(`ts/src/conformance.test.ts`). Run all SDK tests with `make sdk-test`.
-Scope today is the `Price` codec + ratio math (`quote_for_base` /
-`base_for_quote`); `simulate_swap` conformance (needs serialized market
-fixtures) is a follow-up.
+Three checked-in vector sets under `sdk/conformance/`, each generated from
+its Rust reference (`make conformance-vectors`) and replayed in **both**
+languages — Rust and TS:
+
+- `price_vectors.json` — the `Price` codec + ratio math (`quote_for_base` /
+  `base_for_quote`), via `gen_conformance`; verified by
+  `math-core/tests/conformance.rs` and `ts/src/conformance.test.ts`.
+- `quoting_vectors.json` — the native↔relative book translation, via
+  `gen_quoting`; verified by `rs/tests/quoting_conformance.rs` and
+  `ts/src/quoting.conformance.test.ts`.
+- `share_vectors.json` — the share/NAV/PnL kernels, via `gen_share`;
+  verified by `math-core/tests/share_conformance.rs` and
+  `ts/src/share.conformance.test.ts`.
+
+Run all SDK tests with `make sdk-test`. The Rust `simulate_swap` is
+additionally pinned to the engine by
+`programs/dropset/tests/sdk_conformance.rs` (litesvm — see Verification
+below); the genuinely-remaining follow-up is the **TS/WASM** `simulate_swap`,
+which lands when the WASM client retires the hand-written TS mirror
+(interface.md §6B).
 
 ## Quoting: native vs relative
 
