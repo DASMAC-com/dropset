@@ -508,3 +508,71 @@ fn do_teardown_market(
     log.accounts_changed();
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PHASES: [Phase; 6] = [
+        Phase::NoValidator,
+        Phase::ProgramAbsent,
+        Phase::RegistryAbsent,
+        Phase::MarketAbsent,
+        Phase::VaultAbsent,
+        Phase::Ready,
+    ];
+
+    #[test]
+    fn recommended_next_follows_the_bootstrap_order() {
+        assert_eq!(recommended_next(Phase::NoValidator), None);
+        assert_eq!(recommended_next(Phase::ProgramAbsent), Some(Action::Deploy));
+        assert_eq!(
+            recommended_next(Phase::RegistryAbsent),
+            Some(Action::InitRegistry)
+        );
+        assert_eq!(
+            recommended_next(Phase::MarketAbsent),
+            Some(Action::CreateMarket)
+        );
+        assert_eq!(
+            recommended_next(Phase::VaultAbsent),
+            Some(Action::CreateVault)
+        );
+        assert_eq!(recommended_next(Phase::Ready), None);
+    }
+
+    #[test]
+    fn each_bootstrap_step_is_enabled_in_exactly_one_phase() {
+        for step in [
+            Action::Deploy,
+            Action::InitRegistry,
+            Action::CreateMarket,
+            Action::CreateVault,
+        ] {
+            let count = PHASES.iter().filter(|p| step.enabled(**p)).count();
+            assert_eq!(count, 1, "{step:?} should be enabled in exactly one phase");
+        }
+    }
+
+    #[test]
+    fn teardown_enabled_once_the_program_is_deployed() {
+        assert!(!Action::Teardown.enabled(Phase::NoValidator));
+        assert!(!Action::Teardown.enabled(Phase::ProgramAbsent));
+        for p in [
+            Phase::RegistryAbsent,
+            Phase::MarketAbsent,
+            Phase::VaultAbsent,
+            Phase::Ready,
+        ] {
+            assert!(Action::Teardown.enabled(p), "teardown should run in {p:?}");
+        }
+    }
+
+    #[test]
+    fn wipe_always_enabled_and_explorer_needs_a_validator() {
+        for p in PHASES {
+            assert!(Action::Wipe.enabled(p));
+            assert_eq!(Action::OpenExplorer.enabled(p), p != Phase::NoValidator);
+        }
+    }
+}

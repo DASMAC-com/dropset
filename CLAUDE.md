@@ -595,6 +595,7 @@ program (solana-program, high): programs/dropset/src/**
 sdk-math (rust-lib, high): sdk/math-core/src/**, sdk/interface/src/**
 sdk-clients (gen-client, med): sdk/rs/src/**, sdk/ts/src/**, sdk/codama/**
 frontend (web-app, med): frontend/**
+tui (rust-lib, low): tui/**
 docs (specs, med): docs/**
 ci-infra (ci, low): .github/**, cfg/**, Makefile, Anchor.toml
 tools (rust-tool, low): tools/**
