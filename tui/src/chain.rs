@@ -42,6 +42,18 @@ pub const CREATE_MARKET_FEE_ATOMS: u64 = 1_000 * 1_000_000;
 /// SPL Token Mint account size (bytes).
 const MINT_LEN: usize = 82;
 
+/// Lamports the TUI pre-funds onto each program-created PDA (registry,
+/// market) in the same transaction as its creation. anchor-v2 `init`
+/// under-funds a `Slab` account against a real validator's post-execution
+/// rent-exemption check — litesvm doesn't enforce that check, so the
+/// program's tests never exercised it. Topping the account up in a trailing
+/// `transfer` (the rent check runs once at end-of-transaction) carries it
+/// over the rent floor. 0.02 SOL dwarfs the rent-exempt minimum of these
+/// small accounts, so the result is exempt regardless of how little `init`
+/// funded; the excess is reclaimed to the wallet at teardown. Interim
+/// workaround pending a program-side fix to fund init rent correctly.
+pub const RENT_TOPUP_LAMPORTS: u64 = 20_000_000;
+
 /// Default perf-fee rate (ppm) for the bootstrap vault — 0, a plain vault.
 const DEFAULT_PERF_FEE_RATE: u32 = 0;
 
@@ -383,6 +395,21 @@ pub fn create_spl_mint(client: &RpcClient, authority: &Keypair) -> Result<Pubkey
         .send_and_confirm_transaction(&tx)
         .context("create mint")?;
     Ok(mint.pubkey())
+}
+
+/// A System-program `transfer` of `lamports` from `from` (signer) to `to`.
+/// Used to top up a freshly-`init`'d PDA over the rent floor — see
+/// [`RENT_TOPUP_LAMPORTS`].
+pub fn system_transfer_ix(from: &Pubkey, to: &Pubkey, lamports: u64) -> Instruction {
+    let mut data = Vec::with_capacity(12);
+    // System instruction index 2 = Transfer, then the u64 lamports.
+    data.extend_from_slice(&2u32.to_le_bytes());
+    data.extend_from_slice(&lamports.to_le_bytes());
+    Instruction::new_with_bytes(
+        SYSTEM_PROGRAM_ID,
+        &data,
+        vec![AccountMeta::new(*from, true), AccountMeta::new(*to, false)],
+    )
 }
 
 /// Request `lamports` from the validator faucet for `to` and block until

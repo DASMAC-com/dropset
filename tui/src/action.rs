@@ -249,7 +249,13 @@ fn do_init(
     let fee_mint = chain::create_spl_mint(client, wallet).context("create fee mint")?;
     log.log(format!("fee mint: {fee_mint}"));
     let ix = chain::build_init_ix(&wallet.pubkey(), &fee_mint);
-    let sig = chain::send(client, wallet, &[wallet], &[ix]).context("send init")?;
+    // Trailing rent top-up for the registry PDA — see RENT_TOPUP_LAMPORTS.
+    let topup = chain::system_transfer_ix(
+        &wallet.pubkey(),
+        &chain::registry_pda(),
+        chain::RENT_TOPUP_LAMPORTS,
+    );
+    let sig = chain::send(client, wallet, &[wallet], &[ix, topup]).context("send init")?;
     log.log(format!("init: {sig}"));
     log.accounts_changed();
     Ok("Registry initialized".into())
@@ -278,7 +284,13 @@ fn do_create_market(
         &registry.fee_mint,
         &registry.fee_token_program,
     );
-    let sig = chain::send(client, wallet, &[wallet], &[ix]).context("send create_market")?;
+    // Trailing rent top-up for the market PDA — see RENT_TOPUP_LAMPORTS.
+    let topup = chain::system_transfer_ix(
+        &wallet.pubkey(),
+        &chain::market_pda(&base_mint, &quote_mint),
+        chain::RENT_TOPUP_LAMPORTS,
+    );
+    let sig = chain::send(client, wallet, &[wallet], &[ix, topup]).context("send create_market")?;
     log.log(format!("create_market: {sig}"));
     log.accounts_changed();
     Ok("Market created".into())
@@ -302,7 +314,14 @@ fn do_create_vault(
         &registry.fee_mint,
         &registry.fee_token_program,
     );
-    let sig = chain::send(client, wallet, &[wallet], &[ix]).context("send create_vault")?;
+    // Trailing rent top-up for the market PDA, which create_vault grows —
+    // see RENT_TOPUP_LAMPORTS.
+    let topup = chain::system_transfer_ix(
+        &wallet.pubkey(),
+        &market.address,
+        chain::RENT_TOPUP_LAMPORTS,
+    );
+    let sig = chain::send(client, wallet, &[wallet], &[ix, topup]).context("send create_vault")?;
     log.log(format!("create_vault: {sig}"));
     log.accounts_changed();
     Ok("Vault created".into())
