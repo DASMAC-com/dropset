@@ -82,6 +82,25 @@ fn leader_may_revoke_delegation_to_self() {
 }
 
 #[test]
+fn leader_may_rotate_on_a_frozen_vault() {
+    // SetQuoteAuthority is leader-only (architecture.md § Caller mechanics →
+    // Authority), NOT a quote-mutating ix, so — unlike SetReferencePrice /
+    // SetLiquidityProfile — it is deliberately NOT gated on `!frozen`.
+    // Freezing must not trap a leader from rotating away a compromised quote
+    // authority; the rotated-in key still can't quote (those paths reject a
+    // frozen vault), so the rotation is harmless. This pins that contract
+    // against a future change that might wrongly add a frozen check.
+    let mut f = fixture_with_vault();
+    let leader = f.authority.insecure_clone();
+    f.freeze_vault(&leader, 0).expect("admin freezes vault");
+
+    let new_authority = Pubkey::new_unique();
+    f.set_quote_authority(&leader, 0, new_authority)
+        .expect("leader may rotate quote authority even on a frozen vault");
+    assert_eq!(f.vault(0).quote_authority, new_authority.to_bytes().into());
+}
+
+#[test]
 fn rejects_non_leader() {
     let mut f = fixture_with_vault();
     // The incumbent quote authority is the leader here; prove that even a
