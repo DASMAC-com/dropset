@@ -1,6 +1,6 @@
 ---
 name: audit-loop
-description: One iteration of a continuous background platform audit — pick a unit of work (a randomly-chosen non-generated file, or a whole-system architecture pass fanned out per subsystem and per inter-subsystem interface), audit files by delegating to the `audit-scope` engine and run the whole-system lenses with an adversarial cross-check, dedup against open or resolved Linear issues, then file one self-contained Backlog issue per finding and announce. Stops itself after a configurable number of filings (default 20) and hands staging to `stage-backlog`. Drive it with `/loop audit-loop`.
+description: One iteration of a continuous background platform audit — pick a unit of work (a randomly-chosen non-generated file, or a whole-system architecture pass fanned out per subsystem and per inter-subsystem interface), audit files by delegating to the `audit-scope` engine and run the whole-system lenses with an adversarial cross-check, dedup against open or resolved Linear issues, then file one self-contained Backlog issue per finding, fold it into the Task Staging document via stage-backlog's incremental mode, and announce. Stops itself after a configurable number of filings (default 20). Drive it with `/loop audit-loop`.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -454,7 +454,16 @@ own worktree (literal newlines, not `\n`):
 
 After each `save_issue`, increment the in-context
 `filed_total` by one — it drives the stop-after-cap
-condition in step 2.
+condition in step 2 — and **fold the new issue into the
+Task Staging document incrementally**: invoke the
+`stage-backlog` skill (via the Skill tool) in its
+**incremental** mode, passing the just-filed `ENG-###`
+id(s) (the whole union, when you filed a combined
+issue). This keeps the plan roughly current as findings
+land, instead of waiting for one heavy re-stage at the
+end. It is best-effort chip placement, not a global
+regroup — the next full `stage-backlog` reconciles
+(step 11).
 
 **WHOLE-SYSTEM findings** are filed the same way (plain
 Backlog issue, same IDs, no parent) but as **one
@@ -514,24 +523,23 @@ wait for the next invocation). Otherwise stop so `/loop`
 re-invokes immediately for the next iteration — no
 timer, no wait.
 
-**11. Wind down — hand staging to `stage-backlog` and
-stop.** Reached only when `filed_total >= cap` (from the
-step 2 gate, or directly from step 10 when the capping
-filing just landed). This is the loop's terminal step:
-it does no auditing, and it does **not** author the PR
-plan itself — staging is `stage-backlog`'s job.
+**11. Wind down and stop.** Reached only when
+`filed_total >= cap` (from the step 2 gate, or directly
+from step 10 when the capping filing just landed). This
+is the loop's terminal step: it does no auditing.
 
-- **Invoke the `stage-backlog` skill** (via the Skill
-  tool) to (re)stage the Backlog onto the **Task
-  Staging** document: it reads every Backlog issue —
-  including the ones this campaign just filed — groups
-  them into the fewest parallel, file-disjoint PR
-  sessions, merges the issues that belong in one PR, and
-  rewrites the document. All the wave/session/merge logic
-  lives there, not here.
+The Task Staging document was kept roughly current
+**incrementally** as each finding was filed (step 8), so
+the loop does **not** run a heavy full re-stage here.
+The authoritative reconcile — a full `stage-backlog`
+that re-derives the grouping and merges the issues that
+belong in one PR — is the **next `housekeeping` morning
+pass**'s job (or a manual `/stage-backlog` on demand);
+incremental placement is the fast in-between, and the
+full pass is the source of truth.
 
 - **Stop the loop.** Print a final line —
-  `DONE audit-loop | filed_total <t> | staged via stage-backlog`
+  `DONE audit-loop | filed_total <t> | staged incrementally`
   — and do **not** begin another iteration. The loop is
   complete; `/loop` should not re-invoke. To run another
   campaign later, just invoke `/loop audit-loop` again —

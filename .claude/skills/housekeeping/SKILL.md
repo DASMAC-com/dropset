@@ -1,17 +1,19 @@
 ---
 name: housekeeping
-description: One pass of day-to-day repo upkeep, run from the base repo root — fast-forward main so the run uses the latest skills, prune the worktrees of already-merged PRs, drain the Linear Permissions inbox doc via firm-perms (propose-only), and restage the backlog. The cspell dictionary check is opt-in (pass `cspell`) and off by default. Drive it with `/loop 30m housekeeping` while developing, or run it once at the start of the day.
+description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, prune the worktrees of already-merged PRs, drain the Linear Permissions inbox doc via firm-perms (propose-only), restage the backlog, then offer (default yes) to kick off the audit-loop as a background campaign and exit. The cspell dictionary check is opt-in (pass `cspell`) and off by default. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
 disable-model-invocation: false
 user-invocable: true
 ---
 
 # `housekeeping`
 
-A single iteration of routine repo upkeep — the
-chores that pile up while you develop but don't
-belong to any one PR. It first fast-forwards `main`
-so the pass runs on the latest committed skills, then
-does three things:
+The **one thing Alex fires up when he arrives**: it
+does the morning upkeep — the chores that pile up while
+you develop but don't belong to any one PR — then kicks
+off the audit campaign in the background so that, by the
+afternoon, there's a ready-to-fire task sequence. It
+first fast-forwards `main` so the pass runs on the
+latest committed skills, then:
 
 1. **Prune merged worktrees** — remove the local
    worktree (and branch) of every PR that has
@@ -24,6 +26,15 @@ does three things:
 1. **Restage the backlog** — hand off to
    `stage-backlog` so the Task Staging document
    reflects everything currently open.
+1. **Kick off the audit-loop** — offer (default yes) to
+   launch the background audit campaign, then **exit**.
+
+The morning entry point is a **single one-shot run**:
+upkeep → background audit-loop → exit. It does *not*
+stay on a timer; the `/loop 30m housekeeping` cadence is
+there for ad-hoc upkeep while you work, but the morning
+driver is the one-shot. Each invocation is one pass and
+safe to repeat.
 
 **Opt-in: spelling-escape hygiene.** The `cspell-audit`
 check is **not** part of the default pass — it runs only
@@ -59,9 +70,14 @@ edits** of its own: its only writes are removing
 merged worktrees, filing / staging Linear issues, and
 annotating the Linear Permissions doc with recommended
 dispositions (it never writes `settings.local.json`
-unattended).
-Drive it on a timer while you work, or run it by
-hand:
+unattended). Its last step *launches* the audit-loop as
+a background task (step 6), but housekeeping itself
+makes no source edit — the campaign only files Linear
+issues.
+
+Run it **once when you arrive** for the full
+morning-driver flow (it launches the background campaign
+and exits), or drive ad-hoc upkeep on a timer:
 
 ```sh
 /loop 30m housekeeping
@@ -282,9 +298,42 @@ says so and this step is a no-op.
 the Task Staging document from the current open
 Backlog — including anything steps 3–4 just filed. All
 the grouping / merge logic lives there; this skill
-just triggers it.
+just triggers it. This **full** re-stage is the
+authoritative reconcile that converges whatever the
+previous morning's audit-loop folded in incrementally.
 
-**6. Report.** Print a short summary:
+**6. Kick off the audit-loop (offer, default yes).**
+The morning's last act: with upkeep done, offer to
+start the background audit campaign so Alex can do
+admin / minutia while it runs. Ask via
+**`AskUserQuestion`** — the same TUI-selector handoff
+pattern as `init-pr` / `review-pr` (per `CLAUDE.md` →
+"The PR workflow and skill handoffs") — offering
+"yes, start the audit-loop (Recommended)" (**first**,
+the default) and "skip".
+
+- On **yes**, launch the audit-loop **in the
+  background** (`run_in_background`): start a background
+  task that drives `/loop audit-loop`, passing the
+  **finding cap** as its argument (default 20 — use a
+  different value only if this invocation supplied one).
+  The campaign files findings, folds each into the Task
+  Staging document incrementally (`audit-loop` step 8),
+  and fires a high-severity `PushNotification` only when
+  something warrants interrupting him. Then **this
+  housekeeping pass exits** — it does not wait on the
+  campaign.
+- On **skip**, end the pass without launching anything.
+
+**The kickoff is a one-shot, not a loop.** This run
+does the upkeep, launches the audit-loop as a background
+task, and exits — it does *not* stay on a timer. During
+the morning only the audit-loop (folding findings in via
+its incremental staging) writes the Task Staging
+document, so there's no second loop to coordinate; the
+next morning's step 5 is the full reconcile.
+
+**7. Report.** Print a short summary:
 
 - `main`: fast-forwarded to the latest, or left at its
   current commit (with the reason) if the pull couldn't
@@ -307,3 +356,6 @@ just triggers it.
   why the step was skipped (e.g. a missing env var).
 - Backlog staging: that `stage-backlog` ran, or why
   it was skipped (e.g. a missing env var).
+- Audit-loop: launched in the background with finding
+  cap N (so the campaign runs while you work), or
+  skipped at the prompt.
