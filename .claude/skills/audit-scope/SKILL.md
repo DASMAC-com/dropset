@@ -65,14 +65,14 @@ Optional (ask on a direct run if not provided):
 
 1. **Classify the scope by platform kind.** Match the
    scope's paths to a platform/subsystem so the right
-   checklist runs — this is the component-scope logic the
-   audit shares with `audit-loop`. When invoked by the
-   loop, read its discovered registry
-   (`.audit-loop/components.json`) and take the `kind` of
-   the component the paths map to; on a direct run, infer
-   the kind from the paths and build manifests
-   (`Cargo.toml`, `package.json`, `Dockerfile`,
-   `.github/workflows/`):
+   checklist runs — this is the subsystem-scope logic the
+   audit shares with `audit-loop`. Read the **Audit
+   registry** in `CLAUDE.md` (→ "Audit registry") and take
+   the `kind` of the subsystem whose `roots` the paths map
+   to; if the paths match no registered subsystem (or on a
+   direct run over something new), infer the kind from the
+   paths and build manifests (`Cargo.toml`,
+   `package.json`, `Dockerfile`, `.github/workflows/`):
 
    - **on-chain program** (Rust / Anchor / Solana)
    - **frontend** (TS / React)

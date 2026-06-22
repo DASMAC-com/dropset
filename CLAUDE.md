@@ -503,3 +503,70 @@ the brief **leaked** — the agent emitted shell the brief forbids.
 That's a prompt to tighten, not a rule to allow-list; `firm-perms`
 sets such approvals aside and names the emitting agent so its prompt
 gets fixed at the source.
+
+## Audit registry
+
+`audit-loop` (and `audit-scope`) read their coverage map from here —
+the **subsystems** to range over, the **interfaces** between them
+where contract drift hides, and the **skip-globs** of generated /
+vendored paths never worth auditing. These lists live in `CLAUDE.md`
+(committed, shared) rather than in per-worktree state, and `review-pr`
+refreshes them on every run: when a diff introduces a new subsystem, a
+new seam between subsystems, or a new generated-file family, it
+appends the entry here so the registry stays current as the system
+grows. Keep all three blocks lint-clean (MD013 80-col, mdformat).
+
+**Subsystems** — `name (kind, risk): roots`. `kind` selects the
+per-platform audit checklist; `risk` weights selection.
+
+```txt
+program (solana-program, high): programs/dropset/src/**
+sdk-math (rust-lib, high): sdk/math-core/src/**, sdk/interface/src/**
+sdk-clients (gen-client, med): sdk/rs/src/**, sdk/ts/src/**, sdk/codama/**
+frontend (web-app, med): frontend/**
+docs (specs, med): docs/**
+ci-infra (ci, low): .github/**, cfg/**, Makefile, Anchor.toml
+```
+
+**Inter-subsystem interfaces** — the seams where contract drift
+hides; `A <-> B: the contract that crosses the boundary`.
+
+```txt
+program <-> sdk-clients: the Anchor IDL (sdk/idl/dropset.json) is
+  generated from the program; the Rust/TS clients are generated from
+  the IDL — accounts, instructions, and on-chain events (FillEvent)
+  must stay in lockstep.
+program <-> sdk-math: the program depends on the shared math
+  (sdk/math-core, sdk/interface) and must compute identically to it;
+  the conformance vectors (sdk/conformance) pin price/share/quoting
+  parity across the boundary.
+program <-> frontend: the on-chain account/instruction contract in
+  docs/interface.md, which the frontend builds transactions against
+  through the generated clients.
+sdk-math <-> frontend: math-core / interface compiled to WASM (their
+  wasm.rs) and consumed by the frontend for quoting; the TS
+  conformance tests pin that WASM surface.
+```
+
+**Skip-globs** — generated / vendored / binary paths the file audit
+never picks. One glob per line.
+
+```txt
+target/**
+**/node_modules/**
+Cargo.lock
+**/pnpm-lock.yaml
+**/package-lock.json
+**/yarn.lock
+**/*.gen.*
+**/generated/**
+**/idl/**
+sdk/conformance/**
+target/types/**
+frontend/lib/data/*.json
+frontend/public/**
+**/*.png
+**/*.svg
+**/*.min.*
+.audits/**
+```

@@ -440,6 +440,37 @@ is `DASMAC-com/dropset`, so every MCP call takes
    (a regenerated-file commit can still trip whitespace /
    EOF hooks), applying the step-4 fix-and-retry logic.
 
+1. **Refresh the `CLAUDE.md` Audit registry if the diff
+   changed the platform shape.** `audit-loop` reads its
+   subsystems, inter-subsystem interfaces, and skip-globs
+   from the `## Audit registry` section of `CLAUDE.md`
+   (see `CLAUDE.md` → "Audit registry"); that registry is
+   kept current on the PR path — here, on every run.
+   Inspect the diff for any of three additions and, when
+   one is present, **append** the matching entry:
+
+   - a **new subsystem / platform** (a new top-level tree
+     or build manifest the registry doesn't list) → add a
+     `name (kind, risk): roots` line to the subsystems
+     block;
+   - a **new seam between subsystems** (a new contract
+     crossing a boundary — an event schema, a generated
+     surface, a documented interface) → add an
+     `A <-> B: contract` line to the interfaces block;
+   - a **new generated-file family** (a tree or extension
+     the audit should never pick) → add its glob to the
+     skip-globs block.
+
+   **Append only** — never drop an existing entry — and
+   keep the three blocks lint-clean (MD013, mdformat). If
+   the diff introduces none of these, this is a no-op.
+   Commit any change signed:
+
+   ```sh
+   git add CLAUDE.md
+   git commit -S -m "Update audit registry"
+   ```
+
 1. **Run the test suite (mirror CI).** The `Tests`
    workflow runs `make test` and
    `make test-no-teardown`; run both locally so the
