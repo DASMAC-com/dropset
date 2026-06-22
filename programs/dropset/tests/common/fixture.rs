@@ -40,9 +40,9 @@ use dropset::{
         SetDefaultFeeConfig as SetDefaultFeeConfigIx, SetLiquidityProfile as SetLiquidityProfileIx,
         SetMarketFeeConfig as SetMarketFeeConfigIx, SetMinLeaderShare as SetMinLeaderShareIx,
         SetOutsideDepositsApproved as SetOutsideDepositsApprovedIx,
-        SetReferencePrice as SetReferencePriceIx, SetRegistryDefaults as SetRegistryDefaultsIx,
-        SetTakerFee as SetTakerFeeIx, Swap as SwapIx, Withdraw as WithdrawIx,
-        WithdrawLeader as WithdrawLeaderIx,
+        SetQuoteAuthority as SetQuoteAuthorityIx, SetReferencePrice as SetReferencePriceIx,
+        SetRegistryDefaults as SetRegistryDefaultsIx, SetTakerFee as SetTakerFeeIx, Swap as SwapIx,
+        Withdraw as WithdrawIx, WithdrawLeader as WithdrawLeaderIx,
     },
     Level, LiquidityProfile, MarketHeader, Price, RegistryHeader, Vault, VaultDepositorHeader,
     N_LEVELS,
@@ -695,6 +695,29 @@ impl Fixture {
             ],
         );
         send_ixn(&mut self.svm, admin, ix)
+    }
+
+    /// `set_quote_authority` — leader rotates a vault's quoting delegate.
+    /// Leader-only (signer + market, no registry, no event authority).
+    pub fn set_quote_authority(
+        &mut self,
+        signer: &Keypair,
+        vault_idx: u32,
+        new_authority: Pubkey,
+    ) -> Result<(), String> {
+        let ix = Instruction::new_with_bytes(
+            PROGRAM_ID,
+            &SetQuoteAuthorityIx {
+                vault_idx,
+                new_authority,
+            }
+            .data(),
+            vec![
+                AccountMeta::new_readonly(signer.pubkey(), true),
+                AccountMeta::new(self.market, false),
+            ],
+        );
+        send_ixn(&mut self.svm, signer, ix)
     }
 
     /// `set_min_leader_share` — admin retunes a vault's skin-in-the-game

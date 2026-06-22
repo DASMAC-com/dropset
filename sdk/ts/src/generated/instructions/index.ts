@@ -27,6 +27,7 @@ export * from './setLiquidityProfile';
 export * from './setMarketFeeConfig';
 export * from './setMinLeaderShare';
 export * from './setOutsideDepositsApproved';
+export * from './setQuoteAuthority';
 export * from './setReferencePrice';
 export * from './setRegistryDefaults';
 export * from './setTakerFee';

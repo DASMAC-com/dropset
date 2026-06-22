@@ -2088,6 +2088,38 @@
       ]
     },
     {
+      "name": "set_quote_authority",
+      "discriminator": [
+        27
+      ],
+      "accounts": [
+        {
+          "name": "signer",
+          "docs": [
+            "The vault's leader — the only signer this rotation accepts."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market",
+          "docs": [
+            "Market holding the target vault. `mut` for the authority write."
+          ],
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "vault_idx",
+          "type": "u32"
+        },
+        {
+          "name": "new_authority",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
       "name": "set_reference_price",
       "discriminator": [
         5
