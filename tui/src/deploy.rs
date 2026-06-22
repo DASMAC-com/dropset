@@ -42,12 +42,26 @@ pub fn deploy_program(
     )
     .context("fund wallet for deploy")?;
 
-    let mut build = Command::new("make");
-    build.arg("program").current_dir(repo_root);
-    run_streaming(log, "make program", build)?;
+    // Materialize the program keypair from its committed source so anchor
+    // build's program-id check sees keypair == declare_id! (keys/AAAA.json
+    // is canonical; target/deploy/ is a pure build artifact).
+    let program_keypair: PathBuf = repo_root.join("target/deploy/dropset-keypair.json");
+    std::fs::create_dir_all(repo_root.join("target/deploy")).context("create target/deploy")?;
+    std::fs::copy(repo_root.join("keys/AAAA.json"), &program_keypair)
+        .context("stage program keypair")?;
+
+    let mut sync = Command::new("anchor");
+    sync.args(["keys", "sync"]).current_dir(repo_root);
+    run_streaming(log, "anchor keys sync", sync)?;
+
+    // `--no-idl` skips IDL generation, which builds and runs the test suite
+    // to extract the IDL. Deploy only needs the `.so`, and the IDL is
+    // already checked in (sdk/idl/dropset.json).
+    let mut build = Command::new("anchor");
+    build.args(["build", "--no-idl"]).current_dir(repo_root);
+    run_streaming(log, "anchor build --no-idl", build)?;
 
     let so: PathBuf = repo_root.join("target/deploy/dropset.so");
-    let program_keypair: PathBuf = repo_root.join("target/deploy/dropset-keypair.json");
     let mut deploy = Command::new("solana");
     deploy
         .args(["program", "deploy"])
@@ -65,6 +79,30 @@ pub fn deploy_program(
 
     log.accounts_changed();
     Ok("Program deployed".into())
+}
+
+/// Close the deployed program, reclaiming its (program-data) rent to
+/// `recipient`. Signed by the wallet at `wallet_path` (the upgrade
+/// authority). The program account is closed, so the phase drops back to
+/// `ProgramAbsent` — a fresh deploy needs a wiped validator.
+pub fn close_program(
+    log: &Logger,
+    rpc_url: &str,
+    wallet_path: &str,
+    recipient: &Pubkey,
+) -> Result<()> {
+    let mut close = Command::new("solana");
+    close
+        .args(["program", "close"])
+        .arg(dropset_sdk::DROPSET_ID.to_string())
+        .arg("--recipient")
+        .arg(recipient.to_string())
+        .arg("--keypair")
+        .arg(wallet_path)
+        .arg("--url")
+        .arg(rpc_url)
+        .arg("--bypass-warning");
+    run_streaming(log, "solana program close", close)
 }
 
 /// Run `cmd`, streaming both stdout and stderr into the log line-by-line.

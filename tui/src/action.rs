@@ -81,7 +81,12 @@ impl Action {
                 phase,
                 Phase::RegistryAbsent | Phase::MarketAbsent | Phase::VaultAbsent
             ),
-            Action::Teardown => matches!(phase, Phase::VaultAbsent | Phase::Ready),
+            // Reclaim whatever exists from the program onward — program
+            // rent, the registry + fee vault, and the market if present.
+            Action::Teardown => matches!(
+                phase,
+                Phase::RegistryAbsent | Phase::MarketAbsent | Phase::VaultAbsent | Phase::Ready
+            ),
             Action::Wipe => true,
         }
     }
@@ -103,7 +108,7 @@ impl Action {
             Action::CreateVault if below(phase, Phase::VaultAbsent) => "create the market first",
             Action::CreateVault => "vault already exists",
             Action::BootstrapAll => "already bootstrapped",
-            Action::Teardown => "nothing to tear down yet",
+            Action::Teardown => "deploy the program first",
             Action::OpenExplorer | Action::Wipe => "",
         }
     }
@@ -190,7 +195,7 @@ pub fn dispatch(action: Action, ctx: &JobContext, state: &ChainState, tx: Sender
         Action::Teardown => {
             job::spawn(tx, "Teardown", move |log| {
                 let client = chain::rpc(&rpc_url);
-                do_teardown(&client, &wallet, log)
+                do_teardown(&client, &wallet, &wallet_path, &rpc_url, log)
             });
         }
         Action::OpenExplorer => {
@@ -327,22 +332,75 @@ fn do_create_vault(
     Ok("Vault created".into())
 }
 
-/// Admin teardown in the verified order, refunding all rent to the wallet:
+/// Reclaim every rent-bearing artifact that currently exists, in dependency
+/// order — so it works at any phase from `RegistryAbsent` on. A live market
+/// is drained and closed first (per-depositor `force_withdraw_depositor` →
 /// per-leader `force_withdraw_leader` → per-leg `close_market_treasury` →
-/// `close_market` → `close_registry_fee_vault` → `close_registry`. (The
-/// per-depositor `force_withdraw_depositor` step is a no-op here — the TUI
-/// never opens outside depositors.) Logs the reclaimed-rent lamports delta.
+/// `close_market`), then the registry fee vault and registry, and finally
+/// the program itself (reclaiming its program-data rent). All rent is
+/// refunded to the wallet; logs the lamports delta. Each layer is guarded by
+/// existence, so a partial bootstrap tears down cleanly.
 fn do_teardown(
     client: &solana_client::rpc_client::RpcClient,
     wallet: &Keypair,
+    wallet_path: &str,
+    rpc_url: &str,
     log: &Logger,
 ) -> Result<String> {
     let admin = wallet.pubkey();
     let state = accounts::poll(client, &admin);
-    let registry = state.registry.context("registry not found")?;
-    let market = state.market.context("market not found")?;
     let before = client.get_balance(&admin).unwrap_or(0);
 
+    match &state.market {
+        None => log.log("No market to tear down."),
+        Some(market) => do_teardown_market(client, wallet, market, log)?,
+    }
+
+    match &state.registry {
+        None => log.log("No registry to tear down."),
+        Some(registry) => {
+            log.log("close_registry_fee_vault");
+            let ix = chain::build_close_registry_fee_vault_ix(
+                &admin,
+                &registry.fee_mint,
+                &registry.fee_token_program,
+                &admin,
+            );
+            let sig = chain::send(client, wallet, &[wallet], &[ix])
+                .context("close_registry_fee_vault")?;
+            log.log(format!("  {sig}"));
+
+            log.log("close_registry");
+            let ix = chain::build_close_registry_ix(&admin, &admin);
+            let sig = chain::send(client, wallet, &[wallet], &[ix]).context("close_registry")?;
+            log.log(format!("  {sig}"));
+            log.accounts_changed();
+        }
+    }
+
+    if state.program_deployed {
+        log.log("Closing program to reclaim program rent…");
+        deploy::close_program(log, rpc_url, wallet_path, &admin)?;
+        log.accounts_changed();
+    }
+
+    let after = client.get_balance(&admin).unwrap_or(0);
+    let reclaimed = after.saturating_sub(before);
+    Ok(format!(
+        "Teardown complete — reclaimed {:.4} SOL in rent",
+        reclaimed as f64 / LAMPORTS_PER_SOL as f64
+    ))
+}
+
+/// Drain and close a live market: depositors → leaders → treasuries →
+/// `close_market`, refunding all rent to the admin wallet.
+fn do_teardown_market(
+    client: &solana_client::rpc_client::RpcClient,
+    wallet: &Keypair,
+    market: &accounts::MarketView,
+    log: &Logger,
+) -> Result<()> {
+    let admin = wallet.pubkey();
     for (sector, owner) in &market.depositors {
         log.log(format!(
             "force_withdraw_depositor sector {sector} owner {owner}"
@@ -414,27 +472,5 @@ fn do_teardown(
     let sig = chain::send(client, wallet, &[wallet], &[ix]).context("close_market")?;
     log.log(format!("  {sig}"));
     log.accounts_changed();
-
-    log.log("close_registry_fee_vault");
-    let ix = chain::build_close_registry_fee_vault_ix(
-        &admin,
-        &registry.fee_mint,
-        &registry.fee_token_program,
-        &admin,
-    );
-    let sig = chain::send(client, wallet, &[wallet], &[ix]).context("close_registry_fee_vault")?;
-    log.log(format!("  {sig}"));
-
-    log.log("close_registry");
-    let ix = chain::build_close_registry_ix(&admin, &admin);
-    let sig = chain::send(client, wallet, &[wallet], &[ix]).context("close_registry")?;
-    log.log(format!("  {sig}"));
-    log.accounts_changed();
-
-    let after = client.get_balance(&admin).unwrap_or(0);
-    let reclaimed = after.saturating_sub(before);
-    Ok(format!(
-        "Teardown complete — reclaimed {:.6} SOL in rent",
-        reclaimed as f64 / LAMPORTS_PER_SOL as f64
-    ))
+    Ok(())
 }

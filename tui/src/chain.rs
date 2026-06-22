@@ -429,6 +429,12 @@ pub fn airdrop(client: &RpcClient, to: &Pubkey, lamports: u64) -> Result<()> {
 
 /// Sign `ixs` with `signers` (fee payer = `payer`) and send, confirming at
 /// the client's commitment. Returns the transaction signature as a string.
+///
+/// On failure the error carries the program-log stream: a
+/// `ClientError`'s `Display` drops the logs for a custom-program-error, so
+/// we re-simulate the (already-signed) transaction to recover them — state
+/// is unchanged after a failed send, so the simulation reproduces the same
+/// error and logs.
 pub fn send(
     client: &RpcClient,
     payer: &Keypair,
@@ -437,10 +443,19 @@ pub fn send(
 ) -> Result<String> {
     let blockhash = client.get_latest_blockhash().context("blockhash")?;
     let tx = Transaction::new_signed_with_payer(ixs, Some(&payer.pubkey()), signers, blockhash);
-    let sig = client
-        .send_and_confirm_transaction(&tx)
-        .context("send transaction")?;
-    Ok(sig.to_string())
+    match client.send_and_confirm_transaction(&tx) {
+        Ok(sig) => Ok(sig.to_string()),
+        Err(err) => {
+            let logs = client
+                .simulate_transaction(&tx)
+                .ok()
+                .and_then(|r| r.value.logs)
+                .filter(|l| !l.is_empty())
+                .map(|l| format!("\n{}", l.join("\n")))
+                .unwrap_or_default();
+            Err(anyhow::anyhow!("{err}{logs}"))
+        }
+    }
 }
 
 #[cfg(test)]

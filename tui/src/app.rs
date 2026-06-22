@@ -235,13 +235,17 @@ impl App {
         }
     }
 
-    /// Append a line to the log (and mirror it to the on-disk log),
-    /// trimming the in-memory ring to capacity.
+    /// Append `text` to the log (and mirror it to the on-disk log),
+    /// trimming the in-memory ring to capacity. Multi-line text — e.g. a
+    /// program-log stream folded into one error — is split so each line
+    /// renders on its own row.
     fn log(&mut self, kind: LogKind, text: String) {
         if let Some(file) = self.log_file.as_mut() {
             let _ = writeln!(file, "{text}");
         }
-        self.log.push_back((kind, text));
+        for line in text.split('\n') {
+            self.log.push_back((kind, line.to_string()));
+        }
         while self.log.len() > LOG_CAPACITY {
             self.log.pop_front();
         }
