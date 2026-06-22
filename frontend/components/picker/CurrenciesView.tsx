@@ -530,7 +530,7 @@ function CurrenciesInner() {
   // means each cache notify re-renders with freshly ranked stables without
   // having to thread version counters through deps. When no column is
   // actively sorted, fall back to volume-desc within group + JSON order
-  // across groups (the default ranking that's been in place since ENG-359).
+  // across groups (the established default ranking).
   const grouped =
     sort === null
       ? filtered.map(({ code, stables }) => ({
