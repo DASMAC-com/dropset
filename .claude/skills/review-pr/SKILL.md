@@ -788,15 +788,30 @@ is `DASMAC-com/dropset`, so every MCP call takes
    generalize them. Run this **after** the enqueue,
    **not** gated on the merge landing — the merge resolves
    asynchronously in the queue, so this is the productive
-   thing to do while it does. Invoke
-   `/firm-perms` to collapse the per-worktree and
-   per-arg `permissions.allow` entries into reusable
-   globs and propagate them to the base repo so
-   future worktrees inherit them. This is
-   housekeeping on the gitignored
-   `.claude/settings.local.json` — it does **not**
-   affect the PR diff or its ready state, so run it
-   regardless of the gate or CI outcome.
+   thing to do while it does.
+
+   **Ask first, via `AskUserQuestion`.** This is a
+   skill-to-skill handoff, so gate it on the same TUI
+   selector the merge-queue prompt uses (per `CLAUDE.md` →
+   "The PR workflow and skill handoffs"): ask whether to
+   firm permissions now, offering "yes, run /firm-perms"
+   (**first**, the recommended default) and "skip". This
+   is a second, lighter gate *in front of* `firm-perms`'
+   own propose-then-confirm gate — intentional: the
+   `AskUserQuestion` decides *whether to firm at all this
+   run*; `firm-perms`' internal gate still governs *what
+   gets written*.
+
+   - On **decline**, skip this step and note in the
+     report that permissions were **not** firmed this run.
+   - On **approve**, invoke `/firm-perms` to collapse the
+     per-worktree and per-arg `permissions.allow` entries
+     into reusable globs and propagate them to the base
+     repo so future worktrees inherit them. This is
+     housekeeping on the gitignored
+     `.claude/settings.local.json` — it does **not** affect
+     the PR diff or its ready state, so run it regardless
+     of the gate or CI outcome.
 
    **Account for what the review agents requested.**
    The diff-review and cross-check agents (steps 5–6)
