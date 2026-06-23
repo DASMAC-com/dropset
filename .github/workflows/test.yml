@@ -96,8 +96,9 @@ jobs:
     # prunes the workspace crates (dropset, math-core, interface, sdk) and the
     # ~20 integration test binaries, so they recompile from source every run.
     # With sccache those compiles become cache hits whenever the sources are
-    # unchanged. Wired only onto the nextest steps below (step-level
-    # RUSTC_WRAPPER), never the SBF build (poor fit, already .so-cached).
+    # unchanged. Wired only onto the nextest step below (step-level
+    # RUSTC_WRAPPER); kept off every make target — the SBF build (poor
+    # fit, already .so-cached) and make idl alike.
     - if: |
         needs.changes.outputs.code == 'true'
       uses: 'mozilla-actions/sccache-action@v0.0.10'
