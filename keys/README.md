@@ -46,6 +46,24 @@ check agree. The rest are signer accounts the TUI and bots fund and
 drive. Need more participants (extra takers or makers)? Grind the next
 prefix (`GGGG`, `HHHH`, …) into this directory.
 
+## The mock token mints
+
+The localnet market bootstrap also uses two **fixed mint keypairs**, so the
+traded pair — and therefore the market PDA, seeded on `[base, quote]` —
+lands at the same address on every run. Both are 6-decimal SPL mints whose
+mint authority is the localnet wallet, created fresh against each new
+validator:
+
+| File        | Address | Conventional role         |
+| ----------- | ------- | ------------------------- |
+| `CADC.json` | `CADC…` | base mint (mock CAD coin) |
+| `USDC.json` | `USDC…` | quote mint (mock USDC)    |
+
+These are named in the bootstrap's pair config (`tui/src/market.rs`,
+`MOCK_CADC_USDC`); the vault leader is `EEEE.json` above. Add another pair
+by grinding two more mint prefixes and adding a `PairConfig` that names
+them.
+
 ## Regenerating
 
 Each key was ground with the Solana CLI:

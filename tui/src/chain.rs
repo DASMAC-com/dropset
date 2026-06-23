@@ -10,12 +10,14 @@
 //! orderings in `programs/dropset/tests/common/fixture.rs` so a transposed
 //! field (base where quote belongs) is caught at `cargo test`, not on chain.
 
+// cspell:word idempotently
+
 use anyhow::{Context, Result};
 use dropset_sdk::instructions::{
     CloseMarket, CloseMarketTreasury, CloseRegistry, CloseRegistryFeeVault, CreateMarket,
-    CreateVault, CreateVaultInstructionArgs, ForceWithdrawDepositor,
-    ForceWithdrawDepositorInstructionArgs, ForceWithdrawLeader, ForceWithdrawLeaderInstructionArgs,
-    Init, InitInstructionArgs,
+    CreateVault, CreateVaultInstructionArgs, DepositLeader, DepositLeaderInstructionArgs,
+    ForceWithdrawDepositor, ForceWithdrawDepositorInstructionArgs, ForceWithdrawLeader,
+    ForceWithdrawLeaderInstructionArgs, Init, InitInstructionArgs,
 };
 use dropset_sdk::DROPSET_ID;
 use solana_client::rpc_client::RpcClient;
@@ -199,6 +201,48 @@ pub fn build_create_vault_ix(
     })
 }
 
+/// `deposit_leader` — the vault's `leader` (signer) seeds `(base_in,
+/// quote_in)` atoms from its own ATAs into the market treasuries. The
+/// basket is bounded above by `(base_in, quote_in)`; the leader's ATAs must
+/// already hold the legs (mint to them first). Used by the bootstrap to
+/// open the vault with live inventory.
+#[allow(clippy::too_many_arguments)]
+pub fn build_deposit_leader_ix(
+    leader: &Pubkey,
+    market: &Pubkey,
+    base_mint: &Pubkey,
+    quote_mint: &Pubkey,
+    base_treasury: &Pubkey,
+    quote_treasury: &Pubkey,
+    vault_idx: u32,
+    base_in: u64,
+    quote_in: u64,
+) -> Instruction {
+    DepositLeader {
+        signer: *leader,
+        market: *market,
+        base_mint: *base_mint,
+        quote_mint: *quote_mint,
+        base_token_program: SPL_TOKEN_PROGRAM_ID,
+        quote_token_program: SPL_TOKEN_PROGRAM_ID,
+        signer_base_ata: associated_token_address(leader, base_mint, &SPL_TOKEN_PROGRAM_ID),
+        signer_quote_ata: associated_token_address(leader, quote_mint, &SPL_TOKEN_PROGRAM_ID),
+        market_base_treasury: *base_treasury,
+        market_quote_treasury: *quote_treasury,
+        system_program: SYSTEM_PROGRAM_ID,
+        associated_token_program: ATA_PROGRAM_ID,
+        event_authority: event_authority(),
+        program: DROPSET_ID,
+    }
+    .instruction(DepositLeaderInstructionArgs {
+        vault_idx,
+        base_in,
+        quote_in,
+        max_base_in: base_in,
+        max_quote_in: quote_in,
+    })
+}
+
 // ── Teardown instruction builders ────────────────────────────────────
 
 /// `force_withdraw_depositor` — admin drains `owner`'s position on
@@ -355,12 +399,25 @@ pub fn build_close_registry_ix(admin: &Pubkey, rent_recipient: &Pubkey) -> Instr
 
 // ── Mock mint creation + send ────────────────────────────────────────
 
-/// Create a 6-decimal SPL Token mint owned by `authority` and return its
-/// pubkey. Ports `create_spl_mint` from the test fixture: a
-/// `SystemProgram::CreateAccount` + `InitializeMint2` pair, signed by the
-/// new mint keypair alongside the funding `authority`.
+/// Create a 6-decimal SPL Token mint at a fresh random address owned by
+/// `authority`. The registry fee mint uses this — its address is incidental
+/// (read back from the registry), unlike the traded pair's fixed mints.
 pub fn create_spl_mint(client: &RpcClient, authority: &Keypair) -> Result<Pubkey> {
-    let mint = Keypair::new();
+    create_mint(client, authority, &Keypair::new(), 6)
+}
+
+/// Create an SPL Token mint at `mint`'s address with `decimals`, mint
+/// authority `authority`. Ports the test fixture's `create_spl_mint`: a
+/// `SystemProgram::CreateAccount` + `InitializeMint2` pair, signed by the
+/// `mint` keypair alongside the funding `authority`. The explicit keypair +
+/// decimals let the bootstrap mint the fixed, checked-in pair mints (a
+/// `PairConfig`'s `MintSpec`) at their deterministic addresses.
+pub fn create_mint(
+    client: &RpcClient,
+    authority: &Keypair,
+    mint: &Keypair,
+    decimals: u8,
+) -> Result<Pubkey> {
     let lamports = client
         .get_minimum_balance_for_rent_exemption(MINT_LEN)
         .context("rent for mint account")?;
@@ -381,7 +438,7 @@ pub fn create_spl_mint(client: &RpcClient, authority: &Keypair) -> Result<Pubkey
     );
 
     // InitializeMint2 (index 20): decimals, mint authority, no freeze.
-    let mut mint_data = vec![20u8, 6];
+    let mut mint_data = vec![20u8, decimals];
     mint_data.extend_from_slice(&authority.pubkey().to_bytes());
     mint_data.push(0);
     let init_mint = Instruction::new_with_bytes(
@@ -390,17 +447,60 @@ pub fn create_spl_mint(client: &RpcClient, authority: &Keypair) -> Result<Pubkey
         vec![AccountMeta::new(mint.pubkey(), false)],
     );
 
-    let blockhash = client.get_latest_blockhash().context("blockhash")?;
-    let tx = Transaction::new_signed_with_payer(
-        &[create, init_mint],
-        Some(&authority.pubkey()),
-        &[authority, &mint],
-        blockhash,
-    );
-    client
-        .send_and_confirm_transaction(&tx)
-        .context("create mint")?;
+    send(client, authority, &[authority, mint], &[create, init_mint]).context("create mint")?;
     Ok(mint.pubkey())
+}
+
+/// Mint `amount` atoms of `mint` to `ata` under the SPL Token program;
+/// `authority` must be the mint authority. Used to fund the leader's ATAs
+/// before the bootstrap's seed `deposit_leader`.
+pub fn mint_to(
+    client: &RpcClient,
+    authority: &Keypair,
+    mint: &Pubkey,
+    ata: &Pubkey,
+    amount: u64,
+) -> Result<String> {
+    // SPL Token `MintTo` (index 7): the u64 amount.
+    let mut data = vec![7u8];
+    data.extend_from_slice(&amount.to_le_bytes());
+    let ix = Instruction::new_with_bytes(
+        SPL_TOKEN_PROGRAM_ID,
+        &data,
+        vec![
+            AccountMeta::new(*mint, false),
+            AccountMeta::new(*ata, false),
+            AccountMeta::new_readonly(authority.pubkey(), true),
+        ],
+    );
+    send(client, authority, &[authority], &[ix])
+}
+
+/// Create the associated token account for `(wallet, mint, SPL Token)`
+/// idempotently (ATA program `CreateIdempotent`, index 1), paid by `payer`.
+/// Returns the ATA address. Idempotent so a re-run after a partial bootstrap
+/// doesn't fail on an ATA that already exists.
+pub fn create_ata_idempotent(
+    client: &RpcClient,
+    payer: &Keypair,
+    wallet: &Pubkey,
+    mint: &Pubkey,
+) -> Result<Pubkey> {
+    let ata = associated_token_address(wallet, mint, &SPL_TOKEN_PROGRAM_ID);
+    let ix = Instruction::new_with_bytes(
+        ATA_PROGRAM_ID,
+        &[1u8],
+        vec![
+            AccountMeta::new(payer.pubkey(), true),
+            AccountMeta::new(ata, false),
+            AccountMeta::new_readonly(*wallet, false),
+            AccountMeta::new_readonly(*mint, false),
+            AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
+            AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
+        ],
+    );
+    send(client, payer, &[payer], &[ix]).context("create ATA")?;
+    Ok(ata)
 }
 
 /// A System-program `transfer` of `lamports` from `from` (signer) to `to`.
@@ -609,5 +709,59 @@ mod tests {
         // Neither the fee source nor the leader may alias the admin payer.
         assert_ne!(payer, fee_source);
         assert_ne!(payer, leader);
+    }
+
+    /// Pins the `deposit_leader` ordering against `fixture`'s
+    /// `deposit_leader_as_meta` ix: leader(signer,w) · market(w) ·
+    /// base_mint · quote_mint · base_tp · quote_tp · leader_base(w) ·
+    /// leader_quote(w) · base_treasury(w) · quote_treasury(w) · system ·
+    /// ata · event_authority · program — so a transposed base/quote leg or
+    /// ATA/treasury slot is caught at `cargo test`.
+    #[test]
+    fn deposit_leader_ordering_matches_fixture() {
+        let leader = Pubkey::new_unique();
+        let market = Pubkey::new_unique();
+        let base_mint = Pubkey::new_unique();
+        let quote_mint = Pubkey::new_unique();
+        let base_treasury = Pubkey::new_unique();
+        let quote_treasury = Pubkey::new_unique();
+        let ix = build_deposit_leader_ix(
+            &leader,
+            &market,
+            &base_mint,
+            &quote_mint,
+            &base_treasury,
+            &quote_treasury,
+            0,
+            1_000,
+            2_000,
+        );
+        assert_eq!(
+            metas(&ix),
+            vec![
+                (leader, true, true),
+                (market, false, true),
+                (base_mint, false, false),
+                (quote_mint, false, false),
+                (SPL_TOKEN_PROGRAM_ID, false, false),
+                (SPL_TOKEN_PROGRAM_ID, false, false),
+                (
+                    associated_token_address(&leader, &base_mint, &SPL_TOKEN_PROGRAM_ID),
+                    false,
+                    true
+                ),
+                (
+                    associated_token_address(&leader, &quote_mint, &SPL_TOKEN_PROGRAM_ID),
+                    false,
+                    true
+                ),
+                (base_treasury, false, true),
+                (quote_treasury, false, true),
+                (SYSTEM_PROGRAM_ID, false, false),
+                (ATA_PROGRAM_ID, false, false),
+                (event_authority(), false, false),
+                (DROPSET_ID, false, false),
+            ]
+        );
     }
 }

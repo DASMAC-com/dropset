@@ -1541,6 +1541,7 @@ name = "dropset-tui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytemuck",
  "crossterm",
  "dropset-sdk",
  "open",
