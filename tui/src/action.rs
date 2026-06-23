@@ -13,12 +13,13 @@ use crate::chain;
 use crate::deploy;
 use crate::explorer;
 use crate::job::{self, JobEvent, Logger};
+use crate::market::{self, PairConfig};
 use anyhow::{Context, Result};
 use solana_keypair::Keypair;
 use solana_native_token::LAMPORTS_PER_SOL;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
@@ -186,21 +187,22 @@ pub fn dispatch(action: Action, ctx: &JobContext, state: &ChainState, tx: Sender
         Action::CreateMarket => {
             job::spawn(tx, "Create market", move |log| {
                 let client = chain::rpc(&rpc_url);
-                do_create_market(&client, &wallet, log)
+                do_create_market(&client, &wallet, &repo_root, &market::MOCK_CADC_USDC, log)
             });
         }
         Action::CreateVault => {
             job::spawn(tx, "Create vault", move |log| {
                 let client = chain::rpc(&rpc_url);
-                do_create_vault(&client, &wallet, log)
+                do_create_vault(&client, &wallet, &repo_root, &market::MOCK_CADC_USDC, log)
             });
         }
         Action::BootstrapAll => {
             job::spawn(tx, "Bootstrap all", move |log| {
                 let client = chain::rpc(&rpc_url);
+                let config = &market::MOCK_CADC_USDC;
                 do_init(&client, &wallet, log)?;
-                do_create_market(&client, &wallet, log)?;
-                do_create_vault(&client, &wallet, log)?;
+                do_create_market(&client, &wallet, &repo_root, config, log)?;
+                do_create_vault(&client, &wallet, &repo_root, config, log)?;
                 Ok("Bootstrap complete".into())
             });
         }
@@ -316,22 +318,22 @@ fn do_init(
     Ok("Registry initialized".into())
 }
 
-/// Create the market: mint mock base/quote mints, then `create_market`
-/// charged (and waived, admin) against the registry's stamped fee mint.
+/// Create the market: mint `config`'s fixed base/quote pair, then
+/// `create_market` charged (and waived, admin) against the registry's
+/// stamped fee mint.
 fn do_create_market(
     client: &solana_client::rpc_client::RpcClient,
     wallet: &Keypair,
+    repo_root: &Path,
+    config: &PairConfig,
     log: &Logger,
 ) -> Result<String> {
     ensure_funded(client, &wallet.pubkey(), log);
     let registry = accounts::poll(client, &wallet.pubkey())
         .registry
         .context("registry not found — init first")?;
-    log.log("Creating mock base + quote mints…");
-    let base_mint = chain::create_spl_mint(client, wallet).context("create base mint")?;
-    let quote_mint = chain::create_spl_mint(client, wallet).context("create quote mint")?;
-    log.log(format!("base: {base_mint}"));
-    log.log(format!("quote: {quote_mint}"));
+    let (base_mint, quote_mint) =
+        market::create_pair_mints(client, wallet, repo_root, config, log)?;
     // A distinct (never-read, admin path) fee source — must not alias the
     // payer, or anchor-v2 rejects it as a duplicate mutable account.
     let fee_source = Keypair::new().pubkey();
@@ -355,10 +357,14 @@ fn do_create_market(
     Ok("Market created".into())
 }
 
-/// Create the leader vault on the market via the admin path.
+/// Create the leader vault on the market via the admin path, then bring it
+/// up live — set `config`'s reference price + quote ladder and seed it with
+/// the leader's opening deposit (see [`market::seed_vault`]).
 fn do_create_vault(
     client: &solana_client::rpc_client::RpcClient,
     wallet: &Keypair,
+    repo_root: &Path,
+    config: &PairConfig,
     log: &Logger,
 ) -> Result<String> {
     ensure_funded(client, &wallet.pubkey(), log);
@@ -367,21 +373,21 @@ fn do_create_vault(
     let market = state
         .market
         .context("market not found — create market first")?;
-    // The vault is opened for a distinct leader (not the admin), so admin
-    // teardown's force_withdraw_leader doesn't alias the admin signer; the
-    // fee source likewise must differ from the payer. Neither key needs to
-    // exist on-chain — the leader is stored as an argument and read back
-    // from the slab at teardown.
+    // The vault is opened for `config`'s leader (a distinct role key, not
+    // the admin), so admin teardown's force_withdraw_leader doesn't alias
+    // the admin signer; the fee source likewise must differ from the payer.
+    // The leader also quotes and seeds the vault, so unlike before it must
+    // be a real signer with a known key — not a throwaway pubkey.
+    let leader = market::leader(repo_root, config)?;
     let fee_source = Keypair::new().pubkey();
-    let leader = Keypair::new().pubkey();
-    log.log(format!("vault leader: {leader}"));
+    log.log(format!("vault leader: {}", leader.pubkey()));
     let ix = chain::build_create_vault_ix(
         &wallet.pubkey(),
         &fee_source,
         &market.address,
         &registry.fee_mint,
         &registry.fee_token_program,
-        &leader,
+        &leader.pubkey(),
     );
     // Trailing rent top-up for the market PDA, which create_vault grows —
     // see RENT_TOPUP_LAMPORTS.
@@ -393,7 +399,10 @@ fn do_create_vault(
     let sig = chain::send(client, wallet, &[wallet], &[ix, topup]).context("send create_vault")?;
     log.log(format!("create_vault: {sig}"));
     log.accounts_changed();
-    Ok("Vault created".into())
+    // Bring the vault up quotable + seeded.
+    market::seed_vault(client, wallet, &leader, config, &market, log)?;
+    log.accounts_changed();
+    Ok("Vault created, quoting, and seeded".into())
 }
 
 /// Reclaim every rent-bearing artifact that currently exists, in dependency

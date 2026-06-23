@@ -12,6 +12,7 @@ mod chain;
 mod deploy;
 mod explorer;
 mod job;
+mod market;
 mod ui;
 mod validator;
 

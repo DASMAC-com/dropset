@@ -12,6 +12,9 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+# Zero the `LiquidityProfile` Pod before filling its top-of-book level for
+# the bootstrap quote ladder (matches the SDK's own profile construction).
+bytemuck = "1"
 crossterm = "0.28"
 # The off-chain client: Codama instruction builders (whose AccountMeta
 # ordering is the single source of truth `chain.rs` builds on), the typed
