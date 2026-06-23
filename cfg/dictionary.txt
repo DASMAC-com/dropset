@@ -70,6 +70,7 @@ retune
 retuned
 retunes
 rlib
+rustc
 sbpf
 serde
 significand

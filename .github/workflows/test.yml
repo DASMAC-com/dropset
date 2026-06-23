@@ -2,8 +2,14 @@
 # cspell:word doctests
 # cspell:word dorny
 # cspell:word nextest
+# cspell:word sccache
 env:
   ANCHOR_REV: '2a191379'
+  # Incremental compilation output isn't sccache-cacheable; disable it on CI so
+  # every rustc unit is a content-addressable sccache object instead.
+  CARGO_INCREMENTAL: '0'
+  # Route sccache at GitHub's own Actions cache (no S3/external service).
+  SCCACHE_GHA_ENABLED: 'true'
   SOLANA_VERSION: 'v3.1.9'
 jobs:
   # Decide whether the changed files can affect the Rust test suite. On a
@@ -85,6 +91,16 @@ jobs:
       with:
         anchor-revision: '${{ env.ANCHOR_REV }}'
         solana-version: '${{ env.SOLANA_VERSION }}'
+    # sccache content-addresses each rustc compilation and stores the objects in
+    # GitHub's Actions cache, plugging the hole rust-cache leaves: rust-cache
+    # prunes the workspace crates (dropset, math-core, interface, sdk) and the
+    # ~20 integration test binaries, so they recompile from source every run.
+    # With sccache those compiles become cache hits whenever the sources are
+    # unchanged. Wired only onto the nextest steps below (step-level
+    # RUSTC_WRAPPER), never the SBF build (poor fit, already .so-cached).
+    - if: |
+        needs.changes.outputs.code == 'true'
+      uses: 'mozilla-actions/sccache-action@v0.0.10'
     # rust-cache caches ~/.cargo/{registry,git} plus only the *dependency*
     # build artifacts in target/ (workspace crates are pruned), and re-saves
     # whenever the lockfile/toolchain change — so the cache never freezes at a
@@ -145,7 +161,9 @@ jobs:
     # binary-at-a-time run of `cargo test`, the big win for a suite where
     # each test spins a fresh LiteSVM and redeploys the .so. (No doctests
     # are lost: every doc code fence is ```text.)
-    - if: |
+    - env:
+        RUSTC_WRAPPER: 'sccache'
+      if: |
         needs.changes.outputs.code == 'true'
       name: 'Run tests'
       run: 'cargo nextest run'
@@ -172,6 +190,13 @@ jobs:
       with:
         anchor-revision: '${{ env.ANCHOR_REV }}'
         solana-version: '${{ env.SOLANA_VERSION }}'
+    # sccache content-addresses each rustc compilation into GitHub's Actions
+    # cache, restoring the workspace crates and test binaries that rust-cache
+    # prunes. Wired only onto the nextest step below (step-level RUSTC_WRAPPER),
+    # never the SBF build (poor fit, already .so-cached). See the `test` job.
+    - if: |
+        needs.changes.outputs.code == 'true'
+      uses: 'mozilla-actions/sccache-action@v0.0.10'
     # Shares the `test` job's dep-artifact cache via the same shared-key:
     # the dependency builds are identical across the two feature sets, so a
     # cold no-teardown run warms from that cache and only the dropset crate
@@ -221,7 +246,9 @@ jobs:
     - if: |
         needs.changes.outputs.code == 'true'
       uses: 'taiki-e/install-action@nextest'
-    - if: |
+    - env:
+        RUSTC_WRAPPER: 'sccache'
+      if: |
         needs.changes.outputs.code == 'true'
       name: 'Run feature-off teardown-disabled tests'
       run: 'cargo nextest run --no-default-features --test teardown_disabled'
