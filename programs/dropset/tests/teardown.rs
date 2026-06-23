@@ -290,6 +290,67 @@ fn force_withdraw_leader_rejects_non_admin() {
     common::assert_program_error(&err, dropset::DropsetError::Unauthorized);
 }
 
+/// A vault that was created but never seeded still occupies a sector, so
+/// `active_count > 0` blocks `close_market` — but it has no stake to
+/// drain, and the share guards used to reject the reclaim with
+/// `InsufficientShares` (`0x178e`). `force_withdraw_leader` must instead
+/// treat the zero-stake vault as a no-op-then-reclaim, returning the
+/// sector to the free list so admin teardown can proceed. This drives the
+/// empty-vault path end-to-end: open a vault, never seed it, then
+/// force-withdraw the leader and assert the sector is reclaimed and the
+/// (empty) treasuries then close so `close_market` clears.
+#[test]
+fn force_withdraw_leader_reclaims_empty_vault() {
+    let mut f = Fixture::bootstrap();
+    let admin = f.authority.insecure_clone();
+    let leader = f.funded_keypair(10 * common::SIGNER_FUNDING_LAMPORTS);
+    let rr = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS).pubkey();
+
+    // Open a vault on the leader's behalf and stop — no reference price,
+    // no ladder, no leader seed. The vault occupies sector 0 with zero
+    // stake.
+    f.create_vault(0, leader.pubkey(), true, leader.pubkey())
+        .expect("admin opens an empty vault");
+    let v = f.vault(0);
+    assert_eq!(v.total_shares.get(), 0, "vault never seeded");
+    assert_eq!(v.leader_shares.get(), 0);
+    assert_eq!(f.market_header().active_count.get(), 1, "sector occupied");
+
+    // Force-withdrawing the leader of an empty vault must not error on the
+    // share guards — it reclaims the sector instead.
+    f.force_withdraw_leader(&admin, 0, &leader.pubkey())
+        .expect("force_withdraw_leader reclaims an empty vault");
+
+    // Sector reclaimed to the free DLL: zeroed leader, off the active
+    // list, free head pointing at it.
+    let v = f.vault(0);
+    assert_eq!(
+        v.leader,
+        Pubkey::default().to_bytes().into(),
+        "sector reclaimed — leader zeroed"
+    );
+    let h = f.market_header();
+    assert_eq!(h.active_count.get(), 0, "active count dropped to zero");
+    assert_eq!(h.head.get(), dropset::NULL_SECTOR, "active list empty");
+    assert_eq!(h.free_head.get(), 0, "sector 0 reclaimed onto free list");
+
+    // An empty vault never funded the treasuries, so they close cleanly
+    // and `close_market` then clears — the whole point of the reclaim.
+    let (base_mint, quote_mint) = (f.base_mint, f.quote_mint);
+    let (base_treasury, quote_treasury) = (f.base_treasury, f.quote_treasury);
+    let market = f.market;
+    f.close_market_treasury(&admin, &base_mint, &base_treasury, &rr)
+        .expect("close base treasury");
+    f.close_market_treasury(&admin, &quote_mint, &quote_treasury, &rr)
+        .expect("close quote treasury");
+    f.close_market(&admin, &rr).expect("close market");
+    assert!(
+        !exists(&f.svm, &market),
+        "market closed after empty reclaim"
+    );
+    assert_eq!(f.registry_market_count(), 0);
+}
+
 /// Ordering pre-condition: a market with open treasuries cannot be
 /// closed — the treasuries must be drained and closed first.
 #[test]

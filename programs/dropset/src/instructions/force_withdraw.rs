@@ -24,6 +24,13 @@
 //! `force_withdraw_leader` runs `total_shares == leader_shares` and the
 //! leader exits to zero. Draining the last leader share is exactly the
 //! point of the instruction.
+//!
+//! A vault that was created but never seeded still occupies a sector, so
+//! `active_count > 0` keeps `close_market` from running — yet it has no
+//! stake to drain. `force_withdraw_leader` handles this empty case as a
+//! no-op-then-reclaim: a zero-`total_shares` vault is returned straight to
+//! the free list (`active_count--`) without a transfer, so admin teardown
+//! can reclaim an empty vault rather than deadlocking on it.
 
 use anchor_lang_v2::{address_eq, prelude::*};
 #[allow(unused_imports)]
@@ -357,7 +364,34 @@ impl ForceWithdrawLeader {
             address_eq(&leader, &leader_addr),
             DropsetError::Unauthorized
         );
-        require!(total_shares > 0, DropsetError::InsufficientShares);
+
+        // An empty (created-but-never-seeded) vault still occupies a
+        // sector, so `active_count > 0` blocks `close_market` — yet there
+        // is nothing to drain, and the share guards below would reject it
+        // with `InsufficientShares`. Treat the zero-stake case as a
+        // no-op-then-reclaim: return the sector to the free list
+        // (`active_count--`) and exit with a zero-valued `WithdrawEvent`,
+        // so admin teardown can reclaim an empty vault. `total_shares == 0`
+        // implies no inventory, so no transfer or realize is needed.
+        if total_shares == 0 {
+            let market_addr = *self.market.address();
+            self.market.reclaim_sector(vault_idx)?;
+            let withdraw_event = WithdrawEvent {
+                market: market_addr,
+                sector_idx: vault_idx,
+                depositor: leader_addr,
+                is_leader: true,
+                shares_in: 0,
+                base_out: 0,
+                quote_out: 0,
+                total_shares_after: 0,
+                leader_shares_after: 0,
+                base_atoms_after: 0,
+                quote_atoms_after: 0,
+                realized_pnl_delta: 0,
+            };
+            return Ok((None, withdraw_event));
+        }
 
         // Realize first (spec). No-op on frozen vaults (HWM pinned).
         let realize_outcome = {
