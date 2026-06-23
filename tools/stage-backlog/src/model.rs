@@ -48,14 +48,9 @@ pub fn parse_number(id: &str) -> Option<u64> {
 pub fn parse_touches(description: &str) -> Vec<String> {
     let mut out = Vec::new();
     for line in description.lines() {
-        let line = line.trim();
-        // Tolerate a single leading list marker, e.g. "- **Touches**: …"
-        // (without eating the bold `**` that follows).
-        let line = line
-            .strip_prefix("- ")
-            .or_else(|| line.strip_prefix("* "))
-            .unwrap_or(line);
-        if let Some(rest) = line.strip_prefix("**Touches**:") {
+        // A single leading list marker ("- **Touches**: …") is tolerated by
+        // the shared prefix stripper, without eating the bold `**`.
+        if let Some(rest) = strip_field_prefix(line, "**Touches**:") {
             for glob in rest.split(',') {
                 let glob = glob.trim().trim_matches('`').trim();
                 if !glob.is_empty() {
@@ -65,6 +60,50 @@ pub fn parse_touches(description: &str) -> Vec<String> {
         }
     }
     out
+}
+
+/// Pull every `**Fingerprint**:` value off a description, one per line (a
+/// merged issue carries several). Unlike `**Touches**:`, a fingerprint is a
+/// single `<basename>:<slug>` token, not a comma-separated list, so the whole
+/// trimmed remainder of the line is the value.
+pub fn parse_fingerprints(description: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in description.lines() {
+        if let Some(rest) = strip_field_prefix(line, "**Fingerprint**:") {
+            let value = rest.trim();
+            if !value.is_empty() {
+                out.push(value.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// Strip a structured-field prefix (`**Touches**:`, `**Fingerprint**:`) from a
+/// line, tolerating a single leading list marker (`- ` / `* `) and surrounding
+/// whitespace, and return the remainder. `None` when the line isn't that
+/// field. Shared by the field parsers and the merge fold's line stripper.
+fn strip_field_prefix<'a>(line: &'a str, field: &str) -> Option<&'a str> {
+    let line = line.trim();
+    let line = line
+        .strip_prefix("- ")
+        .or_else(|| line.strip_prefix("* "))
+        .unwrap_or(line);
+    line.strip_prefix(field)
+}
+
+/// Drop every `**Touches**:` / `**Fingerprint**:` line from a description so a
+/// merge fold can re-emit the unified set once at the end instead of leaving a
+/// member's own field lines scattered through the folded body.
+pub fn strip_field_lines(description: &str) -> String {
+    let kept: Vec<&str> = description
+        .lines()
+        .filter(|line| {
+            strip_field_prefix(line, "**Touches**:").is_none()
+                && strip_field_prefix(line, "**Fingerprint**:").is_none()
+        })
+        .collect();
+    kept.join("\n")
 }
 
 /// A glob counts as skill-suite when it names `CLAUDE.md` or sits under
@@ -149,6 +188,31 @@ mod tests {
     #[test]
     fn no_touches_is_empty() {
         assert!(parse_touches("**What**: nothing structured").is_empty());
+    }
+
+    #[test]
+    fn parses_fingerprints_one_per_line() {
+        let desc = "**Fingerprint**: swap.rs:nonce-overflow\n\
+                    body text\n\
+                    - **Fingerprint**: plan.rs:also-after\n";
+        assert_eq!(
+            parse_fingerprints(desc),
+            vec!["swap.rs:nonce-overflow", "plan.rs:also-after"]
+        );
+        assert!(parse_fingerprints("no fingerprint here").is_empty());
+    }
+
+    #[test]
+    fn strips_field_lines_keeping_prose() {
+        let desc = "**What**: a thing\n\
+                    **Fingerprint**: a.rs:x\n\
+                    middle prose\n\
+                    **Touches**: a/, b/\n\
+                    tail";
+        assert_eq!(
+            strip_field_lines(desc),
+            "**What**: a thing\nmiddle prose\ntail"
+        );
     }
 
     #[test]

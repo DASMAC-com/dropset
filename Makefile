@@ -137,6 +137,9 @@ lint:
 # LINEAR_PROJECT_ID, and LINEAR_TASK_STAGING_DOC_ID from the environment.
 # Pass ARGS=--dry-run to print the tree to stdout without writing the doc:
 # `make stage-backlog ARGS=--dry-run`.
+# The merge subcommand folds a same-PR group onto its canonical and closes the
+# rest as duplicates (preview first with --dry-run):
+# `make stage-backlog ARGS="merge --dry-run ENG-1,ENG-2"`.
 stage-backlog:
 	cargo run -p dropset-stage-backlog -- $(ARGS)
 

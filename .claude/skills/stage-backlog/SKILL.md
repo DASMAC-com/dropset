@@ -1,6 +1,6 @@
 ---
 name: stage-backlog
-description: One iteration of keeping the Dropset Task Staging document in sync with the Linear Backlog. The deterministic core — read every open Backlog issue, build the dependency tree from declared blockedBy/blocks edges + file overlap, and rewrite the chips-only Task Staging document — runs as the committed `dropset-stage-backlog` binary (`make stage-backlog`). The skill drives that binary and keeps the agent for the two things a tool can't do: the prose merge of issues that belong in one PR, and the fallback for legacy issues that predate the `**Touches**:` field. Also runs an incremental mode (given just-filed ENG-### ids) that slots new findings into the current document in place — the fast in-between update audit-loop drives as it files. Drive the full re-stage with `/loop stage-backlog` or run it once.
+description: One iteration of keeping the Dropset Task Staging document in sync with the Linear Backlog. The deterministic core — read every open Backlog issue, build the dependency tree from declared blockedBy/blocks edges + file overlap, rewrite the chips-only Task Staging document, and fold a same-PR group onto its canonical (closing the rest as duplicates) via the merge subcommand — runs as the committed `dropset-stage-backlog` binary (`make stage-backlog`). The skill drives that binary and keeps the agent for the two judgment calls a tool can't make: deciding which issues belong in one PR, and the fallback for legacy issues that predate the `**Touches**:` field. Also runs an incremental mode (given just-filed ENG-### ids) that slots new findings into the current document in place — the fast in-between update audit-loop drives as it files. Drive the full re-stage with `/loop stage-backlog` or run it once.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -42,7 +42,12 @@ hand each run. The binary:
   subtasks, and a trailing `# Standalone`;
 - renders the chips-only tree (bare `ENG-###` tags,
   4-space nesting, `(after …)` / `(also after …)` notes)
-  and writes it to the Task Staging document.
+  and writes it to the Task Staging document;
+- under its `merge` subcommand, folds a same-PR group onto
+  its lowest-numbered canonical — merging descriptions,
+  `**Fingerprint**:` / `**Touches**:` fields, and
+  `blockedBy` / `blocks` edges — and closes the rest as
+  duplicates, write-before-close (see step 2).
 
 That is the whole of the old "read → group → cross-check
 → write" core, now reproducible and lint-clean under the
@@ -75,23 +80,25 @@ automation".
 ## What stays with the agent
 
 The binary is deterministic "where there's data". Two
-slices genuinely need a model, and stay here:
+**judgment calls** genuinely need a model, and stay here:
 
-1. **The prose merge** (optional consolidation). When
-   several issues should land as **one PR**, folding them
-   into a single canonical issue — merging their
-   descriptions under per-source sub-headings, taking the
-   union of their `**Fingerprint**:` / `**Touches**:` /
-   relation fields, and closing the others as duplicates — is
-   a
-   prose operation the binary doesn't perform. It's an
-   **optimization**, not a correctness requirement: the
-   binary already prevents a parallel file conflict by
-   **nesting** colliding issues (serial), so skipping the
-   merge just means two chips instead of one, never a
-   conflict. Do it when it meaningfully cuts PR count
-   (step 2 below); the binary renders whatever Backlog
-   remains.
+1. **The grouping decision** (optional consolidation).
+   Deciding *which* issues should land as **one PR** — they
+   touch the same files, or are otherwise one unit of work —
+   is a prose judgment the binary doesn't make. Once the
+   group is chosen, the **mechanical fold is the binary's**:
+   `merge` folds the members onto the lowest-numbered
+   canonical (their descriptions under per-source
+   sub-headings, the union of their `**Fingerprint**:` /
+   `**Touches**:` / `blockedBy` / `blocks` fields), then
+   closes the others as duplicates — write-before-close. The
+   merge is an **optimization**, not a correctness
+   requirement: the binary already prevents a parallel file
+   conflict by **nesting** colliding issues (serial), so
+   skipping it just means two chips instead of one, never a
+   conflict. Decide the group when it meaningfully cuts PR
+   count and hand it to `merge` (step 2 below); the binary
+   renders whatever Backlog remains.
 1. **The missing-`Touches:` fallback.** An issue filed
    before the `**Touches**:` convention has no file globs,
    so the binary can place it only by declared edges /
@@ -117,28 +124,21 @@ slices genuinely need a model, and stay here:
   **next full re-stage reconciles it** — `housekeeping`'s
   morning pass runs that full re-stage.
 
-## Filing destination (shared with `linear-task`)
+## Configuration
 
-The merge step (step 2) writes through the `claude.ai`
-Linear MCP, so it needs the same fixed destination every
-issue uses. Resolve the IDs at run time from the
-environment exactly as `linear-task` does — never
-hard-code them — with a bare `printenv` per variable
-(each reduces to the same `Bash(printenv:*)` allow-rule):
-
-```sh
-printenv LINEAR_TEAM_ID
-printenv LINEAR_PROJECT_ID
-printenv LINEAR_ASSIGNEE_ID
-```
-
-Query each variable on **its own** `printenv` line. Do
-**not** combine them into one `printenv A B C`: macOS /
-BSD `printenv` honors only its **first** operand, so the
-combined form prints just the first value and you'd
-wrongly conclude the rest are unset. If any variable is
-empty, stop and tell the user to export it in their shell
-profile (`~/.zshrc`).
+Both the render and the `merge` subcommand are the binary,
+so they share its environment — no separate Linear MCP
+filing destination. The binary resolves everything via
+`std::env::var` (never a hard-coded id): `LINEAR_API_KEY`
+(a personal key — the headless binary can't use the OAuth
+`claude.ai` MCP) and `LINEAR_PROJECT_ID` for every run, and
+`LINEAR_TASK_STAGING_DOC_ID` only for a real render write
+(`--dry-run` and `merge` don't need it). The `merge`
+subcommand resolves the **team** for the duplicate state
+from the group's own issues, so it needs no `LINEAR_TEAM_ID`
+/ `LINEAR_ASSIGNEE_ID`. A missing required variable errors
+and exits; export them in your shell profile (`~/.zshrc`) —
+see `CLAUDE.md` → "Linear automation".
 
 ## How it's driven
 
@@ -183,48 +183,38 @@ The warnings (on stderr) name every open issue with no
 Read both before deciding what, if anything, needs the
 agent.
 
-**2. Merge same-PR issues (optional consolidation).** If
-two or more open issues should land as a **single PR**
-(they touch the same files, or are otherwise one unit of
-work), fold them into one canonical issue —
-**write-before-close so no state is ever dropped**:
+**2. Merge same-PR issues (optional consolidation).**
+Decide *which* issues should land as a **single PR** (they
+touch the same files, or are otherwise one unit of work) —
+that grouping is your call. The **fold itself is the
+binary's**: hand it each group, lowest-ENG first or in any
+order (it sorts), as a comma-separated list. Preview before
+writing:
 
-- **Pick the canonical issue**: the lowest ENG number in
-  the group (stable across reruns). Its priority becomes
-  the **max** priority of the group.
+```sh
+make stage-backlog ARGS="merge --dry-run ENG-465,ENG-470"
+```
 
-- **First, fold everything into the canonical issue and
-  save it.** Rewrite the canonical issue's description
-  (`mcp__claude_ai_Linear__save_issue` with
-  `id: "<canonical>"`) to carry every member's notes under
-  a per-source sub-heading (e.g. `### From ENG-465`), a
-  `**Fingerprint**:` line for **every** fingerprint across
-  the group (the union, deduped), and a `**Touches**:`
-  line with the union of every member's globs (so the
-  binary still sees the full file set). In the **same**
-  save, fold in
-  the group's declared blocking relations: union every
-  member's `blockedBy` / `blocks` edges onto the canonical
-  (`blockedBy: [...]`, `blocks: [...]` — both
-  append-only). Drop only the pairs whose **other**
-  endpoint is also in the group (intra-group edges would
-  become self-edges). Confirm the save succeeded before
-  touching any other issue. This ordering is the safety
-  guarantee: if the run is interrupted here, the members
-  still exist and hold their own state.
+The dry-run prints, per group, the chosen canonical (lowest
+ENG number, taking the group's **max** priority), the
+members that will close as duplicates, the external
+`blockedBy` / `blocks` edges it will add, and the full
+folded description — each member's body under a
+`### From ENG-###` sub-heading plus the deduped union of
+every `**Fingerprint**:` and `**Touches**:`. Review it,
+then drop `--dry-run` to perform the merge:
 
-- **Then, and only then, close the other members** as
-  duplicates of the canonical:
+```sh
+make stage-backlog ARGS="merge ENG-465,ENG-470"
+```
 
-  ```txt
-  mcp__claude_ai_Linear__save_issue(
-    id: "<member>",
-    duplicateOf: "<canonical>",
-  )
-  ```
-
-  Do this **after** the canonical save is confirmed,
-  never before.
+Pass several groups in one call by listing each as its own
+argument (`ARGS="merge ENG-1,ENG-2 ENG-8,ENG-9"`). The
+binary is **write-before-close**: it folds everything onto
+the canonical and confirms that write before closing any
+member, so an interruption never drops state. Intra-group
+edges (a member blocking the canonical) are dropped rather
+than becoming self-edges.
 
 This step is **optional** — skip it when no group clearly
 belongs in one PR. The binary nests colliding issues
@@ -353,16 +343,21 @@ stage-backlog incremental | +<n> chips placed
   ordering. The only inline annotation is a trailing
   `(after ENG-###)` / `(also after ENG-###)` for a blocker
   the tree can't show.
-- **Reversible-safe merges.** Step 2's write-before-close
-  ordering means the union of fingerprints, touches, and
-  declared relations lands on the survivor before any
-  member is closed, so `audit-loop` dedup keeps recognizing
-  a folded-in finding and no edge is dropped when a member
-  becomes a Duplicate.
+- **Reversible-safe merges.** The `merge` subcommand's
+  write-before-close ordering means the union of
+  fingerprints, touches, and declared relations lands on the
+  survivor before any member is closed, so `audit-loop`
+  dedup keeps recognizing a folded-in finding and no edge is
+  dropped when a member becomes a Duplicate. Re-running after
+  a clean failure is safe (the fold is an idempotent
+  overwrite and the union edges self-heal from the canonical's
+  live relations), but a failure *between* members in the
+  close loop can leave a group half-closed — a re-run can't
+  finish it cleanly, so close the remaining members by hand.
 - **Relations are read, honoured, and preserved — never
   manufactured.** The binary treats a declared `blockedBy`
   / `blocks` edge as authoritative input to the tree and
-  the merge carries edges across, but neither writes the
+  `merge` carries edges across, but neither writes the
   *inferred* file-overlap nesting back as a relation —
   that's a scheduling artifact, not a true dependency. The
   durable record of real dependencies is what the filing
@@ -370,17 +365,13 @@ stage-backlog incremental | +<n> chips placed
   at file time.
 - **No umbrella issue.** This skill, the plain Backlog, and
   the document fully replace the old ENG-452 parent.
-- **A follow-up may move the merge into the binary.** Step
-  2's fold + close is the one slice still left to the
-  agent; folding the mechanical part (fingerprint / touches
-  / edge union) into the binary, leaving only the prose
-  description merge, is a candidate follow-up.
 - Shell discipline (per `CLAUDE.md`): every command is a
   single bare call that reduces to an allow-glob — no
   `&&`, pipes, `$(...)`, or redirects; content search
   routes to the Grep tool (never `git grep`).
 - To graduate this to a fully detached schedule (cron
-  cloud routine) later: the binary already authenticates
-  headless via `LINEAR_API_KEY`, so the full-mode render is
-  cron-ready; only the optional agent merge step still
-  needs an interactive session.
+  cloud routine) later: both the render and `merge`
+  authenticate headless via `LINEAR_API_KEY`, so the only
+  thing still needing an interactive session is the
+  **grouping decision** that feeds `merge` — the mechanical
+  fold itself is cron-ready.
