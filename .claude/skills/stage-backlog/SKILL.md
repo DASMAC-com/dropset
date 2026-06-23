@@ -348,7 +348,12 @@ stage-backlog incremental | +<n> chips placed
   fingerprints, touches, and declared relations lands on the
   survivor before any member is closed, so `audit-loop`
   dedup keeps recognizing a folded-in finding and no edge is
-  dropped when a member becomes a Duplicate.
+  dropped when a member becomes a Duplicate. Re-running after
+  a clean failure is safe (the fold is an idempotent
+  overwrite and the union edges self-heal from the canonical's
+  live relations), but a failure *between* members in the
+  close loop can leave a group half-closed — a re-run can't
+  finish it cleanly, so close the remaining members by hand.
 - **Relations are read, honoured, and preserved — never
   manufactured.** The binary treats a declared `blockedBy`
   / `blocks` edge as authoritative input to the tree and

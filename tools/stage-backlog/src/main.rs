@@ -164,6 +164,16 @@ fn run_merge(args: &[String]) -> Result<()> {
 
 /// Perform a single group's writes, write-before-close: fold the canonical
 /// (description, priority, union edges) and confirm it, then close each member.
+///
+/// Re-running after a *clean* failure is safe: the fold is an idempotent
+/// overwrite, and the union edges self-heal because [`fetch_merge_group`] re-reads
+/// the canonical's live relations each run, so `*_to_add` excludes edges a prior
+/// partial run already created. The gap is the close loop: a failure *between*
+/// members can leave the group half-closed, and a re-run re-attempts the
+/// `duplicate` relation on an already-closed member — which errors if Linear
+/// rejects a duplicate `issueRelationCreate`. Making the close loop fully
+/// idempotent needs Linear's exact duplicate-relation semantics, which can't be
+/// verified here; until then, finish a half-closed group by hand.
 fn execute_merge(client: &linear::Client, plan: &merge::MergePlan, team_id: &str) -> Result<()> {
     // 1. Fold everything onto the canonical and confirm before any close — if
     //    interrupted here, every member still exists and holds its own state.

@@ -108,11 +108,25 @@ The `dropset-stage-backlog` **binary** (the deterministic core of the
 `stage-backlog` skill — see "Structured filing fields" below) reads
 `LINEAR_PROJECT_ID` the same way, plus its own `LINEAR_API_KEY`: a
 personal Linear API key, because a headless binary can't ride the
-OAuth-based `claude.ai` Linear MCP. For a real write it also reads
-`LINEAR_TASK_STAGING_DOC_ID` (the document it rewrites); `--dry-run`
-prints the tree to stdout and doesn't require it. It resolves all of
-these via `std::env::var`, never a hard-coded id, and the key is never
-committed.
+OAuth-based `claude.ai` Linear MCP. For a real render write it also
+reads `LINEAR_TASK_STAGING_DOC_ID` (the document it rewrites);
+`--dry-run` prints the tree to stdout and doesn't require it. It
+resolves all of these via `std::env::var`, never a hard-coded id, and
+the key is never committed.
+
+The binary also exposes a `merge` subcommand — the deterministic half
+of the same-PR issue merge. Given a group the skill judged to belong
+in one PR, it folds the members onto the lowest-numbered canonical
+(merging their descriptions and taking the union of their
+`**Fingerprint**:` / `**Touches**:` fields and `blockedBy` / `blocks`
+edges) and closes the rest as duplicates, write-before-close. Unlike
+a render write it does **not**
+read `LINEAR_TASK_STAGING_DOC_ID`, and it resolves the team for the
+duplicate state from the group's own issues, so it needs no
+`LINEAR_TEAM_ID` / `LINEAR_ASSIGNEE_ID` — only `LINEAR_API_KEY`. The
+grouping decision stays with the skill's agent; the binary owns the
+mechanical fold. Preview any merge with `--dry-run` first — it closes
+production issues and can't be end-to-end verified locally.
 
 ### Structured filing fields
 

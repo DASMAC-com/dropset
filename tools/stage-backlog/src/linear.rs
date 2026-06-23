@@ -129,9 +129,11 @@ impl Client {
         Ok(())
     }
 
-    /// Fetch every member of a merge group in full, plus the team id (taken
-    /// from the first member) used to resolve the duplicate state. Errors if
-    /// any identifier doesn't resolve.
+    /// Fetch every member of a merge group in full, plus the team id used to
+    /// resolve the duplicate state. Errors if any identifier doesn't resolve,
+    /// or if the members span more than one team — the duplicate close moves
+    /// every member to a single team's canceled state, so a cross-team group
+    /// (usually a typo'd id) would file a member into the wrong team's state.
     pub fn fetch_merge_group(&self, ids: &[String]) -> Result<(Vec<MergeIssue>, String)> {
         let mut members = Vec::with_capacity(ids.len());
         let mut team_id: Option<String> = None;
@@ -142,7 +144,16 @@ impl Client {
             let raw = data
                 .issue
                 .ok_or_else(|| anyhow!("no issue resolves to {id}"))?;
-            team_id.get_or_insert_with(|| raw.team.id.clone());
+            match &team_id {
+                Some(first) if first != &raw.team.id => {
+                    anyhow::bail!(
+                        "merge group spans more than one team ({id} is not on the \
+                         first member's team); refusing — check for a typo'd id"
+                    );
+                }
+                Some(_) => {}
+                None => team_id = Some(raw.team.id.clone()),
+            }
             members.push(raw_to_merge_issue(raw));
         }
         let team_id = team_id.ok_or_else(|| anyhow!("merge group is empty"))?;

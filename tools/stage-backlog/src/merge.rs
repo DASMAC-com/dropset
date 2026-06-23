@@ -109,6 +109,10 @@ pub fn plan_merge(members: &[MergeIssue]) -> Result<MergePlan> {
         let body = body.trim();
         blocks_md.push(format!("### From {}\n\n{body}", m.id));
     }
+    // Drop an empty canonical body so a fields-only canonical doesn't leave the
+    // folded description leading with blank lines (each `### From` block always
+    // carries its heading, so only the canonical body can be empty).
+    blocks_md.retain(|b| !b.is_empty());
 
     // Unified fields: union across canonical-then-members (the sorted order),
     // deduped, first-seen order preserved.
@@ -296,6 +300,21 @@ mod tests {
         assert_eq!(plan.blocked_by_to_add, vec!["ENG-7".to_string()]);
         // ENG-20 was intra-group; ENG-30 is the new external block edge.
         assert_eq!(plan.blocks_to_add, vec!["ENG-30".to_string()]);
+    }
+
+    #[test]
+    fn fields_only_canonical_does_not_lead_with_blank_lines() {
+        // The canonical body is empty after stripping its only line; the fold
+        // must lead with the first member's heading, not blank lines.
+        let plan = plan_merge(&[
+            member(10, 0, "**Touches**: a/"),
+            member(20, 0, "Member prose."),
+        ])
+        .unwrap();
+        assert_eq!(
+            plan.description,
+            "### From ENG-20\n\nMember prose.\n\n**Touches**: a/"
+        );
     }
 
     #[test]
