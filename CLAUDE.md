@@ -2,8 +2,6 @@
 
 <!-- cspell:word PIPESTATUS -->
 
-<!-- cspell:word rustc -->
-
 <!-- cspell:word Toolsets -->
 
 ## Commits and PRs
