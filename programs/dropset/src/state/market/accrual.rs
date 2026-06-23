@@ -19,19 +19,28 @@ use super::Vault;
 pub struct RealizeOutcome {
     /// New shares minted into `leader_shares` (and `total_shares`).
     pub shares_minted: u64,
-    /// HWM after this call. Equal to the pre-call value when nothing was minted.
+    /// HWM after this call. Equal to the pre-call value when the vault
+    /// is frozen / tombstoned or VPS did not exceed HWM; with no (or
+    /// sub-quantum) fee but VPS above HWM it advances to the new VPS
+    /// even though `shares_minted == 0`.
     pub hwm_after: u64,
 }
 
 /// Per the spec's **Realize**: when `VPS = L / total_shares` exceeds
 /// the high-water mark, mint `m` new shares to the leader and bump
-/// HWM. No-op when:
+/// HWM. Genuine no-op (HWM unchanged, no mint) when:
 /// - `total_shares == 0` (vault is unseeded — no shares to dilute);
+/// - the geometric-mean liquidity `L = isqrt(base · quote) == 0`
+///   (an empty reserve — no value to fee);
 /// - `vault.frozen != 0` (per spec, HWM is pinned at freeze time);
 /// - `vault.tombstoned != 0` (closed vault; HWM pinned at close time —
 ///   no perf fee may accrue to a leader who has already exited);
-/// - `vault.perf_fee_rate == 0` (no fee to accrue);
 /// - `VPS <= HWM` (no excess to fee).
+///
+/// At `vault.perf_fee_rate == 0` (or a sub-quantum gain) with
+/// `VPS > HWM` no shares are minted, but HWM still advances to VPS so a
+/// later fee-rate change can't claw back past historical highs — this
+/// is **not** a no-op: the higher HWM is written through to the vault.
 ///
 /// `L`, `HWM`, and the intermediate share math run in `u128` to keep
 /// the perf-fee formula precise without overflow on realistic atom
