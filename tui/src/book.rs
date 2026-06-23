@@ -135,3 +135,81 @@ fn divider(best_ask: Option<&Row>, best_bid: Option<&Row>) -> Line<'static> {
         Style::new().fg(Color::Gray).add_modifier(Modifier::DIM),
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::accounts::MarketView;
+    use dropset_sdk::price::Price;
+    use solana_pubkey::Pubkey;
+
+    /// A `BookLevel` at a human price (quote per base) and atom size.
+    fn lvl(price: f64, size: u64) -> BookLevel {
+        BookLevel {
+            price: Price::from_value(price).unwrap(),
+            size,
+        }
+    }
+
+    /// A minimal 6/6-decimal market carrying just the book the pane reads.
+    fn market(asks: Vec<BookLevel>, bids: Vec<BookLevel>) -> MarketView {
+        MarketView {
+            address: Pubkey::default(),
+            lamports: 0,
+            base_mint: Pubkey::default(),
+            quote_mint: Pubkey::default(),
+            base_treasury: Pubkey::default(),
+            quote_treasury: Pubkey::default(),
+            base_treasury_lamports: 0,
+            quote_treasury_lamports: 0,
+            active_count: 1,
+            live_vaults: Vec::new(),
+            depositors: Vec::new(),
+            base_decimals: 6,
+            quote_decimals: 6,
+            asks,
+            bids,
+        }
+    }
+
+    /// Flatten a line's spans back to plain text for assertions.
+    fn text(line: &Line) -> String {
+        line.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    #[test]
+    fn empty_book_shows_a_placeholder() {
+        let out = lines(&market(Vec::new(), Vec::new()));
+        assert_eq!(out.len(), 1);
+        assert!(text(&out[0]).contains("no resting liquidity"));
+    }
+
+    #[test]
+    fn asks_sit_above_a_mid_divider_above_bids() {
+        // Asks arrive best-first (ascending); one bid below.
+        let out = lines(&market(
+            vec![lvl(0.74, 1_000_000), lvl(0.75, 500_000)],
+            vec![lvl(0.72, 2_000_000)],
+        ));
+        // two asks + divider + one bid
+        assert_eq!(out.len(), 4);
+        // Highest ask at the top; best (lowest) ask just above the divider.
+        assert!(text(&out[0]).contains("0.7500"));
+        assert!(text(&out[1]).contains("0.7400"));
+        assert!(text(&out[2]).contains("mid"));
+        assert!(text(&out[3]).contains("0.7200"));
+    }
+
+    #[test]
+    fn equal_priced_levels_aggregate() {
+        // Two asks at one price collapse to a single row summing their size.
+        let out = lines(&market(
+            vec![lvl(0.74, 1_000_000), lvl(0.74, 500_000)],
+            Vec::new(),
+        ));
+        // one ask row + a one-sided divider
+        assert_eq!(out.len(), 2);
+        assert!(text(&out[0]).contains("1.50"));
+        assert!(text(&out[1]).contains("best ask"));
+    }
+}
