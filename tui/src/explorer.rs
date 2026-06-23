@@ -1,24 +1,184 @@
-//! Solana Explorer deep links for localnet accounts.
+//! Local Solana Explorer, run as a Docker container the TUI supervises.
 //!
-//! The explorer can point at an arbitrary RPC via `cluster=custom` +
-//! `customUrl=<urlencoded rpc>`, so a localnet account opens in the same UI
-//! as mainnet — survey accounts before a teardown, then watch them go
-//! not-found after.
+//! The hosted explorer.solana.com is served from a *public* origin, and
+//! modern browsers block a public page from reaching a *loopback* RPC — Brave
+//! by default (its localhost-access protection), Safari always (loopback
+//! counts as mixed content), and Chromium under Private Network Access (the
+//! validator doesn't return `Access-Control-Allow-Private-Network: true`). So
+//! the hosted explorer stalls on "loading" against the localnet; it is the
+//! browser blocking the fetch, not a CORS or indexer gap (the validator's
+//! CORS is fine). Serving the explorer from `http://localhost` makes the page
+//! itself loopback, so its client-side fetch to the loopback validator is
+//! loopback -> loopback and no browser blocks it.
+//!
+//! The explorer runs as the seed service of the localnet Docker stack
+//! (`infra/localnet/docker-compose.yml`). The TUI owns its lifecycle: built
+//! (first run) and started in the background at launch, so it is serving by
+//! the time the operator opens it, and torn down on quit — the same ownership
+//! the validator has.
 
+use crate::job::{self, Logger};
+use anyhow::{bail, Context, Result};
 use solana_pubkey::Pubkey;
+use std::net::{SocketAddr, TcpStream};
+use std::path::Path;
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
-/// Build the explorer URL for `address` against the custom `rpc_url`
-/// cluster.
-pub fn account_url(rpc_url: &str, address: &Pubkey) -> String {
+/// Host port the explorer container publishes (compose maps `3000:3000`).
+pub const EXPLORER_PORT: u16 = 3000;
+
+/// Lifecycle state of the managed explorer container, shared (as an
+/// [`AtomicU8`]) between the background starter, the "Open explorer" action,
+/// and the UI — so the render loop can read it without blocking on a job.
+pub mod state {
+    /// Build / start in progress (Docker is present).
+    pub const STARTING: u8 = 0;
+    /// Serving on [`super::EXPLORER_PORT`].
+    pub const READY: u8 = 1;
+    /// No Docker CLI — "Open explorer" falls back to the hosted explorer.
+    pub const NO_DOCKER: u8 = 2;
+    /// Docker is present but the build / start failed.
+    pub const FAILED: u8 = 3;
+}
+
+/// One-word label for `state`, for the status bar.
+pub fn state_label(s: u8) -> &'static str {
+    match s {
+        state::STARTING => "starting…",
+        state::READY => "ready",
+        state::NO_DOCKER => "no docker",
+        state::FAILED => "failed",
+        _ => "?",
+    }
+}
+
+/// Bring the explorer up on a background thread at TUI launch, recording
+/// progress in `status` so it is serving by the time the operator opens it —
+/// built lazily the first time, reused after. Serialized via `lock` so it
+/// never races the "Open explorer" action's own [`ensure_running`]; streams
+/// build output into `log`.
+pub fn start_in_background(log: &Logger, repo_root: &Path, status: &AtomicU8, lock: &Mutex<()>) {
+    if !docker_available() {
+        status.store(state::NO_DOCKER, Ordering::SeqCst);
+        log.log("Docker not found — \"Open explorer\" will use the hosted explorer.");
+        return;
+    }
+    let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+    status.store(state::STARTING, Ordering::SeqCst);
+    log.log("Starting the local explorer container in the background…");
+    match ensure_running(log, repo_root) {
+        Ok(()) => {
+            status.store(state::READY, Ordering::SeqCst);
+            log.log(format!(
+                "Local explorer ready on http://localhost:{EXPLORER_PORT}"
+            ));
+        }
+        Err(e) => {
+            status.store(state::FAILED, Ordering::SeqCst);
+            log.log(format!("Local explorer failed to start: {e:#}"));
+        }
+    }
+}
+
+/// The compose file, relative to the repo root, and the service it defines.
+const COMPOSE_REL: &str = "infra/localnet/docker-compose.yml";
+const SERVICE: &str = "explorer";
+
+/// Wait this long for the served port after the container starts (`next
+/// start` comes up in seconds once the image is built; the build itself is
+/// streamed by the `up` command, ahead of this poll).
+const READY_TIMEOUT: Duration = Duration::from_secs(90);
+const READY_POLL: Duration = Duration::from_millis(500);
+
+/// Build the explorer URL for `address`, served from the local container and
+/// pointed at the loopback validator `rpc_url` via the custom-cluster params.
+pub fn account_url(address: &Pubkey, rpc_url: &str) -> String {
+    format!(
+        "http://localhost:{EXPLORER_PORT}/address/{address}?cluster=custom&customUrl={}",
+        percent_encode(rpc_url)
+    )
+}
+
+/// The hosted-explorer URL — the fallback used when Docker isn't available.
+/// Won't reach the localnet in Brave/Safari (see the module docs), so callers
+/// pair it with a hint.
+pub fn hosted_account_url(address: &Pubkey, rpc_url: &str) -> String {
     format!(
         "https://explorer.solana.com/address/{address}?cluster=custom&customUrl={}",
         percent_encode(rpc_url)
     )
 }
 
-/// Open `address` in the system browser on the custom cluster.
-pub fn open_account(rpc_url: &str, address: &Pubkey) -> std::io::Result<()> {
-    open::that(account_url(rpc_url, address))
+/// Whether a `docker` CLI is on PATH. A `false` steers "Open explorer" to the
+/// hosted fallback; a daemon that's installed-but-not-running surfaces later
+/// as an `up` failure with docker's own message.
+pub fn docker_available() -> bool {
+    Command::new("docker")
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Build (first run) and start the explorer container, then wait for its
+/// port. Idempotent — compose reuses the cached image and a running
+/// container, so repeat calls are cheap. Output is streamed into `log`.
+pub fn ensure_running(log: &Logger, repo_root: &Path) -> Result<()> {
+    let compose = repo_root.join(COMPOSE_REL);
+    if !compose.exists() {
+        bail!("compose file not found at {}", compose.display());
+    }
+    let mut up = Command::new("docker");
+    up.args(["compose", "-f"])
+        .arg(&compose)
+        .args(["up", "-d", SERVICE])
+        .current_dir(repo_root);
+    job::run_streaming(log, "docker compose up -d explorer", up)?;
+    wait_for_port(log)
+}
+
+/// Stop and remove the explorer container. Best-effort: called on quit, so it
+/// silences output and only reports a non-zero exit.
+pub fn stop(repo_root: &Path) -> Result<()> {
+    let compose = repo_root.join(COMPOSE_REL);
+    let status = Command::new("docker")
+        .args(["compose", "-f"])
+        .arg(&compose)
+        .arg("down")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .context("run `docker compose down`")?;
+    if !status.success() {
+        bail!("`docker compose down` exited with {status}");
+    }
+    Ok(())
+}
+
+/// Poll the published port until it accepts a connection or the timeout
+/// elapses — enough to know `next start` is serving before we open a browser.
+fn wait_for_port(log: &Logger) -> Result<()> {
+    log.log(format!(
+        "Waiting for the explorer on http://localhost:{EXPLORER_PORT}…"
+    ));
+    let addr = SocketAddr::from(([127, 0, 0, 1], EXPLORER_PORT));
+    let deadline = Instant::now() + READY_TIMEOUT;
+    loop {
+        if TcpStream::connect_timeout(&addr, READY_POLL).is_ok() {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            bail!("explorer did not start within {}s", READY_TIMEOUT.as_secs());
+        }
+        std::thread::sleep(READY_POLL);
+    }
 }
 
 /// Percent-encode a string for use as a URL query-parameter value. Keeps
@@ -51,11 +211,22 @@ mod tests {
     }
 
     #[test]
-    fn builds_custom_cluster_url() {
+    fn local_url_is_served_from_loopback_with_custom_cluster() {
         let addr = Pubkey::new_from_array([1u8; 32]);
-        let url = account_url("http://127.0.0.1:8899", &addr);
+        let url = account_url(&addr, "http://127.0.0.1:8899");
+        // Served from the local container, not the hosted HTTPS origin — that
+        // is the whole point (loopback page -> loopback RPC).
+        assert!(url.starts_with("http://localhost:3000/address/"));
         assert!(url.contains("cluster=custom"));
         assert!(url.contains("customUrl=http%3A%2F%2F127.0.0.1%3A8899"));
         assert!(url.contains(&addr.to_string()));
+    }
+
+    #[test]
+    fn hosted_url_is_the_https_fallback() {
+        let addr = Pubkey::new_from_array([2u8; 32]);
+        let url = hosted_account_url(&addr, "http://127.0.0.1:8899");
+        assert!(url.starts_with("https://explorer.solana.com/address/"));
+        assert!(url.contains("customUrl=http%3A%2F%2F127.0.0.1%3A8899"));
     }
 }

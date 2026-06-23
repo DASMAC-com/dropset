@@ -19,7 +19,9 @@ use solana_native_token::LAMPORTS_PER_SOL;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex};
 
 /// A menu action.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -141,6 +143,14 @@ pub struct JobContext {
     pub repo_root: PathBuf,
     pub wallet_path: String,
     pub wallet: Keypair,
+    /// Lifecycle of the managed explorer container (an `explorer::state::*`
+    /// value). The background starter and the "Open explorer" job both update
+    /// it; the UI reads it; `App`'s `Drop` tears the container down unless it
+    /// is `NO_DOCKER`.
+    pub explorer_state: Arc<AtomicU8>,
+    /// Serializes the explorer `docker compose up` so the background starter
+    /// and "Open explorer" never run it concurrently.
+    pub explorer_lock: Arc<Mutex<()>>,
 }
 
 impl JobContext {
@@ -157,6 +167,8 @@ pub fn dispatch(action: Action, ctx: &JobContext, state: &ChainState, tx: Sender
     let repo_root = ctx.repo_root.clone();
     let wallet_path = ctx.wallet_path.clone();
     let wallet = ctx.wallet();
+    let explorer_state = ctx.explorer_state.clone();
+    let explorer_lock = ctx.explorer_lock.clone();
 
     match action {
         Action::Deploy => {
@@ -199,14 +211,38 @@ pub fn dispatch(action: Action, ctx: &JobContext, state: &ChainState, tx: Sender
             });
         }
         Action::OpenExplorer => {
-            let urls = explorer_targets(state);
+            let targets = explorer_targets(state);
             job::spawn(tx, "Open explorer", move |log| {
-                for (label, addr) in &urls {
-                    log.log(format!("Opening {label} {addr}"));
-                    explorer::open_account(&rpc_url, addr)
-                        .with_context(|| format!("open {label}"))?;
+                if !explorer::docker_available() {
+                    log.log("Docker not found — opening the hosted explorer instead.");
+                    log.log(
+                        "Note: explorer.solana.com can't reach the localnet in Brave/Safari; \
+                         install Docker for the local explorer, or open these links in \
+                         Chrome/Firefox.",
+                    );
+                    open_targets(log, &targets, |addr| {
+                        explorer::hosted_account_url(addr, &rpc_url)
+                    })?;
+                    return Ok(format!(
+                        "Opened {} account(s) in the hosted explorer (fallback)",
+                        targets.len()
+                    ));
                 }
-                Ok(format!("Opened {} account(s) in explorer", urls.len()))
+                // Docker is present. Usually the background starter already
+                // has it serving; if not, take the lock (waiting for any
+                // in-flight start) and bring it up before opening.
+                if explorer_state.load(Ordering::SeqCst) != explorer::state::READY {
+                    let _guard = explorer_lock.lock().unwrap_or_else(|e| e.into_inner());
+                    if explorer_state.load(Ordering::SeqCst) != explorer::state::READY {
+                        explorer::ensure_running(log, &repo_root)?;
+                        explorer_state.store(explorer::state::READY, Ordering::SeqCst);
+                    }
+                }
+                open_targets(log, &targets, |addr| explorer::account_url(addr, &rpc_url))?;
+                Ok(format!(
+                    "Opened {} account(s) in the local explorer",
+                    targets.len()
+                ))
             });
         }
         // Wipe is handled by the event loop (owns the validator).
@@ -228,6 +264,20 @@ fn explorer_targets(state: &ChainState) -> Vec<(&'static str, Pubkey)> {
         targets.push(("quote treasury", mkt.quote_treasury));
     }
     targets
+}
+
+/// Open each `(label, address)` target in the browser, building its URL with
+/// `url_for`. Logs each as it goes; the first failure aborts.
+fn open_targets(
+    log: &Logger,
+    targets: &[(&'static str, Pubkey)],
+    url_for: impl Fn(&Pubkey) -> String,
+) -> Result<()> {
+    for (label, addr) in targets {
+        log.log(format!("Opening {label} {addr}"));
+        open::that(url_for(addr)).with_context(|| format!("open {label}"))?;
+    }
+    Ok(())
 }
 
 /// Airdrop a working balance to the wallet if it is running low — admin

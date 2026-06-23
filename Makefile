@@ -6,6 +6,8 @@
 .PHONY: check-toolchain
 .PHONY: clean
 .PHONY: conformance-vectors
+.PHONY: explorer
+.PHONY: explorer-down
 .PHONY: frontend
 .PHONY: idl
 .PHONY: install-anchor-v2
@@ -101,6 +103,16 @@ debugger: program
 # (not `localnet`) because the same panel will later drive mainnet too.
 tui:
 	cargo run -p dropset-tui
+
+# Localnet Docker stack: the local Solana Explorer (infra/localnet). The
+# dropset-tui control plane manages this automatically; these targets drive
+# it by hand. First `explorer` run builds the image from source (a few
+# minutes); later runs reuse the cache. Set DROPSET_EXPLORER_REF to pin the
+# explorer version (branch, tag, or commit SHA).
+explorer:
+	docker compose -f infra/localnet/docker-compose.yml up -d explorer
+explorer-down:
+	docker compose -f infra/localnet/docker-compose.yml down
 
 # Run next dev and open the browser once it's accepting connections.
 frontend:

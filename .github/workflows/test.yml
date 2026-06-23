@@ -68,6 +68,7 @@ jobs:
           - '!pnpm-lock.yaml'
           - '!pnpm-workspace.yaml'
           - '!cfg/**'
+          - '!infra/**'
         predicate-quantifier: 'every'
   test:
     name: 'Tests'

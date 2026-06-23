@@ -15,7 +15,8 @@
 use crate::accounts::{self, ChainState};
 use crate::action::{self, Action, JobContext};
 use crate::chain;
-use crate::job::JobEvent;
+use crate::explorer;
+use crate::job::{JobEvent, Logger};
 use crate::ui;
 use crate::validator::Validator;
 use anyhow::Result;
@@ -31,6 +32,7 @@ use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
@@ -110,6 +112,7 @@ impl App {
     /// Run the event loop until the user quits.
     pub fn run(&mut self) -> Result<()> {
         self.log(LogKind::Info, "Starting solana-test-validator…".to_string());
+        self.start_explorer();
         let backend = CrosstermBackend::new(io::stdout());
         let terminal = Terminal::new(backend)?;
         let mut guard = TerminalGuard::new(terminal);
@@ -135,6 +138,20 @@ impl App {
             self.maybe_refresh();
         }
         Ok(())
+    }
+
+    /// Bring the local explorer container up on a background thread, so it is
+    /// serving by the time the operator opens it. Streams its output into the
+    /// log without occupying the single-job slot, so bootstrapping stays
+    /// available while the (first-time) image builds.
+    fn start_explorer(&self) {
+        let log = Logger::new(self.tx.clone());
+        let repo_root = self.ctx.repo_root.clone();
+        let status = self.ctx.explorer_state.clone();
+        let lock = self.ctx.explorer_lock.clone();
+        std::thread::spawn(move || {
+            explorer::start_in_background(&log, &repo_root, &status, &lock);
+        });
     }
 
     fn handle_event(&mut self, ev: Event) -> Flow {
@@ -252,6 +269,18 @@ impl App {
         }
         while self.log.len() > LOG_CAPACITY {
             self.log.pop_front();
+        }
+    }
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        // Tear down the explorer container unless Docker was never there, so
+        // quitting leaves no orphan — mirrors the owned `Validator`, whose own
+        // `Drop` kills its child and wipes its temp ledger right after. `stop`
+        // is a no-op if the container isn't up (e.g. quit mid-build).
+        if self.ctx.explorer_state.load(Ordering::SeqCst) != explorer::state::NO_DOCKER {
+            let _ = explorer::stop(&self.ctx.repo_root);
         }
     }
 }
