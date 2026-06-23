@@ -283,9 +283,21 @@ fn render_bucket(
 
     let mut out = format!("{heading}\n\n");
     let mut seen: HashSet<&str> = HashSet::new();
+    // Proper ancestors of the node currently being rendered, threaded down the
+    // descent so a blocker the nesting already expresses isn't repeated as a
+    // note. A fresh, empty set per bucket root (a root has no ancestors).
+    let mut ancestors: HashSet<&str> = HashSet::new();
     for root in roots {
         render_node(
-            root, 0, primary, children, blockers, number_of, &mut seen, &mut out,
+            root,
+            0,
+            primary,
+            children,
+            blockers,
+            number_of,
+            &mut seen,
+            &mut ancestors,
+            &mut out,
         );
     }
     Some(out)
@@ -293,6 +305,9 @@ fn render_bucket(
 
 /// Render `id` as a bullet and recurse into its children. `seen` guards
 /// against re-rendering a node reached twice (defensive against cycles).
+/// `ancestors` holds the proper ancestors of `id` on the current descent path
+/// (every node between `id` and its bucket root, exclusive of `id`); a blocker
+/// in that set is already shown by the indentation, so `notes` drops it.
 #[allow(clippy::too_many_arguments)]
 fn render_node<'a>(
     id: &'a str,
@@ -302,6 +317,7 @@ fn render_node<'a>(
     blockers: &HashMap<String, BTreeSet<String>>,
     number_of: &HashMap<&str, u64>,
     seen: &mut HashSet<&'a str>,
+    ancestors: &mut HashSet<&'a str>,
     out: &mut String,
 ) {
     if !seen.insert(id) {
@@ -310,12 +326,15 @@ fn render_node<'a>(
     let indent = INDENT.repeat(depth);
     out.push_str(&format!(
         "{indent}- {id}{}\n",
-        notes(id, primary, blockers, number_of)
+        notes(id, primary, blockers, number_of, ancestors)
     ));
 
     if let Some(kids) = children.get(id) {
         let mut kids = kids.clone();
         kids.sort_by_key(|k| number_of.get(k).copied().unwrap_or(0));
+        // `id` is a proper ancestor of every node below it; insert before
+        // recursing and remove on backtrack, mirroring the `seen` guard.
+        ancestors.insert(id);
         for kid in kids {
             render_node(
                 kid,
@@ -325,20 +344,24 @@ fn render_node<'a>(
                 blockers,
                 number_of,
                 seen,
+                ancestors,
                 out,
             );
         }
+        ancestors.remove(id);
     }
 }
 
 /// The trailing `(after …)` / `(also after …)` note for a node: every blocker
-/// except the primary, sorted by number. A top-level node's first such
-/// blocker reads `after`; everything else reads `also after`.
+/// except the primary **and** except any blocker already an ancestor in the
+/// tree (the indentation shows those), sorted by number. A top-level node's
+/// first remaining blocker reads `after`; everything else reads `also after`.
 fn notes(
     id: &str,
     primary: &HashMap<&str, Option<String>>,
     blockers: &HashMap<String, BTreeSet<String>>,
     number_of: &HashMap<&str, u64>,
+    ancestors: &HashSet<&str>,
 ) -> String {
     let prim = primary.get(id).and_then(|p| p.clone());
     let mut extra: Vec<&String> = blockers
@@ -346,6 +369,10 @@ fn notes(
         .into_iter()
         .flatten()
         .filter(|b| Some((*b).clone()) != prim)
+        // A blocker that is an ancestor on the descent path is already
+        // expressed by the nesting; only a cross-branch / cross-heading
+        // blocker the tree can't show earns a note.
+        .filter(|b| !ancestors.contains(b.as_str()))
         .collect();
     if extra.is_empty() {
         return String::new();
@@ -476,19 +503,39 @@ mod tests {
     }
 
     #[test]
-    fn second_in_bucket_blocker_renders_also_after() {
+    fn ancestor_blocker_note_is_suppressed() {
         // ENG-3 is blocked by both ENG-1 and ENG-2 (all standalone, all in
-        // one bucket). It nests under the deeper-chain blocker and notes the
-        // other as "also after".
+        // one bucket). It nests under the deeper-chain blocker ENG-2; its
+        // other blocker ENG-1 is ENG-2's own blocker, so it is an ancestor of
+        // ENG-3 in the tree and the nesting already shows it — no note.
         let out = render(&[
             with("ENG-1", None, &["a/x.rs"], &[]),
             with("ENG-2", None, &["b/y.rs"], &["ENG-1"]),
             with("ENG-3", None, &["c/z.rs"], &["ENG-1", "ENG-2"]),
         ]);
-        // chain: 1 (0) < 2 (1); ENG-3 nests under ENG-2, "also after ENG-1".
+        // chain: 1 (0) < 2 (1); ENG-3 nests under ENG-2. ENG-1 is an ancestor
+        // (1 → 2 → 3), so the redundant "(also after ENG-1)" is dropped.
         assert_eq!(
             out,
-            "# Standalone\n\n- ENG-1\n    - ENG-2\n        - ENG-3 (also after ENG-1)\n"
+            "# Standalone\n\n- ENG-1\n    - ENG-2\n        - ENG-3\n"
+        );
+    }
+
+    #[test]
+    fn sibling_blocker_still_renders_also_after() {
+        // ENG-2 and ENG-3 both nest under ENG-1 (siblings). ENG-4 is blocked
+        // by both: it nests under ENG-3 (higher number breaks the equal-chain
+        // tie), but ENG-2 is a sibling — not an ancestor of ENG-4 — so the
+        // nesting can't express it and the "(also after ENG-2)" note stays.
+        let out = render(&[
+            with("ENG-1", None, &["a/x.rs"], &[]),
+            with("ENG-2", None, &["b/y.rs"], &["ENG-1"]),
+            with("ENG-3", None, &["c/z.rs"], &["ENG-1"]),
+            with("ENG-4", None, &["d/w.rs"], &["ENG-2", "ENG-3"]),
+        ]);
+        assert_eq!(
+            out,
+            "# Standalone\n\n- ENG-1\n    - ENG-2\n    - ENG-3\n        - ENG-4 (also after ENG-2)\n"
         );
     }
 
