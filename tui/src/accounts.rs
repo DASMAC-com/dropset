@@ -18,6 +18,7 @@ use dropset_sdk::accounts::{
     VAULT_DEPOSITOR_HEADER_DISCRIMINATOR,
 };
 use dropset_sdk::layout::MarketView as SlabView;
+use dropset_sdk::matching::{resting_levels, BookLevel, SwapSide};
 use dropset_sdk::shared::MaybeAccount;
 use dropset_sdk::DROPSET_ID;
 use solana_client::rpc_client::RpcClient;
@@ -78,6 +79,15 @@ pub struct MarketView {
     /// `(sector_index, owner)` for every open `VaultDepositor` on this
     /// market — the first leg of teardown (`force_withdraw_depositor`).
     pub depositors: Vec<(u32, Pubkey)>,
+    /// Base / quote mint decimals — for scaling book prices and sizes to
+    /// human units in the order-book pane.
+    pub base_decimals: u8,
+    pub quote_decimals: u8,
+    /// The reconstructed resting book at the poll's slot, in cross-vault
+    /// price-time priority (best first). `asks` ascend in price, `bids`
+    /// descend; sizes are base atoms (see [`resting_levels`]).
+    pub asks: Vec<BookLevel>,
+    pub bids: Vec<BookLevel>,
 }
 
 /// A full snapshot of localnet state at one refresh.
@@ -141,7 +151,7 @@ pub fn poll(client: &RpcClient, wallet: &Pubkey) -> ChainState {
         return state;
     }
 
-    state.market = read_market(client);
+    state.market = read_market(client, slot.unwrap_or(0).min(u32::MAX as u64) as u32);
     state
 }
 
@@ -168,8 +178,9 @@ fn read_registry(client: &RpcClient) -> Option<RegistryView> {
 
 /// Discover the localnet market by scanning the program's owned accounts
 /// for the `MarketHeader` discriminator, then decode its header + active
-/// vault list via the slab-layout mirror.
-fn read_market(client: &RpcClient) -> Option<MarketView> {
+/// vault list via the slab-layout mirror, and reconstruct the resting book
+/// at `current_slot` through the shared SDK matcher.
+fn read_market(client: &RpcClient, current_slot: u32) -> Option<MarketView> {
     let accounts = client.get_program_accounts(&DROPSET_ID).ok()?;
     let market_idx = accounts
         .iter()
@@ -179,12 +190,19 @@ fn read_market(client: &RpcClient) -> Option<MarketView> {
 
     let view = SlabView::load(&account.data).ok()?;
     let header = view.header;
+    let base_mint = Pubkey::new_from_array(header.base_mint);
+    let quote_mint = Pubkey::new_from_array(header.quote_mint);
     let base_treasury = Pubkey::new_from_array(header.base_treasury);
     let quote_treasury = Pubkey::new_from_array(header.quote_treasury);
     let live_vaults: Vec<(u32, Pubkey)> = view
         .active_vaults()
         .map(|(idx, v)| (idx, Pubkey::new_from_array(v.leader)))
         .collect();
+
+    // Reconstruct the resting book via the shared matcher (Buy ⇒ asks,
+    // Sell ⇒ bids) — the same levels a real swap would fill.
+    let asks = resting_levels(&view, SwapSide::Buy, current_slot);
+    let bids = resting_levels(&view, SwapSide::Sell, current_slot);
 
     // Open VaultDepositor PDAs for this market — discovered in the same
     // program-accounts scan, decoded for their (sector, owner).
@@ -196,23 +214,21 @@ fn read_market(client: &RpcClient) -> Option<MarketView> {
         .map(|h| (h.sector_idx, h.owner))
         .collect();
 
-    // Treasury ATAs are SPL-owned, so they aren't in the program-accounts
-    // scan — read their lamports directly.
-    let balances = client
-        .get_multiple_accounts(&[base_treasury, quote_treasury])
+    // Treasury ATAs and mints are SPL-owned, so they aren't in the
+    // program-accounts scan — read them directly: the treasuries for their
+    // lamports, the mints for their `decimals` (byte 44 of an SPL Mint).
+    let fetched = client
+        .get_multiple_accounts(&[base_treasury, quote_treasury, base_mint, quote_mint])
         .ok()?;
-    let lamports = |i: usize| {
-        balances
-            .get(i)
-            .and_then(|o| o.as_ref())
-            .map_or(0, |a| a.lamports)
-    };
+    let at = |i: usize| fetched.get(i).and_then(|o| o.as_ref());
+    let lamports = |i: usize| at(i).map_or(0, |a| a.lamports);
+    let decimals = |i: usize| at(i).and_then(|a| a.data.get(44).copied()).unwrap_or(0);
 
     Some(MarketView {
         address,
         lamports: account.lamports,
-        base_mint: Pubkey::new_from_array(header.base_mint),
-        quote_mint: Pubkey::new_from_array(header.quote_mint),
+        base_mint,
+        quote_mint,
         base_treasury,
         quote_treasury,
         base_treasury_lamports: lamports(0),
@@ -220,5 +236,9 @@ fn read_market(client: &RpcClient) -> Option<MarketView> {
         active_count: header.active_count.get(),
         live_vaults,
         depositors,
+        base_decimals: decimals(2),
+        quote_decimals: decimals(3),
+        asks,
+        bids,
     })
 }

@@ -8,6 +8,7 @@
 mod accounts;
 mod action;
 mod app;
+mod book;
 mod chain;
 mod deploy;
 mod explorer;

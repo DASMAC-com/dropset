@@ -16,6 +16,9 @@ pub enum JobEvent {
     /// The job mutated on-chain state — refresh the account view now rather
     /// than waiting for the next periodic poll.
     AccountsChanged,
+    /// A transaction's measured compute-unit cost, keyed by a short operation
+    /// `label` — feeds the CU pane. Re-emitting a label updates its row.
+    Cu { label: String, units: u64 },
     /// The job finished. `ok` drives the summary's color; `summary` is the
     /// one-line result shown in the log.
     Done { ok: bool, summary: String },
@@ -43,6 +46,14 @@ impl Logger {
     /// Signal that on-chain state changed so the loop refreshes promptly.
     pub fn accounts_changed(&self) {
         let _ = self.tx.send(JobEvent::AccountsChanged);
+    }
+
+    /// Record a transaction's compute-unit cost under `label` for the CU pane.
+    pub fn cu(&self, label: impl Into<String>, units: u64) {
+        let _ = self.tx.send(JobEvent::Cu {
+            label: label.into(),
+            units,
+        });
     }
 }
 

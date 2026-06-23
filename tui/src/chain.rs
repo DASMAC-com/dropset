@@ -12,12 +12,13 @@
 
 // cspell:word idempotently
 
+use crate::job::Logger;
 use anyhow::{Context, Result};
 use dropset_sdk::instructions::{
     CloseMarket, CloseMarketTreasury, CloseRegistry, CloseRegistryFeeVault, CreateMarket,
     CreateVault, CreateVaultInstructionArgs, DepositLeader, DepositLeaderInstructionArgs,
     ForceWithdrawDepositor, ForceWithdrawDepositorInstructionArgs, ForceWithdrawLeader,
-    ForceWithdrawLeaderInstructionArgs, Init, InitInstructionArgs,
+    ForceWithdrawLeaderInstructionArgs, Init, InitInstructionArgs, Swap, SwapInstructionArgs,
 };
 use dropset_sdk::DROPSET_ID;
 use solana_client::rpc_client::RpcClient;
@@ -35,6 +36,8 @@ pub const SPL_TOKEN_PROGRAM_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuB
 pub const ATA_PROGRAM_ID: Pubkey = pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
 /// System program.
 pub const SYSTEM_PROGRAM_ID: Pubkey = pubkey!("11111111111111111111111111111111");
+/// Clock sysvar — the `swap` instruction reads it for level-expiry checks.
+pub const CLOCK_SYSVAR_ID: Pubkey = pubkey!("SysvarC1ock11111111111111111111111111111111");
 
 /// $1,000 in 6-decimal atoms — the per-`CreateVault` fee stamped at `init`.
 /// Mirrors `CREATE_MARKET_FEE_ATOMS` in the test fixture. Waived on the
@@ -240,6 +243,48 @@ pub fn build_deposit_leader_ix(
         quote_in,
         max_base_in: base_in,
         max_quote_in: quote_in,
+    })
+}
+
+/// `swap` — a taker take against the market's live book. `side` is `0` for a
+/// Buy (pays quote from `taker`'s quote ATA, receives base) or `1` for a Sell
+/// (pays base, receives quote); `limit_price_bits` is the worst acceptable
+/// fill (`Price::INFINITY` bits for a Buy / `Price::ZERO` for a Sell disables
+/// the bound) and `min_out` the slippage floor. Used by the TUI's swap probe
+/// to exercise — and measure the CU of — a real take against the seeded vault.
+#[allow(clippy::too_many_arguments)]
+pub fn build_swap_ix(
+    taker: &Pubkey,
+    market: &Pubkey,
+    base_mint: &Pubkey,
+    quote_mint: &Pubkey,
+    base_treasury: &Pubkey,
+    quote_treasury: &Pubkey,
+    side: u8,
+    amount_in: u64,
+    limit_price_bits: u32,
+    min_out: u64,
+) -> Instruction {
+    Swap {
+        taker: *taker,
+        market: *market,
+        base_mint: *base_mint,
+        quote_mint: *quote_mint,
+        base_token_program: SPL_TOKEN_PROGRAM_ID,
+        quote_token_program: SPL_TOKEN_PROGRAM_ID,
+        taker_base_ata: associated_token_address(taker, base_mint, &SPL_TOKEN_PROGRAM_ID),
+        taker_quote_ata: associated_token_address(taker, quote_mint, &SPL_TOKEN_PROGRAM_ID),
+        market_base_treasury: *base_treasury,
+        market_quote_treasury: *quote_treasury,
+        clock: CLOCK_SYSVAR_ID,
+        event_authority: event_authority(),
+        program: DROPSET_ID,
+    }
+    .instruction(SwapInstructionArgs {
+        side,
+        amount_in,
+        limit_price_bits,
+        min_out,
     })
 }
 
@@ -562,6 +607,55 @@ pub fn send(
             Err(anyhow::anyhow!("{err}{logs}"))
         }
     }
+}
+
+/// Like [`send`], but also reports the transaction's compute-unit cost — the
+/// value the CU pane watches. The CU is read by simulating the (signed)
+/// transaction against the same pre-state it will execute against, which is
+/// exact for these deterministic instructions and needs no transaction-history
+/// RPC. A `None` CU (simulation unavailable) still sends and returns the
+/// signature, so a transient simulate failure never blocks the operation.
+pub fn send_measured(
+    client: &RpcClient,
+    payer: &Keypair,
+    signers: &[&Keypair],
+    ixs: &[Instruction],
+) -> Result<(String, Option<u64>)> {
+    let cu = measure_cu(client, payer, signers, ixs);
+    let sig = send(client, payer, signers, ixs)?;
+    Ok((sig, cu))
+}
+
+/// Send `ixs` as one transaction, log its signature under `label`, route the
+/// measured CU to the CU pane (when available), and return the signature. The
+/// one-stop send for operations whose per-instruction cost the TUI surfaces.
+pub fn send_logged(
+    client: &RpcClient,
+    payer: &Keypair,
+    signers: &[&Keypair],
+    ixs: &[Instruction],
+    label: &str,
+    log: &Logger,
+) -> Result<String> {
+    let (sig, cu) = send_measured(client, payer, signers, ixs)?;
+    log.log(format!("{label}: {sig}"));
+    if let Some(units) = cu {
+        log.cu(label.to_string(), units);
+    }
+    Ok(sig)
+}
+
+/// Simulate `ixs` (signed, against current state) purely to recover the
+/// compute units consumed. Best-effort — any RPC hiccup yields `None`.
+fn measure_cu(
+    client: &RpcClient,
+    payer: &Keypair,
+    signers: &[&Keypair],
+    ixs: &[Instruction],
+) -> Option<u64> {
+    let blockhash = client.get_latest_blockhash().ok()?;
+    let tx = Transaction::new_signed_with_payer(ixs, Some(&payer.pubkey()), signers, blockhash);
+    client.simulate_transaction(&tx).ok()?.value.units_consumed
 }
 
 #[cfg(test)]
