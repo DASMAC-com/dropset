@@ -21,10 +21,10 @@ use super::{Market, MarketHeader, Vault, NULL_SECTOR};
 /// borrow into the header through the slab's `DerefMut`.
 pub trait VaultDll {
     /// Allocate a sector: prefers the free list, else extends the slab
-    /// by one entry. Returns the new sector's index; sets `leader`,
-    /// `quote_authority`, and bookkeeping fields to default but does
-    /// **not** thread it onto the active list — the caller does that
-    /// after stamping the rest of the vault.
+    /// by one entry. Returns the new sector's index. Zeroes the entire
+    /// vault (`Vault::zeroed`) so no prior state leaks, then resets
+    /// `next` / `prev` to [`NULL_SECTOR`], but does **not** thread it
+    /// onto a list — the caller stamps the live fields and links it.
     fn allocate_sector(&mut self, payer: &AccountView) -> Result<u32>;
 
     /// Push `sector` to the front of `list`. Updates list head, links
@@ -44,8 +44,10 @@ pub trait VaultDll {
     /// The free list is intentionally excluded: callers reclaiming a
     /// drained sector want to know whether it was active (so they can
     /// decrement `active_count`) or tombstoned, and a free sector is
-    /// already where reclaim would put it. Bounded by
-    /// `registry.max_vaults_per_market` (a `u8`), so the walk is cheap.
+    /// already where reclaim would put it. The walk is bounded by the
+    /// slab length — the active and tombstone membership it traverses —
+    /// not by `registry.max_vaults_per_market`: only `active_count` is
+    /// capped, while tombstoned sectors stay threaded until reclaimed.
     fn vault_list_of(&self, sector: u32) -> Option<DllList>;
 
     /// Reclaim a fully-drained sector (`total_shares == 0`) to the free
@@ -368,12 +370,12 @@ mod tests {
     fn unlink_rejects_orphan_head() {
         // Manually corrupt the slab so a sector's `prev == NULL` but
         // the list head doesn't point at it — that's the inconsistent
-        // "head-or-orphan" branch of `unlink`'s defensive check
-        // (line ~341). Without the require! this would happily set
-        // `head = next` based on the orphan's pointers and corrupt
-        // the visible list. The Active list is left empty (head =
-        // NULL_SECTOR) while sector 0 carries `prev = NULL` from
-        // setup but isn't reachable from any head.
+        // "head-or-orphan" branch of `unlink`'s defensive check, the
+        // `list.head(self) == sector` require!. Without it this would
+        // happily set `head = next` based on the orphan's pointers and
+        // corrupt the visible list. The Active list is left empty
+        // (head = NULL_SECTOR) while sector 0 carries `prev = NULL`
+        // from setup but isn't reachable from any head.
         let buf = setup();
         let mut market = load_market(&buf);
         // sector 0 already has prev=NULL from setup; market.head is
