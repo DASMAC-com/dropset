@@ -23,7 +23,8 @@ services:
     # reach a host-run validator at http://host.docker.internal:8899.
     extra_hosts:
     - 'host.docker.internal:host-gateway'
+    # Bind to loopback only — a local dev viewer, not a LAN service.
     ports:
-    - '3000:3000'
+    - '127.0.0.1:3000:3000'
     restart: 'unless-stopped'
 ...
