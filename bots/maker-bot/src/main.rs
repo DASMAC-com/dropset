@@ -1,42 +1,118 @@
 //! `dropset-maker-bot` entrypoint.
 //!
-//! For now this drives a **dry run**: it polls the live price feeds, composes
-//! the fair mid and peg, and prints the reference price and quote ladder it
-//! *would* stamp — no validator, no writes. It's the wiring check for the
-//! feed credentials and the composition rules before the bot drives a real
-//! vault. The live tick loop (the `chain` + `tasks` modules) builds on this.
+//! Default mode runs the bot live against a localnet market: discover the
+//! market, fund the leader, and drive the tick loop. `--dry-run` instead polls
+//! the feeds once and prints the reference and ladder it *would* stamp — the
+//! wiring check for feed credentials, with no validator and no writes.
+//!
+//! Flags:
+//!   --rpc <url>            RPC endpoint (default http://127.0.0.1:8899)
+//!   --leader-key <path>    leader/quote-authority keypair (default keys/EEEE.json)
+//!   --aerodrome <net>:<pool>  enable the Aerodrome feed (off by default)
+//!   --dry-run              poll feeds and print the intended quote, then exit
 
-use anyhow::Result;
-use dropset_maker_bot::config::{AerodromeConfig, BotConfig};
+use anyhow::{anyhow, Context, Result};
+use dropset_maker_bot::config::{AerodromeConfig, BotConfig, DEFAULT_LEADER_KEY};
+use dropset_maker_bot::context::Context as BotContext;
 use dropset_maker_bot::model::fair_mid::{compose, Quote};
 use dropset_maker_bot::model::feeds::Feeds;
 use dropset_maker_bot::model::inventory::Inventory;
 use dropset_maker_bot::model::{killswitch, ladder, skew};
+use dropset_maker_bot::{chain, tasks};
+use solana_signer::Signer;
 use std::time::Duration;
+
+/// Lamports per SOL.
+const LAMPORTS_PER_SOL: u64 = 1_000_000_000;
+/// Below this leader balance, airdrop on startup (localnet).
+const MIN_LEADER_LAMPORTS: u64 = LAMPORTS_PER_SOL / 2;
+/// Airdrop size when topping up the leader.
+const AIRDROP_LAMPORTS: u64 = 2 * LAMPORTS_PER_SOL;
+
+struct Args {
+    leader_key: String,
+    dry_run: bool,
+}
 
 fn main() -> Result<()> {
     let mut cfg = BotConfig::default();
-    parse_args(&mut cfg);
-    dry_run(&cfg)
+    let args = parse_args(&mut cfg);
+    if args.dry_run {
+        dry_run(&cfg)
+    } else {
+        run_live(&cfg, &args)
+    }
 }
 
-/// Minimal flag parsing: `--aerodrome <network>:<pool>` enables the Aerodrome
-/// feed for this run (off by default). Unknown flags are ignored.
-fn parse_args(cfg: &mut BotConfig) {
-    let mut args = std::env::args().skip(1);
-    while let Some(arg) = args.next() {
-        if arg == "--aerodrome" {
-            if let Some(spec) = args.next() {
-                if let Some((network, pool)) = spec.split_once(':') {
+/// Parse flags, mutating `cfg` and returning the run options.
+fn parse_args(cfg: &mut BotConfig) -> Args {
+    let mut leader_key = DEFAULT_LEADER_KEY.to_string();
+    let mut dry_run = false;
+    let mut it = std::env::args().skip(1);
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--rpc" => {
+                if let Some(url) = it.next() {
+                    cfg.rpc_url = url;
+                }
+            }
+            "--leader-key" => {
+                if let Some(path) = it.next() {
+                    leader_key = path;
+                }
+            }
+            "--aerodrome" => {
+                if let Some((network, pool)) = it.next().and_then(|s| split_pair(&s)) {
                     cfg.feeds.aerodrome = Some(AerodromeConfig {
-                        network: network.to_string(),
-                        pool: pool.to_string(),
+                        network,
+                        pool,
                         poll: Duration::from_secs(10),
                     });
                 }
             }
+            "--dry-run" => dry_run = true,
+            _ => {}
         }
     }
+    Args {
+        leader_key,
+        dry_run,
+    }
+}
+
+/// Split a `network:pool` argument into its owned parts.
+fn split_pair(spec: &str) -> Option<(String, String)> {
+    spec.split_once(':')
+        .map(|(n, p)| (n.to_string(), p.to_string()))
+}
+
+/// Discover the market, fund the leader, and run the tick loop.
+fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
+    let client = chain::rpc(&cfg.rpc_url);
+    let leader = solana_keypair::read_keypair_file(&args.leader_key)
+        .map_err(|e| anyhow!("read leader key {}: {e}", args.leader_key))?;
+
+    // The leader pays for its own quoting txns; top it up on localnet.
+    let balance = client
+        .get_balance(&leader.pubkey())
+        .context("leader balance")?;
+    if balance < MIN_LEADER_LAMPORTS {
+        println!(
+            "funding leader {} ({} SOL)…",
+            leader.pubkey(),
+            AIRDROP_LAMPORTS / LAMPORTS_PER_SOL
+        );
+        chain::airdrop(&client, &leader.pubkey(), AIRDROP_LAMPORTS)?;
+    }
+
+    let market = chain::discover_market(&client)?;
+    println!(
+        "discovered market {} ({}/{})",
+        market.market, market.base_mint, market.quote_mint
+    );
+    let ctx = BotContext::new(client, leader, cfg.vault_idx, market);
+    let feeds = Feeds::new(cfg.feeds.clone());
+    tasks::run(ctx, feeds, cfg.clone())
 }
 
 /// Poll the feeds once, compose the reference, and print the intended quote.

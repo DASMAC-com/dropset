@@ -14,8 +14,11 @@
 //! - [`model`] — the pure quoting logic (feeds, fair mid, ladder, skew,
 //!   triggers, kill switches), deterministic and unit tested.
 //!
-//! The `context`, `chain`, and `tasks` modules (runtime state, on-chain I/O,
-//! and the 5-second tick loop) build on this core.
+//! The [`context`], [`chain`], and [`tasks`] modules layer the runtime state,
+//! on-chain I/O, and the 5-second tick loop on top of this core.
 
+pub mod chain;
 pub mod config;
+pub mod context;
 pub mod model;
+pub mod tasks;

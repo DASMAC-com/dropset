@@ -108,6 +108,10 @@ pub struct StrategyConfig {
     /// `SetReferencePrice` skew trigger: refresh when the inventory skew shifts
     /// the reference by more than this many bps (§3).
     pub ref_skew_change_bps: f64,
+    /// `SetLiquidityProfile` daily heartbeat — re-arm the ladder at least this
+    /// often so deep, rarely-filled levels don't expire dark (§3 cold-path
+    /// trigger 3).
+    pub profile_heartbeat: Duration,
 }
 
 /// Inventory / peg / staleness kill-switch bounds (§1, §4).
@@ -170,6 +174,7 @@ impl Default for StrategyConfig {
             ref_drift_bps: 10.0,
             ref_heartbeat: Duration::from_secs(30),
             ref_skew_change_bps: 2.0,
+            profile_heartbeat: Duration::from_secs(24 * 3600),
         }
     }
 }
