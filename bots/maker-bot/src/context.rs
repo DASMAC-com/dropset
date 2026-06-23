@@ -29,6 +29,8 @@ pub struct MarketAddrs {
 /// A live snapshot of the bot's vault, re-read each tick.
 #[derive(Clone, Copy, Debug)]
 pub struct VaultSnapshot {
+    /// The vault's sector index — addresses it in the quoting instructions.
+    pub sector_idx: u32,
     pub base_atoms: u64,
     pub quote_atoms: u64,
     /// The reference price currently stamped on-chain, as a float.

@@ -93,26 +93,38 @@ fn mint_decimals(client: &RpcClient, mint: &Pubkey) -> Result<u8> {
         .ok_or_else(|| anyhow!("mint account too small"))
 }
 
-/// Read the bot's vault sector — its live inventory, stamped reference,
-/// price-time nonce (fill detection), and frozen flag.
-pub fn read_vault(client: &RpcClient, market: &Pubkey, vault_idx: u32) -> Result<VaultSnapshot> {
+/// Read the bot's vault — the active sector whose quote authority is
+/// `authority` (the leader). Matching by authority rather than a hardcoded
+/// sector index makes the bot robust to whichever sector the bootstrap
+/// happened to open. Reports the active sectors on a miss.
+pub fn read_vault(
+    client: &RpcClient,
+    market: &Pubkey,
+    authority: &Pubkey,
+) -> Result<VaultSnapshot> {
     let account = client.get_account(market).context("get market account")?;
     let view = SlabView::load(&account.data).map_err(|e| anyhow!("decode market: {e:?}"))?;
-    let (_, vault) = view
-        .active_vaults()
-        .find(|(idx, _)| *idx == vault_idx)
-        .ok_or_else(|| anyhow!("vault {vault_idx} is not active"))?;
 
-    let reference = vault.reference_price.price();
-    let reference_price = reference.quote_for_base(PRICE_SCALE) as f64 / PRICE_SCALE as f64;
-
-    Ok(VaultSnapshot {
-        base_atoms: vault.base_atoms.get(),
-        quote_atoms: vault.quote_atoms.get(),
-        reference_price,
-        nonce: vault.reference_price.nonce(),
-        frozen: vault.frozen != 0,
-    })
+    let wanted = authority.to_bytes();
+    let mut active = Vec::new();
+    for (idx, vault) in view.active_vaults() {
+        active.push(idx);
+        if vault.quote_authority == wanted {
+            let reference = vault.reference_price.price();
+            let reference_price = reference.quote_for_base(PRICE_SCALE) as f64 / PRICE_SCALE as f64;
+            return Ok(VaultSnapshot {
+                sector_idx: idx,
+                base_atoms: vault.base_atoms.get(),
+                quote_atoms: vault.quote_atoms.get(),
+                reference_price,
+                nonce: vault.reference_price.nonce(),
+                frozen: vault.frozen != 0,
+            });
+        }
+    }
+    Err(anyhow!(
+        "no vault with quote authority {authority}; active sectors: {active:?}"
+    ))
 }
 
 /// Stamp a new reference price (`set_reference_price`, hot path). `slot` is the

@@ -24,6 +24,7 @@ use crate::model::ladder::{self, Side};
 use crate::model::skew;
 use crate::model::triggers::{self, RefTrigger};
 use anyhow::Result;
+use solana_signer::Signer;
 use std::time::{Duration, Instant};
 
 /// The cached state of one feed: its last successful reading (with the instant
@@ -102,9 +103,10 @@ fn tick(
         ae.maybe_poll(now, interval, "aerodrome", || feeds.poll_aerodrome());
     }
 
-    // 2. Compose the reference and read the live vault.
+    // 2. Compose the reference and read the live vault (by quote authority).
     let fair = compose(cg.quote(now), ae.quote(now), fx.quote(now), &cfg.kill);
-    let vault = chain::read_vault(&ctx.client, &ctx.market.market, ctx.vault_idx)?;
+    let vault = chain::read_vault(&ctx.client, &ctx.market.market, &ctx.leader.pubkey())?;
+    ctx.vault_idx = vault.sector_idx;
 
     // Fill detection: a nonce bump since the last tick means a flush landed.
     if ctx.last_nonce != 0 && vault.nonce != ctx.last_nonce {
