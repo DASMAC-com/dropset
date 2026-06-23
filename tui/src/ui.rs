@@ -7,6 +7,7 @@
 use crate::accounts::Phase;
 use crate::action::{self, Action};
 use crate::app::{App, LogKind};
+use crate::explorer;
 use dropset_sdk::DROPSET_ID;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -17,6 +18,7 @@ use ratatui::{
 };
 use solana_native_token::LAMPORTS_PER_SOL;
 use solana_pubkey::Pubkey;
+use std::sync::atomic::Ordering;
 
 /// Render the whole dashboard.
 pub fn draw(f: &mut Frame<'_>, app: &mut App) {
@@ -79,6 +81,8 @@ fn draw_status(f: &mut Frame<'_>, app: &App, area: Rect) {
             "  ·  wallet {:.3} SOL",
             app.chain.wallet_lamports as f64 / LAMPORTS_PER_SOL as f64
         )),
+        Span::raw("  ·  explorer "),
+        explorer_status(app),
     ]);
     let job = if app.job_running {
         " (job running) "
@@ -93,6 +97,18 @@ fn draw_status(f: &mut Frame<'_>, app: &App, area: Rect) {
         ),
         area,
     );
+}
+
+/// Colored status-bar span for the managed explorer container.
+fn explorer_status(app: &App) -> Span<'static> {
+    let s = app.ctx.explorer_state.load(Ordering::SeqCst);
+    let color = match s {
+        explorer::state::READY => Color::Green,
+        explorer::state::STARTING => Color::Yellow,
+        explorer::state::FAILED => Color::Red,
+        _ => Color::DarkGray,
+    };
+    Span::styled(explorer::state_label(s), Style::new().fg(color))
 }
 
 fn draw_menu(f: &mut Frame<'_>, app: &mut App, area: Rect) {

@@ -7,7 +7,7 @@
 # localnet services (e.g. the market-making bot) join this same stack.
 #
 # The dropset-tui control plane owns this stack's lifecycle: it brings the
-# explorer up lazily on first "Open explorer" and tears it down on quit.
+# explorer up in the background at launch and tears it down on quit.
 # `make explorer` / `make explorer-down` drive it by hand.
 name: 'dropset-localnet'
 services:

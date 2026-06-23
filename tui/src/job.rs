@@ -29,6 +29,12 @@ pub struct Logger {
 }
 
 impl Logger {
+    /// Build a `Logger` over a job channel — for work that streams into the
+    /// log outside the single-job harness (the background explorer starter).
+    pub fn new(tx: Sender<JobEvent>) -> Self {
+        Self { tx }
+    }
+
     /// Append a line to the log pane.
     pub fn log(&self, msg: impl Into<String>) {
         let _ = self.tx.send(JobEvent::Log(msg.into()));

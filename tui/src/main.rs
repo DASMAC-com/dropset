@@ -17,8 +17,8 @@ mod validator;
 
 use anyhow::{anyhow, Result};
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
+use std::sync::atomic::AtomicU8;
+use std::sync::{Arc, Mutex};
 
 /// Default wallet path (mirrors `Anchor.toml`'s `provider.wallet`). Used as
 /// payer, genesis admin, and program upgrade authority.
@@ -39,7 +39,8 @@ fn main() -> Result<()> {
         repo_root,
         wallet_path,
         wallet,
-        explorer_up: Arc::new(AtomicBool::new(false)),
+        explorer_state: Arc::new(AtomicU8::new(explorer::state::STARTING)),
+        explorer_lock: Arc::new(Mutex::new(())),
     };
     app::App::new(ctx)?.run()
 }

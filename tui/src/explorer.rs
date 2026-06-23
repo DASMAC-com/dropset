@@ -13,8 +13,9 @@
 //!
 //! The explorer runs as the seed service of the localnet Docker stack
 //! (`infra/localnet/docker-compose.yml`). The TUI owns its lifecycle: built
-//! and started lazily on the first "Open explorer", torn down on quit — the
-//! same ownership the validator has.
+//! (first run) and started in the background at launch, so it is serving by
+//! the time the operator opens it, and torn down on quit — the same ownership
+//! the validator has.
 
 use crate::job::{self, Logger};
 use anyhow::{bail, Context, Result};
@@ -22,10 +23,65 @@ use solana_pubkey::Pubkey;
 use std::net::{SocketAddr, TcpStream};
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 /// Host port the explorer container publishes (compose maps `3000:3000`).
 pub const EXPLORER_PORT: u16 = 3000;
+
+/// Lifecycle state of the managed explorer container, shared (as an
+/// [`AtomicU8`]) between the background starter, the "Open explorer" action,
+/// and the UI — so the render loop can read it without blocking on a job.
+pub mod state {
+    /// Build / start in progress (Docker is present).
+    pub const STARTING: u8 = 0;
+    /// Serving on [`super::EXPLORER_PORT`].
+    pub const READY: u8 = 1;
+    /// No Docker CLI — "Open explorer" falls back to the hosted explorer.
+    pub const NO_DOCKER: u8 = 2;
+    /// Docker is present but the build / start failed.
+    pub const FAILED: u8 = 3;
+}
+
+/// One-word label for `state`, for the status bar.
+pub fn state_label(s: u8) -> &'static str {
+    match s {
+        state::STARTING => "starting…",
+        state::READY => "ready",
+        state::NO_DOCKER => "no docker",
+        state::FAILED => "failed",
+        _ => "?",
+    }
+}
+
+/// Bring the explorer up on a background thread at TUI launch, recording
+/// progress in `status` so it is serving by the time the operator opens it —
+/// built lazily the first time, reused after. Serialized via `lock` so it
+/// never races the "Open explorer" action's own [`ensure_running`]; streams
+/// build output into `log`.
+pub fn start_in_background(log: &Logger, repo_root: &Path, status: &AtomicU8, lock: &Mutex<()>) {
+    if !docker_available() {
+        status.store(state::NO_DOCKER, Ordering::SeqCst);
+        log.log("Docker not found — \"Open explorer\" will use the hosted explorer.");
+        return;
+    }
+    let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+    status.store(state::STARTING, Ordering::SeqCst);
+    log.log("Starting the local explorer container in the background…");
+    match ensure_running(log, repo_root) {
+        Ok(()) => {
+            status.store(state::READY, Ordering::SeqCst);
+            log.log(format!(
+                "Local explorer ready on http://localhost:{EXPLORER_PORT}"
+            ));
+        }
+        Err(e) => {
+            status.store(state::FAILED, Ordering::SeqCst);
+            log.log(format!("Local explorer failed to start: {e:#}"));
+        }
+    }
+}
 
 /// The compose file, relative to the repo root, and the service it defines.
 const COMPOSE_REL: &str = "infra/localnet/docker-compose.yml";

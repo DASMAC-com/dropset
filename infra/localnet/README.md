@@ -29,8 +29,9 @@ browser blocks it.
 ## Usage
 
 The `dropset-tui` control plane owns the stack's lifecycle: it builds
-and starts the explorer lazily on the first "Open explorer" action and
-tears it down on quit. Drive it by hand with:
+and starts the explorer in the background at launch (so it is serving
+by the time you open it) and tears it down on quit. Drive it by hand
+with:
 
 ```sh
 make explorer       # build (first run) + start, detached
