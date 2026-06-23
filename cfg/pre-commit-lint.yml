@@ -77,6 +77,13 @@ repos:
   repo: 'https://github.com/macisamuele/language-formatters-pre-commit-hooks'
   rev: 'v2.16.0'
 - hooks:
+  - args:
+    - '--fix'
+    id: 'ruff-check'
+  - id: 'ruff-format'
+  repo: 'https://github.com/astral-sh/ruff-pre-commit'
+  rev: 'v0.15.18'
+- hooks:
   - entry: 'cargo fmt --'
     id: 'rustfmt'
     language: 'system'
