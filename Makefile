@@ -12,6 +12,7 @@
 .PHONY: lint
 .PHONY: sdk
 .PHONY: sdk-test
+.PHONY: stage-backlog
 .PHONY: test
 .PHONY: test-no-teardown
 .PHONY: wasm
@@ -110,6 +111,14 @@ install-anchor-v2:
 
 lint:
 	pre-commit run --config cfg/pre-commit-lint.yml --all-files
+
+# Render the Linear Backlog as the Task Staging dependency tree (the
+# deterministic core of the stage-backlog skill). Resolves LINEAR_API_KEY,
+# LINEAR_PROJECT_ID, and LINEAR_TASK_STAGING_DOC_ID from the environment.
+# Pass ARGS=--dry-run to print the tree to stdout without writing the doc:
+# `make stage-backlog ARGS=--dry-run`.
+stage-backlog:
+	cargo run -p dropset-stage-backlog -- $(ARGS)
 
 # Materialize the program keypair into the (git-ignored) build dir from
 # its canonical home, keys/AAAA.json, so anchor's build-time program-ID

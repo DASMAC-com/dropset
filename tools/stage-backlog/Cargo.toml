@@ -1,0 +1,21 @@
+# Deterministic Linear Backlog → Task Staging document renderer. The bulk of
+# the `stage-backlog` skill — read the Backlog, build the dependency tree from
+# declared blockedBy/blocks edges + file-overlap, and render the chips-only
+# markdown — is pure mechanism, so it lives here as a committed binary that
+# inherits the workspace's cargo fmt + clippy hooks. Blocking HTTP only (no
+# tokio), mirroring the off-chain tools' synchronous design.
+
+[dependencies]
+anyhow = "1"
+serde = {version = "1", features = ["derive"]}
+serde_json = "1"
+# Blocking HTTP client for the Linear GraphQL calls (TLS enabled by
+# default); `json` enables send_json / into_json. No async runtime.
+ureq = {version = "2", features = ["json"]}
+
+[package]
+description = "Deterministic Linear Backlog → Task Staging document renderer."
+name = "dropset-stage-backlog"
+publish = false
+edition.workspace = true
+version.workspace = true

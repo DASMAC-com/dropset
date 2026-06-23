@@ -72,6 +72,12 @@ export LINEAR_TASK_STAGING_DOC_ID=…
 # Used only by firm-perms (and housekeeping, which calls it) —
 # the "Permissions" inbox document it drains:
 export LINEAR_PERMISSIONS_DOC_ID=…
+# Used only by the dropset-stage-backlog binary (the deterministic
+# core of the stage-backlog skill) — a personal Linear API key. The
+# headless binary can't use the OAuth-based claude.ai Linear MCP, so
+# it authenticates with this key, sent as the Authorization header.
+# Never commit it.
+export LINEAR_API_KEY=…
 ```
 
 Skills read these at run time with a bare `printenv`, **one variable
@@ -97,6 +103,38 @@ of the "Permissions" inbox document it drains in its `doc` mode (and
 that `housekeeping` drains via `firm-perms` each pass) — with its own
 bare `printenv`, on the same rule. It too is not a filing
 destination.
+
+The `dropset-stage-backlog` **binary** (the deterministic core of the
+`stage-backlog` skill — see "Structured filing fields" below) reads
+`LINEAR_PROJECT_ID` the same way, plus its own `LINEAR_API_KEY`: a
+personal Linear API key, because a headless binary can't ride the
+OAuth-based `claude.ai` Linear MCP. For a real write it also reads
+`LINEAR_TASK_STAGING_DOC_ID` (the document it rewrites); `--dry-run`
+prints the tree to stdout and doesn't require it. It resolves all of
+these via `std::env::var`, never a hard-coded id, and the key is never
+committed.
+
+### Structured filing fields
+
+Every filed issue carries machine-readable fields the automation reads
+back, on top of the human prose. Keep the field **names** stable — the
+filing skills emit them and `stage-backlog` parses them:
+
+- `**Fingerprint**: <basename>:<slug>` — the dedup key `audit-loop`
+  matches on so a finding is never refiled. Mandatory on audit
+  findings; one line per finding (a merged issue carries several).
+- `**Touches**: <glob>[, <glob>…]` — the path globs the fix will
+  edit, comma-separated. Declare the **directory** when the work
+  spans a dir (`tui/`), the **file** when it's one file
+  (`programs/dropset/src/swap.rs`); list every glob for a multi-file
+  finding. The `stage-backlog` renderer reads this to detect file
+  collisions **deterministically** — a directory glob collides with
+  any path under it, and two issues that collide can't run in
+  parallel, so the higher-numbered one nests under the lower. Moving
+  this structure to **filing time** is what lets the tool skip the
+  prose-reading sub-agent it used to need; an issue that predates the
+  field falls back to declared-edge/parent placement, and the skill's
+  agent step reconciles it.
 
 A worktree branch and its Linear issue **share one `ENG-###`
 number**: branch `eng-499` ↔ issue `ENG-499`. Skills resolve the
@@ -252,6 +290,18 @@ allow-rule per read tool covers all of its methods. Propagate the
 pre-approved allow-rules (reads *and* the PR-authoring writes) to the
 **base-repo** settings so future worktrees inherit them (per the
 per-worktree settings rule); `firm-perms` does this at session end.
+
+## Docs and skills prose
+
+**Refer to users in the abstract, never by name.** Committed docs and
+skills (`.claude/skills/**`, `CLAUDE.md`, `docs/**`) should read as if
+written for any user of the tool, so a particular individual's name
+never appears in the prose — write "the user", "you", or "whoever runs
+it" instead. The skill suite is general-purpose tooling; hard-coding
+one person's name makes it read as bespoke and dates poorly. This is
+about **prose only** — the env-var-resolved assignee / filing-destination
+ids (`LINEAR_ASSIGNEE_ID`, etc.) are configuration, not prose, and are
+unaffected.
 
 ## Spelling (cspell)
 
@@ -436,6 +486,26 @@ If a one-off like these still gets approved during a session, do
 `firm-perms` skill flags it and points back here so the source stops
 emitting it.
 
+### The compound-shell guard hook
+
+These rules are enforced **mechanically**, not just by convention. A
+`PreToolUse` Bash hook (`.claude/hooks/no_compound_bash.py`, wired in
+the committed `.claude/settings.json` so every worktree inherits it)
+inspects each Bash command before it runs and **blocks** any that
+contains an unquoted shell compound / redirect operator — a pipe, `>`,
+`<`, `;`, `&&`, `||`, `&`, a backtick, or `$(` — telling the model to
+split the call and use the Write / Read / Grep tools instead. The scan
+is **quote-aware**: an operator inside a single- or double-quoted
+string (a commit message's `;`, a regex's `|`) is legitimate text and
+passes; command substitution (`` ` `` and `$(`) is caught even inside
+double quotes, mirroring real shell. The guard fails *open* — any
+payload it can't parse is allowed — so it never wedges a session.
+
+**Escape hatch.** A genuinely-unavoidable compound (rare) is let
+through by adding the literal marker `#compound-ok` anywhere in the
+command. It's deliberately visible in the transcript so the bypass is
+auditable; reach for it only when the work truly can't be split.
+
 ## Briefing sub-agents
 
 A sub-agent you spawn (via the `Agent` tool) does **not** inherit this
@@ -527,6 +597,7 @@ sdk-clients (gen-client, med): sdk/rs/src/**, sdk/ts/src/**, sdk/codama/**
 frontend (web-app, med): frontend/**
 docs (specs, med): docs/**
 ci-infra (ci, low): .github/**, cfg/**, Makefile, Anchor.toml
+tools (rust-tool, low): tools/**
 ```
 
 **Inter-subsystem interfaces** — the seams where contract drift

@@ -369,9 +369,10 @@ Only findings that survive the check proceed.
 
 **8. File one Linear issue per finding.** File exactly
 as the `linear-task` skill does: a **plain Backlog issue
-with no parent**, assigned to Alex, into the shared
-destination. There is **no umbrella issue** — the
-project Backlog is the queue, and `stage-backlog` turns
+with no parent**, assigned to the configured assignee,
+into the shared destination. There is **no umbrella
+issue** — the project Backlog is the queue, and
+`stage-backlog` turns
 it into a PR plan later. Resolve the destination IDs
 from the environment exactly as `linear-task` does —
 never hard-code them — with a bare `printenv` per
@@ -451,6 +452,12 @@ own worktree (literal newlines, not `\n`):
   reads it back to rebuild the dedup set, so a wiped
   worktree recovers dedup state from Linear instead of
   refiling everything.
+- `**Touches**: <glob>[, <glob>…]` — the machine-readable
+  list of path globs the fix will edit, comma-separated
+  (for a single-file nit, just that file). `stage-backlog`'s
+  renderer reads this to detect file collisions
+  deterministically. **Mandatory** — see `CLAUDE.md` →
+  "Structured filing fields".
 - `**Discovered by**: audit-loop iteration <n> @ <commit SHA>`
 
 After each `save_issue`, increment the in-context
@@ -487,9 +494,14 @@ fixable, so don't pretend otherwise. Don't include the
   `arch:<lens>:<topic-slug>` dedup key (mandatory, same
   role as for FILE findings: step 1 rebuilds the dedup
   set from it).
+- `**Touches**: <glob>[, <glob>…]` — the path globs the
+  proposal's work would span (often several dirs for an
+  `arch:` finding), comma-separated. `stage-backlog` reads
+  it for collision detection. **Mandatory** — see
+  `CLAUDE.md` → "Structured filing fields".
 - `**Discovered by**: audit-loop iteration <n> @ <commit SHA>`
 
-Priority 3; these are proposals for Alex to triage, not
+Priority 3; these are proposals for the user to triage, not
 pre-approved work. Title them by area, e.g.
 `arch: decouple the matcher from Market storage layout`.
 
@@ -499,7 +511,7 @@ prominent line:
 If at least one **high-severity** issue was filed this
 iteration, send exactly **one** `PushNotification`
 summarizing the top one — ideal for the background
-morning campaign, so Alex is interrupted only when it
+morning campaign, so you are interrupted only when it
 matters. If nothing was filed, send no notification.
 
 **10. Close out and continue.** Update the in-context

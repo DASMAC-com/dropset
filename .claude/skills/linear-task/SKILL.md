@@ -1,6 +1,6 @@
 ---
 name: linear-task
-description: File a follow-up to-do into Linear (Engineering team, Dropset project, assigned to Alex) via the Linear MCP. Use for deferring blockers and clean-ups uncovered during a PR to do after it merges.
+description: File a follow-up to-do into Linear (Engineering team, Dropset project, assigned to the configured assignee) via the Linear MCP. Use for deferring blockers and clean-ups uncovered during a PR to do after it merges.
 user-invocable: true
 ---
 
@@ -74,7 +74,14 @@ what to file.
      is deferred and enough context to act on it
      cold: what was uncovered, where in the code,
      and what the fix likely involves. Pass literal
-     newlines, not `\n` escapes.
+     newlines, not `\n` escapes. Include a
+     `**Touches**: <glob>[, <glob>…]` line — the
+     machine-readable path globs the fix will edit
+     (a directory like `tui/` when it spans a dir, a
+     file when it's one file), comma-separated, so
+     `stage-backlog`'s renderer can group it by file
+     collision. See `CLAUDE.md` → "Structured filing
+     fields".
 
    - If the to-do came out of an open PR or branch,
      add a `links` entry to that PR so the issue

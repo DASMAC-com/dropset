@@ -241,6 +241,16 @@ Optional (ask on a direct run if not provided):
      - `**Fingerprint**: <basename>:<fingerprint_slug>` —
        the dedup key (e.g. `swap.rs:slippage:no-min-out`),
        so `audit-loop` and re-runs recognize it. Mandatory.
+     - `**Touches**: <glob>[, <glob>…]` — the
+       machine-readable list of path globs this fix will
+       edit (e.g. `programs/dropset/src/swap.rs` or
+       `tui/`), comma-separated. `stage-backlog`'s renderer
+       reads this to detect file collisions deterministically
+       (a directory glob like `tui/` collides with any path
+       under it). Declare the **directory** when the fix
+       spans a dir, the **file** when it's one file; for a
+       multi-file finding list every glob. Mandatory — see
+       `CLAUDE.md` → "Structured filing fields".
 
 1. **Report.** Print a short tally — findings by
    dimension and severity, deduped count, and (direct run)

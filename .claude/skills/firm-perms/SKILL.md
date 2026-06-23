@@ -130,8 +130,8 @@ Optional, and accepts these shapes:
   whole array.
 
 - **The Linear "Permissions" doc** (pass `doc`, or run
-  by `housekeeping`) — drain Alex's living
-  **Permissions** inbox document, where he dumps
+  by `housekeeping`) — drain the user's living
+  **Permissions** inbox document, where they dump
   permission prompts as they fire across sessions.
   Each unchecked `- [ ]` entry holds a captured prompt
   block; adjudicate the command it contains, firm it or
@@ -234,8 +234,8 @@ them by context:
 
 ### Fast path (firm the just-approved command)
 
-The low-friction common case: Alex one-time-approves a
-prompt (option 1, because option 2's "don't ask again
+The low-friction common case: the user one-time-approves
+a prompt (option 1, because option 2's "don't ask again
 for…" is almost always far too broad — `pnpm *`,
 `git *`), then types `/firm-perms` to memorialize the
 *correct* narrow glob right now. This path does only
@@ -255,7 +255,7 @@ and it does **not** propose-then-wait.
    only safe generalization the rules can produce would
    be a bare-verb wildcard (`git *`, `pnpm *`,
    `cargo *`, `gh *`, `rm *`), **do not write it** —
-   stop and ask Alex how he wants to narrow it. This is
+   stop and ask the user how to narrow it. This is
    the one case the fast path is allowed to pause.
 1. **Find the base repo and enumerate every live
    worktree** exactly as the full sweep's step 1 does
@@ -291,7 +291,7 @@ and it does **not** propose-then-wait.
 propose-then-confirm gate exists because a sweep can
 touch many rules at once and resurrect drifted entries
 into the base file. The fast path touches exactly one
-rule that Alex *just* approved by hand and explicitly
+rule that the user *just* approved by hand and explicitly
 asked to firm, and it reports precisely what it wrote —
 so the human confirmation already happened (the
 one-time approval plus the `/firm-perms`), and the
@@ -436,9 +436,9 @@ flow below.
 
 ## Draining the Linear Permissions doc
 
-Alex keeps a living **Permissions** document in Linear
-— an inbox where he dumps permission prompts as they
-fire across multi-session work, under headings like
+The user keeps a living **Permissions** document in
+Linear — an inbox where they dump permission prompts as
+they fire across multi-session work, under headings like
 `# /review-pr agents` and `# General/unknown`. Each
 prompt is captured as an unchecked `- [ ]` item whose
 body is a fenced block holding the command (and often
@@ -489,9 +489,9 @@ passes `doc propose-only`; a bare `doc` is attended.
 1. **Read the doc live, every pass.** Fetch it fresh
    with `mcp__claude_ai_Linear__get_document` (id = the
    resolved value). Never reuse a snapshot from an
-   earlier pass: Alex adds entries quickly, so a stale
-   body would drop his newest items or clobber his
-   edits on write-back.
+   earlier pass: the user adds entries quickly, so a
+   stale body would drop their newest items or clobber
+   their edits on write-back.
 
 1. **Find the work.** Collect every **unchecked**
    (`- [ ]`) entry; ticked (`- [x]`) ones are already
@@ -502,12 +502,12 @@ passes `doc propose-only`; a bare `doc` is attended.
 
    - **No disposition note** → fresh work; adjudicate it
      below.
-   - **`✓ firmed: <rule>`** (an attended firm that Alex
-     re-opened) → a **contest**; handle it per **The
+   - **`✓ firmed: <rule>`** (an attended firm that the
+     user re-opened) → a **contest**; handle it per **The
      contest protocol** below (attended reverts the
      rule; propose-only skips).
-   - **`⚠ contested — reverted …`** → held for Alex;
-     skip it until he edits the entry (see the contest
+   - **`⚠ contested — reverted …`** → held for the user;
+     skip it until they edit the entry (see the contest
      protocol).
    - **`recommend firm: …`** or **`⚠ can't firm: …`** (a
      prior propose-only recommendation) → an attended
@@ -640,17 +640,17 @@ passes `doc propose-only`; a bare `doc` is attended.
    **Diff against the live body before saving.** Build
    the new body from the body you just fetched this pass,
    changing only the lines you're disposing; never
-   reorder or rewrite Alex's other content. If the doc
-   `updatedAt` is newer than when you fetched it
+   reorder or rewrite the user's other content. If the
+   doc `updatedAt` is newer than when you fetched it
    (someone edited mid-pass), re-fetch and rebuild rather
-   than overwriting his change.
+   than overwriting their change.
 
 ### The contest protocol
 
-An auto-firm can be wrong, so Alex needs a way to
-reverse one. The protocol uses the checkbox he can see:
+An auto-firm can be wrong, so the user needs a way to
+reverse one. The protocol uses the checkbox they can see:
 
-- To **contest** a firm, Alex **re-opens** the item —
+- To **contest** a firm, the user **re-opens** the item —
   flips `- [x]` back to `- [ ]` — leaving its
   `✓ firmed: <rule>` note in place.
 - On the next **attended** pass, an item that is
@@ -663,13 +663,13 @@ reverse one. The protocol uses the checkbox he can see:
   `⚠ contested — reverted <rule>; needs re-handling`
   note and leave the item unchecked.
 - That `⚠ contested — reverted` note then **holds the
-  item for Alex** — it is *not* fresh work. Don't
+  item for the user** — it is *not* fresh work. Don't
   re-adjudicate or re-firm a contested item on a later
-  pass; that would just re-fire the rule Alex rejected
-  and loop. The item only re-enters adjudication once
-  Alex acts on it: he rewrites the command, deletes the
-  note, or removes the entry. Until then, skip it (the
-  step-3 "find the work" pass excludes it).
+  pass; that would just re-fire the rule the user
+  rejected and loop. The item only re-enters adjudication
+  once the user acts on it: they rewrite the command,
+  delete the note, or remove the entry. Until then, skip
+  it (the step-3 "find the work" pass excludes it).
 
 So an unchecked item resolves unambiguously by its
 note: a `✓ firmed:` note means *contest → revert*; a
