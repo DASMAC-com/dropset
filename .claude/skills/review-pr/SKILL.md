@@ -574,12 +574,11 @@ PR-authoring **writes** (`create_pull_request`,
    decision on `mergeable`, which is the gh equivalent of
    the MCP `mergeable_state`:
 
-   - `mergeable: "CONFLICTING"` (or `mergeStateStatus:
-     "DIRTY"`) → the PR has merge conflicts. Catalogue this
-     as a **blocking** issue and do **not** mark the PR
-     ready. Tell the user to rebase onto `main` and resolve
-     the conflicts (this skill does not auto-resolve them),
-     then re-run `/review-pr`.
+   - `mergeable: "CONFLICTING"` (or `mergeStateStatus: "DIRTY"`) → the
+     PR has merge conflicts. Catalogue this as a **blocking** issue
+     and do **not** mark the PR ready. Tell the user to rebase onto
+     `main` and resolve the conflicts (this skill does not
+     auto-resolve them), then re-run `/review-pr`.
    - `mergeable: "UNKNOWN"` → GitHub hasn't finished
      computing mergeability yet. Wait a few seconds and
      re-run the `gh pr view` call until it settles.
@@ -660,11 +659,11 @@ PR-authoring **writes** (`create_pull_request`,
    gh pr checks <number>
    ```
 
-   Each line is `<name>\t<pass|fail|pending|skipping>\t
-   <elapsed>\t<url>`; the exit is `0` (all passed), `8`
-   (some still pending), or `1` (one or more failed). That
-   one-line-per-check snapshot — not a full object — is the
-   signal.
+   Each line names a check and its status — `pass`, `fail`,
+   `pending`, or `skipping` — with its elapsed time and URL; the exit
+   is `0` (all passed), `8` (some still pending), or `1` (one or more
+   failed). That one-line-per-check snapshot — not a full object — is
+   the signal.
 
    This is a **model-driven** poll, not a shell watcher.
    Re-issue the single `gh pr checks` call above as a fresh

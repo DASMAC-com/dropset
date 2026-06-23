@@ -70,6 +70,7 @@ retune
 retuned
 retunes
 rlib
+rollup
 rustc
 sbpf
 serde

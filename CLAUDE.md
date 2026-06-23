@@ -116,12 +116,11 @@ mines the unprocessed entries for recurring trim levers and files them
 as propose-only skill-improvement Backlog tasks (never editing a skill
 itself). Either skill no-ops with a clear message when the variable is
 unset. It is not a filing destination. The `session-metrics` skill
-drives the `dropset-session-metrics` binary via `make session-metrics
-SESSION=<uuid>`, which reduces to a `Bash(make session-metrics:*)`
-allow-rule. Unlike `dropset-stage-backlog`, this binary needs **no**
-`LINEAR_API_KEY` — it only parses the local transcript and makes no
-network call; the skill does the one Linear write (the doc append)
-over the MCP.
+drives its binary via `make session-metrics`, which reduces to a
+`Bash(make session-metrics:*)` allow-rule. Unlike
+`dropset-stage-backlog`, this binary needs **no** `LINEAR_API_KEY` — it
+only parses the local transcript and makes no network call; the skill
+does the one Linear write (the doc append) over the MCP.
 
 The `dropset-stage-backlog` **binary** (the deterministic core of the
 `stage-backlog` skill — see "Structured filing fields" below) reads
@@ -257,17 +256,17 @@ are written against it. `gh` survives in two places, both in
   repeatedly** across the CI and merge-queue waits, and the MCP
   equivalents (`pull_request_read` `get` / `get_check_runs`) return
   the **full** PR object or check array on every poll — a fat payload
-  that, because a tool result is replayed as input on every later turn
-  (see "Context economy" below), is paid many times over. `gh pr
-  checks` is one compact line per check, and `--json <fields>` selects
-  only the fields the decision needs. `--json` / `--jq` are command
-  **flags**, not shell pipes, so they stay shell-rule-clean and reduce
-  to `Bash(gh pr checks:*)` / `Bash(gh pr view:*)` allow-rules. This is
-  the one place a `gh` read is preferred *over* the MCP: when the call
-  repeats and the payload — not the transport — is the cost. Keep the
-  poll **model-driven** (a fresh call paced by `ScheduleWakeup`), never
-  a shell `while … sleep` loop or a `jq` filter; the failure path still
-  pulls logs via `get_job_logs`.
+  that, because a tool result is replayed as input on every later
+  turn (see "Context economy" below), is paid many times over.
+  `gh pr checks` is one compact line per check, and `--json <fields>`
+  selects only the fields the decision needs. `--json` / `--jq` are
+  command **flags**, not shell pipes, so they stay shell-rule-clean
+  and reduce to `Bash(gh pr checks:*)` / `Bash(gh pr view:*)`
+  allow-rules. This is the one place a `gh` read is preferred *over*
+  the MCP: when the call repeats and the payload — not the transport —
+  is the cost. Keep the poll **model-driven** (a fresh call paced by
+  `ScheduleWakeup`), never a shell `while … sleep` loop or a `jq`
+  filter; the failure path still pulls logs via `get_job_logs`.
 
 Everything else stays MCP-first; `gh` is not a general-purpose escape
 hatch.
@@ -356,11 +355,11 @@ the rest of the session — the MCP server (or shell, or file) is not
 re-queried; it's the transcript replay that recurs. The prompt cache
 discounts the replay (~10%) but the tokens are still counted and still
 occupy the finite window. So a fat payload early in a long session is
-paid many times over. **This is transport-agnostic** — a large `git
-diff`, a whole-file `Read`, or a verbose build log behaves exactly
-like a fat MCP result; `gh` vs. the MCP is token-neutral for the same
-data. The only durable lever is **how much each call returns into the
-transcript**:
+paid many times over. **This is transport-agnostic** — a large
+`git diff`, a whole-file `Read`, or a verbose build log behaves
+exactly like a fat MCP result; `gh` vs. the MCP is token-neutral for
+the same data. The only durable lever is **how much each call returns
+into the transcript**:
 
 - **Ask for the narrowest thing that answers the question.** Use the
   narrowest method / subcommand, field-select where the transport
