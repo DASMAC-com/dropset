@@ -70,6 +70,10 @@ export LINEAR_TASK_STAGING_DOC_ID=…
 # Used only by firm-perms (and housekeeping, which calls it) —
 # the "Permissions" inbox document it drains:
 export LINEAR_PERMISSIONS_DOC_ID=…
+# Used by session-metrics (producer) and housekeeping (consumer) —
+# the "Session Metrics" inbox document one appends to and the other
+# mines into propose-only skill-improvement tasks:
+export LINEAR_SESSION_METRICS_DOC_ID=…
 # Used only by the dropset-stage-backlog binary (the deterministic
 # core of the stage-backlog skill) — a personal Linear API key. The
 # headless binary can't use the OAuth-based claude.ai Linear MCP, so
@@ -101,6 +105,23 @@ of the "Permissions" inbox document it drains in its `doc` mode (and
 that `housekeeping` drains via `firm-perms` each pass) — with its own
 bare `printenv`, on the same rule. It too is not a filing
 destination.
+
+`session-metrics` and `housekeeping` share
+`LINEAR_SESSION_METRICS_DOC_ID` — the id of the "Session Metrics"
+inbox document — each resolving it with its own bare `printenv`, on
+the same rule. `session-metrics` is the **producer**: it appends one
+dated entry per session (the measured token sinks plus tailored trim
+recommendations). `housekeeping` is the **consumer**: each pass it
+mines the unprocessed entries for recurring trim levers and files them
+as propose-only skill-improvement Backlog tasks (never editing a skill
+itself). Either skill no-ops with a clear message when the variable is
+unset. It is not a filing destination. The `session-metrics` skill
+drives the `dropset-session-metrics` binary via `make session-metrics
+SESSION=<uuid>`, which reduces to a `Bash(make session-metrics:*)`
+allow-rule. Unlike `dropset-stage-backlog`, this binary needs **no**
+`LINEAR_API_KEY` — it only parses the local transcript and makes no
+network call; the skill does the one Linear write (the doc append)
+over the MCP.
 
 The `dropset-stage-backlog` **binary** (the deterministic core of the
 `stage-backlog` skill — see "Structured filing fields" below) reads
@@ -213,20 +234,43 @@ first so its `ENG-###` exists, then reference it.
 All GitHub operations — opening PRs, updating titles and bodies,
 reading the diff, watching checks, pulling failing-job logs — go
 through the **GitHub MCP server** (`mcp__github__*`), not the `gh`
-CLI. The skills (`init-pr`, `pr-title-description`, `review-pr`,
-`housekeeping`, `linear-task`) are written against it.
-`gh` is no longer required; it survives only at the `review-pr`
-**merge-queue handoff** — the enqueue (a `gh pr merge --auto` write,
-**no** strategy flag: this repo's merge queue sets the strategy, so a
-`--squash` only warns) and a read-only dequeue probe (a
-`gh api graphql … mergeQueueEntry` read). The enqueue stays on `gh`
-because the server exposes no auto-merge / merge-queue tool
-(`merge_pull_request` does an *immediate* merge, which bypasses the
-queue); the probe stays on `gh` because the hosted MCP's
-`pull_request_read` omits the merge-queue state — and on a merge-queue
-repo a still-queued PR reports `autoMergeRequest: null`, so the probe
-must read `mergeQueueEntry` (non-null while queued) over GraphQL to
-tell a still-queued PR from one that was dequeued.
+CLI, **with the deliberate exceptions below**. The skills (`init-pr`,
+`pr-title-description`, `review-pr`, `housekeeping`, `linear-task`)
+are written against it. `gh` survives in two places, both in
+`review-pr`:
+
+- **The merge-queue handoff** — the enqueue (a `gh pr merge --auto`
+  write, **no** strategy flag: this repo's merge queue sets the
+  strategy, so a `--squash` only warns) and a read-only dequeue probe
+  (a `gh api graphql … mergeQueueEntry` read). The enqueue stays on
+  `gh` because the server exposes no auto-merge / merge-queue tool
+  (`merge_pull_request` does an *immediate* merge, which bypasses the
+  queue); the probe stays on `gh` because the hosted MCP's
+  `pull_request_read` omits the merge-queue state — and on a
+  merge-queue repo a still-queued PR reports `autoMergeRequest: null`,
+  so the probe must read `mergeQueueEntry` (non-null while queued)
+  over GraphQL to tell a still-queued PR from one that was dequeued.
+
+- **The CI-wait and PR-state reads** — `gh pr checks <number>` for the
+  CI-wait poll, and `gh pr view <number> --json <fields>` for the
+  one-shot `mergeable` / PR-lookup reads. These reads are **polled
+  repeatedly** across the CI and merge-queue waits, and the MCP
+  equivalents (`pull_request_read` `get` / `get_check_runs`) return
+  the **full** PR object or check array on every poll — a fat payload
+  that, because a tool result is replayed as input on every later turn
+  (see "Context economy" below), is paid many times over. `gh pr
+  checks` is one compact line per check, and `--json <fields>` selects
+  only the fields the decision needs. `--json` / `--jq` are command
+  **flags**, not shell pipes, so they stay shell-rule-clean and reduce
+  to `Bash(gh pr checks:*)` / `Bash(gh pr view:*)` allow-rules. This is
+  the one place a `gh` read is preferred *over* the MCP: when the call
+  repeats and the payload — not the transport — is the cost. Keep the
+  poll **model-driven** (a fresh call paced by `ScheduleWakeup`), never
+  a shell `while … sleep` loop or a `jq` filter; the failure path still
+  pulls logs via `get_job_logs`.
+
+Everything else stays MCP-first; `gh` is not a general-purpose escape
+hatch.
 
 Every tool takes `owner` and `repo`. This repo is
 `DASMAC-com/dropset`, so pass `owner: "DASMAC-com"`, `repo: "dropset"`
@@ -302,6 +346,51 @@ allow-rule per read tool covers all of its methods. Propagate the
 pre-approved allow-rules (reads *and* the PR-authoring writes) to the
 **base-repo** settings so future worktrees inherit them (per the
 per-worktree settings rule); `firm-perms` does this at session end.
+
+## Context economy
+
+**Request less; you usually can't trim more.** An LLM is stateless, so
+every turn re-sends the whole conversation as *input*. A tool result
+is fetched **once** but **replayed as input on every later turn** for
+the rest of the session — the MCP server (or shell, or file) is not
+re-queried; it's the transcript replay that recurs. The prompt cache
+discounts the replay (~10%) but the tokens are still counted and still
+occupy the finite window. So a fat payload early in a long session is
+paid many times over. **This is transport-agnostic** — a large `git
+diff`, a whole-file `Read`, or a verbose build log behaves exactly
+like a fat MCP result; `gh` vs. the MCP is token-neutral for the same
+data. The only durable lever is **how much each call returns into the
+transcript**:
+
+- **Ask for the narrowest thing that answers the question.** Use the
+  narrowest method / subcommand, field-select where the transport
+  allows it (`gh … --json <fields>`, a GraphQL projection), paginate
+  instead of dumping, and **never re-fetch what's already in context**.
+- **Read large known files by slice.** Grep to locate, then `Read`
+  with `offset`/`limit`; don't pull a 1000-line file to use 80 lines
+  of it. Brief review sub-agents to do the same.
+- **Route verbose build logs away from context.** Prefer `-q` /
+  `--quiet` so a `cargo` / `make` "Compiling …" cascade doesn't land
+  inline; for a noisy target, surface only the tail / the result, not
+  the whole stream. (Do this within the shell rules — no redirect; a
+  quiet flag is a flag.)
+- **Scope a sub-agent fan-out.** Inlining the same large diff into N
+  reviewers pays for N resident copies; scope each agent to its files,
+  or have them read one shared file, rather than inlining N times.
+- **Polls multiply payload.** A read issued once is cheap; the same
+  read polled across a CI / merge wait is paid per poll *and* per
+  later turn — that's why `review-pr`'s waits use the compact `gh`
+  reads above rather than the full-object MCP calls.
+
+**Track consumption ideas as you go.** When something reads as
+wasteful mid-session — a payload you only needed a slice of, a call
+that repeated, an avoidable fan-out — keep a running note of it. At
+session end `/session-metrics` pairs those observations with the
+binary's ranked token sinks to emit *grounded* trim recommendations
+(the lever, and the concrete skill / `CLAUDE.md` edit it implies) into
+the Linear "Session Metrics" inbox, which `housekeeping` later mines.
+The binary says *where* the tokens went; your running notes say *why*
+and *what to change*.
 
 ## Docs and skills prose
 
