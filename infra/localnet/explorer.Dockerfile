@@ -25,21 +25,25 @@ FROM node:${NODE_VERSION}-bookworm-slim AS build
 ARG EXPLORER_REPO=https://github.com/solana-foundation/explorer.git
 ARG EXPLORER_REF=master
 ENV NEXT_TELEMETRY_DISABLED=1
+# Install git + ca-certificates (to clone) and enable corepack, which ships
+# with Node 22 and resolves the pnpm version pinned in the explorer's
+# package.json `packageManager` field. The Debian packages are intentionally
+# unpinned: this is a from-source dev image, and pinning their versions would
+# only rot.
+# hadolint ignore=DL3008
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-# corepack ships with Node 22; it resolves the pnpm version pinned in the
-# explorer's package.json `packageManager` field.
-RUN corepack enable
+    && rm -rf /var/lib/apt/lists/* \
+    && corepack enable
 WORKDIR /app
-# Shallow-fetch exactly the pinned ref (works for a branch, tag, or SHA), so
-# the clone stays small and reproducible.
+# Shallow-fetch exactly the pinned ref (works for a branch, tag, or SHA), then
+# install and build — one layer, re-run only when EXPLORER_REF changes.
 RUN git init -q . \
     && git remote add origin "${EXPLORER_REPO}" \
     && git fetch --depth 1 origin "${EXPLORER_REF}" \
-    && git checkout -q FETCH_HEAD
-RUN pnpm install --frozen-lockfile
-RUN pnpm build
+    && git checkout -q FETCH_HEAD \
+    && pnpm install --frozen-lockfile \
+    && pnpm build
 
 FROM node:${NODE_VERSION}-bookworm-slim AS run
 ENV NODE_ENV=production

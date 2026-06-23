@@ -1,4 +1,5 @@
 # cspell:word checkmake
+# cspell:word hadolint
 # cspell:word mdformat
 ---
 repos:
@@ -69,6 +70,16 @@ repos:
   - id: 'checkmake'
   repo: 'https://github.com/checkmake/checkmake.git'
   rev: 'v0.3.2'
+# hadolint-py wraps the hadolint binary so the hook needs neither Docker nor
+# a manual install. `files` matches `Dockerfile` and `*.Dockerfile` (identify
+# doesn't tag the latter as the `dockerfile` type), so `types: file`.
+- hooks:
+  - files: 'Dockerfile$'
+    id: 'hadolint'
+    types:
+    - 'file'
+  repo: 'https://github.com/AleksaC/hadolint-py'
+  rev: 'v2.14.0'
 - hooks:
   - args:
     - '--autofix'
