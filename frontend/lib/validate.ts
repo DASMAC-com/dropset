@@ -1,9 +1,9 @@
-// Tiny hand-rolled validators for the three external response shapes we
-// trust the least: DFlow /quote, DFlow /order, and Solana RPC's jsonParsed
-// token-account payload. These boundaries previously cast directly to a
-// hand-typed shape and then BigInt-coerced fields without checking — a
-// malformed body would surface to the UI as a generic "Network error" with
-// no diagnostic.
+// Tiny hand-rolled validators for the four external response shapes we
+// trust the least: DFlow /quote, DFlow /order, Jupiter /tokens/v2/search,
+// and Solana RPC's jsonParsed token-account payload. These boundaries
+// previously cast directly to a hand-typed shape and then BigInt-coerced
+// fields without checking — a malformed body would surface to the UI as a
+// generic "Network error" with no diagnostic.
 
 export const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null;
@@ -14,24 +14,31 @@ export const isNumber = (v: unknown): v is number =>
   typeof v === "number" && Number.isFinite(v);
 
 // Coerce a decimal-string into bigint. BigInt() throws SyntaxError on any
-// non-integer input (including scientific notation, decimal points, trailing
-// whitespace mixed with characters); we surface those as a single typed
-// reason rather than letting them propagate as a raw TypeError.
+// non-integer input (scientific notation, decimal points, embedded non-digit
+// characters); we surface those as a single typed reason rather than letting
+// them propagate as a raw TypeError. Surrounding whitespace is fine —
+// BigInt() trims it (`BigInt(" 123 ") === 123n`), so no pre-trim is needed.
 //
-// We trim before BigInt() because a whitespace-padded numeric (`" 123"`) from
-// a non-strict upstream is a parseable integer in spirit but BigInt rejects
-// it. The error message also doesn't echo the raw value — a malformed
-// upstream response could include sensitive-looking data we don't want
-// surfaced to the user; the field name is enough to diagnose.
+// Its callers are all DFlow swap amounts, an unsigned atomic figure, so we
+// reject a negative value at the boundary rather than rely on each consumer
+// re-checking — a negative `outAmount` would otherwise render as a negative
+// "To" figure in the UI. The error message also doesn't echo the raw value — a
+// malformed upstream response could include sensitive-looking data we don't
+// want surfaced to the user; the field name is enough to diagnose.
 export const parseBigIntString = (value: unknown, field: string): bigint => {
   if (!isString(value)) {
     throw new ValidationError(`${field} missing or not a string`);
   }
+  let parsed: bigint;
   try {
-    return BigInt(value.trim());
+    parsed = BigInt(value);
   } catch {
     throw new ValidationError(`${field} is not a valid integer`);
   }
+  if (parsed < 0n) {
+    throw new ValidationError(`${field} must be non-negative`);
+  }
+  return parsed;
 };
 
 export class ValidationError extends Error {
@@ -99,8 +106,7 @@ export type ParsedJupiterRow = {
   };
 };
 
-const nullableNumber = (v: unknown): number | null =>
-  typeof v === "number" && Number.isFinite(v) ? v : null;
+const nullableNumber = (v: unknown): number | null => (isNumber(v) ? v : null);
 
 const parseJupiterRow = (raw: unknown): ParsedJupiterRow | null => {
   if (!isObject(raw)) return null;
