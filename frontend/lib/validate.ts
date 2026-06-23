@@ -14,14 +14,13 @@ export const isNumber = (v: unknown): v is number =>
   typeof v === "number" && Number.isFinite(v);
 
 // Coerce a decimal-string into bigint. BigInt() throws SyntaxError on any
-// non-integer input (including scientific notation, decimal points, trailing
-// whitespace mixed with characters); we surface those as a single typed
-// reason rather than letting them propagate as a raw TypeError. BigInt()
-// already tolerates surrounding whitespace (`BigInt(" 123 ") === 123n`), so
-// no pre-trim is needed.
+// non-integer input (scientific notation, decimal points, embedded non-digit
+// characters); we surface those as a single typed reason rather than letting
+// them propagate as a raw TypeError. Surrounding whitespace is fine —
+// BigInt() trims it (`BigInt(" 123 ") === 123n`), so no pre-trim is needed.
 //
-// Every caller is a DFlow swap amount, which is an unsigned atomic figure, so
-// we reject a negative value at the boundary rather than rely on each consumer
+// Its callers are all DFlow swap amounts, an unsigned atomic figure, so we
+// reject a negative value at the boundary rather than rely on each consumer
 // re-checking — a negative `outAmount` would otherwise render as a negative
 // "To" figure in the UI. The error message also doesn't echo the raw value — a
 // malformed upstream response could include sensitive-looking data we don't
