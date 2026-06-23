@@ -1,6 +1,6 @@
 ---
 name: housekeeping
-description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, prune the worktrees of already-merged PRs, drain the Linear Permissions inbox doc via firm-perms (propose-only), restage the backlog, then offer (default yes) to kick off the audit-loop as a background campaign and exit. The cspell dictionary check is opt-in (pass `cspell`) and off by default. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
+description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, prune the worktrees of already-merged PRs, drain the Linear Permissions inbox doc via firm-perms (propose-only), mine the Session Metrics inbox into propose-only skill-improvement tasks, restage the backlog, then offer (default yes) to kick off the audit-loop as a background campaign and exit. The cspell dictionary check is opt-in (pass `cspell`) and off by default. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -23,6 +23,10 @@ latest committed skills, then:
    Linear Permissions doc, so each captured prompt gets
    a recommended disposition (and malformed ones a
    source-fix task) without writing settings unattended.
+1. **Mine the Session Metrics inbox** — read the Linear
+   Session Metrics doc and file **propose-only**
+   skill-improvement tasks for the trim patterns that
+   recur across sessions, never editing a skill itself.
 1. **Restage the backlog** — hand off to
    `stage-backlog` so the Task Staging document
    reflects everything currently open.
@@ -68,10 +72,11 @@ wrong place.
 It is safe to run repeatedly and makes **no source
 edits** of its own: its only writes are removing
 merged worktrees, filing / staging Linear issues, and
-annotating the Linear Permissions doc with recommended
-dispositions (it never writes `settings.local.json`
+annotating the Linear Permissions and Session Metrics
+docs with recommended dispositions (it never writes
+`settings.local.json` and never edits a skill
 unattended). Its last step *launches* the audit-loop as
-a background task (step 6), but housekeeping itself
+a background task (step 7), but housekeeping itself
 makes no source edit — the campaign only files Linear
 issues.
 
@@ -90,13 +95,13 @@ clean up on demand.
 
 ## Linear destination
 
-Steps 3–5 file and stage Backlog issues and drain the
-Permissions doc, so they use the same env-resolved
-Linear destination as `linear-task` / `stage-backlog`.
-Resolve each variable with its **own** bare `printenv`
-(one `Bash(printenv:*)` allow-rule covers them all) —
-never a combined `printenv A B C`, which on macOS /
-BSD prints only the first value:
+Steps 3–6 file and stage Backlog issues and drain the
+Permissions and Session Metrics docs, so they use the
+same env-resolved Linear destination as `linear-task` /
+`stage-backlog`. Resolve each variable with its **own**
+bare `printenv` (one `Bash(printenv:*)` allow-rule
+covers them all) — never a combined `printenv A B C`,
+which on macOS / BSD prints only the first value:
 
 ```sh
 printenv LINEAR_TEAM_ID
@@ -104,6 +109,7 @@ printenv LINEAR_PROJECT_ID
 printenv LINEAR_ASSIGNEE_ID
 printenv LINEAR_TASK_STAGING_DOC_ID
 printenv LINEAR_PERMISSIONS_DOC_ID
+printenv LINEAR_SESSION_METRICS_DOC_ID
 ```
 
 If any is empty, skip the step that needs it and say
@@ -293,16 +299,74 @@ attended `/firm-perms doc` run. If
 `LINEAR_PERMISSIONS_DOC_ID` is unset, `firm-perms`
 says so and this step is a no-op.
 
-**5. Restage the backlog.** Invoke the
+**5. Mine the Session Metrics inbox.** Drain the Linear
+"Session Metrics" doc the same way step 4 drains
+Permissions: **propose-only**, never editing a skill.
+The `session-metrics` skill appends one dated entry per
+session — measured token sinks plus tailored trim
+recommendations; this step turns the **recurring**
+patterns across them into filed skill-improvement tasks.
+
+- **Resolve the doc id** from
+  `LINEAR_SESSION_METRICS_DOC_ID` (its own bare
+  `printenv`, per "Linear destination"). If empty, say
+  so and skip this step — don't guess an id.
+
+- **Read the doc live** with
+  `mcp__claude_ai_Linear__get_document` (id = the
+  resolved value); never reuse a stale snapshot. Collect
+  every **unprocessed** entry — an unchecked `- [ ]` with
+  **no** disposition note (a nested line beginning
+  `✓ filed:` or `⚠ noted:`). Skip entries that already
+  carry one, so a repeat pass doesn't re-file.
+
+- **Synthesize across sessions, don't transcribe.** Look
+  for the trim levers that **recur** across the
+  unprocessed entries — a verbose build log inflating
+  several runs, a whole-file Read where a slice would do,
+  a repeated full-PR read, an inlined-diff fan-out. File
+  one skill-improvement task **per distinct lever**
+  (citing the sessions that motivate it), not one task
+  per session. A one-off that appears in a single session
+  and implies no skill change isn't filed — just note it
+  consumed.
+
+- **File propose-only**, to the same env-resolved
+  destination as step 4 (`save_issue` with
+  `team`/`project`/`assignee`, `state: "Backlog"`,
+  priority 3). Each task names the concrete fix and
+  carries a **`**Touches**:`** line (the skill or
+  `CLAUDE.md` file the fix edits, per `CLAUDE.md` →
+  "Structured filing fields") and a **`**Fingerprint**:`**
+  line keyed `session-metrics:<lever-slug>` so later
+  passes dedup. Before filing, list the open Backlog
+  (`mcp__claude_ai_Linear__list_issues`) and drop any
+  fingerprint already open. **Autonomy bound:** filing a
+  task *proposes* a fix — it never edits a skill or
+  `CLAUDE.md`; that lands later through a normal PR. This
+  is the same propose-only bound as the Permissions drain.
+
+- **Write the disposition back** with
+  `mcp__claude_ai_Linear__save_document` (id = the
+  resolved value, literal newlines): tick each consumed
+  entry (`- [ ]` → `- [x]`) and add a nested note —
+  `✓ filed: ENG-### (<lever>)` for one that drove a task,
+  or `⚠ noted: <reason>` for a one-off that implied no
+  change. Build the new body from the body you just
+  fetched, changing only those lines; if `updatedAt` is
+  newer than your fetch, re-fetch and rebuild rather than
+  clobbering a concurrent edit.
+
+**6. Restage the backlog.** Invoke the
 `stage-backlog` skill (via the Skill tool) to rewrite
 the Task Staging document from the current open
-Backlog — including anything steps 3–4 just filed. All
+Backlog — including anything steps 3–5 just filed. All
 the grouping / merge logic lives there; this skill
 just triggers it. This **full** re-stage is the
 authoritative reconcile that converges whatever the
 previous morning's audit-loop folded in incrementally.
 
-**6. Kick off the audit-loop (offer, default yes).**
+**7. Kick off the audit-loop (offer, default yes).**
 The morning's last act: with upkeep done, offer to
 start the background audit campaign so you can do
 admin / minutia while it runs. Ask via
@@ -331,9 +395,9 @@ task, and exits — it does *not* stay on a timer. During
 the morning only the audit-loop (folding findings in via
 its incremental staging) writes the Task Staging
 document, so there's no second loop to coordinate; the
-next morning's step 5 is the full reconcile.
+next morning's step 6 is the full reconcile.
 
-**7. Report.** Print a short summary:
+**8. Report.** Print a short summary:
 
 - `main`: fast-forwarded to the latest, or left at its
   current commit (with the reason) if the pull couldn't
@@ -354,6 +418,11 @@ next morning's step 5 is the full reconcile.
   recommended firm, source-fix tasks filed (with their
   ENG-###), and any skipped as already-handled — or
   why the step was skipped (e.g. a missing env var).
+- Session Metrics inbox: skill-improvement tasks filed
+  (with their ENG-###) for the recurring trim levers,
+  how many session entries were consumed, and any skipped
+  as already-handled — or why the step was skipped (e.g.
+  a missing env var).
 - Backlog staging: that `stage-backlog` ran, or why
   it was skipped (e.g. a missing env var).
 - Audit-loop: launched in the background with finding

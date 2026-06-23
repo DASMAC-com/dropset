@@ -1,6 +1,6 @@
 ---
 name: review-pr
-description: Adversarial pre-review — mark the Linear issue In Progress on invocation, verify its checklist is fully addressed, lint, catalogue issues, fix what's mechanical, ready the PR, wait for GitHub CI to pass, print the review summary, then at the merge-queue handoff move the issue In Review, offer to enqueue the PR, firm up permissions while it sits in the queue, and report whether it merges or gets taken back out.
+description: Adversarial pre-review — mark the Linear issue In Progress on invocation, verify its checklist is fully addressed, lint, catalogue issues, fix what's mechanical, ready the PR, wait for GitHub CI to pass, print the review summary, then at the merge-queue handoff move the issue In Review, offer to enqueue the PR, firm up permissions and capture session metrics while it sits in the queue, and report whether it merges or gets taken back out.
 user-invocable: true
 ---
 
@@ -718,9 +718,10 @@ is `DASMAC-com/dropset`, so every MCP call takes
    structured summary now — *before* the merge-queue
    prompt — so the human reviews the full picture at the
    moment they decide whether to enqueue. The merge-queue
-   outcome and the `firm-perms` results aren't known yet
-   (both resolve in the steps below); they're surfaced
-   separately as they land, not folded in here.
+   outcome, the `firm-perms` results, and the session-metrics
+   capture aren't known yet (all resolve in the steps below);
+   they're surfaced separately as they land, not folded in
+   here.
 
    - Linear coverage: the resolved tag, and each
      checklist item marked addressed / partial /
@@ -875,6 +876,47 @@ is `DASMAC-com/dropset`, so every MCP call takes
      forbids. Tighten the brief (or the prompt) so the
      pattern stops recurring, rather than trying to
      allow-list it.
+
+1. **Capture session metrics** (while the PR sits in the
+   queue). A review run is long and tool-heavy, so it is the
+   natural moment to account for where its tokens went and
+   bank trim recommendations for the skill suite. Like
+   `firm-perms`, this is productive work to do while the
+   merge resolves asynchronously — run it **after** the
+   enqueue, **not** gated on the merge landing, and run it
+   regardless of the merge outcome (it analyzes the session,
+   not the PR).
+
+   **Ask first, via `AskUserQuestion`.** This is a
+   skill-to-skill handoff, so gate it on the same TUI
+   selector the merge-queue and `firm-perms` prompts use
+   (per `CLAUDE.md` → "The PR workflow and skill handoffs"):
+   ask whether to capture session metrics now, offering
+   "yes, run /session-metrics" (**first**, the recommended
+   default) and "skip".
+
+   - On **decline**, skip this step and note in the report
+     that session metrics were **not** captured this run.
+   - On **approve**, invoke `/session-metrics`. It derives
+     this session's id from the scratchpad path, runs the
+     `dropset-session-metrics` binary to rank the run's
+     token sinks (the transcript is read in the binary's own
+     process, so it never enters context), and appends a
+     dated entry — measured sinks plus tailored trim
+     recommendations — to the Linear "Session Metrics" inbox
+     document that `housekeeping` later drains. It authors no
+     source edit, so it's safe to run regardless of the gate
+     or CI outcome. If `LINEAR_SESSION_METRICS_DOC_ID` is
+     unset, the skill no-ops with a clear message — note that
+     in the report.
+
+   **Ground the recommendations in this run.** As the review
+   progressed you may have noticed wasteful payloads (a
+   whole-file Read, a verbose build log, a repeated full PR
+   read, an inlined-diff fan-out). Per `CLAUDE.md`'s "track
+   consumption ideas as you go" habit, carry those
+   observations into `/session-metrics` so its prose names
+   concrete levers, not just the binary's raw sink ranking.
 
 1. **Surface the merge-queue outcome** (separately). Run
    this **only** if the user approved the enqueue (skip it
