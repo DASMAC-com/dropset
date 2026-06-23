@@ -15,6 +15,7 @@
 .PHONY: stage-backlog
 .PHONY: test
 .PHONY: test-no-teardown
+.PHONY: tui
 .PHONY: wasm
 
 all: lint test
@@ -93,6 +94,13 @@ sdk-test:
 
 debugger: program
 	anchor debugger
+
+# Localnet control-plane TUI. Spawns its own
+# solana-test-validator (ledger in a temp dir), so it needs no running
+# validator first — just the toolchain check-toolchain gates. Named `tui`
+# (not `localnet`) because the same panel will later drive mainnet too.
+tui:
+	cargo run -p dropset-tui
 
 # Run next dev and open the browser once it's accepting connections.
 frontend:

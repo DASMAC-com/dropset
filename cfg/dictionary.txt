@@ -21,6 +21,7 @@ cngn
 codama
 codegen
 cpis
+crossterm
 dasmac
 dedup
 dedups
@@ -51,6 +52,7 @@ litesvm
 localnet
 macropod
 metas
+mpsc
 multisigs
 mxne
 paytrie
@@ -60,7 +62,9 @@ prebuild
 predev
 programdata
 pubkeys
+ratatui
 repr
+respawn
 retunable
 retune
 retuned
@@ -85,6 +89,7 @@ tokenised
 tombstoned
 tombstoning
 topojson
+topup
 transfero
 tryb
 tsup
