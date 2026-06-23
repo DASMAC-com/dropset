@@ -1,0 +1,49 @@
+# Localnet market-maker bot for the CADC/USDC mock market. A single leader
+# bot that quotes CADC against USDC on the eCLOB per docs/market-making-mvp.md:
+# poll external price feeds, compose a fair mid, and drive the relative-quoting
+# hot path (set_reference_price) and cold path (set_liquidity_profile) with an
+# inventory skew and kill-switch policy. Rust-only, not published. No tokio:
+# a synchronous tick loop drives blocking feed polls (ureq) and the blocking
+# RpcClient (sdk/rs `fetch` feature), matching the TUI and stage-backlog.
+
+[[bin]]
+name = "dropset-maker-bot"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+# Zero the `LiquidityProfile` Pod before filling its levels, and read the
+# on-chain `Vault` slab mirror for live inventory (matches the SDK's own
+# profile construction and the TUI's account decoding).
+bytemuck = "1"
+# The off-chain client: Codama instruction builders + the `quoting` helpers
+# (set_reference_price_ix / set_liquidity_profile_ix / NativeBook), the typed
+# `fetch_*` account decoders, the `layout` slab mirror (active-vault walk for
+# inventory), the `Price` codec, and the blocking `RpcClient` — all behind
+# `fetch`.
+dropset-sdk = {path = "../../sdk/rs", features = ["fetch"]}
+serde = {version = "1", features = ["derive"]}
+serde_json = "1"
+# Pinned to the SDK's 3.x line (sdk/rs/Cargo.toml) so there is one
+# `Pubkey` / `Instruction` / `RpcClient` type across the builder, fetch, and
+# transaction paths — NOT the workspace's solana-pubkey 4.x. `~3.1` on
+# solana-client matches the validator minor the Makefile gates (3.1.x).
+solana-client = "~3.1"
+solana-commitment-config = "3"
+solana-instruction = "3"
+solana-keypair = "3"
+solana-pubkey = "3"
+solana-signer = "3"
+solana-transaction = "3"
+# Blocking HTTP for the price feeds (CoinGecko / Oanda / GeckoTerminal), the
+# same synchronous JSON client tools/stage-backlog uses for Linear.
+ureq = {version = "2", features = ["json"]}
+
+[package]
+description = "Localnet market-maker bot for the Dropset CADC/USDC mock market."
+name = "dropset-maker-bot"
+publish = false
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true
