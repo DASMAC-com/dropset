@@ -1,0 +1,29 @@
+---
+# Localnet Docker stack.
+#
+# Seed service: the Solana Explorer, served on http://localhost:3000 so a
+# loopback page reaches the loopback validator RPC without the
+# public-site -> localhost block that stalls the hosted explorer. Future
+# localnet services (e.g. the market-making bot) join this same stack.
+#
+# The dropset-tui control plane owns this stack's lifecycle: it brings the
+# explorer up lazily on first "Open explorer" and tears it down on quit.
+# `make explorer` / `make explorer-down` drive it by hand.
+name: 'dropset-localnet'
+services:
+  explorer:
+    build:
+      args:
+        # Override to move the explorer version (branch, tag, or commit SHA).
+        EXPLORER_REF: '${DROPSET_EXPLORER_REF:-master}'
+      context: '.'
+      dockerfile: 'explorer.Dockerfile'
+    # The explorer reads localnet state client-side (the browser hits the
+    # customUrl RPC directly); the host gateway lets any server-side fetch
+    # reach a host-run validator at http://host.docker.internal:8899.
+    extra_hosts:
+    - 'host.docker.internal:host-gateway'
+    ports:
+    - '3000:3000'
+    restart: 'unless-stopped'
+...

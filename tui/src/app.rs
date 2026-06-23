@@ -15,6 +15,7 @@
 use crate::accounts::{self, ChainState};
 use crate::action::{self, Action, JobContext};
 use crate::chain;
+use crate::explorer;
 use crate::job::JobEvent;
 use crate::ui;
 use crate::validator::Validator;
@@ -31,6 +32,7 @@ use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
@@ -252,6 +254,17 @@ impl App {
         }
         while self.log.len() > LOG_CAPACITY {
             self.log.pop_front();
+        }
+    }
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        // Tear down the explorer container if "Open explorer" started one, so
+        // quitting leaves no orphan — mirrors the owned `Validator`, whose own
+        // `Drop` kills its child and wipes its temp ledger right after.
+        if self.ctx.explorer_up.load(Ordering::SeqCst) {
+            let _ = explorer::stop(&self.ctx.repo_root);
         }
     }
 }

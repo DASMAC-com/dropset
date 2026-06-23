@@ -10,14 +10,12 @@
 //! upgrade authority, so deploy and init must use the same key.
 
 use crate::chain;
-use crate::job::Logger;
-use anyhow::{bail, Context, Result};
+use crate::job::{self, Logger};
+use anyhow::{Context, Result};
 use solana_native_token::LAMPORTS_PER_SOL;
 use solana_pubkey::Pubkey;
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::thread;
+use std::process::Command;
 
 /// Deploy funds airdropped to the wallet before publishing — comfortably
 /// covers program-account rent plus fees on localnet.
@@ -52,14 +50,14 @@ pub fn deploy_program(
 
     let mut sync = Command::new("anchor");
     sync.args(["keys", "sync"]).current_dir(repo_root);
-    run_streaming(log, "anchor keys sync", sync)?;
+    job::run_streaming(log, "anchor keys sync", sync)?;
 
     // `--no-idl` skips IDL generation, which builds and runs the test suite
     // to extract the IDL. Deploy only needs the `.so`, and the IDL is
     // already checked in (sdk/idl/dropset.json).
     let mut build = Command::new("anchor");
     build.args(["build", "--no-idl"]).current_dir(repo_root);
-    run_streaming(log, "anchor build --no-idl", build)?;
+    job::run_streaming(log, "anchor build --no-idl", build)?;
 
     let so: PathBuf = repo_root.join("target/deploy/dropset.so");
     let mut deploy = Command::new("solana");
@@ -75,7 +73,7 @@ pub fn deploy_program(
         .arg("--upgrade-authority")
         .arg(wallet_path)
         .current_dir(repo_root);
-    run_streaming(log, "solana program deploy", deploy)?;
+    job::run_streaming(log, "solana program deploy", deploy)?;
 
     log.accounts_changed();
     Ok("Program deployed".into())
@@ -102,42 +100,5 @@ pub fn close_program(
         .arg("--url")
         .arg(rpc_url)
         .arg("--bypass-warning");
-    run_streaming(log, "solana program close", close)
-}
-
-/// Run `cmd`, streaming both stdout and stderr into the log line-by-line.
-/// Returns `Err` if the process exits non-zero. `label` is the banner shown
-/// before the output and named in a failure.
-fn run_streaming(log: &Logger, label: &str, mut cmd: Command) -> Result<()> {
-    log.log(format!("$ {label}"));
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = cmd
-        .spawn()
-        .with_context(|| format!("spawn `{label}` (is the toolchain installed?)"))?;
-
-    // stderr on its own reader thread, stdout on this one — both feed the
-    // same (cloneable) Logger, interleaving as the process emits them.
-    let stderr = child.stderr.take().expect("piped stderr");
-    let err_log = log.clone();
-    let err_thread = thread::spawn(move || {
-        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-            err_log.log(line);
-        }
-    });
-    if let Some(stdout) = child.stdout.take() {
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            log.log(line);
-        }
-    }
-    let _ = err_thread.join();
-
-    let status = child
-        .wait()
-        .with_context(|| format!("wait for `{label}`"))?;
-    if !status.success() {
-        bail!("`{label}` exited with {status}");
-    }
-    Ok(())
+    job::run_streaming(log, "solana program close", close)
 }

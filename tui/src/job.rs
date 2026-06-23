@@ -3,6 +3,9 @@
 //! stream [`JobEvent`]s back over an `mpsc` channel, so the synchronous
 //! event loop never blocks on an RPC round-trip or an `anchor build`.
 
+use anyhow::{bail, Context, Result};
+use std::io::{BufRead, BufReader};
+use std::process::{Command, Stdio};
 use std::sync::mpsc::Sender;
 use std::thread;
 
@@ -54,4 +57,43 @@ where
         };
         let _ = tx.send(done);
     });
+}
+
+/// Run `cmd`, streaming both stdout and stderr into the log line-by-line.
+/// Returns `Err` if the process exits non-zero. `label` is the banner shown
+/// before the output and named in a failure. Shared by every job that shells
+/// out (deploy, the explorer container) so their output interleaves into the
+/// log the same way.
+pub fn run_streaming(log: &Logger, label: &str, mut cmd: Command) -> Result<()> {
+    log.log(format!("$ {label}"));
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd
+        .spawn()
+        .with_context(|| format!("spawn `{label}` (is the toolchain installed?)"))?;
+
+    // stderr on its own reader thread, stdout on this one — both feed the
+    // same (cloneable) Logger, interleaving as the process emits them.
+    let stderr = child.stderr.take().expect("piped stderr");
+    let err_log = log.clone();
+    let err_thread = thread::spawn(move || {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            err_log.log(line);
+        }
+    });
+    if let Some(stdout) = child.stdout.take() {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            log.log(line);
+        }
+    }
+    let _ = err_thread.join();
+
+    let status = child
+        .wait()
+        .with_context(|| format!("wait for `{label}`"))?;
+    if !status.success() {
+        bail!("`{label}` exited with {status}");
+    }
+    Ok(())
 }
