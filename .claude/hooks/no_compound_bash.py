@@ -208,8 +208,7 @@ def _self_test():
         blocked = code == 2
         if blocked != should_block:
             failures.append(
-                "  %-40r expected block=%s got block=%s"
-                % (cmd, should_block, blocked)
+                "  %-40r expected block=%s got block=%s" % (cmd, should_block, blocked)
             )
     # Non-Bash tools are never touched.
     if evaluate({"tool_name": "Read", "tool_input": {}})[0] != 0:
