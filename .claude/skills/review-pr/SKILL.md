@@ -1,6 +1,6 @@
 ---
 name: review-pr
-description: Adversarial pre-review — mark the Linear issue In Progress on invocation, verify its checklist is fully addressed, lint, catalogue issues, fix what's mechanical, ready the PR, wait for GitHub CI to pass, print the review summary, then at the merge-queue handoff move the issue In Review, offer to enqueue the PR, firm up permissions while it sits in the queue, and report whether it merges or gets taken back out.
+description: Adversarial pre-review — mark the Linear issue In Progress on invocation, verify its checklist is fully addressed, lint, catalogue issues, fix what's mechanical, ready the PR, wait for GitHub CI to pass, print the review summary, then at the merge-queue handoff move the issue In Review, offer to enqueue the PR, firm up permissions and capture session metrics while it sits in the queue, and report whether it merges or gets taken back out.
 user-invocable: true
 ---
 
@@ -29,36 +29,42 @@ with nothing left to check.
 Run this after autonomous work is complete and
 all changes are committed and pushed.
 
-All GitHub reads and writes go through the **GitHub
-MCP**, with one exception at the merge-queue handoff near
-the end — both the enqueue (a `gh` write) and a read-only
-dequeue probe (a `gh` read) stay on `gh`, because the MCP
-server exposes no auto-merge / merge-queue tool and its
-`pull_request_read` omits the merge-queue state
-(`mergeQueueEntry`) the probe reads over GraphQL. This repo
-is `DASMAC-com/dropset`, so every MCP call takes
+GitHub reads and writes go through the **GitHub MCP**, with
+the deliberate `gh` exceptions in `CLAUDE.md` → "GitHub via
+MCP": the merge-queue **enqueue** (a `gh pr merge --auto`
+write) and **dequeue probe** (a `gh api graphql` read) at
+the handoff, because the MCP exposes no merge-queue tool and
+its `pull_request_read` omits `mergeQueueEntry`; plus the
+**polled / one-shot reads** this skill makes with the
+compact `gh pr checks` (the CI-wait poll) and field-selected
+`gh pr view --json` (the PR lookup in step 1 and the
+merge-clean check) — chosen because those reads repeat, and
+a full-object MCP payload would be replayed into context on
+every later turn (`CLAUDE.md` → "Context economy"). The
+PR-authoring **writes** (`create_pull_request`,
+`update_pull_request`) stay on the MCP. This repo is
+`DASMAC-com/dropset`, so every MCP call takes
 `owner: "DASMAC-com"`, `repo: "dropset"`.
 
 ## Steps
 
 1. **Locate the PR.** Identify the current branch
-   (`git branch --show-current`), then look it up with
-   `mcp__github__list_pull_requests` — the `head` filter
-   is `owner:branch`:
+   (`git branch --show-current`), then look it up with a
+   **field-selected** `gh pr view` — passing only the fields
+   the later steps need, so the lookup doesn't drag the full
+   PR object into context (per `CLAUDE.md` → "Context
+   economy" / "GitHub via MCP"):
 
-   ```txt
-   mcp__github__list_pull_requests(
-     owner: "DASMAC-com",
-     repo: "dropset",
-     head: "DASMAC-com:<branch>",
-     state: "open",
-   )
+   ```sh
+   gh pr view <branch> --json number,title,state,isDraft
    ```
 
-   The returned PR object carries `number`, `title`,
-   `state`, and `draft` — everything the later steps
-   need. If no PR exists, stop and tell the user to
-   run `/init-pr` first.
+   That returns just `number`, `title`, `state`, and
+   `isDraft`. If the branch has no PR, `gh` exits non-zero
+   ("no pull requests found") — treat that as "no PR" and
+   stop, telling the user to run `/init-pr` first. (This is a
+   read; the routine PR-authoring **writes** in later steps
+   stay on the MCP.)
 
 1. **Clean tree, then rebase onto `main`.** First run
    `git status` — if there are uncommitted changes,
@@ -161,6 +167,16 @@ is `DASMAC-com/dropset`, so every MCP call takes
      the live body you just fetched so you never clobber
      a box the author already ticked or other edits made
      since.
+
+     **Minimize Linear echoes** (per `CLAUDE.md` →
+     "Context economy"): each `save_issue` / `get_issue`
+     **echoes the full issue body** back into context, and
+     that echo is then replayed every later turn. So fetch
+     the issue **once** (the `get_issue` above) and don't
+     re-`get_issue` it — the In-Progress `save_issue`'s
+     echo already reflects the current body — and batch
+     **all** the box-ticks into this **one** `save_issue`,
+     never one write per box.
 
    - Catalogue every **partial** or **missing**
      requirement as a **blocking** issue (step 7),
@@ -537,40 +553,42 @@ is `DASMAC-com/dropset`, so every MCP call takes
    already rebased onto `main`, so this is normally
    clean — but `main` can advance again during a
    long review, so confirm rather than assume. Fetch
-   the latest base, then ask GitHub via
-   `mcp__github__pull_request_read` (`method: "get"`).
-   Key the decision on **`mergeable_state`** — the `get`
-   response leads with it, and the tri-state `mergeable`
-   boolean is often absent until GitHub has computed it,
-   so don't rely on `mergeable` being present:
+   the latest base, then ask GitHub with a
+   **field-selected** `gh pr view` — only the two merge
+   fields, so this one-shot read doesn't pull the full PR
+   object into context (per `CLAUDE.md` → "Context
+   economy" / "GitHub via MCP"):
 
    ```sh
    git fetch origin main
    ```
 
-   ```txt
-   mcp__github__pull_request_read(
-     owner: "DASMAC-com",
-     repo: "dropset",
-     pullNumber: <number>,
-     method: "get",
-   )
+   ```sh
+   gh pr view <number> --json mergeable,mergeStateStatus
    ```
 
-   - `mergeable_state: "dirty"` → the PR has merge
-     conflicts. Catalogue this as a **blocking** issue and
-     do **not** mark the PR ready. Tell the user to rebase
-     onto `main` and resolve the conflicts (this skill does
-     not auto-resolve them), then re-run `/review-pr`.
-   - `mergeable_state: "unknown"` → GitHub hasn't finished
+   `mergeable` is the tri-state conflict signal
+   (`MERGEABLE` / `CONFLICTING` / `UNKNOWN`);
+   `mergeStateStatus` is the detail (`CLEAN`, `BLOCKED`,
+   `BEHIND`, `UNSTABLE`, `HAS_HOOKS`, `DIRTY`, …). Key the
+   decision on `mergeable`, which is the gh equivalent of
+   the MCP `mergeable_state`:
+
+   - `mergeable: "CONFLICTING"` (or `mergeStateStatus: "DIRTY"`) → the
+     PR has merge conflicts. Catalogue this as a **blocking** issue
+     and do **not** mark the PR ready. Tell the user to rebase onto
+     `main` and resolve the conflicts (this skill does not
+     auto-resolve them), then re-run `/review-pr`.
+   - `mergeable: "UNKNOWN"` → GitHub hasn't finished
      computing mergeability yet. Wait a few seconds and
-     re-run the `get` call until it settles.
-   - any other value (`clean`, `blocked`, `behind`,
-     `unstable`, `has_hooks`) → **no merge conflict** —
-     proceed to the gate. `blocked` / `unstable` just mean
-     branch protection, the required checks, or human
-     review haven't cleared yet (expected for a draft PR
-     mid-review); `behind` means `main` moved (the step-1
+     re-run the `gh pr view` call until it settles.
+   - `mergeable: "MERGEABLE"` (any `mergeStateStatus` —
+     `CLEAN`, `BLOCKED`, `BEHIND`, `UNSTABLE`,
+     `HAS_HOOKS`) → **no merge conflict** — proceed to the
+     gate. `BLOCKED` / `UNSTABLE` just mean branch
+     protection, the required checks, or human review
+     haven't cleared yet (expected for a draft PR
+     mid-review); `BEHIND` means `main` moved (the step-1
      rebase already handled it). None of these are a
      conflict, and the gate + CI wait below cover them.
 
@@ -586,8 +604,8 @@ is `DASMAC-com/dropset`, so every MCP call takes
    clients, conformance vectors), `make test` and
    `make test-no-teardown` pass (or are honestly
    reported as unverifiable locally), the title
-   passes `Semantic PR`, and `mergeable_state` is not
-   `dirty` (no merge conflict). Take the PR out of draft
+   passes `Semantic PR`, and `mergeable` is not
+   `CONFLICTING` (no merge conflict). Take the PR out of draft
    with
    `mcp__github__update_pull_request` (`draft: false`):
 
@@ -628,62 +646,67 @@ is `DASMAC-com/dropset`, so every MCP call takes
    locally (tests / IDL reported unverifiable), CI is
    the *only* signal. This repo runs CI on the PR even
    while it was a draft (that's how `init-pr` warms the
-   caches), so the checks are already in flight. The MCP
-   server has no streaming `--watch`, so **poll** the
-   check runs (`pull_request_read` with
-   `method: "get_check_runs"`) until every
-   check run reports `status: "completed"`:
+   caches), so the checks are already in flight. There's no
+   streaming `--watch`, so **poll** — but poll with the
+   **compact** `gh pr checks`, one line per check, rather
+   than the MCP `get_check_runs`, which returns the full
+   check-run array on **every** poll and replays it into
+   context each later turn (per `CLAUDE.md` → "Context
+   economy" / "GitHub via MCP"). Re-issue this until every
+   check is no longer pending:
 
-   ```txt
-   mcp__github__pull_request_read(
-     owner: "DASMAC-com",
-     repo: "dropset",
-     pullNumber: <number>,
-     method: "get_check_runs",
-   )
+   ```sh
+   gh pr checks <number>
    ```
 
+   Each line names a check and its status — `pass`, `fail`,
+   `pending`, or `skipping` — with its elapsed time and URL; the exit
+   is `0` (all passed), `8` (some still pending), or `1` (one or more
+   failed). That one-line-per-check snapshot — not a full object — is
+   the signal.
+
    This is a **model-driven** poll, not a shell watcher.
-   Re-issue the single `get_check_runs` call above as a
-   fresh tool call across successive turns — **never** a
-   shell `while … sleep … done` loop or a `jq` filter (a
-   compound that can't reduce to an allow-rule, and
-   foreground `sleep` is blocked anyway). To pace the
+   Re-issue the single `gh pr checks` call above as a fresh
+   tool call across successive turns — **never** a shell
+   `while … sleep … done` loop, a `--watch`, or a `jq`
+   filter (a compound that can't reduce to an allow-rule,
+   and foreground `sleep` is blocked anyway). To pace the
    re-calls across turns rather than busy-looping, schedule
    a wakeup (e.g. `ScheduleWakeup`) — one probe per wake.
    Tell the human **once**, up front, that CI is in flight
    and you're standing by, then stay silent: don't narrate
-   each poll. Ping again only on a **terminal** outcome
-   (every check `completed` — the branch below). Two
+   each poll. Ping again only on a **terminal** outcome (no
+   check still `pending` — the branch below). Two
    operational notes:
 
    - Polling is naturally resumable: each call returns the
      current snapshot, so if a wait is interrupted, just
-     call again until every run is `completed`.
-   - If `get_check_runs` returns **no checks** on the head
-     commit, there is nothing to wait on — note that in
-     the report and treat it as green rather than polling
-     forever.
+     call again until nothing is `pending`.
+   - If `gh pr checks` reports **no checks** on the head
+     commit (it says so and exits non-zero), there is
+     nothing to wait on — note that in the report and treat
+     it as green rather than polling forever.
 
-   Then branch on the outcome — a check run's `conclusion`
-   is `success` / `neutral` / `skipped` (passing) versus
-   `failure` / `timed_out` / `cancelled` / `action_required`
-   (failing):
+   Then branch on the outcome — a check line reading `pass`
+   / `skipping` is passing, `fail` is failing:
 
-   - **All checks green** → the PR is now ready **and**
-     CI-green. Leave the Linear issue **In Progress** (it
-     moves to In Review at the merge-queue handoff, not
-     here) and proceed to print the review summary — the
-     human reviews that summary, then approves enqueueing.
+   - **All checks green** (no `fail`, none `pending`) → the
+     PR is now ready **and** CI-green. Leave the Linear
+     issue **In Progress** (it moves to In Review at the
+     merge-queue handoff, not here) and proceed to print the
+     review summary — the human reviews that summary, then
+     approves enqueueing.
 
    - **Any check failed** → the PR is not actually clean,
      so don't leave it reading as merge-ready. Catalogue
      each failing check as **blocking**, naming it and its
-     `details_url` (the log URL from the `get_check_runs`
-     entry). To pull the actual failing-job output in one
-     call, take the workflow run id — the `details_url` is
+     URL (the last column of the `gh pr checks` line). To
+     pull the actual failing-job output in one call, take
+     the workflow run id from that URL — it is
      `…/actions/runs/<run_id>/job/<job_id>` — and fetch
-     every failed job's log together:
+     every failed job's log together over the MCP (this
+     failure path stays on the MCP — `get_job_logs` already
+     caps its output with `tail_lines`):
 
      ```txt
      mcp__github__get_job_logs(
@@ -718,9 +741,10 @@ is `DASMAC-com/dropset`, so every MCP call takes
    structured summary now — *before* the merge-queue
    prompt — so the human reviews the full picture at the
    moment they decide whether to enqueue. The merge-queue
-   outcome and the `firm-perms` results aren't known yet
-   (both resolve in the steps below); they're surfaced
-   separately as they land, not folded in here.
+   outcome, the `firm-perms` results, and the session-metrics
+   capture aren't known yet (all resolve in the steps below);
+   they're surfaced separately as they land, not folded in
+   here.
 
    - Linear coverage: the resolved tag, and each
      checklist item marked addressed / partial /
@@ -737,8 +761,8 @@ is `DASMAC-com/dropset`, so every MCP call takes
      `make test-no-teardown` — pass, fail, or
      unverified locally (toolchain absent).
    - Title status: passes `Semantic PR` or not.
-   - Merge status: `mergeable_state` — `dirty`
-     (conflicting) vs. any non-`dirty` value (no conflict).
+   - Merge status: `mergeable` — `CONFLICTING` vs.
+     `MERGEABLE` (no conflict).
    - CI status: all GitHub checks green, or "no checks"
      treated as green — by this point CI has passed (a
      failure would have stopped the run at the CI wait).
@@ -876,6 +900,47 @@ is `DASMAC-com/dropset`, so every MCP call takes
      pattern stops recurring, rather than trying to
      allow-list it.
 
+1. **Capture session metrics** (while the PR sits in the
+   queue). A review run is long and tool-heavy, so it is the
+   natural moment to account for where its tokens went and
+   bank trim recommendations for the skill suite. Like
+   `firm-perms`, this is productive work to do while the
+   merge resolves asynchronously — run it **after** the
+   enqueue, **not** gated on the merge landing, and run it
+   regardless of the merge outcome (it analyzes the session,
+   not the PR).
+
+   **Ask first, via `AskUserQuestion`.** This is a
+   skill-to-skill handoff, so gate it on the same TUI
+   selector the merge-queue and `firm-perms` prompts use
+   (per `CLAUDE.md` → "The PR workflow and skill handoffs"):
+   ask whether to capture session metrics now, offering
+   "yes, run /session-metrics" (**first**, the recommended
+   default) and "skip".
+
+   - On **decline**, skip this step and note in the report
+     that session metrics were **not** captured this run.
+   - On **approve**, invoke `/session-metrics`. It derives
+     this session's id from the scratchpad path, runs the
+     `dropset-session-metrics` binary to rank the run's
+     token sinks (the transcript is read in the binary's own
+     process, so it never enters context), and appends a
+     dated entry — measured sinks plus tailored trim
+     recommendations — to the Linear "Session Metrics" inbox
+     document that `housekeeping` later drains. It authors no
+     source edit, so it's safe to run regardless of the gate
+     or CI outcome. If `LINEAR_SESSION_METRICS_DOC_ID` is
+     unset, the skill no-ops with a clear message — note that
+     in the report.
+
+   **Ground the recommendations in this run.** As the review
+   progressed you may have noticed wasteful payloads (a
+   whole-file Read, a verbose build log, a repeated full PR
+   read, an inlined-diff fan-out). Per `CLAUDE.md`'s "track
+   consumption ideas as you go" habit, carry those
+   observations into `/session-metrics` so its prose names
+   concrete levers, not just the binary's raw sink ranking.
+
 1. **Surface the merge-queue outcome** (separately). Run
    this **only** if the user approved the enqueue (skip it
    if they declined — there's nothing queued to watch). The
@@ -884,91 +949,78 @@ is `DASMAC-com/dropset`, so every MCP call takes
    above — the summary couldn't know this outcome yet.
 
    Watch whether the PR lands or gets kicked back out with
-   the **same model-driven poll** as the CI wait: re-issue
-   the `get` call (and the `gh` probe below) as fresh tool
-   calls across successive turns, paced with a scheduled
+   the **same model-driven poll** as the CI wait, but with a
+   **single** probe per poll: the `gh api graphql` dequeue
+   probe below already selects `state` and `merged` **and**
+   the merge-queue fields, so it answers "landed?", "still
+   queued?", and "dequeued?" in one read — the old
+   `pull_request_read` `get` poll that used to run first was
+   redundant (it carried the full PR object every poll just
+   to read `state`/`merged`) and is dropped (per `CLAUDE.md`
+   → "Context economy"). Re-issue the one probe as a fresh
+   tool call across successive turns, paced with a scheduled
    wakeup (e.g. `ScheduleWakeup`) — **never** a shell
    `while … sleep … done` loop or a `jq` filter. Say once,
    up front, that the PR is queued and you're standing by;
    then stay silent until a **terminal** outcome (merged,
    or taken out of the queue), pinging the human only then.
-   Each poll is resumable — a fresh call returns the
-   current snapshot. Key on fields the hosted GitHub MCP
-   actually returns — its `pull_request_read` `get`
-   response carries `state`, `merged`, and `mergeable_state`,
-   but **not** `auto_merge` or `merged_at`:
+   Each poll is resumable — a fresh call returns the current
+   snapshot.
 
-   ```txt
-   mcp__github__pull_request_read(
-     owner: "DASMAC-com",
-     repo: "dropset",
-     pullNumber: <number>,
-     method: "get",
-   )
-   ```
+   This is the one `gh` **read** the skill makes (mirror of
+   the enqueue write). The signal that distinguishes "still
+   queued" from "silently removed" is the PR's
+   **`mergeQueueEntry`**: it is non-null exactly while the PR
+   sits in the merge queue and flips to `null` the moment it
+   leaves. **Do not** key on `autoMergeRequest` for that — on
+   a merge-queue repo a genuinely-queued PR reports
+   `autoMergeRequest: null` (and a `CLEAN` `mergeStateStatus`,
+   not `QUEUED`), so the old `autoMergeRequest`-null test was
+   a **false positive** that announced "taken out of the
+   queue" on every run. `mergeQueueEntry` isn't exposed by
+   the MCP `get` (nor by `gh pr view --json`), so query it
+   over GraphQL, where the same query also returns `state`,
+   `merged`, and `autoMergeRequest` (the last keeps the
+   **classic-auto-merge** path — repos with no merge queue —
+   working).
 
-   On each poll, branch on the `get` result — and when the
-   PR is still `open`, run the `gh` probe below to tell
-   "still queued" from "silently removed", which the MCP
-   `get` can't (it omits `auto_merge`):
+   Keep the command globbable: the query body has braces and
+   quotes that trip the brace-with-quote guard, so write it
+   to a file with the **Write** tool rather than inlining it,
+   then pass the PR number as a typed variable and the file
+   on a stable command line (per the file-handoff rule in
+   `CLAUDE.md`). The query (write it to e.g.
+   `/tmp/mq-probe.graphql`):
 
-   - `merged: true` (or `state: "closed"`) → it landed;
-     report the merge. Key on `merged` / `state`, **not**
-     `merged_at` — the MCP `get` response omits it.
-
-   - still `open` → run the dequeue probe. This is the one
-     `gh` **read** the skill makes (mirror of the enqueue
-     write). The signal to key on is the PR's
-     **`mergeQueueEntry`**: it is non-null exactly while the
-     PR sits in the merge queue and flips to `null` the
-     moment it leaves. **Do not** key on `autoMergeRequest`
-     here — on a merge-queue repo a genuinely-queued PR
-     reports `autoMergeRequest: null` (and a `CLEAN`
-     `mergeStateStatus`, not `QUEUED`), so the old
-     `autoMergeRequest`-null test was a **false positive**
-     that announced "taken out of the queue" on every run.
-     `mergeQueueEntry` isn't exposed by the MCP `get` (nor
-     by `gh pr view --json`), so query it over GraphQL,
-     where the same query also returns `autoMergeRequest`
-     to keep the **classic-auto-merge** path (repos with no
-     merge queue) working.
-
-     Keep the command globbable: the query body has braces
-     and quotes that trip the brace-with-quote guard, so
-     write it to a file with the **Write** tool rather than
-     inlining it, then pass the PR number as a typed variable
-     and the file on a stable command line (per the
-     file-handoff rule in `CLAUDE.md`). The query (write it
-     to e.g. `/tmp/mq-probe.graphql`):
-
-     ```graphql
-     query($number: Int!) {
-       repository(owner: "DASMAC-com", name: "dropset") {
-         pullRequest(number: $number) {
-           state
-           merged
-           mergeQueueEntry { state }
-           autoMergeRequest { enabledAt }
-         }
+   ```graphql
+   query($number: Int!) {
+     repository(owner: "DASMAC-com", name: "dropset") {
+       pullRequest(number: $number) {
+         state
+         merged
+         mergeQueueEntry { state }
+         autoMergeRequest { enabledAt }
        }
      }
-     ```
+   }
+   ```
 
-     ```sh
-     gh api graphql -F number=<number> -F query=@/tmp/mq-probe.graphql
-     ```
+   ```sh
+   gh api graphql -F number=<number> -F query=@/tmp/mq-probe.graphql
+   ```
 
-     This reduces to a `Bash(gh api graphql:*)` allow-rule —
-     only `<number>` varies; the brace-heavy query rides in
-     the file, not the command line. Branch on the result:
+   This reduces to a `Bash(gh api graphql:*)` allow-rule —
+   only `<number>` varies; the brace-heavy query rides in the
+   file, not the command line. Branch on the single result:
 
-     - `mergeQueueEntry` non-null (or, on a classic-auto-merge
-       repo, `autoMergeRequest` non-null) → still queued;
-       keep polling.
-     - both `mergeQueueEntry` **and** `autoMergeRequest` null
-       while `state` is `OPEN` → it was **taken out** of the
-       queue (a required check went red, a conflict appeared,
-       or someone dequeued it). Report the removal, naming the
-       cause from a fresh `get_check_runs` if a required check
-       shows a `conclusion` of `failure` / `timed_out` /
-       `cancelled`.
+   - `merged: true` (or `state: "MERGED"` / `"CLOSED"`) → it
+     landed; report the merge. Key on `merged` / `state`.
+   - `state: "OPEN"` with `mergeQueueEntry` non-null (or, on
+     a classic-auto-merge repo, `autoMergeRequest` non-null)
+     → still queued; keep polling.
+   - `state: "OPEN"` with both `mergeQueueEntry` **and**
+     `autoMergeRequest` null → it was **taken out** of the
+     queue (a required check went red, a conflict appeared,
+     or someone dequeued it). Report the removal, naming the
+     cause from a fresh `gh pr checks <number>` if a required
+     check shows `fail`.

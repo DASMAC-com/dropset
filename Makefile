@@ -14,6 +14,7 @@
 .PHONY: lint
 .PHONY: sdk
 .PHONY: sdk-test
+.PHONY: session-metrics
 .PHONY: stage-backlog
 .PHONY: test
 .PHONY: test-no-teardown
@@ -131,6 +132,14 @@ install-anchor-v2:
 
 lint:
 	pre-commit run --config cfg/pre-commit-lint.yml --all-files
+
+# Account for where a session's tokens went (the deterministic core of the
+# session-metrics skill). Resolves the transcript itself from the Claude home
+# (CLAUDE_CONFIG_DIR or ~/.claude) and the working-directory project slug, reads
+# it in its own process, and prints a compact ranked-sink summary. Pass the
+# session id: `make session-metrics SESSION=<uuid>` (add ARGS=--json for JSON).
+session-metrics:
+	cargo run -p dropset-session-metrics -- --session-id $(SESSION) $(ARGS)
 
 # Render the Linear Backlog as the Task Staging dependency tree (the
 # deterministic core of the stage-backlog skill). Resolves LINEAR_API_KEY,
