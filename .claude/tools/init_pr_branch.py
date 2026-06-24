@@ -100,8 +100,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--branch",
-        help="the current branch name; if omitted, runs "
-        "`git branch --show-current`",
+        help="the current branch name; if omitted, runs `git branch --show-current`",
     )
     parser.add_argument(
         "--porcelain-file",
