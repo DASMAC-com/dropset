@@ -63,12 +63,18 @@ class ModelTests(unittest.TestCase):
         self.assertFalse(issue("ENG-4", []).is_skill_only())
 
     def test_overlap_same_dir_and_file(self):
-        self.assertTrue(touches_overlap(issue("ENG-1", ["tui/"]), issue("ENG-2", ["tui/pane.rs"])))
         self.assertTrue(
-            touches_overlap(issue("ENG-1", ["sdk/rs/**"]), issue("ENG-2", ["sdk/rs/lib.rs"]))
+            touches_overlap(issue("ENG-1", ["tui/"]), issue("ENG-2", ["tui/pane.rs"]))
         )
         self.assertTrue(
-            touches_overlap(issue("ENG-1", ["CLAUDE.md"]), issue("ENG-2", ["CLAUDE.md"]))
+            touches_overlap(
+                issue("ENG-1", ["sdk/rs/**"]), issue("ENG-2", ["sdk/rs/lib.rs"])
+            )
+        )
+        self.assertTrue(
+            touches_overlap(
+                issue("ENG-1", ["CLAUDE.md"]), issue("ENG-2", ["CLAUDE.md"])
+            )
         )
 
     def test_no_overlap_distinct_files(self):
@@ -79,7 +85,9 @@ class ModelTests(unittest.TestCase):
             )
         )
         # a shared string prefix that is not a path boundary must not match
-        self.assertFalse(touches_overlap(issue("ENG-1", ["sdk/rs"]), issue("ENG-2", ["sdk/rust"])))
+        self.assertFalse(
+            touches_overlap(issue("ENG-1", ["sdk/rs"]), issue("ENG-2", ["sdk/rust"]))
+        )
 
 
 class PlanTests(unittest.TestCase):
@@ -103,13 +111,18 @@ class PlanTests(unittest.TestCase):
     def test_file_overlap_serializes_higher_under_lower(self):
         # No declared edge, but both declare the tui/ directory → they can't
         # run in parallel, so 22 nests under 18.
-        out = render([with_("ENG-18", touches=["tui/"]), with_("ENG-22", touches=["tui/"])])
+        out = render(
+            [with_("ENG-18", touches=["tui/"]), with_("ENG-22", touches=["tui/"])]
+        )
         self.assertEqual(out, "# Standalone\n\n- ENG-18\n    - ENG-22\n")
 
     def test_distinct_files_in_same_dir_run_in_parallel(self):
         # Different files under tui/ don't conflict, so both stay top-level.
         out = render(
-            [with_("ENG-18", touches=["tui/pane.rs"]), with_("ENG-22", touches=["tui/action.rs"])]
+            [
+                with_("ENG-18", touches=["tui/pane.rs"]),
+                with_("ENG-22", touches=["tui/action.rs"]),
+            ]
         )
         self.assertEqual(out, "# Standalone\n\n- ENG-18\n- ENG-22\n")
 
@@ -141,7 +154,9 @@ class PlanTests(unittest.TestCase):
         out = render(
             [
                 with_("ENG-60", parent="ENG-50", touches=["a/x.rs"]),
-                with_("ENG-61", parent="ENG-50", touches=["b/y.rs"], blocked_by=["ENG-70"]),
+                with_(
+                    "ENG-61", parent="ENG-50", touches=["b/y.rs"], blocked_by=["ENG-70"]
+                ),
                 with_("ENG-70", touches=["c/z.rs"]),
             ]
         )
@@ -229,7 +244,9 @@ class OrphanCycleTests(unittest.TestCase):
         # Every member renders exactly once — none silently dropped.
         for m in members:
             self.assertIn(f"- {m}", out, f"{m} missing from the rendered tree")
-            self.assertEqual(out.count(f"- {m}\n") + out.count(f"- {m} "), 1, f"{m} not unique")
+            self.assertEqual(
+                out.count(f"- {m}\n") + out.count(f"- {m} "), 1, f"{m} not unique"
+            )
 
         # The unreached ids are flagged so it can never fail silently again.
         self.assertTrue(orphans, "orphan sweep recorded no cyclic ids")

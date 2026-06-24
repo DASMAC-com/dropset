@@ -231,7 +231,15 @@ def render(issues: list[Issue], orphans: list[str] | None = None) -> str:
 
     # # Skills first.
     s = render_bucket(
-        "# Skills", ("skills",), issues, buckets, primary, children, blockers, number_of, orphans
+        "# Skills",
+        ("skills",),
+        issues,
+        buckets,
+        primary,
+        children,
+        blockers,
+        number_of,
+        orphans,
     )
     if s is not None:
         sections.append(s)
@@ -370,7 +378,9 @@ def render_bucket(
     # between roots.
     ancestors: set[str] = set()
     for root in roots:
-        render_node(root, 0, primary, children, blockers, number_of, seen, ancestors, out)
+        render_node(
+            root, 0, primary, children, blockers, number_of, seen, ancestors, out
+        )
 
     # Orphan sweep: any member the root-walk didn't reach — every member of a
     # blocker cycle has a non-None primary, so none is a root and the whole
@@ -383,12 +393,16 @@ def render_bucket(
     for ident in members_sorted:
         if ident in seen:
             continue
-        render_node(ident, 0, primary, children, blockers, number_of, seen, ancestors, out)
+        render_node(
+            ident, 0, primary, children, blockers, number_of, seen, ancestors, out
+        )
 
     return "".join(out)
 
 
-def render_node(ident, depth, primary, children, blockers, number_of, seen, ancestors, out):
+def render_node(
+    ident, depth, primary, children, blockers, number_of, seen, ancestors, out
+):
     """Render ``ident`` as a bullet and recurse into its children. ``seen``
     guards against re-rendering a node reached twice. ``ancestors`` holds the
     proper ancestors of ``ident`` on the current descent path; a blocker in
@@ -397,7 +411,9 @@ def render_node(ident, depth, primary, children, blockers, number_of, seen, ance
         return
     seen.add(ident)
     indent = INDENT * depth
-    out.append(f"{indent}- {ident}{notes(ident, primary, blockers, number_of, ancestors)}\n")
+    out.append(
+        f"{indent}- {ident}{notes(ident, primary, blockers, number_of, ancestors)}\n"
+    )
 
     kids = children.get(ident)
     if kids:
@@ -406,7 +422,17 @@ def render_node(ident, depth, primary, children, blockers, number_of, seen, ance
         # recursing and remove on backtrack, mirroring the ``seen`` guard.
         ancestors.add(ident)
         for kid in kids_sorted:
-            render_node(kid, depth + 1, primary, children, blockers, number_of, seen, ancestors, out)
+            render_node(
+                kid,
+                depth + 1,
+                primary,
+                children,
+                blockers,
+                number_of,
+                seen,
+                ancestors,
+                out,
+            )
         ancestors.discard(ident)
 
 
@@ -600,7 +626,9 @@ def run(argv: list[str]) -> int:
 
     if dry_run:
         sys.stdout.write(document)
-        print(f"stage-backlog (dry-run) | {len(issues)} backlog issues", file=sys.stderr)
+        print(
+            f"stage-backlog (dry-run) | {len(issues)} backlog issues", file=sys.stderr
+        )
         return 0
 
     doc_id = env_var("LINEAR_TASK_STAGING_DOC_ID")

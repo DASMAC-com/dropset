@@ -1,6 +1,6 @@
 ---
 name: audit-loop
-description: One iteration of a continuous background platform audit — pick a unit of work (a randomly-chosen non-generated file, or a whole-system architecture pass fanned out per subsystem and per inter-subsystem interface), audit files by delegating to the `audit-scope` engine and run the whole-system lenses with an adversarial cross-check, dedup against open or resolved Linear issues, then file one self-contained Backlog issue per finding, fold it into the Task Staging document via stage-backlog's incremental mode, and announce. Stops itself after a configurable number of filings (default 20). Drive it with `/loop audit-loop`.
+description: One iteration of a continuous background platform audit — pick a unit of work (a randomly-chosen non-generated file, or a whole-system architecture pass fanned out per subsystem and per inter-subsystem interface), audit files by delegating to the `audit-scope` engine and run the whole-system lenses with an adversarial cross-check, dedup against open or resolved Linear issues, then file one self-contained Backlog issue per finding, and announce. A single deterministic `stage-backlog` re-stage at the end of the run folds the run's findings into the Task Staging document. Stops itself after a configurable number of filings (default 20). Drive it with `/loop audit-loop`.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -73,8 +73,8 @@ unit, so they don't go through `audit-scope`.
 This loop **never authors source edits and never
 writes to the worktree**. Its only writes are the
 Linear issues it files and the **Task Staging**
-document it folds each finding into incrementally as it
-files (step 8, via `stage-backlog`). It produces no
+document it re-stages once at the end of the run
+(step 11, via `stage-backlog`). It produces no
 source diff of its own, so it must never commit or
 push. The one repo operation it does perform
 is fast-forwarding the throwaway worktree to upstream
@@ -179,8 +179,9 @@ description carries a `**Fingerprint**:` line — those
 are the audit-filed issues (step 8 writes the line onto
 every one). For each kept issue, parse **every**
 `**Fingerprint**:` line — a normal issue has one, but
-an issue that `stage-backlog` merged carries the
-**union** of its group's fingerprints, so read them
+a combined issue (several coupled findings filed as one,
+per step 8) carries the **union** of its findings'
+fingerprints, so read them
 all — and note its current state (resolved vs. open).
 The collected `{fingerprint → state}` map is this
 iteration's dedup set (step 7).
@@ -358,7 +359,7 @@ deterministically). Then check it against the dedup set
 rebuilt from Linear in step 1: if any Dropset issue —
 **open or resolved** — already carries that fingerprint
 (checking **every** `**Fingerprint**:` line, since a
-`stage-backlog`-merged issue holds several), **skip
+combined issue holds several), **skip
 filing**. A resolved match means the finding was already
 triaged (Done / Won't-fix / Canceled); refiling it would
 reopen settled noise. Because step 1 rebuilds the set
@@ -423,12 +424,15 @@ symbol, the work would obviously land as one change —
 file them as **one combined Backlog issue** instead of
 several: one title, the per-finding notes under
 per-source sub-headings, and a `**Fingerprint**:` line
-for **each** finding (the union). You already hold the
-context here, so combining now saves `stage-backlog`
-from re-deriving the grouping and re-merging later.
+for **each** finding (the union). `stage-backlog` never
+merges issues, so combining at file time is the **only**
+way coupled findings become one issue — you already hold
+the context here, so do it now rather than leaving two
+chips for triage to reconcile by hand.
 Count each fingerprint toward `filed_total`. Findings
-that don't obviously share a PR stay separate — let
-`stage-backlog` decide those.
+that don't obviously share a PR stay separate —
+`stage-backlog` nests them serially when their
+`**Touches**:` globs collide.
 
 The description must let a cold agent act on it in its
 own worktree (literal newlines, not `\n`):
@@ -462,16 +466,11 @@ own worktree (literal newlines, not `\n`):
 
 After each `save_issue`, increment the in-context
 `filed_total` by one — it drives the stop-after-cap
-condition in step 2 — and **fold the new issue into the
-Task Staging document incrementally**: invoke the
-`stage-backlog` skill (via the Skill tool) in its
-**incremental** mode, passing the just-filed `ENG-###`
-id(s) (the whole union, when you filed a combined
-issue). This keeps the plan roughly current as findings
-land, instead of waiting for one heavy re-stage at the
-end. It is best-effort chip placement, not a global
-regroup — the next full `stage-backlog` reconciles
-(step 11).
+condition in step 2. The Task Staging document is **not**
+touched per finding; the run does a single deterministic
+re-stage at the end (step 11), which is cheap (one read +
+render + one write) and reflects every issue filed this
+run.
 
 **WHOLE-SYSTEM findings** are filed the same way (plain
 Backlog issue, same IDs, no parent) but as **one
@@ -541,18 +540,24 @@ timer, no wait.
 from step 10 when the capping filing just landed). This
 is the loop's terminal step: it does no auditing.
 
-The Task Staging document was kept roughly current
-**incrementally** as each finding was filed (step 8), so
-the loop does **not** run a heavy full re-stage here.
-The authoritative reconcile — a full `stage-backlog`
-that re-derives the grouping and merges the issues that
-belong in one PR — is the **next `housekeeping` morning
-pass**'s job (or a manual `/stage-backlog` on demand);
-incremental placement is the fast in-between, and the
-full pass is the source of truth.
+**Re-stage the Task Staging document.** Run a single full
+re-stage so the run's findings land in the plan:
+
+```sh
+make stage-backlog
+```
+
+This is the deterministic Python tool (one Backlog read +
+render + one document write); it re-derives the whole
+tree from the live Backlog, so it reflects every issue
+filed this run. It is the authoritative reconcile — there
+is no incremental placement to clean up. If the re-stage
+errors (e.g. a missing env var in this throwaway
+worktree), don't fail the run: note it and let the next
+`housekeeping` morning pass re-stage instead.
 
 - **Stop the loop.** Print a final line —
-  `DONE audit-loop | filed_total <t> | staged incrementally`
+  `DONE audit-loop | filed_total <t> | re-staged`
   — and do **not** begin another iteration. The loop is
   complete; `/loop` should not re-invoke. To run another
   campaign later, just invoke `/loop audit-loop` again —
