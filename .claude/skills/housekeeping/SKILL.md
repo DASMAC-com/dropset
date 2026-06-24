@@ -1,6 +1,6 @@
 ---
 name: housekeeping
-description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, prune the worktrees of already-merged PRs, drain the Linear Permissions inbox doc via firm-perms (propose-only), mine the Session Metrics inbox into propose-only skill-improvement tasks, restage the backlog, then offer (default yes) to kick off the audit-loop as a background campaign and exit. The cspell dictionary check is opt-in (pass `cspell`) and off by default. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
+description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, prune the worktrees of already-merged PRs, drain the Linear Permissions inbox doc via firm-perms (propose-only), mine the Session Metrics inbox into propose-only skill-improvement tasks, restage the backlog, then — only when given a finding cap (e.g. `/housekeeping 15`) — automatically kick off the audit-loop as a background campaign capped at that many issues and exit; with no number the audit-loop is skipped. The cspell dictionary check is opt-in (pass `cspell`) and off by default. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -9,11 +9,13 @@ user-invocable: true
 
 The **one thing to fire up when you arrive**: it
 does the morning upkeep — the chores that pile up while
-you develop but don't belong to any one PR — then kicks
-off the audit campaign in the background so that, by the
-afternoon, there's a ready-to-fire task sequence. It
-first fast-forwards `main` so the pass runs on the
-latest committed skills, then:
+you develop but don't belong to any one PR — then, **when
+you hand it a finding cap** (e.g. `/housekeeping 15`),
+kicks off the audit campaign in the background so that, by
+the afternoon, there's a ready-to-fire task sequence. With
+**no** number it stops after the upkeep and skips the
+audit-loop. It first fast-forwards `main` so the pass runs
+on the latest committed skills, then:
 
 1. **Prune merged worktrees** — remove the local
    worktree (and branch) of every PR that has
@@ -27,18 +29,25 @@ latest committed skills, then:
    Session Metrics doc and file **propose-only**
    skill-improvement tasks for the trim patterns that
    recur across sessions, never editing a skill itself.
+1. **Check convention references** — flag any skill that
+   points at a `CLAUDE.md` section or `docs/conventions/`
+   doc that no longer exists, filing the drift
+   **propose-only**.
 1. **Restage the backlog** — hand off to
    `stage-backlog` so the Task Staging document
    reflects everything currently open.
-1. **Kick off the audit-loop** — offer (default yes) to
-   launch the background audit campaign, then **exit**.
+1. **Kick off the audit-loop** — **only when a finding
+   cap was passed**, automatically launch the background
+   audit campaign capped at that many issues, then
+   **exit**. With no number, skip this and exit after the
+   upkeep.
 
 The morning entry point is a **single one-shot run**:
-upkeep → background audit-loop → exit. It does *not*
-stay on a timer; the `/loop 30m housekeeping` cadence is
-there for ad-hoc upkeep while you work, but the morning
-driver is the one-shot. Each invocation is one pass and
-safe to repeat.
+upkeep → background audit-loop (only when a finding cap
+was passed) → exit. It does *not* stay on a timer; the
+`/loop 30m housekeeping` cadence is there for ad-hoc
+upkeep while you work, but the morning driver is the
+one-shot. Each invocation is one pass and safe to repeat.
 
 **Opt-in: spelling-escape hygiene.** The `cspell-audit`
 check is **not** part of the default pass — it runs only
@@ -53,12 +62,27 @@ a Backlog task to fix later.
 
 ## Input
 
-Optional. The only argument is the **`cspell`** flag:
-when the invocation includes `cspell` (e.g.
-`housekeeping cspell`, or `/loop 30m housekeeping cspell`),
-the pass runs the opt-in spelling-escape check (step 3);
-with no argument it skips that step entirely. Any other
-argument is ignored.
+Optional, and accepts two independent arguments in any
+order:
+
+- **A finding cap** (a bare integer, e.g.
+  `housekeeping 15`) — the maximum number of issues the
+  audit-loop should file before it self-terminates. Its
+  **presence is also the gate**: given a number, the pass
+  automatically kicks off the background audit-loop capped
+  at it (step 8); with **no** number, the audit-loop is
+  **skipped** entirely and the pass exits after the
+  upkeep. So `/housekeeping 15` does upkeep then launches a
+  15-issue campaign, while a bare `/housekeeping` does
+  upkeep only.
+- **The `cspell` flag** — when the invocation includes
+  `cspell` (e.g. `housekeeping cspell` or
+  `housekeeping 15 cspell`, and likewise under
+  `/loop 30m housekeeping cspell`), the pass runs the
+  opt-in spelling-escape check (step 3); without it that
+  step is skipped.
+
+Any other argument is ignored.
 
 ## Run it from the base repo root
 
@@ -75,14 +99,16 @@ merged worktrees, filing / staging Linear issues, and
 annotating the Linear Permissions and Session Metrics
 docs with recommended dispositions (it never writes
 `settings.local.json` and never edits a skill
-unattended). Its last step *launches* the audit-loop as
-a background task (step 7), but housekeeping itself
-makes no source edit — the campaign only files Linear
-issues.
+unattended). When given a finding cap, its last step
+*launches* the audit-loop as a background task (step 8),
+but housekeeping itself makes no source edit — the
+campaign only files Linear issues.
 
-Run it **once when you arrive** for the full
-morning-driver flow (it launches the background campaign
-and exits), or drive ad-hoc upkeep on a timer:
+Run it **once when you arrive with a finding cap**
+(e.g. `housekeeping 15`) for the full morning-driver flow
+(it launches the background campaign and exits), or with
+no number for upkeep only, or drive ad-hoc upkeep on a
+timer:
 
 ```sh
 /loop 30m housekeeping
@@ -95,7 +121,7 @@ clean up on demand.
 
 ## Linear destination
 
-Steps 3–6 file and stage Backlog issues and drain the
+Steps 3–7 file and stage Backlog issues and drain the
 Permissions and Session Metrics docs, so they use the
 same env-resolved Linear destination as `linear-task` /
 `stage-backlog`. Resolve each variable with its **own**
@@ -357,48 +383,76 @@ patterns across them into filed skill-improvement tasks.
   newer than your fetch, re-fetch and rebuild rather than
   clobbering a concurrent edit.
 
-**6. Restage the backlog.** Invoke the
+**6. Check the convention ↔ skill reference sync.**
+`CLAUDE.md` is the **index**; the full operating
+conventions live in `docs/conventions/**`, and the skills
+reference both. A moved section or renamed doc can leave a
+skill pointing at something that no longer exists, so this
+read-only pass flags that drift the same way `review-pr`'s
+freshness lens does on the PR path — here, periodically.
+
+- **Collect the targets.** List the headings in
+  `CLAUDE.md` and the files under `docs/conventions/`
+  (Read / Glob; never a shell `find … | …` pipe).
+- **Scan the skills.** Grep `.claude/skills/**` for
+  references to `CLAUDE.md` section names and
+  `docs/conventions/…` paths (the Grep tool, or a bare
+  single `grep` where it's absent — never `git grep`).
+- **Flag dangling references** — a skill that cites a
+  `CLAUDE.md` section heading that no longer exists, or a
+  `docs/conventions/<file>.md` path that isn't present.
+- **File propose-only**, to the same env-resolved
+  destination as steps 4–5 (`save_issue`,
+  `state: "Backlog"`, priority 3), one aggregated task per
+  pass listing each dangling reference and its fix, with a
+  `**Fingerprint**: convention-ref:<skill>:<target>` line
+  per finding so later passes dedup; drop any fingerprint
+  already open. **Autonomy bound:** filing *proposes* the
+  fix — it never edits a skill, `CLAUDE.md`, or a doc; that
+  lands later through a normal PR. If everything resolves,
+  file nothing and note "in sync" in the report.
+
+**7. Restage the backlog.** Invoke the
 `stage-backlog` skill (via the Skill tool) to rewrite
 the Task Staging document from the current open
-Backlog — including anything steps 3–5 just filed. The
+Backlog — including anything steps 3–6 just filed. The
 deterministic Python tool does all the work (read →
 render → write); this skill just triggers it. This
 **full** re-stage is the authoritative reconcile, run
 fresh from the live Backlog each morning.
 
-**7. Kick off the audit-loop (offer, default yes).**
-The morning's last act: with upkeep done, offer to
-start the background audit campaign so you can do
-admin / minutia while it runs. Ask via
-**`AskUserQuestion`** — the same TUI-selector handoff
-pattern as `init-pr` / `review-pr` (per `CLAUDE.md` →
-"The PR workflow and skill handoffs") — offering
-"yes, start the audit-loop (Recommended)" (**first**,
-the default) and "skip".
+**8. Kick off the audit-loop (only when a finding cap was
+passed).** The morning's last act: with upkeep done, the
+**finding cap argument decides whether to run a
+campaign** — passing a number *is* the go-ahead, so there
+is no separate prompt (this is the one handoff in the
+suite that's arg-gated rather than `AskUserQuestion`-gated,
+precisely because the number carries the intent).
 
-- On **yes**, launch the audit-loop **in the
-  background** (`run_in_background`): start a background
-  task that drives `/loop audit-loop`, passing the
-  **finding cap** as its argument (default 20 — use a
-  different value only if this invocation supplied one).
-  The campaign files findings, re-stages the Task
-  Staging document once at the end of its run
-  (`audit-loop` step 11), and fires a high-severity
-  `PushNotification` only when something warrants
-  interrupting you. Then **this housekeeping pass
+- **A finding cap was passed** (e.g. `housekeeping 15`) →
+  launch the audit-loop **in the background**
+  (`run_in_background`): start a background task that
+  drives `/loop audit-loop`, passing that number as its
+  **finding cap** argument. The campaign files findings,
+  re-stages the Task Staging document once at the end of
+  its run (`audit-loop` step 11), and fires a
+  high-severity `PushNotification` only when something
+  warrants interrupting you. Then **this housekeeping pass
   exits** — it does not wait on the campaign.
-- On **skip**, end the pass without launching anything.
+- **No finding cap** → skip the audit-loop entirely and
+  end the pass after the upkeep. (To run a campaign, re-run
+  with a number.)
 
-**The kickoff is a one-shot, not a loop.** This run
-does the upkeep, launches the audit-loop as a background
-task, and exits — it does *not* stay on a timer. During
-the morning only the audit-loop (re-staging once at the
-end of its run) writes the Task Staging
+**The kickoff is a one-shot, not a loop.** When a cap was
+given, this run does the upkeep, launches the audit-loop as
+a background task, and exits — it does *not* stay on a
+timer. During the morning only the audit-loop (re-staging
+once at the end of its run) writes the Task Staging
 document, so there's no second loop to coordinate; the
-next morning's step 6 re-stages again from the live
+next morning's step 7 re-stages again from the live
 Backlog.
 
-**8. Report.** Print a short summary:
+**9. Report.** Print a short summary:
 
 - `main`: fast-forwarded to the latest, or left at its
   current commit (with the reason) if the pull couldn't
@@ -424,8 +478,11 @@ Backlog.
   how many session entries were consumed, and any skipped
   as already-handled — or why the step was skipped (e.g.
   a missing env var).
+- Convention references: in sync, or the dangling
+  `CLAUDE.md` / `docs/conventions/` references filed
+  (with the ENG-### of the aggregated task).
 - Backlog staging: that `stage-backlog` ran, or why
   it was skipped (e.g. a missing env var).
 - Audit-loop: launched in the background with finding
   cap N (so the campaign runs while you work), or
-  skipped at the prompt.
+  skipped because no finding cap was passed.

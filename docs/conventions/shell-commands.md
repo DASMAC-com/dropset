@@ -1,0 +1,186 @@
+<!-- cspell:word PIPESTATUS -->
+
+# Shell commands
+
+The guiding rule: **every Bash invocation should reduce to a
+reusable allow-rule** (`Bash(prefix:*)`). A call that can't —
+because of a compound, a substitution, a pipe, or a one-off
+literal — is unique, so the user must approve it by hand *every
+single time*. When you catch yourself about to run something that
+won't generalize, stop and reshape it (split it, hoist the dynamic
+part into a prior step or a tool, pass values literally) before
+running it.
+
+This applies to shell you **author**, not just shell you type
+ad-hoc: snippets in skills, scripts, Makefile targets, and docs get
+executed verbatim, so the same patterns below re-prompt forever when
+baked into them. Write committed shell to the same standard — prefer
+a sequence of bare commands that each reduce to a glob (or "run X,
+read its output, then run Y with the value inline") over a clever
+one-liner.
+
+It applies to work you hand to a **sub-agent**, too. The whole
+objective is **the fewest permission prompts possible** across the
+session, and a spawned agent's Bash calls surface to you for approval
+exactly like your own — but the agent doesn't inherit the project
+instructions, so it will reach for the forbidden compounds unless told
+not to. Brief every agent you spawn on these rules (see
+[the sub-agent brief](sub-agent-brief.md)) so its calls reduce to
+allow-rules too. A session that follows the rules and briefs its
+agents on them prompts only for a genuinely novel command — which
+`firm-perms` then memorializes so it never prompts again.
+
+**The dedicated Grep / Glob tools aren't always present.** Native macOS
+Claude Code builds (>= 2.1.117) drop them from the default tool palette
+in favor of embedded Bash search
+(<https://github.com/anthropics/claude-code/issues/52004>), and we do
+**not** force them back on via `--tools` (that flag is replace-not-add,
+so it would mean enumerating the whole built-in set in every launcher —
+too brittle). So the "use the Grep tool" guidance below is conditional:
+use Grep / Glob **when they exist**, but where they don't, fall back to
+a **bare, single** `grep` / `find` Bash command — never a piped
+compound. Bare `grep` / `find` reduce to the retained `Bash(grep:*)` /
+`Bash(find:*)` allow-rules and prompt once; it's the `grep … | head` /
+`find … | xargs` **pipes** that can't generalize and re-prompt forever.
+The `Bash(grep:*)`, `Bash(find:*)`, `Bash(head:*)`, and `Bash(tail:*)`
+allow-rules are kept for exactly this fallback.
+
+Concrete rules:
+
+- Prefer the dedicated tools — Read, Grep, Glob — over `cat`, `grep`,
+  `find`, `ls` in Bash. They don't prompt for in-workspace paths. This
+  includes *slicing* a file: use Read with `offset`/`limit` instead of
+  `sed -n 'X,Yp'`, `awk 'NR>=X'`, `head`, or `tail`. Never shell out to
+  `python3` / `node` / `jq` to read or edit JSON/config (including
+  `.claude/settings.local.json`) — use Read + Edit/Write. Each such
+  one-liner is unique and re-prompts forever. To find **over-length
+  lines** for the MD013 80-col rule, don't reach for
+  `awk 'length>80'` / `sed` either — run the markdownlint hook
+  (`pre-commit run markdownlint-fix … --files <path>`, with
+  `--config cfg/pre-commit-lint.yml`); it reports every MD013
+  violation with its line number and reduces to the existing
+  `Bash(pre-commit run:*)` rule.
+- Searching file *contents* — prefer the **Grep tool**; where it's
+  absent (the Grep / Glob caveat above) a **bare, single** `grep` is
+  the fallback, but **never** `git grep`. This is the same rule the
+  sub-agent brief carries
+  (see [the sub-agent brief](sub-agent-brief.md)); it holds for the
+  main agent too, so the convention is one and the same — the brief
+  just restates it because a sub-agent doesn't inherit these
+  instructions. Grep takes a real regex (alternation is `a|b|c`, not a
+  shell-quoted `a\|b\|c`), reads any path you point it at, and prompts
+  zero times. `git grep` looks blessed — it's a git subcommand, so it
+  seems covered by the `git -C <path> <sub>` cross-checkout rule below —
+  but it isn't: a clean single pattern only re-prompts until firmed, and
+  a quoted `\|` alternation trips the per-subcommand `|` guard and can't
+  be firmed at all. Reserve `git -C <path>` for **metadata** subcommands
+  (`log` / `show` / `diff` / `status` / `ls-files`), never `grep`.
+- One command per Bash call. Avoid `&&`, `;`, and pipes when separate
+  calls work; a chained command can't be generalized into a glob and
+  always re-prompts.
+- No command substitution. `$(...)` and backticks block globbing —
+  compute the value in a prior step (or a tool) and pass it literally.
+- Avoid redirects (`>`, `<`, here-strings). Use the Write tool to
+  create files rather than `echo … > file`.
+- Pass large or special-character arguments through a **file**, not
+  inline on the command line. A multi-paragraph commit message — its
+  backticks, braces, and quotes trip the "brace with quote character
+  (expansion obfuscation)" guard and force manual approval *every
+  time*, even though the command prefix is allow-listed. Write the
+  content to a throwaway file with the Write tool (e.g. under `/tmp`)
+  and hand the command its path via the matching `--*-file` flag —
+  `git commit -F /tmp/<f>.txt` — so only a stable, globbable path rides
+  the command line and the call reduces to a `prefix:*` rule. (PR
+  titles and bodies are **no longer** a shell concern: they go through
+  the GitHub MCP as structured tool arguments — see
+  [GitHub via MCP](github-mcp.md) — so there is no `--body-file`
+  workaround to manage.)
+- Keep a stable command + subcommand prefix (`pnpm lint …`,
+  `cargo test …`, `git log …`) and put only the variable parts in the
+  arguments, so the call matches a `:*` allow-glob.
+- Stay in your worktree. The shell already starts at the worktree
+  root — never `cd` into it (`cd <worktree> && …`). That compound
+  forces manual approval every time (path-resolution bypass) and
+  can't reduce to a glob. Run commands bare from the cwd.
+- No status banners or exit-code plumbing. Don't append
+  `; echo "=== exit $? ==="`, pipe through `tail` / `grep`, redirect
+  `2>&1`, or read `${PIPESTATUS[0]}`. Run the bare command
+  (`make lint`, `cargo fmt -p dropset`) — its full output and exit
+  status already come back. Pipes and `$(…)` / `${…}` expansion
+  force re-approval on every call.
+- Inspect the base repo by path, not by `cd`. To read another branch
+  or the base checkout from a worktree, run
+  `git -C <base-repo-path> <subcommand>` with a *literal*, stable path
+  (no `$(…)`). Keep the subcommand immediately after the path so the
+  call reduces to a `Bash(git -C <base-repo-path> <sub>:*)` rule —
+  then pre-approve the read-only subcommands (`log`, `show`, `diff`,
+  `status`, `rev-parse`) once in your local `settings.local.json` so
+  they never prompt again.
+- Operate on a *sibling worktree* by its real path, but approve it
+  with a worktree **glob**. A command like
+  `git -C <base-repo-path>/.claude/worktrees/<tag> status --short`
+  has to name the real worktree to run, but the allow-rule it matches
+  against should be the generalized
+  `Bash(git -C <base-repo-path>/.claude/worktrees/* status:*)` — the
+  mid-path `*` covers every sibling tag and the `:*` covers the args,
+  so one rule firms the whole family. Don't approve the per-tag,
+  per-arg variant; it only ever matches that one call.
+- When per-worktree or per-arg approvals have already piled up in
+  `settings.local.json`, run the `firm-perms` skill. It collapses the
+  one-off entries into globs (per the rules above), dedupes them, and
+  writes the firmed allowlist to **both** this worktree and the base
+  repo so future worktrees inherit it — proposing the changes for
+  your approval before it writes. That's the full sweep; a bare
+  `/firm-perms` run right after a one-time approval instead takes the
+  **fast path** — it firms just that single just-approved command into
+  both files immediately, with no propose-then-confirm gate.
+
+## Patterns that always re-prompt — never author these
+
+The rules above each rule out a class of command. These are the
+specific forms that have actually slipped through and forced a manual
+approval *every time*, because none can reduce to an allow-rule —
+don't write them, in ad-hoc shell or in committed skills/scripts:
+
+- **Heredocs** (`cat > file << 'EOF' … EOF`, `python3 << 'EOF' … EOF`).
+  A heredoc is a redirect plus inline content; when the body contains
+  braces it also trips the "brace with quote character (expansion
+  obfuscation)" guard, which forces approval regardless of the
+  allowlist. To **create a file**, use the Write tool. To **read or
+  parse** one (including JSON/IDL), use Read / Grep — never `python3` /
+  `node` / `jq`.
+- **Ad-hoc compile-and-run scratch** — e.g. a
+  `cat > /tmp/x.rs << EOF` heredoc piped into
+  `rustc … && /tmp/x`. To check a language or layout question, Write a
+  throwaway file and drive it with the normal target (`cargo test`, a
+  `#[test]`), or reason it out — don't synthesize a one-off program
+  through a heredoc-and-`&&` chain.
+- **`cd <path> && <cmd>`** (e.g. `cd <repo> && git -C <worktree> …`).
+  The `cd &&` compound re-prompts as a path-resolution bypass. Run
+  bare from the cwd, or address another checkout with `git -C <path>`
+  alone — no `cd`, no `&&`.
+
+If a one-off like these still gets approved during a session, do
+**not** allow-list it (a `*` can't generalize a compound): the
+`firm-perms` skill flags it and points back here so the source stops
+emitting it.
+
+## The compound-shell guard hook
+
+These rules are enforced **mechanically**, not just by convention. A
+`PreToolUse` Bash hook (`.claude/hooks/no_compound_bash.py`, wired in
+the committed `.claude/settings.json` so every worktree inherits it)
+inspects each Bash command before it runs and **blocks** any that
+contains an unquoted shell compound / redirect operator — a pipe, `>`,
+`<`, `;`, `&&`, `||`, `&`, a backtick, or `$(` — telling the model to
+split the call and use the Write / Read / Grep tools instead. The scan
+is **quote-aware**: an operator inside a single- or double-quoted
+string (a commit message's `;`, a regex's `|`) is legitimate text and
+passes; command substitution (`` ` `` and `$(`) is caught even inside
+double quotes, mirroring real shell. The guard fails *open* — any
+payload it can't parse is allowed — so it never wedges a session.
+
+**Escape hatch.** A genuinely-unavoidable compound (rare) is let
+through by adding the literal marker `#compound-ok` anywhere in the
+command. It's deliberately visible in the transcript so the bypass is
+auditable; reach for it only when the work truly can't be split.

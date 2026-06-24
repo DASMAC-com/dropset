@@ -113,10 +113,10 @@ across its back-to-back iterations lives in either
   working context — how many FILE iterations have run
   since the last whole-system pass.
 - **The subsystem registry, the inter-subsystem
-  interfaces, and the skip-globs** live in `CLAUDE.md`
-  → "Audit registry" (committed, shared), refreshed on
-  the PR path by `review-pr`. This loop **reads** them
-  (step 1); it never edits them.
+  interfaces, and the skip-globs** live in
+  `docs/conventions/audit-registry.md` (committed,
+  shared), refreshed on the PR path by `review-pr`. This
+  loop **reads** them (step 1); it never edits them.
 
 ## Fingerprints (dedup keys)
 
@@ -186,8 +186,8 @@ all — and note its current state (resolved vs. open).
 The collected `{fingerprint → state}` map is this
 iteration's dedup set (step 7).
 
-Then **read the Audit registry** from `CLAUDE.md` →
-"Audit registry": the **subsystems**
+Then **read the Audit registry** from
+`docs/conventions/audit-registry.md`: the **subsystems**
 (`name (kind, risk): roots`), the **inter-subsystem
 interfaces** (`A <-> B: contract`), and the
 **skip-globs**. These drive selection (step 3) and the
@@ -261,7 +261,7 @@ interface in the registry. Read the specs in `docs/`
 are themselves in scope.
 
 **Prepend the standing sub-agent brief from
-`CLAUDE.md`** (→ "Briefing sub-agents") to every agent
+`docs/conventions/sub-agent-brief.md`** to every agent
 prompt below — the lens agents, the synthesis agent,
 and the cross-check agent (step 6). They don't inherit
 `CLAUDE.md`, and a whole-system pass explores widely, so
@@ -343,7 +343,7 @@ selection, dedup, and filing.
 findings were already cross-checked inside `audit-scope`
 (step 5), so this step applies to the whole-system lens
 findings: spawn a fresh skeptic sub-agent (brief it with
-the same `CLAUDE.md` sub-agent brief, per step 4) with
+the same sub-agent brief, per step 4) with
 the collected findings. It must kill false positives,
 challenge weak rationale, and surface anything the first
 pass missed. On material disagreement, re-spawn the
@@ -574,9 +574,10 @@ worktree), don't fail the run: note it and let the next
   unattended. The project Backlog is the review queue;
   triage there, not at file time.
 - The subsystems, interfaces, and skip-globs are not
-  pinned in this skill — they live in `CLAUDE.md` →
-  "Audit registry" and grow on the PR path (`review-pr`)
-  as new subsystems, seams, and generated-file families
+  pinned in this skill — they live in
+  `docs/conventions/audit-registry.md` and grow on the PR
+  path (`review-pr`) as new subsystems, seams, and
+  generated-file families
   appear. A new `indexer/`, `docker/`, or `.github/`
   tree becomes auditable the moment `review-pr` adds it
   to the registry.

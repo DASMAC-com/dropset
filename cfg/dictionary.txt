@@ -65,6 +65,7 @@ prebuild
 predev
 programdata
 pubkeys
+pytest
 ratatui
 repr
 respawn
@@ -84,6 +85,7 @@ solflare
 solscan
 soulbound
 stablecoins
+stdlib
 stoikov
 straitsx
 strat

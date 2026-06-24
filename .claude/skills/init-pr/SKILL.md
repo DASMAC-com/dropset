@@ -51,32 +51,53 @@ at its merge-queue handoff — the same TUI-selector
 pattern, applied one stage earlier at the
 init-pr → review-pr boundary.
 
+## The branch/worktree helper tool
+
+The deterministic string/path work this bootstrap needs —
+**tag validation**, **base-repo resolution**, and
+**branch-name normalization** — lives in the Python
+skill-tool `.claude/tools/init_pr_branch.py` (per
+`CLAUDE.md` → "Skill tooling"), so the skill drives it
+instead of hand-parsing `git worktree list` in prose. Run
+it **once** near the top with the resolved tag; it runs
+the two read-only git reads itself and prints JSON:
+
+```sh
+python3 .claude/tools/init_pr_branch.py --tag <eng-###>
+```
+
+```json
+{
+  "tag": "eng-603",          // the validated tag, lowercased
+  "tag_valid": true,         // false (+ non-zero exit) if not eng-###
+  "base_repo": "/…/dropset", // the refs/heads/main worktree, or null
+  "current_branch": "worktree-eng-603",
+  "normalized_branch": "eng-603",
+  "rename_needed": true      // true iff a `worktree-` prefix is stripped
+}
+```
+
+Steps 1, 2, and 4 read their answers from this one call.
+
 ## Steps
 
-1. Validate that the resolved tag matches the
-   pattern `eng-###` (case-insensitive). If not,
-   stop and ask the user for it.
+1. **Validate the tag.** Take `tag_valid` / `tag` from
+   the helper's output. If `tag_valid` is `false` (the
+   tool also exits non-zero), stop and ask the user for a
+   valid `eng-###` tag. Otherwise use the lowercased
+   `tag` from here on.
 
-1. Pull main in the **base repository** (not this
-   worktree). Don't use command substitution to
-   find it — run the listing as its own command and
-   read the path out of the output yourself:
-
-   ```sh
-   git worktree list --porcelain
-   ```
-
-   In that output, the worktree whose `branch` line
-   is `refs/heads/main` is the base repo. Take its
-   literal path and pull, passing the path inline so
-   the call reduces to a stable allow-rule (no `$(…)`):
+1. **Pull main in the base repository** (not this
+   worktree). Take `base_repo` from the helper's output —
+   it is the worktree whose branch is `refs/heads/main`.
+   If `base_repo` is `null`, no worktree has `main`
+   checked out: skip the pull and warn the user.
+   Otherwise pull, passing the path inline so the call
+   reduces to a stable allow-rule (no `$(…)`):
 
    ```sh
-   git -C <main-worktree-path> pull --ff-only
+   git -C <base_repo> pull --ff-only
    ```
-
-   If no worktree has `main` checked out, skip the
-   pull and warn the user.
 
 1. Symlink `frontend/.env.local` from the main
    worktree so `pnpm dev` / `make frontend` pick up
@@ -94,15 +115,16 @@ init-pr → review-pr boundary.
    - Glob `frontend/.env.local` in **this** worktree.
      If it matches, a file already exists — skip.
    - Glob (or Read) `frontend/.env.local` under the
-     main worktree path. If it doesn't exist, main
-     has no env file — skip and move on.
+     base repo (`base_repo` from the helper). If it
+     doesn't exist, main has no env file — skip and move
+     on.
 
    Only when this worktree has none and main has one,
    create the link (the bare `ln` matches an existing
    allow-rule, so it won't prompt):
 
    ```sh
-   ln -s <main-worktree-path>/frontend/.env.local frontend/.env.local
+   ln -s <base_repo>/frontend/.env.local frontend/.env.local
    ```
 
    If main isn't checked out anywhere (previous
@@ -114,23 +136,21 @@ init-pr → review-pr boundary.
    `eng-###` but the **branch** `worktree-eng-###` —
    there's no CLI flag to drop the `worktree-` prefix, so
    the skill strips it here rather than leaving each
-   session to rename it by hand. Check the current branch:
+   session to rename it by hand. The helper already
+   computed this: read `rename_needed`, `current_branch`,
+   and `normalized_branch` from its output.
 
-   ```sh
-   git branch --show-current
-   ```
-
-   - If it's `worktree-eng-###` (the `aps` default),
-     rename it to the bare `eng-###` that matches the
-     Linear issue identifier — pass both names literally
-     so the call reduces to a stable allow-rule:
+   - If `rename_needed` is `true`, rename the branch to
+     the bare `eng-###` — pass both names literally so the
+     call reduces to a stable allow-rule:
 
      ```sh
-     git branch -m worktree-eng-### eng-###
+     git branch -m <current_branch> <normalized_branch>
      ```
 
-   - If it's already `eng-###` (or any other non-`worktree-`
-     name), this is a **no-op** — leave it alone. Only the
+   - If `rename_needed` is `false` (the branch is already
+     `eng-###`, or any other non-`worktree-` name), this
+     is a **no-op** — leave it alone. Only the
      `worktree-`-prefixed default is rewritten.
 
 1. Rebase onto the freshly-pulled main so the
