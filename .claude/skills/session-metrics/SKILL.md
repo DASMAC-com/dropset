@@ -1,6 +1,6 @@
 ---
 name: session-metrics
-description: Capture where a session spent its tokens and recommend concrete trims. The deterministic core — resolve the session's on-disk transcript, read it (and its sub-agent transcripts) in its own process so the huge file never enters context, and rank the costliest tools / largest single results / per-sub-agent rollup plus the repeated command shapes worth hardening into a tool — runs as the committed `session_metrics.py` tool under `.claude/tools/` (`make session-metrics SESSION=<uuid>`). The skill drives that tool, then writes narrative trim recommendations — grounded in the ranked sinks and hardening candidates plus the observations the model kept during the session — into the Linear "Session Metrics" inbox document, which `housekeeping` later mines into propose-only skill-improvement tasks. Runs at the end of a `review-pr` session (its handoff offers it) or standalone for any session id.
+description: Capture where a session spent its tokens and recommend concrete trims. The deterministic core — resolve the session's on-disk transcript, read it (and its sub-agent transcripts) in its own process so the huge file never enters context, and rank the costliest tools / largest single results / per-sub-agent rollup plus the repeated command shapes worth hardening into a tool — runs as the committed `session_metrics.py` tool under `.claude/tools/` (`make session-metrics SESSION=<uuid>`). The skill drives that tool, then writes narrative trim recommendations — grounded in the ranked sinks and hardening candidates plus the observations the model kept during the session — into the Linear "Session Metrics" inbox document, which `trim-context` (driven by `housekeeping`) later mines into propose-only skill-improvement tasks. Runs at the end of a `review-pr` session (its handoff offers it) or standalone for any session id.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -25,10 +25,11 @@ complementary halves:
   into a Python tool).
 
 The two land together as one entry in a Linear inbox
-document, which `housekeeping` drains into propose-only
-skill-improvement Backlog tasks. This is the feedback loop
-that systematizes, every session, the by-hand analysis that
-motivated this work.
+document, which `trim-context` drains into propose-only
+skill-improvement Backlog tasks — on its own, or as
+`housekeeping`'s Session Metrics step. This is the feedback
+loop that systematizes, every session, the by-hand analysis
+that motivated this work.
 
 ## The mechanism (why a tool)
 
@@ -178,7 +179,8 @@ because the doc id was unset).
   inbox document) and never authors a code or skill diff,
   never commits, never pushes. The skill-improvement edits
   its recommendations imply are filed — propose-only — by
-  `housekeeping` and applied later by a human.
+  `trim-context` (run on its own or by `housekeeping`) and
+  applied later by a human.
 - **Runs standalone or at handoff.** `review-pr` offers it
   after its `firm-perms` gate (recommended, via
   `AskUserQuestion`), but it runs just as well invoked by

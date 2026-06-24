@@ -33,12 +33,13 @@ recommended default **first**. Full detail:
 ## Linear automation
 
 Filing skills (`linear-task`, `stage-backlog`, `audit-loop`,
-`audit-scope`, `housekeeping`) resolve team / project / assignee and
-the inbox-doc ids from **environment variables** (`LINEAR_*`), never
-hard-coded UUIDs — each via its **own** bare `printenv` (a combined
-`printenv A B C` returns only the first on macOS / BSD). A worktree
-branch and its Linear issue share one `ENG-###`. Full detail — every
-env var and which skill reads it: `docs/conventions/linear-automation.md`.
+`audit-scope`, `trim-context`, `housekeeping`) resolve team / project /
+assignee and the inbox-doc ids from **environment variables**
+(`LINEAR_*`), never hard-coded UUIDs — each via its **own** bare
+`printenv` (a combined `printenv A B C` returns only the first on macOS
+/ BSD). A worktree branch and its Linear issue share one `ENG-###`.
+Full detail — every env var and which skill reads it:
+`docs/conventions/linear-automation.md`.
 
 ### Structured filing fields
 

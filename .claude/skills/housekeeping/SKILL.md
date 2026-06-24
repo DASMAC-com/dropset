@@ -140,8 +140,10 @@ printenv LINEAR_SESSION_METRICS_DOC_ID
 
 If any is empty, skip the step that needs it and say
 so; don't guess an id. (`firm-perms` resolves
-`LINEAR_PERMISSIONS_DOC_ID` itself in step 4; it's
-listed here only so the whole set lives in one place.)
+`LINEAR_PERMISSIONS_DOC_ID` itself in step 4, and
+`trim-context` resolves `LINEAR_SESSION_METRICS_DOC_ID`
+itself in step 5; both are listed here only so the whole
+set lives in one place.)
 
 ## Steps
 
@@ -325,63 +327,20 @@ attended `/firm-perms doc` run. If
 `LINEAR_PERMISSIONS_DOC_ID` is unset, `firm-perms`
 says so and this step is a no-op.
 
-**5. Mine the Session Metrics inbox.** Drain the Linear
-"Session Metrics" doc the same way step 4 drains
-Permissions: **propose-only**, never editing a skill.
-The `session-metrics` skill appends one dated entry per
-session — measured token sinks plus tailored trim
-recommendations; this step turns the **recurring**
-patterns across them into filed skill-improvement tasks.
-
-- **Resolve the doc id** from
-  `LINEAR_SESSION_METRICS_DOC_ID` (its own bare
-  `printenv`, per "Linear destination"). If empty, say
-  so and skip this step — don't guess an id.
-
-- **Read the doc live** with
-  `mcp__claude_ai_Linear__get_document` (id = the
-  resolved value); never reuse a stale snapshot. Collect
-  every **unprocessed** entry — an unchecked `- [ ]` with
-  **no** disposition note (a nested line beginning
-  `✓ filed:` or `⚠ noted:`). Skip entries that already
-  carry one, so a repeat pass doesn't re-file.
-
-- **Synthesize across sessions, don't transcribe.** Look
-  for the trim levers that **recur** across the
-  unprocessed entries — a verbose build log inflating
-  several runs, a whole-file Read where a slice would do,
-  a repeated full-PR read, an inlined-diff fan-out. File
-  one skill-improvement task **per distinct lever**
-  (citing the sessions that motivate it), not one task
-  per session. A one-off that appears in a single session
-  and implies no skill change isn't filed — just note it
-  consumed.
-
-- **File propose-only**, to the same env-resolved
-  destination as step 4 (`save_issue` with
-  `team`/`project`/`assignee`, `state: "Backlog"`,
-  priority 3). Each task names the concrete fix and
-  carries a **`**Touches**:`** line (the skill or
-  `CLAUDE.md` file the fix edits, per `CLAUDE.md` →
-  "Structured filing fields") and a **`**Fingerprint**:`**
-  line keyed `session-metrics:<lever-slug>` so later
-  passes dedup. Before filing, list the open Backlog
-  (`mcp__claude_ai_Linear__list_issues`) and drop any
-  fingerprint already open. **Autonomy bound:** filing a
-  task *proposes* a fix — it never edits a skill or
-  `CLAUDE.md`; that lands later through a normal PR. This
-  is the same propose-only bound as the Permissions drain.
-
-- **Write the disposition back** with
-  `mcp__claude_ai_Linear__save_document` (id = the
-  resolved value, literal newlines): tick each consumed
-  entry (`- [ ]` → `- [x]`) and add a nested note —
-  `✓ filed: ENG-### (<lever>)` for one that drove a task,
-  or `⚠ noted: <reason>` for a one-off that implied no
-  change. Build the new body from the body you just
-  fetched, changing only those lines; if `updatedAt` is
-  newer than your fetch, re-fetch and rebuild rather than
-  clobbering a concurrent edit.
+**5. Mine the Session Metrics inbox.** Invoke the
+`trim-context` skill (via the Skill tool) — the consumer
+half of the `session-metrics` producer. It resolves
+`LINEAR_SESSION_METRICS_DOC_ID` itself, reads the doc
+live, synthesizes the trim levers that **recur** across
+the unprocessed entries, files one **propose-only**
+skill-improvement Backlog task per distinct lever (each
+with a `**Touches**:` + `**Fingerprint**:` line, deduped
+against the open Backlog), and writes each consumed
+entry's disposition back into the doc. `trim-context` has
+**no** attended / propose-only split — filing a task *is*
+the proposal, so it never edits a skill or convention
+doc. If `LINEAR_SESSION_METRICS_DOC_ID` is unset,
+`trim-context` says so and this step is a no-op.
 
 **6. Check the convention ↔ skill reference sync.**
 `CLAUDE.md` is the **index**; the full operating

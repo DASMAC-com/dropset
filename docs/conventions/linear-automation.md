@@ -1,7 +1,7 @@
 # Linear automation
 
 Skills that **file** Linear issues (`linear-task`, `audit-loop`,
-`audit-scope`, `housekeeping`) resolve the filing
+`audit-scope`, `trim-context`, `housekeeping`) resolve the filing
 destination — team, project, assignee — from **environment
 variables**, never hard-coded UUIDs. (Skills that only **update**
 an existing issue by id — `init-pr`, `review-pr` — need no
@@ -55,16 +55,18 @@ that `housekeeping` drains via `firm-perms` each pass) — with its own
 bare `printenv`, on the same rule. It too is not a filing
 destination.
 
-`session-metrics` and `housekeeping` share
+`session-metrics`, `trim-context`, and `housekeeping` share
 `LINEAR_SESSION_METRICS_DOC_ID` — the id of the "Session Metrics"
 inbox document — each resolving it with its own bare `printenv`, on
 the same rule. `session-metrics` is the **producer**: it appends one
 dated entry per session (the measured token sinks plus tailored trim
-recommendations). `housekeeping` is the **consumer**: each pass it
-mines the unprocessed entries for recurring trim levers and files them
-as propose-only skill-improvement Backlog tasks (never editing a skill
-itself). Either skill no-ops with a clear message when the variable is
-unset. It is not a filing destination. The `session-metrics` skill
+recommendations). `trim-context` is the **consumer**: it mines the
+unprocessed entries for the trim levers that recur across sessions and
+files them as propose-only skill-improvement Backlog tasks (never
+editing a skill itself), then writes each consumed entry's disposition
+back. `housekeeping` drives `trim-context` as its Session Metrics step,
+and the skill also runs standalone. Each no-ops with a clear message
+when the variable is unset. The `session-metrics` skill
 drives its tool via `make session-metrics`, which reduces to a
 `Bash(make session-metrics:*)` allow-rule. This tool needs **no**
 `LINEAR_API_KEY` — it only parses the local transcript and makes no
