@@ -117,6 +117,7 @@ impl Action {
             Action::CreateMarket => "market already exists",
             Action::CreateVault if below(phase, Phase::VaultAbsent) => "create the market first",
             Action::CreateVault => "vault already exists",
+            Action::BootstrapAll if phase == Phase::ProgramAbsent => "deploy the program first",
             Action::BootstrapAll => "already bootstrapped",
             Action::ProbeSwap => "needs a live, seeded vault",
             Action::Teardown => "deploy the program first",
@@ -217,13 +218,13 @@ pub fn dispatch(action: Action, ctx: &JobContext, state: &ChainState, tx: Sender
         Action::ProbeSwap => {
             job::spawn(tx, "Probe swap", move |log| {
                 let client = chain::rpc(&rpc_url);
-                do_probe_swap(&client, &wallet, log)
+                do_probe_swap(&client, &wallet, &repo_root, log)
             });
         }
         Action::Teardown => {
             job::spawn(tx, "Teardown", move |log| {
                 let client = chain::rpc(&rpc_url);
-                do_teardown(&client, &wallet, &wallet_path, &rpc_url, log)
+                do_teardown(&client, &wallet, log)
             });
         }
         Action::OpenExplorer => {
@@ -343,7 +344,7 @@ fn do_create_market(
     log: &Logger,
 ) -> Result<String> {
     ensure_funded(client, &wallet.pubkey(), log);
-    let registry = accounts::poll(client, &wallet.pubkey())
+    let registry = accounts::poll(client, &wallet.pubkey(), None)
         .registry
         .context("registry not found — init first")?;
     let (base_mint, quote_mint) =
@@ -389,7 +390,7 @@ fn do_create_vault(
     log: &Logger,
 ) -> Result<String> {
     ensure_funded(client, &wallet.pubkey(), log);
-    let state = accounts::poll(client, &wallet.pubkey());
+    let state = accounts::poll(client, &wallet.pubkey(), None);
     let registry = state.registry.context("registry not found")?;
     let market = state
         .market
@@ -431,30 +432,36 @@ fn do_create_vault(
 const PROBE_QUOTE_UNITS: u64 = 10;
 
 /// Exercise — and measure the CU of — the swap path with a small taker Buy
-/// against the seeded vault. Funds the taker's (admin's) quote ATA from the
-/// admin mint authority, ensures a base ATA to receive into, then swaps a
-/// fixed quote notional for base. The realized CU lands in the CU pane under
-/// "swap" via [`chain::send_logged`]; depth and balances refresh after.
+/// against the seeded vault. The swapper is the dedicated `FFFF` taker role
+/// key, never the admin: it signs and pays for the take, so the probe
+/// exercises a real third-party taker against the bot's quotes rather than
+/// the admin trading with itself. The admin stays the mint authority — it
+/// funds the taker's quote leg and creates its ATAs, but takes no part in the
+/// swap transaction. The realized CU lands in the CU pane under "swap" via
+/// [`chain::send_logged`]; depth and balances refresh after.
 fn do_probe_swap(
     client: &solana_client::rpc_client::RpcClient,
     wallet: &Keypair,
+    repo_root: &Path,
     log: &Logger,
 ) -> Result<String> {
     ensure_funded(client, &wallet.pubkey(), log);
-    let market = accounts::poll(client, &wallet.pubkey())
+    let market = accounts::poll(client, &wallet.pubkey(), None)
         .market
         .context("no market — bootstrap first")?;
     if market.active_count == 0 {
         anyhow::bail!("no live vault to swap against — create the vault first");
     }
 
-    // Buy: pay quote, receive base. The admin doubles as the taker — fund its
-    // quote ATA (admin is the mint authority) and ensure a base ATA exists to
-    // receive into.
-    let taker = wallet.pubkey();
-    let quote_ata = chain::create_ata_idempotent(client, wallet, &taker, &market.quote_mint)
+    // Buy: pay quote, receive base. The taker is FFFF — fund it with SOL so it
+    // pays its own fee, give it the quote leg (admin is the mint authority),
+    // and ensure a base ATA to receive into.
+    let taker = market::taker(repo_root)?;
+    let taker_pk = taker.pubkey();
+    ensure_funded(client, &taker_pk, log);
+    let quote_ata = chain::create_ata_idempotent(client, wallet, &taker_pk, &market.quote_mint)
         .context("taker quote ATA")?;
-    chain::create_ata_idempotent(client, wallet, &taker, &market.base_mint)
+    chain::create_ata_idempotent(client, wallet, &taker_pk, &market.base_mint)
         .context("taker base ATA")?;
     let notional = 10u64
         .pow(market.quote_decimals as u32)
@@ -463,10 +470,10 @@ fn do_probe_swap(
         .context("fund taker quote")?;
 
     log.log(format!(
-        "probe swap: buy with {PROBE_QUOTE_UNITS} quote units"
+        "probe swap: {taker_pk} buys with {PROBE_QUOTE_UNITS} quote units"
     ));
     let ix = chain::build_swap_ix(
-        &taker,
+        &taker_pk,
         &market.address,
         &market.base_mint,
         &market.quote_mint,
@@ -477,35 +484,40 @@ fn do_probe_swap(
         Price::INFINITY.as_u32(), // no limit price for the probe
         0,                        // accept any output (probe)
     );
-    chain::send_logged(client, wallet, &[wallet], &[ix], "swap", log).context("swap")?;
+    chain::send_logged(client, &taker, &[&taker], &[ix], "swap", log).context("swap")?;
     log.accounts_changed();
     Ok("Swap probe filled — see the CU pane".into())
 }
 
-/// Reclaim every rent-bearing artifact that currently exists, in dependency
-/// order — so it works at any phase from `RegistryAbsent` on. A live market
-/// is drained and closed first (per-depositor `force_withdraw_depositor` →
-/// per-leader `force_withdraw_leader` → per-leg `close_market_treasury` →
-/// `close_market`), then the registry fee vault and registry, and finally
-/// the program itself (reclaiming its program-data rent). All rent is
-/// refunded to the wallet; logs the lamports delta. Each layer is guarded by
-/// existence, so a partial bootstrap tears down cleanly.
+/// Reclaim every rent-bearing **application** artifact that currently exists,
+/// in dependency order — so it works at any phase from `RegistryAbsent` on. A
+/// live market is drained and closed first (per-depositor
+/// `force_withdraw_depositor` → per-leader `force_withdraw_leader` → per-leg
+/// `close_market_treasury` → `close_market`), then the registry fee vault and
+/// registry. All rent is refunded to the wallet; logs the lamports delta.
+/// Each layer is guarded by existence, so a partial bootstrap tears down
+/// cleanly.
+///
+/// The **program itself is left deployed and upgradeable** — teardown resets
+/// only on-chain state, never the program. Closing a program bricks its id on
+/// the ledger forever (a fresh deploy would need a wiped validator), whereas
+/// keeping it mirrors the mainnet workflow: the program keeps its address and
+/// new logic is shipped by upgrading in place. After teardown the phase reads
+/// `RegistryAbsent`, so `init` (or `Bootstrap all`) runs straight away against
+/// the still-deployed program. Use `Wipe` for a true clean slate.
 fn do_teardown(
     client: &solana_client::rpc_client::RpcClient,
     wallet: &Keypair,
-    wallet_path: &str,
-    rpc_url: &str,
     log: &Logger,
 ) -> Result<String> {
     let admin = wallet.pubkey();
-    let state = accounts::poll(client, &admin);
+    let state = accounts::poll(client, &admin, None);
     let before = client.get_balance(&admin).unwrap_or(0);
 
     // The `rent_recipient` of every close instruction must differ from the
     // admin signer (anchor-v2's duplicate-mutable-account rule), so reclaimed
     // rent is routed to an ephemeral sink and swept back to the wallet at the
-    // end. The program close (a loader CLI op, no such check) pays the wallet
-    // directly.
+    // end.
     let sink = Keypair::new();
     let sink_key = sink.pubkey();
 
@@ -547,16 +559,10 @@ fn do_teardown(
         ));
     }
 
-    if state.program_deployed {
-        log.log("Closing program to reclaim program rent…");
-        deploy::close_program(log, rpc_url, wallet_path, &admin)?;
-        log.accounts_changed();
-    }
-
     let after = client.get_balance(&admin).unwrap_or(0);
     let reclaimed = after.saturating_sub(before);
     Ok(format!(
-        "Teardown complete — reclaimed {:.4} SOL in rent",
+        "Teardown complete — reclaimed {:.4} SOL in rent (program left deployed)",
         reclaimed as f64 / LAMPORTS_PER_SOL as f64
     ))
 }
@@ -702,6 +708,21 @@ mod tests {
         ] {
             assert!(Action::Teardown.enabled(p), "teardown should run in {p:?}");
         }
+    }
+
+    #[test]
+    fn bootstrap_all_reason_distinguishes_pre_deploy_from_done() {
+        // Before the program is deployed, "Bootstrap all" is blocked because
+        // there's nothing to bootstrap against yet — not because it's done.
+        assert_eq!(
+            Action::BootstrapAll.disabled_reason(Phase::ProgramAbsent),
+            "deploy the program first"
+        );
+        // Once everything exists, it really is already bootstrapped.
+        assert_eq!(
+            Action::BootstrapAll.disabled_reason(Phase::Ready),
+            "already bootstrapped"
+        );
     }
 
     #[test]

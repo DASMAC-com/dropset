@@ -90,9 +90,20 @@ pub const MOCK_CADC_USDC: PairConfig = PairConfig {
 /// is 0. The seed instructions address the vault by this index.
 const VAULT_IDX: u32 = 0;
 
+/// The taker / swapper role key (`keys/README.md`'s `FFFF`). The swap probe
+/// signs and pays for its take with this, so the swapper is a distinct,
+/// recognizable participant — never the admin. Not pair-specific: one taker
+/// exercises any market.
+const TAKER_KEYPAIR_FILE: &str = "keys/FFFF.json";
+
 /// Load the leader / quote-authority keypair `config` names.
 pub fn leader(repo_root: &Path, config: &PairConfig) -> Result<Keypair> {
     load_key(repo_root, config.leader_keypair_file)
+}
+
+/// Load the taker / swapper role key (`FFFF`) — the probe swap's signer.
+pub fn taker(repo_root: &Path) -> Result<Keypair> {
+    load_key(repo_root, TAKER_KEYPAIR_FILE)
 }
 
 /// Create `config`'s two fixed mints at their checked-in addresses, with the

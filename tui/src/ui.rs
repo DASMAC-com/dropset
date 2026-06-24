@@ -4,7 +4,7 @@
 //! left action menu (enabled / greyed with reasons, recommended next step
 //! marked), a right account table (✓ / ✗ + lamports), and a scrolling log.
 
-use crate::accounts::Phase;
+use crate::accounts::{ParticipantView, Phase};
 use crate::action::{self, Action};
 use crate::app::{App, LogKind};
 use crate::book;
@@ -221,6 +221,24 @@ fn draw_accounts(f: &mut Frame<'_>, app: &App, area: Rect) {
                 format!("  active vaults: {}", mkt.active_count),
                 Style::new().fg(Color::DarkGray),
             )));
+            // The market's participants — the MM bot (vault leader) and the
+            // swapper — with the token holdings in their own wallets.
+            if let Some(leader) = &app.chain.leader {
+                lines.push(participant_line(
+                    "leader (MM bot)",
+                    leader,
+                    mkt.base_decimals,
+                    mkt.quote_decimals,
+                ));
+            }
+            if let Some(swapper) = &app.chain.swapper {
+                lines.push(participant_line(
+                    "swapper",
+                    swapper,
+                    mkt.base_decimals,
+                    mkt.quote_decimals,
+                ));
+            }
         }
         None => lines.push(account_line("market", false, &Pubkey::default(), None)),
     }
@@ -262,6 +280,29 @@ fn account_line(
         spans.push(Span::styled("—", Style::new().fg(Color::DarkGray)));
     }
     Line::from(spans)
+}
+
+/// One participant row: a bullet · label · short address · base/quote wallet
+/// holdings scaled to whole units. Uses a bullet rather than the ✓/✗ of an
+/// account row — a participant is an identity that always "is", not an
+/// account whose existence is the thing being tracked.
+fn participant_line(
+    label: &str,
+    p: &ParticipantView,
+    base_decimals: u8,
+    quote_decimals: u8,
+) -> Line<'static> {
+    let base = p.base_tokens as f64 / 10f64.powi(base_decimals as i32);
+    let quote = p.quote_tokens as f64 / 10f64.powi(quote_decimals as i32);
+    Line::from(vec![
+        Span::styled("\u{2022} ", Style::new().fg(Color::DarkGray)),
+        Span::raw(format!("{label:<14} ")),
+        Span::styled(short_pubkey(&p.address), Style::new().fg(Color::Gray)),
+        Span::styled(
+            format!("  base {base:.2} · quote {quote:.2}"),
+            Style::new().fg(Color::DarkGray),
+        ),
+    ])
 }
 
 /// `AAAA…oiV`-style abbreviation of a pubkey.

@@ -78,27 +78,3 @@ pub fn deploy_program(
     log.accounts_changed();
     Ok("Program deployed".into())
 }
-
-/// Close the deployed program, reclaiming its (program-data) rent to
-/// `recipient`. Signed by the wallet at `wallet_path` (the upgrade
-/// authority). The program account is closed, so the phase drops back to
-/// `ProgramAbsent` — a fresh deploy needs a wiped validator.
-pub fn close_program(
-    log: &Logger,
-    rpc_url: &str,
-    wallet_path: &str,
-    recipient: &Pubkey,
-) -> Result<()> {
-    let mut close = Command::new("solana");
-    close
-        .args(["program", "close"])
-        .arg(dropset_sdk::DROPSET_ID.to_string())
-        .arg("--recipient")
-        .arg(recipient.to_string())
-        .arg("--keypair")
-        .arg(wallet_path)
-        .arg("--url")
-        .arg(rpc_url)
-        .arg("--bypass-warning");
-    job::run_streaming(log, "solana program close", close)
-}
