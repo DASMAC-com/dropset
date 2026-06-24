@@ -55,7 +55,7 @@ ENV COREPACK_HOME=/opt/corepack
 WORKDIR /app
 # --chown so the node user owns node_modules / .next and can write the runtime
 # .next cache; the build stage runs as root and would otherwise leave them
-# root-owned and unwritable.
+# root-owned, blocking those writes.
 COPY --from=build --chown=node:node /app ./
 # Enable corepack and pre-install the pnpm version pinned in the explorer's
 # package.json into the shared COREPACK_HOME, so `pnpm start` needs no runtime
