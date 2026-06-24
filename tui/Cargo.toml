@@ -6,9 +6,20 @@
 # `std::thread` + `mpsc` background-job harness, and the SDK fetch path is
 # the blocking `RpcClient` (sdk/rs `fetch` feature).
 
+[lib]
+name = "dropset_tui"
+path = "src/lib.rs"
+
 [[bin]]
 name = "dropset-tui"
 path = "src/main.rs"
+
+# Headless rent-reclamation script. Drives the same `teardown::run` the TUI's
+# "Teardown & reclaim" action does, with no UI — runnable in automation and,
+# with an explicit `--rpc-url`, against a real cluster. `make teardown`.
+[[bin]]
+name = "dropset-teardown"
+path = "src/bin/teardown.rs"
 
 [dependencies]
 anyhow = "1"

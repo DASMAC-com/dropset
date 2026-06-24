@@ -24,36 +24,71 @@ pub enum JobEvent {
     Done { ok: bool, summary: String },
 }
 
+/// Where a [`Logger`] sends its progress. The TUI streams [`JobEvent`]s over
+/// the job channel; the headless `dropset-teardown` binary has no UI loop, so
+/// it prints to stdout instead. Same `Logger` API drives both — the teardown
+/// code path doesn't know or care which sink it's writing to.
+#[derive(Clone)]
+enum Sink {
+    /// Stream events to the TUI event loop.
+    Channel(Sender<JobEvent>),
+    /// Print log lines to stdout (headless). `accounts_changed` is a no-op —
+    /// there's no view to refresh — and `cu` prints a plain line.
+    Stdout,
+}
+
 /// Sink handed to a job body for streaming progress. Cloneable so a job can
 /// pass it into helpers (e.g. a streaming command runner).
 #[derive(Clone)]
 pub struct Logger {
-    tx: Sender<JobEvent>,
+    sink: Sink,
 }
 
 impl Logger {
     /// Build a `Logger` over a job channel — for work that streams into the
     /// log outside the single-job harness (the background explorer starter).
     pub fn new(tx: Sender<JobEvent>) -> Self {
-        Self { tx }
+        Self {
+            sink: Sink::Channel(tx),
+        }
     }
 
-    /// Append a line to the log pane.
+    /// Build a headless `Logger` that prints to stdout — for the standalone
+    /// `dropset-teardown` binary, which has no TUI event loop.
+    pub fn stdout() -> Self {
+        Self { sink: Sink::Stdout }
+    }
+
+    /// Append a line to the log pane (or stdout, headless).
     pub fn log(&self, msg: impl Into<String>) {
-        let _ = self.tx.send(JobEvent::Log(msg.into()));
+        match &self.sink {
+            Sink::Channel(tx) => {
+                let _ = tx.send(JobEvent::Log(msg.into()));
+            }
+            Sink::Stdout => println!("{}", msg.into()),
+        }
     }
 
     /// Signal that on-chain state changed so the loop refreshes promptly.
+    /// A no-op headless — there is no view to refresh.
     pub fn accounts_changed(&self) {
-        let _ = self.tx.send(JobEvent::AccountsChanged);
+        if let Sink::Channel(tx) = &self.sink {
+            let _ = tx.send(JobEvent::AccountsChanged);
+        }
     }
 
-    /// Record a transaction's compute-unit cost under `label` for the CU pane.
+    /// Record a transaction's compute-unit cost under `label` for the CU pane
+    /// (or a plain stdout line, headless).
     pub fn cu(&self, label: impl Into<String>, units: u64) {
-        let _ = self.tx.send(JobEvent::Cu {
-            label: label.into(),
-            units,
-        });
+        match &self.sink {
+            Sink::Channel(tx) => {
+                let _ = tx.send(JobEvent::Cu {
+                    label: label.into(),
+                    units,
+                });
+            }
+            Sink::Stdout => println!("{}: {units} CU", label.into()),
+        }
     }
 }
 
@@ -63,7 +98,7 @@ pub fn spawn<F>(tx: Sender<JobEvent>, label: &'static str, body: F)
 where
     F: FnOnce(&Logger) -> anyhow::Result<String> + Send + 'static,
 {
-    let logger = Logger { tx: tx.clone() };
+    let logger = Logger::new(tx.clone());
     thread::spawn(move || {
         let done = match body(&logger) {
             Ok(summary) => JobEvent::Done { ok: true, summary },
