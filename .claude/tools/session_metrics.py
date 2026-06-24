@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""``dropset-session-metrics`` — account for where a Claude Code session spent
-its tokens, so the ``session-metrics`` skill can recommend concrete trims.
+"""``session-metrics`` (`.claude/tools/session_metrics.py`) — account for where
+a Claude Code session spent its tokens, so the ``session-metrics`` skill can
+recommend concrete trims.
 
 Given a ``--session-id``, the tool resolves the session's on-disk transcript
 itself, reads it (and its sub-agent transcripts) in its **own** process — so the
@@ -153,6 +154,11 @@ class SessionAggregator:
         # transcripts — `msg_…` ids are globally unique.
         self._counted_messages: set[str] = set()
         self._bash_signatures: dict[str, int] = {}
+        # tool_use ids whose Bash signature was already counted. The content
+        # array is re-walked on every content-block record of a split message
+        # (tool_use items can repeat), so dedupe the signature count by id —
+        # otherwise a split message inflates a command's hardening count.
+        self._counted_bash_ids: set[str] = set()
         self.parse_errors = 0
 
     # -- ingestion -------------------------------------------------------- #
@@ -237,7 +243,8 @@ class SessionAggregator:
                 return
             label = tool_label(name, item.get("input"))
             self._pending[tid] = _ToolCall(name=name, label=label)
-            if name == "Bash":
+            if name == "Bash" and tid not in self._counted_bash_ids:
+                self._counted_bash_ids.add(tid)
                 self._record_bash_signature(item.get("input"))
         elif kind == "tool_result":
             tid = item.get("tool_use_id")
@@ -335,14 +342,16 @@ class SessionAggregator:
 
 
 def value_len(v) -> int:
-    """Serialized length of a tool result's ``content``. A bare string is
-    measured directly; any other shape is measured by its JSON serialization —
-    an approximation, which is all sink *ranking* needs.
+    """Serialized **byte** length of a tool result's ``content`` (UTF-8). A bare
+    string is measured directly; any other shape is measured by its JSON
+    serialization — an approximation, which is all sink *ranking* needs. Bytes,
+    not characters, so the "bytes ÷ 4" token proxy holds for non-ASCII results.
     """
     if isinstance(v, str):
-        return len(v)
+        return len(v.encode("utf-8"))
     try:
-        return len(json.dumps(v, separators=(",", ":"), ensure_ascii=False))
+        serialized = json.dumps(v, separators=(",", ":"), ensure_ascii=False)
+        return len(serialized.encode("utf-8"))
     except (TypeError, ValueError):
         return 0
 

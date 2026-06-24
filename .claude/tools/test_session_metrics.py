@@ -239,18 +239,20 @@ class BashSignatures(unittest.TestCase):
         agg = sm.SessionAggregator()
         # `git worktree list` runs twice (a deterministic repeat); `make lint`
         # runs twice (a repeat, but not deterministic string logic); `git status`
-        # runs once (below the recurrence threshold).
-        for cmd in (
+        # runs once (below the recurrence threshold). Each genuine call gets its
+        # own tool_use id.
+        commands = [
             "git worktree list --porcelain",
             "git worktree list --porcelain",
             "make lint",
             "make lint",
             "git status --short",
-        ):
+        ]
+        for i, cmd in enumerate(commands):
             agg.ingest_main_line(
                 assistant(
                     '{"output_tokens":1}',
-                    tool_use("x", "Bash", json.dumps({"command": cmd})),
+                    tool_use(f"b{i}", "Bash", json.dumps({"command": cmd})),
                 )
             )
         report = agg.finish()
@@ -263,6 +265,24 @@ class BashSignatures(unittest.TestCase):
         self.assertNotIn("git status", by_signature)  # only ran once
         # Deterministic candidates rank ahead of non-deterministic ones.
         self.assertTrue(report["hardening_candidates"][0].deterministic)
+
+    def test_bash_signature_deduped_by_tool_use_id(self):
+        # A split assistant message re-walks the same tool_use block across its
+        # content-block records; the signature must be counted once per id, not
+        # once per record (else a single call inflates the hardening count).
+        agg = sm.SessionAggregator()
+        line = assistant(
+            '{"output_tokens":1}',
+            tool_use(
+                "b1", "Bash", json.dumps({"command": "git worktree list --porcelain"})
+            ),
+        )
+        agg.ingest_main_line(line)
+        agg.ingest_main_line(line)  # same tool_use id seen again (the split)
+        report = agg.finish()
+        by_signature = {c.signature: c for c in report["hardening_candidates"]}
+        # Counted once → below the recurrence threshold → not surfaced.
+        self.assertNotIn("git worktree list", by_signature)
 
 
 class Rendering(unittest.TestCase):
