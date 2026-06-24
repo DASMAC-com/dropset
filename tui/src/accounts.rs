@@ -90,6 +90,17 @@ pub struct MarketView {
     pub bids: Vec<BookLevel>,
 }
 
+/// A market participant's wallet token holdings — the swapper's or the
+/// vault leader's (the MM bot's) base/quote ATA balances, in atoms. Lets the
+/// accounts pane surface who is trading the market and the inventory in their
+/// own wallets (distinct from the vault's, which the treasuries show).
+#[derive(Clone, Debug)]
+pub struct ParticipantView {
+    pub address: Pubkey,
+    pub base_tokens: u64,
+    pub quote_tokens: u64,
+}
+
 /// A full snapshot of localnet state at one refresh.
 #[derive(Clone, Debug, Default)]
 pub struct ChainState {
@@ -99,6 +110,12 @@ pub struct ChainState {
     pub registry: Option<RegistryView>,
     pub market: Option<MarketView>,
     pub wallet_lamports: u64,
+    /// The vault leader (the MM bot) of the market's first live vault, with
+    /// its wallet token holdings — `None` until a live vault exists.
+    pub leader: Option<ParticipantView>,
+    /// The swapper / taker (`FFFF`), with its wallet token holdings — `None`
+    /// until a market exists (and the swapper key resolves).
+    pub swapper: Option<ParticipantView>,
 }
 
 impl ChainState {
@@ -123,8 +140,11 @@ impl ChainState {
 
 /// Refresh the snapshot. Each layer is only queried once the previous one
 /// exists, mirroring the phase progression and avoiding RPC calls that
-/// would error before the program is deployed.
-pub fn poll(client: &RpcClient, wallet: &Pubkey) -> ChainState {
+/// would error before the program is deployed. `swapper` is the taker role
+/// key (`FFFF`); when supplied, its wallet token holdings are read for the
+/// accounts pane (`None` skips that — the bootstrap jobs that poll only for
+/// registry/market pass `None`).
+pub fn poll(client: &RpcClient, wallet: &Pubkey, swapper: Option<&Pubkey>) -> ChainState {
     let slot = client.get_slot().ok();
     let mut state = ChainState {
         validator_up: slot.is_some(),
@@ -152,7 +172,43 @@ pub fn poll(client: &RpcClient, wallet: &Pubkey) -> ChainState {
     }
 
     state.market = read_market(client, slot.unwrap_or(0).min(u32::MAX as u64) as u32);
+    if let Some(market) = &state.market {
+        // The MM bot is the leader of the market's first live vault; the
+        // swapper is the supplied taker key. Read each one's wallet holdings.
+        state.leader = market
+            .live_vaults
+            .first()
+            .map(|(_, leader)| read_participant(client, leader, market));
+        state.swapper = swapper.map(|pk| read_participant(client, pk, market));
+    }
     state
+}
+
+/// Read `owner`'s base/quote ATA token balances for `market` into a
+/// [`ParticipantView`]. A missing ATA reads as zero — the participant simply
+/// holds none of that leg.
+fn read_participant(client: &RpcClient, owner: &Pubkey, market: &MarketView) -> ParticipantView {
+    let base_ata =
+        chain::associated_token_address(owner, &market.base_mint, &chain::SPL_TOKEN_PROGRAM_ID);
+    let quote_ata =
+        chain::associated_token_address(owner, &market.quote_mint, &chain::SPL_TOKEN_PROGRAM_ID);
+    let fetched = client.get_multiple_accounts(&[base_ata, quote_ata]).ok();
+    // SPL Token account layout: mint(32) · owner(32) · amount(u64 LE) at 64.
+    let amount = |i: usize| -> u64 {
+        fetched
+            .as_ref()
+            .and_then(|v| v.get(i))
+            .and_then(|o| o.as_ref())
+            .and_then(|a| a.data.get(64..72))
+            .and_then(|b| b.try_into().ok())
+            .map(u64::from_le_bytes)
+            .unwrap_or(0)
+    };
+    ParticipantView {
+        address: *owner,
+        base_tokens: amount(0),
+        quote_tokens: amount(1),
+    }
 }
 
 /// Decode the registry via the SDK's typed `fetch_*` path, deriving its

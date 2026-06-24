@@ -17,6 +17,7 @@ use crate::action::{self, Action, JobContext};
 use crate::chain;
 use crate::explorer;
 use crate::job::{JobEvent, Logger};
+use crate::market;
 use crate::ui;
 use crate::validator::Validator;
 use anyhow::Result;
@@ -73,6 +74,10 @@ pub struct App {
     pub(crate) cu: Vec<(String, u64)>,
     /// Path the log is mirrored to on disk (shown in the log pane title).
     pub(crate) log_path: PathBuf,
+    /// The swapper / taker (`FFFF`) pubkey, resolved once at startup, so each
+    /// poll can read its holdings for the accounts pane. `None` if the role
+    /// key can't be loaded.
+    swapper: Option<solana_pubkey::Pubkey>,
     tx: Sender<JobEvent>,
     rx: Receiver<JobEvent>,
     /// Append handle for the on-disk log mirror, if it opened.
@@ -95,6 +100,8 @@ impl App {
         // RPC errors included — survives outside the scrollback.
         let log_path = std::env::temp_dir().join("dropset-tui.log");
         let log_file = File::create(&log_path).ok();
+        // Resolve the swapper (FFFF) once — used to read its holdings each poll.
+        let swapper = market::taker(&ctx.repo_root).ok().map(|k| k.pubkey());
         Ok(Self {
             ctx,
             validator,
@@ -105,6 +112,7 @@ impl App {
             job_running: false,
             cu: Vec::new(),
             log_path,
+            swapper,
             tx,
             rx,
             log_file,
@@ -227,6 +235,9 @@ impl App {
         match self.validator.wipe_and_respawn() {
             Ok(()) => {
                 self.client = chain::rpc(self.validator.rpc_url());
+                // The fresh ledger has no history, so the measured CU costs
+                // from the wiped one are stale — clear the pane with it.
+                self.cu.clear();
                 self.dirty = true;
                 self.log(
                     LogKind::Ok,
@@ -256,7 +267,11 @@ impl App {
     /// Re-poll on-chain state if forced (`dirty`) or the interval elapsed.
     fn maybe_refresh(&mut self) {
         if self.dirty || self.last_refresh.elapsed() >= REFRESH_INTERVAL {
-            self.chain = accounts::poll(&self.client, &self.ctx.wallet.pubkey());
+            self.chain = accounts::poll(
+                &self.client,
+                &self.ctx.wallet.pubkey(),
+                self.swapper.as_ref(),
+            );
             self.last_refresh = Instant::now();
             self.dirty = false;
         }
