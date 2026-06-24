@@ -6,10 +6,6 @@
 # `std::thread` + `mpsc` background-job harness, and the SDK fetch path is
 # the blocking `RpcClient` (sdk/rs `fetch` feature).
 
-[lib]
-name = "dropset_tui"
-path = "src/lib.rs"
-
 [[bin]]
 name = "dropset-tui"
 path = "src/main.rs"
@@ -49,6 +45,10 @@ solana-pubkey = "3"
 solana-signer = "3"
 solana-transaction = "3"
 tempfile = "3"
+
+[lib]
+name = "dropset_tui"
+path = "src/lib.rs"
 
 [package]
 description = "Localnet control-plane TUI for the Dropset eCLOB program."
