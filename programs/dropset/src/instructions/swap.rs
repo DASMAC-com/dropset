@@ -33,12 +33,14 @@ use anchor_spl_v2::{
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
 
-use dropset_math_core::matching_math::{flush_level_price, level_fill_atoms, sort_key};
+use dropset_math_core::matching_math::{
+    flush_level_price, level_fill_atoms, sort_key, taker_fee_atoms,
+};
 
 use crate::{
     errors::DropsetError,
     events::FillEvent,
-    state::{Market, VaultAccess, FLUSH_BIT, PPM},
+    state::{Market, VaultAccess, FLUSH_BIT},
     Price, N_LEVELS,
 };
 
@@ -587,8 +589,10 @@ impl Swap {
             // Apply taker fee on the *output* leg (base on a Buy, quote
             // on a Sell), retained in the matched vault for the
             // depositors' benefit.
-            let fee = (side.output_atoms(fill_base, fill_quote) as u128) * (taker_fee_ppm as u128)
-                / (PPM as u128);
+            let fee = taker_fee_atoms(
+                side.output_atoms(fill_base, fill_quote),
+                taker_fee_ppm as u128,
+            );
             let fee_u64 = fee.min(u64::MAX as u128) as u64;
 
             // Snapshot the pre-leg state so the `min_out` soft-revert
