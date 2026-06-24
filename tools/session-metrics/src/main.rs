@@ -21,8 +21,18 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
+use serde::Deserialize;
 
 use model::{Report, SessionAggregator};
+
+/// The sidecar `agent-<id>.meta.json` Claude Code writes next to each
+/// sub-agent transcript, naming what the agent was.
+#[derive(Deserialize)]
+struct AgentMeta {
+    #[serde(rename = "agentType")]
+    agent_type: Option<String>,
+    description: Option<String>,
+}
 
 const HELP: &str = "\
 Usage:
@@ -57,6 +67,15 @@ fn main() -> Result<()> {
         }
     }
     let session_id = session_id.ok_or_else(|| anyhow!("--session-id is required (try --help)"))?;
+    // The id is interpolated into a filename, so reject anything that could
+    // escape the projects directory (a session id is always a bare UUID).
+    if session_id.is_empty()
+        || session_id.contains('/')
+        || session_id.contains('\\')
+        || session_id.contains("..")
+    {
+        anyhow::bail!("--session-id must be a bare session id (a UUID), not a path");
+    }
 
     let transcript = resolve_transcript(&session_id)
         .with_context(|| format!("locating the transcript for session {session_id}"))?;
@@ -144,11 +163,7 @@ fn aggregate(transcript: &Path, session_id: &str) -> Result<Report> {
                 if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
                     continue;
                 }
-                let label = path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("agent")
-                    .to_string();
+                let label = agent_label(&path);
                 for line in read_lines(&path)? {
                     agg.ingest_subagent_line(&label, &line);
                 }
@@ -157,6 +172,30 @@ fn aggregate(transcript: &Path, session_id: &str) -> Result<Report> {
     }
 
     Ok(agg.finish())
+}
+
+/// A human label for a sub-agent: the `description` (else the `agentType`)
+/// from the sibling `<stem>.meta.json`, falling back to the file stem when the
+/// sidecar is absent or malformed — so the sub-agent table names what each
+/// agent *did* (e.g. "Correctness review") instead of an opaque hash.
+fn agent_label(jsonl: &Path) -> String {
+    let stem = jsonl
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("agent");
+    let meta_path = jsonl.with_file_name(format!("{stem}.meta.json"));
+    if let Ok(text) = fs::read_to_string(&meta_path) {
+        if let Ok(meta) = serde_json::from_str::<AgentMeta>(&text) {
+            if let Some(label) = meta
+                .description
+                .or(meta.agent_type)
+                .filter(|s| !s.trim().is_empty())
+            {
+                return label;
+            }
+        }
+    }
+    stem.to_string()
 }
 
 /// Read a file's lines, skipping any that can't be decoded (a partial trailing

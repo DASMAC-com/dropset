@@ -168,6 +168,16 @@ because the doc id was unset).
   decision the recommendations turn on. Treat the numbers as
   relative, not billing-exact (no dollar figures are
   reported).
+- **Sink labels can carry input fragments — scrub before
+  writing to Linear.** The "Largest single results" labels
+  are short heads of the call's input (a Bash command, a
+  URL, a query). If a command or URL embedded a secret, that
+  fragment could ride into the shared inbox doc. When you
+  write the `Measured:` line, summarize a sink by its **tool
+  and target** (file, package, MCP method) rather than
+  pasting a raw command/URL verbatim, and drop anything that
+  looks like a credential. Keep secrets in env vars, not
+  inline, so they never reach a label in the first place.
 - Shell discipline (per `CLAUDE.md`): every command is a
   single bare call that reduces to an allow-glob — no `&&`,
   pipes, `$(…)`, or redirects; resolve the doc id with a

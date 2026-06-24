@@ -20,7 +20,7 @@
 //! attributed to the main-session tool table (the main table mirrors what the
 //! main session replays in its own context).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -43,6 +43,11 @@ struct RawRecord {
 
 #[derive(Deserialize)]
 struct RawMessage {
+    /// The logical message id (`msg_…`). Claude Code writes one JSONL record
+    /// per *content block*, repeating the identical `usage` on every record of
+    /// the same message — so usage must be counted once **per id**, not per
+    /// record, or the totals inflate by the per-message split factor.
+    id: Option<String>,
     usage: Option<Usage>,
     /// `content` is polymorphic: a plain user turn is a bare string, while
     /// assistant turns and tool results are arrays of typed items.
@@ -170,6 +175,11 @@ pub struct SessionAggregator {
     by_tool: HashMap<String, ToolLine>,
     sinks: Vec<SinkLine>,
     subagents: HashMap<String, SubAgentAcc>,
+    /// Message ids whose `usage` has already been counted, so the
+    /// one-record-per-content-block split (which repeats `usage`) is summed
+    /// once per logical message. Shared across the main and sub-agent
+    /// transcripts — `msg_…` ids are globally unique.
+    counted_messages: HashSet<String>,
     parse_errors: u64,
 }
 
@@ -196,24 +206,46 @@ impl SessionAggregator {
         }
         match serde_json::from_str::<RawRecord>(line) {
             Ok(rec) => {
-                if let Some(usage) = rec.message.and_then(|m| m.usage) {
-                    let acc = self.subagents.entry(agent.to_string()).or_default();
-                    acc.turns += 1;
-                    acc.input += usage.input_tokens;
-                    acc.output += usage.output_tokens;
-                    acc.cache_creation += usage.cache_creation_input_tokens;
-                    acc.cache_read += usage.cache_read_input_tokens;
+                let Some(msg) = rec.message else { return };
+                let Some(usage) = msg.usage else { return };
+                // Count each message's usage once, even though the split
+                // repeats it across the message's records.
+                if !self.first_usage_sighting(msg.id.as_deref()) {
+                    return;
                 }
+                let acc = self.subagents.entry(agent.to_string()).or_default();
+                acc.turns += 1;
+                acc.input += usage.input_tokens;
+                acc.output += usage.output_tokens;
+                acc.cache_creation += usage.cache_creation_input_tokens;
+                acc.cache_read += usage.cache_read_input_tokens;
             }
             Err(_) => self.parse_errors += 1,
+        }
+    }
+
+    /// Whether this message's `usage` has not yet been counted. A message
+    /// without an id can't be deduped, so it always counts (the common path
+    /// always carries one). `HashSet::insert` returns `true` on first sight.
+    fn first_usage_sighting(&mut self, id: Option<&str>) -> bool {
+        match id {
+            Some(id) => self.counted_messages.insert(id.to_string()),
+            None => true,
         }
     }
 
     fn ingest_main_record(&mut self, rec: RawRecord) {
         let Some(msg) = rec.message else { return };
         if let Some(usage) = &msg.usage {
-            self.totals.add(usage);
+            // Sum usage once per logical message, not once per content-block
+            // record (which repeats the same usage).
+            if self.first_usage_sighting(msg.id.as_deref()) {
+                self.totals.add(usage);
+            }
         }
+        // The content array is walked on *every* record (tool_use items are
+        // idempotent in `pending`; tool_results live in separate user records),
+        // so attribution is unaffected by the per-message split.
         let Some(Value::Array(items)) = msg.content else {
             return;
         };
@@ -451,7 +483,10 @@ fn tool_label(name: &str, input: Option<&Value>) -> String {
             .unwrap_or_default();
     }
     if name.starts_with("mcp__") {
-        return pick(&["method", "query", "id", "pullNumber"])
+        // MCP inputs vary; the string-valued fields that best identify the call
+        // are the method/query/id. (Numeric fields like `pullNumber` can't be a
+        // label — `pick` only matches JSON strings.)
+        return pick(&["method", "query", "id"])
             .map(|m| shorten_head(&m))
             .unwrap_or_default();
     }
@@ -505,6 +540,14 @@ mod tests {
 
     fn tool_use(id: &str, name: &str, input: &str) -> String {
         format!(r#"{{"type":"tool_use","id":"{id}","name":"{name}","input":{input}}}"#)
+    }
+
+    /// An assistant record carrying a logical message `id`, to model the
+    /// one-record-per-content-block split that repeats the same `usage`.
+    fn assistant_with_id(id: &str, usage: &str, tool_uses: &str) -> String {
+        format!(
+            r#"{{"type":"assistant","message":{{"role":"assistant","id":"{id}","usage":{usage},"content":[{tool_uses}]}}}}"#
+        )
     }
 
     /// A user record carrying one tool_result, as a JSON line.
@@ -563,6 +606,38 @@ mod tests {
         assert_eq!(report.top_sinks[0].label, "/a/b/fixture.rs");
         assert_eq!(report.top_sinks[1].name, "Bash");
         assert_eq!(report.top_sinks[1].label, "cargo test -p dropset-tui");
+    }
+
+    #[test]
+    fn usage_counted_once_per_message_id() {
+        // Claude Code writes one record per content block, repeating the same
+        // usage on each — so a 3-way split must still count usage once.
+        let mut agg = SessionAggregator::new();
+        let usage = r#"{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":700}"#;
+        for _ in 0..3 {
+            agg.ingest_main_line(&assistant_with_id("msg_aaa", usage, ""));
+        }
+        // A second, distinct logical message.
+        agg.ingest_main_line(&assistant_with_id("msg_bbb", r#"{"output_tokens":5}"#, ""));
+        let report = agg.finish();
+        assert_eq!(report.totals.input, 100); // once, not 3×
+        assert_eq!(report.totals.output, 55);
+        assert_eq!(report.totals.cache_read, 700);
+        assert_eq!(report.totals.turns, 2); // two logical messages, not four records
+    }
+
+    #[test]
+    fn subagent_usage_counted_once_per_message_id() {
+        let mut agg = SessionAggregator::new();
+        let usage = r#"{"input_tokens":5000,"output_tokens":300}"#;
+        for _ in 0..4 {
+            agg.ingest_subagent_line("agent-x", &assistant_with_id("msg_sub", usage, ""));
+        }
+        let report = agg.finish();
+        assert_eq!(report.subagents.len(), 1);
+        assert_eq!(report.subagents[0].turns, 1); // one logical message
+        assert_eq!(report.subagents[0].input, 5000);
+        assert_eq!(report.subagents[0].output, 300);
     }
 
     #[test]

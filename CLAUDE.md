@@ -323,6 +323,14 @@ writes to confirm-on-use:
 - **Pre-approve (reads):** `pull_request_read`, `list_pull_requests`,
   `actions_list`, `actions_get`, `get_job_logs`, `get_me`, and the
   `search_*` family.
+- **Pre-approve (the companion `gh` reads, as `Bash(…)` rules):**
+  `Bash(gh pr checks:*)`, `Bash(gh pr view:*)`, and
+  `Bash(gh api graphql:*)` — the polled / field-selected reads
+  `review-pr` uses in place of the full-object MCP calls (see "GitHub
+  via MCP" above and "Context economy"). These are Bash globs, not
+  `mcp__github__*` entries, but they're pre-approved on the same
+  rationale (routine, low-blast-radius reads) and propagated to the
+  base repo so future worktrees inherit them.
 - **Pre-approve (routine PR-authoring writes):** `create_pull_request`
   (init-pr) and `update_pull_request` (pr-title-description, review-pr).
   The skills call these on every run to open and maintain the draft PR,
