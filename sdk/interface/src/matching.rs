@@ -57,6 +57,17 @@ struct Lvl {
     size: u64,
 }
 
+/// A resting level in the reconstructed book: an absolute `price` and the
+/// matchable depth at it expressed in **base atoms**, before the taker fee.
+/// (Internally an ask carries base atoms and a bid carries quote atoms;
+/// [`resting_levels`] normalizes the bid leg to base at the level price so
+/// both sides are comparable.)
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct BookLevel {
+    pub price: Price,
+    pub size: u64,
+}
+
 /// Simulate a take. Returns the achievable [`Quote`] against the book in
 /// `market` at `current_slot`, capping the consumed input when the book
 /// cannot fully absorb `amount_in`.
@@ -74,84 +85,13 @@ pub fn simulate_swap(
     let taker_fee_ppm = market.header.taker_fee.get() as u128;
     let is_buy = side == SwapSide::Buy;
 
-    // Engine parity on a corrupt active DLL. `swap.rs` bounds its walk by
-    // `market.len()` steps and hard-rejects the whole `swap` tx
-    // (`CorruptVaultList`) when a `Vault.next` pointer cycles — the step
-    // budget runs out before `NULL_SECTOR` — or points out of bounds. The
-    // bounded `active_vaults` iterator instead *silently truncates* at the
-    // same budget and would quote whatever levels it collected before the
-    // truncation. Detect the corruption up front and refuse to quote, the
-    // way the oversize-flush guard below does: a router must never quote a
-    // fill the engine rejects. (Only reachable from account bytes the
-    // program never wrote — see `MarketView::active_dll_is_corrupt`.)
-    if market.active_dll_is_corrupt() {
+    // Reconstruct the chosen side's book in cross-vault price-time priority.
+    // `None` means the book is in a state the engine hard-rejects (a corrupt
+    // active DLL or an oversize flush level) — refuse to quote, matching
+    // `swap.rs` (see [`collect_side_levels`]).
+    let Some(mut levels) = collect_side_levels(market, is_buy, current_slot) else {
         return Quote::default();
-    }
-
-    // ── Book construction: collect live levels of the chosen side. ──
-    let mut levels: Vec<Lvl> = Vec::new();
-    for (sector, v) in market.active_vaults() {
-        let reference = v.reference_price.price();
-        // Skip vaults the matcher won't touch: invalid/sentinel ref
-        // price or frozen (frozen vaults stay on the active DLL but are
-        // skipped from the matching set — see swap.rs).
-        if !reference.is_valid() || reference.is_zero() || reference.is_infinity() || v.frozen != 0
-        {
-            continue;
-        }
-        let nonce = v.reference_price.nonce();
-        let flush = v.reference_price.flush_armed();
-        // Engine parity on out-of-range flush sizes. `swap.rs` builds the
-        // whole book before it fills: it materializes every active,
-        // flush-armed vault's profile — both sides — and
-        // `flush_level_size` hard-rejects the entire `swap` tx if any
-        // level's `size_bps > BPS`. So a single corrupt level aborts the
-        // take regardless of which side or how deep it sits. Mirror that
-        // by refusing to quote rather than dropping the level and filling
-        // the rest: a router must never quote a fill the engine rejects.
-        // (Only reachable from account bytes the program never wrote — see
-        // `vault_has_oversize_flush_level`.)
-        if flush && vault_has_oversize_flush_level(v) {
-            return Quote::default();
-        }
-        let ref_slot = v.reference_price.quote_slot.get();
-        let base_atoms = v.base_atoms.get();
-        let quote_atoms = v.quote_atoms.get();
-
-        for i in 0..N_LEVELS {
-            let (price, size, expires_at) = level_state(
-                v,
-                i,
-                is_buy,
-                flush,
-                reference,
-                ref_slot,
-                base_atoms,
-                quote_atoms,
-            );
-            if size == 0
-                || expires_at <= current_slot
-                || price.is_zero()
-                || price.is_infinity()
-                || !price.is_valid()
-            {
-                continue;
-            }
-            let key = sort_key(price, is_buy);
-            levels.push(Lvl {
-                key,
-                price,
-                nonce,
-                sector,
-                level: i as u32,
-                size,
-            });
-        }
-    }
-
-    // Cross-vault price-time priority: best price first; on ties, older
-    // quote (lower nonce) wins, then lower sector, then lower level.
-    levels.sort_by_key(|e| (e.key, e.nonce, e.sector, e.level));
+    };
 
     // ── Fill loop. Track per-touched-sector inventory so a vault whose
     //    multiple levels match decrements consistently (cap_by_vault). ──
@@ -255,6 +195,132 @@ pub fn simulate_swap(
     }
 }
 
+/// Reconstruct the **resting book** on one `side` at `current_slot`: the
+/// live, matchable levels across every active vault, in cross-vault
+/// price-time priority (best price first). This is the same book
+/// [`simulate_swap`] fills against, exposed for depth / order-book views;
+/// the fill itself is not run.
+///
+/// Each [`BookLevel`]'s `size` is normalized to **base atoms** — an ask
+/// carries base atoms directly, a bid's matchable quote leg is converted to
+/// base at the level price — so the two sides are directly comparable. An
+/// empty `Vec` means either no live levels or a book the engine would reject
+/// (a router must not show depth the engine won't fill).
+pub fn resting_levels(
+    market: &MarketView<'_>,
+    side: SwapSide,
+    current_slot: u32,
+) -> Vec<BookLevel> {
+    let is_buy = side == SwapSide::Buy;
+    let Some(levels) = collect_side_levels(market, is_buy, current_slot) else {
+        return Vec::new();
+    };
+    levels
+        .into_iter()
+        .map(|l| {
+            // Asks already carry base atoms; convert a bid's matchable quote
+            // leg to base at the level price so depth is base-denominated on
+            // both sides.
+            let size = if is_buy {
+                l.size
+            } else {
+                l.price.base_for_quote(l.size).min(u64::MAX as u128) as u64
+            };
+            BookLevel {
+                price: l.price,
+                size,
+            }
+        })
+        .collect()
+}
+
+/// Collect the live, matchable levels of one side (`is_buy` ⇒ asks) across
+/// all active vaults, sorted into cross-vault price-time priority: best
+/// price first; on ties, older quote (lower nonce) wins, then lower sector,
+/// then lower level. Shared by [`simulate_swap`] (which then fills against
+/// the levels) and [`resting_levels`] (which exposes them) so the canonical
+/// book reconstruction lives in one place.
+///
+/// Returns `None` when the book is in a state the on-chain engine
+/// hard-rejects, so both callers can refuse rather than quote/show a fill
+/// the engine won't honor:
+///
+/// - **Corrupt active DLL.** `swap.rs` bounds its walk by `market.len()`
+///   steps and rejects the whole `swap` (`CorruptVaultList`) when a
+///   `Vault.next` pointer cycles or points out of bounds; the bounded
+///   `active_vaults` iterator instead *silently truncates* at the same
+///   budget and would otherwise quote whatever it collected first.
+/// - **Oversize flush level.** `swap.rs` materializes every active,
+///   flush-armed vault's profile — both sides — and `flush_level_size`
+///   rejects the entire `swap` (`LiquidityProfileSizeOverflow`) if any
+///   level's `size_bps > BPS`, so a single corrupt level aborts the take
+///   regardless of side or depth.
+///
+/// Both are only reachable from account bytes the program never wrote — see
+/// [`MarketView::active_dll_is_corrupt`] and [`vault_has_oversize_flush_level`].
+fn collect_side_levels(
+    market: &MarketView<'_>,
+    is_buy: bool,
+    current_slot: u32,
+) -> Option<Vec<Lvl>> {
+    if market.active_dll_is_corrupt() {
+        return None;
+    }
+
+    let mut levels: Vec<Lvl> = Vec::new();
+    for (sector, v) in market.active_vaults() {
+        let reference = v.reference_price.price();
+        // Skip vaults the matcher won't touch: invalid/sentinel ref price or
+        // frozen (frozen vaults stay on the active DLL but are skipped from
+        // the matching set — see swap.rs).
+        if !reference.is_valid() || reference.is_zero() || reference.is_infinity() || v.frozen != 0
+        {
+            continue;
+        }
+        let nonce = v.reference_price.nonce();
+        let flush = v.reference_price.flush_armed();
+        if flush && vault_has_oversize_flush_level(v) {
+            return None;
+        }
+        let ref_slot = v.reference_price.quote_slot.get();
+        let base_atoms = v.base_atoms.get();
+        let quote_atoms = v.quote_atoms.get();
+
+        for i in 0..N_LEVELS {
+            let (price, size, expires_at) = level_state(
+                v,
+                i,
+                is_buy,
+                flush,
+                reference,
+                ref_slot,
+                base_atoms,
+                quote_atoms,
+            );
+            if size == 0
+                || expires_at <= current_slot
+                || price.is_zero()
+                || price.is_infinity()
+                || !price.is_valid()
+            {
+                continue;
+            }
+            let key = sort_key(price, is_buy);
+            levels.push(Lvl {
+                key,
+                price,
+                nonce,
+                sector,
+                level: i as u32,
+                size,
+            });
+        }
+    }
+
+    levels.sort_by_key(|e| (e.key, e.nonce, e.sector, e.level));
+    Some(levels)
+}
+
 /// True when any level in `v`'s flush profile sizes past its full leg
 /// (`size_bps > BPS`), on either side — i.e. [`level_fill_atoms`] would
 /// reject it. `set_liquidity_profile` bounds the per-side Σ `size_bps` to
@@ -318,5 +384,136 @@ fn level_state(
             p.size.get(),
             p.expires_at.get(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{resting_levels, simulate_swap, BookLevel, SwapSide};
+    use crate::layout::{
+        MarketHeader, MarketView, Position, ReferencePrice, Vault, ACCOUNT_DISCRIMINATOR_LEN,
+        NULL_SECTOR, VAULT_ALIGN,
+    };
+    use crate::price::Price;
+    use bytemuck::{bytes_of, cast_slice, Zeroable};
+
+    /// One live `remaining` book level — mirrors the conformance generator.
+    fn position(significand: u32, size: u64) -> Position {
+        Position {
+            price: Price::encode(significand, 0).unwrap().as_u32().into(),
+            size: size.into(),
+            expires_at: u32::MAX.into(),
+        }
+    }
+
+    /// A one-vault market whose single active vault carries a live EUR/USD
+    /// book in its `remaining` positions (no flush armed): two asks (1.0904
+    /// ×1.0M, 1.1393 ×0.8M base) and two bids (1.0796 ×2.0M, 1.0416 ×1.5M
+    /// quote). Same shape as `examples/gen_simulate_swap.rs`.
+    fn market_data() -> Vec<u8> {
+        let mut header = MarketHeader::zeroed();
+        header.head = 0u32.into();
+        header.tombstone_head = NULL_SECTOR.into();
+        header.free_head = NULL_SECTOR.into();
+        header.active_count = 1u32.into();
+        header.base_mint = [2u8; 32];
+        header.quote_mint = [3u8; 32];
+
+        let mut v = Vault::zeroed();
+        v.next = NULL_SECTOR.into();
+        v.prev = NULL_SECTOR.into();
+        v.leader = [1u8; 32];
+        v.reference_price = ReferencePrice {
+            stamp: 1u64.into(),
+            price: Price::encode(10_850_000, 0).unwrap().as_u32().into(),
+            quote_slot: 0u32.into(),
+        };
+        v.base_atoms = 10_000_000u64.into();
+        v.quote_atoms = 10_000_000u64.into();
+        v.remaining.asks[0] = position(10_904_000, 1_000_000);
+        v.remaining.asks[1] = position(11_393_000, 800_000);
+        v.remaining.bids[0] = position(10_796_000, 2_000_000);
+        v.remaining.bids[1] = position(10_416_000, 1_500_000);
+
+        let vaults = [v];
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&[0u8; ACCOUNT_DISCRIMINATOR_LEN]);
+        buf.extend_from_slice(bytes_of(&header));
+        buf.extend_from_slice(&(vaults.len() as u32).to_le_bytes());
+        while !buf.len().is_multiple_of(VAULT_ALIGN) {
+            buf.push(0);
+        }
+        buf.extend_from_slice(cast_slice(&vaults));
+        buf
+    }
+
+    /// Asks come back best-first (lowest price), base-denominated, exactly
+    /// as written.
+    #[test]
+    fn resting_asks_are_best_first_and_base_sized() {
+        let data = market_data();
+        let view = MarketView::load(&data).unwrap();
+        let asks = resting_levels(&view, SwapSide::Buy, 1);
+        assert_eq!(
+            asks,
+            vec![
+                BookLevel {
+                    price: Price::encode(10_904_000, 0).unwrap(),
+                    size: 1_000_000,
+                },
+                BookLevel {
+                    price: Price::encode(11_393_000, 0).unwrap(),
+                    size: 800_000,
+                },
+            ]
+        );
+    }
+
+    /// Bids come back best-first (highest price), with each level's quote
+    /// leg normalized to base at the level price.
+    #[test]
+    fn resting_bids_are_best_first_and_normalized_to_base() {
+        let data = market_data();
+        let view = MarketView::load(&data).unwrap();
+        let bids = resting_levels(&view, SwapSide::Sell, 1);
+        let best = Price::encode(10_796_000, 0).unwrap();
+        let next = Price::encode(10_416_000, 0).unwrap();
+        assert_eq!(
+            bids,
+            vec![
+                BookLevel {
+                    price: best,
+                    size: best.base_for_quote(2_000_000).min(u64::MAX as u128) as u64,
+                },
+                BookLevel {
+                    price: next,
+                    size: next.base_for_quote(1_500_000).min(u64::MAX as u128) as u64,
+                },
+            ]
+        );
+    }
+
+    /// The reconstructed ask depth is exactly what a take large enough to
+    /// clear the book consumes: total ask base = gross out (out + fee).
+    #[test]
+    fn resting_ask_depth_matches_a_clearing_buy() {
+        let data = market_data();
+        let view = MarketView::load(&data).unwrap();
+        let asks = resting_levels(&view, SwapSide::Buy, 1);
+        let total_base: u64 = asks.iter().map(|l| l.size).sum();
+        assert_eq!(total_base, 1_800_000);
+
+        let q = simulate_swap(&view, SwapSide::Buy, 10_000_000, Price::INFINITY, 1);
+        assert_eq!(q.out_amount + q.fee_amount, total_base);
+    }
+
+    /// Levels expired at `current_slot` are dropped — past every level's
+    /// `expires_at` (here `u32::MAX`), the book is empty on both sides.
+    #[test]
+    fn expired_levels_are_excluded() {
+        let data = market_data();
+        let view = MarketView::load(&data).unwrap();
+        assert!(resting_levels(&view, SwapSide::Buy, u32::MAX).is_empty());
+        assert!(resting_levels(&view, SwapSide::Sell, u32::MAX).is_empty());
     }
 }

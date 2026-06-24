@@ -67,6 +67,10 @@ pub struct App {
     pub(crate) menu: ListState,
     pub(crate) log: VecDeque<(LogKind, String)>,
     pub(crate) job_running: bool,
+    /// Measured compute-unit cost per operation, in first-seen order — one
+    /// row per `label`, updated in place when an operation runs again. Drives
+    /// the CU pane.
+    pub(crate) cu: Vec<(String, u64)>,
     /// Path the log is mirrored to on disk (shown in the log pane title).
     pub(crate) log_path: PathBuf,
     tx: Sender<JobEvent>,
@@ -99,6 +103,7 @@ impl App {
             menu,
             log: VecDeque::new(),
             job_running: false,
+            cu: Vec::new(),
             log_path,
             tx,
             rx,
@@ -238,6 +243,7 @@ impl App {
             match ev {
                 JobEvent::Log(s) => self.log(LogKind::Info, s),
                 JobEvent::AccountsChanged => self.dirty = true,
+                JobEvent::Cu { label, units } => self.record_cu(label, units),
                 JobEvent::Done { ok, summary } => {
                     self.job_running = false;
                     self.dirty = true;
@@ -253,6 +259,16 @@ impl App {
             self.chain = accounts::poll(&self.client, &self.ctx.wallet.pubkey());
             self.last_refresh = Instant::now();
             self.dirty = false;
+        }
+    }
+
+    /// Record an operation's measured CU, updating its row in place if the
+    /// operation has run before so the pane shows the latest cost per label
+    /// rather than an ever-growing history.
+    fn record_cu(&mut self, label: String, units: u64) {
+        match self.cu.iter_mut().find(|(l, _)| *l == label) {
+            Some(entry) => entry.1 = units,
+            None => self.cu.push((label, units)),
         }
     }
 

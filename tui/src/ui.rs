@@ -7,6 +7,7 @@
 use crate::accounts::Phase;
 use crate::action::{self, Action};
 use crate::app::{App, LogKind};
+use crate::book;
 use crate::explorer;
 use dropset_sdk::DROPSET_ID;
 use ratatui::{
@@ -23,11 +24,11 @@ use std::sync::atomic::Ordering;
 /// Render the whole dashboard.
 pub fn draw(f: &mut Frame<'_>, app: &mut App) {
     let area = f.area();
-    let [status, main, log, footer] = Layout::new(
+    let [status, body, log, footer] = Layout::new(
         Direction::Vertical,
         [
             Constraint::Length(3),
-            Constraint::Percentage(55),
+            Constraint::Percentage(60),
             Constraint::Min(6),
             Constraint::Length(3),
         ],
@@ -36,17 +37,30 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
 
     draw_status(f, app, status);
 
-    let [menu_area, accounts_area] = Layout::new(
+    // Three columns: the action menu, a stacked accounts + CU column, and the
+    // order book.
+    let [menu_area, mid_area, book_area] = Layout::new(
         Direction::Horizontal,
-        [Constraint::Percentage(50), Constraint::Percentage(50)],
+        [
+            Constraint::Percentage(30),
+            Constraint::Percentage(32),
+            Constraint::Percentage(38),
+        ],
     )
-    .areas(main);
+    .areas(body);
     draw_menu(f, app, menu_area);
+    let [accounts_area, cu_area] = Layout::new(
+        Direction::Vertical,
+        [Constraint::Percentage(62), Constraint::Percentage(38)],
+    )
+    .areas(mid_area);
     draw_accounts(f, app, accounts_area);
+    draw_cu(f, app, cu_area);
+    draw_book(f, app, book_area);
 
     draw_log(f, app, log);
 
-    let help = Paragraph::new("j/k move  ·  enter / 1-8 run  ·  r refresh  ·  q quit")
+    let help = Paragraph::new("j/k move  ·  enter / 1-9 run  ·  r refresh  ·  q quit")
         .block(Block::default().borders(Borders::ALL))
         .alignment(Alignment::Center);
     f.render_widget(help, footer);
@@ -260,6 +274,68 @@ fn short_pubkey(p: &Pubkey) -> String {
     }
 }
 
+/// Render the order-book pane — the reconstructed resting ladder (see
+/// [`book`]) for the live market, or a placeholder before one exists.
+fn draw_book(f: &mut Frame<'_>, app: &App, area: Rect) {
+    let lines = match &app.chain.market {
+        Some(market) => book::lines(market),
+        None => vec![Line::from(Span::styled(
+            "  no market",
+            Style::new().fg(Color::DarkGray),
+        ))],
+    };
+    f.render_widget(
+        Paragraph::new(lines).block(Block::default().title(" order book ").borders(Borders::ALL)),
+        area,
+    );
+}
+
+/// Render the compute-unit pane: one row per measured operation (in
+/// first-seen order), the latest cost for each.
+fn draw_cu(f: &mut Frame<'_>, app: &App, area: Rect) {
+    let lines: Vec<Line> = if app.cu.is_empty() {
+        vec![Line::from(Span::styled(
+            "  run an action to measure CU",
+            Style::new().fg(Color::DarkGray),
+        ))]
+    } else {
+        app.cu
+            .iter()
+            .map(|(label, units)| {
+                Line::from(vec![
+                    Span::raw(format!("{label:<22}")),
+                    Span::styled(
+                        format!("{:>9} CU", fmt_units(*units)),
+                        Style::new().fg(Color::Cyan),
+                    ),
+                ])
+            })
+            .collect()
+    };
+    f.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .title(" compute units ")
+                .borders(Borders::ALL),
+        ),
+        area,
+    );
+}
+
+/// Group a CU count into thousands (`41203` → `41,203`) for the pane.
+fn fmt_units(n: u64) -> String {
+    let digits = n.to_string();
+    let len = digits.len();
+    let mut out = String::with_capacity(len + len / 3);
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (len - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
 fn draw_log(f: &mut Frame<'_>, app: &App, area: Rect) {
     let height = area.height.saturating_sub(2) as usize;
     let start = app.log.len().saturating_sub(height);
@@ -294,5 +370,19 @@ fn phase_style(phase: Phase) -> (Color, Modifier) {
         Phase::Ready => (Color::Green, Modifier::BOLD),
         Phase::NoValidator => (Color::Red, Modifier::BOLD),
         _ => (Color::Yellow, Modifier::BOLD),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fmt_units;
+
+    #[test]
+    fn fmt_units_groups_thousands() {
+        assert_eq!(fmt_units(0), "0");
+        assert_eq!(fmt_units(999), "999");
+        assert_eq!(fmt_units(1_000), "1,000");
+        assert_eq!(fmt_units(41_203), "41,203");
+        assert_eq!(fmt_units(1_234_567), "1,234,567");
     }
 }

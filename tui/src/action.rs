@@ -15,6 +15,8 @@ use crate::explorer;
 use crate::job::{self, JobEvent, Logger};
 use crate::market::{self, PairConfig};
 use anyhow::{Context, Result};
+use dropset_sdk::matching::SwapSide;
+use dropset_sdk::price::Price;
 use solana_keypair::Keypair;
 use solana_native_token::LAMPORTS_PER_SOL;
 use solana_pubkey::Pubkey;
@@ -33,18 +35,20 @@ pub enum Action {
     CreateVault,
     OpenExplorer,
     BootstrapAll,
+    ProbeSwap,
     Teardown,
     Wipe,
 }
 
-/// The menu in display order. Indices map to the `1..=8` number keys.
-pub const MENU: [Action; 8] = [
+/// The menu in display order. Indices map to the `1..=9` number keys.
+pub const MENU: [Action; 9] = [
     Action::Deploy,
     Action::InitRegistry,
     Action::CreateMarket,
     Action::CreateVault,
     Action::OpenExplorer,
     Action::BootstrapAll,
+    Action::ProbeSwap,
     Action::Teardown,
     Action::Wipe,
 ];
@@ -67,6 +71,7 @@ impl Action {
             Action::CreateVault => "Create vault",
             Action::OpenExplorer => "Open explorer",
             Action::BootstrapAll => "Bootstrap all",
+            Action::ProbeSwap => "Probe swap (CU)",
             Action::Teardown => "Teardown & reclaim",
             Action::Wipe => "Wipe localnet",
         }
@@ -84,6 +89,8 @@ impl Action {
                 phase,
                 Phase::RegistryAbsent | Phase::MarketAbsent | Phase::VaultAbsent
             ),
+            // A take needs a live, seeded vault to match against.
+            Action::ProbeSwap => phase == Phase::Ready,
             // Reclaim whatever exists from the program onward — program
             // rent, the registry + fee vault, and the market if present.
             Action::Teardown => matches!(
@@ -111,6 +118,7 @@ impl Action {
             Action::CreateVault if below(phase, Phase::VaultAbsent) => "create the market first",
             Action::CreateVault => "vault already exists",
             Action::BootstrapAll => "already bootstrapped",
+            Action::ProbeSwap => "needs a live, seeded vault",
             Action::Teardown => "deploy the program first",
             Action::OpenExplorer | Action::Wipe => "",
         }
@@ -204,6 +212,12 @@ pub fn dispatch(action: Action, ctx: &JobContext, state: &ChainState, tx: Sender
                 do_create_market(&client, &wallet, &repo_root, config, log)?;
                 do_create_vault(&client, &wallet, &repo_root, config, log)?;
                 Ok("Bootstrap complete".into())
+            });
+        }
+        Action::ProbeSwap => {
+            job::spawn(tx, "Probe swap", move |log| {
+                let client = chain::rpc(&rpc_url);
+                do_probe_swap(&client, &wallet, log)
             });
         }
         Action::Teardown => {
@@ -312,8 +326,8 @@ fn do_init(
         &chain::registry_pda(),
         chain::RENT_TOPUP_LAMPORTS,
     );
-    let sig = chain::send(client, wallet, &[wallet], &[ix, topup]).context("send init")?;
-    log.log(format!("init: {sig}"));
+    chain::send_logged(client, wallet, &[wallet], &[ix, topup], "init", log)
+        .context("send init")?;
     log.accounts_changed();
     Ok("Registry initialized".into())
 }
@@ -351,8 +365,15 @@ fn do_create_market(
         &chain::market_pda(&base_mint, &quote_mint),
         chain::RENT_TOPUP_LAMPORTS,
     );
-    let sig = chain::send(client, wallet, &[wallet], &[ix, topup]).context("send create_market")?;
-    log.log(format!("create_market: {sig}"));
+    chain::send_logged(
+        client,
+        wallet,
+        &[wallet],
+        &[ix, topup],
+        "create_market",
+        log,
+    )
+    .context("send create_market")?;
     log.accounts_changed();
     Ok("Market created".into())
 }
@@ -396,13 +417,69 @@ fn do_create_vault(
         &market.address,
         chain::RENT_TOPUP_LAMPORTS,
     );
-    let sig = chain::send(client, wallet, &[wallet], &[ix, topup]).context("send create_vault")?;
-    log.log(format!("create_vault: {sig}"));
+    chain::send_logged(client, wallet, &[wallet], &[ix, topup], "create_vault", log)
+        .context("send create_vault")?;
     log.accounts_changed();
     // Bring the vault up quotable + seeded.
     market::seed_vault(client, wallet, &leader, config, &market, log)?;
     log.accounts_changed();
     Ok("Vault created, quoting, and seeded".into())
+}
+
+/// Whole quote units a swap probe spends (e.g. 10 USDC), scaled by the quote
+/// mint's decimals at send time.
+const PROBE_QUOTE_UNITS: u64 = 10;
+
+/// Exercise — and measure the CU of — the swap path with a small taker Buy
+/// against the seeded vault. Funds the taker's (admin's) quote ATA from the
+/// admin mint authority, ensures a base ATA to receive into, then swaps a
+/// fixed quote notional for base. The realized CU lands in the CU pane under
+/// "swap" via [`chain::send_logged`]; depth and balances refresh after.
+fn do_probe_swap(
+    client: &solana_client::rpc_client::RpcClient,
+    wallet: &Keypair,
+    log: &Logger,
+) -> Result<String> {
+    ensure_funded(client, &wallet.pubkey(), log);
+    let market = accounts::poll(client, &wallet.pubkey())
+        .market
+        .context("no market — bootstrap first")?;
+    if market.active_count == 0 {
+        anyhow::bail!("no live vault to swap against — create the vault first");
+    }
+
+    // Buy: pay quote, receive base. The admin doubles as the taker — fund its
+    // quote ATA (admin is the mint authority) and ensure a base ATA exists to
+    // receive into.
+    let taker = wallet.pubkey();
+    let quote_ata = chain::create_ata_idempotent(client, wallet, &taker, &market.quote_mint)
+        .context("taker quote ATA")?;
+    chain::create_ata_idempotent(client, wallet, &taker, &market.base_mint)
+        .context("taker base ATA")?;
+    let notional = 10u64
+        .pow(market.quote_decimals as u32)
+        .saturating_mul(PROBE_QUOTE_UNITS);
+    chain::mint_to(client, wallet, &market.quote_mint, &quote_ata, notional)
+        .context("fund taker quote")?;
+
+    log.log(format!(
+        "probe swap: buy with {PROBE_QUOTE_UNITS} quote units"
+    ));
+    let ix = chain::build_swap_ix(
+        &taker,
+        &market.address,
+        &market.base_mint,
+        &market.quote_mint,
+        &market.base_treasury,
+        &market.quote_treasury,
+        SwapSide::Buy as u8,
+        notional,
+        Price::INFINITY.as_u32(), // no limit price for the probe
+        0,                        // accept any output (probe)
+    );
+    chain::send_logged(client, wallet, &[wallet], &[ix], "swap", log).context("swap")?;
+    log.accounts_changed();
+    Ok("Swap probe filled — see the CU pane".into())
 }
 
 /// Reclaim every rent-bearing artifact that currently exists, in dependency

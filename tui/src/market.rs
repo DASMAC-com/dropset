@@ -141,13 +141,29 @@ pub fn seed_vault(
         config.reference_price
     ));
     let ix = set_reference_price_ix(leader.pubkey(), market.address, VAULT_IDX, price, slot);
-    chain::send(client, wallet, &[wallet, leader], &[ix]).context("set_reference_price")?;
+    chain::send_logged(
+        client,
+        wallet,
+        &[wallet, leader],
+        &[ix],
+        "set_reference_price",
+        log,
+    )
+    .context("set_reference_price")?;
 
     // 2. Quote ladder — a symmetric one-level profile.
     log.log("set_liquidity_profile");
     let bytes = symmetric_profile_bytes(config.offset_ppm, config.size_bps, config.expiry_offset);
     let ix = set_liquidity_profile_ix(leader.pubkey(), market.address, VAULT_IDX, bytes);
-    chain::send(client, wallet, &[wallet, leader], &[ix]).context("set_liquidity_profile")?;
+    chain::send_logged(
+        client,
+        wallet,
+        &[wallet, leader],
+        &[ix],
+        "set_liquidity_profile",
+        log,
+    )
+    .context("set_liquidity_profile")?;
 
     // 3. Fund the leader's ATAs (admin is the mint authority), then seed.
     let (base_atoms, quote_atoms) = config.leader_deposit;
@@ -176,7 +192,15 @@ pub fn seed_vault(
         base_atoms,
         quote_atoms,
     );
-    chain::send(client, wallet, &[wallet, leader], &[ix]).context("deposit_leader")?;
+    chain::send_logged(
+        client,
+        wallet,
+        &[wallet, leader],
+        &[ix],
+        "deposit_leader",
+        log,
+    )
+    .context("deposit_leader")?;
     Ok(())
 }
 
