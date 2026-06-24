@@ -12,11 +12,12 @@ a tag, it resolves three things the skill no longer has to hand-parse:
 * **tag validation** — the resolved tag must match ``eng-###``
   (case-insensitive), normalized to lowercase.
 
-It performs **no** git mutation: it parses and validates, and prints the
-answers as JSON for the skill to act on (the one mutation, the branch rename, is
-still the skill's ``git branch -m`` call). Reads the porcelain output from a
-file (``--porcelain-file``) or stdin so no large argument rides the command
-line.
+By default it runs the two **read-only** git reads itself
+(``git worktree list --porcelain`` and ``git branch --show-current``) and prints
+the answers as JSON, so the skill needs a single call and no inline parsing.
+It performs **no** git mutation — the one mutation, the branch rename, stays the
+skill's ``git branch -m`` call. ``--porcelain-file`` and ``--branch`` override
+the git reads (used by the tests, and handy for a dry run).
 
 Stdlib only. This is a Python skill-tool under ``.claude/tools/`` — deliberately
 **not** a Cargo workspace member (see ``CLAUDE.md`` → "Skill tooling").
@@ -27,7 +28,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import sys
+import subprocess
 
 # A worktree tag: `eng-` followed by digits, case-insensitive.
 _TAG_RE = re.compile(r"^eng-\d+$", re.IGNORECASE)
@@ -99,13 +100,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--branch",
-        default="",
-        help="the current branch name (from `git branch --show-current`)",
+        help="the current branch name; if omitted, runs "
+        "`git branch --show-current`",
     )
     parser.add_argument(
         "--porcelain-file",
         help="path to a file holding `git worktree list --porcelain` output; "
-        "if omitted, the output is read from stdin",
+        "if omitted, the tool runs that command itself",
     )
     args = parser.parse_args(argv)
 
@@ -113,17 +114,31 @@ def main(argv: list[str] | None = None) -> int:
         with open(args.porcelain_file, encoding="utf-8") as handle:
             porcelain = handle.read()
     else:
-        porcelain = sys.stdin.read()
+        porcelain = subprocess.run(
+            ["git", "worktree", "list", "--porcelain"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    if args.branch is not None:
+        branch = args.branch
+    else:
+        branch = subprocess.run(
+            ["git", "branch", "--show-current"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
 
     tag = normalize_tag(args.tag)
     base_repo = parse_base_repo(porcelain)
-    normalized_branch, rename_needed = normalize_branch(args.branch)
+    normalized_branch, rename_needed = normalize_branch(branch)
 
     result = {
         "tag": tag,
         "tag_valid": tag is not None,
         "base_repo": base_repo,
-        "current_branch": args.branch.strip(),
+        "current_branch": branch.strip(),
         "normalized_branch": normalized_branch,
         "rename_needed": rename_needed,
     }

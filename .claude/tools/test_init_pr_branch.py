@@ -3,7 +3,12 @@
 
 from __future__ import annotations
 
+import io
+import json
+import tempfile
 import unittest
+from contextlib import redirect_stdout
+from pathlib import Path
 
 import init_pr_branch as ipb
 
@@ -60,6 +65,38 @@ class NormalizeBranch(unittest.TestCase):
 
     def test_other_name_is_noop(self):
         self.assertEqual(ipb.normalize_branch("main"), ("main", False))
+
+
+class MainCli(unittest.TestCase):
+    """Drive ``main()`` through its ``--porcelain-file`` / ``--branch``
+    overrides so no real git is invoked.
+    """
+
+    def _run(self, tag: str, branch: str, porcelain: str):
+        with tempfile.TemporaryDirectory() as tmp:
+            pfile = Path(tmp) / "wt.txt"
+            pfile.write_text(porcelain, encoding="utf-8")
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = ipb.main(
+                    ["--tag", tag, "--branch", branch, "--porcelain-file", str(pfile)]
+                )
+            return code, json.loads(buf.getvalue())
+
+    def test_worktree_branch_resolves_and_normalizes(self):
+        code, out = self._run("ENG-603", "worktree-eng-603", PORCELAIN)
+        self.assertEqual(code, 0)
+        self.assertEqual(out["tag"], "eng-603")
+        self.assertTrue(out["tag_valid"])
+        self.assertEqual(out["base_repo"], "/Users/alex/repos/dropset")
+        self.assertEqual(out["normalized_branch"], "eng-603")
+        self.assertTrue(out["rename_needed"])
+
+    def test_invalid_tag_exits_nonzero(self):
+        code, out = self._run("not-a-tag", "eng-603", PORCELAIN)
+        self.assertEqual(code, 1)
+        self.assertFalse(out["tag_valid"])
+        self.assertIsNone(out["tag"])
 
 
 if __name__ == "__main__":

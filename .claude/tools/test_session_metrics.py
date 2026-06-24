@@ -254,13 +254,13 @@ class BashSignatures(unittest.TestCase):
                 )
             )
         report = agg.finish()
-        cands = {c.signature: c for c in report["hardening_candidates"]}
-        self.assertIn("git worktree list", cands)
-        self.assertEqual(cands["git worktree list"].count, 2)
-        self.assertTrue(cands["git worktree list"].deterministic)
-        self.assertIn("make lint", cands)
-        self.assertFalse(cands["make lint"].deterministic)
-        self.assertNotIn("git status", cands)  # only ran once
+        by_signature = {c.signature: c for c in report["hardening_candidates"]}
+        self.assertIn("git worktree list", by_signature)
+        self.assertEqual(by_signature["git worktree list"].count, 2)
+        self.assertTrue(by_signature["git worktree list"].deterministic)
+        self.assertIn("make lint", by_signature)
+        self.assertFalse(by_signature["make lint"].deterministic)
+        self.assertNotIn("git status", by_signature)  # only ran once
         # Deterministic candidates rank ahead of non-deterministic ones.
         self.assertTrue(report["hardening_candidates"][0].deterministic)
 

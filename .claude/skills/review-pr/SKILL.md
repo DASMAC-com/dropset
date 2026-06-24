@@ -120,23 +120,23 @@ PR-authoring **writes** (`create_pull_request`,
      items and acceptance criteria sometimes live in an
      inline (anchored) comment, not the body.
 
-   - Mark the issue **In Progress** to reflect that
-     review work is underway — invoking `review-pr` always
-     moves it there, **including reclaiming it from In
-     Review** if a prior `review-pr` run advanced it. In
+   - Plan to move the issue to **In Progress** to reflect
+     that review work is underway — invoking `review-pr`
+     always moves it there, **including reclaiming it from
+     In Review** if a prior `review-pr` run advanced it. In
      Review now belongs to the merge-queue handoff (the
      final steps), so a re-run should pull the issue back
      to In Progress rather than leave it sitting In Review
      while the review is actively redone. The one thing
      not to regress is a **Done** / **Canceled** issue —
-     leave those as-is:
-
-     ```txt
-     mcp__claude_ai_Linear__save_issue(
-       id: "<ENG-###>",
-       state: "In Progress"
-     )
-     ```
+     leave those as-is. **Do not issue this state change
+     as its own `save_issue`**: fold it into the single
+     box-tick write below (see "Minimize Linear echoes"),
+     so the In-Progress move and the ticked checklist land
+     in **one** call rather than two full-body echoes. (In
+     Review can't be folded the same way — it's gated on
+     CI-green at the merge-queue handoff, a different point
+     in the flow, so it stays its own write at step 18.)
 
    - Extract every actionable requirement: markdown
      checkboxes (`- [ ]` open, `- [x]` already done),
@@ -157,26 +157,40 @@ PR-authoring **writes** (`create_pull_request`,
      filed via `/linear-task`. Silent omission is
      **missing**.
 
-   - **Tick the addressed items.** For every
+   - **Tick the addressed items in the same write that
+     moves the issue to In Progress.** For every
      requirement the diff genuinely delivers, check its
-     box (`- [ ]` → `- [x]`) and write the updated
-     description back with `save_issue` (id + the full
-     edited `description`). Leave **partial** and
-     **missing** boxes unchecked, and don't invent
-     boxes for non-checkbox requirements. Diff against
-     the live body you just fetched so you never clobber
-     a box the author already ticked or other edits made
-     since.
+     box (`- [ ]` → `- [x]`), then write the updated
+     `description` **and** `state: "In Progress"` back in a
+     **single** `save_issue` (id + state + the full edited
+     `description`). Leave **partial** and **missing**
+     boxes unchecked, and don't invent boxes for
+     non-checkbox requirements. Diff against the live body
+     you just fetched so you never clobber a box the author
+     already ticked or other edits made since.
+
+     ```txt
+     mcp__claude_ai_Linear__save_issue(
+       id: "<ENG-###>",
+       state: "In Progress",
+       description: "<the full edited body, boxes ticked>"
+     )
+     ```
+
+     If there are **no** boxes to tick (no checklist, or
+     none newly delivered), this same single call still
+     carries `state: "In Progress"` — just omit the
+     `description`. Either way it is **one** write.
 
      **Minimize Linear echoes** (per `CLAUDE.md` →
      "Context economy"): each `save_issue` / `get_issue`
      **echoes the full issue body** back into context, and
      that echo is then replayed every later turn. So fetch
-     the issue **once** (the `get_issue` above) and don't
-     re-`get_issue` it — the In-Progress `save_issue`'s
-     echo already reflects the current body — and batch
-     **all** the box-ticks into this **one** `save_issue`,
-     never one write per box.
+     the issue **once** (the `get_issue` above), don't
+     re-`get_issue` it, and collapse the In-Progress move
+     and **all** the box-ticks into the **one** `save_issue`
+     above — never a separate state write, and never one
+     write per box.
 
    - Catalogue every **partial** or **missing**
      requirement as a **blocking** issue (step 7),
@@ -236,12 +250,23 @@ PR-authoring **writes** (`create_pull_request`,
      **blocking** issues (step 7) and do **not** mark
      the PR ready.
 
-1. **Adversarial diff review.** Get the full diff:
+1. **Adversarial diff review.** Collect the diff and log —
+   but write the **diff to a single file** rather than into
+   context, so the fan-out below hands each agent a path
+   instead of inlining N resident copies (per `CLAUDE.md` →
+   "Context economy"; the file-handoff pattern). `git diff`'s
+   `--output=<file>` flag writes straight to the file with no
+   shell redirect (so it stays a `Bash(git diff:*)`
+   allow-rule) **and** keeps the bulky diff out of the main
+   transcript entirely:
 
    ```sh
-   git diff main..HEAD
+   git diff main..HEAD --output=/tmp/review-diff.txt
    git log main..HEAD --oneline
    ```
+
+   The commit log is small, so it prints to context and is
+   passed inline; the diff lives only in `/tmp/review-diff.txt`.
 
    **Brief every sub-agent on the shell rules.** Prepend
    the standing sub-agent brief from `CLAUDE.md` (→
@@ -274,12 +299,20 @@ PR-authoring **writes** (`create_pull_request`,
    **only through the Read / Grep tools** — never shell
    `grep` or `git grep` (including `git -C <path> grep`),
    which re-prompt and, with a quoted `\|` alternation,
-   can't even be firmed.
+   can't even be firmed. And tell them to **slice-read**:
+   `CLAUDE.md` and the larger SKILL.md files are big, so
+   Grep to the relevant section and `Read` it with
+   `offset`/`limit` rather than pulling the whole file to
+   check one rule (per `CLAUDE.md` → "Context economy") —
+   a whole-file Read of each is a top token sink otherwise.
 
-   Pass the `git diff main..HEAD` and `git log` output
-   you already collected **inline** in each prompt (as
-   the brief requires), so no agent re-fetches them by
-   shelling out.
+   **Hand each agent the diff by path, not inline.** Tell
+   every reviewer (and the step-6 cross-check agent) to
+   **Read `/tmp/review-diff.txt`** for the full diff, and
+   pass the small commit log inline. This holds **one**
+   resident copy of the diff (read into each agent's own
+   context) instead of N copies inlined across the prompts;
+   no agent re-fetches the diff by shelling out.
 
    Spawn parallel sub-agents via the `Agent` tool
    (single message, multiple calls) to review the
@@ -345,8 +378,10 @@ PR-authoring **writes** (`create_pull_request`,
 1. **Adversarial cross-check.** Spawn a fresh
    sub-agent that receives the collected findings
    and the diff (prepend the same `CLAUDE.md`
-   sub-agent brief to its prompt too, and pass the
-   diff inline), and is told to act adversarially:
+   sub-agent brief to its prompt too, and hand it the
+   diff **by path** — `/tmp/review-diff.txt` — as the
+   review agents got it, not inlined), and is told to
+   act adversarially:
 
    - Challenge weak or speculative findings.
      Flag false positives.
