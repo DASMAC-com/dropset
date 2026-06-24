@@ -266,8 +266,9 @@ Optional (ask on a direct run if not provided):
 - If a finding spans multiple files that obviously belong
   in one PR, file them as one combined issue with a
   `**Fingerprint**:` line per finding (the union), the way
-  `audit-loop` does — it saves `stage-backlog` from
-  re-deriving the grouping.
+  `audit-loop` does — `stage-backlog` never merges issues,
+  so combining at file time is the only way coupled
+  findings become one issue.
 - Shell discipline (per `CLAUDE.md`): every command is a
   single bare call that reduces to an allow-glob — no
   `&&`, pipes, `$(…)`, redirects, or heredocs; content
