@@ -134,12 +134,14 @@ lint:
 	pre-commit run --config cfg/pre-commit-lint.yml --all-files
 
 # Account for where a session's tokens went (the deterministic core of the
-# session-metrics skill). Resolves the transcript itself from the Claude home
-# (CLAUDE_CONFIG_DIR or ~/.claude) and the working-directory project slug, reads
-# it in its own process, and prints a compact ranked-sink summary. Pass the
-# session id: `make session-metrics SESSION=<uuid>` (add ARGS=--json for JSON).
+# session-metrics skill). A stdlib-only Python skill-tool under .claude/tools/
+# (not a Cargo workspace member — see CLAUDE.md "Skill tooling"). Resolves the
+# transcript itself from the Claude home (CLAUDE_CONFIG_DIR or ~/.claude) and the
+# working-directory project slug, reads it in its own process, and prints a
+# compact ranked-sink summary. Pass the session id:
+# `make session-metrics SESSION=<uuid>` (add ARGS=--json for JSON).
 session-metrics:
-	cargo run -p dropset-session-metrics -- --session-id $(SESSION) $(ARGS)
+	python3 .claude/tools/session_metrics.py --session-id $(SESSION) $(ARGS)
 
 # Render the Linear Backlog as the Task Staging dependency tree (the
 # deterministic core of the stage-backlog skill — a stdlib-only Python tool).
