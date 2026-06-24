@@ -189,7 +189,8 @@ re-invokes immediately (no timer, no wait).
 
 ## Notes
 
-- **The chips-only format.** The document is bare
+- **The chips-only format.** Below the tally (next bullet),
+  the document is bare
   `ENG-###` tags nested by blocker, under `# Skills`,
   `# ENG-###` parent headings, and `# Standalone` — **no**
   per-issue summary, file globs, or merge notes, **no**
@@ -199,6 +200,18 @@ re-invokes immediately (no timer, no wait).
   annotation is a trailing `(after ENG-###)` /
   `(also after ENG-###)` for a blocker the tree can't
   show.
+- **The `# Most blocking` tally.** The document opens with
+  a `# Most blocking` section ranking every issue that
+  blocks at least one other by **how many** it blocks
+  (descending, ties broken by lowest `ENG-###` first), as
+  `- ENG-### — blocks <n> issues`. It tells you which
+  issue to start on first — the one at the top unblocks
+  the most downstream work. The count is **direct** (the
+  number of issues that list it as a blocker, declared or
+  file-overlap), so it matches the `(after …)` edges the
+  tree shows and stays meaningful inside a blocker cycle.
+  The section is omitted entirely when nothing blocks
+  anything.
 - **Relations are read, honoured, and preserved — never
   manufactured.** The tool treats a declared `blockedBy`
   / `blocks` edge as authoritative input to the tree, but

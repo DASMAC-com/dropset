@@ -182,6 +182,36 @@ def missing_touches(issues: list[Issue]) -> list[str]:
     return [i.id for i in issues if not i.touches]
 
 
+def block_counts(issues: list[Issue], blockers: dict[str, set[str]]) -> dict[str, int]:
+    """How many *other* issues each issue blocks: the number of issues that
+    list it in their blocker set. Direct (not transitive) — it matches the
+    edges the tree renders, and stays meaningful inside a cycle (a transitive
+    count would make every cycle member look equally blocking)."""
+    counts = {i.id: 0 for i in issues}
+    for i in issues:
+        for b in blockers[i.id]:
+            if b in counts:
+                counts[b] += 1
+    return counts
+
+
+def render_tally(counts: dict[str, int], number_of: dict[str, int]) -> str | None:
+    """The `# Most blocking` tally: every issue that blocks at least one other,
+    ranked by how many it blocks (descending), ties broken by lowest number
+    first — so the issue to start first sits at the top. ``None`` when nothing
+    blocks anything."""
+    ranked = [ident for ident, n in counts.items() if n > 0]
+    if not ranked:
+        return None
+    ranked.sort(key=lambda ident: (-counts[ident], number_of.get(ident, 0)))
+    out = ["# Most blocking\n\n"]
+    for ident in ranked:
+        n = counts[ident]
+        noun = "issue" if n == 1 else "issues"
+        out.append(f"- {ident} — blocks {n} {noun}\n")
+    return "".join(out)
+
+
 def render(issues: list[Issue], orphans: list[str] | None = None) -> str:
     """Render the full Task Staging document body for ``issues``.
 
@@ -229,7 +259,12 @@ def render(issues: list[Issue], orphans: list[str] | None = None) -> str:
 
     sections: list[str] = []
 
-    # # Skills first.
+    # # Most blocking tally first — ranks the issues to start on first.
+    tally = render_tally(block_counts(issues, blockers), number_of)
+    if tally is not None:
+        sections.append(tally)
+
+    # # Skills next.
     s = render_bucket(
         "# Skills",
         ("skills",),
