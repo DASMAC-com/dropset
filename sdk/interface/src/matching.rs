@@ -133,8 +133,16 @@ pub fn simulate_swap(
             }
             let fill_b = fill_b.min(u64::MAX as u128) as u64;
             let fill_q = lvl.price.quote_for_base(fill_b);
+            // A reverse leg past u64::MAX makes the on-chain engine abort
+            // the whole take (swap.rs `compute_fill` `require!`s
+            // `MathOverflow`), so refuse to quote rather than return the
+            // partial accumulated from earlier legs — mirroring the
+            // `collect_side_levels` early returns above. Unreachable in
+            // practice: `fill_b <= base_for_quote(unfilled)`, so the floor
+            // round-trip gives `fill_q <= unfilled <= u64::MAX`. Kept to
+            // stay in lockstep with the engine should the taker cap change.
             if fill_q > u64::MAX as u128 {
-                break;
+                return Quote::default();
             }
             let fill_q = fill_q.min(unfilled) as u64;
             (fill_b, fill_q)
@@ -150,8 +158,13 @@ pub fn simulate_swap(
             }
             let fill_q = fill_q.min(u64::MAX as u128) as u64;
             let fill_b = lvl.price.base_for_quote(fill_q);
+            // Symmetric to the Buy guard: the engine aborts the whole take
+            // on a u64 overflow, so refuse to quote rather than return the
+            // partial. Unreachable for the same reason
+            // (`fill_q <= quote_for_base(unfilled)` ⟹ `fill_b <= unfilled`);
+            // kept to mirror the engine.
             if fill_b > u64::MAX as u128 {
-                break;
+                return Quote::default();
             }
             let fill_b = fill_b.min(unfilled) as u64;
             (fill_b, fill_q)
