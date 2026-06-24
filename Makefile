@@ -142,15 +142,17 @@ session-metrics:
 	cargo run -p dropset-session-metrics -- --session-id $(SESSION) $(ARGS)
 
 # Render the Linear Backlog as the Task Staging dependency tree (the
-# deterministic core of the stage-backlog skill). Resolves LINEAR_API_KEY,
-# LINEAR_PROJECT_ID, and LINEAR_TASK_STAGING_DOC_ID from the environment.
-# Pass ARGS=--dry-run to print the tree to stdout without writing the doc:
-# `make stage-backlog ARGS=--dry-run`.
-# The merge subcommand folds a same-PR group onto its canonical and closes the
-# rest as duplicates (preview first with --dry-run):
-# `make stage-backlog ARGS="merge --dry-run ENG-1,ENG-2"`.
+# deterministic core of the stage-backlog skill — a stdlib-only Python tool).
+# Resolves LINEAR_API_KEY, LINEAR_PROJECT_ID, and LINEAR_TASK_STAGING_DOC_ID
+# from the environment. Pass ARGS=--dry-run to print the tree to stdout without
+# writing the doc: `make stage-backlog ARGS=--dry-run`.
 stage-backlog:
-	cargo run -p dropset-stage-backlog -- $(ARGS)
+	python3 tools/stage-backlog/stage_backlog.py $(ARGS)
+
+# Run the stage-backlog tool's unit tests (Python unittest, no third-party dep).
+.PHONY: stage-backlog-test
+stage-backlog-test:
+	python3 -m unittest discover -s tools/stage-backlog -t tools/stage-backlog
 
 # Materialize the program keypair into the (git-ignored) build dir from
 # its canonical home, keys/AAAA.json, so anchor's build-time program-ID

@@ -231,8 +231,8 @@ cspell fixes are all trivial and file-disjoint, so they
 belong in **one PR** — file the run's drift as a **single
 aggregated** Backlog issue, **not** one issue per finding.
 (The old per-finding behavior scattered them into separate
-parallel sessions that `stage-backlog` then had to
-hand-consolidate.) Each finding is a **bullet carrying its
+parallel sessions / chips for no benefit.) Each finding is a
+**bullet carrying its
 own `**Fingerprint**:` line**, so one issue = one PR while
 later passes still dedup each finding individually. The
 fingerprint `<key>` is keyed by kind: `dictionary:<word>`
@@ -360,11 +360,11 @@ patterns across them into filed skill-improvement tasks.
 **6. Restage the backlog.** Invoke the
 `stage-backlog` skill (via the Skill tool) to rewrite
 the Task Staging document from the current open
-Backlog — including anything steps 3–5 just filed. All
-the grouping / merge logic lives there; this skill
-just triggers it. This **full** re-stage is the
-authoritative reconcile that converges whatever the
-previous morning's audit-loop folded in incrementally.
+Backlog — including anything steps 3–5 just filed. The
+deterministic Python tool does all the work (read →
+render → write); this skill just triggers it. This
+**full** re-stage is the authoritative reconcile, run
+fresh from the live Backlog each morning.
 
 **7. Kick off the audit-loop (offer, default yes).**
 The morning's last act: with upkeep done, offer to
@@ -381,21 +381,22 @@ the default) and "skip".
   task that drives `/loop audit-loop`, passing the
   **finding cap** as its argument (default 20 — use a
   different value only if this invocation supplied one).
-  The campaign files findings, folds each into the Task
-  Staging document incrementally (`audit-loop` step 8),
-  and fires a high-severity `PushNotification` only when
-  something warrants interrupting you. Then **this
-  housekeeping pass exits** — it does not wait on the
-  campaign.
+  The campaign files findings, re-stages the Task
+  Staging document once at the end of its run
+  (`audit-loop` step 11), and fires a high-severity
+  `PushNotification` only when something warrants
+  interrupting you. Then **this housekeeping pass
+  exits** — it does not wait on the campaign.
 - On **skip**, end the pass without launching anything.
 
 **The kickoff is a one-shot, not a loop.** This run
 does the upkeep, launches the audit-loop as a background
 task, and exits — it does *not* stay on a timer. During
-the morning only the audit-loop (folding findings in via
-its incremental staging) writes the Task Staging
+the morning only the audit-loop (re-staging once at the
+end of its run) writes the Task Staging
 document, so there's no second loop to coordinate; the
-next morning's step 6 is the full reconcile.
+next morning's step 6 re-stages again from the live
+Backlog.
 
 **8. Report.** Print a short summary:
 

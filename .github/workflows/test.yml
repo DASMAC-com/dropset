@@ -75,7 +75,22 @@ jobs:
           - '!pnpm-workspace.yaml'
           - '!cfg/**'
           - '!infra/**'
+          - '!tools/stage-backlog/**'
         predicate-quantifier: 'every'
+  # The stage-backlog tool is a pure-Python script (no third-party deps, no
+  # Solana/Rust toolchain), so its unit tests run in this lightweight job rather
+  # than the gated Rust suite below — which is why tools/stage-backlog/** is on
+  # the `code` exclude-list above: a change there skips the expensive Rust
+  # build and is covered here instead. Always runs (seconds of work, no
+  # caching); not gated by `changes`, so a staging-tool-only PR still gets a
+  # real test signal.
+  stage-backlog-tests:
+    name: 'stage-backlog tool tests'
+    runs-on: 'ubuntu-latest'
+    steps:
+    - uses: 'actions/checkout@v6'
+    - name: 'Run stage-backlog unit tests'
+      run: 'make stage-backlog-test'
   test:
     name: 'Tests'
     needs: 'changes'

@@ -53,12 +53,14 @@ user- and model-invocable), but the flow never offers it on its own;
 
 ## Linear automation
 
-Skills that **file** Linear issues (`linear-task`, `stage-backlog`,
-`audit-loop`, `audit-scope`, `housekeeping`) resolve the filing
+Skills that **file** Linear issues (`linear-task`, `audit-loop`,
+`audit-scope`, `housekeeping`) resolve the filing
 destination — team, project, assignee — from **environment
 variables**, never hard-coded UUIDs. (Skills that only **update**
 an existing issue by id — `init-pr`, `review-pr` — need no
-destination.) Set them once in your
+destination; `stage-backlog` only rewrites the Task Staging document,
+reading `LINEAR_PROJECT_ID` as a query filter — see its own paragraph
+below.) Set them once in your
 shell profile (`~/.zshrc`):
 
 ```sh
@@ -74,10 +76,10 @@ export LINEAR_PERMISSIONS_DOC_ID=…
 # the "Session Metrics" inbox document one appends to and the other
 # mines into propose-only skill-improvement tasks:
 export LINEAR_SESSION_METRICS_DOC_ID=…
-# Used only by the dropset-stage-backlog binary (the deterministic
-# core of the stage-backlog skill) — a personal Linear API key. The
-# headless binary can't use the OAuth-based claude.ai Linear MCP, so
-# it authenticates with this key, sent as the Authorization header.
+# Used only by the stage-backlog Python tool (the deterministic
+# core of the stage-backlog skill) — a personal Linear API key. A
+# script can't use the OAuth-based claude.ai Linear MCP, so it
+# authenticates with this key, sent as the Authorization header.
 # Never commit it.
 export LINEAR_API_KEY=…
 ```
@@ -117,34 +119,30 @@ as propose-only skill-improvement Backlog tasks (never editing a skill
 itself). Either skill no-ops with a clear message when the variable is
 unset. It is not a filing destination. The `session-metrics` skill
 drives its binary via `make session-metrics`, which reduces to a
-`Bash(make session-metrics:*)` allow-rule. Unlike
-`dropset-stage-backlog`, this binary needs **no** `LINEAR_API_KEY` — it
+`Bash(make session-metrics:*)` allow-rule. Like the stage-backlog
+tool, this binary needs **no** `LINEAR_API_KEY` — it
 only parses the local transcript and makes no network call; the skill
 does the one Linear write (the doc append) over the MCP.
 
-The `dropset-stage-backlog` **binary** (the deterministic core of the
-`stage-backlog` skill — see "Structured filing fields" below) reads
-`LINEAR_PROJECT_ID` the same way, plus its own `LINEAR_API_KEY`: a
-personal Linear API key, because a headless binary can't ride the
-OAuth-based `claude.ai` Linear MCP. For a real render write it also
-reads `LINEAR_TASK_STAGING_DOC_ID` (the document it rewrites);
+The **stage-backlog Python tool** (the deterministic core of the
+`stage-backlog` skill — see "Structured filing fields" below) is a
+single, dependency-free `python3` script at
+`tools/stage-backlog/stage_backlog.py`, driven by `make stage-backlog`
+(which preserves the `Bash(make stage-backlog:*)` allow-rule). It is
+**render-only**: it reads the open Backlog and
+rewrites the Task Staging document, and that document write is its
+**only** Linear write — no `merge` subcommand, no issue-folding or
+duplicate-closing. Two issues that belong in one PR render as nested
+serial chips, never a folded issue. It uses the standard library only
+(`urllib` + `json`) for its two GraphQL calls, so it adds no
+dependency to the Rust build and inherits the repo's `ruff` hooks. It
+reads `LINEAR_PROJECT_ID` plus its own `LINEAR_API_KEY` (a personal
+Linear API key, because a script can't ride the OAuth-based
+`claude.ai` Linear MCP) for every run; for a real write it also reads
+`LINEAR_TASK_STAGING_DOC_ID` (the document it rewrites), while
 `--dry-run` prints the tree to stdout and doesn't require it. It
-resolves all of these via `std::env::var`, never a hard-coded id, and
-the key is never committed.
-
-The binary also exposes a `merge` subcommand — the deterministic half
-of the same-PR issue merge. Given a group the skill judged to belong
-in one PR, it folds the members onto the lowest-numbered canonical
-(merging their descriptions and taking the union of their
-`**Fingerprint**:` / `**Touches**:` fields and `blockedBy` / `blocks`
-edges) and closes the rest as duplicates, write-before-close. Unlike
-a render write it does **not**
-read `LINEAR_TASK_STAGING_DOC_ID`, and it resolves the team for the
-duplicate state from the group's own issues, so it needs no
-`LINEAR_TEAM_ID` / `LINEAR_ASSIGNEE_ID` — only `LINEAR_API_KEY`. The
-grouping decision stays with the skill's agent; the binary owns the
-mechanical fold. Preview any merge with `--dry-run` first — it closes
-production issues and can't be end-to-end verified locally.
+resolves all of these via `os.environ`, never a hard-coded id, and the
+key is never committed.
 
 ### Structured filing fields
 
