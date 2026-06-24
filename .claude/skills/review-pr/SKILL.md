@@ -269,14 +269,15 @@ PR-authoring **writes** (`create_pull_request`,
    passed inline; the diff lives only in `/tmp/review-diff.txt`.
 
    **Brief every sub-agent on the shell rules.** Prepend
-   the standing sub-agent brief from `CLAUDE.md` (→
-   "Briefing sub-agents") to **each** Agent prompt — the
-   review agents here *and* the cross-check agent in
-   step 6. That brief is the canonical wording (read-only
-   framing, Read/Grep/Glob over shell, one bare command
-   per Bash call, each reducible to an allow-rule); it
-   exists so sub-agents — which don't inherit `CLAUDE.md` —
-   don't reach for the `find` / `sed … | grep` / `cat`
+   the standing sub-agent brief from
+   `docs/conventions/sub-agent-brief.md` to **each** Agent
+   prompt — the review agents here *and* the cross-check
+   agent in step 6. That brief is the canonical wording
+   (read-only framing, Read/Grep/Glob over shell, one bare
+   command per Bash call, each reducible to an allow-rule);
+   it exists so sub-agents — which inherit neither that
+   brief nor `CLAUDE.md` — don't reach for the
+   `find` / `sed … | grep` / `cat`
    compounds that re-prompt on every run.
 
    **Then narrow the scope for these reviewers.** The
@@ -332,18 +333,23 @@ PR-authoring **writes** (`create_pull_request`,
      left behind, partial implementations,
      unused imports or dead code introduced by
      the diff.
-   - **`CLAUDE.md` freshness** — does anything in
-     the project's `CLAUDE.md` still match reality
-     after this diff? Read `CLAUDE.md` and check its
-     rules, command examples, paths, and tooling
-     references against the current codebase and the
-     diff. Flag guidance the diff outdates (a
-     command, path, target, or convention it renames,
-     moves, or removes) and any rule that has silently
-     gone stale. Treat a rule the diff **directly
-     violates or invalidates** as **blocking**;
-     merely-stale prose as a **warning** with the
-     suggested correction.
+   - **`CLAUDE.md` + `docs/conventions/` freshness** —
+     does the project's convention set still match reality
+     after this diff? `CLAUDE.md` is the index; the full
+     rules live in `docs/conventions/**`. Read `CLAUDE.md`
+     and the relevant convention doc(s), and check their
+     rules, command examples, paths, and tooling references
+     against the current codebase and the diff. Flag
+     guidance the diff outdates (a command, path, target,
+     or convention it renames, moves, or removes), any rule
+     that has silently gone stale, **and any skill that
+     references a `CLAUDE.md` section or
+     `docs/conventions/` doc that the diff renamed or moved
+     without the skill being updated to match** (the
+     index ↔ doc ↔ skill sync). Treat a rule the diff
+     **directly violates or invalidates** — or a dangling
+     reference — as **blocking**; merely-stale prose as a
+     **warning** with the suggested correction.
    - **CI skip-list freshness** — the `Tests` workflow
      (`.github/workflows/test.yml`) skips the Rust suite
      only when **every** changed file lands in a known
@@ -491,11 +497,10 @@ PR-authoring **writes** (`create_pull_request`,
    (a regenerated-file commit can still trip whitespace /
    EOF hooks), applying the step-4 fix-and-retry logic.
 
-1. **Refresh the `CLAUDE.md` Audit registry if the diff
-   changed the platform shape.** `audit-loop` reads its
-   subsystems, inter-subsystem interfaces, and skip-globs
-   from the `## Audit registry` section of `CLAUDE.md`
-   (see `CLAUDE.md` → "Audit registry"); that registry is
+1. **Refresh the Audit registry if the diff changed the
+   platform shape.** `audit-loop` reads its subsystems,
+   inter-subsystem interfaces, and skip-globs from
+   `docs/conventions/audit-registry.md`; that registry is
    kept current on the PR path — here, on every run.
    Inspect the diff for any of three additions and, when
    one is present, **append** the matching entry:
@@ -518,7 +523,7 @@ PR-authoring **writes** (`create_pull_request`,
    Commit any change signed:
 
    ```sh
-   git add CLAUDE.md
+   git add docs/conventions/audit-registry.md
    git commit -S -m "Update audit registry"
    ```
 
@@ -804,9 +809,9 @@ PR-authoring **writes** (`create_pull_request`,
    - Linear status: currently **In Progress**; it moves to
      **In Review** at the merge-queue handoff that follows
      (or stays put if no tag was resolvable).
-   - `CLAUDE.md` freshness: in sync, or each stale
-     rule / reference the diff outdated, with the
-     suggested correction.
+   - `CLAUDE.md` + `docs/conventions/` freshness: in sync,
+     or each stale rule / dangling skill reference the diff
+     outdated, with the suggested correction.
    - CI skip-list freshness: the `test.yml` `code`-filter
      exclude-list is in sync, or each test-irrelevant tree
      the diff added/renamed that should be excluded, with
@@ -957,11 +962,11 @@ PR-authoring **writes** (`create_pull_request`,
      that session metrics were **not** captured this run.
    - On **approve**, invoke `/session-metrics`. It derives
      this session's id from the scratchpad path, runs the
-     `dropset-session-metrics` binary to rank the run's
-     token sinks (the transcript is read in the binary's own
-     process, so it never enters context), and appends a
-     dated entry — measured sinks plus tailored trim
-     recommendations — to the Linear "Session Metrics" inbox
+     `session_metrics.py` tool to rank the run's token sinks
+     and hardening candidates (the transcript is read in the
+     tool's own process, so it never enters context), and
+     appends a dated entry — measured sinks plus tailored
+     trim recommendations — to the Linear "Session Metrics" inbox
      document that `housekeeping` later drains. It authors no
      source edit, so it's safe to run regardless of the gate
      or CI outcome. If `LINEAR_SESSION_METRICS_DOC_ID` is
@@ -974,7 +979,7 @@ PR-authoring **writes** (`create_pull_request`,
    read, an inlined-diff fan-out). Per `CLAUDE.md`'s "track
    consumption ideas as you go" habit, carry those
    observations into `/session-metrics` so its prose names
-   concrete levers, not just the binary's raw sink ranking.
+   concrete levers, not just the tool's raw sink ranking.
 
 1. **Surface the merge-queue outcome** (separately). Run
    this **only** if the user approved the enqueue (skip it

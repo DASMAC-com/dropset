@@ -51,7 +51,8 @@ word does **not** count — match on word boundaries.
 ### Inline escape syntax by file type
 
 Add the escape in a comment, following the repo's
-`cspell:word` convention (see `CLAUDE.md` → "Spelling
+`cspell:word` convention (see
+`docs/conventions/docs-and-style.md` → "Spelling
 (cspell)"):
 
 | File type           | Escape                                   |

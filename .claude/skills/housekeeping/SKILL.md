@@ -29,6 +29,10 @@ on the latest committed skills, then:
    Session Metrics doc and file **propose-only**
    skill-improvement tasks for the trim patterns that
    recur across sessions, never editing a skill itself.
+1. **Check convention references** — flag any skill that
+   points at a `CLAUDE.md` section or `docs/conventions/`
+   doc that no longer exists, filing the drift
+   **propose-only**.
 1. **Restage the backlog** — hand off to
    `stage-backlog` so the Task Staging document
    reflects everything currently open.
@@ -66,7 +70,7 @@ order:
   audit-loop should file before it self-terminates. Its
   **presence is also the gate**: given a number, the pass
   automatically kicks off the background audit-loop capped
-  at it (step 7); with **no** number, the audit-loop is
+  at it (step 8); with **no** number, the audit-loop is
   **skipped** entirely and the pass exits after the
   upkeep. So `/housekeeping 15` does upkeep then launches a
   15-issue campaign, while a bare `/housekeeping` does
@@ -96,7 +100,7 @@ annotating the Linear Permissions and Session Metrics
 docs with recommended dispositions (it never writes
 `settings.local.json` and never edits a skill
 unattended). When given a finding cap, its last step
-*launches* the audit-loop as a background task (step 7),
+*launches* the audit-loop as a background task (step 8),
 but housekeeping itself makes no source edit — the
 campaign only files Linear issues.
 
@@ -117,7 +121,7 @@ clean up on demand.
 
 ## Linear destination
 
-Steps 3–6 file and stage Backlog issues and drain the
+Steps 3–7 file and stage Backlog issues and drain the
 Permissions and Session Metrics docs, so they use the
 same env-resolved Linear destination as `linear-task` /
 `stage-backlog`. Resolve each variable with its **own**
@@ -379,16 +383,45 @@ patterns across them into filed skill-improvement tasks.
   newer than your fetch, re-fetch and rebuild rather than
   clobbering a concurrent edit.
 
-**6. Restage the backlog.** Invoke the
+**6. Check the convention ↔ skill reference sync.**
+`CLAUDE.md` is the **index**; the full operating
+conventions live in `docs/conventions/**`, and the skills
+reference both. A moved section or renamed doc can leave a
+skill pointing at something that no longer exists, so this
+read-only pass flags that drift the same way `review-pr`'s
+freshness lens does on the PR path — here, periodically.
+
+- **Collect the targets.** List the headings in
+  `CLAUDE.md` and the files under `docs/conventions/`
+  (Read / Glob; never a shell `find … | …` pipe).
+- **Scan the skills.** Grep `.claude/skills/**` for
+  references to `CLAUDE.md` section names and
+  `docs/conventions/…` paths (the Grep tool, or a bare
+  single `grep` where it's absent — never `git grep`).
+- **Flag dangling references** — a skill that cites a
+  `CLAUDE.md` section heading that no longer exists, or a
+  `docs/conventions/<file>.md` path that isn't present.
+- **File propose-only**, to the same env-resolved
+  destination as steps 4–5 (`save_issue`,
+  `state: "Backlog"`, priority 3), one aggregated task per
+  pass listing each dangling reference and its fix, with a
+  `**Fingerprint**: convention-ref:<skill>:<target>` line
+  per finding so later passes dedup; drop any fingerprint
+  already open. **Autonomy bound:** filing *proposes* the
+  fix — it never edits a skill, `CLAUDE.md`, or a doc; that
+  lands later through a normal PR. If everything resolves,
+  file nothing and note "in sync" in the report.
+
+**7. Restage the backlog.** Invoke the
 `stage-backlog` skill (via the Skill tool) to rewrite
 the Task Staging document from the current open
-Backlog — including anything steps 3–5 just filed. The
+Backlog — including anything steps 3–6 just filed. The
 deterministic Python tool does all the work (read →
 render → write); this skill just triggers it. This
 **full** re-stage is the authoritative reconcile, run
 fresh from the live Backlog each morning.
 
-**7. Kick off the audit-loop (only when a finding cap was
+**8. Kick off the audit-loop (only when a finding cap was
 passed).** The morning's last act: with upkeep done, the
 **finding cap argument decides whether to run a
 campaign** — passing a number *is* the go-ahead, so there
@@ -416,10 +449,10 @@ a background task, and exits — it does *not* stay on a
 timer. During the morning only the audit-loop (re-staging
 once at the end of its run) writes the Task Staging
 document, so there's no second loop to coordinate; the
-next morning's step 6 re-stages again from the live
+next morning's step 7 re-stages again from the live
 Backlog.
 
-**8. Report.** Print a short summary:
+**9. Report.** Print a short summary:
 
 - `main`: fast-forwarded to the latest, or left at its
   current commit (with the reason) if the pull couldn't
@@ -445,6 +478,9 @@ Backlog.
   how many session entries were consumed, and any skipped
   as already-handled — or why the step was skipped (e.g.
   a missing env var).
+- Convention references: in sync, or the dangling
+  `CLAUDE.md` / `docs/conventions/` references filed
+  (with the ENG-### of the aggregated task).
 - Backlog staging: that `stage-backlog` ran, or why
   it was skipped (e.g. a missing env var).
 - Audit-loop: launched in the background with finding

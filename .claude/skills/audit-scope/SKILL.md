@@ -67,8 +67,9 @@ Optional (ask on a direct run if not provided):
    scope's paths to a platform/subsystem so the right
    checklist runs — this is the subsystem-scope logic the
    audit shares with `audit-loop`. Read the **Audit
-   registry** in `CLAUDE.md` (→ "Audit registry") and take
-   the `kind` of the subsystem whose `roots` the paths map
+   registry** in `docs/conventions/audit-registry.md` and
+   take the `kind` of the subsystem whose `roots` the paths
+   map
    to; if the paths match no registered subsystem (or on a
    direct run over something new), infer the kind from the
    paths and build manifests (`Cargo.toml`,
@@ -86,9 +87,9 @@ Optional (ask on a direct run if not provided):
 1. **Run the dimensions in parallel.** Spawn sub-agents
    via the `Agent` tool (single message, multiple calls),
    each scoped to the subject. **Prepend the standing
-   sub-agent brief from `CLAUDE.md`** (→ "Briefing
-   sub-agents") to every one — these agents don't inherit
-   `CLAUDE.md`, and an audit legitimately ranges across
+   sub-agent brief from `docs/conventions/sub-agent-brief.md`**
+   to every one — these agents don't inherit that brief (or
+   `CLAUDE.md`), and an audit legitimately ranges across
    the codebase, so they need the brief's shell discipline
    (Read/Grep/Glob over shell, one bare globbable command
    per Bash call) precisely *because* they explore widely.
@@ -161,8 +162,8 @@ Optional (ask on a direct run if not provided):
    `fix_sketch`.
 
 1. **Adversarial cross-check.** Spawn a fresh skeptic
-   sub-agent (brief it with the same `CLAUDE.md`
-   sub-agent brief) with the collected findings and the
+   sub-agent (brief it with the same sub-agent brief) with
+   the collected findings and the
    scope. It kills false positives, challenges weak
    rationale, and surfaces anything the first pass missed. On material
    disagreement, re-spawn the relevant dimension agent to
