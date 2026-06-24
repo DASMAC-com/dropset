@@ -290,8 +290,8 @@ fn draw_book(f: &mut Frame<'_>, app: &App, area: Rect) {
     );
 }
 
-/// Render the compute-unit pane: one row per measured operation (newest
-/// last), the latest cost for each.
+/// Render the compute-unit pane: one row per measured operation (in
+/// first-seen order), the latest cost for each.
 fn draw_cu(f: &mut Frame<'_>, app: &App, area: Rect) {
     let lines: Vec<Line> = if app.cu.is_empty() {
         vec![Line::from(Span::styled(
@@ -370,5 +370,19 @@ fn phase_style(phase: Phase) -> (Color, Modifier) {
         Phase::Ready => (Color::Green, Modifier::BOLD),
         Phase::NoValidator => (Color::Red, Modifier::BOLD),
         _ => (Color::Yellow, Modifier::BOLD),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fmt_units;
+
+    #[test]
+    fn fmt_units_groups_thousands() {
+        assert_eq!(fmt_units(0), "0");
+        assert_eq!(fmt_units(999), "999");
+        assert_eq!(fmt_units(1_000), "1,000");
+        assert_eq!(fmt_units(41_203), "41,203");
+        assert_eq!(fmt_units(1_234_567), "1,234,567");
     }
 }

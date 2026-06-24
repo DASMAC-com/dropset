@@ -67,9 +67,9 @@ pub struct App {
     pub(crate) menu: ListState,
     pub(crate) log: VecDeque<(LogKind, String)>,
     pub(crate) job_running: bool,
-    /// Measured compute-unit cost per operation, newest last — one row per
-    /// `label`, updated in place when an operation runs again. Drives the CU
-    /// pane.
+    /// Measured compute-unit cost per operation, in first-seen order — one
+    /// row per `label`, updated in place when an operation runs again. Drives
+    /// the CU pane.
     pub(crate) cu: Vec<(String, u64)>,
     /// Path the log is mirrored to on disk (shown in the log pane title).
     pub(crate) log_path: PathBuf,

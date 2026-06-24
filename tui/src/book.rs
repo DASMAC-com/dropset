@@ -10,6 +10,7 @@
 
 use crate::accounts::MarketView;
 use dropset_sdk::matching::BookLevel;
+use dropset_sdk::price::Price;
 use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
@@ -73,19 +74,26 @@ fn ladder(levels: &[BookLevel], base_dec: u8, quote_dec: u8) -> Vec<Row> {
     let base_scale = 10f64.powi(base_dec as i32);
     let quote_scale = 10f64.powi(quote_dec as i32);
     let mut rows: Vec<Row> = Vec::new();
+    // Track the previous level's on-chain price so equal-priced levels merge
+    // on exact `Price` equality, not a float tolerance — levels are
+    // price-sorted, so equal prices are adjacent.
+    let mut prev: Option<Price> = None;
     for lvl in levels {
         // Price (quote per base) = quote atoms for one whole base unit,
         // de-scaled by the quote mint's decimals.
         let price = lvl.price.quote_for_base(10u64.pow(base_dec as u32)) as f64 / quote_scale;
         let size = lvl.size as f64 / base_scale;
-        match rows.last_mut() {
-            Some(last) if (last.price - price).abs() < f64::EPSILON => last.size += size,
-            _ => {
-                if rows.len() == MAX_LEVELS {
-                    break;
-                }
-                rows.push(Row { price, size });
+        if prev == Some(lvl.price) {
+            // Same price as the level above — fold its depth into that row.
+            if let Some(last) = rows.last_mut() {
+                last.size += size;
             }
+        } else {
+            if rows.len() == MAX_LEVELS {
+                break;
+            }
+            rows.push(Row { price, size });
+            prev = Some(lvl.price);
         }
     }
     rows
