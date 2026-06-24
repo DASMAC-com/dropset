@@ -34,8 +34,10 @@ pub enum HaltReason {
 pub enum Action {
     /// Quote the full ladder normally.
     Quote,
-    /// Reshape to invite rebalancing (imbalance past the reshape bound). The
-    /// reference skew already nudges takers; this re-arms the profile.
+    /// Imbalance past the reshape bound. For the MVP the rebalancing is
+    /// driven entirely by the reference skew (which every tick already
+    /// applies), so this behaves like `Quote`; growing the heavy side's
+    /// `size_bps` asymmetrically (spec §4 row 1) is a deferred refinement.
     Reshape,
     /// Freeze the side that *accumulates* the heavy leg — only the rebuild
     /// side keeps quoting (imbalance past the freeze-side bound).
