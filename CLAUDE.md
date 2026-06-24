@@ -650,6 +650,11 @@ program <-> frontend: the on-chain account/instruction contract in
 sdk-math <-> frontend: math-core / interface compiled to WASM (their
   wasm.rs) and consumed by the frontend for quoting; the TS
   conformance tests pin that WASM surface.
+tui <-> sdk-math: the resting-book matcher surface (sdk/interface
+  matching `resting_levels` / `BookLevel`) the TUI's order-book pane
+  reconstructs depth from — the SDK normalizes a bid's quote leg to base
+  at the level price, and the pane (tui/src/book.rs) de-scales by mint
+  decimals, so the two must agree on the base-atom denomination.
 ```
 
 **Skip-globs** — generated / vendored / binary paths the file audit
