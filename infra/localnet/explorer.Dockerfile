@@ -12,9 +12,10 @@
 # to the loopback validator is loopback -> loopback and no browser blocks it.
 #
 # The explorer (solana-foundation/explorer) ships no Dockerfile and no
-# published image, so we clone it at a pinned ref and `next start` it. It has
-# no `output: standalone`, so the runtime keeps node_modules and runs the
-# built `.next` via `pnpm start`.
+# published image, so we clone it at a configurable ref (default `master`;
+# override EXPLORER_REF with a tag or commit SHA to pin) and `next start` it.
+# It has no `output: standalone`, so the runtime keeps node_modules and runs
+# the built `.next` via `pnpm start`.
 
 ARG NODE_VERSION=22
 
@@ -48,8 +49,21 @@ RUN git init -q . \
 FROM node:${NODE_VERSION}-bookworm-slim AS run
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN corepack enable
+# Share corepack's cache from a world-readable location so the unprivileged
+# node user (set below) resolves pnpm without a writable home cache.
+ENV COREPACK_HOME=/opt/corepack
 WORKDIR /app
-COPY --from=build /app ./
+# --chown so the node user owns node_modules / .next and can write the runtime
+# .next cache; the build stage runs as root and would otherwise leave them
+# root-owned, blocking those writes.
+COPY --from=build --chown=node:node /app ./
+# Enable corepack and pre-install the pnpm version pinned in the explorer's
+# package.json into the shared COREPACK_HOME, so `pnpm start` needs no runtime
+# download or per-user cache. chmod makes the cache readable by the node user.
+RUN corepack enable \
+    && corepack install \
+    && chmod -R a+rX /opt/corepack
+# Drop root: the explorer is just a static Next server, so it never needs it.
+USER node
 EXPOSE 3000
 CMD ["pnpm", "start"]
