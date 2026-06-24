@@ -148,11 +148,17 @@ impl SwapSide {
     /// cap, vault output inventory)`, reverse-convert to the **input**
     /// leg, then apply two guards.
     ///
-    /// * **1d (overflow):** a huge price can push the reverse-converted
-    ///   input leg past `u64::MAX`. Reject explicitly instead of
-    ///   silently truncating — a clamped input would debit the taker
-    ///   (and book the vault) less than the price implies, shattering
-    ///   the treasury invariant.
+    /// * **1d (overflow):** guard the reverse-converted input leg
+    ///   against `u64::MAX` and reject explicitly rather than silently
+    ///   truncate — a clamped input would debit the taker (and book the
+    ///   vault) less than the price implies, shattering the treasury
+    ///   invariant. Defense-in-depth: the output leg is already capped
+    ///   by `base_for_quote(taker_in)` / `quote_for_base(taker_in)`
+    ///   (the 1c cap), so the floor round-trip bounds the reverse leg at
+    ///   `<= taker_in <= u64::MAX` and this `require!` cannot fire on a
+    ///   valid price today. Kept so an overflow stays a hard abort if
+    ///   the cap is ever weakened — and so the off-chain simulator's
+    ///   matching guard has an on-chain counterpart to mirror.
     /// * **1c (round-trip cap):** the decoders truncate toward zero in
     ///   both directions, so `out→in→` can exceed the taker's remaining
     ///   input by a few atoms. Capping the input leg at
