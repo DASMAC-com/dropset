@@ -8,6 +8,9 @@
 //! JSON shapes are decoded by the free `parse_*` functions, which are unit
 //! tested against captured responses; only the transport needs a network.
 
+// cspell:word geckoterminal
+// cspell:word xpool
+
 use crate::config::{AerodromeConfig, FeedConfig};
 use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
