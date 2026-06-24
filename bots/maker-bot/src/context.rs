@@ -35,8 +35,6 @@ pub struct VaultSnapshot {
     pub quote_atoms: u64,
     /// The reference price currently stamped on-chain, as a float.
     pub reference_price: f64,
-    /// Price-time nonce — bumps on every flush, so a change means a fill.
-    pub nonce: u64,
     pub frozen: bool,
 }
 
@@ -70,8 +68,9 @@ pub struct Context {
     pub last_profile_at: Instant,
     /// The profile shape the bot believes is armed.
     pub profile_kind: ProfileKind,
-    /// Vault nonce observed at the previous tick — fill detection.
-    pub last_nonce: u64,
+    /// Inventory `(base_atoms, quote_atoms)` at the previous tick — a change
+    /// the bot didn't cause is a fill (fill detection).
+    pub last_inventory: Option<(u64, u64)>,
 }
 
 impl Context {
@@ -89,7 +88,7 @@ impl Context {
             last_set_at: now,
             last_profile_at: now,
             profile_kind: ProfileKind::Unknown,
-            last_nonce: 0,
+            last_inventory: None,
         }
     }
 }

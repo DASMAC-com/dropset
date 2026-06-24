@@ -97,6 +97,11 @@ fn mint_decimals(client: &RpcClient, mint: &Pubkey) -> Result<u8> {
 /// `authority` (the leader). Matching by authority rather than a hardcoded
 /// sector index makes the bot robust to whichever sector the bootstrap
 /// happened to open. Reports the active sectors on a miss.
+///
+/// Note the reference's price-time nonce is deliberately *not* read for fill
+/// detection: it bumps on every re-quote (the leader's own
+/// `set_reference_price` / `set_liquidity_profile` arm a flush), so a change
+/// doesn't imply a taker. Inventory movement is the fill signal instead.
 pub fn read_vault(
     client: &RpcClient,
     market: &Pubkey,
@@ -117,7 +122,6 @@ pub fn read_vault(
                 base_atoms: vault.base_atoms.get(),
                 quote_atoms: vault.quote_atoms.get(),
                 reference_price,
-                nonce: vault.reference_price.nonce(),
                 frozen: vault.frozen != 0,
             });
         }

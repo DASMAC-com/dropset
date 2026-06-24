@@ -7,9 +7,11 @@
 //! A failed send is logged and the tick is skipped; the next tick retries (no
 //! retry storms).
 //!
-//! Fill detection for the MVP rides the per-tick vault read: the reference's
-//! price-time nonce bumps on every flush, so a change since the last tick
-//! means a fill landed. The spec's `emit_cpi` event subscription is the
+//! Fill detection for the MVP rides the per-tick vault read: the leader only
+//! moves its inventory by quoting, so a `base_atoms` / `quote_atoms` change it
+//! didn't cause is a fill. (The reference's price-time nonce is *not* used —
+//! it bumps on every re-quote, so it can't tell a fill from the bot's own
+//! quote update.) The spec's `emit_cpi` event subscription is the
 //! production-fidelity path and is deferred (the adversarial taker that would
 //! exercise it is itself deferred, §5).
 
@@ -108,14 +110,15 @@ fn tick(
     let vault = chain::read_vault(&ctx.client, &ctx.market.market, &ctx.leader.pubkey())?;
     ctx.vault_idx = vault.sector_idx;
 
-    // Fill detection: a nonce bump since the last tick means a flush landed.
-    if ctx.last_nonce != 0 && vault.nonce != ctx.last_nonce {
-        println!(
-            "[fill] vault nonce {} → {} (a level filled)",
-            ctx.last_nonce, vault.nonce
-        );
+    // Fill detection: inventory the bot didn't move itself is a taker fill.
+    if let Some((pb, pq)) = ctx.last_inventory {
+        if pb != vault.base_atoms || pq != vault.quote_atoms {
+            let db = vault.base_atoms as i128 - pb as i128;
+            let dq = vault.quote_atoms as i128 - pq as i128;
+            println!("[fill] inventory moved: base {db:+}, quote {dq:+} atoms");
+        }
     }
-    ctx.last_nonce = vault.nonce;
+    ctx.last_inventory = Some((vault.base_atoms, vault.quote_atoms));
 
     if vault.frozen {
         println!("[halt] vault is frozen on-chain — idling");
