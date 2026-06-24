@@ -76,6 +76,18 @@ pub fn sort_key(price: Price, is_ask: bool) -> u32 {
     }
 }
 
+/// Taker fee on a single leg: `output_leg_atoms × taker_fee_ppm / PPM`
+/// (u128, truncating). `output_leg_atoms` is the *output* leg the fee is
+/// charged on — base atoms on a Buy, quote atoms on a Sell — and
+/// `taker_fee_ppm` is the market header's `taker_fee`. Returns the raw
+/// u128 product; callers clamp to `u64` themselves (the engine per leg,
+/// the simulator after summing every leg's fee), so the byte-identical
+/// truncation lives here while each side keeps its own accumulation.
+#[inline]
+pub fn taker_fee_atoms(output_leg_atoms: u64, taker_fee_ppm: u128) -> u128 {
+    (output_leg_atoms as u128 * taker_fee_ppm) / PPM as u128
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,5 +132,18 @@ mod tests {
         let p = Price::encode(10_850_000, 0).unwrap();
         assert_eq!(sort_key(p, true), p.as_u32());
         assert_eq!(sort_key(p, false), p.bid_key());
+    }
+
+    #[test]
+    fn taker_fee_truncates() {
+        // 30 ppm on 1_000_000 atoms = 30.
+        assert_eq!(taker_fee_atoms(1_000_000, 30), 30);
+        // Truncates toward zero: 1 ppm on 1_999_999 = 1.999999 -> 1.
+        assert_eq!(taker_fee_atoms(1_999_999, 1), 1);
+        // Zero fee and zero leg both yield zero.
+        assert_eq!(taker_fee_atoms(1_000_000, 0), 0);
+        assert_eq!(taker_fee_atoms(0, 30), 0);
+        // No u64 overflow in the product (u128 intermediate).
+        assert_eq!(taker_fee_atoms(u64::MAX, PPM as u128), u64::MAX as u128);
     }
 }

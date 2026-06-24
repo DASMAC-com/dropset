@@ -16,8 +16,8 @@
 //! distinct here. That residual seam is pinned to the engine by the
 //! shared conformance vectors (see `sdk/conformance`).
 
-use crate::layout::{MarketView, Vault, N_LEVELS, PPM};
-use crate::matching_math::{flush_level_price, level_fill_atoms, sort_key};
+use crate::layout::{MarketView, Vault, N_LEVELS};
+use crate::matching_math::{flush_level_price, level_fill_atoms, sort_key, taker_fee_atoms};
 use crate::price::Price;
 
 /// Taker side. `Buy` consumes asks (pays quote, receives base); `Sell`
@@ -170,12 +170,8 @@ pub fn simulate_swap(
             (fill_b, fill_q)
         };
 
-        // Taker fee on the output leg.
-        let fee = if is_buy {
-            (fill_base as u128 * taker_fee_ppm) / PPM as u128
-        } else {
-            (fill_quote as u128 * taker_fee_ppm) / PPM as u128
-        };
+        // Taker fee on the output leg (base on a Buy, quote on a Sell).
+        let fee = taker_fee_atoms(if is_buy { fill_base } else { fill_quote }, taker_fee_ppm);
 
         // Decrement simulated vault inventory + this level's allowance,
         // mirroring the on-chain per-leg mutation.
