@@ -156,7 +156,7 @@ class SessionAggregator:
         self._bash_signatures: dict[str, int] = {}
         # tool_use ids whose Bash signature was already counted. The content
         # array is re-walked on every content-block record of a split message
-        # (tool_use items can repeat), so dedupe the signature count by id —
+        # (tool_use items can repeat), so count the signature once per id —
         # otherwise a split message inflates a command's hardening count.
         self._counted_bash_ids: set[str] = set()
         self.parse_errors = 0
