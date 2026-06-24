@@ -1,6 +1,6 @@
 # Audit registry
 
-`audit-loop` reads its coverage map from here — the **subsystems**
+`audit` reads its coverage map from here — the **subsystems**
 to range over, the **interfaces** between them where contract drift
 hides, and the **skip-globs** of generated / vendored paths never
 worth auditing (`audit-scope` reads just the subsystem `kind`). These

@@ -1,6 +1,6 @@
 # Linear automation
 
-Skills that **file** Linear issues (`linear-task`, `audit-loop`,
+Skills that **file** Linear issues (`linear-task`, `audit`,
 `audit-scope`, `trim-context`, `housekeeping`) resolve the filing
 destination — team, project, assignee — from **environment
 variables**, never hard-coded UUIDs. (Skills that only **update**
@@ -98,7 +98,7 @@ Every filed issue carries machine-readable fields the automation reads
 back, on top of the human prose. Keep the field **names** stable — the
 filing skills emit them and `stage-backlog` parses them:
 
-- `**Fingerprint**: <basename>:<slug>` — the dedup key `audit-loop`
+- `**Fingerprint**: <basename>:<slug>` — the dedup key `audit`
   matches on so a finding is never refiled. Mandatory on audit
   findings; one line per finding (a merged issue carries several).
 - `**Touches**: <glob>[, <glob>…]` — the path globs the fix will
@@ -165,7 +165,7 @@ nests its dependency tree on them. Assert only a dependency you
 actually know to be real; omit it when unsure.
 
 `linear-task` sets these from a person's call. The **autonomous**
-auditors (`audit-scope`, `audit-loop`) work under a tighter rule:
+auditors (`audit-scope`, `audit`) work under a tighter rule:
 they may assert a relation **only on concrete evidence** that one
 finding's fix cannot land until another issue resolves (e.g. a nit
 that depends on an `arch:` proposal filed the same run), never a

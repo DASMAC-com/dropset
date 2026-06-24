@@ -1,6 +1,6 @@
 ---
 name: housekeeping
-description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, prune the worktrees of already-merged PRs, drain the Linear Permissions inbox doc via firm-perms (propose-only), mine the Session Metrics inbox into propose-only skill-improvement tasks, restage the backlog, then — only when given a finding cap (e.g. `/housekeeping 15`) — automatically kick off the audit-loop as a background campaign capped at that many issues and exit; with no number the audit-loop is skipped. The cspell dictionary check is opt-in (pass `cspell`) and off by default. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
+description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, prune the worktrees of already-merged PRs, drain the Linear Permissions inbox doc via firm-perms (propose-only), mine the Session Metrics inbox via trim-context (propose-only), restage the backlog, then — only when given the `audit` flag (`/housekeeping audit`) — run one finite `/audit` rotation inline and exit; with no flag the audit is skipped. The cspell dictionary check is opt-in (pass `cspell`) and off by default. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -10,12 +10,12 @@ user-invocable: true
 The **one thing to fire up when you arrive**: it
 does the morning upkeep — the chores that pile up while
 you develop but don't belong to any one PR — then, **when
-you hand it a finding cap** (e.g. `/housekeeping 15`),
-kicks off the audit campaign in the background so that, by
-the afternoon, there's a ready-to-fire task sequence. With
-**no** number it stops after the upkeep and skips the
-audit-loop. It first fast-forwards `main` so the pass runs
-on the latest committed skills, then:
+you pass the `audit` flag** (`/housekeeping audit`), runs
+one finite `/audit` rotation inline so a fresh batch of
+findings lands on the Backlog. With **no** flag it stops
+after the upkeep and skips the audit. It first
+fast-forwards `main` so the pass runs on the latest
+committed skills, then:
 
 1. **Prune merged worktrees** — remove the local
    worktree (and branch) of every PR that has
@@ -25,8 +25,8 @@ on the latest committed skills, then:
    Linear Permissions doc, so each captured prompt gets
    a recommended disposition (and malformed ones a
    source-fix task) without writing settings unattended.
-1. **Mine the Session Metrics inbox** — read the Linear
-   Session Metrics doc and file **propose-only**
+1. **Mine the Session Metrics inbox** — delegate to
+   `trim-context`, which files **propose-only**
    skill-improvement tasks for the trim patterns that
    recur across sessions, never editing a skill itself.
 1. **Check convention references** — flag any skill that
@@ -36,14 +36,13 @@ on the latest committed skills, then:
 1. **Restage the backlog** — hand off to
    `stage-backlog` so the Task Staging document
    reflects everything currently open.
-1. **Kick off the audit-loop** — **only when a finding
-   cap was passed**, automatically launch the background
-   audit campaign capped at that many issues, then
-   **exit**. With no number, skip this and exit after the
-   upkeep.
+1. **Run one audit rotation** — **only when the `audit`
+   flag was passed**, invoke `/audit` once (a single
+   finite rotation) inline, then **exit**. With no flag,
+   skip this and exit after the upkeep.
 
 The morning entry point is a **single one-shot run**:
-upkeep → background audit-loop (only when a finding cap
+upkeep → one `/audit` rotation (only when the `audit` flag
 was passed) → exit. It does *not* stay on a timer; the
 `/loop 30m housekeeping` cadence is there for ad-hoc
 upkeep while you work, but the morning driver is the
@@ -65,19 +64,19 @@ a Backlog task to fix later.
 Optional, and accepts two independent arguments in any
 order:
 
-- **A finding cap** (a bare integer, e.g.
-  `housekeeping 15`) — the maximum number of issues the
-  audit-loop should file before it self-terminates. Its
-  **presence is also the gate**: given a number, the pass
-  automatically kicks off the background audit-loop capped
-  at it (step 8); with **no** number, the audit-loop is
-  **skipped** entirely and the pass exits after the
-  upkeep. So `/housekeeping 15` does upkeep then launches a
-  15-issue campaign, while a bare `/housekeeping` does
-  upkeep only.
+- **The `audit` flag** — when the invocation includes
+  `audit` (e.g. `housekeeping audit`), the pass runs one
+  finite `/audit` rotation inline after the upkeep
+  (step 8); without it the audit is **skipped** entirely
+  and the pass exits after the upkeep. So
+  `/housekeeping audit` does upkeep then one audit
+  rotation, while a bare `/housekeeping` does upkeep only.
+  (Unlike the old finding-cap argument, `/audit` is
+  itself finite — one rotation, no cap — so the flag only
+  decides *whether* to run it, not how much.)
 - **The `cspell` flag** — when the invocation includes
   `cspell` (e.g. `housekeeping cspell` or
-  `housekeeping 15 cspell`, and likewise under
+  `housekeeping audit cspell`, and likewise under
   `/loop 30m housekeeping cspell`), the pass runs the
   opt-in spelling-escape check (step 3); without it that
   step is skipped.
@@ -99,15 +98,15 @@ merged worktrees, filing / staging Linear issues, and
 annotating the Linear Permissions and Session Metrics
 docs with recommended dispositions (it never writes
 `settings.local.json` and never edits a skill
-unattended). When given a finding cap, its last step
-*launches* the audit-loop as a background task (step 8),
-but housekeeping itself makes no source edit — the
-campaign only files Linear issues.
+unattended). When given the `audit` flag, its last step
+runs one `/audit` rotation (step 8), but housekeeping
+itself makes no source edit — the rotation only files
+Linear issues.
 
-Run it **once when you arrive with a finding cap**
-(e.g. `housekeeping 15`) for the full morning-driver flow
-(it launches the background campaign and exits), or with
-no number for upkeep only, or drive ad-hoc upkeep on a
+Run it **once when you arrive with the `audit` flag**
+(e.g. `housekeeping audit`) for the full morning-driver
+flow (it runs one audit rotation and exits), or with no
+flag for upkeep only, or drive ad-hoc upkeep on a
 timer:
 
 ```sh
@@ -253,7 +252,7 @@ than two files (with its sole file and recommended
 action), and a file whose inline escapes aren't in one
 contiguous block at the top (with its path). This skill
 is the only place the scheduled check lives — opt-in here,
-via the `cspell` flag; `audit-loop` no longer runs it.
+via the `cspell` flag; `audit` no longer runs it.
 
 cspell fixes are all trivial and file-disjoint, so they
 belong in **one PR** — file the run's drift as a **single
@@ -378,38 +377,39 @@ Backlog — including anything steps 3–6 just filed. The
 deterministic Python tool does all the work (read →
 render → write); this skill just triggers it. This
 **full** re-stage is the authoritative reconcile, run
-fresh from the live Backlog each morning.
+fresh from the live Backlog each morning — it converges
+whatever a previous `/audit` rotation folded in
+incrementally.
 
-**8. Kick off the audit-loop (only when a finding cap was
+**8. Run one audit rotation (only when the `audit` flag was
 passed).** The morning's last act: with upkeep done, the
-**finding cap argument decides whether to run a
-campaign** — passing a number *is* the go-ahead, so there
-is no separate prompt (this is the one handoff in the
-suite that's arg-gated rather than `AskUserQuestion`-gated,
-precisely because the number carries the intent).
+**`audit` flag decides whether to run a rotation** —
+passing it *is* the go-ahead, so there is no separate
+prompt (this is the one handoff in the suite that's
+arg-gated rather than `AskUserQuestion`-gated, precisely
+because the flag carries the intent).
 
-- **A finding cap was passed** (e.g. `housekeeping 15`) →
-  launch the audit-loop **in the background**
-  (`run_in_background`): start a background task that
-  drives `/loop audit-loop`, passing that number as its
-  **finding cap** argument. The campaign files findings,
-  re-stages the Task Staging document once at the end of
-  its run (`audit-loop` step 11), and fires a
-  high-severity `PushNotification` only when something
-  warrants interrupting you. Then **this housekeeping pass
-  exits** — it does not wait on the campaign.
-- **No finding cap** → skip the audit-loop entirely and
-  end the pass after the upkeep. (To run a campaign, re-run
-  with a number.)
+- **The `audit` flag was passed** (`housekeeping audit`) →
+  invoke the `audit` skill (via the Skill tool) **once**.
+  `/audit` is finite — a single seven-unit rotation that
+  files its findings, folds each into the Task Staging
+  document incrementally, fires a high-severity
+  `PushNotification` only when something warrants
+  interrupting you, and stops on its own with a `DONE`
+  line. It runs **inline** (it's bounded, so there's no
+  background campaign to wait on), then **this housekeeping
+  pass exits**.
+- **No `audit` flag** → skip the audit entirely and end
+  the pass after the upkeep. (To run a rotation, re-run
+  with the `audit` flag, or invoke `/audit` directly.)
 
-**The kickoff is a one-shot, not a loop.** When a cap was
-given, this run does the upkeep, launches the audit-loop as
-a background task, and exits — it does *not* stay on a
-timer. During the morning only the audit-loop (re-staging
-once at the end of its run) writes the Task Staging
-document, so there's no second loop to coordinate; the
-next morning's step 7 re-stages again from the live
-Backlog.
+**The kickoff is a one-shot, not a loop.** `/audit` is a
+single bounded rotation, not a continuous campaign — it
+files what its seven units surface and stops. To audit
+again, run `housekeeping audit` (or `/audit`) again. The
+rotation keeps the Task Staging document roughly current
+via its incremental staging; the next pass's step 7 is the
+full reconcile.
 
 **9. Report.** Print a short summary:
 
@@ -442,6 +442,6 @@ Backlog.
   (with the ENG-### of the aggregated task).
 - Backlog staging: that `stage-backlog` ran, or why
   it was skipped (e.g. a missing env var).
-- Audit-loop: launched in the background with finding
-  cap N (so the campaign runs while you work), or
-  skipped because no finding cap was passed.
+- Audit: one `/audit` rotation ran inline (with its
+  `DONE` tally), or was skipped because the `audit` flag
+  wasn't passed.
