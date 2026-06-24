@@ -204,10 +204,10 @@ impl VaultDepositorHeader {
 
 // Pin the on-chain layout — same boundary-only offset-guard pattern as
 // `MarketHeader` / `Vault` (see `market/layout.rs`). These pin the total
-// size plus the head/tail boundary and discriminator-adjacent offsets
-// (`market`, `sector_idx`, `owner`, `shares`, `bump`, `_reserved`); a
-// size-preserving reorder among the interior basis fields (offsets
-// 76–136) is deliberately **not** caught here.
+// size plus the head field (`market`), the identity and share-claim
+// offsets (`sector_idx`, `owner`, `shares`), and the tail (`bump`,
+// `_reserved`); a size-preserving reorder among the interior basis
+// fields (offsets 76–136) is deliberately **not** caught here.
 const _: () = assert!(core::mem::size_of::<VaultDepositorHeader>() == 144);
 const _: () = assert!(core::mem::offset_of!(VaultDepositorHeader, market) == 0);
 const _: () = assert!(core::mem::offset_of!(VaultDepositorHeader, sector_idx) == 32);
