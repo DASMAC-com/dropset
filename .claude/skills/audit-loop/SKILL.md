@@ -1,6 +1,6 @@
 ---
 name: audit-loop
-description: One iteration of a continuous background platform audit — pick a unit of work (a randomly-chosen non-generated file, or a whole-system architecture pass fanned out per subsystem and per inter-subsystem interface), audit files by delegating to the `audit-scope` engine and run the whole-system lenses with an adversarial cross-check, dedup against open or resolved Linear issues, then file one self-contained Backlog issue per finding, and announce. A single deterministic `stage-backlog` re-stage at the end of the run folds the run's findings into the Task Staging document. Stops itself after a configurable number of filings (default 20). Drive it with `/loop audit-loop`.
+description: One iteration of a continuous background platform audit — pick a unit of work (a randomly-chosen non-generated file, or a whole-system architecture pass fanned out per subsystem and per inter-subsystem interface), audit files by delegating to the `audit-scope` engine and run the whole-system lenses with an adversarial cross-check, dedup against open or resolved Linear issues, then file one self-contained Backlog issue per finding, and announce. A single deterministic `stage-backlog` re-stage at the end of the run renders the run's findings into the Task Staging document. Stops itself after a configurable number of filings (default 20). Drive it with `/loop audit-loop`.
 disable-model-invocation: false
 user-invocable: true
 ---
