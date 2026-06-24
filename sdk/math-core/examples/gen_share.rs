@@ -11,8 +11,8 @@
 //! seeding `isqrt`, single-leg deposit sizing, the pro-rata withdrawal
 //! slice, the perf-fee mint, realized-PnL crystallization, and the
 //! shares-weighted cost-basis merge. These run on-chain; the off-chain
-//! consumers (the simulator and the frontend's NAV/PnL fallback) reuse the
-//! exact arithmetic, so both forks must reproduce these vectors bit-for-bit.
+//! TS SDK fork (`sdk/ts/src/share.ts`) reuses the exact arithmetic, so
+//! both forks must reproduce these vectors bit-for-bit.
 //!
 //! u64 / i64 / u128 fields are serialized as JSON **strings** — consensus
 //! values reach `u64::MAX` / `i64::MAX`, beyond JS's 2^53 safe-integer

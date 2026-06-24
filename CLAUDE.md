@@ -744,9 +744,13 @@ program <-> sdk-math: the program depends on the shared math
 program <-> frontend: the on-chain account/instruction contract in
   docs/interface.md, which the frontend builds transactions against
   through the generated clients.
-sdk-math <-> frontend: math-core / interface compiled to WASM (their
-  wasm.rs) and consumed by the frontend for quoting; the TS
-  conformance tests pin that WASM surface.
+sdk-math <-> frontend: no live wiring today. The frontend imports no
+  sdk-math (a grep of frontend/ for @dropset/sdk is empty) and consumes
+  no WASM; it quotes via DFlow's API (frontend/lib/dflow/) and shows a
+  display-only float PnL re-implementation (frontend/lib/data/pnl.ts) of
+  the share kernels that no conformance vector pins, over static mock
+  data. The drift to watch is the day pnl.ts is wired to live on-chain
+  reserves: its float math can then diverge from the integer engine.
 tui <-> sdk-math: the resting-book matcher surface (sdk/interface
   matching `resting_levels` / `BookLevel`) the TUI's order-book pane
   reconstructs depth from — the SDK normalizes a bid's quote leg to base

@@ -9,9 +9,10 @@
 //! the kernel, and write state back), so a bug here is a consensus bug.
 //!
 //! They live here, alongside [`crate::price`] and [`crate::matching_math`],
-//! so the off-chain consumers — the simulator and the upcoming indexer /
-//! order-book views — reuse the exact same arithmetic instead of
-//! re-deriving NAV/PnL math that would drift from the engine. Anything typed
+//! so the off-chain TS SDK fork (`sdk/ts/src/share.ts`), held to these
+//! kernels by the share conformance vectors, reuses the exact same
+//! arithmetic instead of re-deriving NAV/PnL math that would drift from
+//! the engine. Anything typed
 //! against the on-chain `Vault` / `VaultDepositorHeader` (Anchor `Pod`
 //! wrappers) stays in the program; only the pure scalar formula lives here,
 //! keeping this module solana-free and WASM-compatible.
