@@ -35,10 +35,12 @@ coupling skill tooling to the program's toolchain.
   is later rewritten.
 
 Today `.claude/tools/` holds `session_metrics.py` (the
-`session-metrics` core) and `init_pr_branch.py` (the `init-pr`
-branch/worktree checks). `tools/stage-backlog/` is the one remaining
-helper still under `tools/` — its Python rewrite is tracked
-separately.
+`session-metrics` core), `init_pr_branch.py` (the `init-pr`
+branch/worktree checks), and `run_quiet.py` (a generic quiet runner
+that captures a noisy command's output to a log and surfaces only a
+summary — see [context economy](context-economy.md)).
+`tools/stage-backlog/` is the one remaining helper still under
+`tools/` — its Python rewrite is tracked separately.
 
 ## MCP first for prototyping and fallback; harden settled workflows
 

@@ -108,6 +108,15 @@ Concrete rules:
   (`make lint`, `cargo fmt -p dropset`) — its full output and exit
   status already come back. Pipes and `$(…)` / `${…}` expansion
   force re-approval on every call.
+- Capture a *genuinely noisy* command with the quiet runner, not a
+  redirect. `python3 .claude/tools/run_quiet.py -- CMD ARGS…` does its
+  capture-and-summarize inside Python with `shell=False`, so the
+  model's command line stays one bare command with no `>` / `2>&1` — it
+  passes the compound-shell guard and reduces to the
+  `Bash(python3 .claude/tools/*)` allow-rule. It propagates the child's
+  exit code, so callers still see pass/fail. Reach for it only when a
+  target has no quiet flag and its success output is pure noise — see
+  [context economy](context-economy.md).
 - Inspect the base repo by path, not by `cd`. To read another branch
   or the base checkout from a worktree, run
   `git -C <base-repo-path> <subcommand>` with a *literal*, stable path
