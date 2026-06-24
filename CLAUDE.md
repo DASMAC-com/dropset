@@ -726,6 +726,7 @@ tui (rust-lib, low): tui/**
 docs (specs, med): docs/**
 ci-infra (ci, low): .github/**, cfg/**, infra/**, Makefile, Anchor.toml
 tools (rust-tool, low): tools/**
+maker-bot (rust-tool, low): bots/maker-bot/**
 ```
 
 **Inter-subsystem interfaces** — the seams where contract drift
@@ -751,6 +752,9 @@ tui <-> sdk-math: the resting-book matcher surface (sdk/interface
   reconstructs depth from — the SDK normalizes a bid's quote leg to base
   at the level price, and the pane (tui/src/book.rs) de-scales by mint
   decimals, so the two must agree on the base-atom denomination.
+maker-bot <-> program: the bot quotes and submits against the on-chain
+  account/instruction contract (docs/interface.md) through the generated
+  SDK clients (sdk/rs) — instruction args and accounts must match.
 ```
 
 **Skip-globs** — generated / vendored / binary paths the file audit

@@ -1,3 +1,4 @@
+addrs
 affordance
 affordances
 airdrop
@@ -46,6 +47,7 @@ idrx
 impls
 kapsule
 keypair
+killswitch
 kripto
 lamports
 litesvm
@@ -55,6 +57,7 @@ metas
 mpsc
 multisigs
 mxne
+oanda
 paytrie
 pdas
 permissionless
@@ -81,7 +84,9 @@ solflare
 solscan
 soulbound
 stablecoins
+stoikov
 straitsx
+strat
 swatinem
 sysvar
 taiki
@@ -95,6 +100,7 @@ topup
 transfero
 tryb
 tsup
+txns
 unmirrored
 ureq
 usdg

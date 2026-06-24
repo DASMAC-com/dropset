@@ -1494,6 +1494,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "dropset-maker-bot"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytemuck",
+ "dropset-sdk",
+ "serde",
+ "serde_json",
+ "solana-client",
+ "solana-commitment-config",
+ "solana-instruction",
+ "solana-keypair",
+ "solana-pubkey 3.0.0",
+ "solana-signer",
+ "solana-transaction",
+ "ureq",
+]
+
+[[package]]
 name = "dropset-math-core"
 version = "0.1.0"
 dependencies = [
