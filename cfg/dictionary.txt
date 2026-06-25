@@ -7,6 +7,7 @@ atas
 audc
 audd
 audm
+autocorrelated
 bindgen
 blockhash
 borsh
@@ -44,6 +45,7 @@ globbable
 gyen
 générale
 heredocs
+idempotently
 idrx
 impls
 kapsule
@@ -78,6 +80,7 @@ rlib
 rollup
 rustc
 sbpf
+seedable
 serde
 significand
 société

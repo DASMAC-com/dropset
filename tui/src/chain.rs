@@ -10,8 +10,6 @@
 //! orderings in `programs/dropset/tests/common/fixture.rs` so a transposed
 //! field (base where quote belongs) is caught at `cargo test`, not on chain.
 
-// cspell:word idempotently
-
 use crate::job::Logger;
 use anyhow::{Context, Result};
 use dropset_sdk::instructions::{

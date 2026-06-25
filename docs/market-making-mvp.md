@@ -324,7 +324,10 @@ ______________________________________________________________________
   Coinmarketcap, Jupiter, Raydium, Orca, Manifest, DFlow, Titan, …) —
   three uncorrelated sources are plenty for stable-pair sanity at MVP
   scale.
-- Adversarial taker bot for hardening — separate effort.
+- Adversarial taker bot for hardening — separate effort. The localnet MVP
+  does ship a *benign* stochastic flow taker (a quiet/burst Markov arrival
+  process with LogNormal order sizes) to move the book and exercise the
+  maker; the adversarial strategy-hardening taker remains deferred.
 - Hedging / shorting CADC for market-neutrality — separate effort,
   requires venue research.
 - Performance fee / outside-depositor flow — comes with vault maturity,
