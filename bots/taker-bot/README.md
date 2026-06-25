@@ -27,7 +27,8 @@ dropset-alpha's `services/taker-bot/src/taker.rs`):
    50/50 split.
 
 The whole process is deterministic given its RNG seed: a fixed seed replays
-the same flow, so `--dry-run` is a faithful preview of a live run.
+the same flow, so `--dry-run` is a faithful preview of the order flow a live
+run would submit.
 
 ## How an order becomes a swap
 

@@ -15,8 +15,8 @@
 //!    revert rather than a fixed 50/50 split.
 //!
 //! Everything here is deterministic given the seed: same seed ⇒ same flow,
-//! which is what makes `--dry-run` a faithful preview of a live run and the
-//! unit tests reproducible. Sizes are emitted as a **quote-denominated
+//! which is what makes `--dry-run` a faithful preview of the order flow and
+//! the unit tests reproducible. Sizes are emitted as a **quote-denominated
 //! notional** (a float in human units, e.g. USDC); turning that into an
 //! `amount_in` for a given side and into the swap's `min_out` is the chain
 //! layer's job ([`crate::chain`]), so this module stays free of decimals,

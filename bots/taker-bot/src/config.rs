@@ -11,6 +11,9 @@ use std::time::Duration;
 /// Default localnet RPC endpoint (the `solana-test-validator` the TUI spawns).
 pub const DEFAULT_RPC_URL: &str = "http://127.0.0.1:8899";
 
+/// Lamports per SOL.
+pub const LAMPORTS_PER_SOL: u64 = 1_000_000_000;
+
 /// The taker role key (`keys/README.md` → `FFFF`). Signs and pays for its own
 /// swaps; funded by an airdrop on startup.
 pub const DEFAULT_TAKER_KEY: &str = "keys/FFFF.json";
@@ -126,9 +129,6 @@ impl Default for BotConfig {
         }
     }
 }
-
-/// Lamports per SOL.
-pub const LAMPORTS_PER_SOL: u64 = 1_000_000_000;
 
 #[cfg(test)]
 mod tests {

@@ -11,8 +11,6 @@
 //! achievable `amount_in` / `min_out` at the live book, and the swap itself is
 //! built with the generated [`SwapBuilder`] and signed by the taker.
 
-// cspell:word idempotently
-
 use anyhow::{anyhow, Context as _, Result};
 use dropset_sdk::accounts::MARKET_HEADER_DISCRIMINATOR;
 use dropset_sdk::instructions::SwapBuilder;
@@ -336,8 +334,10 @@ pub fn size_order(
         return Ok(None);
     }
     // Floor `min_out` below the simulated output so a benign book move between
-    // sizing and execution doesn't trip the on-chain slippage check.
-    let min_out = (quote.out_amount as f64 * (1.0 - slippage)) as u64;
+    // sizing and execution doesn't trip the on-chain slippage check — but keep
+    // it at least 1, since `min_out == 0` opts out of the on-chain soft-revert
+    // entirely (swap.rs), which would drop slippage protection on a dust order.
+    let min_out = ((quote.out_amount as f64 * (1.0 - slippage)) as u64).max(1);
 
     Ok(Some(SizedSwap {
         side: order.side,
