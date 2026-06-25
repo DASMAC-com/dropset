@@ -24,6 +24,7 @@ docs (specs, med): docs/**
 ci-infra (ci, low): .github/**, cfg/**, infra/**, Makefile, Anchor.toml
 tools (rust-tool, low): tools/**
 maker-bot (rust-tool, low): bots/maker-bot/**
+taker-bot (rust-tool, low): bots/taker-bot/**
 ```
 
 **Inter-subsystem interfaces** — the seams where contract drift
@@ -56,6 +57,10 @@ tui <-> sdk-math: the resting-book matcher surface (sdk/interface
 maker-bot <-> program: the bot quotes and submits against the on-chain
   account/instruction contract (docs/interface.md) through the generated
   SDK clients (sdk/rs) — instruction args and accounts must match.
+taker-bot <-> program: the bot sizes orders off-chain against the live
+  book (sdk/interface matching `simulate_swap`) and submits `swap`s
+  through the generated SDK clients (sdk/rs) — the off-chain fill math
+  and the swap instruction args/accounts must match the engine.
 ```
 
 **Skip-globs** — generated / vendored / binary paths the file audit
