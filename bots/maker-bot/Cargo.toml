@@ -11,7 +11,17 @@ name = "dropset-maker-bot"
 path = "src/main.rs"
 
 [dependencies]
+# The fill-event subscription decodes `emit_cpi!` inner instructions, which
+# anchor frames with its `EVENT_IX_TAG_LE` self-CPI tag — sourced here rather
+# than hand-copied. Default features only — host build, no on-chain
+# (`const-rent` / `testing`) extras.
+anchor-lang-v2 = {workspace = true}
 anyhow = "1"
+# Decode the borsh wire form of `FillEvent` off the event inner instruction.
+borsh = "1"
+# Inner-instruction `data` comes back base58-encoded from `getTransaction`
+# even under base64 transaction encoding, so decode it before parsing.
+bs58 = "0.5"
 # Zero the `LiquidityProfile` Pod before filling its levels, and read the
 # on-chain `Vault` slab mirror for live inventory (matches the SDK's own
 # profile construction and the TUI's account decoding).
@@ -24,6 +34,10 @@ bytemuck = "1"
 dropset-sdk = {path = "../../sdk/rs", features = ["fetch"]}
 serde = {version = "1", features = ["derive"]}
 serde_json = "1"
+# Reproduce `FillEvent`'s event discriminator off-chain via anchor's
+# name-based scheme, `sha256("event:FillEvent")[..8]` — the on-chain type
+# lives in the SBF-only program crate the bot can't depend on.
+sha2 = "0.10"
 # Pinned to the SDK's 3.x line (sdk/rs/Cargo.toml) so there is one
 # `Pubkey` / `Instruction` / `RpcClient` type across the builder, fetch, and
 # transaction paths — NOT the workspace's solana-pubkey 4.x. `~3.1` on
@@ -33,8 +47,14 @@ solana-commitment-config = "3"
 solana-instruction = "3"
 solana-keypair = "3"
 solana-pubkey = "3"
+# Parse the `getTransaction` signature from the logs-subscription notification.
+solana-signature = "3"
 solana-signer = "3"
 solana-transaction = "3"
+# Name the `getTransaction` response shapes (`EncodedConfirmedTransaction…`,
+# `UiInstruction`, the inner-instruction list) the fill decoder walks. The
+# light client-types crate, not the full `solana-transaction-status`.
+solana-transaction-status-client-types = "3"
 # Blocking HTTP for the price feeds (CoinGecko / Oanda / GeckoTerminal), the
 # same synchronous JSON client tools/stage-backlog uses for Linear.
 ureq = {version = "2", features = ["json"]}

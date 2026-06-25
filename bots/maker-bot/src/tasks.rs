@@ -7,17 +7,24 @@
 //! A failed send is logged and the tick is skipped; the next tick retries (no
 //! retry storms).
 //!
-//! Fill detection for the MVP rides the per-tick vault read: the leader only
-//! moves its inventory by quoting, so a `base_atoms` / `quote_atoms` change it
-//! didn't cause is a fill. (The reference's price-time nonce is *not* used —
-//! it bumps on every re-quote, so it can't tell a fill from the bot's own
-//! quote update.) The spec's `emit_cpi` event subscription is the
-//! production-fidelity path and is deferred (the adversarial taker that would
-//! exercise it is itself deferred, §5).
+//! Fill detection is driven by the `emit_cpi!` `FillEvent` subscription
+//! (`fills` module, §3 production-fidelity path): the subscription thread
+//! forwards each attributed fill, the tick drains them into a fill-derived
+//! position, and the policy values inventory off that position. The per-tick
+//! vault read reconciles the position (catching a missed fill or an external
+//! deposit / withdraw the events don't carry) and is the sole fill signal in
+//! the fallback path — when no subscription is attached, a `base_atoms` /
+//! `quote_atoms` change the bot didn't cause is taken as a fill. (The
+//! reference's price-time nonce is *not* used — it bumps on every re-quote, so
+//! it can't tell a fill from the bot's own quote update.)
+//!
+//! Quoting actions stay on the tick boundary (§3: at most one ix per tick, no
+//! retry storms); the fill stream makes the bot's inventory *belief*
+//! real-time, not its sends.
 
 use crate::chain;
 use crate::config::BotConfig;
-use crate::context::{Context, ProfileKind};
+use crate::context::{Context, ProfileKind, VaultSnapshot};
 use crate::model::fair_mid::{compose, Health, Quote};
 use crate::model::feeds::Feeds;
 use crate::model::inventory::Inventory;
@@ -110,15 +117,12 @@ fn tick(
     let vault = chain::read_vault(&ctx.client, &ctx.market.market, &ctx.leader.pubkey())?;
     ctx.vault_idx = vault.sector_idx;
 
-    // Fill detection: inventory the bot didn't move itself is a taker fill.
-    if let Some((pb, pq)) = ctx.last_inventory {
-        if pb != vault.base_atoms || pq != vault.quote_atoms {
-            let db = vault.base_atoms as i128 - pb as i128;
-            let dq = vault.quote_atoms as i128 - pq as i128;
-            println!("[fill] inventory moved: base {db:+}, quote {dq:+} atoms");
-        }
-    }
-    ctx.last_inventory = Some((vault.base_atoms, vault.quote_atoms));
+    // Primary fill signal: drain attributed `FillEvent`s into the position
+    // belief, then resolve the inventory the policy reads (reconciling the
+    // position against this vault read, or the diff fallback when no
+    // subscription is attached).
+    drain_fills(ctx, now);
+    let (base_atoms, quote_atoms) = resolve_inventory(ctx, &vault, now);
 
     if vault.frozen {
         println!("[halt] vault is frozen on-chain — idling");
@@ -135,8 +139,8 @@ fn tick(
 
     // 3. Value inventory and decide the action + skewed reference.
     let inv = Inventory::from_atoms(
-        vault.base_atoms,
-        vault.quote_atoms,
+        base_atoms,
+        quote_atoms,
         ctx.market.base_decimals,
         ctx.market.quote_decimals,
         mid,
@@ -191,6 +195,69 @@ fn tick(
         println!("[ref] set {reference:.6} (skew {skew_bps:+.1} bps, slot {slot})");
     }
     Ok(())
+}
+
+/// Drain every attributed fill delivered since the last tick, log it, and
+/// advance the fill-derived position to the latest fill's authoritative
+/// `*_after` balances. No-op when no subscription is attached.
+fn drain_fills(ctx: &mut Context, now: Instant) {
+    let Some(fills) = &ctx.fills else {
+        return;
+    };
+    let mut latest = None;
+    for fill in fills.try_iter() {
+        let e = &fill.event;
+        let side = if e.side == 0 { "ask" } else { "bid" };
+        println!(
+            "[fill] {side} L{} {} base / {} quote @ {} (fee {} atoms, sig {})",
+            e.level_idx, e.fill_base, e.fill_quote, e.fill_price, e.taker_fee_atoms, fill.signature
+        );
+        latest = Some((e.base_atoms_after, e.quote_atoms_after));
+    }
+    if let Some((base, quote)) = latest {
+        ctx.position = Some((base, quote, now));
+    }
+}
+
+/// Resolve the inventory the policy values this tick, in `(base, quote)` atoms.
+///
+/// With a subscription attached, the fill-derived position is authoritative:
+/// it is seeded from the first vault read and then advanced by fills, with the
+/// per-tick vault read used to reconcile it — a divergence means a missed fill
+/// or an external deposit / withdraw the events don't carry, so the chain read
+/// wins and the position snaps to it. Without a subscription, the vault read
+/// is the only signal and a balance the bot didn't move itself is logged as a
+/// fill (the fallback detection).
+fn resolve_inventory(ctx: &mut Context, vault: &VaultSnapshot, now: Instant) -> (u64, u64) {
+    let chain = (vault.base_atoms, vault.quote_atoms);
+
+    if ctx.fills.is_none() {
+        if let Some(prev) = ctx.last_inventory {
+            if prev != chain {
+                let db = chain.0 as i128 - prev.0 as i128;
+                let dq = chain.1 as i128 - prev.1 as i128;
+                println!("[fill] inventory moved: base {db:+}, quote {dq:+} atoms");
+            }
+        }
+        ctx.last_inventory = Some(chain);
+        return chain;
+    }
+
+    match ctx.position {
+        None => {
+            ctx.position = Some((chain.0, chain.1, now));
+            chain
+        }
+        Some((pb, pq, _)) if (pb, pq) != chain => {
+            println!(
+                "[fills] reconciling to chain: position ({pb}, {pq}) vs vault ({}, {}) — missed fill or external flow",
+                chain.0, chain.1
+            );
+            ctx.position = Some((chain.0, chain.1, now));
+            chain
+        }
+        Some((pb, pq, _)) => (pb, pq),
+    }
 }
 
 /// Whether the standard ladder needs re-arming this tick — either it isn't the

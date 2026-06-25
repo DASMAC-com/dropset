@@ -12,6 +12,31 @@ use std::time::Duration;
 /// Default localnet RPC endpoint (the `solana-test-validator` the TUI spawns).
 pub const DEFAULT_RPC_URL: &str = "http://127.0.0.1:8899";
 
+/// Derive the PubSub websocket endpoint from an RPC URL, matching the Agave
+/// convention: swap the scheme (`http`→`ws`, `https`→`wss`) and use the RPC
+/// port + 1 (the validator serves logs/account subscriptions there, so
+/// `8899` → `8900`). Returns the input unchanged for an unrecognized scheme
+/// (assume it is already a ws endpoint) or a non-numeric port.
+pub fn ws_url_from_rpc(rpc_url: &str) -> String {
+    let (scheme, rest) = if let Some(rest) = rpc_url.strip_prefix("https://") {
+        ("wss://", rest)
+    } else if let Some(rest) = rpc_url.strip_prefix("http://") {
+        ("ws://", rest)
+    } else {
+        return rpc_url.to_string();
+    };
+    // PubSub lives at the root, so drop any path and bump the port.
+    let authority = rest.split('/').next().unwrap_or(rest);
+    let ws_authority = match authority.rsplit_once(':') {
+        Some((host, port)) => match port.parse::<u16>() {
+            Ok(port) => format!("{host}:{}", port + 1),
+            Err(_) => authority.to_string(),
+        },
+        None => authority.to_string(),
+    };
+    format!("{scheme}{ws_authority}")
+}
+
 /// The vault the bootstrap opens first; the bot quotes this sector.
 pub const DEFAULT_VAULT_IDX: u32 = 0;
 
@@ -143,6 +168,9 @@ pub struct KillSwitchConfig {
 pub struct BotConfig {
     /// RPC endpoint.
     pub rpc_url: String,
+    /// PubSub websocket endpoint for the fill-event subscription. `None`
+    /// derives it from `rpc_url` via [`ws_url_from_rpc`].
+    pub ws_url: Option<String>,
     /// Vault sector the bot quotes.
     pub vault_idx: u32,
     /// Bot tick interval — the §3 5-second heartbeat.
@@ -199,6 +227,7 @@ impl Default for BotConfig {
     fn default() -> Self {
         Self {
             rpc_url: DEFAULT_RPC_URL.to_string(),
+            ws_url: None,
             vault_idx: DEFAULT_VAULT_IDX,
             tick: Duration::from_secs(5),
             feeds: FeedConfig::default(),
@@ -230,5 +259,17 @@ mod tests {
             assert!(w[1].size_bps < w[0].size_bps);
             assert!(w[1].expiry_offset > w[0].expiry_offset);
         }
+    }
+
+    /// The websocket endpoint swaps the scheme and uses the RPC port + 1.
+    #[test]
+    fn ws_url_follows_the_agave_convention() {
+        assert_eq!(ws_url_from_rpc(DEFAULT_RPC_URL), "ws://127.0.0.1:8900");
+        assert_eq!(
+            ws_url_from_rpc("https://api.example.com:443/rpc"),
+            "wss://api.example.com:444"
+        );
+        // Unrecognized scheme is assumed to already be a ws endpoint.
+        assert_eq!(ws_url_from_rpc("ws://host:9000"), "ws://host:9000");
     }
 }

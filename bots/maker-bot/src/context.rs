@@ -7,10 +7,12 @@
 //! last reference it stamped, the skew it applied, when it last fired each
 //! path, and which profile shape it believes is armed.
 
+use crate::fills::Fill;
 use crate::model::ladder::Side;
 use solana_client::rpc_client::RpcClient;
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
+use std::sync::mpsc::Receiver;
 use std::time::Instant;
 
 /// The discovered market and its token metadata — everything the bot needs to
@@ -68,9 +70,18 @@ pub struct Context {
     pub last_profile_at: Instant,
     /// The profile shape the bot believes is armed.
     pub profile_kind: ProfileKind,
-    /// Inventory `(base_atoms, quote_atoms)` at the previous tick — a change
-    /// the bot didn't cause is a fill (fill detection).
+    /// Inventory `(base_atoms, quote_atoms)` at the previous tick — used by
+    /// the fallback fill detection (a change the bot didn't cause is a fill)
+    /// only when the event subscription is absent.
     pub last_inventory: Option<(u64, u64)>,
+    /// Fill-derived inventory `(base_atoms, quote_atoms, when)` — the
+    /// authoritative `*_after` balances off the most recent `FillEvent`,
+    /// fresher than and reconciled against the per-tick vault read. `None`
+    /// until the first fill (or seeded from the first vault read).
+    pub position: Option<(u64, u64, Instant)>,
+    /// Attributed-fill channel from the subscription thread (the primary fill
+    /// signal). `None` when fills aren't subscribed (`--dry-run`, no ws).
+    pub fills: Option<Receiver<Fill>>,
 }
 
 impl Context {
@@ -89,6 +100,14 @@ impl Context {
             last_profile_at: now,
             profile_kind: ProfileKind::Unknown,
             last_inventory: None,
+            position: None,
+            fills: None,
         }
+    }
+
+    /// Attach the attributed-fill channel from the subscription thread.
+    pub fn with_fills(mut self, fills: Receiver<Fill>) -> Self {
+        self.fills = Some(fills);
+        self
     }
 }

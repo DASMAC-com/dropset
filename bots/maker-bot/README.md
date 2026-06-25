@@ -54,6 +54,9 @@ cargo run -p dropset-maker-bot
 ### Flags
 
 - `--rpc <url>` — RPC endpoint (default `http://127.0.0.1:8899`).
+- `--ws <url>` — PubSub websocket for the fill-event subscription
+  (default: derived from `--rpc`, swapping the scheme and using the RPC
+  port + 1, so `8899` → `8900`).
 - `--leader-key <path>` — leader / quote-authority keypair (default
   `keys/EEEE.json`, the role key the bootstrap seeds the vault with).
 - `--aerodrome <network>:<pool>` — enable the Aerodrome (GeckoTerminal)
@@ -76,7 +79,12 @@ cargo run -p dropset-maker-bot
   imbalance) **halt quoting** (zero the profile, let levels expire) and
   alert for human review rather than calling the irreversible,
   admin-gated `FreezeVault` autonomously.
-- **Fill detection** rides the per-tick vault read (the reference's
-  price-time nonce bumps on every flush). The `emit_cpi` event
-  subscription is the production-fidelity path and is deferred along
-  with the adversarial taker that would exercise it.
+- **Fill detection** subscribes to the program's `emit_cpi!`
+  `FillEvent`s (production-fidelity path): a dedicated thread runs a
+  `logsSubscribe` and reads the events out of each transaction's inner
+  instructions via `getTransaction`, forwarding the attributed fills the
+  tick folds into its inventory belief. The per-tick vault read
+  reconciles that belief (catching a missed fill or an external deposit
+  / withdraw) and is the sole signal in the fallback path when no
+  subscription is attached. The adversarial taker that would exercise
+  this under load is still deferred.

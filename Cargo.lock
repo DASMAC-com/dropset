@@ -1497,18 +1497,24 @@ dependencies = [
 name = "dropset-maker-bot"
 version = "0.1.0"
 dependencies = [
+ "anchor-lang-v2",
  "anyhow",
+ "borsh",
+ "bs58",
  "bytemuck",
  "dropset-sdk",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "solana-client",
  "solana-commitment-config",
  "solana-instruction",
  "solana-keypair",
  "solana-pubkey 3.0.0",
+ "solana-signature",
  "solana-signer",
  "solana-transaction",
+ "solana-transaction-status-client-types",
  "ureq",
 ]
 
