@@ -377,9 +377,9 @@ Backlog — including anything steps 3–6 just filed. The
 deterministic Python tool does all the work (read →
 render → write); this skill just triggers it. This
 **full** re-stage is the authoritative reconcile, run
-fresh from the live Backlog each morning — it converges
-whatever a previous `/audit` rotation folded in
-incrementally.
+fresh from the live Backlog each morning — it subsumes
+the re-stage a previous `/audit` rotation already ran at
+its end.
 
 **8. Run one audit rotation (only when the `audit` flag was
 passed).** The morning's last act: with upkeep done, the
@@ -392,8 +392,8 @@ because the flag carries the intent).
 - **The `audit` flag was passed** (`housekeeping audit`) →
   invoke the `audit` skill (via the Skill tool) **once**.
   `/audit` is finite — a single seven-unit rotation that
-  files its findings, folds each into the Task Staging
-  document incrementally, fires a high-severity
+  files its findings, re-stages the Task Staging document
+  once at the end, fires a high-severity
   `PushNotification` only when something warrants
   interrupting you, and stops on its own with a `DONE`
   line. It runs **inline** (it's bounded, so there's no
@@ -407,9 +407,8 @@ because the flag carries the intent).
 single bounded rotation, not a continuous campaign — it
 files what its seven units surface and stops. To audit
 again, run `housekeeping audit` (or `/audit`) again. The
-rotation keeps the Task Staging document roughly current
-via its incremental staging; the next pass's step 7 is the
-full reconcile.
+rotation re-stages the Task Staging document once at its
+end; the next pass's step 7 is the full reconcile.
 
 **9. Report.** Print a short summary:
 

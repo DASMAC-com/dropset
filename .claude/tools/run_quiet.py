@@ -141,11 +141,14 @@ def run(tail, label, cmd):
     to LAUNCH_FAILURE_CODE rather than raising.
     """
     display = label if label else " ".join(cmd)
-    os.makedirs(LOG_DIR, exist_ok=True)
+    # A captured log can hold secrets a wrapped command surfaced (a token in a
+    # failing build, an env dump), so keep the dir and file owner-only.
+    os.makedirs(LOG_DIR, mode=0o700, exist_ok=True)
     log_path = os.path.join(LOG_DIR, "%s-%d.log" % (sanitize(cmd), os.getpid()))
 
     try:
         with open(log_path, "w", encoding="utf-8", errors="replace") as log_file:
+            os.chmod(log_path, 0o600)
             completed = subprocess.run(
                 cmd,
                 stdout=log_file,

@@ -32,8 +32,8 @@ recommended default **first**. Full detail:
 
 ## Linear automation
 
-Filing skills (`linear-task`, `stage-backlog`, `audit`,
-`audit-scope`, `trim-context`, `housekeeping`) resolve team / project /
+Filing skills (`linear-task`, `audit`, `audit-scope`,
+`trim-context`, `housekeeping`) resolve team / project /
 assignee and the inbox-doc ids from **environment variables**
 (`LINEAR_*`), never hard-coded UUIDs — each via its **own** bare
 `printenv` (a combined `printenv A B C` returns only the first on macOS

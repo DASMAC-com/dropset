@@ -1,6 +1,6 @@
 ---
 name: audit
-description: One bounded platform-audit rotation, run once to completion — a fixed 7-unit pass that interleaves four randomly-chosen non-generated files (each audited via the `audit-scope` engine) with one randomly-chosen subsystem (internal-architecture lens), one randomly-chosen inter-subsystem interface (seam / contract-drift lens), and one repo-layout + spec-health pass, each adversarially cross-checked. Dedups against open or resolved Linear issues, files one self-contained Backlog issue per confirmed finding, folds each into the Task Staging document incrementally, announces, and stops. No loop, no finding cap, no re-invocation — run it again for another rotation.
+description: One bounded platform-audit rotation, run once to completion — a fixed 7-unit pass that interleaves four randomly-chosen non-generated files (each audited via the `audit-scope` engine) with one randomly-chosen subsystem (internal-architecture lens), one randomly-chosen inter-subsystem interface (seam / contract-drift lens), and one repo-layout + spec-health pass, each adversarially cross-checked. Dedups against open or resolved Linear issues, files one self-contained Backlog issue per confirmed finding, re-stages the Task Staging document once at the end via stage-backlog, announces, and stops. No loop, no finding cap, no re-invocation — run it again for another rotation.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -20,8 +20,8 @@ separate job, owned by `stage-backlog`.
 
 Invoke it directly — `/audit` — when you want a fresh batch of findings.
 It is **finite**: it runs the seven units once, files what they surface,
-folds each into the Task Staging document, and **stops** with a single
-`DONE` line. There is **no `/loop`, no finding cap, and no
+re-stages the Task Staging document once at the end, and **stops** with
+a single `DONE` line. There is **no `/loop`, no finding cap, and no
 re-invocation** — the rotation *is* the bound. To audit more, run
 `/audit` again; each run is one independent rotation. `housekeeping`
 runs exactly one rotation inline when invoked with its `audit` flag
@@ -44,7 +44,8 @@ passes:
 5. FILE       — another random non-generated file  → audit-scope
 6. LAYOUT     — repo-layout + spec-health pass      → one agent
 7. FILE       — another random non-generated file  → audit-scope
-→ per unit: dedup, file findings, fold into Task Staging; then DONE
+→ per unit: cross-check, dedup, file findings
+→ once at the end: one stage-backlog re-stage, then DONE
 ```
 
 The structural units (2, 4, 6) each pick **one** subject **at random**,
@@ -70,8 +71,8 @@ going through `audit-scope`.
 
 This skill **never authors source edits and never writes to the
 worktree**. Its only writes are the Linear issues it files and the
-**Task Staging** document it folds each finding into incrementally
-(the File step, via `stage-backlog`). It produces no source diff of its
+**Task Staging** document it re-stages once at the end of the rotation
+(the Done step, via `stage-backlog`). It produces no source diff of its
 own, so it must never commit or push. The one repo operation it does
 perform is fast-forwarding the throwaway worktree to upstream `main` at
 the **start of the rotation** (step 1) — that pulls in others' merged
@@ -150,11 +151,11 @@ Dropset-project issues** with `mcp__claude_ai_Linear__list_issues`
 (same team / project IDs as the File step, `includeArchived: true`) and
 keep those whose description carries a `**Fingerprint**:` line — those
 are the audit-filed issues. For each kept issue, parse **every**
-`**Fingerprint**:` line — a normal issue has one, but an issue that
-`stage-backlog` merged carries the **union** of its group's
-fingerprints, so read them all — and note its current state (resolved
-vs. open). The collected `{fingerprint → state}` map is this rotation's
-dedup set (the Dedup step).
+`**Fingerprint**:` line — a normal issue has one, but a **combined**
+issue (one filed for several coupled findings) carries the **union** of
+their fingerprints, so read them all — and note its current state
+(resolved vs. open). The collected `{fingerprint → state}` map is this
+rotation's dedup set (the Dedup step).
 
 Then **read the Audit registry** from
 `docs/conventions/audit-registry.md`: the **subsystems**
@@ -169,9 +170,9 @@ path.
 unit step below. As **each** unit's findings come back, run them
 through the shared **Cross-check** (structural units only), **Dedup**,
 **File**, and **Announce** steps before moving to the next unit — so
-staging stays roughly current as the rotation proceeds. There is no
+findings land promptly as the rotation proceeds. There is no
 cap and no cadence counter: the seven units *are* the rotation. When
-all seven are done, go to **Done**.
+all seven are done, go to **Done** (which re-stages once).
 
 **Prepend the standing sub-agent brief from
 `docs/conventions/sub-agent-brief.md`** to every sub-agent prompt the
@@ -290,7 +291,7 @@ the basename for FILE findings; `arch:` for structural findings; slug
 deterministically). Then check it against the dedup set rebuilt from
 Linear in step 1: if any Dropset issue — **open or resolved** —
 already carries that fingerprint (checking **every** `**Fingerprint**:`
-line, since a `stage-backlog`-merged issue holds several), **skip
+line, since a combined issue holds several), **skip
 filing**. A resolved match means the finding was already triaged
 (Done / Won't-fix / Canceled); refiling it would reopen settled noise.
 Only findings that survive the check proceed.
@@ -343,10 +344,11 @@ surfaced more than one finding that plainly belongs in the **same PR**
 — same file or symbol, the work would obviously land as one change —
 file them as **one combined Backlog issue** instead of several: one
 title, the per-finding notes under per-source sub-headings, and a
-`**Fingerprint**:` line for **each** finding (the union). You already
-hold the context here, so combining now saves `stage-backlog` from
-re-deriving the grouping and re-merging later. Findings that don't
-obviously share a PR stay separate — let `stage-backlog` decide those.
+`**Fingerprint**:` line for **each** finding (the union). `stage-backlog`
+is render-only and **never merges issues**, so coupled findings only
+become one issue if you file them that way — combining at file time is
+the only way. Findings that don't obviously share a PR stay separate;
+`stage-backlog` then renders any file-overlap as a serial nesting.
 
 The description must let a cold agent act on it in its own worktree
 (literal newlines, not `\n`):
@@ -376,14 +378,11 @@ The description must let a cold agent act on it in its own worktree
   `docs/conventions/linear-automation.md` → "Structured filing fields".
 - `**Discovered by**: audit <unit> @ <commit SHA>`
 
-After each `save_issue`, **fold the new issue into the Task Staging
-document incrementally**: invoke the `stage-backlog` skill (via the
-Skill tool) in its **incremental** mode, passing the just-filed
-`ENG-###` id(s) (the whole union, when you filed a combined issue).
-This keeps the plan roughly current as findings land. It is best-effort
-chip placement, not a global regroup — the next full `stage-backlog`
-(the next `housekeeping` pass, or a manual `/stage-backlog`)
-reconciles.
+Do **not** stage per finding. `stage-backlog` is **render-only** — it
+re-reads the whole open Backlog and rewrites the document; there is no
+incremental / per-`ENG-###` mode. So filing is all the File step does;
+the single re-stage that picks up everything this rotation filed runs
+once at the end (the **Done** step).
 
 **Structural findings** (SUBSYSTEM / INTERFACE / LAYOUT) are filed the
 same way (plain Backlog issue, same IDs, no parent) but as **one
@@ -420,17 +419,19 @@ inline run interrupts you only when it matters. If nothing was filed,
 send no notification.
 
 **Done.** After all seven units have been processed (each cross-checked
-where applicable, deduped, filed, and folded into staging), the
-rotation is complete. The Task Staging document was kept roughly
-current incrementally as each finding was filed, so this skill does
-**not** run a heavy full re-stage here — the authoritative reconcile (a
-full `stage-backlog` that re-derives the grouping and merges the issues
-that belong in one PR) is the **next `housekeeping` pass**'s job (or a
-manual `/stage-backlog`). Print a single final line and **stop** —
-there is no re-invocation:
+where applicable, deduped, and filed), the rotation is complete.
+**Re-stage the Task Staging document once, now:** invoke the
+`stage-backlog` skill (via the Skill tool). It runs the render-only
+`make stage-backlog`, which re-reads the whole open Backlog — including
+everything this rotation just filed — and rewrites the document in one
+deterministic pass. (`make stage-backlog` needs `LINEAR_API_KEY`; if
+it's unset the tool says so and the re-stage is left to the next
+`housekeeping` pass or a manual `/stage-backlog` — note that in the
+final line rather than failing the rotation.) Then print a single final
+line and **stop** — there is no re-invocation:
 
 ```txt
-DONE audit | filed <t> (h/m/l) | deduped <d> | staged incrementally
+DONE audit | filed <t> (h/m/l) | deduped <d> | re-staged
 ```
 
 To run another rotation later, just invoke `/audit` again — it samples

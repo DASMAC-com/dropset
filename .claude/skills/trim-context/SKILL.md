@@ -70,8 +70,8 @@ skill change isn't filed — just note it consumed.
 carries:
 
 - a **`**Touches**:`** line — the skill or convention doc the fix edits
-  (per [linear-automation](../../../docs/conventions/linear-automation.md)
-  → "Structured filing fields"), and
+  (per `docs/conventions/linear-automation.md` → "Structured filing
+  fields"), and
 - a **`**Fingerprint**: session-metrics:<lever-slug>`** line so later
   passes dedup.
 
@@ -121,7 +121,7 @@ no-op'd because the inbox id was unset.
   by hand any time the inbox has unprocessed entries. Either way the
   behavior is identical — there is no attended / propose-only mode.
 - **Shell discipline** (per
-  [shell-commands](../../../docs/conventions/shell-commands.md)): every
+  `docs/conventions/shell-commands.md`): every
   command is a single bare call that reduces to an allow-glob — no
   `&&`, pipes, `$(…)`, or redirects; resolve each id with a bare
   `printenv`, one variable per call.
