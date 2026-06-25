@@ -78,6 +78,7 @@ retuned
 retunes
 rlib
 rollup
+rollups
 rustc
 sbpf
 seedable
@@ -88,6 +89,7 @@ solana
 solflare
 solscan
 soulbound
+sqlx
 stablecoins
 stdlib
 stoikov

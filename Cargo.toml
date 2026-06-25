@@ -13,7 +13,7 @@ opt-level = 2
 overflow-checks = true
 
 [workspace]
-members = ["bots/maker-bot", "bots/taker-bot", "programs/dropset", "sdk/math-core", "sdk/interface", "sdk/rs", "tui"]
+members = ["bots/maker-bot", "bots/taker-bot", "indexer", "programs/dropset", "sdk/math-core", "sdk/interface", "sdk/rs", "tui"]
 resolver = "2"
 
 [workspace.dependencies]

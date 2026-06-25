@@ -10,6 +10,8 @@
 .PHONY: explorer-down
 .PHONY: frontend
 .PHONY: idl
+.PHONY: indexer-down
+.PHONY: indexer-up
 .PHONY: install-anchor-v2
 .PHONY: lint
 .PHONY: sdk
@@ -124,6 +126,16 @@ explorer:
 	docker compose -f infra/localnet/docker-compose.yml up -d explorer
 explorer-down:
 	docker compose -f infra/localnet/docker-compose.yml down
+
+# Localnet indexer stack: Postgres + the event indexer worker + the /v1 API
+# (infra/localnet, docs/indexer.md §8). Needs a running validator (the tui or
+# a host-run solana-test-validator) as the live event source. First run builds
+# the Rust image (slow); later runs reuse the cargo-chef dependency cache. The
+# /v1 surface comes up on http://localhost:8080.
+indexer-up:
+	docker compose -f infra/localnet/docker-compose.yml up -d postgres indexer indexer-api
+indexer-down:
+	docker compose -f infra/localnet/docker-compose.yml rm -sf postgres indexer indexer-api
 
 # Run next dev and open the browser once it's accepting connections.
 frontend:

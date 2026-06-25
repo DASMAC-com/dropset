@@ -21,6 +21,7 @@
 // form Codama renders; allow `io_other_error` here rather than editing
 // generated files `make sdk` would overwrite.
 pub mod adapters;
+pub mod events;
 #[allow(clippy::io_other_error)]
 #[allow(unused_imports)]
 pub mod generated;
