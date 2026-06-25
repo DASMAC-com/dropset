@@ -110,7 +110,7 @@ tui:
 # action runs, with no UI. Defaults to localnet; pass WALLET to override the
 # admin keypair and ARGS for the rest (e.g. a real cluster, which prompts for
 # confirmation — add --yes to skip that prompt in automation):
-# `make teardown WALLET=~/admin.json ARGS="--rpc-url <url> --skip-program-close"`.
+# `make teardown WALLET=~/admin.json ARGS="--rpc-url <url> --yes"`.
 teardown:
 	cargo run -p dropset-tui --bin dropset-teardown -- $(if $(WALLET),--wallet $(WALLET)) $(ARGS)
 

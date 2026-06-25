@@ -3,22 +3,19 @@
 //! Drives the exact same [`teardown::run`] the TUI's "Teardown & reclaim"
 //! action does, but with no UI: discover whatever live accounts exist, drain
 //! and close them in the spec's dependency order, and refund all rent to the
-//! wallet. Built to run in automation or against a real cluster, so unlike the
-//! TUI (which is pinned to localnet) it takes an explicit `--rpc-url` and
-//! guards any non-localnet target behind an interactive confirmation.
+//! wallet. The program is left deployed (teardown resets only on-chain state).
+//! Built to run in automation or against a real cluster, so unlike the TUI
+//! (which is pinned to localnet) it takes an explicit `--rpc-url` and guards
+//! any non-localnet target behind an interactive confirmation.
 //!
 //! ```text
-//! dropset-teardown [--wallet <path>] [--rpc-url <url>]
-//!                  [--skip-program-close] [--yes]
+//! dropset-teardown [--wallet <path>] [--rpc-url <url>] [--yes]
 //! ```
 //!
-//! - `--wallet <path>` — admin keypair (payer + registry admin + upgrade
-//!   authority). Defaults to the Solana CLI wallet.
+//! - `--wallet <path>` — admin keypair (payer + registry admin). Defaults to
+//!   the Solana CLI wallet.
 //! - `--rpc-url <url>` — cluster endpoint. Defaults to the localnet validator
 //!   (`http://127.0.0.1:8899`).
-//! - `--skip-program-close` — reclaim accounts but leave the deployed program
-//!   in place. Recommended on a real cluster; without it (the default, which
-//!   the TUI's localnet wipe also uses) the program is closed too.
 //! - `--yes` / `-y` — skip the non-localnet confirmation prompt (for
 //!   unattended runs).
 
@@ -38,7 +35,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let (keypair, wallet_path) = wallet::load(args.wallet.as_deref())?;
+    let (keypair, _wallet_path) = wallet::load(args.wallet.as_deref())?;
     let rpc_url = args
         .rpc_url
         .unwrap_or_else(|| validator::DEFAULT_RPC_URL.to_string());
@@ -47,22 +44,11 @@ fn main() -> Result<()> {
     // A real cluster is irreversible, so make the operator confirm unless they
     // opted out with --yes (or the target is the throwaway localnet).
     if !is_localnet(&rpc_url) && !args.yes {
-        confirm(
-            &rpc_url,
-            &keypair.pubkey().to_string(),
-            args.skip_program_close,
-        )?;
+        confirm(&rpc_url, &keypair.pubkey().to_string())?;
     }
 
     let log = Logger::stdout();
-    let summary = teardown::run(
-        &client,
-        &keypair,
-        &wallet_path,
-        &rpc_url,
-        args.skip_program_close,
-        &log,
-    )?;
+    let summary = teardown::run(&client, &keypair, &log)?;
     println!("{summary}");
     Ok(())
 }
@@ -99,22 +85,15 @@ fn host_of(rpc_url: &str) -> Option<String> {
 
 /// Block on an interactive `yes` before tearing down a non-localnet cluster.
 /// Prints to stderr so a piped stdout (the teardown log) stays clean.
-fn confirm(rpc_url: &str, wallet: &str, skip_program_close: bool) -> Result<()> {
+fn confirm(rpc_url: &str, wallet: &str) -> Result<()> {
     eprintln!("⚠  Non-localnet teardown — this is irreversible.");
     eprintln!("   RPC:    {rpc_url}");
     eprintln!("   wallet: {wallet}");
     eprintln!(
         "   Drains and CLOSES every live market, vault, treasury, and the\n   \
-         registry, reclaiming all rent to the wallet."
+         registry, reclaiming all rent to the wallet. The program is left\n   \
+         deployed."
     );
-    if skip_program_close {
-        eprintln!("   The deployed program is left in place (--skip-program-close).");
-    } else {
-        eprintln!(
-            "   The deployed program will ALSO be closed — pass\n   \
-             --skip-program-close to keep it."
-        );
-    }
     eprint!("   Type 'yes' to continue: ");
     std::io::stderr().flush().ok();
     let mut line = String::new();
@@ -129,12 +108,10 @@ fn print_help() {
     println!(
         "dropset-teardown — headless rent reclamation\n\n\
          USAGE:\n    \
-         dropset-teardown [--wallet <path>] [--rpc-url <url>] \
-         [--skip-program-close] [--yes]\n\n\
+         dropset-teardown [--wallet <path>] [--rpc-url <url>] [--yes]\n\n\
          OPTIONS:\n    \
          -w, --wallet <path>     admin keypair (default: Solana CLI wallet)\n        \
-         --rpc-url <url>     cluster endpoint (default: localnet)\n        \
-         --skip-program-close   reclaim accounts but leave the program deployed\n    \
+         --rpc-url <url>     cluster endpoint (default: localnet)\n    \
          -y, --yes               skip the non-localnet confirmation prompt\n    \
          -h, --help              show this help"
     );
@@ -155,7 +132,6 @@ fn value(it: &mut impl Iterator<Item = String>, flag: &str) -> Result<String> {
 struct Args {
     wallet: Option<String>,
     rpc_url: Option<String>,
-    skip_program_close: bool,
     yes: bool,
     help: bool,
 }
@@ -165,7 +141,6 @@ impl Args {
         let mut a = Args {
             wallet: None,
             rpc_url: None,
-            skip_program_close: false,
             yes: false,
             help: false,
         };
@@ -173,7 +148,6 @@ impl Args {
             match arg.as_str() {
                 "--wallet" | "-w" => a.wallet = Some(value(&mut it, "--wallet")?),
                 "--rpc-url" => a.rpc_url = Some(value(&mut it, "--rpc-url")?),
-                "--skip-program-close" => a.skip_program_close = true,
                 "--yes" | "-y" => a.yes = true,
                 "--help" | "-h" => a.help = true,
                 other => bail!("unknown argument: {other} (try --help)"),
@@ -214,18 +188,9 @@ mod tests {
 
     #[test]
     fn args_parse_flags_and_values() {
-        let a = parse(&[
-            "--wallet",
-            "/k.json",
-            "--rpc-url",
-            "http://h:1",
-            "--skip-program-close",
-            "-y",
-        ])
-        .unwrap();
+        let a = parse(&["--wallet", "/k.json", "--rpc-url", "http://h:1", "-y"]).unwrap();
         assert_eq!(a.wallet.as_deref(), Some("/k.json"));
         assert_eq!(a.rpc_url.as_deref(), Some("http://h:1"));
-        assert!(a.skip_program_close);
         assert!(a.yes);
         assert!(!a.help);
     }

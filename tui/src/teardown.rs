@@ -1,19 +1,17 @@
 //! Teardown / rent reclamation — the single source of truth.
 //!
-//! [`run`] reclaims every rent-bearing artifact that currently exists, in the
-//! spec's prescribed dependency order (architecture.md § Account lifecycle and
-//! rent reclamation → Teardown ordering): a live market is drained and closed
-//! first (per-depositor `force_withdraw_depositor` → per-leader
-//! `force_withdraw_leader` → per-leg `close_market_treasury` →
-//! `close_market`), then the registry fee vault and registry, and finally the
-//! program itself (reclaiming its program-data rent). The same `run` is driven
-//! by the TUI's "Teardown & reclaim" action and by the headless
+//! [`run`] reclaims every rent-bearing **application** artifact that currently
+//! exists, in the spec's prescribed dependency order (architecture.md §
+//! Account lifecycle and rent reclamation → Teardown ordering): a live market
+//! is drained and closed first (per-depositor `force_withdraw_depositor` →
+//! per-leader `force_withdraw_leader` → per-leg `close_market_treasury` →
+//! `close_market`), then the registry fee vault and registry. The same `run`
+//! is driven by the TUI's "Teardown & reclaim" action and by the headless
 //! `dropset-teardown` binary, so there is one implementation, not two that can
 //! drift.
 
 use crate::accounts::{self, MarketView};
 use crate::chain;
-use crate::deploy;
 use crate::job::Logger;
 use anyhow::{Context, Result};
 use solana_client::rpc_client::RpcClient;
@@ -22,37 +20,31 @@ use solana_native_token::LAMPORTS_PER_SOL;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 
-/// Reclaim every rent-bearing artifact that currently exists, in dependency
-/// order — so it works at any phase from `RegistryAbsent` on. A live market is
-/// drained and closed first (per-depositor `force_withdraw_depositor` →
-/// per-leader `force_withdraw_leader` → per-leg `close_market_treasury` →
-/// `close_market`), then the registry fee vault and registry, and — unless
-/// `skip_program_close` — the program itself (reclaiming its program-data
-/// rent). All rent is refunded to the wallet; returns the lamports delta in
+/// Reclaim every rent-bearing **application** artifact that currently exists,
+/// in dependency order — so it works at any phase from `RegistryAbsent` on. A
+/// live market is drained and closed first (per-depositor
+/// `force_withdraw_depositor` → per-leader `force_withdraw_leader` → per-leg
+/// `close_market_treasury` → `close_market`), then the registry fee vault and
+/// registry. All rent is refunded to the wallet; returns the lamports delta in
 /// the summary. Each layer is guarded by existence, so a partial bootstrap
 /// tears down cleanly.
 ///
-/// `skip_program_close` leaves the deployed program in place — recommended on
-/// a real cluster, where you reclaim accounts but rarely want to close the
-/// program. Without it (the default, and what the TUI passes) the program is
-/// closed too, to wipe a localnet whole.
-pub fn run(
-    client: &RpcClient,
-    wallet: &Keypair,
-    wallet_path: &str,
-    rpc_url: &str,
-    skip_program_close: bool,
-    log: &Logger,
-) -> Result<String> {
+/// The **program itself is left deployed and upgradeable** — teardown resets
+/// only on-chain state, never the program. Closing a program bricks its id on
+/// the ledger forever (a fresh deploy would need a wiped validator), whereas
+/// keeping it mirrors the mainnet workflow: the program keeps its address and
+/// new logic is shipped by upgrading in place. After teardown the phase reads
+/// `RegistryAbsent`, so `init` runs straight away against the still-deployed
+/// program. Use the TUI's `Wipe` for a true clean slate.
+pub fn run(client: &RpcClient, wallet: &Keypair, log: &Logger) -> Result<String> {
     let admin = wallet.pubkey();
-    let state = accounts::poll(client, &admin);
+    let state = accounts::poll(client, &admin, None);
     let before = client.get_balance(&admin).unwrap_or(0);
 
     // The `rent_recipient` of every close instruction must differ from the
     // admin signer (anchor-v2's duplicate-mutable-account rule), so reclaimed
     // rent is routed to an ephemeral sink and swept back to the wallet at the
-    // end. The program close (a loader CLI op, no such check) pays the wallet
-    // directly.
+    // end.
     let sink = Keypair::new();
     let sink_key = sink.pubkey();
 
@@ -94,20 +86,10 @@ pub fn run(
         ));
     }
 
-    if skip_program_close {
-        if state.program_deployed {
-            log.log("Leaving the program deployed (--skip-program-close).");
-        }
-    } else if state.program_deployed {
-        log.log("Closing program to reclaim program rent…");
-        deploy::close_program(log, rpc_url, wallet_path, &admin)?;
-        log.accounts_changed();
-    }
-
     let after = client.get_balance(&admin).unwrap_or(0);
     let reclaimed = after.saturating_sub(before);
     Ok(format!(
-        "Teardown complete — reclaimed {:.4} SOL in rent",
+        "Teardown complete — reclaimed {:.4} SOL in rent (program left deployed)",
         reclaimed as f64 / LAMPORTS_PER_SOL as f64
     ))
 }
