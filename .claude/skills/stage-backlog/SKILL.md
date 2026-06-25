@@ -9,7 +9,7 @@ user-invocable: true
 
 Run **one iteration** of staging the Dropset Linear
 Backlog onto the **Task Staging** document and exit.
-Agent-filed findings (`audit-loop`) and hand-filed
+Agent-filed findings (`audit`) and hand-filed
 to-dos (`linear-task`) all land as plain **Backlog**
 issues with no parent. This skill turns that flat queue
 into a plan: it groups the issues into the fewest
@@ -219,7 +219,7 @@ re-invokes immediately (no timer, no wait).
   a relation — that's a scheduling artifact, not a true
   dependency. The durable record of real dependencies is
   what the filing skills (`linear-task`, `audit-scope`,
-  `audit-loop`) set at file time.
+  `audit`) set at file time.
 - **No issue folding.** The tool renders the Backlog as it
   finds it; it never merges or closes issues. Two issues
   that belong in one PR render as nested serial chips, not

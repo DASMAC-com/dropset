@@ -22,9 +22,14 @@ into the transcript**:
   of it. Brief review sub-agents to do the same.
 - **Route verbose build logs away from context.** Prefer `-q` /
   `--quiet` so a `cargo` / `make` "Compiling …" cascade doesn't land
-  inline; for a noisy target, surface only the tail / the result, not
-  the whole stream. (Do this within the shell rules — no redirect; a
-  quiet flag is a flag.)
+  inline. For a noisy target with no quiet flag, run it through the
+  quiet runner, `python3 .claude/tools/run_quiet.py -- CMD ARGS…`
+  (with optional `--tail N` / `--label L`): it captures the output to a
+  temp log and prints only a one-line summary on success, or the
+  failing tail plus the exit code and log path on failure (so you can
+  `Read` more by slice). A green build is then paid once, not replayed
+  every later turn. (Do this within the shell rules — the runner
+  captures inside Python, so the command line carries no redirect.)
 - **Scope a sub-agent fan-out.** Inlining the same large diff into N
   reviewers pays for N resident copies; scope each agent to its files,
   or have them read one shared file, rather than inlining N times.

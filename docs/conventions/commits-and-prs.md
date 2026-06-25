@@ -43,7 +43,7 @@ user- and model-invocable), but the flow never offers it on its own;
   sensible default exists, put it **first** and label it
   "(Recommended)". This is the shared pattern behind the
   init-pr → review-pr handoff and the review-pr → firm-perms gate.
-  (`housekeeping`'s audit-loop kickoff is the one deliberate
-  exception: it is **arg-gated** — passing a finding cap is itself the
-  go-ahead — rather than `AskUserQuestion`-gated, because the number
+  (`housekeeping`'s audit kickoff is the one deliberate
+  exception: it is **arg-gated** — passing the `audit` flag is itself
+  the go-ahead — rather than `AskUserQuestion`-gated, because the flag
   carries the intent.)

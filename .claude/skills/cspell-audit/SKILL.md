@@ -222,7 +222,7 @@ matching entries (still report the rest).
 
 The `housekeeping` skill runs this check on its periodic
 pass — escape drift is slow, so it's upkeep, not part of
-the audit loop. It invokes `cspell-audit` in delegated
+the `audit` rotation. It invokes `cspell-audit` in delegated
 mode (read-only, no edits) and files the run's violations
 as a **single aggregated** Backlog issue — **not** one
 issue per finding, because cspell fixes are trivial,

@@ -1,6 +1,6 @@
 ---
 name: audit-scope
-description: Audit a defined scope — one file, a PR's files, a subsystem, or the whole codebase — across the dimensions its platform kind calls for (security, comment accuracy, DRY, modularity, naming, doc-freshness), with adversarial sub-agent cross-checking, and file each confirmed finding as a Linear Backlog issue. The shared audit engine that audit-loop drives one unit at a time.
+description: Audit a defined scope — one file, a PR's files, a subsystem, or the whole codebase — across the dimensions its platform kind calls for (security, comment accuracy, DRY, modularity, naming, doc-freshness), with adversarial sub-agent cross-checking, and file each confirmed finding as a Linear Backlog issue. The shared audit engine that `audit` drives one file at a time.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -12,9 +12,9 @@ user-invocable: true
 Audit a defined scope of the codebase and file each
 confirmed finding as its own Linear **Backlog** issue —
 the same destination and format `linear-task` and
-`audit-loop` use. Use when a milestone lands, a feature
+`audit` use. Use when a milestone lands, a feature
 ships, or before declaring a subsystem "stable", and as
-the engine `audit-loop` calls for its per-unit passes.
+the engine `audit` calls for its per-file passes.
 
 This replaces the old `audit-codebase`, which wrote a
 gitignored checklist. Findings now live in the Backlog,
@@ -26,12 +26,12 @@ so they're picked up as normal PRs (staged by
 - **Directly (you invoke it).** Plan-gated: you give a
   scope, confirm the plan, and the skill files the
   surviving findings as Backlog issues itself.
-- **Delegated (`audit-loop` invokes it).** The loop has
-  already picked the unit and owns selection + dedup, so
+- **Delegated (`audit` invokes it).** The caller has
+  already picked the file and owns selection + dedup, so
   audit-scope skips the plan gate, runs the audit, and
-  **returns the confirmed findings** to the loop, which
+  **returns the confirmed findings** to the caller, which
   dedups them against live Linear and files. It does
-  **not** file in this mode — the loop does.
+  **not** file in this mode — the caller does.
 
 The work in between — classify the scope, fan out the
 dimensions, adversarially cross-check — is identical
@@ -60,13 +60,13 @@ Optional (ask on a direct run if not provided):
    the per-kind security checklist the scope selects, the
    extra focus areas, and the sub-agents that will run),
    show it to the user, and wait for confirmation before
-   searching. Delegated runs skip this — `audit-loop`
+   searching. Delegated runs skip this — `audit`
    supplies the scope and there's no one to gate.
 
 1. **Classify the scope by platform kind.** Match the
    scope's paths to a platform/subsystem so the right
    checklist runs — this is the subsystem-scope logic the
-   audit shares with `audit-loop`. Read the **Audit
+   audit shares with `audit`. Read the **Audit
    registry** in `docs/conventions/audit-registry.md` and
    take the `kind` of the subsystem whose `roots` the paths
    map
@@ -181,8 +181,8 @@ Optional (ask on a direct run if not provided):
 
    - **Delegated run:** return the confirmed findings
      (their `fingerprint_slug`s, titles, bodies, and
-     severities) to `audit-loop`. Do **not** file — the
-     loop dedups against live Linear first. Stop here.
+     severities) to the caller (`audit`). Do **not** file —
+     the caller dedups against live Linear first. Stop here.
 
    - **Direct run:** file each surviving finding as its
      own Linear **Backlog** issue, exactly as `linear-task`
@@ -241,7 +241,7 @@ Optional (ask on a direct run if not provided):
        that would catch this class going forward.
      - `**Fingerprint**: <basename>:<fingerprint_slug>` —
        the dedup key (e.g. `swap.rs:slippage:no-min-out`),
-       so `audit-loop` and re-runs recognize it. Mandatory.
+       so `audit` and re-runs recognize it. Mandatory.
      - `**Touches**: <glob>[, <glob>…]` — the
        machine-readable list of path globs this fix will
        edit (e.g. `programs/dropset/src/swap.rs` or
@@ -256,7 +256,7 @@ Optional (ask on a direct run if not provided):
 1. **Report.** Print a short tally — findings by
    dimension and severity, deduped count, and (direct run)
    the filed issue identifiers, or (delegated run) a note
-   that the findings were handed back to the loop.
+   that the findings were handed back to the caller.
 
 ## Notes
 
@@ -267,7 +267,7 @@ Optional (ask on a direct run if not provided):
 - If a finding spans multiple files that obviously belong
   in one PR, file them as one combined issue with a
   `**Fingerprint**:` line per finding (the union), the way
-  `audit-loop` does — `stage-backlog` never merges issues,
+  `audit` does — `stage-backlog` never merges issues,
   so combining at file time is the only way coupled
   findings become one issue.
 - Shell discipline (per `CLAUDE.md`): every command is a

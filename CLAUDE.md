@@ -32,13 +32,14 @@ recommended default **first**. Full detail:
 
 ## Linear automation
 
-Filing skills (`linear-task`, `stage-backlog`, `audit-loop`,
-`audit-scope`, `housekeeping`) resolve team / project / assignee and
-the inbox-doc ids from **environment variables** (`LINEAR_*`), never
-hard-coded UUIDs — each via its **own** bare `printenv` (a combined
-`printenv A B C` returns only the first on macOS / BSD). A worktree
-branch and its Linear issue share one `ENG-###`. Full detail — every
-env var and which skill reads it: `docs/conventions/linear-automation.md`.
+Filing skills (`linear-task`, `audit`, `audit-scope`,
+`trim-context`, `housekeeping`) resolve team / project /
+assignee and the inbox-doc ids from **environment variables**
+(`LINEAR_*`), never hard-coded UUIDs — each via its **own** bare
+`printenv` (a combined `printenv A B C` returns only the first on macOS
+/ BSD). A worktree branch and its Linear issue share one `ENG-###`.
+Full detail — every env var and which skill reads it:
+`docs/conventions/linear-automation.md`.
 
 ### Structured filing fields
 
@@ -129,6 +130,6 @@ skill. **Spelling (cspell):** `cfg/dictionary.txt` is for terms in
 ## Audit registry
 
 The audit coverage map — the **subsystems**, **inter-subsystem
-interfaces**, and **skip-globs** that `audit-loop` / `audit-scope`
+interfaces**, and **skip-globs** that `audit` / `audit-scope`
 range over and `review-pr` refreshes on the PR path — lives in
 `docs/conventions/audit-registry.md`. Read and append it there.

@@ -498,7 +498,7 @@ PR-authoring **writes** (`create_pull_request`,
    EOF hooks), applying the step-4 fix-and-retry logic.
 
 1. **Refresh the Audit registry if the diff changed the
-   platform shape.** `audit-loop` reads its subsystems,
+   platform shape.** `audit` reads its subsystems,
    inter-subsystem interfaces, and skip-globs from
    `docs/conventions/audit-registry.md`; that registry is
    kept current on the PR path — here, on every run.
