@@ -17,11 +17,15 @@
 //! - `--rpc-url <url>` — cluster endpoint. Defaults to the localnet validator
 //!   (`http://127.0.0.1:8899`).
 //! - `--skip-program-close` — reclaim accounts but leave the deployed program
-//!   in place — the sane default on a real cluster.
+//!   in place. Recommended on a real cluster; without it (the default, which
+//!   the TUI's localnet wipe also uses) the program is closed too.
 //! - `--yes` / `-y` — skip the non-localnet confirmation prompt (for
 //!   unattended runs).
 
-use anyhow::{anyhow, bail, Result};
+// cspell:word rsplit
+// cspell:word userinfo
+
+use anyhow::{bail, Result};
 use dropset_tui::job::Logger;
 use dropset_tui::{chain, teardown, validator, wallet};
 use solana_signer::Signer;
@@ -63,10 +67,34 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// A URL is "localnet" if it points at the loopback validator — the only
-/// target that skips the confirmation prompt.
+/// Whether `rpc_url` targets the loopback validator — the only target that
+/// skips the confirmation prompt. Matches on the URL's **host component**
+/// exactly, not a substring: a remote host that merely contains the loopback
+/// token (`http://127.0.0.1.evil.com`, `https://127.0.0.1@evil.com`) resolves
+/// off-box and must still prompt.
 fn is_localnet(rpc_url: &str) -> bool {
-    rpc_url.contains("127.0.0.1") || rpc_url.contains("localhost")
+    matches!(
+        host_of(rpc_url).as_deref(),
+        Some("127.0.0.1" | "localhost" | "::1" | "0.0.0.0")
+    )
+}
+
+/// Best-effort, dependency-free host extraction from a
+/// `scheme://[user@]host[:port][/…]` URL, lowercased — enough to classify a
+/// teardown target as loopback. `None` when no host is present.
+fn host_of(rpc_url: &str) -> Option<String> {
+    let after_scheme = rpc_url.split_once("://").map_or(rpc_url, |(_, rest)| rest);
+    // The authority ends at the first '/', '?', or '#'.
+    let authority = after_scheme.split(['/', '?', '#']).next().unwrap_or("");
+    // Drop any `user[:pass]@` userinfo prefix.
+    let host_port = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    // A bracketed IPv6 literal (`[::1]:8899`) keeps its inner colons; an
+    // unbracketed host drops its `:port` suffix.
+    let host = match host_port.strip_prefix('[') {
+        Some(rest) => rest.split_once(']').map_or(rest, |(h, _)| h),
+        None => host_port.split_once(':').map_or(host_port, |(h, _)| h),
+    };
+    (!host.is_empty()).then(|| host.to_ascii_lowercase())
 }
 
 /// Block on an interactive `yes` before tearing down a non-localnet cluster.
@@ -112,6 +140,17 @@ fn print_help() {
     );
 }
 
+/// Consume the value following an option, rejecting a missing value or a
+/// flag-looking token (so `--rpc-url --yes` errors instead of silently taking
+/// `--yes` as the URL).
+fn value(it: &mut impl Iterator<Item = String>, flag: &str) -> Result<String> {
+    match it.next() {
+        Some(v) if !v.starts_with('-') => Ok(v),
+        Some(v) => bail!("{flag} needs a value, got flag-like `{v}`"),
+        None => bail!("{flag} needs a value"),
+    }
+}
+
 /// Parsed command line.
 struct Args {
     wallet: Option<String>,
@@ -132,12 +171,8 @@ impl Args {
         };
         while let Some(arg) = it.next() {
             match arg.as_str() {
-                "--wallet" | "-w" => {
-                    a.wallet = Some(it.next().ok_or_else(|| anyhow!("--wallet needs a path"))?)
-                }
-                "--rpc-url" => {
-                    a.rpc_url = Some(it.next().ok_or_else(|| anyhow!("--rpc-url needs a URL"))?)
-                }
+                "--wallet" | "-w" => a.wallet = Some(value(&mut it, "--wallet")?),
+                "--rpc-url" => a.rpc_url = Some(value(&mut it, "--rpc-url")?),
                 "--skip-program-close" => a.skip_program_close = true,
                 "--yes" | "-y" => a.yes = true,
                 "--help" | "-h" => a.help = true,
@@ -145,5 +180,60 @@ impl Args {
             }
         }
         Ok(a)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn localnet_matches_loopback_host_exactly() {
+        assert!(is_localnet("http://127.0.0.1:8899"));
+        assert!(is_localnet("http://localhost:8899"));
+        assert!(is_localnet("http://[::1]:8899"));
+        assert!(is_localnet("http://0.0.0.0:8899"));
+        assert!(is_localnet("https://LOCALHOST")); // case-insensitive host
+    }
+
+    #[test]
+    fn localnet_rejects_loopback_token_outside_the_host() {
+        // The dangerous direction: a remote host that merely contains the
+        // loopback token must still be treated as non-local (and prompt).
+        assert!(!is_localnet("http://127.0.0.1.evil.com/"));
+        assert!(!is_localnet("http://localhost.attacker.net/"));
+        assert!(!is_localnet("https://127.0.0.1@evil.com/"));
+        assert!(!is_localnet("http://evil.com/127.0.0.1"));
+        assert!(!is_localnet("https://evil.com/?note=localhost"));
+        assert!(!is_localnet("https://api.mainnet-beta.solana.com"));
+    }
+
+    fn parse(args: &[&str]) -> Result<Args> {
+        Args::parse(args.iter().map(|s| s.to_string()))
+    }
+
+    #[test]
+    fn args_parse_flags_and_values() {
+        let a = parse(&[
+            "--wallet",
+            "/k.json",
+            "--rpc-url",
+            "http://h:1",
+            "--skip-program-close",
+            "-y",
+        ])
+        .unwrap();
+        assert_eq!(a.wallet.as_deref(), Some("/k.json"));
+        assert_eq!(a.rpc_url.as_deref(), Some("http://h:1"));
+        assert!(a.skip_program_close);
+        assert!(a.yes);
+        assert!(!a.help);
+    }
+
+    #[test]
+    fn args_parse_rejects_unknown_missing_and_flag_value() {
+        assert!(parse(&["--bogus"]).is_err());
+        assert!(parse(&["--wallet"]).is_err()); // missing value
+        assert!(parse(&["--rpc-url", "--yes"]).is_err()); // flag swallowed as value
     }
 }

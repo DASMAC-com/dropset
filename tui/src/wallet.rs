@@ -12,7 +12,7 @@ use solana_keypair::Keypair;
 pub const DEFAULT_WALLET: &str = "~/.config/solana/id.json";
 
 /// Expand a leading `~/` to `$HOME`.
-pub fn expand_tilde(path: &str) -> String {
+fn expand_tilde(path: &str) -> String {
     match path.strip_prefix("~/") {
         Some(rest) => match std::env::var("HOME") {
             Ok(home) => format!("{home}/{rest}"),

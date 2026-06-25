@@ -32,9 +32,10 @@ use solana_signer::Signer;
 /// the summary. Each layer is guarded by existence, so a partial bootstrap
 /// tears down cleanly.
 ///
-/// `skip_program_close` leaves the deployed program in place: the right
-/// default on a real cluster, where you reclaim accounts but rarely want to
-/// close the program account. The TUI passes `false` to wipe a localnet whole.
+/// `skip_program_close` leaves the deployed program in place — recommended on
+/// a real cluster, where you reclaim accounts but rarely want to close the
+/// program. Without it (the default, and what the TUI passes) the program is
+/// closed too, to wipe a localnet whole.
 pub fn run(
     client: &RpcClient,
     wallet: &Keypair,
