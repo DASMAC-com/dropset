@@ -1,0 +1,45 @@
+# Localnet taker bot for the CADC/USDC mock market. A single benign
+# flow-generation taker that submits stochastic `swap`s against the seeded
+# vault so the book moves and the maker takes fills. Models dropset-alpha's
+# taker: a two-state (quiet/burst) Markov chain feeds a Poisson arrival count
+# per tick, LogNormal order sizes, and a buy-bias that mean-reverts toward
+# 0.5. Distinct from the deferred adversarial strategy-hardening taker.
+# Rust-only, not published. No tokio: a synchronous tick loop drives the
+# blocking RpcClient (sdk/rs `fetch` feature), matching the maker-bot and TUI.
+
+[[bin]]
+name = "dropset-taker-bot"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+# The off-chain client: the `matching` book simulator (size each order and
+# derive `min_out` off-chain before sending), the `layout` slab mirror
+# (market discovery + live book read), the `Price` codec (encode the swap's
+# `limit_price_bits`), the generated `SwapBuilder`, and the blocking
+# `RpcClient` — all behind `fetch`.
+dropset-sdk = {path = "../../sdk/rs", features = ["fetch"]}
+# The stochastic process: `Poisson` arrivals and `LogNormal` order sizes, on
+# a seedable `StdRng` so a fixed seed replays the same flow.
+rand = "0.8"
+rand_distr = "0.4"
+# Pinned to the SDK's 3.x line (sdk/rs/Cargo.toml) so there is one
+# `Pubkey` / `Instruction` / `RpcClient` type across the builder, fetch, and
+# transaction paths — NOT the workspace's solana-pubkey 4.x. `~3.1` on
+# solana-client matches the validator minor the Makefile gates (3.1.x).
+solana-client = "~3.1"
+solana-commitment-config = "3"
+solana-instruction = "3"
+solana-keypair = "3"
+solana-pubkey = "3"
+solana-signer = "3"
+solana-transaction = "3"
+
+[package]
+description = "Localnet stochastic taker bot for the Dropset CADC/USDC mock market."
+name = "dropset-taker-bot"
+publish = false
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true
