@@ -5,32 +5,15 @@
 //! create-market → create-vault → teardown → wipe) on it — so the operator
 //! can drive and watch the eCLOB end to end. Launched with `make tui`.
 
-mod accounts;
-mod action;
-mod app;
-mod book;
-mod chain;
-mod deploy;
-mod explorer;
-mod job;
-mod market;
-mod ui;
-mod validator;
-
 use anyhow::{anyhow, Result};
+use dropset_tui::{action, app, explorer, validator, wallet};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU8;
 use std::sync::{Arc, Mutex};
 
-/// Default wallet path (mirrors `Anchor.toml`'s `provider.wallet`). Used as
-/// payer, genesis admin, and program upgrade authority.
-const DEFAULT_WALLET: &str = "~/.config/solana/id.json";
-
 fn main() -> Result<()> {
     let wallet_arg = parse_wallet_arg();
-    let wallet_path = expand_tilde(wallet_arg.as_deref().unwrap_or(DEFAULT_WALLET));
-    let wallet = solana_keypair::read_keypair_file(&wallet_path)
-        .map_err(|e| anyhow!("read wallet keypair {wallet_path}: {e}"))?;
+    let (wallet, wallet_path) = wallet::load(wallet_arg.as_deref())?;
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .ok_or_else(|| anyhow!("locate repo root from crate dir"))?
@@ -48,7 +31,7 @@ fn main() -> Result<()> {
 }
 
 /// Parse `--wallet <path>` / `-w <path>`, or a single positional path.
-/// `None` falls back to [`DEFAULT_WALLET`].
+/// `None` falls back to [`wallet::DEFAULT_WALLET`].
 fn parse_wallet_arg() -> Option<String> {
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -59,15 +42,4 @@ fn parse_wallet_arg() -> Option<String> {
         }
     }
     None
-}
-
-/// Expand a leading `~/` to `$HOME`.
-fn expand_tilde(path: &str) -> String {
-    match path.strip_prefix("~/") {
-        Some(rest) => match std::env::var("HOME") {
-            Ok(home) => format!("{home}/{rest}"),
-            Err(_) => path.to_string(),
-        },
-        None => path.to_string(),
-    }
 }

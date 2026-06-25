@@ -16,6 +16,7 @@
 .PHONY: sdk-test
 .PHONY: session-metrics
 .PHONY: stage-backlog
+.PHONY: teardown
 .PHONY: test
 .PHONY: test-no-teardown
 .PHONY: tui
@@ -104,6 +105,14 @@ debugger: program
 # (not `localnet`) because the same panel will later drive mainnet too.
 tui:
 	cargo run -p dropset-tui
+
+# Headless rent reclamation — the same teardown the TUI's "Teardown & reclaim"
+# action runs, with no UI. Defaults to localnet; pass WALLET to override the
+# admin keypair and ARGS for the rest (e.g. a real cluster, which prompts for
+# confirmation — add --yes to skip that prompt in automation):
+# `make teardown WALLET=~/admin.json ARGS="--rpc-url <url> --yes"`.
+teardown:
+	cargo run -p dropset-tui --bin dropset-teardown -- $(if $(WALLET),--wallet $(WALLET)) $(ARGS)
 
 # Localnet Docker stack: the local Solana Explorer (infra/localnet). The
 # dropset-tui control plane manages this automatically; these targets drive

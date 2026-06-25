@@ -10,6 +10,13 @@
 name = "dropset-tui"
 path = "src/main.rs"
 
+# Headless rent-reclamation script. Drives the same `teardown::run` the TUI's
+# "Teardown & reclaim" action does, with no UI — runnable in automation and,
+# with an explicit `--rpc-url`, against a real cluster. `make teardown`.
+[[bin]]
+name = "dropset-teardown"
+path = "src/bin/teardown.rs"
+
 [dependencies]
 anyhow = "1"
 # Zero the `LiquidityProfile` Pod before filling its top-of-book level for
@@ -38,6 +45,10 @@ solana-pubkey = "3"
 solana-signer = "3"
 solana-transaction = "3"
 tempfile = "3"
+
+[lib]
+name = "dropset_tui"
+path = "src/lib.rs"
 
 [package]
 description = "Localnet control-plane TUI for the Dropset eCLOB program."
