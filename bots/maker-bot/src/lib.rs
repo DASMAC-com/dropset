@@ -20,5 +20,6 @@
 pub mod chain;
 pub mod config;
 pub mod context;
+pub mod fills;
 pub mod model;
 pub mod tasks;

@@ -101,7 +101,8 @@ fn mint_decimals(client: &RpcClient, mint: &Pubkey) -> Result<u8> {
 /// Note the reference's price-time nonce is deliberately *not* read for fill
 /// detection: it bumps on every re-quote (the leader's own
 /// `set_reference_price` / `set_liquidity_profile` arm a flush), so a change
-/// doesn't imply a taker. Inventory movement is the fill signal instead.
+/// doesn't imply a taker. The `emit_cpi!` `FillEvent` subscription (`fills`)
+/// is the primary fill signal; this read reconciles it and is the fallback.
 pub fn read_vault(
     client: &RpcClient,
     market: &Pubkey,

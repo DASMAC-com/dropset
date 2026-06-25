@@ -7,18 +7,19 @@
 //!
 //! Flags:
 //!   --rpc <url>            RPC endpoint (default http://127.0.0.1:8899)
+//!   --ws <url>             PubSub websocket (default: derived from --rpc)
 //!   --leader-key <path>    leader/quote-authority keypair (default keys/EEEE.json)
 //!   --aerodrome <net>:<pool>  enable the Aerodrome feed (off by default)
 //!   --dry-run              poll feeds and print the intended quote, then exit
 
 use anyhow::{anyhow, Context, Result};
-use dropset_maker_bot::config::{AerodromeConfig, BotConfig, DEFAULT_LEADER_KEY};
+use dropset_maker_bot::config::{ws_url_from_rpc, AerodromeConfig, BotConfig, DEFAULT_LEADER_KEY};
 use dropset_maker_bot::context::Context as BotContext;
 use dropset_maker_bot::model::fair_mid::{compose, Quote};
 use dropset_maker_bot::model::feeds::Feeds;
 use dropset_maker_bot::model::inventory::Inventory;
 use dropset_maker_bot::model::{killswitch, ladder, skew};
-use dropset_maker_bot::{chain, tasks};
+use dropset_maker_bot::{chain, fills, tasks};
 use solana_signer::Signer;
 use std::time::Duration;
 
@@ -54,6 +55,11 @@ fn parse_args(cfg: &mut BotConfig) -> Args {
             "--rpc" => {
                 if let Some(url) = it.next() {
                     cfg.rpc_url = url;
+                }
+            }
+            "--ws" => {
+                if let Some(url) = it.next() {
+                    cfg.ws_url = Some(url);
                 }
             }
             "--leader-key" => {
@@ -110,7 +116,21 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
         "discovered market {} ({}/{})",
         market.market, market.base_mint, market.quote_mint
     );
+
+    // Start the fill-event subscription before the tick loop so fills landing
+    // during warm-up aren't missed. The thread reconnects on its own; a failed
+    // subscription degrades to the per-tick inventory-diff fallback.
+    let ws_url = cfg
+        .ws_url
+        .clone()
+        .unwrap_or_else(|| ws_url_from_rpc(&cfg.rpc_url));
+    let fills = fills::spawn(ws_url, cfg.rpc_url.clone(), leader.pubkey());
+
     let ctx = BotContext::new(client, leader, cfg.vault_idx, market);
+    let ctx = match fills {
+        Some(rx) => ctx.with_fills(rx),
+        None => ctx,
+    };
     let feeds = Feeds::new(cfg.feeds.clone());
     tasks::run(ctx, feeds, cfg.clone())
 }
