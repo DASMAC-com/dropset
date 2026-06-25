@@ -7,6 +7,8 @@
 //! API key) come from the environment, never a committed field — the same
 //! convention the Linear tooling uses.
 
+// cspell:word rsplit
+
 use std::time::Duration;
 
 /// Default localnet RPC endpoint (the `solana-test-validator` the TUI spawns).

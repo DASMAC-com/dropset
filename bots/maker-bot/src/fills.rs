@@ -138,7 +138,7 @@ fn subscribe_and_forward(
         let signature = match Signature::from_str(&logs.signature) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("[fills] unparseable signature {}: {e}", logs.signature);
+                eprintln!("[fills] could not parse signature {}: {e}", logs.signature);
                 continue;
             }
         };
