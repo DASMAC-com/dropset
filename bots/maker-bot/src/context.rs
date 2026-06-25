@@ -74,11 +74,11 @@ pub struct Context {
     /// the fallback fill detection (a change the bot didn't cause is a fill)
     /// only when the event subscription is absent.
     pub last_inventory: Option<(u64, u64)>,
-    /// Fill-derived inventory `(base_atoms, quote_atoms, when)` — the
-    /// authoritative `*_after` balances off the most recent `FillEvent`,
-    /// fresher than and reconciled against the per-tick vault read. `None`
-    /// until the first fill (or seeded from the first vault read).
-    pub position: Option<(u64, u64, Instant)>,
+    /// Fill-derived inventory `(base_atoms, quote_atoms)` — the authoritative
+    /// `*_after` balances off the chain-latest `FillEvent` drained this run,
+    /// reconciled against the per-tick vault read. `None` until the first fill
+    /// (or seeded from the first vault read).
+    pub position: Option<(u64, u64)>,
     /// Attributed-fill channel from the subscription thread (the primary fill
     /// signal). `None` when fills aren't subscribed (`--dry-run`, no ws).
     pub fills: Option<Receiver<Fill>>,

@@ -34,6 +34,7 @@ use crate::model::skew;
 use crate::model::triggers::{self, RefTrigger};
 use anyhow::Result;
 use solana_signer::Signer;
+use std::sync::mpsc::TryRecvError;
 use std::time::{Duration, Instant};
 
 /// The cached state of one feed: its last successful reading (with the instant
@@ -118,11 +119,12 @@ fn tick(
     ctx.vault_idx = vault.sector_idx;
 
     // Primary fill signal: drain attributed `FillEvent`s into the position
-    // belief, then resolve the inventory the policy reads (reconciling the
-    // position against this vault read, or the diff fallback when no
-    // subscription is attached).
-    drain_fills(ctx, now);
-    let (base_atoms, quote_atoms) = resolve_inventory(ctx, &vault, now);
+    // belief, then resolve the inventory the policy reads. A fill drained this
+    // tick is fresher than the vault read taken just above, so it wins; with
+    // no fill, the vault read reconciles the position (or drives the diff
+    // fallback when no subscription is attached).
+    let drained = drain_fills(ctx);
+    let (base_atoms, quote_atoms) = resolve_inventory(ctx, &vault, drained);
 
     if vault.frozen {
         println!("[halt] vault is frozen on-chain — idling");
@@ -198,37 +200,68 @@ fn tick(
 }
 
 /// Drain every attributed fill delivered since the last tick, log it, and
-/// advance the fill-derived position to the latest fill's authoritative
-/// `*_after` balances. No-op when no subscription is attached.
-fn drain_fills(ctx: &mut Context, now: Instant) {
+/// advance the fill-derived position to the **chain-latest** fill's `*_after`
+/// balances (highest `nonce_after` wins, since channel-arrival order isn't
+/// guaranteed to be slot order). Only fills against the bot's current sector
+/// are applied. Returns whether any fill was applied this tick. No-op (returns
+/// `false`) when no subscription is attached; if the subscription channel has
+/// disconnected (the thread died), clears `ctx.fills` so the tick reverts to
+/// the inventory-diff fallback.
+fn drain_fills(ctx: &mut Context) -> bool {
     let Some(fills) = &ctx.fills else {
-        return;
+        return false;
     };
-    let mut latest = None;
-    for fill in fills.try_iter() {
-        let e = &fill.event;
-        let side = if e.side == 0 { "ask" } else { "bid" };
-        println!(
-            "[fill] {side} L{} {} base / {} quote @ {} (fee {} atoms, sig {})",
-            e.level_idx, e.fill_base, e.fill_quote, e.fill_price, e.taker_fee_atoms, fill.signature
-        );
-        latest = Some((e.base_atoms_after, e.quote_atoms_after));
+    // The chain-latest fill so far this tick, as `(nonce_after, base, quote)`.
+    let mut best: Option<(u64, u64, u64)> = None;
+    let mut disconnected = false;
+    loop {
+        match fills.try_recv() {
+            Ok(fill) => {
+                let e = &fill.event;
+                // A fill against a different sector of the same authority isn't
+                // this vault's inventory.
+                if e.sector_idx != ctx.vault_idx {
+                    continue;
+                }
+                let side = if e.side == 0 { "ask" } else { "bid" };
+                println!(
+                    "[fill] {side} L{} {} base / {} quote @ {} (fee {} atoms, sig {})",
+                    e.level_idx,
+                    e.fill_base,
+                    e.fill_quote,
+                    e.fill_price,
+                    e.taker_fee_atoms,
+                    fill.signature
+                );
+                if best.is_none_or(|(nonce, _, _)| e.nonce_after >= nonce) {
+                    best = Some((e.nonce_after, e.base_atoms_after, e.quote_atoms_after));
+                }
+            }
+            Err(TryRecvError::Empty) => break,
+            Err(TryRecvError::Disconnected) => {
+                disconnected = true;
+                break;
+            }
+        }
     }
-    if let Some((base, quote)) = latest {
-        ctx.position = Some((base, quote, now));
+    if let Some((_, base, quote)) = best {
+        ctx.position = Some((base, quote));
     }
+    if disconnected {
+        eprintln!("[fills] subscription channel closed; reverting to inventory-diff fallback");
+        ctx.fills = None;
+    }
+    best.is_some()
 }
 
 /// Resolve the inventory the policy values this tick, in `(base, quote)` atoms.
 ///
 /// With a subscription attached, the fill-derived position is authoritative:
-/// it is seeded from the first vault read and then advanced by fills, with the
-/// per-tick vault read used to reconcile it — a divergence means a missed fill
-/// or an external deposit / withdraw the events don't carry, so the chain read
-/// wins and the position snaps to it. Without a subscription, the vault read
-/// is the only signal and a balance the bot didn't move itself is logged as a
-/// fill (the fallback detection).
-fn resolve_inventory(ctx: &mut Context, vault: &VaultSnapshot, now: Instant) -> (u64, u64) {
+/// seeded from the first vault read, advanced by fills, and reconciled against
+/// the per-tick vault read — see [`decide_position`] for the rule. Without a
+/// subscription, the vault read is the only signal and a balance the bot
+/// didn't move itself is logged as a fill (the fallback detection).
+fn resolve_inventory(ctx: &mut Context, vault: &VaultSnapshot, drained: bool) -> (u64, u64) {
     let chain = (vault.base_atoms, vault.quote_atoms);
 
     if ctx.fills.is_none() {
@@ -243,20 +276,39 @@ fn resolve_inventory(ctx: &mut Context, vault: &VaultSnapshot, now: Instant) -> 
         return chain;
     }
 
-    match ctx.position {
-        None => {
-            ctx.position = Some((chain.0, chain.1, now));
-            chain
-        }
-        Some((pb, pq, _)) if (pb, pq) != chain => {
-            println!(
-                "[fills] reconciling to chain: position ({pb}, {pq}) vs vault ({}, {}) — missed fill or external flow",
-                chain.0, chain.1
-            );
-            ctx.position = Some((chain.0, chain.1, now));
-            chain
-        }
-        Some((pb, pq, _)) => (pb, pq),
+    let (inventory, position, reconciled) = decide_position(ctx.position, chain, drained);
+    if reconciled {
+        let (pb, pq) = ctx.position.unwrap_or(chain);
+        println!(
+            "[fills] reconciling to chain: position ({pb}, {pq}) vs vault ({}, {}) — missed fill or external flow",
+            chain.0, chain.1
+        );
+    }
+    ctx.position = Some(position);
+    inventory
+}
+
+/// The fill-path inventory decision, factored out as a pure function over
+/// plain values so it can be unit-tested without a live `Context`.
+///
+/// Returns `(inventory_to_value, position_to_store, reconciled)`:
+/// - no position yet → seed it from the chain read;
+/// - a fill landed this tick → the position is fresher than the vault read
+///   taken before the drain, so trust it (no reconcile);
+/// - no fill this tick but the position disagrees with the chain → a missed
+///   fill or external deposit / withdraw the events don't carry, so the chain
+///   wins and the position snaps to it (`reconciled`);
+/// - otherwise the position already matches the chain, so keep it.
+fn decide_position(
+    position: Option<(u64, u64)>,
+    chain: (u64, u64),
+    drained: bool,
+) -> ((u64, u64), (u64, u64), bool) {
+    match position {
+        None => (chain, chain, false),
+        Some(pos) if drained => (pos, pos, false),
+        Some(pos) if pos != chain => (chain, chain, true),
+        Some(pos) => (pos, pos, false),
     }
 }
 
@@ -324,4 +376,45 @@ fn halt(ctx: &mut Context, cfg: &BotConfig, reason: HaltReason) -> Result<()> {
         println!("[halt] zeroed both sides; existing levels expire on their own");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn first_read_seeds_the_position() {
+        let (inv, pos, reconciled) = decide_position(None, (100, 200), false);
+        assert_eq!(inv, (100, 200));
+        assert_eq!(pos, (100, 200));
+        assert!(!reconciled);
+    }
+
+    #[test]
+    fn a_fill_this_tick_leads_the_pre_drain_vault_read() {
+        // The vault read was taken before the drain, so a drained fill is
+        // fresher: trust the position, do not reconcile backward.
+        let (inv, pos, reconciled) = decide_position(Some((90, 210)), (100, 200), true);
+        assert_eq!(inv, (90, 210));
+        assert_eq!(pos, (90, 210));
+        assert!(!reconciled);
+    }
+
+    #[test]
+    fn a_quiet_tick_matching_chain_keeps_the_position() {
+        let (inv, pos, reconciled) = decide_position(Some((100, 200)), (100, 200), false);
+        assert_eq!(inv, (100, 200));
+        assert_eq!(pos, (100, 200));
+        assert!(!reconciled);
+    }
+
+    #[test]
+    fn divergence_without_a_fill_reconciles_to_chain() {
+        // No fill drained but the chain disagrees → a missed fill or external
+        // flow; the chain wins and the position snaps to it.
+        let (inv, pos, reconciled) = decide_position(Some((90, 210)), (100, 200), false);
+        assert_eq!(inv, (100, 200));
+        assert_eq!(pos, (100, 200));
+        assert!(reconciled);
+    }
 }

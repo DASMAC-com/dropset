@@ -126,7 +126,11 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
         .unwrap_or_else(|| ws_url_from_rpc(&cfg.rpc_url));
     let fills = fills::spawn(ws_url, cfg.rpc_url.clone(), leader.pubkey());
 
-    let ctx = BotContext::new(client, leader, cfg.vault_idx, market).with_fills(fills);
+    let ctx = BotContext::new(client, leader, cfg.vault_idx, market);
+    let ctx = match fills {
+        Some(rx) => ctx.with_fills(rx),
+        None => ctx,
+    };
     let feeds = Feeds::new(cfg.feeds.clone());
     tasks::run(ctx, feeds, cfg.clone())
 }

@@ -46,6 +46,7 @@ use solana_transaction_status_client_types::{
 };
 use std::str::FromStr;
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::LazyLock;
 use std::time::Duration;
 
 /// How long to wait before re-subscribing after the websocket drops or a
@@ -59,10 +60,10 @@ const RECONNECT_DELAY: Duration = Duration::from_secs(5);
 /// depend on (it compiles for SBF), so the bot recomputes the same bytes.
 /// Pinned end-to-end by the round-trip test below; the program's `events.rs`
 /// test pins the on-chain side of the same wire format.
-fn fill_event_discriminator() -> [u8; 8] {
+static FILL_EVENT_DISCRIMINATOR: LazyLock<[u8; 8]> = LazyLock::new(|| {
     let hash = Sha256::digest(b"event:FillEvent");
     hash[..8].try_into().expect("sha256 digest is 32 bytes")
-}
+});
 
 /// One attributed fill leg: a decoded [`FillEvent`] and the signature of the
 /// swap that produced it (for logging / dedup).
@@ -77,7 +78,12 @@ pub struct Fill {
 /// `quote_authority` is the bot's vault key (the leader); only fills against
 /// that vault are forwarded. The thread owns its own [`RpcClient`] and the
 /// blocking pubsub subscription, reconnecting on drop — it never quotes.
-pub fn spawn(ws_url: String, rpc_url: String, quote_authority: Pubkey) -> Receiver<Fill> {
+///
+/// Returns `None` if the thread can't be spawned, so the caller leaves
+/// `ctx.fills` unset and the tick uses the inventory-diff fallback. (A thread
+/// that dies *later* is caught by the drained-channel check in `tasks.rs`,
+/// which clears `ctx.fills` and reverts to the same fallback.)
+pub fn spawn(ws_url: String, rpc_url: String, quote_authority: Pubkey) -> Option<Receiver<Fill>> {
     let (tx, rx) = mpsc::channel();
     let spawned = std::thread::Builder::new()
         .name("maker-bot-fills".into())
@@ -85,12 +91,15 @@ pub fn spawn(ws_url: String, rpc_url: String, quote_authority: Pubkey) -> Receiv
             let rpc = crate::chain::rpc(&rpc_url);
             run(&ws_url, &rpc, &quote_authority, &tx);
         });
-    if let Err(e) = spawned {
-        eprintln!(
-            "[fills] could not spawn subscription thread: {e}; using inventory-diff fallback"
-        );
+    match spawned {
+        Ok(_) => Some(rx),
+        Err(e) => {
+            eprintln!(
+                "[fills] could not spawn subscription thread: {e}; using inventory-diff fallback"
+            );
+            None
+        }
     }
-    rx
 }
 
 /// Subscribe, forward fills, and reconnect on websocket drop until the tick's
@@ -158,7 +167,14 @@ fn subscribe_and_forward(
 }
 
 /// Fetch the transaction and decode every `FillEvent` inner instruction that
-/// hit our vault.
+/// hit our vault, attributing by `quote_authority`.
+///
+/// Attribution does not yet verify the *emitting program* of each event inner
+/// instruction (its `program_id_index`), so a third party could in principle
+/// craft a `FillEvent`-shaped inner instruction from another program carrying
+/// our `quote_authority`. The per-tick vault reconcile in `tasks.rs` bounds
+/// any such spoof to a single tick; the program-id check is a tracked
+/// follow-up.
 fn decode_fills(
     rpc: &RpcClient,
     signature: &Signature,
@@ -211,11 +227,11 @@ fn decode_fills(
 /// different event / not an event at all. The trailing `try_from_slice` also
 /// length-checks the body (borsh rejects trailing bytes).
 fn decode_fill_event(data: &[u8]) -> Option<FillEvent> {
-    let discriminator = fill_event_discriminator();
+    let discriminator: &[u8; 8] = &FILL_EVENT_DISCRIMINATOR;
     let prefix = EVENT_IX_TAG_LE.len() + discriminator.len();
     if data.len() < prefix
         || &data[..EVENT_IX_TAG_LE.len()] != EVENT_IX_TAG_LE
-        || data[EVENT_IX_TAG_LE.len()..prefix] != discriminator
+        || &data[EVENT_IX_TAG_LE.len()..prefix] != discriminator.as_slice()
     {
         return None;
     }
@@ -253,7 +269,7 @@ mod tests {
     fn wrap(event: &FillEvent) -> Vec<u8> {
         let mut data = Vec::new();
         data.extend_from_slice(EVENT_IX_TAG_LE);
-        data.extend_from_slice(&fill_event_discriminator());
+        data.extend_from_slice(FILL_EVENT_DISCRIMINATOR.as_slice());
         data.extend_from_slice(&borsh::to_vec(event).unwrap());
         data
     }

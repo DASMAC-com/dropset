@@ -31,7 +31,7 @@ pub fn ws_url_from_rpc(rpc_url: &str) -> String {
     let authority = rest.split('/').next().unwrap_or(rest);
     let ws_authority = match authority.rsplit_once(':') {
         Some((host, port)) => match port.parse::<u16>() {
-            Ok(port) => format!("{host}:{}", port + 1),
+            Ok(port) => format!("{host}:{}", port.saturating_add(1)),
             Err(_) => authority.to_string(),
         },
         None => authority.to_string(),
