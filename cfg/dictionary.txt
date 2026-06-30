@@ -51,6 +51,7 @@ idrx
 impls
 kapsule
 keypair
+keypairs
 killswitch
 kripto
 lamports

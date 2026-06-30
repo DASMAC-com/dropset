@@ -1,4 +1,6 @@
 .PHONY: all
+.PHONY: bots-down
+.PHONY: bots-up
 .PHONY: check-anchor
 .PHONY: check-conformance-vectors
 .PHONY: check-sbf
@@ -138,6 +140,19 @@ indexer-up:
 indexer-down:
 	docker compose -f infra/localnet/docker-compose.yml \
 		rm -sf postgres indexer indexer-api
+
+# Localnet bot stack: the maker + taker bots (infra/localnet). Both sign with
+# the repo keys/ keypairs and reach the host-run validator at
+# host.docker.internal:8899; the taker also mounts the operator's Solana CLI
+# wallet (the mock-mint authority) read-only. Needs a running validator with
+# the market bootstrapped and seeded (the tui control plane). First run builds
+# the Rust image (slow); later runs reuse the cargo-chef dependency cache.
+bots-up:
+	docker compose -f infra/localnet/docker-compose.yml \
+		up -d maker-bot taker-bot
+bots-down:
+	docker compose -f infra/localnet/docker-compose.yml \
+		rm -sf maker-bot taker-bot
 
 # Run next dev and open the browser once it's accepting connections.
 frontend:
