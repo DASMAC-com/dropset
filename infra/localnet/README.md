@@ -1,8 +1,17 @@
 # Localnet Docker stack
 
-The seed of the Dropset localnet container stack. Today it runs one
-service — a local **Solana Explorer** — and is the foundation future
-localnet services (e.g. the market-making bot) join.
+The Dropset localnet container stack. It runs the off-chain services of
+the localnet MVP, each as a compose service, against a **host-run**
+`solana-test-validator` (deliberately not containerized — the
+`dropset-tui` control plane owns its lifecycle):
+
+- a local **Solana Explorer** (`make explorer`),
+- the **event indexer** — Postgres + worker + `/v1` API
+  (`make indexer-up`, see [`docs/indexer.md`](../../docs/indexer.md) §8),
+- the **maker + taker bots** (`make bots-up`).
+
+The container services reach the host validator over
+`host.docker.internal:8899` (RPC) / `:8900` (PubSub).
 
 ## Why a local explorer
 
@@ -51,3 +60,34 @@ Open an account against the localnet at (one line; wrapped here):
 http://localhost:3000/address/<PUBKEY>
     ?cluster=custom&customUrl=http://127.0.0.1:8899
 ```
+
+## The bots
+
+The maker and taker bots run from a single shared image
+(`bots.Dockerfile`, both binaries) with one compose service each:
+
+```sh
+make bots-up    # build (first run) + start maker-bot + taker-bot
+make bots-down  # stop and remove both
+```
+
+Prerequisites: a host-run validator with the program deployed and the
+mock CADC/USDC market bootstrapped and seeded — bring it to `Ready`
+with the `dropset-tui` control plane first. The bots read the cluster's
+genesis hash on startup and **refuse any non-localnet cluster**, so a
+misconfigured RPC fails fast rather than signing against a public chain.
+
+Both sign with the repo `keys/` keypairs, bind-mounted read-only:
+
+- the **maker** quotes as the leader (`keys/EEEE.json`) and funds it
+  from the localnet faucet over RPC — no host wallet needed. Set
+  `OANDA_API_KEY` in the environment to arm the FX peg sanity feed;
+  without it the peg kill switch is disarmed and the CADC sources still
+  drive quoting.
+- the **taker** signs swaps with `keys/FFFF.json` and mints itself back
+  up to target inventory under the mock-mint authority — the operator's
+  Solana CLI wallet (`~/.config/solana/id.json`), bind-mounted
+  read-only into the container.
+
+The first build compiles the bots from source (slow); later runs reuse
+the cargo-chef dependency cache.

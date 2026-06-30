@@ -10,7 +10,13 @@
 # The indexer stack (postgres + indexer + indexer-api) joins this same stack
 # (docs/indexer.md §8): the worker polls the host validator for events and
 # the api serves /v1 on http://localhost:8080. Bring it up with
-# `make indexer-up`. Future localnet services join here too.
+# `make indexer-up`.
+#
+# The maker + taker bots join too (`make bots-up`): both sign with the repo
+# `keys/` keypairs bind-mounted in, reach the host-run validator at
+# host.docker.internal:8899, and refuse any non-localnet genesis. The host
+# validator is intentionally not a service here — the dropset-tui control
+# plane owns its lifecycle. Future localnet services join this stack too.
 #
 # The dropset-tui control plane owns this stack's lifecycle: it brings the
 # explorer up in the background at launch and tears it down on quit.
@@ -67,6 +73,27 @@ services:
     ports:
     - '127.0.0.1:8080:8080'
     restart: 'unless-stopped'
+  maker-bot:
+    # The leader market-maker: polls feeds, composes a fair mid, and drives
+    # the relative-quoting hot + cold paths. Funds its leader (keys/EEEE.json)
+    # from the localnet faucet over RPC, so it needs no host wallet — only the
+    # repo keys/ mount. OANDA_API_KEY (host env, optional) arms the FX peg
+    # sanity feed; without it the peg kill switch is disarmed.
+    build:
+      context: '../..'
+      dockerfile: 'infra/localnet/bots.Dockerfile'
+    command:
+    - 'dropset-maker-bot'
+    - '--rpc'
+    - 'http://host.docker.internal:8899'
+    environment:
+      OANDA_API_KEY: '${OANDA_API_KEY:-}'
+      RUST_LOG: 'info'
+    extra_hosts:
+    - 'host.docker.internal:host-gateway'
+    restart: 'unless-stopped'
+    volumes:
+    - '../../keys:/app/keys:ro'
   postgres:
     # Prototype: data is ephemeral (no named volume) — the indexer re-syncs
     # from chain via its watermark, so a fresh container just re-indexes.
@@ -84,4 +111,28 @@ services:
     ports:
     - '127.0.0.1:5432:5432'
     restart: 'unless-stopped'
+  taker-bot:
+    # The benign flow taker: stochastic swaps so the book moves and the maker
+    # takes fills. Signs swaps with keys/FFFF.json and mints itself back up to
+    # target inventory under the mock-mint authority — the operator's Solana
+    # CLI wallet, bind-mounted read-only at the container's ~/.config/solana.
+    build:
+      context: '../..'
+      dockerfile: 'infra/localnet/bots.Dockerfile'
+    command:
+    - 'dropset-taker-bot'
+    - '--rpc'
+    - 'http://host.docker.internal:8899'
+    # Point at the mounted wallet explicitly — the default is `~`-relative and
+    # the container sets no HOME, so tilde expansion would not resolve.
+    - '--mint-authority'
+    - '/root/.config/solana/id.json'
+    environment:
+      RUST_LOG: 'info'
+    extra_hosts:
+    - 'host.docker.internal:host-gateway'
+    restart: 'unless-stopped'
+    volumes:
+    - '../../keys:/app/keys:ro'
+    - '${HOME}/.config/solana:/root/.config/solana:ro'
 ...
