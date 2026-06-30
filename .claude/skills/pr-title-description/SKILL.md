@@ -99,6 +99,14 @@ takes `owner: "DASMAC-com"`, `repo: "dropset"`.
    - `fix(ENG-456): Correct off-by-one in order matching`
    - `docs(ENG-789): Add algorithm index page`
 
+   **Never carry a `Claude:` prefix into the title.** The
+   `Claude:` meta-work prefix (per `CLAUDE.md` → "Claude:
+   meta-work prefix") is a **Linear issue-title** signal
+   only; the PR title keeps the plain
+   `type(ENG-###): Subject` form even when the linked issue
+   title starts with `Claude:`. Drop the token — don't
+   copy it from the issue title into the PR title.
+
 1. Write a concise PR description that mirrors
    the format and tone of those recent PRs.
    Typically this means a `# Changes` section

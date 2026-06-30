@@ -48,6 +48,18 @@ parses: `**Fingerprint**: <basename>:<slug>` (the dedup key) and
 `**Touches**: <glob>[, …]` (the path globs, for collision detection).
 Detail: `docs/conventions/linear-automation.md`.
 
+### Claude: meta-work prefix
+
+**Meta-work** issues — those whose `**Touches**:` sit entirely under
+`.claude/**`, `CLAUDE.md`, `docs/conventions/**`, or `tools/**` — carry
+a leading **`Claude:`** token on their **Linear issue title** (capital
+C, colon, space) so agent-infra work batches apart from product code.
+Filing skills (`linear-task`, `audit`, `audit-scope`, `housekeeping`)
+emit it; `stage-backlog` buckets prefixed issues under `# Claude` and
+warns on prefix↔`**Touches**:` drift. It is a **Linear-title signal
+only — never a PR title** (PR titles keep `type(ENG-###): Subject`).
+Detail: `docs/conventions/linear-automation.md`.
+
 ### Keep Linear tags out of PR bodies and comments
 
 **Do not put `ENG-###` tags in PR descriptions or comments** — Linear's

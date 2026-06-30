@@ -135,6 +135,36 @@ delivered checklist items and moves it to In Review at the merge-queue
 handoff — once the PR is ready, CI is green, and the review summary has
 been printed for the human.
 
+## The `Claude:` meta-work prefix
+
+**Meta-work** is agent-infra change — work whose touched paths sit
+**entirely** under `.claude/**`, `CLAUDE.md`, `docs/conventions/**`, or
+`tools/**`. Anything that also touches product / on-chain / SDK /
+frontend code is **not** meta. Every meta-work Linear issue title
+carries a leading **`Claude:`** token (capital C, colon, space) —
+e.g. `Claude: Add a /merge-tasks skill` — so all agent-infra work
+batches together and can be filtered, staged, and reviewed apart from
+product code on the board.
+
+- **Filing skills emit it.** `linear-task`, `audit`, `audit-scope`,
+  and `housekeeping` prepend `Claude:` to a title when the issue's
+  `**Touches**:` globs are all on the meta surface above. `/merge-tasks`
+  applies it when every issue it consolidates is meta.
+- **`stage-backlog` buckets by it.** Issues whose title starts with
+  `Claude:` group under a single `# Claude` heading (the deterministic
+  batch signal — the bucket keys on the **prefix**, not on file globs).
+  The tool also runs a **prefix↔touched-paths consistency check** and
+  warns on drift: a `Claude:`-prefixed issue whose `**Touches**:` reach
+  outside the meta surface, or a meta-only-touches issue with no
+  prefix. `housekeeping` surfaces those warnings for a human to
+  reconcile; the tool never retitles an issue itself.
+- **It is a Linear-title signal only — never a PR title.** The prefix
+  lives on the **issue** title for board recognition and batching. PR
+  titles keep the standard `type(ENG-###): Subject` semantic-pr format
+  (see "Keep Linear tags out of PR bodies and comments" below for the
+  title-scope rule); the `Claude:` token is **not** added to a PR
+  title, where the conventional type and `ENG-###` scope already apply.
+
 ## Keep Linear tags out of PR bodies and comments
 
 **Do not put Linear issue tags (`ENG-###`, e.g. `ENG-513`) in PR

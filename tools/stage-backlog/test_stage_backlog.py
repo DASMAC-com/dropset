@@ -18,20 +18,24 @@ from stage_backlog import (
     missing_touches,
     parse_number,
     parse_touches,
+    prefix_touches_drift,
     render,
     render_tally,
     touches_overlap,
 )
 
 
-def issue(ident, touches=()):
-    return Issue(id=ident, number=parse_number(ident), touches=list(touches))
+def issue(ident, touches=(), title=""):
+    return Issue(
+        id=ident, number=parse_number(ident), touches=list(touches), title=title
+    )
 
 
-def with_(ident, parent=None, touches=(), blocked_by=(), blocks=()):
+def with_(ident, parent=None, touches=(), blocked_by=(), blocks=(), title=""):
     return Issue(
         id=ident,
         number=parse_number(ident),
+        title=title,
         parent=parent,
         touches=list(touches),
         blocked_by=list(blocked_by),
@@ -61,17 +65,28 @@ class ModelTests(unittest.TestCase):
     def test_no_touches_is_empty(self):
         self.assertEqual(parse_touches("**What**: nothing structured"), [])
 
-    def test_skill_only_detection(self):
-        self.assertTrue(issue("ENG-1", [".claude/skills/foo/SKILL.md"]).is_skill_only())
+    def test_meta_only_detection(self):
+        # The meta surface is .claude/**, CLAUDE.md, docs/conventions/**, tools/**.
+        self.assertTrue(issue("ENG-1", [".claude/skills/foo/SKILL.md"]).is_meta_only())
         self.assertTrue(
-            issue("ENG-2", ["CLAUDE.md", ".claude/skills/bar/SKILL.md"]).is_skill_only()
+            issue("ENG-2", ["CLAUDE.md", "docs/conventions/x.md"]).is_meta_only()
         )
-        # mixed with product code is not pure skill work
+        self.assertTrue(issue("ENG-3", ["tools/stage-backlog/**"]).is_meta_only())
+        # mixed with product code is not pure meta work
         self.assertFalse(
-            issue("ENG-3", ["CLAUDE.md", "programs/dropset/src/lib.rs"]).is_skill_only()
+            issue("ENG-4", ["CLAUDE.md", "programs/dropset/src/lib.rs"]).is_meta_only()
         )
-        # no touches can't be proven skill-only
-        self.assertFalse(issue("ENG-4", []).is_skill_only())
+        # docs/ outside conventions/ is product docs, not meta
+        self.assertFalse(issue("ENG-5", ["docs/indexer.md"]).is_meta_only())
+        # no touches can't be proven meta-only
+        self.assertFalse(issue("ENG-6", []).is_meta_only())
+
+    def test_claude_prefix_detection(self):
+        self.assertTrue(with_("ENG-1", title="Claude: Do a thing").has_claude_prefix())
+        # needs the capital C, colon, and space
+        self.assertFalse(with_("ENG-2", title="claude: lower").has_claude_prefix())
+        self.assertFalse(with_("ENG-3", title="Claude things").has_claude_prefix())
+        self.assertFalse(with_("ENG-4", title="Add a skill").has_claude_prefix())
 
     def test_overlap_same_dir_and_file(self):
         self.assertTrue(
@@ -177,14 +192,20 @@ class PlanTests(unittest.TestCase):
         )
         self.assertEqual(out, "# Standalone\n\n- ENG-18\n- ENG-22\n")
 
-    def test_skills_bucket_comes_first(self):
+    def test_claude_bucket_comes_first_and_keys_on_prefix(self):
+        # Bucketing is by the Claude: title prefix, not by file globs: ENG-5
+        # carries the prefix → # Claude; ENG-30 doesn't → # Standalone.
         out = render(
             [
                 with_("ENG-30", touches=["programs/dropset/src/lib.rs"]),
-                with_("ENG-5", touches=[".claude/skills/foo/SKILL.md"]),
+                with_(
+                    "ENG-5",
+                    touches=[".claude/skills/foo/SKILL.md"],
+                    title="Claude: Tweak a skill",
+                ),
             ]
         )
-        self.assertEqual(out, "# Skills\n\n- ENG-5\n\n# Standalone\n\n- ENG-30\n")
+        self.assertEqual(out, "# Claude\n\n- ENG-5\n\n# Standalone\n\n- ENG-30\n")
 
     def test_parent_with_two_subtasks_gets_heading(self):
         out = render(
@@ -418,6 +439,39 @@ class MostBlockingTallyTests(unittest.TestCase):
         state_of = {"ENG-10": "backlog", "ENG-20": "backlog", "ENG-5": "started"}
         out = render(issues, state_of)
         self.assertIn("- ENG-5 — blocks 2 issues", out)
+
+
+class PrefixTouchesDriftTests(unittest.TestCase):
+    """The consistency check that supersedes the glob-only bucketing: flag a
+    `Claude:`-prefixed issue that touches non-meta paths, or a meta-only-touches
+    issue with no prefix."""
+
+    def test_clean_prefixed_meta_issue_not_flagged(self):
+        issues = [with_("ENG-1", touches=[".claude/skills/x"], title="Claude: x")]
+        self.assertEqual(prefix_touches_drift(issues), [])
+
+    def test_clean_unprefixed_product_issue_not_flagged(self):
+        issues = [with_("ENG-1", touches=["programs/dropset/src/lib.rs"])]
+        self.assertEqual(prefix_touches_drift(issues), [])
+
+    def test_prefixed_but_touches_product_is_flagged(self):
+        issues = [
+            with_("ENG-1", touches=["CLAUDE.md", "programs/x.rs"], title="Claude: x")
+        ]
+        drift = prefix_touches_drift(issues)
+        self.assertEqual(len(drift), 1)
+        self.assertEqual(drift[0][0], "ENG-1")
+
+    def test_meta_only_without_prefix_is_flagged(self):
+        issues = [with_("ENG-1", touches=["tools/stage-backlog/**"])]
+        drift = prefix_touches_drift(issues)
+        self.assertEqual(len(drift), 1)
+        self.assertEqual(drift[0][0], "ENG-1")
+
+    def test_prefixed_with_no_touches_is_not_flagged(self):
+        # Nothing to check the prefix against — left alone.
+        issues = [with_("ENG-1", title="Claude: no touches yet")]
+        self.assertEqual(prefix_touches_drift(issues), [])
 
 
 if __name__ == "__main__":

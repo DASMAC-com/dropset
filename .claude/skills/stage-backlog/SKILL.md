@@ -44,9 +44,14 @@ The tool:
   until it reaches a terminal state — a Backlog issue
   gated by a live In-Progress / In-Review issue keeps that
   blocker as a tag rather than dropping it;
-- buckets issues under `# Skills` (pure skill-suite
-  work), a `# ENG-###` heading per parent with 2+ Backlog
-  subtasks, and a trailing `# Standalone`;
+- buckets issues under `# Claude` (meta-work, keyed on the
+  `Claude:` title prefix — see `CLAUDE.md` → "Claude:
+  meta-work prefix"), a `# ENG-###` heading per parent with
+  2+ Backlog subtasks, and a trailing `# Standalone`;
+- warns on `Claude:` prefix↔`**Touches**:` drift — a
+  prefixed issue touching non-meta paths, or a
+  meta-only-touches issue with no prefix (the consistency
+  check that replaces the old glob-only bucketing);
 - renders the chips-only tree (bare `ENG-###` tags,
   4-space nesting, bare-tag `(ENG-X, ENG-Y)` blocker
   notes) and writes it to the Task Staging document.
@@ -205,7 +210,7 @@ re-invokes immediately (no timer, no wait).
 
 - **The chips-only format.** Below the tally (next bullet),
   the document is bare
-  `ENG-###` tags nested by blocker, under `# Skills`,
+  `ENG-###` tags nested by blocker, under `# Claude`,
   `# ENG-###` parent headings, and `# Standalone` — **no**
   per-issue summary, file globs, or merge notes, **no**
   preamble or legend, and **no** "Wave N" / "start now"

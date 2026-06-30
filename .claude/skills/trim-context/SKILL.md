@@ -66,8 +66,11 @@ skill change isn't filed — just note it consumed.
 
 **3. File propose-only**, to the env-resolved destination
 (`save_issue` with `team` / `project` / `assignee`,
-`state: "Backlog"`, priority 3). Each task names the concrete fix and
-carries:
+`state: "Backlog"`, priority 3). A trim lever always edits a skill or
+convention doc, so its `**Touches**:` are all meta-surface — prepend the
+**`Claude:`** prefix to the title (`Claude: <imperative fix>`), per
+`CLAUDE.md` → "Claude: meta-work prefix". Each task names the concrete
+fix and carries:
 
 - a **`**Touches**:`** line — the skill or convention doc the fix edits
   (per `docs/conventions/linear-automation.md` → "Structured filing
@@ -88,7 +91,7 @@ mcp__claude_ai_Linear__save_issue(
   project: "<$LINEAR_PROJECT_ID>",
   assignee: "<$LINEAR_ASSIGNEE_ID>",
   state: "Backlog",
-  title: "<the trim lever, as an imperative fix>",
+  title: "Claude: <the trim lever, as an imperative fix>",
   description: "<the lever, the sessions that motivate it, and the
     concrete skill / convention-doc edit it implies>\n\n**Touches**:
     <glob>\n**Fingerprint**: session-metrics:<lever-slug>",

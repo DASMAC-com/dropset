@@ -330,6 +330,15 @@ mcp__claude_ai_Linear__save_issue(
 )
 ```
 
+**Meta-work prefix.** When a finding's `**Touches**:` sit entirely under
+the meta surface (`.claude/**`, `CLAUDE.md`, `docs/conventions/**`,
+`tools/**`), prepend the **`Claude:`** token to the title (per
+`CLAUDE.md` → "Claude: meta-work prefix") so it reads
+`Claude: <file>: <imperative fix>`. This composes with the `arch:`
+fingerprint prefix above (a fingerprint-slug convention, not a title
+one). A finding touching product / on-chain / SDK / frontend code gets
+no prefix.
+
 **Dependencies.** Set a `blockedBy` / `blocks` edge per the **Blocking
 relations** brief in `docs/conventions/linear-automation.md` —
 autonomous, so only on concrete evidence, never speculatively, and

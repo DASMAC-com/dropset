@@ -369,7 +369,10 @@ freshness lens does on the PR path — here, periodically.
   pass listing each dangling reference and its fix, with a
   `**Fingerprint**: convention-ref:<skill>:<target>` line
   per finding so later passes dedup; drop any fingerprint
-  already open. **Autonomy bound:** filing *proposes* the
+  already open. The task only edits skills / `CLAUDE.md` /
+  `docs/conventions/**`, so it's meta-work — prepend the
+  **`Claude:`** prefix to its title (per `CLAUDE.md` →
+  "Claude: meta-work prefix"). **Autonomy bound:** filing *proposes* the
   fix — it never edits a skill, `CLAUDE.md`, or a doc; that
   lands later through a normal PR. If everything resolves,
   file nothing and note "in sync" in the report.
@@ -386,10 +389,10 @@ the re-stage a previous `/audit` rotation already ran at
 its end.
 
 **8. Flag `Claude:` meta-work batching drift.** The
-`Claude:` title prefix (see `CLAUDE.md` → "Claude:
-meta-work prefix") is the deterministic batch signal that
-groups agent-infra work apart from product code; the
-re-stage in step 7 runs the deterministic
+`Claude:` title prefix (see `CLAUDE.md` →
+"Claude: meta-work prefix") is the deterministic batch
+signal that groups agent-infra work apart from product
+code; the re-stage in step 7 runs the deterministic
 **prefix↔touched-paths consistency check** and prints a
 warning for each mismatch it finds — a `Claude:`-prefixed
 issue whose `**Touches**:` reach **outside** the meta

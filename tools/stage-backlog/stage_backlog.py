@@ -51,6 +51,10 @@ REQUEST_TIMEOUT = 30
 
 INDENT = "    "  # four spaces per nesting level
 
+# Path bases (besides the file CLAUDE.md) that count as agent-infra "meta-work"
+# — the surface the ``Claude:`` issue-title prefix batches together.
+META_BASES = (".claude", "docs/conventions", "tools")
+
 
 class StageBacklogError(Exception):
     """A user-facing failure: surfaced to stderr, exits non-zero."""
@@ -68,17 +72,26 @@ class Issue:
     id: str
     number: int
     uuid: str = ""  # Linear's internal UUID, needed to file a relation
+    title: str = ""
     parent: str | None = None
     touches: list[str] = field(default_factory=list)
     blocked_by: list[str] = field(default_factory=list)
     blocks: list[str] = field(default_factory=list)
 
-    def is_skill_only(self) -> bool:
-        """True when the issue touches **only** the skill suite — files under
-        ``.claude/skills/**`` or ``CLAUDE.md``, with no product code — so it
-        folds into the consolidated ``# Skills`` PR. An issue with no
-        ``touches`` is never skill-only (we can't prove it)."""
-        return bool(self.touches) and all(is_skill_glob(g) for g in self.touches)
+    def has_claude_prefix(self) -> bool:
+        """True when the title carries the ``Claude:`` meta-work prefix (capital
+        C, colon, space) — the deterministic signal that batches agent-infra
+        work under the ``# Claude`` heading (see
+        ``docs/conventions/linear-automation.md`` → "The ``Claude:`` meta-work
+        prefix")."""
+        return self.title.startswith("Claude: ")
+
+    def is_meta_only(self) -> bool:
+        """True when the issue touches **only** the agent-infra surface
+        (``.claude/**``, ``CLAUDE.md``, ``docs/conventions/**``, ``tools/**``),
+        with no product code — so it *should* carry the ``Claude:`` prefix. An
+        issue with no ``touches`` is never meta-only (we can't prove it)."""
+        return bool(self.touches) and all(is_meta_glob(g) for g in self.touches)
 
 
 def parse_number(ident: str) -> int | None:
@@ -122,13 +135,18 @@ def parse_touches(description: str) -> list[str]:
     return out
 
 
-def is_skill_glob(glob: str) -> bool:
-    """A glob counts as skill-suite when it names ``CLAUDE.md`` or sits under
-    ``.claude/skills/``."""
+def is_meta_glob(glob: str) -> bool:
+    """A glob counts as **meta-work** (agent-infra) when it names ``CLAUDE.md``
+    or sits under ``.claude/``, ``docs/conventions/``, or ``tools/`` — the
+    surface the ``Claude:`` prefix batches. A glob outside all of these is
+    product / on-chain / SDK / frontend code."""
     g = glob
     while g.startswith("./"):
         g = g[2:]
-    return g == "CLAUDE.md" or g.startswith(".claude/skills")
+    g = g.rstrip("/")
+    if g == "CLAUDE.md":
+        return True
+    return any(g == base or g.startswith(base + "/") for base in META_BASES)
 
 
 def normalize_glob(glob: str) -> str:
@@ -184,13 +202,35 @@ def touches_overlap(a: Issue, b: Issue) -> bool:
 # The render is a pure function of its input and fully deterministic: all
 # iteration that reaches the output is sorted by issue number.
 
-# A bucket is a tuple: ("skills",), ("parent", "ENG-40"), or ("standalone",).
+# A bucket is a tuple: ("claude",), ("parent", "ENG-40"), or ("standalone",).
 
 
 def missing_touches(issues: list[Issue]) -> list[str]:
     """Identifiers of issues that have no ``**Touches**:`` field — the planner
     can place them only by declared edges / parent, so the caller warns."""
     return [i.id for i in issues if not i.touches]
+
+
+def prefix_touches_drift(issues: list[Issue]) -> list[tuple[str, str]]:
+    """``(identifier, reason)`` pairs where the ``Claude:`` title prefix and the
+    ``**Touches**:`` surface disagree — the consistency check that supersedes
+    the old glob-only ``# Skills`` bucketing. Two mismatches are flagged:
+
+    * a ``Claude:``-prefixed issue whose touches reach **outside** the meta
+      surface (the prefix over-claims), and
+    * a meta-only-touches issue with **no** ``Claude:`` prefix (it should have
+      one so it batches under ``# Claude``).
+
+    A prefixed issue with no ``**Touches**:`` at all is left alone — there's
+    nothing to check it against."""
+    out: list[tuple[str, str]] = []
+    for i in issues:
+        prefixed = i.has_claude_prefix()
+        if prefixed and i.touches and not i.is_meta_only():
+            out.append((i.id, "Claude: prefix but touches reach outside the meta surface"))
+        elif i.is_meta_only() and not prefixed:
+            out.append((i.id, "meta-only touches but no Claude: prefix"))
+    return out
 
 
 def block_counts(
@@ -318,10 +358,10 @@ def render(
     if tally is not None:
         sections.append(tally)
 
-    # # Skills next.
+    # # Claude (meta-work) next.
     s = render_bucket(
-        "# Skills",
-        ("skills",),
+        "# Claude",
+        ("claude",),
         issues,
         buckets,
         primary,
@@ -409,20 +449,23 @@ def compute_blockers(
 
 
 def compute_buckets(issues: list[Issue]) -> dict[str, tuple]:
-    """Assign each issue a bucket: skill-only → ``# Skills``; otherwise grouped
-    under its parent when that parent has 2+ non-skill Backlog subtasks, else
-    ``# Standalone``."""
+    """Assign each issue a bucket: a ``Claude:``-prefixed (meta-work) issue →
+    ``# Claude``; otherwise grouped under its parent when that parent has 2+
+    non-``Claude:`` Backlog subtasks, else ``# Standalone``. Bucketing keys on
+    the **title prefix** (the deterministic batch signal), not on file globs —
+    the glob check is now the :func:`prefix_touches_drift` consistency warning.
+    """
     parent_count: dict[str, int] = {}
     for i in issues:
-        if i.is_skill_only():
+        if i.has_claude_prefix():
             continue
         if i.parent:
             parent_count[i.parent] = parent_count.get(i.parent, 0) + 1
 
     result: dict[str, tuple] = {}
     for i in issues:
-        if i.is_skill_only():
-            bucket: tuple = ("skills",)
+        if i.has_claude_prefix():
+            bucket: tuple = ("claude",)
         elif i.parent and parent_count.get(i.parent, 0) >= 2:
             bucket = ("parent", i.parent)
         else:
@@ -556,6 +599,7 @@ query Backlog($projectId: ID!, $first: Int!) {
     nodes {
       id
       identifier
+      title
       description
       parent { identifier }
       relations { nodes { type relatedIssue { identifier state { type } } } }
@@ -634,6 +678,7 @@ def _raw_to_issue(raw: dict) -> Issue:
         id=ident,
         number=parse_number(ident) or 0,
         uuid=raw.get("id") or "",
+        title=raw.get("title") or "",
         parent=parent,
         touches=touches,
         blocked_by=blocked_by,
@@ -792,6 +837,13 @@ def run(argv: list[str]) -> int:
         print(
             f"warning: {ident} has no **Touches**: field; placed by declared "
             "edges / parent only — backfill one if the placement looks wrong",
+            file=sys.stderr,
+        )
+
+    for ident, reason in prefix_touches_drift(issues):
+        print(
+            f"warning: {ident} {reason} — reconcile the Claude: prefix with "
+            "the **Touches**: surface",
             file=sys.stderr,
         )
 
