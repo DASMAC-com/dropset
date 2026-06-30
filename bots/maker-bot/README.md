@@ -72,6 +72,14 @@ cargo run -p dropset-maker-bot
 
 ## Notes and deferrals
 
+- **Localnet only.** On startup the bot reads the cluster's genesis hash
+  and refuses to run against mainnet-beta, devnet, or testnet. Its
+  airdrop needs the localnet faucet and its leader key holds no authority
+  on a public cluster, so an off-localnet `--rpc` is always a
+  misconfiguration — the guard fails fast rather than emitting doomed
+  sends. The check is keyed on the genesis hash, not the RPC host, so a
+  localnet on any address still passes while a port-forward to a public
+  cluster is caught.
 - **Single bot.** The MVP ships exactly the spec's single maker; the
   multiple-strategy-variant structure is deferred.
 - **`FreezeVault` is admin-only.** The bot signs only as the leader, so

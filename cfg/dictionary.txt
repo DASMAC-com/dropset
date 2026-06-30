@@ -27,6 +27,7 @@ crossterm
 dasmac
 dedup
 dedups
+devnet
 dflow
 discordapp
 drainable

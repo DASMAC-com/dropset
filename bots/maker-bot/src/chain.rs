@@ -42,6 +42,47 @@ pub fn rpc(url: &str) -> RpcClient {
     )
 }
 
+/// The genesis hashes of the three public Solana clusters. `assert_localnet`
+/// refuses to run against any of them — the airdrop needs the localnet faucet
+/// and the leader key holds no authority on a public cluster, so running
+/// off-localnet is always a misconfiguration. Cross-checked against the Solana
+/// docs and the gill / mpl-bubblegum SDKs.
+const MAINNET_GENESIS: &str = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";
+const DEVNET_GENESIS: &str = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG";
+const TESTNET_GENESIS: &str = "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY";
+
+/// The name of the public Solana cluster with this genesis hash, or `None` for
+/// any other cluster (a localnet test validator mints a fresh genesis per
+/// launch). Pure, so the denylist is unit-testable without a validator.
+fn public_cluster(genesis: &str) -> Option<&'static str> {
+    match genesis {
+        MAINNET_GENESIS => Some("mainnet-beta"),
+        DEVNET_GENESIS => Some("devnet"),
+        TESTNET_GENESIS => Some("testnet"),
+        _ => None,
+    }
+}
+
+/// Abort unless `client` is a localnet validator. Keyed on the cluster's
+/// genesis hash rather than the RPC host, so it allows a localnet on any
+/// address (LAN, Docker) yet still trips on a port-forward / proxy that tunnels
+/// a public cluster through a loopback URL. Call once at startup, before the
+/// first signed send.
+pub fn assert_localnet(client: &RpcClient) -> Result<()> {
+    let genesis = client
+        .get_genesis_hash()
+        .context("get genesis hash")?
+        .to_string();
+    if let Some(cluster) = public_cluster(&genesis) {
+        return Err(anyhow!(
+            "refusing to run against the {cluster} public cluster (genesis \
+             {genesis}): this localnet bot signs quoting transactions with the \
+             leader key and must run only against a localnet test validator"
+        ));
+    }
+    Ok(())
+}
+
 /// Airdrop `lamports` to `who` and block until it confirms (localnet faucet).
 /// Used to fund the leader's fees, since it pays for its own quoting txns.
 pub fn airdrop(client: &RpcClient, who: &Pubkey, lamports: u64) -> Result<()> {
@@ -183,5 +224,20 @@ fn send(client: &RpcClient, leader: &Keypair, ixs: &[Instruction]) -> Result<Str
                 .unwrap_or_default();
             Err(anyhow!("{err}{logs}"))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The public clusters are named (and so rejected); any other genesis — a
+    /// fresh test-validator's — reads as localnet and passes.
+    #[test]
+    fn public_clusters_are_named_localnet_passes() {
+        assert_eq!(public_cluster(MAINNET_GENESIS), Some("mainnet-beta"));
+        assert_eq!(public_cluster(DEVNET_GENESIS), Some("devnet"));
+        assert_eq!(public_cluster(TESTNET_GENESIS), Some("testnet"));
+        assert_eq!(public_cluster("11111111111111111111111111111111"), None);
     }
 }

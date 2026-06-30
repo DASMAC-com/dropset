@@ -52,6 +52,49 @@ pub fn rpc(url: &str) -> RpcClient {
     )
 }
 
+/// The genesis hashes of the three public Solana clusters. `assert_localnet`
+/// refuses to run against any of them — this bot signs with local keys,
+/// including the operator's own Solana CLI wallet as the mock-mint authority
+/// (`config::DEFAULT_MINT_AUTHORITY_KEY`), so a real cluster behind `--rpc`
+/// would mean real `MintTo` and `swap` sends. Cross-checked against the Solana
+/// docs and the gill / mpl-bubblegum SDKs.
+const MAINNET_GENESIS: &str = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";
+const DEVNET_GENESIS: &str = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG";
+const TESTNET_GENESIS: &str = "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY";
+
+/// The name of the public Solana cluster with this genesis hash, or `None` for
+/// any other cluster (a localnet test validator mints a fresh genesis per
+/// launch). Pure, so the denylist is unit-testable without a validator.
+fn public_cluster(genesis: &str) -> Option<&'static str> {
+    match genesis {
+        MAINNET_GENESIS => Some("mainnet-beta"),
+        DEVNET_GENESIS => Some("devnet"),
+        TESTNET_GENESIS => Some("testnet"),
+        _ => None,
+    }
+}
+
+/// Abort unless `client` is a localnet validator. Keyed on the cluster's
+/// genesis hash rather than the RPC host, so it allows a localnet on any
+/// address (LAN, Docker) yet still trips on a port-forward / proxy that tunnels
+/// a public cluster through a loopback URL. Call once at startup, before the
+/// first signed send.
+pub fn assert_localnet(client: &RpcClient) -> Result<()> {
+    let genesis = client
+        .get_genesis_hash()
+        .context("get genesis hash")?
+        .to_string();
+    if let Some(cluster) = public_cluster(&genesis) {
+        return Err(anyhow!(
+            "refusing to run against the {cluster} public cluster (genesis \
+             {genesis}): this localnet bot signs transactions with local keys \
+             — including your Solana CLI wallet as the mock-mint authority — \
+             and must run only against a localnet test validator"
+        ));
+    }
+    Ok(())
+}
+
 /// The self-CPI event-authority PDA — seeds `[b"__event_authority"]`.
 fn event_authority() -> Pubkey {
     Pubkey::find_program_address(&[b"__event_authority"], &DROPSET_ID).0
@@ -444,5 +487,15 @@ mod tests {
             event_authority(),
             Pubkey::find_program_address(&[b"__event_authority"], &DROPSET_ID).0
         );
+    }
+
+    /// The public clusters are named (and so rejected); any other genesis — a
+    /// fresh test-validator's — reads as localnet and passes.
+    #[test]
+    fn public_clusters_are_named_localnet_passes() {
+        assert_eq!(public_cluster(MAINNET_GENESIS), Some("mainnet-beta"));
+        assert_eq!(public_cluster(DEVNET_GENESIS), Some("devnet"));
+        assert_eq!(public_cluster(TESTNET_GENESIS), Some("testnet"));
+        assert_eq!(public_cluster("11111111111111111111111111111111"), None);
     }
 }
