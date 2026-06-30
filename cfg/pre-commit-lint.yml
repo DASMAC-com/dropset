@@ -1,6 +1,7 @@
 # cspell:word checkmake
 # cspell:word hadolint
 # cspell:word mdformat
+# cspell:word pygrep
 ---
 repos:
 - hooks:
