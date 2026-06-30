@@ -1,6 +1,6 @@
 ---
 name: housekeeping
-description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, prune the worktrees of already-merged PRs, drain the Linear Permissions inbox doc via firm-perms (propose-only), mine the Session Metrics inbox via trim-context (propose-only), restage the backlog, then — only when given the `audit` flag (`/housekeeping audit`) — run one finite `/audit` rotation inline and exit; with no flag the audit is skipped. The cspell dictionary check is opt-in (pass `cspell`) and off by default. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
+description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, prune the worktrees of already-merged PRs and dismiss their stale GitHub notifications, drain the Linear Permissions inbox doc via firm-perms (propose-only), mine the Session Metrics inbox via trim-context (propose-only), restage the backlog, then — only when given the `audit` flag (`/housekeeping audit`) — run one finite `/audit` rotation inline and exit; with no flag the audit is skipped. The cspell dictionary check is opt-in (pass `cspell`) and off by default. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -240,6 +240,51 @@ admin entries:
 git worktree prune
 ```
 
+**Then clear notifications for merged PRs.** Merged PRs
+leave GitHub notifications that otherwise pile up with no
+easy bulk clear. List the unread notifications through the
+GitHub MCP and dismiss only the ones whose PR has **merged**
+— a robust catch-all that also covers auto-merged PRs and
+others' PRs the worktree sweep above never touches:
+
+```txt
+mcp__github__list_notifications(
+  owner: "DASMAC-com",
+  repo: "dropset",
+)
+```
+
+For each notification whose `subject.type` is
+`PullRequest`, read that PR (its number is the tail of
+`subject.url`) and key on `merged_at` exactly as above:
+
+```txt
+mcp__github__pull_request_read(
+  owner: "DASMAC-com",
+  repo: "dropset",
+  pullNumber: <number>,
+  method: "get",
+)
+```
+
+- `merged_at` is **non-null** → dismiss that one
+  notification:
+
+  ```txt
+  mcp__github__dismiss_notification(
+    threadID: "<notification id>",
+    state: "read",
+  )
+  ```
+
+- `merged_at` is null (open or closed-unmerged), or the
+  subject isn't a PR → **leave it**.
+
+**Never** call `mark_all_notifications_read` — that would
+clear unread mentions, review requests, and other non-merge
+notifications too. Only a confirmed-merged PR's
+notification is dismissed.
+
 **3. Spelling-escape hygiene — run cspell, file the
 drift as one aggregated issue.** **Opt-in — run this step
 only when the invocation passed the `cspell` flag (see
@@ -456,7 +501,8 @@ end; the next pass's step 7 is the full reconcile.
   is never silent.
 - Worktrees pruned (path + branch), and any left in
   place with the reason (PR open/closed-unmerged, no
-  PR, or dirty tree).
+  PR, or dirty tree); and how many merged-PR
+  notifications were dismissed.
 - Spelling-escape drift (only if the `cspell` flag was
   passed; otherwise note the step was skipped): the
   aggregated cspell issue —

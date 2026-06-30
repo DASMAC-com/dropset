@@ -1117,9 +1117,33 @@ PR-authoring **writes** (`create_pull_request`,
 
    - `merged: true` (or `state: "MERGED"` / `"CLOSED"`) → it
      landed; report the merge. Key on `merged` / `state`.
+     Then **dismiss this PR's own GitHub notification** so it
+     doesn't linger (the immediate companion to
+     `housekeeping`'s merged-PR notification sweep): list the
+     notifications and dismiss the one whose
+     `subject.url` ends in this PR's number — never
+     `mark_all_notifications_read`:
+
+     ```txt
+     mcp__github__list_notifications(
+       owner: "DASMAC-com",
+       repo: "dropset",
+     )
+     ```
+
+     ```txt
+     mcp__github__dismiss_notification(
+       threadID: "<this PR's notification id>",
+       state: "read",
+     )
+     ```
+
+     If no notification matches (already cleared), skip it.
+
    - `state: "OPEN"` with `mergeQueueEntry` non-null (or, on
      a classic-auto-merge repo, `autoMergeRequest` non-null)
      → still queued; keep polling.
+
    - `state: "OPEN"` with both `mergeQueueEntry` **and**
      `autoMergeRequest` null → it was **taken out** of the
      queue (a required check went red, a conflict appeared,
