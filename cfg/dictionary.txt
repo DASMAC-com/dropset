@@ -91,6 +91,7 @@ solana
 solflare
 solscan
 soulbound
+sqlfluff
 sqlx
 stablecoins
 stdlib
@@ -100,6 +101,7 @@ strat
 swatinem
 sysvar
 taiki
+templater
 tgbp
 thiserror
 tokenised
