@@ -192,7 +192,9 @@ fn dry_run(cfg: &BotConfig) -> Result<()> {
     };
     let skew_bps = skew::ref_skew_bps(&neutral, &cfg.strategy);
     let reference = skew::apply_skew(mid, skew_bps);
-    let action = killswitch::evaluate(&fair, &neutral, &cfg.kill, false);
+    // The dry run has no chain read, so the assumed-neutral inventory is also
+    // the launch baseline for the drawdown floor.
+    let action = killswitch::evaluate(&fair, &neutral, &cfg.kill, false, neutral.total_usd());
 
     println!("\nIntended quote (neutral inventory assumed):");
     println!("  reference:  {reference:.6} (skew {skew_bps:+.1} bps)");
