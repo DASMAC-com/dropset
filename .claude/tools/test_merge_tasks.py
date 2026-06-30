@@ -143,6 +143,17 @@ class AssembleTests(unittest.TestCase):
         # a non-meta union means no auto-prefix
         self.assertEqual(out["title"], "Refine the audit dedup")
 
+    def test_no_touch_issue_withholds_prefix(self):
+        # A folded issue with no **Touches**: can't be proven meta-work, so the
+        # whole merge isn't all-meta and the Claude: prefix is withheld.
+        data = self._issues()
+        data["issues"][1]["description"] = "Folded body, no touches.\n"
+        out = assemble(data)
+        self.assertFalse(out["all_meta"])
+        self.assertEqual(out["title"], "Refine the audit dedup")
+        # not cross-area either: a no-touch issue is neither meta nor product
+        self.assertFalse(out["cross_area"])
+
     def test_survivor_must_be_present(self):
         data = self._issues()
         data["survivor"] = "ENG-999"

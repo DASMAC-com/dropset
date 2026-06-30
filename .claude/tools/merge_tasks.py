@@ -176,7 +176,11 @@ def assemble(data: dict) -> dict:
     if union_globs:
         description += f"\n\n**Touches**: {', '.join(union_globs)}"
 
-    all_meta = bool(union_globs) and all(is_meta_glob(g) for g in union_globs)
+    # The prefix applies only when **every** folded issue is provably
+    # meta-work (all its globs meta) — so a no-touch issue, which can't be
+    # proven meta, withholds the prefix rather than silently mislabeling
+    # possible product work as meta.
+    all_meta = meta_count == len(issues)
     title = survivor.get("title") or survivor_id
     if all_meta and not title.startswith(CLAUDE_PREFIX):
         title = CLAUDE_PREFIX + title

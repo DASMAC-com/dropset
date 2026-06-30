@@ -190,8 +190,9 @@ def touches_overlap(a: Issue, b: Issue) -> bool:
 # Planner — from a set of Issues, render the chips-only Task Staging tree.
 # --------------------------------------------------------------------------
 #
-# * Issues bucket under ``# Skills`` (pure skill-suite work), a ``# ENG-###``
-#   heading per parent with 2+ Backlog subtasks, or a trailing ``# Standalone``.
+# * Issues bucket under ``# Claude`` (meta-work, keyed on the ``Claude:`` title
+#   prefix), a ``# ENG-###`` heading per parent with 2+ Backlog subtasks, or a
+#   trailing ``# Standalone``.
 # * Within a bucket, issues nest by blocker. Blocking is edge-driven: every
 #   blocker is a declared ``blockedBy`` / ``blocks`` relation (a file overlap
 #   is materialized into one such relation upstream, before the planner runs).
