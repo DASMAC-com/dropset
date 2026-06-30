@@ -56,7 +56,7 @@ pub fn group_takes(fills: &[FillRow]) -> Vec<Take> {
 /// the number of new legs folded.
 pub async fn run_once(store: &Store, batch_limit: i64) -> anyhow::Result<usize> {
     let cursor = store.cursor().await?;
-    let new_fills = store.fills_after(cursor, batch_limit).await?;
+    let new_fills = store.fills_after(&cursor, batch_limit).await?;
     if new_fills.is_empty() {
         return Ok(0);
     }
@@ -79,10 +79,11 @@ pub async fn run_once(store: &Store, batch_limit: i64) -> anyhow::Result<usize> 
 
     let last = new_fills.last().expect("non-empty");
     store
-        .set_cursor(Cursor {
+        .set_cursor(&Cursor {
             last_slot: last.slot,
             last_txn_index: last.txn_index,
             last_event_ordinal: last.event_ordinal,
+            last_signature: last.signature.clone(),
         })
         .await?;
     Ok(new_fills.len())

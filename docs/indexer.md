@@ -46,10 +46,11 @@ target, on a path that extends cleanly to an AWS deploy.
 - A Postgres store keyed on
   `(slot, txn_index, signature, event_ordinal)`.
 - A watermarked aggregator that groups per-leg fills into takes and
-  maintains a small set of rollups (per-market volume, last price,
-  TVL).
-- A hand-written `/v1` REST service (vaults, positions, prices,
-  book/depth, fills).
+  maintains a per-market rollup (volume and last price). TVL /
+  vault-inventory and OHLCV candles are deferred (§5, §9).
+- A hand-written `/v1` REST service over what the store holds: fills,
+  takes, per-market stats, and the raw event log. The richer
+  vendor-shaped surfaces (vaults, positions, book/depth) are deferred.
 - A localnet Docker service + `make` target; an AWS-shaped deploy
   path.
 
@@ -119,10 +120,10 @@ ______________________________________________________________________
 
 ```text
  cluster ──▶ ingest ──▶ decode ──▶ store(raw) ──▶ aggregate ──▶ /v1
- (geyser)    (filter     (events.rs   (Postgres,    (watermarked   (Axum
-             event-      walk +       table-per-    worker:        REST)
-             authority)  SDK codec)   event, PK)    legs→takes,
-                                                    candles, TVL)
+ (RPC poll;  (filter     (events.rs   (Postgres:    (watermarked   (Axum
+  geyser      event-      walk +       fill_events   worker:        REST)
+  next)       authority)  SDK codec)   + JSONB, PK)  legs→takes,
+                                                     market stats)
 ```
 
 Each stage is idempotent on the primary key, so a replay (restart,
@@ -197,11 +198,13 @@ aggregator owns. Never aggregate at query time.
 
 ### Tier 1 — raw events
 
-One table per event type (`fill_events`, `deposit_events`,
-`withdraw_events`, `create_vault_events`, `close_vault_events`,
-`freeze_vault_events`, `realize_events`, and the admin events).
-**Every** table carries the same key columns and the same primary
-key, the one frozen in `interface.md` §1:
+The hot, high-cardinality **`fill_events`** is a typed table — one
+column per `FillEvent` field. Every other event — the lifecycle events
+(`Deposit`, `Withdraw`, `CreateVault`, `CloseVault`, `FreezeVault`,
+`Realize`) and the admin retuning events — lands in a single generic
+**`events`** table at full fidelity: the key columns, a `kind`, the
+`market`, and the decoded JSON `payload`. Both tables carry the same
+primary key, the one frozen in `interface.md` §1:
 
 ```text
 PRIMARY KEY (slot, txn_index, signature, event_ordinal)
@@ -209,9 +212,10 @@ PRIMARY KEY (slot, txn_index, signature, event_ordinal)
 
 `event_ordinal` is the inner-instruction index (heap-pop order). Every
 write is an idempotent `INSERT … ON CONFLICT DO NOTHING`, so a replayed
-slot is a no-op — the PK *is* the dedup contract, end to end. The
-non-key columns mirror the decoded struct fields one-for-one (the
-`events.rs` shapes in §2 are the column lists).
+slot is a no-op — the PK *is* the dedup contract, end to end. Promoting
+the cold events out of the JSONB `events` table into their own typed
+tables is the natural next step; the generic table keeps full fidelity
+meanwhile.
 
 ### Tier 2 — derived rollups
 
@@ -222,16 +226,17 @@ Owned by the aggregator (§6), each carries its own watermark:
   `avg_price` (= `total_fill_quote / total_fill_base`), `market`,
   `taker`, `side`. This is the take-level view the contract says is
   *derived, not emitted*.
-- **`market_stats`** — per-market last price, a rolling volume window
-  (raw **and** self-trade-adjusted — never silently netted, per
-  §1 "volume integrity"), and `reserve_in_usd` once a price feed
-  lands (open: h).
-- **`vault_inventory`** — per vault, the latest
-  `(base_atoms_after, quote_atoms_after, nonce_after)`, for TVL and the
-  book/depth endpoint. Live book depth is reconstructed from
-  `LiquidityProfile` account state, not from events (the hot path emits
-  nothing) — so this table feeds TVL and history, while best-bid/ask
-  comes from an account read.
+- **`market_stats`** — per-market last price and raw volume. The
+  self-trade-adjusted volume columns are reserved (nullable) pending
+  the off-chain wash-clustering pipeline — never silently netted, per
+  §1 "volume integrity". A USD `reserve_in_usd` waits on a price feed
+  (open: h) and is likewise deferred.
+- **`vault_inventory`** *(deferred — not built in the prototype, §9)* —
+  per vault, the latest
+  `(base_atoms_after, quote_atoms_after, nonce_after)`, for TVL and a
+  book/depth endpoint. Live book depth would be reconstructed from
+  `LiquidityProfile` account state, not from events (the hot path
+  emits nothing).
 
 A candle / OHLCV table is the obvious next rollup (the idempotent
 `ON CONFLICT … DO UPDATE` candlestick fold is the template:
@@ -244,13 +249,15 @@ ______________________________________________________________________
 ## 6. Aggregation
 
 A **watermarked worker**, not database triggers — the standard shape
-for event-indexer aggregation. The worker advances a persisted cursor
-over the raw tables (the last processed
-`(slot, txn_index, event_ordinal)`) inside a `repeatable read`
-transaction, folds new legs into the Tier-2 tables with idempotent
-upserts, then advances the watermark. A separate `aggregated_events`
-ledger records which legs have been folded, so a re-run never
-double-counts a fill.
+for event-indexer aggregation. The worker reads the fill legs past a
+persisted cursor (the singleton `indexer_cursor`, holding the last
+folded `(slot, txn_index, event_ordinal, signature)`), then for each
+touched `(signature, txn_index)` re-reads that take's **full** leg set
+and recomputes its row — so the upsert is a full recompute and
+re-running converges on the same value, idempotent without a per-leg
+ledger. Wrapping the pass in a `repeatable read` transaction and adding
+an `aggregated_events` ledger are later hardening; the prototype relies
+on the cursor plus idempotent recompute.
 
 The **per-leg → take** grouping is the load-bearing case: group the
 raw `fill_events` of one transaction by `(signature, txn_index)`, sum
@@ -342,6 +349,13 @@ ______________________________________________________________________
   `[u8; 160]`, neither serde-supported as generated. The indexer
   sidesteps it (decode is borsh; `/v1` JSON is built in `model.rs`),
   but the feature wants a Codama-visitor fix — a separate follow-up.
+- **RPC-poll backlog window.** The poll fetches at most
+  `signature_batch_limit` newest-first signatures per tick and then
+  advances the cursor to the newest — so a backlog larger than one
+  batch (a long gap, or the first poll after downtime) skips the
+  middle. Fine for steady localnet flow; the fix (page with `before`
+  until the window drains, or don't advance on a saturated batch) lands
+  with the geyser path.
 - **Realtime channel.** WebSocket vs SSE vs PostgREST + `pg_notify`
   for the eventual push surface — out of scope for the prototype, seam
   noted in §6 / §7.
@@ -350,21 +364,23 @@ ______________________________________________________________________
 
 ## 10. Prior art
 
-The design follows the patterns established by mature on-chain
-order-book event indexers, distilled to what this prototype adopts:
+The design follows patterns established by mature on-chain order-book
+event indexers; how far this prototype takes each:
 
 - A **processor → Postgres ← watermarked aggregator** topology, with a
   thin REST layer (hand-written `/v1` here; PostgREST is a known
-  shortcut) over the store.
-- **Table-per-event raw tier** keyed on a uniform event coordinate,
-  with idempotent `ON CONFLICT` writes; **derived rollups** folded by a
-  watermarked worker, never at query time, with an `aggregated_events`
-  ledger so a re-fold never double-counts.
+  shortcut) over the store. *Adopted.*
+- A **raw tier keyed on a uniform event coordinate** with idempotent
+  `ON CONFLICT` writes, and **derived rollups** folded by a watermarked
+  worker, never at query time. *Adopted* — though the raw tier is one
+  typed `fill_events` table plus a generic JSONB `events` table (full
+  table-per-event, and an `aggregated_events` ledger, are the next
+  step, not yet built; idempotent recompute stands in, §6).
 - The **candlestick fold** (`open=COALESCE(first)`, `high=GREATEST`,
   `low=LEAST`, `close=EXCLUDED`, `volume=volume+EXCLUDED`) as the
-  template for the deferred OHLCV rollup.
+  template for the deferred OHLCV rollup. *Deferred.*
 - **Poll-at-`finalized`** ingest as the low-dependency path, with the
-  event coordinate PK absorbing replays.
+  event coordinate PK absorbing replays. *Adopted.*
 
 The earlier in-house streaming prototype (see §2) is the one local
 precedent the subscription + Docker shape transfers from; its

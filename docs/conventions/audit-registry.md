@@ -25,6 +25,7 @@ ci-infra (ci, low): .github/**, cfg/**, infra/**, Makefile, Anchor.toml
 tools (rust-tool, low): tools/**
 maker-bot (rust-tool, low): bots/maker-bot/**
 taker-bot (rust-tool, low): bots/taker-bot/**
+indexer (rust-tool, low): indexer/**
 ```
 
 **Inter-subsystem interfaces** — the seams where contract drift
@@ -61,6 +62,10 @@ taker-bot <-> program: the bot sizes orders off-chain against the live
   book (sdk/interface matching `simulate_swap`) and submits `swap`s
   through the generated SDK clients (sdk/rs) — the off-chain fill math
   and the swap instruction args/accounts must match the engine.
+indexer <-> sdk-clients: the indexer extracts and decodes emit_cpi
+  events through the shared dropset_sdk::events codec; its decoded event
+  layouts and the 8-byte discriminators must track the IDL
+  (sdk/idl/dropset.json).
 ```
 
 **Skip-globs** — generated / vendored / binary paths the file audit

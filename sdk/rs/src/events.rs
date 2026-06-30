@@ -145,22 +145,6 @@ pub fn strip_event_tag(inner_ix_data: &[u8]) -> Option<&[u8]> {
         .filter(|payload| payload.len() >= DISCRIMINATOR_LEN)
 }
 
-/// Decode every Dropset event-CPI from a transaction's inner-instruction
-/// `data` blobs, in iteration order — which, for a single transaction's
-/// inner instructions walked in order, is the heap-pop emission order the
-/// `event_ordinal` primary key counts (`interface.md` §1). Non-event
-/// inner instructions are skipped.
-pub fn decode_inner_instructions<'a, I>(inner_ix_blobs: I) -> Vec<DropsetEvent>
-where
-    I: IntoIterator<Item = &'a [u8]>,
-{
-    inner_ix_blobs
-        .into_iter()
-        .filter_map(strip_event_tag)
-        .filter_map(decode_event_payload)
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,7 +185,7 @@ mod tests {
         assert!(strip_event_tag(&[1, 2, 3]).is_none());
         let mut tagged = EVENT_IX_TAG_LE.to_vec();
         tagged.extend_from_slice(&FILL);
-        // tag present but body shorter than a discriminator stripped → ok
+        // tag present, payload is exactly a discriminator (== DISCRIMINATOR_LEN)
         assert!(strip_event_tag(&tagged).is_some());
     }
 

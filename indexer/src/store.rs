@@ -8,12 +8,15 @@ use serde::Serialize;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 
-/// The aggregator watermark: the last event coordinate folded.
-#[derive(Clone, Copy, Debug, Default, sqlx::FromRow)]
+/// The aggregator watermark: the last event coordinate folded. Carries
+/// `last_signature` so the tuple is unique (the RPC path pins `txn_index`
+/// to 0, collapsing `(slot, txn_index, event_ordinal)` across takes).
+#[derive(Clone, Debug, Default, sqlx::FromRow)]
 pub struct Cursor {
     pub last_slot: i64,
     pub last_txn_index: i64,
     pub last_event_ordinal: i64,
+    pub last_signature: String,
 }
 
 /// One row of the JSONB fidelity table, for `/v1/events`.
@@ -64,36 +67,42 @@ impl Store {
 
     pub async fn cursor(&self) -> anyhow::Result<Cursor> {
         let c = sqlx::query_as::<_, Cursor>(
-            "SELECT last_slot, last_txn_index, last_event_ordinal FROM indexer_cursor WHERE id = 1",
+            "SELECT last_slot, last_txn_index, last_event_ordinal, last_signature \
+             FROM indexer_cursor WHERE id = 1",
         )
         .fetch_one(&self.pool)
         .await?;
         Ok(c)
     }
 
-    pub async fn set_cursor(&self, c: Cursor) -> anyhow::Result<()> {
+    pub async fn set_cursor(&self, c: &Cursor) -> anyhow::Result<()> {
         sqlx::query(
             "UPDATE indexer_cursor SET last_slot = $1, last_txn_index = $2, \
-             last_event_ordinal = $3 WHERE id = 1",
+             last_event_ordinal = $3, last_signature = $4 WHERE id = 1",
         )
         .bind(c.last_slot)
         .bind(c.last_txn_index)
         .bind(c.last_event_ordinal)
+        .bind(&c.last_signature)
         .execute(&self.pool)
         .await?;
         Ok(())
     }
 
     /// Fill legs with coordinates strictly after the cursor, in PK order.
-    pub async fn fills_after(&self, c: Cursor, limit: i64) -> anyhow::Result<Vec<FillRow>> {
+    /// `signature` is part of the compare/order tuple so the strict `>`
+    /// never skips a leg when two takes share `(slot, txn_index,
+    /// event_ordinal)` (the RPC path pins `txn_index` to 0).
+    pub async fn fills_after(&self, c: &Cursor, limit: i64) -> anyhow::Result<Vec<FillRow>> {
         let rows = sqlx::query_as::<_, FillRow>(
             "SELECT * FROM fill_events \
-             WHERE (slot, txn_index, event_ordinal) > ($1, $2, $3) \
-             ORDER BY slot, txn_index, event_ordinal LIMIT $4",
+             WHERE (slot, txn_index, event_ordinal, signature) > ($1, $2, $3, $4) \
+             ORDER BY slot, txn_index, event_ordinal, signature LIMIT $5",
         )
         .bind(c.last_slot)
         .bind(c.last_txn_index)
         .bind(c.last_event_ordinal)
+        .bind(&c.last_signature)
         .bind(limit)
         .fetch_all(&self.pool)
         .await?;
@@ -146,7 +155,8 @@ impl Store {
         sqlx::query(
             "INSERT INTO market_stats (market, last_price, last_slot, take_count, volume_base, volume_quote) \
              SELECT t.market, \
-               (SELECT avg_price FROM takes WHERE market = t.market ORDER BY slot DESC, txn_index DESC LIMIT 1), \
+               (SELECT avg_price FROM takes WHERE market = t.market \
+                ORDER BY slot DESC, txn_index DESC, signature DESC LIMIT 1), \
                COALESCE(MAX(t.slot), 0), COUNT(*), \
                COALESCE(SUM(t.total_fill_base), 0), COALESCE(SUM(t.total_fill_quote), 0) \
              FROM takes t WHERE t.market = $1 GROUP BY t.market \

@@ -97,11 +97,16 @@ CREATE TABLE IF NOT EXISTS market_stats (
 );
 
 -- Singleton watermark: the last event coordinate the aggregator folded.
+-- Carries the full event PK (incl. `signature`): the RPC path leaves
+-- `txn_index` at 0, so two takes in one slot share `(slot, txn_index,
+-- event_ordinal)` — `signature` is what makes the watermark tuple unique,
+-- so a strict `>` advance never skips an unfolded leg.
 CREATE TABLE IF NOT EXISTS indexer_cursor (
     id                 SMALLINT PRIMARY KEY DEFAULT 1,
     last_slot          BIGINT NOT NULL DEFAULT 0,
     last_txn_index     BIGINT NOT NULL DEFAULT 0,
     last_event_ordinal BIGINT NOT NULL DEFAULT 0,
+    last_signature     TEXT   NOT NULL DEFAULT '',
     CONSTRAINT indexer_cursor_singleton CHECK (id = 1)
 );
 

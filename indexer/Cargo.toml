@@ -37,7 +37,6 @@ solana-transaction-status = "~3"
 # embeds `./migrations`; `rust_decimal` maps u64 atoms onto Postgres NUMERIC
 # without the i64 truncation a BIGINT bind would risk.
 sqlx = {version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "macros", "migrate", "rust_decimal", "json"]}
-thiserror = "1"
 tokio = {version = "1", features = ["rt-multi-thread", "macros", "signal", "time"]}
 tracing = "0.1"
 tracing-subscriber = {version = "0.3", features = ["env-filter"]}
