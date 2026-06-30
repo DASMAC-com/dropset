@@ -231,8 +231,8 @@ any vault size — the multi-market demo seeds ~\$100 top-of-book across
 markets whose tokens span ~\$1.14 down to ~\$0.00006, and the skew must
 mean the same thing in each. At the \$100 reference vault this reproduces
 the original "5 bps per \$10" (a \$10 deviation is 10% of a \$100 TVL).
-Beyond a 20%-of-TVL deviation, reshape the ladder via
-`SetLiquidityProfile` (see §3).
+Beyond a 15%-of-TVL deviation (a 30% per-side imbalance), reshape the
+ladder via `SetLiquidityProfile` (see §3).
 
 ______________________________________________________________________
 

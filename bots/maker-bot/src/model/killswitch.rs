@@ -219,6 +219,18 @@ mod tests {
     }
 
     #[test]
+    fn tvl_floor_takes_precedence_over_critical_imbalance() {
+        // A drained vault is the more urgent post-mortem signal, so the floor
+        // is checked before the imbalance ladder: a vault both below floor and
+        // critically imbalanced halts on TvlFloor, not ImbalanceCritical.
+        let drained = inv(70.0, 5.0); // $75 (≤ $80 floor), ~87% imbalance
+        assert_eq!(
+            evaluate(&ok_fair(), &drained, &kill(), false, LAUNCH),
+            Action::Halt(HaltReason::TvlFloor)
+        );
+    }
+
+    #[test]
     fn degraded_tightens_thresholds() {
         // 60/40 → 20% imbalance: Quote when healthy, Reshape when degraded
         // (reshape bound tightens 30% → 15%). Base-heavy → shrink the bid side.

@@ -147,8 +147,21 @@ fn tick(
         ctx.market.quote_decimals,
         mid,
     );
-    // Baseline the drawdown floor against the first valued TVL of this run.
-    let launch_tvl = *ctx.launch_tvl_usd.get_or_insert_with(|| inv.total_usd());
+    // Baseline the drawdown floor against the first valued TVL of this run,
+    // logging the adopted baseline so the operator can see which floor the run
+    // is holding to (the floor is meaningless if the vault was read near-empty).
+    let launch_tvl = match ctx.launch_tvl_usd {
+        Some(tvl) => tvl,
+        None => {
+            let tvl = inv.total_usd();
+            ctx.launch_tvl_usd = Some(tvl);
+            println!(
+                "[baseline] launch TVL ${tvl:.2} — drawdown floor at {:.0}%",
+                cfg.kill.tvl_floor_frac * 100.0
+            );
+            tvl
+        }
+    };
     let degraded = fair.health == Health::Degraded;
     let action = killswitch::evaluate(&fair, &inv, &cfg.kill, degraded, launch_tvl);
     let skew_bps = skew::ref_skew_bps(&inv, &cfg.strategy);

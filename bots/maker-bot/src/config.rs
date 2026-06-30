@@ -124,9 +124,8 @@ pub struct StrategyConfig {
     pub ladder: Vec<LadderLevel>,
     /// Linear inventory skew: shift the reference by this many bps per 1% of
     /// TVL of signed inventory deviation (§2 override of the formal A-S skew).
-    /// Pegged to fractional lopsidedness rather than absolute dollars so one
-    /// calibration is correct at any vault size; at the $100 reference scale it
-    /// reproduces the spec's "5 bps per $10" (a $10 deviation is 10% of TVL).
+    /// Keyed to fractional deviation so one calibration holds at any vault
+    /// size — see the module header for why.
     pub skew_bps_per_pct_tvl: f64,
     /// Cap on the inventory skew, in bps (±).
     pub skew_cap_bps: f64,
@@ -169,10 +168,9 @@ pub struct KillSwitchConfig {
     /// updates (§1, §4).
     pub cadc_disagree_bps: f64,
     /// TVL floor that halts the vault for post-mortem (§4 last row), as a
-    /// *fraction of launch TVL* — `0.8` halts on a 20% drawdown. The launch TVL
-    /// itself is read from the vault at startup (it is not a config constant),
-    /// so the floor self-scales to whatever each market is seeded with rather
-    /// than baking in the spec's literal $80/$100.
+    /// *fraction of launch TVL* — `0.8` halts on a 20% drawdown. Launch TVL is
+    /// read from the vault at startup (not a config constant), so the floor
+    /// self-scales per market — see the module header.
     pub tvl_floor_frac: f64,
 }
 
