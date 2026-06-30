@@ -139,6 +139,12 @@ pub struct StrategyConfig {
     /// often so deep, rarely-filled levels don't expire dark (§3 cold-path
     /// trigger 3).
     pub profile_heartbeat: Duration,
+    /// §4 reshape (imbalance > 30%): the fraction the *accumulating* side's
+    /// `size_bps` is scaled to. The heavy (rebuild) side stays at full commit,
+    /// so it dominates the book and leans into offloading the heavy leg — the
+    /// realizable form of "grow the heavy side" given the `Σ size_bps = 10000`
+    /// per-side invariant.
+    pub reshape_accumulating_scale: f64,
 }
 
 /// Inventory / peg / staleness kill-switch bounds (§1, §4).
@@ -205,6 +211,7 @@ impl Default for StrategyConfig {
             ref_heartbeat: Duration::from_secs(30),
             ref_skew_change_bps: 2.0,
             profile_heartbeat: Duration::from_secs(24 * 3600),
+            reshape_accumulating_scale: 0.5,
         }
     }
 }

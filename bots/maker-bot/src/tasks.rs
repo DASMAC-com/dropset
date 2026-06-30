@@ -165,8 +165,18 @@ fn tick(
             }
             // Already frozen on that side; fall through to the hot path.
         }
-        Action::Reshape | Action::Quote => {
-            if reshape_due(ctx, cfg, now) {
+        Action::Reshape(accumulating) => {
+            if ctx.profile_kind != ProfileKind::Reshaped(accumulating)
+                || profile_heartbeat_due(ctx, cfg, now)
+            {
+                arm_reshape(ctx, cfg, accumulating, now)?;
+                return Ok(());
+            }
+            // Already reshaped that way; fall through to the hot path so the
+            // reference skew keeps inviting rebalancing.
+        }
+        Action::Quote => {
+            if standard_arm_due(ctx, cfg, now) {
                 arm_standard(ctx, cfg, now)?;
                 return Ok(());
             }
@@ -312,15 +322,20 @@ fn decide_position(
     }
 }
 
+/// Whether the daily `SetLiquidityProfile` heartbeat is due — re-arm even an
+/// unchanged shape this often so deep, rarely-filled levels don't expire dark.
+fn profile_heartbeat_due(ctx: &Context, cfg: &BotConfig, now: Instant) -> bool {
+    triggers::should_set_profile_heartbeat(
+        now.duration_since(ctx.last_profile_at),
+        cfg.strategy.profile_heartbeat,
+    )
+}
+
 /// Whether the standard ladder needs re-arming this tick — either it isn't the
-/// armed shape (first tick, or recovering from a halt/freeze) or the daily
-/// heartbeat is due.
-fn reshape_due(ctx: &Context, cfg: &BotConfig, now: Instant) -> bool {
-    ctx.profile_kind != ProfileKind::Standard
-        || triggers::should_set_profile_heartbeat(
-            now.duration_since(ctx.last_profile_at),
-            cfg.strategy.profile_heartbeat,
-        )
+/// armed shape (first tick, or recovering from a halt/freeze/reshape) or the
+/// daily heartbeat is due.
+fn standard_arm_due(ctx: &Context, cfg: &BotConfig, now: Instant) -> bool {
+    ctx.profile_kind != ProfileKind::Standard || profile_heartbeat_due(ctx, cfg, now)
 }
 
 /// Arm the full symmetric ladder.
@@ -336,6 +351,34 @@ fn arm_standard(ctx: &mut Context, cfg: &BotConfig, now: Instant) -> Result<()> 
     ctx.profile_kind = ProfileKind::Standard;
     ctx.last_profile_at = now;
     println!("[profile] armed standard ladder");
+    Ok(())
+}
+
+/// Shrink the accumulating side so the heavy (rebuild) side dominates the book
+/// and leans into offloading the heavy leg — the §4 row 1 reshape (imbalance
+/// over 30%), a milder step than the freeze. The reference skew (applied every
+/// tick) supplies the price shift that invites rebalancing.
+fn arm_reshape(ctx: &mut Context, cfg: &BotConfig, accumulating: Side, now: Instant) -> Result<()> {
+    let mut profile = ladder::build_profile(&cfg.strategy.ladder);
+    ladder::scale_side(
+        &mut profile,
+        accumulating,
+        cfg.strategy.reshape_accumulating_scale,
+    );
+    chain::set_liquidity_profile(
+        &ctx.client,
+        &ctx.leader,
+        &ctx.market.market,
+        ctx.vault_idx,
+        ladder::to_bytes(&profile),
+    )?;
+    ctx.profile_kind = ProfileKind::Reshaped(accumulating);
+    ctx.last_profile_at = now;
+    let rebuild = match accumulating {
+        Side::Bid => Side::Ask,
+        Side::Ask => Side::Bid,
+    };
+    println!("[reshape] shrank {accumulating:?} side — grew {rebuild:?} side to rebalance");
     Ok(())
 }
 

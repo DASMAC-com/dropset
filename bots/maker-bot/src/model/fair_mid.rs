@@ -4,8 +4,11 @@
 //! Aerodrome) — *not* Oanda, which measures the underlying CAD/USD FX rate and
 //! serves only as a peg-deviation sanity check. The composition also folds in
 //! the §1 / §4 freshness rules: disagreeing or stale CADC sources pause the
-//! reference hot path, a single fresh CADC source runs degraded, and a peg
-//! outside the band flags a freeze condition.
+//! reference hot path, *any* single stale feed (one CADC source, or the FX
+//! feed) runs degraded, and a peg outside the band flags a freeze condition.
+//! Degraded tightens the kill switches by 50% (§4 row 5) — the peg band halves
+//! its margin here, the imbalance bounds and TVL floor tighten in
+//! [`super::killswitch`].
 
 use crate::config::KillSwitchConfig;
 use std::time::Duration;
@@ -33,8 +36,10 @@ impl Quote {
 pub enum Health {
     /// Both CADC sources fresh and in agreement — quote normally.
     Ok,
-    /// One CADC source fresh, the other stale/absent — quote with kill
-    /// switches tightened (§1: "use it but flag the vault as degraded").
+    /// A single feed is stale — one CADC source out (the other carries the
+    /// mid) or the FX feed out (the CADC mid still quotes, but the peg switch
+    /// disarms). Quote with the kill switches tightened (§1 / §4 row 5: "use
+    /// it but flag the vault as degraded").
     Degraded,
     /// CADC sources disagree past the bound, or none is fresh — pause
     /// `SetReferencePrice` until resolved (§1 / §4).
@@ -55,6 +60,20 @@ pub struct FairMid {
     pub peg_breach: bool,
 }
 
+/// The peg sanity band `[low, high]` for this tick. Healthy it is the
+/// configured `[peg_low, peg_high]`; degraded it halves each margin around the
+/// band's midpoint (§4 row 5), e.g. `[0.97, 1.03]` → `[0.985, 1.015]`.
+fn peg_band(kill: &KillSwitchConfig, degraded: bool) -> (f64, f64) {
+    if !degraded {
+        return (kill.peg_low, kill.peg_high);
+    }
+    let mid = (kill.peg_low + kill.peg_high) / 2.0;
+    (
+        mid + (kill.peg_low - mid) * 0.5,
+        mid + (kill.peg_high - mid) * 0.5,
+    )
+}
+
 /// Compose `fair_mid` from the CADC sources (`cg` = CoinGecko, `ae` =
 /// Aerodrome, the latter `None` when the feed is disabled) and the Oanda FX
 /// reading (`fx`). `None` arguments are absent feeds.
@@ -69,7 +88,7 @@ pub fn compose(
     let ae = fresh(ae);
     let fx = fresh(fx);
 
-    let (mid, health) = match (cg, ae) {
+    let (mid, mut health) = match (cg, ae) {
         // Both CADC sources fresh: pause if they disagree, else mean them.
         (Some(a), Some(b)) => {
             let mean = (a.value + b.value) / 2.0;
@@ -86,11 +105,21 @@ pub fn compose(
         (None, None) => (None, Health::Pause),
     };
 
+    // A stale (or absent) FX feed is also a single stale feed (§4 row 5): the
+    // CADC mid still quotes, but the vault runs degraded. Never upgrades a
+    // paused reference — only a healthy one steps down to degraded.
+    if fx.is_none() && health == Health::Ok {
+        health = Health::Degraded;
+    }
+
+    // Degraded halves the peg band's margin around par (§4 row 5), so a fresh
+    // peg reading trips the freeze switch on half the deviation.
+    let (peg_low, peg_high) = peg_band(kill, health == Health::Degraded);
     let peg = match (mid, fx) {
         (Some(m), Some(f)) => Some(m / f.value),
         _ => None,
     };
-    let peg_breach = peg.is_some_and(|p| p < kill.peg_low || p > kill.peg_high);
+    let peg_breach = peg.is_some_and(|p| p < peg_low || p > peg_high);
 
     FairMid {
         mid,
@@ -149,12 +178,27 @@ mod tests {
     }
 
     #[test]
-    fn stale_oanda_disarms_peg_switch_without_tripping_it() {
+    fn stale_oanda_disarms_peg_switch_and_runs_degraded() {
         let stale_fx = Quote::new(0.50, Duration::from_secs(600));
         let r = compose(Some(q(0.73)), Some(q(0.73)), Some(stale_fx), &kill());
         assert!(r.peg.is_none());
         assert!(!r.peg_breach);
-        // CADC sources are still fine, so quoting continues.
-        assert_eq!(r.health, Health::Ok);
+        // CADC sources are still fine, so quoting continues — but a stale FX
+        // feed is a single stale feed, so the vault runs degraded (§4 row 5).
+        assert_eq!(r.health, Health::Degraded);
+    }
+
+    #[test]
+    fn degraded_tightens_the_peg_band() {
+        // CADC 0.745 against FX 0.73 → peg ~1.021: inside the healthy
+        // [0.97, 1.03] band, but outside the degraded [0.985, 1.015] band once
+        // a single CADC source drops the vault to degraded.
+        let healthy = compose(Some(q(0.745)), Some(q(0.745)), Some(q(0.73)), &kill());
+        assert_eq!(healthy.health, Health::Ok);
+        assert!(!healthy.peg_breach);
+
+        let degraded = compose(Some(q(0.745)), None, Some(q(0.73)), &kill());
+        assert_eq!(degraded.health, Health::Degraded);
+        assert!(degraded.peg_breach);
     }
 }

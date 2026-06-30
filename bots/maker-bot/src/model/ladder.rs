@@ -46,6 +46,26 @@ pub fn zero_side(profile: &mut LiquidityProfile, side: Side) {
     }
 }
 
+/// Scale one side's per-level `size_bps` by `scale`, each level clamped to
+/// `[0, 10000]` — the §4 reshape (imbalance > 30%). The standard ladder already
+/// fully commits each leg (`Σ size_bps = 10000`), so "grow the heavy side"
+/// (spec §4 row 1) can only be realized *relatively*: shrink the accumulating
+/// side here (`scale < 1`) so the untouched heavy (rebuild) side dominates the
+/// book and leans into offloading the heavy leg. A `scale ≤ 1` only shrinks the
+/// side, so it can never breach the per-side `Σ ≤ 10000` invariant (the clamp
+/// is a guard for a hypothetical grow caller). A milder step than [`zero_side`],
+/// which the > 50% freeze uses to drop the accumulating side entirely.
+pub fn scale_side(profile: &mut LiquidityProfile, side: Side, scale: f64) {
+    let levels = match side {
+        Side::Bid => &mut profile.bids,
+        Side::Ask => &mut profile.asks,
+    };
+    for level in levels.iter_mut() {
+        let scaled = (f64::from(level.size_bps.get()) * scale).round();
+        level.size_bps = (scaled.clamp(0.0, 10_000.0) as u16).into();
+    }
+}
+
 /// Serialize a profile to the `[u8; 160]` `set_liquidity_profile` argument.
 pub fn to_bytes(profile: &LiquidityProfile) -> [u8; 160] {
     profile_bytes(profile)
@@ -85,6 +105,33 @@ mod tests {
         zero_side(&mut p, Side::Ask);
         assert_eq!(p.asks[0].size_bps.get(), 0);
         assert_eq!(p.bids[0].size_bps.get(), DEFAULT_LADDER[0].size_bps);
+    }
+
+    #[test]
+    fn scale_side_shrinks_only_the_accumulating_side() {
+        let mut p = build_profile(&DEFAULT_LADDER);
+        scale_side(&mut p, Side::Bid, 0.5);
+        // The scaled (accumulating) side halves; the heavy side is untouched
+        // and so dominates the book.
+        for (i, lvl) in DEFAULT_LADDER.iter().enumerate() {
+            assert_eq!(p.bids[i].size_bps.get(), lvl.size_bps / 2);
+            assert_eq!(p.asks[i].size_bps.get(), lvl.size_bps);
+        }
+        let bid: u32 = p.bids.iter().map(|l| l.size_bps.get() as u32).sum();
+        let ask: u32 = p.asks.iter().map(|l| l.size_bps.get() as u32).sum();
+        assert!(bid < ask);
+    }
+
+    #[test]
+    fn scale_side_shrinks_the_ask_side_too() {
+        // The quote-heavy reshape scales the ask side; the bid side is left at
+        // full commit.
+        let mut p = build_profile(&DEFAULT_LADDER);
+        scale_side(&mut p, Side::Ask, 0.5);
+        for (i, lvl) in DEFAULT_LADDER.iter().enumerate() {
+            assert_eq!(p.asks[i].size_bps.get(), lvl.size_bps / 2);
+            assert_eq!(p.bids[i].size_bps.get(), lvl.size_bps);
+        }
     }
 
     #[test]
