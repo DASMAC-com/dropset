@@ -89,11 +89,11 @@ fields"), then rewrites the Task Staging document. It still has **no**
 belong in one PR render as nested serial chips. A blocker is honoured
 until it reaches a terminal state (`completed` / `canceled`), so a
 Backlog issue gated by a live In-Progress / In-Review issue keeps that
-blocker as a tag and the blocker ranks in the transitive `# Most
-blocking` tally. It uses the standard library only (`urllib` + `json`)
-for its GraphQL calls, so it adds no dependency to the Rust build and
-inherits the repo's `ruff` hooks; its unit tests run under `make
-tools-tests`. It reads `LINEAR_PROJECT_ID` plus its own
+blocker as a tag, and the blocker ranks in the transitive
+`# Most blocking` tally. It uses the standard library only
+(`urllib` + `json`) for its GraphQL calls, so it adds no dependency to
+the Rust build and inherits the repo's `ruff` hooks; its unit tests run
+under `make tools-tests`. It reads `LINEAR_PROJECT_ID` plus its own
 `LINEAR_API_KEY` (a personal Linear API key, because a script can't
 ride the OAuth-based `claude.ai` Linear MCP) for every run; for a real
 write it also reads `LINEAR_TASK_STAGING_DOC_ID` (the document it
