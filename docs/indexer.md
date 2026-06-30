@@ -293,6 +293,7 @@ stage — split into a workspace only if a stage grows independently:
 indexer/
   Cargo.toml
   migrations/      # sqlx SQL migrations (0001_init.sql)
+  queries/         # externalized .sql, loaded via include_str!
   src/
     config.rs      # env-driven config (db / rpc / program id)
     model.rs       # row types, /v1 wire shape, event → JSON / columns

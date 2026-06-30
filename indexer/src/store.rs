@@ -66,26 +66,20 @@ impl Store {
     }
 
     pub async fn cursor(&self) -> anyhow::Result<Cursor> {
-        let c = sqlx::query_as::<_, Cursor>(
-            "SELECT last_slot, last_txn_index, last_event_ordinal, last_signature \
-             FROM indexer_cursor WHERE id = 1",
-        )
-        .fetch_one(&self.pool)
-        .await?;
+        let c = sqlx::query_as::<_, Cursor>(include_str!("../queries/cursor_get.sql"))
+            .fetch_one(&self.pool)
+            .await?;
         Ok(c)
     }
 
     pub async fn set_cursor(&self, c: &Cursor) -> anyhow::Result<()> {
-        sqlx::query(
-            "UPDATE indexer_cursor SET last_slot = $1, last_txn_index = $2, \
-             last_event_ordinal = $3, last_signature = $4 WHERE id = 1",
-        )
-        .bind(c.last_slot)
-        .bind(c.last_txn_index)
-        .bind(c.last_event_ordinal)
-        .bind(&c.last_signature)
-        .execute(&self.pool)
-        .await?;
+        sqlx::query(include_str!("../queries/cursor_set.sql"))
+            .bind(c.last_slot)
+            .bind(c.last_txn_index)
+            .bind(c.last_event_ordinal)
+            .bind(&c.last_signature)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -94,80 +88,53 @@ impl Store {
     /// never skips a leg when two takes share `(slot, txn_index,
     /// event_ordinal)` (the RPC path pins `txn_index` to 0).
     pub async fn fills_after(&self, c: &Cursor, limit: i64) -> anyhow::Result<Vec<FillRow>> {
-        let rows = sqlx::query_as::<_, FillRow>(
-            "SELECT * FROM fill_events \
-             WHERE (slot, txn_index, event_ordinal, signature) > ($1, $2, $3, $4) \
-             ORDER BY slot, txn_index, event_ordinal, signature LIMIT $5",
-        )
-        .bind(c.last_slot)
-        .bind(c.last_txn_index)
-        .bind(c.last_event_ordinal)
-        .bind(&c.last_signature)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?;
+        let rows = sqlx::query_as::<_, FillRow>(include_str!("../queries/fills_after.sql"))
+            .bind(c.last_slot)
+            .bind(c.last_txn_index)
+            .bind(c.last_event_ordinal)
+            .bind(&c.last_signature)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?;
         Ok(rows)
     }
 
     /// All legs of one take (`(signature, txn_index)` group), for a full
     /// idempotent recompute.
     pub async fn legs_for(&self, signature: &str, txn_index: i64) -> anyhow::Result<Vec<FillRow>> {
-        let rows = sqlx::query_as::<_, FillRow>(
-            "SELECT * FROM fill_events WHERE signature = $1 AND txn_index = $2 \
-             ORDER BY event_ordinal",
-        )
-        .bind(signature)
-        .bind(txn_index)
-        .fetch_all(&self.pool)
-        .await?;
+        let rows = sqlx::query_as::<_, FillRow>(include_str!("../queries/legs_for.sql"))
+            .bind(signature)
+            .bind(txn_index)
+            .fetch_all(&self.pool)
+            .await?;
         Ok(rows)
     }
 
     pub async fn upsert_take(&self, t: &Take) -> anyhow::Result<()> {
-        sqlx::query(
-            "INSERT INTO takes (signature, txn_index, slot, block_time, market, taker, side, \
-             leg_count, total_fill_base, total_fill_quote, total_taker_fee, avg_price) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) \
-             ON CONFLICT (signature, txn_index) DO UPDATE SET \
-             slot = EXCLUDED.slot, block_time = EXCLUDED.block_time, leg_count = EXCLUDED.leg_count, \
-             total_fill_base = EXCLUDED.total_fill_base, total_fill_quote = EXCLUDED.total_fill_quote, \
-             total_taker_fee = EXCLUDED.total_taker_fee, avg_price = EXCLUDED.avg_price",
-        )
-        .bind(&t.signature)
-        .bind(t.txn_index)
-        .bind(t.slot)
-        .bind(t.block_time)
-        .bind(&t.market)
-        .bind(&t.taker)
-        .bind(t.side)
-        .bind(t.leg_count)
-        .bind(t.total_fill_base)
-        .bind(t.total_fill_quote)
-        .bind(t.total_taker_fee)
-        .bind(t.avg_price)
-        .execute(&self.pool)
-        .await?;
+        sqlx::query(include_str!("../queries/take_upsert.sql"))
+            .bind(&t.signature)
+            .bind(t.txn_index)
+            .bind(t.slot)
+            .bind(t.block_time)
+            .bind(&t.market)
+            .bind(&t.taker)
+            .bind(t.side)
+            .bind(t.leg_count)
+            .bind(t.total_fill_base)
+            .bind(t.total_fill_quote)
+            .bind(t.total_taker_fee)
+            .bind(t.avg_price)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
     /// Recompute one market's rollup from its takes — idempotent.
     pub async fn recompute_market_stats(&self, market: &str) -> anyhow::Result<()> {
-        sqlx::query(
-            "INSERT INTO market_stats (market, last_price, last_slot, take_count, volume_base, volume_quote) \
-             SELECT t.market, \
-               (SELECT avg_price FROM takes WHERE market = t.market \
-                ORDER BY slot DESC, txn_index DESC, signature DESC LIMIT 1), \
-               COALESCE(MAX(t.slot), 0), COUNT(*), \
-               COALESCE(SUM(t.total_fill_base), 0), COALESCE(SUM(t.total_fill_quote), 0) \
-             FROM takes t WHERE t.market = $1 GROUP BY t.market \
-             ON CONFLICT (market) DO UPDATE SET \
-               last_price = EXCLUDED.last_price, last_slot = EXCLUDED.last_slot, \
-               take_count = EXCLUDED.take_count, volume_base = EXCLUDED.volume_base, \
-               volume_quote = EXCLUDED.volume_quote",
-        )
-        .bind(market)
-        .execute(&self.pool)
-        .await?;
+        sqlx::query(include_str!("../queries/market_stats_recompute.sql"))
+            .bind(market)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -178,34 +145,27 @@ impl Store {
         market: Option<&str>,
         limit: i64,
     ) -> anyhow::Result<Vec<FillRow>> {
-        let rows = sqlx::query_as::<_, FillRow>(
-            "SELECT * FROM fill_events WHERE ($1::text IS NULL OR market = $1) \
-             ORDER BY slot DESC, txn_index DESC, event_ordinal DESC LIMIT $2",
-        )
-        .bind(market)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?;
+        let rows = sqlx::query_as::<_, FillRow>(include_str!("../queries/recent_fills.sql"))
+            .bind(market)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?;
         Ok(rows)
     }
 
     pub async fn list_takes(&self, market: Option<&str>, limit: i64) -> anyhow::Result<Vec<Take>> {
-        let rows = sqlx::query_as::<_, Take>(
-            "SELECT * FROM takes WHERE ($1::text IS NULL OR market = $1) \
-             ORDER BY slot DESC, txn_index DESC LIMIT $2",
-        )
-        .bind(market)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?;
+        let rows = sqlx::query_as::<_, Take>(include_str!("../queries/takes_list.sql"))
+            .bind(market)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?;
         Ok(rows)
     }
 
     pub async fn list_markets(&self) -> anyhow::Result<Vec<MarketStatsRow>> {
-        let rows =
-            sqlx::query_as::<_, MarketStatsRow>("SELECT * FROM market_stats ORDER BY market")
-                .fetch_all(&self.pool)
-                .await?;
+        let rows = sqlx::query_as::<_, MarketStatsRow>(include_str!("../queries/markets_list.sql"))
+            .fetch_all(&self.pool)
+            .await?;
         Ok(rows)
     }
 
@@ -215,17 +175,12 @@ impl Store {
         market: Option<&str>,
         limit: i64,
     ) -> anyhow::Result<Vec<EventEnvelope>> {
-        let rows = sqlx::query_as::<_, EventEnvelope>(
-            "SELECT slot, txn_index, signature, event_ordinal, block_time, kind, market, payload \
-             FROM events WHERE ($1::text IS NULL OR kind = $1) \
-             AND ($2::text IS NULL OR market = $2) \
-             ORDER BY slot DESC, txn_index DESC, event_ordinal DESC LIMIT $3",
-        )
-        .bind(kind)
-        .bind(market)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?;
+        let rows = sqlx::query_as::<_, EventEnvelope>(include_str!("../queries/events_list.sql"))
+            .bind(kind)
+            .bind(market)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?;
         Ok(rows)
     }
 }
@@ -234,34 +189,28 @@ async fn write_fill(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     r: &FillRow,
 ) -> anyhow::Result<u64> {
-    let res = sqlx::query(
-        "INSERT INTO fill_events (slot, txn_index, signature, event_ordinal, block_time, market, \
-         taker, leader, quote_authority, side, sector_idx, level_idx, fill_base, fill_quote, \
-         fill_price, base_atoms_after, quote_atoms_after, nonce_after, taker_fee_atoms) \
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) \
-         ON CONFLICT DO NOTHING",
-    )
-    .bind(r.slot)
-    .bind(r.txn_index)
-    .bind(&r.signature)
-    .bind(r.event_ordinal)
-    .bind(r.block_time)
-    .bind(&r.market)
-    .bind(&r.taker)
-    .bind(&r.leader)
-    .bind(&r.quote_authority)
-    .bind(r.side)
-    .bind(r.sector_idx)
-    .bind(r.level_idx)
-    .bind(r.fill_base)
-    .bind(r.fill_quote)
-    .bind(r.fill_price)
-    .bind(r.base_atoms_after)
-    .bind(r.quote_atoms_after)
-    .bind(r.nonce_after)
-    .bind(r.taker_fee_atoms)
-    .execute(&mut **tx)
-    .await?;
+    let res = sqlx::query(include_str!("../queries/fill_insert.sql"))
+        .bind(r.slot)
+        .bind(r.txn_index)
+        .bind(&r.signature)
+        .bind(r.event_ordinal)
+        .bind(r.block_time)
+        .bind(&r.market)
+        .bind(&r.taker)
+        .bind(&r.leader)
+        .bind(&r.quote_authority)
+        .bind(r.side)
+        .bind(r.sector_idx)
+        .bind(r.level_idx)
+        .bind(r.fill_base)
+        .bind(r.fill_quote)
+        .bind(r.fill_price)
+        .bind(r.base_atoms_after)
+        .bind(r.quote_atoms_after)
+        .bind(r.nonce_after)
+        .bind(r.taker_fee_atoms)
+        .execute(&mut **tx)
+        .await?;
     Ok(res.rows_affected())
 }
 
@@ -270,19 +219,16 @@ async fn write_envelope(
     coords: &EventCoords,
     event: &DropsetEvent,
 ) -> anyhow::Result<u64> {
-    let res = sqlx::query(
-        "INSERT INTO events (slot, txn_index, signature, event_ordinal, block_time, kind, market, payload) \
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING",
-    )
-    .bind(coords.slot)
-    .bind(coords.txn_index)
-    .bind(&coords.signature)
-    .bind(coords.event_ordinal)
-    .bind(coords.block_time)
-    .bind(event.name())
-    .bind(event_market(event))
-    .bind(event_to_json(event))
-    .execute(&mut **tx)
-    .await?;
+    let res = sqlx::query(include_str!("../queries/event_insert.sql"))
+        .bind(coords.slot)
+        .bind(coords.txn_index)
+        .bind(&coords.signature)
+        .bind(coords.event_ordinal)
+        .bind(coords.block_time)
+        .bind(event.name())
+        .bind(event_market(event))
+        .bind(event_to_json(event))
+        .execute(&mut **tx)
+        .await?;
     Ok(res.rows_affected())
 }

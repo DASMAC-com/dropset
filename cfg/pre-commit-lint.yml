@@ -106,6 +106,17 @@ repos:
   - id: 'ruff-format'
   repo: 'https://github.com/astral-sh/ruff-pre-commit'
   rev: 'v0.15.18'
+# Lint the externalized indexer SQL (indexer/queries/*.sql, loaded by
+# store.rs via include_str!). Postgres dialect + `$n` placeholder templater
+# are set in cfg/sqlfluff.cfg.
+- hooks:
+  - args:
+    - '--config'
+    - 'cfg/sqlfluff.cfg'
+    files: '^indexer/queries/.*\.sql$'
+    id: 'sqlfluff-lint'
+  repo: 'https://github.com/sqlfluff/sqlfluff'
+  rev: '4.2.2'
 - hooks:
   - entry: 'cargo fmt --'
     id: 'rustfmt'
