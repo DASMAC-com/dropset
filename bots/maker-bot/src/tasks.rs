@@ -176,7 +176,7 @@ fn tick(
             // reference skew keeps inviting rebalancing.
         }
         Action::Quote => {
-            if reshape_due(ctx, cfg, now) {
+            if standard_arm_due(ctx, cfg, now) {
                 arm_standard(ctx, cfg, now)?;
                 return Ok(());
             }
@@ -334,7 +334,7 @@ fn profile_heartbeat_due(ctx: &Context, cfg: &BotConfig, now: Instant) -> bool {
 /// Whether the standard ladder needs re-arming this tick — either it isn't the
 /// armed shape (first tick, or recovering from a halt/freeze/reshape) or the
 /// daily heartbeat is due.
-fn reshape_due(ctx: &Context, cfg: &BotConfig, now: Instant) -> bool {
+fn standard_arm_due(ctx: &Context, cfg: &BotConfig, now: Instant) -> bool {
     ctx.profile_kind != ProfileKind::Standard || profile_heartbeat_due(ctx, cfg, now)
 }
 

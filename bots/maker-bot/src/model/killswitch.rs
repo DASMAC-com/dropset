@@ -138,6 +138,16 @@ mod tests {
     }
 
     #[test]
+    fn quote_heavy_reshape_shrinks_the_ask_side() {
+        // 34/66 → 32% imbalance, quote-heavy → the accumulating (ask) side is
+        // the one shrunk, mirroring the base-heavy bid case.
+        assert_eq!(
+            evaluate(&ok_fair(), &inv(34.0, 66.0), &kill(), false),
+            Action::Reshape(Side::Ask)
+        );
+    }
+
+    #[test]
     fn heavy_imbalance_freezes_the_accumulating_side() {
         // 78/22 → 56% imbalance, base-heavy → freeze the bid side.
         assert_eq!(
