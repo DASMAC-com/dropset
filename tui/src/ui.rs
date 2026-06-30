@@ -502,7 +502,21 @@ fn phase_style(phase: Phase) -> (Color, Modifier) {
 
 #[cfg(test)]
 mod tests {
-    use super::fmt_units;
+    use super::{fmt_units, symbol_for};
+    use solana_pubkey::Pubkey;
+
+    #[test]
+    fn symbol_for_resolves_known_mints_and_falls_back() {
+        let base = Pubkey::new_from_array([1u8; 32]);
+        let quote = Pubkey::new_from_array([2u8; 32]);
+        let other = Pubkey::new_from_array([3u8; 32]);
+        let symbols = [(base, "CADC"), (quote, "USDC")];
+        assert_eq!(symbol_for(&symbols, &base, "base"), "CADC");
+        assert_eq!(symbol_for(&symbols, &quote, "quote"), "USDC");
+        // An unknown mint (a market minted outside the bootstrap) falls back.
+        assert_eq!(symbol_for(&symbols, &other, "base"), "base");
+        assert_eq!(symbol_for(&[], &base, "quote"), "quote");
+    }
 
     #[test]
     fn fmt_units_groups_thousands() {

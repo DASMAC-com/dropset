@@ -29,7 +29,12 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::{backend::CrosstermBackend, layout::Rect, widgets::ListState, Terminal};
+use ratatui::{
+    backend::CrosstermBackend,
+    layout::{Position, Rect},
+    widgets::ListState,
+    Terminal,
+};
 use solana_client::rpc_client::RpcClient;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
@@ -208,13 +213,7 @@ impl App {
     /// The account address whose click-target rect contains `(col, row)`, if
     /// any.
     fn address_at(&self, col: u16, row: u16) -> Option<Pubkey> {
-        self.click_targets.iter().find_map(|(rect, addr)| {
-            let hit = col >= rect.x
-                && col < rect.x + rect.width
-                && row >= rect.y
-                && row < rect.y + rect.height;
-            hit.then_some(*addr)
-        })
+        hit_target(&self.click_targets, col, row)
     }
 
     /// Open `address` in the explorer — the local container when it's ready,
@@ -375,6 +374,16 @@ impl Drop for App {
     }
 }
 
+/// The address whose click-target rectangle contains `(col, row)`, if any —
+/// the lookup behind [`App::address_at`], split out so it's testable without
+/// an `App`.
+fn hit_target(targets: &[(Rect, Pubkey)], col: u16, row: u16) -> Option<Pubkey> {
+    let pos = Position { x: col, y: row };
+    targets
+        .iter()
+        .find_map(|(rect, addr)| rect.contains(pos).then_some(*addr))
+}
+
 /// RAII guard for the alternate-screen / raw-mode terminal. Restores the
 /// terminal on drop (including during a panic unwind).
 struct TerminalGuard {
@@ -405,5 +414,49 @@ impl Drop for TerminalGuard {
             LeaveAlternateScreen
         );
         let _ = self.term.show_cursor();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::hit_target;
+    use ratatui::layout::Rect;
+    use solana_pubkey::Pubkey;
+
+    #[test]
+    fn hit_target_matches_only_the_containing_row() {
+        let a = Pubkey::new_from_array([1u8; 32]);
+        let b = Pubkey::new_from_array([2u8; 32]);
+        // Two stacked single-row targets, side-inset like the accounts pane.
+        let targets = [
+            (
+                Rect {
+                    x: 2,
+                    y: 3,
+                    width: 10,
+                    height: 1,
+                },
+                a,
+            ),
+            (
+                Rect {
+                    x: 2,
+                    y: 4,
+                    width: 10,
+                    height: 1,
+                },
+                b,
+            ),
+        ];
+        // A click inside the first row hits its address; the second, the other.
+        assert_eq!(hit_target(&targets, 5, 3), Some(a));
+        assert_eq!(hit_target(&targets, 5, 4), Some(b));
+        // Right edge is exclusive (x + width), left edge inclusive.
+        assert_eq!(hit_target(&targets, 2, 3), Some(a));
+        assert_eq!(hit_target(&targets, 12, 3), None);
+        // Outside every target — the border column and an empty row.
+        assert_eq!(hit_target(&targets, 1, 3), None);
+        assert_eq!(hit_target(&targets, 5, 9), None);
+        assert_eq!(hit_target(&[], 5, 3), None);
     }
 }
