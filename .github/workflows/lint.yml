@@ -35,6 +35,9 @@ jobs:
         cache-dependency-path: '.github/workflows/lint/requirements.txt'
         python-version: '${{ env.PYTHON_VERSION }}'
     - run: 'pip install -r .github/workflows/lint/requirements.txt'
+    # Python skill-tool unit tests (stdlib only, reuses the cached Python set up
+    # above — no new cache). Folds in the old dedicated stage-backlog-tests job.
+    - run: 'make tools-tests'
     - id: 'pre-commit-cache'
       uses: 'actions/cache/restore@v5'
       with:

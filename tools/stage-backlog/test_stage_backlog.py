@@ -2,8 +2,10 @@
 
 Ported from the Rust crate's ``#[cfg(test)]`` cases in ``model.rs`` / ``plan.rs``
 (the merge-only helpers and their tests are gone with the merge subcommand),
-plus the orphan-cycle regression for the silent-drop bug the port fixes. Run
-with ``python3 -m unittest`` from ``tools/stage-backlog``.
+plus the orphan-cycle regression for the silent-drop bug the port fixes, and the
+edge-driven-blocking cases (materialized overlap, cross-state blockers, bare-tag
+notes, transitive tally). Run with ``python3 -m unittest`` from
+``tools/stage-backlog``.
 """
 
 import unittest
@@ -12,6 +14,7 @@ from stage_backlog import (
     Issue,
     block_counts,
     compute_blockers,
+    materialize_overlap_edges,
     missing_touches,
     parse_number,
     parse_touches,
@@ -34,6 +37,11 @@ def with_(ident, parent=None, touches=(), blocked_by=(), blocks=()):
         blocked_by=list(blocked_by),
         blocks=list(blocks),
     )
+
+
+def all_backlog(issues):
+    """A ``state_of`` map treating every issue as live Backlog."""
+    return {i.id: "backlog" for i in issues}
 
 
 class ModelTests(unittest.TestCase):
@@ -93,6 +101,39 @@ class ModelTests(unittest.TestCase):
         )
 
 
+class MaterializeOverlapTests(unittest.TestCase):
+    """File-overlap is turned into a real ``blocks`` relation (lower blocks
+    higher) before the tree is built — not inferred in the renderer. Under
+    ``--dry-run`` nothing is written, but the edge is still reflected in memory
+    so the previewed tree matches a real run."""
+
+    def test_overlap_files_lower_blocks_higher(self):
+        # Input order higher-first to prove the lower number is chosen.
+        issues = [
+            with_("ENG-22", touches=["tui/"]),
+            with_("ENG-18", touches=["tui/"]),
+        ]
+        filed = materialize_overlap_edges(issues, None, True)
+        self.assertEqual(filed, [("ENG-18", "ENG-22")])
+        eng18 = next(i for i in issues if i.id == "ENG-18")
+        self.assertIn("ENG-22", eng18.blocks)  # reflected in memory
+
+    def test_declared_edge_suppresses_overlap_edge(self):
+        # A declared edge in either direction wins; no overlap edge is filed.
+        issues = [
+            with_("ENG-18", touches=["tui/"]),
+            with_("ENG-22", touches=["tui/"], blocked_by=["ENG-18"]),
+        ]
+        self.assertEqual(materialize_overlap_edges(issues, None, True), [])
+
+    def test_distinct_files_file_no_edge(self):
+        issues = [
+            with_("ENG-18", touches=["tui/pane.rs"]),
+            with_("ENG-22", touches=["tui/action.rs"]),
+        ]
+        self.assertEqual(materialize_overlap_edges(issues, None, True), [])
+
+
 class PlanTests(unittest.TestCase):
     def test_empty_renders_empty(self):
         self.assertEqual(render([]), "")
@@ -115,14 +156,13 @@ class PlanTests(unittest.TestCase):
             "# Standalone\n\n- ENG-10\n    - ENG-20\n",
         )
 
-    def test_file_overlap_serializes_higher_under_lower(self):
-        # No declared edge, but both declare the tui/ directory → they can't
-        # run in parallel, so 22 nests under 18.
-        out = render(
-            [with_("ENG-18", touches=["tui/"]), with_("ENG-22", touches=["tui/"])]
-        )
+    def test_materialized_overlap_serializes_higher_under_lower(self):
+        # No declared edge, but both declare the tui/ directory → materialize
+        # files ENG-18 blocks ENG-22, so 22 nests under 18.
+        issues = [with_("ENG-18", touches=["tui/"]), with_("ENG-22", touches=["tui/"])]
+        materialize_overlap_edges(issues, None, True)
         self.assertEqual(
-            out,
+            render(issues),
             "# Most blocking\n\n- ENG-18 — blocks 1 issue\n\n"
             "# Standalone\n\n- ENG-18\n    - ENG-22\n",
         )
@@ -159,9 +199,9 @@ class PlanTests(unittest.TestCase):
         out = render([with_("ENG-41", parent="ENG-40", touches=["a/x.rs"])])
         self.assertEqual(out, "# Standalone\n\n- ENG-41\n")
 
-    def test_cross_heading_blocker_renders_after_note(self):
+    def test_cross_heading_blocker_renders_bare_tag_note(self):
         # ENG-60/61 share a parent heading; ENG-61 is blocked by standalone
-        # ENG-70, which is under a different heading → (after ENG-70).
+        # ENG-70, under a different heading → bare-tag note (ENG-70).
         out = render(
             [
                 with_("ENG-60", parent="ENG-50", touches=["a/x.rs"]),
@@ -174,7 +214,7 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(
             out,
             "# Most blocking\n\n- ENG-70 — blocks 1 issue\n\n"
-            "# ENG-50\n\n- ENG-60\n- ENG-61 (after ENG-70)\n\n# Standalone\n\n- ENG-70\n",
+            "# ENG-50\n\n- ENG-60\n- ENG-61 (ENG-70)\n\n# Standalone\n\n- ENG-70\n",
         )
 
     def test_ancestor_blocker_note_is_suppressed(self):
@@ -195,11 +235,12 @@ class PlanTests(unittest.TestCase):
             "# Standalone\n\n- ENG-1\n    - ENG-2\n        - ENG-3\n",
         )
 
-    def test_sibling_blocker_still_renders_also_after(self):
+    def test_sibling_blocker_renders_in_bare_tag_note(self):
         # ENG-2 and ENG-3 both nest under ENG-1 (siblings). ENG-4 is blocked by
         # both: it nests under ENG-3 (higher number breaks the equal-chain tie),
         # but ENG-2 is a sibling — not an ancestor of ENG-4 — so the nesting
-        # can't express it and the "(also after ENG-2)" note stays.
+        # can't express it and the bare-tag "(ENG-2)" note stays. ENG-1 blocks
+        # ENG-4 transitively (1 → 2/3 → 4), so its tally count is 3.
         out = render(
             [
                 with_("ENG-1", touches=["a/x.rs"]),
@@ -210,9 +251,9 @@ class PlanTests(unittest.TestCase):
         )
         self.assertEqual(
             out,
-            "# Most blocking\n\n- ENG-1 — blocks 2 issues\n- ENG-2 — blocks 1 issue\n"
+            "# Most blocking\n\n- ENG-1 — blocks 3 issues\n- ENG-2 — blocks 1 issue\n"
             "- ENG-3 — blocks 1 issue\n\n"
-            "# Standalone\n\n- ENG-1\n    - ENG-2\n    - ENG-3\n        - ENG-4 (also after ENG-2)\n",
+            "# Standalone\n\n- ENG-1\n    - ENG-2\n    - ENG-3\n        - ENG-4 (ENG-2)\n",
         )
 
     def test_deterministic_regardless_of_input_order(self):
@@ -240,6 +281,36 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(missing_touches(issues), ["ENG-9"])
 
 
+class CrossStateBlockerTests(unittest.TestCase):
+    """A blocker is honoured by its **state**, not by whether it is itself in
+    the Backlog: a live external (In-Progress / In-Review) blocker stays visible
+    as a tag and ranks in the tally; a resolved (Done / Cancelled) blocker is
+    dropped."""
+
+    def test_live_external_blocker_kept_as_tag_and_ranked(self):
+        issues = [with_("ENG-10", touches=["a/b.rs"], blocked_by=["ENG-5"])]
+        state_of = {"ENG-10": "backlog", "ENG-5": "started"}
+        out = render(issues, state_of)
+        self.assertIn("- ENG-10 (ENG-5)", out)
+        self.assertIn("- ENG-5 — blocks 1 issue", out)
+
+    def test_completed_blocker_dropped(self):
+        issues = [with_("ENG-10", touches=["a/b.rs"], blocked_by=["ENG-5"])]
+        out = render(issues, {"ENG-10": "backlog", "ENG-5": "completed"})
+        self.assertEqual(out, "# Standalone\n\n- ENG-10\n")
+
+    def test_canceled_blocker_dropped(self):
+        issues = [with_("ENG-10", touches=["a/b.rs"], blocked_by=["ENG-5"])]
+        out = render(issues, {"ENG-10": "backlog", "ENG-5": "canceled"})
+        self.assertEqual(out, "# Standalone\n\n- ENG-10\n")
+
+    def test_unknown_state_blocker_assumed_live(self):
+        # No state entry for the blocker → assumed live, never silently dropped.
+        issues = [with_("ENG-10", touches=["a/b.rs"], blocked_by=["ENG-5"])]
+        out = render(issues, {"ENG-10": "backlog"})
+        self.assertIn("- ENG-10 (ENG-5)", out)
+
+
 class OrphanCycleTests(unittest.TestCase):
     """Regression for the silent-drop bug: a directed cycle in the blocker
     graph means every member has a non-None primary, so none is a bucket root.
@@ -248,16 +319,17 @@ class OrphanCycleTests(unittest.TestCase):
     and flag the unreached ids."""
 
     def test_backward_declared_edge_plus_overlap_renders_all_members(self):
-        # The maker-bot cluster: all six share bots/** (file-overlap edges put
-        # the higher number under the lower), plus one *backward* declared edge
-        # — ENG-602 blockedBy ENG-606, though 606 > 602 — which closes the cycle
-        # 602 → 606 → 604 → 602. None of the six is a root.
+        # The maker-bot cluster: all six share bots/** (materialized overlap
+        # edges put the higher number under the lower), plus one *backward*
+        # declared edge — ENG-602 blockedBy ENG-606, though 606 > 602 — which
+        # closes the cycle 602 → 606 → 604 → 602. None of the six is a root.
         members = ["ENG-602", "ENG-604", "ENG-605", "ENG-606", "ENG-607", "ENG-608"]
         issues = [with_(m, touches=["bots/**"]) for m in members]
         issues[0].blocked_by = ["ENG-606"]  # ENG-602 blockedBy ENG-606 (backward)
+        materialize_overlap_edges(issues, None, True)
 
         orphans = []
-        out = render(issues, orphans)
+        out = render(issues, all_backlog(issues), orphans)
 
         # Every member renders exactly once in the tree — none silently
         # dropped. A tree bullet is `- {m}\n` (leaf) or `- {m} (…)` (with
@@ -280,23 +352,23 @@ class OrphanCycleTests(unittest.TestCase):
                 with_("ENG-1", touches=["a/x.rs"]),
                 with_("ENG-2", touches=["b/y.rs"], blocked_by=["ENG-1"]),
             ],
-            orphans,
+            orphans=orphans,
         )
         self.assertEqual(orphans, [])
 
 
 class MostBlockingTallyTests(unittest.TestCase):
-    """The `# Most blocking` tally that ranks issues by how many others they
-    block, so the issue to start on first sits at the top."""
+    """The `# Most blocking` tally ranks issues by how many others they block
+    **transitively**, so the issue to start on first sits at the top."""
 
     def test_absent_when_nothing_blocks(self):
         # No edges → no tally section at all, just the buckets.
         out = render([with_("ENG-10", touches=["a/b.rs"])])
         self.assertNotIn("# Most blocking", out)
 
-    def test_ranks_desc_with_lowest_number_tie_break(self):
-        # ENG-1 blocks ENG-2 and ENG-3 (2); ENG-2 and ENG-3 each block ENG-4
-        # (1 apiece). Order: ENG-1 (2) first, then the tied pair by number asc.
+    def test_ranks_transitively_desc_with_lowest_number_tie_break(self):
+        # ENG-1 blocks ENG-2 and ENG-3, each of which blocks ENG-4 — so ENG-1
+        # transitively blocks 3 (2, 3, and 4); ENG-2 and ENG-3 block 1 apiece.
         out = render(
             [
                 with_("ENG-1", touches=["a/x.rs"]),
@@ -308,7 +380,7 @@ class MostBlockingTallyTests(unittest.TestCase):
         tally = out.split("\n\n#", 1)[0]
         self.assertEqual(
             tally,
-            "# Most blocking\n\n- ENG-1 — blocks 2 issues\n"
+            "# Most blocking\n\n- ENG-1 — blocks 3 issues\n"
             "- ENG-2 — blocks 1 issue\n- ENG-3 — blocks 1 issue",
         )
 
@@ -318,24 +390,34 @@ class MostBlockingTallyTests(unittest.TestCase):
             with_("ENG-1", touches=["a/x.rs"]),
             with_("ENG-2", touches=["b/y.rs"], blocked_by=["ENG-1"]),
         ]
-        blockers = compute_blockers(issues, {i.id for i in issues})
+        blockers = compute_blockers(issues, all_backlog(issues))
         counts = block_counts(issues, blockers)
         self.assertEqual(counts, {"ENG-1": 1, "ENG-2": 0})
         tally = render_tally(counts, {i.id: i.number for i in issues})
         self.assertEqual(tally, "# Most blocking\n\n- ENG-1 — blocks 1 issue\n")
 
-    def test_cycle_members_counted_directly(self):
-        # In a cycle each member still gets a direct (not transitive) count, so
-        # the tally differentiates them instead of showing one inflated tie.
+    def test_cycle_members_counted_transitively(self):
+        # In the maker-bot cycle ENG-602 reaches every other member transitively
+        # (604/605/607/608 directly, 606 and itself via the cycle) — 5 distinct
+        # others, never counting itself.
         members = ["ENG-602", "ENG-604", "ENG-605", "ENG-606", "ENG-607", "ENG-608"]
         issues = [with_(m, touches=["bots/**"]) for m in members]
         issues[0].blocked_by = ["ENG-606"]
-        out = render(issues)
+        materialize_overlap_edges(issues, None, True)
+        out = render(issues, all_backlog(issues))
         self.assertIn("# Most blocking", out)
-        # ENG-602 blocks 604/605/607/608 (overlap, higher-under-lower). It does
-        # NOT block 606: the declared `602 blockedBy 606` edge suppresses the
-        # 602↔606 overlap edge, so 606 never lists 602 as a blocker.
-        self.assertIn("- ENG-602 — blocks 4 issues", out)
+        self.assertIn("- ENG-602 — blocks 5 issues", out)
+
+    def test_live_external_blocker_ranks_in_tally(self):
+        # A live external (In-Progress) blocker gating a Backlog chain ranks by
+        # its transitive reach: ENG-5 → ENG-10 → ENG-20 means ENG-5 blocks 2.
+        issues = [
+            with_("ENG-10", touches=["a/b.rs"], blocked_by=["ENG-5"]),
+            with_("ENG-20", touches=["c/d.rs"], blocked_by=["ENG-10"]),
+        ]
+        state_of = {"ENG-10": "backlog", "ENG-20": "backlog", "ENG-5": "started"}
+        out = render(issues, state_of)
+        self.assertIn("- ENG-5 — blocks 2 issues", out)
 
 
 if __name__ == "__main__":
