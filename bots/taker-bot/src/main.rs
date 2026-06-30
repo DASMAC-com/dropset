@@ -87,6 +87,10 @@ fn parse_args(cfg: &mut BotConfig) -> Args {
 /// Discover the market, fund the taker, and run the tick loop.
 fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
     let client = chain::rpc(&cfg.rpc_url);
+    // Guard before reading the mint-authority wallet or sending anything: this
+    // bot mints inventory and signs swaps with local keys, so it must only run
+    // against a localnet validator, never a public cluster.
+    chain::assert_localnet(&client)?;
     let taker = read_key(&args.taker_key, "taker")?;
     let mint_authority = read_key(&expand_tilde(&args.mint_authority_key), "mint authority")?;
 

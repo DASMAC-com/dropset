@@ -59,6 +59,14 @@ On localnet the bot funds itself each tick (all idempotent):
 mirroring `tui/src/chain.rs` (`airdrop` / `create_ata_idempotent` /
 `mint_to`) and the `MOCK_CADC_USDC` pair in `tui/src/market.rs`.
 
+Because the mint authority defaults to the operator's own Solana CLI
+wallet, the bot guards against funding off-localnet: on startup it reads
+the cluster's genesis hash and refuses to run against mainnet-beta,
+devnet, or testnet, so a mistyped `--rpc` can't have that wallet sign a
+real `MintTo` or `swap`. The check is keyed on the genesis hash, not the
+RPC host, so a localnet on any address still passes while a port-forward
+to a public cluster is caught.
+
 ## Running
 
 Bring up the localnet market first (the TUI bootstrap, then the maker bot so
