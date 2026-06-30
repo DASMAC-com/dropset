@@ -122,9 +122,12 @@ pub struct AerodromeConfig {
 pub struct StrategyConfig {
     /// The quote ladder.
     pub ladder: Vec<LadderLevel>,
-    /// Linear inventory skew: shift the reference by this many bps per $10 of
-    /// signed inventory deviation (§2 override of the formal A-S skew).
-    pub skew_bps_per_10usd: f64,
+    /// Linear inventory skew: shift the reference by this many bps per 1% of
+    /// TVL of signed inventory deviation (§2 override of the formal A-S skew).
+    /// Pegged to fractional lopsidedness rather than absolute dollars so one
+    /// calibration is correct at any vault size; at the $100 reference scale it
+    /// reproduces the spec's "5 bps per $10" (a $10 deviation is 10% of TVL).
+    pub skew_bps_per_pct_tvl: f64,
     /// Cap on the inventory skew, in bps (±).
     pub skew_cap_bps: f64,
     /// `SetReferencePrice` price-drift trigger: refresh when `fair_mid` moves
@@ -165,10 +168,12 @@ pub struct KillSwitchConfig {
     /// CADC sources disagreeing by more than this (bps) → pause reference
     /// updates (§1, §4).
     pub cadc_disagree_bps: f64,
-    /// Launch TVL (USD) and the floor that halts the vault for post-mortem
-    /// (§4 last row).
-    pub launch_tvl_usd: f64,
-    pub tvl_halt_usd: f64,
+    /// TVL floor that halts the vault for post-mortem (§4 last row), as a
+    /// *fraction of launch TVL* — `0.8` halts on a 20% drawdown. The launch TVL
+    /// itself is read from the vault at startup (it is not a config constant),
+    /// so the floor self-scales to whatever each market is seeded with rather
+    /// than baking in the spec's literal $80/$100.
+    pub tvl_floor_frac: f64,
 }
 
 /// The full bot configuration.
@@ -205,7 +210,7 @@ impl Default for StrategyConfig {
     fn default() -> Self {
         Self {
             ladder: DEFAULT_LADDER.to_vec(),
-            skew_bps_per_10usd: 5.0,
+            skew_bps_per_pct_tvl: 0.5,
             skew_cap_bps: 20.0,
             ref_drift_bps: 10.0,
             ref_heartbeat: Duration::from_secs(30),
@@ -226,8 +231,7 @@ impl Default for KillSwitchConfig {
             peg_high: 1.03,
             feed_stale: Duration::from_secs(5 * 60),
             cadc_disagree_bps: 50.0,
-            launch_tvl_usd: 100.0,
-            tvl_halt_usd: 80.0,
+            tvl_floor_frac: 0.8,
         }
     }
 }

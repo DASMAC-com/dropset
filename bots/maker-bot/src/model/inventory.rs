@@ -43,6 +43,21 @@ impl Inventory {
         (self.base_value_usd - self.quote_value_usd) / 2.0
     }
 
+    /// Signed deviation from neutral as a percentage of TVL — positive when
+    /// base-heavy. This is the *scale-free* form the inventory skew (§2) leans
+    /// on: the same fractional lopsidedness yields the same skew whether the
+    /// vault holds $100 or $1M, so a single calibration is correct across the
+    /// demo's seven differently-priced markets. Relates to [`Self::deviation_usd`]
+    /// as `deviation_usd / TVL`, and to [`Self::imbalance_pct`] as half of it
+    /// (the §2 deviation is the half-gap; imbalance is the full gap).
+    pub fn deviation_pct(&self) -> f64 {
+        let total = self.total_usd();
+        if total <= 0.0 {
+            return 0.0;
+        }
+        self.deviation_usd() / total * 100.0
+    }
+
     /// Imbalance as a percentage of TVL: `|base − quote| / total · 100`. A
     /// 65/35 split reads as 30%, matching the §4 trigger table.
     pub fn imbalance_pct(&self) -> f64 {
@@ -83,6 +98,34 @@ mod tests {
         assert!(inv.base_heavy());
         // Deviation is half the $30 gap.
         assert!((inv.deviation_usd() - 15.0).abs() < 1e-9);
+        // As a fraction of TVL it is half the imbalance: 15% of $100.
+        assert!((inv.deviation_pct() - 15.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn deviation_pct_is_scale_free() {
+        // The same 60/40 lopsidedness reads as the same deviation percentage at
+        // $100 and at $1M — that scale-invariance is what lets one skew
+        // calibration serve every market size.
+        let small = Inventory {
+            base_value_usd: 60.0,
+            quote_value_usd: 40.0,
+        };
+        let large = Inventory {
+            base_value_usd: 600_000.0,
+            quote_value_usd: 400_000.0,
+        };
+        assert!((small.deviation_pct() - large.deviation_pct()).abs() < 1e-9);
+        assert!((small.deviation_pct() - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn empty_vault_has_no_deviation_pct() {
+        let inv = Inventory {
+            base_value_usd: 0.0,
+            quote_value_usd: 0.0,
+        };
+        assert_eq!(inv.deviation_pct(), 0.0);
     }
 
     #[test]

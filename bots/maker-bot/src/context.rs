@@ -64,6 +64,11 @@ pub struct Context {
     pub vault_idx: u32,
     pub market: MarketAddrs,
 
+    /// The vault's TVL (USD) the first time this run valued it — the baseline
+    /// the §4 drawdown floor is measured against. Seeded on the first tick that
+    /// has a usable mid; `None` until then. A restart re-baselines to the
+    /// current TVL, which is fine for the short, attended demo run.
+    pub launch_tvl_usd: Option<f64>,
     /// Last reference price actually stamped, if any.
     pub last_set_price: Option<f64>,
     /// Inventory skew (bps) applied at the last stamp.
@@ -97,6 +102,7 @@ impl Context {
             leader,
             vault_idx,
             market,
+            launch_tvl_usd: None,
             last_set_price: None,
             last_skew_bps: 0.0,
             last_set_at: now,

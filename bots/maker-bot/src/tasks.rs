@@ -147,8 +147,10 @@ fn tick(
         ctx.market.quote_decimals,
         mid,
     );
+    // Baseline the drawdown floor against the first valued TVL of this run.
+    let launch_tvl = *ctx.launch_tvl_usd.get_or_insert_with(|| inv.total_usd());
     let degraded = fair.health == Health::Degraded;
-    let action = killswitch::evaluate(&fair, &inv, &cfg.kill, degraded);
+    let action = killswitch::evaluate(&fair, &inv, &cfg.kill, degraded, launch_tvl);
     let skew_bps = skew::ref_skew_bps(&inv, &cfg.strategy);
     let reference = skew::apply_skew(mid, skew_bps);
 

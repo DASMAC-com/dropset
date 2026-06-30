@@ -223,10 +223,16 @@ A-S default — small `Q` needs faster mean-reversion), σ ≈ 1.7e-5,
 τ = 3600 s: `δ_ref` comes out sub-bps, which is too small to matter.
 
 **Override with a linear inventory skew** instead: shift reference by
-**5 bps per \$10 of deviation**, capped at ±20 bps. This is a hand-tuned
-override of A-S because the stable-pair σ is so small that the formal
-A-S skew is invisible at our size. Beyond a \$20 deviation, reshape the
-ladder via `SetLiquidityProfile` (see §3).
+**0.5 bps per 1% of TVL of deviation**, capped at ±20 bps. This is a
+hand-tuned override of A-S because the stable-pair σ is so small that the
+formal A-S skew is invisible at our size. The rate is keyed to
+*fractional* deviation, not absolute dollars, so one calibration holds at
+any vault size — the multi-market demo seeds ~\$100 top-of-book across
+markets whose tokens span ~\$1.14 down to ~\$0.00006, and the skew must
+mean the same thing in each. At the \$100 reference vault this reproduces
+the original "5 bps per \$10" (a \$10 deviation is 10% of a \$100 TVL).
+Beyond a 20%-of-TVL deviation, reshape the ladder via
+`SetLiquidityProfile` (see §3).
 
 ______________________________________________________________________
 
@@ -309,7 +315,7 @@ ______________________________________________________________________
 | Peg deviation outside `[0.97, 1.03]` of FX            | `FreezeVault`                                                                  |
 | Any single feed > 5 min stale                         | Run degraded; tighten kill switches by 50%                                     |
 | Both CADC sources disagreeing > 50 bps, or both stale | Stop calling `SetReferencePrice` until resolved                                |
-| Vault TVL drops to \$80                               | `FreezeVault`, post-mortem                                                     |
+| Vault TVL drops below 80% of launch TVL               | `FreezeVault`, post-mortem                                                     |
 
 `FreezeVault` is a leader ix from the protocol; everything else is
 bot-side policy.
