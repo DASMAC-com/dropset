@@ -1,10 +1,16 @@
 ---
+# cspell:word healthcheck
+# cspell:word isready
 # Localnet Docker stack.
 #
 # Seed service: the Solana Explorer, served on http://localhost:3000 so a
 # loopback page reaches the loopback validator RPC without the
-# public-site -> localhost block that stalls the hosted explorer. Future
-# localnet services (e.g. the market-making bot) join this same stack.
+# public-site -> localhost block that stalls the hosted explorer.
+#
+# The indexer stack (postgres + indexer + indexer-api) joins this same stack
+# (docs/indexer.md §8): the worker polls the host validator for events and
+# the api serves /v1 on http://localhost:8080. Bring it up with
+# `make indexer-up`. Future localnet services join here too.
 #
 # The dropset-tui control plane owns this stack's lifecycle: it brings the
 # explorer up in the background at launch and tears it down on quit.
@@ -26,5 +32,56 @@ services:
     # Bind to loopback only — a local dev viewer, not a LAN service.
     ports:
     - '127.0.0.1:3000:3000'
+    restart: 'unless-stopped'
+  indexer:
+    # Decode + persist + aggregate. Polls the host-run validator's events.
+    build:
+      context: '../..'
+      dockerfile: 'infra/localnet/indexer.Dockerfile'
+    command:
+    - 'dropset-indexer'
+    depends_on:
+      postgres:
+        condition: 'service_healthy'
+    environment:
+      DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset_indexer'
+      RPC_URL: 'http://host.docker.internal:8899'
+      RUST_LOG: 'info'
+    extra_hosts:
+    - 'host.docker.internal:host-gateway'
+    restart: 'unless-stopped'
+  indexer-api:
+    # The /v1 REST surface, on loopback http://localhost:8080.
+    build:
+      context: '../..'
+      dockerfile: 'infra/localnet/indexer.Dockerfile'
+    command:
+    - 'dropset-indexer-api'
+    depends_on:
+      postgres:
+        condition: 'service_healthy'
+    environment:
+      API_BIND: '0.0.0.0:8080'
+      DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset_indexer'
+      RUST_LOG: 'info'
+    ports:
+    - '127.0.0.1:8080:8080'
+    restart: 'unless-stopped'
+  postgres:
+    # Prototype: data is ephemeral (no named volume) — the indexer re-syncs
+    # from chain via its watermark, so a fresh container just re-indexes.
+    environment:
+      POSTGRES_DB: 'dropset_indexer'
+      POSTGRES_PASSWORD: 'dropset'
+      POSTGRES_USER: 'dropset'
+    healthcheck:
+      interval: '5s'
+      retries: 10
+      test:
+      - 'CMD-SHELL'
+      - 'pg_isready -U dropset -d dropset_indexer'
+    image: 'postgres:16-alpine'
+    ports:
+    - '127.0.0.1:5432:5432'
     restart: 'unless-stopped'
 ...
