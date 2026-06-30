@@ -133,9 +133,11 @@ explorer-down:
 # the Rust image (slow); later runs reuse the cargo-chef dependency cache. The
 # /v1 surface comes up on http://localhost:8080.
 indexer-up:
-	docker compose -f infra/localnet/docker-compose.yml up -d postgres indexer indexer-api
+	docker compose -f infra/localnet/docker-compose.yml \
+		up -d postgres indexer indexer-api
 indexer-down:
-	docker compose -f infra/localnet/docker-compose.yml rm -sf postgres indexer indexer-api
+	docker compose -f infra/localnet/docker-compose.yml \
+		rm -sf postgres indexer indexer-api
 
 # Run next dev and open the browser once it's accepting connections.
 frontend:
