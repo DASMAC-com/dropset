@@ -24,9 +24,9 @@ bs58 = "0.5"
 # The shared event decoder (`dropset_sdk::events`) + the blocking `RpcClient`
 # behind `fetch`, polled from a `spawn_blocking` task. Same 3.x solana line as
 # the maker-bot so there is one `Pubkey` type across decode and RPC.
-dropset-sdk = {path = "../sdk/rs", features = ["fetch"]}
-rust_decimal = {version = "1", features = ["db-postgres", "serde-str"]}
-serde = {version = "1", features = ["derive"]}
+dropset-sdk = { path = "../sdk/rs", features = ["fetch"] }
+rust_decimal = { version = "1", features = ["db-postgres", "serde-str"] }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 solana-client = "~3.1"
 solana-commitment-config = "3"
@@ -36,14 +36,27 @@ solana-transaction-status = "~3"
 # String-typed runtime queries (no compile-time `DATABASE_URL`); `migrate`
 # embeds `./migrations`; `rust_decimal` maps u64 atoms onto Postgres NUMERIC
 # without the i64 truncation a BIGINT bind would risk.
-sqlx = {version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "macros", "migrate", "rust_decimal", "json"]}
-tokio = {version = "1", features = ["rt-multi-thread", "macros", "signal", "time"]}
+sqlx = { version = "0.8", default-features = false, features = [
+  "runtime-tokio",
+  "tls-rustls",
+  "postgres",
+  "macros",
+  "migrate",
+  "rust_decimal",
+  "json",
+] }
+tokio = { version = "1", features = [
+  "rt-multi-thread",
+  "macros",
+  "signal",
+  "time",
+] }
 tracing = "0.1"
-tracing-subscriber = {version = "0.3", features = ["env-filter"]}
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 # Build tagged event bytes in the decode unit test.
-borsh = {version = "1", features = ["derive"]}
+borsh = { version = "1", features = ["derive"] }
 
 [package]
 description = "Prototype event indexer for the Dropset eCLOB program."

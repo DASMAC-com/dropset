@@ -13,9 +13,9 @@
 # (the on-chain program's IDL build). It is NOT solana-free, so it must
 # never be enabled for the WASM build — keep it gated.
 [dependencies]
-anchor-lang-v2 = {workspace = true, optional = true}
-bytemuck = {version = "1", features = ["derive", "min_const_generics"]}
-wasm-bindgen = {version = "0.2", optional = true}
+anchor-lang-v2 = { workspace = true, optional = true }
+bytemuck = { version = "1", features = ["derive", "min_const_generics"] }
+wasm-bindgen = { version = "0.2", optional = true }
 
 [dev-dependencies]
 # Used only by the conformance generator/verifier (examples + tests); does

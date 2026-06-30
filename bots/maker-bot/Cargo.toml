@@ -15,7 +15,7 @@ path = "src/main.rs"
 # anchor frames with its `EVENT_IX_TAG_LE` self-CPI tag — sourced here rather
 # than hand-copied. Default features only — host build, no on-chain
 # (`const-rent` / `testing`) extras.
-anchor-lang-v2 = {workspace = true}
+anchor-lang-v2 = { workspace = true }
 anyhow = "1"
 # Decode the borsh wire form of `FillEvent` off the event inner instruction.
 borsh = "1"
@@ -31,8 +31,8 @@ bytemuck = "1"
 # `fetch_*` account decoders, the `layout` slab mirror (active-vault walk for
 # inventory), the `Price` codec, and the blocking `RpcClient` — all behind
 # `fetch`.
-dropset-sdk = {path = "../../sdk/rs", features = ["fetch"]}
-serde = {version = "1", features = ["derive"]}
+dropset-sdk = { path = "../../sdk/rs", features = ["fetch"] }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Reproduce `FillEvent`'s event discriminator off-chain via anchor's
 # name-based scheme, `sha256("event:FillEvent")[..8]` — the on-chain type
@@ -57,7 +57,7 @@ solana-transaction = "3"
 solana-transaction-status-client-types = "3"
 # Blocking HTTP for the price feeds (CoinGecko / Oanda / GeckoTerminal), the
 # same synchronous JSON client tools/stage-backlog uses for Linear.
-ureq = {version = "2", features = ["json"]}
+ureq = { version = "2", features = ["json"] }
 
 [package]
 description = "Localnet market-maker bot for the Dropset CADC/USDC mock market."

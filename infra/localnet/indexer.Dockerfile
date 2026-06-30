@@ -32,7 +32,9 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/target/release/dropset-indexer /usr/local/bin/dropset-indexer
-COPY --from=builder /app/target/release/dropset-indexer-api /usr/local/bin/dropset-indexer-api
+COPY --from=builder /app/target/release/dropset-indexer \
+    /usr/local/bin/dropset-indexer
+COPY --from=builder /app/target/release/dropset-indexer-api \
+    /usr/local/bin/dropset-indexer-api
 # The worker is the default; the api service overrides `command` in compose.
 CMD ["dropset-indexer"]

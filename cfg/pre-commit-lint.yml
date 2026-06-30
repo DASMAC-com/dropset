@@ -71,16 +71,17 @@ repos:
   - id: 'checkmake'
   repo: 'https://github.com/checkmake/checkmake.git'
   rev: 'v0.3.2'
-# checkmake lints Makefile structure, not line width. This local pygrep hook
-# enforces the same 80-column limit the docs follow (MD013), failing on any
-# line over 80 chars (the leading recipe tab counts as one column). Wrap with
-# `\` continuations, as the existing multi-line recipes do.
+# checkmake and hadolint lint Makefile / Dockerfile structure, not line
+# width. This local pygrep hook enforces the same 80-column limit the docs
+# follow (MD013) across both, failing on any line over 80 chars (a leading
+# recipe tab counts as one column). Wrap with `\` continuations, as the
+# existing multi-line recipes and Dockerfile `COPY`s do.
 - hooks:
   - entry: '^.{81,}$'
-    files: '(^|/)(Makefile|.*\.mk)$'
-    id: 'makefile-line-length'
+    files: '(^|/)(Makefile|.*\.mk|Dockerfile|.*\.Dockerfile)$'
+    id: 'line-length-80'
     language: 'pygrep'
-    name: 'Makefile lines over 80 columns'
+    name: 'Lines over 80 columns'
   repo: 'local'
 # hadolint-py wraps the hadolint binary so the hook needs neither Docker nor
 # a manual install. `files` matches `Dockerfile` and `*.Dockerfile` (identify
@@ -92,13 +93,18 @@ repos:
     - 'file'
   repo: 'https://github.com/AleksaC/hadolint-py'
   rev: 'v2.14.0'
+# taplo formats every `.toml` to the shared 80-column limit, auto-wrapping
+# over-width inline arrays (config in cfg/taplo.toml). The hook pip-installs a
+# prebuilt taplo, so it needs neither a Rust build nor Docker. `Cargo.lock` is
+# tagged `toml` by identify but is cargo-managed, so leave it untouched.
 - hooks:
   - args:
-    - '--autofix'
+    - '--config'
+    - 'cfg/taplo.toml'
     exclude: 'Cargo.lock'
-    id: 'pretty-format-toml'
-  repo: 'https://github.com/macisamuele/language-formatters-pre-commit-hooks'
-  rev: 'v2.16.0'
+    id: 'taplo'
+  repo: 'https://github.com/hoxbro/taplo-pre-commit'
+  rev: 'v0.9.3'
 - hooks:
   - args:
     - '--fix'
