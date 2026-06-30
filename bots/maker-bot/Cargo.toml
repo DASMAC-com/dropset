@@ -1,9 +1,10 @@
-# Localnet market-maker bot for the CADC/USDC mock market. A single leader
-# bot that quotes CADC against USDC on the eCLOB per docs/market-making-mvp.md:
-# poll external price feeds, compose a fair mid, and drive the relative-quoting
-# hot path (set_reference_price) and cold path (set_liquidity_profile) with an
-# inventory skew and kill-switch policy. Rust-only, not published. No tokio:
-# a synchronous tick loop drives blocking feed polls (ureq) and the blocking
+# Localnet market-maker bot for the FX-stablecoin demo markets. A supervisor
+# over many <token>/USDC markets quoting on the eCLOB per
+# docs/market-making-mvp.md: poll a batched tiered price feed, compose a
+# per-market fair mid, and drive the relative-quoting hot path
+# (set_reference_price) and cold path (set_liquidity_profile) with an inventory
+# skew and kill-switch policy. Rust-only, not published. No tokio: a
+# synchronous tick loop drives blocking feed polls (ureq) and the blocking
 # RpcClient (sdk/rs `fetch` feature), matching the TUI and stage-backlog.
 
 [[bin]]
@@ -55,12 +56,12 @@ solana-transaction = "3"
 # `UiInstruction`, the inner-instruction list) the fill decoder walks. The
 # light client-types crate, not the full `solana-transaction-status`.
 solana-transaction-status-client-types = "3"
-# Blocking HTTP for the price feeds (CoinGecko / Oanda / GeckoTerminal), the
-# same synchronous JSON client tools/stage-backlog uses for Linear.
+# Blocking HTTP for the price feeds (CoinGecko / CoinMarketCap / Frankfurter),
+# the same synchronous JSON client tools/stage-backlog uses for Linear.
 ureq = { version = "2", features = ["json"] }
 
 [package]
-description = "Localnet market-maker bot for the Dropset CADC/USDC mock market."
+description = "Localnet FX-stablecoin market-maker bot for the Dropset demo markets."
 name = "dropset-maker-bot"
 publish = false
 edition.workspace = true

@@ -1,4 +1,4 @@
-# Localnet taker bot for the CADC/USDC mock market. A single benign
+# Localnet taker bot for the FX-stablecoin demo. A single benign
 # flow-generation taker that submits stochastic `swap`s against the seeded
 # vault so the book moves and the maker takes fills. Models dropset-alpha's
 # taker: a two-state (quiet/burst) Markov chain feeds a Poisson arrival count
@@ -36,7 +36,7 @@ solana-signer = "3"
 solana-transaction = "3"
 
 [package]
-description = "Localnet stochastic taker bot for the Dropset CADC/USDC mock market."
+description = "Localnet stochastic taker bot for the Dropset FX-stablecoin demo."
 name = "dropset-taker-bot"
 publish = false
 edition.workspace = true

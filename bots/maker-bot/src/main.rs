@@ -1,25 +1,29 @@
 //! `dropset-maker-bot` entrypoint.
 //!
-//! Default mode runs the bot live against a localnet market: discover the
-//! market, fund the leader, and drive the tick loop. `--dry-run` instead polls
-//! the feeds once and prints the reference and ladder it *would* stamp — the
-//! wiring check for feed credentials, with no validator and no writes.
+//! Default mode supervises every demo market live against a localnet validator:
+//! discover the markets, fund the leader, and drive the tick loop, one batched
+//! feed poll shared across them. `--dry-run` instead polls the tiered feeds
+//! once and prints the reference each market *would* stamp — the wiring check
+//! for feed credentials, with no validator and no writes. Pass `--drop <tier>`
+//! (repeatable: `coingecko`, `cmc`, `fx`) in a dry run to suppress a tier and
+//! watch the cascade fall through to the next one.
 //!
 //! Flags:
 //!   --rpc <url>            RPC endpoint (default http://127.0.0.1:8899)
 //!   --ws <url>             PubSub websocket (default: derived from --rpc)
 //!   --leader-key <path>    leader/quote-authority keypair (default keys/EEEE.json)
-//!   --aerodrome <net>:<pool>  enable the Aerodrome feed (off by default)
-//!   --dry-run              poll feeds and print the intended quote, then exit
+//!   --dry-run              poll feeds and print the intended quotes, then exit
+//!   --drop <tier>          dry-run only: suppress coingecko | cmc | fx
 
 use anyhow::{anyhow, Context, Result};
-use dropset_maker_bot::config::{ws_url_from_rpc, AerodromeConfig, BotConfig, DEFAULT_LEADER_KEY};
+use dropset_maker_bot::config::{
+    ws_url_from_rpc, BotConfig, DEFAULT_LEADER_KEY, MARKETS, QUOTE_KEYPAIR_FILE,
+};
 use dropset_maker_bot::context::Context as BotContext;
 use dropset_maker_bot::model::fair_mid::{compose, Quote};
 use dropset_maker_bot::model::feeds::Feeds;
-use dropset_maker_bot::model::inventory::Inventory;
-use dropset_maker_bot::model::{killswitch, ladder, skew};
 use dropset_maker_bot::{chain, fills, tasks};
+use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 use std::time::Duration;
 
@@ -33,13 +37,15 @@ const AIRDROP_LAMPORTS: u64 = 2 * LAMPORTS_PER_SOL;
 struct Args {
     leader_key: String,
     dry_run: bool,
+    /// Tiers to suppress in a dry run (to exercise the cascade).
+    drop: Vec<String>,
 }
 
 fn main() -> Result<()> {
     let mut cfg = BotConfig::default();
     let args = parse_args(&mut cfg);
     if args.dry_run {
-        dry_run(&cfg)
+        dry_run(&cfg, &args)
     } else {
         run_live(&cfg, &args)
     }
@@ -49,6 +55,7 @@ fn main() -> Result<()> {
 fn parse_args(cfg: &mut BotConfig) -> Args {
     let mut leader_key = DEFAULT_LEADER_KEY.to_string();
     let mut dry_run = false;
+    let mut drop = Vec::new();
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -67,13 +74,9 @@ fn parse_args(cfg: &mut BotConfig) -> Args {
                     leader_key = path;
                 }
             }
-            "--aerodrome" => {
-                if let Some((network, pool)) = it.next().and_then(|s| split_pair(&s)) {
-                    cfg.feeds.aerodrome = Some(AerodromeConfig {
-                        network,
-                        pool,
-                        poll: Duration::from_secs(10),
-                    });
+            "--drop" => {
+                if let Some(tier) = it.next() {
+                    drop.push(tier);
                 }
             }
             "--dry-run" => dry_run = true,
@@ -83,16 +86,11 @@ fn parse_args(cfg: &mut BotConfig) -> Args {
     Args {
         leader_key,
         dry_run,
+        drop,
     }
 }
 
-/// Split a `network:pool` argument into its owned parts.
-fn split_pair(spec: &str) -> Option<(String, String)> {
-    spec.split_once(':')
-        .map(|(n, p)| (n.to_string(), p.to_string()))
-}
-
-/// Discover the market, fund the leader, and run the tick loop.
+/// Discover the markets, fund the leader, and run the supervisor loop.
 fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
     let client = chain::rpc(&cfg.rpc_url);
     // Guard before funding or signing anything: the airdrop needs the localnet
@@ -116,111 +114,127 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
         chain::airdrop(&client, &leader.pubkey(), AIRDROP_LAMPORTS)?;
     }
 
-    let market = chain::discover_market(&client)?;
-    println!(
-        "discovered market {} ({}/{})",
-        market.market, market.base_mint, market.quote_mint
-    );
+    // Discover every on-chain market once, then match the roster against it by
+    // base mint (quote is always USDC).
+    let discovered = chain::discover_markets(&client)?;
+    let quote_mint = mint_pubkey(QUOTE_KEYPAIR_FILE)?;
+    let mut contexts = Vec::new();
+    for market in MARKETS {
+        let base_mint = match mint_pubkey(market.base_keypair_file) {
+            Ok(pk) => pk,
+            Err(e) => {
+                eprintln!("[{}] skipped — {e}", market.symbol);
+                continue;
+            }
+        };
+        let Some(addrs) = discovered
+            .iter()
+            .find(|m| m.base_mint == base_mint && m.quote_mint == quote_mint)
+        else {
+            eprintln!(
+                "[{}] no on-chain market for {base_mint}/USDC — bootstrap it first",
+                market.symbol
+            );
+            continue;
+        };
+        println!(
+            "[{}] market {} ({})",
+            market.symbol, addrs.market, base_mint
+        );
+        contexts.push(BotContext::new(
+            chain::rpc(&cfg.rpc_url),
+            leader.insecure_clone(),
+            cfg.vault_idx,
+            addrs.clone(),
+            market,
+        ));
+    }
+    if contexts.is_empty() {
+        return Err(anyhow!(
+            "no demo markets found on-chain — is the localnet bootstrapped?"
+        ));
+    }
 
-    // Start the fill-event subscription before the tick loop so fills landing
-    // during warm-up aren't missed. The thread reconnects on its own; a failed
-    // subscription degrades to the per-tick inventory-diff fallback.
+    // One fill subscription covers every market the leader quotes; the
+    // supervisor routes each fill to its market by `event.market`.
     let ws_url = cfg
         .ws_url
         .clone()
         .unwrap_or_else(|| ws_url_from_rpc(&cfg.rpc_url));
     let fills = fills::spawn(ws_url, cfg.rpc_url.clone(), leader.pubkey());
 
-    let ctx = BotContext::new(client, leader, cfg.vault_idx, market);
-    let ctx = match fills {
-        Some(rx) => ctx.with_fills(rx),
-        None => ctx,
-    };
     let feeds = Feeds::new(cfg.feeds.clone());
-    tasks::run(ctx, feeds, cfg.clone())
+    tasks::run_supervisor(feeds, cfg.clone(), contexts, fills)
 }
 
-/// Poll the feeds once, compose the reference, and print the intended quote.
-fn dry_run(cfg: &BotConfig) -> Result<()> {
+/// Load a checked-in mint keypair and return its public key.
+fn mint_pubkey(keypair_file: &str) -> Result<Pubkey> {
+    solana_keypair::read_keypair_file(keypair_file)
+        .map(|kp| kp.pubkey())
+        .map_err(|e| anyhow!("read mint key {keypair_file}: {e}"))
+}
+
+/// Poll the tiered feeds once and print the reference each market would stamp.
+/// No validator and no writes — a credentials/cascade check. `--drop` suppresses
+/// a tier so the cascade to the next one is observable.
+fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
     let feeds = Feeds::new(cfg.feeds.clone());
-    let now = Duration::from_secs(0);
+    let drop = |tier: &str| args.drop.iter().any(|d| d == tier);
 
-    let cg = feeds.poll_coingecko();
-    let fx = feeds.poll_oanda();
-    let ae = if feeds.aerodrome_enabled() {
-        Some(feeds.poll_aerodrome())
+    let cg_ids: Vec<&str> = MARKETS.iter().map(|m| m.coingecko_id).collect();
+    let cmc_ids: Vec<u32> = MARKETS.iter().filter_map(|m| m.coinmarketcap_id).collect();
+    let mut currencies: Vec<&str> = MARKETS.iter().map(|m| m.currency).collect();
+    currencies.sort_unstable();
+    currencies.dedup();
+
+    let cg = if drop("coingecko") {
+        Default::default()
     } else {
-        None
+        feeds.poll_coingecko(&cg_ids).unwrap_or_default()
+    };
+    let cmc = if drop("cmc") || !feeds.coinmarketcap_enabled() {
+        Default::default()
+    } else {
+        feeds.poll_coinmarketcap(&cmc_ids).unwrap_or_default()
+    };
+    let fx = if drop("fx") {
+        Default::default()
+    } else {
+        feeds.poll_frankfurter(&currencies).unwrap_or_default()
     };
 
-    println!("Feed readings:");
-    print_feed("  CoinGecko CADC/USD", &cg);
-    print_feed("  Oanda CAD/USD     ", &fx);
-    match &ae {
-        Some(r) => print_feed("  Aerodrome CADC/USD", r),
-        None => println!("  Aerodrome CADC/USD: disabled (pass --aerodrome <net>:<pool>)"),
-    }
-
-    let quote = |r: &Result<f64>| r.as_ref().ok().map(|&v| Quote::new(v, now));
-    let fair = compose(
-        quote(&cg),
-        ae.as_ref().and_then(quote),
-        quote(&fx),
-        &cfg.kill,
+    println!(
+        "Tiers live: coingecko {} ids, coinmarketcap {} ids{}, fx {} currencies",
+        cg.len(),
+        cmc.len(),
+        if feeds.coinmarketcap_enabled() {
+            ""
+        } else {
+            " (no CMC_API_KEY)"
+        },
+        fx.len()
     );
-
-    println!("\nComposed reference:");
-    println!("  health:     {:?}", fair.health);
-    match fair.mid {
-        Some(mid) => println!("  fair_mid:   {mid:.6} USDC/CADC"),
-        None => {
-            println!("  fair_mid:   <paused — no usable CADC source>");
-            return Ok(());
-        }
+    if !args.drop.is_empty() {
+        println!("Suppressed tiers: {}", args.drop.join(", "));
     }
-    match fair.peg {
-        Some(peg) => println!("  peg:        {peg:.4} (breach: {})", fair.peg_breach),
-        None => println!("  peg:        <no fresh FX feed>"),
-    }
+    println!("\n  market      mid (USD)     tier           health     peg");
 
-    // Without a chain read we can't value live inventory, so assume neutral —
-    // the dry run is about feeds and ladder shape, not inventory skew.
-    let mid = fair.mid.unwrap();
-    let neutral = Inventory {
-        base_value_usd: 50.0,
-        quote_value_usd: 50.0,
-    };
-    let skew_bps = skew::ref_skew_bps(&neutral, &cfg.strategy);
-    let reference = skew::apply_skew(mid, skew_bps);
-    // The dry run has no chain read, so the assumed-neutral inventory is also
-    // the launch baseline for the drawdown floor.
-    let action = killswitch::evaluate(&fair, &neutral, &cfg.kill, false, neutral.total_usd());
-
-    println!("\nIntended quote (neutral inventory assumed):");
-    println!("  reference:  {reference:.6} (skew {skew_bps:+.1} bps)");
-    println!("  action:     {action:?}");
-    println!("  ladder:");
-    let profile = ladder::build_profile(&cfg.strategy.ladder);
-    for (i, level) in cfg.strategy.ladder.iter().enumerate() {
-        let bid = mid * (1.0 - level.offset_ppm as f64 / 1_000_000.0);
-        let ask = reference * (1.0 + level.offset_ppm as f64 / 1_000_000.0);
+    let now = Duration::from_secs(0);
+    let q = |v: Option<f64>| v.map(|v| Quote::new(v, now));
+    for m in MARKETS {
+        let cg_q = q(cg.get(m.coingecko_id).copied());
+        let cmc_q = q(m.coinmarketcap_id.and_then(|id| cmc.get(&id)).copied());
+        let fx_q = q(fx.get(m.currency).copied());
+        let fair = compose(cg_q, cmc_q, fx_q, m.static_usd, &cfg.kill);
+        let tier = fair.tier.map_or("—", |t| t.label());
+        let mid = fair.mid.map_or("—".to_string(), |v| format!("{v:.8}"));
+        let peg = fair.peg.map_or("—".to_string(), |p| {
+            format!("{p:.4}{}", if fair.peg_breach { " BREACH" } else { "" })
+        });
         println!(
-            "    L{}: ±{} ppm, {} bps, expiry {} slots  (bid {bid:.6} / ask {ask:.6})",
-            i + 1,
-            level.offset_ppm,
-            level.size_bps,
-            level.expiry_offset,
+            "  {:<10}  {:>12}  {:<13}  {:<9?}  {}",
+            m.symbol, mid, tier, fair.health, peg
         );
     }
-    // Touch the serialized form so the dry run also exercises it.
-    let _bytes = ladder::to_bytes(&profile);
-
     Ok(())
-}
-
-fn print_feed(label: &str, result: &Result<f64>) {
-    match result {
-        Ok(v) => println!("{label}: {v:.6}"),
-        Err(e) => println!("{label}: error — {e}"),
-    }
 }

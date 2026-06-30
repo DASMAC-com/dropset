@@ -10,11 +10,11 @@
 //! asks for on those rows. A real `FreezeVault` stays a human (admin) decision
 //! so a transient feed glitch can't autonomously brick the vault.
 //!
-//! When any single feed is stale the vault runs *degraded* (§4 row 5): the
-//! whole switch set tightens by 50% so the bot pulls back sooner on thinner
-//! information — the imbalance bounds halve here, the TVL floor halves its
-//! permitted drawdown from launch here, and the peg band halves its margin
-//! upstream in [`super::fair_mid`] (where `peg_breach` is composed).
+//! When no live market price remains and the bot quotes off a peg-rate
+//! fallback (the FX-rate or static tier) the vault runs *degraded* (§4 row 5):
+//! the whole switch set tightens by 50% so the bot pulls back sooner on
+//! thinner information — the imbalance bounds halve here and the TVL floor
+//! halves its permitted drawdown from launch here.
 //!
 //! The TVL floor is expressed as a *fraction of launch TVL* (the
 //! `tvl_floor_frac` config knob) against the launch TVL the caller reads from
@@ -31,7 +31,7 @@ use crate::model::ladder::Side;
 /// Why the bot halted — carried into the alert log.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HaltReason {
-    /// CADC peg left `[peg_low, peg_high]` vs FX spot.
+    /// Token peg left `[peg_low, peg_high]` vs FX spot.
     PegBreach,
     /// Vault TVL fell to the floor.
     TvlFloor,
@@ -113,7 +113,8 @@ mod tests {
 
     fn ok_fair() -> FairMid {
         FairMid {
-            mid: Some(0.73),
+            mid: Some(1.14),
+            tier: Some(crate::model::feeds::FeedTier::CoinGecko),
             peg: Some(1.0),
             health: Health::Ok,
             peg_breach: false,

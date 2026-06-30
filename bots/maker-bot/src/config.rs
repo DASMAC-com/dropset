@@ -1,11 +1,17 @@
 //! Bot configuration — the knobs `docs/market-making-mvp.md` pins down.
 //!
-//! Defaults encode the MVP spec verbatim: the CADC/USDC sources and poll
+//! Defaults encode the MVP spec verbatim: the tiered price feed and poll
 //! cadences (§1), the 50/100/200/500 bps ladder (§2), the `SetReferencePrice`
 //! / `SetLiquidityProfile` triggers (§3), the linear inventory skew (§2), and
-//! the inventory / peg / staleness kill-switch bounds (§4). Secrets (the Oanda
-//! API key) come from the environment, never a committed field — the same
-//! convention the Linear tooling uses.
+//! the inventory / peg / staleness kill-switch bounds (§4). Secrets (the
+//! CoinMarketCap API key) come from the environment, never a committed field —
+//! the same convention the Linear tooling uses.
+//!
+//! The demo runs **many** FX-stablecoin markets at once, all quoted against
+//! USDC ([`MARKETS`]). Each carries the per-tier feed identifiers — its
+//! CoinGecko id, its (optional) CoinMarketCap numeric id, and the ISO 4217
+//! currency the keyless FX-rate tier pegs to — plus the mock-mint keypair and
+//! decimals the localnet bootstrap and inventory valuation need.
 
 // cspell:word rsplit
 
@@ -42,10 +48,117 @@ pub fn ws_url_from_rpc(rpc_url: &str) -> String {
 /// The vault the bootstrap opens first; the bot quotes this sector.
 pub const DEFAULT_VAULT_IDX: u32 = 0;
 
-/// The leader / quote-authority role key the ENG-515 bootstrap seeds the mock
-/// vault with (`tui/src/market.rs` → `MOCK_CADC_USDC`). The bot signs the
-/// vault-gated hot/cold path with it.
+/// The leader / quote-authority role key the localnet bootstrap seeds every
+/// mock vault with (`tui/src/market.rs`). The bot signs the vault-gated
+/// hot/cold path with it. On localnet one leader quotes all markets; the
+/// delegated per-market `quote_authority` model is the devnet/mainnet
+/// promotion's concern, not this localnet plumbing.
 pub const DEFAULT_LEADER_KEY: &str = "keys/EEEE.json";
+
+/// The shared quote mint — every demo market is `<token>/USDC`. The mock
+/// localnet USDC mint keypair and its decimals.
+pub const QUOTE_KEYPAIR_FILE: &str = "keys/USDC.json";
+pub const QUOTE_DECIMALS: u8 = 6;
+
+/// One FX-stablecoin market: a base token quoted against USDC, with the
+/// per-tier feed identifiers and the mint / decimals the bot needs to address
+/// its vault and value inventory. The reference price is *discovered* from the
+/// feeds, so — unlike the bootstrap's `PairConfig` — no seed price lives here.
+#[derive(Clone, Copy, Debug)]
+pub struct MarketConfig {
+    /// Human ticker, for logs and to map a discovered market back to its feeds.
+    pub symbol: &'static str,
+    /// The mock base-mint keypair (relative to the repo root); its pubkey,
+    /// paired with USDC, seeds the market PDA the bot discovers.
+    pub base_keypair_file: &'static str,
+    /// Base-mint decimals — matched to the real token so the localnet plumbing
+    /// exercises the same per-market decimal/atoms-ratio path mainnet will.
+    pub base_decimals: u8,
+    /// ISO 4217 code of the fiat the token tracks — the symbol the keyless
+    /// ECB/Frankfurter FX-rate tier and the static last-resort peg to.
+    pub currency: &'static str,
+    /// CoinGecko coin id (primary tier, batched `/simple/price`).
+    pub coingecko_id: &'static str,
+    /// CoinMarketCap numeric id (secondary tier, batched by id). `None` for a
+    /// token CMC doesn't list (MXNe), which simply skips the CMC tier and
+    /// cascades CoinGecko → FX-rate → static.
+    pub coinmarketcap_id: Option<u32>,
+    /// Last-resort static USD-per-token peg, used when every live feed is down.
+    /// A representative spot value; the FX-rate tier supersedes it whenever the
+    /// keyless ECB feed answers.
+    pub static_usd: f64,
+}
+
+/// The demo roster — the seven non-USD FX stablecoins with ≥ $1k Solana
+/// liquidity, each quoted against USDC at $100 top-of-book. The CoinGecko ids
+/// are from a by-contract lookup on each token's real mainnet mint; the
+/// CoinMarketCap ids from its `cryptocurrency/detail` record. MXNe (Real MXN)
+/// is not listed on CoinMarketCap, so its secondary tier is `None`.
+pub const MARKETS: [MarketConfig; 7] = [
+    MarketConfig {
+        symbol: "EURC",
+        base_keypair_file: "keys/EURC.json",
+        base_decimals: 6,
+        currency: "EUR",
+        coingecko_id: "euro-coin",
+        coinmarketcap_id: Some(20641),
+        static_usd: 1.14,
+    },
+    MarketConfig {
+        symbol: "VCHF",
+        base_keypair_file: "keys/VCHF.json",
+        base_decimals: 9,
+        currency: "CHF",
+        coingecko_id: "vnx-swiss-franc",
+        coinmarketcap_id: Some(24130),
+        static_usd: 1.235,
+    },
+    MarketConfig {
+        symbol: "TGBP",
+        base_keypair_file: "keys/TGBP.json",
+        base_decimals: 9,
+        currency: "GBP",
+        coingecko_id: "tokenised-gbp",
+        coinmarketcap_id: Some(38935),
+        static_usd: 1.324,
+    },
+    MarketConfig {
+        symbol: "ZARP",
+        base_keypair_file: "keys/ZARP.json",
+        base_decimals: 6,
+        currency: "ZAR",
+        coingecko_id: "zarp-stablecoin",
+        coinmarketcap_id: Some(21856),
+        static_usd: 0.0605,
+    },
+    MarketConfig {
+        symbol: "MXNe",
+        base_keypair_file: "keys/MXNe.json",
+        base_decimals: 9,
+        currency: "MXN",
+        coingecko_id: "real-mxn",
+        coinmarketcap_id: None,
+        static_usd: 0.0573,
+    },
+    MarketConfig {
+        symbol: "XSGD",
+        base_keypair_file: "keys/XSGD.json",
+        base_decimals: 6,
+        currency: "SGD",
+        coingecko_id: "xsgd",
+        coinmarketcap_id: Some(8489),
+        static_usd: 0.7705,
+    },
+    MarketConfig {
+        symbol: "IDRX",
+        base_keypair_file: "keys/idrx.json",
+        base_decimals: 2,
+        currency: "IDR",
+        coingecko_id: "idrx",
+        coinmarketcap_id: Some(26732),
+        static_usd: 0.000056,
+    },
+];
 
 /// One rung of the quote ladder: a ppm offset from the reference price, a
 /// fraction of the inventory leg in bps, and a per-level expiry in slots.
@@ -85,36 +198,29 @@ pub const DEFAULT_LADDER: [LadderLevel; 4] = [
     },
 ];
 
-/// Price feeds and their poll cadences (§1). Identifiers, not secrets — the
-/// Oanda API key is read from `OANDA_API_KEY` at run time.
+/// The tiered price feed (§1): poll cadences and base URLs for the four
+/// sources `fair_mid` cascades through, primary-first. The per-token
+/// identifiers live on each [`MarketConfig`]; only the transport settings are
+/// here. Base URLs are fields so tests can point them at a local stub. The
+/// CoinMarketCap API key is read from `CMC_API_KEY` at run time, never a field.
 #[derive(Clone, Debug)]
 pub struct FeedConfig {
-    /// CoinGecko coin id for CADC (primary CADC/USD source).
-    pub coingecko_id: String,
-    /// CoinGecko poll interval (10 s, under the 30 req/min free-tier ceiling).
+    /// CoinGecko poll interval (primary). One batched `/simple/price` call
+    /// covers every market, so 10 s stays well under the free-tier ceiling.
     pub coingecko_poll: Duration,
-    /// Oanda instrument for the FX sanity feed; inverted to CAD/USD.
-    pub oanda_instrument: String,
-    /// Oanda poll interval (15 s, M1 candles).
-    pub oanda_poll: Duration,
-    /// Oanda Practice REST base URL.
-    pub oanda_base_url: String,
-    /// Aerodrome (Base) CADC/USDC pool, via GeckoTerminal — a second CADC
-    /// market-price source. `None` (the default) leaves `fair_mid` on the
-    /// CoinGecko-only degraded path; your note flagged this feed as needing
-    /// live testing before it feeds quoting.
-    pub aerodrome: Option<AerodromeConfig>,
-}
-
-/// GeckoTerminal pool descriptor for the Aerodrome CADC/USDC source.
-#[derive(Clone, Debug)]
-pub struct AerodromeConfig {
-    /// GeckoTerminal network slug (Base is `base`).
-    pub network: String,
-    /// Pool address on that network.
-    pub pool: String,
-    /// Poll interval (10 s via GeckoTerminal).
-    pub poll: Duration,
+    /// CoinMarketCap poll interval (secondary). Polled only when CoinGecko is
+    /// down or throttled — the free tier's ~10k/mo quota rules out a hot poll —
+    /// so this is the *minimum* spacing between fallback calls, not a cadence.
+    pub coinmarketcap_poll: Duration,
+    /// ECB/Frankfurter FX-rate poll interval (tertiary). ECB publishes once a
+    /// working day, so a slow poll suffices.
+    pub fx_poll: Duration,
+    /// CoinGecko REST base URL (`/simple/price` is appended).
+    pub coingecko_base_url: String,
+    /// CoinMarketCap REST base URL (`/v2/cryptocurrency/quotes/latest`).
+    pub coinmarketcap_base_url: String,
+    /// Frankfurter REST base URL (`/latest`), the keyless ECB FX-rate feed.
+    pub frankfurter_base_url: String,
 }
 
 /// Quoting strategy parameters (§2–§3).
@@ -159,14 +265,11 @@ pub struct KillSwitchConfig {
     pub imbalance_freeze_side_pct: f64,
     /// Imbalance that halts the whole vault for review (§4 row 3).
     pub imbalance_halt_pct: f64,
-    /// Lower / upper CADC-peg bound vs FX spot; outside → halt (§1, §4).
+    /// Lower / upper token-peg bound vs FX spot; outside → halt (§1, §4).
     pub peg_low: f64,
     pub peg_high: f64,
     /// A feed older than this is stale → run degraded (§1, §4).
     pub feed_stale: Duration,
-    /// CADC sources disagreeing by more than this (bps) → pause reference
-    /// updates (§1, §4).
-    pub cadc_disagree_bps: f64,
     /// TVL floor that halts the vault for post-mortem (§4 last row), as a
     /// *fraction of launch TVL* — `0.8` halts on a 20% drawdown. Launch TVL is
     /// read from the vault at startup (not a config constant), so the floor
@@ -191,15 +294,18 @@ pub struct BotConfig {
     pub kill: KillSwitchConfig,
 }
 
+/// Environment variable holding the CoinMarketCap API key (never committed).
+pub const CMC_KEY_ENV: &str = "CMC_API_KEY";
+
 impl Default for FeedConfig {
     fn default() -> Self {
         Self {
-            coingecko_id: "cad-coin".to_string(),
             coingecko_poll: Duration::from_secs(10),
-            oanda_instrument: "USD_CAD".to_string(),
-            oanda_poll: Duration::from_secs(15),
-            oanda_base_url: "https://api-fxpractice.oanda.com".to_string(),
-            aerodrome: None,
+            coinmarketcap_poll: Duration::from_secs(60),
+            fx_poll: Duration::from_secs(300),
+            coingecko_base_url: "https://api.coingecko.com/api/v3".to_string(),
+            coinmarketcap_base_url: "https://pro-api.coinmarketcap.com".to_string(),
+            frankfurter_base_url: "https://api.frankfurter.dev/v1".to_string(),
         }
     }
 }
@@ -228,7 +334,6 @@ impl Default for KillSwitchConfig {
             peg_low: 0.97,
             peg_high: 1.03,
             feed_stale: Duration::from_secs(5 * 60),
-            cadc_disagree_bps: 50.0,
             tvl_floor_frac: 0.8,
         }
     }
@@ -269,6 +374,29 @@ mod tests {
             assert!(w[1].offset_ppm > w[0].offset_ppm);
             assert!(w[1].size_bps < w[0].size_bps);
             assert!(w[1].expiry_offset > w[0].expiry_offset);
+        }
+    }
+
+    /// Every demo market names a base mint, a CoinGecko id, a tracked
+    /// currency, and a positive static peg; symbols and mint files are unique
+    /// so the roster maps cleanly onto distinct vaults.
+    #[test]
+    fn markets_roster_is_well_formed() {
+        use std::collections::HashSet;
+        let mut symbols = HashSet::new();
+        let mut files = HashSet::new();
+        for m in MARKETS {
+            assert!(!m.symbol.is_empty());
+            assert!(!m.coingecko_id.is_empty());
+            assert_eq!(m.currency.len(), 3, "{} currency is ISO 4217", m.symbol);
+            assert!(m.static_usd > 0.0, "{} static peg", m.symbol);
+            assert!(m.base_decimals <= 9, "{} decimals", m.symbol);
+            assert!(symbols.insert(m.symbol), "duplicate symbol {}", m.symbol);
+            assert!(
+                files.insert(m.base_keypair_file),
+                "duplicate mint file {}",
+                m.base_keypair_file
+            );
         }
     }
 

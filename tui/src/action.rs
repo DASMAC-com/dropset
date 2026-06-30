@@ -200,22 +200,27 @@ pub fn dispatch(action: Action, ctx: &JobContext, state: &ChainState, tx: Sender
             });
         }
         Action::CreateMarket => {
-            job::spawn(tx, "Create market", move |log| {
+            job::spawn(tx, "Create markets", move |log| {
                 let client = chain::rpc(&rpc_url);
-                do_create_market(&client, &wallet, &repo_root, &market::MOCK_CADC_USDC, log)
+                for config in market::PAIRS {
+                    do_create_market(&client, &wallet, &repo_root, config, log)?;
+                }
+                Ok(format!("Created {} markets", market::PAIRS.len()))
             });
         }
         Action::CreateVault => {
-            job::spawn(tx, "Create vault", move |log| {
+            job::spawn(tx, "Create vaults", move |log| {
                 let client = chain::rpc(&rpc_url);
-                do_create_vault(&client, &wallet, &repo_root, &market::MOCK_CADC_USDC, log)
+                for config in market::PAIRS {
+                    do_create_vault(&client, &wallet, &repo_root, config, log)?;
+                }
+                Ok(format!("Created {} vaults", market::PAIRS.len()))
             });
         }
         Action::BootstrapAll => {
             let pubkey = wallet.pubkey();
             let program_deployed = state.program_deployed;
             job::spawn(tx, "Bootstrap all", move |log| {
-                let config = &market::MOCK_CADC_USDC;
                 // Deploy first if the program isn't on-chain yet, so a fresh
                 // localnet bootstraps end-to-end from one action.
                 if !program_deployed {
@@ -223,9 +228,17 @@ pub fn dispatch(action: Action, ctx: &JobContext, state: &ChainState, tx: Sender
                 }
                 let client = chain::rpc(&rpc_url);
                 do_init(&client, &wallet, log)?;
-                do_create_market(&client, &wallet, &repo_root, config, log)?;
-                do_create_vault(&client, &wallet, &repo_root, config, log)?;
-                Ok("Bootstrap complete".into())
+                // Bring up every demo market: its mints, market PDA, and a
+                // seeded, quotable vault.
+                for config in market::PAIRS {
+                    log.log(format!("— {} —", config.base.symbol));
+                    do_create_market(&client, &wallet, &repo_root, config, log)?;
+                    do_create_vault(&client, &wallet, &repo_root, config, log)?;
+                }
+                Ok(format!(
+                    "Bootstrap complete — {} markets",
+                    market::PAIRS.len()
+                ))
             });
         }
         Action::ProbeSwap => {
@@ -405,8 +418,11 @@ fn do_create_vault(
     ensure_funded(client, &wallet.pubkey(), log);
     let state = accounts::poll(client, &wallet.pubkey(), None);
     let registry = state.registry.context("registry not found")?;
-    let market = state
-        .market
+    // Address this config's own market by its PDA — the bootstrap brings up
+    // many markets, so the first-found one in `ChainState` isn't necessarily
+    // this pair's.
+    let (base_mint, quote_mint) = market::pair_mints(repo_root, config)?;
+    let market = accounts::read_market_at(client, chain::market_pda(&base_mint, &quote_mint))
         .context("market not found — create market first")?;
     // The vault is opened for `config`'s leader (a distinct role key, not
     // the admin), so admin teardown's force_withdraw_leader doesn't alias

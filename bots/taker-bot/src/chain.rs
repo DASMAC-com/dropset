@@ -30,7 +30,7 @@ use std::time::Duration;
 use crate::context::MarketAddrs;
 use crate::model::Order;
 
-/// SPL Token program (the mock CADC/USDC mints live here, not Token-2022).
+/// SPL Token program (the mock demo mints live here, not Token-2022).
 pub const SPL_TOKEN_PROGRAM_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 /// Associated Token Account program.
 pub const ATA_PROGRAM_ID: Pubkey = pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");

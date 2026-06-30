@@ -171,7 +171,7 @@ pub fn poll(client: &RpcClient, wallet: &Pubkey, swapper: Option<&Pubkey>) -> Ch
         return state;
     }
 
-    state.market = read_market(client, slot.unwrap_or(0).min(u32::MAX as u64) as u32);
+    state.market = read_market(client, slot.unwrap_or(0).min(u32::MAX as u64) as u32, None);
     if let Some(market) = &state.market {
         // The MM bot is the leader of the market's first live vault; the
         // swapper is the supplied taker key. Read each one's wallet holdings.
@@ -232,15 +232,27 @@ fn read_registry(client: &RpcClient) -> Option<RegistryView> {
     })
 }
 
-/// Discover the localnet market by scanning the program's owned accounts
-/// for the `MarketHeader` discriminator, then decode its header + active
-/// vault list via the slab-layout mirror, and reconstruct the resting book
-/// at `current_slot` through the shared SDK matcher.
-fn read_market(client: &RpcClient, current_slot: u32) -> Option<MarketView> {
+/// Load a specific market by address, for the multi-market bootstrap which
+/// seeds each pair's own market PDA rather than whichever turns up first.
+pub fn read_market_at(client: &RpcClient, address: Pubkey) -> Option<MarketView> {
+    let slot = client.get_slot().ok()?;
+    read_market(client, slot.min(u32::MAX as u64) as u32, Some(address))
+}
+
+/// Decode a market into a [`MarketView`]. With `target` set, that exact market
+/// is loaded; otherwise the first market the program-accounts scan turns up
+/// (the single-market `ChainState` path).
+fn read_market(
+    client: &RpcClient,
+    current_slot: u32,
+    target: Option<Pubkey>,
+) -> Option<MarketView> {
     let accounts = client.get_program_accounts(&DROPSET_ID).ok()?;
-    let market_idx = accounts
-        .iter()
-        .position(|(_, a)| a.data.len() >= 8 && a.data[..8] == MARKET_HEADER_DISCRIMINATOR)?;
+    let market_idx = accounts.iter().position(|(addr, a)| {
+        a.data.len() >= 8
+            && a.data[..8] == MARKET_HEADER_DISCRIMINATOR
+            && target.is_none_or(|t| *addr == t)
+    })?;
     let address = accounts[market_idx].0;
     let account = &accounts[market_idx].1;
 

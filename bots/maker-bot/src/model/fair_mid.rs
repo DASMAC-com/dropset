@@ -1,16 +1,21 @@
 //! Reference-price composition and the peg sanity bound (§1).
 //!
-//! `fair_mid` is the mean of the two CADC market-price sources (CoinGecko and
-//! Aerodrome) — *not* Oanda, which measures the underlying CAD/USD FX rate and
-//! serves only as a peg-deviation sanity check. The composition also folds in
-//! the §1 / §4 freshness rules: disagreeing or stale CADC sources pause the
-//! reference hot path, *any* single stale feed (one CADC source, or the FX
-//! feed) runs degraded, and a peg outside the band flags a freeze condition.
-//! Degraded tightens the kill switches by 50% (§4 row 5) — the peg band halves
-//! its margin here, the imbalance bounds and TVL floor tighten in
-//! [`super::killswitch`].
+//! For one market, `compose` cascades the tiered feeds primary-first —
+//! CoinGecko → CoinMarketCap → ECB/Frankfurter FX-rate → static — and anchors
+//! the quoting mid to the highest live tier. The first two are real market
+//! prices and quote healthy; the FX-rate and static tiers are pure peg-rate
+//! fallbacks (no live market price), so they run *degraded*, tightening the
+//! kill switches in [`super::killswitch`] (§4 row 5). The "full degrade" the
+//! spec calls out — every live source down, only the static peg left — is the
+//! deepest case of that degraded path.
+//!
+//! When a market tier is live *and* a fresh FX rate exists, the market price is
+//! cross-checked against the fiat peg (`mid / fx_rate ≈ 1` for a sound peg);
+//! outside the band that flags a freeze condition. The peg-rate tiers have no
+//! independent market price to check against themselves, so they carry no peg.
 
 use crate::config::KillSwitchConfig;
+use crate::model::feeds::FeedTier;
 use std::time::Duration;
 
 /// One feed reading and how old it is, as of the tick computing `fair_mid`.
@@ -34,95 +39,94 @@ impl Quote {
 /// Health of the composed reference, gating the hot path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Health {
-    /// Both CADC sources fresh and in agreement — quote normally.
+    /// A live market price (CoinGecko or CoinMarketCap) anchors the mid —
+    /// quote normally.
     Ok,
-    /// A single feed is stale — one CADC source out (the other carries the
-    /// mid) or the FX feed out (the CADC mid still quotes, but the peg switch
-    /// disarms). Quote with the kill switches tightened (§1 / §4 row 5: "use
-    /// it but flag the vault as degraded").
+    /// Only a peg-rate fallback is live (the FX-rate or static tier): no live
+    /// market price, so quote with the kill switches tightened (§4 row 5: "use
+    /// it but flag the vault as degraded"). The spec's "full degrade" — every
+    /// live source down to the static peg — is the deepest form of this.
     Degraded,
-    /// CADC sources disagree past the bound, or none is fresh — pause
-    /// `SetReferencePrice` until resolved (§1 / §4).
+    /// Nothing usable at all — not even a static peg. Pause `SetReferencePrice`
+    /// until a feed returns (§1 / §4). Unreachable while a market configures a
+    /// positive `static_usd`, but kept as the defensive floor.
     Pause,
 }
 
 /// The composed reference for one tick.
 #[derive(Clone, Copy, Debug)]
 pub struct FairMid {
-    /// The quoting mid (mean of fresh CADC sources). `None` when paused.
+    /// The quoting mid (USD per token, human units). `None` only when paused.
     pub mid: Option<f64>,
-    /// CADC peg vs FX spot (`mid / f_fx`), when a fresh FX reading exists.
+    /// Which tier produced the mid — surfaced so an operator sees the live
+    /// source per market. `None` when paused.
+    pub tier: Option<FeedTier>,
+    /// Token peg vs the FX rate (`mid / fx_rate`), set only on a market tier
+    /// with a fresh FX cross-check.
     pub peg: Option<f64>,
     pub health: Health,
     /// Peg outside `[peg_low, peg_high]` — a freeze condition (§4). Only set
-    /// when both a mid and a fresh FX reading exist; Oanda staleness merely
-    /// disarms this switch, it never trips it.
+    /// when a market price can be compared to a fresh FX rate.
     pub peg_breach: bool,
 }
 
-/// The peg sanity band `[low, high]` for this tick. Healthy it is the
-/// configured `[peg_low, peg_high]`; degraded it halves each margin around the
-/// band's midpoint (§4 row 5), e.g. `[0.97, 1.03]` → `[0.985, 1.015]`.
-fn peg_band(kill: &KillSwitchConfig, degraded: bool) -> (f64, f64) {
-    if !degraded {
-        return (kill.peg_low, kill.peg_high);
-    }
-    let mid = (kill.peg_low + kill.peg_high) / 2.0;
-    (
-        mid + (kill.peg_low - mid) * 0.5,
-        mid + (kill.peg_high - mid) * 0.5,
-    )
-}
-
-/// Compose `fair_mid` from the CADC sources (`cg` = CoinGecko, `ae` =
-/// Aerodrome, the latter `None` when the feed is disabled) and the Oanda FX
-/// reading (`fx`). `None` arguments are absent feeds.
+/// Compose the reference for one market from its tiered readings — `cg`
+/// (CoinGecko), `cmc` (CoinMarketCap), and `fx` (the ECB/Frankfurter
+/// USD-per-token peg rate), each `None` when that source didn't answer — plus
+/// the market's `static_usd` last-resort peg. Cascades primary-first.
 pub fn compose(
     cg: Option<Quote>,
-    ae: Option<Quote>,
+    cmc: Option<Quote>,
     fx: Option<Quote>,
+    static_usd: f64,
     kill: &KillSwitchConfig,
 ) -> FairMid {
     let fresh = |q: Option<Quote>| q.filter(|q| q.fresh(kill.feed_stale));
     let cg = fresh(cg);
-    let ae = fresh(ae);
+    let cmc = fresh(cmc);
     let fx = fresh(fx);
 
-    let (mid, mut health) = match (cg, ae) {
-        // Both CADC sources fresh: pause if they disagree, else mean them.
-        (Some(a), Some(b)) => {
-            let mean = (a.value + b.value) / 2.0;
-            let disagree_bps = (a.value - b.value).abs() / mean * 10_000.0;
-            if disagree_bps > kill.cadc_disagree_bps {
-                (None, Health::Pause)
-            } else {
-                (Some(mean), Health::Ok)
-            }
-        }
-        // Exactly one fresh CADC source: usable, but degraded.
-        (Some(q), None) | (None, Some(q)) => (Some(q.value), Health::Degraded),
-        // No fresh CADC source: nothing to quote against.
-        (None, None) => (None, Health::Pause),
+    // Cascade primary-first to the highest live tier.
+    let picked = if let Some(q) = cg {
+        Some((q.value, FeedTier::CoinGecko))
+    } else if let Some(q) = cmc {
+        Some((q.value, FeedTier::CoinMarketCap))
+    } else if let Some(q) = fx {
+        Some((q.value, FeedTier::FxRate))
+    } else if static_usd.is_finite() && static_usd > 0.0 {
+        Some((static_usd, FeedTier::Static))
+    } else {
+        None
     };
 
-    // A stale (or absent) FX feed is also a single stale feed (§4 row 5): the
-    // CADC mid still quotes, but the vault runs degraded. Never upgrades a
-    // paused reference — only a healthy one steps down to degraded.
-    if fx.is_none() && health == Health::Ok {
-        health = Health::Degraded;
-    }
+    let Some((mid, tier)) = picked else {
+        return FairMid {
+            mid: None,
+            tier: None,
+            peg: None,
+            health: Health::Pause,
+            peg_breach: false,
+        };
+    };
 
-    // Degraded halves the peg band's margin around par (§4 row 5), so a fresh
-    // peg reading trips the freeze switch on half the deviation.
-    let (peg_low, peg_high) = peg_band(kill, health == Health::Degraded);
-    let peg = match (mid, fx) {
-        (Some(m), Some(f)) => Some(m / f.value),
+    // A live market price quotes healthy; a peg-rate fallback runs degraded.
+    let health = if tier.is_market_price() {
+        Health::Ok
+    } else {
+        Health::Degraded
+    };
+
+    // Peg sanity only when a market price can be compared to a fresh FX rate;
+    // the peg-rate tiers have nothing independent to check against themselves.
+    let peg = match (tier.is_market_price(), fx) {
+        (true, Some(f)) => Some(mid / f.value),
         _ => None,
     };
-    let peg_breach = peg.is_some_and(|p| p < peg_low || p > peg_high);
+    let peg_breach = peg.is_some_and(|p| p < kill.peg_low || p > kill.peg_high);
 
     FairMid {
-        mid,
+        mid: Some(mid),
+        tier: Some(tier),
         peg,
         health,
         peg_breach,
@@ -141,64 +145,89 @@ mod tests {
         Quote::new(value, Duration::from_secs(1))
     }
 
-    #[test]
-    fn means_two_agreeing_cadc_sources() {
-        let r = compose(Some(q(0.73)), Some(q(0.7302)), Some(q(0.73)), &kill());
-        assert_eq!(r.health, Health::Ok);
-        assert!((r.mid.unwrap() - 0.7301).abs() < 1e-9);
+    fn stale(value: f64) -> Quote {
+        Quote::new(value, Duration::from_secs(600))
     }
 
     #[test]
-    fn pauses_when_cadc_sources_disagree() {
-        // 0.73 vs 0.75 is ~270 bps apart, past the 50 bps bound.
-        let r = compose(Some(q(0.73)), Some(q(0.75)), Some(q(0.73)), &kill());
+    fn coingecko_is_the_primary_tier() {
+        let r = compose(Some(q(1.14)), Some(q(1.13)), Some(q(1.139)), 1.14, &kill());
+        assert_eq!(r.tier, Some(FeedTier::CoinGecko));
+        assert_eq!(r.mid, Some(1.14));
+        assert_eq!(r.health, Health::Ok);
+    }
+
+    #[test]
+    fn cascades_to_coinmarketcap_when_coingecko_down() {
+        let r = compose(None, Some(q(1.13)), Some(q(1.139)), 1.14, &kill());
+        assert_eq!(r.tier, Some(FeedTier::CoinMarketCap));
+        assert_eq!(r.mid, Some(1.13));
+        assert_eq!(r.health, Health::Ok);
+    }
+
+    #[test]
+    fn cascades_to_fx_rate_when_markets_down() {
+        // No market price: quote off the FX peg, degraded, with no peg check.
+        let r = compose(None, None, Some(q(1.139)), 1.14, &kill());
+        assert_eq!(r.tier, Some(FeedTier::FxRate));
+        assert_eq!(r.mid, Some(1.139));
+        assert_eq!(r.health, Health::Degraded);
+        assert!(r.peg.is_none());
+        assert!(!r.peg_breach);
+    }
+
+    #[test]
+    fn full_degrade_falls_to_static() {
+        // Every live source down → the static peg, the deepest degraded case.
+        let r = compose(None, None, None, 1.14, &kill());
+        assert_eq!(r.tier, Some(FeedTier::Static));
+        assert_eq!(r.mid, Some(1.14));
+        assert_eq!(r.health, Health::Degraded);
+    }
+
+    #[test]
+    fn stale_readings_are_skipped_in_the_cascade() {
+        // CoinGecko stale, CMC fresh → CMC carries the mid.
+        let r = compose(
+            Some(stale(1.14)),
+            Some(q(1.13)),
+            Some(q(1.139)),
+            1.14,
+            &kill(),
+        );
+        assert_eq!(r.tier, Some(FeedTier::CoinMarketCap));
+    }
+
+    #[test]
+    fn pauses_only_without_a_static_peg() {
+        let r = compose(None, None, None, 0.0, &kill());
         assert_eq!(r.health, Health::Pause);
         assert!(r.mid.is_none());
+        assert!(r.tier.is_none());
     }
 
     #[test]
-    fn single_fresh_cadc_source_runs_degraded() {
-        let r = compose(Some(q(0.73)), None, Some(q(0.73)), &kill());
-        assert_eq!(r.health, Health::Degraded);
-        assert_eq!(r.mid, Some(0.73));
-    }
-
-    #[test]
-    fn pauses_when_all_cadc_sources_stale() {
-        let stale = Quote::new(0.73, Duration::from_secs(600));
-        let r = compose(Some(stale), Some(stale), Some(q(0.73)), &kill());
-        assert_eq!(r.health, Health::Pause);
+    fn peg_checks_the_market_against_the_fx_rate() {
+        // Market 1.14 vs FX peg 1.139 → peg ≈ 1.0009, inside the band.
+        let r = compose(Some(q(1.14)), None, Some(q(1.139)), 1.14, &kill());
+        assert!(r.peg.is_some());
+        assert!(!r.peg_breach);
     }
 
     #[test]
     fn peg_breach_flags_a_freeze() {
-        // CADC at 0.80 against FX 0.73 → peg 1.096, outside the 1.03 ceiling.
-        let r = compose(Some(q(0.80)), Some(q(0.80)), Some(q(0.73)), &kill());
+        // Market price 1.25 against an FX peg of 1.139 → peg ≈ 1.097, past the
+        // 1.03 ceiling.
+        let r = compose(Some(q(1.25)), None, Some(q(1.139)), 1.14, &kill());
         assert!(r.peg_breach);
     }
 
     #[test]
-    fn stale_oanda_disarms_peg_switch_and_runs_degraded() {
-        let stale_fx = Quote::new(0.50, Duration::from_secs(600));
-        let r = compose(Some(q(0.73)), Some(q(0.73)), Some(stale_fx), &kill());
+    fn market_tier_without_fx_still_quotes_ok_without_a_peg() {
+        // A live market price with no FX cross-check: quote normally, no peg.
+        let r = compose(Some(q(1.14)), None, None, 1.14, &kill());
+        assert_eq!(r.health, Health::Ok);
         assert!(r.peg.is_none());
         assert!(!r.peg_breach);
-        // CADC sources are still fine, so quoting continues — but a stale FX
-        // feed is a single stale feed, so the vault runs degraded (§4 row 5).
-        assert_eq!(r.health, Health::Degraded);
-    }
-
-    #[test]
-    fn degraded_tightens_the_peg_band() {
-        // CADC 0.745 against FX 0.73 → peg ~1.021: inside the healthy
-        // [0.97, 1.03] band, but outside the degraded [0.985, 1.015] band once
-        // a single CADC source drops the vault to degraded.
-        let healthy = compose(Some(q(0.745)), Some(q(0.745)), Some(q(0.73)), &kill());
-        assert_eq!(healthy.health, Health::Ok);
-        assert!(!healthy.peg_breach);
-
-        let degraded = compose(Some(q(0.745)), None, Some(q(0.73)), &kill());
-        assert_eq!(degraded.health, Health::Degraded);
-        assert!(degraded.peg_breach);
     }
 }

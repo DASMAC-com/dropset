@@ -40,10 +40,17 @@ pub struct MintSpec {
     pub decimals: u8,
 }
 
+/// The USD value each side of a seeded vault opens with — the demo's $100
+/// top-of-book per market. The leader deposits ≈ `$100` of the base token and
+/// `$100` of USDC, balanced at the seed reference, so the opening book is
+/// symmetric and the maker bot's full-leg ladder quotes ≈ $100 a side.
+pub const SEED_USD_PER_SIDE: f64 = 100.0;
+
 /// A localnet market pair plus everything the bootstrap needs to bring it
 /// up quotable and seeded: the two mints, the leader role key that quotes
-/// and seeds the vault, the reference price, a symmetric quote ladder, and
-/// the leader's opening deposit. One per tradeable pair.
+/// and seeds the vault, the seed reference price, and a symmetric quote
+/// ladder. The opening deposit is derived from the price + decimals so each
+/// side opens at [`SEED_USD_PER_SIDE`]. One per tradeable pair.
 pub struct PairConfig {
     pub base: MintSpec,
     pub quote: MintSpec,
@@ -51,7 +58,11 @@ pub struct PairConfig {
     /// the admin wallet — anchor-v2 rejects the same key in the admin and
     /// leader slots of `create_vault`.
     pub leader_keypair_file: &'static str,
-    /// Reference (quote-per-base) price, e.g. `0.73` USDC per CADC.
+    /// Seed (quote-per-base) price in human units, e.g. `1.14` USDC per EURC.
+    /// Just the opening anchor — the maker bot rediscovers the live price from
+    /// its feeds and re-stamps it. Tokens span orders of magnitude (EURC
+    /// ~$1.14 … IDRX ~$0.000056), so this is converted to the on-chain
+    /// atoms-ratio per [`reference_atoms_ratio`] before encoding.
     pub reference_price: f64,
     /// Symmetric quote: a `±offset_ppm` spread around the reference, each
     /// side sized `size_bps` of its inventory leg, expiring `expiry_offset`
@@ -59,36 +70,77 @@ pub struct PairConfig {
     pub offset_ppm: u32,
     pub size_bps: u16,
     pub expiry_offset: u32,
-    /// The leader's opening deposit, `(base_atoms, quote_atoms)`.
-    pub leader_deposit: (u64, u64),
 }
 
-/// The mock CADC/USDC pair the localnet bootstrap brings up by default:
-/// base CADC, quote USDC, both 6-decimal, led by the `EEEE` role key,
-/// anchored at 0.73 USDC/CADC with a full-inventory ±0.5% ladder and an
-/// inventory balanced at that reference (1,000,000 CADC / 730,000 USDC).
-pub const MOCK_CADC_USDC: PairConfig = PairConfig {
-    base: MintSpec {
-        symbol: "CADC",
-        keypair_file: "keys/CADC.json",
-        decimals: 6,
-    },
-    quote: MintSpec {
-        symbol: "USDC",
-        keypair_file: "keys/USDC.json",
-        decimals: 6,
-    },
-    leader_keypair_file: "keys/EEEE.json",
-    reference_price: 0.73,
-    offset_ppm: 5_000,       // ±0.5%
-    size_bps: 10_000,        // 100% of each leg
-    expiry_offset: u32::MAX, // never expires
-    leader_deposit: (1_000_000_000_000, 730_000_000_000),
-};
+/// The seven FX-stablecoin markets the localnet bootstrap brings up, each a
+/// `<token>/USDC` pair led by the `EEEE` role key with a full-inventory ±0.5%
+/// opening ladder. The base mints are the mock localnet keypairs in `keys/`
+/// (vanity-named for the token); decimals match the real tokens so the
+/// localnet plumbing exercises the same per-market decimal handling the
+/// devnet/mainnet promotion will. Listing a `PairConfig` here also teaches the
+/// accounts pane its mint tickers (see [`mint_symbols`]).
+const fn fx_market(
+    symbol: &'static str,
+    keypair_file: &'static str,
+    decimals: u8,
+    reference_price: f64,
+) -> PairConfig {
+    PairConfig {
+        base: MintSpec {
+            symbol,
+            keypair_file,
+            decimals,
+        },
+        quote: MintSpec {
+            symbol: "USDC",
+            keypair_file: "keys/USDC.json",
+            decimals: 6,
+        },
+        leader_keypair_file: "keys/EEEE.json",
+        reference_price,
+        offset_ppm: 5_000,       // ±0.5%
+        size_bps: 10_000,        // 100% of each leg
+        expiry_offset: u32::MAX, // never expires (re-armed by the maker bot)
+    }
+}
 
-/// Every localnet pair the bootstrap can bring up. Listing a `PairConfig`
-/// here also teaches the accounts pane its mint tickers (see [`mint_symbols`]).
-pub const PAIRS: [&PairConfig; 1] = [&MOCK_CADC_USDC];
+pub const MARKET_EURC: PairConfig = fx_market("EURC", "keys/EURC.json", 6, 1.14);
+pub const MARKET_VCHF: PairConfig = fx_market("VCHF", "keys/VCHF.json", 9, 1.235);
+pub const MARKET_TGBP: PairConfig = fx_market("TGBP", "keys/TGBP.json", 9, 1.324);
+pub const MARKET_ZARP: PairConfig = fx_market("ZARP", "keys/ZARP.json", 6, 0.0605);
+pub const MARKET_MXNE: PairConfig = fx_market("MXNe", "keys/MXNe.json", 9, 0.0573);
+pub const MARKET_XSGD: PairConfig = fx_market("XSGD", "keys/XSGD.json", 6, 0.7705);
+pub const MARKET_IDRX: PairConfig = fx_market("IDRX", "keys/idrx.json", 2, 0.000056);
+
+/// Every localnet pair the bootstrap can bring up.
+pub const PAIRS: [&PairConfig; 7] = [
+    &MARKET_EURC,
+    &MARKET_VCHF,
+    &MARKET_TGBP,
+    &MARKET_ZARP,
+    &MARKET_MXNE,
+    &MARKET_XSGD,
+    &MARKET_IDRX,
+];
+
+/// Convert a pair's human quote-per-base price into the atoms-ratio the
+/// on-chain `Price` encodes — `quote_atoms` per `base_atoms`. They coincide
+/// only when both legs share decimals; a token with more decimals than USDC
+/// scales the ratio down, fewer scales it up.
+pub fn reference_atoms_ratio(config: &PairConfig) -> f64 {
+    config.reference_price * 10f64.powi(config.quote.decimals as i32 - config.base.decimals as i32)
+}
+
+/// The leader's opening deposit `(base_atoms, quote_atoms)`, sized so each leg
+/// is worth [`SEED_USD_PER_SIDE`] at the seed reference and the vault opens
+/// balanced. USDC (the quote) is ≈ $1, so its side is just the dollar amount;
+/// the base side is the token quantity worth the same, scaled by decimals.
+pub fn seed_deposit(config: &PairConfig) -> (u64, u64) {
+    let quote_atoms = (SEED_USD_PER_SIDE * 10f64.powi(config.quote.decimals as i32)) as u64;
+    let base_units = SEED_USD_PER_SIDE / config.reference_price;
+    let base_atoms = (base_units * 10f64.powi(config.base.decimals as i32)) as u64;
+    (base_atoms, quote_atoms)
+}
 
 /// Resolve each known pair's mint address → human ticker, loading the
 /// checked-in mint keypairs once. The chain scan that discovers a market only
@@ -120,6 +172,15 @@ const TAKER_KEYPAIR_FILE: &str = "keys/FFFF.json";
 /// Load the leader / quote-authority keypair `config` names.
 pub fn leader(repo_root: &Path, config: &PairConfig) -> Result<Keypair> {
     load_key(repo_root, config.leader_keypair_file)
+}
+
+/// Resolve a pair's two mint pubkeys from its checked-in keypair files without
+/// creating them — used to address an already-created market (its PDA is
+/// seeded on `[base, quote]`).
+pub fn pair_mints(repo_root: &Path, config: &PairConfig) -> Result<(Pubkey, Pubkey)> {
+    let base = load_key(repo_root, config.base.keypair_file)?;
+    let quote = load_key(repo_root, config.quote.keypair_file)?;
+    Ok((base.pubkey(), quote.pubkey()))
 }
 
 /// Load the taker / swapper role key (`FFFF`) — the probe swap's signer.
@@ -163,10 +224,16 @@ pub fn seed_vault(
     market: &MarketView,
     log: &Logger,
 ) -> Result<()> {
-    // 1. Reference price. Anchored at the current slot so the relative
-    //    `expiry_offset` is measured from now.
-    let price = Price::from_value(config.reference_price)
-        .with_context(|| format!("encode reference price {}", config.reference_price))?;
+    // 1. Reference price. The engine stores the atoms-ratio, so scale the
+    //    human price by the decimal gap before encoding. Anchored at the
+    //    current slot so the relative `expiry_offset` is measured from now.
+    let ratio = reference_atoms_ratio(config);
+    let price = Price::from_value(ratio).with_context(|| {
+        format!(
+            "encode reference price {} (atoms-ratio {ratio})",
+            config.reference_price
+        )
+    })?;
     let slot = client.get_slot().context("current slot")?;
     log.log(format!(
         "set_reference_price {} (slot {slot})",
@@ -198,7 +265,7 @@ pub fn seed_vault(
     .context("set_liquidity_profile")?;
 
     // 3. Fund the leader's ATAs (admin is the mint authority), then seed.
-    let (base_atoms, quote_atoms) = config.leader_deposit;
+    let (base_atoms, quote_atoms) = seed_deposit(config);
     let base_ata =
         chain::create_ata_idempotent(client, wallet, &leader.pubkey(), &market.base_mint)
             .context("leader base ATA")?;
@@ -260,26 +327,54 @@ fn symmetric_profile_bytes(offset_ppm: u32, size_bps: u16, expiry_offset: u32) -
 mod tests {
     use super::*;
 
-    /// The default pair's reference price must encode, and the leader's
-    /// opening inventory must be balanced at it (quote = base × price), so
-    /// the seeded vault is symmetric around its own quote.
+    /// Every market's reference price must encode as a `Price` once scaled to
+    /// the atoms-ratio — the wide unit-price spread (EURC ~$1.14 down to IDRX
+    /// ~$0.000056) plus mixed decimals all has to land inside the codec range.
     #[test]
-    fn mock_pair_inventory_is_balanced_at_the_reference() {
-        let c = &MOCK_CADC_USDC;
-        assert!(Price::from_value(c.reference_price).is_some());
-        let (base, quote) = c.leader_deposit;
-        let expected_quote = (base as f64 * c.reference_price) as u64;
-        assert_eq!(quote, expected_quote);
+    fn every_market_reference_encodes() {
+        for c in PAIRS {
+            let ratio = reference_atoms_ratio(c);
+            assert!(
+                Price::from_value(ratio).is_some(),
+                "{} ratio {ratio} out of Price range",
+                c.base.symbol
+            );
+        }
     }
 
-    /// The leader must differ from the admin so `create_vault` doesn't trip
-    /// anchor-v2's duplicate-mutable-account rule — they are distinct
-    /// checked-in role keys, so the file names at least must differ.
+    /// Each market's seed deposit opens both legs at ≈ $100, so the vault is
+    /// symmetric around its own quote regardless of the token's decimals.
+    #[test]
+    fn seed_deposit_is_balanced_at_one_hundred_usd_per_side() {
+        for c in PAIRS {
+            let (base_atoms, quote_atoms) = seed_deposit(c);
+            let base_usd =
+                base_atoms as f64 / 10f64.powi(c.base.decimals as i32) * c.reference_price;
+            let quote_usd = quote_atoms as f64 / 10f64.powi(c.quote.decimals as i32);
+            assert!(
+                (base_usd - SEED_USD_PER_SIDE).abs() < 1.0,
+                "{} base side ${base_usd}",
+                c.base.symbol
+            );
+            assert!(
+                (quote_usd - SEED_USD_PER_SIDE).abs() < 0.01,
+                "{} quote side ${quote_usd}",
+                c.base.symbol
+            );
+        }
+    }
+
+    /// The leader must differ from each pair's mints so `create_vault` doesn't
+    /// trip anchor-v2's duplicate-mutable-account rule — they are distinct
+    /// checked-in role keys, so the file names at least must differ. The quote
+    /// is the shared USDC mint across every market.
     #[test]
     fn leader_key_is_not_a_pair_mint() {
-        let c = &MOCK_CADC_USDC;
-        assert_ne!(c.leader_keypair_file, c.base.keypair_file);
-        assert_ne!(c.leader_keypair_file, c.quote.keypair_file);
+        for c in PAIRS {
+            assert_ne!(c.leader_keypair_file, c.base.keypair_file);
+            assert_ne!(c.leader_keypair_file, c.quote.keypair_file);
+            assert_eq!(c.quote.keypair_file, "keys/USDC.json");
+        }
     }
 
     /// A symmetric profile fills exactly the top bid and ask, leaving the

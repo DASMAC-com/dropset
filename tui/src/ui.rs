@@ -510,8 +510,8 @@ mod tests {
         let base = Pubkey::new_from_array([1u8; 32]);
         let quote = Pubkey::new_from_array([2u8; 32]);
         let other = Pubkey::new_from_array([3u8; 32]);
-        let symbols = [(base, "CADC"), (quote, "USDC")];
-        assert_eq!(symbol_for(&symbols, &base, "base"), "CADC");
+        let symbols = [(base, "EURC"), (quote, "USDC")];
+        assert_eq!(symbol_for(&symbols, &base, "base"), "EURC");
         assert_eq!(symbol_for(&symbols, &quote, "quote"), "USDC");
         // An unknown mint (a market minted outside the bootstrap) falls back.
         assert_eq!(symbol_for(&symbols, &other, "base"), "base");

@@ -2,14 +2,15 @@
 //! quantities the skew (§2) and kill-switch (§4) policies reason about.
 //!
 //! The quote leg is USDC (≈ $1), so its USD value is just its atom count
-//! descaled by decimals. The base leg (CADC) is valued at the current mid
-//! (USDC per CADC). "Deviation from neutral" is half the gap between the legs
-//! — a $10 swing means each side moved $5 off the midpoint (§2).
+//! descaled by decimals. The base leg (the FX-stablecoin token) is valued at
+//! the current mid (USD per token). "Deviation from neutral" is half the gap
+//! between the legs — a $10 swing means each side moved $5 off the midpoint
+//! (§2).
 
 /// A vault's two legs, valued in USD.
 #[derive(Clone, Copy, Debug)]
 pub struct Inventory {
-    /// Base leg (CADC) value in USD: `base_atoms / 10^decimals · mid`.
+    /// Base leg (the token) value in USD: `base_atoms / 10^decimals · mid`.
     pub base_value_usd: f64,
     /// Quote leg (USDC) value in USD: `quote_atoms / 10^decimals`.
     pub quote_value_usd: f64,
@@ -81,8 +82,8 @@ mod tests {
 
     #[test]
     fn balanced_vault_has_no_deviation() {
-        // 1,000,000 CADC at 0.73 = $730k; 730,000 USDC = $730k. Balanced.
-        let inv = Inventory::from_atoms(1_000_000_000_000, 730_000_000_000, 6, 6, 0.73);
+        // 100 EURC at 1.14 = $114; 114 USDC = $114. Balanced at $100-scale.
+        let inv = Inventory::from_atoms(100_000_000, 114_000_000, 6, 6, 1.14);
         assert!(inv.deviation_usd().abs() < 1.0);
         assert!(inv.imbalance_pct() < 0.01);
     }

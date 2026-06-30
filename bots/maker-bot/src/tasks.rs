@@ -1,31 +1,30 @@
-//! The tick loop (§3 bot heartbeat).
+//! The supervisor tick loop (§3 bot heartbeat).
 //!
-//! Every tick (5 s): refresh the due feeds, compose the reference, read the
-//! live vault, then fire **at most one** instruction — the cold path
-//! (`set_liquidity_profile`) takes precedence over the hot path
-//! (`set_reference_price`) when a reshape is due, so a tick never sends both.
-//! A failed send is logged and the tick is skipped; the next tick retries (no
-//! retry storms).
+//! The demo runs many markets at once. A single process supervises them: each
+//! cycle (5 s) it refreshes the **shared, batched** feed cache once — one
+//! CoinGecko call prices every token, one Frankfurter call covers every
+//! currency, CoinMarketCap is the on-failure secondary — then walks the
+//! markets, composing each one's reference from the cache and firing **at most
+//! one** instruction per market. The cold path (`set_liquidity_profile`) takes
+//! precedence over the hot path (`set_reference_price`) when a reshape is due,
+//! so a market never sends both in one cycle. A failed send is logged and that
+//! market is skipped; the next cycle retries (no retry storms).
 //!
 //! Fill detection is driven by the `emit_cpi!` `FillEvent` subscription
-//! (`fills` module, §3 production-fidelity path): the subscription thread
-//! forwards each attributed fill, the tick drains them into a fill-derived
-//! position, and the policy values inventory off that position. The per-tick
-//! vault read reconciles the position (catching a missed fill or an external
-//! deposit / withdraw the events don't carry) and is the sole fill signal in
-//! the fallback path — when no subscription is attached, a `base_atoms` /
-//! `quote_atoms` change the bot didn't cause is taken as a fill. (The
-//! reference's price-time nonce is *not* used — it bumps on every re-quote, so
-//! it can't tell a fill from the bot's own quote update.)
-//!
-//! Quoting actions stay on the tick boundary (§3: at most one ix per tick, no
-//! retry storms); the fill stream makes the bot's inventory *belief*
-//! real-time, not its sends.
+//! (`fills` module, §3 production-fidelity path). One subscription covers every
+//! market the shared leader quotes; the supervisor drains it each cycle and
+//! routes each fill to its market by `event.market`, advancing that market's
+//! fill-derived position. The per-market vault read reconciles the position
+//! (catching a missed fill or external flow) and is the sole fill signal in the
+//! fallback path — when no subscription is attached, a balance change the bot
+//! didn't cause is taken as a fill. (The reference's price-time nonce is *not*
+//! used — it bumps on every re-quote, so it can't tell a fill from a re-quote.)
 
 use crate::chain;
-use crate::config::BotConfig;
+use crate::config::{BotConfig, FeedConfig, MarketConfig};
 use crate::context::{Context, ProfileKind, VaultSnapshot};
-use crate::model::fair_mid::{compose, Health, Quote};
+use crate::fills::Fill;
+use crate::model::fair_mid::{compose, FairMid, Health, Quote};
 use crate::model::feeds::Feeds;
 use crate::model::inventory::Inventory;
 use crate::model::killswitch::{self, Action, HaltReason};
@@ -33,113 +32,304 @@ use crate::model::ladder::{self, Side};
 use crate::model::skew;
 use crate::model::triggers::{self, RefTrigger};
 use anyhow::Result;
+use solana_pubkey::Pubkey;
 use solana_signer::Signer;
-use std::sync::mpsc::TryRecvError;
+use std::collections::HashMap;
+use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
-/// The cached state of one feed: its last successful reading (with the instant
-/// it was taken, for freshness) and when it was last polled (for cadence).
-#[derive(Default)]
-struct FeedState {
-    last: Option<(f64, Instant)>,
-    last_poll: Option<Instant>,
+/// Whether a feed tier is due to poll again given its last poll and interval.
+fn due(last: Option<Instant>, now: Instant, interval: Duration) -> bool {
+    last.is_none_or(|t| now.duration_since(t) >= interval)
 }
 
-impl FeedState {
-    /// Poll the feed if its interval has elapsed, caching a successful reading
-    /// and logging a failure without disturbing the last good value.
-    fn maybe_poll(
+/// The shared, batched feed cache. One refresh cycle polls CoinGecko for every
+/// market's token at once and Frankfurter for every currency at once, so the
+/// whole roster costs one request per tier rather than one per market.
+/// CoinMarketCap is the on-failure secondary: polled only when the latest
+/// CoinGecko poll came back empty, and on a slower spacing to respect the
+/// free-tier quota.
+struct FeedHub {
+    /// `coingecko_id → (usd, when read)`.
+    cg: HashMap<String, (f64, Instant)>,
+    /// `cmc numeric id → (usd, when read)`.
+    cmc: HashMap<u32, (f64, Instant)>,
+    /// `currency → (usd per unit, when read)`.
+    fx: HashMap<String, (f64, Instant)>,
+    cg_last_poll: Option<Instant>,
+    cmc_last_poll: Option<Instant>,
+    fx_last_poll: Option<Instant>,
+    /// Whether the most recent CoinGecko poll produced at least one price — the
+    /// signal that gates the CoinMarketCap fallback.
+    cg_ok: bool,
+}
+
+impl FeedHub {
+    fn new() -> Self {
+        Self {
+            cg: HashMap::new(),
+            cmc: HashMap::new(),
+            fx: HashMap::new(),
+            cg_last_poll: None,
+            cmc_last_poll: None,
+            fx_last_poll: None,
+            cg_ok: false,
+        }
+    }
+
+    /// Refresh whichever tiers are due, batched across the whole roster.
+    fn refresh(
         &mut self,
         now: Instant,
-        interval: Duration,
-        label: &str,
-        poll: impl FnOnce() -> Result<f64>,
+        feeds: &Feeds,
+        cfg: &FeedConfig,
+        cg_ids: &[&str],
+        cmc_ids: &[u32],
+        currencies: &[&str],
     ) {
-        let due = self
-            .last_poll
-            .is_none_or(|t| now.duration_since(t) >= interval);
-        if !due {
-            return;
+        // Primary: CoinGecko, one batched call for every token.
+        if due(self.cg_last_poll, now, cfg.coingecko_poll) {
+            self.cg_last_poll = Some(now);
+            match feeds.poll_coingecko(cg_ids) {
+                Ok(map) if !map.is_empty() => {
+                    self.cg_ok = true;
+                    for (k, v) in map {
+                        self.cg.insert(k, (v, now));
+                    }
+                }
+                Ok(_) => {
+                    self.cg_ok = false;
+                    eprintln!("[feed] coingecko returned no prices");
+                }
+                Err(e) => {
+                    self.cg_ok = false;
+                    eprintln!("[feed] coingecko poll failed: {e}");
+                }
+            }
         }
-        self.last_poll = Some(now);
-        match poll() {
-            Ok(v) => self.last = Some((v, now)),
-            Err(e) => eprintln!("[feed] {label} poll failed: {e}"),
+
+        // Secondary: CoinMarketCap, only when CoinGecko is down and a key is
+        // set — the quota rules out a hot poll, so this is a min spacing.
+        if !self.cg_ok
+            && feeds.coinmarketcap_enabled()
+            && !cmc_ids.is_empty()
+            && due(self.cmc_last_poll, now, cfg.coinmarketcap_poll)
+        {
+            self.cmc_last_poll = Some(now);
+            match feeds.poll_coinmarketcap(cmc_ids) {
+                Ok(map) => {
+                    for (k, v) in map {
+                        self.cmc.insert(k, (v, now));
+                    }
+                }
+                Err(e) => eprintln!("[feed] coinmarketcap poll failed: {e}"),
+            }
+        }
+
+        // Tertiary: ECB/Frankfurter FX rates, keyless — both the peg
+        // cross-check and the next fallback tier, on a slow cadence.
+        if !currencies.is_empty() && due(self.fx_last_poll, now, cfg.fx_poll) {
+            self.fx_last_poll = Some(now);
+            match feeds.poll_frankfurter(currencies) {
+                Ok(map) => {
+                    for (k, v) in map {
+                        self.fx.insert(k, (v, now));
+                    }
+                }
+                Err(e) => eprintln!("[feed] frankfurter poll failed: {e}"),
+            }
         }
     }
 
-    /// This feed's reading as a [`Quote`] aged to `now`, if any.
-    fn quote(&self, now: Instant) -> Option<Quote> {
-        self.last.map(|(v, t)| Quote::new(v, now.duration_since(t)))
+    /// This market's cached readings as `Quote`s aged to `now` — the inputs
+    /// `compose` cascades over.
+    fn quotes(
+        &self,
+        now: Instant,
+        market: &MarketConfig,
+    ) -> (Option<Quote>, Option<Quote>, Option<Quote>) {
+        let aged =
+            |o: Option<&(f64, Instant)>| o.map(|(v, t)| Quote::new(*v, now.duration_since(*t)));
+        let cg = aged(self.cg.get(market.coingecko_id));
+        let cmc = market
+            .coinmarketcap_id
+            .and_then(|id| self.cmc.get(&id))
+            .map(|(v, t)| Quote::new(*v, now.duration_since(*t)));
+        let fx = aged(self.fx.get(market.currency));
+        (cg, cmc, fx)
     }
 }
 
-/// Run the bot until interrupted. Each loop iteration is one tick; a tick
-/// error is logged and the loop continues.
-pub fn run(mut ctx: Context, feeds: Feeds, cfg: BotConfig) -> Result<()> {
+/// Run the supervisor over every market until interrupted. Each loop iteration
+/// is one cycle; a per-market error is logged and the others continue.
+pub fn run_supervisor(
+    feeds: Feeds,
+    cfg: BotConfig,
+    mut markets: Vec<Context>,
+    mut fills: Option<Receiver<Fill>>,
+) -> Result<()> {
+    let fills_active = fills.is_some();
+    for ctx in &mut markets {
+        ctx.fills_active = fills_active;
+    }
     println!(
-        "maker-bot live: market {} vault {} (tick {:?})",
-        ctx.market.market, ctx.vault_idx, cfg.tick
+        "maker-bot live: {} markets (tick {:?}, fills {})",
+        markets.len(),
+        cfg.tick,
+        if fills_active { "on" } else { "off" }
     );
-    let mut cg = FeedState::default();
-    let mut fx = FeedState::default();
-    let mut ae = FeedState::default();
 
+    // The batched feed identifiers, collected once.
+    let cg_ids: Vec<&str> = markets.iter().map(|m| m.cfg.coingecko_id).collect();
+    let cmc_ids: Vec<u32> = markets
+        .iter()
+        .filter_map(|m| m.cfg.coinmarketcap_id)
+        .collect();
+    let mut currencies: Vec<&str> = markets.iter().map(|m| m.cfg.currency).collect();
+    currencies.sort_unstable();
+    currencies.dedup();
+
+    let mut hub = FeedHub::new();
     loop {
-        if let Err(e) = tick(&mut ctx, &feeds, &cfg, &mut cg, &mut fx, &mut ae) {
-            eprintln!("[tick] error: {e}");
+        let now = Instant::now();
+        hub.refresh(now, &feeds, &cfg.feeds, &cg_ids, &cmc_ids, &currencies);
+
+        // Drain the one subscription and route each fill to its market.
+        let (routed, disconnected) = drain_fills(fills.as_ref(), &markets);
+        if disconnected {
+            fills = None;
+            for ctx in &mut markets {
+                ctx.fills_active = false;
+            }
+        }
+
+        for ctx in &mut markets {
+            let (cg, cmc, fx) = hub.quotes(now, &ctx.cfg);
+            let fair = compose(cg, cmc, fx, ctx.cfg.static_usd, &cfg.kill);
+            let got_fill = routed.get(&ctx.market.market).copied();
+            if let Err(e) = quote_market(ctx, &cfg, now, fair, got_fill) {
+                eprintln!("[{}] tick error: {e}", ctx.cfg.symbol);
+            }
         }
         std::thread::sleep(cfg.tick);
     }
 }
 
-fn tick(
-    ctx: &mut Context,
-    feeds: &Feeds,
-    cfg: &BotConfig,
-    cg: &mut FeedState,
-    fx: &mut FeedState,
-    ae: &mut FeedState,
-) -> Result<()> {
-    let now = Instant::now();
-
-    // 1. Refresh due feeds.
-    cg.maybe_poll(now, cfg.feeds.coingecko_poll, "coingecko", || {
-        feeds.poll_coingecko()
-    });
-    fx.maybe_poll(now, cfg.feeds.oanda_poll, "oanda", || feeds.poll_oanda());
-    if feeds.aerodrome_enabled() {
-        let interval = cfg.feeds.aerodrome.as_ref().map_or(cfg.tick, |a| a.poll);
-        ae.maybe_poll(now, interval, "aerodrome", || feeds.poll_aerodrome());
+/// Drain every attributed fill delivered since the last cycle and route it to
+/// its market by `event.market`, keeping the chain-latest (highest
+/// `nonce_after`) per market — channel-arrival order isn't guaranteed to be
+/// slot order. Returns `market → (base_after, quote_after)` plus whether the
+/// subscription channel disconnected (the thread died), so the caller can
+/// revert every market to the inventory-diff fallback.
+///
+/// Routing is by market alone: the bootstrap opens exactly one leader vault
+/// (sector) per market, and the leader quotes only that sector, so a fill
+/// against this leader on this market is unambiguously this vault's. A market
+/// with more than one leader-owned sector would need `event.sector_idx`
+/// disambiguation too — not a shape this localnet demo creates.
+fn drain_fills(
+    fills: Option<&Receiver<Fill>>,
+    markets: &[Context],
+) -> (HashMap<Pubkey, (u64, u64)>, bool) {
+    let mut best: HashMap<Pubkey, (u64, u64, u64)> = HashMap::new();
+    let Some(rx) = fills else {
+        return (HashMap::new(), false);
+    };
+    let symbol = |market: &Pubkey| {
+        markets
+            .iter()
+            .find(|c| &c.market.market == market)
+            .map_or("?", |c| c.cfg.symbol)
+    };
+    let mut disconnected = false;
+    loop {
+        match rx.try_recv() {
+            Ok(fill) => {
+                let e = &fill.event;
+                let side = if e.side == 0 { "ask" } else { "bid" };
+                println!(
+                    "[{}][fill] {side} L{} {} base / {} quote @ {} (fee {} atoms, sig {})",
+                    symbol(&e.market),
+                    e.level_idx,
+                    e.fill_base,
+                    e.fill_quote,
+                    e.fill_price,
+                    e.taker_fee_atoms,
+                    fill.signature
+                );
+                let entry = best.entry(e.market).or_insert((0, 0, 0));
+                if e.nonce_after >= entry.0 {
+                    *entry = (e.nonce_after, e.base_atoms_after, e.quote_atoms_after);
+                }
+            }
+            Err(TryRecvError::Empty) => break,
+            Err(TryRecvError::Disconnected) => {
+                eprintln!(
+                    "[fills] subscription channel closed; reverting to inventory-diff fallback"
+                );
+                disconnected = true;
+                break;
+            }
+        }
     }
+    let routed = best
+        .into_iter()
+        .map(|(m, (_, base, quote))| (m, (base, quote)))
+        .collect();
+    (routed, disconnected)
+}
 
-    // 2. Compose the reference and read the live vault (by quote authority).
-    let fair = compose(cg.quote(now), ae.quote(now), fx.quote(now), &cfg.kill);
-    let vault = chain::read_vault(&ctx.client, &ctx.market.market, &ctx.leader.pubkey())?;
+/// Quote one market for this cycle: read its vault, value inventory off the
+/// composed reference, and fire at most one instruction.
+fn quote_market(
+    ctx: &mut Context,
+    cfg: &BotConfig,
+    now: Instant,
+    fair: FairMid,
+    got_fill: Option<(u64, u64)>,
+) -> Result<()> {
+    let vault = chain::read_vault(
+        &ctx.client,
+        &ctx.market.market,
+        &ctx.leader.pubkey(),
+        ctx.market.base_decimals,
+        ctx.market.quote_decimals,
+    )?;
     ctx.vault_idx = vault.sector_idx;
 
-    // Primary fill signal: drain attributed `FillEvent`s into the position
-    // belief, then resolve the inventory the policy reads. A fill drained this
-    // tick is fresher than the vault read taken just above, so it wins; with
-    // no fill, the vault read reconciles the position (or drives the diff
-    // fallback when no subscription is attached).
-    let drained = drain_fills(ctx);
-    let (base_atoms, quote_atoms) = resolve_inventory(ctx, &vault, drained);
+    // A fill the supervisor routed to this market is fresher than the vault
+    // read taken above, so it leads the reconcile.
+    if let Some(pos) = got_fill {
+        ctx.position = Some(pos);
+    }
+    let (base_atoms, quote_atoms) = resolve_inventory(ctx, &vault, got_fill.is_some());
 
     if vault.frozen {
-        println!("[halt] vault is frozen on-chain — idling");
+        println!(
+            "[{}][halt] vault is frozen on-chain — idling",
+            ctx.cfg.symbol
+        );
         return Ok(());
     }
 
     let Some(mid) = fair.mid else {
         println!(
-            "[pause] {:?}: no usable CADC source, holding reference",
-            fair.health
+            "[{}][pause] {:?}: no usable feed, holding reference",
+            ctx.cfg.symbol, fair.health
         );
         return Ok(());
     };
+    if let Some(tier) = fair.tier {
+        // Surface the live tier so an operator can see the cascade per market.
+        if !tier.is_market_price() {
+            println!(
+                "[{}] quoting off the {} tier (degraded)",
+                ctx.cfg.symbol,
+                tier.label()
+            );
+        }
+    }
 
-    // 3. Value inventory and decide the action + skewed reference.
     let inv = Inventory::from_atoms(
         base_atoms,
         quote_atoms,
@@ -167,7 +357,7 @@ fn tick(
     let skew_bps = skew::ref_skew_bps(&inv, &cfg.strategy);
     let reference = skew::apply_skew(mid, skew_bps);
 
-    // 4. Cold path first — at most one ix per tick.
+    // Cold path first — at most one ix per cycle.
     match action {
         Action::Halt(reason) => {
             halt(ctx, cfg, reason)?;
@@ -178,7 +368,6 @@ fn tick(
                 freeze_side(ctx, cfg, side)?;
                 return Ok(());
             }
-            // Already frozen on that side; fall through to the hot path.
         }
         Action::Reshape(accumulating) => {
             if ctx.profile_kind != ProfileKind::Reshaped(accumulating)
@@ -187,8 +376,6 @@ fn tick(
                 arm_reshape(ctx, cfg, accumulating, now)?;
                 return Ok(());
             }
-            // Already reshaped that way; fall through to the hot path so the
-            // reference skew keeps inviting rebalancing.
         }
         Action::Quote => {
             if standard_arm_due(ctx, cfg, now) {
@@ -198,7 +385,7 @@ fn tick(
         }
     }
 
-    // 5. Hot path — refresh the reference when a trigger fires.
+    // Hot path — refresh the reference when a trigger fires.
     let trig = RefTrigger {
         candidate: reference,
         last_set: ctx.last_set_price,
@@ -214,87 +401,38 @@ fn tick(
             &ctx.market.market,
             ctx.vault_idx,
             reference,
+            ctx.market.base_decimals,
+            ctx.market.quote_decimals,
             slot,
         )?;
         ctx.last_set_price = Some(reference);
         ctx.last_skew_bps = skew_bps;
         ctx.last_set_at = now;
-        println!("[ref] set {reference:.6} (skew {skew_bps:+.1} bps, slot {slot})");
+        println!(
+            "[{}][ref] set {reference:.8} (skew {skew_bps:+.1} bps, slot {slot})",
+            ctx.cfg.symbol
+        );
     }
     Ok(())
 }
 
-/// Drain every attributed fill delivered since the last tick, log it, and
-/// advance the fill-derived position to the **chain-latest** fill's `*_after`
-/// balances (highest `nonce_after` wins, since channel-arrival order isn't
-/// guaranteed to be slot order). Only fills against the bot's current sector
-/// are applied. Returns whether any fill was applied this tick. No-op (returns
-/// `false`) when no subscription is attached; if the subscription channel has
-/// disconnected (the thread died), clears `ctx.fills` so the tick reverts to
-/// the inventory-diff fallback.
-fn drain_fills(ctx: &mut Context) -> bool {
-    let Some(fills) = &ctx.fills else {
-        return false;
-    };
-    // The chain-latest fill so far this tick, as `(nonce_after, base, quote)`.
-    let mut best: Option<(u64, u64, u64)> = None;
-    let mut disconnected = false;
-    loop {
-        match fills.try_recv() {
-            Ok(fill) => {
-                let e = &fill.event;
-                // A fill against a different sector of the same authority isn't
-                // this vault's inventory.
-                if e.sector_idx != ctx.vault_idx {
-                    continue;
-                }
-                let side = if e.side == 0 { "ask" } else { "bid" };
-                println!(
-                    "[fill] {side} L{} {} base / {} quote @ {} (fee {} atoms, sig {})",
-                    e.level_idx,
-                    e.fill_base,
-                    e.fill_quote,
-                    e.fill_price,
-                    e.taker_fee_atoms,
-                    fill.signature
-                );
-                if best.is_none_or(|(nonce, _, _)| e.nonce_after >= nonce) {
-                    best = Some((e.nonce_after, e.base_atoms_after, e.quote_atoms_after));
-                }
-            }
-            Err(TryRecvError::Empty) => break,
-            Err(TryRecvError::Disconnected) => {
-                disconnected = true;
-                break;
-            }
-        }
-    }
-    if let Some((_, base, quote)) = best {
-        ctx.position = Some((base, quote));
-    }
-    if disconnected {
-        eprintln!("[fills] subscription channel closed; reverting to inventory-diff fallback");
-        ctx.fills = None;
-    }
-    best.is_some()
-}
-
-/// Resolve the inventory the policy values this tick, in `(base, quote)` atoms.
-///
-/// With a subscription attached, the fill-derived position is authoritative:
-/// seeded from the first vault read, advanced by fills, and reconciled against
-/// the per-tick vault read — see [`decide_position`] for the rule. Without a
-/// subscription, the vault read is the only signal and a balance the bot
-/// didn't move itself is logged as a fill (the fallback detection).
+/// Resolve the inventory the policy values this cycle, in `(base, quote)`
+/// atoms. With a subscription attached, the fill-derived position is
+/// authoritative (seeded from the first vault read, advanced by routed fills,
+/// reconciled against the per-cycle vault read). Without one, the vault read is
+/// the only signal and a balance the bot didn't move is logged as a fill.
 fn resolve_inventory(ctx: &mut Context, vault: &VaultSnapshot, drained: bool) -> (u64, u64) {
     let chain = (vault.base_atoms, vault.quote_atoms);
 
-    if ctx.fills.is_none() {
+    if !ctx.fills_active {
         if let Some(prev) = ctx.last_inventory {
             if prev != chain {
                 let db = chain.0 as i128 - prev.0 as i128;
                 let dq = chain.1 as i128 - prev.1 as i128;
-                println!("[fill] inventory moved: base {db:+}, quote {dq:+} atoms");
+                println!(
+                    "[{}][fill] inventory moved: base {db:+}, quote {dq:+} atoms",
+                    ctx.cfg.symbol
+                );
             }
         }
         ctx.last_inventory = Some(chain);
@@ -305,24 +443,23 @@ fn resolve_inventory(ctx: &mut Context, vault: &VaultSnapshot, drained: bool) ->
     if reconciled {
         let (pb, pq) = ctx.position.unwrap_or(chain);
         println!(
-            "[fills] reconciling to chain: position ({pb}, {pq}) vs vault ({}, {}) — missed fill or external flow",
-            chain.0, chain.1
+            "[{}][fills] reconciling to chain: position ({pb}, {pq}) vs vault ({}, {}) — missed fill or external flow",
+            ctx.cfg.symbol, chain.0, chain.1
         );
     }
     ctx.position = Some(position);
     inventory
 }
 
-/// The fill-path inventory decision, factored out as a pure function over
-/// plain values so it can be unit-tested without a live `Context`.
+/// The fill-path inventory decision, factored out as a pure function over plain
+/// values so it can be unit-tested without a live `Context`.
 ///
 /// Returns `(inventory_to_value, position_to_store, reconciled)`:
 /// - no position yet → seed it from the chain read;
-/// - a fill landed this tick → the position is fresher than the vault read
+/// - a fill landed this cycle → the position is fresher than the vault read
 ///   taken before the drain, so trust it (no reconcile);
-/// - no fill this tick but the position disagrees with the chain → a missed
-///   fill or external deposit / withdraw the events don't carry, so the chain
-///   wins and the position snaps to it (`reconciled`);
+/// - no fill this cycle but the position disagrees with the chain → a missed
+///   fill or external deposit / withdraw, so the chain wins (`reconciled`);
 /// - otherwise the position already matches the chain, so keep it.
 fn decide_position(
     position: Option<(u64, u64)>,
@@ -346,8 +483,8 @@ fn profile_heartbeat_due(ctx: &Context, cfg: &BotConfig, now: Instant) -> bool {
     )
 }
 
-/// Whether the standard ladder needs re-arming this tick — either it isn't the
-/// armed shape (first tick, or recovering from a halt/freeze/reshape) or the
+/// Whether the standard ladder needs re-arming this cycle — either it isn't the
+/// armed shape (first cycle, or recovering from a halt/freeze/reshape) or the
 /// daily heartbeat is due.
 fn standard_arm_due(ctx: &Context, cfg: &BotConfig, now: Instant) -> bool {
     ctx.profile_kind != ProfileKind::Standard || profile_heartbeat_due(ctx, cfg, now)
@@ -365,14 +502,14 @@ fn arm_standard(ctx: &mut Context, cfg: &BotConfig, now: Instant) -> Result<()> 
     )?;
     ctx.profile_kind = ProfileKind::Standard;
     ctx.last_profile_at = now;
-    println!("[profile] armed standard ladder");
+    println!("[{}][profile] armed standard ladder", ctx.cfg.symbol);
     Ok(())
 }
 
 /// Shrink the accumulating side so the heavy (rebuild) side dominates the book
 /// and leans into offloading the heavy leg — the §4 row 1 reshape (imbalance
 /// over 30%), a milder step than the freeze. The reference skew (applied every
-/// tick) supplies the price shift that invites rebalancing.
+/// cycle) supplies the price shift that invites rebalancing.
 fn arm_reshape(ctx: &mut Context, cfg: &BotConfig, accumulating: Side, now: Instant) -> Result<()> {
     let mut profile = ladder::build_profile(&cfg.strategy.ladder);
     ladder::scale_side(
@@ -393,7 +530,10 @@ fn arm_reshape(ctx: &mut Context, cfg: &BotConfig, accumulating: Side, now: Inst
         Side::Bid => Side::Ask,
         Side::Ask => Side::Bid,
     };
-    println!("[reshape] shrank {accumulating:?} side — grew {rebuild:?} side to rebalance");
+    println!(
+        "[{}][reshape] shrank {accumulating:?} side — grew {rebuild:?} side to rebalance",
+        ctx.cfg.symbol
+    );
     Ok(())
 }
 
@@ -410,14 +550,20 @@ fn freeze_side(ctx: &mut Context, cfg: &BotConfig, side: Side) -> Result<()> {
     )?;
     ctx.profile_kind = ProfileKind::FrozenSide(side);
     ctx.last_profile_at = Instant::now();
-    println!("[freeze] zeroed {side:?} side — only the rebuild side quotes");
+    println!(
+        "[{}][freeze] zeroed {side:?} side — only the rebuild side quotes",
+        ctx.cfg.symbol
+    );
     Ok(())
 }
 
 /// Stop quoting and alert. The bot zeroes both sides (leader-authorized) and
 /// leaves the irreversible, admin-only `FreezeVault` to a human.
 fn halt(ctx: &mut Context, cfg: &BotConfig, reason: HaltReason) -> Result<()> {
-    eprintln!("[ALERT] kill switch: {reason:?} — halting quotes for review");
+    eprintln!(
+        "[{}][ALERT] kill switch: {reason:?} — halting quotes for review",
+        ctx.cfg.symbol
+    );
     if ctx.profile_kind != ProfileKind::Halted {
         let mut profile = ladder::build_profile(&cfg.strategy.ladder);
         ladder::zero_side(&mut profile, Side::Bid);
@@ -431,7 +577,10 @@ fn halt(ctx: &mut Context, cfg: &BotConfig, reason: HaltReason) -> Result<()> {
         )?;
         ctx.profile_kind = ProfileKind::Halted;
         ctx.last_profile_at = Instant::now();
-        println!("[halt] zeroed both sides; existing levels expire on their own");
+        println!(
+            "[{}][halt] zeroed both sides; existing levels expire on their own",
+            ctx.cfg.symbol
+        );
     }
     Ok(())
 }
@@ -449,9 +598,7 @@ mod tests {
     }
 
     #[test]
-    fn a_fill_this_tick_leads_the_pre_drain_vault_read() {
-        // The vault read was taken before the drain, so a drained fill is
-        // fresher: trust the position, do not reconcile backward.
+    fn a_fill_this_cycle_leads_the_pre_drain_vault_read() {
         let (inv, pos, reconciled) = decide_position(Some((90, 210)), (100, 200), true);
         assert_eq!(inv, (90, 210));
         assert_eq!(pos, (90, 210));
@@ -459,7 +606,7 @@ mod tests {
     }
 
     #[test]
-    fn a_quiet_tick_matching_chain_keeps_the_position() {
+    fn a_quiet_cycle_matching_chain_keeps_the_position() {
         let (inv, pos, reconciled) = decide_position(Some((100, 200)), (100, 200), false);
         assert_eq!(inv, (100, 200));
         assert_eq!(pos, (100, 200));
@@ -468,11 +615,16 @@ mod tests {
 
     #[test]
     fn divergence_without_a_fill_reconciles_to_chain() {
-        // No fill drained but the chain disagrees → a missed fill or external
-        // flow; the chain wins and the position snaps to it.
         let (inv, pos, reconciled) = decide_position(Some((90, 210)), (100, 200), false);
         assert_eq!(inv, (100, 200));
         assert_eq!(pos, (100, 200));
         assert!(reconciled);
+    }
+
+    #[test]
+    fn poll_is_due_when_never_polled_or_interval_elapsed() {
+        let now = Instant::now();
+        assert!(due(None, now, Duration::from_secs(10)));
+        assert!(!due(Some(now), now, Duration::from_secs(10)));
     }
 }

@@ -2,8 +2,6 @@
 
 <!-- cspell:word keypairs -->
 
-<!-- cspell:word localnet -->
-
 <!-- cspell:word vanity -->
 
 # Localnet vanity keypairs
@@ -46,21 +44,33 @@ prefix (`GGGG`, `HHHH`, …) into this directory.
 
 ## The mock token mints
 
-The localnet market bootstrap also uses two **fixed mint keypairs**, so the
-traded pair — and therefore the market PDA, seeded on `[base, quote]` —
-lands at the same address on every run. Both are 6-decimal SPL mints whose
-mint authority is the localnet admin wallet (`BBBB.json`), created fresh
-against each new validator:
+The localnet market bootstrap also uses **fixed mint keypairs**, so each
+traded pair — and therefore its market PDA, seeded on `[base, quote]` —
+lands at the same address on every run. Every demo market is
+`<token>/USDC`, so USDC is the shared quote and each FX stablecoin gets
+its own base mint. Their mint authority is the localnet admin wallet
+(`BBBB.json`), created fresh against each new validator. The base mints'
+decimals match the real tokens so the localnet plumbing exercises the same
+per-market decimal handling the devnet/mainnet promotion will:
 
-| File        | Address | Conventional role         |
-| ----------- | ------- | ------------------------- |
-| `CADC.json` | `CADC…` | base mint (mock CAD coin) |
-| `USDC.json` | `USDC…` | quote mint (mock USDC)    |
+| File        | Address | Dec | Conventional role             |
+| ----------- | ------- | --- | ----------------------------- |
+| `USDC.json` | `USDC…` | 6   | shared quote mint (mock USDC) |
+| `EURC.json` | `EURC…` | 6   | base — mock EURC (EUR)        |
+| `VCHF.json` | `VCHF…` | 9   | base — mock VCHF (CHF)        |
+| `TGBP.json` | `TGBP…` | 9   | base — mock TGBP (GBP)        |
+| `ZARP.json` | `ZARP…` | 6   | base — mock ZARP (ZAR)        |
+| `MXNe.json` | `MXNe…` | 9   | base — mock MXNe (MXN)        |
+| `XSGD.json` | `XSGD…` | 6   | base — mock XSGD (SGD)        |
+| `idrx.json` | `idrx…` | 2   | base — mock IDRX (IDR)        |
 
-These are named in the bootstrap's pair config (`tui/src/market.rs`,
-`MOCK_CADC_USDC`); the vault leader is `EEEE.json` above. Add another pair
-by grinding two more mint prefixes and adding a `PairConfig` that names
-them.
+These are named in the bootstrap's pair roster (`tui/src/market.rs`,
+`PAIRS`) and the maker-bot's market roster (`bots/maker-bot` →
+`config::MARKETS`); the vault leader is `EEEE.json` above. IDRX grinds as
+lowercase `idrx` because the base58 alphabet has no capital `I`. These
+**mock** mints are localnet-only — devnet/mainnet use the real token
+mints. Add another pair by grinding one more base-mint prefix and adding
+it to both rosters.
 
 ## Regenerating
 
