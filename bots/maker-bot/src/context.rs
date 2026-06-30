@@ -48,6 +48,9 @@ pub enum ProfileKind {
     Unknown,
     /// The full symmetric ladder.
     Standard,
+    /// The accumulating side shrunk so the heavy side dominates (a > 30%
+    /// reshape); carries the *accumulating* side that was scaled down.
+    Reshaped(Side),
     /// One side zeroed (a freeze-side reshape).
     FrozenSide(Side),
     /// Both sides zeroed (a halt).
