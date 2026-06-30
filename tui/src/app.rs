@@ -22,12 +22,21 @@ use crate::ui;
 use crate::validator::Validator;
 use anyhow::Result;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
+        MouseButton, MouseEvent, MouseEventKind,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::{backend::CrosstermBackend, widgets::ListState, Terminal};
+use ratatui::{
+    backend::CrosstermBackend,
+    layout::{Position, Rect},
+    widgets::ListState,
+    Terminal,
+};
 use solana_client::rpc_client::RpcClient;
+use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 use std::collections::VecDeque;
 use std::fs::File;
@@ -77,7 +86,15 @@ pub struct App {
     /// The swapper / taker (`FFFF`) pubkey, resolved once at startup, so each
     /// poll can read its holdings for the accounts pane. `None` if the role
     /// key can't be loaded.
-    swapper: Option<solana_pubkey::Pubkey>,
+    swapper: Option<Pubkey>,
+    /// Known mint → ticker, resolved once at startup from the bootstrap's
+    /// fixed mint keys, so the accounts pane can name a discovered
+    /// market's coins (the chain scan only yields mint pubkeys).
+    pub(crate) mint_symbols: Vec<(Pubkey, &'static str)>,
+    /// Address click targets for the accounts pane, rebuilt by [`ui::draw`]
+    /// each frame: a left-click inside one of these rectangles opens that
+    /// account in the explorer.
+    pub(crate) click_targets: Vec<(Rect, Pubkey)>,
     tx: Sender<JobEvent>,
     rx: Receiver<JobEvent>,
     /// Append handle for the on-disk log mirror, if it opened.
@@ -102,6 +119,8 @@ impl App {
         let log_file = File::create(&log_path).ok();
         // Resolve the swapper (FFFF) once — used to read its holdings each poll.
         let swapper = market::taker(&ctx.repo_root).ok().map(|k| k.pubkey());
+        // Resolve the known mint tickers once — used to label the accounts pane.
+        let mint_symbols = market::mint_symbols(&ctx.repo_root);
         Ok(Self {
             ctx,
             validator,
@@ -113,6 +132,8 @@ impl App {
             cu: Vec::new(),
             log_path,
             swapper,
+            mint_symbols,
+            click_targets: Vec::new(),
             tx,
             rx,
             log_file,
@@ -168,10 +189,47 @@ impl App {
     }
 
     fn handle_event(&mut self, ev: Event) -> Flow {
-        let Event::Key(k) = ev else {
-            return Flow::Continue;
+        match ev {
+            Event::Key(k) => self.handle_key(k),
+            Event::Mouse(m) => {
+                self.handle_mouse(m);
+                Flow::Continue
+            }
+            _ => Flow::Continue,
+        }
+    }
+
+    /// Handle a mouse event: a left-click on an account row (a [`ui`] click
+    /// target) opens that account in the explorer; everything else is ignored.
+    fn handle_mouse(&mut self, m: MouseEvent) {
+        if !matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
+            return;
+        }
+        if let Some(addr) = self.address_at(m.column, m.row) {
+            self.open_in_explorer(addr);
+        }
+    }
+
+    /// The account address whose click-target rect contains `(col, row)`, if
+    /// any.
+    fn address_at(&self, col: u16, row: u16) -> Option<Pubkey> {
+        hit_target(&self.click_targets, col, row)
+    }
+
+    /// Open `address` in the explorer — the local container when it's ready,
+    /// else the hosted explorer as a fallback (which can't reach the localnet
+    /// in some browsers; see [`explorer`]). Best-effort: a launch failure is
+    /// logged, not fatal.
+    fn open_in_explorer(&mut self, address: Pubkey) {
+        let url = if self.ctx.explorer_state.load(Ordering::SeqCst) == explorer::state::READY {
+            explorer::account_url(&address, &self.ctx.rpc_url)
+        } else {
+            explorer::hosted_account_url(&address, &self.ctx.rpc_url)
         };
-        self.handle_key(k)
+        self.log(LogKind::Info, format!("Opening {address} in the explorer…"));
+        if let Err(e) = open::that(&url) {
+            self.log(LogKind::Err, format!("open explorer: {e:#}"));
+        }
     }
 
     fn handle_key(&mut self, k: KeyEvent) -> Flow {
@@ -316,6 +374,16 @@ impl Drop for App {
     }
 }
 
+/// The address whose click-target rectangle contains `(col, row)`, if any —
+/// the lookup behind [`App::address_at`], split out so it's testable without
+/// an `App`.
+fn hit_target(targets: &[(Rect, Pubkey)], col: u16, row: u16) -> Option<Pubkey> {
+    let pos = Position { x: col, y: row };
+    targets
+        .iter()
+        .find_map(|(rect, addr)| rect.contains(pos).then_some(*addr))
+}
+
 /// RAII guard for the alternate-screen / raw-mode terminal. Restores the
 /// terminal on drop (including during a panic unwind).
 struct TerminalGuard {
@@ -325,10 +393,12 @@ struct TerminalGuard {
 impl TerminalGuard {
     fn new(mut term: Terminal<CrosstermBackend<io::Stdout>>) -> Self {
         let _ = enable_raw_mode();
-        // No mouse capture: the panel takes no mouse input, and capturing it
-        // would steal the terminal's native text selection — so leaving it
-        // off keeps the log copy-pasteable.
-        let _ = execute!(term.backend_mut(), EnterAlternateScreen);
+        // Capture the mouse so a click on an account row can open it in the
+        // explorer. This does take over the terminal's native click-drag
+        // selection; hold Shift (most terminals) to select/copy as usual, and
+        // the full log is mirrored to the on-disk file shown in its title
+        // regardless.
+        let _ = execute!(term.backend_mut(), EnterAlternateScreen, EnableMouseCapture);
         let _ = term.hide_cursor();
         let _ = term.clear();
         Self { term }
@@ -338,7 +408,55 @@ impl TerminalGuard {
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = execute!(self.term.backend_mut(), LeaveAlternateScreen);
+        let _ = execute!(
+            self.term.backend_mut(),
+            DisableMouseCapture,
+            LeaveAlternateScreen
+        );
         let _ = self.term.show_cursor();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::hit_target;
+    use ratatui::layout::Rect;
+    use solana_pubkey::Pubkey;
+
+    #[test]
+    fn hit_target_matches_only_the_containing_row() {
+        let a = Pubkey::new_from_array([1u8; 32]);
+        let b = Pubkey::new_from_array([2u8; 32]);
+        // Two stacked single-row targets, side-inset like the accounts pane.
+        let targets = [
+            (
+                Rect {
+                    x: 2,
+                    y: 3,
+                    width: 10,
+                    height: 1,
+                },
+                a,
+            ),
+            (
+                Rect {
+                    x: 2,
+                    y: 4,
+                    width: 10,
+                    height: 1,
+                },
+                b,
+            ),
+        ];
+        // A click inside the first row hits its address; the second, the other.
+        assert_eq!(hit_target(&targets, 5, 3), Some(a));
+        assert_eq!(hit_target(&targets, 5, 4), Some(b));
+        // Right edge is exclusive (x + width), left edge inclusive.
+        assert_eq!(hit_target(&targets, 2, 3), Some(a));
+        assert_eq!(hit_target(&targets, 12, 3), None);
+        // Outside every target — the border column and an empty row.
+        assert_eq!(hit_target(&targets, 1, 3), None);
+        assert_eq!(hit_target(&targets, 5, 9), None);
+        assert_eq!(hit_target(&[], 5, 3), None);
     }
 }

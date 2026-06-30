@@ -4,7 +4,7 @@
 //! left action menu (enabled / greyed with reasons, recommended next step
 //! marked), a right account table (✓ / ✗ + lamports), and a scrolling log.
 
-use crate::accounts::{ParticipantView, Phase};
+use crate::accounts::{ChainState, ParticipantView, Phase};
 use crate::action::{self, Action};
 use crate::app::{App, LogKind};
 use crate::book;
@@ -23,6 +23,9 @@ use std::sync::atomic::Ordering;
 
 /// Render the whole dashboard.
 pub fn draw(f: &mut Frame<'_>, app: &mut App) {
+    // Rebuilt every frame from the current layout: stale rectangles from a
+    // prior size/state must not catch clicks.
+    app.click_targets.clear();
     let area = f.area();
     let [status, body, log, footer] = Layout::new(
         Direction::Vertical,
@@ -60,9 +63,11 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
 
     draw_log(f, app, log);
 
-    let help = Paragraph::new("j/k move  ·  enter / 1-9 run  ·  r refresh  ·  q quit")
-        .block(Block::default().borders(Borders::ALL))
-        .alignment(Alignment::Center);
+    let help = Paragraph::new(
+        "j/k move  ·  enter / 1-9 run  ·  click account → explorer  ·  r refresh  ·  q quit",
+    )
+    .block(Block::default().borders(Borders::ALL))
+    .alignment(Alignment::Center);
     f.render_widget(help, footer);
 }
 
@@ -167,86 +172,164 @@ fn menu_item(i: usize, action: Action, phase: Phase, next: Option<Action>) -> Li
     ListItem::new(Line::from(spans))
 }
 
-fn draw_accounts(f: &mut Frame<'_>, app: &App, area: Rect) {
-    let mut lines = vec![account_line(
-        "program",
-        app.chain.program_deployed,
-        &DROPSET_ID,
-        None,
-    )];
-
-    match &app.chain.registry {
-        Some(reg) => {
-            lines.push(account_line(
-                "registry",
-                true,
-                &reg.address,
-                Some(reg.lamports),
-            ));
-            lines.push(account_line(
-                "fee vault",
-                true,
-                &reg.fee_vault,
-                Some(reg.fee_vault_lamports),
-            ));
-            lines.push(Line::from(Span::styled(
-                format!("  markets: {}", reg.market_count),
-                Style::new().fg(Color::DarkGray),
-            )));
+fn draw_accounts(f: &mut Frame<'_>, app: &mut App, area: Rect) {
+    let rows = build_account_rows(&app.chain, &app.mint_symbols);
+    // Register each address-bearing row as a click target over its inner-row
+    // rect, so a left-click anywhere on the row opens that account in the
+    // explorer. The inner area sits one cell in from the border on every side.
+    let inner_x = area.x + 1;
+    let inner_y = area.y + 1;
+    let inner_w = area.width.saturating_sub(2);
+    let max_y = area.y + area.height.saturating_sub(1);
+    for (i, (_, addr)) in rows.iter().enumerate() {
+        let y = inner_y + i as u16;
+        if y >= max_y {
+            break; // past the bottom border — not drawn, so not clickable
         }
-        None => lines.push(account_line("registry", false, &Pubkey::default(), None)),
-    }
-
-    match &app.chain.market {
-        Some(mkt) => {
-            lines.push(account_line(
-                "market",
-                true,
-                &mkt.address,
-                Some(mkt.lamports),
+        if let Some(addr) = addr {
+            app.click_targets.push((
+                Rect {
+                    x: inner_x,
+                    y,
+                    width: inner_w,
+                    height: 1,
+                },
+                *addr,
             ));
-            lines.push(account_line(
-                "base treasury",
-                true,
-                &mkt.base_treasury,
-                Some(mkt.base_treasury_lamports),
-            ));
-            lines.push(account_line(
-                "quote treasury",
-                true,
-                &mkt.quote_treasury,
-                Some(mkt.quote_treasury_lamports),
-            ));
-            lines.push(Line::from(Span::styled(
-                format!("  active vaults: {}", mkt.active_count),
-                Style::new().fg(Color::DarkGray),
-            )));
-            // The market's participants — the MM bot (vault leader) and the
-            // swapper — with the token holdings in their own wallets.
-            if let Some(leader) = &app.chain.leader {
-                lines.push(participant_line(
-                    "leader (MM bot)",
-                    leader,
-                    mkt.base_decimals,
-                    mkt.quote_decimals,
-                ));
-            }
-            if let Some(swapper) = &app.chain.swapper {
-                lines.push(participant_line(
-                    "swapper",
-                    swapper,
-                    mkt.base_decimals,
-                    mkt.quote_decimals,
-                ));
-            }
         }
-        None => lines.push(account_line("market", false, &Pubkey::default(), None)),
     }
-
+    let lines: Vec<Line> = rows.into_iter().map(|(line, _)| line).collect();
     f.render_widget(
         Paragraph::new(lines).block(Block::default().title(" accounts ").borders(Borders::ALL)),
         area,
     );
+}
+
+/// Build the accounts-pane rows from chain state: each row is a rendered line
+/// paired with the address it points at (if any). The pairing lets the caller
+/// both draw the line and register it as a click target that opens that
+/// address in the explorer. `symbols` maps a mint to its ticker, so the
+/// participant rows name their actual coins rather than generic base/quote.
+fn build_account_rows(
+    chain: &ChainState,
+    symbols: &[(Pubkey, &'static str)],
+) -> Vec<(Line<'static>, Option<Pubkey>)> {
+    // The program id is fixed and meaningful even before deploy, so its row is
+    // always clickable; absent registry/market rows have no real address.
+    let mut rows: Vec<(Line<'static>, Option<Pubkey>)> = vec![(
+        account_line("program", chain.program_deployed, &DROPSET_ID, None),
+        Some(DROPSET_ID),
+    )];
+
+    match &chain.registry {
+        Some(reg) => {
+            rows.push((
+                account_line("registry", true, &reg.address, Some(reg.lamports)),
+                Some(reg.address),
+            ));
+            rows.push((
+                account_line(
+                    "fee vault",
+                    true,
+                    &reg.fee_vault,
+                    Some(reg.fee_vault_lamports),
+                ),
+                Some(reg.fee_vault),
+            ));
+            rows.push((count_line(format!("  markets: {}", reg.market_count)), None));
+        }
+        None => rows.push((
+            account_line("registry", false, &Pubkey::default(), None),
+            None,
+        )),
+    }
+
+    match &chain.market {
+        Some(mkt) => {
+            rows.push((
+                account_line("market", true, &mkt.address, Some(mkt.lamports)),
+                Some(mkt.address),
+            ));
+            rows.push((
+                account_line(
+                    "base treasury",
+                    true,
+                    &mkt.base_treasury,
+                    Some(mkt.base_treasury_lamports),
+                ),
+                Some(mkt.base_treasury),
+            ));
+            rows.push((
+                account_line(
+                    "quote treasury",
+                    true,
+                    &mkt.quote_treasury,
+                    Some(mkt.quote_treasury_lamports),
+                ),
+                Some(mkt.quote_treasury),
+            ));
+            rows.push((
+                count_line(format!("  active vaults: {}", mkt.active_count)),
+                None,
+            ));
+            // The market's participants — the MM bot (vault leader) and the
+            // swapper — with the token holdings in their own wallets, labelled
+            // with the market's actual coin tickers.
+            let base_symbol = symbol_for(symbols, &mkt.base_mint, "base");
+            let quote_symbol = symbol_for(symbols, &mkt.quote_mint, "quote");
+            if let Some(leader) = &chain.leader {
+                rows.push((
+                    participant_line(
+                        "leader",
+                        leader,
+                        mkt.base_decimals,
+                        mkt.quote_decimals,
+                        base_symbol,
+                        quote_symbol,
+                    ),
+                    Some(leader.address),
+                ));
+            }
+            if let Some(swapper) = &chain.swapper {
+                rows.push((
+                    participant_line(
+                        "swapper",
+                        swapper,
+                        mkt.base_decimals,
+                        mkt.quote_decimals,
+                        base_symbol,
+                        quote_symbol,
+                    ),
+                    Some(swapper.address),
+                ));
+            }
+        }
+        None => rows.push((
+            account_line("market", false, &Pubkey::default(), None),
+            None,
+        )),
+    }
+
+    rows
+}
+
+/// A dimmed, non-address summary row (e.g. `markets: 1`).
+fn count_line(text: String) -> Line<'static> {
+    Line::from(Span::styled(text, Style::new().fg(Color::DarkGray)))
+}
+
+/// The ticker for `mint` from the known-mint map, or `fallback` if the mint
+/// isn't one the bootstrap knows about (e.g. a market minted outside it).
+fn symbol_for<'a>(
+    symbols: &'a [(Pubkey, &'static str)],
+    mint: &Pubkey,
+    fallback: &'a str,
+) -> &'a str {
+    symbols
+        .iter()
+        .find(|(m, _)| m == mint)
+        .map(|(_, s)| *s)
+        .unwrap_or(fallback)
 }
 
 /// One account row: ✓/✗ · label · short address · lamports (SOL).
@@ -282,15 +365,18 @@ fn account_line(
     Line::from(spans)
 }
 
-/// One participant row: a bullet · label · short address · base/quote wallet
-/// holdings scaled to whole units. Uses a bullet rather than the ✓/✗ of an
-/// account row — a participant is an identity that always "is", not an
-/// account whose existence is the thing being tracked.
+/// One participant row: a bullet · label · short address · the holdings in its
+/// own wallet, each leg named with its coin ticker and right-aligned in a
+/// fixed-width column so the two participant rows line up. Uses a bullet rather
+/// than the ✓/✗ of an account row — a participant is an identity that always
+/// "is", not an account whose existence is the thing being tracked.
 fn participant_line(
     label: &str,
     p: &ParticipantView,
     base_decimals: u8,
     quote_decimals: u8,
+    base_symbol: &str,
+    quote_symbol: &str,
 ) -> Line<'static> {
     let base = p.base_tokens as f64 / 10f64.powi(base_decimals as i32);
     let quote = p.quote_tokens as f64 / 10f64.powi(quote_decimals as i32);
@@ -299,7 +385,7 @@ fn participant_line(
         Span::raw(format!("{label:<14} ")),
         Span::styled(short_pubkey(&p.address), Style::new().fg(Color::Gray)),
         Span::styled(
-            format!("  base {base:.2} · quote {quote:.2}"),
+            format!("  {base_symbol} {base:>12.2} · {quote_symbol} {quote:>12.2}"),
             Style::new().fg(Color::DarkGray),
         ),
     ])
@@ -416,7 +502,21 @@ fn phase_style(phase: Phase) -> (Color, Modifier) {
 
 #[cfg(test)]
 mod tests {
-    use super::fmt_units;
+    use super::{fmt_units, symbol_for};
+    use solana_pubkey::Pubkey;
+
+    #[test]
+    fn symbol_for_resolves_known_mints_and_falls_back() {
+        let base = Pubkey::new_from_array([1u8; 32]);
+        let quote = Pubkey::new_from_array([2u8; 32]);
+        let other = Pubkey::new_from_array([3u8; 32]);
+        let symbols = [(base, "CADC"), (quote, "USDC")];
+        assert_eq!(symbol_for(&symbols, &base, "base"), "CADC");
+        assert_eq!(symbol_for(&symbols, &quote, "quote"), "USDC");
+        // An unknown mint (a market minted outside the bootstrap) falls back.
+        assert_eq!(symbol_for(&symbols, &other, "base"), "base");
+        assert_eq!(symbol_for(&[], &base, "quote"), "quote");
+    }
 
     #[test]
     fn fmt_units_groups_thousands() {

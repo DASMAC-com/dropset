@@ -6,7 +6,8 @@
 //! with a one-line reason. Bootstrapping is a sequence of discrete gated
 //! steps (deploy → init → create-market → create-vault) so each account and
 //! its rent can be watched appearing one at a time; "Bootstrap all" chains
-//! the on-chain steps for convenience.
+//! the whole sequence — deploying the program first when it isn't yet
+//! on-chain — for convenience.
 
 use crate::accounts::{self, ChainState, Phase};
 use crate::chain;
@@ -86,9 +87,14 @@ impl Action {
             Action::CreateMarket => phase == Phase::MarketAbsent,
             Action::CreateVault => phase == Phase::VaultAbsent,
             Action::OpenExplorer => phase != Phase::NoValidator,
+            // Self-deploys when the program is absent, so it's available the
+            // moment a validator is up and runs until everything exists.
             Action::BootstrapAll => matches!(
                 phase,
-                Phase::RegistryAbsent | Phase::MarketAbsent | Phase::VaultAbsent
+                Phase::ProgramAbsent
+                    | Phase::RegistryAbsent
+                    | Phase::MarketAbsent
+                    | Phase::VaultAbsent
             ),
             // A take needs a live, seeded vault to match against.
             Action::ProbeSwap => phase == Phase::Ready,
@@ -118,7 +124,6 @@ impl Action {
             Action::CreateMarket => "market already exists",
             Action::CreateVault if below(phase, Phase::VaultAbsent) => "create the market first",
             Action::CreateVault => "vault already exists",
-            Action::BootstrapAll if phase == Phase::ProgramAbsent => "deploy the program first",
             Action::BootstrapAll => "already bootstrapped",
             Action::ProbeSwap => "needs a live, seeded vault",
             Action::Teardown => "deploy the program first",
@@ -207,9 +212,16 @@ pub fn dispatch(action: Action, ctx: &JobContext, state: &ChainState, tx: Sender
             });
         }
         Action::BootstrapAll => {
+            let pubkey = wallet.pubkey();
+            let program_deployed = state.program_deployed;
             job::spawn(tx, "Bootstrap all", move |log| {
-                let client = chain::rpc(&rpc_url);
                 let config = &market::MOCK_CADC_USDC;
+                // Deploy first if the program isn't on-chain yet, so a fresh
+                // localnet bootstraps end-to-end from one action.
+                if !program_deployed {
+                    deploy::deploy_program(log, &repo_root, &rpc_url, &wallet_path, &pubkey)?;
+                }
+                let client = chain::rpc(&rpc_url);
                 do_init(&client, &wallet, log)?;
                 do_create_market(&client, &wallet, &repo_root, config, log)?;
                 do_create_vault(&client, &wallet, &repo_root, config, log)?;
@@ -550,17 +562,30 @@ mod tests {
     }
 
     #[test]
-    fn bootstrap_all_reason_distinguishes_pre_deploy_from_done() {
-        // Before the program is deployed, "Bootstrap all" is blocked because
-        // there's nothing to bootstrap against yet — not because it's done.
-        assert_eq!(
-            Action::BootstrapAll.disabled_reason(Phase::ProgramAbsent),
-            "deploy the program first"
-        );
+    fn bootstrap_all_spans_deploy_through_vault() {
+        // "Bootstrap all" self-deploys, so it's enabled from the moment a
+        // validator is up (program still absent) until everything exists.
+        for p in [
+            Phase::ProgramAbsent,
+            Phase::RegistryAbsent,
+            Phase::MarketAbsent,
+            Phase::VaultAbsent,
+        ] {
+            assert!(
+                Action::BootstrapAll.enabled(p),
+                "bootstrap all should run in {p:?}"
+            );
+        }
+        assert!(!Action::BootstrapAll.enabled(Phase::NoValidator));
+        assert!(!Action::BootstrapAll.enabled(Phase::Ready));
         // Once everything exists, it really is already bootstrapped.
         assert_eq!(
             Action::BootstrapAll.disabled_reason(Phase::Ready),
             "already bootstrapped"
+        );
+        assert_eq!(
+            Action::BootstrapAll.disabled_reason(Phase::NoValidator),
+            "waiting for validator"
         );
     }
 
