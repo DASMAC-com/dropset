@@ -159,8 +159,8 @@ session-metrics:
 # because `tools/stage-backlog` is a hyphenated, non-package directory that a
 # single top-level `discover -s tools` can't import. Run in CI's lint job.
 tools-tests:
-	python3 -m unittest discover -s tools/stage-backlog -t tools/stage-backlog -p 'test_*.py'
-	python3 -m unittest discover -s .claude/tools -t .claude/tools -p 'test_*.py'
+	python3 -m unittest discover -s tools/stage-backlog -p 'test_*.py'
+	python3 -m unittest discover -s .claude/tools -p 'test_*.py'
 
 # Materialize the program keypair into the (git-ignored) build dir from
 # its canonical home, keys/AAAA.json, so anchor's build-time program-ID
