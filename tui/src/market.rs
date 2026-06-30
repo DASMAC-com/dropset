@@ -86,6 +86,27 @@ pub const MOCK_CADC_USDC: PairConfig = PairConfig {
     leader_deposit: (1_000_000_000_000, 730_000_000_000),
 };
 
+/// Every localnet pair the bootstrap can bring up. Listing a `PairConfig`
+/// here also teaches the accounts pane its mint tickers (see [`mint_symbols`]).
+pub const PAIRS: [&PairConfig; 1] = [&MOCK_CADC_USDC];
+
+/// Resolve each known pair's mint address → human ticker, loading the
+/// checked-in mint keypairs once. The chain scan that discovers a market only
+/// yields mint pubkeys, so the accounts pane needs this to label a market with
+/// its coins. A pair whose keypair files don't load is skipped — its mints
+/// fall back to the generic base/quote labels.
+pub fn mint_symbols(repo_root: &Path) -> Vec<(Pubkey, &'static str)> {
+    let mut out = Vec::new();
+    for pair in PAIRS {
+        for spec in [&pair.base, &pair.quote] {
+            if let Ok(kp) = load_key(repo_root, spec.keypair_file) {
+                out.push((kp.pubkey(), spec.symbol));
+            }
+        }
+    }
+    out
+}
+
 /// The bootstrap always opens the market's first vault, so its sector index
 /// is 0. The seed instructions address the vault by this index.
 const VAULT_IDX: u32 = 0;
