@@ -112,7 +112,8 @@ tui:
 # confirmation — add --yes to skip that prompt in automation):
 # `make teardown WALLET=~/admin.json ARGS="--rpc-url <url> --yes"`.
 teardown:
-	cargo run -p dropset-tui --bin dropset-teardown -- $(if $(WALLET),--wallet $(WALLET)) $(ARGS)
+	cargo run -p dropset-tui --bin dropset-teardown -- \
+		$(if $(WALLET),--wallet $(WALLET)) $(ARGS)
 
 # Localnet Docker stack: the local Solana Explorer (infra/localnet). The
 # dropset-tui control plane manages this automatically; these targets drive
@@ -145,9 +146,9 @@ lint:
 # Account for where a session's tokens went (the deterministic core of the
 # session-metrics skill). A stdlib-only Python skill-tool under .claude/tools/
 # (not a Cargo workspace member — see CLAUDE.md "Skill tooling"). Resolves the
-# transcript itself from the Claude home (CLAUDE_CONFIG_DIR or ~/.claude) and the
-# working-directory project slug, reads it in its own process, and prints a
-# compact ranked-sink summary. Pass the session id:
+# transcript itself from the Claude home (CLAUDE_CONFIG_DIR or ~/.claude) and
+# the working-directory project slug, reads it in its own process, and prints
+# a compact ranked-sink summary. Pass the session id:
 # `make session-metrics SESSION=<uuid>` (add ARGS=--json for JSON).
 session-metrics:
 	python3 .claude/tools/session_metrics.py --session-id $(SESSION) $(ARGS)

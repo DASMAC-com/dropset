@@ -1,6 +1,7 @@
 # cspell:word checkmake
 # cspell:word hadolint
 # cspell:word mdformat
+# cspell:word pygrep
 ---
 repos:
 - hooks:
@@ -70,6 +71,17 @@ repos:
   - id: 'checkmake'
   repo: 'https://github.com/checkmake/checkmake.git'
   rev: 'v0.3.2'
+# checkmake lints Makefile structure, not line width. This local pygrep hook
+# enforces the same 80-column limit the docs follow (MD013), failing on any
+# line over 80 chars (the leading recipe tab counts as one column). Wrap with
+# `\` continuations, as the existing multi-line recipes do.
+- hooks:
+  - entry: '^.{81,}$'
+    files: '(^|/)(Makefile|.*\.mk)$'
+    id: 'makefile-line-length'
+    language: 'pygrep'
+    name: 'Makefile lines over 80 columns'
+  repo: 'local'
 # hadolint-py wraps the hadolint binary so the hook needs neither Docker nor
 # a manual install. `files` matches `Dockerfile` and `*.Dockerfile` (identify
 # doesn't tag the latter as the `dockerfile` type), so `types: file`.
