@@ -83,12 +83,12 @@ pub struct App {
     /// key can't be loaded.
     swapper: Option<Pubkey>,
     /// Known mint → ticker, resolved once at startup from the bootstrap's
-    /// fixed mint keypairs, so the accounts pane can name a discovered
+    /// fixed mint keys, so the accounts pane can name a discovered
     /// market's coins (the chain scan only yields mint pubkeys).
     pub(crate) mint_symbols: Vec<(Pubkey, &'static str)>,
     /// Address click targets for the accounts pane, rebuilt by [`ui::draw`]
-    /// each frame: a left-click inside one of these rects opens that account
-    /// in the explorer.
+    /// each frame: a left-click inside one of these rectangles opens that
+    /// account in the explorer.
     pub(crate) click_targets: Vec<(Rect, Pubkey)>,
     tx: Sender<JobEvent>,
     rx: Receiver<JobEvent>,

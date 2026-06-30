@@ -23,8 +23,8 @@ use std::sync::atomic::Ordering;
 
 /// Render the whole dashboard.
 pub fn draw(f: &mut Frame<'_>, app: &mut App) {
-    // Rebuilt every frame from the current layout: stale rects from a prior
-    // size/state must not catch clicks.
+    // Rebuilt every frame from the current layout: stale rectangles from a
+    // prior size/state must not catch clicks.
     app.click_targets.clear();
     let area = f.area();
     let [status, body, log, footer] = Layout::new(
