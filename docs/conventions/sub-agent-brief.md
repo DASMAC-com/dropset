@@ -36,6 +36,11 @@ copy, so the wording stays in one place.
 >   SKILL.md into context to use a fraction of it; a whole-file Read of
 >   a large file is a top token sink (see
 >   [context economy](context-economy.md)).
+> - **Read each file you need once, then reason from it.** Open the
+>   handful of files your task touches a single time up front (slicing
+>   the large ones as above) and work from what you've read — don't
+>   re-`Read` or re-grep the same file on later turns. Every re-read is
+>   paid again in your own context.
 > - **Exploring another repo or path is fine** — reach outside this
 >   worktree when the task needs it; approving a one-off read of a
 >   different repo is expected, not something to avoid. Just keep each

@@ -67,7 +67,7 @@ order:
 - **The `audit` flag** — when the invocation includes
   `audit` (e.g. `housekeeping audit`), the pass runs one
   finite `/audit` rotation inline after the upkeep
-  (step 8); without it the audit is **skipped** entirely
+  (step 10); without it the audit is **skipped** entirely
   and the pass exits after the upkeep. So
   `/housekeeping audit` does upkeep then one audit
   rotation, while a bare `/housekeeping` does upkeep only.
@@ -99,7 +99,7 @@ annotating the Linear Permissions and Session Metrics
 docs with recommended dispositions (it never writes
 `settings.local.json` and never edits a skill
 unattended). When given the `audit` flag, its last step
-runs one `/audit` rotation (step 8), but housekeeping
+runs one `/audit` rotation (step 10), but housekeeping
 itself makes no source edit — the rotation only files
 Linear issues.
 
@@ -338,8 +338,12 @@ against the open Backlog), and writes each consumed
 entry's disposition back into the doc. `trim-context` has
 **no** attended / propose-only split — filing a task *is*
 the proposal, so it never edits a skill or convention
-doc. If `LINEAR_SESSION_METRICS_DOC_ID` is unset,
-`trim-context` says so and this step is a no-op.
+doc. At the end of its run `trim-context` also offers (via
+`AskUserQuestion`) to clear the now-processed inbox
+entries; that prompt lives in `trim-context` itself, so
+this step **inherits** it through the delegation — don't
+re-implement it here. If `LINEAR_SESSION_METRICS_DOC_ID`
+is unset, `trim-context` says so and this step is a no-op.
 
 **6. Check the convention ↔ skill reference sync.**
 `CLAUDE.md` is the **index**; the full operating
@@ -381,7 +385,38 @@ fresh from the live Backlog each morning — it subsumes
 the re-stage a previous `/audit` rotation already ran at
 its end.
 
-**8. Run one audit rotation (only when the `audit` flag was
+**8. Flag `Claude:` meta-work batching drift.** The
+`Claude:` title prefix (see `CLAUDE.md` → "Claude:
+meta-work prefix") is the deterministic batch signal that
+groups agent-infra work apart from product code; the
+re-stage in step 7 runs the deterministic
+**prefix↔touched-paths consistency check** and prints a
+warning for each mismatch it finds — a `Claude:`-prefixed
+issue whose `**Touches**:` reach **outside** the meta
+surface (`.claude/**`, `CLAUDE.md`, `docs/conventions/**`,
+`tools/**`), or a meta-only `**Touches**:` set on an issue
+with **no** `Claude:` prefix. For each flagged issue, ask
+via **`AskUserQuestion`** how to resolve it — add or drop
+the prefix, or fix the `**Touches**:` line — and apply
+only the human's choice with a `save_issue`; **never**
+auto-retitle or auto-merge. If step 7 flagged nothing, this
+is a no-op. (In an unattended pass with no one to answer,
+skip the prompt and leave the warnings for the next
+attended pass.)
+
+**9. Offer a session-metrics run.** The morning pass both
+*mines* the Session Metrics inbox (step 5) and can
+*contribute* to it: offer, via **`AskUserQuestion`** with
+the recommended default **first**, to run `/session-metrics`
+for the **current** session so this pass also appends a
+fresh measured entry (the producer side of the loop).
+Run it only on an explicit yes. Because a `session-metrics`
+run **appends** a new unprocessed entry, this offer comes
+*after* step 5's mine-and-clear, so the clear in step 5 is
+evaluated against the inbox state before this append. (In
+an unattended pass with no one to answer, skip the offer.)
+
+**10. Run one audit rotation (only when the `audit` flag was
 passed).** The morning's last act: with upkeep done, the
 **`audit` flag decides whether to run a rotation** —
 passing it *is* the go-ahead, so there is no separate
@@ -410,7 +445,7 @@ again, run `housekeeping audit` (or `/audit`) again. The
 rotation re-stages the Task Staging document once at its
 end; the next pass's step 7 is the full reconcile.
 
-**9. Report.** Print a short summary:
+**11. Report.** Print a short summary:
 
 - `main`: fast-forwarded to the latest, or left at its
   current commit (with the reason) if the pull couldn't
@@ -441,6 +476,12 @@ end; the next pass's step 7 is the full reconcile.
   (with the ENG-### of the aggregated task).
 - Backlog staging: that `stage-backlog` ran, or why
   it was skipped (e.g. a missing env var).
+- Meta-work batching: any `Claude:` prefix↔`**Touches**:`
+  mismatches step 7 flagged and how each was resolved (or
+  that none were flagged, or the prompt was skipped in an
+  unattended pass).
+- Session metrics run: whether a `/session-metrics` run
+  was offered and accepted for this session, or skipped.
 - Audit: one `/audit` rotation ran inline (with its
   `DONE` tally), or was skipped because the `audit` flag
   wasn't passed.

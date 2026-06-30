@@ -315,6 +315,42 @@ PR-authoring **writes** (`create_pull_request`,
    context) instead of N copies inlined across the prompts;
    no agent re-fetches the diff by shelling out.
 
+   **Tell each reviewer to read every file it needs once,
+   up front, and reason from that copy.** A lens that
+   re-`Read`s or re-greps the same file on each turn pays
+   for it every turn (review lenses have run 197k–469k input
+   each doing this). Brief each agent to open the handful of
+   files its lens touches a single time at the start —
+   slice-reading the large ones (Grep to the section, then
+   `Read` with `offset`/`limit`) — and then work from what
+   it has read, not re-fetch. Combined with the diff-by-path
+   handoff above, an agent should rarely need to shell out
+   again.
+
+   **Scale the fan-out to the diff.** The full lens set
+   below plus the step-6 cross-check is the right spend for
+   a substantial diff with real new logic (a new
+   instruction, a non-trivial refactor, new on-chain or SDK
+   surface — e.g. PRs #178, #184). It is near-pure fixed
+   cost on a **trivial** diff, where each lens and the
+   cross-check re-read the same few lines for nothing
+   (a 4-line reword spawned a 70.4k-input agent; a 3-file
+   doc-only diff a 375.4k one; a 24-line infra diff four
+   agents including a 277.8k cross-check for a single nit).
+   So first size the diff from the commit log and the line
+   count (`git diff --stat main..HEAD`), and **short-circuit
+   when it is trivial** — small and confined to one of:
+   comment / doc / Markdown-only, a config or workflow
+   tweak, a rename, or a handful of lines with no new
+   control flow. For a trivial diff, spawn **one** scoped
+   reviewer (correctness + anything the diff's own nature
+   calls for, e.g. the freshness lenses for a `CLAUDE.md` /
+   skill edit) and **skip the step-6 cross-check** — note
+   in the summary that the fan-out was scaled down. Reserve
+   the full multi-lens fan-out below for a diff that earns
+   it. When in doubt, fan out — the short-circuit is for the
+   clearly-trivial, not the merely-small-but-subtle.
+
    Spawn parallel sub-agents via the `Agent` tool
    (single message, multiple calls) to review the
    diff — each with the brief above prepended. At
@@ -381,7 +417,8 @@ PR-authoring **writes** (`create_pull_request`,
    **warning** / **nit**), and a one-line
    rationale.
 
-1. **Adversarial cross-check.** Spawn a fresh
+1. **Adversarial cross-check.** (Skipped for a trivial
+   diff that took the scaled-down path above.) Spawn a fresh
    sub-agent that receives the collected findings
    and the diff (prepend the same `CLAUDE.md`
    sub-agent brief to its prompt too, and hand it the
@@ -393,6 +430,18 @@ PR-authoring **writes** (`create_pull_request`,
      Flag false positives.
    - Identify issues the first pass missed.
    - Push back on rationale that doesn't hold up.
+
+   **Challenge from what it was given, not by re-deriving
+   the codebase.** The cross-check's inputs are the
+   collected findings and the diff at `/tmp/review-diff.txt`
+   — tell it to reason from those plus a single up-front read
+   of any file a finding cites, and to shell out again only
+   to settle a **genuine** dispute it can't resolve from
+   them. A cross-check that re-reads and re-greps the whole
+   diff's files from scratch has cost 676.7k input
+   re-deriving facts the primary lenses already passed it;
+   the findings + diff are enough to adjudicate almost
+   every call.
 
    If the cross-check produces material
    disagreements, iterate: re-spawn the relevant
@@ -431,12 +480,20 @@ PR-authoring **writes** (`create_pull_request`,
    here and commit any diff; otherwise the ready PR fails
    CI on a stale artifact. Regenerate **in dependency
    order** — the SDK is generated from the IDL, which is
-   built from the program:
+   built from the program. Each of these targets emits a
+   full `Compiling …` cascade that is pure noise once it
+   succeeds, so run them **through the quiet runner**
+   (`python3 .claude/tools/run_quiet.py -- <make …>`, per
+   `CLAUDE.md` → "Context economy") — it captures the build
+   log to a temp file and prints only a one-line summary on
+   success, or the failing tail + log path on failure (which
+   you then `Read` by slice). Only the `git diff` result,
+   not the build cascade, needs to reach context:
 
    - **IDL** (needs the Solana/Anchor toolchain):
 
      ```sh
-     make idl
+     python3 .claude/tools/run_quiet.py -- make idl
      ```
 
      ```sh
@@ -459,7 +516,7 @@ PR-authoring **writes** (`create_pull_request`,
      toolchain needed, so always runnable):
 
      ```sh
-     make sdk
+     python3 .claude/tools/run_quiet.py -- make sdk
      ```
 
      ```sh
@@ -480,7 +537,7 @@ PR-authoring **writes** (`create_pull_request`,
      toolchain needed):
 
      ```sh
-     make check-conformance-vectors
+     python3 .claude/tools/run_quiet.py -- make check-conformance-vectors
      ```
 
      That target regenerates the price/quoting vectors,
@@ -531,11 +588,16 @@ PR-authoring **writes** (`create_pull_request`,
    workflow runs `make test` and
    `make test-no-teardown`; run both locally so the
    green checks GitHub needs for auto-merge are
-   already verified here:
+   already verified here. Both emit a long `Compiling …`
+   cascade ahead of the test result, so run them **through
+   the quiet runner** (per `CLAUDE.md` → "Context economy")
+   — it routes the build/test log to a temp file and
+   surfaces only the one-line pass summary, or the failing
+   tail + log path you then `Read` by slice:
 
    ```sh
-   make test
-   make test-no-teardown
+   python3 .claude/tools/run_quiet.py -- make test
+   python3 .claude/tools/run_quiet.py -- make test-no-teardown
    ```
 
    - Both depend on the Solana/Anchor toolchain via

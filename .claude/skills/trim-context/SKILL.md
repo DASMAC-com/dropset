@@ -1,6 +1,6 @@
 ---
 name: trim-context
-description: Mine the Linear "Session Metrics" inbox into propose-only skill-improvement Backlog tasks — the consumer half of the `session-metrics` producer. Reads the inbox document live, synthesizes the trim levers that recur across sessions (a verbose build log, a whole-file Read where a slice would do, a repeated full-PR read, an inlined-diff fan-out), files one propose-only task per distinct lever with a `**Touches**:` + `**Fingerprint**:` line, dedups against the open Backlog, and writes each consumed entry's disposition back into the doc. Never edits a skill or convention doc — filing a task is the proposal. Runs standalone or as `housekeeping`'s Session Metrics step.
+description: Mine the Linear "Session Metrics" inbox into propose-only skill-improvement Backlog tasks — the consumer half of the `session-metrics` producer. Reads the inbox document live, synthesizes the trim levers that recur across sessions (a verbose build log, a whole-file Read where a slice would do, a repeated full-PR read, an inlined-diff fan-out), files one propose-only task per distinct lever with a `**Touches**:` + `**Fingerprint**:` line, dedups against the open Backlog, writes each consumed entry's disposition back into the doc, and offers (via AskUserQuestion) to clear the processed entries so the inbox doesn't grow unbounded. Never edits a skill or convention doc — filing a task is the proposal. Runs standalone or as `housekeeping`'s Session Metrics step.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -105,10 +105,30 @@ new body from the body you just fetched in step 1, changing only those
 lines; if the doc `updatedAt` is newer than your fetch (a concurrent
 edit), re-fetch and rebuild rather than clobbering it.
 
-**5. Report** in one line: the skill-improvement tasks filed (with
+**5. Offer to clear the processed entries** so the inbox doesn't grow
+unbounded. After the dispositions are written, ask via
+**`AskUserQuestion`** whether to clear the now-**checked** (`- [x]`,
+processed) entries, with the recommended default **first**: "yes, clear
+the processed entries (Recommended)" and "no, leave them". Clear **only
+on an explicit yes** — on "no" (or if nothing is checked) leave the doc
+as written and move on. This step applies whether the skill runs
+standalone or under `housekeeping` (which inherits it through the
+delegation rather than re-implementing it). To clear: rebuild the body
+from the **live** doc (re-fetch first, as in step 4) and drop only the
+lines of entries that are checked **and** carry a disposition note,
+collapsing to the empty-inbox template when none remain. Diff against
+the live body, not your step-1 snapshot, so an unprocessed entry the
+user (or a concurrent `session-metrics` run) added mid-pass is never
+dropped. Write it back with `save_document`. When this runs right before
+a `session-metrics` producer step (e.g. under `housekeeping`), evaluate
+the clear against the inbox state **before** that step appends a fresh
+entry.
+
+**6. Report** in one line: the skill-improvement tasks filed (with
 their ENG-###) for the recurring trim levers, how many session entries
-were consumed, and any skipped as already-handled — or that the skill
-no-op'd because the inbox id was unset.
+were consumed, any skipped as already-handled, whether the processed
+entries were cleared — or that the skill no-op'd because the inbox id
+was unset.
 
 ## Notes
 
