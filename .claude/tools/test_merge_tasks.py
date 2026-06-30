@@ -121,9 +121,9 @@ class AssembleTests(unittest.TestCase):
         # exactly one consolidated Touches line, at the end
         self.assertEqual(out["description"].count("**Touches**:"), 1)
         self.assertTrue(
-            out["description"].rstrip().endswith(
-                "**Touches**: .claude/skills/audit/**, tools/stage-backlog/**"
-            )
+            out["description"]
+            .rstrip()
+            .endswith("**Touches**: .claude/skills/audit/**, tools/stage-backlog/**")
         )
 
     def test_all_meta_applies_claude_prefix(self):

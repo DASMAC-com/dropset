@@ -227,7 +227,9 @@ def prefix_touches_drift(issues: list[Issue]) -> list[tuple[str, str]]:
     for i in issues:
         prefixed = i.has_claude_prefix()
         if prefixed and i.touches and not i.is_meta_only():
-            out.append((i.id, "Claude: prefix but touches reach outside the meta surface"))
+            out.append(
+                (i.id, "Claude: prefix but touches reach outside the meta surface")
+            )
         elif i.is_meta_only() and not prefixed:
             out.append((i.id, "meta-only touches but no Claude: prefix"))
     return out

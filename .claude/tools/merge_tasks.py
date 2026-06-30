@@ -167,7 +167,9 @@ def assemble(data: dict) -> dict:
             meta_count += 1
         elif globs:
             non_meta_count += 1
-        heading = f"# Part {n} — {strip_claude_prefix(other.get('title') or other['id'])}"
+        heading = (
+            f"# Part {n} — {strip_claude_prefix(other.get('title') or other['id'])}"
+        )
         sections.append(f"---\n\n{heading}\n\n{body.rstrip()}")
 
     description = "\n\n".join(sections)
