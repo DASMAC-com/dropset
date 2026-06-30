@@ -292,6 +292,19 @@ PR-authoring **writes** (`create_pull_request`,
    agent looks* on top of the brief — it does not relax
    the shell rules.
 
+   **State the negative scope explicitly.** Give every lens
+   prompt (and the step-6 cross-check) a one-line bound so
+   an on-topic agent can't wander into a settings /
+   permissions / git audit: **"review the code diff only;
+   do not audit permissions, settings, or git history."**
+   Review lenses have drifted into a `firm-perms`-style
+   permission-allowlist audit or run the full test suite
+   instead of reviewing the diff, forcing an expensive
+   redo; the negative-scope line is what kept the redo on
+   task. The only exception is the two **freshness** lenses
+   below, which are *meant* to read named convention files —
+   give them their positive scope (the named files) instead.
+
    The two **freshness** lenses below are the deliberate
    exception: they *do* read a handful of named
    in-workspace files (`CLAUDE.md`, the skill files under

@@ -72,6 +72,15 @@ looks*; the shell rules stay exactly as written. An audit agent, by
 contrast, is *meant* to range over the whole codebase, so it gets the
 brief without any narrowing.
 
+**State the negative scope, not just the positive one.** An agent
+told only what to review will still wander off-lens — a code reviewer
+drifts into a settings / permissions audit, a style pass runs the
+whole test suite. So when a skill narrows the subject, give the agent
+an explicit *negative* bound alongside the positive one — e.g.
+"review the code diff only; do not audit permissions, settings, or git
+history." One line naming what's **out** of scope is what keeps an
+on-topic agent from straying into an expensive tangent.
+
 A sub-agent approval that still re-prompts despite this brief means
 the brief **leaked** — the agent emitted shell the brief forbids.
 That's a prompt to tighten, not a rule to allow-list; `firm-perms`
