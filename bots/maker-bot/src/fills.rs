@@ -183,8 +183,8 @@ fn subscribe_and_forward(
 /// account-key list can't be resolved (the transaction won't decode, or a
 /// loaded lookup-table address won't parse), no fill is attributed for the
 /// transaction and the per-tick vault reconcile in `tasks.rs` is the fallback
-/// — a partial static-keys-only check would instead misresolve indices into
-/// lookup-table slots and wrongly drop legitimate fills.
+/// — a partial static-keys-only check would instead resolve indices into the
+/// wrong lookup-table slots and wrongly drop legitimate fills.
 fn decode_fills(
     rpc: &RpcClient,
     signature: &Signature,
@@ -216,9 +216,10 @@ fn decode_fills(
         eprintln!("[fills] {signature}: undecodable transaction; using inventory-diff fallback");
         return Ok(Vec::new());
     };
-    let Some(account_keys) =
-        full_account_keys(decoded.message.static_account_keys(), &meta.loaded_addresses)
-    else {
+    let Some(account_keys) = full_account_keys(
+        decoded.message.static_account_keys(),
+        &meta.loaded_addresses,
+    ) else {
         eprintln!(
             "[fills] {signature}: unresolvable loaded addresses; using inventory-diff fallback"
         );
@@ -389,10 +390,10 @@ mod tests {
         }
     }
 
-    /// An unparseable loaded address means the full list can't be trusted, so
-    /// the caller drops to the inventory-diff fallback rather than misresolve.
+    /// A loaded address that won't parse means the full list can't be trusted,
+    /// so the caller drops to the inventory-diff fallback rather than guess.
     #[test]
-    fn unparseable_loaded_address_resolves_to_none() {
+    fn malformed_loaded_address_resolves_to_none() {
         let loaded = OptionSerializer::Some(UiLoadedAddresses {
             writable: vec!["not-a-pubkey".to_string()],
             readonly: vec![],
