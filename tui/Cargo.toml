@@ -53,6 +53,9 @@ path = "src/lib.rs"
 [package]
 description = "Localnet control-plane TUI for the Dropset eCLOB program."
 name = "dropset-tui"
+# Two binaries live here (dropset-tui, dropset-teardown), so a bare
+# `cargo run -p dropset-tui` (what `make tui` runs) is ambiguous without this.
+default-run = "dropset-tui"
 publish = false
 edition.workspace = true
 license.workspace = true
