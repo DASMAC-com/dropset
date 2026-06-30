@@ -13,7 +13,13 @@
 //! EVENT_IX_TAG_LE (8)  ++  DISCRIMINATOR (8)  ++  body
 //! ```
 //!
-//! where the body is the borsh wire form. `FillEvent` is `#[event(bytemuck)]`
+//! where the body is the borsh wire form. Since that tag and the name-based
+//! discriminator are both public, any program could emit a `FillEvent`-shaped
+//! inner instruction, so the decoder first resolves each inner instruction's
+//! `program_id_index` against the transaction's full account-key list and
+//! requires it to be the dropset program before trusting the bytes.
+//!
+//! `FillEvent` is `#[event(bytemuck)]`
 //! on-chain — a fixed `repr(C)` struct with explicit padding fields chosen so
 //! it has no implicit padding, which makes its raw bytes byte-identical to the
 //! borsh serialization of the SDK's generated [`FillEvent`] (`Price` is a
@@ -42,7 +48,7 @@ use solana_commitment_config::CommitmentConfig;
 use solana_pubkey::Pubkey;
 use solana_signature::Signature;
 use solana_transaction_status_client_types::{
-    option_serializer::OptionSerializer, UiInstruction, UiTransactionEncoding,
+    option_serializer::OptionSerializer, UiInstruction, UiLoadedAddresses, UiTransactionEncoding,
 };
 use std::str::FromStr;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -167,14 +173,18 @@ fn subscribe_and_forward(
 }
 
 /// Fetch the transaction and decode every `FillEvent` inner instruction that
-/// hit our vault, attributing by `quote_authority`.
+/// our program emitted against our vault, attributing by `quote_authority`.
 ///
-/// Attribution does not yet verify the *emitting program* of each event inner
-/// instruction (its `program_id_index`), so a third party could in principle
-/// craft a `FillEvent`-shaped inner instruction from another program carrying
-/// our `quote_authority`. The per-tick vault reconcile in `tasks.rs` bounds
-/// any such spoof to a single tick; the program-id check is a tracked
-/// follow-up.
+/// Each event inner instruction's emitting program is verified by resolving
+/// its `program_id_index` against the transaction's full account-key list and
+/// requiring it to be `DROPSET_ID` — without it, a third party could craft a
+/// `FillEvent`-shaped inner instruction from another program carrying our
+/// `quote_authority` (the tag and discriminator are both public). If the
+/// account-key list can't be resolved (the transaction won't decode, or a
+/// loaded lookup-table address won't parse), no fill is attributed for the
+/// transaction and the per-tick vault reconcile in `tasks.rs` is the fallback
+/// — a partial static-keys-only check would instead misresolve indices into
+/// lookup-table slots and wrongly drop legitimate fills.
 fn decode_fills(
     rpc: &RpcClient,
     signature: &Signature,
@@ -191,10 +201,27 @@ fn decode_fills(
         )
         .context("get_transaction")?;
 
-    let Some(meta) = confirmed.transaction.meta else {
+    let tx = confirmed.transaction;
+    let Some(meta) = tx.meta else {
         return Ok(Vec::new());
     };
     let OptionSerializer::Some(inner_sets) = meta.inner_instructions else {
+        return Ok(Vec::new());
+    };
+
+    // Resolve the full account-key list so each event's emitting program can
+    // be checked before its bytes are trusted. Bail to the inventory-diff
+    // fallback (rather than accept an unverified emitter) if it can't be built.
+    let Some(decoded) = tx.transaction.decode() else {
+        eprintln!("[fills] {signature}: undecodable transaction; using inventory-diff fallback");
+        return Ok(Vec::new());
+    };
+    let Some(account_keys) =
+        full_account_keys(decoded.message.static_account_keys(), &meta.loaded_addresses)
+    else {
+        eprintln!(
+            "[fills] {signature}: unresolvable loaded addresses; using inventory-diff fallback"
+        );
         return Ok(Vec::new());
     };
 
@@ -205,6 +232,12 @@ fn decode_fills(
             let UiInstruction::Compiled(compiled) = instruction else {
                 continue;
             };
+            // Only events emitted by our own program count — the tag and
+            // discriminator are public, so anyone can forge the bytes, but the
+            // emitting program id is what `emit_cpi!`'s self-CPI authenticates.
+            if account_keys.get(compiled.program_id_index as usize) != Some(&DROPSET_ID) {
+                continue;
+            }
             // Inner-instruction data is base58 even under base64 tx encoding.
             let Ok(data) = bs58::decode(&compiled.data).into_vec() else {
                 continue;
@@ -221,6 +254,25 @@ fn decode_fills(
         }
     }
     Ok(fills)
+}
+
+/// Assemble the transaction's full account-key list in the order an
+/// instruction's `program_id_index` addresses: the message's static keys
+/// first, then the address-lookup-table loaded addresses (writable, then
+/// readonly). Returns `None` if a loaded address won't parse — the caller then
+/// can't safely attribute and drops to the inventory-diff fallback rather than
+/// trust an unverified emitter.
+fn full_account_keys(
+    static_keys: &[Pubkey],
+    loaded: &OptionSerializer<UiLoadedAddresses>,
+) -> Option<Vec<Pubkey>> {
+    let mut keys = static_keys.to_vec();
+    if let OptionSerializer::Some(loaded) = loaded {
+        for encoded in loaded.writable.iter().chain(loaded.readonly.iter()) {
+            keys.push(Pubkey::from_str(encoded).ok()?);
+        }
+    }
+    Some(keys)
 }
 
 /// Decode one inner-instruction blob as a [`FillEvent`], or `None` if it is a
@@ -303,5 +355,48 @@ mod tests {
     fn rejects_a_non_event_instruction() {
         assert!(decode_fill_event(&[0u8; 4]).is_none());
         assert!(decode_fill_event(&[]).is_none());
+    }
+
+    /// `program_id_index` addresses static keys first, then loaded writable,
+    /// then loaded readonly — the order a transaction with a lookup table
+    /// composes its account keys.
+    #[test]
+    fn resolves_keys_static_then_writable_then_readonly() {
+        let static_a = Pubkey::new_from_array([10; 32]);
+        let static_b = Pubkey::new_from_array([11; 32]);
+        let writable = Pubkey::new_from_array([12; 32]);
+        let readonly = Pubkey::new_from_array([13; 32]);
+        let loaded = OptionSerializer::Some(UiLoadedAddresses {
+            writable: vec![writable.to_string()],
+            readonly: vec![readonly.to_string()],
+        });
+        let keys = full_account_keys(&[static_a, static_b], &loaded).expect("all parse");
+        assert_eq!(keys, vec![static_a, static_b, writable, readonly]);
+    }
+
+    /// With no lookup-table loads the static keys stand alone — both an absent
+    /// field and an empty one resolve to just the static list.
+    #[test]
+    fn resolves_keys_without_loaded_addresses() {
+        let static_a = Pubkey::new_from_array([10; 32]);
+        for loaded in [
+            OptionSerializer::None,
+            OptionSerializer::Skip,
+            OptionSerializer::Some(UiLoadedAddresses::default()),
+        ] {
+            let keys = full_account_keys(&[static_a], &loaded).expect("static-only resolves");
+            assert_eq!(keys, vec![static_a]);
+        }
+    }
+
+    /// An unparseable loaded address means the full list can't be trusted, so
+    /// the caller drops to the inventory-diff fallback rather than misresolve.
+    #[test]
+    fn unparseable_loaded_address_resolves_to_none() {
+        let loaded = OptionSerializer::Some(UiLoadedAddresses {
+            writable: vec!["not-a-pubkey".to_string()],
+            readonly: vec![],
+        });
+        assert!(full_account_keys(&[Pubkey::new_from_array([10; 32])], &loaded).is_none());
     }
 }
