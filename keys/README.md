@@ -1,5 +1,3 @@
-<!-- cspell:word devnet -->
-
 <!-- cspell:word keygen -->
 
 <!-- cspell:word keypairs -->

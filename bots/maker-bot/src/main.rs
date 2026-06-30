@@ -95,9 +95,10 @@ fn split_pair(spec: &str) -> Option<(String, String)> {
 /// Discover the market, fund the leader, and run the tick loop.
 fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
     let client = chain::rpc(&cfg.rpc_url);
-    // Guard before funding or signing anything: this bot airdrops itself and
-    // signs quoting transactions with the leader key, so it must only run
-    // against a localnet validator, never a public cluster.
+    // Guard before funding or signing anything: the airdrop needs the localnet
+    // faucet and the leader key holds no authority on a public cluster, so an
+    // off-localnet --rpc is always a misconfiguration — fail fast rather than
+    // emit doomed sends.
     chain::assert_localnet(&client)?;
     let leader = solana_keypair::read_keypair_file(&args.leader_key)
         .map_err(|e| anyhow!("read leader key {}: {e}", args.leader_key))?;

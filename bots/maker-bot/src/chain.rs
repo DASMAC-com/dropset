@@ -43,10 +43,10 @@ pub fn rpc(url: &str) -> RpcClient {
 }
 
 /// The genesis hashes of the three public Solana clusters. `assert_localnet`
-/// refuses to run against any of them — this bot airdrops itself and signs
-/// quoting transactions with the leader key, which are localnet-only
-/// operations. Cross-checked against the Solana docs and the gill /
-/// mpl-bubblegum SDKs.
+/// refuses to run against any of them — the airdrop needs the localnet faucet
+/// and the leader key holds no authority on a public cluster, so running
+/// off-localnet is always a misconfiguration. Cross-checked against the Solana
+/// docs and the gill / mpl-bubblegum SDKs.
 const MAINNET_GENESIS: &str = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";
 const DEVNET_GENESIS: &str = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG";
 const TESTNET_GENESIS: &str = "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY";
