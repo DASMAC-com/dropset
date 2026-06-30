@@ -19,7 +19,14 @@ into the transcript**:
   instead of dumping, and **never re-fetch what's already in context**.
 - **Read large known files by slice.** Grep to locate, then `Read`
   with `offset`/`limit`; don't pull a 1000-line file to use 80 lines
-  of it. Brief review sub-agents to do the same.
+  of it. This is **main-loop** discipline during a study phase too, not
+  just a sub-agent rule: when you only need a few symbols from a
+  reference or generated file, Grep to them first and slice-read — on a
+  generated instruction file read only the `Builder` section you'll
+  call, and skip a file's trailing `#[cfg(test)]` / `mod tests` when
+  you need its API, not its tests. Whole-file `Read` is consistently
+  the single largest token sink across review/build sessions. Brief
+  review sub-agents to do the same.
 - **Route verbose build logs away from context.** Prefer `-q` /
   `--quiet` so a `cargo` / `make` "Compiling …" cascade doesn't land
   inline. For a noisy target with no quiet flag, run it through the

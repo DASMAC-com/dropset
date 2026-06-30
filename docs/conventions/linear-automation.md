@@ -76,21 +76,31 @@ over the MCP.
 The **stage-backlog Python tool** (the deterministic core of the
 `stage-backlog` skill — see "Structured filing fields" below) is a
 single, dependency-free `python3` script at
-`tools/stage-backlog/stage_backlog.py`, driven by `make stage-backlog`
-(which preserves the `Bash(make stage-backlog:*)` allow-rule). It is
-**render-only**: it reads the open Backlog and rewrites the Task
-Staging document, and that document write is its **only** Linear
-write — no `merge` subcommand, no issue-folding or duplicate-closing.
-Two issues that belong in one PR render as nested serial chips, never
-a folded issue. It uses the standard library only (`urllib` + `json`)
-for its two GraphQL calls, so it adds no dependency to the Rust build
-and inherits the repo's `ruff` hooks. It reads `LINEAR_PROJECT_ID`
-plus its own `LINEAR_API_KEY` (a personal Linear API key, because a
-script can't ride the OAuth-based `claude.ai` Linear MCP) for every
-run; for a real write it also reads `LINEAR_TASK_STAGING_DOC_ID` (the
-document it rewrites), while `--dry-run` prints the tree to stdout and
-doesn't require it. It resolves all of these via `os.environ`, never a
-hard-coded id, and the key is never committed.
+`tools/stage-backlog/stage_backlog.py`, run directly (the
+`Bash(python3 tools/stage-backlog/stage_backlog.py:*)` allow-rule —
+there is no `make` target). Blocking is **edge-driven**: it reads the
+open Backlog plus the state of every issue its relations reach, and
+builds the tree from declared `blockedBy` / `blocks` edges alone. It
+makes **two kinds** of Linear write: it materializes each undeclared
+`**Touches**:` collision between two Backlog issues into a real
+`blocks` relation (lower number blocks higher — see "Structured filing
+fields"), then rewrites the Task Staging document. It still has **no**
+`merge` subcommand and never folds or closes an issue; two issues that
+belong in one PR render as nested serial chips. A blocker is honoured
+until it reaches a terminal state (`completed` / `canceled`), so a
+Backlog issue gated by a live In-Progress / In-Review issue keeps that
+blocker as a tag, and the blocker ranks in the transitive
+`# Most blocking` tally. It uses the standard library only
+(`urllib` + `json`) for its GraphQL calls, so it adds no dependency to
+the Rust build and inherits the repo's `ruff` hooks; its unit tests run
+under `make tools-tests`. It reads `LINEAR_PROJECT_ID` plus its own
+`LINEAR_API_KEY` (a personal Linear API key, because a script can't
+ride the OAuth-based `claude.ai` Linear MCP) for every run; for a real
+write it also reads `LINEAR_TASK_STAGING_DOC_ID` (the document it
+rewrites), while `--dry-run` prints the tree to stdout, prints the
+overlap edges it *would* file, and doesn't require it. It resolves all
+of these via `os.environ`, never a hard-coded id, and the key is never
+committed.
 
 ## Structured filing fields
 
@@ -105,10 +115,13 @@ filing skills emit them and `stage-backlog` parses them:
   edit, comma-separated. Declare the **directory** when the work
   spans a dir (`tui/`), the **file** when it's one file
   (`programs/dropset/src/swap.rs`); list every glob for a multi-file
-  finding. The `stage-backlog` renderer reads this to detect file
+  finding. The `stage-backlog` tool reads this to detect file
   collisions **deterministically** — a directory glob collides with
   any path under it, and two issues that collide can't run in
-  parallel, so the higher-numbered one nests under the lower. Moving
+  parallel. When such a pair has no declared edge either direction,
+  the tool **materializes** the constraint into a real `blocks`
+  relation (the lower-numbered issue blocks the higher), so the higher
+  nests under the lower and Linear carries the edge durably. Moving
   this structure to **filing time** is what lets the tool skip the
   prose-reading sub-agent it used to need; an issue that predates the
   field falls back to declared-edge/parent placement, and the skill's
@@ -121,6 +134,36 @@ issue from the branch (or the PR title scope) on that basis —
 delivered checklist items and moves it to In Review at the merge-queue
 handoff — once the PR is ready, CI is green, and the review summary has
 been printed for the human.
+
+## The `Claude:` meta-work prefix
+
+**Meta-work** is agent-infra change — work whose touched paths sit
+**entirely** under `.claude/**`, `CLAUDE.md`, `docs/conventions/**`, or
+`tools/**`. Anything that also touches product / on-chain / SDK /
+frontend code is **not** meta. Every meta-work Linear issue title
+carries a leading **`Claude:`** token (capital C, colon, space) —
+e.g. `Claude: Add a /merge-tasks skill` — so all agent-infra work
+batches together and can be filtered, staged, and reviewed apart from
+product code on the board.
+
+- **Filing skills emit it.** `linear-task`, `audit`, `audit-scope`,
+  and `housekeeping` prepend `Claude:` to a title when the issue's
+  `**Touches**:` globs are all on the meta surface above. `/merge-tasks`
+  applies it when every issue it consolidates is meta.
+- **`stage-backlog` buckets by it.** Issues whose title starts with
+  `Claude:` group under a single `# Claude` heading (the deterministic
+  batch signal — the bucket keys on the **prefix**, not on file globs).
+  The tool also runs a **prefix↔touched-paths consistency check** and
+  warns on drift: a `Claude:`-prefixed issue whose `**Touches**:` reach
+  outside the meta surface, or a meta-only-touches issue with no
+  prefix. `housekeeping` surfaces those warnings for a human to
+  reconcile; the tool never retitles an issue itself.
+- **It is a Linear-title signal only — never a PR title.** The prefix
+  lives on the **issue** title for board recognition and batching. PR
+  titles keep the standard `type(ENG-###): Subject` semantic-pr format
+  (see "Keep Linear tags out of PR bodies and comments" below for the
+  title-scope rule); the `Claude:` token is **not** added to a PR
+  title, where the conventional type and `ENG-###` scope already apply.
 
 ## Keep Linear tags out of PR bodies and comments
 

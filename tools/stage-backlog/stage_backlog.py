@@ -2,10 +2,20 @@
 """Render the Dropset Linear Backlog as the chips-only Task Staging tree.
 
 This is the deterministic core of the ``stage-backlog`` skill: read the
-project's open Backlog (with parents and declared blocking relations), build
-the dependency tree from those edges plus file-overlap, and write the rendered
-tree to the Task Staging document. The whole path is mechanical — no model
-judgment, no issue folding, one Linear read and (on a real run) one write.
+project's open Backlog (with parents, declared blocking relations, and the
+state of every issue those relations reach), build the dependency tree from
+those edges alone, and write the rendered tree to the Task Staging document.
+
+Blocking is **edge-driven**: every blocker is a tagged Linear relation. A
+``**Touches**:`` file-overlap between two Backlog issues with no declared edge
+is *materialized* into a real ``blocks`` relation (lower number blocks higher)
+before the tree is built, rather than inferred in memory — so the staged tree
+and Linear never disagree. A blocker is honoured until it reaches a terminal
+state (``completed`` / ``canceled``), so a Backlog issue gated by an
+In-Progress / In-Review issue keeps showing that blocker as a tag instead of
+silently dropping it. The whole path is mechanical — no model judgment, no
+issue folding, one Linear read, the overlap-edge writes, and (on a real run)
+the document write.
 
 Configuration comes entirely from the environment (no hard-coded ids, never a
 committed token):
@@ -41,6 +51,10 @@ REQUEST_TIMEOUT = 30
 
 INDENT = "    "  # four spaces per nesting level
 
+# Path bases (besides the file CLAUDE.md) that count as agent-infra "meta-work"
+# — the surface the ``Claude:`` issue-title prefix batches together.
+META_BASES = (".claude", "docs/conventions", "tools")
+
 
 class StageBacklogError(Exception):
     """A user-facing failure: surfaced to stderr, exits non-zero."""
@@ -57,17 +71,27 @@ class Issue:
 
     id: str
     number: int
+    uuid: str = ""  # Linear's internal UUID, needed to file a relation
+    title: str = ""
     parent: str | None = None
     touches: list[str] = field(default_factory=list)
     blocked_by: list[str] = field(default_factory=list)
     blocks: list[str] = field(default_factory=list)
 
-    def is_skill_only(self) -> bool:
-        """True when the issue touches **only** the skill suite — files under
-        ``.claude/skills/**`` or ``CLAUDE.md``, with no product code — so it
-        folds into the consolidated ``# Skills`` PR. An issue with no
-        ``touches`` is never skill-only (we can't prove it)."""
-        return bool(self.touches) and all(is_skill_glob(g) for g in self.touches)
+    def has_claude_prefix(self) -> bool:
+        """True when the title carries the ``Claude:`` meta-work prefix (capital
+        C, colon, space) — the deterministic signal that batches agent-infra
+        work under the ``# Claude`` heading (see
+        ``docs/conventions/linear-automation.md`` → "The ``Claude:`` meta-work
+        prefix")."""
+        return self.title.startswith("Claude: ")
+
+    def is_meta_only(self) -> bool:
+        """True when the issue touches **only** the agent-infra surface
+        (``.claude/**``, ``CLAUDE.md``, ``docs/conventions/**``, ``tools/**``),
+        with no product code — so it *should* carry the ``Claude:`` prefix. An
+        issue with no ``touches`` is never meta-only (we can't prove it)."""
+        return bool(self.touches) and all(is_meta_glob(g) for g in self.touches)
 
 
 def parse_number(ident: str) -> int | None:
@@ -111,13 +135,18 @@ def parse_touches(description: str) -> list[str]:
     return out
 
 
-def is_skill_glob(glob: str) -> bool:
-    """A glob counts as skill-suite when it names ``CLAUDE.md`` or sits under
-    ``.claude/skills/``."""
+def is_meta_glob(glob: str) -> bool:
+    """A glob counts as **meta-work** (agent-infra) when it names ``CLAUDE.md``
+    or sits under ``.claude/``, ``docs/conventions/``, or ``tools/`` — the
+    surface the ``Claude:`` prefix batches. A glob outside all of these is
+    product / on-chain / SDK / frontend code."""
     g = glob
     while g.startswith("./"):
         g = g[2:]
-    return g == "CLAUDE.md" or g.startswith(".claude/skills")
+    g = g.rstrip("/")
+    if g == "CLAUDE.md":
+        return True
+    return any(g == base or g.startswith(base + "/") for base in META_BASES)
 
 
 def normalize_glob(glob: str) -> str:
@@ -161,19 +190,20 @@ def touches_overlap(a: Issue, b: Issue) -> bool:
 # Planner — from a set of Issues, render the chips-only Task Staging tree.
 # --------------------------------------------------------------------------
 #
-# * Issues bucket under ``# Skills`` (pure skill-suite work), a ``# ENG-###``
-#   heading per parent with 2+ Backlog subtasks, or a trailing ``# Standalone``.
-# * Within a bucket, issues nest by blocker — declared (``blockedBy`` /
-#   ``blocks``) or inferred from a file overlap (the higher-numbered issue
-#   nests under the lower).
-# * A blocker under a different heading renders as a trailing ``(after …)``
-#   note; a second in-heading blocker the nesting can't show renders as
-#   ``(also after …)``.
+# * Issues bucket under ``# Claude`` (meta-work, keyed on the ``Claude:`` title
+#   prefix), a ``# ENG-###`` heading per parent with 2+ Backlog subtasks, or a
+#   trailing ``# Standalone``.
+# * Within a bucket, issues nest by blocker. Blocking is edge-driven: every
+#   blocker is a declared ``blockedBy`` / ``blocks`` relation (a file overlap
+#   is materialized into one such relation upstream, before the planner runs).
+# * A blocker the nesting can't show — one under a different heading, a sibling,
+#   or a *live external* (non-Backlog, not-yet-resolved) issue that has no chip
+#   of its own — renders as a trailing bare-tag note ``(ENG-X, ENG-Y)``.
 #
 # The render is a pure function of its input and fully deterministic: all
 # iteration that reaches the output is sorted by issue number.
 
-# A bucket is a tuple: ("skills",), ("parent", "ENG-40"), or ("standalone",).
+# A bucket is a tuple: ("claude",), ("parent", "ENG-40"), or ("standalone",).
 
 
 def missing_touches(issues: list[Issue]) -> list[str]:
@@ -182,16 +212,65 @@ def missing_touches(issues: list[Issue]) -> list[str]:
     return [i.id for i in issues if not i.touches]
 
 
-def block_counts(issues: list[Issue], blockers: dict[str, set[str]]) -> dict[str, int]:
-    """How many *other* issues each issue blocks: the number of issues that
-    list it in their blocker set. Direct (not transitive) — it matches the
-    edges the tree renders, and stays meaningful inside a cycle (a transitive
-    count would make every cycle member look equally blocking)."""
-    counts = {i.id: 0 for i in issues}
+def prefix_touches_drift(issues: list[Issue]) -> list[tuple[str, str]]:
+    """``(identifier, reason)`` pairs where the ``Claude:`` title prefix and the
+    ``**Touches**:`` surface disagree — the consistency check that supersedes
+    the old glob-only ``# Skills`` bucketing. Two mismatches are flagged:
+
+    * a ``Claude:``-prefixed issue whose touches reach **outside** the meta
+      surface (the prefix over-claims), and
+    * a meta-only-touches issue with **no** ``Claude:`` prefix (it should have
+      one so it batches under ``# Claude``).
+
+    A prefixed issue with no ``**Touches**:`` at all is left alone — there's
+    nothing to check it against."""
+    out: list[tuple[str, str]] = []
     for i in issues:
-        for b in blockers[i.id]:
-            if b in counts:
-                counts[b] += 1
+        prefixed = i.has_claude_prefix()
+        if prefixed and i.touches and not i.is_meta_only():
+            out.append(
+                (i.id, "Claude: prefix but touches reach outside the meta surface")
+            )
+        elif i.is_meta_only() and not prefixed:
+            out.append((i.id, "meta-only touches but no Claude: prefix"))
+    return out
+
+
+def block_counts(
+    issues: list[Issue],
+    blockers: dict[str, set[str]],
+    extra_nodes: set[str] | None = None,
+) -> dict[str, int]:
+    """How many *other* issues each issue blocks, counted **transitively**: if
+    A blocks B and B blocks C, A blocks 2. The node set is the Backlog
+    (``issues``) plus any ``extra_nodes`` — the live external blockers that gate
+    Backlog work without a chip of their own — so they rank in the tally too.
+
+    ``blockers[x]`` is the set of issues that block ``x``; we invert it to a
+    forward map (who each issue blocks) and count the distinct reach of each
+    node with a visited set, so a blocker **cycle** terminates instead of
+    looping and no node is counted as blocking itself."""
+    forward: dict[str, set[str]] = {}
+    for blocked, bs in blockers.items():
+        for b in bs:
+            forward.setdefault(b, set()).add(blocked)
+
+    nodes = {i.id for i in issues}
+    if extra_nodes:
+        nodes |= extra_nodes
+
+    counts: dict[str, int] = {}
+    for n in nodes:
+        reached: set[str] = set()
+        stack = list(forward.get(n, ()))
+        while stack:
+            cur = stack.pop()
+            if cur in reached:
+                continue
+            reached.add(cur)
+            stack.extend(forward.get(cur, ()))
+        reached.discard(n)  # a cycle can reach back to the node; don't self-count
+        counts[n] = len(reached)
     return counts
 
 
@@ -212,8 +291,17 @@ def render_tally(counts: dict[str, int], number_of: dict[str, int]) -> str | Non
     return "".join(out)
 
 
-def render(issues: list[Issue], orphans: list[str] | None = None) -> str:
+def render(
+    issues: list[Issue],
+    state_of: dict[str, str] | None = None,
+    orphans: list[str] | None = None,
+) -> str:
     """Render the full Task Staging document body for ``issues``.
+
+    ``state_of`` maps every issue an edge reaches (Backlog and external) to its
+    Linear state type, so a blocker that has resolved (``completed`` /
+    ``canceled``) is dropped while a live external blocker is kept; when omitted
+    every issue is treated as live Backlog (the unit-test default).
 
     If ``orphans`` is given, the ids of any bucket members the root-walk could
     not reach (a blocker cycle) are appended to it — the caller turns them into
@@ -223,11 +311,20 @@ def render(issues: list[Issue], orphans: list[str] | None = None) -> str:
     if not issues:
         return ""
 
-    universe = {i.id for i in issues}
-    number_of = {i.id: i.number for i in issues}
+    if state_of is None:
+        state_of = {i.id: "backlog" for i in issues}
 
-    blockers = compute_blockers(issues, universe)
+    universe = {i.id for i in issues}
+
+    blockers = compute_blockers(issues, state_of)
     buckets = compute_buckets(issues)
+
+    # Live external blockers — referenced in a blocker set but not a Backlog
+    # chip — rank in the tally and number their tie-breaks like any other node.
+    external_nodes = {b for bs in blockers.values() for b in bs} - universe
+    number_of = {i.id: i.number for i in issues}
+    for e in external_nodes:
+        number_of[e] = parse_number(e) or 0
 
     # In-bucket blockers drive nesting; cross-bucket ones become notes.
     def same_bucket(a: str, b: str) -> bool:
@@ -260,14 +357,14 @@ def render(issues: list[Issue], orphans: list[str] | None = None) -> str:
     sections: list[str] = []
 
     # # Most blocking tally first — ranks the issues to start on first.
-    tally = render_tally(block_counts(issues, blockers), number_of)
+    tally = render_tally(block_counts(issues, blockers, external_nodes), number_of)
     if tally is not None:
         sections.append(tally)
 
-    # # Skills next.
+    # # Claude (meta-work) next.
     s = render_bucket(
-        "# Skills",
-        ("skills",),
+        "# Claude",
+        ("claude",),
         issues,
         buckets,
         primary,
@@ -317,56 +414,61 @@ def render(issues: list[Issue], orphans: list[str] | None = None) -> str:
     return "\n".join(sections)
 
 
-def compute_blockers(issues: list[Issue], universe: set[str]) -> dict[str, set[str]]:
-    """Build each issue's blocker set, restricted to the read universe:
-    declared ``blockedBy`` / ``blocks`` (symmetric), then file-overlap edges
-    (higher number under lower) for pairs with no declared edge."""
+def compute_blockers(
+    issues: list[Issue], state_of: dict[str, str]
+) -> dict[str, set[str]]:
+    """Build each Backlog issue's blocker set from declared edges alone
+    (``blockedBy`` / ``blocks``, symmetric). File-overlap is **not** inferred
+    here — it arrives upstream as a materialized relation (see
+    :func:`materialize_overlap_edges`), so blocking is wholly edge-driven.
+
+    An edge is kept while its blocker is **live**: a blocker that has reached a
+    terminal state (``completed`` / ``canceled``) is dropped, so a resolved
+    dependency stops gating downstream work. A blocker is kept whether or not it
+    is itself a Backlog issue — a live In-Progress / In-Review blocker stays
+    visible as a tag. A blocker with no known state is assumed live (never
+    silently dropped)."""
+
+    def live(ident: str) -> bool:
+        return state_of.get(ident) not in ("completed", "canceled")
+
+    universe = {i.id for i in issues}
     blockers: dict[str, set[str]] = {i.id: set() for i in issues}
 
     for i in issues:
         for b in i.blocked_by:
-            # Ignore a blocker outside the read set, and a self-edge (a data
-            # error) that would otherwise drop the issue from the tree.
-            if b != i.id and b in universe:
+            # Drop a self-edge (a data error) that would otherwise pull the
+            # issue out of the tree, and a blocker that has already resolved.
+            if b != i.id and live(b):
                 blockers[i.id].add(b)
         for b in i.blocks:
-            # ``i blocks b`` is the same edge as ``b blockedBy i``.
+            # ``i blocks b`` is the same edge as ``b blockedBy i``; only the
+            # blocked Backlog issue carries a blocker set, and ``i`` (a Backlog
+            # issue) is live by construction.
             if b != i.id and b in universe:
                 blockers[b].add(i.id)
-
-    n = len(issues)
-    for a in range(n):
-        for c in range(a + 1, n):
-            ia, ic = issues[a], issues[c]
-            if not touches_overlap(ia, ic):
-                continue
-            # A declared edge between the pair (either direction) wins over the
-            # inferred "higher under lower" overlap edge — the human asserted
-            # the order on purpose — so don't add a second edge.
-            declared = ic.id in blockers[ia.id] or ia.id in blockers[ic.id]
-            if declared:
-                continue
-            lo, hi = (ia, ic) if ia.number <= ic.number else (ic, ia)
-            blockers[hi.id].add(lo.id)
 
     return blockers
 
 
 def compute_buckets(issues: list[Issue]) -> dict[str, tuple]:
-    """Assign each issue a bucket: skill-only → ``# Skills``; otherwise grouped
-    under its parent when that parent has 2+ non-skill Backlog subtasks, else
-    ``# Standalone``."""
+    """Assign each issue a bucket: a ``Claude:``-prefixed (meta-work) issue →
+    ``# Claude``; otherwise grouped under its parent when that parent has 2+
+    non-``Claude:`` Backlog subtasks, else ``# Standalone``. Bucketing keys on
+    the **title prefix** (the deterministic batch signal), not on file globs —
+    the glob check is now the :func:`prefix_touches_drift` consistency warning.
+    """
     parent_count: dict[str, int] = {}
     for i in issues:
-        if i.is_skill_only():
+        if i.has_claude_prefix():
             continue
         if i.parent:
             parent_count[i.parent] = parent_count.get(i.parent, 0) + 1
 
     result: dict[str, tuple] = {}
     for i in issues:
-        if i.is_skill_only():
-            bucket: tuple = ("skills",)
+        if i.has_claude_prefix():
+            bucket: tuple = ("claude",)
         elif i.parent and parent_count.get(i.parent, 0) >= 2:
             bucket = ("parent", i.parent)
         else:
@@ -472,23 +574,18 @@ def render_node(
 
 
 def notes(ident, primary, blockers, number_of, ancestors) -> str:
-    """The trailing ``(after …)`` / ``(also after …)`` note for a node: every
-    blocker except the primary **and** except any blocker already an ancestor
-    in the tree (the indentation shows those), sorted by number. A top-level
-    node's first remaining blocker reads ``after``; everything else reads
-    ``also after``."""
+    """The trailing bare-tag blocker note for a node: a plain parenthesized
+    list ``(ENG-X, ENG-Y)`` of the node's direct live blockers that the nesting
+    does **not** already express — i.e. every blocker except the primary (shown
+    by what it nests under) and except any blocker already an ancestor on the
+    descent path (shown by the indentation), sorted by number. Empty when the
+    nesting already shows every blocker."""
     prim = primary.get(ident)
     extra = [b for b in blockers.get(ident, ()) if b != prim and b not in ancestors]
     if not extra:
         return ""
     extra.sort(key=lambda b: number_of.get(b, 0))
-
-    nested = prim is not None
-    parts = []
-    for i, b in enumerate(extra):
-        word = "after" if (not nested and i == 0) else "also after"
-        parts.append(f"{word} {b}")
-    return f" ({', '.join(parts)})"
+    return f" ({', '.join(extra)})"
 
 
 # --------------------------------------------------------------------------
@@ -503,13 +600,23 @@ query Backlog($projectId: ID!, $first: Int!) {
   ) {
     pageInfo { hasNextPage }
     nodes {
+      id
       identifier
+      title
       description
       parent { identifier }
-      relations { nodes { type relatedIssue { identifier } } }
-      inverseRelations { nodes { type issue { identifier } } }
+      relations { nodes { type relatedIssue { identifier state { type } } } }
+      inverseRelations { nodes { type issue { identifier state { type } } } }
     }
   }
+}
+"""
+
+ISSUE_RELATION_CREATE_MUTATION = """
+mutation CreateBlocks($issueId: String!, $relatedIssueId: String!) {
+  issueRelationCreate(
+    input: { type: blocks, issueId: $issueId, relatedIssueId: $relatedIssueId }
+  ) { success }
 }
 """
 
@@ -573,6 +680,8 @@ def _raw_to_issue(raw: dict) -> Issue:
     return Issue(
         id=ident,
         number=parse_number(ident) or 0,
+        uuid=raw.get("id") or "",
+        title=raw.get("title") or "",
         parent=parent,
         touches=touches,
         blocked_by=blocked_by,
@@ -580,8 +689,25 @@ def _raw_to_issue(raw: dict) -> Issue:
     )
 
 
-def fetch_backlog(api_key: str, project_id: str) -> list[Issue]:
-    """All open Backlog issues for the project, distilled into :class:`Issue`s.
+def _collect_states(node: dict, state_of: dict[str, str]) -> None:
+    """Record the state type of every issue ``node``'s relations reach, so a
+    blocker outside the Backlog (an In-Progress / In-Review / Done issue) has a
+    known state. ``setdefault`` keeps a Backlog issue's authoritative
+    ``"backlog"`` (set from its own node) over a relation-derived copy."""
+    for r in node["relations"]["nodes"]:
+        ri = r.get("relatedIssue")
+        if ri and ri.get("state"):
+            state_of.setdefault(ri["identifier"], ri["state"]["type"])
+    for r in node["inverseRelations"]["nodes"]:
+        ii = r.get("issue")
+        if ii and ii.get("state"):
+            state_of.setdefault(ii["identifier"], ii["state"]["type"])
+
+
+def fetch_backlog(api_key: str, project_id: str) -> tuple[list[Issue], dict[str, str]]:
+    """All open Backlog issues for the project, distilled into :class:`Issue`s,
+    paired with a ``state_of`` map (identifier → Linear state type) covering
+    every Backlog issue and every issue its relations reach.
 
     Reads one page (``PAGE_SIZE``); rather than silently stage — and overwrite
     the document with — a truncated tree, it refuses if the project has more.
@@ -593,7 +719,13 @@ def fetch_backlog(api_key: str, project_id: str) -> list[Issue]:
             f"project has more than {PAGE_SIZE} open Backlog issues; pagination "
             "is not implemented, so refusing to stage a truncated tree"
         )
-    return [_raw_to_issue(n) for n in conn["nodes"]]
+    issues = [_raw_to_issue(n) for n in conn["nodes"]]
+    # The query filters to backlog state, so every top-level node is "backlog";
+    # relations contribute the states of issues outside that set.
+    state_of: dict[str, str] = {n["identifier"]: "backlog" for n in conn["nodes"]}
+    for n in conn["nodes"]:
+        _collect_states(n, state_of)
+    return issues, state_of
 
 
 def save_document(api_key: str, doc_id: str, content: str) -> None:
@@ -601,6 +733,65 @@ def save_document(api_key: str, doc_id: str, content: str) -> None:
     data = _post(api_key, SAVE_DOC_MUTATION, {"id": doc_id, "content": content})
     if not data["documentUpdate"]["success"]:
         raise StageBacklogError("Linear documentUpdate returned success=false")
+
+
+def issue_relation_create(api_key: str, issue_uuid: str, related_uuid: str) -> None:
+    """File a ``blocks`` relation: ``issue_uuid`` blocks ``related_uuid`` (both
+    Linear internal UUIDs)."""
+    data = _post(
+        api_key,
+        ISSUE_RELATION_CREATE_MUTATION,
+        {"issueId": issue_uuid, "relatedIssueId": related_uuid},
+    )
+    if not data["issueRelationCreate"]["success"]:
+        raise StageBacklogError("Linear issueRelationCreate returned success=false")
+
+
+def materialize_overlap_edges(
+    issues: list[Issue], api_key: str | None, dry_run: bool
+) -> list[tuple[str, str]]:
+    """Turn each undeclared file-overlap into a real Linear ``blocks`` relation.
+
+    For every pair of Backlog issues whose ``**Touches**:`` globs collide and
+    that have **no** declared edge in either direction, file the lower-numbered
+    issue ``blocks`` the higher-numbered one — materializing the scheduling
+    constraint as a tagged edge so the staged tree and Linear agree (this is the
+    one place the tool writes a *relation*, a deliberate departure from the
+    render-only rewrite). The edge is also added to the in-memory model so the
+    same run renders it, in both real and ``--dry-run`` mode; only the Linear
+    write is skipped under ``--dry-run``. Returns the ``(lower, higher)`` id
+    pairs filed (or that would be filed), lowest-first, for the caller to
+    report. A pair already linked (declared, or filed earlier in this pass) is
+    skipped, so the relation is never duplicated."""
+    universe = {i.id for i in issues}
+    linked: set[frozenset[str]] = set()
+    for i in issues:
+        for b in i.blocked_by:
+            if b in universe:
+                linked.add(frozenset((i.id, b)))
+        for b in i.blocks:
+            if b in universe:
+                linked.add(frozenset((i.id, b)))
+
+    filed: list[tuple[str, str]] = []
+    n = len(issues)
+    for a in range(n):
+        for c in range(a + 1, n):
+            ia, ic = issues[a], issues[c]
+            if not touches_overlap(ia, ic):
+                continue
+            pair = frozenset((ia.id, ic.id))
+            if pair in linked:
+                continue
+            lo, hi = (ia, ic) if ia.number <= ic.number else (ic, ia)
+            filed.append((lo.id, hi.id))
+            linked.add(pair)
+            # Reflect the new edge in memory so this run renders it.
+            lo.blocks.append(hi.id)
+            if not dry_run:
+                issue_relation_create(api_key, lo.uuid, hi.uuid)
+    filed.sort(key=lambda p: (parse_number(p[0]) or 0, parse_number(p[1]) or 0))
+    return filed
 
 
 # --------------------------------------------------------------------------
@@ -639,8 +830,11 @@ def run(argv: list[str]) -> int:
 
     api_key = env_var("LINEAR_API_KEY")
     project_id = env_var("LINEAR_PROJECT_ID")
+    # Resolve the write target before any relation is filed, so a real run that
+    # is missing the doc id fails fast instead of half-writing relations.
+    doc_id = env_var("LINEAR_TASK_STAGING_DOC_ID") if not dry_run else None
 
-    issues = fetch_backlog(api_key, project_id)
+    issues, state_of = fetch_backlog(api_key, project_id)
 
     for ident in missing_touches(issues):
         print(
@@ -649,8 +843,20 @@ def run(argv: list[str]) -> int:
             file=sys.stderr,
         )
 
+    for ident, reason in prefix_touches_drift(issues):
+        print(
+            f"warning: {ident} {reason} — reconcile the Claude: prefix with "
+            "the **Touches**: surface",
+            file=sys.stderr,
+        )
+
+    filed = materialize_overlap_edges(issues, api_key, dry_run)
+    verb = "would file" if dry_run else "filed"
+    for lo, hi in filed:
+        print(f"{verb}: {lo} blocks {hi} (touch overlap)", file=sys.stderr)
+
     orphans: list[str] = []
-    document = render(issues, orphans)
+    document = render(issues, state_of, orphans)
     if orphans:
         print(
             f"warning: blocker cycle — {', '.join(orphans)} unreachable from a "
@@ -662,13 +868,17 @@ def run(argv: list[str]) -> int:
     if dry_run:
         sys.stdout.write(document)
         print(
-            f"stage-backlog (dry-run) | {len(issues)} backlog issues", file=sys.stderr
+            f"stage-backlog (dry-run) | {len(issues)} backlog issues | "
+            f"{len(filed)} overlap edges would be filed",
+            file=sys.stderr,
         )
         return 0
 
-    doc_id = env_var("LINEAR_TASK_STAGING_DOC_ID")
     save_document(api_key, doc_id, document)
-    print(f"stage-backlog | {len(issues)} backlog issues | staging document updated")
+    print(
+        f"stage-backlog | {len(issues)} backlog issues | "
+        f"{len(filed)} overlap edges filed | staging document updated"
+    )
     return 0
 
 

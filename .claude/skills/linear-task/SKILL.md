@@ -68,7 +68,14 @@ what to file.
 
    - **Title** — concise, imperative, no trailing
      period (e.g. "Harden vault swap against
-     partial fills").
+     partial fills"). If the to-do is **meta-work** —
+     its `**Touches**:` sit entirely under `.claude/**`,
+     `CLAUDE.md`, `docs/conventions/**`, or `tools/**` —
+     prepend the **`Claude:`** prefix (e.g. "Claude:
+     Harden the audit dedup key"), per `CLAUDE.md` →
+     "Claude: meta-work prefix". Anything also touching
+     product / on-chain / SDK / frontend code gets no
+     prefix.
 
    - **Description** — Markdown. Capture *why* this
      is deferred and enough context to act on it

@@ -330,6 +330,15 @@ mcp__claude_ai_Linear__save_issue(
 )
 ```
 
+**Meta-work prefix.** When a finding's `**Touches**:` sit entirely under
+the meta surface (`.claude/**`, `CLAUDE.md`, `docs/conventions/**`,
+`tools/**`), prepend the **`Claude:`** token to the title (per
+`CLAUDE.md` → "Claude: meta-work prefix") so it reads
+`Claude: <file>: <imperative fix>`. This composes with the `arch:`
+fingerprint prefix above (a fingerprint-slug convention, not a title
+one). A finding touching product / on-chain / SDK / frontend code gets
+no prefix.
+
 **Dependencies.** Set a `blockedBy` / `blocks` edge per the **Blocking
 relations** brief in `docs/conventions/linear-automation.md` —
 autonomous, so only on concrete evidence, never speculatively, and
@@ -345,10 +354,11 @@ surfaced more than one finding that plainly belongs in the **same PR**
 file them as **one combined Backlog issue** instead of several: one
 title, the per-finding notes under per-source sub-headings, and a
 `**Fingerprint**:` line for **each** finding (the union). `stage-backlog`
-is render-only and **never merges issues**, so coupled findings only
+**never merges or closes issues**, so coupled findings only
 become one issue if you file them that way — combining at file time is
 the only way. Findings that don't obviously share a PR stay separate;
-`stage-backlog` then renders any file-overlap as a serial nesting.
+`stage-backlog` then materializes any file-overlap into a `blocks` edge
+and renders it as a serial nesting.
 
 The description must let a cold agent act on it in its own worktree
 (literal newlines, not `\n`):
@@ -378,8 +388,8 @@ The description must let a cold agent act on it in its own worktree
   `docs/conventions/linear-automation.md` → "Structured filing fields".
 - `**Discovered by**: audit <unit> @ <commit SHA>`
 
-Do **not** stage per finding. `stage-backlog` is **render-only** — it
-re-reads the whole open Backlog and rewrites the document; there is no
+Do **not** stage per finding. `stage-backlog` re-reads the **whole**
+open Backlog and rewrites the document in one pass; there is no
 incremental / per-`ENG-###` mode. So filing is all the File step does;
 the single re-stage that picks up everything this rotation filed runs
 once at the end (the **Done** step).
@@ -421,11 +431,13 @@ send no notification.
 **Done.** After all seven units have been processed (each cross-checked
 where applicable, deduped, and filed), the rotation is complete.
 **Re-stage the Task Staging document once, now:** invoke the
-`stage-backlog` skill (via the Skill tool). It runs the render-only
-`make stage-backlog`, which re-reads the whole open Backlog — including
-everything this rotation just filed — and rewrites the document in one
-deterministic pass. (`make stage-backlog` needs `LINEAR_API_KEY`; if
-it's unset the tool says so and the re-stage is left to the next
+`stage-backlog` skill (via the Skill tool). It runs the deterministic
+`python3 tools/stage-backlog/stage_backlog.py`, which re-reads the whole
+open Backlog — including everything this rotation just filed — and
+rewrites the document in one pass (materializing any undeclared
+file-overlap into a `blocks` edge as it goes). (The tool needs
+`LINEAR_API_KEY`; if it's unset the tool says so and the re-stage is
+left to the next
 `housekeeping` pass or a manual `/stage-backlog` — note that in the
 final line rather than failing the rotation.) Then print a single final
 line and **stop** — there is no re-invocation:

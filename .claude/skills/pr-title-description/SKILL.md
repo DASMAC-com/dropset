@@ -44,7 +44,12 @@ takes `owner: "DASMAC-com"`, `repo: "dropset"`.
    style. `list_pull_requests` has no "merged" filter, so
    list **closed** PRs newest-first and take the first
    three with a non-null `merged_at` (a closed-unmerged PR
-   has `merged_at: null`):
+   has `merged_at: null`). **Cap the page with a small
+   `perPage`** — without it the call returns *every* closed
+   PR with full bodies (~104k tokens observed, replayed
+   every later turn), and only the result-size guard keeps
+   that out of context. A handful is plenty to find three
+   merged ones:
 
    ```txt
    mcp__github__list_pull_requests(
@@ -53,6 +58,7 @@ takes `owner: "DASMAC-com"`, `repo: "dropset"`.
      state: "closed",
      sort: "updated",
      direction: "desc",
+     perPage: 8,
    )
    ```
 
@@ -92,6 +98,14 @@ takes `owner: "DASMAC-com"`, `repo: "dropset"`.
    - `feat(ENG-123): Add frame offset scaffolding and asm config sourcing`
    - `fix(ENG-456): Correct off-by-one in order matching`
    - `docs(ENG-789): Add algorithm index page`
+
+   **Never carry a `Claude:` prefix into the title.** The
+   `Claude:` meta-work prefix (per `CLAUDE.md` → "Claude:
+   meta-work prefix") is a **Linear issue-title** signal
+   only; the PR title keeps the plain
+   `type(ENG-###): Subject` form even when the linked issue
+   title starts with `Claude:`. Drop the token — don't
+   copy it from the issue title into the PR title.
 
 1. Write a concise PR description that mirrors
    the format and tone of those recent PRs.

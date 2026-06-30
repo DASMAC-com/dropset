@@ -36,6 +36,11 @@ copy, so the wording stays in one place.
 >   SKILL.md into context to use a fraction of it; a whole-file Read of
 >   a large file is a top token sink (see
 >   [context economy](context-economy.md)).
+> - **Read each file you need once, then reason from it.** Open the
+>   handful of files your task touches a single time up front (slicing
+>   the large ones as above) and work from what you've read — don't
+>   re-`Read` or re-grep the same file on later turns. Every re-read is
+>   paid again in your own context.
 > - **Exploring another repo or path is fine** — reach outside this
 >   worktree when the task needs it; approving a one-off read of a
 >   different repo is expected, not something to avoid. Just keep each
@@ -66,6 +71,15 @@ your findings instead of scanning." That narrows *where the agent
 looks*; the shell rules stay exactly as written. An audit agent, by
 contrast, is *meant* to range over the whole codebase, so it gets the
 brief without any narrowing.
+
+**State the negative scope, not just the positive one.** An agent
+told only what to review will still wander off-lens — a code reviewer
+drifts into a settings / permissions audit, a style pass runs the
+whole test suite. So when a skill narrows the subject, give the agent
+an explicit *negative* bound alongside the positive one — e.g.
+"review the code diff only; do not audit permissions, settings, or git
+history." One line naming what's **out** of scope is what keeps an
+on-topic agent from straying into an expensive tangent.
 
 A sub-agent approval that still re-prompts despite this brief means
 the brief **leaked** — the agent emitted shell the brief forbids.

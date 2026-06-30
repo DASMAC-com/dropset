@@ -1,6 +1,6 @@
 ---
 name: stage-backlog
-description: One iteration of keeping the Dropset Task Staging document in sync with the Linear Backlog. The whole job is deterministic and lives in a committed, dependency-free Python tool (`tools/stage-backlog/stage_backlog.py`, run via `make stage-backlog`): read every open Backlog issue, build the dependency tree from declared blockedBy/blocks edges + file overlap, and rewrite the chips-only Task Staging document. The skill is a thin wrapper — it runs the tool and reports the one-line tally; it never reads the document body into context. The one optional manual touch is backfilling a `**Touches**:` line on an issue the dry-run flags as missing one. Drive the full re-stage with `/loop stage-backlog` or run it once.
+description: One iteration of keeping the Dropset Task Staging document in sync with the Linear Backlog. The whole job is deterministic and lives in a committed, dependency-free Python tool (`tools/stage-backlog/stage_backlog.py`, run directly with `python3`): read every open Backlog issue, build the dependency tree from declared blockedBy/blocks edges (a file-overlap collision is materialized into a real blocks edge first), and rewrite the chips-only Task Staging document. The skill is a thin wrapper — it runs the tool and reports the one-line tally; it never reads the document body into context. The one optional manual touch is backfilling a `**Touches**:` line on an issue the dry-run flags as missing one. Drive the full re-stage with `/loop stage-backlog` or run it once.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -24,43 +24,57 @@ document is the plan.
 ## Deterministic core: the stage-backlog Python tool
 
 The whole job is pure mechanism — string and graph work
-plus two HTTP calls — so it lives in a committed,
+plus a handful of HTTP calls — so it lives in a committed,
 dependency-free Python tool
-(`tools/stage-backlog/stage_backlog.py`, run via
-`make stage-backlog`) rather than being re-derived by
-hand each run. The tool:
+(`tools/stage-backlog/stage_backlog.py`, run directly with
+`python3`) rather than being re-derived by hand each run.
+The tool:
 
 - reads every **open** Backlog issue for the project
-  (with its `parentId` and its declared `blockedBy` /
-  `blocks` edges);
+  (with its `parentId`, its declared `blockedBy` /
+  `blocks` edges, and the **state** of every issue those
+  edges reach);
+- **materializes** file-overlap into real edges — two
+  issues whose `**Touches**:` globs collide can't run in
+  parallel, so if Linear has no edge between them the tool
+  files a `blocks` relation (lower number blocks higher)
+  before building the tree;
 - builds the dependency tree from those declared edges
-  **plus** file overlap — two issues whose `**Touches**:`
-  globs collide can't run in parallel, so the
-  higher-numbered one nests under the lower;
-- buckets issues under `# Skills` (pure skill-suite
-  work), a `# ENG-###` heading per parent with 2+ Backlog
-  subtasks, and a trailing `# Standalone`;
+  **alone** (blocking is edge-driven), keeping a blocker
+  until it reaches a terminal state — a Backlog issue
+  gated by a live In-Progress / In-Review issue keeps that
+  blocker as a tag rather than dropping it;
+- buckets issues under `# Claude` (meta-work, keyed on the
+  `Claude:` title prefix — see `CLAUDE.md` → "Claude:
+  meta-work prefix"), a `# ENG-###` heading per parent with
+  2+ Backlog subtasks, and a trailing `# Standalone`;
+- warns on `Claude:` prefix↔`**Touches**:` drift — a
+  prefixed issue touching non-meta paths, or a
+  meta-only-touches issue with no prefix (the consistency
+  check that replaces the old glob-only bucketing);
 - renders the chips-only tree (bare `ENG-###` tags,
-  4-space nesting, `(after …)` / `(also after …)` notes)
-  and writes it to the Task Staging document.
+  4-space nesting, bare-tag `(ENG-X, ENG-Y)` blocker
+  notes) and writes it to the Task Staging document.
 
 That is the whole of the old "read → group → cross-check
 → write" core, now reproducible and lint-clean under the
-repo's existing `ruff` hooks. It is **render-only**:
-the tool never merges or closes issues — a same-file
-collision is represented as a serial **nesting**, which
-preserves the parallelism guarantee without mutating
-Linear. Run it:
+repo's existing `ruff` hooks. It **writes relations**: a
+same-file collision with no declared edge is materialized
+into a tagged `blocks` relation, then represented as a
+serial **nesting** — a deliberate departure from the
+earlier render-only design, so the staged tree and Linear
+never disagree. It still never merges or closes issues.
+Run it:
 
 ```sh
-make stage-backlog
+python3 tools/stage-backlog/stage_backlog.py
 ```
 
-Add `ARGS=--dry-run` to print the tree to stdout without
-writing the document:
+Add `--dry-run` to print the tree to stdout, print the
+overlap edges it *would* file, and write nothing:
 
 ```sh
-make stage-backlog ARGS=--dry-run
+python3 tools/stage-backlog/stage_backlog.py --dry-run
 ```
 
 The tool resolves its configuration from the environment
@@ -74,7 +88,8 @@ shell profile (`~/.zshrc`) — see `CLAUDE.md` → "Linear
 automation".
 
 Its unit tests (Python's `unittest`, no third-party test
-dependency) run with `make stage-backlog-test`.
+dependency) run with `make tools-tests`, the shared target
+that runs every Python skill-tool's tests.
 
 ## Context economy
 
@@ -131,25 +146,28 @@ never commit in; it never authors a source edit.
 ## Read-only with respect to source
 
 This skill **never authors source edits** and never
-commits or pushes. Its only write is to Linear: the
-tool's rewrite of the **Task Staging** document. It
-produces no source diff of its own.
+commits or pushes. Its only writes are to Linear: the
+overlap `blocks` relations the tool materializes and its
+rewrite of the **Task Staging** document. It produces no
+source diff of its own.
 
 ## Steps
 
 **1. Preview the current plan.** Run the tool in dry-run
-to see the tree it would write and the missing-`Touches:`
-warnings:
+to see the tree it would write, the overlap edges it
+*would* file, and the missing-`Touches:` warnings:
 
 ```sh
-make stage-backlog ARGS=--dry-run
+python3 tools/stage-backlog/stage_backlog.py --dry-run
 ```
 
-The warnings (on stderr) name every open issue with no
-`**Touches**:` field, and flag any blocker **cycle** the
-render had to break at its lowest-numbered member; the
-stdout tree shows the grouping. Read both before deciding
-whether anything needs the one manual touch.
+The stderr output names every open issue with no
+`**Touches**:` field, prints a `would file:` line for each
+overlap edge a real run would materialize, and flags any
+blocker **cycle** the render had to break at its
+lowest-numbered member; the stdout tree shows the
+grouping. Read all of it before deciding whether anything
+needs the one manual touch.
 
 **2. Backfill missing `Touches:` (optional).** For each
 issue the dry-run flagged as missing `**Touches**:`, add
@@ -163,10 +181,11 @@ parent only. Skip this step when nothing is flagged.
 (no `--dry-run`):
 
 ```sh
-make stage-backlog
+python3 tools/stage-backlog/stage_backlog.py
 ```
 
-It reads the Backlog, builds the deterministic tree, and
+It reads the Backlog, files any overlap edges, builds the
+deterministic tree, and
 rewrites the **Task Staging** document in full (idempotent
 — never appended to, so it never stacks duplicates).
 **Open issues only**: a closed / resolved issue (Done /
@@ -191,35 +210,41 @@ re-invokes immediately (no timer, no wait).
 
 - **The chips-only format.** Below the tally (next bullet),
   the document is bare
-  `ENG-###` tags nested by blocker, under `# Skills`,
+  `ENG-###` tags nested by blocker, under `# Claude`,
   `# ENG-###` parent headings, and `# Standalone` — **no**
   per-issue summary, file globs, or merge notes, **no**
   preamble or legend, and **no** "Wave N" / "start now"
   labels. The chip renders the issue's live title and
   status; the nesting is the ordering. The only inline
-  annotation is a trailing `(after ENG-###)` /
-  `(also after ENG-###)` for a blocker the tree can't
-  show.
+  annotation is a trailing bare-tag list
+  `(ENG-X, ENG-Y)` — the issue's direct live blockers the
+  nesting can't otherwise show (a cross-heading or sibling
+  blocker, or a live external one), sorted by number.
 - **The `# Most blocking` tally.** The document opens with
   a `# Most blocking` section ranking every issue that
   blocks at least one other by **how many** it blocks
   (descending, ties broken by lowest `ENG-###` first), as
   `- ENG-### — blocks <n> issues`. It tells you which
   issue to start on first — the one at the top unblocks
-  the most downstream work. The count is **direct** (the
-  number of issues that list it as a blocker, declared or
-  file-overlap), so it matches the `(after …)` edges the
-  tree shows and stays meaningful inside a blocker cycle.
-  The section is omitted entirely when nothing blocks
-  anything.
-- **Relations are read, honoured, and preserved — never
-  manufactured.** The tool treats a declared `blockedBy`
-  / `blocks` edge as authoritative input to the tree, but
-  never writes the *inferred* file-overlap nesting back as
-  a relation — that's a scheduling artifact, not a true
-  dependency. The durable record of real dependencies is
-  what the filing skills (`linear-task`, `audit-scope`,
-  `audit`) set at file time.
+  the most downstream work. The count is **transitive**
+  (A blocks B and B blocks C ⇒ A blocks 2), computed with
+  a visited set so a blocker cycle terminates and no issue
+  counts itself; the node set includes live external
+  blockers, so an In-Progress issue gating a Backlog chain
+  ranks too. The section is omitted entirely when nothing
+  blocks anything.
+- **Edges are authoritative; an overlap collision is
+  materialized into one.** The tool treats a declared
+  `blockedBy` / `blocks` edge as authoritative input to
+  the tree. A `**Touches**:` collision between two Backlog
+  issues with **no** declared edge either direction is
+  turned into a real `blocks` relation (lower number
+  blocks higher) — a genuine Linear write, so the staged
+  tree and Linear agree and the constraint is durable
+  rather than re-inferred each run. The filing skills
+  (`linear-task`, `audit-scope`, `audit`) still set the
+  real semantic dependencies at file time; this only fills
+  the gap for an undeclared same-file collision.
 - **No issue folding.** The tool renders the Backlog as it
   finds it; it never merges or closes issues. Two issues
   that belong in one PR render as nested serial chips, not

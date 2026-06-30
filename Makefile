@@ -17,10 +17,10 @@
 .PHONY: sdk
 .PHONY: sdk-test
 .PHONY: session-metrics
-.PHONY: stage-backlog
 .PHONY: teardown
 .PHONY: test
 .PHONY: test-no-teardown
+.PHONY: tools-tests
 .PHONY: tui
 .PHONY: wasm
 
@@ -167,18 +167,14 @@ lint:
 session-metrics:
 	python3 .claude/tools/session_metrics.py --session-id $(SESSION) $(ARGS)
 
-# Render the Linear Backlog as the Task Staging dependency tree (the
-# deterministic core of the stage-backlog skill — a stdlib-only Python tool).
-# Resolves LINEAR_API_KEY, LINEAR_PROJECT_ID, and LINEAR_TASK_STAGING_DOC_ID
-# from the environment. Pass ARGS=--dry-run to print the tree to stdout without
-# writing the doc: `make stage-backlog ARGS=--dry-run`.
-stage-backlog:
-	python3 tools/stage-backlog/stage_backlog.py $(ARGS)
-
-# Run the stage-backlog tool's unit tests (Python unittest, no third-party dep).
-.PHONY: stage-backlog-test
-stage-backlog-test:
-	python3 -m unittest discover -s tools/stage-backlog -t tools/stage-backlog
+# Run every Python skill-tool's unit tests (stdlib `unittest`, no third-party
+# dep). Covers both tool homes: the `tools/` deterministic skill cores and the
+# `.claude/tools/` skill helpers. Each tool dir is its own discovery root
+# because `tools/stage-backlog` is a hyphenated, non-package directory that a
+# single top-level `discover -s tools` can't import. Run in CI's lint job.
+tools-tests:
+	python3 -m unittest discover -s tools/stage-backlog -p 'test_*.py'
+	python3 -m unittest discover -s .claude/tools -p 'test_*.py'
 
 # Materialize the program keypair into the (git-ignored) build dir from
 # its canonical home, keys/AAAA.json, so anchor's build-time program-ID

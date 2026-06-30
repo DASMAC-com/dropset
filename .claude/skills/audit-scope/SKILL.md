@@ -220,6 +220,14 @@ Optional (ask on a direct run if not provided):
      )
      ```
 
+     **Meta-work prefix.** If the finding's `**Touches**:`
+     sit entirely under the meta surface (`.claude/**`,
+     `CLAUDE.md`, `docs/conventions/**`, `tools/**`),
+     prepend the **`Claude:`** token to the title —
+     `Claude: <file>: <imperative fix>` — per `CLAUDE.md` →
+     "Claude: meta-work prefix". A finding touching product
+     / on-chain / SDK / frontend code gets no prefix.
+
      **Dependencies.** Set a `blockedBy` / `blocks`
      edge per the **Blocking relations** brief in
      `CLAUDE.md` (→ "Linear automation") — as an
