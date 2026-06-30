@@ -226,11 +226,12 @@ Owned by the aggregator (§6), each carries its own watermark:
   (raw **and** self-trade-adjusted — never silently netted, per
   §1 "volume integrity"), and `reserve_in_usd` once a price feed
   lands (open: h).
-- **`vault_inventory`** — latest `(base_atoms_after, quote_atoms_after,
-  nonce_after)` per vault, for TVL and the book/depth endpoint. Live
-  book depth is reconstructed from `LiquidityProfile` account state,
-  not from events (the hot path emits nothing) — so this table feeds
-  TVL and history, while best-bid/ask comes from an account read.
+- **`vault_inventory`** — per vault, the latest
+  `(base_atoms_after, quote_atoms_after, nonce_after)`, for TVL and the
+  book/depth endpoint. Live book depth is reconstructed from
+  `LiquidityProfile` account state, not from events (the hot path emits
+  nothing) — so this table feeds TVL and history, while best-bid/ask
+  comes from an account read.
 
 A candle / OHLCV table is the obvious next rollup (the idempotent
 `ON CONFLICT … DO UPDATE` candlestick fold is the template:
@@ -244,11 +245,12 @@ ______________________________________________________________________
 
 A **watermarked worker**, not database triggers — the standard shape
 for event-indexer aggregation. The worker advances a persisted cursor
-over the raw tables (the last processed `(slot, txn_index,
-event_ordinal)`) inside a `repeatable read` transaction, folds new legs
-into the Tier-2 tables with idempotent upserts, then advances the
-watermark. A separate `aggregated_events` ledger records which legs
-have been folded, so a re-run never double-counts a fill.
+over the raw tables (the last processed
+`(slot, txn_index, event_ordinal)`) inside a `repeatable read`
+transaction, folds new legs into the Tier-2 tables with idempotent
+upserts, then advances the watermark. A separate `aggregated_events`
+ledger records which legs have been folded, so a re-run never
+double-counts a fill.
 
 The **per-leg → take** grouping is the load-bearing case: group the
 raw `fill_events` of one transaction by `(signature, txn_index)`, sum
