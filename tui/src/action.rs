@@ -38,6 +38,10 @@ use std::sync::{Arc, Mutex};
 /// reshape" distinction live: [`Action::RepegUp`] / [`Action::RepegDown`] move
 /// the whole ladder (`set_reference_price`), while the reshape actions change
 /// the ladder's shape at a fixed peg (`set_liquidity_profile`).
+///
+/// Both compete with a running maker bot, which re-quotes every tick and
+/// overwrites a manual nudge within ~1s — stop the market's bot (`s` / `x`)
+/// for a stable on-stage demo.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     Deploy,
