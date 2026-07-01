@@ -71,11 +71,11 @@ repos:
   - id: 'checkmake'
   repo: 'https://github.com/checkmake/checkmake.git'
   rev: 'v0.3.2'
-# checkmake and hadolint lint Makefile / Dockerfile structure, not line
-# width. This local pygrep hook enforces the same 80-column limit the docs
-# follow (MD013) across both, failing on any line over 80 chars (a leading
-# recipe tab counts as one column). Wrap with `\` continuations, as the
-# existing multi-line recipes and Dockerfile `COPY`s do.
+# checkmake lints Makefile structure and hadolint lints Dockerfile structure,
+# but neither checks line width. This local pygrep hook enforces the same
+# 80-column limit the docs follow (MD013) across both, failing on any line over
+# 80 chars (a leading recipe tab counts as one column). Wrap with `\`
+# continuations, as the existing multi-line recipes and Dockerfile `COPY`s do.
 - hooks:
   - entry: '^.{81,}$'
     files: '(^|/)(Makefile|.*\.mk|Dockerfile|.*\.Dockerfile)$'
