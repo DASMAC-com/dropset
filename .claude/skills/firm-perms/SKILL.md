@@ -341,6 +341,19 @@ below.
    stop the prompt. Set these aside for the summary
    instead (see the intro).
 
+   **Gate the dual read on this harvest.** If the working
+   set is **empty** after harvesting — no permission prompt
+   fired this session (and no fragment / pasted block was
+   supplied) — there is nothing to firm: report "nothing to
+   firm" and **stop here, without reading either allowlist**.
+   Both `settings.local.json` copies are ≈244 entries
+   (≈5.2k each), and reading them to union-and-diff is pure
+   overhead when the mature allowlist already covered every
+   command this session (the common case — seven of seven
+   sampled review sessions firmed nothing). Only when the
+   harvest yields **≥1** new / uncovered rule is the dual
+   read below worth its cost.
+
 1. **Read both allowlists** with the Read tool (per the
    CLAUDE.md shell conventions — never shell out to
    `jq`/`node`/`python` to read or edit JSON):

@@ -7,8 +7,9 @@ reading the diff, watching checks, pulling failing-job logs — go
 through the **GitHub MCP server** (`mcp__github__*`), not the `gh`
 CLI, **with the deliberate exceptions below**. The skills (`init-pr`,
 `pr-title-description`, `review-pr`, `housekeeping`, `linear-task`)
-are written against it. `gh` survives in four places — two in
-`review-pr`, one in `init-pr`, one in `pr-title-description`:
+are written against it. `gh` survives in five places — two in
+`review-pr`, one in `init-pr`, and the field-selected `gh pr list`
+read shared by `pr-title-description` and `housekeeping`:
 
 - **The merge-queue handoff** — the enqueue (a `gh pr merge --auto`
   write, **no** strategy flag: this repo's merge queue sets the
@@ -57,16 +58,22 @@ are written against it. `gh` survives in four places — two in
   Bash(gh api --method PUT /repos/DASMAC-com/dropset/issues/*/subscription:*)
   ```
 
-- **The recent-merged-PR style lookup** (`pr-title-description`) — a
-  one-shot `gh pr list --json number,title,body --state merged --limit 3`
-  to read the last few merged PRs' bodies for style. `gh` has a
-  `merged` state filter the MCP `list_pull_requests` lacks **and**
-  returns the `body` in the same call, so it replaces a list-every-closed-PR
-  call (~104k tokens of full bodies, replayed every later turn — see
-  [context economy](context-economy.md)) *plus* a per-PR
-  `pull_request_read` body fetch with one field-selected read. `--json`
-  is a flag, not a pipe, so it reduces to a `Bash(gh pr list:*)`
-  allow-rule (a routine, low-blast-radius read).
+- **The field-selected `gh pr list --json` read** (`pr-title-description`
+  and `housekeeping`) — `gh` has a `merged` state filter the MCP
+  `list_pull_requests` lacks **and** selects only the fields the
+  decision needs, so one field-selected read replaces a
+  list-every-closed-PR call (~104k tokens of full bodies, replayed
+  every later turn — see [context economy](context-economy.md)) *plus*
+  the per-PR body fetches it would otherwise need. `pr-title-description`
+  uses `gh pr list --json number,title,body --state merged --limit 3`
+  to read the last few merged PRs' bodies for style;
+  `housekeeping`'s worktree-prune uses `gh pr list --state merged`
+  selecting only `number,headRefName,mergedAt` (with `--limit 100`)
+  **once** to learn which worktree branches merged, in place of one
+  full-body `list_pull_requests` per branch. `--json` is a flag, not a
+  pipe, so
+  both reduce to the `Bash(gh pr list:*)` allow-rule (a routine,
+  low-blast-radius read).
 
 Everything else stays MCP-first; `gh` is not a general-purpose escape
 hatch.
@@ -127,8 +134,8 @@ writes to confirm-on-use:
   `Bash(gh pr checks:*)`, `Bash(gh pr view:*)`,
   `Bash(gh api graphql:*)`, and `Bash(gh pr list:*)` — the polled /
   field-selected reads
-  `review-pr` and `pr-title-description` use in place of the
-  full-object MCP calls (see "GitHub
+  `review-pr`, `pr-title-description`, and `housekeeping` use in place
+  of the full-object MCP calls (see "GitHub
   via MCP" above and [context economy](context-economy.md)). These are
   Bash globs, not `mcp__github__*` entries, but they're pre-approved on
   the same rationale (routine, low-blast-radius reads) and propagated to
