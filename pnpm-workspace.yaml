@@ -6,6 +6,7 @@ onlyBuiltDependencies:
 - 'sharp'
 packages:
 - 'frontend'
+- 'decks'
 - 'sdk/ts'
 - 'sdk/codama'
 ...
