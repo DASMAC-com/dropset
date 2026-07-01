@@ -833,7 +833,7 @@ impl Swap {
 }
 
 #[cfg(test)]
-mod overflow_bound_tests {
+mod tests {
     //! Pin the invariant that makes `compute_fill`'s two `u128`→`u64`
     //! `MathOverflow` guards (WARNING 1d) unreachable.
     //!
@@ -857,8 +857,7 @@ mod overflow_bound_tests {
     //! hardening review suspected could overflow — a tiny-price `Sell`
     //! with the taker's base budget at `u64::MAX` — and shows it doesn't.
 
-    use super::SwapSide;
-    use crate::Price;
+    use super::*;
 
     /// Valid prices spanning the full exponent range, chosen to stress
     /// both the tiny-price direction (base blows up on `base_for_quote`)
