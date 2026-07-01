@@ -462,7 +462,7 @@ impl App {
     }
 
     /// Leave input mode, applying the typed buffer to `swap_quote_units` when it
-    /// is a positive integer — an empty, zero, or unparseable buffer is rejected
+    /// is a positive integer — an empty, zero, or non-numeric buffer is rejected
     /// and the current amount kept.
     fn commit_amount_input(&mut self) {
         let buf = self.amount_input.take().unwrap_or_default();

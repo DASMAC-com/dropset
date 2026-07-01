@@ -73,14 +73,14 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
     draw_log(f, app, log);
 
     // While the taker is typing a swap amount, the footer becomes the input
-    // prompt; otherwise it shows the keybind help.
+    // prompt; otherwise it shows the keybinds help.
     match &app.amount_input {
         Some(buf) => draw_amount_prompt(f, buf, footer),
         None => draw_help(f, footer),
     }
 }
 
-/// Render the keybind-help footer.
+/// Render the keybinds-help footer.
 fn draw_help(f: &mut Frame<'_>, area: Rect) {
     let help = Paragraph::new(vec![
         Line::from(
