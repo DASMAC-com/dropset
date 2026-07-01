@@ -41,39 +41,27 @@ takes `owner: "DASMAC-com"`, `repo: "dropset"`.
    `git log main..HEAD --oneline`.
 
 1. Fetch the 3 most recent merged PRs to match their
-   style. `list_pull_requests` has no "merged" filter, so
-   list **closed** PRs newest-first and take the first
-   three with a non-null `merged_at` (a closed-unmerged PR
-   has `merged_at: null`). **Cap the page with a small
-   `perPage`** — without it the call returns *every* closed
-   PR with full bodies (~104k tokens observed, replayed
-   every later turn), and only the result-size guard keeps
-   that out of context. A handful is plenty to find three
-   merged ones:
+   style — with a **field-selected `gh pr list`**, the one
+   place this skill uses `gh` over the MCP (a documented
+   exception, per `CLAUDE.md` → "GitHub via MCP"):
 
-   ```txt
-   mcp__github__list_pull_requests(
-     owner: "DASMAC-com",
-     repo: "dropset",
-     state: "closed",
-     sort: "updated",
-     direction: "desc",
-     perPage: 8,
-   )
+   ```sh
+   gh pr list --json number,title,body --state merged --limit 3
    ```
 
-   The list response gives each PR's `number` and `title`
-   but **not** its `body`, so fetch the body for each of
-   the three with `pull_request_read` (`method: "get"`):
-
-   ```txt
-   mcp__github__pull_request_read(
-     owner: "DASMAC-com",
-     repo: "dropset",
-     pullNumber: <number>,
-     method: "get",
-   )
-   ```
+   This is strictly better than the MCP `list_pull_requests`
+   here on both counts that bit before: `gh` has a `merged`
+   state filter the MCP lacks (so no listing *every* closed
+   PR and filtering on `merged_at` by hand), and `--json`
+   returns the `body` in the **same** call (so no per-PR
+   `pull_request_read` follow-up). The MCP path returned
+   *every* closed PR with full bodies — ~104k tokens
+   observed, replayed every later turn (per `CLAUDE.md` →
+   "Context economy"); field-selecting three merged PRs'
+   `number` / `title` / `body` is all the style lookup needs.
+   `--json` is a command **flag**, not a shell pipe, so it
+   stays shell-rule-clean and reduces to a
+   `Bash(gh pr list:*)` allow-rule.
 
 1. Write the PR title using the **Semantic PR /
    Conventional Commits** format:

@@ -1,6 +1,6 @@
 ---
 name: housekeeping
-description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, prune the worktrees of already-merged PRs and dismiss their stale GitHub notifications, drain the Linear Permissions inbox doc via firm-perms (propose-only), mine the Session Metrics inbox via trim-context (propose-only), restage the backlog, then — only when given the `audit` flag (`/housekeeping audit`) — run one finite `/audit` rotation inline and exit; with no flag the audit is skipped. The cspell dictionary check is opt-in (pass `cspell`) and off by default. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
+description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, prune the worktrees of already-merged PRs and dismiss their stale GitHub notifications, mine the Session Metrics inbox via trim-context (one aggregated propose-only task), restage the backlog, then — only when given the `audit` flag (`/housekeeping audit`) — run one finite `/audit` rotation inline and exit; with no flag the audit is skipped. The cspell dictionary check is opt-in (pass `cspell`) and off by default. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -20,14 +20,10 @@ committed skills, then:
 1. **Prune merged worktrees** — remove the local
    worktree (and branch) of every PR that has
    already merged.
-1. **Drain the Permissions inbox** — invoke
-   `firm-perms` in **propose-only** mode against the
-   Linear Permissions doc, so each captured prompt gets
-   a recommended disposition (and malformed ones a
-   source-fix task) without writing settings unattended.
 1. **Mine the Session Metrics inbox** — delegate to
-   `trim-context`, which files **propose-only**
-   skill-improvement tasks for the trim patterns that
+   `trim-context`, which files a **single aggregated
+   propose-only** skill-improvement task (one bullet per
+   recurring trim lever) for the trim patterns that
    recur across sessions, never editing a skill itself.
 1. **Check convention references** — flag any skill that
    points at a `CLAUDE.md` section or `docs/conventions/`
@@ -67,7 +63,7 @@ order:
 - **The `audit` flag** — when the invocation includes
   `audit` (e.g. `housekeeping audit`), the pass runs one
   finite `/audit` rotation inline after the upkeep
-  (step 10); without it the audit is **skipped** entirely
+  (step 9); without it the audit is **skipped** entirely
   and the pass exits after the upkeep. So
   `/housekeeping audit` does upkeep then one audit
   rotation, while a bare `/housekeeping` does upkeep only.
@@ -95,11 +91,10 @@ wrong place.
 It is safe to run repeatedly and makes **no source
 edits** of its own: its only writes are removing
 merged worktrees, filing / staging Linear issues, and
-annotating the Linear Permissions and Session Metrics
-docs with recommended dispositions (it never writes
-`settings.local.json` and never edits a skill
+annotating the Linear Session Metrics doc with
+recommended dispositions (it never edits a skill
 unattended). When given the `audit` flag, its last step
-runs one `/audit` rotation (step 10), but housekeeping
+runs one `/audit` rotation (step 9), but housekeeping
 itself makes no source edit — the rotation only files
 Linear issues.
 
@@ -120,8 +115,8 @@ clean up on demand.
 
 ## Linear destination
 
-Steps 3–7 file and stage Backlog issues and drain the
-Permissions and Session Metrics docs, so they use the
+Steps 3–6 file and stage Backlog issues and mine the
+Session Metrics doc, so they use the
 same env-resolved Linear destination as `linear-task` /
 `stage-backlog`. Resolve each variable with its **own**
 bare `printenv` (one `Bash(printenv:*)` allow-rule
@@ -133,16 +128,13 @@ printenv LINEAR_TEAM_ID
 printenv LINEAR_PROJECT_ID
 printenv LINEAR_ASSIGNEE_ID
 printenv LINEAR_TASK_STAGING_DOC_ID
-printenv LINEAR_PERMISSIONS_DOC_ID
 printenv LINEAR_SESSION_METRICS_DOC_ID
 ```
 
 If any is empty, skip the step that needs it and say
-so; don't guess an id. (`firm-perms` resolves
-`LINEAR_PERMISSIONS_DOC_ID` itself in step 4, and
-`trim-context` resolves `LINEAR_SESSION_METRICS_DOC_ID`
-itself in step 5; both are listed here only so the whole
-set lives in one place.)
+so; don't guess an id. (`trim-context` resolves
+`LINEAR_SESSION_METRICS_DOC_ID` itself in step 4; it's
+listed here only so the whole set lives in one place.)
 
 ## Steps
 
@@ -355,31 +347,18 @@ keeps this pass non-editing and lets the fix land in
 a normal PR. (To fix it directly instead, run
 `cspell-audit` on its own; that's its default mode.)
 
-**4. Drain the Permissions inbox.** Invoke the
-`firm-perms` skill (via the Skill tool) in
-**propose-only** mode against the Linear Permissions
-doc — pass it `doc propose-only`. It resolves
-`LINEAR_PERMISSIONS_DOC_ID` itself, reads the doc
-live, adjudicates each unchecked entry, annotates it
-with the rule it *recommends* firming (or files a
-source-fix task for a malformed one), and writes those
-notes back into the doc. Because this pass is
-unattended, `firm-perms` in this mode **never writes
-`settings.local.json` and never ticks a checkbox** —
-it only proposes. The actual firming is left for an
-attended `/firm-perms doc` run. If
-`LINEAR_PERMISSIONS_DOC_ID` is unset, `firm-perms`
-says so and this step is a no-op.
-
-**5. Mine the Session Metrics inbox.** Invoke the
+**4. Mine the Session Metrics inbox.** Invoke the
 `trim-context` skill (via the Skill tool) — the consumer
 half of the `session-metrics` producer. It resolves
 `LINEAR_SESSION_METRICS_DOC_ID` itself, reads the doc
 live, synthesizes the trim levers that **recur** across
-the unprocessed entries, files one **propose-only**
-skill-improvement Backlog task per distinct lever (each
-with a `**Touches**:` + `**Fingerprint**:` line, deduped
-against the open Backlog), and writes each consumed
+the unprocessed entries, files a **single aggregated
+propose-only** skill-improvement Backlog task — one
+bullet per distinct lever, each with its own
+`**Fingerprint**:` line under a combined `**Touches**:`,
+deduped against the open Backlog and **appended** to the
+open aggregated task rather than opening a second — and
+writes each consumed
 entry's disposition back into the doc. `trim-context` has
 **no** attended / propose-only split — filing a task *is*
 the proposal, so it never edits a skill or convention
@@ -390,7 +369,7 @@ this step **inherits** it through the delegation — don't
 re-implement it here. If `LINEAR_SESSION_METRICS_DOC_ID`
 is unset, `trim-context` says so and this step is a no-op.
 
-**6. Check the convention ↔ skill reference sync.**
+**5. Check the convention ↔ skill reference sync.**
 `CLAUDE.md` is the **index**; the full operating
 conventions live in `docs/conventions/**`, and the skills
 reference both. A moved section or renamed doc can leave a
@@ -409,7 +388,7 @@ freshness lens does on the PR path — here, periodically.
   `CLAUDE.md` section heading that no longer exists, or a
   `docs/conventions/<file>.md` path that isn't present.
 - **File propose-only**, to the same env-resolved
-  destination as steps 4–5 (`save_issue`,
+  destination as step 4 (`save_issue`,
   `state: "Backlog"`, priority 3), one aggregated task per
   pass listing each dangling reference and its fix, with a
   `**Fingerprint**: convention-ref:<skill>:<target>` line
@@ -422,10 +401,10 @@ freshness lens does on the PR path — here, periodically.
   lands later through a normal PR. If everything resolves,
   file nothing and note "in sync" in the report.
 
-**7. Restage the backlog.** Invoke the
+**6. Restage the backlog.** Invoke the
 `stage-backlog` skill (via the Skill tool) to rewrite
 the Task Staging document from the current open
-Backlog — including anything steps 3–6 just filed. The
+Backlog — including anything steps 3–5 just filed. The
 deterministic Python tool does all the work (read →
 render → write); this skill just triggers it. This
 **full** re-stage is the authoritative reconcile, run
@@ -433,11 +412,11 @@ fresh from the live Backlog each morning — it subsumes
 the re-stage a previous `/audit` rotation already ran at
 its end.
 
-**8. Flag `Claude:` meta-work batching drift.** The
+**7. Flag `Claude:` meta-work batching drift.** The
 `Claude:` title prefix (see `CLAUDE.md` →
 "Claude: meta-work prefix") is the deterministic batch
 signal that groups agent-infra work apart from product
-code; the re-stage in step 7 runs the deterministic
+code; the re-stage in step 6 runs the deterministic
 **prefix↔touched-paths consistency check** and prints a
 warning for each mismatch it finds — a `Claude:`-prefixed
 issue whose `**Touches**:` reach **outside** the meta
@@ -447,24 +426,24 @@ with **no** `Claude:` prefix. For each flagged issue, ask
 via **`AskUserQuestion`** how to resolve it — add or drop
 the prefix, or fix the `**Touches**:` line — and apply
 only the human's choice with a `save_issue`; **never**
-auto-retitle or auto-merge. If step 7 flagged nothing, this
+auto-retitle or auto-merge. If step 6 flagged nothing, this
 is a no-op. (In an unattended pass with no one to answer,
 skip the prompt and leave the warnings for the next
 attended pass.)
 
-**9. Offer a session-metrics run.** The morning pass both
-*mines* the Session Metrics inbox (step 5) and can
+**8. Offer a session-metrics run.** The morning pass both
+*mines* the Session Metrics inbox (step 4) and can
 *contribute* to it: offer, via **`AskUserQuestion`** with
 the recommended default **first**, to run `/session-metrics`
 for the **current** session so this pass also appends a
 fresh measured entry (the producer side of the loop).
 Run it only on an explicit yes. Because a `session-metrics`
 run **appends** a new unprocessed entry, this offer comes
-*after* step 5's mine-and-clear, so the clear in step 5 is
+*after* step 4's mine-and-clear, so the clear in step 4 is
 evaluated against the inbox state before this append. (In
 an unattended pass with no one to answer, skip the offer.)
 
-**10. Run one audit rotation (only when the `audit` flag was
+**9. Run one audit rotation (only when the `audit` flag was
 passed).** The morning's last act: with upkeep done, the
 **`audit` flag decides whether to run a rotation** —
 passing it *is* the go-ahead, so there is no separate
@@ -491,9 +470,9 @@ single bounded rotation, not a continuous campaign — it
 files what its seven units surface and stops. To audit
 again, run `housekeeping audit` (or `/audit`) again. The
 rotation re-stages the Task Staging document once at its
-end; the next pass's step 7 is the full reconcile.
+end; the next pass's step 6 is the full reconcile.
 
-**11. Report.** Print a short summary:
+**10. Report.** Print a short summary:
 
 - `main`: fast-forwarded to the latest, or left at its
   current commit (with the reason) if the pull couldn't
@@ -511,14 +490,12 @@ end; the next pass's step 7 is the full reconcile.
   (dictionary words to move and files whose escapes need
   regrouping), and any skipped as already-open duplicates;
   or that no drift was found.
-- Permissions inbox: entries annotated with a
-  recommended firm, source-fix tasks filed (with their
-  ENG-###), and any skipped as already-handled — or
-  why the step was skipped (e.g. a missing env var).
-- Session Metrics inbox: skill-improvement tasks filed
-  (with their ENG-###) for the recurring trim levers,
-  how many session entries were consumed, and any skipped
-  as already-handled — or why the step was skipped (e.g.
+- Session Metrics inbox: the aggregated skill-improvement
+  task — whether new levers were filed into a fresh one or
+  appended to the open one (with its ENG-###), and how many
+  levers — for the recurring trim patterns, how many session
+  entries were consumed, and any levers skipped as
+  already-handled — or why the step was skipped (e.g.
   a missing env var).
 - Convention references: in sync, or the dangling
   `CLAUDE.md` / `docs/conventions/` references filed
@@ -526,7 +503,7 @@ end; the next pass's step 7 is the full reconcile.
 - Backlog staging: that `stage-backlog` ran, or why
   it was skipped (e.g. a missing env var).
 - Meta-work batching: any `Claude:` prefix↔`**Touches**:`
-  mismatches step 7 flagged and how each was resolved (or
+  mismatches step 6 flagged and how each was resolved (or
   that none were flagged, or the prompt was skipped in an
   unattended pass).
 - Session metrics run: whether a `/session-metrics` run

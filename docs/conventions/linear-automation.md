@@ -16,9 +16,6 @@ export LINEAR_PROJECT_ID=…
 export LINEAR_ASSIGNEE_ID=…
 # Used only by stage-backlog — the "Task Staging" document:
 export LINEAR_TASK_STAGING_DOC_ID=…
-# Used only by firm-perms (and housekeeping, which calls it) —
-# the "Permissions" inbox document it drains:
-export LINEAR_PERMISSIONS_DOC_ID=…
 # Used by session-metrics (producer) and housekeeping (consumer) —
 # the "Session Metrics" inbox document one appends to and the other
 # mines into propose-only skill-improvement tasks:
@@ -49,12 +46,6 @@ UUIDs out of every committed file.
 Staging" document) — with its own bare `printenv`, on the same rule.
 It is not a filing destination, so the other skills don't need it.
 
-`firm-perms` likewise resolves `LINEAR_PERMISSIONS_DOC_ID` — the id
-of the "Permissions" inbox document it drains in its `doc` mode (and
-that `housekeeping` drains via `firm-perms` each pass) — with its own
-bare `printenv`, on the same rule. It too is not a filing
-destination.
-
 `session-metrics`, `trim-context`, and `housekeeping` share
 `LINEAR_SESSION_METRICS_DOC_ID` — the id of the "Session Metrics"
 inbox document — each resolving it with its own bare `printenv`, on
@@ -62,9 +53,13 @@ the same rule. `session-metrics` is the **producer**: it appends one
 dated entry per session (the measured token sinks plus tailored trim
 recommendations). `trim-context` is the **consumer**: it mines the
 unprocessed entries for the trim levers that recur across sessions and
-files them as propose-only skill-improvement Backlog tasks (never
-editing a skill itself), then writes each consumed entry's disposition
-back. `housekeeping` drives `trim-context` as its Session Metrics step,
+files them as a **single aggregated** propose-only skill-improvement
+Backlog task — one bullet per lever, each carrying its own
+`**Fingerprint**:` line under a combined `**Touches**:` — so a mining
+pass yields one issue (one PR) rather than a batch to consolidate
+later, never editing a skill itself, then writes each consumed entry's
+disposition back. `housekeeping` drives `trim-context` as its Session
+Metrics step,
 and the skill also runs standalone. Each no-ops with a clear message
 when the variable is unset. The `session-metrics` skill
 drives its tool via `make session-metrics`, which reduces to a

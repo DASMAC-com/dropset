@@ -1,6 +1,6 @@
 ---
 name: firm-perms
-description: Generalize the local permission allowlist into reusable globs — Bash commands and file-access/`Read` paths alike. The low-friction default is the fast path: right after you one-time-approve a prompt, a bare `/firm-perms` (or `/firm-perms this`) firms just that one command into this worktree's and the base repo's settings immediately — no sweep, no confirm gate. Otherwise it runs the full sweep — harvest everything you approved this session (or a pasted block of permission strings, or the Linear "Permissions" inbox doc) and propagate it to this worktree's settings and the base repo (so future worktrees inherit it too). Use the fast path after an approval, the full sweep at the end of a session or during a review-pr run that piled up per-worktree or per-arg approvals, with a pasted permissions block, or pass `doc` to drain the Linear Permissions inbox.
+description: Generalize the local permission allowlist into reusable globs — Bash commands and file-access/`Read` paths alike. The low-friction default is the fast path: right after you one-time-approve a prompt, a bare `/firm-perms` (or `/firm-perms this`) firms just that one command into this worktree's and the base repo's settings immediately — no sweep, no confirm gate. Otherwise it runs the full sweep — harvest everything you approved this session (or a pasted block of permission strings) and propagate it to this worktree's settings and the base repo (so future worktrees inherit it too). Use the fast path after an approval, the full sweep at the end of a session or during a review-pr run that piled up per-worktree or per-arg approvals, or with a pasted permissions block.
 user-invocable: true
 ---
 
@@ -101,8 +101,7 @@ Optional, and accepts these shapes:
   permission prompt just surfaced, often under a
   `# Permissions` heading or in a fenced block. This is
   the "memorialize these so I stop being asked"
-  entry-point (you can drop such a block straight into a
-  Linear task and run `/firm-perms` against it). Treat
+  entry-point. Treat
   **each line** as a session approval to fold in: derive
   the generalized rule it *should* have been (per the
   generalization rules below) and add it to the working
@@ -132,19 +131,6 @@ Optional, and accepts these shapes:
   Then run the normal generalize / dedupe / propose /
   write flow over the lines that can be firmed and the
   whole array.
-
-- **The Linear "Permissions" doc** (pass `doc`, or run
-  by `housekeeping`) — drain the user's living
-  **Permissions** inbox document, where they dump
-  permission prompts as they fire across sessions.
-  Each unchecked `- [ ]` entry holds a captured prompt
-  block; adjudicate the command it contains, firm it or
-  file a source-fix task, and record the disposition
-  back into the doc. This mode reuses the same
-  generalization and adjudication rules but sources its
-  commands from the doc instead of the session and
-  writes its results back into it — see **Draining the
-  Linear Permissions doc** below.
 
 ## Generalization rules
 
@@ -231,10 +217,10 @@ them by context:
   confirm gate. See **Fast path** immediately below.
 - **Full sweep** — every other invocation: a bare
   `/firm-perms` when the previous turn was *not* an
-  approval, a fragment given for general cleanup, a
-  pasted permissions block, or `doc`. It harvests the
-  whole session (or the given source) and runs the
-  propose-then-confirm flow. See **Full sweep** below.
+  approval, a fragment given for general cleanup, or a
+  pasted permissions block. It harvests the whole session
+  (or the given source) and runs the propose-then-confirm
+  flow. See **Full sweep** below.
 
 ### Fast path (firm the just-approved command)
 
@@ -303,8 +289,8 @@ gate unchanged.
 ### Full sweep
 
 The remaining modes — no-arg full harvest, fragment,
-pasted block, and `doc` — run the harvest-and-propose
-flow below.
+and pasted block — run the harvest-and-propose flow
+below.
 
 1. **Find the base repo.** List worktrees and read
    the path out of the output yourself (no command
@@ -427,250 +413,3 @@ flow below.
    (heredoc, `cd … &&`, `python3`/`jq` one-liner) and
    point at its source so the author stops emitting it,
    rather than allow-listing it.
-
-## Draining the Linear Permissions doc
-
-The user keeps a living **Permissions** document in
-Linear — an inbox where they dump permission prompts as
-they fire across multi-session work, under headings like
-`# /review-pr agents` and `# General/unknown`. Each
-prompt is captured as an unchecked `- [ ]` item whose
-body is a fenced block holding the command (and often
-the surrounding "Do you want to proceed?" chrome and
-the over-broad `2. Yes, and don't ask again for: git *`
-option the harness offered). This mode drains that
-inbox: it adjudicates each unchecked item with the
-**same** generalization rules and safety floor as
-every other mode, then records the disposition back
-into the doc.
-
-It runs in **two contexts**, which differ only in
-**autonomy** (what they're allowed to write), never in
-how they adjudicate:
-
-- **Attended** — you invoke `/firm-perms doc` yourself.
-  This may write `settings.local.json` (behind the
-  normal propose-then-confirm gate), tick the doc
-  checkboxes, and finalize the notes.
-- **Propose-only** — `housekeeping` invokes it
-  unattended on a timer. It **never writes settings**
-  and **never ticks a checkbox**. It only annotates
-  each unchecked item with the disposition it
-  *recommends*, and files source-fix tasks for
-  malformed entries. The actual settings write and
-  check-off are left for a later attended run. (This is
-  the deliberate autonomy bound: an unattended loop must
-  not silently widen the base-repo allowlist that seeds
-  every future worktree.)
-
-The mode is selected by the caller: `housekeeping`
-passes `doc propose-only`; a bare `doc` is attended.
-
-### Steps (doc mode)
-
-1. **Resolve the doc id from the environment**, on the
-   same bare-`printenv` rule as the other Linear ids
-   (one variable per call — never a combined
-   `printenv A B`):
-
-   ```sh
-   printenv LINEAR_PERMISSIONS_DOC_ID
-   ```
-
-   If it's empty, say so and stop — don't guess a doc
-   id.
-
-1. **Read the doc live, every pass.** Fetch it fresh
-   with `mcp__claude_ai_Linear__get_document` (id = the
-   resolved value). Never reuse a snapshot from an
-   earlier pass: the user adds entries quickly, so a
-   stale body would drop their newest items or clobber
-   their edits on write-back.
-
-1. **Find the work.** Collect every **unchecked**
-   (`- [ ]`) entry; ticked (`- [x]`) ones are already
-   disposed, so skip them. Then triage each unchecked
-   entry by the disposition note (if any) a prior pass
-   left under it — this is what makes the loop converge
-   instead of re-firming the same rules forever:
-
-   - **No disposition note** → fresh work; adjudicate it
-     below.
-   - **`✓ firmed: <rule>`** (an attended firm that the
-     user re-opened) → a **contest**; handle it per **The
-     contest protocol** below (attended reverts the
-     rule; propose-only skips).
-   - **`⚠ contested — reverted …`** → held for the user;
-     skip it until they edit the entry (see the contest
-     protocol).
-   - **`recommend firm: …`** or **`⚠ can't firm: …`** (a
-     prior propose-only recommendation) → an attended
-     run executes the recommendation (firm it / confirm
-     the filed task); propose-only skips it as already
-     handled.
-
-   For each entry you do adjudicate, extract the actual
-   command from its fenced block: ignore the prompt
-   chrome — the `Bash command` header, the description
-   line, the `Do you want to proceed?` prompt, and its
-   numbered menu — and the
-   `2. Yes, and don't ask again for: …` line — that
-   line shows the **over-broad** rule the harness
-   offered (often a bare-verb `git *`), which the safety
-   floor forbids; derive the correct narrow glob
-   yourself, don't copy it. Some entries are truncated
-   or garbled (e.g. a line starting `rs/alex/…`); if you
-   can't recover a runnable command, treat it as
-   malformed-unrecoverable and note that rather than
-   guessing.
-
-1. **Adjudicate each command** with the existing rules
-   — no new logic:
-
-   - **Reduces to a safe glob** → it's firmable. Derive
-     the generalized rule per the **Generalization
-     rules** above (collapse `worktrees/<tag>` to `*`,
-     `:*` the trailing args, keep the command +
-     subcommand literal, respect the safety floor — no
-     bare-verb wildcards).
-   - **Malformed** — a compound (`&&`, `;`), a pipe, a
-     `$(…)` substitution, a redirect, a heredoc, or an
-     `awk`/`sed`/`python3`/`jq` one-liner that should be
-     a Read/Grep/Glob tool call or a lint hook — **can't
-     be allow-listed** (a `*` can't rescue it, and the
-     harness re-validates each sub-command). It must be
-     fixed at the **source**. If a committed skill,
-     script, Makefile target, or sub-agent emits it,
-     **file a Linear task** to fix that source so the
-     prompt stops firing; if it was a one-off nobody
-     emits, there's nothing to fix — just record that.
-   - **Network- or mutation-capable verb** (e.g.
-     `gh api …`, which can `-X DELETE`) — even when it
-     reduces to a glob, do **not** auto-firm it in
-     propose-only mode. Flag it for the attended run to
-     decide, with a note on why it needs a human.
-
-1. **Apply the disposition — gated by autonomy:**
-
-   - **Attended (`doc`)**: fold the firmable rules into
-     the working set and run them through the normal
-     **propose → confirm → write-both-files** flow
-     (steps 5–6 above) — the base-repo write still waits
-     for your go-ahead. For malformed entries, file the
-     source-fix task (below). Then **write the doc back**
-     (next step): tick each disposed item and replace its
-     note.
-   - **Propose-only (`doc propose-only`, housekeeping)**:
-     do **not** touch `settings.local.json` and do
-     **not** tick any checkbox. For firmable entries,
-     annotate the item with the rule you *would* firm
-     and why. For malformed entries, file the source-fix
-     task (filing a task is proposing a fix, not widening
-     settings — it's allowed unattended). Leave the
-     checkbox unchecked so the attended run still sees it
-     as work, but skip any item that already carries a
-     disposition note — one whose nested line begins with
-     `recommend firm:`, `✓ firmed:`, `⚠ can't firm:`, or
-     `⚠ contested —` — so a 30-minute loop doesn't
-     re-annotate or re-file what it (or an attended run)
-     already handled. Match the actual lead markers the
-     write-back step emits, not a paraphrase, so the skip
-     reliably fires.
-
-1. **Filing a source-fix task** (malformed entries).
-   Use the same env-resolved destination as
-   `linear-task` / `housekeeping` (resolve each id with
-   its own bare `printenv` — `LINEAR_TEAM_ID`,
-   `LINEAR_PROJECT_ID`, `LINEAR_ASSIGNEE_ID`),
-   `state: "Backlog"`, priority 3, with a fingerprint
-   line so re-runs dedup. Before filing, list the open
-   Backlog and skip any issue already carrying the same
-   fingerprint:
-
-   ```txt
-   mcp__claude_ai_Linear__save_issue(
-     team: "<$LINEAR_TEAM_ID>",
-     project: "<$LINEAR_PROJECT_ID>",
-     assignee: "<$LINEAR_ASSIGNEE_ID>",
-     state: "Backlog",
-     title: "<source>: stop emitting <malformed pattern>",
-     description: "<the captured command + which CLAUDE.md
-       rule it breaks + the fix>\n\n**Fingerprint**:
-       perms-doc:<short-hash-or-slug>",
-     priority: 3,
-   )
-   ```
-
-1. **Write the disposition back into the doc.** There
-   is no per-line comment API on a Linear *document*, so
-   the record lives **inline in the body**: rewrite the
-   doc with `mcp__claude_ai_Linear__save_document` (id =
-   the resolved value), and for each disposed entry add
-   nested note lines indented under it. Keep the
-   captured block intact; just append the note and (when
-   attended) flip the checkbox:
-
-   ```md
-   - [x] git -C …/worktrees/eng-531 ls-files cfg
-     - ✓ firmed: `Bash(git -C …/worktrees/* ls-files:*)`
-     - reason: read-only `ls-files` on a sibling
-       worktree; tag collapsed to `*`, args to `:*`
-   ```
-
-   For a malformed entry:
-
-   ```md
-   - [x] ls /Users/alex/repos 2>/dev/null | grep -i drop
-     - ⚠ can't firm: pipe + redirect compound — filed
-       ENG-### to fix the stage-backlog cross-check
-       agent's brief (use Glob, not `ls | grep`)
-   ```
-
-   In **propose-only** mode the same notes are written
-   but the checkbox stays `- [ ]` and the lead marker is
-   `recommend firm:` rather than `✓ firmed:` (with the
-   recommended rule, e.g. `Bash(git -C …/worktrees/* diff:*)`).
-
-   **Diff against the live body before saving.** Build
-   the new body from the body you just fetched this pass,
-   changing only the lines you're disposing; never
-   reorder or rewrite the user's other content. If the
-   doc `updatedAt` is newer than when you fetched it
-   (someone edited mid-pass), re-fetch and rebuild rather
-   than overwriting their change.
-
-### The contest protocol
-
-An auto-firm can be wrong, so the user needs a way to
-reverse one. The protocol uses the checkbox they can see:
-
-- To **contest** a firm, the user **re-opens** the item —
-  flips `- [x]` back to `- [ ]` — leaving its
-  `✓ firmed: <rule>` note in place.
-- On the next **attended** pass, an item that is
-  **unchecked but still carries a `✓ firmed: <rule>`
-  note** is the contest signal. **Revert** that exact
-  rule from **both** `settings.local.json` copies (this
-  worktree and the base — the same set the firm wrote
-  to), then replace the note with a
-  `⚠ contested — reverted <rule>; needs re-handling`
-  note and leave the item unchecked.
-- That `⚠ contested — reverted` note then **holds the
-  item for the user** — it is *not* fresh work. Don't
-  re-adjudicate or re-firm a contested item on a later
-  pass; that would just re-fire the rule the user
-  rejected and loop. The item only re-enters adjudication
-  once the user acts on it: they rewrite the command,
-  delete the note, or remove the entry. Until then, skip
-  it (the step-3 "find the work" pass excludes it).
-
-So an unchecked item resolves unambiguously by its
-note: a `✓ firmed:` note means *contest → revert*; a
-`⚠ contested — reverted` note means *held, skip*; no
-disposition note means *fresh work → adjudicate*.
-
-Propose-only (housekeeping) never reverts settings and
-never re-handles a contested item; it just leaves any
-already-noted entry for the attended run, exactly as
-its skip rule (step "apply the disposition") already
-provides.
