@@ -4,7 +4,7 @@
 //! left action menu (enabled / greyed with reasons, recommended next step
 //! marked), a right account table (✓ / ✗ + lamports), and a scrolling log.
 
-use crate::accounts::{ChainState, ParticipantView, Phase};
+use crate::accounts::{ChainState, Liveness, ParticipantView, Phase};
 use crate::action::{self, Action};
 use crate::app::{App, LogKind};
 use crate::book;
@@ -392,11 +392,14 @@ fn account_line(
     Line::from(spans)
 }
 
-/// One participant row: a bullet · label · short address · the holdings in its
-/// own wallet, each leg named with its coin ticker and right-aligned in a
+/// One participant row: a status dot · label · short address · the holdings in
+/// its own wallet, each leg named with its coin ticker and right-aligned in a
 /// fixed-width column so the two participant rows line up. Uses a bullet rather
 /// than the ✓/✗ of an account row — a participant is an identity that always
-/// "is", not an account whose existence is the thing being tracked.
+/// "is", not an account whose existence is the thing being tracked — but colors
+/// that bullet by [`Liveness`]: green when the bot is quoting, yellow once its
+/// quotes have aged, dim when the TUI has no signal to observe (see
+/// [`liveness_color`]).
 fn participant_line(
     label: &str,
     p: &ParticipantView,
@@ -408,7 +411,7 @@ fn participant_line(
     let base = p.base_tokens as f64 / 10f64.powi(base_decimals as i32);
     let quote = p.quote_tokens as f64 / 10f64.powi(quote_decimals as i32);
     Line::from(vec![
-        Span::styled("\u{2022} ", Style::new().fg(Color::DarkGray)),
+        Span::styled("\u{2022} ", Style::new().fg(liveness_color(p.liveness))),
         Span::raw(format!("{label:<14} ")),
         Span::styled(short_pubkey(&p.address), Style::new().fg(Color::Gray)),
         Span::styled(
@@ -416,6 +419,18 @@ fn participant_line(
             Style::new().fg(Color::DarkGray),
         ),
     ])
+}
+
+/// The status-dot color for a participant's liveness: green when quoting,
+/// yellow once its quotes have aged, and the dim gray of an unobserved
+/// participant otherwise — so a running bot's gray dot turns green, and a
+/// stopped one fades to yellow before going gray when its vault is gone.
+fn liveness_color(liveness: Liveness) -> Color {
+    match liveness {
+        Liveness::Live => Color::Green,
+        Liveness::Stale => Color::Yellow,
+        Liveness::Unknown => Color::DarkGray,
+    }
 }
 
 /// `AAAA…oiV`-style abbreviation of a pubkey.
@@ -596,8 +611,17 @@ fn phase_style(phase: Phase) -> (Color, Modifier) {
 
 #[cfg(test)]
 mod tests {
-    use super::{fmt_units, symbol_for};
+    use super::{fmt_units, liveness_color, symbol_for};
+    use crate::accounts::Liveness;
+    use ratatui::style::Color;
     use solana_pubkey::Pubkey;
+
+    #[test]
+    fn liveness_color_maps_each_state() {
+        assert_eq!(liveness_color(Liveness::Live), Color::Green);
+        assert_eq!(liveness_color(Liveness::Stale), Color::Yellow);
+        assert_eq!(liveness_color(Liveness::Unknown), Color::DarkGray);
+    }
 
     #[test]
     fn symbol_for_resolves_known_mints_and_falls_back() {

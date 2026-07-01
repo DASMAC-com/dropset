@@ -191,6 +191,7 @@ mod tests {
             quote_treasury_lamports: 0,
             active_count: 1,
             live_vaults: Vec::new(),
+            leader_quote_slot: None,
             depositors: Vec::new(),
             base_decimals: 6,
             quote_decimals: 6,
