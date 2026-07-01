@@ -1,6 +1,6 @@
 ---
 name: audit
-description: One bounded platform-audit rotation, run once to completion — a fixed 7-unit pass that interleaves four randomly-chosen non-generated files (each audited via the `audit-scope` engine) with one randomly-chosen subsystem (internal-architecture lens), one randomly-chosen inter-subsystem interface (seam / contract-drift lens), and one repo-layout + spec-health pass, each adversarially cross-checked. Dedups against open or resolved Linear issues, files one self-contained Backlog issue per confirmed finding, re-stages the Task Staging document once at the end via stage-backlog, announces, and stops. No loop, no finding cap, no re-invocation — run it again for another rotation.
+description: One bounded platform-audit rotation, run once to completion — a fixed 7-unit pass that interleaves four randomly-chosen non-generated files (each audited via the `audit-scope` engine) with one randomly-chosen subsystem (internal-architecture lens), one randomly-chosen inter-subsystem interface (seam / contract-drift lens), and one repo-layout + spec-health pass, each adversarially cross-checked. Dedups against open or resolved Linear issues, files one self-contained Backlog issue per confirmed finding, syncs each new issue's file-overlap blocking edges via sync-blockers `--for`, announces, and stops. No loop, no finding cap, no re-invocation — run it again for another rotation.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -15,12 +15,14 @@ passes — each audited across the dimensions its subject calls for, with
 adversarial cross-checking, filing one self-contained **Backlog** issue
 per confirmed finding (no parent — the same no-parent Backlog
 `linear-task` files into) so the work can be picked up in parallel
-without blocking the repo. Staging those issues into a PR plan is a
-separate job, owned by `stage-backlog`.
+without blocking the repo. What gates what is recorded as native Linear
+blocking edges; keeping those edges honest against file overlap is a
+separate job, owned by `sync-blockers` (this skill calls it per finding
+— see the File and Done steps).
 
 Invoke it directly — `/audit` — when you want a fresh batch of findings.
-It is **finite**: it runs the seven units once, files what they surface,
-re-stages the Task Staging document once at the end, and **stops** with
+It is **finite**: it runs the seven units once, files what they surface
+(syncing each new issue's overlap edges as it goes), and **stops** with
 a single `DONE` line. There is **no `/loop`, no finding cap, and no
 re-invocation** — the rotation *is* the bound. To audit more, run
 `/audit` again; each run is one independent rotation. `housekeeping`
@@ -44,8 +46,8 @@ passes:
 5. FILE       — another random non-generated file  → audit-scope
 6. LAYOUT     — repo-layout + spec-health pass      → one agent
 7. FILE       — another random non-generated file  → audit-scope
-→ per unit: cross-check, dedup, file findings
-→ once at the end: one stage-backlog re-stage, then DONE
+→ per unit: cross-check, dedup, file findings, sync-blockers --for each
+→ at the end: DONE
 ```
 
 The structural units (2, 4, 6) each pick **one** subject **at random**,
@@ -71,8 +73,8 @@ going through `audit-scope`.
 
 This skill **never authors source edits and never writes to the
 worktree**. Its only writes are the Linear issues it files and the
-**Task Staging** document it re-stages once at the end of the rotation
-(the Done step, via `stage-backlog`). It produces no source diff of its
+file-overlap `blocks` relations `sync-blockers` materializes for each
+(via its `--for` incremental mode). It produces no source diff of its
 own, so it must never commit or push. The one repo operation it does
 perform is fast-forwarding the throwaway worktree to upstream `main` at
 the **start of the rotation** (step 1) — that pulls in others' merged
@@ -172,7 +174,7 @@ through the shared **Cross-check** (structural units only), **Dedup**,
 **File**, and **Announce** steps before moving to the next unit — so
 findings land promptly as the rotation proceeds. There is no
 cap and no cadence counter: the seven units *are* the rotation. When
-all seven are done, go to **Done** (which re-stages once).
+all seven are done, go to **Done**.
 
 **Prepend the standing sub-agent brief from
 `docs/conventions/sub-agent-brief.md`** to every sub-agent prompt the
@@ -300,7 +302,8 @@ Only findings that survive the check proceed.
 `linear-task` skill does: a **plain Backlog issue with no parent**,
 assigned to the configured assignee, into the shared destination.
 There is **no umbrella issue** — the project Backlog is the queue, and
-`stage-backlog` turns it into a PR plan later. Resolve the destination
+`sync-blockers` keeps its blocking edges honest against file overlap.
+Resolve the destination
 IDs from the environment exactly as `linear-task` does — never
 hard-code them — with a bare `printenv` per variable (each reduces to
 the same `Bash(printenv:*)` allow-rule):
@@ -353,12 +356,12 @@ surfaced more than one finding that plainly belongs in the **same PR**
 — same file or symbol, the work would obviously land as one change —
 file them as **one combined Backlog issue** instead of several: one
 title, the per-finding notes under per-source sub-headings, and a
-`**Fingerprint**:` line for **each** finding (the union). `stage-backlog`
-**never merges or closes issues**, so coupled findings only
+`**Fingerprint**:` line for **each** finding (the union). Nothing
+**merges or closes issues** for you, so coupled findings only
 become one issue if you file them that way — combining at file time is
 the only way. Findings that don't obviously share a PR stay separate;
-`stage-backlog` then materializes any file-overlap into a `blocks` edge
-and renders it as a serial nesting.
+`sync-blockers` then materializes any file-overlap between them into a
+`blocks` edge (Linear's blocking icon).
 
 The description must let a cold agent act on it in its own worktree
 (literal newlines, not `\n`):
@@ -383,16 +386,26 @@ The description must let a cold agent act on it in its own worktree
   refiling everything.
 - `**Touches**: <glob>[, <glob>…]` — the machine-readable list of path
   globs the fix will edit, comma-separated (for a single-file nit, just
-  that file). `stage-backlog`'s renderer reads this to detect file
-  collisions deterministically. **Mandatory** — see
+  that file). `sync-blockers` reads this to detect file collisions
+  deterministically. **Mandatory** — see
   `docs/conventions/linear-automation.md` → "Structured filing fields".
 - `**Discovered by**: audit <unit> @ <commit SHA>`
 
-Do **not** stage per finding. `stage-backlog` re-reads the **whole**
-open Backlog and rewrites the document in one pass; there is no
-incremental / per-`ENG-###` mode. So filing is all the File step does;
-the single re-stage that picks up everything this rotation filed runs
-once at the end (the **Done** step).
+**Sync overlap edges for each finding as you file it.** Right after
+`save_issue` returns a new identifier, file that issue's file-overlap
+`blocks` edges against the open Backlog with the incremental sweep — one
+bare command that reduces to the
+`Bash(python3 tools/sync-blockers/sync_blockers.py:*)` allow-rule (the
+scan runs in the tool's own process, so nothing enters context):
+
+```sh
+python3 tools/sync-blockers/sync_blockers.py --for <ENG-###>
+```
+
+Filing in `ENG-###` order means the later filer always sees the earlier
+sibling, so an intra-rotation overlap pair is filed by the second of
+the two — no end-of-rotation full sweep is needed. Best-effort: it needs
+`LINEAR_API_KEY`; if unset the tool says so — note it and continue.
 
 **Structural findings** (SUBSYSTEM / INTERFACE / LAYOUT) are filed the
 same way (plain Backlog issue, same IDs, no parent) but as **one
@@ -412,7 +425,7 @@ line; use this body instead:
   dedup key (mandatory, same role as for FILE findings).
 - `**Touches**: <glob>[, <glob>…]` — the path globs the proposal's work
   would span (often several dirs for an `arch:` finding),
-  comma-separated. `stage-backlog` reads it for collision detection.
+  comma-separated. `sync-blockers` reads it for collision detection.
   **Mandatory** — see `docs/conventions/linear-automation.md` →
   "Structured filing fields".
 - `**Discovered by**: audit <unit> @ <commit SHA>`
@@ -429,21 +442,14 @@ inline run interrupts you only when it matters. If nothing was filed,
 send no notification.
 
 **Done.** After all seven units have been processed (each cross-checked
-where applicable, deduped, and filed), the rotation is complete.
-**Re-stage the Task Staging document once, now:** invoke the
-`stage-backlog` skill (via the Skill tool). It runs the deterministic
-`python3 tools/stage-backlog/stage_backlog.py`, which re-reads the whole
-open Backlog — including everything this rotation just filed — and
-rewrites the document in one pass (materializing any undeclared
-file-overlap into a `blocks` edge as it goes). (The tool needs
-`LINEAR_API_KEY`; if it's unset the tool says so and the re-stage is
-left to the next
-`housekeeping` pass or a manual `/stage-backlog` — note that in the
-final line rather than failing the rotation.) Then print a single final
-line and **stop** — there is no re-invocation:
+where applicable, deduped, filed, and its overlap edges synced via
+`sync-blockers --for`), the rotation is complete. The blocking edges are
+already current — the per-finding `--for` calls filed them at file time,
+so there is no end-of-rotation sweep. Print a single final line and
+**stop** — there is no re-invocation:
 
 ```txt
-DONE audit | filed <t> (h/m/l) | deduped <d> | re-staged
+DONE audit | filed <t> (h/m/l) | deduped <d> | edges synced
 ```
 
 To run another rotation later, just invoke `/audit` again — it samples

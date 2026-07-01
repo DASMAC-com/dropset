@@ -69,7 +69,7 @@ class TouchesTests(unittest.TestCase):
         self.assertTrue(is_meta_glob(".claude/skills/x"))
         self.assertTrue(is_meta_glob("CLAUDE.md"))
         self.assertTrue(is_meta_glob("docs/conventions/**"))
-        self.assertTrue(is_meta_glob("tools/stage-backlog/**"))
+        self.assertTrue(is_meta_glob("tools/sync-blockers/**"))
         self.assertFalse(is_meta_glob("programs/dropset/src/lib.rs"))
         self.assertFalse(is_meta_glob("docs/indexer.md"))
 
@@ -95,10 +95,10 @@ class AssembleTests(unittest.TestCase):
                 {
                     "id": "ENG-622",
                     "number": 622,
-                    "title": "Claude: Tweak stage-backlog",
+                    "title": "Claude: Tweak sync-blockers",
                     "description": (
                         "Folded body.\n\n**Fingerprint**: stage:tweak\n"
-                        "**Touches**: tools/stage-backlog/**\n"
+                        "**Touches**: tools/sync-blockers/**\n"
                     ),
                 },
             ],
@@ -106,7 +106,7 @@ class AssembleTests(unittest.TestCase):
 
     def test_folds_as_part_section_preserving_fingerprints(self):
         out = assemble(self._issues())
-        self.assertIn("# Part 1 — Tweak stage-backlog", out["description"])
+        self.assertIn("# Part 1 — Tweak sync-blockers", out["description"])
         # both fingerprints survive
         self.assertIn("**Fingerprint**: audit:dedup", out["description"])
         self.assertIn("**Fingerprint**: stage:tweak", out["description"])
@@ -116,14 +116,14 @@ class AssembleTests(unittest.TestCase):
     def test_unions_touches_into_one_line(self):
         out = assemble(self._issues())
         self.assertEqual(
-            out["touches"], [".claude/skills/audit/**", "tools/stage-backlog/**"]
+            out["touches"], [".claude/skills/audit/**", "tools/sync-blockers/**"]
         )
         # exactly one consolidated Touches line, at the end
         self.assertEqual(out["description"].count("**Touches**:"), 1)
         self.assertTrue(
             out["description"]
             .rstrip()
-            .endswith("**Touches**: .claude/skills/audit/**, tools/stage-backlog/**")
+            .endswith("**Touches**: .claude/skills/audit/**, tools/sync-blockers/**")
         )
 
     def test_all_meta_applies_claude_prefix(self):

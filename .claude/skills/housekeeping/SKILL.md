@@ -1,6 +1,6 @@
 ---
 name: housekeeping
-description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, prune the worktrees of already-merged PRs and dismiss their stale GitHub notifications, mine the Session Metrics inbox via trim-context (one aggregated propose-only task), restage the backlog, then — only when given the `audit` flag (`/housekeeping audit`) — run one finite `/audit` rotation inline and exit; with no flag the audit is skipped. The cspell dictionary check is opt-in (pass `cspell`) and off by default. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
+description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, prune the worktrees of already-merged PRs and dismiss their stale GitHub notifications, mine the Session Metrics inbox via trim-context (one aggregated propose-only task), reconcile Backlog blocking edges via a sync-blockers sweep, then — only when given the `audit` flag (`/housekeeping audit`) — run one finite `/audit` rotation inline and exit; with no flag the audit is skipped. The cspell dictionary check is opt-in (pass `cspell`) and off by default. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -29,9 +29,9 @@ committed skills, then:
    points at a `CLAUDE.md` section or `docs/conventions/`
    doc that no longer exists, filing the drift
    **propose-only**.
-1. **Restage the backlog** — hand off to
-   `stage-backlog` so the Task Staging document
-   reflects everything currently open.
+1. **Reconcile blocking edges** — run an optional full
+   `sync-blockers` sweep to catch any file-overlap edge
+   the file-time `--for` calls didn't already file.
 1. **Run one audit rotation** — **only when the `audit`
    flag was passed**, invoke `/audit` once (a single
    finite rotation) inline, then **exit**. With no flag,
@@ -63,7 +63,7 @@ order:
 - **The `audit` flag** — when the invocation includes
   `audit` (e.g. `housekeeping audit`), the pass runs one
   finite `/audit` rotation inline after the upkeep
-  (step 9); without it the audit is **skipped** entirely
+  (step 8); without it the audit is **skipped** entirely
   and the pass exits after the upkeep. So
   `/housekeeping audit` does upkeep then one audit
   rotation, while a bare `/housekeeping` does upkeep only.
@@ -94,7 +94,7 @@ merged worktrees, filing / staging Linear issues, and
 annotating the Linear Session Metrics doc with
 recommended dispositions (it never edits a skill
 unattended). When given the `audit` flag, its last step
-runs one `/audit` rotation (step 9), but housekeeping
+runs one `/audit` rotation (step 8), but housekeeping
 itself makes no source edit — the rotation only files
 Linear issues.
 
@@ -115,10 +115,10 @@ clean up on demand.
 
 ## Linear destination
 
-Steps 3–6 file and stage Backlog issues and mine the
+Steps 3–6 file and reconcile Backlog issues and mine the
 Session Metrics doc, so they use the
 same env-resolved Linear destination as `linear-task` /
-`stage-backlog`. Resolve each variable with its **own**
+`sync-blockers`. Resolve each variable with its **own**
 bare `printenv` (one `Bash(printenv:*)` allow-rule
 covers them all) — never a combined `printenv A B C`,
 which on macOS / BSD prints only the first value:
@@ -127,7 +127,6 @@ which on macOS / BSD prints only the first value:
 printenv LINEAR_TEAM_ID
 printenv LINEAR_PROJECT_ID
 printenv LINEAR_ASSIGNEE_ID
-printenv LINEAR_TASK_STAGING_DOC_ID
 printenv LINEAR_SESSION_METRICS_DOC_ID
 ```
 
@@ -158,7 +157,7 @@ parsed worktree list; step 2 reuses it.
 Once confirmed, fast-forward `main` so the pass runs
 on the latest committed code — the up-to-date version
 of **this** skill and of the sub-skills it invokes
-(`cspell-audit`, `stage-backlog`), rather than whatever
+(`cspell-audit`, `sync-blockers`), rather than whatever
 was current when the worktree was last synced. The base
 repo has `main` checked out, so pull it in place (a bare
 `git pull` reduces to the `Bash(git pull:*)` allow-rule):
@@ -401,37 +400,22 @@ freshness lens does on the PR path — here, periodically.
   lands later through a normal PR. If everything resolves,
   file nothing and note "in sync" in the report.
 
-**6. Restage the backlog.** Invoke the
-`stage-backlog` skill (via the Skill tool) to rewrite
-the Task Staging document from the current open
-Backlog — including anything steps 3–5 just filed. The
-deterministic Python tool does all the work (read →
-render → write); this skill just triggers it. This
-**full** re-stage is the authoritative reconcile, run
-fresh from the live Backlog each morning — it subsumes
-the re-stage a previous `/audit` rotation already ran at
-its end.
+**6. Reconcile blocking edges.** Invoke the
+`sync-blockers` skill (via the Skill tool) to run a
+**full sweep** over the open Backlog, filing any
+file-overlap `blocks` edge that isn't already declared.
+The deterministic Python tool does all the work in its own
+process; this skill just triggers it and reports the
+one-line tally. This sweep is a **catch-up**, not the
+primary mechanism: the filing skills (`linear-task`,
+`audit`, `audit-scope`, `merge-tasks`) already file each
+new issue's overlap edges at file time via
+`sync_blockers.py --for`, so the sweep only picks up edges
+a `**Touches**:` line backfilled onto an *older* issue
+would newly imply. It needs `LINEAR_API_KEY` /
+`LINEAR_PROJECT_ID`; if either is unset, skip it and say so.
 
-**7. Flag `Claude:` meta-work batching drift.** The
-`Claude:` title prefix (see `CLAUDE.md` →
-"Claude: meta-work prefix") is the deterministic batch
-signal that groups agent-infra work apart from product
-code; the re-stage in step 6 runs the deterministic
-**prefix↔touched-paths consistency check** and prints a
-warning for each mismatch it finds — a `Claude:`-prefixed
-issue whose `**Touches**:` reach **outside** the meta
-surface (`.claude/**`, `CLAUDE.md`, `docs/conventions/**`,
-`tools/**`), or a meta-only `**Touches**:` set on an issue
-with **no** `Claude:` prefix. For each flagged issue, ask
-via **`AskUserQuestion`** how to resolve it — add or drop
-the prefix, or fix the `**Touches**:` line — and apply
-only the human's choice with a `save_issue`; **never**
-auto-retitle or auto-merge. If step 6 flagged nothing, this
-is a no-op. (In an unattended pass with no one to answer,
-skip the prompt and leave the warnings for the next
-attended pass.)
-
-**8. Offer a session-metrics run.** The morning pass both
+**7. Offer a session-metrics run.** The morning pass both
 *mines* the Session Metrics inbox (step 4) and can
 *contribute* to it: offer, via **`AskUserQuestion`** with
 the recommended default **first**, to run `/session-metrics`
@@ -443,7 +427,7 @@ run **appends** a new unprocessed entry, this offer comes
 evaluated against the inbox state before this append. (In
 an unattended pass with no one to answer, skip the offer.)
 
-**9. Run one audit rotation (only when the `audit` flag was
+**8. Run one audit rotation (only when the `audit` flag was
 passed).** The morning's last act: with upkeep done, the
 **`audit` flag decides whether to run a rotation** —
 passing it *is* the go-ahead, so there is no separate
@@ -454,8 +438,8 @@ because the flag carries the intent).
 - **The `audit` flag was passed** (`housekeeping audit`) →
   invoke the `audit` skill (via the Skill tool) **once**.
   `/audit` is finite — a single seven-unit rotation that
-  files its findings, re-stages the Task Staging document
-  once at the end, fires a high-severity
+  files its findings (syncing each one's overlap edges via
+  `sync-blockers --for` as it goes), fires a high-severity
   `PushNotification` only when something warrants
   interrupting you, and stops on its own with a `DONE`
   line. It runs **inline** (it's bounded, so there's no
@@ -469,10 +453,11 @@ because the flag carries the intent).
 single bounded rotation, not a continuous campaign — it
 files what its seven units surface and stops. To audit
 again, run `housekeeping audit` (or `/audit`) again. The
-rotation re-stages the Task Staging document once at its
-end; the next pass's step 6 is the full reconcile.
+rotation syncs each finding's overlap edges as it files
+them; the next pass's step 6 is the full reconciliation
+sweep.
 
-**10. Report.** Print a short summary:
+**9. Report.** Print a short summary:
 
 - `main`: fast-forwarded to the latest, or left at its
   current commit (with the reason) if the pull couldn't
@@ -500,12 +485,10 @@ end; the next pass's step 6 is the full reconcile.
 - Convention references: in sync, or the dangling
   `CLAUDE.md` / `docs/conventions/` references filed
   (with the ENG-### of the aggregated task).
-- Backlog staging: that `stage-backlog` ran, or why
-  it was skipped (e.g. a missing env var).
-- Meta-work batching: any `Claude:` prefix↔`**Touches**:`
-  mismatches step 6 flagged and how each was resolved (or
-  that none were flagged, or the prompt was skipped in an
-  unattended pass).
+- Blocking edges: the `sync-blockers` reconciliation
+  sweep's one-line tally (backlog issue count + overlap
+  edges filed), or why it was skipped (e.g. a missing env
+  var).
 - Session metrics run: whether a `/session-metrics` run
   was offered and accepted for this session, or skipped.
 - Audit: one `/audit` rotation ran inline (with its

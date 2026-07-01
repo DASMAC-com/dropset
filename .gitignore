@@ -17,5 +17,14 @@ sdk/ts/dist/
 # Background audit-loop state (see .claude/skills/audit-loop).
 .audit-loop/
 
+# Claude Code local config. The repo does not enforce hooks or
+# permissions — it documents how to wire them (see
+# docs/conventions/shell-commands.md → "Wiring the compound-shell
+# guard"). settings.json (hook wiring + any baseline perms) and
+# settings.local.json (the per-machine permission allowlist) are both
+# user-local; the hook *script* under .claude/hooks/ stays committed.
+.claude/settings.json
+.claude/settings.local.json
+
 # macOS metadata.
 .DS_Store

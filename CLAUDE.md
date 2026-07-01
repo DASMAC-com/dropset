@@ -55,9 +55,10 @@ Detail: `docs/conventions/linear-automation.md`.
 a leading **`Claude:`** token on their **Linear issue title** (capital
 C, colon, space) so agent-infra work batches apart from product code.
 Filing skills (`linear-task`, `audit`, `audit-scope`, `housekeeping`)
-emit it; `stage-backlog` buckets prefixed issues under `# Claude` and
-warns on prefix↔`**Touches**:` drift. It is a **Linear-title signal
-only — never a PR title** (PR titles keep `type(ENG-###): Subject`).
+emit it at filing time, so the prefix and the touched paths stay
+consistent by construction; a human filters the Linear board by it. It
+is a **Linear-title signal only — never a PR title** (PR titles keep
+`type(ENG-###): Subject`).
 Detail: `docs/conventions/linear-automation.md`.
 
 ### Keep Linear tags out of PR bodies and comments
@@ -116,8 +117,11 @@ Keep a stable command + subcommand prefix and let only the args vary.
 This holds for shell you **author** in skills, scripts, and Makefile
 targets too, and for work you hand a sub-agent. A `PreToolUse` hook
 (`.claude/hooks/no_compound_bash.py`) mechanically blocks compounds
-(escape marker `#compound-ok`). Full detail, incl. the
-always-re-prompt patterns and the guard hook:
+(escape marker `#compound-ok`) — but the repo does **not** commit its
+`.claude/settings.json` wiring or the permission allowlist, so the
+guard is **opt-in**: wire it into your own user-local `settings.json`
+per the doc. Full detail, incl. the always-re-prompt patterns, the
+guard hook, and how to wire it:
 `docs/conventions/shell-commands.md`.
 
 ## Briefing sub-agents

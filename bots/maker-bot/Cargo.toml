@@ -5,7 +5,7 @@
 # (set_reference_price) and cold path (set_liquidity_profile) with an inventory
 # skew and kill-switch policy. Rust-only, not published. No tokio: a
 # synchronous tick loop drives blocking feed polls (ureq) and the blocking
-# RpcClient (sdk/rs `fetch` feature), matching the TUI and stage-backlog.
+# RpcClient (sdk/rs `fetch` feature), matching the TUI and sync-blockers.
 
 [[bin]]
 name = "dropset-maker-bot"
@@ -57,7 +57,7 @@ solana-transaction = "3"
 # light client-types crate, not the full `solana-transaction-status`.
 solana-transaction-status-client-types = "3"
 # Blocking HTTP for the price feeds (CoinGecko / CoinMarketCap / Frankfurter),
-# the same synchronous JSON client tools/stage-backlog uses for Linear.
+# the same synchronous JSON client tools/sync-blockers uses for Linear.
 ureq = { version = "2", features = ["json"] }
 
 [package]

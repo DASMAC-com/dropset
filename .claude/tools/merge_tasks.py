@@ -32,9 +32,9 @@ import re
 import sys
 
 # Path bases (besides the file CLAUDE.md) that count as agent-infra "meta-work"
-# — the surface the ``Claude:`` issue-title prefix batches. Keep in sync with
-# ``tools/stage-backlog/stage_backlog.py`` (META_BASES) and
-# ``docs/conventions/linear-automation.md`` → "The Claude: meta-work prefix".
+# — the surface the ``Claude:`` issue-title prefix batches. The canonical
+# definition is ``docs/conventions/linear-automation.md`` → "The Claude:
+# meta-work prefix"; keep this copy in sync with it.
 META_BASES = (".claude", "docs/conventions", "tools")
 
 CLAUDE_PREFIX = "Claude: "
