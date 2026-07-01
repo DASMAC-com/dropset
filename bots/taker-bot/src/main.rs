@@ -9,7 +9,7 @@
 //! Flags:
 //!   --rpc <url>              RPC endpoint (default http://127.0.0.1:8899)
 //!   --taker-key <path>       taker keypair (default keys/FFFF.json)
-//!   --mint-authority <path>  mock-mint authority (default the Solana CLI wallet)
+//!   --mint-authority <path>  mock-mint authority (default keys/BBBB.json)
 //!   --seed <u64>             seed the flow RNG for a reproducible run
 //!   --dry-run                sample the flow and print intended swaps, then exit
 //!   --ticks <n>              dry-run sample length (default 20)
@@ -159,8 +159,8 @@ fn read_key(path: &str, role: &str) -> Result<solana_keypair::Keypair> {
 }
 
 /// Expand a leading `~/` to the user's home directory, leaving other paths
-/// untouched. The mock-mint authority defaults to the Solana CLI wallet at
-/// `~/.config/solana/id.json`.
+/// untouched. The mock-mint authority defaults to the repo key `keys/BBBB.json`
+/// (no tilde), so this only matters for a user-supplied `~`-relative override.
 fn expand_tilde(path: &str) -> String {
     match path.strip_prefix("~/") {
         Some(rest) => match std::env::var_os("HOME") {

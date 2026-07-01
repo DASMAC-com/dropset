@@ -54,7 +54,7 @@ pub fn rpc(url: &str) -> RpcClient {
 
 /// The genesis hashes of the three public Solana clusters. `assert_localnet`
 /// refuses to run against any of them — this bot signs with local keys,
-/// including the operator's own Solana CLI wallet as the mock-mint authority
+/// including the committed localnet admin keypair as the mock-mint authority
 /// (`config::DEFAULT_MINT_AUTHORITY_KEY`), so a real cluster behind `--rpc`
 /// would mean real `MintTo` and `swap` sends. Cross-checked against the Solana
 /// docs and the gill / mpl-bubblegum SDKs.
@@ -88,8 +88,8 @@ pub fn assert_localnet(client: &RpcClient) -> Result<()> {
         return Err(anyhow!(
             "refusing to run against the {cluster} public cluster (genesis \
              {genesis}): this localnet bot signs transactions with local keys \
-             — including your Solana CLI wallet as the mock-mint authority — \
-             and must run only against a localnet test validator"
+             — including the committed localnet admin keypair as the mock-mint \
+             authority — and must run only against a localnet test validator"
         ));
     }
     Ok(())

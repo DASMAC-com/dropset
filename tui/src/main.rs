@@ -13,11 +13,11 @@ use std::sync::{Arc, Mutex};
 
 fn main() -> Result<()> {
     let wallet_arg = parse_wallet_arg();
-    let (wallet, wallet_path) = wallet::load(wallet_arg.as_deref())?;
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .ok_or_else(|| anyhow!("locate repo root from crate dir"))?
         .to_path_buf();
+    let (wallet, wallet_path) = wallet::load(wallet_arg.as_deref(), &repo_root)?;
 
     let ctx = action::JobContext {
         rpc_url: validator::DEFAULT_RPC_URL.to_string(),

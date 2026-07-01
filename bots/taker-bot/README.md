@@ -59,13 +59,13 @@ On localnet the bot funds itself each tick (all idempotent):
 mirroring `tui/src/chain.rs` (`airdrop` / `create_ata_idempotent` /
 `mint_to`) and the `MOCK_CADC_USDC` pair in `tui/src/market.rs`.
 
-Because the mint authority defaults to the operator's own Solana CLI
-wallet, the bot guards against funding off-localnet: on startup it reads
-the cluster's genesis hash and refuses to run against mainnet-beta,
-devnet, or testnet, so a mistyped `--rpc` can't have that wallet sign a
-real `MintTo` or `swap`. The check is keyed on the genesis hash, not the
-RPC host, so a localnet on any address still passes while a port-forward
-to a public cluster is caught.
+The bot signs `MintTo` and `swap` with committed localnet keypairs
+(`keys/BBBB.json` and `keys/FFFF.json`), so it guards against running
+off-localnet: on startup it reads the cluster's genesis hash and refuses
+to run against mainnet-beta, devnet, or testnet, so a mistyped `--rpc`
+can't have those keys sign a real `MintTo` or `swap`. The check is keyed
+on the genesis hash, not the RPC host, so a localnet on any address still
+passes while a port-forward to a public cluster is caught.
 
 ## Running
 
@@ -83,14 +83,14 @@ cargo run -p dropset-taker-bot
 
 Flags:
 
-| Flag                      | Default                    | Meaning                          |
-| ------------------------- | -------------------------- | -------------------------------- |
-| `--rpc <url>`             | `http://127.0.0.1:8899`    | RPC endpoint                     |
-| `--taker-key <path>`      | `keys/FFFF.json`           | taker keypair (signs swaps)      |
-| `--mint-authority <path>` | `~/.config/solana/id.json` | mock-mint authority (funds only) |
-| `--seed <u64>`            | random                     | seed the flow RNG                |
-| `--dry-run`               | off                        | sample + print, don't send       |
-| `--ticks <n>`             | `20`                       | dry-run sample length            |
+| Flag                      | Default                 | Meaning                          |
+| ------------------------- | ----------------------- | -------------------------------- |
+| `--rpc <url>`             | `http://127.0.0.1:8899` | RPC endpoint                     |
+| `--taker-key <path>`      | `keys/FFFF.json`        | taker keypair (signs swaps)      |
+| `--mint-authority <path>` | `keys/BBBB.json`        | mock-mint authority (funds only) |
+| `--seed <u64>`            | random                  | seed the flow RNG                |
+| `--dry-run`               | off                     | sample + print, don't send       |
+| `--ticks <n>`             | `20`                    | dry-run sample length            |
 
 ## Configuration
 

@@ -28,14 +28,14 @@ Each file is a standard Solana CLI keypair — a 64-byte JSON array (the
 The four-character prefix is the identifier. Roles are assigned by
 convention, in the order the localnet bootstrap introduces them:
 
-| File        | Address | Conventional role                   |
-| ----------- | ------- | ----------------------------------- |
-| `AAAA.json` | `AAAA…` | the dropset program ID              |
-| `BBBB.json` | `BBBB…` | admin 1 — payer / upgrade authority |
-| `CCCC.json` | `CCCC…` | admin 2                             |
-| `DDDD.json` | `DDDD…` | registrant                          |
-| `EEEE.json` | `EEEE…` | vault leader                        |
-| `FFFF.json` | `FFFF…` | taker                               |
+| File        | Address | Conventional role                          |
+| ----------- | ------- | ------------------------------------------ |
+| `AAAA.json` | `AAAA…` | the dropset program ID                     |
+| `BBBB.json` | `BBBB…` | admin 1 — payer / upgrade / mint authority |
+| `CCCC.json` | `CCCC…` | admin 2                                    |
+| `DDDD.json` | `DDDD…` | registrant                                 |
+| `EEEE.json` | `EEEE…` | vault leader                               |
+| `FFFF.json` | `FFFF…` | taker                                      |
 
 `AAAA.json` is the **program keypair**: it is copied into
 `target/deploy/dropset-keypair.json` at build time (the `program-keypair`
@@ -49,8 +49,8 @@ prefix (`GGGG`, `HHHH`, …) into this directory.
 The localnet market bootstrap also uses two **fixed mint keypairs**, so the
 traded pair — and therefore the market PDA, seeded on `[base, quote]` —
 lands at the same address on every run. Both are 6-decimal SPL mints whose
-mint authority is the localnet wallet, created fresh against each new
-validator:
+mint authority is the localnet admin wallet (`BBBB.json`), created fresh
+against each new validator:
 
 | File        | Address | Conventional role         |
 | ----------- | ------- | ------------------------- |

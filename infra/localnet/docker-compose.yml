@@ -114,8 +114,9 @@ services:
   taker-bot:
     # The benign flow taker: stochastic swaps so the book moves and the maker
     # takes fills. Signs swaps with keys/FFFF.json and mints itself back up to
-    # target inventory under the mock-mint authority — the operator's Solana
-    # CLI wallet, bind-mounted read-only at the container's ~/.config/solana.
+    # target inventory under the mock-mint authority (keys/BBBB.json, the same
+    # committed admin key the host TUI created the mints under) — so, like the
+    # maker, it needs only the repo keys/ mount and no host wallet.
     build:
       context: '../..'
       dockerfile: 'infra/localnet/bots.Dockerfile'
@@ -123,10 +124,6 @@ services:
     - 'dropset-taker-bot'
     - '--rpc'
     - 'http://host.docker.internal:8899'
-    # Point at the mounted wallet explicitly — the default is `~`-relative and
-    # the container sets no HOME, so tilde expansion would not resolve.
-    - '--mint-authority'
-    - '/root/.config/solana/id.json'
     environment:
       RUST_LOG: 'info'
     extra_hosts:
@@ -134,5 +131,4 @@ services:
     restart: 'unless-stopped'
     volumes:
     - '../../keys:/app/keys:ro'
-    - '${HOME}/.config/solana:/root/.config/solana:ro'
 ...
