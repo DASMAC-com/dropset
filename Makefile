@@ -73,10 +73,12 @@ sdk:
 # Build the WASM package for the TS client (requires wasm-pack:
 # `cargo install wasm-pack`). Built over `dropset-interface`, whose `wasm`
 # feature turns on `dropset-math-core`'s, so the one package exports both the
-# `simulate_swap` binding and the `Price` codec bindings. Outputs
-# sdk/interface/pkg.
+# `simulate_swap` binding and the `Price` codec bindings. Emits the glue
+# straight into the TS SDK (sdk/ts/src/wasm) so `@dropset/sdk` can import it
+# and the SDK CI typechecks against it; the `simulate` module wraps it.
 wasm:
-	cd sdk/interface && wasm-pack build --target web --features wasm
+	cd sdk/interface && wasm-pack build --target web --out-dir ../ts/src/wasm --features wasm
+	rm -f sdk/ts/src/wasm/.gitignore sdk/ts/src/wasm/package.json sdk/ts/src/wasm/README.md sdk/ts/src/wasm/LICENSE
 
 # Regenerate the checked-in conformance vectors from their generators.
 # The `--write` flag makes each example write its canonical JSON straight
