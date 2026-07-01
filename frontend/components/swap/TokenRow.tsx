@@ -225,13 +225,13 @@ export function TokenRow({
               data-shortcut-passthrough="true"
               onFocus={() => setActiveSide("from")}
               onChange={onAmountChange}
-              className="min-w-0 flex-1 bg-transparent text-right font-mono text-3xl text-foreground outline-none placeholder:text-muted-fg"
+              className="min-w-0 flex-1 bg-transparent text-right font-mono text-2xl text-foreground outline-none placeholder:text-muted-fg sm:text-3xl"
             />
           ) : (
             <output
               aria-live="polite"
               aria-label="You will receive"
-              className={`flex min-w-0 flex-1 justify-end truncate text-right font-mono text-3xl ${
+              className={`flex min-w-0 flex-1 justify-end truncate text-right font-mono text-2xl sm:text-3xl ${
                 toIsLive ? "text-foreground" : "text-muted-fg"
               }`}
             >
