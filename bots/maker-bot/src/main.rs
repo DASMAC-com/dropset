@@ -12,12 +12,13 @@
 //!   --rpc <url>            RPC endpoint (default http://127.0.0.1:8899)
 //!   --ws <url>             PubSub websocket (default: derived from --rpc)
 //!   --leader-key <path>    leader/quote-authority keypair (default keys/EEEE.json)
+//!   --market <symbol>      quote only this market (repeatable); default: all
 //!   --dry-run              poll feeds and print the intended quotes, then exit
 //!   --drop <tier>          dry-run only: suppress coingecko | cmc | fx
 
 use anyhow::{anyhow, Context, Result};
 use dropset_maker_bot::config::{
-    ws_url_from_rpc, BotConfig, DEFAULT_LEADER_KEY, MARKETS, QUOTE_KEYPAIR_FILE,
+    ws_url_from_rpc, BotConfig, MarketConfig, DEFAULT_LEADER_KEY, MARKETS, QUOTE_KEYPAIR_FILE,
 };
 use dropset_maker_bot::context::Context as BotContext;
 use dropset_maker_bot::model::fair_mid::{compose, Quote};
@@ -39,6 +40,27 @@ struct Args {
     dry_run: bool,
     /// Tiers to suppress in a dry run (to exercise the cascade).
     drop: Vec<String>,
+    /// Symbols to restrict this instance to (empty = every market). The TUI
+    /// runs one instance per market by passing a single `--market`, so an
+    /// operator can start / stop each market's bot independently.
+    markets: Vec<String>,
+}
+
+impl Args {
+    /// The roster this instance quotes: every [`MarketConfig`] whose symbol was
+    /// named with `--market` (case-insensitive), or all of them when none was.
+    fn selected(&self) -> Vec<&'static MarketConfig> {
+        MARKETS
+            .iter()
+            .filter(|m| {
+                self.markets.is_empty()
+                    || self
+                        .markets
+                        .iter()
+                        .any(|s| s.eq_ignore_ascii_case(m.symbol))
+            })
+            .collect()
+    }
 }
 
 fn main() -> Result<()> {
@@ -56,6 +78,7 @@ fn parse_args(cfg: &mut BotConfig) -> Args {
     let mut leader_key = DEFAULT_LEADER_KEY.to_string();
     let mut dry_run = false;
     let mut drop = Vec::new();
+    let mut markets = Vec::new();
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -74,6 +97,11 @@ fn parse_args(cfg: &mut BotConfig) -> Args {
                     leader_key = path;
                 }
             }
+            "--market" => {
+                if let Some(symbol) = it.next() {
+                    markets.push(symbol);
+                }
+            }
             "--drop" => {
                 if let Some(tier) = it.next() {
                     drop.push(tier);
@@ -87,6 +115,7 @@ fn parse_args(cfg: &mut BotConfig) -> Args {
         leader_key,
         dry_run,
         drop,
+        markets,
     }
 }
 
@@ -115,11 +144,13 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
     }
 
     // Discover every on-chain market once, then match the roster against it by
-    // base mint (quote is always USDC).
+    // base mint (quote is always USDC). The roster is narrowed to any
+    // `--market` symbols so one instance can quote a single market.
     let discovered = chain::discover_markets(&client)?;
     let quote_mint = mint_pubkey(QUOTE_KEYPAIR_FILE)?;
+    let roster = args.selected();
     let mut contexts = Vec::new();
-    for market in MARKETS {
+    for &market in &roster {
         let base_mint = match mint_pubkey(market.base_keypair_file) {
             Ok(pk) => pk,
             Err(e) => {
@@ -146,7 +177,7 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
             leader.insecure_clone(),
             cfg.vault_idx,
             addrs.clone(),
-            market,
+            *market,
         ));
     }
     if contexts.is_empty() {
@@ -181,9 +212,10 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
     let feeds = Feeds::new(cfg.feeds.clone());
     let drop = |tier: &str| args.drop.iter().any(|d| d == tier);
 
-    let cg_ids: Vec<&str> = MARKETS.iter().map(|m| m.coingecko_id).collect();
-    let cmc_ids: Vec<u32> = MARKETS.iter().filter_map(|m| m.coinmarketcap_id).collect();
-    let mut currencies: Vec<&str> = MARKETS.iter().map(|m| m.currency).collect();
+    let roster = args.selected();
+    let cg_ids: Vec<&str> = roster.iter().map(|m| m.coingecko_id).collect();
+    let cmc_ids: Vec<u32> = roster.iter().filter_map(|m| m.coinmarketcap_id).collect();
+    let mut currencies: Vec<&str> = roster.iter().map(|m| m.currency).collect();
     currencies.sort_unstable();
     currencies.dedup();
 
@@ -221,7 +253,7 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
 
     let now = Duration::from_secs(0);
     let q = |v: Option<f64>| v.map(|v| Quote::new(v, now));
-    for m in MARKETS {
+    for &m in &roster {
         let cg_q = q(cg.get(m.coingecko_id).copied());
         let cmc_q = q(m.coinmarketcap_id.and_then(|id| cmc.get(&id)).copied());
         let fx_q = q(fx.get(m.currency).copied());
@@ -237,4 +269,35 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(markets: &[&str]) -> Args {
+        Args {
+            leader_key: DEFAULT_LEADER_KEY.to_string(),
+            dry_run: false,
+            drop: Vec::new(),
+            markets: markets.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn no_market_flag_selects_the_whole_roster() {
+        assert_eq!(args(&[]).selected().len(), MARKETS.len());
+    }
+
+    #[test]
+    fn market_flag_narrows_to_the_named_markets_case_insensitively() {
+        let selected = args(&["eurc", "MXNE"]).selected();
+        let symbols: Vec<&str> = selected.iter().map(|m| m.symbol).collect();
+        assert_eq!(symbols, ["EURC", "MXNe"]);
+    }
+
+    #[test]
+    fn an_unknown_market_symbol_selects_nothing() {
+        assert!(args(&["nope"]).selected().is_empty());
+    }
 }

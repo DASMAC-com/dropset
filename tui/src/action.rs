@@ -177,14 +177,25 @@ impl JobContext {
 
 /// Spawn the background job for `action`. [`Action::Wipe`] is handled by the
 /// event loop instead (it mutates the owned validator), so it is a no-op
-/// here.
-pub fn dispatch(action: Action, ctx: &JobContext, state: &ChainState, tx: Sender<JobEvent>) {
+/// here. `selected` picks which discovered market the market-scoped actions
+/// (the probe swap, the explorer targets) act on.
+pub fn dispatch(
+    action: Action,
+    ctx: &JobContext,
+    state: &ChainState,
+    tx: Sender<JobEvent>,
+    selected: usize,
+) {
     let rpc_url = ctx.rpc_url.clone();
     let repo_root = ctx.repo_root.clone();
     let wallet_path = ctx.wallet_path.clone();
     let wallet = ctx.wallet();
     let explorer_state = ctx.explorer_state.clone();
     let explorer_lock = ctx.explorer_lock.clone();
+    // The market the market-scoped jobs target — resolved now, on the event
+    // loop's fresh snapshot, so a job addresses the selected market and not
+    // whichever the scan turns up first.
+    let target_market = state.selected_market(selected).map(|m| m.address);
 
     match action {
         Action::Deploy => {
@@ -244,7 +255,7 @@ pub fn dispatch(action: Action, ctx: &JobContext, state: &ChainState, tx: Sender
         Action::ProbeSwap => {
             job::spawn(tx, "Probe swap", move |log| {
                 let client = chain::rpc(&rpc_url);
-                do_probe_swap(&client, &wallet, &repo_root, log)
+                do_probe_swap(&client, &wallet, &repo_root, target_market, log)
             });
         }
         Action::Teardown => {
@@ -254,7 +265,7 @@ pub fn dispatch(action: Action, ctx: &JobContext, state: &ChainState, tx: Sender
             });
         }
         Action::OpenExplorer => {
-            let targets = explorer_targets(state);
+            let targets = explorer_targets(state, selected);
             job::spawn(tx, "Open explorer", move |log| {
                 if !explorer::docker_available() {
                     log.log("Docker not found — opening the hosted explorer instead.");
@@ -294,14 +305,14 @@ pub fn dispatch(action: Action, ctx: &JobContext, state: &ChainState, tx: Sender
 }
 
 /// `(label, address)` pairs to open in the explorer for the current state —
-/// every account that currently exists.
-fn explorer_targets(state: &ChainState) -> Vec<(&'static str, Pubkey)> {
+/// the program, the registry, and the *selected* market's accounts.
+fn explorer_targets(state: &ChainState, selected: usize) -> Vec<(&'static str, Pubkey)> {
     let mut targets = vec![("program", dropset_sdk::DROPSET_ID)];
     if let Some(reg) = &state.registry {
         targets.push(("registry", reg.address));
         targets.push(("registry fee vault", reg.fee_vault));
     }
-    if let Some(mkt) = &state.market {
+    if let Some(mkt) = state.selected_market(selected) {
         targets.push(("market", mkt.address));
         targets.push(("base treasury", mkt.base_treasury));
         targets.push(("quote treasury", mkt.quote_treasury));
@@ -370,7 +381,7 @@ fn do_create_market(
     log: &Logger,
 ) -> Result<String> {
     ensure_funded(client, &wallet.pubkey(), log);
-    let registry = accounts::poll(client, &wallet.pubkey(), None)
+    let registry = accounts::poll(client, &wallet.pubkey(), None, 0)
         .registry
         .context("registry not found — init first")?;
     let (base_mint, quote_mint) =
@@ -416,7 +427,7 @@ fn do_create_vault(
     log: &Logger,
 ) -> Result<String> {
     ensure_funded(client, &wallet.pubkey(), log);
-    let state = accounts::poll(client, &wallet.pubkey(), None);
+    let state = accounts::poll(client, &wallet.pubkey(), None, 0);
     let registry = state.registry.context("registry not found")?;
     // Address this config's own market by its PDA — the bootstrap brings up
     // many markets, so the first-found one in `ChainState` isn't necessarily
@@ -472,12 +483,20 @@ fn do_probe_swap(
     client: &solana_client::rpc_client::RpcClient,
     wallet: &Keypair,
     repo_root: &Path,
+    target: Option<Pubkey>,
     log: &Logger,
 ) -> Result<String> {
     ensure_funded(client, &wallet.pubkey(), log);
-    let market = accounts::poll(client, &wallet.pubkey(), None)
-        .market
-        .context("no market — bootstrap first")?;
+    // Swap against the selected market when one is set, else the first the scan
+    // finds — matching the book the operator is looking at.
+    let market = match target {
+        Some(address) => accounts::read_market_at(client, address),
+        None => accounts::poll(client, &wallet.pubkey(), None, 0)
+            .markets
+            .into_iter()
+            .next(),
+    }
+    .context("no market — bootstrap first")?;
     if market.active_count == 0 {
         anyhow::bail!("no live vault to swap against — create the vault first");
     }
