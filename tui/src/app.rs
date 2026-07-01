@@ -350,6 +350,9 @@ impl App {
             self.takers.stop(symbol);
             self.log(LogKind::Ok, format!("[{symbol}] taker stopped"));
         } else {
+            // Unreachable in practice: `selected_symbol()` above already
+            // resolved from this same selected market, so it exists — the guard
+            // is just defensive against a race the single-threaded UI can't hit.
             let Some(address) = self
                 .chain
                 .selected_market(self.selected_market)
@@ -371,7 +374,7 @@ impl App {
 
     /// Start every discovered market's maker bot that isn't already running —
     /// the demo's "flash liquidity across the board" moment. (No taker
-    /// equivalent: the taker is opt-in per market, flipped on with `t`.)
+    /// equivalent: the taker is opt-in per market, flipped on with `T`.)
     fn start_all_bots(&mut self) {
         let symbols: Vec<&'static str> = self
             .chain

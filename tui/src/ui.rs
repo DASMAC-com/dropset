@@ -157,8 +157,10 @@ fn bots_status(app: &App) -> Span<'static> {
 fn takers_status(app: &App) -> Span<'static> {
     let running = app.takers.running_count();
     let total = app.chain.markets.len();
+    // Cyan when any taker is up — matching the cyan taker dot in the markets
+    // list (the maker is green in both places, the taker cyan in both).
     let color = if running > 0 {
-        Color::Green
+        Color::Cyan
     } else {
         Color::DarkGray
     };

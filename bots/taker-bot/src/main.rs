@@ -61,8 +61,15 @@ fn parse_args(cfg: &mut BotConfig) -> Args {
                 }
             }
             "--market-address" => {
-                if let Some(pk) = it.next().and_then(|s| s.parse().ok()) {
-                    market_address = Some(pk);
+                // Surface a bad value rather than swallow it: unlike --seed /
+                // --ticks (a bad value just reverts to a benign default), a
+                // typo'd market address would silently fall back to the first
+                // market found — trading the wrong book.
+                if let Some(s) = it.next() {
+                    match s.parse() {
+                        Ok(pk) => market_address = Some(pk),
+                        Err(e) => eprintln!("ignoring --market-address {s}: {e}"),
+                    }
                 }
             }
             "--taker-key" => {
