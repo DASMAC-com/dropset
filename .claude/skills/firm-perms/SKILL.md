@@ -78,12 +78,20 @@ that matches:
   `git worktree list:*`, and the
   `git -C <base>/.claude/worktrees/* <read-verb>:*`
   globs (the tag already collapsed to `*`, so the rule is the same in
-  every worktree). The companion read-only `gh` reads
+  every worktree). (`git branch:*` is included as a **read-mostly**
+  inspection verb: its `-D` / `-m` forms only delete or rename a
+  *local* ref — reflog-recoverable, never touching the remote or a
+  working tree — so its blast radius is low enough to commit alongside
+  the strictly-read-only verbs, and it clears the safety floor since it
+  keeps the subcommand. A verb whose mutation reaches the remote or the
+  tree does **not** belong here.) The companion read-only `gh` reads
   (`gh pr checks:*`, `gh pr view:*`, `gh api graphql:*`) and the
   read-only GitHub MCP tools belong here too, on the same rationale
   (routine, low-blast-radius, identical across worktrees — see
   `docs/conventions/github-mcp.md`). A rule is committed-eligible only
-  when it is **both** worktree-agnostic and clearly read-only — with
+  when it is **both** worktree-agnostic and read-only — or read-mostly,
+  like `git branch` above, with only local, reflog-recoverable
+  mutations — with
   **one enumerated exception**: the narrow, routine PR-lifecycle
   **writes** that every worktree runs and that `docs/conventions/github-mcp.md`
   explicitly blesses for inheritance (the GitHub MCP PR-authoring writes
