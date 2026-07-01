@@ -1,0 +1,44 @@
+@import "tailwindcss";
+
+:root {
+  /* Dark palette lifted from the frontend design tokens
+   * (frontend/app/globals.css) so decks match the product surface. */
+  color-scheme: dark;
+  --background: #0a0a0a;
+  --foreground: #ededed;
+  --muted: #1a1a1a;
+  --muted-fg: #a3a3a3;
+  --border: #262626;
+  --accent: #60a5fa;
+  --accent-hover: #93bbfd;
+  --accent-buy: #10b981;
+  --accent-sell: #ef4444;
+  /* Dropset brand blue — the wordmark color, reserved for emphasis. */
+  --brand: #0044ff;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-fg: var(--muted-fg);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-buy: var(--accent-buy);
+  --color-accent-sell: var(--accent-sell);
+  --color-brand: var(--brand);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}

@@ -8,6 +8,7 @@
 .PHONY: check-toolchain
 .PHONY: clean
 .PHONY: conformance-vectors
+.PHONY: decks
 .PHONY: explorer
 .PHONY: explorer-down
 .PHONY: frontend
@@ -161,6 +162,15 @@ frontend:
 		opener=$$(command -v open || command -v xdg-open) \
 			&& $$opener http://localhost:3000 ) &
 	cd frontend && pnpm dev
+
+# Run the decks deck dev server (port 3200, set in the dev script) and
+# open the browser once it's accepting connections.
+decks:
+	cd decks && pnpm install
+	@( until nc -z localhost 3200 2>/dev/null; do sleep 0.2; done; \
+		opener=$$(command -v open || command -v xdg-open) \
+			&& $$opener http://localhost:3200 ) &
+	cd decks && pnpm dev
 
 # https://github.com/solana-foundation/anchor/tree/anchor-next/lang-v2
 install-anchor-v2:
