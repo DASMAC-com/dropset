@@ -1061,7 +1061,7 @@ PR-authoring **writes** (`create_pull_request`,
    skill-to-skill handoff, so gate it on the same TUI
    selector the merge-queue prompt uses (per `CLAUDE.md` →
    "The PR workflow and skill handoffs"): ask whether to
-   firm permissions now, offering "yes, run /firm-perms base-only"
+   firm permissions now, offering "yes, run /firm-perms"
    (**first**, the recommended default) and "skip". This
    is a second, lighter gate *in front of* `firm-perms`'
    own propose-then-confirm gate — intentional: the
@@ -1071,22 +1071,14 @@ PR-authoring **writes** (`create_pull_request`,
 
    - On **decline**, skip this step and note in the
      report that permissions were **not** firmed this run.
-   - On **approve**, invoke **`/firm-perms base-only`** to
-     collapse the per-worktree and per-arg
-     `permissions.allow` entries into reusable globs and
-     propagate them. **Pass `base-only`**: this worktree is
-     about to be torn down once the PR merges, so a write to
-     *its* `.claude/settings.local.json` is wasted churn —
-     `base-only` makes `firm-perms` skip the active-worktree
-     local write and firm only the base (the committed
-     `.claude/settings.json` for worktree-agnostic read-only
-     rules, and the base `.claude/settings.local.json` for
-     the rest), which is what future worktrees actually
-     inherit (see `firm-perms` → "Where firmed rules land").
-     This is housekeeping on the allowlists — it does **not**
-     affect the PR diff or its ready state, so run it
-     regardless of the gate or CI outcome. Note in the report
-     that only the base was firmed.
+   - On **approve**, invoke `/firm-perms` to collapse the
+     per-worktree and per-arg `permissions.allow` entries
+     into reusable globs and propagate them to the base
+     repo so future worktrees inherit them. This is
+     housekeeping on the gitignored
+     `.claude/settings.local.json` — it does **not** affect
+     the PR diff or its ready state, so run it regardless
+     of the gate or CI outcome.
 
    **Account for what the review agents requested.**
    The diff-review and cross-check agents (steps 5–6)

@@ -134,21 +134,15 @@ Concrete rules:
   mid-path `*` covers every sibling tag and the `:*` covers the args,
   so one rule firms the whole family. Don't approve the per-tag,
   per-arg variant; it only ever matches that one call.
-- When per-worktree or per-arg approvals have already piled up, run the
-  `firm-perms` skill. It collapses the
+- When per-worktree or per-arg approvals have already piled up in
+  `settings.local.json`, run the `firm-perms` skill. It collapses the
   one-off entries into globs (per the rules above), dedupes them, and
-  writes each firmed rule to the file its **scope** belongs in: a
-  worktree-agnostic read-only rule (like the `git … status:*` example
-  above) into the **committed** `.claude/settings.json`, which rides
-  into every fresh worktree through git — the mechanism that actually
-  stops the cold-worktree re-prompt — and everything else into the
-  per-worktree `.claude/settings.local.json` (this worktree and the base
-  repo). It proposes the changes for
+  writes the firmed allowlist to **both** this worktree and the base
+  repo so future worktrees inherit it — proposing the changes for
   your approval before it writes. That's the full sweep; a bare
   `/firm-perms` run right after a one-time approval instead takes the
   **fast path** — it firms just that single just-approved command into
-  the right file immediately, with no propose-then-confirm gate. (See
-  `firm-perms` → "Where firmed rules land".)
+  both files immediately, with no propose-then-confirm gate.
 
 ## Patterns that always re-prompt — never author these
 

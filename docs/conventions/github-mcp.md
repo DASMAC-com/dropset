@@ -50,15 +50,12 @@ are written against it. `gh` survives in four places — two in
   thread and `manage_repository_notification_subscription` is repo-wide
   — so the `gh api` write is the only path. It's **best-effort**:
   `init-pr` continues if it errors, and `housekeeping`'s merged-PR
-  notification sweep is the catch-all for anything it misses. Its
-  allow-rule is narrow and **committed** (see "Permission rules"
-  below):
+  notification sweep is the catch-all for anything it misses. It reduces
+  to a narrow allow-rule (`firm-perms` can memorialize it):
 
   ```text
   Bash(gh api --method PUT /repos/DASMAC-com/dropset/issues/*/subscription:*)
   ```
-
-  so a fresh worktree inherits it and `init-pr` never re-prompts for it.
 
 - **The recent-merged-PR style lookup** (`pr-title-description`) — a
   one-shot `gh pr list --json number,title,body --state merged --limit 3`
@@ -69,7 +66,7 @@ are written against it. `gh` survives in four places — two in
   [context economy](context-economy.md)) *plus* a per-PR
   `pull_request_read` body fetch with one field-selected read. `--json`
   is a flag, not a pipe, so it reduces to a `Bash(gh pr list:*)`
-  allow-rule (read-only, worktree-agnostic — committed).
+  allow-rule (a routine, low-blast-radius read).
 
 Everything else stays MCP-first; `gh` is not a general-purpose escape
 hatch.
@@ -134,9 +131,8 @@ writes to confirm-on-use:
   full-object MCP calls (see "GitHub
   via MCP" above and [context economy](context-economy.md)). These are
   Bash globs, not `mcp__github__*` entries, but they're pre-approved on
-  the same rationale (routine, low-blast-radius reads). Being
-  worktree-agnostic and read-only, they live in the **committed**
-  `.claude/settings.json` so every worktree inherits them through git.
+  the same rationale (routine, low-blast-radius reads) and propagated to
+  the base repo so future worktrees inherit them.
 - **Pre-approve (routine PR-authoring writes):** `create_pull_request`
   (init-pr) and `update_pull_request` (pr-title-description, review-pr),
   plus `init-pr`'s notification-subscription ignore (the narrow
@@ -160,13 +156,8 @@ mutations.**
 The MCP entries are `mcp__github__<tool>` permission strings, not
 `Bash(…)`
 globs — and because of the single-tool-many-methods shape, one
-allow-rule per read tool covers all of its methods. So future worktrees
-inherit these without re-prompting, they land by the same classification
-`firm-perms` uses everywhere (`firm-perms` → "Where firmed rules land"):
-the worktree-agnostic **reads** — the MCP read tools and the companion
-`gh` reads — and the enumerated **routine PR-lifecycle writes** above
-(the PR-authoring writes and the notification-subscription ignore) go
-into the **committed** `.claude/settings.json`, which rides into every
-fresh worktree through git. The genuinely destructive / irreversible
-writes are never pre-approved at all (confirm-on-use). `firm-perms`
-keeps this current at session end.
+allow-rule per read tool covers all of its methods. Propagate the
+pre-approved allow-rules (the reads, the companion `gh` reads, and the
+routine PR-authoring writes incl. the notification-subscription ignore)
+to the **base-repo** settings so future worktrees inherit them (per the
+per-worktree settings rule); `firm-perms` does this at session end.
