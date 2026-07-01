@@ -126,17 +126,26 @@ pub fn airdrop(client: &RpcClient, who: &Pubkey, lamports: u64) -> Result<()> {
     Err(anyhow!("airdrop did not confirm in time"))
 }
 
-/// Discover the single localnet market by scanning the program's accounts for
-/// the `MarketHeader` discriminator, then read its mints, treasuries, and the
-/// pair's decimals.
-pub fn discover_market(client: &RpcClient) -> Result<MarketAddrs> {
+/// Discover a localnet market by scanning the program's accounts for the
+/// `MarketHeader` discriminator, then read its mints, treasuries, and the
+/// pair's decimals. With `target` set, only that exact market PDA matches (the
+/// per-market path the TUI drives, so one instance trades the selected book);
+/// otherwise the first market the scan turns up (the single-market default).
+pub fn discover_market(client: &RpcClient, target: Option<Pubkey>) -> Result<MarketAddrs> {
     let accounts = client
         .get_program_accounts(&DROPSET_ID)
         .context("get_program_accounts")?;
     let (address, account) = accounts
         .iter()
-        .find(|(_, a)| a.data.len() >= 8 && a.data[..8] == MARKET_HEADER_DISCRIMINATOR)
-        .ok_or_else(|| anyhow!("no market found — is the localnet bootstrapped?"))?;
+        .find(|(addr, a)| {
+            a.data.len() >= 8
+                && a.data[..8] == MARKET_HEADER_DISCRIMINATOR
+                && target.is_none_or(|t| *addr == t)
+        })
+        .ok_or_else(|| match target {
+            Some(t) => anyhow!("market {t} not found — wrong address, or not bootstrapped?"),
+            None => anyhow!("no market found — is the localnet bootstrapped?"),
+        })?;
 
     let view = MarketView::load(&account.data).map_err(|e| anyhow!("decode market: {e:?}"))?;
     let header = view.header;

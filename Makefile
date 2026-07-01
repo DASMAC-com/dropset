@@ -19,6 +19,8 @@
 .PHONY: sdk
 .PHONY: sdk-test
 .PHONY: session-metrics
+.PHONY: taker-down
+.PHONY: taker-up
 .PHONY: teardown
 .PHONY: test
 .PHONY: test-no-teardown
@@ -141,18 +143,29 @@ indexer-down:
 	docker compose -f infra/localnet/docker-compose.yml \
 		rm -sf postgres indexer indexer-api
 
-# Localnet bot stack: the maker + taker bots (infra/localnet). Both sign with
-# the repo keys/ keypairs and reach the host-run validator at
-# host.docker.internal:8899; the taker also mounts the operator's Solana CLI
-# wallet (the mock-mint authority) read-only. Needs a running validator with
-# the market bootstrapped and seeded (the tui control plane). First run builds
-# the Rust image (slow); later runs reuse the cargo-chef dependency cache.
+# Localnet bot stack: the maker bot (infra/localnet). It signs with the repo
+# keys/ keypairs and reaches the host-run validator at
+# host.docker.internal:8899. Needs a running validator with the market
+# bootstrapped and seeded (the tui control plane). First run builds the Rust
+# image (slow); later runs reuse the cargo-chef dependency cache. The taker is
+# opt-in (`taker-up`), never started here — the demo market stays quiet until
+# an operator asks for organic flow.
 bots-up:
 	docker compose -f infra/localnet/docker-compose.yml \
-		up -d maker-bot taker-bot
+		up -d maker-bot
 bots-down:
 	docker compose -f infra/localnet/docker-compose.yml \
 		rm -sf maker-bot taker-bot
+
+# Opt-in localnet flow: start / stop the benign stochastic taker so the seeded
+# books move and the maker takes fills. Off by default (gated behind the compose
+# `taker` profile); flip it on for a walkthrough, off to leave the market quiet.
+taker-up:
+	docker compose -f infra/localnet/docker-compose.yml \
+		--profile taker up -d taker-bot
+taker-down:
+	docker compose -f infra/localnet/docker-compose.yml \
+		rm -sf taker-bot
 
 # Run next dev and open the browser once it's accepting connections.
 frontend:

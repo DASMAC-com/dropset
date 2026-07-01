@@ -111,8 +111,11 @@ pub struct MarketView {
 /// from how recently it stamped a reference price on chain — its vault's
 /// `quote_slot` versus the poll's head slot — so a bot that is quoting reads
 /// [`Liveness::Live`] and one that has gone quiet reads [`Liveness::Stale`],
-/// independent of who launched it. A participant the TUI has no signal for is
-/// [`Liveness::Unknown`] (the taker, until it is wired into the supervisor).
+/// independent of who launched it. The taker leaves no such on-chain footprint
+/// (its flow is deliberately quiet between bursts, so activity would flap), so
+/// its liveness is process-based: the TUI reads it [`Liveness::Live`] exactly
+/// while it is running that market's taker child (set after the poll, in
+/// `App::maybe_refresh`). A participant with no signal is [`Liveness::Unknown`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Liveness {
     /// Quoting: stamped a reference price within the freshness window.
@@ -242,8 +245,9 @@ pub fn poll(
     if let Some(market) = state.selected_market(selected).cloned() {
         // The MM bot is the leader of the market's first live vault; the
         // swapper is the supplied taker key. Read each one's wallet holdings.
-        // The leader's liveness is derived from its vault's quote freshness; the
-        // swapper has no observable signal yet, so it stays `Unknown`.
+        // The leader's liveness is derived here from its vault's quote freshness;
+        // the swapper stays `Unknown` — the caller (`App::maybe_refresh`) raises
+        // it to `Live` when the TUI is running that market's taker child.
         state.leader = market.live_vaults.first().map(|(_, leader)| {
             let mut view = read_participant(client, leader, &market);
             view.liveness = maker_liveness(slot, market.leader_quote_slot);

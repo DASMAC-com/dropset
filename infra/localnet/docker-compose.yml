@@ -117,6 +117,11 @@ services:
     # target inventory under the mock-mint authority (keys/BBBB.json, the same
     # committed admin key the host TUI created the mints under) — so, like the
     # maker, it needs only the repo keys/ mount and no host wallet.
+    #
+    # Opt-in, off by default: the `taker` profile keeps it out of a plain
+    # `docker compose up` (and `make bots-up`), so the seeded market stays quiet
+    # until the operator explicitly starts it with `make taker-up`. Real takes
+    # are operator-driven; this only exists to make localnet books look alive.
     build:
       context: '../..'
       dockerfile: 'infra/localnet/bots.Dockerfile'
@@ -128,6 +133,8 @@ services:
       RUST_LOG: 'info'
     extra_hosts:
     - 'host.docker.internal:host-gateway'
+    profiles:
+    - 'taker'
     restart: 'unless-stopped'
     volumes:
     - '../../keys:/app/keys:ro'

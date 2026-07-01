@@ -12,9 +12,9 @@
 // cspell:word pasteable
 // cspell:word RAII
 
-use crate::accounts::{self, ChainState};
+use crate::accounts::{self, ChainState, Liveness};
 use crate::action::{self, Action, JobContext};
-use crate::bot::BotManager;
+use crate::bot::{self, BotManager};
 use crate::chain;
 use crate::explorer;
 use crate::job::{JobEvent, Logger};
@@ -98,6 +98,11 @@ pub struct App {
     pub(crate) selected_market: usize,
     /// The per-market maker-bot child processes the operator starts and stops.
     pub(crate) bots: BotManager,
+    /// The per-market taker-bot child processes — opt-in, off by default. The
+    /// operator flips one on to give the selected book organic flow during a
+    /// walkthrough; keyed by symbol like [`App::bots`], so a market's maker and
+    /// taker are tracked independently.
+    pub(crate) takers: BotManager,
     /// Address click targets for the accounts pane, rebuilt by [`ui::draw`]
     /// each frame: a left-click inside one of these rectangles opens that
     /// account in the explorer.
@@ -142,6 +147,7 @@ impl App {
             mint_symbols,
             selected_market: 0,
             bots: BotManager::new(),
+            takers: BotManager::new(),
             click_targets: Vec::new(),
             tx,
             rx,
@@ -251,9 +257,12 @@ impl App {
             // Book selector — cycle which market's book and accounts show.
             KeyCode::Char('[') | KeyCode::BackTab => self.select_market(-1),
             KeyCode::Char(']') | KeyCode::Tab => self.select_market(1),
-            // Per-bot control: toggle the selected market's bot, or all at once.
+            // Per-bot control: toggle the selected market's maker, or all at
+            // once; `T` toggles the selected market's taker (opt-in flow). `T`
+            // dodges `t` (eCLOB tighten, below).
             KeyCode::Char('s') => self.toggle_selected_bot(),
             KeyCode::Char('S') => self.start_all_bots(),
+            KeyCode::Char('T') => self.toggle_selected_taker(),
             KeyCode::Char('x') => self.stop_all_bots(),
             KeyCode::Char('r') => self.dirty = true,
             // eCLOB demo (selected market): reprice the anchor (whole-book
@@ -316,18 +325,53 @@ impl App {
             self.log(LogKind::Ok, format!("[{symbol}] bot stopped"));
         } else {
             let log = Logger::new(self.tx.clone());
-            if let Err(e) = self
-                .bots
-                .start(symbol, &self.ctx.repo_root, &self.ctx.rpc_url, &log)
-            {
+            let cmd = bot::maker_command(&self.ctx.repo_root, symbol, &self.ctx.rpc_url);
+            if let Err(e) = self.bots.start(symbol, cmd, &log) {
                 self.log(LogKind::Err, format!("[{symbol}] start failed: {e:#}"));
             }
         }
         self.dirty = true;
     }
 
-    /// Start every discovered market's bot that isn't already running — the
-    /// demo's "flash liquidity across the board" moment.
+    /// Toggle the selected market's taker bot — start it against that exact
+    /// market to give the book organic flow, or stop it to leave the market
+    /// quiet. Off by default: nothing runs a taker until the operator flips it
+    /// on here. Needs the selected market's address (the taker is scoped by
+    /// PDA), so it is a no-op before a market exists.
+    fn toggle_selected_taker(&mut self) {
+        let Some(symbol) = self.selected_symbol() else {
+            self.log(
+                LogKind::Err,
+                "No market selected to drive a taker.".to_string(),
+            );
+            return;
+        };
+        if self.takers.is_running(symbol) {
+            self.takers.stop(symbol);
+            self.log(LogKind::Ok, format!("[{symbol}] taker stopped"));
+        } else {
+            let Some(address) = self
+                .chain
+                .selected_market(self.selected_market)
+                .map(|m| m.address)
+            else {
+                return;
+            };
+            let log = Logger::new(self.tx.clone());
+            let cmd = bot::taker_command(&self.ctx.repo_root, &address, &self.ctx.rpc_url);
+            if let Err(e) = self.takers.start(symbol, cmd, &log) {
+                self.log(
+                    LogKind::Err,
+                    format!("[{symbol}] taker start failed: {e:#}"),
+                );
+            }
+        }
+        self.dirty = true;
+    }
+
+    /// Start every discovered market's maker bot that isn't already running —
+    /// the demo's "flash liquidity across the board" moment. (No taker
+    /// equivalent: the taker is opt-in per market, flipped on with `t`.)
     fn start_all_bots(&mut self) {
         let symbols: Vec<&'static str> = self
             .chain
@@ -343,10 +387,8 @@ impl App {
         let log = Logger::new(self.tx.clone());
         for symbol in symbols {
             if !self.bots.is_running(symbol) {
-                if let Err(e) =
-                    self.bots
-                        .start(symbol, &self.ctx.repo_root, &self.ctx.rpc_url, &log)
-                {
+                let cmd = bot::maker_command(&self.ctx.repo_root, symbol, &self.ctx.rpc_url);
+                if let Err(e) = self.bots.start(symbol, cmd, &log) {
                     self.log(LogKind::Err, format!("[{symbol}] start failed: {e:#}"));
                 }
             }
@@ -354,10 +396,12 @@ impl App {
         self.dirty = true;
     }
 
-    /// Stop every running bot.
+    /// Stop every running bot — makers and takers alike, so `x` quiets the
+    /// whole demo in one keystroke.
     fn stop_all_bots(&mut self) {
-        let n = self.bots.running_count();
+        let n = self.bots.running_count() + self.takers.running_count();
         self.bots.stop_all();
+        self.takers.stop_all();
         self.log(LogKind::Ok, format!("Stopped {n} bot(s)."));
         self.dirty = true;
     }
@@ -459,6 +503,20 @@ impl App {
             );
             let log = Logger::new(self.tx.clone());
             self.bots.reap(&log);
+            self.takers.reap(&log);
+            // The taker leaves no on-chain heartbeat (its flow is deliberately
+            // quiet between bursts, so activity would flap), but the TUI owns
+            // the child — so the swapper reads `Live` exactly when this session
+            // is running its taker for the selected market, else `Unknown`.
+            // Resolve the symbol before the mutable borrow of `swapper`.
+            let taker_live = self
+                .selected_symbol()
+                .is_some_and(|s| self.takers.is_running(s));
+            if taker_live {
+                if let Some(swapper) = self.chain.swapper.as_mut() {
+                    swapper.liveness = Liveness::Live;
+                }
+            }
             if !self.chain.markets.is_empty() && self.selected_market >= self.chain.markets.len() {
                 self.selected_market = self.chain.markets.len() - 1;
             }

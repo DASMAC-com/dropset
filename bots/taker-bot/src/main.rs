@@ -8,6 +8,7 @@
 //!
 //! Flags:
 //!   --rpc <url>              RPC endpoint (default http://127.0.0.1:8899)
+//!   --market-address <pk>    target this exact market PDA (default: first found)
 //!   --taker-key <path>       taker keypair (default keys/FFFF.json)
 //!   --mint-authority <path>  mock-mint authority (default keys/BBBB.json)
 //!   --seed <u64>             seed the flow RNG for a reproducible run
@@ -20,10 +21,16 @@ use dropset_taker_bot::config::{BotConfig, DEFAULT_MINT_AUTHORITY_KEY, DEFAULT_T
 use dropset_taker_bot::context::Context;
 use dropset_taker_bot::model::{Flow, Regime};
 use dropset_taker_bot::{chain, tasks};
+use solana_pubkey::Pubkey;
 
 struct Args {
     taker_key: String,
     mint_authority_key: String,
+    /// The exact market PDA to trade, when the caller scopes this instance to
+    /// one market (the TUI passes the selected market so a per-market taker
+    /// hits the right book). `None` ⇒ discover the first market on-chain, the
+    /// single-market / container default.
+    market_address: Option<Pubkey>,
     dry_run: bool,
     dry_run_ticks: u32,
 }
@@ -42,6 +49,7 @@ fn main() -> Result<()> {
 fn parse_args(cfg: &mut BotConfig) -> Args {
     let mut taker_key = DEFAULT_TAKER_KEY.to_string();
     let mut mint_authority_key = DEFAULT_MINT_AUTHORITY_KEY.to_string();
+    let mut market_address = None;
     let mut dry_run = false;
     let mut dry_run_ticks = 20u32;
     let mut it = std::env::args().skip(1);
@@ -50,6 +58,11 @@ fn parse_args(cfg: &mut BotConfig) -> Args {
             "--rpc" => {
                 if let Some(url) = it.next() {
                     cfg.rpc_url = url;
+                }
+            }
+            "--market-address" => {
+                if let Some(pk) = it.next().and_then(|s| s.parse().ok()) {
+                    market_address = Some(pk);
                 }
             }
             "--taker-key" => {
@@ -79,6 +92,7 @@ fn parse_args(cfg: &mut BotConfig) -> Args {
     Args {
         taker_key,
         mint_authority_key,
+        market_address,
         dry_run,
         dry_run_ticks,
     }
@@ -94,7 +108,7 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
     let taker = read_key(&args.taker_key, "taker")?;
     let mint_authority = read_key(&expand_tilde(&args.mint_authority_key), "mint authority")?;
 
-    let market = chain::discover_market(&client)?;
+    let market = chain::discover_market(&client, args.market_address)?;
     println!(
         "discovered market {} ({}/{})",
         market.market, market.base_mint, market.quote_mint

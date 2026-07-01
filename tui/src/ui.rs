@@ -74,8 +74,8 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
 
     let help = Paragraph::new(vec![
         Line::from(
-            "j/k menu  ·  enter/1-9 run  ·  [ ] market  ·  s start/stop bot  ·  \
-             S all  ·  x stop all  ·  r refresh  ·  q quit",
+            "j/k menu  ·  enter/1-9 run  ·  [ ] market  ·  s maker  ·  S all  ·  \
+             T taker  ·  x stop all  ·  r refresh  ·  q quit",
         ),
         Line::from(
             "eCLOB · selected market:  < > re-peg \u{00b1}5 bps  ·  w widen  ·  \
@@ -118,6 +118,8 @@ fn draw_status(f: &mut Frame<'_>, app: &App, area: Rect) {
         )),
         Span::raw("  ·  bots "),
         bots_status(app),
+        Span::raw("  ·  takers "),
+        takers_status(app),
         Span::raw("  ·  explorer "),
         explorer_status(app),
     ]);
@@ -140,6 +142,20 @@ fn draw_status(f: &mut Frame<'_>, app: &App, area: Rect) {
 /// discovered markets, green once any is up.
 fn bots_status(app: &App) -> Span<'static> {
     let running = app.bots.running_count();
+    let total = app.chain.markets.len();
+    let color = if running > 0 {
+        Color::Green
+    } else {
+        Color::DarkGray
+    };
+    Span::styled(format!("{running}/{total}"), Style::new().fg(color))
+}
+
+/// Status-bar span for the taker bots (opt-in flow): how many are running out
+/// of the discovered markets, green once any is up — a running-count so the
+/// operator sees at a glance whether any book is being driven with flow.
+fn takers_status(app: &App) -> Span<'static> {
+    let running = app.takers.running_count();
     let total = app.chain.markets.len();
     let color = if running > 0 {
         Color::Green
@@ -450,9 +466,10 @@ fn short_pubkey(p: &Pubkey) -> String {
 }
 
 /// Render the markets list — every discovered market with its per-market
-/// status: a ✓/○ liquidity glyph, its ticker, the book mid (or "idle"), and a
-/// green ● when its maker bot is running. The selected market is marked and
-/// bold; `[` / `]` move the selection, which drives the order book below.
+/// status: a ✓/○ liquidity glyph, its ticker, the book mid (or "idle"), a green
+/// ● when its maker bot is running, and a cyan ● when its taker is. The selected
+/// market is marked and bold; `[` / `]` move the selection, which drives the
+/// order book below.
 fn draw_markets(f: &mut Frame<'_>, app: &App, area: Rect) {
     let lines: Vec<Line> = if app.chain.markets.is_empty() {
         vec![Line::from(Span::styled(
@@ -474,7 +491,8 @@ fn draw_markets(f: &mut Frame<'_>, app: &App, area: Rect) {
 }
 
 /// One markets-list row for market `i`: selection marker · liquidity glyph ·
-/// ticker · book mid (or "idle") · a green ● when the bot is running.
+/// ticker · book mid (or "idle") · a green ● when its maker is running · a cyan
+/// ● when its taker is.
 fn market_row(app: &App, i: usize, market: &crate::accounts::MarketView) -> Line<'static> {
     let symbol = symbol_for(&app.mint_symbols, &market.base_mint, "?");
     let selected = i == app.selected_market;
@@ -502,8 +520,14 @@ fn market_row(app: &App, i: usize, market: &crate::accounts::MarketView) -> Line
     ];
     if app.bots.is_running(symbol) {
         spans.push(Span::styled(
-            "  \u{25cf} bot",
+            "  \u{25cf} maker",
             Style::new().fg(Color::Green),
+        ));
+    }
+    if app.takers.is_running(symbol) {
+        spans.push(Span::styled(
+            "  \u{25cf} taker",
+            Style::new().fg(Color::Cyan),
         ));
     }
     Line::from(spans)
