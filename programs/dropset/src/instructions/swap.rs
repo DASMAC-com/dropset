@@ -831,3 +831,114 @@ impl Swap {
         Ok(fill_events)
     }
 }
+
+#[cfg(test)]
+mod overflow_bound_tests {
+    //! Pin the invariant that makes `compute_fill`'s two `u128`→`u64`
+    //! `MathOverflow` guards (WARNING 1d) unreachable.
+    //!
+    //! Each side sizes the taker's **output** leg first — capped by the
+    //! taker's converted budget, the level, and the vault — then
+    //! reverse-converts to the **input** leg and guards it against
+    //! `u64::MAX`. Because the output leg is capped by
+    //! `quote_for_base(taker_in)` / `base_for_quote(taker_in)` (the 1c
+    //! cap) and both decoders truncate toward zero, the reverse leg
+    //! round-trips back to `<= taker_in <= u64::MAX` — so neither guard
+    //! can fire on any reachable state, for either side. `quote_for_base`
+    //! also never saturates for a `u64` input (max exponent gives a
+    //! `10^8` factor, so the widest product is `~1.8e35 < u128::MAX`), so
+    //! the round-trip bound has no saturation escape hatch.
+    //!
+    //! The guards are therefore defense-in-depth: kept so an overflow
+    //! stays a hard abort if the cap is ever weakened. These tests pin
+    //! the bound so such a regression (or a switch to round-half-up in
+    //! the decoders) trips a fast local unit test instead of shipping a
+    //! live overflow path. The second test nails the exact case the
+    //! hardening review suspected could overflow — a tiny-price `Sell`
+    //! with the taker's base budget at `u64::MAX` — and shows it doesn't.
+
+    use super::SwapSide;
+    use crate::Price;
+
+    /// Valid prices spanning the full exponent range, chosen to stress
+    /// both the tiny-price direction (base blows up on `base_for_quote`)
+    /// and the large-price direction (quote blows up on `quote_for_base`).
+    fn stress_prices() -> [Price; 8] {
+        [
+            Price::encode(10_000_000, -16).unwrap(), // ~1e-16, smallest
+            Price::encode(99_999_999, -16).unwrap(), // ~1e-15
+            Price::encode(10_000_000, -2).unwrap(),  // 0.01
+            Price::encode(10_000_000, 0).unwrap(),   // 1.0
+            Price::encode(10_850_000, 0).unwrap(),   // 1.0850 (FX)
+            Price::encode(98_700_000, 2).unwrap(),   // 987
+            Price::encode(10_000_000, 15).unwrap(),  // 1e15
+            Price::encode(99_999_999, 15).unwrap(),  // ~1e16, largest
+        ]
+    }
+
+    /// `taker_unfilled_in` values, including the `u64::MAX` extreme and a
+    /// `u128` above it to exercise the internal `min(u64::MAX)` clamp.
+    const TAKER_INS: [u128; 6] = [
+        1,
+        1_000_000,
+        7_777_777_777,
+        u64::MAX as u128 - 1,
+        u64::MAX as u128,
+        u64::MAX as u128 + 999,
+    ];
+
+    /// Level-size and vault-inventory caps, spanning both extremes so the
+    /// binding cap is sometimes the taker, sometimes the level, sometimes
+    /// the vault inventory.
+    const CAPS: [u64; 4] = [1, 1_000_000, u64::MAX / 2, u64::MAX];
+
+    #[test]
+    fn compute_fill_never_overflows_for_any_valid_price() {
+        for side in [SwapSide::Buy, SwapSide::Sell] {
+            for price in stress_prices() {
+                for &taker_in in &TAKER_INS {
+                    for &level_size in &CAPS {
+                        for &inv in &CAPS {
+                            let got = side.compute_fill(price, taker_in, level_size, inv, inv);
+                            assert!(
+                                got.is_ok(),
+                                "compute_fill overflowed: side={side:?} price={price:?} \
+                                 taker_in={taker_in} level_size={level_size} inv={inv}"
+                            );
+                            // On a fill, the input leg the taker pays must
+                            // never exceed their remaining budget — the 1c
+                            // cap that keeps the reverse leg under u64::MAX.
+                            if let Ok(Some((fill_base, fill_quote))) = got {
+                                let input = side.input_atoms(fill_base, fill_quote);
+                                assert!(
+                                    input as u128 <= taker_in,
+                                    "input leg {input} exceeded taker budget {taker_in}: \
+                                     side={side:?} price={price:?}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pathological_tiny_price_sell_at_max_base_does_not_overflow() {
+        // The exact case the hardening review flagged: a `Sell` of
+        // `u64::MAX` base into a bottomless bid at the smallest
+        // representable price. `quote_for_base(u64::MAX)` at ~1e-16 is
+        // only ~1844, so `base_for_quote(1844)` rounds back to ~1.844e19
+        // < u64::MAX and the guard stays dormant.
+        let price = Price::encode(10_000_000, -16).unwrap();
+        let got =
+            SwapSide::Sell.compute_fill(price, u64::MAX as u128, u64::MAX, u64::MAX, u64::MAX);
+        assert!(
+            got.is_ok(),
+            "tiny-price max-base Sell must not overflow the fill-leg guard"
+        );
+        if let Ok(Some((fill_base, _))) = got {
+            assert!(fill_base <= u64::MAX, "reverse-converted base leg within u64");
+        }
+    }
+}
