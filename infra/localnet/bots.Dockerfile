@@ -33,8 +33,10 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/target/release/dropset-maker-bot /usr/local/bin/dropset-maker-bot
-COPY --from=builder /app/target/release/dropset-taker-bot /usr/local/bin/dropset-taker-bot
+COPY --from=builder /app/target/release/dropset-maker-bot \
+    /usr/local/bin/dropset-maker-bot
+COPY --from=builder /app/target/release/dropset-taker-bot \
+    /usr/local/bin/dropset-taker-bot
 # The bots resolve their keypairs relative to the working dir (`keys/…`); the
 # compose services bind-mount the repo `keys/` here. Each service overrides
 # `command` with its bot binary + the host-validator `--rpc`.
