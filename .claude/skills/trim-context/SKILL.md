@@ -73,11 +73,11 @@ have to be hand-consolidated with `/merge-tasks` afterward. This mirrors
 the **cspell-aggregation pattern** in `housekeeping` step 3 ("file the
 drift as a single aggregated Backlog issue … each finding is a bullet
 carrying its own `**Fingerprint**:` line"). The trade-off is
-intended: aggregating means the levers can't be staged as independent
-parallel PRs (`stage-backlog` would otherwise split them by file
-overlap), and that's the accepted choice — one task / one PR for these
-skill tweaks over parallelism. Per-lever fingerprints preserve
-independent dedup regardless.
+intended: aggregating means the levers can't run as independent
+parallel PRs (separate issues would otherwise carry their own
+file-overlap edges), and that's the accepted choice — one task / one
+PR for these skill tweaks over parallelism. Per-lever fingerprints
+preserve independent dedup regardless.
 
 A trim lever always edits a skill or convention doc, so the aggregated
 task is meta-work — prepend the **`Claude:`** prefix to its title, per
@@ -88,7 +88,7 @@ task is meta-work — prepend the **`Claude:`** prefix to its title, per
   lever** (the dedup key — later passes match on it individually), and
 - a single **`**Touches**:`** line that **unions** every lever's globs
   (per `docs/conventions/linear-automation.md` → "Structured filing
-  fields"), so `stage-backlog` sees the whole task's footprint.
+  fields"), so `sync-blockers` sees the whole task's footprint.
 
 **Dedup, then append or create — never duplicate:**
 

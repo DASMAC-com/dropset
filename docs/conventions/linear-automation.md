@@ -5,23 +5,21 @@ Skills that **file** Linear issues (`linear-task`, `audit`,
 destination — team, project, assignee — from **environment
 variables**, never hard-coded UUIDs. (Skills that only **update**
 an existing issue by id — `init-pr`, `review-pr` — need no
-destination; `stage-backlog` only rewrites the Task Staging document,
-reading `LINEAR_PROJECT_ID` as a query filter — see its own paragraph
-below.) Set them once in your
+destination; `sync-blockers` only files `blocks` relations between
+Backlog issues, reading `LINEAR_PROJECT_ID` as a query filter — see its
+own paragraph below.) Set them once in your
 shell profile (`~/.zshrc`):
 
 ```sh
 export LINEAR_TEAM_ID=…
 export LINEAR_PROJECT_ID=…
 export LINEAR_ASSIGNEE_ID=…
-# Used only by stage-backlog — the "Task Staging" document:
-export LINEAR_TASK_STAGING_DOC_ID=…
 # Used by session-metrics (producer) and housekeeping (consumer) —
 # the "Session Metrics" inbox document one appends to and the other
 # mines into propose-only skill-improvement tasks:
 export LINEAR_SESSION_METRICS_DOC_ID=…
-# Used only by the stage-backlog Python tool (the deterministic
-# core of the stage-backlog skill) — a personal Linear API key. A
+# Used only by the sync-blockers Python tool (the deterministic
+# core of the sync-blockers skill) — a personal Linear API key. A
 # script can't use the OAuth-based claude.ai Linear MCP, so it
 # authenticates with this key, sent as the Authorization header.
 # Never commit it.
@@ -40,11 +38,6 @@ call still matches the same `Bash(printenv:*)` allow-rule, so none of
 them re-prompt. A new Linear-filing skill must follow the same
 pattern: reference the variable **names**, and keep the resolved
 UUIDs out of every committed file.
-
-`stage-backlog` additionally resolves `LINEAR_TASK_STAGING_DOC_ID`
-— the id of the Linear document it rewrites each run (the "Task
-Staging" document) — with its own bare `printenv`, on the same rule.
-It is not a filing destination, so the other skills don't need it.
 
 `session-metrics`, `trim-context`, and `housekeeping` share
 `LINEAR_SESSION_METRICS_DOC_ID` — the id of the "Session Metrics"
@@ -68,40 +61,37 @@ drives its tool via `make session-metrics`, which reduces to a
 network call; the skill does the one Linear write (the doc append)
 over the MCP.
 
-The **stage-backlog Python tool** (the deterministic core of the
-`stage-backlog` skill — see "Structured filing fields" below) is a
+The **sync-blockers Python tool** (the deterministic core of the
+`sync-blockers` skill — see "Structured filing fields" below) is a
 single, dependency-free `python3` script at
-`tools/stage-backlog/stage_backlog.py`, run directly (the
-`Bash(python3 tools/stage-backlog/stage_backlog.py:*)` allow-rule —
-there is no `make` target). Blocking is **edge-driven**: it reads the
-open Backlog plus the state of every issue its relations reach, and
-builds the tree from declared `blockedBy` / `blocks` edges alone. It
-makes **two kinds** of Linear write: it materializes each undeclared
-`**Touches**:` collision between two Backlog issues into a real
-`blocks` relation (lower number blocks higher — see "Structured filing
-fields"), then rewrites the Task Staging document. It still has **no**
-`merge` subcommand and never folds or closes an issue; two issues that
-belong in one PR render as nested serial chips. A blocker is honoured
-until it reaches a terminal state (`completed` / `canceled`), so a
-Backlog issue gated by a live In-Progress / In-Review issue keeps that
-blocker as a tag, and the blocker ranks in the transitive
-`# Most blocking` tally. It uses the standard library only
+`tools/sync-blockers/sync_blockers.py`, run directly (the
+`Bash(python3 tools/sync-blockers/sync_blockers.py:*)` allow-rule —
+there is no `make` target). Its one job is **edge maintenance**: it
+reads the open Backlog's `**Touches**:` globs and declared `blockedBy`
+/ `blocks` edges, and files a real `blocks` relation (lower number
+blocks higher — see "Structured filing fields") for each undeclared
+`**Touches**:` collision, so Linear's native blocking icons carry the
+constraint. That relation write is its **only** Linear write — it
+renders no document, ranks nothing, and never folds or closes an issue
+(consolidation is `merge-tasks`' job). It runs in **two modes**:
+`--for ENG-###` compares just the named, just-filed issue against the
+backlog (the bounded file-time path the filing skills call after
+`save_issue`), and a bare invocation is the full pairwise sweep for
+occasional reconciliation. It uses the standard library only
 (`urllib` + `json`) for its GraphQL calls, so it adds no dependency to
 the Rust build and inherits the repo's `ruff` hooks; its unit tests run
 under `make tools-tests`. It reads `LINEAR_PROJECT_ID` plus its own
 `LINEAR_API_KEY` (a personal Linear API key, because a script can't
-ride the OAuth-based `claude.ai` Linear MCP) for every run; for a real
-write it also reads `LINEAR_TASK_STAGING_DOC_ID` (the document it
-rewrites), while `--dry-run` prints the tree to stdout, prints the
-overlap edges it *would* file, and doesn't require it. It resolves all
-of these via `os.environ`, never a hard-coded id, and the key is never
+ride the OAuth-based `claude.ai` Linear MCP); `--dry-run` prints the
+overlap edges it *would* file and writes nothing. It resolves all of
+these via `os.environ`, never a hard-coded id, and the key is never
 committed.
 
 ## Structured filing fields
 
 Every filed issue carries machine-readable fields the automation reads
 back, on top of the human prose. Keep the field **names** stable — the
-filing skills emit them and `stage-backlog` parses them:
+filing skills emit them and `sync-blockers` parses them:
 
 - `**Fingerprint**: <basename>:<slug>` — the dedup key `audit`
   matches on so a finding is never refiled. Mandatory on audit
@@ -110,17 +100,17 @@ filing skills emit them and `stage-backlog` parses them:
   edit, comma-separated. Declare the **directory** when the work
   spans a dir (`tui/`), the **file** when it's one file
   (`programs/dropset/src/swap.rs`); list every glob for a multi-file
-  finding. The `stage-backlog` tool reads this to detect file
+  finding. The `sync-blockers` tool reads this to detect file
   collisions **deterministically** — a directory glob collides with
   any path under it, and two issues that collide can't run in
   parallel. When such a pair has no declared edge either direction,
   the tool **materializes** the constraint into a real `blocks`
-  relation (the lower-numbered issue blocks the higher), so the higher
-  nests under the lower and Linear carries the edge durably. Moving
-  this structure to **filing time** is what lets the tool skip the
-  prose-reading sub-agent it used to need; an issue that predates the
-  field falls back to declared-edge/parent placement, and the skill's
-  agent step reconciles it.
+  relation (the lower-numbered issue blocks the higher), so Linear
+  carries the edge durably as a blocking icon. This runs at **filing
+  time**: each filing skill calls `sync_blockers.py --for <new-id>`
+  right after `save_issue`, so a new issue's overlap edges are filed
+  the moment it lands. An issue that predates the `**Touches**:`
+  convention has no globs to check; backfill one and re-run the sweep.
 
 A worktree branch and its Linear issue **share one `ENG-###`
 number**: branch `eng-499` ↔ issue `ENG-499`. Skills resolve the
@@ -145,14 +135,13 @@ product code on the board.
   and `housekeeping` prepend `Claude:` to a title when the issue's
   `**Touches**:` globs are all on the meta surface above. `/merge-tasks`
   applies it when every issue it consolidates is meta.
-- **`stage-backlog` buckets by it.** Issues whose title starts with
-  `Claude:` group under a single `# Claude` heading (the deterministic
-  batch signal — the bucket keys on the **prefix**, not on file globs).
-  The tool also runs a **prefix↔touched-paths consistency check** and
-  warns on drift: a `Claude:`-prefixed issue whose `**Touches**:` reach
-  outside the meta surface, or a meta-only-touches issue with no
-  prefix. `housekeeping` surfaces those warnings for a human to
-  reconcile; the tool never retitles an issue itself.
+- **It batches meta-work on the board.** The prefix is the signal a
+  human filters and groups by in Linear to see all agent-infra work at
+  once, apart from product code. It is applied at **filing time** — the
+  filing skills add it exactly when the issue's `**Touches**:` globs are
+  all on the meta surface, so the prefix and the touched paths stay
+  consistent by construction. No tool re-derives or re-checks the
+  bucket; there is no rendered `# Claude` heading to keep in sync.
 - **It is a Linear-title signal only — never a PR title.** The prefix
   lives on the **issue** title for board recognition and batching. PR
   titles keep the standard `type(ENG-###): Subject` semantic-pr format
@@ -198,8 +187,9 @@ this one gates), both by identifier; they are **append-only** — they
 add edges and never clear existing ones, so use `removeBlockedBy` /
 `removeBlocks` to drop one. Recording a real edge keeps the blocker
 visible and prioritized so dependent work doesn't rot waiting on an
-upstream nobody remembers, and `stage-backlog` reads these edges and
-nests its dependency tree on them. Assert only a dependency you
+upstream nobody remembers, and `sync-blockers` reads these edges to
+avoid duplicating one — a declared edge suppresses the overlap edge it
+would otherwise materialize for that pair. Assert only a dependency you
 actually know to be real; omit it when unsure.
 
 `linear-task` sets these from a person's call. The **autonomous**

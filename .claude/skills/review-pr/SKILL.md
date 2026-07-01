@@ -1,6 +1,6 @@
 ---
 name: review-pr
-description: Adversarial pre-review — mark the Linear issue In Progress on invocation, verify its checklist is fully addressed, lint, catalogue issues, fix what's mechanical, ready the PR, wait for GitHub CI to pass, print the review summary, then at the merge-queue handoff move the issue In Review, offer to enqueue the PR, firm up permissions and capture session metrics while it sits in the queue, and report whether it merges or gets taken back out.
+description: Adversarial pre-review — mark the Linear issue In Progress on invocation, verify its checklist is fully addressed, lint, catalogue issues, fix what's mechanical, ready the PR, wait for GitHub CI to pass, print the review summary, then at the merge-queue handoff re-check the PR still merges cleanly before moving the issue In Review and offering to enqueue the PR, firm up permissions and capture session metrics while it sits in the queue, and report whether it merges or gets taken back out.
 user-invocable: true
 ---
 
@@ -178,19 +178,30 @@ PR-authoring **writes** (`create_pull_request`,
      ```
 
      If there are **no** boxes to tick (no checklist, or
-     none newly delivered), this same single call still
-     carries `state: "In Progress"` — just omit the
-     `description`. Either way it is **one** write.
+     none newly delivered), **and** the `get_issue` above
+     already shows the issue **In Progress** (which `init-pr`
+     set at bootstrap), there is **nothing to write** —
+     skip the `save_issue` entirely. Only when the state
+     actually needs to change (it's not yet In Progress, or
+     it's being reclaimed from In Review) does a
+     description-less `state: "In Progress"` write fire.
+     Either way it is **at most one** write.
 
      **Minimize Linear echoes** (per `CLAUDE.md` →
      "Context economy"): each `save_issue` / `get_issue`
      **echoes the full issue body** back into context, and
-     that echo is then replayed every later turn. So fetch
+     that echo is then replayed every later turn — worst on
+     a large consolidated-spec body. So fetch
      the issue **once** (the `get_issue` above), don't
      re-`get_issue` it, and collapse the In-Progress move
      and **all** the box-ticks into the **one** `save_issue`
      above — never a separate state write, and never one
-     write per box.
+     write per box. On a **re-run / rework**, don't re-flip
+     the state unless it genuinely changed (the fetched state
+     tells you), and if a state-change echo comes back not
+     reflecting the change, **verify once and report the
+     discrepancy** — do not retry, since each retry re-echoes
+     the whole body.
 
    - Catalogue every **partial** or **missing**
      requirement as a **blocking** issue (step 7),
@@ -204,12 +215,19 @@ PR-authoring **writes** (`create_pull_request`,
    **through the quiet runner** (per `CLAUDE.md` → "Context
    economy") — it captures the hook output to a temp log and
    prints only a one-line summary on success, or the failing
-   tail + log path on failure (which you then `Read` by
-   slice):
+   tail + log path on failure:
 
    ```sh
    python3 .claude/tools/run_quiet.py -- make lint
    ```
+
+   **When you go into the captured log, Grep it for the
+   failure — never `Read` it whole.** A whole-file read of a
+   captured lint log is how a 500-line per-file cspell dump
+   became the single largest result of a run (PR #207). Grep
+   the log for the failure markers (`Failed`, `error[`,
+   `Error`) to find the offending hook, or read only its
+   tail; slice from there.
 
    If lint fails, first separate **environmental**
    failures from **real violations** — they're not the
@@ -407,6 +425,39 @@ PR-authoring **writes** (`create_pull_request`,
    it. When in doubt, fan out — the short-circuit is for the
    clearly-trivial, not the merely-small-but-subtle.
 
+   **Reduced-fan-out cases — one scoped lens, cross-check
+   skipped.** Between "trivial" and "full fan-out" sits a
+   band of diffs that are *large* but whose real risk is
+   **narrow**, where the full multi-lens spend returned only
+   nits (each ≈0.5M–2.3M combined sub-agent input across
+   PRs #202/#203/#204/#206/#210). For any of these, run a
+   **single scoped lens** matched to the actual risk and
+   **skip the cross-check**, noting the reduced fan-out in
+   the summary:
+
+   - **infra/ops diff** touching no program / SDK / app
+     control flow (Dockerfile, compose, a make target, CI
+     YAML, docs) — better verified by *building / running*
+     the image than by a prose fan-out; scope to one
+     ops-correctness lens.
+   - **faithful extraction / move refactor** — code deleted
+     in one place reappears verbatim as additions elsewhere;
+     scope to one lens checking the move is faithful (no
+     dropped or altered lines), not six re-reviewing
+     unchanged logic.
+   - **mechanical repo-wide reformat** (a formatter / lint
+     autofix applied tree-wide) — discount the reformat
+     noise from the sizing and scope to one lens spot-checking
+     that no semantic change rode along.
+   - **value / default rewiring with no new control flow** (a
+     constant, default, or config value changed; no new
+     branches) — one lens confirming the new values and their
+     call sites.
+   - **test-only diff** (`#[cfg(test)]` blocks, `tests/`, no
+     production change) — cannot alter runtime behavior, so a
+     single **test-validity** lens (do the tests assert the
+     right thing?) is the whole review.
+
    **Gate the two freshness lenses on the diff's touched
    surfaces.** The four substantive lenses below
    (correctness, security, style, completeness) are
@@ -427,6 +478,31 @@ PR-authoring **writes** (`create_pull_request`,
    than — and composes with — the trivial-diff short-circuit
    above: a trivial `CLAUDE.md` edit still runs the freshness
    lenses; a large pure-source refactor still skips them.)
+
+   **Scope every broad-scan lens to the diff — don't turn it
+   loose on the whole convention set.** The freshness /
+   conventions / completeness lenses have repeatedly
+   dominated sub-agent input (≈471k, ≈627k, and one ≈5.4M /
+   71-turn run) by re-reading the *whole* `CLAUDE.md` +
+   `docs/conventions/` + `test.yml` and re-running repo-wide
+   greps for rules the diff barely touches. Tighten the
+   briefing:
+
+   - **Name the specific implicated doc**, not "read
+     `CLAUDE.md` and the relevant convention doc(s)". Point
+     the lens at the one section the diff actually bears on.
+   - **Run any needed repo-wide grep once, here in the main
+     loop**, and hand the result set to the lens; cap its
+     shell budget to "adjudicate from the diff + the provided
+     grep — don't re-derive".
+   - **Confirm a rule's presence or absence by `Read`ing the
+     current file, never by inferring from the diff's `-`/`+`
+     lines.** On a *removal* diff the freshness lens has read
+     `-` lines as still-present and returned false-positive
+     "stale doc" findings the cross-check then had to refute.
+   - When the diff adds **no new top-level tree / build
+     manifest**, fold or skip the CI-skip-list and
+     audit-registry checks (nothing new for them to learn).
 
    Spawn parallel sub-agents via the `Agent` tool
    (single message, multiple calls) to review the
@@ -666,7 +742,12 @@ PR-authoring **writes** (`create_pull_request`,
      `A <-> B: contract` line to the interfaces block;
    - a **new generated-file family** (a tree or extension
      the audit should never pick) → add its glob to the
-     skip-globs block.
+     skip-globs block. This also covers **data-only or
+     fixture JSON with no auditable logic** — e.g. the
+     committed `keys/*.json` throwaway localnet keypairs
+     (skipped as a family, while `keys/**` stays a
+     `ci-infra` root so `keys/README.md` keeps
+     doc-freshness coverage).
 
    **Append only** — never drop an existing entry — and
    keep the three blocks lint-clean (MD013, mdformat). If
@@ -989,6 +1070,31 @@ PR-authoring **writes** (`create_pull_request`,
    in front of them. (If CI failed, no checks ran, or the
    gate was never reached, skip this entirely.)
 
+   **First, re-check mergeability — a PR that was
+   `MERGEABLE` at the ready gate can turn `CONFLICTING`
+   while CI ran, if `main` advanced.** So before moving the
+   issue and before the prompt, re-read the conflict signal
+   (the same read the ready gate used):
+
+   ```sh
+   gh pr view <number> --json mergeable,mergeStateStatus
+   ```
+
+   - `mergeable: "CONFLICTING"`
+     (or `mergeStateStatus: "DIRTY"`) → **do not** offer to
+     enqueue and **do not** advance the issue. Report the
+     conflict, tell the human to rebase onto `main` to
+     resolve it (this skill does not auto-resolve), and leave
+     the issue **In Progress**. Stop here — the enqueue offer
+     is off the table until the rebase clears the conflict.
+   - `mergeable: "UNKNOWN"` → GitHub hasn't finished
+     computing mergeability; re-poll a few times (a short
+     wait between reads) before deciding rather than
+     offering blindly. If it stays `UNKNOWN`, say so and
+     hold rather than enqueue.
+   - `mergeable` not conflicting (`MERGEABLE`) → proceed to
+     the In Review move and the enqueue prompt below.
+
    This prompt is the handoff: per `CLAUDE.md`, **In
    Review** means "okay for the human to look at the PR
    and approve enqueueing it." So move the Linear issue
@@ -1002,6 +1108,14 @@ PR-authoring **writes** (`create_pull_request`,
      state: "In Review"
    )
    ```
+
+   **One write, no retry loop.** If the response echo comes
+   back still showing In Progress, do **not** re-issue the
+   write chasing it (that loop cost five body-echoing
+   `save_issue`/`get_issue` round-trips on PR #207) — verify
+   once and, if it still disagrees, report the discrepancy
+   and move on. The transition is idempotent; a silent echo
+   is not worth another full-body round-trip.
 
    Then ask with `AskUserQuestion` — always this tool, so
    the human gets the little TUI pop-up selector and picks

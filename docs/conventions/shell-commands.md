@@ -178,8 +178,9 @@ emitting it.
 
 These rules are enforced **mechanically**, not just by convention. A
 `PreToolUse` Bash hook (`.claude/hooks/no_compound_bash.py`, wired in
-the committed `.claude/settings.json` so every worktree inherits it)
-inspects each Bash command before it runs and **blocks** any that
+your **user-local** `.claude/settings.json` — see "Wiring the
+compound-shell guard" below) inspects each Bash command before it runs
+and **blocks** any that
 contains an unquoted shell compound / redirect operator — a pipe, `>`,
 `<`, `;`, `&&`, `||`, `&`, a backtick, or `$(` — telling the model to
 split the call and use the Write / Read / Grep tools instead. The scan
@@ -193,3 +194,53 @@ payload it can't parse is allowed — so it never wedges a session.
 through by adding the literal marker `#compound-ok` anywhere in the
 command. It's deliberately visible in the transcript so the bypass is
 auditable; reach for it only when the work truly can't be split.
+
+## Wiring the compound-shell guard
+
+The guard **script** (`.claude/hooks/no_compound_bash.py`) is committed,
+but its `PreToolUse` **wiring** is not: the repo does **not** commit
+`.claude/settings.json` (it is git-ignored, alongside the per-machine
+`.claude/settings.local.json` allowlist). The repo *documents* how to
+configure your own Claude Code — it does not enforce hooks or
+permissions on you. That means the guard is **opt-in**: a fresh
+worktree, a new contributor, or a CI runner does **not** get it until
+the hook is wired into a local `settings.json`. That is the intended
+tradeoff — configuration is the user's, not the checkout's.
+
+To turn the guard on, add this `PreToolUse` hook to your
+`.claude/settings.json` (the `$CLAUDE_PROJECT_DIR` variable resolves to
+the checkout root, so the same block works in the base repo and in
+every worktree):
+
+<!-- markdownlint-disable MD013 -->
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/no_compound_bash.py\"",
+            "statusMessage": "Checking for compound shell",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+<!-- markdownlint-enable MD013 -->
+
+Baseline permission allow-rules (the `Bash(prefix:*)` globs this doc's
+rules produce) go in the same file, or in `settings.local.json` — the
+`firm-perms` skill maintains the local allowlist for you. Because
+neither settings file is tracked, a worktree does **not** inherit the
+base repo's copy automatically; `firm-perms`' full sweep is what
+propagates a firmed allowlist from the base repo into a worktree (and
+back), so run it once in a cold worktree if the guard or a familiar
+allow-rule is missing.

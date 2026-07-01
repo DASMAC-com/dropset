@@ -39,8 +39,9 @@ Today `.claude/tools/` holds `session_metrics.py` (the
 branch/worktree checks), and `run_quiet.py` (a generic quiet runner
 that captures a noisy command's output to a log and surfaces only a
 summary — see [context economy](context-economy.md)).
-`tools/stage-backlog/` is the one remaining helper still under
-`tools/` — its Python rewrite is tracked separately.
+`tools/sync-blockers/` (`sync_blockers.py`, the deterministic core of
+the `sync-blockers` skill) is the one helper under `tools/` rather than
+`.claude/tools/`; it is run directly with `python3` (no `make` target).
 
 ## MCP first for prototyping and fallback; harden settled workflows
 

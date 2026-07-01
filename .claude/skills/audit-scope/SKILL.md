@@ -18,8 +18,9 @@ the engine `audit` calls for its per-file passes.
 
 This replaces the old `audit-codebase`, which wrote a
 gitignored checklist. Findings now live in the Backlog,
-so they're picked up as normal PRs (staged by
-`stage-backlog`) instead of a scratch file.
+so they're picked up as normal PRs (their blocking edges
+kept honest by `sync-blockers`) instead of a scratch
+file.
 
 ## Two ways it runs
 
@@ -253,13 +254,31 @@ Optional (ask on a direct run if not provided):
      - `**Touches**: <glob>[, <glob>…]` — the
        machine-readable list of path globs this fix will
        edit (e.g. `programs/dropset/src/swap.rs` or
-       `tui/`), comma-separated. `stage-backlog`'s renderer
+       `tui/`), comma-separated. `sync-blockers`
        reads this to detect file collisions deterministically
        (a directory glob like `tui/` collides with any path
        under it). Declare the **directory** when the fix
        spans a dir, the **file** when it's one file; for a
        multi-file finding list every glob. Mandatory — see
        `CLAUDE.md` → "Structured filing fields".
+
+   **Sync overlap edges (direct run only).** Right after each
+   `save_issue` returns a new identifier, file that issue's
+   file-overlap `blocks` edges against the open Backlog with
+   the incremental sweep — one bare command reducing to the
+   `Bash(python3 tools/sync-blockers/sync_blockers.py:*)`
+   allow-rule (the scan runs in the tool's own process, so
+   nothing enters context):
+
+   ```sh
+   python3 tools/sync-blockers/sync_blockers.py --for <ENG-###>
+   ```
+
+   Best-effort: it needs `LINEAR_API_KEY` / `LINEAR_PROJECT_ID`;
+   if either is unset, note it and continue. On a **delegated**
+   run the findings are handed back to the caller (not filed
+   here), so `audit` files them and runs the `--for` call —
+   skip it here.
 
 1. **Report.** Print a short tally — findings by
    dimension and severity, deduped count, and (direct run)
@@ -275,7 +294,7 @@ Optional (ask on a direct run if not provided):
 - If a finding spans multiple files that obviously belong
   in one PR, file them as one combined issue with a
   `**Fingerprint**:` line per finding (the union), the way
-  `audit` does — `stage-backlog` never merges issues,
+  `audit` does — nothing merges issues for you,
   so combining at file time is the only way coupled
   findings become one issue.
 - Shell discipline (per `CLAUDE.md`): every command is a

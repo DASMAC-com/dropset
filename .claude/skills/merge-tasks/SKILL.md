@@ -1,6 +1,6 @@
 ---
 name: merge-tasks
-description: Consolidate several Linear issues into one, given their numbers. Folds each non-survivor's body into the lowest-numbered survivor as a labeled # Part section (preserving every Fingerprint), unions the Touches globs, carries blockedBy/blocks/relatedTo relations append-only, applies the Claude: prefix when every issue is meta-work, cancels the folded issues as duplicateOf the survivor, and re-stages the backlog. Confirms the plan via AskUserQuestion before any write. The deterministic parsing/assembly lives in the merge_tasks.py tool.
+description: Consolidate several Linear issues into one, given their numbers. Folds each non-survivor's body into the lowest-numbered survivor as a labeled # Part section (preserving every Fingerprint), unions the Touches globs, carries blockedBy/blocks/relatedTo relations append-only, applies the Claude: prefix when every issue is meta-work, cancels the folded issues as duplicateOf the survivor, and syncs the survivor's file-overlap blocking edges via sync-blockers `--for`. Confirms the plan via AskUserQuestion before any write. The deterministic parsing/assembly lives in the merge_tasks.py tool.
 user-invocable: true
 ---
 
@@ -125,21 +125,33 @@ approval:
   with `state: "Canceled"` and `duplicateOf: "<survivor>"`,
   so the board shows it folded into the survivor.
 
-**6. Re-stage.** Invoke the `stage-backlog` skill (via the
-Skill tool) so the Task Staging document reflects the
-merge — the canceled issues drop off and the survivor
-carries the consolidated work.
+**6. Sync the survivor's blocking edges.** The survivor's
+`**Touches**:` is now the union of every folded issue's, so
+run the incremental sweep on it to file any new file-overlap
+`blocks` edges against the open Backlog — one bare command
+that reduces to the
+`Bash(python3 tools/sync-blockers/sync_blockers.py:*)`
+allow-rule:
+
+```sh
+python3 tools/sync-blockers/sync_blockers.py --for <survivor>
+```
+
+Best-effort: it needs `LINEAR_API_KEY` / `LINEAR_PROJECT_ID`;
+if either is unset, note it and continue. The canceled
+non-survivors drop out of the open Backlog on their own, so
+their stale overlap edges no longer gate anything.
 
 **7. Report.** One line: the survivor (with its final
-title), the issues folded in and canceled, and that the
-backlog was re-staged.
+title), the issues folded in and canceled, and that its
+blocking edges were synced.
 
 ## Notes
 
 - **Read-only with respect to source.** This skill writes
   only to Linear (the survivor update, the cancellations,
-  and the `stage-backlog` document rewrite). It authors no
-  code or skill diff, and never commits or pushes.
+  and the survivor's `sync-blockers` overlap edges). It
+  authors no code or skill diff, and never commits or pushes.
 - **Shell discipline** (per `docs/conventions/shell-commands.md`):
   every command is a single bare call that reduces to an
   allow-glob — the tool calls match

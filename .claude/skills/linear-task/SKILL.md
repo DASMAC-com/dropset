@@ -47,10 +47,10 @@ value.
 
 Every issue is filed **into the Backlog with no
 parent** (`state: "Backlog"`, no `parentId`). There is
-no umbrella issue: the staging plan — which issues
-group into which PR, and in what order — is owned by
-the `stage-backlog` skill, which reads this Backlog
-and writes the **Task Staging** document. So
+no umbrella issue. What gates what is recorded as
+native Linear blocking edges; the `sync-blockers` skill
+keeps those edges honest against file overlap (this
+skill calls it after filing — see the final step). So
 just file the to-do; don't attach it to a parent.
 
 ## Input
@@ -86,8 +86,8 @@ what to file.
      machine-readable path globs the fix will edit
      (a directory like `tui/` when it spans a dir, a
      file when it's one file), comma-separated, so
-     `stage-backlog`'s renderer can group it by file
-     collision. See `CLAUDE.md` → "Structured filing
+     `sync-blockers` can detect a file collision with
+     another issue. See `CLAUDE.md` → "Structured filing
      fields".
 
    - If the to-do came out of an open PR or branch,
@@ -137,6 +137,24 @@ what to file.
      blocks: ["<ENG-###>"]      // omit if none — this one gates them
    )
    ```
+
+1. **Sync blocking edges for the new issue.** Right
+   after `save_issue` returns the identifier, file its
+   file-overlap `blocks` edges against the open Backlog
+   with the incremental sweep — one bare command that
+   reduces to the
+   `Bash(python3 tools/sync-blockers/sync_blockers.py:*)`
+   allow-rule (the overlap scan happens in the tool's own
+   process, so nothing enters context):
+
+   ```sh
+   python3 tools/sync-blockers/sync_blockers.py --for <ENG-###>
+   ```
+
+   Best-effort: it needs `LINEAR_API_KEY` /
+   `LINEAR_PROJECT_ID`; if either is unset the tool says
+   so — note it and continue, the full sweep will catch
+   the edge later.
 
 1. Print the new issue's identifier (e.g. ENG-123)
    and URL so the user can jump to it.
