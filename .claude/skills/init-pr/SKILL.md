@@ -227,32 +227,59 @@ Steps 1, 2, and 4 read their answers from this one call.
    `html_url` and `number` — keep both (the number for
    the next step, the URL for the final one).
 
-1. **Ignore this PR's notification subscription** so its
+1. **Unsubscribe from this PR's notifications** so its
    lifecycle doesn't ping the author. Opening a PR
    auto-subscribes you to it, and the draft then generates a
    stream of notifications through its life (CI results,
    assignment, and finally the merge) — noise in a
-   solo / agent-driven flow. Ignore the thread right after
+   solo / agent-driven flow. Unsubscribe right after
    creating it. No GitHub MCP tool covers a per-PR
    subscription (`manage_notification_subscription` needs an
    existing thread; `manage_repository_notification_subscription`
    is repo-wide), so this is a **documented `gh` exception**
-   (per `docs/conventions/github-mcp.md`) — pass the PR
-   `number` from the previous step:
+   (per `docs/conventions/github-mcp.md`). The working path is
+   the GraphQL `updateSubscription` mutation, keyed by the
+   PR's GraphQL **node id**.
+
+   `create_pull_request` returns the PR's *numeric* database
+   id, **not** the node id the mutation needs, so first
+   resolve the node id from the `number` kept above — gh's
+   `id` field over its GraphQL is the node id, and this reuses
+   the existing `Bash(gh pr view:*)` allow-rule:
 
    ```sh
-   gh api --method PUT \
-     /repos/DASMAC-com/dropset/issues/<number>/subscription \
-     -F ignored=true
+   gh pr view <number> --repo DASMAC-com/dropset --json id
    ```
 
-   Make it **best-effort**: if the call errors, note it and
+   Then set the subscription to `IGNORED` with the node id
+   (`<node_id>`, e.g. `PR_kwDO…`) — this reuses the existing
+   `Bash(gh api graphql:*)` allow-rule:
+
+   ```sh
+   gh api graphql -F id=<node_id> -f query='
+     mutation($id: ID!) {
+       updateSubscription(
+         input: { subscribableId: $id, state: IGNORED }
+       ) { subscribable { viewerSubscription } }
+     }'
+   ```
+
+   A success returns `viewerSubscription: "UNSUBSCRIBED"` —
+   GitHub normalizes the `IGNORED` readback to `UNSUBSCRIBED`,
+   which is what stops the lifecycle self-pings. The mutation
+   needs the `gh` token's **`notifications`** OAuth scope; if
+   it's missing the call fails with `INSUFFICIENT_SCOPES` (a
+   one-time operator grant:
+   `gh auth refresh -h github.com -s notifications`).
+
+   Make it **best-effort**: if either call errors, note it and
    continue — a notification ping must never block
    bootstrapping. (`housekeeping`'s merged-PR notification
    sweep remains the catch-all for anything this misses.)
-   **Tradeoff:** ignoring the thread suppresses *all* of this
-   PR's notifications, including others' review comments —
-   accepted in this solo / agent-driven flow.
+   **Tradeoff:** unsubscribing suppresses this PR's routine
+   lifecycle notifications; a direct @-mention or an explicit
+   review request can still re-notify — accepted in this
+   solo / agent-driven flow.
 
 1. Mark the Linear issue **In Progress** so the board
    reflects that work on this worktree has started.
