@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="132" height="24" viewBox="0 0 132 24" fill="none" role="img" aria-label="Dropset">
+  <circle cx="12" cy="12" r="6" fill="#0044ff" />
+  <circle cx="12" cy="12" r="10" stroke="#0044ff" stroke-width="1.5" fill="none" opacity="0.4" />
+  <text x="30" y="17" font-family="system-ui, sans-serif" font-size="16" font-weight="600" letter-spacing="0.5" fill="#ededed">dropset</text>
+</svg>
