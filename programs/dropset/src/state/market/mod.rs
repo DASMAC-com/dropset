@@ -22,11 +22,13 @@ mod access;
 mod accrual;
 mod dll;
 mod layout;
+mod reference_price;
 
 pub use access::*;
 pub use accrual::*;
 pub use dll::*;
 pub use layout::*;
+pub use reference_price::*;
 
 // The pure seeding / withdrawal kernels are solana-free, so they live in
 // `dropset-math-core` and are re-exported here unchanged — every
