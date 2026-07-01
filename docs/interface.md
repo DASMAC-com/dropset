@@ -1,5 +1,3 @@
-<!-- cspell:word birdeye -->
-
 <!-- cspell:word ohlcv -->
 
 <!-- cspell:word rollups -->
