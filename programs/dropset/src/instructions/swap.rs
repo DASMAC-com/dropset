@@ -933,12 +933,13 @@ mod overflow_bound_tests {
         let price = Price::encode(10_000_000, -16).unwrap();
         let got =
             SwapSide::Sell.compute_fill(price, u64::MAX as u128, u64::MAX, u64::MAX, u64::MAX);
+        // `Ok(Some(_))`, not just `Ok`: a fill actually occurs, so the
+        // reverse `base_for_quote` conversion and its `u64::MAX` guard
+        // really ran and cleared — rather than the leg early-returning
+        // `Ok(None)` on a zero fill and never reaching the guard.
         assert!(
-            got.is_ok(),
-            "tiny-price max-base Sell must not overflow the fill-leg guard"
+            matches!(got, Ok(Some(_))),
+            "tiny-price max-base Sell must fill and clear the guard, got {got:?}"
         );
-        if let Ok(Some((fill_base, _))) = got {
-            assert!(fill_base <= u64::MAX, "reverse-converted base leg within u64");
-        }
     }
 }
