@@ -1,19 +1,22 @@
 """Stdlib ``unittest`` tests for prune_conversations' pure decision logic —
-the age/open-PR rule, worktree parsing, the dropset-set derivation, and the
-under-root path guard. The filesystem scan/delete driver is exercised through
-these units; run with ``python3 -m unittest`` from ``.claude/tools``.
+the age/open-PR rule, worktree parsing, the dropset-set derivation, the
+under-root path guard, and the destructive ``safe_delete`` guard's refusal
+branches. Run with ``python3 -m unittest`` from ``.claude/tools``.
 """
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
 
 from prune_conversations import (
+    Record,
     decide_history,
     decide_slug,
     dropset_slug_sets,
     is_within,
     parse_worktrees,
+    safe_delete,
     slugify,
 )
 
@@ -154,6 +157,56 @@ class IsWithinTests(unittest.TestCase):
             self.assertFalse(is_within(root, outside))
             # the root itself is not "under" the root
             self.assertFalse(is_within(root, root))
+
+
+class SafeDeleteTests(unittest.TestCase):
+    """The one `rmtree` caller: it must delete a real directory under a known
+    root and **refuse** anything else (symlink, non-dir, outside every root)."""
+
+    def _record(self, path, size=123):
+        return Record(
+            path=path, category="dropset-old", delete=True, reason="", size=size
+        )
+
+    def test_deletes_real_dir_under_root_and_returns_size(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "root"
+            victim = root / "slug"
+            victim.mkdir(parents=True)
+            (victim / "f").write_text("x", encoding="utf-8")
+            freed = safe_delete(self._record(victim, size=999), [root])
+            self.assertEqual(freed, 999)
+            self.assertFalse(victim.exists())
+
+    def test_refuses_outside_every_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "root"
+            root.mkdir()
+            outside = Path(tmp) / "outside"
+            outside.mkdir()
+            freed = safe_delete(self._record(outside), [root])
+            self.assertEqual(freed, 0)
+            self.assertTrue(outside.exists())  # untouched
+
+    def test_refuses_symlink_entry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "root"
+            root.mkdir()
+            real = Path(tmp) / "real"
+            real.mkdir()
+            link = root / "link"
+            os.symlink(real, link)
+            freed = safe_delete(self._record(link), [root])
+            self.assertEqual(freed, 0)
+            self.assertTrue(real.exists())  # symlink target never followed/deleted
+            self.assertTrue(link.is_symlink())
+
+    def test_refuses_missing_or_non_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "root"
+            root.mkdir()
+            missing = root / "gone"
+            self.assertEqual(safe_delete(self._record(missing), [root]), 0)
 
 
 if __name__ == "__main__":
