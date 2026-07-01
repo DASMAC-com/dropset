@@ -24,6 +24,14 @@ use dropset_sdk::DROPSET_ID;
 use solana_client::rpc_client::RpcClient;
 use solana_pubkey::Pubkey;
 
+/// A maker `quote_slot` this many slots behind the poll's head slot still
+/// counts as [`Liveness::Live`]. The maker stamps a reference price at least
+/// every `ref_heartbeat` (30 s — `bots/maker-bot` `StrategyConfig`); at
+/// localnet's ~400 ms/slot that is ~75 slots, so ~3 heartbeats' worth of slots
+/// absorbs a late or missed heartbeat and poll jitter without flapping to
+/// stale, while a stopped bot still crosses into stale within ~90 s.
+const MAKER_LIVE_WITHIN_SLOTS: u64 = 225;
+
 /// The bootstrap progression. Each action is enabled in exactly one phase
 /// (plus the always-on ones); the order here is the order they unlock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,6 +85,12 @@ pub struct MarketView {
     pub active_count: u32,
     /// `(sector_index, leader)` for every live vault — drives teardown.
     pub live_vaults: Vec<(u32, Pubkey)>,
+    /// The `reference_price.quote_slot` of the first live vault — the one whose
+    /// leader the accounts pane shows as the MM bot. Drives the leader's
+    /// liveness (freshness against the poll's head slot). `None` when the market
+    /// has no live vault; `Some(0)` for a vault that has never quoted (reads as
+    /// maximally stale).
+    pub leader_quote_slot: Option<u32>,
     /// `(sector_index, owner)` for every open `VaultDepositor` on this
     /// market — the first leg of teardown (`force_withdraw_depositor`).
     pub depositors: Vec<(u32, Pubkey)>,
@@ -91,6 +105,25 @@ pub struct MarketView {
     pub bids: Vec<BookLevel>,
 }
 
+/// How live a bot participant looks, as the accounts pane can observe it
+/// without any bot-side heartbeat account. For the maker it is derived purely
+/// from how recently it stamped a reference price on chain — its vault's
+/// `quote_slot` versus the poll's head slot — so a bot that is quoting reads
+/// [`Liveness::Live`] and one that has gone quiet reads [`Liveness::Stale`],
+/// independent of who launched it. A participant the TUI has no signal for is
+/// [`Liveness::Unknown`] (the taker, until it is wired into the supervisor).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Liveness {
+    /// Quoting: stamped a reference price within the freshness window.
+    Live,
+    /// Present but its last quote has aged past the window — booting, wedged,
+    /// or stopped.
+    Stale,
+    /// No liveness signal is observable for this participant.
+    #[default]
+    Unknown,
+}
+
 /// A market participant's wallet token holdings — the swapper's or the
 /// vault leader's (the MM bot's) base/quote ATA balances, in atoms. Lets the
 /// accounts pane surface who is trading the market and the inventory in their
@@ -100,6 +133,10 @@ pub struct ParticipantView {
     pub address: Pubkey,
     pub base_tokens: u64,
     pub quote_tokens: u64,
+    /// The bot's observed liveness — for the leader (the MM bot), derived from
+    /// its vault's quote freshness; [`Liveness::Unknown`] for a participant with
+    /// no observable signal.
+    pub liveness: Liveness,
 }
 
 /// A full snapshot of localnet state at one refresh.
@@ -204,13 +241,34 @@ pub fn poll(
     if let Some(market) = state.selected_market(selected).cloned() {
         // The MM bot is the leader of the market's first live vault; the
         // swapper is the supplied taker key. Read each one's wallet holdings.
-        state.leader = market
-            .live_vaults
-            .first()
-            .map(|(_, leader)| read_participant(client, leader, &market));
+        // The leader's liveness is derived from its vault's quote freshness; the
+        // swapper has no observable signal yet, so it stays `Unknown`.
+        state.leader = market.live_vaults.first().map(|(_, leader)| {
+            let mut view = read_participant(client, leader, &market);
+            view.liveness = maker_liveness(slot, market.leader_quote_slot);
+            view
+        });
         state.swapper = swapper.map(|pk| read_participant(client, pk, &market));
     }
     state
+}
+
+/// Classify the maker's liveness from its last quote slot against the poll's
+/// head slot: quoting within [`MAKER_LIVE_WITHIN_SLOTS`] is [`Liveness::Live`],
+/// anything older (including a vault that has never quoted, `quote_slot == 0`)
+/// is [`Liveness::Stale`]. Without a head slot (validator down) there is nothing
+/// to compare against, so the result is [`Liveness::Unknown`].
+fn maker_liveness(head_slot: Option<u64>, quote_slot: Option<u32>) -> Liveness {
+    match (head_slot, quote_slot) {
+        (Some(head), Some(quoted)) => {
+            if head.saturating_sub(quoted as u64) <= MAKER_LIVE_WITHIN_SLOTS {
+                Liveness::Live
+            } else {
+                Liveness::Stale
+            }
+        }
+        _ => Liveness::Unknown,
+    }
 }
 
 /// Read `owner`'s base/quote ATA token balances for `market` into a
@@ -237,6 +295,9 @@ fn read_participant(client: &RpcClient, owner: &Pubkey, market: &MarketView) -> 
         address: *owner,
         base_tokens: amount(0),
         quote_tokens: amount(1),
+        // Filled in by the caller for the leader; the default is the honest
+        // answer for a participant with no observable liveness signal.
+        liveness: Liveness::Unknown,
     }
 }
 
@@ -299,10 +360,17 @@ fn read_markets(client: &RpcClient, current_slot: u32, target: Option<Pubkey>) -
         let quote_mint = Pubkey::new_from_array(header.quote_mint);
         let base_treasury = Pubkey::new_from_array(header.base_treasury);
         let quote_treasury = Pubkey::new_from_array(header.quote_treasury);
-        let live_vaults: Vec<(u32, Pubkey)> = view
-            .active_vaults()
-            .map(|(idx, v)| (idx, Pubkey::new_from_array(v.leader)))
-            .collect();
+        // Walk the active vaults once, collecting the teardown roster and, from
+        // the first one (the vault the accounts pane surfaces as the MM bot),
+        // its quote slot for the leader's liveness.
+        let mut live_vaults: Vec<(u32, Pubkey)> = Vec::new();
+        let mut leader_quote_slot: Option<u32> = None;
+        for (idx, v) in view.active_vaults() {
+            if live_vaults.is_empty() {
+                leader_quote_slot = Some(v.reference_price.quote_slot.get());
+            }
+            live_vaults.push((idx, Pubkey::new_from_array(v.leader)));
+        }
 
         // Reconstruct the resting book via the shared matcher (Buy ⇒ asks,
         // Sell ⇒ bids) — the same levels a real swap would fill.
@@ -344,6 +412,7 @@ fn read_markets(client: &RpcClient, current_slot: u32, target: Option<Pubkey>) -
             quote_treasury_lamports: lamports(1),
             active_count: header.active_count.get(),
             live_vaults,
+            leader_quote_slot,
             depositors,
             base_decimals: decimals(2),
             quote_decimals: decimals(3),
@@ -372,6 +441,7 @@ mod tests {
             quote_treasury_lamports: 0,
             active_count,
             live_vaults: Vec::new(),
+            leader_quote_slot: None,
             depositors: Vec::new(),
             base_decimals: 6,
             quote_decimals: 6,
@@ -415,6 +485,28 @@ mod tests {
             ready_state(vec![market(1, 1), market(2, 2)]).phase(),
             Phase::Ready
         );
+    }
+
+    #[test]
+    fn maker_liveness_tracks_quote_freshness() {
+        // A recent quote is live; the boundary slot is inclusive.
+        assert_eq!(maker_liveness(Some(1_000), Some(1_000)), Liveness::Live);
+        assert_eq!(
+            maker_liveness(Some(1_000 + MAKER_LIVE_WITHIN_SLOTS), Some(1_000)),
+            Liveness::Live
+        );
+        // One slot past the window is stale.
+        assert_eq!(
+            maker_liveness(Some(1_001 + MAKER_LIVE_WITHIN_SLOTS), Some(1_000)),
+            Liveness::Stale
+        );
+        // A vault that has never quoted (`quote_slot == 0`) reads as stale.
+        assert_eq!(maker_liveness(Some(1_000_000), Some(0)), Liveness::Stale);
+        // A future-dated quote (clock skew) saturates to zero age, not stale.
+        assert_eq!(maker_liveness(Some(10), Some(1_000)), Liveness::Live);
+        // No head slot (validator down) or no live vault → unknown.
+        assert_eq!(maker_liveness(None, Some(1_000)), Liveness::Unknown);
+        assert_eq!(maker_liveness(Some(1_000), None), Liveness::Unknown);
     }
 
     #[test]
