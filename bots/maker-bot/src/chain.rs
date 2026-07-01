@@ -29,6 +29,23 @@ use crate::context::{MarketAddrs, VaultSnapshot};
 /// `quoting` module.
 const PRICE_SCALE: u64 = 1_000_000_000;
 
+/// Convert a human quote-per-base price (USD per token, as the feeds report it)
+/// into the **atoms-ratio** the on-chain `Price` encodes — `quote_atoms` per
+/// `base_atoms`. They coincide only when both legs share decimals (an
+/// equal-decimals market stamps the human price directly); a token with more
+/// decimals than USDC scales down, fewer scales up. This is the per-market
+/// decimal handling the wide-unit-price roster (EURC ~$1.14 … IDRX ~$0.000056)
+/// needs so each market's reference encodes correctly.
+pub fn human_to_atoms_ratio(human: f64, base_decimals: u8, quote_decimals: u8) -> f64 {
+    human * 10f64.powi(quote_decimals as i32 - base_decimals as i32)
+}
+
+/// Inverse of [`human_to_atoms_ratio`] — decode an on-chain atoms-ratio back to
+/// the human quote-per-base price for display.
+pub fn atoms_ratio_to_human(ratio: f64, base_decimals: u8, quote_decimals: u8) -> f64 {
+    ratio * 10f64.powi(base_decimals as i32 - quote_decimals as i32)
+}
+
 /// SPL Token Mint `decimals` byte offset (after `COption<Pubkey>` authority +
 /// `u64` supply).
 const MINT_DECIMALS_OFFSET: usize = 44;
@@ -96,32 +113,45 @@ pub fn airdrop(client: &RpcClient, who: &Pubkey, lamports: u64) -> Result<()> {
     Err(anyhow!("airdrop did not confirm in time"))
 }
 
-/// Discover the single localnet market by scanning the program's accounts for
-/// the `MarketHeader` discriminator, then read its mints, treasuries, and the
-/// pair's decimals.
-pub fn discover_market(client: &RpcClient) -> Result<MarketAddrs> {
+/// Discover every localnet market in one scan of the program's accounts for the
+/// `MarketHeader` discriminator, reading each one's mints, treasuries, and the
+/// pair's decimals. The supervisor matches these against the [`MARKETS`] roster
+/// by base mint to find each bot's market.
+///
+/// [`MARKETS`]: crate::config::MARKETS
+pub fn discover_markets(client: &RpcClient) -> Result<Vec<MarketAddrs>> {
     let accounts = client
         .get_program_accounts(&DROPSET_ID)
         .context("get_program_accounts")?;
-    let (address, account) = accounts
-        .iter()
-        .find(|(_, a)| a.data.len() >= 8 && a.data[..8] == MARKET_HEADER_DISCRIMINATOR)
-        .ok_or_else(|| anyhow!("no market found — is the localnet bootstrapped?"))?;
-
-    let view = SlabView::load(&account.data).map_err(|e| anyhow!("decode market: {e:?}"))?;
-    let header = view.header;
-    let base_mint = Pubkey::new_from_array(header.base_mint);
-    let quote_mint = Pubkey::new_from_array(header.quote_mint);
-
-    Ok(MarketAddrs {
-        market: *address,
-        base_mint,
-        quote_mint,
-        base_treasury: Pubkey::new_from_array(header.base_treasury),
-        quote_treasury: Pubkey::new_from_array(header.quote_treasury),
-        base_decimals: mint_decimals(client, &base_mint).context("base mint decimals")?,
-        quote_decimals: mint_decimals(client, &quote_mint).context("quote mint decimals")?,
-    })
+    let mut markets = Vec::new();
+    for (address, account) in &accounts {
+        if account.data.len() < 8 || account.data[..8] != MARKET_HEADER_DISCRIMINATOR {
+            continue;
+        }
+        // Skip (don't abort the whole scan on) an account that carries the
+        // header discriminator but won't decode — one malformed market must not
+        // hide the rest of the roster.
+        let view = match SlabView::load(&account.data) {
+            Ok(view) => view,
+            Err(e) => {
+                eprintln!("[discover] skipping undecodable market {address}: {e:?}");
+                continue;
+            }
+        };
+        let header = view.header;
+        let base_mint = Pubkey::new_from_array(header.base_mint);
+        let quote_mint = Pubkey::new_from_array(header.quote_mint);
+        markets.push(MarketAddrs {
+            market: *address,
+            base_mint,
+            quote_mint,
+            base_treasury: Pubkey::new_from_array(header.base_treasury),
+            quote_treasury: Pubkey::new_from_array(header.quote_treasury),
+            base_decimals: mint_decimals(client, &base_mint).context("base mint decimals")?,
+            quote_decimals: mint_decimals(client, &quote_mint).context("quote mint decimals")?,
+        });
+    }
+    Ok(markets)
 }
 
 /// Read an SPL mint's `decimals`.
@@ -148,6 +178,8 @@ pub fn read_vault(
     client: &RpcClient,
     market: &Pubkey,
     authority: &Pubkey,
+    base_decimals: u8,
+    quote_decimals: u8,
 ) -> Result<VaultSnapshot> {
     let account = client.get_account(market).context("get market account")?;
     let view = SlabView::load(&account.data).map_err(|e| anyhow!("decode market: {e:?}"))?;
@@ -158,7 +190,10 @@ pub fn read_vault(
         active.push(idx);
         if vault.quote_authority == wanted {
             let reference = vault.reference_price.price();
-            let reference_price = reference.quote_for_base(PRICE_SCALE) as f64 / PRICE_SCALE as f64;
+            let ratio = reference.quote_for_base(PRICE_SCALE) as f64 / PRICE_SCALE as f64;
+            // The stored price is the atoms-ratio; lift it back to the human
+            // quote-per-base for the snapshot.
+            let reference_price = atoms_ratio_to_human(ratio, base_decimals, quote_decimals);
             return Ok(VaultSnapshot {
                 sector_idx: idx,
                 base_atoms: vault.base_atoms.get(),
@@ -175,16 +210,22 @@ pub fn read_vault(
 
 /// Stamp a new reference price (`set_reference_price`, hot path). `slot` is the
 /// quote slot; it is not backdated on this path (§3 heartbeat invariant).
+#[allow(clippy::too_many_arguments)]
 pub fn set_reference_price(
     client: &RpcClient,
     leader: &Keypair,
     market: &Pubkey,
     vault_idx: u32,
     price: f64,
+    base_decimals: u8,
+    quote_decimals: u8,
     slot: u64,
 ) -> Result<String> {
-    let reference =
-        Price::from_value(price).ok_or_else(|| anyhow!("price {price} out of range"))?;
+    // The feeds report a human quote-per-base price; the engine stores the
+    // atoms-ratio, so scale by the decimal gap before encoding.
+    let ratio = human_to_atoms_ratio(price, base_decimals, quote_decimals);
+    let reference = Price::from_value(ratio)
+        .ok_or_else(|| anyhow!("price {price} (ratio {ratio}) out of range"))?;
     let ix = set_reference_price_ix(leader.pubkey(), *market, vault_idx, reference, slot);
     send(client, leader, &[ix])
 }
@@ -239,5 +280,29 @@ mod tests {
         assert_eq!(public_cluster(DEVNET_GENESIS), Some("devnet"));
         assert_eq!(public_cluster(TESTNET_GENESIS), Some("testnet"));
         assert_eq!(public_cluster("11111111111111111111111111111111"), None);
+    }
+
+    #[test]
+    fn atoms_ratio_is_identity_at_equal_decimals() {
+        // EURC (6) / USDC (6): the human price stamps unchanged.
+        assert!((human_to_atoms_ratio(1.14, 6, 6) - 1.14).abs() < 1e-12);
+    }
+
+    #[test]
+    fn atoms_ratio_scales_with_the_decimal_gap() {
+        // VCHF (9) / USDC (6): 1 VCHF-atom is 10^-3 of a token, so the
+        // atoms-ratio is the human price × 10^(6-9).
+        assert!((human_to_atoms_ratio(1.235, 9, 6) - 1.235e-3).abs() < 1e-12);
+        // IDRX (2) / USDC (6): the atoms-ratio scales up.
+        assert!((human_to_atoms_ratio(0.000056, 2, 6) - 0.56).abs() < 1e-12);
+    }
+
+    #[test]
+    fn atoms_ratio_round_trips_to_human() {
+        for (human, base, quote) in [(1.14, 6, 6), (1.235, 9, 6), (0.000056, 2, 6)] {
+            let ratio = human_to_atoms_ratio(human, base, quote);
+            let back = atoms_ratio_to_human(ratio, base, quote);
+            assert!((back - human).abs() / human < 1e-12, "round-trip {human}");
+        }
     }
 }

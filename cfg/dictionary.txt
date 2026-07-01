@@ -22,6 +22,8 @@ clob
 cngn
 codama
 codegen
+coingecko
+coinmarketcap
 cpis
 crossterm
 dasmac
@@ -40,6 +42,7 @@ eurc
 eurcv
 eurozone
 fieldless
+frankfurter
 frontmatter
 getpid
 globbable
@@ -62,7 +65,6 @@ metas
 mpsc
 multisigs
 mxne
-oanda
 paytrie
 pdas
 permissionless

@@ -77,8 +77,8 @@ services:
     # The leader market-maker: polls feeds, composes a fair mid, and drives
     # the relative-quoting hot + cold paths. Funds its leader (keys/EEEE.json)
     # from the localnet faucet over RPC, so it needs no host wallet — only the
-    # repo keys/ mount. OANDA_API_KEY (host env, optional) arms the FX peg
-    # sanity feed; without it the peg kill switch is disarmed.
+    # repo keys/ mount. CMC_API_KEY (host env, optional) arms the CoinMarketCap
+    # secondary tier; without it the feed cascades CoinGecko → FX-rate → static.
     build:
       context: '../..'
       dockerfile: 'infra/localnet/bots.Dockerfile'
@@ -87,7 +87,7 @@ services:
     - '--rpc'
     - 'http://host.docker.internal:8899'
     environment:
-      OANDA_API_KEY: '${OANDA_API_KEY:-}'
+      CMC_API_KEY: '${CMC_API_KEY:-}'
       RUST_LOG: 'info'
     extra_hosts:
     - 'host.docker.internal:host-gateway'

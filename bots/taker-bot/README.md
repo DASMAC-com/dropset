@@ -2,10 +2,10 @@
 
 # dropset-taker-bot
 
-A single **benign, flow-generation** taker for the localnet CADC/USDC mock
-market. It submits stochastic `swap`s against the seeded vault so the book
-actually moves and the maker (`bots/maker-bot`) takes fills — the demand
-side of the localnet MVP described in `docs/market-making-mvp.md`.
+A single **benign, flow-generation** taker for the localnet FX-stablecoin
+demo. It submits stochastic `swap`s against one seeded market's vault so
+the book actually moves and the maker (`bots/maker-bot`) takes fills — the
+demand side of the localnet MVP described in `docs/market-making-mvp.md`.
 
 This is the benign flow taker. The **adversarial** strategy-hardening taker
 is a separate, deferred effort; this bot is not it.
@@ -52,12 +52,12 @@ The swap is built with the SDK's `SwapBuilder` and signed by the taker.
 On localnet the bot funds itself each tick (all idempotent):
 
 - airdrops the taker SOL for fees when its balance is low,
-- creates the taker's CADC and USDC ATAs, and
+- creates the taker's base-token and USDC ATAs, and
 - mints either leg back up to its target inventory under the mock-mint
   authority when it runs low,
 
 mirroring `tui/src/chain.rs` (`airdrop` / `create_ata_idempotent` /
-`mint_to`) and the `MOCK_CADC_USDC` pair in `tui/src/market.rs`.
+`mint_to`) and the market roster (`PAIRS`) in `tui/src/market.rs`.
 
 The bot signs `MintTo` and `swap` with committed localnet keypairs
 (`keys/BBBB.json` and `keys/FFFF.json`), so it guards against running

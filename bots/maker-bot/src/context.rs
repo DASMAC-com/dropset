@@ -7,12 +7,11 @@
 //! last reference it stamped, the skew it applied, when it last fired each
 //! path, and which profile shape it believes is armed.
 
-use crate::fills::Fill;
+use crate::config::MarketConfig;
 use crate::model::ladder::Side;
 use solana_client::rpc_client::RpcClient;
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
-use std::sync::mpsc::Receiver;
 use std::time::Instant;
 
 /// The discovered market and its token metadata — everything the bot needs to
@@ -57,18 +56,27 @@ pub enum ProfileKind {
     Halted,
 }
 
-/// The bot's runtime context.
+/// One market's runtime context. The supervisor holds one per market — they
+/// share a leader and a single fill subscription, but each tracks its own
+/// vault, armed profile, and inventory belief.
 pub struct Context {
     pub client: RpcClient,
     pub leader: Keypair,
     pub vault_idx: u32,
     pub market: MarketAddrs,
+    /// The market's feed identity (CoinGecko / CoinMarketCap ids, the FX
+    /// currency, the static peg) — what `compose` needs to price this token.
+    pub cfg: MarketConfig,
 
     /// The vault's TVL (USD) the first time this run valued it — the baseline
     /// the §4 drawdown floor is measured against. Seeded on the first tick that
     /// has a usable mid; `None` until then. A restart re-baselines to the
     /// current TVL, which is fine for the short, attended demo run.
     pub launch_tvl_usd: Option<f64>,
+    /// Whether a fill subscription is feeding this market (the supervisor sets
+    /// it for every market when the subscription is live). Drives the
+    /// fill-derived inventory path vs the inventory-diff fallback.
+    pub fills_active: bool,
     /// Last reference price actually stamped, if any.
     pub last_set_price: Option<f64>,
     /// Inventory skew (bps) applied at the last stamp.
@@ -83,26 +91,31 @@ pub struct Context {
     /// only when the event subscription is absent.
     pub last_inventory: Option<(u64, u64)>,
     /// Fill-derived inventory `(base_atoms, quote_atoms)` — the authoritative
-    /// `*_after` balances off the chain-latest `FillEvent` drained this run,
-    /// reconciled against the per-tick vault read. `None` until the first fill
-    /// (or seeded from the first vault read).
+    /// `*_after` balances off the chain-latest `FillEvent` the supervisor
+    /// routed to this market, reconciled against the per-tick vault read.
+    /// `None` until the first fill (or seeded from the first vault read).
     pub position: Option<(u64, u64)>,
-    /// Attributed-fill channel from the subscription thread (the primary fill
-    /// signal). `None` when fills aren't subscribed (`--dry-run`, no ws).
-    pub fills: Option<Receiver<Fill>>,
 }
 
 impl Context {
     /// Build a context around a discovered market, starting the cadence clocks
     /// in the past so the first tick can establish the reference immediately.
-    pub fn new(client: RpcClient, leader: Keypair, vault_idx: u32, market: MarketAddrs) -> Self {
+    pub fn new(
+        client: RpcClient,
+        leader: Keypair,
+        vault_idx: u32,
+        market: MarketAddrs,
+        cfg: MarketConfig,
+    ) -> Self {
         let now = Instant::now();
         Self {
             client,
             leader,
             vault_idx,
             market,
+            cfg,
             launch_tvl_usd: None,
+            fills_active: false,
             last_set_price: None,
             last_skew_bps: 0.0,
             last_set_at: now,
@@ -110,13 +123,6 @@ impl Context {
             profile_kind: ProfileKind::Unknown,
             last_inventory: None,
             position: None,
-            fills: None,
         }
-    }
-
-    /// Attach the attributed-fill channel from the subscription thread.
-    pub fn with_fills(mut self, fills: Receiver<Fill>) -> Self {
-        self.fills = Some(fills);
-        self
     }
 }

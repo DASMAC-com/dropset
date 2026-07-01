@@ -81,9 +81,8 @@ Both sign with the repo `keys/` keypairs, bind-mounted read-only:
 
 - the **maker** quotes as the leader (`keys/EEEE.json`) and funds it
   from the localnet faucet over RPC — no host wallet needed. Set
-  `OANDA_API_KEY` in the environment to arm the FX peg sanity feed;
-  without it the peg kill switch is disarmed and the CADC sources still
-  drive quoting.
+  `CMC_API_KEY` in the environment to arm the CoinMarketCap secondary
+  tier; without it the feed cascades CoinGecko → FX-rate → static.
 - the **taker** signs swaps with `keys/FFFF.json` and mints itself back
   up to target inventory under the mock-mint authority
   (`keys/BBBB.json`, the committed localnet admin the host TUI created

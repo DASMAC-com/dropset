@@ -1,7 +1,8 @@
 //! Bot configuration — every knob, with MVP defaults.
 //!
-//! Defaults give a benign, gently-clustering flow against the mock CADC/USDC
-//! market: a quiet baseline punctuated by short bursts, modest LogNormal
+//! Defaults give a benign, gently-clustering flow against a mock
+//! `<token>/USDC` demo market: a quiet baseline punctuated by short bursts,
+//! modest LogNormal
 //! order sizes, and a roughly balanced buy/sell split. The optional
 //! passive / retail / aggressive presets from dropset-alpha are deliberately
 //! *not* a deliverable — re-parameterize [`FlowConfig`] to taste.

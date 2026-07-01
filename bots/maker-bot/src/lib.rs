@@ -1,9 +1,10 @@
-//! `dropset-maker-bot` — the localnet CADC/USDC market-maker.
+//! `dropset-maker-bot` — the localnet FX-stablecoin market-maker.
 //!
-//! A single leader bot that quotes CADC against USDC on the eCLOB per
-//! `docs/market-making-mvp.md`. It polls external price feeds, composes a fair
-//! mid from the two CADC sources (with the Oanda FX feed as a peg sanity
-//! bound), and drives the program's relative-quoting hot path
+//! A supervisor over many `<token>/USDC` markets ([`config::MARKETS`]) quoting
+//! on the eCLOB per `docs/market-making-mvp.md`. One shared leader quotes every
+//! market; each cycle the bot refreshes a batched, tiered price feed
+//! (CoinGecko → CoinMarketCap → ECB/Frankfurter FX-rate → static), composes a
+//! per-market fair mid, and drives the program's relative-quoting hot path
 //! (`set_reference_price`, with an inventory skew) and cold path
 //! (`set_liquidity_profile`), under the spec's inventory / peg / staleness
 //! kill switches.

@@ -1,51 +1,66 @@
-<!-- cspell:word aerodrome -->
-
-<!-- cspell:word coingecko -->
-
-<!-- cspell:word oanda -->
-
 # dropset-maker-bot
 
-The localnet market-maker for the mock CADC/USDC market. A single
-leader bot that quotes CADC against USDC on the eCLOB per
-[`docs/market-making-mvp.md`](../../docs/market-making-mvp.md): it polls
-external price feeds, composes a fair mid from the CADC market-price
-sources (with the Oanda FX feed as a peg sanity bound), and drives the
-program's relative-quoting hot path (`set_reference_price`, with an
+The localnet market-maker for the FX-stablecoin demo. A supervisor over
+many `<token>/USDC` markets — the seven non-USD FX stablecoins in
+`config::MARKETS` (EURC, VCHF, TGBP, ZARP, MXNe, XSGD, IDRX) — quoting on
+the eCLOB per [`docs/market-making-mvp.md`](../../docs/market-making-mvp.md).
+One shared leader quotes every market; each cycle the bot refreshes a
+batched, tiered price feed, composes a per-market fair mid, and drives
+the program's relative-quoting hot path (`set_reference_price`, with an
 inventory skew) and cold path (`set_liquidity_profile`) under the spec's
 inventory / peg / staleness kill switches.
 
+## The tiered price feed
+
+Each market's USD reference cascades through four sources, primary-first,
+failing over on a stale or errored tier:
+
+1. **CoinGecko** `/simple/price` — one batched call prices every token
+   (the primary market feed).
+1. **CoinMarketCap** `/v2/cryptocurrency/quotes/latest` — batched by
+   numeric id, keyed from `CMC_API_KEY`. The free tier's quota rules out
+   a hot poll, so it is the secondary, polled only when CoinGecko is
+   down.
+1. **ECB/Frankfurter** `/latest` — the keyless FX-rate tier: `USD/<ccy>`
+   inverted to a USD-per-unit peg, a pure peg rate.
+1. **Static** — a per-market constant, the last resort.
+
+A live market price (tiers 1–2) quotes healthy; a peg-rate fallback
+(tiers 3–4) runs the vault degraded, tightening the kill switches. When
+a market price and a fresh FX rate coexist, the price is peg-checked
+against the FX rate.
+
 ## Layout
 
-The crate follows the dropset-alpha maker-bot split:
-
-- `config` — the spec's knobs, with defaults encoding the MVP verbatim
-  (feed sources and cadences, the 50/100/200/500 bps ladder, the
-  reference / profile triggers, the linear inventory skew, the
-  kill-switch bounds).
-- `model` — the pure, unit-tested quoting logic: feed composition
-  (`fair_mid`), the ladder builder, inventory valuation and skew, the
-  update-cadence triggers, and the kill-switch policy.
-- `context` / `chain` / `tasks` — runtime state, on-chain I/O (market
-  discovery, vault reads, the two quoting-path sends), and the
-  5-second tick loop.
+- `config` — the spec's knobs and the `MARKETS` roster (each market's
+  CoinGecko id, optional CoinMarketCap numeric id, FX currency, mock
+  mint, decimals, and static peg), with defaults encoding the MVP.
+- `model` — the pure, unit-tested quoting logic: tiered feed parsing
+  (`feeds`), per-market reference composition (`fair_mid`), the ladder
+  builder, inventory valuation and skew, the update-cadence triggers,
+  and the kill-switch policy.
+- `context` / `chain` / `tasks` — per-market runtime state, on-chain I/O
+  (market discovery, vault reads, the two quoting-path sends, the
+  human↔atoms-ratio price conversion), and the supervisor tick loop.
 
 ## Running
 
 Prerequisites: a localnet `solana-test-validator` with the program
-deployed and the mock CADC/USDC market bootstrapped and seeded (the
-`dropset-tui` control plane does this — bring the market to `Ready`).
+deployed and the demo markets bootstrapped and seeded (the `dropset-tui`
+control plane does this — its bootstrap brings up all markets).
 
-Dry run — poll the feeds once and print the reference and ladder the bot
+Dry run — poll the tiered feeds once and print the reference each market
 *would* stamp, with no validator and no writes (the wiring check for
-feed credentials):
+feed credentials). `--drop` suppresses a tier so the cascade to the next
+one is observable:
 
 ```sh
 cargo run -p dropset-maker-bot -- --dry-run
+cargo run -p dropset-maker-bot -- --dry-run --drop coingecko --drop cmc
 ```
 
-Live — discover the market, fund the leader from the faucet, and drive
-the tick loop:
+Live — discover the markets, fund the leader from the faucet, and drive
+the supervisor loop:
 
 ```sh
 cargo run -p dropset-maker-bot
@@ -58,17 +73,16 @@ cargo run -p dropset-maker-bot
   (default: derived from `--rpc`, swapping the scheme and using the RPC
   port + 1, so `8899` → `8900`).
 - `--leader-key <path>` — leader / quote-authority keypair (default
-  `keys/EEEE.json`, the role key the bootstrap seeds the vault with).
-- `--aerodrome <network>:<pool>` — enable the Aerodrome (GeckoTerminal)
-  CADC/USDC feed, off by default pending live verification of the pool
-  and its base/quote orientation.
-- `--dry-run` — poll feeds and print the intended quote, then exit.
+  `keys/EEEE.json`, the role key the bootstrap seeds every vault with).
+- `--dry-run` — poll feeds and print the intended quotes, then exit.
+- `--drop <tier>` — dry-run only: suppress `coingecko`, `cmc`, or `fx`
+  (repeatable) to watch the cascade fall through.
 
 ### Environment
 
-- `OANDA_API_KEY` — Oanda Practice API key for the FX peg sanity feed.
-  Without it the peg kill switch is disarmed (Oanda staleness is
-  non-fatal); the CADC sources still drive quoting.
+- `CMC_API_KEY` — CoinMarketCap API key for the secondary tier. Without
+  it the CoinMarketCap fallback is skipped and the cascade goes
+  CoinGecko → FX-rate → static.
 
 ## Notes and deferrals
 
@@ -80,8 +94,10 @@ cargo run -p dropset-maker-bot
   sends. The check is keyed on the genesis hash, not the RPC host, so a
   localnet on any address still passes while a port-forward to a public
   cluster is caught.
-- **Single bot.** The MVP ships exactly the spec's single maker; the
-  multiple-strategy-variant structure is deferred.
+- **One supervisor, one leader.** This localnet plumbing runs all
+  markets from one process under one quote-authority. The delegated
+  per-market `quote_authority` model (one hot key per market) is the
+  devnet/mainnet promotion's concern.
 - **`FreezeVault` is admin-only.** The bot signs only as the leader, so
   the hard kill-switch triggers (peg breach, TVL floor, critical
   imbalance) **halt quoting** (zero the profile, let levels expire) and
@@ -90,9 +106,8 @@ cargo run -p dropset-maker-bot
 - **Fill detection** subscribes to the program's `emit_cpi!`
   `FillEvent`s (production-fidelity path): a dedicated thread runs a
   `logsSubscribe` and reads the events out of each transaction's inner
-  instructions via `getTransaction`, forwarding the attributed fills the
-  tick folds into its inventory belief. The per-tick vault read
-  reconciles that belief (catching a missed fill or an external deposit
-  / withdraw) and is the sole signal in the fallback path when no
-  subscription is attached. The adversarial taker that would exercise
-  this under load is still deferred.
+  instructions via `getTransaction`. One subscription covers every
+  market the leader quotes; the supervisor routes each fill to its
+  market by `event.market`. The per-market vault read reconciles that
+  belief (catching a missed fill or external flow) and is the sole
+  signal in the fallback path when no subscription is attached.
