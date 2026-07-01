@@ -19,6 +19,7 @@ use crate::teardown;
 use anyhow::{Context, Result};
 use dropset_sdk::matching::SwapSide;
 use dropset_sdk::price::Price;
+use dropset_sdk::quoting::{set_liquidity_profile_ix, set_reference_price_ix};
 use solana_keypair::Keypair;
 use solana_native_token::LAMPORTS_PER_SOL;
 use solana_pubkey::Pubkey;
@@ -29,6 +30,14 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
 /// A menu action.
+///
+/// The first block is the bootstrap-lifecycle menu (the numbered `1..=9`
+/// entries in [`MENU`]). The trailing block are the eCLOB demo controls —
+/// market-scoped keybinds, *not* menu entries — that fire the two quoting
+/// instructions independently on the selected market to show the "reprice vs
+/// reshape" distinction live: [`Action::RepegUp`] / [`Action::RepegDown`] move
+/// the whole ladder (`set_reference_price`), while the reshape actions change
+/// the ladder's shape at a fixed peg (`set_liquidity_profile`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     Deploy,
@@ -40,7 +49,34 @@ pub enum Action {
     ProbeSwap,
     Teardown,
     Wipe,
+    // eCLOB demo controls — keybinds, not menu entries.
+    RepegUp,
+    RepegDown,
+    WidenSpread,
+    TightenSpread,
+    ThinFarSide,
+    ResetLadder,
 }
+
+/// Whole book shift per reprice nudge — ±5 bps re-anchors the ladder without
+/// touching its shape.
+const REPEG_BPS: f64 = 5.0;
+/// `Price::quote_for_base` scale for decoding a reference to its atoms-ratio
+/// before the bump — matches the maker bot and SDK (`value × 10^9`).
+const PRICE_SCALE: u64 = 1_000_000_000;
+/// Reshape half-spreads (ppm price offset). The seed ladder quotes ±0.5%
+/// (5_000 ppm); "widen" fans it to ±1.5% and "tighten" pulls it to ±0.15%, so
+/// the shape change reads clearly against the peg.
+const WIDE_OFFSET_PPM: u32 = 15_000;
+const TIGHT_OFFSET_PPM: u32 = 1_500;
+/// Full commit of a side — 100% of its inventory leg, in bps.
+const FULL_SIZE_BPS: u16 = 10_000;
+/// The thinned far (ask) side's size for "thin the far side" — a fraction of
+/// full commit, so offer depth visibly shrinks while the bid stays full.
+const THIN_SIZE_BPS: u16 = 3_000;
+/// The demo presets quote until the next reshape (the maker bot re-arms
+/// expiry itself).
+const NEVER_EXPIRES: u32 = u32::MAX;
 
 /// The menu in display order. Indices map to the `1..=9` number keys.
 pub const MENU: [Action; 9] = [
@@ -76,6 +112,12 @@ impl Action {
             Action::ProbeSwap => "Probe swap (CU)",
             Action::Teardown => "Teardown & reclaim",
             Action::Wipe => "Wipe localnet",
+            Action::RepegUp => "Re-peg +5 bps",
+            Action::RepegDown => "Re-peg -5 bps",
+            Action::WidenSpread => "Widen spread",
+            Action::TightenSpread => "Tighten spread",
+            Action::ThinFarSide => "Thin far side",
+            Action::ResetLadder => "Reset ladder",
         }
     }
 
@@ -105,6 +147,13 @@ impl Action {
                 Phase::RegistryAbsent | Phase::MarketAbsent | Phase::VaultAbsent | Phase::Ready
             ),
             Action::Wipe => true,
+            // The demo controls quote against a live vault.
+            Action::RepegUp
+            | Action::RepegDown
+            | Action::WidenSpread
+            | Action::TightenSpread
+            | Action::ThinFarSide
+            | Action::ResetLadder => phase == Phase::Ready,
         }
     }
 
@@ -128,6 +177,12 @@ impl Action {
             Action::ProbeSwap => "needs a live, seeded vault",
             Action::Teardown => "deploy the program first",
             Action::OpenExplorer | Action::Wipe => "",
+            Action::RepegUp
+            | Action::RepegDown
+            | Action::WidenSpread
+            | Action::TightenSpread
+            | Action::ThinFarSide
+            | Action::ResetLadder => "needs a live, seeded vault",
         }
     }
 }
@@ -194,8 +249,13 @@ pub fn dispatch(
     let explorer_lock = ctx.explorer_lock.clone();
     // The market the market-scoped jobs target — resolved now, on the event
     // loop's fresh snapshot, so a job addresses the selected market and not
-    // whichever the scan turns up first.
-    let target_market = state.selected_market(selected).map(|m| m.address);
+    // whichever the scan turns up first. The eCLOB controls also need its base
+    // mint (to resolve the leader / quote authority + seed ladder) and the
+    // sector index of its first live vault (the one to reprice / reshape).
+    let selected_market = state.selected_market(selected);
+    let target_market = selected_market.map(|m| m.address);
+    let target_base_mint = selected_market.map(|m| m.base_mint);
+    let target_vault = selected_market.and_then(|m| m.live_vaults.first().map(|(idx, _)| *idx));
 
     match action {
         Action::Deploy => {
@@ -299,9 +359,168 @@ pub fn dispatch(
                 ))
             });
         }
+        Action::RepegUp | Action::RepegDown => {
+            let bps = if action == Action::RepegUp {
+                REPEG_BPS
+            } else {
+                -REPEG_BPS
+            };
+            job::spawn(tx, "Re-peg", move |log| {
+                let client = chain::rpc(&rpc_url);
+                do_repeg(
+                    &client,
+                    &wallet,
+                    &repo_root,
+                    target_market,
+                    target_base_mint,
+                    target_vault,
+                    bps,
+                    log,
+                )
+            });
+        }
+        Action::WidenSpread | Action::TightenSpread | Action::ThinFarSide | Action::ResetLadder => {
+            job::spawn(tx, "Reshape", move |log| {
+                let client = chain::rpc(&rpc_url);
+                do_reshape(
+                    &client,
+                    &wallet,
+                    &repo_root,
+                    target_market,
+                    target_base_mint,
+                    target_vault,
+                    action,
+                    log,
+                )
+            });
+        }
         // Wipe is handled by the event loop (owns the validator).
         Action::Wipe => {}
     }
+}
+
+/// Resolve the selected market's `(address, base_mint, vault_idx)` for an
+/// eCLOB control, erroring with a demo-friendly message when no live vault is
+/// selected. Shared by [`do_repeg`] and [`do_reshape`].
+fn eclob_target(
+    market: Option<Pubkey>,
+    base_mint: Option<Pubkey>,
+    vault_idx: Option<u32>,
+) -> Result<(Pubkey, Pubkey, u32)> {
+    let market = market.context("no market selected")?;
+    let base_mint = base_mint.context("no market selected")?;
+    let vault_idx = vault_idx.context("no live vault on the selected market")?;
+    Ok((market, base_mint, vault_idx))
+}
+
+/// Reprice the selected market's vault (`set_reference_price`) — the cheap
+/// hot path. Reads the live reference, scales it by `bps`, and re-stamps it at
+/// the current slot, moving the *whole* ladder without reshaping it. The
+/// leader (quote authority) co-signs; the admin wallet pays the fee.
+#[allow(clippy::too_many_arguments)]
+fn do_repeg(
+    client: &solana_client::rpc_client::RpcClient,
+    wallet: &Keypair,
+    repo_root: &Path,
+    market: Option<Pubkey>,
+    base_mint: Option<Pubkey>,
+    vault_idx: Option<u32>,
+    bps: f64,
+    log: &Logger,
+) -> Result<String> {
+    let (market, base_mint, vault_idx) = eclob_target(market, base_mint, vault_idx)?;
+    let leader = market::leader_for(repo_root, &base_mint)?;
+    // Bump the live reference — decode it to its atoms-ratio, scale by the bps
+    // step, and re-encode — so the nudge is relative to the current peg.
+    let current = accounts::read_reference_price(client, &market, vault_idx)
+        .context("read current reference price")?;
+    let ratio = current.quote_for_base(PRICE_SCALE) as f64 / PRICE_SCALE as f64;
+    let bumped = ratio * (1.0 + bps / 10_000.0);
+    let price =
+        Price::from_value(bumped).with_context(|| format!("re-peg to atoms-ratio {bumped}"))?;
+    let slot = client.get_slot().context("current slot")?;
+    let ix = set_reference_price_ix(leader.pubkey(), market, vault_idx, price, slot);
+    chain::send_logged(
+        client,
+        wallet,
+        &[wallet, &leader],
+        &[ix],
+        "set_reference_price",
+        log,
+    )
+    .context("set_reference_price")?;
+    log.accounts_changed();
+    Ok(format!(
+        "Re-pegged {bps:+} bps — whole book shifts (nonce bumped, flush armed)"
+    ))
+}
+
+/// Reshape the selected market's ladder (`set_liquidity_profile`) — the cold
+/// path. Rewrites the quote profile (spread / per-side depth) while the peg
+/// stays put, so the book's *shape* changes without moving the anchor. The
+/// preset is chosen by `action`; the leader co-signs, the admin wallet pays.
+#[allow(clippy::too_many_arguments)]
+fn do_reshape(
+    client: &solana_client::rpc_client::RpcClient,
+    wallet: &Keypair,
+    repo_root: &Path,
+    market: Option<Pubkey>,
+    base_mint: Option<Pubkey>,
+    vault_idx: Option<u32>,
+    action: Action,
+    log: &Logger,
+) -> Result<String> {
+    let (market, base_mint, vault_idx) = eclob_target(market, base_mint, vault_idx)?;
+    let config =
+        market::config_for(repo_root, &base_mint).context("market not in the bootstrap roster")?;
+    let leader = market::leader(repo_root, config)?;
+    let (bytes, summary) = match action {
+        Action::WidenSpread => (
+            market::one_level_profile_bytes(
+                (WIDE_OFFSET_PPM, FULL_SIZE_BPS),
+                (WIDE_OFFSET_PPM, FULL_SIZE_BPS),
+                NEVER_EXPIRES,
+            ),
+            "Widened spread — ladder reshapes wider, peg unchanged",
+        ),
+        Action::TightenSpread => (
+            market::one_level_profile_bytes(
+                (TIGHT_OFFSET_PPM, FULL_SIZE_BPS),
+                (TIGHT_OFFSET_PPM, FULL_SIZE_BPS),
+                NEVER_EXPIRES,
+            ),
+            "Tightened spread — ladder reshapes tighter, peg unchanged",
+        ),
+        Action::ThinFarSide => (
+            market::one_level_profile_bytes(
+                (config.offset_ppm, FULL_SIZE_BPS),
+                (config.offset_ppm, THIN_SIZE_BPS),
+                NEVER_EXPIRES,
+            ),
+            "Thinned the far (ask) side — offer depth shrinks, peg unchanged",
+        ),
+        Action::ResetLadder => (
+            market::one_level_profile_bytes(
+                (config.offset_ppm, config.size_bps),
+                (config.offset_ppm, config.size_bps),
+                config.expiry_offset,
+            ),
+            "Reset to the seed ladder",
+        ),
+        other => unreachable!("do_reshape received a non-reshape action: {other:?}"),
+    };
+    let ix = set_liquidity_profile_ix(leader.pubkey(), market, vault_idx, bytes);
+    chain::send_logged(
+        client,
+        wallet,
+        &[wallet, &leader],
+        &[ix],
+        "set_liquidity_profile",
+        log,
+    )
+    .context("set_liquidity_profile")?;
+    log.accounts_changed();
+    Ok(summary.to_string())
 }
 
 /// `(label, address)` pairs to open in the explorer for the current state —
@@ -622,6 +841,34 @@ mod tests {
             Action::BootstrapAll.disabled_reason(Phase::NoValidator),
             "waiting for validator"
         );
+    }
+
+    #[test]
+    fn eclob_controls_run_only_when_ready() {
+        // The reprice / reshape keybinds quote against a live, seeded vault, so
+        // they light up in `Ready` alone — and grey out with a vault reason
+        // everywhere else (once a validator is up).
+        let controls = [
+            Action::RepegUp,
+            Action::RepegDown,
+            Action::WidenSpread,
+            Action::TightenSpread,
+            Action::ThinFarSide,
+            Action::ResetLadder,
+        ];
+        for c in controls {
+            for p in PHASES {
+                assert_eq!(
+                    c.enabled(p),
+                    p == Phase::Ready,
+                    "{c:?} should be enabled only in Ready, not {p:?}"
+                );
+            }
+            assert_eq!(
+                c.disabled_reason(Phase::VaultAbsent),
+                "needs a live, seeded vault"
+            );
+        }
     }
 
     #[test]

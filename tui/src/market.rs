@@ -174,6 +174,26 @@ pub fn leader(repo_root: &Path, config: &PairConfig) -> Result<Keypair> {
     load_key(repo_root, config.leader_keypair_file)
 }
 
+/// The `PairConfig` whose base mint is `base_mint`, resolving it by loading the
+/// checked-in mint keypairs and matching addresses — `None` for a market minted
+/// outside the bootstrap roster. Lets a market-scoped control (the eCLOB
+/// reprice / reshape keybinds) recover the selected market's seed ladder and
+/// leader key from just its base mint.
+pub fn config_for(repo_root: &Path, base_mint: &Pubkey) -> Option<&'static PairConfig> {
+    PAIRS.into_iter().find(|c| {
+        load_key(repo_root, c.base.keypair_file)
+            .map(|k| k.pubkey() == *base_mint)
+            .unwrap_or(false)
+    })
+}
+
+/// Load the leader / quote-authority keypair for the market with `base_mint` —
+/// the signer `set_reference_price` / `set_liquidity_profile` require.
+pub fn leader_for(repo_root: &Path, base_mint: &Pubkey) -> Result<Keypair> {
+    let config = config_for(repo_root, base_mint).context("market not in the bootstrap roster")?;
+    leader(repo_root, config)
+}
+
 /// Resolve a pair's two mint pubkeys from its checked-in keypair files without
 /// creating them — used to address an already-created market (its PDA is
 /// seeded on `[base, quote]`).
@@ -310,17 +330,33 @@ fn load_key(repo_root: &Path, rel: &str) -> Result<Keypair> {
         .map_err(|e| anyhow::anyhow!("read keypair {}: {e}", path.display()))
 }
 
+/// Serialize a one-level-per-side [`LiquidityProfile`] to the 160-byte
+/// `set_liquidity_profile` argument, taking an independent `(offset_ppm,
+/// size_bps)` for the top bid and ask rung and a shared `expiry_offset`.
+/// Unused rungs stay zeroed. The bootstrap's symmetric seed and the TUI's
+/// eCLOB reshape presets are both single-rung profiles differing only in these
+/// numbers, so both encode through here — the book's shape (spread width and
+/// per-side depth) is then a direct readout of the profile.
+pub fn one_level_profile_bytes(bid: (u32, u16), ask: (u32, u16), expiry_offset: u32) -> [u8; 160] {
+    let mut profile = LiquidityProfile::zeroed();
+    profile.bids[0].price_offset = bid.0.into();
+    profile.bids[0].size_bps = bid.1.into();
+    profile.bids[0].expiry_offset = expiry_offset.into();
+    profile.asks[0].price_offset = ask.0.into();
+    profile.asks[0].size_bps = ask.1.into();
+    profile.asks[0].expiry_offset = expiry_offset.into();
+    profile_bytes(&profile)
+}
+
 /// Serialize a symmetric one-level [`LiquidityProfile`] — the same
 /// `±offset_ppm` / `size_bps` / `expiry_offset` on the top bid and ask — to
 /// the 160-byte `set_liquidity_profile` argument.
 fn symmetric_profile_bytes(offset_ppm: u32, size_bps: u16, expiry_offset: u32) -> [u8; 160] {
-    let mut profile = LiquidityProfile::zeroed();
-    for side in [&mut profile.bids, &mut profile.asks] {
-        side[0].price_offset = offset_ppm.into();
-        side[0].size_bps = size_bps.into();
-        side[0].expiry_offset = expiry_offset.into();
-    }
-    profile_bytes(&profile)
+    one_level_profile_bytes(
+        (offset_ppm, size_bps),
+        (offset_ppm, size_bps),
+        expiry_offset,
+    )
 }
 
 #[cfg(test)]
@@ -375,6 +411,22 @@ mod tests {
             assert_ne!(c.leader_keypair_file, c.quote.keypair_file);
             assert_eq!(c.quote.keypair_file, "keys/USDC.json");
         }
+    }
+
+    /// An asymmetric one-level profile encodes each side's own
+    /// `(offset_ppm, size_bps)` — the shape behind the "thin the far side"
+    /// reshape, where the ask leg is shrunk while the bid stays full.
+    #[test]
+    fn one_level_profile_encodes_each_side_independently() {
+        let bytes = one_level_profile_bytes((5_000, 10_000), (5_000, 3_000), u32::MAX);
+        let profile: &LiquidityProfile = bytemuck::from_bytes(&bytes);
+        assert_eq!(profile.bids[0].size_bps.get(), 10_000);
+        assert_eq!(profile.asks[0].size_bps.get(), 3_000);
+        assert_eq!(profile.bids[0].price_offset.get(), 5_000);
+        assert_eq!(profile.asks[0].price_offset.get(), 5_000);
+        // Only the top rung is populated.
+        assert_eq!(profile.bids[1].size_bps.get(), 0);
+        assert_eq!(profile.asks[1].size_bps.get(), 0);
     }
 
     /// A symmetric profile fills exactly the top bid and ask, leaving the

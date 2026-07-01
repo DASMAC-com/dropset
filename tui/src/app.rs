@@ -256,6 +256,14 @@ impl App {
             KeyCode::Char('S') => self.start_all_bots(),
             KeyCode::Char('x') => self.stop_all_bots(),
             KeyCode::Char('r') => self.dirty = true,
+            // eCLOB demo (selected market): reprice the anchor (whole-book
+            // shift) vs reshape the ladder (shape change at a fixed peg).
+            KeyCode::Char('>') | KeyCode::Char('.') => self.run_action(Action::RepegUp),
+            KeyCode::Char('<') | KeyCode::Char(',') => self.run_action(Action::RepegDown),
+            KeyCode::Char('w') => self.run_action(Action::WidenSpread),
+            KeyCode::Char('t') => self.run_action(Action::TightenSpread),
+            KeyCode::Char('f') => self.run_action(Action::ThinFarSide),
+            KeyCode::Char('g') => self.run_action(Action::ResetLadder),
             KeyCode::Enter => self.run_selected(),
             KeyCode::Char(d @ '1'..='9') => {
                 let idx = (d as usize) - ('1' as usize);
@@ -361,11 +369,16 @@ impl App {
         self.menu.select(Some(next));
     }
 
-    /// Run the selected action — but a [`Action::Wipe`] is executed inline
-    /// (it mutates the owned validator), everything else is dispatched to a
-    /// background job.
+    /// Run the highlighted menu action.
     fn run_selected(&mut self) {
         let action = action::MENU[self.menu.selected().unwrap_or(0)];
+        self.run_action(action);
+    }
+
+    /// Run `action` — a [`Action::Wipe`] is executed inline (it mutates the
+    /// owned validator), everything else is dispatched to a background job.
+    /// Shared by the numbered action menu and the eCLOB demo keybinds.
+    fn run_action(&mut self, action: Action) {
         let phase = self.chain.phase();
         if !action.enabled(phase) {
             self.log(
