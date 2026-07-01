@@ -19,9 +19,11 @@ pub const LAMPORTS_PER_SOL: u64 = 1_000_000_000;
 pub const DEFAULT_TAKER_KEY: &str = "keys/FFFF.json";
 
 /// The mint-authority wallet — the localnet admin the bootstrap created the
-/// mock mints under (`tui/src/main.rs` default wallet). Used only to mint the
-/// taker its starting inventory; it never signs a swap.
-pub const DEFAULT_MINT_AUTHORITY_KEY: &str = "~/.config/solana/id.json";
+/// mock mints under (`keys/README.md` → `BBBB`, the TUI's default wallet). Used
+/// only to mint the taker its starting inventory; it never signs a swap.
+/// Resolved cwd-relative like the other `keys/` roles, so it works unchanged in
+/// the container (WORKDIR `/app`, `keys/` mounted at `/app/keys`).
+pub const DEFAULT_MINT_AUTHORITY_KEY: &str = "keys/BBBB.json";
 
 /// The stochastic order-flow parameters consumed by [`crate::model::Flow`].
 #[derive(Clone, Debug)]

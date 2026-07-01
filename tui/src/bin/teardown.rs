@@ -13,7 +13,7 @@
 //! ```
 //!
 //! - `--wallet <path>` — admin keypair (payer + registry admin). Defaults to
-//!   the Solana CLI wallet.
+//!   the committed localnet admin keypair (`keys/BBBB.json`).
 //! - `--rpc-url <url>` — cluster endpoint. Defaults to the localnet validator
 //!   (`http://127.0.0.1:8899`).
 //! - `--yes` / `-y` — skip the non-localnet confirmation prompt (for
@@ -22,11 +22,12 @@
 // cspell:word rsplit
 // cspell:word userinfo
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use dropset_tui::job::Logger;
 use dropset_tui::{chain, teardown, validator, wallet};
 use solana_signer::Signer;
 use std::io::Write;
+use std::path::PathBuf;
 
 fn main() -> Result<()> {
     let args = Args::parse(std::env::args().skip(1))?;
@@ -35,7 +36,11 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let (keypair, _wallet_path) = wallet::load(args.wallet.as_deref())?;
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| anyhow!("locate repo root from crate dir"))?
+        .to_path_buf();
+    let (keypair, _wallet_path) = wallet::load(args.wallet.as_deref(), &repo_root)?;
     let rpc_url = args
         .rpc_url
         .unwrap_or_else(|| validator::DEFAULT_RPC_URL.to_string());
@@ -110,7 +115,7 @@ fn print_help() {
          USAGE:\n    \
          dropset-teardown [--wallet <path>] [--rpc-url <url>] [--yes]\n\n\
          OPTIONS:\n    \
-         -w, --wallet <path>     admin keypair (default: Solana CLI wallet)\n        \
+         -w, --wallet <path>     admin keypair (default: keys/BBBB.json)\n        \
          --rpc-url <url>     cluster endpoint (default: localnet)\n    \
          -y, --yes               skip the non-localnet confirmation prompt\n    \
          -h, --help              show this help"

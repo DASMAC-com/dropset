@@ -85,9 +85,9 @@ Both sign with the repo `keys/` keypairs, bind-mounted read-only:
   without it the peg kill switch is disarmed and the CADC sources still
   drive quoting.
 - the **taker** signs swaps with `keys/FFFF.json` and mints itself back
-  up to target inventory under the mock-mint authority — the operator's
-  Solana CLI wallet (`~/.config/solana/id.json`), bind-mounted
-  read-only into the container.
+  up to target inventory under the mock-mint authority
+  (`keys/BBBB.json`, the committed localnet admin the host TUI created
+  the mints under) — no host wallet needed.
 
 The first build compiles the bots from source (slow); later runs reuse
 the cargo-chef dependency cache.
