@@ -18,7 +18,7 @@ anyhow = "1"
 # (market discovery + live book read), the `Price` codec (encode the swap's
 # `limit_price_bits`), the generated `SwapBuilder`, and the blocking
 # `RpcClient` — all behind `fetch`.
-dropset-sdk = {path = "../../sdk/rs", features = ["fetch"]}
+dropset-sdk = { path = "../../sdk/rs", features = ["fetch"] }
 # The stochastic process: `Poisson` arrivals and `LogNormal` order sizes, on
 # a seedable `StdRng` so a fixed seed replays the same flow.
 rand = "0.8"

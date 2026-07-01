@@ -101,6 +101,7 @@ strat
 swatinem
 sysvar
 taiki
+taplo
 templater
 tgbp
 thiserror

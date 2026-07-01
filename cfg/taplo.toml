@@ -1,0 +1,8 @@
+# taplo formatting config, passed to the pre-commit `taplo` hook via
+# `--config`. `array_auto_expand` wraps any inline array that would exceed
+# `column_width` one entry per line (e.g. the workspace `members` list and
+# long dependency `features = [...]` arrays), keeping every `.toml` under the
+# same 80-column limit the Makefile, Dockerfile, and docs (MD013) follow.
+[formatting]
+array_auto_expand = true
+column_width = 80

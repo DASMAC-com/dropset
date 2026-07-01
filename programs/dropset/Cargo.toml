@@ -13,12 +13,14 @@
 # `6960 * 1` once SIMD-0194 activates, so it is correct across the transition;
 # the only tradeoff is a custom-rent cluster, which neither mainnet nor
 # `solana-test-validator` is.
-anchor-lang-v2 = {workspace = true, features = ["const-rent"]}
+anchor-lang-v2 = { workspace = true, features = ["const-rent"] }
 # Canonical consensus arithmetic — `Price` codec, pure matcher math, and
 # the share/NAV/PnL kernels (interface.md § SDK). Pulled with
 # `default-features = false` to keep the build solana-free; `idl` turns on
 # Anchor's `IdlType` derive for `Price` so the generated IDL still emits it.
-dropset-math-core = {path = "../../sdk/math-core", default-features = false, features = ["idl"]}
+dropset-math-core = { path = "../../sdk/math-core", default-features = false, features = [
+  "idl",
+] }
 anchor-spl-v2.workspace = true
 solana-program-log.workspace = true
 solana-sdk-ids.workspace = true
@@ -29,10 +31,10 @@ wincode.workspace = true
 # `src/`. Dev-dependencies are NOT included in `cargo build-sbf`
 # (anchor build) — the production .so never ships the testing scaffold.
 [dev-dependencies]
-anchor-lang-v2 = {workspace = true, features = ["testing"]}
+anchor-lang-v2 = { workspace = true, features = ["testing"] }
 # The off-chain SDK, used by tests/sdk_conformance.rs to verify its layout
 # decoder + matching simulator against the real engine running in litesvm.
-dropset-sdk = {path = "../../sdk/rs"}
+dropset-sdk = { path = "../../sdk/rs" }
 # Reads the shared sdk/conformance/price_vectors.json in
 # tests/price_conformance.rs (the program-side codec pin).
 serde_json = "1"

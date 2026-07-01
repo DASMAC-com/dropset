@@ -15,9 +15,9 @@
 # the reverse.
 
 [dependencies]
-bytemuck = {version = "1", features = ["derive", "min_const_generics"]}
-dropset-math-core = {path = "../math-core", version = "0.1.0"}
-wasm-bindgen = {version = "0.2", optional = true}
+bytemuck = { version = "1", features = ["derive", "min_const_generics"] }
+dropset-math-core = { path = "../math-core", version = "0.1.0" }
+wasm-bindgen = { version = "0.2", optional = true }
 
 [dev-dependencies]
 # `gen_simulate_swap` serializes the simulate_swap vectors; the wasm
