@@ -494,9 +494,10 @@ take CPI** into the program — the SDK + on-chain layer
 ### 11.4 MCP servers — orthogonal to listing
 
 Whether a vendor ships a Model Context Protocol server is **mostly
-irrelevant to getting listed**. Official MCPs exist for CoinGecko
-(read-only market data), Jupiter (docs-only), and DFlow (agent / trading
-tools); DEXScreener, DeFiLlama, and Birdeye have only community wrappers
+irrelevant to getting listed**. As of writing, official MCPs exist for
+CoinGecko (read-only market data), Jupiter (docs-only), and DFlow
+(agent / trading tools); DEXScreener, DeFiLlama, and Birdeye have only
+community wrappers
 (and "Birdeye MCP" collides with an unrelated reputation-SaaS product —
 not the crypto-data vendor); Titan has none. Every one is a
 **consume-data / agent-tooling** surface, not a submit-your-DEX channel,
