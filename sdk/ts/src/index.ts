@@ -8,6 +8,7 @@
  */
 
 export * from './generated';
+export * from './market';
 export * from './price';
 export * from './quoting';
 export * from './share';

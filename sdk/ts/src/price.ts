@@ -47,6 +47,15 @@ export function priceBiasedExponent(bits: PriceBits): number {
   return (bits >>> 0) >>> SIGNIFICAND_BITS;
 }
 
+/**
+ * Bid-side sort key: `u32::MAX − bits`. Inverts the raw ordering so a
+ * higher bid price yields a lower key, giving highest-bid-first priority
+ * from an ascending sort (mirrors Rust `Price::bid_key`).
+ */
+export function priceBidKey(bits: PriceBits): number {
+  return (PRICE_INFINITY - (bits >>> 0)) >>> 0;
+}
+
 /** `biasedExponent - 16`. Meaningful only for regular prices. */
 export function priceUnbiasedExponent(bits: PriceBits): number {
   return priceBiasedExponent(bits) - BIAS;
@@ -95,7 +104,7 @@ const SIGNIFICAND_MAX_BIG = BigInt(SIGNIFICAND_MAX);
  * beyond the 8th are truncated toward zero. Throws if the result falls
  * outside the representable exponent range.
  */
-function fromScaled(sig: bigint, biasedExp: number): PriceBits {
+export function fromScaled(sig: bigint, biasedExp: number): PriceBits {
   if (sig === 0n) return PRICE_ZERO;
   let s = sig;
   let e = biasedExp;

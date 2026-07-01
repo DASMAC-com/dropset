@@ -66,6 +66,12 @@ indexer <-> sdk-clients: the indexer extracts and decodes emit_cpi
   events through the shared dropset_sdk::events codec; its decoded event
   layouts and the 8-byte discriminators must track the IDL
   (sdk/idl/dropset.json).
+sdk-clients <-> sdk-math: the TS market reader (sdk/ts/src/market.ts)
+  hand-decodes the opaque Vault slab and reconstructs the resting book,
+  mirroring the on-chain byte layout (sdk/interface/src/layout.rs) and the
+  Rust matcher (resting_levels / BookLevel) — the slab is opaque to the
+  IDL, so the generated client can't catch drift; market.ts's byte offsets
+  and level materialization must track layout.rs / matching.rs.
 ```
 
 **Skip-globs** — generated / vendored / binary paths the file audit
