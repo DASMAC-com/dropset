@@ -9,6 +9,7 @@ audd
 audm
 autocorrelated
 bindgen
+birdeye
 blockhash
 borsh
 bpf
