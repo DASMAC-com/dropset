@@ -54,6 +54,7 @@ idempotently
 idrx
 impls
 kapsule
+keybinds
 keypair
 keypairs
 killswitch
@@ -75,6 +76,7 @@ programdata
 pubkeys
 pytest
 ratatui
+repeg
 repr
 respawn
 retunable
