@@ -7,7 +7,7 @@ reading the diff, watching checks, pulling failing-job logs — go
 through the **GitHub MCP server** (`mcp__github__*`), not the `gh`
 CLI, **with the deliberate exceptions below**. The skills (`init-pr`,
 `pr-title-description`, `review-pr`, `housekeeping`, `linear-task`)
-are written against it. `gh` survives in five places — two in
+are written against it. `gh` survives in four places — two in
 `review-pr`, one in `init-pr`, and the field-selected `gh pr list`
 read shared by `pr-title-description` and `housekeeping`:
 
@@ -69,8 +69,8 @@ read shared by `pr-title-description` and `housekeeping`:
   *is* the node id). A success returns
   `viewerSubscription: "UNSUBSCRIBED"` (GitHub normalizes the `IGNORED`
   readback), which is what stops the lifecycle self-pings. The mutation
-  needs the `gh`
-  token's **`notifications`** OAuth scope — a one-time operator grant
+  needs the `gh` token's **`notifications`** OAuth scope — a one-time
+  operator grant
   (`gh auth refresh -h github.com -s notifications`); without it the
   call fails with `INSUFFICIENT_SCOPES`. It's **best-effort**:
   `init-pr` continues if it errors, and `housekeeping`'s merged-PR
