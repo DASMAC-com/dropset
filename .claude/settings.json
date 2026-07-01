@@ -13,5 +13,46 @@
         "matcher": "Bash"
       }
     ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(git branch:*)",
+      "Bash(git ls-files:*)",
+      "Bash(git ls-tree:*)",
+      "Bash(git ls-remote:*)",
+      "Bash(git merge-base:*)",
+      "Bash(git reflog:*)",
+      "Bash(git check-ignore:*)",
+      "Bash(git worktree list:*)",
+      "Bash(git --no-pager diff:*)",
+      "Bash(git --no-pager log:*)",
+      "Bash(git -C /Users/alex/repos/dropset log:*)",
+      "Bash(git -C /Users/alex/repos/dropset show:*)",
+      "Bash(git -C /Users/alex/repos/dropset diff:*)",
+      "Bash(git -C /Users/alex/repos/dropset status:*)",
+      "Bash(git -C /Users/alex/repos/dropset rev-parse:*)",
+      "Bash(git -C /Users/alex/repos/dropset ls-files:*)",
+      "Bash(git -C /Users/alex/repos/dropset/.claude/worktrees/* log:*)",
+      "Bash(git -C /Users/alex/repos/dropset/.claude/worktrees/* status:*)",
+      "Bash(git -C /Users/alex/repos/dropset/.claude/worktrees/* branch:*)",
+      "Bash(git -C /Users/alex/repos/dropset/.claude/worktrees/* reflog:*)",
+      "Bash(git -C /Users/alex/repos/dropset/.claude/worktrees/* diff:*)",
+      "Bash(git -C /Users/alex/repos/dropset/.claude/worktrees/* show:*)",
+      "Bash(git -C /Users/alex/repos/dropset/.claude/worktrees/* rev-parse:*)",
+      "Bash(git -C /Users/alex/repos/dropset/.claude/worktrees/* ls-files:*)",
+      "Bash(git -C /Users/alex/repos/dropset/.claude/worktrees/* ls-tree:*)",
+      "Bash(git -C /Users/alex/repos/dropset/.claude/worktrees/* merge-base:*)",
+      "Bash(git -C /Users/alex/repos/dropset/.claude/worktrees/* worktree list:*)",
+      "Bash(gh pr checks:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh api graphql:*)",
+      "Bash(gh api --method PUT /repos/DASMAC-com/dropset/issues/*/subscription:*)"
+    ]
   }
 }

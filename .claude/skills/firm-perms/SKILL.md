@@ -1,6 +1,6 @@
 ---
 name: firm-perms
-description: Generalize the local permission allowlist into reusable globs — Bash commands and file-access/`Read` paths alike. The low-friction default is the fast path: right after you one-time-approve a prompt, a bare `/firm-perms` (or `/firm-perms this`) firms just that one command into this worktree's and the base repo's settings immediately — no sweep, no confirm gate. Otherwise it runs the full sweep — harvest everything you approved this session (or a pasted block of permission strings, or the Linear "Permissions" inbox doc) and propagate it to this worktree's settings and the base repo (so future worktrees inherit it too). Use the fast path after an approval, the full sweep at the end of a session or during a review-pr run that piled up per-worktree or per-arg approvals, with a pasted permissions block, or pass `doc` to drain the Linear Permissions inbox.
+description: Generalize the local permission allowlist into reusable globs — Bash commands and file-access/`Read` paths alike. The low-friction default is the fast path: right after you one-time-approve a prompt, a bare `/firm-perms` (or `/firm-perms this`) firms just that one command immediately — no sweep, no confirm gate. Otherwise it runs the full sweep — harvest everything you approved this session (or a pasted block of permission strings) and propagate it. A firmed rule lands by classification: worktree-agnostic read-only rules go into the committed `.claude/settings.json` (so a fresh worktree inherits them through git, with no re-firming); everything else stays in the per-worktree `.claude/settings.local.json`. Use the fast path after an approval, the full sweep at the end of a session or during a review-pr run that piled up per-worktree or per-arg approvals, or with a pasted permissions block. `review-pr` drives it `base-only` at its merge-queue handoff (the worktree is about to be torn down).
 user-invocable: true
 ---
 
@@ -8,17 +8,17 @@ user-invocable: true
 
 # `firm-perms`
 
-"Firm up" `.claude/settings.local.json`: rewrite
-narrow, one-off `permissions.allow` entries into
-generalized globs, dedupe them, and write the same
-allowlist to **this worktree and the base repo** — so
-the rule takes effect here *now* and the base copy
-seeds it into future worktrees.
+"Firm up" the permission allowlist: rewrite narrow, one-off
+`permissions.allow` entries into generalized globs, dedupe them, and
+write each firmed rule to **the file its scope belongs in** —
+worktree-agnostic read-only rules into the **committed**
+`.claude/settings.json`, everything else into the per-worktree
+`.claude/settings.local.json` (this worktree and the base repo). See
+**Where firmed rules land** for the split and why it matters.
 
 The common case is the **fast path**: right after you
 one-time-approve a prompt, a bare `/firm-perms` (or
-`/firm-perms this`) firms just that one command into
-this worktree's and the base repo's settings immediately
+`/firm-perms this`) firms just that one command immediately
 — no session sweep, no propose-then-confirm gate.
 Everything below is
 the **full sweep**, the heavier cleanup the fast path is
@@ -34,9 +34,8 @@ the rules already written to disk — and
 built-in `fewer-permission-prompts` skill (which
 discovers new *read-only Bash* rules from your
 transcripts) but is broader: it folds in file-access
-approvals too and writes the firmed result to this
-worktree and the base repo (so future worktrees
-inherit it).
+approvals too and writes the firmed result to the right
+file so future worktrees inherit what they should.
 
 Some approvals **can't** be firmed into a safe rule —
 a heredoc, a `cd … &&` compound, a `python3`/`jq`
@@ -47,31 +46,94 @@ Surface them in the summary and point at the
 offending pattern so the *author* (a skill, a script,
 or you) stops emitting it.
 
-## Why base + active worktree
+## Where firmed rules land
 
-`.claude/settings.local.json` is gitignored and
-exists as an **independent copy per worktree**, not
-a symlink. A running session reads its *own* worktree
-copy, and new worktrees are seeded from the **base
-repo** file. So this skill writes the firmed allowlist
-to exactly two places: **this (the active) worktree** —
-so the rule takes effect in the running session *now* —
-and the **base repo** — so every *future* worktree
-inherits it on creation.
+There are **two** allowlist files, and the difference between them is
+the whole reason this skill used to be run again in every fresh
+worktree:
+
+- **Committed `.claude/settings.json`** is tracked in git, so it rides
+  into every `git worktree` checkout automatically. A rule here is
+  inherited by every future worktree with **no re-firming** — this is
+  the file that actually fixes the "cold worktree re-prompts until
+  firm-perms runs again" churn.
+- **Per-worktree `.claude/settings.local.json`** is gitignored and
+  exists as an **independent copy per worktree**, not a symlink. The
+  harness merges a session's settings only from its **own** project
+  root (plus the user/managed scopes) — never from an ancestor
+  directory — and an untracked file never rides into a fresh checkout.
+  So a rule written *only* to `settings.local.json` is **not** inherited
+  by future worktrees; it lives and dies with the worktree it was
+  written in (and the base copy, which seeds nothing on its own because
+  the seed mechanism — a tracked file — is `settings.json`).
+
+So each firmed rule is **classified** by scope and written to the file
+that matches:
+
+- **Worktree-agnostic *and* read-only → committed `.claude/settings.json`.**
+  The read-only git verbs are the canonical set: `git status:*`,
+  `git diff:*`, `git log:*`, `git show:*`, `git rev-parse:*`,
+  `git branch:*`, `git ls-files:*`, `git ls-tree:*`, `git ls-remote:*`,
+  `git merge-base:*`, `git reflog:*`, `git check-ignore:*`,
+  `git worktree list:*`, and the
+  `git -C <base>/.claude/worktrees/* <read-verb>:*`
+  globs (the tag already collapsed to `*`, so the rule is the same in
+  every worktree). The companion read-only `gh` reads
+  (`gh pr checks:*`, `gh pr view:*`, `gh api graphql:*`) and the
+  read-only GitHub MCP tools belong here too, on the same rationale
+  (routine, low-blast-radius, identical across worktrees — see
+  `docs/conventions/github-mcp.md`). A rule is committed-eligible only
+  when it is **both** worktree-agnostic and clearly read-only — with
+  **one enumerated exception**: the narrow, routine PR-lifecycle
+  **writes** that every worktree runs and that `docs/conventions/github-mcp.md`
+  explicitly blesses for inheritance (the GitHub MCP PR-authoring writes
+  and `init-pr`'s notification-subscription ignore) are committed too,
+  because they fire in every fresh worktree and re-prompting defeats the
+  purpose. That's an explicit list in `github-mcp.md`, **not** a class
+  this skill auto-promotes — firm-perms never moves an arbitrary write
+  into the committed file on its own.
+- **Everything else → per-worktree `.claude/settings.local.json`**, in
+  **this (the active) worktree** (so the rule takes effect now) **and**
+  the **base repo** (so a hand-run firm in one worktree at least
+  carries to the base copy). This is the right home for mutations
+  (`git commit`, `git push`, `cargo build`, `pnpm install`, `rm`,
+  `mv`), anything network- or mutation-capable, machine-specific
+  absolute `Read` paths, and `additionalDirectories` grants — rules
+  that are either not safe to share by default or not identical across
+  machines/worktrees.
 
 It deliberately does **not** fan out to sibling
-worktrees. An existing sibling keeps its own allowlist
-until it's either recreated (re-seeded from the base) or
-re-firmed while it's itself the active worktree. That
-narrower scope is the accepted tradeoff: a sibling may
-re-prompt once for a rule firmed here until it re-firms
-itself, but the skill no longer reads and rewrites every
-live worktree on every run.
+worktrees for the local file. An existing sibling keeps its own
+`settings.local.json` until it's either recreated (re-seeded) or
+re-firmed while it's itself the active worktree; the committed
+`settings.json` rules it already has from git. That narrower scope is
+the accepted tradeoff: a sibling may re-prompt once for a *local* rule
+firmed here until it re-firms itself, but the skill no longer reads and
+rewrites every live worktree on every run.
 
 Don't hardcode the base-repo path — discover it at
 run time (step 1). The examples below use `<base>`
 for that path and `<tag>` for a worktree folder
 (e.g. `eng-447`).
+
+### `base-only` (driven by `review-pr`)
+
+`review-pr` calls this skill at its merge-queue handoff, when the
+active worktree is **about to be torn down** — a write to that
+worktree's `settings.local.json` is wasted churn. So `review-pr` passes
+**`base-only`** (e.g. `/firm-perms base-only`, optionally with a
+fragment). In `base-only`:
+
+- **Skip the active-worktree `settings.local.json` write entirely.**
+  Local-classified rules are written only to the **base** copy.
+- Committed `.claude/settings.json` rules are still written normally —
+  that file *is* the base (it's tracked, one copy), and it's what
+  future worktrees inherit.
+- Report that only the base was firmed (committed `settings.json` and
+  the base `settings.local.json`), not the active worktree.
+
+Any other invocation (interactive `/firm-perms`, fast path, full sweep)
+writes the active worktree as usual.
 
 ## Input
 
@@ -80,9 +142,8 @@ Optional, and accepts these shapes:
 - **Bare `/firm-perms` right after a one-time
   approval**, or **`/firm-perms this`** — the **fast
   path**: firm just the command you literally just
-  approved into this worktree's and the base repo's
-  settings immediately, no sweep, no confirm gate. This
-  is the
+  approved, into the file its scope belongs in,
+  immediately, no sweep, no confirm gate. This is the
   primary low-friction entry point; see the **Fast path**
   under Steps.
 
@@ -96,13 +157,18 @@ Optional, and accepts these shapes:
   on the matching entries but still dedupe and write the
   whole array.
 
+- **`base-only`** (optionally with a fragment) — the
+  full sweep, but with the active-worktree
+  `settings.local.json` write suppressed; see
+  **`base-only`** above. `review-pr` passes this at its
+  merge-queue handoff.
+
 - **A pasted permissions block** — one or more raw
   command / rule strings, typically the ones a
   permission prompt just surfaced, often under a
   `# Permissions` heading or in a fenced block. This is
   the "memorialize these so I stop being asked"
-  entry-point (you can drop such a block straight into a
-  Linear task and run `/firm-perms` against it). Treat
+  entry-point. Treat
   **each line** as a session approval to fold in: derive
   the generalized rule it *should* have been (per the
   generalization rules below) and add it to the working
@@ -129,22 +195,9 @@ Optional, and accepts these shapes:
     nothing to edit; name it in the summary, cite the
     CLAUDE.md rule it broke, and move on.
 
-  Then run the normal generalize / dedupe / propose /
-  write flow over the lines that can be firmed and the
-  whole array.
-
-- **The Linear "Permissions" doc** (pass `doc`, or run
-  by `housekeeping`) — drain the user's living
-  **Permissions** inbox document, where they dump
-  permission prompts as they fire across sessions.
-  Each unchecked `- [ ]` entry holds a captured prompt
-  block; adjudicate the command it contains, firm it or
-  file a source-fix task, and record the disposition
-  back into the doc. This mode reuses the same
-  generalization and adjudication rules but sources its
-  commands from the doc instead of the session and
-  writes its results back into it — see **Draining the
-  Linear Permissions doc** below.
+  Then run the normal generalize / dedupe / classify /
+  propose / write flow over the lines that can be firmed
+  and the whole array.
 
 ## Generalization rules
 
@@ -194,7 +247,10 @@ more verb than it used to.
    approved in one worktree covers them all.
    `WebFetch(domain:…)`, `mcp__…`, and `Skill(…)` rules
    carry no per-worktree path, so copy those through
-   verbatim.
+   verbatim. (These are still **classified** by the
+   rule in "Where firmed rules land" — a read-only MCP
+   tool can go committed; a machine-specific absolute
+   `Read` path and `additionalDirectories` stay local.)
 
 ### Safety floor — do not over-widen
 
@@ -232,9 +288,13 @@ them by context:
 - **Full sweep** — every other invocation: a bare
   `/firm-perms` when the previous turn was *not* an
   approval, a fragment given for general cleanup, a
-  pasted permissions block, or `doc`. It harvests the
-  whole session (or the given source) and runs the
+  pasted permissions block, or `base-only`. It harvests
+  the whole session (or the given source) and runs the
   propose-then-confirm flow. See **Full sweep** below.
+
+`base-only` is a **modifier** on the full sweep (it only
+changes which files get the local-classified rules — see
+"Where firmed rules land"), not a third mode.
 
 ### Fast path (firm the just-approved command)
 
@@ -261,37 +321,47 @@ and it does **not** propose-then-wait.
    `cargo *`, `gh *`, `rm *`), **do not write it** —
    stop and ask the user how to narrow it. This is
    the one case the fast path is allowed to pause.
+1. **Classify the rule** per "Where firmed rules land":
+   worktree-agnostic *and* read-only → the **committed**
+   `.claude/settings.json`; anything else → the
+   per-worktree `.claude/settings.local.json` in this
+   worktree **and** the base.
 1. **Find the base repo** exactly as the full sweep's
    step 1 does (`git worktree list --porcelain`). The
-   `refs/heads/main` worktree is `<base>`. The only two
-   targets are this (the active) worktree and `<base>`;
-   sibling worktrees are not touched.
-1. **Read both allowlists** with the Read tool — this
-   worktree's `.claude/settings.local.json` and the
-   base's.
-1. **Write the glob into both `allow` arrays
-   immediately**, with Edit/Write — **no
+   `refs/heads/main` worktree is `<base>`.
+1. **Read the file(s) the classification targets** with
+   the Read tool — the committed `.claude/settings.json`
+   (this worktree's, which is the same tracked file
+   everywhere) for a committed-eligible rule, and/or this
+   worktree's and the base's `.claude/settings.local.json`
+   for a local rule. Don't read a file you won't write.
+1. **Write the glob into the classified file's `allow`
+   array immediately**, with Edit/Write — **no
    propose-then-confirm gate** (the deliberate difference
-   from the other modes). Dedupe against each file's
+   from the full sweep). Dedupe against the file's
    existing entries; if the glob is already present or
    subsumed by a broader existing rule there, no-op for
    that file. Leave `additionalDirectories` and every
-   other key intact; both files end byte-identical for the
-   `allow` array. If the base write is denied (it isn't in
-   this session's `additionalDirectories`), say so and
-   report that only this worktree was firmed rather than
-   implying the base was — same caveat as the full sweep.
-1. **Report in one line** what was added and that both
-   copies now match — e.g. "Firmed
-   `Bash(cargo test -p dropset:*)` into this worktree +
-   base." Because the report states exactly what was
-   written and where, the change stays trivially
-   reversible.
+   other key intact. For a local-classified rule, write
+   both `settings.local.json` copies (this worktree and
+   the base) so they match; for a committed rule, the one
+   tracked `settings.json` is the write. If a base /
+   committed write is denied (the path isn't in this
+   session's `additionalDirectories`), say so and report
+   what was actually firmed rather than implying more —
+   same caveat as the full sweep.
+1. **Report in one line** what was added, to which file,
+   and that the copies now match — e.g. "Firmed
+   `Bash(git diff:*)` into the committed `settings.json`"
+   or "Firmed `Bash(cargo test -p dropset:*)` into this
+   worktree + base `settings.local.json`." Because the
+   report states exactly what was written and where, the
+   change stays trivially reversible.
 
 **Why no confirm gate here.** The full sweep's
 propose-then-confirm gate exists because a sweep can
-touch many rules at once and resurrect drifted entries
-into the base file. The fast path touches exactly one
+touch many rules at once and resurrect drifted entries.
+The fast path touches exactly one
 rule that the user *just* approved by hand and explicitly
 asked to firm, and it reports precisely what it wrote —
 so the human confirmation already happened (the
@@ -303,7 +373,7 @@ gate unchanged.
 ### Full sweep
 
 The remaining modes — no-arg full harvest, fragment,
-pasted block, and `doc` — run the harvest-and-propose
+pasted block, and `base-only` — run the harvest-and-propose
 flow below.
 
 1. **Find the base repo.** List worktrees and read
@@ -316,12 +386,15 @@ flow below.
 
    The worktree whose `branch` line is
    `refs/heads/main` is the base repo (`<base>`). Take
-   its literal path from the output — the firmed
-   allowlist lands in just two places, this (the active)
-   worktree and `<base>` (see "Why base + active
-   worktree"); sibling worktrees are not touched. If no
-   worktree has `main` checked out, warn the user and
-   firm only this worktree.
+   its literal path from the output. The committed
+   `.claude/settings.json` is one tracked file; the
+   local `.claude/settings.local.json` lands in this (the
+   active) worktree and `<base>` — except under
+   `base-only`, where the active-worktree local write is
+   skipped (see "Where firmed rules land"). Sibling
+   worktrees are not touched. If no worktree has `main`
+   checked out, warn the user and firm only this worktree
+   (local) — there's no base to write.
 
 1. **Harvest this session's approvals.** Beyond what's
    already on disk, scan the current session for every
@@ -355,322 +428,107 @@ flow below.
    stop the prompt. Set these aside for the summary
    instead (see the intro).
 
-1. **Read both allowlists** with the Read tool (per the
+1. **Read the allowlists** with the Read tool (per the
    CLAUDE.md shell conventions — never shell out to
    `jq`/`node`/`python` to read or edit JSON):
 
+   - the committed `.claude/settings.json` (one tracked
+     file)
    - this worktree's `.claude/settings.local.json`
    - `<base>/.claude/settings.local.json`
 
-1. **Build the firmed allowlist.** Union the two `allow`
-   arrays you just read with the session-harvested rules
-   from the harvest step, apply the generalization rules
-   above, and dedupe — this is the single canonical array
-   both files will get. Two cautions on the union:
+   (Under `base-only` you may skip the active worktree's
+   local file — it won't be written.)
+
+1. **Build the firmed allowlist, then classify.** Union
+   the `allow` arrays you just read with the
+   session-harvested rules from the harvest step, apply
+   the generalization rules above, and dedupe. Then
+   **classify** each resulting rule per "Where firmed
+   rules land" — worktree-agnostic read-only into the
+   committed-`settings.json` set, everything else into
+   the local-`settings.local.json` set. Three cautions:
 
    - **Watch entries that live in only one file.** The
-     two copies can have drifted, and a rule missing from
-     the base may have been *deliberately* dropped there.
-     Don't silently resurrect it into both; treat every
+     copies can have drifted, and a rule missing from one
+     may have been *deliberately* dropped there.
+     Don't silently resurrect it everywhere; treat every
      entry present in only one file as a distinct diff
      item the user has to approve in the next step.
    - **Run the safety floor over the *result*, not just
      over rules you generalized.** A pre-existing
      bare-verb wildcard (e.g. a stray `git *` that crept
      into one copy) would otherwise ride the union
-     straight into the base file untouched. Flag any
+     straight into a file untouched. Flag any
      such entry instead of propagating it.
+   - **A rule that moves files counts as a diff item.**
+     If a read-only git rule currently sits in
+     `settings.local.json` and the classification now
+     routes it to the committed `settings.json`, show
+     that move in the proposal (it's the mechanism that
+     drains the cold-worktree churn) so the user sees the
+     committed file growing.
 
 1. **Propose, then wait for the user.** Before
    writing **anything**, show the user exactly what
    will change and why, and stop for their go-ahead.
    Present it as a concrete diff against the current
-   allowlist:
+   allowlists, **labeled by destination file**:
 
-   - each rule being **added** (the generalized glob)
-     and the concrete rule(s) it replaces, with a
-     one-line reason (e.g. "collapses three
-     per-worktree variants into one");
+   - each rule being **added** (the generalized glob),
+     **which file** it lands in (committed `settings.json`
+     vs. `settings.local.json`), and the concrete rule(s)
+     it replaces, with a one-line reason (e.g. "collapses
+     three per-worktree variants into one"; "read-only
+     git — promoted to committed `settings.json`");
    - each rule being **removed** as a now-subsumed
-     duplicate;
+     duplicate, or **moved** from the local file to the
+     committed one;
    - each entry present in **only one** of the files,
-     so the user can confirm it should land in both
-     (rather than having drifted out on purpose);
+     so the user can confirm it should land where you
+     propose (rather than having drifted out on purpose);
    - any over-broad rule you're **flagging** but
      leaving in place (per the safety floor).
 
    Do not edit any file until the user approves.
    If they want changes, adjust the proposal and show
    it again. This confirmation gate matters most for
-   the base-repo (meta-level) file, since it seeds
-   every future worktree.
+   the committed `settings.json` and the base-repo local
+   file, since those are what seed every future worktree.
 
-1. **Write it to both files** once approved, with
-   Edit/Write — replacing only the `allow` array and
-   leaving `additionalDirectories` (and any other keys)
-   intact in each. Both files end byte-identical for the
-   `allow` array. Writing the base copy reaches outside
-   this worktree, so it only works when `<base>` is in
-   this session's `additionalDirectories` (it normally
-   is). If the base write is denied, say so and report
-   that only this worktree was firmed rather than
-   implying the base was — don't leave the user thinking
-   future worktrees were covered when they weren't.
+1. **Write it to the classified files** once approved,
+   with Edit/Write — replacing only the `allow` array in
+   each and leaving `additionalDirectories` (and any
+   other keys) intact:
 
-1. **Report.** Confirm what was written and that both
-   copies (this worktree and the base) now match — or,
-   if the base write was denied, that only this worktree
-   was firmed. List
+   - **Committed `.claude/settings.json`** — the
+     worktree-agnostic read-only set. One tracked file;
+     written the same in `base-only` as in any other mode
+     (it *is* shared).
+   - **`.claude/settings.local.json`** — the local set,
+     to this worktree **and** `<base>` so both match —
+     **except under `base-only`**, where only the base
+     copy is written (the active worktree is being torn
+     down).
+
+   Writing a base / committed copy reaches outside this
+   worktree, so it only works when `<base>` is in this
+   session's `additionalDirectories` (it normally is). If
+   that write is denied, say so and report what was
+   actually firmed rather than implying the base /
+   committed file was updated — don't leave the user
+   thinking future worktrees were covered when they
+   weren't.
+
+1. **Report.** Confirm what was written and to **which
+   file** — the committed `settings.json` rules (the ones
+   future worktrees now inherit through git) and the
+   local `settings.local.json` copies (this worktree and
+   the base, or base-only) — or, if a write was denied,
+   what was actually firmed. List
    the session approvals you firmed in (Bash and
    file-access alike), and separately the **malformed**
    approvals you set aside — name the offending pattern
    (heredoc, `cd … &&`, `python3`/`jq` one-liner) and
    point at its source so the author stops emitting it,
    rather than allow-listing it.
-
-## Draining the Linear Permissions doc
-
-The user keeps a living **Permissions** document in
-Linear — an inbox where they dump permission prompts as
-they fire across multi-session work, under headings like
-`# /review-pr agents` and `# General/unknown`. Each
-prompt is captured as an unchecked `- [ ]` item whose
-body is a fenced block holding the command (and often
-the surrounding "Do you want to proceed?" chrome and
-the over-broad `2. Yes, and don't ask again for: git *`
-option the harness offered). This mode drains that
-inbox: it adjudicates each unchecked item with the
-**same** generalization rules and safety floor as
-every other mode, then records the disposition back
-into the doc.
-
-It runs in **two contexts**, which differ only in
-**autonomy** (what they're allowed to write), never in
-how they adjudicate:
-
-- **Attended** — you invoke `/firm-perms doc` yourself.
-  This may write `settings.local.json` (behind the
-  normal propose-then-confirm gate), tick the doc
-  checkboxes, and finalize the notes.
-- **Propose-only** — `housekeeping` invokes it
-  unattended on a timer. It **never writes settings**
-  and **never ticks a checkbox**. It only annotates
-  each unchecked item with the disposition it
-  *recommends*, and files source-fix tasks for
-  malformed entries. The actual settings write and
-  check-off are left for a later attended run. (This is
-  the deliberate autonomy bound: an unattended loop must
-  not silently widen the base-repo allowlist that seeds
-  every future worktree.)
-
-The mode is selected by the caller: `housekeeping`
-passes `doc propose-only`; a bare `doc` is attended.
-
-### Steps (doc mode)
-
-1. **Resolve the doc id from the environment**, on the
-   same bare-`printenv` rule as the other Linear ids
-   (one variable per call — never a combined
-   `printenv A B`):
-
-   ```sh
-   printenv LINEAR_PERMISSIONS_DOC_ID
-   ```
-
-   If it's empty, say so and stop — don't guess a doc
-   id.
-
-1. **Read the doc live, every pass.** Fetch it fresh
-   with `mcp__claude_ai_Linear__get_document` (id = the
-   resolved value). Never reuse a snapshot from an
-   earlier pass: the user adds entries quickly, so a
-   stale body would drop their newest items or clobber
-   their edits on write-back.
-
-1. **Find the work.** Collect every **unchecked**
-   (`- [ ]`) entry; ticked (`- [x]`) ones are already
-   disposed, so skip them. Then triage each unchecked
-   entry by the disposition note (if any) a prior pass
-   left under it — this is what makes the loop converge
-   instead of re-firming the same rules forever:
-
-   - **No disposition note** → fresh work; adjudicate it
-     below.
-   - **`✓ firmed: <rule>`** (an attended firm that the
-     user re-opened) → a **contest**; handle it per **The
-     contest protocol** below (attended reverts the
-     rule; propose-only skips).
-   - **`⚠ contested — reverted …`** → held for the user;
-     skip it until they edit the entry (see the contest
-     protocol).
-   - **`recommend firm: …`** or **`⚠ can't firm: …`** (a
-     prior propose-only recommendation) → an attended
-     run executes the recommendation (firm it / confirm
-     the filed task); propose-only skips it as already
-     handled.
-
-   For each entry you do adjudicate, extract the actual
-   command from its fenced block: ignore the prompt
-   chrome — the `Bash command` header, the description
-   line, the `Do you want to proceed?` prompt, and its
-   numbered menu — and the
-   `2. Yes, and don't ask again for: …` line — that
-   line shows the **over-broad** rule the harness
-   offered (often a bare-verb `git *`), which the safety
-   floor forbids; derive the correct narrow glob
-   yourself, don't copy it. Some entries are truncated
-   or garbled (e.g. a line starting `rs/alex/…`); if you
-   can't recover a runnable command, treat it as
-   malformed-unrecoverable and note that rather than
-   guessing.
-
-1. **Adjudicate each command** with the existing rules
-   — no new logic:
-
-   - **Reduces to a safe glob** → it's firmable. Derive
-     the generalized rule per the **Generalization
-     rules** above (collapse `worktrees/<tag>` to `*`,
-     `:*` the trailing args, keep the command +
-     subcommand literal, respect the safety floor — no
-     bare-verb wildcards).
-   - **Malformed** — a compound (`&&`, `;`), a pipe, a
-     `$(…)` substitution, a redirect, a heredoc, or an
-     `awk`/`sed`/`python3`/`jq` one-liner that should be
-     a Read/Grep/Glob tool call or a lint hook — **can't
-     be allow-listed** (a `*` can't rescue it, and the
-     harness re-validates each sub-command). It must be
-     fixed at the **source**. If a committed skill,
-     script, Makefile target, or sub-agent emits it,
-     **file a Linear task** to fix that source so the
-     prompt stops firing; if it was a one-off nobody
-     emits, there's nothing to fix — just record that.
-   - **Network- or mutation-capable verb** (e.g.
-     `gh api …`, which can `-X DELETE`) — even when it
-     reduces to a glob, do **not** auto-firm it in
-     propose-only mode. Flag it for the attended run to
-     decide, with a note on why it needs a human.
-
-1. **Apply the disposition — gated by autonomy:**
-
-   - **Attended (`doc`)**: fold the firmable rules into
-     the working set and run them through the normal
-     **propose → confirm → write-both-files** flow
-     (steps 5–6 above) — the base-repo write still waits
-     for your go-ahead. For malformed entries, file the
-     source-fix task (below). Then **write the doc back**
-     (next step): tick each disposed item and replace its
-     note.
-   - **Propose-only (`doc propose-only`, housekeeping)**:
-     do **not** touch `settings.local.json` and do
-     **not** tick any checkbox. For firmable entries,
-     annotate the item with the rule you *would* firm
-     and why. For malformed entries, file the source-fix
-     task (filing a task is proposing a fix, not widening
-     settings — it's allowed unattended). Leave the
-     checkbox unchecked so the attended run still sees it
-     as work, but skip any item that already carries a
-     disposition note — one whose nested line begins with
-     `recommend firm:`, `✓ firmed:`, `⚠ can't firm:`, or
-     `⚠ contested —` — so a 30-minute loop doesn't
-     re-annotate or re-file what it (or an attended run)
-     already handled. Match the actual lead markers the
-     write-back step emits, not a paraphrase, so the skip
-     reliably fires.
-
-1. **Filing a source-fix task** (malformed entries).
-   Use the same env-resolved destination as
-   `linear-task` / `housekeeping` (resolve each id with
-   its own bare `printenv` — `LINEAR_TEAM_ID`,
-   `LINEAR_PROJECT_ID`, `LINEAR_ASSIGNEE_ID`),
-   `state: "Backlog"`, priority 3, with a fingerprint
-   line so re-runs dedup. Before filing, list the open
-   Backlog and skip any issue already carrying the same
-   fingerprint:
-
-   ```txt
-   mcp__claude_ai_Linear__save_issue(
-     team: "<$LINEAR_TEAM_ID>",
-     project: "<$LINEAR_PROJECT_ID>",
-     assignee: "<$LINEAR_ASSIGNEE_ID>",
-     state: "Backlog",
-     title: "<source>: stop emitting <malformed pattern>",
-     description: "<the captured command + which CLAUDE.md
-       rule it breaks + the fix>\n\n**Fingerprint**:
-       perms-doc:<short-hash-or-slug>",
-     priority: 3,
-   )
-   ```
-
-1. **Write the disposition back into the doc.** There
-   is no per-line comment API on a Linear *document*, so
-   the record lives **inline in the body**: rewrite the
-   doc with `mcp__claude_ai_Linear__save_document` (id =
-   the resolved value), and for each disposed entry add
-   nested note lines indented under it. Keep the
-   captured block intact; just append the note and (when
-   attended) flip the checkbox:
-
-   ```md
-   - [x] git -C …/worktrees/eng-531 ls-files cfg
-     - ✓ firmed: `Bash(git -C …/worktrees/* ls-files:*)`
-     - reason: read-only `ls-files` on a sibling
-       worktree; tag collapsed to `*`, args to `:*`
-   ```
-
-   For a malformed entry:
-
-   ```md
-   - [x] ls /Users/alex/repos 2>/dev/null | grep -i drop
-     - ⚠ can't firm: pipe + redirect compound — filed
-       ENG-### to fix the stage-backlog cross-check
-       agent's brief (use Glob, not `ls | grep`)
-   ```
-
-   In **propose-only** mode the same notes are written
-   but the checkbox stays `- [ ]` and the lead marker is
-   `recommend firm:` rather than `✓ firmed:` (with the
-   recommended rule, e.g. `Bash(git -C …/worktrees/* diff:*)`).
-
-   **Diff against the live body before saving.** Build
-   the new body from the body you just fetched this pass,
-   changing only the lines you're disposing; never
-   reorder or rewrite the user's other content. If the
-   doc `updatedAt` is newer than when you fetched it
-   (someone edited mid-pass), re-fetch and rebuild rather
-   than overwriting their change.
-
-### The contest protocol
-
-An auto-firm can be wrong, so the user needs a way to
-reverse one. The protocol uses the checkbox they can see:
-
-- To **contest** a firm, the user **re-opens** the item —
-  flips `- [x]` back to `- [ ]` — leaving its
-  `✓ firmed: <rule>` note in place.
-- On the next **attended** pass, an item that is
-  **unchecked but still carries a `✓ firmed: <rule>`
-  note** is the contest signal. **Revert** that exact
-  rule from **both** `settings.local.json` copies (this
-  worktree and the base — the same set the firm wrote
-  to), then replace the note with a
-  `⚠ contested — reverted <rule>; needs re-handling`
-  note and leave the item unchecked.
-- That `⚠ contested — reverted` note then **holds the
-  item for the user** — it is *not* fresh work. Don't
-  re-adjudicate or re-firm a contested item on a later
-  pass; that would just re-fire the rule the user
-  rejected and loop. The item only re-enters adjudication
-  once the user acts on it: they rewrite the command,
-  delete the note, or remove the entry. Until then, skip
-  it (the step-3 "find the work" pass excludes it).
-
-So an unchecked item resolves unambiguously by its
-note: a `✓ firmed:` note means *contest → revert*; a
-`⚠ contested — reverted` note means *held, skip*; no
-disposition note means *fresh work → adjudicate*.
-
-Propose-only (housekeeping) never reverts settings and
-never re-handles a contested item; it just leaves any
-already-noted entry for the attended run, exactly as
-its skip rule (step "apply the disposition") already
-provides.

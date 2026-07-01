@@ -51,6 +51,29 @@ at its merge-queue handoff — the same TUI-selector
 pattern, applied one stage earlier at the
 init-pr → review-pr boundary.
 
+## Surveying reference repos: prefer the `Explore` agent
+
+When the surfaced task is greenfield and the work begins
+with **surveying reference implementations** — reading one
+or more *external* repos to learn a pattern before building
+— spawn the **`Explore`** agent for that survey, **not** a
+`general-purpose` agent, and pass it an explicit file/dir
+**path allowlist** scoped to what's worth reading.
+
+`Explore` reads **excerpts** (it locates and slice-reads)
+rather than ingesting whole files, so it caps the dominant
+cost of a research phase: a `general-purpose` survey of
+reference repos has pulled **multi-MB of external source
+whole-file** into context (e.g. an entire reference repo at
+2–2.5M input each), which is then replayed every later turn
+(per `CLAUDE.md` → "Context economy"). Whole-repo ingestion
+is somewhat inherent to "survey N references," but `Explore`
+plus a scoped allowlist is the lever that bounds it. Give
+the agent the canonical sub-agent brief
+(`docs/conventions/sub-agent-brief.md`) and name the
+specific paths it should look at, rather than turning it
+loose on a whole tree.
+
 ## The branch/worktree helper tool
 
 The deterministic string/path work this bootstrap needs —
@@ -201,7 +224,35 @@ Steps 1, 2, and 4 read their answers from this one call.
    ```
 
    The call returns the PR object, including its
-   `html_url` — keep it for the final step.
+   `html_url` and `number` — keep both (the number for
+   the next step, the URL for the final one).
+
+1. **Ignore this PR's notification subscription** so its
+   lifecycle doesn't ping the author. Opening a PR
+   auto-subscribes you to it, and the draft then generates a
+   stream of notifications through its life (CI results,
+   assignment, and finally the merge) — noise in a
+   solo / agent-driven flow. Ignore the thread right after
+   creating it. No GitHub MCP tool covers a per-PR
+   subscription (`manage_notification_subscription` needs an
+   existing thread; `manage_repository_notification_subscription`
+   is repo-wide), so this is a **documented `gh` exception**
+   (per `docs/conventions/github-mcp.md`) — pass the PR
+   `number` from the previous step:
+
+   ```sh
+   gh api --method PUT \
+     /repos/DASMAC-com/dropset/issues/<number>/subscription \
+     -F ignored=true
+   ```
+
+   Make it **best-effort**: if the call errors, note it and
+   continue — a notification ping must never block
+   bootstrapping. (`housekeeping`'s merged-PR notification
+   sweep remains the catch-all for anything this misses.)
+   **Tradeoff:** ignoring the thread suppresses *all* of this
+   PR's notifications, including others' review comments —
+   accepted in this solo / agent-driven flow.
 
 1. Mark the Linear issue **In Progress** so the board
    reflects that work on this worktree has started.

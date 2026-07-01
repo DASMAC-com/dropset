@@ -7,8 +7,8 @@ reading the diff, watching checks, pulling failing-job logs — go
 through the **GitHub MCP server** (`mcp__github__*`), not the `gh`
 CLI, **with the deliberate exceptions below**. The skills (`init-pr`,
 `pr-title-description`, `review-pr`, `housekeeping`, `linear-task`)
-are written against it. `gh` survives in two places, both in
-`review-pr`:
+are written against it. `gh` survives in four places — two in
+`review-pr`, one in `init-pr`, one in `pr-title-description`:
 
 - **The merge-queue handoff** — the enqueue (a `gh pr merge --auto`
   write, **no** strategy flag: this repo's merge queue sets the
@@ -40,6 +40,36 @@ are written against it. `gh` survives in two places, both in
   fresh call paced by `ScheduleWakeup`), never a shell `while … sleep`
   loop or a `jq` filter; the failure path still pulls logs via
   `get_job_logs`.
+
+- **Ignoring a new PR's notification subscription** (`init-pr`) — a
+  one-shot `gh api --method PUT` against the PR's `/subscription`
+  endpoint with `-F ignored=true`, right after the draft PR is created,
+  so its lifecycle (CI, assignment, merge) doesn't ping the author in
+  this solo / agent-driven flow. No MCP tool covers a per-PR
+  subscription — `manage_notification_subscription` needs an existing
+  thread and `manage_repository_notification_subscription` is repo-wide
+  — so the `gh api` write is the only path. It's **best-effort**:
+  `init-pr` continues if it errors, and `housekeeping`'s merged-PR
+  notification sweep is the catch-all for anything it misses. Its
+  allow-rule is narrow and **committed** (see "Permission rules"
+  below):
+
+  ```text
+  Bash(gh api --method PUT /repos/DASMAC-com/dropset/issues/*/subscription:*)
+  ```
+
+  so a fresh worktree inherits it and `init-pr` never re-prompts for it.
+
+- **The recent-merged-PR style lookup** (`pr-title-description`) — a
+  one-shot `gh pr list --json number,title,body --state merged --limit 3`
+  to read the last few merged PRs' bodies for style. `gh` has a
+  `merged` state filter the MCP `list_pull_requests` lacks **and**
+  returns the `body` in the same call, so it replaces a list-every-closed-PR
+  call (~104k tokens of full bodies, replayed every later turn — see
+  [context economy](context-economy.md)) *plus* a per-PR
+  `pull_request_read` body fetch with one field-selected read. `--json`
+  is a flag, not a pipe, so it reduces to a `Bash(gh pr list:*)`
+  allow-rule (read-only, worktree-agnostic — committed).
 
 Everything else stays MCP-first; `gh` is not a general-purpose escape
 hatch.
@@ -97,17 +127,24 @@ writes to confirm-on-use:
   `actions_list`, `actions_get`, `get_job_logs`, `get_me`, and the
   `search_*` family.
 - **Pre-approve (the companion `gh` reads, as `Bash(…)` rules):**
-  `Bash(gh pr checks:*)`, `Bash(gh pr view:*)`, and
-  `Bash(gh api graphql:*)` — the polled / field-selected reads
-  `review-pr` uses in place of the full-object MCP calls (see "GitHub
+  `Bash(gh pr checks:*)`, `Bash(gh pr view:*)`,
+  `Bash(gh api graphql:*)`, and `Bash(gh pr list:*)` — the polled /
+  field-selected reads
+  `review-pr` and `pr-title-description` use in place of the
+  full-object MCP calls (see "GitHub
   via MCP" above and [context economy](context-economy.md)). These are
   Bash globs, not `mcp__github__*` entries, but they're pre-approved on
-  the same rationale (routine, low-blast-radius reads) and propagated to
-  the base repo so future worktrees inherit them.
+  the same rationale (routine, low-blast-radius reads). Being
+  worktree-agnostic and read-only, they live in the **committed**
+  `.claude/settings.json` so every worktree inherits them through git.
 - **Pre-approve (routine PR-authoring writes):** `create_pull_request`
-  (init-pr) and `update_pull_request` (pr-title-description, review-pr).
-  The skills call these on every run to open and maintain the draft PR,
-  and they touch only the PR's own title / body / draft-state — low
+  (init-pr) and `update_pull_request` (pr-title-description, review-pr),
+  plus `init-pr`'s notification-subscription ignore (the narrow
+  `gh api … /subscription` allow-rule shown above — the one `gh` write
+  of the four exceptions). The skills call these on every run to open
+  and maintain the draft PR,
+  and they touch only the PR's own title / body / draft-state /
+  subscription — low
   blast radius — so gating them behind a confirm prompt each run buys no
   safety. Pre-approving them is deliberate.
 - **Confirm-on-use (merges, deletes, pushes, issue/actions
@@ -120,9 +157,16 @@ The split, in one line: **pre-approve reads + the routine PR-authoring
 writes; confirm-on-use for merges, deletes, pushes, and issue/actions
 mutations.**
 
-These are `mcp__github__<tool>` permission entries, not `Bash(…)`
+The MCP entries are `mcp__github__<tool>` permission strings, not
+`Bash(…)`
 globs — and because of the single-tool-many-methods shape, one
-allow-rule per read tool covers all of its methods. Propagate the
-pre-approved allow-rules (reads *and* the PR-authoring writes) to the
-**base-repo** settings so future worktrees inherit them (per the
-per-worktree settings rule); `firm-perms` does this at session end.
+allow-rule per read tool covers all of its methods. So future worktrees
+inherit these without re-prompting, they land by the same classification
+`firm-perms` uses everywhere (`firm-perms` → "Where firmed rules land"):
+the worktree-agnostic **reads** — the MCP read tools and the companion
+`gh` reads — and the enumerated **routine PR-lifecycle writes** above
+(the PR-authoring writes and the notification-subscription ignore) go
+into the **committed** `.claude/settings.json`, which rides into every
+fresh worktree through git. The genuinely destructive / irreversible
+writes are never pre-approved at all (confirm-on-use). `firm-perms`
+keeps this current at session end.

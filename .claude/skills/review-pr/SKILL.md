@@ -197,10 +197,18 @@ PR-authoring **writes** (`create_pull_request`,
      quoting the checklist text and the `file:line`
      (or absence) that decides it.
 
-1. **Run lint:**
+1. **Run lint.** `make lint` runs the full pre-commit hook
+   set, and on a failure its cspell hook alone dumps a
+   ~450-line per-file cascade — pure noise that, once it's
+   in context, is replayed every later turn. So run it
+   **through the quiet runner** (per `CLAUDE.md` → "Context
+   economy") — it captures the hook output to a temp log and
+   prints only a one-line summary on success, or the failing
+   tail + log path on failure (which you then `Read` by
+   slice):
 
    ```sh
-   make lint
+   python3 .claude/tools/run_quiet.py -- make lint
    ```
 
    If lint fails, first separate **environmental**
@@ -230,7 +238,8 @@ PR-authoring **writes** (`create_pull_request`,
      pass in CI and move on. **Never gate the PR on a
      hook that couldn't run.**
 
-   - For genuine violations, parse the output and fix
+   - For genuine violations, parse the failing tail (and
+     the log by slice) and fix
      every issue that can be fixed mechanically
      (formatting, import order, trailing whitespace,
      spelling, etc.).
@@ -243,7 +252,24 @@ PR-authoring **writes** (`create_pull_request`,
      git commit -S -m "Fix lint violations"
      ```
 
-   - Re-run `make lint` to confirm it passes.
+   - **Re-run only the failing hook, scoped to the diff's
+     changed files** — not the whole `make lint` /
+     `--all-files` cascade. The full run re-checks every file
+     in the repo (the cspell hook's ~450-line cascade is the
+     worst of it); the fix only touched the diff's files, so
+     confirm it against just those, with the failing hook id
+     from the run above:
+
+     ```sh
+     pre-commit run <hook-id> --files <changed files...>
+     ```
+
+     Take `<changed files...>` from
+     `git diff --name-only main..HEAD`. Only fall back to a
+     full `python3 .claude/tools/run_quiet.py -- make lint`
+     when a hook is repo-global (it has no per-file scope) or
+     when you've changed enough that a scoped re-run wouldn't
+     be representative.
 
    - If real violations still fail after the fix
      attempt, catalogue the remaining failures as
@@ -258,15 +284,32 @@ PR-authoring **writes** (`create_pull_request`,
    `--output=<file>` flag writes straight to the file with no
    shell redirect (so it stays a `Bash(git diff:*)`
    allow-rule) **and** keeps the bulky diff out of the main
-   transcript entirely:
+   transcript entirely.
+
+   **Write it to the session scratchpad, not `/tmp`.** The
+   environment designates a per-session scratchpad directory
+   (the harness prints its path at session start) that **is
+   shared with the sub-agents** you spawn. `/tmp` is **not**
+   safe here: it's shared across sessions, so a sibling
+   session's stale `review-diff.txt` can sit at the same path
+   and the fan-out then reviews the **wrong diff** — a real
+   bug that has cost an entire 6-agent pass. Write to
+   `<scratchpad>/review-diff.txt` (substitute the actual
+   scratchpad path), then **verify the file is this branch's
+   diff before fanning out** — a one-line `wc -l` (and, if in
+   any doubt, a `head`) so a zero-length or stale file is
+   caught now, not after N agents have read it:
 
    ```sh
-   git diff main..HEAD --output=/tmp/review-diff.txt
+   git diff main..HEAD --output=<scratchpad>/review-diff.txt
    git log main..HEAD --oneline
+   wc -l <scratchpad>/review-diff.txt
    ```
 
    The commit log is small, so it prints to context and is
-   passed inline; the diff lives only in `/tmp/review-diff.txt`.
+   passed inline; the diff lives only in
+   `<scratchpad>/review-diff.txt`. Do not fan out until the
+   `wc -l` confirms the file holds this branch's diff.
 
    **Brief every sub-agent on the shell rules.** Prepend
    the standing sub-agent brief from
@@ -322,7 +365,7 @@ PR-authoring **writes** (`create_pull_request`,
 
    **Hand each agent the diff by path, not inline.** Tell
    every reviewer (and the step-6 cross-check agent) to
-   **Read `/tmp/review-diff.txt`** for the full diff, and
+   **Read `<scratchpad>/review-diff.txt`** for the full diff, and
    pass the small commit log inline. This holds **one**
    resident copy of the diff (read into each agent's own
    context) instead of N copies inlined across the prompts;
@@ -364,6 +407,27 @@ PR-authoring **writes** (`create_pull_request`,
    it. When in doubt, fan out — the short-circuit is for the
    clearly-trivial, not the merely-small-but-subtle.
 
+   **Gate the two freshness lenses on the diff's touched
+   surfaces.** The four substantive lenses below
+   (correctness, security, style, completeness) are
+   **unconditional** — run them on every non-trivial diff.
+   The two **freshness** lenses, by contrast, near-always
+   return an "in sync, no-op" verdict on a pure source diff
+   yet each costs ~100k+ of sub-agent input, so spawn them
+   **only** when the diff actually touches the surfaces they
+   police: it edits `CLAUDE.md`, `docs/conventions/**`, or
+   `.github/**`, **or it adds a new top-level tree**. The
+   new-tree case is load-bearing and not optional — a new
+   subsystem is "source" that *does* need the conventions
+   lens (e.g. a new `indexer/` tree the audit registry must
+   learn about), so don't blanket-skip on "source-only". On a
+   diff that touches none of those surfaces and adds no new
+   top-level tree, **skip both freshness lenses** and note
+   the skip in the summary. (This surface gate is narrower
+   than — and composes with — the trivial-diff short-circuit
+   above: a trivial `CLAUDE.md` edit still runs the freshness
+   lenses; a large pure-source refactor still skips them.)
+
    Spawn parallel sub-agents via the `Agent` tool
    (single message, multiple calls) to review the
    diff — each with the brief above prepended. At
@@ -382,9 +446,10 @@ PR-authoring **writes** (`create_pull_request`,
      left behind, partial implementations,
      unused imports or dead code introduced by
      the diff.
-   - **`CLAUDE.md` + `docs/conventions/` freshness** —
-     does the project's convention set still match reality
-     after this diff? `CLAUDE.md` is the index; the full
+   - **`CLAUDE.md` + `docs/conventions/` freshness**
+     (conditional — spawn only when the surface gate above
+     fires) — does the project's convention set still match
+     reality after this diff? `CLAUDE.md` is the index; the full
      rules live in `docs/conventions/**`. Read `CLAUDE.md`
      and the relevant convention doc(s), and check their
      rules, command examples, paths, and tooling references
@@ -399,7 +464,8 @@ PR-authoring **writes** (`create_pull_request`,
      **directly violates or invalidates** — or a dangling
      reference — as **blocking**; merely-stale prose as a
      **warning** with the suggested correction.
-   - **CI skip-list freshness** — the `Tests` workflow
+   - **CI skip-list freshness** (conditional — spawn only
+     when the surface gate above fires) — the `Tests` workflow
      (`.github/workflows/test.yml`) skips the Rust suite
      only when **every** changed file lands in a known
      test-irrelevant tree. Its `changes` job encodes that
@@ -435,7 +501,7 @@ PR-authoring **writes** (`create_pull_request`,
    sub-agent that receives the collected findings
    and the diff (prepend the same `CLAUDE.md`
    sub-agent brief to its prompt too, and hand it the
-   diff **by path** — `/tmp/review-diff.txt` — as the
+   diff **by path** — `<scratchpad>/review-diff.txt` — as the
    review agents got it, not inlined), and is told to
    act adversarially:
 
@@ -446,7 +512,7 @@ PR-authoring **writes** (`create_pull_request`,
 
    **Challenge from what it was given, not by re-deriving
    the codebase.** The cross-check's inputs are the
-   collected findings and the diff at `/tmp/review-diff.txt`
+   collected findings and the diff at `<scratchpad>/review-diff.txt`
    — tell it to reason from those plus a single up-front read
    of any file a finding cites, and to shell out again only
    to settle a **genuine** dispute it can't resolve from
@@ -475,11 +541,23 @@ PR-authoring **writes** (`create_pull_request`,
    decisions — leave those as warnings for the
    human reviewer.
 
+   Any inline quick-check you run to confirm a fix — a
+   scoped `cargo test -p <crate> --lib`, a `cargo clippy`,
+   a targeted `cargo test` — emits a `Compiling …` cascade
+   ahead of its result that is pure noise once it passes, so
+   run it **through the quiet runner** too
+   (`python3 .claude/tools/run_quiet.py -- cargo test -p <crate> --lib`,
+   per `CLAUDE.md` → "Context economy") — only the
+   `test result:` / error line needs to reach context.
+
 1. **Re-lint after fixes.** If any fix commits
    were made in the previous step, re-run
-   `make lint` to catch violations introduced by
+   `make lint` **through the quiet runner**
+   (`python3 .claude/tools/run_quiet.py -- make lint`) to
+   catch violations introduced by
    those fixes. Apply the same fix-and-retry
-   logic as the lint step (step 4).
+   logic as the lint step (step 4) — including its
+   scoped per-hook re-run on a failure.
 
 1. **Regenerate committed generated artifacts
    (mirror the IDL / SDK / vectors CI gates).** Three
@@ -564,8 +642,11 @@ PR-authoring **writes** (`create_pull_request`,
      ```
 
    If any artifact commit was made, re-run `make lint`
-   (a regenerated-file commit can still trip whitespace /
-   EOF hooks), applying the step-4 fix-and-retry logic.
+   through the quiet runner
+   (`python3 .claude/tools/run_quiet.py -- make lint`) —
+   a regenerated-file commit can still trip whitespace /
+   EOF hooks — applying the step-4 fix-and-retry logic
+   (including its scoped per-hook re-run on a failure).
 
 1. **Refresh the Audit registry if the diff changed the
    platform shape.** `audit` reads its subsystems,
@@ -886,11 +967,15 @@ PR-authoring **writes** (`create_pull_request`,
      (or stays put if no tag was resolvable).
    - `CLAUDE.md` + `docs/conventions/` freshness: in sync,
      or each stale rule / dangling skill reference the diff
-     outdated, with the suggested correction.
+     outdated, with the suggested correction — or **skipped**
+     (the surface gate didn't fire: the diff touched no
+     `CLAUDE.md` / `docs/conventions/` / `.github/` surface
+     and added no new top-level tree).
    - CI skip-list freshness: the `test.yml` `code`-filter
      exclude-list is in sync, or each test-irrelevant tree
      the diff added/renamed that should be excluded, with
-     the suggested one-line edit (warning only).
+     the suggested one-line edit (warning only) — or
+     **skipped** (surface gate didn't fire, as above).
    - Issues found / fixed / remaining.
    - Remaining warnings and nits for human review,
      each with `file:line` and rationale.
@@ -976,7 +1061,7 @@ PR-authoring **writes** (`create_pull_request`,
    skill-to-skill handoff, so gate it on the same TUI
    selector the merge-queue prompt uses (per `CLAUDE.md` →
    "The PR workflow and skill handoffs"): ask whether to
-   firm permissions now, offering "yes, run /firm-perms"
+   firm permissions now, offering "yes, run /firm-perms base-only"
    (**first**, the recommended default) and "skip". This
    is a second, lighter gate *in front of* `firm-perms`'
    own propose-then-confirm gate — intentional: the
@@ -986,14 +1071,22 @@ PR-authoring **writes** (`create_pull_request`,
 
    - On **decline**, skip this step and note in the
      report that permissions were **not** firmed this run.
-   - On **approve**, invoke `/firm-perms` to collapse the
-     per-worktree and per-arg `permissions.allow` entries
-     into reusable globs and propagate them to the base
-     repo so future worktrees inherit them. This is
-     housekeeping on the gitignored
-     `.claude/settings.local.json` — it does **not** affect
-     the PR diff or its ready state, so run it regardless
-     of the gate or CI outcome.
+   - On **approve**, invoke **`/firm-perms base-only`** to
+     collapse the per-worktree and per-arg
+     `permissions.allow` entries into reusable globs and
+     propagate them. **Pass `base-only`**: this worktree is
+     about to be torn down once the PR merges, so a write to
+     *its* `.claude/settings.local.json` is wasted churn —
+     `base-only` makes `firm-perms` skip the active-worktree
+     local write and firm only the base (the committed
+     `.claude/settings.json` for worktree-agnostic read-only
+     rules, and the base `.claude/settings.local.json` for
+     the rest), which is what future worktrees actually
+     inherit (see `firm-perms` → "Where firmed rules land").
+     This is housekeeping on the allowlists — it does **not**
+     affect the PR diff or its ready state, so run it
+     regardless of the gate or CI outcome. Note in the report
+     that only the base was firmed.
 
    **Account for what the review agents requested.**
    The diff-review and cross-check agents (steps 5–6)

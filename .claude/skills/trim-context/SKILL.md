@@ -1,6 +1,6 @@
 ---
 name: trim-context
-description: Mine the Linear "Session Metrics" inbox into propose-only skill-improvement Backlog tasks — the consumer half of the `session-metrics` producer. Reads the inbox document live, synthesizes the trim levers that recur across sessions (a verbose build log, a whole-file Read where a slice would do, a repeated full-PR read, an inlined-diff fan-out), files one propose-only task per distinct lever with a `**Touches**:` + `**Fingerprint**:` line, dedups against the open Backlog, writes each consumed entry's disposition back into the doc, and offers (via AskUserQuestion) to clear the processed entries so the inbox doesn't grow unbounded. Never edits a skill or convention doc — filing a task is the proposal. Runs standalone or as `housekeeping`'s Session Metrics step.
+description: Mine the Linear "Session Metrics" inbox into a propose-only skill-improvement Backlog task — the consumer half of the `session-metrics` producer. Reads the inbox document live, synthesizes the trim levers that recur across sessions (a verbose build log, a whole-file Read where a slice would do, a repeated full-PR read, an inlined-diff fan-out), and files them as a single aggregated propose-only task — one bullet per lever, each with its own `**Fingerprint**:` line under a combined `**Touches**:` (so one mining pass yields one issue / one PR, not a batch to consolidate later). Dedups each lever against the open Backlog, appends to the open aggregated task rather than opening a second, writes each consumed entry's disposition back into the doc, and offers (via AskUserQuestion) to clear the processed entries so the inbox doesn't grow unbounded. Never edits a skill or convention doc — filing a task is the proposal. Runs standalone or as `housekeeping`'s Session Metrics step.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -12,16 +12,18 @@ The **consumer** half of the context-economy feedback loop.
 one dated entry to the Linear "Session Metrics" inbox document — the
 measured token sinks plus tailored trim recommendations.
 `trim-context` drains that inbox: it reads the unprocessed entries,
-finds the trim levers that **recur** across sessions, and files one
-**propose-only** skill-improvement Backlog task per distinct lever, then
-records each consumed entry's disposition back into the doc.
+finds the trim levers that **recur** across sessions, and files them as
+a **single aggregated propose-only** skill-improvement Backlog task —
+one bullet per lever, so a mining pass yields one issue (one PR) rather
+than a batch that has to be hand-consolidated later — then records each
+consumed entry's disposition back into the doc.
 
 This is the same job `housekeeping` used to do inline as its "Mine the
-Session Metrics inbox" step; it now lives here as its own skill (a
-sibling to `firm-perms`'s Permissions-doc drain), and `housekeeping`
+Session Metrics inbox" step; it now lives here as its own skill, and
+`housekeeping`
 delegates to it. It runs identically whether invoked standalone or by
-`housekeeping` — there is **no** attended / propose-only split (unlike
-`firm-perms`), because filing a task *is* the proposal: this skill never
+`housekeeping` — there is **no** propose-only vs. apply split, because
+filing a task *is* the proposal: this skill never
 edits a skill or convention doc, so an unattended pass and a hand run do
 exactly the same thing.
 
@@ -64,26 +66,54 @@ distinct lever** (citing the sessions that motivate it), not one task
 per session. A one-off that appears in a single session and implies no
 skill change isn't filed — just note it consumed.
 
-**3. File propose-only**, to the env-resolved destination
-(`save_issue` with `team` / `project` / `assignee`,
-`state: "Backlog"`, priority 3). A trim lever always edits a skill or
-convention doc, so its `**Touches**:` are all meta-surface — prepend the
-**`Claude:`** prefix to the title (`Claude: <imperative fix>`), per
-`CLAUDE.md` → "Claude: meta-work prefix". Each task names the concrete
-fix and carries:
+**3. File propose-only, as a single aggregated task.** All the levers a
+pass synthesizes go into **one** `Claude:` Backlog task, not one issue
+per lever — so a mining pass yields **one issue (one PR)** that doesn't
+have to be hand-consolidated with `/merge-tasks` afterward. This mirrors
+the **cspell-aggregation pattern** in `housekeeping` step 3 ("file the
+drift as a single aggregated Backlog issue … each finding is a bullet
+carrying its own `**Fingerprint**:` line"). The trade-off is
+intended: aggregating means the levers can't be staged as independent
+parallel PRs (`stage-backlog` would otherwise split them by file
+overlap), and that's the accepted choice — one task / one PR for these
+skill tweaks over parallelism. Per-lever fingerprints preserve
+independent dedup regardless.
 
-- a **`**Touches**:`** line — the skill or convention doc the fix edits
+A trim lever always edits a skill or convention doc, so the aggregated
+task is meta-work — prepend the **`Claude:`** prefix to its title, per
+`CLAUDE.md` → "Claude: meta-work prefix". The task body is **one
+`# Part N — <title>` section (or bullet) per lever**, and carries:
+
+- one **`**Fingerprint**: session-metrics:<lever-slug>`** line **per
+  lever** (the dedup key — later passes match on it individually), and
+- a single **`**Touches**:`** line that **unions** every lever's globs
   (per `docs/conventions/linear-automation.md` → "Structured filing
-  fields"), and
-- a **`**Fingerprint**: session-metrics:<lever-slug>`** line so later
-  passes dedup.
+  fields"), so `stage-backlog` sees the whole task's footprint.
 
-Before filing, list the open Backlog
-(`mcp__claude_ai_Linear__list_issues`, same destination) and collect
-every `**Fingerprint**:` already present; **drop any lever whose
-fingerprint is already open**. **Autonomy bound:** filing a task
-*proposes* a fix — this skill **never** edits a skill, a convention
-doc, or `CLAUDE.md`; that lands later through a normal PR.
+**Dedup, then append or create — never duplicate:**
+
+- **Collect the fingerprints already open.** List the open Backlog
+  (`mcp__claude_ai_Linear__list_issues`, same destination) and gather
+  every `**Fingerprint**:` line present across the open aggregated
+  trim-context issue(s). Only **new** levers — fingerprints not already
+  open — are filed; drop the rest.
+- **Append to the open aggregated task if one exists.** If an open
+  Backlog issue already carries any `session-metrics:` fingerprint
+  (going forward there is at most one aggregated trim-context task),
+  **append** the new levers' sections to its description, extend its
+  `**Touches**:` union, and re-save (`save_issue` with that issue's
+  `id` and the full edited `description`) rather than opening a second.
+  **Diff against the live body** you just read so existing bullets
+  aren't clobbered. If more than one such issue somehow exists, append
+  to the **lowest-ENG** one and note the others in the report for hand
+  consolidation.
+- **Otherwise create one** aggregated task, one section per new lever.
+- **File nothing** when every lever is already open (neither create nor
+  append).
+
+**Autonomy bound:** filing a task *proposes* a fix — this skill
+**never** edits a skill, a convention doc, or `CLAUDE.md`; that lands
+later through a normal PR.
 
 ```txt
 mcp__claude_ai_Linear__save_issue(
@@ -91,10 +121,11 @@ mcp__claude_ai_Linear__save_issue(
   project: "<$LINEAR_PROJECT_ID>",
   assignee: "<$LINEAR_ASSIGNEE_ID>",
   state: "Backlog",
-  title: "Claude: <the trim lever, as an imperative fix>",
-  description: "<the lever, the sessions that motivate it, and the
-    concrete skill / convention-doc edit it implies>\n\n**Touches**:
-    <glob>\n**Fingerprint**: session-metrics:<lever-slug>",
+  title: "Claude: <umbrella summary of this pass's trim levers>",
+  description: "<one `# Part N — <title>` section per lever — each the
+    lever, the sessions that motivate it, the concrete skill /
+    convention-doc edit it implies, and its own **Fingerprint**:
+    session-metrics:<lever-slug> line>\n\n**Touches**: <combined globs>",
   priority: 3,
 )
 ```
@@ -127,11 +158,12 @@ a `session-metrics` producer step (e.g. under `housekeeping`), evaluate
 the clear against the inbox state **before** that step appends a fresh
 entry.
 
-**6. Report** in one line: the skill-improvement tasks filed (with
-their ENG-###) for the recurring trim levers, how many session entries
-were consumed, any skipped as already-handled, whether the processed
-entries were cleared — or that the skill no-op'd because the inbox id
-was unset.
+**6. Report** in one line: the aggregated skill-improvement task —
+whether new levers were filed into a fresh one or appended to the open
+one (with its ENG-###), and how many levers — for the recurring trim
+levers, how many session entries were consumed, any levers skipped as
+already-handled, whether the processed entries were cleared — or that
+the skill no-op'd because the inbox id was unset.
 
 ## Notes
 

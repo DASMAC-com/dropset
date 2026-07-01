@@ -72,6 +72,7 @@ programdata
 pubkeys
 pytest
 ratatui
+reflog
 repr
 respawn
 retunable
