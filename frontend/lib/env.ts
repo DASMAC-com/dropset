@@ -23,7 +23,7 @@ export const PUBLIC_WS_URL = required(
 // forces eCLOB-only routing (no DFlow aggregator, which only knows mainnet
 // liquidity) and swaps in the mock localnet mints (currencies.localnet.json).
 // The RPC/WS URLs above carry the actual endpoint — this flag only gates the
-// cluster-conditional behaviour, so keep them in sync (a localnet endpoint
+// cluster-conditional behavior, so keep them in sync (a localnet endpoint
 // with CLUSTER=mainnet would route to DFlow against a chain it can't see).
 export type Cluster = "localnet" | "mainnet";
 export const CLUSTER: Cluster =

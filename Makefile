@@ -72,7 +72,7 @@ sdk:
 # feature turns on `dropset-math-core`'s, so the one package exports both the
 # `simulate_swap` binding and the `Price` codec bindings. Emits the glue
 # straight into the TS SDK (sdk/ts/src/wasm) so `@dropset/sdk` can import it
-# and the SDK CI typechecks against it; the `simulate` module wraps it.
+# and the SDK CI type-checks against it; the `simulate` module wraps it.
 wasm:
 	cd sdk/interface && wasm-pack build --target web \
 		--out-dir ../ts/src/wasm --features wasm

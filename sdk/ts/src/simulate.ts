@@ -1,3 +1,4 @@
+// cspell:word turbopack
 /**
  * Off-chain swap simulation — the eCLOB quoter.
  *
