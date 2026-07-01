@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  DROPSET_PROGRAM_ADDRESS,
   findMarketPda,
   PRICE_INFINITY,
   PRICE_ZERO,
@@ -9,7 +8,7 @@ import {
   type SwapSide,
 } from "@dropset/sdk";
 import type { SolanaClientRuntime } from "@solana/client";
-import { type Address, address, getBase64Encoder } from "@solana/kit";
+import { type Address, address, fetchEncodedAccount } from "@solana/kit";
 import { TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
 import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import {
@@ -19,11 +18,6 @@ import {
 } from "../data/currencies";
 
 type Rpc = SolanaClientRuntime["rpc"];
-
-// The program the swap instruction is issued against — a fixed constant,
-// identical on localnet and mainnet (re-exported so route consumers don't
-// reach into the generated client directly).
-export { DROPSET_PROGRAM_ADDRESS };
 
 export const PROGRAM_FOR_KIND: Record<TokenProgramKind, Address> = {
   classic: TOKEN_PROGRAM_ADDRESS,
@@ -87,17 +81,16 @@ export async function resolveEclobRoute(
   };
 }
 
-// Fetch a market account's raw bytes (base64 → Uint8Array, discriminator
-// included — pass verbatim to simulateSwap), or null if the account doesn't
-// exist (market not created on this cluster).
+// Fetch a market account's raw bytes (discriminator included — pass verbatim
+// to simulateSwap), or null if the account doesn't exist (market not created
+// on this cluster). Uses the SDK's account-fetch primitive, which decodes the
+// base64 payload for us.
 export async function fetchMarketData(
   rpc: Rpc,
   market: Address,
 ): Promise<Uint8Array | null> {
-  const { value } = await rpc
-    .getAccountInfo(market, { encoding: "base64", commitment: "confirmed" })
-    .send();
-  if (!value) return null;
-  const [b64] = value.data;
-  return new Uint8Array(getBase64Encoder().encode(b64));
+  const account = await fetchEncodedAccount(rpc, market, {
+    commitment: "confirmed",
+  });
+  return account.exists ? new Uint8Array(account.data) : null;
 }
