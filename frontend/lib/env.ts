@@ -18,6 +18,20 @@ export const PUBLIC_WS_URL = required(
   process.env.NEXT_PUBLIC_WS_URL,
 );
 
+// Which Solana cluster the app targets. Defaults to mainnet (production);
+// set NEXT_PUBLIC_CLUSTER=localnet to point at a local validator. Localnet
+// forces eCLOB-only routing (no DFlow aggregator, which only knows mainnet
+// liquidity) and swaps in the mock localnet mints (currencies.localnet.json).
+// The RPC/WS URLs above carry the actual endpoint — this flag only gates the
+// cluster-conditional behaviour, so keep them in sync (a localnet endpoint
+// with CLUSTER=mainnet would route to DFlow against a chain it can't see).
+export type Cluster = "localnet" | "mainnet";
+export const CLUSTER: Cluster =
+  process.env.NEXT_PUBLIC_CLUSTER?.trim() === "localnet"
+    ? "localnet"
+    : "mainnet";
+export const IS_LOCALNET = CLUSTER === "localnet";
+
 // External APIs. Defaults point at the dev/public endpoints we use today;
 // override to swap in a staging server, a proxy route handler, or an
 // alternative provider without editing hook code.
