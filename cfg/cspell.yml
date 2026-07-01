@@ -7,4 +7,6 @@ dictionaryDefinitions:
   path: './dictionary.txt'
 ignorePaths:
 - '**/pnpm-lock.yaml'
+# Generated wasm-pack glue (make wasm) — its identifiers aren't ours to check.
+- '**/sdk/ts/src/wasm/**'
 ...

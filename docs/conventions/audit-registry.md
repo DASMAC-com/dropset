@@ -43,13 +43,15 @@ program <-> sdk-math: the program depends on the shared math
 program <-> frontend: the on-chain account/instruction contract in
   docs/interface.md, which the frontend builds transactions against
   through the generated clients.
-sdk-math <-> frontend: no live wiring today. The frontend imports no
-  sdk-math (a grep of frontend/ for @dropset/sdk is empty) and consumes
-  no WASM; it quotes via DFlow's API (frontend/lib/dflow/) and shows a
-  display-only float PnL re-implementation (frontend/lib/data/pnl.ts) of
-  the share kernels that no conformance vector pins, over static mock
-  data. The drift to watch is the day pnl.ts is wired to live on-chain
-  reserves: its float math can then diverge from the integer engine.
+sdk-math <-> frontend: the frontend's eCLOB route (frontend/lib/eclob/,
+  frontend/lib/hooks/useEclobQuote.ts + useEclobSwap.ts) quotes and builds
+  swaps via @dropset/sdk's simulateSwap — the WASM binding compiled from
+  sdk/interface — so its off-chain fill math must compute identically to
+  the on-chain engine; the conformance vectors (sdk/conformance) pin that
+  parity. The best-route path still quotes via DFlow's API
+  (frontend/lib/dflow/). A separate drift to watch: the display-only float
+  PnL re-implementation (frontend/lib/data/pnl.ts) that no conformance
+  vector pins.
 tui <-> sdk-math: the resting-book matcher surface (sdk/interface
   matching `resting_levels` / `BookLevel`) the TUI's order-book pane
   reconstructs depth from — the SDK normalizes a bid's quote leg to base
@@ -87,6 +89,7 @@ Cargo.lock
 **/*.gen.*
 **/generated/**
 **/idl/**
+sdk/ts/src/wasm/**
 sdk/conformance/**
 target/types/**
 frontend/lib/data/*.json

@@ -12,6 +12,7 @@ import {
   resolvePair,
   type SidePair,
 } from "./data/currencies";
+import { IS_LOCALNET } from "./env";
 
 export type Side = "from" | "to";
 
@@ -48,6 +49,12 @@ export const DEFAULT_TO_STABLECOIN: string = DEFAULT_TO.stablecoin;
 
 export type Slippage = { mode: "auto" } | { mode: "fixed"; percent: number };
 
+// How the swap is routed. `best` uses the DFlow aggregator (best price across
+// venues); `eclob` routes directly through the Dropset SDK against our own
+// market. Localnet forces `eclob` — the aggregator only knows mainnet
+// liquidity and can't see the local market (see setRouteMode).
+export type RouteMode = "best" | "eclob";
+
 type Store = {
   from: SideState;
   to: SideState;
@@ -63,6 +70,7 @@ type Store = {
   // away, and use it as the promoted from-amount on a direction flip.
   lastFormattedOutAmount: string;
   slippage: Slippage;
+  routeMode: RouteMode;
   activeSide: Side;
   setActiveSide: (side: Side) => void;
   // Assign `currency`/`stablecoin` to `side`. Four branches:
@@ -85,6 +93,10 @@ type Store = {
   ) => void;
   setAmount: (amount: string) => void;
   setSlippage: (slippage: Slippage) => void;
+  // Set the route mode. Clamped to `eclob` on localnet regardless of the
+  // requested value, so the UI toggle can't route a local swap through the
+  // aggregator (which would quote against mainnet, not the local market).
+  setRouteMode: (mode: RouteMode) => void;
   setLastFormattedOutAmount: (formatted: string) => void;
   // Flip from/to. Reads `lastFormattedOutAmount` from the store and
   // promotes it into `amount` in the same `set` call so subscribers
@@ -117,6 +129,8 @@ export const createSwapStore = (initial?: {
     amount: "",
     lastFormattedOutAmount: "",
     slippage: { mode: "auto" },
+    // Localnet has no aggregator route, so it opens (and stays) on eCLOB-only.
+    routeMode: IS_LOCALNET ? "eclob" : "best",
     activeSide: "from",
 
     setActiveSide: (side) => set({ activeSide: side }),
@@ -164,6 +178,8 @@ export const createSwapStore = (initial?: {
     setAmount: (amount) => set({ amount }),
 
     setSlippage: (slippage) => set({ slippage }),
+
+    setRouteMode: (mode) => set({ routeMode: IS_LOCALNET ? "eclob" : mode }),
 
     setLastFormattedOutAmount: (formatted) =>
       set({ lastFormattedOutAmount: formatted }),

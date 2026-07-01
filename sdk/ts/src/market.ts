@@ -232,8 +232,8 @@ function sortKey(price: PriceBits, isAsk: boolean): number {
 /** True when any flush-profile level sizes past its full leg (`size_bps > BPS`). */
 function vaultHasOversizeFlushLevel(v: VaultView): boolean {
   for (let i = 0; i < N_LEVELS; i++) {
-    if (levelFillAtoms(v.profileAsks[i].sizeBps, v.baseAtoms) === null) return true;
-    if (levelFillAtoms(v.profileBids[i].sizeBps, v.quoteAtoms) === null) return true;
+    if (levelFillAtoms(v.profileAsks[i]!.sizeBps, v.baseAtoms) === null) return true;
+    if (levelFillAtoms(v.profileBids[i]!.sizeBps, v.quoteAtoms) === null) return true;
   }
   return false;
 }
@@ -262,7 +262,7 @@ function levelState(
   refSlot: number,
 ): { price: PriceBits; size: bigint; expiresAt: number } {
   if (flush) {
-    const lvl = isAsk ? v.profileAsks[i] : v.profileBids[i];
+    const lvl = (isAsk ? v.profileAsks[i] : v.profileBids[i])!;
     const price = flushLevelPrice(reference, lvl.priceOffset, isAsk);
     const leg = isAsk ? v.baseAtoms : v.quoteAtoms;
     // An oversize `size_bps` is caught up front by
@@ -273,7 +273,7 @@ function levelState(
     const expiresAt = Math.min(refSlot + lvl.expiryOffset, NULL_SECTOR);
     return { price, size, expiresAt };
   }
-  const p = isAsk ? v.remainingAsks[i] : v.remainingBids[i];
+  const p = (isAsk ? v.remainingAsks[i] : v.remainingBids[i])!;
   return { price: p.price, size: p.size, expiresAt: p.expiresAt };
 }
 
@@ -286,7 +286,7 @@ function activeDllIsCorrupt(slab: MarketSlab): boolean {
     if (steps === 0) return true;
     steps -= 1;
     if (cur >= n) return true;
-    cur = slab.sectors[cur].next;
+    cur = slab.sectors[cur]!.next;
   }
   return false;
 }
@@ -300,7 +300,7 @@ function activeVaults(slab: MarketSlab): Array<[number, VaultView]> {
   while (cur !== NULL_SECTOR && steps > 0) {
     steps -= 1;
     if (cur >= n) break; // bad pointer — end the walk (already flagged as corrupt)
-    const v = slab.sectors[cur];
+    const v = slab.sectors[cur]!;
     out.push([cur, v]);
     cur = v.next;
   }
