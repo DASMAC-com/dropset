@@ -72,10 +72,20 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
 
     draw_log(f, app, log);
 
+    // While the taker is typing a swap amount, the footer becomes the input
+    // prompt; otherwise it shows the keybinds help.
+    match &app.amount_input {
+        Some(buf) => draw_amount_prompt(f, buf, footer),
+        None => draw_help(f, footer),
+    }
+}
+
+/// Render the keybinds-help footer.
+fn draw_help(f: &mut Frame<'_>, area: Rect) {
     let help = Paragraph::new(vec![
         Line::from(
             "j/k menu  ·  enter/1-9 run  ·  [ ] market  ·  s maker  ·  S all  ·  \
-             T taker  ·  x stop all  ·  r refresh  ·  q quit",
+             T taker  ·  x stop all  ·  a swap amount  ·  r refresh  ·  q quit",
         ),
         Line::from(
             "eCLOB · selected market:  < > re-peg \u{00b1}5 bps  ·  w widen  ·  \
@@ -84,7 +94,29 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
     ])
     .block(Block::default().borders(Borders::ALL))
     .alignment(Alignment::Center);
-    f.render_widget(help, footer);
+    f.render_widget(help, area);
+}
+
+/// Render the swap-amount input prompt in place of the help footer, echoing the
+/// digits typed so far with a block cursor.
+fn draw_amount_prompt(f: &mut Frame<'_>, buf: &str, area: Rect) {
+    let prompt = Line::from(vec![
+        Span::styled(
+            "swap amount (quote units): ",
+            Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(format!("{buf}\u{2588}"), Style::new().fg(Color::White)),
+    ]);
+    let hint = Line::from(Span::styled(
+        "type digits  ·  Enter confirm  ·  Backspace delete  ·  Esc cancel",
+        Style::new().fg(Color::DarkGray),
+    ));
+    f.render_widget(
+        Paragraph::new(vec![prompt, hint])
+            .block(Block::default().borders(Borders::ALL))
+            .alignment(Alignment::Center),
+        area,
+    );
 }
 
 fn draw_status(f: &mut Frame<'_>, app: &App, area: Rect) {
@@ -120,6 +152,11 @@ fn draw_status(f: &mut Frame<'_>, app: &App, area: Rect) {
         bots_status(app),
         Span::raw("  ·  takers "),
         takers_status(app),
+        Span::raw("  ·  swap "),
+        Span::styled(
+            format!("{} units", app.swap_quote_units),
+            Style::new().fg(Color::Cyan),
+        ),
         Span::raw("  ·  explorer "),
         explorer_status(app),
     ]);

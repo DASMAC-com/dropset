@@ -237,13 +237,15 @@ impl JobContext {
 /// Spawn the background job for `action`. [`Action::Wipe`] is handled by the
 /// event loop instead (it mutates the owned validator), so it is a no-op
 /// here. `selected` picks which discovered market the market-scoped actions
-/// (the probe swap, the explorer targets) act on.
+/// (the probe swap, the explorer targets) act on; `swap_quote_units` is the
+/// taker-selected notional (whole quote units) a [`Action::ProbeSwap`] spends.
 pub fn dispatch(
     action: Action,
     ctx: &JobContext,
     state: &ChainState,
     tx: Sender<JobEvent>,
     selected: usize,
+    swap_quote_units: u64,
 ) {
     let rpc_url = ctx.rpc_url.clone();
     let repo_root = ctx.repo_root.clone();
@@ -319,7 +321,14 @@ pub fn dispatch(
         Action::ProbeSwap => {
             job::spawn(tx, "Probe swap", move |log| {
                 let client = chain::rpc(&rpc_url);
-                do_probe_swap(&client, &wallet, &repo_root, target_market, log)
+                do_probe_swap(
+                    &client,
+                    &wallet,
+                    &repo_root,
+                    target_market,
+                    swap_quote_units,
+                    log,
+                )
             });
         }
         Action::Teardown => {
@@ -690,9 +699,10 @@ fn do_create_vault(
     Ok("Vault created, quoting, and seeded".into())
 }
 
-/// Whole quote units a swap probe spends (e.g. 10 USDC), scaled by the quote
-/// mint's decimals at send time.
-const PROBE_QUOTE_UNITS: u64 = 10;
+/// Whole quote units a swap probe spends by default (e.g. 10 USDC), scaled by
+/// the quote mint's decimals at send time. The TUI seeds its editable swap
+/// amount with this; the taker overrides it via the amount input (`a`).
+pub const DEFAULT_PROBE_QUOTE_UNITS: u64 = 10;
 
 /// Exercise — and measure the CU of — the swap path with a small taker Buy
 /// against the seeded vault. The swapper is the dedicated `FFFF` taker role
@@ -707,6 +717,7 @@ fn do_probe_swap(
     wallet: &Keypair,
     repo_root: &Path,
     target: Option<Pubkey>,
+    quote_units: u64,
     log: &Logger,
 ) -> Result<String> {
     ensure_funded(client, &wallet.pubkey(), log);
@@ -736,12 +747,12 @@ fn do_probe_swap(
         .context("taker base ATA")?;
     let notional = 10u64
         .pow(market.quote_decimals as u32)
-        .saturating_mul(PROBE_QUOTE_UNITS);
+        .saturating_mul(quote_units);
     chain::mint_to(client, wallet, &market.quote_mint, &quote_ata, notional)
         .context("fund taker quote")?;
 
     log.log(format!(
-        "probe swap: {taker_pk} buys with {PROBE_QUOTE_UNITS} quote units"
+        "probe swap: {taker_pk} buys with {quote_units} quote units"
     ));
     let ix = chain::build_swap_ix(
         &taker_pk,

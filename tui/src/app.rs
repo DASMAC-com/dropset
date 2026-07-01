@@ -53,6 +53,9 @@ const MENU_LEN: usize = action::MENU.len();
 const REFRESH_INTERVAL: Duration = Duration::from_millis(700);
 /// How many log lines to retain.
 const LOG_CAPACITY: usize = 1_000;
+/// Longest swap-amount the taker can type, in digits — bounded so the entered
+/// value always parses as a `u64` (its max is 20 digits).
+const MAX_AMOUNT_DIGITS: usize = 18;
 
 /// Kind of a log line — drives its color.
 #[derive(Clone, Copy)]
@@ -96,6 +99,14 @@ pub struct App {
     /// accounts are shown — the "which bot's book am I looking at" selection,
     /// moved with `[` / `]`.
     pub(crate) selected_market: usize,
+    /// Whole quote units a probe swap spends, editable by the taker via the
+    /// amount input (`a`). Seeded from [`action::DEFAULT_PROBE_QUOTE_UNITS`].
+    pub(crate) swap_quote_units: u64,
+    /// When set, the taker is typing a new swap amount — the digits entered so
+    /// far. While it is `Some`, keystrokes edit this buffer and the normal
+    /// keybinds are suppressed, so a digit types a number rather than firing a
+    /// menu action; Enter commits it to `swap_quote_units`, Esc cancels.
+    pub(crate) amount_input: Option<String>,
     /// The per-market maker-bot child processes the operator starts and stops.
     pub(crate) bots: BotManager,
     /// The per-market taker-bot child processes — opt-in, off by default. The
@@ -146,6 +157,8 @@ impl App {
             swapper,
             mint_symbols,
             selected_market: 0,
+            swap_quote_units: action::DEFAULT_PROBE_QUOTE_UNITS,
+            amount_input: None,
             bots: BotManager::new(),
             takers: BotManager::new(),
             click_targets: Vec::new(),
@@ -248,6 +261,13 @@ impl App {
     }
 
     fn handle_key(&mut self, k: KeyEvent) -> Flow {
+        // While entering a swap amount, keystrokes edit the buffer instead of
+        // driving the dashboard — this must come before the normal keybinds so
+        // a digit types a number (and Esc cancels rather than quitting).
+        if self.amount_input.is_some() {
+            self.handle_amount_key(k);
+            return Flow::Continue;
+        }
         let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
         match k.code {
             KeyCode::Char('q') | KeyCode::Esc => return Flow::Quit,
@@ -265,6 +285,8 @@ impl App {
             KeyCode::Char('T') => self.toggle_selected_taker(),
             KeyCode::Char('x') => self.stop_all_bots(),
             KeyCode::Char('r') => self.dirty = true,
+            // Open the swap-amount input — subsequent keys edit the amount.
+            KeyCode::Char('a') => self.begin_amount_input(),
             // eCLOB demo (selected market): reprice the anchor (whole-book
             // shift) vs reshape the ladder (shape change at a fixed peg).
             KeyCode::Char('>') | KeyCode::Char('.') => self.run_action(Action::RepegUp),
@@ -409,6 +431,59 @@ impl App {
         self.dirty = true;
     }
 
+    /// Enter swap-amount input mode with an empty buffer. Subsequent keys edit
+    /// the buffer (see [`App::handle_amount_key`]) until Enter or Esc.
+    fn begin_amount_input(&mut self) {
+        self.amount_input = Some(String::new());
+    }
+
+    /// Edit the swap-amount buffer while in input mode: digits append (capped at
+    /// [`MAX_AMOUNT_DIGITS`]), Backspace deletes, Enter commits, Esc cancels.
+    fn handle_amount_key(&mut self, k: KeyEvent) {
+        let Some(buf) = self.amount_input.as_mut() else {
+            return;
+        };
+        match k.code {
+            KeyCode::Char(d @ '0'..='9') => {
+                if buf.len() < MAX_AMOUNT_DIGITS {
+                    buf.push(d);
+                }
+            }
+            KeyCode::Backspace => {
+                buf.pop();
+            }
+            KeyCode::Enter => self.commit_amount_input(),
+            KeyCode::Esc => {
+                self.amount_input = None;
+                self.log(LogKind::Info, "Swap-amount entry cancelled.".to_string());
+            }
+            _ => {}
+        }
+    }
+
+    /// Leave input mode, applying the typed buffer to `swap_quote_units` when it
+    /// is a positive integer — an empty, zero, or non-numeric buffer is rejected
+    /// and the current amount kept.
+    fn commit_amount_input(&mut self) {
+        let buf = self.amount_input.take().unwrap_or_default();
+        match parse_swap_amount(&buf) {
+            Some(units) => {
+                self.swap_quote_units = units;
+                self.log(
+                    LogKind::Ok,
+                    format!("Swap amount set to {units} quote units."),
+                );
+            }
+            None => self.log(
+                LogKind::Err,
+                format!(
+                    "Invalid swap amount — keeping {} quote units.",
+                    self.swap_quote_units
+                ),
+            ),
+        }
+    }
+
     /// Move the menu selection by `delta`, clamped to the menu bounds.
     fn menu_step(&mut self, delta: isize) {
         let cur = self.menu.selected().unwrap_or(0) as isize;
@@ -450,6 +525,7 @@ impl App {
             &self.chain,
             self.tx.clone(),
             self.selected_market,
+            self.swap_quote_units,
         );
     }
 
@@ -567,6 +643,17 @@ impl Drop for App {
     }
 }
 
+/// Parse a typed swap-amount buffer into whole quote units — `Some(n)` for a
+/// positive integer, `None` for empty, zero, or non-numeric input (the caller
+/// keeps the current amount and warns). Split out so it's testable without an
+/// `App`.
+fn parse_swap_amount(buf: &str) -> Option<u64> {
+    match buf.parse::<u64>() {
+        Ok(n) if n > 0 => Some(n),
+        _ => None,
+    }
+}
+
 /// The address whose click-target rectangle contains `(col, row)`, if any —
 /// the lookup behind [`App::address_at`], split out so it's testable without
 /// an `App`.
@@ -612,9 +699,23 @@ impl Drop for TerminalGuard {
 
 #[cfg(test)]
 mod tests {
-    use super::hit_target;
+    use super::{hit_target, parse_swap_amount};
     use ratatui::layout::Rect;
     use solana_pubkey::Pubkey;
+
+    #[test]
+    fn parse_swap_amount_accepts_positive_integers_only() {
+        assert_eq!(parse_swap_amount("10"), Some(10));
+        assert_eq!(parse_swap_amount("1"), Some(1));
+        assert_eq!(parse_swap_amount("1000000"), Some(1_000_000));
+        // Leading zeros are fine — still a positive integer.
+        assert_eq!(parse_swap_amount("007"), Some(7));
+        // Empty, zero, and non-numeric input keep the current amount.
+        assert_eq!(parse_swap_amount(""), None);
+        assert_eq!(parse_swap_amount("0"), None);
+        assert_eq!(parse_swap_amount("00"), None);
+        assert_eq!(parse_swap_amount("12x"), None);
+    }
 
     #[test]
     fn hit_target_matches_only_the_containing_row() {
