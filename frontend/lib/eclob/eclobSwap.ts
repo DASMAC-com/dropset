@@ -48,12 +48,21 @@ export type EclobSwapInput = {
 };
 
 const BPS_DENOMINATOR = 10_000n;
+// The store's slippage input is uncapped (it can exceed 100%), but a bps of
+// 10000+ would zero or negate minOut — disabling the on-chain floor, or
+// overflowing the u64 instruction arg. Cap at 99.99% so minOut stays positive
+// and the swap always carries a real floor.
+const MAX_SLIPPAGE_BPS = 9_999;
 
 // The output floor below which the swap soft-reverts: the simulated output
-// less the slippage tolerance. Rounds down (integer division), so the actual
-// floor is never looser than requested.
-const applySlippage = (out: bigint, bps: number): bigint =>
-  (out * (BPS_DENOMINATOR - BigInt(bps))) / BPS_DENOMINATOR;
+// less the (clamped) slippage tolerance. Rounds down (integer division), so
+// the actual floor is never looser than requested.
+const applySlippage = (out: bigint, bps: number): bigint => {
+  const clamped = BigInt(
+    Math.min(Math.max(Math.trunc(bps), 0), MAX_SLIPPAGE_BPS),
+  );
+  return (out * (BPS_DENOMINATOR - clamped)) / BPS_DENOMINATOR;
+};
 
 // Execute an eCLOB swap end-to-end, the direct-SDK counterpart to
 // executeDflowSwap:
