@@ -1,6 +1,7 @@
 // cspell:word segoe
-import { IS_LOCALNET } from "../env";
+
 import countries from "world-countries";
+import { IS_LOCALNET } from "../env";
 import data from "./currencies.json";
 // Localnet mint overlay: symbol → { mint, tokenProgram } for the mock demo
 // mints the TUI bootstrap creates (tui/src/market.rs, from the checked-in
