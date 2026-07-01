@@ -398,7 +398,7 @@ impl App {
     fn wipe(&mut self) {
         self.log(LogKind::Info, "Wiping localnet…".to_string());
         // The bots quote against the ledger being wiped — stop them so none
-        // keeps sending doomed txns at the respawned, empty validator.
+        // keeps sending doomed txns at the fresh, empty validator.
         self.bots.stop_all();
         match self.validator.wipe_and_respawn() {
             Ok(()) => {
