@@ -19,6 +19,7 @@ use dropset_sdk::accounts::{
 };
 use dropset_sdk::layout::MarketView as SlabView;
 use dropset_sdk::matching::{resting_levels, BookLevel, SwapSide};
+use dropset_sdk::price::Price;
 use dropset_sdk::shared::MaybeAccount;
 use dropset_sdk::DROPSET_ID;
 use solana_client::rpc_client::RpcClient;
@@ -320,6 +321,25 @@ fn read_registry(client: &RpcClient) -> Option<RegistryView> {
         fee_vault_lamports,
         market_count: decoded.data.market_count,
     })
+}
+
+/// Read the current on-chain reference price of `vault_idx` on `market` from
+/// the slab — the anchor the eCLOB reprice control nudges. Read fresh at the
+/// nudge (rather than carried on [`MarketView`]) so the bump is relative to
+/// the live peg, not a poll-stale one. `None` if the market can't be read /
+/// decoded or the sector isn't active.
+pub fn read_reference_price(client: &RpcClient, market: &Pubkey, vault_idx: u32) -> Option<Price> {
+    let account = client.get_account(market).ok()?;
+    let view = SlabView::load(&account.data).ok()?;
+    // The `active_vaults` iterator borrows `view` → `account.data`; a loop
+    // drops it before the tail `None`, and the returned `Price` is owned, so
+    // no borrow escapes the function.
+    for (idx, vault) in view.active_vaults() {
+        if idx == vault_idx {
+            return Some(vault.reference_price.price());
+        }
+    }
+    None
 }
 
 /// Load a specific market by address, for the multi-market bootstrap which

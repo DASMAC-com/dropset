@@ -33,7 +33,7 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
             Constraint::Length(3),
             Constraint::Percentage(60),
             Constraint::Min(6),
-            Constraint::Length(3),
+            Constraint::Length(4),
         ],
     )
     .areas(area);
@@ -72,10 +72,16 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
 
     draw_log(f, app, log);
 
-    let help = Paragraph::new(
-        "j/k menu  ·  enter/1-9 run  ·  [ ] market  ·  s start/stop bot  ·  \
-         S all  ·  x stop all  ·  r refresh  ·  q quit",
-    )
+    let help = Paragraph::new(vec![
+        Line::from(
+            "j/k menu  ·  enter/1-9 run  ·  [ ] market  ·  s start/stop bot  ·  \
+             S all  ·  x stop all  ·  r refresh  ·  q quit",
+        ),
+        Line::from(
+            "eCLOB · selected market:  < > re-peg \u{00b1}5 bps  ·  w widen  ·  \
+             t tighten  ·  f thin far side  ·  g reset ladder",
+        ),
+    ])
     .block(Block::default().borders(Borders::ALL))
     .alignment(Alignment::Center);
     f.render_widget(help, footer);
