@@ -16,6 +16,11 @@ market makers, routers, and indexers.
   absolute price levels and atom sizes into the relative `profile_bytes`
   arg `set_liquidity_profile` expects. The TypeScript mirror of
   `dropset-sdk`'s `quoting` module.
+- **Market reader** — decode the on-chain market slab (opaque to the IDL)
+  and reconstruct the resting order book.
+  `fetchDropsetMarketView(rpc, address)` is a one-`getAccountInfo` live
+  poll returning `{ header, bids, asks }`. The TypeScript port of the
+  `dropset-interface` crate's `layout` + `matching` modules.
 - **Share / NAV / PnL kernels** — the scalar deposit, withdraw, and
   perf-fee formulas that run on-chain, mirrored in `bigint` so the frontend
   can preview NAV and share value without an indexer. Pinned to the engine
