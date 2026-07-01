@@ -67,21 +67,40 @@ pub fn lines(market: &MarketView) -> Vec<Line<'static>> {
     out
 }
 
+/// The mid price (quote per base, human units) from the best bid and ask —
+/// their average, or whichever side alone has liquidity, and `None` for an
+/// empty book. Drives the markets list's per-market price / idle indicator.
+pub fn mid_price(market: &MarketView) -> Option<f64> {
+    let best = |levels: &[BookLevel]| {
+        levels
+            .first()
+            .map(|l| human_price(l.price, market.base_decimals, market.quote_decimals))
+    };
+    match (best(&market.asks), best(&market.bids)) {
+        (Some(a), Some(b)) => Some((a + b) / 2.0),
+        (Some(p), None) | (None, Some(p)) => Some(p),
+        (None, None) => None,
+    }
+}
+
+/// A resting level's price in human quote-per-base units: quote atoms for one
+/// whole base unit, de-scaled by the quote mint's decimals.
+fn human_price(price: Price, base_dec: u8, quote_dec: u8) -> f64 {
+    price.quote_for_base(10u64.pow(base_dec as u32)) as f64 / 10f64.powi(quote_dec as i32)
+}
+
 /// Aggregate the raw best-first `levels` into at most [`MAX_LEVELS`] display
 /// rows — summing sizes that share a price (adjacent after the price-time
 /// sort) — and scale atoms to human units.
 fn ladder(levels: &[BookLevel], base_dec: u8, quote_dec: u8) -> Vec<Row> {
     let base_scale = 10f64.powi(base_dec as i32);
-    let quote_scale = 10f64.powi(quote_dec as i32);
     let mut rows: Vec<Row> = Vec::new();
     // Track the previous level's on-chain price so equal-priced levels merge
     // on exact `Price` equality, not a float tolerance — levels are
     // price-sorted, so equal prices are adjacent.
     let mut prev: Option<Price> = None;
     for lvl in levels {
-        // Price (quote per base) = quote atoms for one whole base unit,
-        // de-scaled by the quote mint's decimals.
-        let price = lvl.price.quote_for_base(10u64.pow(base_dec as u32)) as f64 / quote_scale;
+        let price = human_price(lvl.price, base_dec, quote_dec);
         let size = lvl.size as f64 / base_scale;
         if prev == Some(lvl.price) {
             // Same price as the level above — fold its depth into that row.
@@ -206,6 +225,18 @@ mod tests {
         assert!(text(&out[1]).contains("0.7400"));
         assert!(text(&out[2]).contains("mid"));
         assert!(text(&out[3]).contains("0.7200"));
+    }
+
+    #[test]
+    fn mid_price_averages_best_bid_and_ask_and_handles_one_sided() {
+        // Both sides → average of the best of each.
+        let both = market(vec![lvl(0.75, 1), lvl(0.76, 1)], vec![lvl(0.73, 1)]);
+        assert!((mid_price(&both).unwrap() - 0.74).abs() < 1e-9);
+        // One side only → that side's best price.
+        let asks_only = market(vec![lvl(0.75, 1)], Vec::new());
+        assert!((mid_price(&asks_only).unwrap() - 0.75).abs() < 1e-9);
+        // Empty book → no mid.
+        assert!(mid_price(&market(Vec::new(), Vec::new())).is_none());
     }
 
     #[test]

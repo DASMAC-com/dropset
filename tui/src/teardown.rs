@@ -38,7 +38,7 @@ use solana_signer::Signer;
 /// program. Use the TUI's `Wipe` for a true clean slate.
 pub fn run(client: &RpcClient, wallet: &Keypair, log: &Logger) -> Result<String> {
     let admin = wallet.pubkey();
-    let state = accounts::poll(client, &admin, None);
+    let state = accounts::poll(client, &admin, None, 0);
     let before = client.get_balance(&admin).unwrap_or(0);
 
     // The `rent_recipient` of every close instruction must differ from the
@@ -48,9 +48,13 @@ pub fn run(client: &RpcClient, wallet: &Keypair, log: &Logger) -> Result<String>
     let sink = Keypair::new();
     let sink_key = sink.pubkey();
 
-    match &state.market {
-        None => log.log("No market to tear down."),
-        Some(market) => teardown_market(client, wallet, market, &sink_key, log)?,
+    // The bootstrap brings up every demo market, so teardown closes them all.
+    if state.markets.is_empty() {
+        log.log("No market to tear down.");
+    } else {
+        for market in &state.markets {
+            teardown_market(client, wallet, market, &sink_key, log)?;
+        }
     }
 
     match &state.registry {

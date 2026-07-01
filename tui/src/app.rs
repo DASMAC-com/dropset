@@ -14,6 +14,7 @@
 
 use crate::accounts::{self, ChainState};
 use crate::action::{self, Action, JobContext};
+use crate::bot::BotManager;
 use crate::chain;
 use crate::explorer;
 use crate::job::{JobEvent, Logger};
@@ -91,6 +92,12 @@ pub struct App {
     /// fixed mint keys, so the accounts pane can name a discovered
     /// market's coins (the chain scan only yields mint pubkeys).
     pub(crate) mint_symbols: Vec<(Pubkey, &'static str)>,
+    /// Index into [`ChainState::markets`] of the market whose order book and
+    /// accounts are shown — the "which bot's book am I looking at" selection,
+    /// moved with `[` / `]`.
+    pub(crate) selected_market: usize,
+    /// The per-market maker-bot child processes the operator starts and stops.
+    pub(crate) bots: BotManager,
     /// Address click targets for the accounts pane, rebuilt by [`ui::draw`]
     /// each frame: a left-click inside one of these rectangles opens that
     /// account in the explorer.
@@ -133,6 +140,8 @@ impl App {
             log_path,
             swapper,
             mint_symbols,
+            selected_market: 0,
+            bots: BotManager::new(),
             click_targets: Vec::new(),
             tx,
             rx,
@@ -239,6 +248,13 @@ impl App {
             KeyCode::Char('c') if ctrl => return Flow::Quit,
             KeyCode::Char('j') | KeyCode::Down => self.menu_step(1),
             KeyCode::Char('k') | KeyCode::Up => self.menu_step(-1),
+            // Book selector — cycle which market's book and accounts show.
+            KeyCode::Char('[') | KeyCode::BackTab => self.select_market(-1),
+            KeyCode::Char(']') | KeyCode::Tab => self.select_market(1),
+            // Per-bot control: toggle the selected market's bot, or all at once.
+            KeyCode::Char('s') => self.toggle_selected_bot(),
+            KeyCode::Char('S') => self.start_all_bots(),
+            KeyCode::Char('x') => self.stop_all_bots(),
             KeyCode::Char('r') => self.dirty = true,
             KeyCode::Enter => self.run_selected(),
             KeyCode::Char(d @ '1'..='9') => {
@@ -251,6 +267,91 @@ impl App {
             _ => {}
         }
         Flow::Continue
+    }
+
+    /// Move the market selection by `delta`, wrapping across the discovered
+    /// markets. A no-op until any market exists. Forces a re-poll so the
+    /// accounts pane's participant holdings track the newly selected market.
+    fn select_market(&mut self, delta: isize) {
+        let n = self.chain.markets.len();
+        if n == 0 {
+            return;
+        }
+        let cur = self.selected_market.min(n - 1) as isize;
+        self.selected_market = (cur + delta).rem_euclid(n as isize) as usize;
+        self.dirty = true;
+    }
+
+    /// The ticker of the currently selected market, from its base mint via the
+    /// known-mint map — `None` before any market exists, or for a market minted
+    /// outside the bootstrap (no known symbol, so no bot to drive).
+    fn selected_symbol(&self) -> Option<&'static str> {
+        let market = self.chain.selected_market(self.selected_market)?;
+        self.mint_symbols
+            .iter()
+            .find(|(m, _)| *m == market.base_mint)
+            .map(|(_, s)| *s)
+    }
+
+    /// Toggle the selected market's maker bot — start it if stopped (flash
+    /// liquidity), stop it if running.
+    fn toggle_selected_bot(&mut self) {
+        let Some(symbol) = self.selected_symbol() else {
+            self.log(
+                LogKind::Err,
+                "No market selected to drive a bot.".to_string(),
+            );
+            return;
+        };
+        if self.bots.is_running(symbol) {
+            self.bots.stop(symbol);
+            self.log(LogKind::Ok, format!("[{symbol}] bot stopped"));
+        } else {
+            let log = Logger::new(self.tx.clone());
+            if let Err(e) = self
+                .bots
+                .start(symbol, &self.ctx.repo_root, &self.ctx.rpc_url, &log)
+            {
+                self.log(LogKind::Err, format!("[{symbol}] start failed: {e:#}"));
+            }
+        }
+        self.dirty = true;
+    }
+
+    /// Start every discovered market's bot that isn't already running — the
+    /// demo's "flash liquidity across the board" moment.
+    fn start_all_bots(&mut self) {
+        let symbols: Vec<&'static str> = self
+            .chain
+            .markets
+            .iter()
+            .filter_map(|m| {
+                self.mint_symbols
+                    .iter()
+                    .find(|(mint, _)| *mint == m.base_mint)
+                    .map(|(_, s)| *s)
+            })
+            .collect();
+        let log = Logger::new(self.tx.clone());
+        for symbol in symbols {
+            if !self.bots.is_running(symbol) {
+                if let Err(e) =
+                    self.bots
+                        .start(symbol, &self.ctx.repo_root, &self.ctx.rpc_url, &log)
+                {
+                    self.log(LogKind::Err, format!("[{symbol}] start failed: {e:#}"));
+                }
+            }
+        }
+        self.dirty = true;
+    }
+
+    /// Stop every running bot.
+    fn stop_all_bots(&mut self) {
+        let n = self.bots.running_count();
+        self.bots.stop_all();
+        self.log(LogKind::Ok, format!("Stopped {n} bot(s)."));
+        self.dirty = true;
     }
 
     /// Move the menu selection by `delta`, clamped to the menu bounds.
@@ -283,13 +384,22 @@ impl App {
         }
         self.job_running = true;
         self.log(LogKind::Info, format!("\u{25b6} {}", action.label()));
-        action::dispatch(action, &self.ctx, &self.chain, self.tx.clone());
+        action::dispatch(
+            action,
+            &self.ctx,
+            &self.chain,
+            self.tx.clone(),
+            self.selected_market,
+        );
     }
 
     /// Kill the validator, wipe its temp ledger, and respawn — then point a
     /// fresh client at it and force a re-poll.
     fn wipe(&mut self) {
         self.log(LogKind::Info, "Wiping localnet…".to_string());
+        // The bots quote against the ledger being wiped — stop them so none
+        // keeps sending doomed txns at the fresh, empty validator.
+        self.bots.stop_all();
         match self.validator.wipe_and_respawn() {
             Ok(()) => {
                 self.client = chain::rpc(self.validator.rpc_url());
@@ -323,13 +433,22 @@ impl App {
     }
 
     /// Re-poll on-chain state if forced (`dirty`) or the interval elapsed.
+    /// Also reaps any maker bot that exited on its own, so the per-market
+    /// status reflects a crashed or orphaned bot, and clamps the selection to
+    /// the current market count (a wipe can drop the markets out from under it).
     fn maybe_refresh(&mut self) {
         if self.dirty || self.last_refresh.elapsed() >= REFRESH_INTERVAL {
             self.chain = accounts::poll(
                 &self.client,
                 &self.ctx.wallet.pubkey(),
                 self.swapper.as_ref(),
+                self.selected_market,
             );
+            let log = Logger::new(self.tx.clone());
+            self.bots.reap(&log);
+            if !self.chain.markets.is_empty() && self.selected_market >= self.chain.markets.len() {
+                self.selected_market = self.chain.markets.len() - 1;
+            }
             self.last_refresh = Instant::now();
             self.dirty = false;
         }

@@ -5,7 +5,7 @@
 //! relaunch), and [`ChainState::phase`] collapses it to the [`Phase`] that
 //! gates the action menu. Because the snapshot is chain-derived, relaunching
 //! the TUI against an already-bootstrapped validator lands in `Ready`, not a
-//! reset — the market is discovered by scanning the program's accounts for
+//! reset — every market is discovered by scanning the program's accounts for
 //! the `MarketHeader` discriminator, and the fee mint is read back from the
 //! registry's stamped default fee config, so nothing depends on mint
 //! keypairs held only in a previous session's memory.
@@ -62,7 +62,8 @@ pub struct RegistryView {
     pub market_count: u32,
 }
 
-/// Decoded market view (the single localnet market, if one exists).
+/// Decoded view of one localnet market — the demo brings up several, and
+/// [`ChainState::markets`] holds them all.
 #[derive(Clone, Debug)]
 pub struct MarketView {
     pub address: Pubkey,
@@ -108,18 +109,23 @@ pub struct ChainState {
     pub slot: Option<u64>,
     pub program_deployed: bool,
     pub registry: Option<RegistryView>,
-    pub market: Option<MarketView>,
+    /// Every localnet market the program-accounts scan discovered, in scan
+    /// order — the multi-market demo brings up one per FX pair. The TUI renders
+    /// the selected one and shows all of them in the markets list.
+    pub markets: Vec<MarketView>,
     pub wallet_lamports: u64,
-    /// The vault leader (the MM bot) of the market's first live vault, with
-    /// its wallet token holdings — `None` until a live vault exists.
+    /// The vault leader (the MM bot) of the *selected* market's first live
+    /// vault, with its wallet token holdings — `None` until a live vault exists.
     pub leader: Option<ParticipantView>,
-    /// The swapper / taker (`FFFF`), with its wallet token holdings — `None`
-    /// until a market exists (and the swapper key resolves).
+    /// The swapper / taker (`FFFF`), with its wallet token holdings for the
+    /// *selected* market — `None` until a market exists (and the key resolves).
     pub swapper: Option<ParticipantView>,
 }
 
 impl ChainState {
-    /// Derive the gating [`Phase`] from the snapshot.
+    /// Derive the gating [`Phase`] from the snapshot. The bootstrap actions
+    /// bring up every demo market together, so the phase is an aggregate:
+    /// `Ready` only once every discovered market has a live vault.
     pub fn phase(&self) -> Phase {
         if !self.validator_up {
             return Phase::NoValidator;
@@ -130,11 +136,24 @@ impl ChainState {
         if self.registry.is_none() {
             return Phase::RegistryAbsent;
         }
-        match &self.market {
-            None => Phase::MarketAbsent,
-            Some(m) if m.active_count == 0 => Phase::VaultAbsent,
-            Some(_) => Phase::Ready,
+        if self.markets.is_empty() {
+            return Phase::MarketAbsent;
         }
+        if self.markets.iter().all(|m| m.active_count > 0) {
+            Phase::Ready
+        } else {
+            Phase::VaultAbsent
+        }
+    }
+
+    /// The market at `selected`, clamped so an out-of-range index (markets
+    /// disappeared on a wipe) still yields the first one rather than `None`
+    /// when any market exists.
+    pub fn selected_market(&self, selected: usize) -> Option<&MarketView> {
+        if self.markets.is_empty() {
+            return None;
+        }
+        self.markets.get(selected).or_else(|| self.markets.first())
     }
 }
 
@@ -143,8 +162,14 @@ impl ChainState {
 /// would error before the program is deployed. `swapper` is the taker role
 /// key (`FFFF`); when supplied, its wallet token holdings are read for the
 /// accounts pane (`None` skips that — the bootstrap jobs that poll only for
-/// registry/market pass `None`).
-pub fn poll(client: &RpcClient, wallet: &Pubkey, swapper: Option<&Pubkey>) -> ChainState {
+/// registry pass `None`). `selected` picks which discovered market's
+/// participants (leader / swapper holdings) to read for the accounts pane.
+pub fn poll(
+    client: &RpcClient,
+    wallet: &Pubkey,
+    swapper: Option<&Pubkey>,
+    selected: usize,
+) -> ChainState {
     let slot = client.get_slot().ok();
     let mut state = ChainState {
         validator_up: slot.is_some(),
@@ -171,15 +196,19 @@ pub fn poll(client: &RpcClient, wallet: &Pubkey, swapper: Option<&Pubkey>) -> Ch
         return state;
     }
 
-    state.market = read_market(client, slot.unwrap_or(0).min(u32::MAX as u64) as u32, None);
-    if let Some(market) = &state.market {
+    state.markets = read_markets(client, slot.unwrap_or(0).min(u32::MAX as u64) as u32, None);
+    // Participants are read for the selected market only — the accounts pane
+    // shows one market at a time, so there is no need to fetch holdings for the
+    // whole roster each poll. Cloned so the read borrows nothing of `state`
+    // while its `leader` / `swapper` fields are written.
+    if let Some(market) = state.selected_market(selected).cloned() {
         // The MM bot is the leader of the market's first live vault; the
         // swapper is the supplied taker key. Read each one's wallet holdings.
         state.leader = market
             .live_vaults
             .first()
-            .map(|(_, leader)| read_participant(client, leader, market));
-        state.swapper = swapper.map(|pk| read_participant(client, pk, market));
+            .map(|(_, leader)| read_participant(client, leader, &market));
+        state.swapper = swapper.map(|pk| read_participant(client, pk, &market));
     }
     state
 }
@@ -236,77 +265,171 @@ fn read_registry(client: &RpcClient) -> Option<RegistryView> {
 /// seeds each pair's own market PDA rather than whichever turns up first.
 pub fn read_market_at(client: &RpcClient, address: Pubkey) -> Option<MarketView> {
     let slot = client.get_slot().ok()?;
-    read_market(client, slot.min(u32::MAX as u64) as u32, Some(address))
+    read_markets(client, slot.min(u32::MAX as u64) as u32, Some(address))
+        .into_iter()
+        .next()
 }
 
-/// Decode a market into a [`MarketView`]. With `target` set, that exact market
-/// is loaded; otherwise the first market the program-accounts scan turns up
-/// (the single-market `ChainState` path).
-fn read_market(
-    client: &RpcClient,
-    current_slot: u32,
-    target: Option<Pubkey>,
-) -> Option<MarketView> {
-    let accounts = client.get_program_accounts(&DROPSET_ID).ok()?;
-    let market_idx = accounts.iter().position(|(addr, a)| {
-        a.data.len() >= 8
-            && a.data[..8] == MARKET_HEADER_DISCRIMINATOR
-            && target.is_none_or(|t| *addr == t)
-    })?;
-    let address = accounts[market_idx].0;
-    let account = &accounts[market_idx].1;
+/// Discover the localnet markets by scanning the program's owned accounts for
+/// the `MarketHeader` discriminator, decoding each one's header + active vault
+/// list via the slab-layout mirror, and reconstructing its resting book at
+/// `current_slot` through the shared SDK matcher. With `target` set, only that
+/// exact market is returned (the by-address bootstrap path); otherwise every
+/// market the scan turns up, in scan order.
+///
+/// The single program-accounts scan is shared across every market — each one's
+/// open depositors are filtered from it — so N markets cost one `get_program_accounts`
+/// plus a small `get_multiple_accounts` per market for the SPL-owned treasuries
+/// and mints (not in the program scan).
+fn read_markets(client: &RpcClient, current_slot: u32, target: Option<Pubkey>) -> Vec<MarketView> {
+    let Ok(accounts) = client.get_program_accounts(&DROPSET_ID) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (address, account) in &accounts {
+        let is_market = account.data.len() >= 8 && account.data[..8] == MARKET_HEADER_DISCRIMINATOR;
+        if !is_market || target.is_some_and(|t| *address != t) {
+            continue;
+        }
+        let Ok(view) = SlabView::load(&account.data) else {
+            continue;
+        };
+        let header = view.header;
+        let base_mint = Pubkey::new_from_array(header.base_mint);
+        let quote_mint = Pubkey::new_from_array(header.quote_mint);
+        let base_treasury = Pubkey::new_from_array(header.base_treasury);
+        let quote_treasury = Pubkey::new_from_array(header.quote_treasury);
+        let live_vaults: Vec<(u32, Pubkey)> = view
+            .active_vaults()
+            .map(|(idx, v)| (idx, Pubkey::new_from_array(v.leader)))
+            .collect();
 
-    let view = SlabView::load(&account.data).ok()?;
-    let header = view.header;
-    let base_mint = Pubkey::new_from_array(header.base_mint);
-    let quote_mint = Pubkey::new_from_array(header.quote_mint);
-    let base_treasury = Pubkey::new_from_array(header.base_treasury);
-    let quote_treasury = Pubkey::new_from_array(header.quote_treasury);
-    let live_vaults: Vec<(u32, Pubkey)> = view
-        .active_vaults()
-        .map(|(idx, v)| (idx, Pubkey::new_from_array(v.leader)))
-        .collect();
+        // Reconstruct the resting book via the shared matcher (Buy ⇒ asks,
+        // Sell ⇒ bids) — the same levels a real swap would fill.
+        let asks = resting_levels(&view, SwapSide::Buy, current_slot);
+        let bids = resting_levels(&view, SwapSide::Sell, current_slot);
 
-    // Reconstruct the resting book via the shared matcher (Buy ⇒ asks,
-    // Sell ⇒ bids) — the same levels a real swap would fill.
-    let asks = resting_levels(&view, SwapSide::Buy, current_slot);
-    let bids = resting_levels(&view, SwapSide::Sell, current_slot);
+        // Open VaultDepositor PDAs for this market — discovered in the same
+        // program-accounts scan, decoded for their (sector, owner).
+        let depositors: Vec<(u32, Pubkey)> = accounts
+            .iter()
+            .filter(|(_, a)| {
+                a.data.len() >= 8 && a.data[..8] == VAULT_DEPOSITOR_HEADER_DISCRIMINATOR
+            })
+            .filter_map(|(_, a)| VaultDepositorHeader::from_bytes(&a.data).ok())
+            .filter(|h| h.market == *address)
+            .map(|h| (h.sector_idx, h.owner))
+            .collect();
 
-    // Open VaultDepositor PDAs for this market — discovered in the same
-    // program-accounts scan, decoded for their (sector, owner).
-    let depositors: Vec<(u32, Pubkey)> = accounts
-        .iter()
-        .filter(|(_, a)| a.data.len() >= 8 && a.data[..8] == VAULT_DEPOSITOR_HEADER_DISCRIMINATOR)
-        .filter_map(|(_, a)| VaultDepositorHeader::from_bytes(&a.data).ok())
-        .filter(|h| h.market == address)
-        .map(|h| (h.sector_idx, h.owner))
-        .collect();
+        // Treasury ATAs and mints are SPL-owned, so they aren't in the
+        // program-accounts scan — read them directly: the treasuries for their
+        // lamports, the mints for their `decimals` (byte 44 of an SPL Mint).
+        let Ok(fetched) =
+            client.get_multiple_accounts(&[base_treasury, quote_treasury, base_mint, quote_mint])
+        else {
+            continue;
+        };
+        let at = |i: usize| fetched.get(i).and_then(|o| o.as_ref());
+        let lamports = |i: usize| at(i).map_or(0, |a| a.lamports);
+        let decimals = |i: usize| at(i).and_then(|a| a.data.get(44).copied()).unwrap_or(0);
 
-    // Treasury ATAs and mints are SPL-owned, so they aren't in the
-    // program-accounts scan — read them directly: the treasuries for their
-    // lamports, the mints for their `decimals` (byte 44 of an SPL Mint).
-    let fetched = client
-        .get_multiple_accounts(&[base_treasury, quote_treasury, base_mint, quote_mint])
-        .ok()?;
-    let at = |i: usize| fetched.get(i).and_then(|o| o.as_ref());
-    let lamports = |i: usize| at(i).map_or(0, |a| a.lamports);
-    let decimals = |i: usize| at(i).and_then(|a| a.data.get(44).copied()).unwrap_or(0);
+        out.push(MarketView {
+            address: *address,
+            lamports: account.lamports,
+            base_mint,
+            quote_mint,
+            base_treasury,
+            quote_treasury,
+            base_treasury_lamports: lamports(0),
+            quote_treasury_lamports: lamports(1),
+            active_count: header.active_count.get(),
+            live_vaults,
+            depositors,
+            base_decimals: decimals(2),
+            quote_decimals: decimals(3),
+            asks,
+            bids,
+        });
+    }
+    out
+}
 
-    Some(MarketView {
-        address,
-        lamports: account.lamports,
-        base_mint,
-        quote_mint,
-        base_treasury,
-        quote_treasury,
-        base_treasury_lamports: lamports(0),
-        quote_treasury_lamports: lamports(1),
-        active_count: header.active_count.get(),
-        live_vaults,
-        depositors,
-        base_decimals: decimals(2),
-        quote_decimals: decimals(3),
-        asks,
-        bids,
-    })
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A minimal market carrying just the `active_count` and an identifying
+    /// base mint the phase / selection logic reads.
+    fn market(active_count: u32, base: u8) -> MarketView {
+        MarketView {
+            address: Pubkey::new_from_array([base; 32]),
+            lamports: 0,
+            base_mint: Pubkey::new_from_array([base; 32]),
+            quote_mint: Pubkey::default(),
+            base_treasury: Pubkey::default(),
+            quote_treasury: Pubkey::default(),
+            base_treasury_lamports: 0,
+            quote_treasury_lamports: 0,
+            active_count,
+            live_vaults: Vec::new(),
+            depositors: Vec::new(),
+            base_decimals: 6,
+            quote_decimals: 6,
+            asks: Vec::new(),
+            bids: Vec::new(),
+        }
+    }
+
+    /// A bootstrapped-enough state (validator up, program + registry present)
+    /// carrying `markets`, so `phase()` turns purely on the market aggregate.
+    fn ready_state(markets: Vec<MarketView>) -> ChainState {
+        ChainState {
+            validator_up: true,
+            program_deployed: true,
+            registry: Some(RegistryView {
+                address: Pubkey::default(),
+                lamports: 0,
+                fee_mint: Pubkey::default(),
+                fee_token_program: Pubkey::default(),
+                fee_vault: Pubkey::default(),
+                fee_vault_lamports: 0,
+                market_count: markets.len() as u32,
+            }),
+            markets,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn phase_is_ready_only_when_every_market_has_a_live_vault() {
+        // No markets → still awaiting market creation.
+        assert_eq!(ready_state(Vec::new()).phase(), Phase::MarketAbsent);
+        // Markets exist but not all seeded → vault phase (the bootstrap seeds
+        // them all together, so a single unseeded market gates the aggregate).
+        assert_eq!(
+            ready_state(vec![market(1, 1), market(0, 2)]).phase(),
+            Phase::VaultAbsent
+        );
+        // Every market has a live vault → ready.
+        assert_eq!(
+            ready_state(vec![market(1, 1), market(2, 2)]).phase(),
+            Phase::Ready
+        );
+    }
+
+    #[test]
+    fn selected_market_clamps_out_of_range_to_the_first() {
+        let state = ready_state(vec![market(1, 1), market(1, 2)]);
+        assert_eq!(
+            state.selected_market(1).unwrap().base_mint,
+            [2u8; 32].into()
+        );
+        // An index past the end falls back to the first rather than `None`.
+        assert_eq!(
+            state.selected_market(9).unwrap().base_mint,
+            [1u8; 32].into()
+        );
+        // With no markets there is nothing to select.
+        assert!(ready_state(Vec::new()).selected_market(0).is_none());
+    }
 }

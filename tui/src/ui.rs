@@ -41,8 +41,8 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
     draw_status(f, app, status);
 
     // Three columns: the action menu, a stacked accounts + CU column, and the
-    // order book.
-    let [menu_area, mid_area, book_area] = Layout::new(
+    // markets list stacked above the selected market's order book.
+    let [menu_area, mid_area, right_area] = Layout::new(
         Direction::Horizontal,
         [
             Constraint::Percentage(30),
@@ -59,12 +59,22 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
     .areas(mid_area);
     draw_accounts(f, app, accounts_area);
     draw_cu(f, app, cu_area);
+    // The markets list is as tall as its rows (plus borders), capped so the
+    // book keeps most of the column; the book takes the rest.
+    let markets_height = (app.chain.markets.len() as u16 + 2).clamp(3, 12);
+    let [markets_area, book_area] = Layout::new(
+        Direction::Vertical,
+        [Constraint::Length(markets_height), Constraint::Min(6)],
+    )
+    .areas(right_area);
+    draw_markets(f, app, markets_area);
     draw_book(f, app, book_area);
 
     draw_log(f, app, log);
 
     let help = Paragraph::new(
-        "j/k move  ·  enter / 1-9 run  ·  click account → explorer  ·  r refresh  ·  q quit",
+        "j/k menu  ·  enter/1-9 run  ·  [ ] market  ·  s start/stop bot  ·  \
+         S all  ·  x stop all  ·  r refresh  ·  q quit",
     )
     .block(Block::default().borders(Borders::ALL))
     .alignment(Alignment::Center);
@@ -100,6 +110,8 @@ fn draw_status(f: &mut Frame<'_>, app: &App, area: Rect) {
             "  ·  wallet {:.3} SOL",
             app.chain.wallet_lamports as f64 / LAMPORTS_PER_SOL as f64
         )),
+        Span::raw("  ·  bots "),
+        bots_status(app),
         Span::raw("  ·  explorer "),
         explorer_status(app),
     ]);
@@ -116,6 +128,19 @@ fn draw_status(f: &mut Frame<'_>, app: &App, area: Rect) {
         ),
         area,
     );
+}
+
+/// Status-bar span for the maker bots: how many are running out of the
+/// discovered markets, green once any is up.
+fn bots_status(app: &App) -> Span<'static> {
+    let running = app.bots.running_count();
+    let total = app.chain.markets.len();
+    let color = if running > 0 {
+        Color::Green
+    } else {
+        Color::DarkGray
+    };
+    Span::styled(format!("{running}/{total}"), Style::new().fg(color))
 }
 
 /// Colored status-bar span for the managed explorer container.
@@ -173,7 +198,7 @@ fn menu_item(i: usize, action: Action, phase: Phase, next: Option<Action>) -> Li
 }
 
 fn draw_accounts(f: &mut Frame<'_>, app: &mut App, area: Rect) {
-    let rows = build_account_rows(&app.chain, &app.mint_symbols);
+    let rows = build_account_rows(&app.chain, &app.mint_symbols, app.selected_market);
     // Register each address-bearing row as a click target over its inner-row
     // rect, so a left-click anywhere on the row opens that account in the
     // explorer. The inner area sits one cell in from the border on every side.
@@ -210,9 +235,11 @@ fn draw_accounts(f: &mut Frame<'_>, app: &mut App, area: Rect) {
 /// both draw the line and register it as a click target that opens that
 /// address in the explorer. `symbols` maps a mint to its ticker, so the
 /// participant rows name their actual coins rather than generic base/quote.
+/// `selected` picks which discovered market's accounts to show.
 fn build_account_rows(
     chain: &ChainState,
     symbols: &[(Pubkey, &'static str)],
+    selected: usize,
 ) -> Vec<(Line<'static>, Option<Pubkey>)> {
     // The program id is fixed and meaningful even before deploy, so its row is
     // always clickable; absent registry/market rows have no real address.
@@ -244,7 +271,7 @@ fn build_account_rows(
         )),
     }
 
-    match &chain.market {
+    match chain.selected_market(selected) {
         Some(mkt) => {
             rows.push((
                 account_line("market", true, &mkt.address, Some(mkt.lamports)),
@@ -401,18 +428,85 @@ fn short_pubkey(p: &Pubkey) -> String {
     }
 }
 
-/// Render the order-book pane — the reconstructed resting ladder (see
-/// [`book`]) for the live market, or a placeholder before one exists.
-fn draw_book(f: &mut Frame<'_>, app: &App, area: Rect) {
-    let lines = match &app.chain.market {
-        Some(market) => book::lines(market),
-        None => vec![Line::from(Span::styled(
-            "  no market",
+/// Render the markets list — every discovered market with its per-market
+/// status: a ✓/○ liquidity glyph, its ticker, the book mid (or "idle"), and a
+/// green ● when its maker bot is running. The selected market is marked and
+/// bold; `[` / `]` move the selection, which drives the order book below.
+fn draw_markets(f: &mut Frame<'_>, app: &App, area: Rect) {
+    let lines: Vec<Line> = if app.chain.markets.is_empty() {
+        vec![Line::from(Span::styled(
+            "  no markets — bootstrap first",
             Style::new().fg(Color::DarkGray),
-        ))],
+        ))]
+    } else {
+        app.chain
+            .markets
+            .iter()
+            .enumerate()
+            .map(|(i, m)| market_row(app, i, m))
+            .collect()
     };
     f.render_widget(
-        Paragraph::new(lines).block(Block::default().title(" order book ").borders(Borders::ALL)),
+        Paragraph::new(lines).block(Block::default().title(" markets ").borders(Borders::ALL)),
+        area,
+    );
+}
+
+/// One markets-list row for market `i`: selection marker · liquidity glyph ·
+/// ticker · book mid (or "idle") · a green ● when the bot is running.
+fn market_row(app: &App, i: usize, market: &crate::accounts::MarketView) -> Line<'static> {
+    let symbol = symbol_for(&app.mint_symbols, &market.base_mint, "?");
+    let selected = i == app.selected_market;
+    let mid = book::mid_price(market);
+
+    // ✓ (green) when the book has resting liquidity, ○ (gray) when idle.
+    let (glyph, glyph_color) = if mid.is_some() {
+        ("\u{2713}", Color::Green)
+    } else {
+        ("\u{25cb}", Color::DarkGray)
+    };
+    let marker = if selected { "> " } else { "  " };
+    let symbol_style = if selected {
+        Style::new().add_modifier(Modifier::BOLD)
+    } else {
+        Style::new()
+    };
+    let price = mid.map_or_else(|| "idle".to_string(), |p| format!("{p:.4}"));
+
+    let mut spans = vec![
+        Span::raw(marker.to_string()),
+        Span::styled(format!("{glyph} "), Style::new().fg(glyph_color)),
+        Span::styled(format!("{symbol:<6}"), symbol_style),
+        Span::styled(format!(" {price:>10}"), Style::new().fg(Color::Gray)),
+    ];
+    if app.bots.is_running(symbol) {
+        spans.push(Span::styled(
+            "  \u{25cf} bot",
+            Style::new().fg(Color::Green),
+        ));
+    }
+    Line::from(spans)
+}
+
+/// Render the order-book pane — the reconstructed resting ladder (see
+/// [`book`]) for the selected market, or a placeholder before one exists. The
+/// pane title carries the selected market's ticker.
+fn draw_book(f: &mut Frame<'_>, app: &App, area: Rect) {
+    let (title, lines) = match app.chain.selected_market(app.selected_market) {
+        Some(market) => {
+            let symbol = symbol_for(&app.mint_symbols, &market.base_mint, "market");
+            (format!(" order book · {symbol} "), book::lines(market))
+        }
+        None => (
+            " order book ".to_string(),
+            vec![Line::from(Span::styled(
+                "  no market",
+                Style::new().fg(Color::DarkGray),
+            ))],
+        ),
+    };
+    f.render_widget(
+        Paragraph::new(lines).block(Block::default().title(title).borders(Borders::ALL)),
         area,
     );
 }
