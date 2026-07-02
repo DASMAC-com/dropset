@@ -68,7 +68,7 @@ le_int!(LeU16, u16, 2);
 le_int!(LeU32, u32, 4);
 le_int!(LeU64, u64, 8);
 
-// ── Layout structs (mirror programs/dropset/src/state/market.rs) ─────
+// ── Layout structs (mirror programs/dropset/src/state/market/layout.rs) ──
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
