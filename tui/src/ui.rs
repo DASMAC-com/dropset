@@ -663,8 +663,12 @@ fn market_row(app: &App, i: usize, market: &crate::accounts::MarketView) -> Line
         Span::styled(format!("{glyph} "), Style::new().fg(glyph_color)),
         Span::raw(format!("{flag} ")),
         Span::styled(format!("{symbol:<6}"), symbol_style),
-        Span::styled(format!(" {price:>11}"), Style::new().fg(Color::Gray)),
-        Span::styled(format!("  ref {reference:>11}"), Style::new().fg(Color::DarkGray)),
+        // Label both prices inline so the columns are self-describing: the book
+        // mid and the leader's stamped reference (fair value).
+        Span::styled("  mid ", Style::new().fg(Color::DarkGray)),
+        Span::styled(format!("{price:>11}"), Style::new().fg(Color::Gray)),
+        Span::styled("  ref ", Style::new().fg(Color::DarkGray)),
+        Span::styled(format!("{reference:>11}"), Style::new().fg(Color::DarkGray)),
     ];
     if app.bots.is_running(symbol) {
         spans.push(Span::styled(
@@ -740,7 +744,7 @@ fn draw_fills(f: &mut Frame<'_>, app: &mut App, area: Rect) {
     // Rows that fit below the header, newest first — snapshot to owned data so
     // the fills read-borrow ends before the target-registration write-borrow.
     let height = (area.height.saturating_sub(2) as usize).saturating_sub(1);
-    let rows: Vec<(String, String, u8, f64, f64)> = app
+    let rows: Vec<(String, String, u8, f64, f64, f64)> = app
         .fills
         .iter()
         .rev()
@@ -751,7 +755,14 @@ fn draw_fills(f: &mut Frame<'_>, app: &mut App, area: Rect) {
         .map(|r| {
             let size = r.event.fill_base as f64 / 10f64.powi(base_dec as i32);
             let value = r.event.fill_quote as f64 / 10f64.powi(quote_dec as i32);
-            (r.time.clone(), r.signature.clone(), r.event.side, value / size, size)
+            (
+                r.time.clone(),
+                r.signature.clone(),
+                r.event.side,
+                value / size,
+                size,
+                value,
+            )
         })
         .collect();
 
@@ -774,7 +785,7 @@ fn draw_fills(f: &mut Frame<'_>, app: &mut App, area: Rect) {
     let inner_w = area.width.saturating_sub(2);
     let max_y = area.y + area.height.saturating_sub(1);
     let mut lines = vec![fills_header()];
-    for (i, (time, sig, side, price, size)) in rows.iter().enumerate() {
+    for (i, (time, sig, side, price, size, volume)) in rows.iter().enumerate() {
         // Row 0 is the header, so data rows start one below it.
         let y = inner_y + 1 + i as u16;
         if !sig.is_empty() && y < max_y {
@@ -788,7 +799,7 @@ fn draw_fills(f: &mut Frame<'_>, app: &mut App, area: Rect) {
                 sig.clone(),
             ));
         }
-        lines.push(fill_line(time, *side, *price, *size, sig));
+        lines.push(fill_line(time, *side, *price, *size, *volume, sig));
     }
     f.render_widget(
         Paragraph::new(lines).block(Block::default().title(title).borders(Borders::ALL)),
@@ -797,7 +808,7 @@ fn draw_fills(f: &mut Frame<'_>, app: &mut App, area: Rect) {
 }
 
 /// The fills-tape column header, styled like the order book's — `time · side ·
-/// price · size · tx`, widths matching [`fill_line`].
+/// price · size · volume · txn`, widths matching [`fill_line`].
 fn fills_header() -> Line<'static> {
     let style = Style::new().fg(Color::Gray).add_modifier(Modifier::BOLD);
     Line::from(vec![
@@ -805,15 +816,17 @@ fn fills_header() -> Line<'static> {
         Span::styled(format!("  {:<4}", "side"), style),
         Span::styled(format!("  {:>10}", "price"), style),
         Span::styled(format!("  {:>12}", "size"), style),
-        Span::styled(format!("  {}", "tx"), style),
+        Span::styled(format!("  {:>12}", "volume"), style),
+        Span::styled(format!("  {}", "txn"), style),
     ])
 }
 
 /// One fills-tape row: the observed time, a colored buy/sell tag (green buy, red
 /// sell — the taker's aggressor side), the fill price (quote per base, adaptive
 /// precision so small-value tokens keep their significant figures), the base
-/// size, and an underlined short signature linking to the swap in the explorer.
-fn fill_line(time: &str, side: u8, price: f64, size: f64, sig: &str) -> Line<'static> {
+/// size, the quote-denominated volume (price × size), and an underlined short
+/// signature linking to the swap in the explorer.
+fn fill_line(time: &str, side: u8, price: f64, size: f64, volume: f64, sig: &str) -> Line<'static> {
     // side: 0 = taker Buy (lifts the ask), 1 = taker Sell (hits the bid).
     let (label, color) = if side == 0 {
         ("buy ", Color::Rgb(30, 135, 80))
@@ -831,8 +844,11 @@ fn fill_line(time: &str, side: u8, price: f64, size: f64, sig: &str) -> Line<'st
             Style::new().fg(color),
         ),
         Span::styled(format!("  {size:>12.2}"), Style::new().fg(Color::DarkGray)),
+        Span::styled(format!("  {volume:>12.2}"), Style::new().fg(Color::DarkGray)),
+        // Leading gap kept out of the underline (see [`cu_line`]).
+        Span::raw("  "),
         Span::styled(
-            format!("  {}", short_sig(sig)),
+            short_sig(sig),
             Style::new()
                 .fg(Color::Gray)
                 .add_modifier(Modifier::UNDERLINED),
@@ -932,7 +948,7 @@ fn cu_header() -> Line<'static> {
         Span::styled(format!("{:<22}", "op"), style),
         Span::styled(format!("{:>10}", "cu"), style),
         Span::styled(format!("  {:>8}", "time"), style),
-        Span::styled(format!("  {}", "tx"), style),
+        Span::styled(format!("  {}", "txn"), style),
     ])
 }
 
@@ -947,8 +963,11 @@ fn cu_line(label: &str, units: u64, time: &str, sig: &str) -> Line<'static> {
         Span::styled(format!("  {time:>8}"), Style::new().fg(Color::DarkGray)),
     ];
     if !sig.is_empty() {
+        // Keep the leading gap out of the underlined span, or the underline
+        // reads as a stray "__" before the signature.
+        spans.push(Span::raw("  "));
         spans.push(Span::styled(
-            format!("  {}", short_sig(sig)),
+            short_sig(sig),
             Style::new()
                 .fg(Color::Gray)
                 .add_modifier(Modifier::UNDERLINED),
@@ -958,7 +977,7 @@ fn cu_line(label: &str, units: u64, time: &str, sig: &str) -> Line<'static> {
 }
 
 /// `AAAAAA…oiV`-style abbreviation of a base58 transaction signature (ASCII, so
-/// byte slicing is safe), for the tx link columns.
+/// byte slicing is safe), for the txn link columns.
 fn short_sig(s: &str) -> String {
     if s.len() > 12 {
         format!("{}\u{2026}{}", &s[..6], &s[s.len() - 4..])

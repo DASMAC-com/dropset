@@ -1759,6 +1759,7 @@ dependencies = [
  "bytemuck",
  "crossterm",
  "dropset-sdk",
+ "libc",
  "open",
  "ratatui",
  "solana-client",

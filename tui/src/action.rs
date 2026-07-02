@@ -463,9 +463,18 @@ fn do_repeg(
     )
     .context("set_reference_price")?;
     log.accounts_changed();
-    Ok(format!(
-        "Re-pegged {bps:+} bps — whole book shifts (nonce bumped, flush armed)"
-    ))
+    // Report the concrete new reference (human quote-per-base) so the green
+    // success line makes the repeg's effect obvious — the atoms-ratio scales
+    // back by the pair's decimal gap.
+    let human = market::config_for(repo_root, &base_mint)
+        .map(|c| bumped * 10f64.powi(c.base.decimals as i32 - c.quote.decimals as i32));
+    Ok(match human {
+        Some(p) => format!(
+            "Re-pegged {bps:+} bps \u{2192} reference now {} \u{2014} whole book shifts",
+            crate::book::fmt_price(p)
+        ),
+        None => format!("Re-pegged {bps:+} bps \u{2014} whole book shifts"),
+    })
 }
 
 /// Reshape the selected market's ladder (`set_liquidity_profile`) — the cold

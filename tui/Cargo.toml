@@ -26,6 +26,10 @@ bs58 = "0.5"
 # the bootstrap quote ladder (matches the SDK's own profile construction).
 bytemuck = "1"
 crossterm = "0.28"
+# Local-time conversion (localtime_r) for the fills / CU timestamps — thread-
+# safe, unlike the `time` crate's local-offset, which refuses in a
+# multithreaded process (the TUI has background threads by then).
+libc = "0.2"
 # The off-chain client: Codama instruction builders (whose AccountMeta
 # ordering is the single source of truth `chain.rs` builds on), the typed
 # `fetch_*` account decoders, the `layout` slab mirror (active-vault walk

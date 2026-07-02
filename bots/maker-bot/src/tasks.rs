@@ -66,7 +66,25 @@ struct FeedHub {
     /// persistent failure (e.g. CoinGecko unreachable on localnet) reports once
     /// and then stays quiet until it recovers — rather than one line per tick.
     cg_logged_down: bool,
+    /// Current CoinGecko poll interval after on-failure backoff. `None` uses the
+    /// configured base; a failure doubles it (capped) so a rate-limited feed is
+    /// retried ever less often instead of hammered, and the backoff resets to
+    /// the base once a poll succeeds.
+    cg_backoff: Option<Duration>,
 }
+
+/// Upper bound on the CoinGecko backoff interval — a rate-limited feed is
+/// retried at most this rarely before a success resets it.
+const CG_BACKOFF_CAP: Duration = Duration::from_secs(300);
+
+/// Replenish a vault leg once its value falls below this fraction of the
+/// per-side launch target: when heavy one-sided flow drains a leg, the book
+/// can only quote the side that still has inventory, so the maker mints +
+/// deposits the drained leg back up to keep both sides live (localnet only).
+const REPLENISH_FLOOR_FRAC: f64 = 0.25;
+/// Minimum spacing between inventory top-ups per market, so a drained vault is
+/// replenished at most once per cooldown rather than every tick.
+const REPLENISH_COOLDOWN: Duration = Duration::from_secs(20);
 
 impl FeedHub {
     fn new() -> Self {
@@ -79,7 +97,17 @@ impl FeedHub {
             fx_last_poll: None,
             cg_ok: false,
             cg_logged_down: false,
+            cg_backoff: None,
         }
+    }
+
+    /// Grow the CoinGecko backoff interval after a failed / empty poll: double
+    /// the current interval (starting from `base`), capped at [`CG_BACKOFF_CAP`],
+    /// so a rate-limited or unreachable feed is retried ever less often. A
+    /// successful poll resets it back to `None` (the configured base).
+    fn grow_cg_backoff(&mut self, base: Duration) {
+        let current = self.cg_backoff.unwrap_or(base);
+        self.cg_backoff = Some(current.saturating_mul(2).min(CG_BACKOFF_CAP).max(base));
     }
 
     /// Refresh whichever tiers are due, batched across the whole roster.
@@ -92,12 +120,15 @@ impl FeedHub {
         cmc_ids: &[u32],
         currencies: &[&str],
     ) {
-        // Primary: CoinGecko, one batched call for every token.
-        if due(self.cg_last_poll, now, cfg.coingecko_poll) {
+        // Primary: CoinGecko, one batched call for every token. The effective
+        // interval is the configured base, or the current backoff while failing.
+        let cg_interval = self.cg_backoff.unwrap_or(cfg.coingecko_poll);
+        if due(self.cg_last_poll, now, cg_interval) {
             self.cg_last_poll = Some(now);
             match feeds.poll_coingecko(cg_ids) {
                 Ok(map) if !map.is_empty() => {
                     self.cg_ok = true;
+                    self.cg_backoff = None;
                     if self.cg_logged_down {
                         eprintln!("[feed] coingecko recovered");
                         self.cg_logged_down = false;
@@ -112,6 +143,7 @@ impl FeedHub {
                 // until it recovers rather than spamming a line per tick.
                 Ok(_) => {
                     self.cg_ok = false;
+                    self.grow_cg_backoff(cfg.coingecko_poll);
                     if !self.cg_logged_down {
                         eprintln!(
                             "[feed] coingecko returned no prices; cascading to the \
@@ -122,6 +154,7 @@ impl FeedHub {
                 }
                 Err(e) => {
                     self.cg_ok = false;
+                    self.grow_cg_backoff(cfg.coingecko_poll);
                     if !self.cg_logged_down {
                         eprintln!(
                             "[feed] coingecko poll failed: {e}; cascading to the \
@@ -377,6 +410,57 @@ fn quote_market(
             tvl
         }
     };
+
+    // Inventory guard: if a leg has drained below the floor (heavy one-sided
+    // flow), mint + deposit it back toward the per-side launch target so the
+    // book stays two-sided instead of quoting only the side that still has
+    // inventory. Localnet only (signed by the mock-mint authority), cadence-
+    // limited, and it skips the rest of the tick so the next read sees the
+    // restored balance.
+    let per_side = launch_tvl / 2.0;
+    let floor = per_side * REPLENISH_FLOOR_FRAC;
+    let base_usd = base_atoms as f64 / 10f64.powi(ctx.market.base_decimals as i32) * mid;
+    let quote_usd = quote_atoms as f64 / 10f64.powi(ctx.market.quote_decimals as i32);
+    if per_side > 0.0
+        && (base_usd < floor || quote_usd < floor)
+        && now.duration_since(ctx.last_replenish_at) >= REPLENISH_COOLDOWN
+    {
+        let base_top = if base_usd < floor {
+            ((per_side - base_usd) / mid * 10f64.powi(ctx.market.base_decimals as i32)) as u64
+        } else {
+            0
+        };
+        let quote_top = if quote_usd < floor {
+            ((per_side - quote_usd) * 10f64.powi(ctx.market.quote_decimals as i32)) as u64
+        } else {
+            0
+        };
+        if base_top > 0 || quote_top > 0 {
+            match chain::replenish(
+                &ctx.client,
+                &ctx.leader,
+                &ctx.mint_authority,
+                &ctx.market,
+                ctx.vault_idx,
+                base_top,
+                quote_top,
+            ) {
+                Ok(()) => {
+                    ctx.last_replenish_at = now;
+                    // Inventory changed under us — reseed the fill-derived
+                    // position from the vault on the next tick.
+                    ctx.position = None;
+                    println!(
+                        "[{}][inventory] leg drained — minted {base_top} base / {quote_top} quote and deposited to keep the book two-sided",
+                        ctx.cfg.symbol
+                    );
+                }
+                Err(e) => eprintln!("[{}][inventory] replenish failed: {e}", ctx.cfg.symbol),
+            }
+            return Ok(());
+        }
+    }
+
     let degraded = fair.health == Health::Degraded;
     let action = killswitch::evaluate(&fair, &inv, &cfg.kill, degraded, launch_tvl);
     let skew_bps = skew::ref_skew_bps(&inv, &cfg.strategy);

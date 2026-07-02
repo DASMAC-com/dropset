@@ -801,22 +801,23 @@ impl Drop for App {
     }
 }
 
-/// The current wall-clock time as `HH:MM:SS` (UTC) — the timestamp stamped on
-/// each fill and CU row as the event loop records it. UTC keeps it dependency-
-/// free; for a localnet session the values' relative ordering (recency, spacing)
-/// is what the panes convey, so the absent local offset doesn't matter.
+/// The current **local** wall-clock time as `HH:MM:SS` — the timestamp stamped
+/// on each fill and CU row as the event loop records it. Uses `libc::localtime_r`
+/// (thread-safe, and it applies the system timezone) rather than the `time`
+/// crate's local-offset, which refuses to run in a multithreaded process — the
+/// TUI has background threads by the time it records anything. Falls back to a
+/// zeroed time only if the epoch or conversion fails.
 fn now_hms() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
+        .map(|d| d.as_secs() as libc::time_t)
         .unwrap_or(0);
-    format!(
-        "{:02}:{:02}:{:02}",
-        (secs / 3600) % 24,
-        (secs / 60) % 60,
-        secs % 60
-    )
+    // SAFETY: `localtime_r` writes into our stack `tm` and returns a pointer to
+    // it (or null on failure); we read only the plain int fields either way.
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    unsafe { libc::localtime_r(&secs, &mut tm) };
+    format!("{:02}:{:02}:{:02}", tm.tm_hour, tm.tm_min, tm.tm_sec)
 }
 
 /// Parse a typed swap-amount buffer into whole quote units — `Some(n)` for a

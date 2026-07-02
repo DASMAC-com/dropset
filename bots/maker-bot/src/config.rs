@@ -60,6 +60,12 @@ pub const DEFAULT_LEADER_KEY: &str = "keys/EEEE.json";
 pub const QUOTE_KEYPAIR_FILE: &str = "keys/USDC.json";
 pub const QUOTE_DECIMALS: u8 = 6;
 
+/// The mock-mint authority (`keys/README.md` → `BBBB`, the committed localnet
+/// admin the TUI created the mints under). Used only on localnet to replenish a
+/// drained vault leg (mint + `deposit_leader`); it never quotes. Same key the
+/// taker bot mints its inventory under.
+pub const MINT_AUTHORITY_KEY: &str = "keys/BBBB.json";
+
 /// One FX-stablecoin market: a base token quoted against USDC, with the
 /// per-tier feed identifiers and the mint / decimals the bot needs to address
 /// its vault and value inventory. The reference price is *discovered* from the
@@ -300,7 +306,12 @@ pub const CMC_KEY_ENV: &str = "CMC_API_KEY";
 impl Default for FeedConfig {
     fn default() -> Self {
         Self {
-            coingecko_poll: Duration::from_secs(10),
+            // CoinGecko's keyless tier rate-limits by IP, and the localnet demo
+            // runs one maker process per market — so seven processes share that
+            // budget. A 30 s base (up from 10 s), plus the on-failure backoff in
+            // `tasks.rs`, keeps the aggregate request rate under the limit; the
+            // FX-rate / static tiers cover any gaps.
+            coingecko_poll: Duration::from_secs(30),
             coinmarketcap_poll: Duration::from_secs(60),
             fx_poll: Duration::from_secs(300),
             coingecko_base_url: "https://api.coingecko.com/api/v3".to_string(),
