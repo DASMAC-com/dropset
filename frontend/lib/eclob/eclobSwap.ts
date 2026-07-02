@@ -30,7 +30,7 @@ import {
   type DflowSwapResult,
 } from "../dflow/dflowSwap";
 import { getErrorMessage } from "../guards";
-import { fetchMarketData, resolveEclobRoute } from "./route";
+import { resolveEclobRoute } from "./route";
 
 type Rpc = SolanaClientRuntime["rpc"];
 
@@ -94,22 +94,16 @@ export async function executeEclobSwap(
     );
   }
 
-  const route = await resolveEclobRoute(inputMint, outputMint);
+  const route = await resolveEclobRoute(rpc, inputMint, outputMint);
   if (!route) {
     throw new DflowSwapError("No Dropset market for this pair", "api");
   }
 
-  const [data, slot] = await Promise.all([
-    fetchMarketData(rpc, route.market),
-    rpc.getSlot({ commitment: "confirmed" }).send(),
-  ]);
-  if (!data) {
-    throw new DflowSwapError("Market not found on this cluster", "api");
-  }
+  const slot = await rpc.getSlot({ commitment: "confirmed" }).send();
 
   await initSimulator();
   const quote = simulateSwap(
-    data,
+    route.marketData,
     route.side,
     atomicAmount,
     route.limitPriceBits,

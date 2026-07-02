@@ -4,7 +4,7 @@ import { initSimulator, simulateSwap } from "@dropset/sdk";
 import { useSolanaClient } from "@solana/react-hooks";
 import { useEffect, useState } from "react";
 import { QUOTE_DEBOUNCE_MS, QUOTE_REFRESH_MS } from "../data/timings";
-import { fetchMarketData, resolveEclobRoute } from "../eclob/route";
+import { resolveEclobRoute } from "../eclob/route";
 import { parseAmountToBase } from "../format/balance";
 import { getErrorMessage } from "../guards";
 import type { DflowQuote } from "./useDflowQuote";
@@ -75,7 +75,7 @@ export const useEclobQuote = (
       }
 
       try {
-        const route = await resolveEclobRoute(inputMint, outputMint);
+        const route = await resolveEclobRoute(rpc, inputMint, outputMint);
         if (cancelled) return;
         if (!route) {
           setQuote({
@@ -86,26 +86,15 @@ export const useEclobQuote = (
           return;
         }
 
-        const [data, slot] = await Promise.all([
-          fetchMarketData(rpc, route.market),
-          rpc.getSlot({ commitment: "confirmed" }).send(),
-        ]);
+        const slot = await rpc.getSlot({ commitment: "confirmed" }).send();
         if (cancelled) return;
-        if (!data) {
-          setQuote({
-            ...INITIAL,
-            status: "error",
-            error: "Market not found on this cluster",
-          });
-          return;
-        }
 
         // Idempotent; instantiates the WASM module on the first quote.
         await initSimulator();
         if (cancelled) return;
 
         const q = simulateSwap(
-          data,
+          route.marketData,
           route.side,
           atomic,
           route.limitPriceBits,
