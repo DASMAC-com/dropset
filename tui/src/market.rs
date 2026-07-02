@@ -308,7 +308,10 @@ pub fn seed_vault(
     //    the book opens with depth across several price levels (not a single
     //    rung the maker only later fans out) and at the tighter default spread.
     log.log("set_liquidity_profile");
-    let bytes = ladder_profile_bytes(&ladder_at_spread_bps(DEFAULT_SPREAD_BPS), config.expiry_offset);
+    let bytes = ladder_profile_bytes(
+        &ladder_at_spread_bps(DEFAULT_SPREAD_BPS),
+        config.expiry_offset,
+    );
     let ix = set_liquidity_profile_ix(leader.pubkey(), market.address, VAULT_IDX, bytes);
     chain::send_logged(
         client,
@@ -487,7 +490,10 @@ mod tests {
         let profile: &LiquidityProfile = bytemuck::from_bytes(&bytes);
         // Bid stays at the full seed ladder; ask depth is thinned to 30%.
         assert_eq!(profile.bids[0].size_bps.get(), SEED_LADDER[0].1);
-        assert_eq!(profile.asks[0].size_bps.get(), (SEED_LADDER[0].1 as f64 * 0.3).round() as u16);
+        assert_eq!(
+            profile.asks[0].size_bps.get(),
+            (SEED_LADDER[0].1 as f64 * 0.3).round() as u16
+        );
         // Offsets are untouched on both sides.
         assert_eq!(profile.bids[0].price_offset.get(), SEED_LADDER[0].0);
         assert_eq!(profile.asks[0].price_offset.get(), SEED_LADDER[0].0);

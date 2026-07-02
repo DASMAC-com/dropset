@@ -85,9 +85,9 @@ fn ws_url_from_rpc(rpc_url: &str) -> String {
 fn run(ws_url: &str, rpc: &RpcClient, tx: &Sender<JobEvent>) {
     loop {
         match subscribe_and_forward(ws_url, rpc, tx) {
-            Ok(true) => return,  // receiver dropped — TUI is quitting
-            Ok(false) => {}      // websocket closed — reconnect
-            Err(_) => {}         // subscribe failed (validator not up / wiped)
+            Ok(true) => return, // receiver dropped — TUI is quitting
+            Ok(false) => {}     // websocket closed — reconnect
+            Err(_) => {}        // subscribe failed (validator not up / wiped)
         }
         std::thread::sleep(RECONNECT_DELAY);
     }
@@ -187,9 +187,10 @@ fn decode_fills(rpc: &RpcClient, signature: &Signature) -> Result<(Vec<FillEvent
     let Some(decoded) = tx.transaction.decode() else {
         return Ok((Vec::new(), cu));
     };
-    let Some(account_keys) =
-        full_account_keys(decoded.message.static_account_keys(), &meta.loaded_addresses)
-    else {
+    let Some(account_keys) = full_account_keys(
+        decoded.message.static_account_keys(),
+        &meta.loaded_addresses,
+    ) else {
         return Ok((Vec::new(), cu));
     };
     Ok((collect_fills(&inner_sets, &account_keys), cu))
@@ -325,7 +326,10 @@ mod tests {
 
     #[test]
     fn ws_url_follows_the_agave_convention() {
-        assert_eq!(ws_url_from_rpc("http://127.0.0.1:8899"), "ws://127.0.0.1:8900");
+        assert_eq!(
+            ws_url_from_rpc("http://127.0.0.1:8899"),
+            "ws://127.0.0.1:8900"
+        );
         assert_eq!(ws_url_from_rpc("ws://host:9000"), "ws://host:9000");
     }
 }

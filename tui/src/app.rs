@@ -31,13 +31,13 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use dropset_sdk::types::FillEvent;
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Position, Rect},
     widgets::ListState,
     Terminal,
 };
-use dropset_sdk::types::FillEvent;
 use solana_client::rpc_client::RpcClient;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
@@ -334,7 +334,10 @@ impl App {
         } else {
             explorer::hosted_tx_url(signature, &self.ctx.rpc_url)
         };
-        self.log(LogKind::Info, format!("Opening tx {signature} in the explorer…"));
+        self.log(
+            LogKind::Info,
+            format!("Opening tx {signature} in the explorer…"),
+        );
         if let Err(e) = open::that(&url) {
             self.log(LogKind::Err, format!("open explorer: {e:#}"));
         }
@@ -634,7 +637,10 @@ impl App {
     fn step_spread(&mut self, action: Action) {
         self.spread_bps = match action {
             Action::WidenSpread => (self.spread_bps + SPREAD_STEP_BPS).min(MAX_SPREAD_BPS),
-            _ => self.spread_bps.saturating_sub(SPREAD_STEP_BPS).max(MIN_SPREAD_BPS),
+            _ => self
+                .spread_bps
+                .saturating_sub(SPREAD_STEP_BPS)
+                .max(MIN_SPREAD_BPS),
         };
         self.run_action(action);
     }

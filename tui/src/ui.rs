@@ -307,8 +307,7 @@ fn draw_alerts(f: &mut Frame<'_>, app: &App, area: Rect) {
     {
         alerts.push((
             Color::DarkGray,
-            "CMC_API_KEY unset — maker FX feed uses CoinGecko → FX-rate → static."
-                .to_string(),
+            "CMC_API_KEY unset — maker FX feed uses CoinGecko → FX-rate → static.".to_string(),
         ));
     }
 
@@ -316,8 +315,7 @@ fn draw_alerts(f: &mut Frame<'_>, app: &App, area: Rect) {
     if app.feed_degraded {
         alerts.push((
             Color::Yellow,
-            "FX feed unavailable (rate-limited?) — maker quoting on the fallback peg."
-                .to_string(),
+            "FX feed unavailable (rate-limited?) — maker quoting on the fallback peg.".to_string(),
         ));
     }
 
@@ -329,7 +327,12 @@ fn draw_alerts(f: &mut Frame<'_>, app: &App, area: Rect) {
     } else {
         alerts
             .into_iter()
-            .map(|(color, msg)| Line::from(Span::styled(format!("\u{2022} {msg}"), Style::new().fg(color))))
+            .map(|(color, msg)| {
+                Line::from(Span::styled(
+                    format!("\u{2022} {msg}"),
+                    Style::new().fg(color),
+                ))
+            })
             .collect()
     };
     f.render_widget(
@@ -693,7 +696,10 @@ fn draw_book(f: &mut Frame<'_>, app: &App, area: Rect) {
         Some(market) => {
             let symbol = symbol_for(&app.mint_symbols, &market.base_mint, "market");
             let flag = flag_for(symbol);
-            (format!(" order book · {flag} {symbol} "), book::lines(market))
+            (
+                format!(" order book · {flag} {symbol} "),
+                book::lines(market),
+            )
         }
         None => (
             " order book ".to_string(),
@@ -748,9 +754,7 @@ fn draw_fills(f: &mut Frame<'_>, app: &mut App, area: Rect) {
         .fills
         .iter()
         .rev()
-        .filter(|r| {
-            r.event.market == address && r.event.fill_base > 0 && r.event.fill_quote > 0
-        })
+        .filter(|r| r.event.market == address && r.event.fill_base > 0 && r.event.fill_quote > 0)
         .take(height)
         .map(|r| {
             let size = r.event.fill_base as f64 / 10f64.powi(base_dec as i32);
@@ -959,7 +963,10 @@ fn cu_header() -> Line<'static> {
 fn cu_line(label: &str, units: u64, time: &str, sig: &str) -> Line<'static> {
     let mut spans = vec![
         Span::raw(format!("{label:<22}")),
-        Span::styled(format!("{:>10}", fmt_units(units)), Style::new().fg(Color::Cyan)),
+        Span::styled(
+            format!("{:>10}", fmt_units(units)),
+            Style::new().fg(Color::Cyan),
+        ),
         Span::styled(format!("  {time:>8}"), Style::new().fg(Color::DarkGray)),
     ];
     if !sig.is_empty() {

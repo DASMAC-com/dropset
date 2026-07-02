@@ -165,7 +165,10 @@ fn row_line(r: &Row, max_size: f64, color: Color) -> Line<'static> {
     let bar = "\u{2588}".repeat(filled);
     Line::from(vec![
         Span::styled(format!("{bar:>BAR_WIDTH$}"), Style::new().fg(color)),
-        Span::styled(format!("  {:>10}", fmt_price(r.price)), Style::new().fg(color)),
+        Span::styled(
+            format!("  {:>10}", fmt_price(r.price)),
+            Style::new().fg(color),
+        ),
         Span::styled(
             format!("  {:>12.2}", r.size),
             Style::new().fg(Color::DarkGray),
@@ -194,10 +197,16 @@ fn divider(best_ask: Option<&Row>, best_bid: Option<&Row>) -> Line<'static> {
             )
         }
         (Some(a), None) => {
-            format!("\u{2500}\u{2500} best ask {} \u{2500}\u{2500}", fmt_price(a.price))
+            format!(
+                "\u{2500}\u{2500} best ask {} \u{2500}\u{2500}",
+                fmt_price(a.price)
+            )
         }
         (None, Some(b)) => {
-            format!("\u{2500}\u{2500} best bid {} \u{2500}\u{2500}", fmt_price(b.price))
+            format!(
+                "\u{2500}\u{2500} best bid {} \u{2500}\u{2500}",
+                fmt_price(b.price)
+            )
         }
         (None, None) => "\u{2500}\u{2500}".to_string(),
     };

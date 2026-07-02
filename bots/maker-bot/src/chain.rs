@@ -264,7 +264,11 @@ fn event_authority() -> Pubkey {
 /// classic SPL Token program.
 fn associated_token_address(wallet: &Pubkey, mint: &Pubkey) -> Pubkey {
     Pubkey::find_program_address(
-        &[wallet.as_ref(), SPL_TOKEN_PROGRAM_ID.as_ref(), mint.as_ref()],
+        &[
+            wallet.as_ref(),
+            SPL_TOKEN_PROGRAM_ID.as_ref(),
+            mint.as_ref(),
+        ],
         &ATA_PROGRAM_ID,
     )
     .0
@@ -325,12 +329,23 @@ pub fn replenish(
         create_ata_idempotent_ix(&leader.pubkey(), &leader.pubkey(), &market.quote_mint),
     ];
     if base_atoms > 0 {
-        ixs.push(mint_to_ix(&market.base_mint, &base_ata, &authority.pubkey(), base_atoms));
+        ixs.push(mint_to_ix(
+            &market.base_mint,
+            &base_ata,
+            &authority.pubkey(),
+            base_atoms,
+        ));
     }
     if quote_atoms > 0 {
-        ixs.push(mint_to_ix(&market.quote_mint, &quote_ata, &authority.pubkey(), quote_atoms));
+        ixs.push(mint_to_ix(
+            &market.quote_mint,
+            &quote_ata,
+            &authority.pubkey(),
+            quote_atoms,
+        ));
     }
-    send_signed(client, leader, &[leader, authority], &ixs).context("mint top-up to leader ATAs")?;
+    send_signed(client, leader, &[leader, authority], &ixs)
+        .context("mint top-up to leader ATAs")?;
 
     let ix = DepositLeader {
         signer: leader.pubkey(),
