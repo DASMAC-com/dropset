@@ -18,8 +18,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use dropset_maker_bot::config::{
-    ws_url_from_rpc, BotConfig, MarketConfig, DEFAULT_LEADER_KEY, MARKETS, MINT_AUTHORITY_KEY,
-    QUOTE_KEYPAIR_FILE,
+    ws_url_from_rpc, BotConfig, MarketConfig, DEFAULT_LEADER_KEY, MARKETS, QUOTE_KEYPAIR_FILE,
 };
 use dropset_maker_bot::context::Context as BotContext;
 use dropset_maker_bot::model::fair_mid::{compose, Quote};
@@ -38,7 +37,6 @@ const AIRDROP_LAMPORTS: u64 = 2 * LAMPORTS_PER_SOL;
 
 struct Args {
     leader_key: String,
-    mint_authority_key: String,
     dry_run: bool,
     /// Tiers to suppress in a dry run (to exercise the cascade).
     drop: Vec<String>,
@@ -78,7 +76,6 @@ fn main() -> Result<()> {
 /// Parse flags, mutating `cfg` and returning the run options.
 fn parse_args(cfg: &mut BotConfig) -> Args {
     let mut leader_key = DEFAULT_LEADER_KEY.to_string();
-    let mut mint_authority_key = MINT_AUTHORITY_KEY.to_string();
     let mut dry_run = false;
     let mut drop = Vec::new();
     let mut markets = Vec::new();
@@ -100,11 +97,6 @@ fn parse_args(cfg: &mut BotConfig) -> Args {
                     leader_key = path;
                 }
             }
-            "--mint-authority-key" => {
-                if let Some(path) = it.next() {
-                    mint_authority_key = path;
-                }
-            }
             "--market" => {
                 if let Some(symbol) = it.next() {
                     markets.push(symbol);
@@ -121,7 +113,6 @@ fn parse_args(cfg: &mut BotConfig) -> Args {
     }
     Args {
         leader_key,
-        mint_authority_key,
         dry_run,
         drop,
         markets,
@@ -138,11 +129,6 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
     chain::assert_localnet(&client)?;
     let leader = solana_keypair::read_keypair_file(&args.leader_key)
         .map_err(|e| anyhow!("read leader key {}: {e}", args.leader_key))?;
-    // The mock-mint authority for the localnet inventory top-up (mint +
-    // deposit_leader when a leg drains). Loaded up front so a missing key fails
-    // fast rather than mid-run; it never quotes.
-    let mint_authority = solana_keypair::read_keypair_file(&args.mint_authority_key)
-        .map_err(|e| anyhow!("read mint-authority key {}: {e}", args.mint_authority_key))?;
 
     // The leader pays for its own quoting txns; top it up on localnet.
     let balance = client
@@ -189,7 +175,6 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
         contexts.push(BotContext::new(
             chain::rpc(&cfg.rpc_url),
             leader.insecure_clone(),
-            mint_authority.insecure_clone(),
             cfg.vault_idx,
             addrs.clone(),
             *market,
@@ -293,7 +278,6 @@ mod tests {
     fn args(markets: &[&str]) -> Args {
         Args {
             leader_key: DEFAULT_LEADER_KEY.to_string(),
-            mint_authority_key: MINT_AUTHORITY_KEY.to_string(),
             dry_run: false,
             drop: Vec::new(),
             markets: markets.iter().map(|s| s.to_string()).collect(),

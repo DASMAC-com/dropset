@@ -10,28 +10,20 @@
 
 use anyhow::{anyhow, Context as _, Result};
 use dropset_sdk::accounts::MARKET_HEADER_DISCRIMINATOR;
-use dropset_sdk::instructions::{DepositLeader, DepositLeaderInstructionArgs};
 use dropset_sdk::layout::MarketView as SlabView;
 use dropset_sdk::price::Price;
 use dropset_sdk::quoting::{set_liquidity_profile_ix, set_reference_price_ix};
 use dropset_sdk::DROPSET_ID;
 use solana_client::rpc_client::RpcClient;
 use solana_commitment_config::CommitmentConfig;
-use solana_instruction::{AccountMeta, Instruction};
+use solana_instruction::Instruction;
 use solana_keypair::Keypair;
-use solana_pubkey::{pubkey, Pubkey};
+use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 use solana_transaction::Transaction;
 use std::time::Duration;
 
 use crate::context::{MarketAddrs, VaultSnapshot};
-
-/// SPL Token / ATA / System program ids, for the inventory top-up path (mint +
-/// `deposit_leader`). The mock demo mints live under the classic SPL Token
-/// program, matching the TUI bootstrap.
-const SPL_TOKEN_PROGRAM_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
-const ATA_PROGRAM_ID: Pubkey = pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
-const SYSTEM_PROGRAM_ID: Pubkey = pubkey!("11111111111111111111111111111111");
 
 /// Decode scale for a `Price` to a float — `value × 10^9`, matching the SDK's
 /// `quoting` module.
@@ -255,141 +247,12 @@ pub fn current_slot(client: &RpcClient) -> Result<u64> {
     client.get_slot().context("get_slot")
 }
 
-/// The self-CPI event-authority PDA — seeds `[b"__event_authority"]`.
-fn event_authority() -> Pubkey {
-    Pubkey::find_program_address(&[b"__event_authority"], &DROPSET_ID).0
-}
-
-/// Canonical associated-token-account address for `(wallet, mint)` under the
-/// classic SPL Token program.
-fn associated_token_address(wallet: &Pubkey, mint: &Pubkey) -> Pubkey {
-    Pubkey::find_program_address(
-        &[
-            wallet.as_ref(),
-            SPL_TOKEN_PROGRAM_ID.as_ref(),
-            mint.as_ref(),
-        ],
-        &ATA_PROGRAM_ID,
-    )
-    .0
-}
-
-/// SPL Token `MintTo` (index 7): mint `amount` atoms of `mint` to `ata`,
-/// `authority` (the mock-mint authority) signing.
-fn mint_to_ix(mint: &Pubkey, ata: &Pubkey, authority: &Pubkey, amount: u64) -> Instruction {
-    let mut data = vec![7u8];
-    data.extend_from_slice(&amount.to_le_bytes());
-    Instruction::new_with_bytes(
-        SPL_TOKEN_PROGRAM_ID,
-        &data,
-        vec![
-            AccountMeta::new(*mint, false),
-            AccountMeta::new(*ata, false),
-            AccountMeta::new_readonly(*authority, true),
-        ],
-    )
-}
-
-/// ATA-program `CreateIdempotent` (index 1), paid by `payer` — safe to include
-/// even when the leader's ATA already exists (it does after bootstrap).
-fn create_ata_idempotent_ix(payer: &Pubkey, wallet: &Pubkey, mint: &Pubkey) -> Instruction {
-    Instruction::new_with_bytes(
-        ATA_PROGRAM_ID,
-        &[1u8],
-        vec![
-            AccountMeta::new(*payer, true),
-            AccountMeta::new(associated_token_address(wallet, mint), false),
-            AccountMeta::new_readonly(*wallet, false),
-            AccountMeta::new_readonly(*mint, false),
-            AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
-            AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
-        ],
-    )
-}
-
-/// Mint `base_atoms` / `quote_atoms` of the depleted legs to the leader's ATAs
-/// (under the mock-mint `authority`) and `deposit_leader` them into the vault —
-/// restoring a two-sided book after one leg is drained. Localnet-only: the
-/// authority is the committed mock admin, guarded by [`assert_localnet`] at
-/// startup. A `0` leg is skipped. Two sends: the mint (leader pays, authority
-/// co-signs), then `deposit_leader` (leader signs).
-pub fn replenish(
-    client: &RpcClient,
-    leader: &Keypair,
-    authority: &Keypair,
-    market: &MarketAddrs,
-    vault_idx: u32,
-    base_atoms: u64,
-    quote_atoms: u64,
-) -> Result<()> {
-    let base_ata = associated_token_address(&leader.pubkey(), &market.base_mint);
-    let quote_ata = associated_token_address(&leader.pubkey(), &market.quote_mint);
-    let mut ixs = vec![
-        create_ata_idempotent_ix(&leader.pubkey(), &leader.pubkey(), &market.base_mint),
-        create_ata_idempotent_ix(&leader.pubkey(), &leader.pubkey(), &market.quote_mint),
-    ];
-    if base_atoms > 0 {
-        ixs.push(mint_to_ix(
-            &market.base_mint,
-            &base_ata,
-            &authority.pubkey(),
-            base_atoms,
-        ));
-    }
-    if quote_atoms > 0 {
-        ixs.push(mint_to_ix(
-            &market.quote_mint,
-            &quote_ata,
-            &authority.pubkey(),
-            quote_atoms,
-        ));
-    }
-    send_signed(client, leader, &[leader, authority], &ixs)
-        .context("mint top-up to leader ATAs")?;
-
-    let ix = DepositLeader {
-        signer: leader.pubkey(),
-        market: market.market,
-        base_mint: market.base_mint,
-        quote_mint: market.quote_mint,
-        base_token_program: SPL_TOKEN_PROGRAM_ID,
-        quote_token_program: SPL_TOKEN_PROGRAM_ID,
-        signer_base_ata: base_ata,
-        signer_quote_ata: quote_ata,
-        market_base_treasury: market.base_treasury,
-        market_quote_treasury: market.quote_treasury,
-        system_program: SYSTEM_PROGRAM_ID,
-        associated_token_program: ATA_PROGRAM_ID,
-        event_authority: event_authority(),
-        program: DROPSET_ID,
-    }
-    .instruction(DepositLeaderInstructionArgs {
-        vault_idx,
-        base_in: base_atoms,
-        quote_in: quote_atoms,
-        max_base_in: base_atoms,
-        max_quote_in: quote_atoms,
-    });
-    send_signed(client, leader, &[leader], &[ix]).context("deposit_leader top-up")?;
-    Ok(())
-}
-
-/// Sign `ixs` with the leader (fee payer and only signer) and send.
+/// Sign `ixs` with the leader (fee payer and only signer) and send,
+/// confirming at the client's commitment. On failure, re-simulate to recover
+/// the program logs a `ClientError` drops for a custom-program error.
 fn send(client: &RpcClient, leader: &Keypair, ixs: &[Instruction]) -> Result<String> {
-    send_signed(client, leader, &[leader], ixs)
-}
-
-/// Sign `ixs` with `signers` (fee payer = `payer`) and send, confirming at the
-/// client's commitment. On failure, re-simulate to recover the program logs a
-/// `ClientError` drops for a custom-program error.
-fn send_signed(
-    client: &RpcClient,
-    payer: &Keypair,
-    signers: &[&Keypair],
-    ixs: &[Instruction],
-) -> Result<String> {
     let blockhash = client.get_latest_blockhash().context("blockhash")?;
-    let tx = Transaction::new_signed_with_payer(ixs, Some(&payer.pubkey()), signers, blockhash);
+    let tx = Transaction::new_signed_with_payer(ixs, Some(&leader.pubkey()), &[leader], blockhash);
     match client.send_and_confirm_transaction(&tx) {
         Ok(sig) => Ok(sig.to_string()),
         Err(err) => {

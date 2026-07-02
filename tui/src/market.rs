@@ -64,15 +64,11 @@ pub struct PairConfig {
     /// ~$1.14 … IDRX ~$0.000056), so this is converted to the on-chain
     /// atoms-ratio per [`reference_atoms_ratio`] before encoding.
     pub reference_price: f64,
-    /// Top-rung quote geometry: the tightest `±offset_ppm` spread and the
-    /// per-side `size_bps` commit (Σ across a ladder's rungs). The bootstrap
-    /// seeds a multi-rung [`SEED_LADDER`] whose first rung is this offset and
-    /// whose sizes sum to this commit; the TUI reshape presets read
-    /// `offset_ppm` for their single-rung "thin the far side" demo.
-    /// `expiry_offset` is how many slots after the quote each rung expires (the
-    /// maker re-arms it).
-    pub offset_ppm: u32,
-    pub size_bps: u16,
+    /// How many slots after the quote each ladder rung expires. The bootstrap
+    /// stamps this on the seeded profile; `u32::MAX` means never (the maker
+    /// re-arms expiry itself once it takes over). The rung geometry (offsets and
+    /// per-side depth) lives in [`SEED_LADDER`] / [`ladder_at_spread_bps`], not
+    /// here — every market opens with the same shape.
     pub expiry_offset: u32,
 }
 
@@ -102,8 +98,6 @@ const fn fx_market(
         },
         leader_keypair_file: "keys/EEEE.json",
         reference_price,
-        offset_ppm: 5_000,       // ±0.5%
-        size_bps: 10_000,        // 100% of each leg
         expiry_offset: u32::MAX, // never expires (re-armed by the maker bot)
     }
 }
@@ -416,17 +410,6 @@ pub fn seed_ladder_scaled_offsets(scale: f64) -> [(u32, u16); 4] {
     out
 }
 
-/// The seed ladder with every rung's depth scaled by `scale` (offsets
-/// unchanged) — the thinned side of a "thin the far side" reshape, which keeps
-/// the full multi-level shape but shrinks each rung's size.
-pub fn seed_ladder_scaled_depth(scale: f64) -> [(u32, u16); 4] {
-    let mut out = SEED_LADDER;
-    for (_, size_bps) in &mut out {
-        *size_bps = ((*size_bps as f64) * scale).round() as u16;
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -485,7 +468,12 @@ mod tests {
     /// "thin the far side": a full bid ladder over a thinned ask ladder.
     #[test]
     fn asymmetric_ladder_encodes_each_side_independently() {
-        let asks = seed_ladder_scaled_depth(0.3);
+        // Thinned asks: the seed ladder with each rung's depth scaled to 30% —
+        // built inline the way `do_reshape`'s thin-far-side path does.
+        let mut asks = SEED_LADDER;
+        for (_, size_bps) in &mut asks {
+            *size_bps = (*size_bps as f64 * 0.3).round() as u16;
+        }
         let bytes = ladder_profile_bytes_asym(&SEED_LADDER, &asks, u32::MAX);
         let profile: &LiquidityProfile = bytemuck::from_bytes(&bytes);
         // Bid stays at the full seed ladder; ask depth is thinned to 30%.

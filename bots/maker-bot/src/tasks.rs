@@ -77,15 +77,6 @@ struct FeedHub {
 /// retried at most this rarely before a success resets it.
 const CG_BACKOFF_CAP: Duration = Duration::from_secs(300);
 
-/// Replenish a vault leg once its value falls below this fraction of the
-/// per-side launch target: when heavy one-sided flow drains a leg, the book
-/// can only quote the side that still has inventory, so the maker mints +
-/// deposits the drained leg back up to keep both sides live (localnet only).
-const REPLENISH_FLOOR_FRAC: f64 = 0.25;
-/// Minimum spacing between inventory top-ups per market, so a drained vault is
-/// replenished at most once per cooldown rather than every tick.
-const REPLENISH_COOLDOWN: Duration = Duration::from_secs(20);
-
 impl FeedHub {
     fn new() -> Self {
         Self {
@@ -411,56 +402,6 @@ fn quote_market(
         }
     };
 
-    // Inventory guard: if a leg has drained below the floor (heavy one-sided
-    // flow), mint + deposit it back toward the per-side launch target so the
-    // book stays two-sided instead of quoting only the side that still has
-    // inventory. Localnet only (signed by the mock-mint authority), cadence-
-    // limited, and it skips the rest of the tick so the next read sees the
-    // restored balance.
-    let per_side = launch_tvl / 2.0;
-    let floor = per_side * REPLENISH_FLOOR_FRAC;
-    let base_usd = base_atoms as f64 / 10f64.powi(ctx.market.base_decimals as i32) * mid;
-    let quote_usd = quote_atoms as f64 / 10f64.powi(ctx.market.quote_decimals as i32);
-    if per_side > 0.0
-        && (base_usd < floor || quote_usd < floor)
-        && now.duration_since(ctx.last_replenish_at) >= REPLENISH_COOLDOWN
-    {
-        let base_top = if base_usd < floor {
-            ((per_side - base_usd) / mid * 10f64.powi(ctx.market.base_decimals as i32)) as u64
-        } else {
-            0
-        };
-        let quote_top = if quote_usd < floor {
-            ((per_side - quote_usd) * 10f64.powi(ctx.market.quote_decimals as i32)) as u64
-        } else {
-            0
-        };
-        if base_top > 0 || quote_top > 0 {
-            match chain::replenish(
-                &ctx.client,
-                &ctx.leader,
-                &ctx.mint_authority,
-                &ctx.market,
-                ctx.vault_idx,
-                base_top,
-                quote_top,
-            ) {
-                Ok(()) => {
-                    ctx.last_replenish_at = now;
-                    // Inventory changed under us — reseed the fill-derived
-                    // position from the vault on the next tick.
-                    ctx.position = None;
-                    println!(
-                        "[{}][inventory] leg drained — minted {base_top} base / {quote_top} quote and deposited to keep the book two-sided",
-                        ctx.cfg.symbol
-                    );
-                }
-                Err(e) => eprintln!("[{}][inventory] replenish failed: {e}", ctx.cfg.symbol),
-            }
-            return Ok(());
-        }
-    }
-
     let degraded = fair.health == Health::Degraded;
     let action = killswitch::evaluate(&fair, &inv, &cfg.kill, degraded, launch_tvl);
     let skew_bps = skew::ref_skew_bps(&inv, &cfg.strategy);
@@ -735,5 +676,23 @@ mod tests {
         let now = Instant::now();
         assert!(due(None, now, Duration::from_secs(10)));
         assert!(!due(Some(now), now, Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn cg_backoff_doubles_from_base_and_caps() {
+        let base = Duration::from_secs(60);
+        let mut hub = FeedHub::new();
+        assert_eq!(hub.cg_backoff, None);
+        // First failure starts the backoff at 2× the base.
+        hub.grow_cg_backoff(base);
+        assert_eq!(hub.cg_backoff, Some(base * 2));
+        // Subsequent failures keep doubling, then clamp at the cap.
+        for _ in 0..10 {
+            hub.grow_cg_backoff(base);
+        }
+        assert_eq!(hub.cg_backoff, Some(CG_BACKOFF_CAP));
+        // A success resets it back to the base.
+        hub.cg_backoff = None;
+        assert_eq!(hub.cg_backoff, None);
     }
 }

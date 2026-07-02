@@ -62,10 +62,6 @@ pub enum ProfileKind {
 pub struct Context {
     pub client: RpcClient,
     pub leader: Keypair,
-    /// The mock-mint authority (`keys/BBBB.json`) — used only on localnet to
-    /// replenish a drained leg (mint + `deposit_leader`) so the book stays
-    /// two-sided. It never quotes; the leader remains the quote authority.
-    pub mint_authority: Keypair,
     pub vault_idx: u32,
     pub market: MarketAddrs,
     /// The market's feed identity (CoinGecko / CoinMarketCap ids, the FX
@@ -88,10 +84,6 @@ pub struct Context {
     /// When the hot / cold paths last fired.
     pub last_set_at: Instant,
     pub last_profile_at: Instant,
-    /// When the inventory top-up last fired — cadence-limits the mint + deposit
-    /// so a drained vault is replenished at most once per cooldown, not every
-    /// tick.
-    pub last_replenish_at: Instant,
     /// The profile shape the bot believes is armed.
     pub profile_kind: ProfileKind,
     /// Inventory `(base_atoms, quote_atoms)` at the previous tick — used by
@@ -108,11 +100,9 @@ pub struct Context {
 impl Context {
     /// Build a context around a discovered market, starting the cadence clocks
     /// in the past so the first tick can establish the reference immediately.
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         client: RpcClient,
         leader: Keypair,
-        mint_authority: Keypair,
         vault_idx: u32,
         market: MarketAddrs,
         cfg: MarketConfig,
@@ -121,7 +111,6 @@ impl Context {
         Self {
             client,
             leader,
-            mint_authority,
             vault_idx,
             market,
             cfg,
@@ -131,7 +120,6 @@ impl Context {
             last_skew_bps: 0.0,
             last_set_at: now,
             last_profile_at: now,
-            last_replenish_at: now,
             profile_kind: ProfileKind::Unknown,
             last_inventory: None,
             position: None,

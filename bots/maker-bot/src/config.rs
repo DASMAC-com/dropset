@@ -60,12 +60,6 @@ pub const DEFAULT_LEADER_KEY: &str = "keys/EEEE.json";
 pub const QUOTE_KEYPAIR_FILE: &str = "keys/USDC.json";
 pub const QUOTE_DECIMALS: u8 = 6;
 
-/// The mock-mint authority (`keys/README.md` → `BBBB`, the committed localnet
-/// admin the TUI created the mints under). Used only on localnet to replenish a
-/// drained vault leg (mint + `deposit_leader`); it never quotes. Same key the
-/// taker bot mints its inventory under.
-pub const MINT_AUTHORITY_KEY: &str = "keys/BBBB.json";
-
 /// One FX-stablecoin market: a base token quoted against USDC, with the
 /// per-tier feed identifiers and the mint / decimals the bot needs to address
 /// its vault and value inventory. The reference price is *discovered* from the
