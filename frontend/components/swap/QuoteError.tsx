@@ -5,7 +5,7 @@ import { X } from "@/components/icons";
 import type { DflowQuote } from "@/lib/hooks/useDflowQuote";
 import { useLiquidityLookup } from "@/lib/hooks/useUsdQuote";
 
-// Inline, dismissable message shown under the swap panel when a quote fails —
+// Inline, dismissible message shown under the swap panel when a quote fails —
 // either route (DFlow's `route_not_found`, or an eCLOB error like "No Dropset
 // market for this pair"). The eCLOB messages render verbatim; the DFlow
 // `route_not_found` case is the common one and has two distinct user-facing
