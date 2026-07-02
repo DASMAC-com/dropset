@@ -21,3 +21,8 @@ npm-debug.log*
 
 *.tsbuildinfo
 next-env.d.ts
+
+# Brand assets copied from frontend/public at dev/build time
+# (see scripts/copy-brand-assets.mjs); sourced, not committed.
+/public/dropset-wordmark.png
+/public/favicon-with-stroke.svg
