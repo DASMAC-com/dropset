@@ -49,7 +49,11 @@ a browser once it's up. Arrow keys drive a deck; `p` opens presenter mode
 
 A dedicated Vercel project (not the `frontend` project) with **Root
 Directory = `decks/`**. `vercel.json` gates deploys to `main` only,
-mirroring `frontend`. The custom domain `decks.dropset.io` is mapped in
+mirroring `frontend`. The gate uses `"**": false` (not `"*"`): minimatch
+`*` stops at a `/`, so `"*"` never matches slash-bearing merge-queue
+branches (`gh-readonly-queue/main/pr-…`) and Vercel would still preview
+them — `"**"` spans the slashes. The custom domain `decks.dropset.io` is
+mapped in
 Vercel with a `CNAME decks -> cname.vercel-dns.com` DNS record. Creating
 that Vercel project + DNS record is a one-time out-of-band step.
 
