@@ -60,6 +60,16 @@ solana-pubkey.workspace = true
 # `make test-no-teardown` already exercises the feature-off dispatcher
 # (every teardown instruction then returns `TeardownDisabled`).
 admin-teardown = []
+# Production entrypoint: the `SetReferencePrice` discriminator is handled
+# by the hand-written sBPF `src/asm/entrypoint.s`, which short-circuits it
+# ahead of Anchor's dispatcher and `call`s the dispatcher for everything
+# else. Off by default until Rust↔ASM parity and the CU saving are
+# validated; the default (feature-off) build keeps the plain Anchor
+# entrypoint + the reference Rust handler, which doubles as the parity
+# oracle. See the architecture spec's **SetReferencePrice**. The build
+# wiring (anchor-lang-v2 `no-entrypoint` + the asm include) is added with
+# the entrypoint itself.
+asm-entrypoint = []
 cpi = ["no-entrypoint"]
 default = ["admin-teardown"]
 # Anchor v2 derive macros emit `cfg(feature = "idl-build")` gated code in

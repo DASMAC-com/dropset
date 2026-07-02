@@ -70,10 +70,10 @@ pub mod dropset {
         ctx: &mut Context<SetReferencePrice>,
         vault_idx: u32,
         price_bits: u32,
-        quote_slot: u64,
+        quote_slot: u32,
     ) -> Result<()> {
         ctx.accounts
-            .set_reference_price(vault_idx, Price::from_bits(price_bits), quote_slot)
+            .set_reference_price(vault_idx, price_bits, quote_slot)
     }
 
     #[discrim = 6]

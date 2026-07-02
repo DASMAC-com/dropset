@@ -57,12 +57,6 @@ pub const NULL_SECTOR: u32 = u32::MAX;
 /// flag — see the spec's **LiquidityProfile → Flush**.
 pub const FLUSH_BIT: u64 = 1u64 << 63;
 
-/// Default sanity cap (in slots) on how stale a leader-supplied
-/// `quote_slot` may be. ~20s on Solana mainnet. Per the spec's
-/// **SetReferencePrice**: backdating only shortens the effective expiry
-/// window (self-grief, not exploit), but worth bounding.
-pub const MAX_BACKDATE: u64 = 50;
-
 /// Q32.32 fixed-point representation of `1.0` — the seed value for
 /// [`Vault::hwm`] at first-deposit time. The HWM is value-per-share
 /// (`L / total_shares`); the first depositor's basket implies
