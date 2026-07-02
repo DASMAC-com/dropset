@@ -22,6 +22,12 @@ const PROGRAM_SO_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../target/deploy/dropset.so"
 );
+/// The `asm-entrypoint` build, produced by `make program-asm`. Used only
+/// by the Rust↔ASM parity tests; absent in a plain `cargo test` run.
+pub const ASM_PROGRAM_SO_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../target/deploy/dropset_asm.so"
+);
 const PROGRAM_KEYPAIR_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../target/deploy/dropset-keypair.json"
@@ -38,6 +44,13 @@ pub const SIGNER_FUNDING_LAMPORTS: u64 = LAMPORTS_PER_SOL;
 /// Real upgradeable-loader deploy (`create_buffer` → chunked `Write`s →
 /// `DeployWithMaxDataLen`) with `authority` as the upgrade authority.
 pub fn deploy_with_authority(authority: &Keypair) -> LiteSVM {
+    deploy_with_authority_from(authority, PROGRAM_SO_PATH)
+}
+
+/// Like [`deploy_with_authority`] but deploys the `.so` at `so_path` — the
+/// hook the parity tests use to stand up the `asm-entrypoint` artifact
+/// (`ASM_PROGRAM_SO_PATH`) alongside the default reference build.
+pub fn deploy_with_authority_from(authority: &Keypair, so_path: &str) -> LiteSVM {
     let mut svm = anchor_v2_testing::svm();
 
     let payer = Keypair::new();
@@ -49,7 +62,7 @@ pub fn deploy_with_authority(authority: &Keypair) -> LiteSVM {
     let program_kp = solana_keypair::read_keypair_file(PROGRAM_KEYPAIR_PATH)
         .expect("program keypair (run `anchor keys sync && anchor build`)");
     assert_eq!(program_kp.pubkey(), PROGRAM_ID);
-    let program_so = std::fs::read(PROGRAM_SO_PATH).expect("program .so (run `anchor build`)");
+    let program_so = std::fs::read(so_path).expect("program .so (run `anchor build`)");
     let buffer_kp = Keypair::new();
 
     let buffer_lamports = svm.minimum_balance_for_rent_exemption(
