@@ -7,7 +7,7 @@ reading the diff, watching checks, pulling failing-job logs — go
 through the **GitHub MCP server** (`mcp__github__*`), not the `gh`
 CLI, **with the deliberate exceptions below**. The skills (`init-pr`,
 `pr-title-description`, `review-pr`, `housekeeping`, `linear-task`)
-are written against it. `gh` survives in five places — two in
+are written against it. `gh` survives in four places — two in
 `review-pr`, one in `init-pr`, and the field-selected `gh pr list`
 read shared by `pr-title-description` and `housekeeping`:
 
@@ -42,21 +42,43 @@ read shared by `pr-title-description` and `housekeeping`:
   loop or a `jq` filter; the failure path still pulls logs via
   `get_job_logs`.
 
-- **Ignoring a new PR's notification subscription** (`init-pr`) — a
-  one-shot `gh api --method PUT` against the PR's `/subscription`
-  endpoint with `-F ignored=true`, right after the draft PR is created,
-  so its lifecycle (CI, assignment, merge) doesn't ping the author in
-  this solo / agent-driven flow. No MCP tool covers a per-PR
-  subscription — `manage_notification_subscription` needs an existing
-  thread and `manage_repository_notification_subscription` is repo-wide
-  — so the `gh api` write is the only path. It's **best-effort**:
-  `init-pr` continues if it errors, and `housekeeping`'s merged-PR
-  notification sweep is the catch-all for anything it misses. It reduces
-  to a narrow allow-rule (`firm-perms` can memorialize it):
+- **Unsubscribing from a new PR's notifications** (`init-pr`) — right
+  after the draft PR is created, so its lifecycle (CI, assignment,
+  merge) doesn't ping the author in this solo / agent-driven flow. No
+  MCP tool covers a per-PR subscription —
+  `manage_notification_subscription` needs an existing thread and
+  `manage_repository_notification_subscription` is repo-wide — so `gh`
+  is the only path. The **REST** `PUT …/issues/{n}/subscription` route
+  that reads plausible for this **does not exist** (it `404`s on every
+  PR, which a missing `notifications` scope also masks as `404`); the
+  working path is the GraphQL `updateSubscription` mutation, keyed by
+  the PR's GraphQL **node id**:
 
   ```text
-  Bash(gh api --method PUT /repos/DASMAC-com/dropset/issues/*/subscription:*)
+  gh api graphql -F id=<node_id> -f query='
+    mutation($id: ID!) {
+      updateSubscription(
+        input: { subscribableId: $id, state: IGNORED }
+      ) { subscribable { viewerSubscription } }
+    }'
   ```
+
+  The MCP `create_pull_request` returns the PR's *numeric* database id,
+  not the node id, so `init-pr` first resolves the node id with
+  `gh pr view <number> --json id` (gh's `id` field over its GraphQL
+  *is* the node id). A success returns
+  `viewerSubscription: "UNSUBSCRIBED"` (GitHub normalizes the `IGNORED`
+  readback), which is what stops the lifecycle self-pings. The mutation
+  needs the `gh` token's **`notifications`** OAuth scope — a one-time
+  operator grant
+  (`gh auth refresh -h github.com -s notifications`); without it the
+  call fails with `INSUFFICIENT_SCOPES`. It's **best-effort**:
+  `init-pr` continues if it errors, and `housekeeping`'s merged-PR
+  notification sweep is the catch-all for anything it misses. Both
+  commands reuse allow-rules already listed below —
+  `Bash(gh pr view:*)` for the node-id lookup and
+  `Bash(gh api graphql:*)` for the mutation — so no new permission is
+  needed.
 
 - **The field-selected `gh pr list --json` read** (`pr-title-description`
   and `housekeeping`) — `gh` has a `merged` state filter the MCP
@@ -136,20 +158,25 @@ writes to confirm-on-use:
   field-selected reads
   `review-pr`, `pr-title-description`, and `housekeeping` use in place
   of the full-object MCP calls (see "GitHub
-  via MCP" above and [context economy](context-economy.md)). These are
+  via MCP" above and [context economy](context-economy.md)).
+  `init-pr`'s notification unsubscribe also rides on these two —
+  `Bash(gh pr view:*)` for the node-id lookup and
+  `Bash(gh api graphql:*)` for the `updateSubscription` mutation (the
+  one write on the `gh api graphql` rule) — so it needs no allow-rule
+  of its own. These are
   Bash globs, not `mcp__github__*` entries, but they're pre-approved on
-  the same rationale (routine, low-blast-radius reads) and propagated to
+  the same rationale (routine, low-blast-radius calls) and propagated to
   the base repo so future worktrees inherit them.
 - **Pre-approve (routine PR-authoring writes):** `create_pull_request`
-  (init-pr) and `update_pull_request` (pr-title-description, review-pr),
-  plus `init-pr`'s notification-subscription ignore (the narrow
-  `gh api … /subscription` allow-rule shown above — the one `gh` write
-  of the four exceptions). The skills call these on every run to open
+  (init-pr) and `update_pull_request` (pr-title-description, review-pr).
+  The skills call these on every run to open
   and maintain the draft PR,
-  and they touch only the PR's own title / body / draft-state /
-  subscription — low
+  and they touch only the PR's own title / body / draft-state — low
   blast radius — so gating them behind a confirm prompt each run buys no
-  safety. Pre-approving them is deliberate.
+  safety. Pre-approving them is deliberate. (`init-pr`'s notification
+  unsubscribe is also a routine write, but it's a GraphQL mutation
+  covered by the `Bash(gh api graphql:*)` companion rule above, not a
+  dedicated allow-rule.)
 - **Confirm-on-use (merges, deletes, pushes, issue/actions
   mutations):** `merge_pull_request`, `delete_file`, `push_files`,
   `create_or_update_file`, `issue_write`, `actions_run_trigger`. These
@@ -165,6 +192,6 @@ The MCP entries are `mcp__github__<tool>` permission strings, not
 globs — and because of the single-tool-many-methods shape, one
 allow-rule per read tool covers all of its methods. Propagate the
 pre-approved allow-rules (the reads, the companion `gh` reads, and the
-routine PR-authoring writes incl. the notification-subscription ignore)
+routine PR-authoring writes)
 to the **base-repo** settings so future worktrees inherit them (per the
 per-worktree settings rule); `firm-perms` does this at session end.
