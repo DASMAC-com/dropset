@@ -18,7 +18,6 @@
 use solana_instruction::Instruction;
 use solana_pubkey::Pubkey;
 
-use crate::adapters::amm::CLOCK_SYSVAR;
 use crate::generated::instructions::{
     SetLiquidityProfile, SetLiquidityProfileInstructionArgs, SetReferencePrice,
     SetReferencePriceInstructionArgs,
@@ -167,6 +166,11 @@ pub fn profile_bytes(profile: &LiquidityProfile) -> [u8; 160] {
 }
 
 /// Build the `set_reference_price` instruction (relative-quoting hot path).
+///
+/// `quote_slot` is taken as the natural `u64` RPC slot and narrowed to the
+/// on-chain `u32` field here — the single truncation boundary. The
+/// horizon before a live slot exceeds `u32::MAX` is ~a decade (tracked as
+/// a follow-up to widen the field); until then the cast is lossless.
 pub fn set_reference_price_ix(
     signer: Pubkey,
     market: Pubkey,
@@ -174,15 +178,10 @@ pub fn set_reference_price_ix(
     reference: Price,
     quote_slot: u64,
 ) -> Instruction {
-    SetReferencePrice {
-        signer,
-        market,
-        clock: CLOCK_SYSVAR,
-    }
-    .instruction(SetReferencePriceInstructionArgs {
+    SetReferencePrice { signer, market }.instruction(SetReferencePriceInstructionArgs {
         vault_idx,
         price_bits: reference.as_u32(),
-        quote_slot,
+        quote_slot: quote_slot as u32,
     })
 }
 

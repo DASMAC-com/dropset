@@ -45,9 +45,16 @@ const DISC_SIZE: usize = 8;
 const NONCE_OFF: usize = DISC_SIZE + offset_of!(MarketHeader, nonce);
 /// Slab's `len: u32`, written immediately after the header.
 const LEN_OFF: usize = DISC_SIZE + size_of::<MarketHeader>();
-/// First `Vault` sector. `align_of::<Vault>() == 1` (every field is an
-/// alignment-1 `Pod` wrapper), so no padding follows the `len` field.
-const ITEMS_OFF: usize = LEN_OFF + size_of::<u32>();
+/// First `Vault` sector. `Slab` rounds the byte after the `len` field up
+/// to `align_of::<Vault>()` — which is 4 (`Vault` embeds `Price`, a
+/// `u32`-aligned newtype), not 1 — so the same `align_up` must be applied
+/// here or every sector read lands short by the padding. Computed exactly
+/// as `Slab::ITEMS_OFFSET` and cross-checked against it below.
+const ITEMS_OFF: usize = {
+    let after_len = LEN_OFF + size_of::<u32>();
+    let align = core::mem::align_of::<Vault>();
+    (after_len + align - 1) & !(align - 1)
+};
 /// One sector's stride.
 const VAULT_SIZE: usize = size_of::<Vault>();
 
@@ -66,7 +73,12 @@ const RP_QUOTE_SLOT_OFF: usize = offset_of!(ReferencePrice, quote_slot);
 // above) so a change to either side is caught.
 const _: () = assert!(NONCE_OFF == 8);
 const _: () = assert!(LEN_OFF == 245);
-const _: () = assert!(ITEMS_OFF == 249);
+const _: () = assert!(ITEMS_OFF == 252);
+// Authoritative pin: `Slab::space_for(0)` *is* the slab's `ITEMS_OFFSET`,
+// so this guarantees the kernel's sector base can never drift from the
+// real on-chain layout (a header-size or `Vault`-alignment change breaks
+// the build here).
+const _: () = assert!(ITEMS_OFF == crate::state::Market::space_for(0));
 const _: () = assert!(VAULT_SIZE == 560);
 const _: () = assert!(VAULT_QUOTE_AUTHORITY_OFF == 40);
 const _: () = assert!(VAULT_REFERENCE_PRICE_OFF == 72);
@@ -282,6 +294,32 @@ mod tests {
             stamp_reference_price(&mut data, SECTORS as u32, 1, 1, &AUTH),
             Err(err::INVALID_SECTOR_INDEX)
         );
+    }
+
+    #[test]
+    fn kernel_reads_authority_where_typed_slab_writes_it() {
+        // Cross-check the kernel's raw-byte offsets against the real
+        // `Slab<MarketHeader, Vault>`: write `quote_authority` through the
+        // typed API, then confirm the kernel finds it at the same place
+        // when handed the account's raw data bytes. Guards against a
+        // coordinate mismatch between the synthetic buffers above and the
+        // on-chain layout.
+        use super::super::test_support::{load_market, setup};
+        let buf = setup();
+        {
+            let mut market = load_market(&buf);
+            market.as_mut_slice()[1].quote_authority = AUTH.into();
+        }
+        let mut data = buf.read_data().to_vec();
+        stamp_reference_price(&mut data, 1, 0xFEED, 9, &AUTH)
+            .expect("kernel must find quote_authority at the typed-slab offset");
+        // Write the kernel's mutation back and confirm the typed API reads
+        // the stamp off the same sector — write offsets agree too.
+        buf.write_data(&data);
+        let market = load_market(&buf);
+        let rp = &market.as_slice()[1].reference_price;
+        assert_eq!(rp.price.as_u32(), 0xFEED);
+        assert_eq!(rp.quote_slot.get(), 9);
     }
 
     #[test]

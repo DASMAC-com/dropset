@@ -14,13 +14,16 @@ pub const SET_REFERENCE_PRICE_DISCRIMINATOR: [u8; 1] = [5];
 #[derive(Debug)]
 pub struct SetReferencePrice {
     /// Quote authority — the only signer the spec accepts here. Set at
-    /// `CreateVault` (defaults to the leader).
+    /// `CreateVault` (defaults to the leader); the kernel checks it
+    /// against the target vault's `quote_authority`.
     pub signer: solana_pubkey::Pubkey,
-    /// Market account holding the target vault.
+    /// CHECK: taken unchecked so the handler can borrow the raw account
+    /// data and drive the shared kernel (a typed `Market` locks the
+    /// account exclusively and would deny that borrow). The account's
+    /// discriminator and owner are not re-validated here: the authority
+    /// check plus runtime program-ownership at the store are the guards,
+    /// exactly as on the asm fast path this build mirrors.
     pub market: solana_pubkey::Pubkey,
-    /// Read for the current slot. The leader-supplied `quote_slot` is
-    /// validated against this (no future-dating, capped backdate).
-    pub clock: solana_pubkey::Pubkey,
 }
 
 impl SetReferencePrice {
@@ -37,15 +40,12 @@ impl SetReferencePrice {
         args: SetReferencePriceInstructionArgs,
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
-        let mut accounts = Vec::with_capacity(3 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(2 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.signer,
             true,
         ));
         accounts.push(solana_instruction::AccountMeta::new(self.market, false));
-        accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.clock, false,
-        ));
         accounts.extend_from_slice(remaining_accounts);
         let mut data = SetReferencePriceInstructionData::new()
             .try_to_vec()
@@ -88,7 +88,7 @@ impl Default for SetReferencePriceInstructionData {
 pub struct SetReferencePriceInstructionArgs {
     pub vault_idx: u32,
     pub price_bits: u32,
-    pub quote_slot: u64,
+    pub quote_slot: u32,
 }
 
 impl SetReferencePriceInstructionArgs {
@@ -103,15 +103,13 @@ impl SetReferencePriceInstructionArgs {
 ///
 ///   0. `[signer]` signer
 ///   1. `[writable]` market
-///   2. `[optional]` clock (default to `SysvarC1ock11111111111111111111111111111111`)
 #[derive(Clone, Debug, Default)]
 pub struct SetReferencePriceBuilder {
     signer: Option<solana_pubkey::Pubkey>,
     market: Option<solana_pubkey::Pubkey>,
-    clock: Option<solana_pubkey::Pubkey>,
     vault_idx: Option<u32>,
     price_bits: Option<u32>,
-    quote_slot: Option<u64>,
+    quote_slot: Option<u32>,
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
 
@@ -120,24 +118,22 @@ impl SetReferencePriceBuilder {
         Self::default()
     }
     /// Quote authority — the only signer the spec accepts here. Set at
-    /// `CreateVault` (defaults to the leader).
+    /// `CreateVault` (defaults to the leader); the kernel checks it
+    /// against the target vault's `quote_authority`.
     #[inline(always)]
     pub fn signer(&mut self, signer: solana_pubkey::Pubkey) -> &mut Self {
         self.signer = Some(signer);
         self
     }
-    /// Market account holding the target vault.
+    /// CHECK: taken unchecked so the handler can borrow the raw account
+    /// data and drive the shared kernel (a typed `Market` locks the
+    /// account exclusively and would deny that borrow). The account's
+    /// discriminator and owner are not re-validated here: the authority
+    /// check plus runtime program-ownership at the store are the guards,
+    /// exactly as on the asm fast path this build mirrors.
     #[inline(always)]
     pub fn market(&mut self, market: solana_pubkey::Pubkey) -> &mut Self {
         self.market = Some(market);
-        self
-    }
-    /// `[optional account, default to 'SysvarC1ock11111111111111111111111111111111']`
-    /// Read for the current slot. The leader-supplied `quote_slot` is
-    /// validated against this (no future-dating, capped backdate).
-    #[inline(always)]
-    pub fn clock(&mut self, clock: solana_pubkey::Pubkey) -> &mut Self {
-        self.clock = Some(clock);
         self
     }
     #[inline(always)]
@@ -151,7 +147,7 @@ impl SetReferencePriceBuilder {
         self
     }
     #[inline(always)]
-    pub fn quote_slot(&mut self, quote_slot: u64) -> &mut Self {
+    pub fn quote_slot(&mut self, quote_slot: u32) -> &mut Self {
         self.quote_slot = Some(quote_slot);
         self
     }
@@ -175,9 +171,6 @@ impl SetReferencePriceBuilder {
         let accounts = SetReferencePrice {
             signer: self.signer.expect("signer is not set"),
             market: self.market.expect("market is not set"),
-            clock: self.clock.unwrap_or(solana_pubkey::pubkey!(
-                "SysvarC1ock11111111111111111111111111111111"
-            )),
         };
         let args = SetReferencePriceInstructionArgs {
             vault_idx: self.vault_idx.clone().expect("vault_idx is not set"),
@@ -192,13 +185,16 @@ impl SetReferencePriceBuilder {
 /// `set_reference_price` CPI accounts.
 pub struct SetReferencePriceCpiAccounts<'a, 'b> {
     /// Quote authority — the only signer the spec accepts here. Set at
-    /// `CreateVault` (defaults to the leader).
+    /// `CreateVault` (defaults to the leader); the kernel checks it
+    /// against the target vault's `quote_authority`.
     pub signer: &'b solana_account_info::AccountInfo<'a>,
-    /// Market account holding the target vault.
+    /// CHECK: taken unchecked so the handler can borrow the raw account
+    /// data and drive the shared kernel (a typed `Market` locks the
+    /// account exclusively and would deny that borrow). The account's
+    /// discriminator and owner are not re-validated here: the authority
+    /// check plus runtime program-ownership at the store are the guards,
+    /// exactly as on the asm fast path this build mirrors.
     pub market: &'b solana_account_info::AccountInfo<'a>,
-    /// Read for the current slot. The leader-supplied `quote_slot` is
-    /// validated against this (no future-dating, capped backdate).
-    pub clock: &'b solana_account_info::AccountInfo<'a>,
 }
 
 /// `set_reference_price` CPI instruction.
@@ -206,13 +202,16 @@ pub struct SetReferencePriceCpi<'a, 'b> {
     /// The program to invoke.
     pub __program: &'b solana_account_info::AccountInfo<'a>,
     /// Quote authority — the only signer the spec accepts here. Set at
-    /// `CreateVault` (defaults to the leader).
+    /// `CreateVault` (defaults to the leader); the kernel checks it
+    /// against the target vault's `quote_authority`.
     pub signer: &'b solana_account_info::AccountInfo<'a>,
-    /// Market account holding the target vault.
+    /// CHECK: taken unchecked so the handler can borrow the raw account
+    /// data and drive the shared kernel (a typed `Market` locks the
+    /// account exclusively and would deny that borrow). The account's
+    /// discriminator and owner are not re-validated here: the authority
+    /// check plus runtime program-ownership at the store are the guards,
+    /// exactly as on the asm fast path this build mirrors.
     pub market: &'b solana_account_info::AccountInfo<'a>,
-    /// Read for the current slot. The leader-supplied `quote_slot` is
-    /// validated against this (no future-dating, capped backdate).
-    pub clock: &'b solana_account_info::AccountInfo<'a>,
     /// The arguments for the instruction.
     pub __args: SetReferencePriceInstructionArgs,
 }
@@ -227,7 +226,6 @@ impl<'a, 'b> SetReferencePriceCpi<'a, 'b> {
             __program: program,
             signer: accounts.signer,
             market: accounts.market,
-            clock: accounts.clock,
             __args: args,
         }
     }
@@ -254,17 +252,13 @@ impl<'a, 'b> SetReferencePriceCpi<'a, 'b> {
         signers_seeds: &[&[&[u8]]],
         remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
     ) -> solana_program_error::ProgramResult {
-        let mut accounts = Vec::with_capacity(3 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(2 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.signer.key,
             true,
         ));
         accounts.push(solana_instruction::AccountMeta::new(
             *self.market.key,
-            false,
-        ));
-        accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.clock.key,
             false,
         ));
         remaining_accounts.iter().for_each(|remaining_account| {
@@ -285,11 +279,10 @@ impl<'a, 'b> SetReferencePriceCpi<'a, 'b> {
             accounts,
             data,
         };
-        let mut account_infos = Vec::with_capacity(4 + remaining_accounts.len());
+        let mut account_infos = Vec::with_capacity(3 + remaining_accounts.len());
         account_infos.push(self.__program.clone());
         account_infos.push(self.signer.clone());
         account_infos.push(self.market.clone());
-        account_infos.push(self.clock.clone());
         remaining_accounts
             .iter()
             .for_each(|remaining_account| account_infos.push(remaining_account.0.clone()));
@@ -308,7 +301,6 @@ impl<'a, 'b> SetReferencePriceCpi<'a, 'b> {
 ///
 ///   0. `[signer]` signer
 ///   1. `[writable]` market
-///   2. `[]` clock
 #[derive(Clone, Debug)]
 pub struct SetReferencePriceCpiBuilder<'a, 'b> {
     instruction: Box<SetReferencePriceCpiBuilderInstruction<'a, 'b>>,
@@ -320,7 +312,6 @@ impl<'a, 'b> SetReferencePriceCpiBuilder<'a, 'b> {
             __program: program,
             signer: None,
             market: None,
-            clock: None,
             vault_idx: None,
             price_bits: None,
             quote_slot: None,
@@ -329,23 +320,22 @@ impl<'a, 'b> SetReferencePriceCpiBuilder<'a, 'b> {
         Self { instruction }
     }
     /// Quote authority — the only signer the spec accepts here. Set at
-    /// `CreateVault` (defaults to the leader).
+    /// `CreateVault` (defaults to the leader); the kernel checks it
+    /// against the target vault's `quote_authority`.
     #[inline(always)]
     pub fn signer(&mut self, signer: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
         self.instruction.signer = Some(signer);
         self
     }
-    /// Market account holding the target vault.
+    /// CHECK: taken unchecked so the handler can borrow the raw account
+    /// data and drive the shared kernel (a typed `Market` locks the
+    /// account exclusively and would deny that borrow). The account's
+    /// discriminator and owner are not re-validated here: the authority
+    /// check plus runtime program-ownership at the store are the guards,
+    /// exactly as on the asm fast path this build mirrors.
     #[inline(always)]
     pub fn market(&mut self, market: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
         self.instruction.market = Some(market);
-        self
-    }
-    /// Read for the current slot. The leader-supplied `quote_slot` is
-    /// validated against this (no future-dating, capped backdate).
-    #[inline(always)]
-    pub fn clock(&mut self, clock: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-        self.instruction.clock = Some(clock);
         self
     }
     #[inline(always)]
@@ -359,7 +349,7 @@ impl<'a, 'b> SetReferencePriceCpiBuilder<'a, 'b> {
         self
     }
     #[inline(always)]
-    pub fn quote_slot(&mut self, quote_slot: u64) -> &mut Self {
+    pub fn quote_slot(&mut self, quote_slot: u32) -> &mut Self {
         self.instruction.quote_slot = Some(quote_slot);
         self
     }
@@ -420,8 +410,6 @@ impl<'a, 'b> SetReferencePriceCpiBuilder<'a, 'b> {
             signer: self.instruction.signer.expect("signer is not set"),
 
             market: self.instruction.market.expect("market is not set"),
-
-            clock: self.instruction.clock.expect("clock is not set"),
             __args: args,
         };
         instruction.invoke_signed_with_remaining_accounts(
@@ -436,10 +424,9 @@ struct SetReferencePriceCpiBuilderInstruction<'a, 'b> {
     __program: &'b solana_account_info::AccountInfo<'a>,
     signer: Option<&'b solana_account_info::AccountInfo<'a>>,
     market: Option<&'b solana_account_info::AccountInfo<'a>>,
-    clock: Option<&'b solana_account_info::AccountInfo<'a>>,
     vault_idx: Option<u32>,
     price_bits: Option<u32>,
-    quote_slot: Option<u64>,
+    quote_slot: Option<u32>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
     __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,
 }

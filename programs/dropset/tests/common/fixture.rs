@@ -621,7 +621,7 @@ impl Fixture {
         signer: &Keypair,
         vault_idx: u32,
         price_bits: u32,
-        quote_slot: u64,
+        quote_slot: u32,
     ) -> Result<(), String> {
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
@@ -631,10 +631,11 @@ impl Fixture {
                 quote_slot,
             }
             .data(),
+            // Just [signer, market]: the clock sysvar was dropped with the
+            // write-time slot validation.
             vec![
                 AccountMeta::new_readonly(signer.pubkey(), true),
                 AccountMeta::new(self.market, false),
-                AccountMeta::new_readonly(SYSVAR_CLOCK_ID, false),
             ],
         );
         send_ixn(&mut self.svm, signer, ix)
