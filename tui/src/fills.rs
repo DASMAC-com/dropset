@@ -116,9 +116,34 @@ fn subscribe_and_forward(ws_url: &str, rpc: &RpcClient, tx: &Sender<JobEvent>) -
             continue;
         };
         // A decode failure is non-fatal: skip the transaction and keep watching.
-        let fills = decode_fills(rpc, &signature).unwrap_or_default();
+        let (fills, cu) = decode_fills(rpc, &signature).unwrap_or_default();
+        if fills.is_empty() {
+            continue;
+        }
+        let sig = signature.to_string();
+        // A transaction that emitted fills is a swap — surface its measured CU
+        // in the CU pane under "swap" (keyed by label, so a taker's swaps update
+        // the same row the probe swap does), then forward each fill leg.
+        if let Some(units) = cu {
+            if tx
+                .send(JobEvent::Cu {
+                    label: "swap".to_string(),
+                    units,
+                    signature: sig.clone(),
+                })
+                .is_err()
+            {
+                return Ok(true);
+            }
+        }
         for event in fills {
-            if tx.send(JobEvent::Fill(event)).is_err() {
+            if tx
+                .send(JobEvent::Fill {
+                    signature: sig.clone(),
+                    event,
+                })
+                .is_err()
+            {
                 return Ok(true);
             }
         }
@@ -130,8 +155,10 @@ fn subscribe_and_forward(ws_url: &str, rpc: &RpcClient, tx: &Sender<JobEvent>) -
 /// Fetch the transaction and decode every `FillEvent` inner instruction our
 /// program emitted, verifying each event's emitting program is `DROPSET_ID`
 /// (resolved against the transaction's full account-key list) before trusting
-/// its bytes — the tag and discriminator are both public.
-fn decode_fills(rpc: &RpcClient, signature: &Signature) -> Result<Vec<FillEvent>> {
+/// its bytes — the tag and discriminator are both public. Also returns the
+/// transaction's actual compute-units-consumed, so a swap's cost lands in the
+/// CU pane whoever sent it (the probe swap or a taker bot).
+fn decode_fills(rpc: &RpcClient, signature: &Signature) -> Result<(Vec<FillEvent>, Option<u64>)> {
     let confirmed = rpc
         .get_transaction_with_config(
             signature,
@@ -145,23 +172,27 @@ fn decode_fills(rpc: &RpcClient, signature: &Signature) -> Result<Vec<FillEvent>
 
     let tx = confirmed.transaction;
     let Some(meta) = tx.meta else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), None));
+    };
+    let cu = match meta.compute_units_consumed {
+        OptionSerializer::Some(units) => Some(units),
+        _ => None,
     };
     let OptionSerializer::Some(inner_sets) = meta.inner_instructions else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), cu));
     };
     // Resolve the full account-key list so each event's emitting program can be
     // checked before its bytes are trusted; bail (attribute nothing) if it
     // can't be built rather than trust an unverified emitter.
     let Some(decoded) = tx.transaction.decode() else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), cu));
     };
     let Some(account_keys) =
         full_account_keys(decoded.message.static_account_keys(), &meta.loaded_addresses)
     else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), cu));
     };
-    Ok(collect_fills(&inner_sets, &account_keys))
+    Ok((collect_fills(&inner_sets, &account_keys), cu))
 }
 
 /// Walk the inner-instruction sets and collect every `FillEvent` our program

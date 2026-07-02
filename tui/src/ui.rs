@@ -9,7 +9,6 @@ use crate::action::{self, Action};
 use crate::app::{App, LogKind};
 use crate::book;
 use crate::explorer;
-use dropset_sdk::types::FillEvent;
 use dropset_sdk::DROPSET_ID;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -27,7 +26,7 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
     // Rebuilt every frame from the current layout: stale rectangles from a
     // prior size/state must not catch clicks.
     app.click_targets.clear();
-    app.cu_targets.clear();
+    app.tx_targets.clear();
     let area = f.area();
     let [status, body, log, footer] = Layout::new(
         Direction::Vertical,
@@ -42,9 +41,10 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
 
     draw_status(f, app, status);
 
-    // Three columns: the action menu, a stacked accounts + CU column, and the
-    // markets list stacked above the selected market's order book.
-    let [menu_area, mid_area, right_area] = Layout::new(
+    // Three columns: the action menu (with an alerts pane beneath it), a stacked
+    // accounts + CU column, and the markets list stacked above the selected
+    // market's order book + fills.
+    let [left_area, mid_area, right_area] = Layout::new(
         Direction::Horizontal,
         [
             Constraint::Percentage(30),
@@ -53,7 +53,16 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
         ],
     )
     .areas(body);
+    // The action menu is a fixed height (its entries + borders); alerts take the
+    // rest of the column, right below the actions.
+    let menu_height = (action::MENU.len() as u16 + 2).clamp(3, 14);
+    let [menu_area, alerts_area] = Layout::new(
+        Direction::Vertical,
+        [Constraint::Length(menu_height), Constraint::Min(3)],
+    )
+    .areas(left_area);
     draw_menu(f, app, menu_area);
+    draw_alerts(f, app, alerts_area);
     let [accounts_area, cu_area] = Layout::new(
         Direction::Vertical,
         [Constraint::Percentage(62), Constraint::Percentage(38)],
@@ -266,6 +275,69 @@ fn menu_item(i: usize, action: Action, phase: Phase, next: Option<Action>) -> Li
         ));
     }
     ListItem::new(Line::from(spans))
+}
+
+/// Render the alerts pane beneath the actions — environment / config
+/// conditions the operator should know about (Docker missing, an unset feed
+/// key, a degraded FX feed), each a colored bullet. Shows a green "all clear"
+/// line when nothing is wrong, so the pane always reads as a live health check.
+fn draw_alerts(f: &mut Frame<'_>, app: &App, area: Rect) {
+    let mut alerts: Vec<(Color, String)> = Vec::new();
+
+    // The managed explorer container / Docker.
+    match app.ctx.explorer_state.load(Ordering::SeqCst) {
+        explorer::state::NO_DOCKER => alerts.push((
+            Color::Yellow,
+            "Docker not found — explorer falls back to the hosted site, which \
+             may not reach the localnet in Brave/Safari."
+                .to_string(),
+        )),
+        explorer::state::FAILED => alerts.push((
+            Color::Red,
+            "Explorer container failed to start — see the log.".to_string(),
+        )),
+        _ => {}
+    }
+
+    // The maker's optional CoinMarketCap secondary feed key.
+    if std::env::var("CMC_API_KEY")
+        .ok()
+        .filter(|k| !k.is_empty())
+        .is_none()
+    {
+        alerts.push((
+            Color::DarkGray,
+            "CMC_API_KEY unset — maker FX feed uses CoinGecko → FX-rate → static."
+                .to_string(),
+        ));
+    }
+
+    // The live FX feed, as reported by the maker's streamed log lines.
+    if app.feed_degraded {
+        alerts.push((
+            Color::Yellow,
+            "FX feed unavailable (rate-limited?) — maker quoting on the fallback peg."
+                .to_string(),
+        ));
+    }
+
+    let lines: Vec<Line> = if alerts.is_empty() {
+        vec![Line::from(Span::styled(
+            "\u{2713} all clear",
+            Style::new().fg(Color::Green),
+        ))]
+    } else {
+        alerts
+            .into_iter()
+            .map(|(color, msg)| Line::from(Span::styled(format!("\u{2022} {msg}"), Style::new().fg(color))))
+            .collect()
+    };
+    f.render_widget(
+        Paragraph::new(lines)
+            .block(Block::default().title(" alerts ").borders(Borders::ALL))
+            .wrap(Wrap { trim: true }),
+        area,
+    );
 }
 
 fn draw_accounts(f: &mut Frame<'_>, app: &mut App, area: Rect) {
@@ -558,8 +630,9 @@ fn draw_markets(f: &mut Frame<'_>, app: &App, area: Rect) {
 }
 
 /// One markets-list row for market `i`: selection marker · liquidity glyph ·
-/// flag · ticker · book mid (or "idle") · a green ● when its maker is running ·
-/// a cyan ● when its taker is.
+/// flag · ticker · book mid (or "idle") · the leader's reference price (the fair
+/// value the maker pegs to) · a green ● when its maker is running · a cyan ●
+/// when its taker is.
 fn market_row(app: &App, i: usize, market: &crate::accounts::MarketView) -> Line<'static> {
     let symbol = symbol_for(&app.mint_symbols, &market.base_mint, "?");
     let flag = flag_for(symbol);
@@ -578,14 +651,20 @@ fn market_row(app: &App, i: usize, market: &crate::accounts::MarketView) -> Line
     } else {
         Style::new()
     };
-    let price = mid.map_or_else(|| "idle".to_string(), |p| format!("{p:.4}"));
+    let price = mid.map_or_else(|| "idle".to_string(), book::fmt_price);
+    // The stamped reference (fair value) the maker pegs to, distinct from the
+    // reconstructed book mid — a dash before any vault has quoted one.
+    let reference = market
+        .reference_price
+        .map_or_else(|| "\u{2014}".to_string(), book::fmt_price);
 
     let mut spans = vec![
         Span::raw(marker.to_string()),
         Span::styled(format!("{glyph} "), Style::new().fg(glyph_color)),
         Span::raw(format!("{flag} ")),
         Span::styled(format!("{symbol:<6}"), symbol_style),
-        Span::styled(format!(" {price:>10}"), Style::new().fg(Color::Gray)),
+        Span::styled(format!(" {price:>11}"), Style::new().fg(Color::Gray)),
+        Span::styled(format!("  ref {reference:>11}"), Style::new().fg(Color::DarkGray)),
     ];
     if app.bots.is_running(symbol) {
         spans.push(Span::styled(
@@ -626,69 +705,137 @@ fn draw_book(f: &mut Frame<'_>, app: &App, area: Rect) {
     );
 }
 
-/// Render the recent-fills tape for the selected market — newest first, one
-/// row per fill (a buy/sell tag, the fill price, and the base size). Fed by the
+/// Render the recent-fills tape for the selected market — a column header, then
+/// newest-first rows (time · buy/sell · price · size · tx link). Fed by the
 /// `emit_cpi!` `FillEvent` subscription ([`crate::fills`]); empty until a swap
-/// lands on this market.
-fn draw_fills(f: &mut Frame<'_>, app: &App, area: Rect) {
-    let (title, lines) = match app.chain.selected_market(app.selected_market) {
-        Some(market) => {
-            let symbol = symbol_for(&app.mint_symbols, &market.base_mint, "market");
-            let flag = flag_for(symbol);
-            // Only as many rows as fit inside the borders, newest first.
-            let height = area.height.saturating_sub(2) as usize;
-            let rows: Vec<Line> = app
-                .fills
-                .iter()
-                .rev()
-                .filter(|e| e.market == market.address)
-                .take(height)
-                .map(|e| fill_line(e, market.base_decimals, market.quote_decimals))
-                .collect();
-            let lines = if rows.is_empty() {
-                vec![Line::from(Span::styled(
-                    "  no fills yet — run a swap or the taker",
-                    Style::new().fg(Color::DarkGray),
-                ))]
-            } else {
-                rows
-            };
-            (format!(" recent fills · {flag} {symbol} "), lines)
-        }
-        None => (
-            " recent fills ".to_string(),
-            vec![Line::from(Span::styled(
+/// lands on this market. Each row is a click target that opens its swap in the
+/// explorer. Degenerate zero-size / zero-value fills are skipped.
+fn draw_fills(f: &mut Frame<'_>, app: &mut App, area: Rect) {
+    // Snapshot the selected market's info as owned values so the fills / target
+    // borrows below don't overlap the chain borrow.
+    let Some((address, base_dec, quote_dec, symbol)) =
+        app.chain.selected_market(app.selected_market).map(|m| {
+            (
+                m.address,
+                m.base_decimals,
+                m.quote_decimals,
+                symbol_for(&app.mint_symbols, &m.base_mint, "market").to_string(),
+            )
+        })
+    else {
+        f.render_widget(
+            Paragraph::new(vec![Line::from(Span::styled(
                 "  no market",
                 Style::new().fg(Color::DarkGray),
-            ))],
-        ),
+            ))])
+            .block(
+                Block::default()
+                    .title(" recent fills ")
+                    .borders(Borders::ALL),
+            ),
+            area,
+        );
+        return;
     };
+    // Rows that fit below the header, newest first — snapshot to owned data so
+    // the fills read-borrow ends before the target-registration write-borrow.
+    let height = (area.height.saturating_sub(2) as usize).saturating_sub(1);
+    let rows: Vec<(String, String, u8, f64, f64)> = app
+        .fills
+        .iter()
+        .rev()
+        .filter(|r| {
+            r.event.market == address && r.event.fill_base > 0 && r.event.fill_quote > 0
+        })
+        .take(height)
+        .map(|r| {
+            let size = r.event.fill_base as f64 / 10f64.powi(base_dec as i32);
+            let value = r.event.fill_quote as f64 / 10f64.powi(quote_dec as i32);
+            (r.time.clone(), r.signature.clone(), r.event.side, value / size, size)
+        })
+        .collect();
+
+    let flag = flag_for(&symbol);
+    let title = format!(" recent fills · {flag} {symbol} ");
+    if rows.is_empty() {
+        f.render_widget(
+            Paragraph::new(vec![Line::from(Span::styled(
+                "  no fills yet — run a swap or the taker",
+                Style::new().fg(Color::DarkGray),
+            ))])
+            .block(Block::default().title(title).borders(Borders::ALL)),
+            area,
+        );
+        return;
+    }
+
+    let inner_x = area.x + 1;
+    let inner_y = area.y + 1;
+    let inner_w = area.width.saturating_sub(2);
+    let max_y = area.y + area.height.saturating_sub(1);
+    let mut lines = vec![fills_header()];
+    for (i, (time, sig, side, price, size)) in rows.iter().enumerate() {
+        // Row 0 is the header, so data rows start one below it.
+        let y = inner_y + 1 + i as u16;
+        if !sig.is_empty() && y < max_y {
+            app.tx_targets.push((
+                Rect {
+                    x: inner_x,
+                    y,
+                    width: inner_w,
+                    height: 1,
+                },
+                sig.clone(),
+            ));
+        }
+        lines.push(fill_line(time, *side, *price, *size, sig));
+    }
     f.render_widget(
         Paragraph::new(lines).block(Block::default().title(title).borders(Borders::ALL)),
         area,
     );
 }
 
-/// One fills-tape row: a colored buy/sell tag (green buy, red sell — the taker's
-/// aggressor side), the fill price (quote per base), and the base size, scaled
-/// to human units by the market's decimals. Price is derived from the fill's
-/// quote/base atoms, so it needs no `Price` decode.
-fn fill_line(event: &FillEvent, base_dec: u8, quote_dec: u8) -> Line<'static> {
-    let size = event.fill_base as f64 / 10f64.powi(base_dec as i32);
-    let value = event.fill_quote as f64 / 10f64.powi(quote_dec as i32);
-    let price = if size > 0.0 { value / size } else { 0.0 };
+/// The fills-tape column header, styled like the order book's — `time · side ·
+/// price · size · tx`, widths matching [`fill_line`].
+fn fills_header() -> Line<'static> {
+    let style = Style::new().fg(Color::Gray).add_modifier(Modifier::BOLD);
+    Line::from(vec![
+        Span::styled(format!("{:>8}", "time"), style),
+        Span::styled(format!("  {:<4}", "side"), style),
+        Span::styled(format!("  {:>10}", "price"), style),
+        Span::styled(format!("  {:>12}", "size"), style),
+        Span::styled(format!("  {}", "tx"), style),
+    ])
+}
+
+/// One fills-tape row: the observed time, a colored buy/sell tag (green buy, red
+/// sell — the taker's aggressor side), the fill price (quote per base, adaptive
+/// precision so small-value tokens keep their significant figures), the base
+/// size, and an underlined short signature linking to the swap in the explorer.
+fn fill_line(time: &str, side: u8, price: f64, size: f64, sig: &str) -> Line<'static> {
     // side: 0 = taker Buy (lifts the ask), 1 = taker Sell (hits the bid).
-    let (label, color) = if event.side == 0 {
+    let (label, color) = if side == 0 {
         ("buy ", Color::Rgb(30, 135, 80))
     } else {
         ("sell", Color::Rgb(240, 75, 90))
     };
     Line::from(vec![
-        Span::styled(label, Style::new().fg(color).add_modifier(Modifier::BOLD)),
-        Span::styled(format!("  {price:>10.4}"), Style::new().fg(color)),
+        Span::styled(format!("{time:>8}"), Style::new().fg(Color::DarkGray)),
         Span::styled(
-            format!("  {size:>12.2}"),
-            Style::new().fg(Color::DarkGray),
+            format!("  {label:<4}"),
+            Style::new().fg(color).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("  {:>10}", book::fmt_price(price)),
+            Style::new().fg(color),
+        ),
+        Span::styled(format!("  {size:>12.2}"), Style::new().fg(Color::DarkGray)),
+        Span::styled(
+            format!("  {}", short_sig(sig)),
+            Style::new()
+                .fg(Color::Gray)
+                .add_modifier(Modifier::UNDERLINED),
         ),
     ])
 }
@@ -710,11 +857,12 @@ fn flag_for(symbol: &str) -> &'static str {
     }
 }
 
-/// Render the compute-unit pane: one row per measured operation (in first-seen
-/// order), each with its latest cost and a link to the transaction that
-/// measured it. Registers each row as a click target (like the accounts pane)
-/// so a left-click opens that operation's latest tx in the explorer — re-running
-/// an operation (e.g. a repeg) updates both the cost and the linked tx.
+/// Render the compute-unit pane: a column header, then one row per measured
+/// operation (in first-seen order), each with its latest cost, the time it was
+/// recorded, and a link to the transaction that measured it. Registers each row
+/// as a click target (like the accounts pane) so a left-click opens that
+/// operation's latest tx in the explorer — re-running an operation (e.g. a
+/// repeg) updates the cost, the time, and the linked tx.
 fn draw_cu(f: &mut Frame<'_>, app: &mut App, area: Rect) {
     if app.cu.is_empty() {
         f.render_widget(
@@ -731,20 +879,30 @@ fn draw_cu(f: &mut Frame<'_>, app: &mut App, area: Rect) {
         );
         return;
     }
-    // Snapshot the rows so the target-registration borrow of `app.cu_targets`
+    // Snapshot the rows so the target-registration borrow of `app.tx_targets`
     // doesn't overlap the read borrow of `app.cu` (cheap — a handful of rows).
-    let rows = app.cu.clone();
+    let rows: Vec<(String, u64, String, String)> = app
+        .cu
+        .iter()
+        .map(|r| {
+            (
+                r.label.clone(),
+                r.units,
+                r.time.clone(),
+                r.signature.clone(),
+            )
+        })
+        .collect();
     let inner_x = area.x + 1;
     let inner_y = area.y + 1;
     let inner_w = area.width.saturating_sub(2);
     let max_y = area.y + area.height.saturating_sub(1);
-    let mut lines = Vec::with_capacity(rows.len());
-    for (i, (label, units, sig)) in rows.iter().enumerate() {
-        let y = inner_y + i as u16;
-        // Register the row as a tx click target (skip once past the bottom
-        // border, where it wouldn't be drawn and so shouldn't catch clicks).
+    let mut lines = vec![cu_header()];
+    for (i, (label, units, time, sig)) in rows.iter().enumerate() {
+        // Row 0 is the header, so data rows start one below it.
+        let y = inner_y + 1 + i as u16;
         if !sig.is_empty() && y < max_y {
-            app.cu_targets.push((
+            app.tx_targets.push((
                 Rect {
                     x: inner_x,
                     y,
@@ -754,7 +912,7 @@ fn draw_cu(f: &mut Frame<'_>, app: &mut App, area: Rect) {
                 sig.clone(),
             ));
         }
-        lines.push(cu_line(label, *units, sig));
+        lines.push(cu_line(label, *units, time, sig));
     }
     f.render_widget(
         Paragraph::new(lines).block(
@@ -766,15 +924,27 @@ fn draw_cu(f: &mut Frame<'_>, app: &mut App, area: Rect) {
     );
 }
 
-/// One CU-pane row: the operation label, its latest measured cost, and an
-/// underlined short signature that links to the transaction in the explorer.
-fn cu_line(label: &str, units: u64, sig: &str) -> Line<'static> {
+/// The CU-pane column header, styled like the order book's — `op · cu · time ·
+/// tx`, widths matching [`cu_line`].
+fn cu_header() -> Line<'static> {
+    let style = Style::new().fg(Color::Gray).add_modifier(Modifier::BOLD);
+    Line::from(vec![
+        Span::styled(format!("{:<22}", "op"), style),
+        Span::styled(format!("{:>10}", "cu"), style),
+        Span::styled(format!("  {:>8}", "time"), style),
+        Span::styled(format!("  {}", "tx"), style),
+    ])
+}
+
+/// One CU-pane row: the operation label, its latest measured cost, the time it
+/// was recorded, and an underlined short signature linking to the transaction.
+/// The label column is wide enough for the longest op (`set_liquidity_profile`)
+/// so the numeric columns stay aligned.
+fn cu_line(label: &str, units: u64, time: &str, sig: &str) -> Line<'static> {
     let mut spans = vec![
-        Span::raw(format!("{label:<16}")),
-        Span::styled(
-            format!("{:>9} CU", fmt_units(units)),
-            Style::new().fg(Color::Cyan),
-        ),
+        Span::raw(format!("{label:<22}")),
+        Span::styled(format!("{:>10}", fmt_units(units)), Style::new().fg(Color::Cyan)),
+        Span::styled(format!("  {time:>8}"), Style::new().fg(Color::DarkGray)),
     ];
     if !sig.is_empty() {
         spans.push(Span::styled(
@@ -788,7 +958,7 @@ fn cu_line(label: &str, units: u64, sig: &str) -> Line<'static> {
 }
 
 /// `AAAAAA…oiV`-style abbreviation of a base58 transaction signature (ASCII, so
-/// byte slicing is safe), for the CU pane's link column.
+/// byte slicing is safe), for the tx link columns.
 fn short_sig(s: &str) -> String {
     if s.len() > 12 {
         format!("{}\u{2026}{}", &s[..6], &s[s.len() - 4..])

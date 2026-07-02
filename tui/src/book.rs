@@ -69,6 +69,23 @@ pub fn lines(market: &MarketView) -> Vec<Line<'static>> {
     out
 }
 
+/// Format a human price with adaptive precision — roughly four significant
+/// figures whatever the magnitude — so a small-value token (IDRX ≈ 0.000056)
+/// keeps its figures instead of collapsing to a single `0.0001`, while a
+/// ~1-valued token (EURC 1.14) still reads cleanly. The decimal count grows as
+/// the price shrinks, clamped to a sane range.
+pub fn fmt_price(p: f64) -> String {
+    if !p.is_finite() || p <= 0.0 {
+        return format!("{p:.4}");
+    }
+    // 10^exp ≤ p < 10^(exp+1). Four significant figures ⇒ (3 − exp) decimals,
+    // with a four-decimal floor so ~1-valued tokens still read as e.g. 1.1400
+    // while a sub-cent token grows its decimals to keep its figures.
+    let exp = p.log10().floor() as i32;
+    let decimals = (3 - exp).clamp(4, 12) as usize;
+    format!("{p:.decimals$}")
+}
+
 /// The mid price (quote per base, human units) from the best bid and ask —
 /// their average, or whichever side alone has liquidity, and `None` for an
 /// empty book. Drives the markets list's per-market price / idle indicator.
@@ -148,7 +165,7 @@ fn row_line(r: &Row, max_size: f64, color: Color) -> Line<'static> {
     let bar = "\u{2588}".repeat(filled);
     Line::from(vec![
         Span::styled(format!("{bar:>BAR_WIDTH$}"), Style::new().fg(color)),
-        Span::styled(format!("  {:>10.4}", r.price), Style::new().fg(color)),
+        Span::styled(format!("  {:>10}", fmt_price(r.price)), Style::new().fg(color)),
         Span::styled(
             format!("  {:>12.2}", r.size),
             Style::new().fg(Color::DarkGray),
@@ -171,10 +188,17 @@ fn divider(best_ask: Option<&Row>, best_bid: Option<&Row>) -> Line<'static> {
             } else {
                 0.0
             };
-            format!("\u{2500}\u{2500} mid {mid:.4}  \u{b7}  spread {spread_bps:.1} bps \u{2500}\u{2500}")
+            format!(
+                "\u{2500}\u{2500} mid {}  \u{b7}  spread {spread_bps:.1} bps \u{2500}\u{2500}",
+                fmt_price(mid)
+            )
         }
-        (Some(a), None) => format!("\u{2500}\u{2500} best ask {:.4} \u{2500}\u{2500}", a.price),
-        (None, Some(b)) => format!("\u{2500}\u{2500} best bid {:.4} \u{2500}\u{2500}", b.price),
+        (Some(a), None) => {
+            format!("\u{2500}\u{2500} best ask {} \u{2500}\u{2500}", fmt_price(a.price))
+        }
+        (None, Some(b)) => {
+            format!("\u{2500}\u{2500} best bid {} \u{2500}\u{2500}", fmt_price(b.price))
+        }
         (None, None) => "\u{2500}\u{2500}".to_string(),
     };
     Line::from(Span::styled(
@@ -212,6 +236,7 @@ mod tests {
             active_count: 1,
             live_vaults: Vec::new(),
             leader_quote_slot: None,
+            reference_price: None,
             depositors: Vec::new(),
             base_decimals: 6,
             quote_decimals: 6,
@@ -223,6 +248,19 @@ mod tests {
     /// Flatten a line's spans back to plain text for assertions.
     fn text(line: &Line) -> String {
         line.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    #[test]
+    fn fmt_price_keeps_significant_figures_across_magnitudes() {
+        // ~1-valued tokens read cleanly at four decimals.
+        assert_eq!(fmt_price(1.14), "1.1400");
+        assert_eq!(fmt_price(0.7705), "0.7705");
+        // A small-value token keeps its figures instead of collapsing to a
+        // single 0.0001 (the IDRX case).
+        assert_eq!(fmt_price(0.000056), "0.00005600");
+        assert_ne!(fmt_price(0.000056), "0.0001");
+        // Sentinels / non-finite fall back to a plain four-decimal render.
+        assert_eq!(fmt_price(0.0), "0.0000");
     }
 
     #[test]

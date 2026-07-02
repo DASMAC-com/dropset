@@ -29,9 +29,14 @@ pub enum JobEvent {
     /// one-line result shown in the log.
     Done { ok: bool, summary: String },
     /// A decoded fill from the program's `emit_cpi!` `FillEvent` subscription
-    /// (the [`crate::fills`] thread) — the recent-fills pane keeps a per-market
-    /// ring of these. Not produced by the single-job harness.
-    Fill(dropset_sdk::types::FillEvent),
+    /// (the [`crate::fills`] thread), tagged with the signature of the swap that
+    /// produced it so the fills pane can link each row to the explorer — the
+    /// pane keeps a per-market ring of these. Not produced by the single-job
+    /// harness.
+    Fill {
+        signature: String,
+        event: dropset_sdk::types::FillEvent,
+    },
 }
 
 /// Where a [`Logger`] sends its progress. The TUI streams [`JobEvent`]s over

@@ -70,6 +70,25 @@ pub enum LogKind {
     Err,
 }
 
+/// One compute-units row: the operation label, its latest measured cost, the
+/// signature of the transaction that produced it (the explorer link), and when
+/// it was recorded (`HH:MM:SS`).
+pub(crate) struct CuRow {
+    pub(crate) label: String,
+    pub(crate) units: u64,
+    pub(crate) signature: String,
+    pub(crate) time: String,
+}
+
+/// One recent fill for the fills pane: when the TUI observed it (`HH:MM:SS`),
+/// the signature of the swap that produced it (the explorer link), and the
+/// decoded event.
+pub(crate) struct FillRow {
+    pub(crate) time: String,
+    pub(crate) signature: String,
+    pub(crate) event: FillEvent,
+}
+
 /// Whether the loop should keep running.
 #[derive(PartialEq, Eq)]
 enum Flow {
@@ -88,10 +107,11 @@ pub struct App {
     pub(crate) job_running: bool,
     /// Measured compute-unit cost per operation, in first-seen order — one row
     /// per `label`, updated in place when an operation runs again. Each row also
-    /// carries the signature of the latest transaction for that operation, which
-    /// the CU pane links to the explorer (so re-running e.g. a repeg refreshes
-    /// the link to the newest `set_reference_price` tx). Drives the CU pane.
-    pub(crate) cu: Vec<(String, u64, String)>,
+    /// carries the signature and timestamp of the latest transaction for that
+    /// operation, which the CU pane links to the explorer (so re-running e.g. a
+    /// repeg refreshes the link to the newest `set_reference_price` tx). Drives
+    /// the CU pane.
+    pub(crate) cu: Vec<CuRow>,
     /// Path the log is mirrored to on disk (shown in the log pane title).
     pub(crate) log_path: PathBuf,
     /// The swapper / taker (`FFFF`) pubkey, resolved once at startup, so each
@@ -125,20 +145,24 @@ pub struct App {
     /// each frame: a left-click inside one of these rectangles opens that
     /// account in the explorer.
     pub(crate) click_targets: Vec<(Rect, Pubkey)>,
-    /// Transaction click targets for the CU pane, rebuilt by [`ui::draw`] each
-    /// frame: a left-click inside one of these rectangles opens that operation's
-    /// latest transaction in the explorer.
-    pub(crate) cu_targets: Vec<(Rect, String)>,
+    /// Transaction click targets for the CU and fills panes, rebuilt by
+    /// [`ui::draw`] each frame: a left-click inside one of these rectangles
+    /// opens that transaction in the explorer.
+    pub(crate) tx_targets: Vec<(Rect, String)>,
     /// Recent decoded fills across every market (newest at the back), fed by
     /// the [`fills`] subscription thread. The fills pane renders the slice for
     /// the selected market; the ring is trimmed to [`FILLS_CAPACITY`].
-    pub(crate) fills: VecDeque<FillEvent>,
+    pub(crate) fills: VecDeque<FillRow>,
     tx: Sender<JobEvent>,
     rx: Receiver<JobEvent>,
     /// Append handle for the on-disk log mirror, if it opened.
     log_file: Option<File>,
     last_refresh: Instant,
     dirty: bool,
+    /// Whether the maker bot's FX feed is currently reporting itself down —
+    /// derived from its streamed `[feed] coingecko …` log lines, surfaced as an
+    /// alert. Set on a failure line, cleared on a recovery line (or a wipe).
+    pub(crate) feed_degraded: bool,
 }
 
 impl App {
@@ -177,7 +201,7 @@ impl App {
             bots: BotManager::new(),
             takers: BotManager::new(),
             click_targets: Vec::new(),
-            cu_targets: Vec::new(),
+            tx_targets: Vec::new(),
             fills: VecDeque::new(),
             tx,
             rx,
@@ -185,6 +209,7 @@ impl App {
             // Force an immediate first poll.
             last_refresh: Instant::now() - REFRESH_INTERVAL,
             dirty: true,
+            feed_degraded: false,
         })
     }
 
@@ -270,7 +295,7 @@ impl App {
     /// The transaction signature whose CU click-target rect contains
     /// `(col, row)`, if any.
     fn signature_at(&self, col: u16, row: u16) -> Option<String> {
-        hit_target(&self.cu_targets, col, row)
+        hit_target(&self.tx_targets, col, row)
     }
 
     /// Open `address` in the explorer — the local container when it's ready,
@@ -624,6 +649,7 @@ impl App {
                 // both panes with it.
                 self.cu.clear();
                 self.fills.clear();
+                self.feed_degraded = false;
                 self.dirty = true;
                 self.log(
                     LogKind::Ok,
@@ -638,14 +664,17 @@ impl App {
     fn drain_jobs(&mut self) {
         while let Ok(ev) = self.rx.try_recv() {
             match ev {
-                JobEvent::Log(s) => self.log(LogKind::Info, s),
+                JobEvent::Log(s) => {
+                    self.note_feed_state(&s);
+                    self.log(LogKind::Info, s);
+                }
                 JobEvent::AccountsChanged => self.dirty = true,
                 JobEvent::Cu {
                     label,
                     units,
                     signature,
                 } => self.record_cu(label, units, signature),
-                JobEvent::Fill(event) => self.record_fill(event),
+                JobEvent::Fill { signature, event } => self.record_fill(signature, event),
                 JobEvent::Done { ok, summary } => {
                     self.job_running = false;
                     self.dirty = true;
@@ -691,27 +720,55 @@ impl App {
         }
     }
 
-    /// Append a decoded fill to the ring (newest at the back), trimming to
-    /// [`FILLS_CAPACITY`], and mark the view dirty so the fills pane redraws.
-    fn record_fill(&mut self, event: FillEvent) {
-        self.fills.push_back(event);
+    /// Update the FX-feed alert from a streamed maker-bot log line: a
+    /// `[feed] coingecko … failed` / `… no prices` line marks the feed down, a
+    /// `… recovered` line marks it back up. Keyed on the maker's own deduped
+    /// feed messages (`bots/maker-bot`), so the alert flips once per transition,
+    /// not per tick.
+    fn note_feed_state(&mut self, line: &str) {
+        if !line.contains("coingecko") {
+            return;
+        }
+        if line.contains("recovered") {
+            self.feed_degraded = false;
+        } else if line.contains("failed") || line.contains("no prices") {
+            self.feed_degraded = true;
+        }
+    }
+
+    /// Append a decoded fill to the ring (newest at the back), stamped with the
+    /// observed time, trimming to [`FILLS_CAPACITY`], and mark the view dirty so
+    /// the fills pane redraws.
+    fn record_fill(&mut self, signature: String, event: FillEvent) {
+        self.fills.push_back(FillRow {
+            time: now_hms(),
+            signature,
+            event,
+        });
         while self.fills.len() > FILLS_CAPACITY {
             self.fills.pop_front();
         }
         self.dirty = true;
     }
 
-    /// Record an operation's measured CU and the signature of the transaction
-    /// it measured, updating its row in place if the operation has run before —
-    /// so the pane shows the latest cost and links to the latest transaction per
-    /// label rather than an ever-growing history.
+    /// Record an operation's measured CU with the signature and time of the
+    /// transaction it measured, updating its row in place if the operation has
+    /// run before — so the pane shows the latest cost and links to the latest
+    /// transaction per label rather than an ever-growing history.
     fn record_cu(&mut self, label: String, units: u64, signature: String) {
-        match self.cu.iter_mut().find(|(l, _, _)| *l == label) {
-            Some(entry) => {
-                entry.1 = units;
-                entry.2 = signature;
+        let time = now_hms();
+        match self.cu.iter_mut().find(|r| r.label == label) {
+            Some(row) => {
+                row.units = units;
+                row.signature = signature;
+                row.time = time;
             }
-            None => self.cu.push((label, units, signature)),
+            None => self.cu.push(CuRow {
+                label,
+                units,
+                signature,
+                time,
+            }),
         }
     }
 
@@ -742,6 +799,24 @@ impl Drop for App {
             let _ = explorer::stop(&self.ctx.repo_root);
         }
     }
+}
+
+/// The current wall-clock time as `HH:MM:SS` (UTC) — the timestamp stamped on
+/// each fill and CU row as the event loop records it. UTC keeps it dependency-
+/// free; for a localnet session the values' relative ordering (recency, spacing)
+/// is what the panes convey, so the absent local offset doesn't matter.
+fn now_hms() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!(
+        "{:02}:{:02}:{:02}",
+        (secs / 3600) % 24,
+        (secs / 60) % 60,
+        secs % 60
+    )
 }
 
 /// Parse a typed swap-amount buffer into whole quote units — `Some(n)` for a

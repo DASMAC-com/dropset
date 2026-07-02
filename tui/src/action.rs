@@ -68,16 +68,16 @@ const REPEG_BPS: f64 = 5.0;
 /// `Price::quote_for_base` scale for decoding a reference to its atoms-ratio
 /// before the bump — matches the maker bot and SDK (`value × 10^9`).
 const PRICE_SCALE: u64 = 1_000_000_000;
-/// Reshape half-spreads (ppm price offset). The seed ladder quotes ±0.5%
-/// (5_000 ppm); "widen" fans it to ±1.5% and "tighten" pulls it to ±0.15%, so
-/// the shape change reads clearly against the peg.
-const WIDE_OFFSET_PPM: u32 = 15_000;
-const TIGHT_OFFSET_PPM: u32 = 1_500;
-/// Full commit of a side — 100% of its inventory leg, in bps.
-const FULL_SIZE_BPS: u16 = 10_000;
-/// The thinned far (ask) side's size for "thin the far side" — a fraction of
-/// full commit, so offer depth visibly shrinks while the bid stays full.
-const THIN_SIZE_BPS: u16 = 3_000;
+/// Widen / tighten scale the seed ladder's rung offsets rather than collapsing
+/// it to one level: `×3` fans the whole four-rung ladder wider (top rung ≈
+/// ±1.5%), `×0.3` pulls it tighter (top rung ≈ ±0.15%), so the book stays
+/// multi-level and only the spread moves.
+const WIDEN_OFFSET_SCALE: f64 = 3.0;
+const TIGHTEN_OFFSET_SCALE: f64 = 0.3;
+/// "Thin the far side" scales the ask ladder's per-rung depth to a fraction of
+/// full, so the offer side visibly shrinks across every level while the bid
+/// stays at the full seed ladder.
+const THIN_DEPTH_SCALE: f64 = 0.3;
 /// The demo presets quote until the next reshape (the maker bot re-arms
 /// expiry itself).
 const NEVER_EXPIRES: u32 = u32::MAX;
@@ -489,25 +489,23 @@ fn do_reshape(
     let leader = market::leader(repo_root, config)?;
     let (bytes, summary) = match action {
         Action::WidenSpread => (
-            market::one_level_profile_bytes(
-                (WIDE_OFFSET_PPM, FULL_SIZE_BPS),
-                (WIDE_OFFSET_PPM, FULL_SIZE_BPS),
+            market::ladder_profile_bytes(
+                &market::seed_ladder_scaled_offsets(WIDEN_OFFSET_SCALE),
                 NEVER_EXPIRES,
             ),
-            "Widened spread — ladder reshapes wider, peg unchanged",
+            "Widened spread — multi-level ladder fans wider, peg unchanged",
         ),
         Action::TightenSpread => (
-            market::one_level_profile_bytes(
-                (TIGHT_OFFSET_PPM, FULL_SIZE_BPS),
-                (TIGHT_OFFSET_PPM, FULL_SIZE_BPS),
+            market::ladder_profile_bytes(
+                &market::seed_ladder_scaled_offsets(TIGHTEN_OFFSET_SCALE),
                 NEVER_EXPIRES,
             ),
-            "Tightened spread — ladder reshapes tighter, peg unchanged",
+            "Tightened spread — multi-level ladder pulls tighter, peg unchanged",
         ),
         Action::ThinFarSide => (
-            market::one_level_profile_bytes(
-                (config.offset_ppm, FULL_SIZE_BPS),
-                (config.offset_ppm, THIN_SIZE_BPS),
+            market::ladder_profile_bytes_asym(
+                &market::SEED_LADDER,
+                &market::seed_ladder_scaled_depth(THIN_DEPTH_SCALE),
                 NEVER_EXPIRES,
             ),
             "Thinned the far (ask) side — offer depth shrinks, peg unchanged",
