@@ -116,8 +116,9 @@ export async function resolveEclobRoute(
 
 // Fetch a market account's raw bytes (discriminator included — pass verbatim
 // to simulateSwap), or null if the account doesn't exist. Uses the SDK's
-// account-fetch primitive, which decodes the base64 payload for us.
-export async function fetchMarketData(
+// account-fetch primitive, which decodes the base64 payload for us. Internal:
+// callers go through resolveEclobRoute, which returns the bytes it fetched.
+async function fetchMarketData(
   rpc: Rpc,
   market: Address,
 ): Promise<Uint8Array | null> {

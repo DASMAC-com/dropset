@@ -219,7 +219,8 @@ frontend-localnet:
 # foreground (it spawns the validator and seeds the markets) plus the
 # localnet frontend in the background, pointed at that validator. Quitting the
 # TUI stops the frontend too; the frontend retries until the validator is up,
-# so start order doesn't matter.
+# so start order doesn't matter. Cleanup runs a broad `pkill -f "next dev"`,
+# so it also stops any unrelated next dev you have running (dev-only target).
 localnet:
 	@$(MAKE) --no-print-directory frontend-localnet & \
 	trap 'kill %1 2>/dev/null; pkill -f "next dev"' INT TERM EXIT; \
