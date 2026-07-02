@@ -1,0 +1,34 @@
+{
+  "USDC": {
+    "mint": "USDCqka4GcPP5K2uyVPoNN9Tq6YY8bMrdq3jsjkxUZn",
+    "tokenProgram": "classic"
+  },
+  "EURC": {
+    "mint": "EURCeThrvC3KKDyZEvKSXBgx5aBQBZWkozH3F45CH4rU",
+    "tokenProgram": "classic"
+  },
+  "VCHF": {
+    "mint": "VCHFrwrYZr16LcBEGocuYg8iEqSGyj2cTbJccBo5pVq",
+    "tokenProgram": "classic"
+  },
+  "TGBP": {
+    "mint": "TGBPceijwwpZxVS3HoHWV4iDbryh4eAnUWAgVFSGqHt",
+    "tokenProgram": "classic"
+  },
+  "ZARP": {
+    "mint": "ZARPfYoPus7NUocgdBz1HCQuZLpL3Y8pzoWQ2WdLJyD",
+    "tokenProgram": "classic"
+  },
+  "MXNe": {
+    "mint": "MXNejRGzxdS4YyJYJyqFPZJeP4WXAfr8n9Je4Vp3Ght",
+    "tokenProgram": "classic"
+  },
+  "XSGD": {
+    "mint": "XSGDJ6qXNaGujAwBxM6pZfBZ3vBWw81iU3t5ddKHhmw",
+    "tokenProgram": "classic"
+  },
+  "IDRX": {
+    "mint": "idrxatdM6g4rzL5pWzzHcigyXE9RJa8eHxB9wCj6iwo",
+    "tokenProgram": "classic"
+  }
+}

@@ -108,10 +108,18 @@ export const useDflowQuote = (
   outputMint: string,
   inputDecimals: number,
   inputAmountDecimal: string,
+  // When false the hook makes no network request and reports "skipped" — the
+  // eCLOB route is active, so the DFlow aggregator must stay silent (on
+  // localnet there is deliberately no call to dev-quote-api.dflow.net).
+  enabled: boolean,
 ): DflowQuote => {
   const [quote, setQuote] = useState<DflowQuote>(INITIAL);
 
   useEffect(() => {
+    if (!enabled) {
+      setQuote({ ...INITIAL, status: "skipped" });
+      return;
+    }
     let timer: number | undefined;
     const controller = new AbortController();
     let cancelled = false;
@@ -261,7 +269,7 @@ export const useDflowQuote = (
       controller.abort();
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [inputMint, outputMint, inputDecimals, inputAmountDecimal]);
+  }, [inputMint, outputMint, inputDecimals, inputAmountDecimal, enabled]);
 
   return quote;
 };

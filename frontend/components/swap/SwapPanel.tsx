@@ -12,6 +12,8 @@ import { parseAmountToBase } from "@/lib/format/balance";
 import { useAllBalances } from "@/lib/hooks/useAllBalances";
 import { formatAtomic, useDflowQuote } from "@/lib/hooks/useDflowQuote";
 import { useDflowSwap } from "@/lib/hooks/useDflowSwap";
+import { useEclobQuote } from "@/lib/hooks/useEclobQuote";
+import { useEclobSwap } from "@/lib/hooks/useEclobSwap";
 import { useTokenInfoRefresh, useUsdQuote } from "@/lib/hooks/useUsdQuote";
 import { useSameToken, useSwapStore, useSwapStoreApi } from "@/lib/store";
 import { useGoToVaultsForPair, useSwapNav } from "@/lib/ui/swapUrl";
@@ -31,6 +33,7 @@ export function SwapPanel() {
   const fromStablecoin = useSwapStore((s) => s.from.stablecoin);
   const toStablecoin = useSwapStore((s) => s.to.stablecoin);
   const amount = useSwapStore((s) => s.amount);
+  const routeMode = useSwapStore((s) => s.routeMode);
   const store = useSwapStoreApi();
   const gotoSwap = useSwapNav();
   const goToVaults = useGoToVaultsForPair();
@@ -42,7 +45,26 @@ export function SwapPanel() {
   const toMint = stablecoinMint(toStablecoin);
   const fromDecimals = stablecoinDecimals(fromStablecoin);
   const toDecimals = stablecoinDecimals(toStablecoin);
-  const quote = useDflowQuote(fromMint, toMint, fromDecimals, amount);
+  // Route the quote through the selected path: "best" hits the DFlow
+  // aggregator, "eclob" simulates against our own market via the SDK. Both
+  // hooks run (rules of hooks), but only the active one fetches — the other
+  // is gated to "skipped" — so the eCLOB route never calls DFlow.
+  const useBestRoute = routeMode === "best";
+  const dflowQuote = useDflowQuote(
+    fromMint,
+    toMint,
+    fromDecimals,
+    amount,
+    useBestRoute,
+  );
+  const eclobQuote = useEclobQuote(
+    fromMint,
+    toMint,
+    fromDecimals,
+    amount,
+    !useBestRoute,
+  );
+  const quote = useBestRoute ? dflowQuote : eclobQuote;
 
   // Toggling direction promotes the current quote's output amount into the
   // new input. The promotion logic lives in the store action — it reads
@@ -92,7 +114,11 @@ export function SwapPanel() {
   const quoteInDecimal =
     quote.inAmount !== null ? formatAtomic(quote.inAmount, fromDecimals) : "0";
   const quoteFromUsd = useUsdQuote(fromStablecoin, quoteInDecimal);
-  const swap = useDflowSwap();
+  // Pick the swap executor to match the quote route. Both hooks mount; only
+  // the selected one's `execute` is ever called (see the Swap button).
+  const dflowSwap = useDflowSwap();
+  const eclobSwap = useEclobSwap();
+  const swap = useBestRoute ? dflowSwap : eclobSwap;
   const swapInFlight =
     swap.status === "preparing" ||
     swap.status === "signing" ||

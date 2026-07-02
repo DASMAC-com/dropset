@@ -1,10 +1,14 @@
 "use client";
 
+import { useState } from "react";
+import { X } from "@/components/icons";
 import type { DflowQuote } from "@/lib/hooks/useDflowQuote";
 import { useLiquidityLookup } from "@/lib/hooks/useUsdQuote";
 
-// Inline message shown under the swap panel when DFlow declines a quote.
-// `route_not_found` is the common case and has two distinct user-facing
+// Inline, dismissible message shown under the swap panel when a quote fails —
+// either route (DFlow's `route_not_found`, or an eCLOB error like "No Dropset
+// market for this pair"). The eCLOB messages render verbatim; the DFlow
+// `route_not_found` case is the common one and has two distinct user-facing
 // meanings that DFlow itself doesn't differentiate:
 //   1. Amount-too-large — the pair is fine, the requested size exceeds what
 //      DFlow's routers can fill in one transaction (e.g., 10M USDC→USDT).
@@ -29,7 +33,12 @@ export function QuoteError({
   toMint: string;
 }) {
   const liquidity = useLiquidityLookup();
+  // Track the dismissed message (not a boolean), so closing silences only that
+  // exact error — a new/different one re-surfaces on its own, no effect needed.
+  const [dismissedError, setDismissedError] = useState<string | null>(null);
+
   if (quote.status !== "error" || !quote.error) return null;
+  if (quote.error === dismissedError) return null;
   let friendly = quote.error;
   if (quote.error === "Route not found") {
     const fromIlliquid = liquidity(fromMint) === "illiquid";
@@ -43,9 +52,17 @@ export function QuoteError({
     <div
       role="alert"
       aria-live="polite"
-      className="rounded-lg border border-border bg-muted px-3 py-2 text-muted-fg text-sm"
+      className="flex items-start justify-between gap-2 rounded-lg border border-border bg-muted px-3 py-2 text-muted-fg text-sm"
     >
-      {friendly}
+      <span>{friendly}</span>
+      <button
+        type="button"
+        onClick={() => setDismissedError(quote.error)}
+        aria-label="Dismiss"
+        className="shrink-0 rounded p-0.5 text-muted-fg transition-colors hover:text-foreground"
+      >
+        <X size={14} aria-hidden />
+      </button>
     </div>
   );
 }

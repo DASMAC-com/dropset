@@ -9,7 +9,12 @@ import {
 } from "@solana-program/token";
 import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import { useEffect, useSyncExternalStore } from "react";
-import { ALL_STABLECOINS, type TokenProgramKind } from "../data/currencies";
+import {
+  ALL_STABLECOINS,
+  onchainMint,
+  onchainTokenProgram,
+  type TokenProgramKind,
+} from "../data/currencies";
 import { BALANCE_REFETCH_DELAY_MS } from "../data/timings";
 import { GET_MULTIPLE_ACCOUNTS_BATCH_SIZE } from "../env";
 import { useAppEvent } from "../events";
@@ -61,14 +66,17 @@ const PROGRAM_FOR_KIND: Record<TokenProgramKind, Address> = {
 };
 
 // Derive every stablecoin's ATA for the given owner. Order matches
-// ALL_STABLECOINS so we can re-index parsed accounts back to mints.
+// ALL_STABLECOINS so we can re-index parsed accounts back to mints. The ATA is
+// derived from the on-chain mint (the mock demo mint on localnet, the real
+// mint on mainnet) so localnet balances resolve — but results stay keyed by
+// the real mint, which is what the rest of the app looks balances up by.
 async function deriveAtas(owner: Address): Promise<Address[]> {
   return Promise.all(
     ALL_STABLECOINS.map(async (s) => {
       const [ata] = await findAssociatedTokenPda({
         owner,
-        mint: address(s.mint),
-        tokenProgram: PROGRAM_FOR_KIND[s.tokenProgram],
+        mint: address(onchainMint(s.mint)),
+        tokenProgram: PROGRAM_FOR_KIND[onchainTokenProgram(s.mint)],
       });
       return ata;
     }),

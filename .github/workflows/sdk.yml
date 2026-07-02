@@ -59,9 +59,27 @@ jobs:
     # simulate_swap_vectors.json, pinning it to the engine-conformant native
     # matcher — the decode + side dispatch + Quote marshalling no host test
     # can reach.
+    # Pinned so the generated wasm-bindgen glue is reproducible — the
+    # freshness gate below diffs that glue against a fresh build, so the
+    # wasm-pack (hence wasm-bindgen) version must be stable.
     - uses: 'taiki-e/install-action@v2'
       with:
-        tool: 'wasm-pack'
+        tool: 'wasm-pack@0.15.0'
+    # The wasm-bindgen glue the TS client imports (sdk/ts/src/wasm) is a
+    # committed, generated artifact like the Codama clients above. Rebuild it
+    # and fail on drift in the deterministic glue (.js/.d.ts), so a
+    # `dropset-interface` API change not followed by `make wasm` can't ship a
+    # stale client surface. The optimized `.wasm` binary is skipped —
+    # wasm-opt isn't byte-reproducible across the committer's platform and
+    # CI's — so the `wasm-pack test` below pins the binary's math instead.
+    - name: 'Committed WASM glue matches a fresh build'
+      run: |
+        make wasm
+        git add -A -- sdk/ts/src/wasm
+        git diff --cached --exit-code -- \
+        sdk/ts/src/wasm/dropset_interface.js \
+        sdk/ts/src/wasm/dropset_interface.d.ts \
+        sdk/ts/src/wasm/dropset_interface_bg.wasm.d.ts
     - run: 'wasm-pack test --node sdk/interface --test wasm_conformance
             --features wasm'
 name: 'SDK'

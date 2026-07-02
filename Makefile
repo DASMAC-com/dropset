@@ -1,3 +1,4 @@
+# cspell:word pkill
 .PHONY: all
 .PHONY: bots-down
 .PHONY: bots-up
@@ -12,11 +13,13 @@
 .PHONY: explorer
 .PHONY: explorer-down
 .PHONY: frontend
+.PHONY: frontend-localnet
 .PHONY: idl
 .PHONY: indexer-down
 .PHONY: indexer-up
 .PHONY: install-anchor-v2
 .PHONY: lint
+.PHONY: localnet
 .PHONY: sdk
 .PHONY: sdk-test
 .PHONY: session-metrics
@@ -73,10 +76,14 @@ sdk:
 # Build the WASM package for the TS client (requires wasm-pack:
 # `cargo install wasm-pack`). Built over `dropset-interface`, whose `wasm`
 # feature turns on `dropset-math-core`'s, so the one package exports both the
-# `simulate_swap` binding and the `Price` codec bindings. Outputs
-# sdk/interface/pkg.
+# `simulate_swap` binding and the `Price` codec bindings. Emits the glue
+# straight into the TS SDK (sdk/ts/src/wasm) so `@dropset/sdk` can import it
+# and the SDK CI type-checks against it; the `simulate` module wraps it.
 wasm:
-	cd sdk/interface && wasm-pack build --target web --features wasm
+	cd sdk/interface && wasm-pack build --target web \
+		--out-dir ../ts/src/wasm --features wasm
+	rm -f sdk/ts/src/wasm/.gitignore sdk/ts/src/wasm/package.json \
+		sdk/ts/src/wasm/README.md sdk/ts/src/wasm/LICENSE
 
 # Regenerate the checked-in conformance vectors from their generators.
 # The `--write` flag makes each example write its canonical JSON straight
@@ -196,6 +203,28 @@ decks:
 		opener=$$(command -v open || command -v xdg-open) \
 			&& $$opener http://localhost:3300 ) &
 	cd decks && pnpm dev
+
+# Run the frontend against a local validator (open http://localhost:3000): the
+# localnet cluster + local RPC/WS, overriding the mainnet endpoints in
+# .env.local (a process env var wins over .env files in Next). Assumes a
+# validator is up with the markets seeded, which the `tui` control plane does;
+# run `make tui` alongside this, or use `make localnet` to launch both.
+frontend-localnet:
+	cd frontend && pnpm install
+	cd frontend && NEXT_PUBLIC_CLUSTER=localnet \
+		NEXT_PUBLIC_RPC_URL=http://127.0.0.1:8899 \
+		NEXT_PUBLIC_WS_URL=ws://127.0.0.1:8900 pnpm dev
+
+# The whole localnet demo in one command: the TUI control plane in the
+# foreground (it spawns the validator and seeds the markets) plus the
+# localnet frontend in the background, pointed at that validator. Quitting the
+# TUI stops the frontend too; the frontend retries until the validator is up,
+# so start order doesn't matter. Cleanup runs a broad `pkill -f "next dev"`,
+# so it also stops any unrelated next dev you have running (dev-only target).
+localnet:
+	@$(MAKE) --no-print-directory frontend-localnet & \
+	trap 'kill %1 2>/dev/null; pkill -f "next dev"' INT TERM EXIT; \
+	$(MAKE) --no-print-directory tui
 
 # https://github.com/solana-foundation/anchor/tree/anchor-next/lang-v2
 install-anchor-v2:

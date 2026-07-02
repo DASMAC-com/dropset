@@ -6,6 +6,7 @@ import { ArrowRightLeft, ChevronDown, ChevronUp } from "@/components/icons";
 import { stablecoinDecimals } from "@/lib/data/currencies";
 import { FORMATS } from "@/lib/format/formats";
 import { bpsToPercent } from "@/lib/format/percent";
+import { RouteModeToggle } from "./RouteModeToggle";
 
 // Sticky preference: once the user collapses the fee panel, keep it
 // collapsed across reloads. Re-expanding is also persisted, so the stored
@@ -104,17 +105,20 @@ export function PlatformFee({
             />
           </button>
         </span>
-        {showFeeDropdown ? (
-          <button
-            type="button"
-            onClick={toggleExpanded}
-            aria-expanded={expanded}
-            aria-label={expanded ? "Hide fees" : "Show fees"}
-            className="shrink-0 rounded p-0.5 text-muted-fg transition-colors hover:text-foreground"
-          >
-            <Chevron size={14} aria-hidden />
-          </button>
-        ) : null}
+        <span className="flex shrink-0 items-center gap-2">
+          <RouteModeToggle />
+          {showFeeDropdown ? (
+            <button
+              type="button"
+              onClick={toggleExpanded}
+              aria-expanded={expanded}
+              aria-label={expanded ? "Hide fees" : "Show fees"}
+              className="shrink-0 rounded p-0.5 text-muted-fg transition-colors hover:text-foreground"
+            >
+              <Chevron size={14} aria-hidden />
+            </button>
+          ) : null}
+        </span>
       </div>
       {showFeeDropdown && expanded ? (
         <div className="flex items-center justify-between px-1 pb-1 text-xs">
