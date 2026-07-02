@@ -27,9 +27,9 @@ import { colors, deckTheme } from "@/theme/tokens";
 
 /**
  * "Multi-market FX stablecoin liquidity" — the accelerator demo-day deck.
- * Source context: the ENG-634 demo spec (pitch, demo arc, money shot,
- * roster, authority model). Route name is public-facing (`/demo-v1`); the
- * internal ticket id never appears here or in the URL.
+ * Source context: the multi-market FX demo spec (pitch, demo arc, money
+ * shot, roster, authority model). Route name is public-facing
+ * (`/demo-v1`); internal ticket ids never appear here or in the URL.
  */
 
 // The seven-market roster (liquidity query, 2026-06-29). Mint columns are
@@ -101,7 +101,7 @@ export default function DemoDeck() {
           Dropset's eCLOB + maker stack can quote all of them at once, in
           parallel, from a single integration surface.
         </Text>
-        <Notes>Orca/Coinbase/Aerodrome benchmarks are parked in ENG-606.</Notes>
+        <Notes>Orca/Coinbase/Aerodrome benchmarks are out of scope here.</Notes>
       </Slide>
 
       {/* 3 — The insight */}
