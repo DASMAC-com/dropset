@@ -1,4 +1,9 @@
 // cspell:word discrim
+#![cfg_attr(
+    all(target_os = "solana", feature = "asm-entrypoint"),
+    feature(asm_experimental_arch)
+)]
+
 use anchor_lang_v2::prelude::*;
 
 mod errors;
@@ -18,6 +23,15 @@ pub use state::*;
 pub use dropset_math_core::Price;
 
 declare_id!("AAAAz3pYUMwhX1bsEtPx9LSWYbpRM8qrFaQgmKVX6oiV");
+
+// Link the hand-written sBPF entrypoint (`src/asm/entrypoint.s`, expanded
+// into `$OUT_DIR/combined.s` by `build.rs`). It short-circuits the
+// `set_reference_price` discriminator and `call`s `__anchor_dispatch` —
+// emitted by `#[program]` under the crate's `no-entrypoint` feature — for
+// everything else. `no-entrypoint` also drops Anchor's allocator / panic
+// handler, so they are reinstated at the bottom of this file.
+#[cfg(all(target_os = "solana", feature = "asm-entrypoint"))]
+anchor_asm_v2_runtime::include_asm!();
 
 #[program]
 pub mod dropset {
@@ -427,3 +441,13 @@ pub mod dropset {
         ctx.accounts.set_quote_authority(vault_idx, new_authority)
     }
 }
+
+// Under `asm-entrypoint` the crate's `no-entrypoint` feature stops the
+// `#[program]` macro from emitting Anchor's entrypoint — and with it the
+// default allocator and panic handler. The assembly provides the
+// entrypoint; reinstate the other two so the Rust handlers reached via
+// `__anchor_dispatch` still have a heap and a panic path.
+#[cfg(all(target_os = "solana", feature = "asm-entrypoint"))]
+anchor_lang_v2::pinocchio::default_allocator!();
+#[cfg(all(target_os = "solana", feature = "asm-entrypoint"))]
+anchor_lang_v2::pinocchio::default_panic_handler!();

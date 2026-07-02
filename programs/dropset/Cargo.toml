@@ -25,6 +25,17 @@ anchor-spl-v2.workspace = true
 solana-program-log.workspace = true
 solana-sdk-ids.workspace = true
 wincode.workspace = true
+# Provides `include_asm!()` for the sBPF entrypoint. Optional — only the
+# `asm-entrypoint` build links the assembly; the default build never
+# references it.
+anchor-asm-v2-runtime = { workspace = true, optional = true }
+
+[build-dependencies]
+# `build.rs` calls `anchor_asm_v2::build("src/asm")` to expand the
+# assembly into `$OUT_DIR/combined.s`. A build-dep, so it never ships in
+# the `.so`; it runs on every build but its output is only linked under
+# `asm-entrypoint`.
+anchor-asm-v2.workspace = true
 
 # `anchor-lang-v2` is re-declared here with the `testing` feature so the
 # stack-backed `AccountBuffer` becomes available to unit tests inside
@@ -69,7 +80,14 @@ admin-teardown = []
 # oracle. See the architecture spec's **SetReferencePrice**. The build
 # wiring (anchor-lang-v2 `no-entrypoint` + the asm include) is added with
 # the entrypoint itself.
-asm-entrypoint = []
+#
+# Enables the crate's `no-entrypoint` feature — the `#[program]` macro
+# reads that cfg to suppress Anchor's generated entrypoint (and allocator
+# / panic handler) and instead emit `__anchor_dispatch`, which the
+# assembly `call`s for every non-fast-path discriminator. `lib.rs`
+# reinstates the allocator / panic handler and links the assembly under
+# this feature, and pulls in the `include_asm!()` runtime crate.
+asm-entrypoint = ["no-entrypoint", "dep:anchor-asm-v2-runtime"]
 cpi = ["no-entrypoint"]
 default = ["admin-teardown"]
 # Anchor v2 derive macros emit `cfg(feature = "idl-build")` gated code in

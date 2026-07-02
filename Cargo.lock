@@ -177,9 +177,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
+name = "anchor-asm-v2"
+version = "0.1.0"
+source = "git+https://github.com/solana-foundation/anchor.git?branch=anchor-next#e056cc17e7424353bd8d21382f15a2eca28abb9a"
+dependencies = [
+ "anchor-asm-v2-macros",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "anchor-asm-v2-macros"
+version = "0.1.0"
+source = "git+https://github.com/solana-foundation/anchor.git?branch=anchor-next#e056cc17e7424353bd8d21382f15a2eca28abb9a"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "anchor-asm-v2-runtime"
+version = "0.1.0"
+source = "git+https://github.com/solana-foundation/anchor.git?branch=anchor-next#e056cc17e7424353bd8d21382f15a2eca28abb9a"
+
+[[package]]
 name = "anchor-derive-accounts-v2"
 version = "2.0.0"
-source = "git+https://github.com/solana-foundation/anchor.git?branch=anchor-next#2a191379020f15c1d384bdadd41f23949734ce98"
+source = "git+https://github.com/solana-foundation/anchor.git?branch=anchor-next#e056cc17e7424353bd8d21382f15a2eca28abb9a"
 dependencies = [
  "anchor-lang-idl",
  "bs58",
@@ -194,7 +219,7 @@ dependencies = [
 [[package]]
 name = "anchor-lang-idl"
 version = "0.1.2"
-source = "git+https://github.com/solana-foundation/anchor.git?branch=anchor-next#2a191379020f15c1d384bdadd41f23949734ce98"
+source = "git+https://github.com/solana-foundation/anchor.git?branch=anchor-next#e056cc17e7424353bd8d21382f15a2eca28abb9a"
 dependencies = [
  "anchor-lang-idl-spec",
  "anyhow",
@@ -207,7 +232,7 @@ dependencies = [
 [[package]]
 name = "anchor-lang-idl-spec"
 version = "0.1.0"
-source = "git+https://github.com/solana-foundation/anchor.git?branch=anchor-next#2a191379020f15c1d384bdadd41f23949734ce98"
+source = "git+https://github.com/solana-foundation/anchor.git?branch=anchor-next#e056cc17e7424353bd8d21382f15a2eca28abb9a"
 dependencies = [
  "anyhow",
  "serde",
@@ -216,7 +241,7 @@ dependencies = [
 [[package]]
 name = "anchor-lang-v2"
 version = "2.0.0"
-source = "git+https://github.com/solana-foundation/anchor.git?branch=anchor-next#2a191379020f15c1d384bdadd41f23949734ce98"
+source = "git+https://github.com/solana-foundation/anchor.git?branch=anchor-next#e056cc17e7424353bd8d21382f15a2eca28abb9a"
 dependencies = [
  "anchor-derive-accounts-v2",
  "bytemuck",
@@ -239,7 +264,7 @@ dependencies = [
 [[package]]
 name = "anchor-spl-v2"
 version = "2.0.0"
-source = "git+https://github.com/solana-foundation/anchor.git?branch=anchor-next#2a191379020f15c1d384bdadd41f23949734ce98"
+source = "git+https://github.com/solana-foundation/anchor.git?branch=anchor-next#e056cc17e7424353bd8d21382f15a2eca28abb9a"
 dependencies = [
  "anchor-lang-v2",
  "bytemuck",
@@ -260,7 +285,7 @@ dependencies = [
 [[package]]
 name = "anchor-v2-testing"
 version = "0.1.0"
-source = "git+https://github.com/solana-foundation/anchor.git?branch=anchor-next#2a191379020f15c1d384bdadd41f23949734ce98"
+source = "git+https://github.com/solana-foundation/anchor.git?branch=anchor-next#e056cc17e7424353bd8d21382f15a2eca28abb9a"
 dependencies = [
  "litesvm",
  "solana-keypair",
@@ -1623,6 +1648,8 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 name = "dropset"
 version = "0.1.0"
 dependencies = [
+ "anchor-asm-v2",
+ "anchor-asm-v2-runtime",
  "anchor-lang-v2",
  "anchor-spl-v2",
  "anchor-v2-testing",
@@ -7532,7 +7559,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.2",
