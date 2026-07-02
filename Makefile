@@ -12,6 +12,7 @@
 .PHONY: explorer
 .PHONY: explorer-down
 .PHONY: frontend
+.PHONY: frontend-localnet
 .PHONY: idl
 .PHONY: indexer-down
 .PHONY: indexer-up
@@ -200,6 +201,18 @@ decks:
 		opener=$$(command -v open || command -v xdg-open) \
 			&& $$opener http://localhost:3300 ) &
 	cd decks && pnpm dev
+
+# Run the frontend against a local validator (open http://localhost:3000): the
+# localnet cluster + local RPC/WS, overriding the mainnet endpoints in
+# .env.local (a process env var wins over .env files in Next). Assumes a
+# validator is up with the markets seeded — the `tui` control plane does both —
+# so run `make tui` alongside this (a full `make localnet` that launches both
+# lands with the TUI work).
+frontend-localnet:
+	cd frontend && pnpm install
+	cd frontend && NEXT_PUBLIC_CLUSTER=localnet \
+		NEXT_PUBLIC_RPC_URL=http://127.0.0.1:8899 \
+		NEXT_PUBLIC_WS_URL=ws://127.0.0.1:8900 pnpm dev
 
 # https://github.com/solana-foundation/anchor/tree/anchor-next/lang-v2
 install-anchor-v2:
