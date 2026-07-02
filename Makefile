@@ -4,9 +4,12 @@
 .PHONY: bots-up
 .PHONY: check-anchor
 .PHONY: check-conformance-vectors
+.PHONY: check-docker
+.PHONY: check-pnpm
 .PHONY: check-sbf
 .PHONY: check-solana
 .PHONY: check-toolchain
+.PHONY: check-wasm
 .PHONY: clean
 .PHONY: conformance-vectors
 .PHONY: decks
@@ -57,6 +60,26 @@ check-solana:
 	@solana-test-validator --version | grep -q " 3\.1\." \
 		|| { echo "solana-test-validator 3.1.x required"; exit 1; }
 
+# Tooling for the non-on-chain subsystems, gated per-consumer (not folded
+# into check-toolchain, which stays the on-chain build path) so a target only
+# demands what it uses: the WASM binding build needs wasm-pack; the localnet
+# Docker stack (explorer / indexer / bots) needs Docker with the compose v2
+# plugin; the SDK and web dev servers need pnpm.
+check-wasm:
+	@command -v wasm-pack >/dev/null \
+		|| { echo "wasm-pack not found (cargo install wasm-pack)"; \
+			exit 1; }
+
+check-docker:
+	@command -v docker >/dev/null \
+		|| { echo "docker not found (install Docker)"; exit 1; }
+	@docker compose version >/dev/null 2>&1 \
+		|| { echo "docker compose v2 plugin required"; exit 1; }
+
+check-pnpm:
+	@command -v pnpm >/dev/null \
+		|| { echo "pnpm not found (npm i -g pnpm)"; exit 1; }
+
 # Regenerate the checked-in IDL from the program. Pin anchor-cli to the
 # same anchor-next rev as the program crate (see install-anchor-v2) so
 # the IDL-diff baseline doesn't drift — interface.md § SDK, CI discipline.
@@ -69,7 +92,7 @@ idl: check-toolchain program-keypair
 # Regenerate the TS + Rust clients from the checked-in IDL via Codama,
 # then normalize the Rust output with `cargo fmt` so it lands in canonical
 # form (clean under the rustfmt hook, reproducible by the SDK CI gate).
-sdk:
+sdk: check-pnpm
 	cd sdk/codama && pnpm install && pnpm generate
 	cargo fmt -p dropset-sdk
 
@@ -79,7 +102,7 @@ sdk:
 # `simulate_swap` binding and the `Price` codec bindings. Emits the glue
 # straight into the TS SDK (sdk/ts/src/wasm) so `@dropset/sdk` can import it
 # and the SDK CI type-checks against it; the `simulate` module wraps it.
-wasm:
+wasm: check-wasm
 	cd sdk/interface && wasm-pack build --target web \
 		--out-dir ../ts/src/wasm --features wasm
 	rm -f sdk/ts/src/wasm/.gitignore sdk/ts/src/wasm/package.json \
@@ -106,7 +129,7 @@ check-conformance-vectors: conformance-vectors
 
 # Run the SDK test suites: Rust (math-core + interface + dropset-sdk, incl.
 # the conformance vectors) and the TS conformance check.
-sdk-test:
+sdk-test: check-pnpm
 	cargo test -p dropset-math-core -p dropset-interface -p dropset-sdk
 	cd sdk/ts && pnpm test
 
@@ -134,9 +157,9 @@ teardown:
 # it by hand. First `explorer` run builds the image from source (a few
 # minutes); later runs reuse the cache. Set DROPSET_EXPLORER_REF to pin the
 # explorer version (branch, tag, or commit SHA).
-explorer:
+explorer: check-docker
 	docker compose -f infra/localnet/docker-compose.yml up -d explorer
-explorer-down:
+explorer-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml down
 
 # Localnet indexer stack: Postgres + the event indexer worker + the /v1 API
@@ -144,10 +167,10 @@ explorer-down:
 # a host-run solana-test-validator) as the live event source. First run builds
 # the Rust image (slow); later runs reuse the cargo-chef dependency cache. The
 # /v1 surface comes up on http://localhost:8080.
-indexer-up:
+indexer-up: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		up -d postgres indexer indexer-api
-indexer-down:
+indexer-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		rm -sf postgres indexer indexer-api
 
@@ -158,20 +181,20 @@ indexer-down:
 # image (slow); later runs reuse the cargo-chef dependency cache. The taker is
 # opt-in (`taker-up`), never started here — the demo market stays quiet until
 # an operator asks for organic flow.
-bots-up:
+bots-up: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		up -d maker-bot
-bots-down:
+bots-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		rm -sf maker-bot taker-bot
 
 # Opt-in localnet flow: start / stop the benign stochastic taker so the seeded
 # books move and the maker takes fills. Off by default (gated behind the compose
 # `taker` profile); flip it on for a walkthrough, off to leave the market quiet.
-taker-up:
+taker-up: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		--profile taker up -d taker-bot
-taker-down:
+taker-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		rm -sf taker-bot
 
@@ -188,7 +211,7 @@ taker-down:
 #   8899  solana-test-validator RPC (validator, not a web port)
 
 # Run next dev and open the browser once it's accepting connections.
-frontend:
+frontend: check-pnpm
 	cd frontend && pnpm install
 	@( until nc -z localhost 3000 2>/dev/null; do sleep 0.2; done; \
 		opener=$$(command -v open || command -v xdg-open) \
@@ -197,7 +220,7 @@ frontend:
 
 # Run the decks deck dev server (port 3300, set in the dev script) and
 # open the browser once it's accepting connections.
-decks:
+decks: check-pnpm
 	cd decks && pnpm install
 	@( until nc -z localhost 3300 2>/dev/null; do sleep 0.2; done; \
 		opener=$$(command -v open || command -v xdg-open) \
@@ -209,7 +232,7 @@ decks:
 # .env.local (a process env var wins over .env files in Next). Assumes a
 # validator is up with the markets seeded, which the `tui` control plane does;
 # run `make tui` alongside this, or use `make localnet` to launch both.
-frontend-localnet:
+frontend-localnet: check-pnpm
 	cd frontend && pnpm install
 	cd frontend && NEXT_PUBLIC_CLUSTER=localnet \
 		NEXT_PUBLIC_RPC_URL=http://127.0.0.1:8899 \
