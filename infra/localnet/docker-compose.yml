@@ -38,7 +38,7 @@ services:
     extra_hosts:
     - 'host.docker.internal:host-gateway'
     # Bind to loopback only — a local dev viewer, not a LAN service. Host port
-    # 3100 avoids the frontend's localhost:3000; the container still serves 3000.
+    # 3100 dodges the frontend's localhost:3000; the container serves 3000.
     ports:
     - '127.0.0.1:3100:3000'
     restart: 'unless-stopped'

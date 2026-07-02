@@ -13,8 +13,6 @@
 //! currency the keyless FX-rate tier pegs to — plus the mock-mint keypair and
 //! decimals the localnet bootstrap and inventory valuation need.
 
-// cspell:word rsplit
-
 use std::time::Duration;
 
 /// Default localnet RPC endpoint (the `solana-test-validator` the TUI spawns).

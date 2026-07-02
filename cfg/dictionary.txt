@@ -62,8 +62,10 @@ keypairs
 killswitch
 kripto
 lamports
+libc
 litesvm
 localnet
+localtime
 macropod
 metas
 mpsc
@@ -82,6 +84,7 @@ readback
 repeg
 repr
 respawn
+respawned
 retunable
 retune
 retuned
@@ -89,6 +92,7 @@ retunes
 rlib
 rollup
 rollups
+rsplit
 rustc
 sbpf
 seedable

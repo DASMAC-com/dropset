@@ -254,12 +254,12 @@ mod tests {
 
     #[test]
     fn tx_urls_target_the_tx_route_on_each_origin() {
-        let sig = "5xY5s1gnaturebase58";
+        let sig = "5xY5s1Vd7z9Kq2Rp8";
         let local = tx_url(sig, "http://127.0.0.1:8899");
-        assert!(local.starts_with("http://localhost:3100/tx/5xY5s1gnaturebase58"));
+        assert!(local.starts_with("http://localhost:3100/tx/5xY5s1Vd7z9Kq2Rp8"));
         assert!(local.contains("cluster=custom"));
         assert!(local.contains("customUrl=http%3A%2F%2F127.0.0.1%3A8899"));
         let hosted = hosted_tx_url(sig, "http://127.0.0.1:8899");
-        assert!(hosted.starts_with("https://explorer.solana.com/tx/5xY5s1gnaturebase58"));
+        assert!(hosted.starts_with("https://explorer.solana.com/tx/5xY5s1Vd7z9Kq2Rp8"));
     }
 }
