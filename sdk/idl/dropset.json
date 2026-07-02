@@ -3059,7 +3059,7 @@
     {
       "code": 6020,
       "name": "InvalidQuoteSlot",
-      "msg": "quote_slot is future-dated or backdated past MAX_BACKDATE"
+      "msg": "quote_slot is invalid"
     },
     {
       "code": 6021,
