@@ -8,8 +8,9 @@
 //! (see [`super::skew`]), and only a large imbalance reshapes the ladder.
 
 use crate::config::LadderLevel;
+use anyhow::Result;
 use bytemuck::Zeroable;
-use dropset_sdk::layout::{LiquidityProfile, N_LEVELS};
+use dropset_sdk::layout::{LiquidityProfile, BPS, N_LEVELS};
 use dropset_sdk::quoting::profile_bytes;
 
 /// Which side of the book a reshape targets.
@@ -46,29 +47,66 @@ pub fn zero_side(profile: &mut LiquidityProfile, side: Side) {
     }
 }
 
-/// Scale one side's per-level `size_bps` by `scale`, each level clamped to
-/// `[0, 10000]` — the §4 reshape (imbalance > 30%). The standard ladder already
-/// fully commits each leg (`Σ size_bps = 10000`), so "grow the heavy side"
-/// (spec §4 row 1) can only be realized *relatively*: shrink the accumulating
-/// side here (`scale < 1`) so the untouched heavy (rebuild) side dominates the
-/// book and leans into offloading the heavy leg. A `scale ≤ 1` only shrinks the
-/// side, so it can never breach the per-side `Σ ≤ 10000` invariant (the clamp
-/// is a guard for a hypothetical grow caller). A milder step than [`zero_side`],
-/// which the > 50% freeze uses to drop the accumulating side entirely.
+/// Scale one side's per-level `size_bps` by `scale` — the §4 reshape
+/// (imbalance > 30%). The standard ladder already fully commits each leg
+/// (`Σ size_bps = 10000`), so "grow the heavy side" (spec §4 row 1) can only
+/// be realized *relatively*: shrink the accumulating side here (`scale < 1`)
+/// so the untouched heavy (rebuild) side dominates the book and leans into
+/// offloading the heavy leg. A milder step than [`zero_side`], which the
+/// > 50% freeze uses to drop the accumulating side entirely.
+///
+/// The per-side `Σ size_bps ≤ BPS` invariant is now enforced at *match* time:
+/// a side that sums past BPS is silently thrown out of matching by the engine
+/// (a no-fill), not rejected at write time. So this must never leave a side
+/// over BPS. Two guards make that hold for any `scale`:
+///
+/// * **Floor, never round.** Round-nearest can tick an individual level up and
+///   drift a `Σ = BPS` side to `BPS + 1`; flooring only ever shrinks, so a
+///   `scale ≤ 1` side stays `≤ BPS` by construction.
+/// * **Renormalize.** For a hypothetical `scale > 1` grow, if the floored sum
+///   still exceeds BPS, scale every level down by `BPS / sum` and floor again
+///   — each term lands `≤` its share of BPS, so the new sum is `≤ BPS`.
 pub fn scale_side(profile: &mut LiquidityProfile, side: Side, scale: f64) {
     let levels = match side {
         Side::Bid => &mut profile.bids,
         Side::Ask => &mut profile.asks,
     };
     for level in levels.iter_mut() {
-        let scaled = (f64::from(level.size_bps.get()) * scale).round();
-        level.size_bps = (scaled.clamp(0.0, 10_000.0) as u16).into();
+        let scaled = (f64::from(level.size_bps.get()) * scale).max(0.0).floor();
+        level.size_bps = (scaled.min(f64::from(u16::MAX)) as u16).into();
     }
+    let sum: u64 = levels.iter().map(|l| l.size_bps.get() as u64).sum();
+    if sum > BPS {
+        for level in levels.iter_mut() {
+            let capped = level.size_bps.get() as u64 * BPS / sum;
+            level.size_bps = (capped as u16).into();
+        }
+    }
+    debug_assert!(
+        levels.iter().map(|l| l.size_bps.get() as u64).sum::<u64>() <= BPS,
+        "scale_side must never leave a side over BPS"
+    );
 }
 
 /// Serialize a profile to the `[u8; 160]` `set_liquidity_profile` argument.
 pub fn to_bytes(profile: &LiquidityProfile) -> [u8; 160] {
     profile_bytes(profile)
+}
+
+/// Serialize a profile for submission, first asserting the on-chain
+/// match-time gate (per-side `Σ size_bps ≤ BPS`). A side over the cap is
+/// silently skipped by the matcher (a no-fill), so an honest bot treats it as
+/// the sizing bug it is and refuses to arm a dark side rather than submit it.
+/// Every `set_liquidity_profile` send routes through here.
+pub fn checked_bytes(profile: &LiquidityProfile) -> Result<[u8; 160]> {
+    if let Err(v) = profile.validate_size_sums() {
+        anyhow::bail!(
+            "liquidity profile Σ size_bps exceeds {BPS} (bids={}, asks={}) — sizing bug",
+            v.bid_sum,
+            v.ask_sum
+        );
+    }
+    Ok(to_bytes(profile))
 }
 
 #[cfg(test)]
@@ -138,5 +176,40 @@ mod tests {
     fn serializes_to_160_bytes() {
         let p = build_profile(&DEFAULT_LADDER);
         assert_eq!(to_bytes(&p).len(), 160);
+    }
+
+    #[test]
+    fn scale_side_never_exceeds_bps_even_when_growing() {
+        // A hypothetical `scale > 1` grow can't push a side past BPS — the
+        // renormalize caps it — so the match-time gate never silently skips
+        // the reshaped side.
+        let mut p = build_profile(&DEFAULT_LADDER);
+        scale_side(&mut p, Side::Bid, 5.0);
+        let bid: u32 = p.bids.iter().map(|l| l.size_bps.get() as u32).sum();
+        assert!(bid <= 10_000, "grown side capped at BPS (got {bid})");
+        assert!(p.validate_size_sums().is_ok());
+    }
+
+    #[test]
+    fn scale_side_shrink_below_one_stays_valid() {
+        // The real reshape path (`scale ≤ 1`) floors, never rounds up, so the
+        // per-side sum can only shrink — even a scale a hair under 1.
+        let mut p = build_profile(&DEFAULT_LADDER);
+        scale_side(&mut p, Side::Ask, 0.999_9);
+        assert!(p.validate_size_sums().is_ok());
+        let ask: u32 = p.asks.iter().map(|l| l.size_bps.get() as u32).sum();
+        assert!(ask <= 10_000);
+    }
+
+    #[test]
+    fn checked_bytes_rejects_an_oversized_profile() {
+        // No builder path produces `Σ > BPS`; force it directly and confirm
+        // the submit guard refuses rather than arm a side the chain would
+        // silently skip.
+        let mut p = build_profile(&DEFAULT_LADDER);
+        p.bids[0].size_bps = (p.bids[0].size_bps.get() + 10_000).into();
+        assert!(checked_bytes(&p).is_err());
+        // A valid profile serializes cleanly.
+        assert!(checked_bytes(&build_profile(&DEFAULT_LADDER)).is_ok());
     }
 }

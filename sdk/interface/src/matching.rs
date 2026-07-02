@@ -16,7 +16,7 @@
 //! distinct here. That residual seam is pinned to the engine by the
 //! shared conformance vectors (see `sdk/conformance`).
 
-use crate::layout::{MarketView, Vault, N_LEVELS};
+use crate::layout::{MarketView, Vault, BPS, N_LEVELS};
 use crate::matching_math::{flush_level_price, level_fill_atoms, sort_key, taker_fee_atoms};
 use crate::price::Price;
 
@@ -87,8 +87,9 @@ pub fn simulate_swap(
 
     // Reconstruct the chosen side's book in cross-vault price-time priority.
     // `None` means the book is in a state the engine hard-rejects (a corrupt
-    // active DLL or an oversize flush level) — refuse to quote, matching
-    // `swap.rs` (see [`collect_side_levels`]).
+    // active DLL) — refuse to quote, matching `swap.rs`. An oversized flush
+    // side is not a hard reject: it's skipped per-vault inside
+    // [`collect_side_levels`], mirroring the engine zeroing that side.
     let Some(mut levels) = collect_side_levels(market, is_buy, current_slot) else {
         return Quote::default();
     };
@@ -250,7 +251,7 @@ pub fn resting_levels(
 /// the levels) and [`resting_levels`] (which exposes them) so the canonical
 /// book reconstruction lives in one place.
 ///
-/// Returns `None` when the book is in a state the on-chain engine
+/// Returns `None` only when the book is in a state the on-chain engine
 /// hard-rejects, so both callers can refuse rather than quote/show a fill
 /// the engine won't honor:
 ///
@@ -259,14 +260,14 @@ pub fn resting_levels(
 ///   `Vault.next` pointer cycles or points out of bounds; the bounded
 ///   `active_vaults` iterator instead *silently truncates* at the same
 ///   budget and would otherwise quote whatever it collected first.
-/// - **Oversize flush level.** `swap.rs` materializes every active,
-///   flush-armed vault's profile — both sides — and `flush_level_size`
-///   rejects the entire `swap` (`LiquidityProfileSizeOverflow`) if any
-///   level's `size_bps > BPS`, so a single corrupt level aborts the take
-///   regardless of side or depth.
 ///
-/// Both are only reachable from account bytes the program never wrote — see
-/// [`MarketView::active_dll_is_corrupt`] and [`vault_has_oversize_flush_level`].
+/// An **oversized flush side** (`Σ size_bps > BPS`) is *not* a hard reject:
+/// `swap.rs` zeroes that side's `remaining` at flush time so it contributes
+/// nothing while the rest of the book still matches, and this collector
+/// mirrors that by skipping the offending vault's contribution on the
+/// collected side (see [`flush_side_sum_exceeds_bps`]) rather than returning
+/// `None`. Both conditions are only reachable from account bytes the program
+/// never wrote — see [`MarketView::active_dll_is_corrupt`].
 fn collect_side_levels(
     market: &MarketView<'_>,
     is_buy: bool,
@@ -288,8 +289,15 @@ fn collect_side_levels(
         }
         let nonce = v.reference_price.nonce();
         let flush = v.reference_price.flush_armed();
-        if flush && vault_has_oversize_flush_level(v) {
-            return None;
+        // Match-time per-side gate (mirrors `swap.rs`'s flush): when a flush
+        // is armed, a side whose `Σ size_bps > BPS` is thrown out of
+        // matching — the engine zeroes that side's `remaining`, so it
+        // contributes nothing — rather than aborting the whole take. Skip
+        // just this vault's contribution on the collected side. When no
+        // flush is armed we read `remaining`, already gated at the last
+        // flush, so no check is needed there.
+        if flush && flush_side_sum_exceeds_bps(v, is_buy) {
+            continue;
         }
         let ref_slot = v.reference_price.quote_slot.get();
         let base_atoms = v.base_atoms.get();
@@ -330,23 +338,23 @@ fn collect_side_levels(
     Some(levels)
 }
 
-/// True when any level in `v`'s flush profile sizes past its full leg
-/// (`size_bps > BPS`), on either side — i.e. [`level_fill_atoms`] would
-/// reject it. `set_liquidity_profile` bounds the per-side Σ `size_bps` to
-/// `BPS`, and each `size_bps` is a non-negative `u16`, so every individual
-/// level is `<= BPS` for any profile the program wrote — this only fires
-/// on corrupted account bytes (or a hypothetical future profile-writing
-/// path that skips the sum check). The on-chain matcher reacts to the same
-/// condition in `flush_level_size` by hard-rejecting the whole `swap`
-/// (`LiquidityProfileSizeOverflow`), so the simulator refuses to quote when
-/// it holds — see `simulate_swap`.
-fn vault_has_oversize_flush_level(v: &Vault) -> bool {
-    let base_atoms = v.base_atoms.get();
-    let quote_atoms = v.quote_atoms.get();
-    (0..N_LEVELS).any(|i| {
-        level_fill_atoms(v.profile.asks[i].size_bps.get(), base_atoms).is_none()
-            || level_fill_atoms(v.profile.bids[i].size_bps.get(), quote_atoms).is_none()
-    })
+/// True when the flush profile's *collected* side (`is_buy` ⇒ asks) sums
+/// past `BPS` — `Σ size_bps > BPS` on that side, which subsumes any single
+/// level `> BPS`. The on-chain matcher zeroes such a side's `remaining` at
+/// flush time (see `swap.rs`), dropping it from matching without aborting
+/// the take, so the simulator mirrors that by skipping this vault's
+/// contribution on the collected side. `set_liquidity_profile` still bounds
+/// the sum at write time, so this only fires on an oversized profile written
+/// outside that path (corrupted account bytes, or a future write that skips
+/// the sum check).
+fn flush_side_sum_exceeds_bps(v: &Vault, is_buy: bool) -> bool {
+    let side = if is_buy {
+        &v.profile.asks
+    } else {
+        &v.profile.bids
+    };
+    let sum: u32 = side.iter().map(|l| l.size_bps.get() as u32).sum();
+    sum > BPS as u32
 }
 
 /// Resolve a single level's `(price, size, expires_at)` for the chosen
@@ -367,11 +375,11 @@ fn level_state(
         if is_buy {
             let a = v.profile.asks[i];
             let price = flush_level_price(reference, a.price_offset.get(), true);
-            // An out-of-range `size_bps` (only from corrupted bytes) is
-            // caught up front by `vault_has_oversize_flush_level`, which
-            // makes `simulate_swap` reject the whole quote to match the
-            // engine's hard abort — so `unwrap_or(0)` here is an
-            // unreachable total-function fallback, not a silent level drop.
+            // A side that sums past BPS is skipped whole by the
+            // [`flush_side_sum_exceeds_bps`] gate in `collect_side_levels`
+            // before this runs, so on a collected side every level is
+            // `≤ Σ ≤ BPS` and `unwrap_or(0)` is an unreachable total-function
+            // fallback, not a silent level drop.
             let size = level_fill_atoms(a.size_bps.get(), base_atoms).unwrap_or(0);
             let expires_at = ref_slot.saturating_add(a.expiry_offset.get());
             (price, size, expires_at)
@@ -398,10 +406,10 @@ fn level_state(
 
 #[cfg(test)]
 mod tests {
-    use super::{resting_levels, simulate_swap, BookLevel, SwapSide};
+    use super::{resting_levels, simulate_swap, BookLevel, Quote, SwapSide};
     use crate::layout::{
-        MarketHeader, MarketView, Position, ReferencePrice, Vault, ACCOUNT_DISCRIMINATOR_LEN,
-        NULL_SECTOR, VAULT_ALIGN,
+        Level, MarketHeader, MarketView, Position, ReferencePrice, Vault,
+        ACCOUNT_DISCRIMINATOR_LEN, FLUSH_BIT, NULL_SECTOR, VAULT_ALIGN,
     };
     use crate::price::Price;
     use bytemuck::{bytes_of, cast_slice, Zeroable};
@@ -524,5 +532,90 @@ mod tests {
         let view = MarketView::load(&data).unwrap();
         assert!(resting_levels(&view, SwapSide::Buy, u32::MAX).is_empty());
         assert!(resting_levels(&view, SwapSide::Sell, u32::MAX).is_empty());
+    }
+
+    fn level(offset_ppm: u32, size_bps: u16) -> Level {
+        Level {
+            price_offset: offset_ppm.into(),
+            size_bps: size_bps.into(),
+            expiry_offset: u32::MAX.into(),
+        }
+    }
+
+    /// A one-vault market with `FLUSH_BIT` armed and a single-level profile a
+    /// side (`ask_bps` / `bid_bps` set on level 0, ±500 ppm off a 1.0850
+    /// reference, 1.0M each leg). The taker's first read materializes
+    /// `remaining` from this profile — the path the per-side size gate lives
+    /// on.
+    fn market_data_flush(ask_bps: u16, bid_bps: u16) -> Vec<u8> {
+        let mut header = MarketHeader::zeroed();
+        header.head = 0u32.into();
+        header.tombstone_head = NULL_SECTOR.into();
+        header.free_head = NULL_SECTOR.into();
+        header.active_count = 1u32.into();
+        header.base_mint = [2u8; 32];
+        header.quote_mint = [3u8; 32];
+
+        let mut v = Vault::zeroed();
+        v.next = NULL_SECTOR.into();
+        v.prev = NULL_SECTOR.into();
+        v.leader = [1u8; 32];
+        v.reference_price = ReferencePrice {
+            stamp: (FLUSH_BIT | 1).into(),
+            price: Price::encode(10_850_000, 0).unwrap().as_u32().into(),
+            quote_slot: 0u32.into(),
+        };
+        v.base_atoms = 1_000_000u64.into();
+        v.quote_atoms = 1_000_000u64.into();
+        v.profile.asks[0] = level(5_000, ask_bps);
+        v.profile.bids[0] = level(5_000, bid_bps);
+
+        let vaults = [v];
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&[0u8; ACCOUNT_DISCRIMINATOR_LEN]);
+        buf.extend_from_slice(bytes_of(&header));
+        buf.extend_from_slice(&(vaults.len() as u32).to_le_bytes());
+        while !buf.len().is_multiple_of(VAULT_ALIGN) {
+            buf.push(0);
+        }
+        buf.extend_from_slice(cast_slice(&vaults));
+        buf
+    }
+
+    /// A flush side whose `Σ size_bps > BPS` is thrown out of matching whole —
+    /// its levels don't appear — while the other side still reconstructs and
+    /// fills, mirroring the engine zeroing only the offending side rather than
+    /// aborting the whole take.
+    #[test]
+    fn oversize_flush_side_is_skipped_not_the_whole_book() {
+        let data = market_data_flush(20_000, 5_000); // asks 200% of leg, bids 50%
+        let view = MarketView::load(&data).unwrap();
+        assert!(
+            resting_levels(&view, SwapSide::Buy, 1).is_empty(),
+            "oversized ask side contributes no depth"
+        );
+        assert!(
+            !resting_levels(&view, SwapSide::Sell, 1).is_empty(),
+            "healthy bid side still reconstructs"
+        );
+        assert_eq!(
+            simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1),
+            Quote::default(),
+            "a Buy against the oversized ask side no-fills, it does not abort"
+        );
+        assert!(
+            simulate_swap(&view, SwapSide::Sell, 500_000, Price::ZERO, 1).out_amount > 0,
+            "the healthy bid side still fills a Sell"
+        );
+    }
+
+    /// `Σ == BPS` exactly is valid — the gate is strict (`> BPS`), so a fully
+    /// committed side still materializes and fills.
+    #[test]
+    fn flush_side_sum_at_bps_is_accepted() {
+        let data = market_data_flush(10_000, 10_000);
+        let view = MarketView::load(&data).unwrap();
+        assert!(!resting_levels(&view, SwapSide::Buy, 1).is_empty());
+        assert!(simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1).out_amount > 0);
     }
 }

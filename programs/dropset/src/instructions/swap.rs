@@ -40,7 +40,7 @@ use dropset_math_core::matching_math::{
 use crate::{
     errors::DropsetError,
     events::FillEvent,
-    state::{Market, VaultAccess, FLUSH_BIT},
+    state::{Market, VaultAccess, BPS, FLUSH_BIT},
     Price, N_LEVELS,
 };
 
@@ -262,28 +262,6 @@ pub struct Swap {
     pub clock: Sysvar<Clock>,
 }
 
-/// `level.size_bps` × the matching leg, in atoms — the program-side
-/// wrapper over [`level_fill_atoms`] that maps its `size_bps > BPS`
-/// rejection to a hard `DropsetError`.
-///
-/// `set_liquidity_profile` bounds the per-side Σ `size_bps` to `BPS`, and
-/// each `size_bps` is a non-negative `u16`, so every *individual* level is
-/// `<= BPS` for any profile written through that path — the rejection is
-/// implied by the sum check and never fires on the normal path. It is
-/// load-bearing only against account bytes the program never wrote
-/// (corruption, or a future profile-writing instruction that skips the sum
-/// check). We reject rather than silently clamp, which would mask the bug
-/// by shrinking the level's materialized size. The pricing
-/// (`flush_level_price`) and the cap itself are shared with the off-chain
-/// simulator via [`dropset_math_core::matching_math`] so the two can't
-/// drift; the simulator pins the same contract from the other direction —
-/// on `size_bps > BPS` it yields an empty quote instead of a fill this
-/// handler would abort (conformance test in `tests/sdk_conformance.rs`).
-fn flush_level_size(size_bps: u16, leg_atoms: u64) -> Result<u64> {
-    level_fill_atoms(size_bps, leg_atoms)
-        .ok_or_else(|| DropsetError::LiquidityProfileSizeOverflow.into())
-}
-
 /// One entry on the ephemeral matching heap. Built per-`(vault,
 /// level)` pair during the active-DLL walk; sorted by
 /// `(price_key, nonce, sector_idx, level_idx)` so the canonical
@@ -424,19 +402,50 @@ impl Swap {
                 // Materialize Remaining from LiquidityProfile +
                 // current inventory, then clear FLUSH_BIT.
                 let v = self.market.mutate_vault(cur)?;
+                // Per-side `Σ size_bps ≤ BPS` gate, enforced here at match
+                // time rather than at the `set_liquidity_profile` write. A
+                // side whose sum exceeds BPS is thrown out of matching —
+                // its `remaining` sizes are written as zero, which the
+                // collection loop below skips — exactly like an invalid
+                // reference price skips a whole vault, instead of aborting
+                // every taker's swap. This subsumes the per-level case: a
+                // single level `> BPS` forces its side's sum `> BPS`. The
+                // stored `profile` bytes are left intact, so the leader's
+                // ladder self-heals the moment they resubmit a valid one.
+                // Writing zeros is not an extra write — the flush overwrites
+                // every `remaining` slot regardless. When a side's sum
+                // holds, every level is `≤ sum ≤ BPS`, so `level_fill_atoms`
+                // can never reject and its `unwrap_or(0)` fallback is
+                // unreachable on that side.
+                let mut bid_sum: u32 = 0;
+                let mut ask_sum: u32 = 0;
+                for i in 0..N_LEVELS {
+                    bid_sum = bid_sum.saturating_add(v.profile.bids[i].size_bps.get() as u32);
+                    ask_sum = ask_sum.saturating_add(v.profile.asks[i].size_bps.get() as u32);
+                }
+                let bids_ok = bid_sum <= BPS as u32;
+                let asks_ok = ask_sum <= BPS as u32;
                 for i in 0..N_LEVELS {
                     let bid = v.profile.bids[i];
                     let ask = v.profile.asks[i];
                     v.remaining.bids[i].price =
                         flush_level_price(ref_price, bid.price_offset.get(), false);
-                    v.remaining.bids[i].size =
-                        flush_level_size(bid.size_bps.get(), quote_atoms)?.into();
+                    v.remaining.bids[i].size = if bids_ok {
+                        level_fill_atoms(bid.size_bps.get(), quote_atoms).unwrap_or(0)
+                    } else {
+                        0
+                    }
+                    .into();
                     v.remaining.bids[i].expires_at =
                         ref_slot.saturating_add(bid.expiry_offset.get()).into();
                     v.remaining.asks[i].price =
                         flush_level_price(ref_price, ask.price_offset.get(), true);
-                    v.remaining.asks[i].size =
-                        flush_level_size(ask.size_bps.get(), base_atoms)?.into();
+                    v.remaining.asks[i].size = if asks_ok {
+                        level_fill_atoms(ask.size_bps.get(), base_atoms).unwrap_or(0)
+                    } else {
+                        0
+                    }
+                    .into();
                     v.remaining.asks[i].expires_at =
                         ref_slot.saturating_add(ask.expiry_offset.get()).into();
                 }

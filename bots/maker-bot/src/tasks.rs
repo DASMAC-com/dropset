@@ -498,7 +498,7 @@ fn arm_standard(ctx: &mut Context, cfg: &BotConfig, now: Instant) -> Result<()> 
         &ctx.leader,
         &ctx.market.market,
         ctx.vault_idx,
-        ladder::to_bytes(&profile),
+        ladder::checked_bytes(&profile)?,
     )?;
     ctx.profile_kind = ProfileKind::Standard;
     ctx.last_profile_at = now;
@@ -522,7 +522,7 @@ fn arm_reshape(ctx: &mut Context, cfg: &BotConfig, accumulating: Side, now: Inst
         &ctx.leader,
         &ctx.market.market,
         ctx.vault_idx,
-        ladder::to_bytes(&profile),
+        ladder::checked_bytes(&profile)?,
     )?;
     ctx.profile_kind = ProfileKind::Reshaped(accumulating);
     ctx.last_profile_at = now;
@@ -546,7 +546,7 @@ fn freeze_side(ctx: &mut Context, cfg: &BotConfig, side: Side) -> Result<()> {
         &ctx.leader,
         &ctx.market.market,
         ctx.vault_idx,
-        ladder::to_bytes(&profile),
+        ladder::checked_bytes(&profile)?,
     )?;
     ctx.profile_kind = ProfileKind::FrozenSide(side);
     ctx.last_profile_at = Instant::now();
@@ -573,7 +573,7 @@ fn halt(ctx: &mut Context, cfg: &BotConfig, reason: HaltReason) -> Result<()> {
             &ctx.leader,
             &ctx.market.market,
             ctx.vault_idx,
-            ladder::to_bytes(&profile),
+            ladder::checked_bytes(&profile)?,
         )?;
         ctx.profile_kind = ProfileKind::Halted;
         ctx.last_profile_at = Instant::now();

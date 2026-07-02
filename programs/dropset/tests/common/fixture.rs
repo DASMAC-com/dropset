@@ -1616,11 +1616,11 @@ impl Fixture {
 
     /// Overwrite `Vault.profile.{asks,bids}[level].size_bps` for vault
     /// `sector_idx`, bypassing the `set_liquidity_profile` per-side Σ ≤ BPS
-    /// bound (`is_ask` selects the side). No
-    /// instruction writes a `size_bps > BPS`, so this is the only way to
-    /// reach the matcher's out-of-range flush-size branch — the on-chain
-    /// hard-reject (`LiquidityProfileSizeOverflow`) and the simulator's
-    /// empty-quote mirror.
+    /// bound (`is_ask` selects the side). No instruction writes a
+    /// `size_bps > BPS`, so this is the only way to reach the matcher's
+    /// match-time per-side skip: at flush the engine throws out a side whose
+    /// `Σ size_bps > BPS` (zeroing its `remaining`) rather than aborting the
+    /// take, and the simulator mirrors that by skipping the vault's side.
     pub fn poke_level_size_bps(
         &mut self,
         sector_idx: u32,

@@ -678,9 +678,13 @@ arrays of `N_LEVELS` `Level`s, each a
 `(price_offset, size_bps, expiry_offset)` triple, top of book first. The
 load-bearing invariants:
 
-- **Per-side size cap.** `Σ size_bps ≤ 10000` per side, enforced at
-  `SetLiquidityProfile`. The sum at exactly `10000` fully commits that
-  leg; a lower sum leaves a reserve.
+- **Per-side size cap.** `Σ size_bps ≤ 10000` per side. The sum at
+  exactly `10000` fully commits that leg; a lower sum leaves a reserve.
+  The invariant is enforced authoritatively **at match time**: a side
+  whose sum exceeds `10000` is skipped (its levels don't materialize)
+  rather than aborting the take — see **Order matching → Book
+  construction**. `SetLiquidityProfile` also rejects an over-cap write up
+  front, a redundant early guard.
 - **Unit asymmetry.** `size_bps` is a fraction of the matching
   inventory leg — `base_atoms` for asks, `quote_atoms` for bids — so a
   materialized **bid** size is denominated in quote atoms (the leader
@@ -727,11 +731,12 @@ overflow (relevant for both the price and size computations); the
 result is truncated back to the native field width. The `−sat`
 operator on bids is saturating subtraction — bid `price_offset`
 values ≥ 1_000_000 ppm produce a 0 bid price, which is range-checked
-out at match time. The per-side `Σ size_bps ≤ 10000` invariant
-(enforced at `SetLiquidityProfile`, see below) means the sum of
-materialized sizes per side never exceeds the inventory leg, so no
-runtime clamp is needed. `FLUSH_BIT` is then cleared with one
-`u64` store.
+out at match time. The per-side `Σ size_bps ≤ 10000` invariant is
+applied here at flush: a side whose sum exceeds `10000` has its
+`remaining` sizes written as zero (thrown out of matching, see **Order
+matching → Book construction**), so on any side that *is* materialized
+the sum never exceeds the inventory leg and no runtime clamp is needed.
+`FLUSH_BIT` is then cleared with one `u64` store.
 
 Properties:
 
@@ -1181,7 +1186,7 @@ expressed in ppm/bps and slot offsets, never absolute. Called after
 seeding the vault and any time the leader wants to reshape their
 ladder.
 
-**Per-side collateral invariant.** Validated before the write:
+**Per-side collateral invariant.**
 
 ```text
 Σ bids[i].size_bps ≤ 10000
@@ -1189,10 +1194,16 @@ ladder.
 ```
 
 A sum of exactly 10000 commits the full inventory leg across the
-ladder; smaller sums leave an unallocated reserve. Either side
-exceeding 10000 is rejected — it would over-commit the leg and
-turn `Position.size` into an unenforceable nominal. The check is
-N_LEVELS adds and one comparison per side.
+ladder; smaller sums leave an unallocated reserve. The invariant is
+enforced authoritatively **at match time**: a side whose sum exceeds
+10000 is skipped during book construction (its levels don't
+materialize) rather than aborting the taker's swap — see **Order
+matching → Book construction**. `SetLiquidityProfile` also validates it
+before the write and rejects an over-cap ladder up front
+(`LiquidityProfileSizeOverflow`); that early reject is a redundant
+guard — the match-time skip is what makes an over-cap side safe — kept
+so an honest leader isn't left silently arming a dark side. The check
+is N_LEVELS adds and one comparison per side.
 
 **Pre-condition: reference price must be set.** `SetLiquidityProfile`
 rejects when `vault.reference_price.price == Price::ZERO` — the
@@ -1621,6 +1632,16 @@ On every taker instruction:
    `reference_price.stamp`, materialize `Vault.remaining` from
    `LiquidityProfile` and current inventory per the formulas in
    **LiquidityProfile → Flush**, and clear the bit with one `u64` store.
+   **Per-side size gate.** Before materializing, sum each side's
+   `size_bps`; a side whose `Σ size_bps > 10000` is thrown out of
+   matching — its `remaining` sizes are written as zero, so the collect
+   step below drops every level on that side — while the other side (and
+   every other vault) still matches. This is the authoritative home of
+   the `Σ size_bps ≤ 10000` invariant: an over-cap side is skipped, just
+   as an out-of-range reference price skips a whole vault; it does **not**
+   abort the take (so one corrupt vault can't DoS every taker). The
+   stored `LiquidityProfile` bytes are left untouched, so a leader's
+   ladder self-heals on their next valid `SetLiquidityProfile`.
 
 1. Iterate the relevant side of `remaining` (asks for a buy taker,
    bids for a sell taker).
