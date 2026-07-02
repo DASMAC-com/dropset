@@ -142,6 +142,21 @@ pub const SEED_LADDER: [(u32, u16); 4] = [
     (50_000, 1_000),
 ];
 
+/// The default top-of-book bid-ask spread (bps) the book opens at and the eCLOB
+/// widen / tighten controls step from. [`SEED_LADDER`]'s top rung (5000 ppm =
+/// ±0.5% = a 100 bps spread) is the shape template; the default scales it to
+/// this tighter opening spread.
+pub const DEFAULT_SPREAD_BPS: u32 = 50;
+
+/// The seed ladder scaled to a target bid-ask `spread_bps` — the shape of
+/// [`SEED_LADDER`] with its rung offsets scaled so the top rung yields
+/// `spread_bps` at the top of book (the seed's 5000 ppm top ≡ 100 bps, so the
+/// scale is `spread_bps / 100`). The book opens at [`DEFAULT_SPREAD_BPS`] and
+/// the widen / tighten controls step this by ±5 bps, keeping all four levels.
+pub fn ladder_at_spread_bps(spread_bps: u32) -> [(u32, u16); 4] {
+    seed_ladder_scaled_offsets(spread_bps as f64 / 100.0)
+}
+
 /// Convert a pair's human quote-per-base price into the atoms-ratio the
 /// on-chain `Price` encodes — `quote_atoms` per `base_atoms`. They coincide
 /// only when both legs share decimals; a token with more decimals than USDC
@@ -289,11 +304,11 @@ pub fn seed_vault(
     )
     .context("set_reference_price")?;
 
-    // 2. Quote ladder — a multi-rung symmetric ladder ([`SEED_LADDER`]), so the
-    //    book opens with depth across several price levels rather than a single
-    //    rung the maker only later fans out.
+    // 2. Quote ladder — a multi-rung symmetric ladder at the default spread, so
+    //    the book opens with depth across several price levels (not a single
+    //    rung the maker only later fans out) and at the tighter default spread.
     log.log("set_liquidity_profile");
-    let bytes = ladder_profile_bytes(&SEED_LADDER, config.expiry_offset);
+    let bytes = ladder_profile_bytes(&ladder_at_spread_bps(DEFAULT_SPREAD_BPS), config.expiry_offset);
     let ix = set_liquidity_profile_ix(leader.pubkey(), market.address, VAULT_IDX, bytes);
     chain::send_logged(
         client,
@@ -476,6 +491,20 @@ mod tests {
         // Offsets are untouched on both sides.
         assert_eq!(profile.bids[0].price_offset.get(), SEED_LADDER[0].0);
         assert_eq!(profile.asks[0].price_offset.get(), SEED_LADDER[0].0);
+    }
+
+    /// The spread→ladder mapping: the default 50 bps halves the seed's 100-bps
+    /// top rung, and 100 bps reproduces the seed offsets exactly — every rung
+    /// stays, depths unchanged.
+    #[test]
+    fn ladder_at_spread_scales_offsets_to_the_target() {
+        let half = ladder_at_spread_bps(DEFAULT_SPREAD_BPS);
+        let full = ladder_at_spread_bps(100);
+        for (i, seed) in SEED_LADDER.iter().enumerate() {
+            assert_eq!(half[i].0, seed.0 / 2);
+            assert_eq!(half[i].1, seed.1);
+            assert_eq!(full[i].0, seed.0);
+        }
     }
 
     /// Scaling the seed ladder's offsets fans (or pulls) every rung by the same

@@ -61,6 +61,12 @@ const FILLS_CAPACITY: usize = 500;
 /// Longest swap-amount the taker can type, in digits — bounded so the entered
 /// value always parses as a `u64` (its max is 20 digits).
 const MAX_AMOUNT_DIGITS: usize = 18;
+/// eCLOB widen / tighten step, in bps of bid-ask spread — `w` adds it, `n`
+/// subtracts it, rebuilding the ladder at the new spread.
+const SPREAD_STEP_BPS: u32 = 5;
+/// Clamp on the manually-stepped spread so it stays a sane, encodable book.
+const MIN_SPREAD_BPS: u32 = 5;
+const MAX_SPREAD_BPS: u32 = 1_000;
 
 /// Kind of a log line — drives its color.
 #[derive(Clone, Copy)]
@@ -163,6 +169,10 @@ pub struct App {
     /// derived from its streamed `[feed] coingecko …` log lines, surfaced as an
     /// alert. Set on a failure line, cleared on a recovery line (or a wipe).
     pub(crate) feed_degraded: bool,
+    /// The current eCLOB manual bid-ask spread (bps) the widen / tighten
+    /// controls step. Seeded at the default; `w` / `n` step it by
+    /// [`SPREAD_STEP_BPS`] and rebuild the ladder at the new spread.
+    spread_bps: u32,
 }
 
 impl App {
@@ -210,6 +220,7 @@ impl App {
             last_refresh: Instant::now() - REFRESH_INTERVAL,
             dirty: true,
             feed_degraded: false,
+            spread_bps: market::DEFAULT_SPREAD_BPS,
         })
     }
 
@@ -347,14 +358,14 @@ impl App {
             KeyCode::Char('[') | KeyCode::BackTab => self.select_market(-1),
             KeyCode::Char(']') | KeyCode::Tab => self.select_market(1),
             // Per-bot control, makers and takers symmetric: lower-case toggles
-            // the selected market's bot, upper-case starts every market's. The
-            // taker is opt-in (off by default), so `t` / `T` only ever start or
-            // stop flow, never quote. eCLOB tighten moved to `n` (narrow) to
-            // free `t` for the taker.
+            // the selected market's bot, upper-case toggles every market's (start
+            // all if none are running, else stop them all). The taker is opt-in
+            // (off by default), so `t` / `T` only ever start or stop flow, never
+            // quote. eCLOB tighten moved to `n` (narrow) to free `t`.
             KeyCode::Char('s') => self.toggle_selected_bot(),
-            KeyCode::Char('S') => self.start_all_bots(),
+            KeyCode::Char('S') => self.toggle_all_bots(),
             KeyCode::Char('t') => self.toggle_selected_taker(),
-            KeyCode::Char('T') => self.start_all_takers(),
+            KeyCode::Char('T') => self.toggle_all_takers(),
             KeyCode::Char('x') => self.stop_all_bots(),
             KeyCode::Char('r') => self.dirty = true,
             // Open the swap-amount input — subsequent keys edit the amount.
@@ -363,10 +374,13 @@ impl App {
             // shift) vs reshape the ladder (shape change at a fixed peg).
             KeyCode::Char('>') | KeyCode::Char('.') => self.run_action(Action::RepegUp),
             KeyCode::Char('<') | KeyCode::Char(',') => self.run_action(Action::RepegDown),
-            KeyCode::Char('w') => self.run_action(Action::WidenSpread),
-            KeyCode::Char('n') => self.run_action(Action::TightenSpread),
+            KeyCode::Char('w') => self.step_spread(Action::WidenSpread),
+            KeyCode::Char('n') => self.step_spread(Action::TightenSpread),
             KeyCode::Char('f') => self.run_action(Action::ThinFarSide),
-            KeyCode::Char('g') => self.run_action(Action::ResetLadder),
+            KeyCode::Char('g') => {
+                self.spread_bps = market::DEFAULT_SPREAD_BPS;
+                self.run_action(Action::ResetLadder);
+            }
             KeyCode::Enter => self.run_selected(),
             KeyCode::Char(d @ '1'..='9') => {
                 let idx = (d as usize) - ('1' as usize);
@@ -466,10 +480,17 @@ impl App {
         self.dirty = true;
     }
 
-    /// Start every discovered market's maker bot that isn't already running —
-    /// the demo's "flash liquidity across the board" moment. (No taker
-    /// equivalent: the taker is opt-in per market, flipped on with `T`.)
-    fn start_all_bots(&mut self) {
+    /// Toggle every market's maker bot at once (the "flash liquidity across the
+    /// board" control): if any maker is running, stop them all; otherwise start
+    /// one per discovered market that isn't already running.
+    fn toggle_all_bots(&mut self) {
+        if self.bots.running_count() > 0 {
+            let n = self.bots.running_count();
+            self.bots.stop_all();
+            self.log(LogKind::Ok, format!("Stopped {n} maker bot(s)."));
+            self.dirty = true;
+            return;
+        }
         let symbols: Vec<&'static str> = self
             .chain
             .markets
@@ -493,13 +514,18 @@ impl App {
         self.dirty = true;
     }
 
-    /// Start every discovered market's taker bot that isn't already running —
-    /// the "give every book organic flow" moment, mirroring [`start_all_bots`]
-    /// for makers. Each taker is scoped to its own market by PDA, so this walks
-    /// the discovered markets and starts one per book that resolves to a known
-    /// symbol. Opt-in like the per-market taker: nothing runs a taker until the
-    /// operator presses `T`.
-    fn start_all_takers(&mut self) {
+    /// Toggle every market's taker bot at once, mirroring [`toggle_all_bots`]:
+    /// if any taker is running, stop them all; otherwise start one per
+    /// discovered market (each scoped to its book by PDA). Opt-in like the
+    /// per-market taker — nothing runs a taker until the operator presses `T`.
+    fn toggle_all_takers(&mut self) {
+        if self.takers.running_count() > 0 {
+            let n = self.takers.running_count();
+            self.takers.stop_all();
+            self.log(LogKind::Ok, format!("Stopped {n} taker bot(s)."));
+            self.dirty = true;
+            return;
+        }
         let targets: Vec<(&'static str, Pubkey)> = self
             .chain
             .markets
@@ -602,6 +628,17 @@ impl App {
         self.run_action(action);
     }
 
+    /// Step the manual eCLOB spread by ±[`SPREAD_STEP_BPS`] (widen adds, tighten
+    /// subtracts), clamp it, then reshape the selected market's ladder to the
+    /// new spread. `action` is the widen / tighten variant driving the sign.
+    fn step_spread(&mut self, action: Action) {
+        self.spread_bps = match action {
+            Action::WidenSpread => (self.spread_bps + SPREAD_STEP_BPS).min(MAX_SPREAD_BPS),
+            _ => self.spread_bps.saturating_sub(SPREAD_STEP_BPS).max(MIN_SPREAD_BPS),
+        };
+        self.run_action(action);
+    }
+
     /// Run `action` — a [`Action::Wipe`] is executed inline (it mutates the
     /// owned validator), everything else is dispatched to a background job.
     /// Shared by the numbered action menu and the eCLOB demo keybinds.
@@ -631,6 +668,7 @@ impl App {
             self.tx.clone(),
             self.selected_market,
             self.swap_quote_units,
+            self.spread_bps,
         );
     }
 

@@ -68,15 +68,9 @@ const REPEG_BPS: f64 = 5.0;
 /// `Price::quote_for_base` scale for decoding a reference to its atoms-ratio
 /// before the bump — matches the maker bot and SDK (`value × 10^9`).
 const PRICE_SCALE: u64 = 1_000_000_000;
-/// Widen / tighten scale the seed ladder's rung offsets rather than collapsing
-/// it to one level: `×3` fans the whole four-rung ladder wider (top rung ≈
-/// ±1.5%), `×0.3` pulls it tighter (top rung ≈ ±0.15%), so the book stays
-/// multi-level and only the spread moves.
-const WIDEN_OFFSET_SCALE: f64 = 3.0;
-const TIGHTEN_OFFSET_SCALE: f64 = 0.3;
 /// "Thin the far side" scales the ask ladder's per-rung depth to a fraction of
 /// full, so the offer side visibly shrinks across every level while the bid
-/// stays at the full seed ladder.
+/// stays at the full ladder.
 const THIN_DEPTH_SCALE: f64 = 0.3;
 /// The demo presets quote until the next reshape (the maker bot re-arms
 /// expiry itself).
@@ -246,6 +240,7 @@ pub fn dispatch(
     tx: Sender<JobEvent>,
     selected: usize,
     swap_quote_units: u64,
+    reshape_spread_bps: u32,
 ) {
     let rpc_url = ctx.rpc_url.clone();
     let repo_root = ctx.repo_root.clone();
@@ -403,6 +398,7 @@ pub fn dispatch(
                     target_base_mint,
                     target_vault,
                     action,
+                    reshape_spread_bps,
                     log,
                 )
             });
@@ -490,38 +486,42 @@ fn do_reshape(
     base_mint: Option<Pubkey>,
     vault_idx: Option<u32>,
     action: Action,
+    spread_bps: u32,
     log: &Logger,
 ) -> Result<String> {
     let (market, base_mint, vault_idx) = eclob_target(market, base_mint, vault_idx)?;
     let config =
         market::config_for(repo_root, &base_mint).context("market not in the bootstrap roster")?;
     let leader = market::leader(repo_root, config)?;
+    // Widen / tighten step the spread by ±5 bps (the caller adjusts `spread_bps`
+    // before dispatch); the ladder is rebuilt at that spread, keeping all four
+    // levels. Thin-far-side keeps the full bid ladder over a depth-scaled ask
+    // ladder at the same spread; reset returns to the default spread.
     let (bytes, summary) = match action {
-        Action::WidenSpread => (
-            market::ladder_profile_bytes(
-                &market::seed_ladder_scaled_offsets(WIDEN_OFFSET_SCALE),
-                NEVER_EXPIRES,
-            ),
-            "Widened spread — multi-level ladder fans wider, peg unchanged",
+        Action::WidenSpread | Action::TightenSpread => (
+            market::ladder_profile_bytes(&market::ladder_at_spread_bps(spread_bps), NEVER_EXPIRES),
+            format!("Spread now {spread_bps} bps — multi-level ladder, peg unchanged"),
         ),
-        Action::TightenSpread => (
-            market::ladder_profile_bytes(
-                &market::seed_ladder_scaled_offsets(TIGHTEN_OFFSET_SCALE),
-                NEVER_EXPIRES,
-            ),
-            "Tightened spread — multi-level ladder pulls tighter, peg unchanged",
-        ),
-        Action::ThinFarSide => (
-            market::ladder_profile_bytes_asym(
-                &market::SEED_LADDER,
-                &market::seed_ladder_scaled_depth(THIN_DEPTH_SCALE),
-                NEVER_EXPIRES,
-            ),
-            "Thinned the far (ask) side — offer depth shrinks, peg unchanged",
-        ),
+        Action::ThinFarSide => {
+            let bids = market::ladder_at_spread_bps(spread_bps);
+            let mut asks = bids;
+            for (_, size_bps) in &mut asks {
+                *size_bps = (f64::from(*size_bps) * THIN_DEPTH_SCALE).round() as u16;
+            }
+            (
+                market::ladder_profile_bytes_asym(&bids, &asks, NEVER_EXPIRES),
+                "Thinned the far (ask) side — offer depth shrinks, peg unchanged".to_string(),
+            )
+        }
         Action::ResetLadder => (
-            market::ladder_profile_bytes(&market::SEED_LADDER, config.expiry_offset),
-            "Reset to the seed ladder (multi-level)",
+            market::ladder_profile_bytes(
+                &market::ladder_at_spread_bps(market::DEFAULT_SPREAD_BPS),
+                config.expiry_offset,
+            ),
+            format!(
+                "Reset to the default {}-bps multi-level ladder",
+                market::DEFAULT_SPREAD_BPS
+            ),
         ),
         other => unreachable!("do_reshape received a non-reshape action: {other:?}"),
     };
@@ -536,7 +536,7 @@ fn do_reshape(
     )
     .context("set_liquidity_profile")?;
     log.accounts_changed();
-    Ok(summary.to_string())
+    Ok(summary)
 }
 
 /// `(label, address)` pairs to open in the explorer for the current state —

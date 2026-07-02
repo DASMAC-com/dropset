@@ -107,8 +107,8 @@ fn draw_help(f: &mut Frame<'_>, area: Rect) {
              t/T taker/all  ·  x stop all  ·  a swap amount  ·  r refresh  ·  q quit",
         ),
         Line::from(
-            "eCLOB · selected market:  < > re-peg \u{00b1}5 bps  ·  w widen  ·  \
-             n narrow (tighten)  ·  f thin far side  ·  g reset ladder",
+            "eCLOB · selected market:  < > re-peg \u{00b1}5 bps  ·  w/n spread \
+             \u{00b1}5 bps  ·  f thin far side  ·  g reset ladder",
         ),
     ])
     .block(Block::default().borders(Borders::ALL))
@@ -815,8 +815,8 @@ fn fills_header() -> Line<'static> {
         Span::styled(format!("{:>8}", "time"), style),
         Span::styled(format!("  {:<4}", "side"), style),
         Span::styled(format!("  {:>10}", "price"), style),
-        Span::styled(format!("  {:>12}", "size"), style),
-        Span::styled(format!("  {:>12}", "volume"), style),
+        Span::styled(format!(" {:>8}", "size"), style),
+        Span::styled(format!(" {:>8}", "volume"), style),
         Span::styled(format!("  {}", "txn"), style),
     ])
 }
@@ -843,8 +843,8 @@ fn fill_line(time: &str, side: u8, price: f64, size: f64, volume: f64, sig: &str
             format!("  {:>10}", book::fmt_price(price)),
             Style::new().fg(color),
         ),
-        Span::styled(format!("  {size:>12.2}"), Style::new().fg(Color::DarkGray)),
-        Span::styled(format!("  {volume:>12.2}"), Style::new().fg(Color::DarkGray)),
+        Span::styled(format!(" {size:>8.2}"), Style::new().fg(Color::DarkGray)),
+        Span::styled(format!(" {volume:>8.2}"), Style::new().fg(Color::DarkGray)),
         // Leading gap kept out of the underline (see [`cu_line`]).
         Span::raw("  "),
         Span::styled(
@@ -979,8 +979,8 @@ fn cu_line(label: &str, units: u64, time: &str, sig: &str) -> Line<'static> {
 /// `AAAAAA…oiV`-style abbreviation of a base58 transaction signature (ASCII, so
 /// byte slicing is safe), for the txn link columns.
 fn short_sig(s: &str) -> String {
-    if s.len() > 12 {
-        format!("{}\u{2026}{}", &s[..6], &s[s.len() - 4..])
+    if s.len() > 10 {
+        format!("{}\u{2026}{}", &s[..4], &s[s.len() - 4..])
     } else {
         s.to_string()
     }

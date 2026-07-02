@@ -308,10 +308,12 @@ impl Default for FeedConfig {
         Self {
             // CoinGecko's keyless tier rate-limits by IP, and the localnet demo
             // runs one maker process per market — so seven processes share that
-            // budget. A 30 s base (up from 10 s), plus the on-failure backoff in
-            // `tasks.rs`, keeps the aggregate request rate under the limit; the
-            // FX-rate / static tiers cover any gaps.
-            coingecko_poll: Duration::from_secs(30),
+            // budget. A 60 s base, plus the on-failure exponential backoff in
+            // `tasks.rs`, keeps the aggregate request rate well under the limit;
+            // the FX-rate / static tiers cover any gaps. (The definitive fix is
+            // one maker process for the whole roster — one batched call — but
+            // that trades away the per-market start/stop the demo uses.)
+            coingecko_poll: Duration::from_secs(60),
             coinmarketcap_poll: Duration::from_secs(60),
             fx_poll: Duration::from_secs(300),
             coingecko_base_url: "https://api.coingecko.com/api/v3".to_string(),
