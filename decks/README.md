@@ -21,7 +21,10 @@ deps, and theme don't fight the product build.
   Spectacle `<Deck>` (`page.tsx` dynamic-imports it with `ssr: false`).
 - `theme/tokens.ts` — Dropset design tokens, mirrored from
   `frontend/app/globals.css` and reshaped into a Spectacle theme.
-- `public/` — deck assets (e.g. `dropset-wordmark.png`).
+- `public/` — deck assets. `dropset-wordmark.png` is a **symlink** to the
+  frontend's copy (`frontend/public/`) so the brand asset stays DRY — the
+  whole repo is checked out at build time, so the relative link resolves
+  locally and on Vercel.
 
 Deck routes use **public-facing names** (e.g. `/demo-v1`) — never internal
 ticket ids, which must not leak into shareable URLs.
@@ -32,10 +35,10 @@ ticket ids, which must not leak into shareable URLs.
 make decks
 ```
 
-Installs, serves on **<http://localhost:3200>** (port set in the `dev`
-script so it never collides with `frontend`'s 3000), and opens a browser
-once it's up. Arrow keys drive a deck; `p` opens presenter mode (speaker
-notes + next-slide preview); `f` goes fullscreen.
+Installs, serves on **<http://localhost:3300>** (port set in the `dev`
+script; see the port-allocation table in the repo `Makefile`), and opens
+a browser once it's up. Arrow keys drive a deck; `p` opens presenter mode
+(speaker notes + next-slide preview); `f` goes fullscreen.
 
 ## Add a deck
 

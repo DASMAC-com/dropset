@@ -168,6 +168,18 @@ taker-down:
 	docker compose -f infra/localnet/docker-compose.yml \
 		rm -sf taker-bot
 
+# Local dev-server port allocation (the "reservation table"). There is no
+# runtime enforcement — the OS fails-loud when a port is taken — so this
+# comment is the single source of truth; pin each server to its slot and
+# add a row when a new one lands.
+#   3000  frontend (make frontend) AND explorer (make explorer) — these
+#         two collide if run together; keep only one up at a time
+#   3100  (free)
+#   3200  (free)
+#   3300  decks (make decks)
+#   8080  indexer /v1 API (make indexer-up)
+#   8899  solana-test-validator RPC (validator, not a web port)
+
 # Run next dev and open the browser once it's accepting connections.
 frontend:
 	cd frontend && pnpm install
@@ -176,13 +188,13 @@ frontend:
 			&& $$opener http://localhost:3000 ) &
 	cd frontend && pnpm dev
 
-# Run the decks deck dev server (port 3200, set in the dev script) and
+# Run the decks deck dev server (port 3300, set in the dev script) and
 # open the browser once it's accepting connections.
 decks:
 	cd decks && pnpm install
-	@( until nc -z localhost 3200 2>/dev/null; do sleep 0.2; done; \
+	@( until nc -z localhost 3300 2>/dev/null; do sleep 0.2; done; \
 		opener=$$(command -v open || command -v xdg-open) \
-			&& $$opener http://localhost:3200 ) &
+			&& $$opener http://localhost:3300 ) &
 	cd decks && pnpm dev
 
 # https://github.com/solana-foundation/anchor/tree/anchor-next/lang-v2
