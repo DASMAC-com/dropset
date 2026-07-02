@@ -1,32 +1,41 @@
 //! `set_reference_price` — leader hot path.
 //!
-//! Updates the vault's reference price (and `quote_slot`) in two
-//! aligned `u64` stores, bumps `market.nonce`, and arms the
-//! `FLUSH_BIT` so the next taker materializes `Vault.remaining` from
-//! the (unchanged) `LiquidityProfile`. Per the architecture spec's
-//! **SetReferencePrice**, this is the asm-optimized path — analogous
-//! to a propAMM reference-price update — so it emits no events and
-//! does no list walks.
+//! Stamps the target vault's reference price (and `quote_slot`), bumps
+//! `market.nonce`, and arms the `FLUSH_BIT` so the next taker
+//! materializes `Vault.remaining` from the (unchanged) `LiquidityProfile`.
+//! Per the architecture spec's **SetReferencePrice** this is the
+//! asm-optimized path: it emits no events, walks no lists, and stores the
+//! price / slot raw — matching skips an invalid-price vault, so there is
+//! no write-time validation to do (the only domain guard is that the
+//! signer is the vault's `quote_authority`).
+//!
+//! Two builds share one implementation. The production `asm-entrypoint`
+//! build handles this discriminator entirely in `src/asm/entrypoint.s`,
+//! so the Rust body here is an `unreachable_unchecked()` stub kept only so
+//! IDL / SDK codegen still emit the instruction. The default (reference)
+//! build runs this handler, which borrows the market's data bytes and
+//! calls the shared [`stamp_reference_price`] kernel — the same kernel the
+//! assembly mirrors byte-for-byte.
 
-use anchor_lang_v2::{address_eq, prelude::*};
+use anchor_lang_v2::prelude::*;
 
-use crate::{
-    errors::DropsetError,
-    state::{Market, VaultAccess, FLUSH_BIT, MAX_BACKDATE},
-    Price, ReferencePrice,
-};
+#[cfg(not(feature = "asm-entrypoint"))]
+use crate::state::stamp_reference_price;
 
 #[derive(Accounts)]
 pub struct SetReferencePrice {
     /// Quote authority — the only signer the spec accepts here. Set at
-    /// `CreateVault` (defaults to the leader).
+    /// `CreateVault` (defaults to the leader); the kernel checks it
+    /// against the target vault's `quote_authority`.
     pub signer: Signer,
-    /// Market account holding the target vault.
+    /// CHECK: taken unchecked so the handler can borrow the raw account
+    /// data and drive the shared kernel (a typed `Market` locks the
+    /// account exclusively and would deny that borrow). The account's
+    /// discriminator and owner are not re-validated here: the authority
+    /// check plus runtime program-ownership at the store are the guards,
+    /// exactly as on the asm fast path this build mirrors.
     #[account(mut)]
-    pub market: Market,
-    /// Read for the current slot. The leader-supplied `quote_slot` is
-    /// validated against this (no future-dating, capped backdate).
-    pub clock: Sysvar<Clock>,
+    pub market: UncheckedAccount,
 }
 
 impl SetReferencePrice {
@@ -34,61 +43,32 @@ impl SetReferencePrice {
     pub fn set_reference_price(
         &mut self,
         vault_idx: u32,
-        price: Price,
-        quote_slot: u64,
+        price_bits: u32,
+        quote_slot: u32,
     ) -> Result<()> {
-        // Validate the price bit pattern up front — `Price` derives Pod
-        // so Anchor will deserialize any 4-byte input; an invalid
-        // significand would mis-sort in the matching engine. The
-        // `ZERO` / `INFINITY` sentinels are also rejected here: they
-        // exist as taker `limit_price` markers, not as legitimate
-        // anchor prices. Allowing `ZERO` would let a leader silently
-        // collapse outside depositors' realized-PnL basis math
-        // (price decoders return 0 for the sentinel); `INFINITY`
-        // would let the basis math saturate to `u64::MAX`.
-        require!(
-            price.is_valid() && !price.is_zero() && !price.is_infinity(),
-            DropsetError::InvalidPrice
-        );
-        // Cap `quote_slot` to `u32` cleanly so the storage truncation
-        // is explicit rather than silent.
-        require!(
-            quote_slot <= u32::MAX as u64,
-            DropsetError::InvalidQuoteSlot
-        );
-
-        let current_slot = self.clock.slot;
-        require!(
-            quote_slot <= current_slot && current_slot.saturating_sub(quote_slot) <= MAX_BACKDATE,
-            DropsetError::InvalidQuoteSlot
-        );
-
-        // Validate the target vault BEFORE mutating any header state —
-        // a caller targeting a free-list sector or the wrong vault
-        // must not advance `market.nonce`.
-        let signer_addr = *self.signer.address();
+        #[cfg(feature = "asm-entrypoint")]
         {
-            let vault = self.market.read_vault(vault_idx)?;
-            require!(vault.is_occupied(), DropsetError::VaultEmpty);
-            require!(
-                address_eq(&vault.quote_authority, &signer_addr),
-                DropsetError::Unauthorized
-            );
-            require!(!vault.frozen.get(), DropsetError::VaultFrozen);
+            // The asm entrypoint stamps this discriminator before the
+            // anchor dispatcher runs, so this body is never reached. Kept
+            // as a stub purely so IDL / SDK codegen still emit the
+            // instruction interface.
+            let _ = (vault_idx, price_bits, quote_slot);
+            unsafe { core::hint::unreachable_unchecked() }
         }
-
-        // Bump the market nonce (header borrow via Slab's DerefMut).
-        let nonce = self.market.nonce.get();
-        let new_nonce = nonce.checked_add(1).ok_or(DropsetError::MathOverflow)?;
-        self.market.nonce = new_nonce.into();
-
-        // Re-borrow the vault mutably and stamp the new reference price.
-        let vault = self.market.mutate_vault(vault_idx)?;
-        vault.reference_price = ReferencePrice {
-            stamp: (nonce | FLUSH_BIT).into(),
-            price,
-            quote_slot: (quote_slot as u32).into(),
-        };
-        Ok(())
+        #[cfg(not(feature = "asm-entrypoint"))]
+        {
+            // `Address` is a 32-byte `Pod` wrapper; reinterpret it as the
+            // raw key bytes the kernel compares, without depending on its
+            // inherent accessors.
+            let signer_key: &[u8; 32] = anchor_lang_v2::bytemuck::cast_ref(self.signer.address());
+            // `AccountView` is `Copy` and borrow state lives in the shared
+            // account header, so a local copy still tracks the one live
+            // mutable borrow of the market's data.
+            let mut view = *self.market.account();
+            let mut data = view.try_borrow_mut()?;
+            stamp_reference_price(&mut data, vault_idx, price_bits, quote_slot, signer_key)
+                .map_err(ProgramError::Custom)?;
+            Ok(())
+        }
     }
 }

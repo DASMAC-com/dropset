@@ -283,3 +283,19 @@ program-no-teardown: check-toolchain program-keypair
 # feature-off-gated test target is run.
 test-no-teardown: program-no-teardown
 	cargo test --no-default-features --test teardown_disabled
+
+# Build BOTH artifacts the Rust↔ASM parity tests need: the reference
+# (feature-off) build stashed as `dropset_ref.so`, then the default asm
+# build left in `dropset.so`. The reference build runs first because
+# `anchor build` always writes `dropset.so`; the trailing default build
+# restores the asm artifact every other test deploys.
+program-parity: check-toolchain program-keypair
+	anchor build -- --no-default-features --features admin-teardown
+	cp target/deploy/dropset.so target/deploy/dropset_ref.so
+	anchor build
+
+# Rust↔ASM parity: deploy both artifacts and assert the assembly fast path
+# (the default `dropset.so`) matches the reference kernel — identical stamp
+# bytes and domain error codes.
+test-parity: program-parity
+	cargo test --test asm_parity

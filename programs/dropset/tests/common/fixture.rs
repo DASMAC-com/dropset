@@ -22,8 +22,9 @@
 
 use super::{
     associated_token_address, create_associated_token_account, create_mock_usdc_mint,
-    create_spl_mint, deploy_with_authority, mint_to, send_ixn, send_ixn_meta, ATA_PROGRAM_ID,
-    CREATE_MARKET_FEE_ATOMS, PROGRAM_ID, SIGNER_FUNDING_LAMPORTS, SPL_TOKEN_PROGRAM_ID,
+    create_spl_mint, deploy_with_authority, deploy_with_authority_from, mint_to, send_ixn,
+    send_ixn_meta, ATA_PROGRAM_ID, CREATE_MARKET_FEE_ATOMS, PROGRAM_ID, REF_PROGRAM_SO_PATH,
+    SIGNER_FUNDING_LAMPORTS, SPL_TOKEN_PROGRAM_ID,
 };
 use anchor_lang_v2::{bytemuck, programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, LiteSVM, Signer};
@@ -219,7 +220,21 @@ impl Fixture {
     /// base/quote pair. No vault yet — call [`Self::create_vault`].
     pub fn bootstrap() -> Self {
         let authority = Keypair::new();
-        let mut svm = deploy_with_authority(&authority);
+        let svm = deploy_with_authority(&authority);
+        Self::bootstrap_on(svm, authority)
+    }
+
+    /// Like [`Self::bootstrap`] but on the reference (feature-off) build —
+    /// the parity oracle (`make program-parity`, `dropset_ref.so`). The
+    /// default `bootstrap` now deploys the asm build, so the parity tests
+    /// compare the two.
+    pub fn bootstrap_ref() -> Self {
+        let authority = Keypair::new();
+        let svm = deploy_with_authority_from(&authority, REF_PROGRAM_SO_PATH);
+        Self::bootstrap_on(svm, authority)
+    }
+
+    fn bootstrap_on(mut svm: LiteSVM, authority: Keypair) -> Self {
         let fee_mint = create_mock_usdc_mint(&mut svm, &authority);
         let registry = registry_pda();
         let registry_fee_treasury =
@@ -621,8 +636,22 @@ impl Fixture {
         signer: &Keypair,
         vault_idx: u32,
         price_bits: u32,
-        quote_slot: u64,
+        quote_slot: u32,
     ) -> Result<(), String> {
+        self.set_reference_price_meta(signer, vault_idx, price_bits, quote_slot)
+            .map(|_| ())
+    }
+
+    /// Like [`Self::set_reference_price`] but yields the
+    /// [`TransactionMetadata`], whose `compute_units_consumed` the CU
+    /// report reads to compare the asm fast path against the reference.
+    pub fn set_reference_price_meta(
+        &mut self,
+        signer: &Keypair,
+        vault_idx: u32,
+        price_bits: u32,
+        quote_slot: u32,
+    ) -> Result<TransactionMetadata, String> {
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
             &SetReferencePriceIx {
@@ -631,13 +660,14 @@ impl Fixture {
                 quote_slot,
             }
             .data(),
+            // Just [signer, market]: the clock sysvar was dropped with the
+            // write-time slot validation.
             vec![
                 AccountMeta::new_readonly(signer.pubkey(), true),
                 AccountMeta::new(self.market, false),
-                AccountMeta::new_readonly(SYSVAR_CLOCK_ID, false),
             ],
         );
-        send_ixn(&mut self.svm, signer, ix)
+        send_ixn_meta(&mut self.svm, signer, ix)
     }
 
     pub fn set_liquidity_profile(

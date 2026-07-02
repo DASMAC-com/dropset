@@ -25,6 +25,17 @@ anchor-spl-v2.workspace = true
 solana-program-log.workspace = true
 solana-sdk-ids.workspace = true
 wincode.workspace = true
+# Provides `include_asm!()` for the sBPF entrypoint. Optional — only the
+# `asm-entrypoint` build links the assembly; the default build never
+# references it.
+anchor-asm-v2-runtime = { workspace = true, optional = true }
+
+[build-dependencies]
+# `build.rs` calls `anchor_asm_v2::build("src/asm")` to expand the
+# assembly into `$OUT_DIR/combined.s`. A build-dep, so it never ships in
+# the `.so`; it runs on every build but its output is only linked under
+# `asm-entrypoint`.
+anchor-asm-v2.workspace = true
 
 # `anchor-lang-v2` is re-declared here with the `testing` feature so the
 # stack-backed `AccountBuffer` becomes available to unit tests inside
@@ -60,8 +71,26 @@ solana-pubkey.workspace = true
 # `make test-no-teardown` already exercises the feature-off dispatcher
 # (every teardown instruction then returns `TeardownDisabled`).
 admin-teardown = []
+# Production entrypoint: the `SetReferencePrice` discriminator is handled
+# by the hand-written sBPF `src/asm/entrypoint.s`, which short-circuits it
+# ahead of Anchor's dispatcher and `call`s the dispatcher for everything
+# else. **On by default** now that Rust↔ASM parity and the CU saving are
+# validated, so the deployed / CI-primary `dropset.so` is the asm build.
+# The reference build — plain Anchor entrypoint + the Rust kernel handler
+# — is the parity oracle; it is produced by turning this feature off
+# (`--no-default-features --features admin-teardown`, see
+# `make program-parity`, artifact `dropset_ref.so`). See the architecture
+# spec's **SetReferencePrice**.
+#
+# Enables the crate's `no-entrypoint` feature — the `#[program]` macro
+# reads that cfg to suppress Anchor's generated entrypoint (and allocator
+# / panic handler) and instead emit `__anchor_dispatch`, which the
+# assembly `call`s for every non-fast-path discriminator. `lib.rs`
+# reinstates the allocator / panic handler and links the assembly under
+# this feature, and pulls in the `include_asm!()` runtime crate.
+asm-entrypoint = ["no-entrypoint", "dep:anchor-asm-v2-runtime"]
 cpi = ["no-entrypoint"]
-default = ["admin-teardown"]
+default = ["admin-teardown", "asm-entrypoint"]
 # Anchor v2 derive macros emit `cfg(feature = "idl-build")` gated code in
 # user crates. The lang-v2 / spl-v2 crates removed the matching forwarded
 # features (e3cf7608 V2: Remove idl-build from Anchor crates), so this

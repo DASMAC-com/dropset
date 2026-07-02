@@ -62,6 +62,18 @@ git = "https://github.com/solana-foundation/anchor.git"
 branch = "anchor-next"
 git = "https://github.com/solana-foundation/anchor.git"
 
+# Hand-written sBPF entrypoint tooling (same anchor-next source as the
+# rest). `anchor-asm-v2` is the build-time helper (`build()` →
+# `$OUT_DIR/combined.s`); `anchor-asm-v2-runtime` provides `include_asm!()`.
+# Only the on-chain `dropset` crate uses these, behind `asm-entrypoint`.
+[workspace.dependencies.anchor-asm-v2]
+branch = "anchor-next"
+git = "https://github.com/solana-foundation/anchor.git"
+
+[workspace.dependencies.anchor-asm-v2-runtime]
+branch = "anchor-next"
+git = "https://github.com/solana-foundation/anchor.git"
+
 # Shared package metadata. The publishable SDK crates (math-core, interface,
 # rs) inherit the publish-required/recommended fields from here with
 # `<field>.workspace = true`; the on-chain `dropset` crate (publish = false)

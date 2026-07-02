@@ -261,6 +261,75 @@ jobs:
         needs.changes.outputs.code == 'true'
       name: 'Run feature-off teardown-disabled tests'
       run: 'cargo nextest run --no-default-features --test teardown_disabled'
+  # Rust↔ASM parity guard. A standalone job (no `needs` beyond `changes`)
+  # so it runs in parallel with `test` / `test-no-teardown` rather than
+  # extending the critical path. It is the only job that builds BOTH
+  # artifacts — the default asm `dropset.so` and the reference
+  # `dropset_ref.so` — and asserts the assembly fast path matches the Rust
+  # kernel byte-for-byte (plus the CU report and offset pins). A matrix
+  # was considered, but the three jobs' build + test commands diverge
+  # enough (this one builds two `.so`) that separate jobs stay clearer.
+  test-parity:
+    name: 'Tests (asm parity)'
+    needs: 'changes'
+    runs-on: 'ubuntu-latest'
+    steps:
+    - uses: 'actions/checkout@v6'
+    - if: |
+        needs.changes.outputs.code == 'true'
+      uses: 'dtolnay/rust-toolchain@stable'
+    - if: |
+        needs.changes.outputs.code == 'true'
+      uses: './.github/actions/install-toolchain'
+      with:
+        anchor-revision: '${{ env.ANCHOR_REV }}'
+        solana-version: '${{ env.SOLANA_VERSION }}'
+    - if: |
+        needs.changes.outputs.code == 'true'
+      uses: 'mozilla-actions/sccache-action@v0.0.10'
+    - if: |
+        needs.changes.outputs.code == 'true'
+      uses: 'Swatinem/rust-cache@v2'
+      with:
+        cache-on-failure: true
+        shared-key: 'rust-test-${{ runner.os }}'
+    # Cache BOTH parity artifacts under one content-addressed key (same
+    # inputs as the other jobs' SBF caches, distinct `parity` tag). An
+    # exact hit restores the pair and skips the two `cargo build-sbf`
+    # runs `make program-parity` would otherwise do.
+    - id: 'sbf-cache'
+      if: |
+        needs.changes.outputs.code == 'true'
+      name: 'Cache parity program .so pair'
+      uses: 'actions/cache@v5'
+      with:
+        key: 'sbf-parity-${{ runner.os }}-${{ env.SOLANA_VERSION }}-${{
+              env.ANCHOR_REV }}-${{ hashFiles(''programs/dropset/**'',
+              ''sdk/math-core/**'', ''Cargo.lock'', ''Cargo.toml'',
+              ''Anchor.toml'') }}'
+        path: |
+          target/deploy/dropset.so
+          target/deploy/dropset_ref.so
+    - if: |
+        needs.changes.outputs.code == 'true'
+      name: 'Install program keypair'
+      run: 'make program-keypair'
+    # Build both artifacts only on a cache miss (asm dropset.so + reference
+    # dropset_ref.so). `make program-parity` runs two `anchor build`s.
+    - if: |
+        needs.changes.outputs.code == 'true'
+        && steps.sbf-cache.outputs.cache-hit != 'true'
+      name: 'Build both program artifacts (.so)'
+      run: 'make program-parity'
+    - if: |
+        needs.changes.outputs.code == 'true'
+      uses: 'taiki-e/install-action@nextest'
+    - env:
+        RUSTC_WRAPPER: 'sccache'
+      if: |
+        needs.changes.outputs.code == 'true'
+      name: 'Run Rust<->ASM parity tests'
+      run: 'cargo nextest run --test asm_parity'
 name: 'Tests'
 'on':
   merge_group: null

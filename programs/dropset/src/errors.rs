@@ -42,7 +42,10 @@ pub enum DropsetError {
     VaultFrozen,
     #[msg("price bit pattern is not a valid encoding")]
     InvalidPrice,
-    #[msg("quote_slot is future-dated or backdated past MAX_BACKDATE")]
+    // No longer emitted: `set_reference_price` stores `quote_slot` raw
+    // (see the architecture spec's **SetReferencePrice**). Retained so the
+    // custom error codes of the variants below it don't shift.
+    #[msg("quote_slot is invalid")]
     InvalidQuoteSlot,
     #[msg("set_liquidity_profile requires the vault's reference price to be set first")]
     ReferencePriceNotSet,

@@ -70,8 +70,8 @@ pub enum DropsetError {
     /// 6019 - price bit pattern is not a valid encoding
     #[error("price bit pattern is not a valid encoding")]
     InvalidPrice = 0x1783,
-    /// 6020 - quote_slot is future-dated or backdated past MAX_BACKDATE
-    #[error("quote_slot is future-dated or backdated past MAX_BACKDATE")]
+    /// 6020 - quote_slot is invalid
+    #[error("quote_slot is invalid")]
     InvalidQuoteSlot = 0x1784,
     /// 6021 - set_liquidity_profile requires the vault's reference price to be set first
     #[error("set_liquidity_profile requires the vault's reference price to be set first")]

@@ -2129,24 +2129,22 @@
           "name": "signer",
           "docs": [
             "Quote authority — the only signer the spec accepts here. Set at",
-            "`CreateVault` (defaults to the leader)."
+            "`CreateVault` (defaults to the leader); the kernel checks it",
+            "against the target vault's `quote_authority`."
           ],
           "signer": true
         },
         {
           "name": "market",
           "docs": [
-            "Market account holding the target vault."
+            "CHECK: taken unchecked so the handler can borrow the raw account",
+            "data and drive the shared kernel (a typed `Market` locks the",
+            "account exclusively and would deny that borrow). The account's",
+            "discriminator and owner are not re-validated here: the authority",
+            "check plus runtime program-ownership at the store are the guards,",
+            "exactly as on the asm fast path this build mirrors."
           ],
           "writable": true
-        },
-        {
-          "name": "clock",
-          "docs": [
-            "Read for the current slot. The leader-supplied `quote_slot` is",
-            "validated against this (no future-dating, capped backdate)."
-          ],
-          "address": "SysvarC1ock11111111111111111111111111111111"
         }
       ],
       "args": [
@@ -2160,7 +2158,7 @@
         },
         {
           "name": "quote_slot",
-          "type": "u64"
+          "type": "u32"
         }
       ]
     },
@@ -3061,7 +3059,7 @@
     {
       "code": 6020,
       "name": "InvalidQuoteSlot",
-      "msg": "quote_slot is future-dated or backdated past MAX_BACKDATE"
+      "msg": "quote_slot is invalid"
     },
     {
       "code": 6021,

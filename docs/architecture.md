@@ -384,10 +384,12 @@ materializes the ladder + inventory into `remaining` and clears it.
 Takers mask off `FLUSH_BIT` before comparing the low 63 bits for
 price-time priority (63 bits never wrap over the market's lifetime). The
 `price` is range-checked by the taker at match time (leader prices are
-**not** validated on write). `quote_slot` is leader-supplied and
-validated `<= current_slot` (no future-dating) and
-`>= current_slot − MAX_BACKDATE` (default 50 slots); per-level effective
-expiry is `quote_slot + level.expiry_offset`.
+**not** validated on write). `quote_slot` is leader-supplied and stored
+raw for the same reason: a stale or future slot only shortens or
+lengthens the liveness of the leader's *own* levels — self-grief, not an
+exploit, with match-time expiry the enforcement point — so it is not
+validated on write either. Per-level effective expiry is
+`quote_slot + level.expiry_offset`.
 
 **`Remaining` / `Position` — materialized levels.** Per-side arrays of
 `N_LEVELS` `Position`s (absolute `price`, atom-sized `size`,
@@ -1090,8 +1092,7 @@ authoritative.
 | `VaultDepositor` PDA ≠ `(market, sector, owner)` seeds      | `VaultDepositorMismatch`       |
 | Reference price unset where a basis read needs it           | `ReferencePriceNotSet`         |
 | Per-side `Σ size_bps > 10000` at `SetLiquidityProfile`      | `LiquidityProfileSizeOverflow` |
-| `price_bits` not a well-formed / regular `Price`            | `InvalidPrice`                 |
-| `quote_slot` future-dated, over-backdated, or `> u32::MAX`  | `InvalidQuoteSlot`             |
+| Swap `limit_price` bits not a well-formed `Price`           | `InvalidPrice`                 |
 | Swap `amount_in == 0`                                       | `InvalidAmountIn`              |
 | Swap `side` neither Buy nor Sell                            | `InvalidSwapSide`              |
 | Swap `limit_price` sentinel wrong for the side              | `InvalidLimitPrice`            |
@@ -1218,40 +1219,49 @@ and current inventory.
 
 ### SetReferencePrice
 
-Hot path. Takes `(vault_idx: u32, price_bits: u32, quote_slot: u64)`
-from the leader; `price_bits` is the raw `Price` encoding,
-reconstructed on entry via `Price::from_bits`.
-`price` is validated up front: it must be a well-formed encoding
-(`Price::is_valid`) **and** a regular price — the `Price::ZERO` and
-`Price::INFINITY` sentinels are rejected with `InvalidPrice`. Those
-sentinels exist only as taker `limit_price` markers; storing one as a
-vault's reference price would corrupt the basis math (the decoders
-return `0` for `ZERO` and saturate to `u64::MAX` for `INFINITY`), so a
-leader cannot stamp them even though they pass the bit-pattern check.
+Hot path. Takes `(vault_idx: u32, price_bits: u32, quote_slot: u32)`
+from the leader over just two accounts — the signer and the market.
+`price_bits` is the raw `Price` encoding and `quote_slot` is stored as a
+`u32` (it packs with the `u32` `price` into one aligned `u64`; see
+**Price**), so both are written verbatim, with **no** write-time
+validation. The one domain guard is that the signer equals the target
+vault's `quote_authority`.
 
-`quote_slot` is validated (all failures reject with
-`InvalidQuoteSlot`):
-
-- `quote_slot <= u32::MAX` — the argument is a `u64`, but
-  `ReferencePrice.quote_slot` stores a `u32` (it packs with the
-  `u32` `price` into one aligned `u64`; see **Price**). The guard
-  makes the narrowing to `u32` explicit rather than a silent
-  truncation.
-- `quote_slot <= current_slot` — no future-dating (which would
-  extend the effective expiry window artificially).
-- `current_slot - quote_slot <= MAX_BACKDATE` — sanity cap;
-  default 50 slots (~20s on Solana mainnet). Backdating only
-  shortens the effective expiry window, so this is self-grief
-  rather than an exploit, but worth bounding.
+Storing an invalid `price` or `quote_slot` is fund-safe, not just
+"skipped": matching gates every vault on `has_valid_reference_price()`
+and re-checks each level's price and expiry, so an invalid price parks
+the vault out of the book and a bad slot just never matures the levels
+(self-grief). Value extraction never reads the reference price at all —
+the HWM / perf-fee kernel is `L = isqrt(base·quote)` over inventory, so
+a bogus quote cannot move a leader's high-water mark. Crystallized-PnL
+reporting reads it, but only to split *reported* realized PnL into FX vs
+yield; the tokens withdrawn are a price-independent pro-rata inventory
+slice. `Deposit` keeps its own `ZERO` / `INFINITY` `entry_ref` guard
+independently. Dropping the write-time checks (price validity, the
+sentinels, the clock sysvar and its future/backdate bounds, the
+occupancy and frozen gates) therefore moves no risk while removing the
+clock account and most of the hot-path CU.
 
 Reads `market.nonce`, writes `Vault.reference_price` as two aligned
-`u64` stores: one for `market.nonce | FLUSH_BIT` as `stamp`, one
-packing `(price, quote_slot)`. Increments `market.nonce`. Setting
-`FLUSH_BIT` arms a pending materialization of `Vault.remaining`,
-deferred to the next taker — so the leader write stays at two stores
-regardless of `N_LEVELS`. No vault iteration, no reallocations, no
-profile touch — asm-optimized, analogous to a propAMM
-reference-price update.
+`u64` stores: one for `market.nonce | FLUSH_BIT` as `stamp`, one packing
+`(price, quote_slot)`. Increments `market.nonce`. Setting `FLUSH_BIT`
+arms a pending materialization of `Vault.remaining`, deferred to the
+next taker — so the leader write stays at two stores regardless of
+`N_LEVELS`. No vault iteration, no reallocations, no profile touch.
+
+**ASM fast path.** Because this is the steady-state hot path, the default
+build (the `asm-entrypoint` feature, on by default) handles this one
+discriminator in a hand-written sBPF entrypoint (`src/asm/entrypoint.s`)
+that short-circuits it ahead of Anchor's dispatcher and `call`s the
+dispatcher for everything else. It mirrors the solana-free
+`stamp_reference_price` kernel byte-for-byte; the reference build
+(feature-off, `dropset_ref.so`) runs the same kernel through the plain
+Anchor entrypoint and serves as the parity oracle (`tests/asm_parity.rs`
+deploys both and asserts identical stamps and domain error codes). On
+litesvm the fast path costs ~47 CU versus ~256 for the Rust entrypoint —
+a ~82% saving. The offsets the assembly hardcodes are pinned against the
+live layout by an `offset_of!` test, so a `layout.rs` change breaks the
+build rather than silently mis-stamping.
 
 Off-chain pre-signing: because `quote_slot` is supplied by the leader
 rather than read from the clock, a quote can be signed at slot N and
