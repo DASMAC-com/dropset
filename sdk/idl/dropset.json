@@ -3623,21 +3623,6 @@
               "Market PDA bump."
             ],
             "type": "u8"
-          },
-          {
-            "name": "base_treasury_bump",
-            "docs": [
-              "Bump for the base treasury ATA derivation. Stored so transfers",
-              "out can sign with the market PDA without re-deriving."
-            ],
-            "type": "u8"
-          },
-          {
-            "name": "quote_treasury_bump",
-            "docs": [
-              "Bump for the quote treasury ATA derivation."
-            ],
-            "type": "u8"
           }
         ]
       }

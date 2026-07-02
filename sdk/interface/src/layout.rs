@@ -4,7 +4,7 @@
 //! The program stores a market as `Slab<MarketHeader, Vault>`: an 8-byte
 //! Anchor account discriminator, then a fixed `MarketHeader`, then a
 //! `u32` slab length, then a tail of `Vault` sectors (see
-//! programs/dropset/src/state/market.rs and architecture.md § Storage
+//! programs/dropset/src/state/market/layout.rs and architecture.md § Storage
 //! layout). The `Vault` slab is **opaque to the IDL**, so the generated
 //! client can't decode it — this module mirrors the layout so the
 //! matching simulator (and any depth/book renderer) can.
@@ -68,7 +68,7 @@ le_int!(LeU16, u16, 2);
 le_int!(LeU32, u32, 4);
 le_int!(LeU64, u64, 8);
 
-// ── Layout structs (mirror programs/dropset/src/state/market.rs) ─────
+// ── Layout structs (mirror programs/dropset/src/state/market/layout.rs) ──
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -133,8 +133,6 @@ pub struct MarketHeader {
     pub base_treasury: [u8; 32],
     pub quote_treasury: [u8; 32],
     pub bump: u8,
-    pub base_treasury_bump: u8,
-    pub quote_treasury_bump: u8,
 }
 
 #[repr(C)]
@@ -165,7 +163,7 @@ pub struct Vault {
 // the program layout (without regenerating against a fresh IDL + updating
 // this mirror) breaks the SDK build here rather than silently
 // misdecoding the slab.
-const _: () = assert!(core::mem::size_of::<MarketHeader>() == 237);
+const _: () = assert!(core::mem::size_of::<MarketHeader>() == 235);
 const _: () = assert!(core::mem::size_of::<Vault>() == 560);
 // Sectors stay aligned across the slab: stride must be a multiple of the
 // on-chain Vault alignment (see VAULT_ALIGN / MarketView::load).

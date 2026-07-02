@@ -183,28 +183,6 @@ impl Vault {
         let p = self.reference_price.price;
         p.is_valid() && !p.is_zero() && !p.is_infinity()
     }
-
-    /// True when this vault should participate in matching: occupied,
-    /// not frozen, not tombstoned, and carrying a valid reference
-    /// price (spec § Vault → Frozen and tombstoned vaults). The full
-    /// gate, for a caller holding a `&Vault` with no other guarantee
-    /// about its provenance.
-    ///
-    /// The matching loop does **not** call this: it walks the active
-    /// DLL, where occupancy and non-tombstoned status already hold by
-    /// construction (free-list and tombstoned sectors live on other
-    /// lists), so it checks only the residual gate
-    /// `has_valid_reference_price() && !frozen` inline and stays
-    /// zero-cost.
-    /// Reach for `is_matchable` from a cold path that has a bare sector
-    /// reference instead.
-    #[inline(always)]
-    pub fn is_matchable(&self) -> bool {
-        self.is_occupied()
-            && !self.frozen.get()
-            && !self.tombstoned.get()
-            && self.has_valid_reference_price()
-    }
 }
 
 /// Header of a market account. Followed by a slab tail of [`Vault`]
@@ -260,11 +238,6 @@ pub struct MarketHeader {
     pub quote_treasury: Address,
     /// Market PDA bump.
     pub bump: u8,
-    /// Bump for the base treasury ATA derivation. Stored so transfers
-    /// out can sign with the market PDA without re-deriving.
-    pub base_treasury_bump: u8,
-    /// Bump for the quote treasury ATA derivation.
-    pub quote_treasury_bump: u8,
 }
 
 // Size regression guards: `#[derive(Pod)]` already rejects implicit
@@ -274,7 +247,7 @@ pub struct MarketHeader {
 // deliberate update here, paired with the matching account-data
 // migration story.
 const _: () = assert!(core::mem::size_of::<Vault>() == 560);
-const _: () = assert!(core::mem::size_of::<MarketHeader>() == 237);
+const _: () = assert!(core::mem::size_of::<MarketHeader>() == 235);
 const _: () = assert!(core::mem::size_of::<LiquidityProfile>() == 2 * N_LEVELS * 10);
 const _: () = assert!(core::mem::size_of::<Remaining>() == 2 * N_LEVELS * 16);
 
@@ -323,23 +296,5 @@ mod tests {
         // `is_valid()` is false, so it never anchors a ladder.
         v.reference_price.price = Price::from_bits(1);
         assert!(!v.has_valid_reference_price());
-    }
-
-    #[test]
-    fn is_matchable_requires_occupied_unfrozen_priced() {
-        let mut v = Vault::zeroed();
-        v.leader = [0x22; 32].into();
-        // A constructed, finite, non-zero price makes the vault matchable.
-        v.reference_price.price = Price::from_value(1.0).unwrap();
-        assert!(v.is_matchable());
-        // Freezing, tombstoning, or emptying each drops it out.
-        v.frozen = true.into();
-        assert!(!v.is_matchable());
-        v.frozen = false.into();
-        v.tombstoned = true.into();
-        assert!(!v.is_matchable());
-        v.tombstoned = false.into();
-        v.leader = Address::default();
-        assert!(!v.is_matchable());
     }
 }
