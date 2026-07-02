@@ -206,3 +206,39 @@ fn oob_err(mut f: Fixture) -> String {
     f.set_reference_price(&signer, 99, valid_price(), 0)
         .expect_err("vault_idx past the slab length must reject")
 }
+
+/// Compute units for one happy-path stamp.
+fn stamp_cu(mut f: Fixture) -> u64 {
+    let auth = f.authority.pubkey();
+    f.create_vault(0, auth, false, Pubkey::default())
+        .expect("create_vault");
+    let signer = f.authority.insecure_clone();
+    f.set_reference_price_meta(&signer, 0, valid_price(), 0)
+        .expect("set_reference_price")
+        .compute_units_consumed
+}
+
+/// The CU report the issue asks for: measure a `set_reference_price` stamp
+/// on each build and print the assembly-vs-reference comparison. The
+/// fast path skips Anchor's dispatch + account deserialization, so it must
+/// come in cheaper — asserted so a regression that erodes the saving fails
+/// the test. Run with `--nocapture` (or read the make-test-parity log) to
+/// see the table.
+#[test]
+fn cu_report() {
+    if !asm_built() {
+        eprintln!("skipping cu_report: asm .so absent (run `make program-asm`)");
+        return;
+    }
+    let reference = stamp_cu(Fixture::bootstrap());
+    let asm = stamp_cu(Fixture::bootstrap_asm());
+    let saved = reference.saturating_sub(asm);
+    eprintln!("set_reference_price compute units");
+    eprintln!("  reference (Rust entrypoint): {reference}");
+    eprintln!("  asm fast path:               {asm}");
+    eprintln!("  saved:                       {saved}");
+    assert!(
+        asm < reference,
+        "asm fast path ({asm} CU) should undercut the reference ({reference} CU)"
+    );
+}

@@ -637,6 +637,20 @@ impl Fixture {
         price_bits: u32,
         quote_slot: u32,
     ) -> Result<(), String> {
+        self.set_reference_price_meta(signer, vault_idx, price_bits, quote_slot)
+            .map(|_| ())
+    }
+
+    /// Like [`Self::set_reference_price`] but yields the
+    /// [`TransactionMetadata`], whose `compute_units_consumed` the CU
+    /// report reads to compare the asm fast path against the reference.
+    pub fn set_reference_price_meta(
+        &mut self,
+        signer: &Keypair,
+        vault_idx: u32,
+        price_bits: u32,
+        quote_slot: u32,
+    ) -> Result<TransactionMetadata, String> {
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
             &SetReferencePriceIx {
@@ -652,7 +666,7 @@ impl Fixture {
                 AccountMeta::new(self.market, false),
             ],
         );
-        send_ixn(&mut self.svm, signer, ix)
+        send_ixn_meta(&mut self.svm, signer, ix)
     }
 
     pub fn set_liquidity_profile(
