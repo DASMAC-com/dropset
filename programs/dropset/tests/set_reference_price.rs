@@ -1,7 +1,7 @@
 //! `set_reference_price` integration tests — leader hot path. Covers the
 //! happy stamp (FLUSH_BIT armed, nonce bumped), the authority and sector
-//! gates (the only checks the simplified handler keeps), and the
-//! deliberately-unvalidated inputs: an invalid / sentinel price, a
+//! gates (the only checks the simplified handler keeps), and the inputs
+//! the write deliberately does not validate: an invalid / sentinel price, a
 //! future- or back-dated `quote_slot`, and a frozen vault are all stored
 //! raw rather than rejected (per the architecture spec's
 //! **SetReferencePrice** — matching skips an invalid-price or frozen

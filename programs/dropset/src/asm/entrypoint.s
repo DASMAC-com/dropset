@@ -1,3 +1,10 @@
+# cspell:word DISCRIM
+# cspell:word lddw
+# cspell:word ldxb
+# cspell:word ldxdw
+# cspell:word ldxw
+# cspell:word stxdw
+# cspell:word stxw
 # Hybrid sBPF entrypoint for the dropset program.
 #
 # Short-circuits the `set_reference_price` discriminator (5) and stamps the
