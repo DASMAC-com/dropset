@@ -48,12 +48,12 @@
 .equ MARKET_DATA_LEN_OFF, MARKET_BASE + 80
 .equ MARKET_DATA_OFF, MARKET_BASE + 88
 
-# --- market data framing: [disc(8)][MarketHeader(237)][len:u32][pad][vaults] ---
+# --- market data framing: [disc(8)][MarketHeader(235)][len:u32][pad][vaults] ---
 # align_of::<Vault>() == 4 (Vault embeds the u32-aligned Price), so items
-# start at align_up(8 + 237 + 4, 4) = 252, not 249.
+# start at align_up(8 + 235 + 4, 4) = 248, not 247.
 .equ MARKET_NONCE_OFF, MARKET_DATA_OFF + 8       # MarketHeader.nonce (u64)
-.equ MARKET_LEN_OFF, MARKET_DATA_OFF + 245       # slab len (u32)
-.equ SLAB_ITEMS_OFF, 252                         # first Vault, within data
+.equ MARKET_LEN_OFF, MARKET_DATA_OFF + 243       # slab len (u32)
+.equ SLAB_ITEMS_OFF, 248                         # first Vault, within data
 .equ VAULT_SIZE, 560
 
 # --- Vault field offsets ---

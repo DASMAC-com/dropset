@@ -72,8 +72,8 @@ const RP_QUOTE_SLOT_OFF: usize = offset_of!(ReferencePrice, quote_slot);
 // mis-stamping. Kept as concrete literals (not just the derivations
 // above) so a change to either side is caught.
 const _: () = assert!(NONCE_OFF == 8);
-const _: () = assert!(LEN_OFF == 245);
-const _: () = assert!(ITEMS_OFF == 252);
+const _: () = assert!(LEN_OFF == 243);
+const _: () = assert!(ITEMS_OFF == 248);
 // Authoritative pin: `Slab::space_for(0)` *is* the slab's `ITEMS_OFFSET`,
 // so this guarantees the kernel's sector base can never drift from the
 // real on-chain layout (a header-size or `Vault`-alignment change breaks

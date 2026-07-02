@@ -83,12 +83,12 @@ fn asm_offsets_match_layout() {
     );
     assert_eq!(
         data_off + DISC_SIZE + size_of::<MarketHeader>(),
-        10677,
+        10675,
         "MARKET_LEN_OFF"
     );
     // `Market::space_for(0)` IS the slab's ITEMS_OFFSET (align_up over the
-    // len field to align_of::<Vault>() == 4), so this pins the 3-byte pad.
-    assert_eq!(Market::space_for(0), 252, "SLAB_ITEMS_OFF");
+    // len field to align_of::<Vault>() == 4), so this pins the pad.
+    assert_eq!(Market::space_for(0), 248, "SLAB_ITEMS_OFF");
     assert_eq!(size_of::<Vault>(), 560, "VAULT_SIZE");
 
     // Vault field offsets the stamp writes to.
