@@ -1,3 +1,4 @@
+# cspell:word pkill
 .PHONY: all
 .PHONY: bots-down
 .PHONY: bots-up
@@ -18,6 +19,7 @@
 .PHONY: indexer-up
 .PHONY: install-anchor-v2
 .PHONY: lint
+.PHONY: localnet
 .PHONY: sdk
 .PHONY: sdk-test
 .PHONY: session-metrics
@@ -205,14 +207,23 @@ decks:
 # Run the frontend against a local validator (open http://localhost:3000): the
 # localnet cluster + local RPC/WS, overriding the mainnet endpoints in
 # .env.local (a process env var wins over .env files in Next). Assumes a
-# validator is up with the markets seeded — the `tui` control plane does both —
-# so run `make tui` alongside this (a full `make localnet` that launches both
-# lands with the TUI work).
+# validator is up with the markets seeded, which the `tui` control plane does;
+# run `make tui` alongside this, or use `make localnet` to launch both.
 frontend-localnet:
 	cd frontend && pnpm install
 	cd frontend && NEXT_PUBLIC_CLUSTER=localnet \
 		NEXT_PUBLIC_RPC_URL=http://127.0.0.1:8899 \
 		NEXT_PUBLIC_WS_URL=ws://127.0.0.1:8900 pnpm dev
+
+# The whole localnet demo in one command: the TUI control plane in the
+# foreground (it spawns the validator and seeds the markets) plus the
+# localnet frontend in the background, pointed at that validator. Quitting the
+# TUI stops the frontend too; the frontend retries until the validator is up,
+# so start order doesn't matter.
+localnet:
+	@$(MAKE) --no-print-directory frontend-localnet & \
+	trap 'kill %1 2>/dev/null; pkill -f "next dev"' INT TERM EXIT; \
+	$(MAKE) --no-print-directory tui
 
 # https://github.com/solana-foundation/anchor/tree/anchor-next/lang-v2
 install-anchor-v2:
