@@ -513,12 +513,8 @@ fn do_reshape(
             "Thinned the far (ask) side — offer depth shrinks, peg unchanged",
         ),
         Action::ResetLadder => (
-            market::one_level_profile_bytes(
-                (config.offset_ppm, config.size_bps),
-                (config.offset_ppm, config.size_bps),
-                config.expiry_offset,
-            ),
-            "Reset to the seed ladder",
+            market::ladder_profile_bytes(&market::SEED_LADDER, config.expiry_offset),
+            "Reset to the seed ladder (multi-level)",
         ),
         other => unreachable!("do_reshape received a non-reshape action: {other:?}"),
     };

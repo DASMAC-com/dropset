@@ -62,6 +62,10 @@ struct FeedHub {
     /// Whether the most recent CoinGecko poll produced at least one price — the
     /// signal that gates the CoinMarketCap fallback.
     cg_ok: bool,
+    /// Whether the current CoinGecko-down state has already been logged, so a
+    /// persistent failure (e.g. CoinGecko unreachable on localnet) reports once
+    /// and then stays quiet until it recovers — rather than one line per tick.
+    cg_logged_down: bool,
 }
 
 impl FeedHub {
@@ -74,6 +78,7 @@ impl FeedHub {
             cmc_last_poll: None,
             fx_last_poll: None,
             cg_ok: false,
+            cg_logged_down: false,
         }
     }
 
@@ -93,17 +98,37 @@ impl FeedHub {
             match feeds.poll_coingecko(cg_ids) {
                 Ok(map) if !map.is_empty() => {
                     self.cg_ok = true;
+                    if self.cg_logged_down {
+                        eprintln!("[feed] coingecko recovered");
+                        self.cg_logged_down = false;
+                    }
                     for (k, v) in map {
                         self.cg.insert(k, (v, now));
                     }
                 }
+                // Both empty and errored polls mean CoinGecko can't price the
+                // roster this cycle; `compose` already cascades to the FX-rate /
+                // static fallback, so log the transition once and stay quiet
+                // until it recovers rather than spamming a line per tick.
                 Ok(_) => {
                     self.cg_ok = false;
-                    eprintln!("[feed] coingecko returned no prices");
+                    if !self.cg_logged_down {
+                        eprintln!(
+                            "[feed] coingecko returned no prices; cascading to the \
+                             fallback tier (silencing repeats until it recovers)"
+                        );
+                        self.cg_logged_down = true;
+                    }
                 }
                 Err(e) => {
                     self.cg_ok = false;
-                    eprintln!("[feed] coingecko poll failed: {e}");
+                    if !self.cg_logged_down {
+                        eprintln!(
+                            "[feed] coingecko poll failed: {e}; cascading to the \
+                             fallback tier (silencing repeats until it recovers)"
+                        );
+                        self.cg_logged_down = true;
+                    }
                 }
             }
         }

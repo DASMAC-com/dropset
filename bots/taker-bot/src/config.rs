@@ -74,9 +74,13 @@ impl Default for FlowConfig {
             // Rare entries, short-lived bursts (~1 / 0.3 ≈ 3 ticks).
             burst_entry_prob: 0.05,
             burst_exit_prob: 0.3,
-            // ~$200 median take with a healthy tail.
-            median_notional: 200.0,
-            size_log_sigma: 0.9,
+            // ~$10 median take — an order of magnitude under the ~$100 seeded
+            // book (SEED_USD_PER_SIDE), so orders fill against resting depth
+            // instead of overrunning the whole book and getting skipped as
+            // unfillable. The tighter σ keeps even the tail mostly within book
+            // depth while still landing the occasional larger take.
+            median_notional: 10.0,
+            size_log_sigma: 0.7,
             // Balanced, gently autocorrelated flow.
             buy_bias_init: 0.5,
             buy_bias_reversion: 0.1,

@@ -64,9 +64,13 @@ pub struct PairConfig {
     /// ~$1.14 … IDRX ~$0.000056), so this is converted to the on-chain
     /// atoms-ratio per [`reference_atoms_ratio`] before encoding.
     pub reference_price: f64,
-    /// Symmetric quote: a `±offset_ppm` spread around the reference, each
-    /// side sized `size_bps` of its inventory leg, expiring `expiry_offset`
-    /// slots after the quote.
+    /// Top-rung quote geometry: the tightest `±offset_ppm` spread and the
+    /// per-side `size_bps` commit (Σ across a ladder's rungs). The bootstrap
+    /// seeds a multi-rung [`SEED_LADDER`] whose first rung is this offset and
+    /// whose sizes sum to this commit; the TUI reshape presets read
+    /// `offset_ppm` for their single-rung "thin the far side" demo.
+    /// `expiry_offset` is how many slots after the quote each rung expires (the
+    /// maker re-arms it).
     pub offset_ppm: u32,
     pub size_bps: u16,
     pub expiry_offset: u32,
@@ -121,6 +125,21 @@ pub const PAIRS: [&PairConfig; 7] = [
     &MARKET_MXNE,
     &MARKET_XSGD,
     &MARKET_IDRX,
+];
+
+/// The opening / reset quote ladder: a four-rung symmetric ladder of
+/// `(offset_ppm, size_bps)` mirroring the maker bot's own `DEFAULT_LADDER`
+/// (`bots/maker-bot`). The bootstrap seeds the book with this so it opens with
+/// visible depth across several price levels — not the single rung the maker
+/// only later fans out — and the TUI's "Reset ladder" reshape returns to it.
+/// Offsets are relative ppm and sizes are bps of the inventory leg (Σ = 10000,
+/// the full per-side commit), so the ladder is market-agnostic. Widths spread
+/// ±0.5% / ±1% / ±2% / ±5% with depth thinning outward.
+pub const SEED_LADDER: [(u32, u16); 4] = [
+    (5_000, 4_000),
+    (10_000, 3_000),
+    (20_000, 2_000),
+    (50_000, 1_000),
 ];
 
 /// Convert a pair's human quote-per-base price into the atoms-ratio the
@@ -270,9 +289,11 @@ pub fn seed_vault(
     )
     .context("set_reference_price")?;
 
-    // 2. Quote ladder — a symmetric one-level profile.
+    // 2. Quote ladder — a multi-rung symmetric ladder ([`SEED_LADDER`]), so the
+    //    book opens with depth across several price levels rather than a single
+    //    rung the maker only later fans out.
     log.log("set_liquidity_profile");
-    let bytes = symmetric_profile_bytes(config.offset_ppm, config.size_bps, config.expiry_offset);
+    let bytes = ladder_profile_bytes(&SEED_LADDER, config.expiry_offset);
     let ix = set_liquidity_profile_ix(leader.pubkey(), market.address, VAULT_IDX, bytes);
     chain::send_logged(
         client,
@@ -348,15 +369,23 @@ pub fn one_level_profile_bytes(bid: (u32, u16), ask: (u32, u16), expiry_offset: 
     profile_bytes(&profile)
 }
 
-/// Serialize a symmetric one-level [`LiquidityProfile`] — the same
-/// `±offset_ppm` / `size_bps` / `expiry_offset` on the top bid and ask — to
-/// the 160-byte `set_liquidity_profile` argument.
-fn symmetric_profile_bytes(offset_ppm: u32, size_bps: u16, expiry_offset: u32) -> [u8; 160] {
-    one_level_profile_bytes(
-        (offset_ppm, size_bps),
-        (offset_ppm, size_bps),
-        expiry_offset,
-    )
+/// Serialize a symmetric multi-rung ladder — the same `(offset_ppm, size_bps)`
+/// list on both the bid and ask sides, sharing `expiry_offset` — to the
+/// 160-byte `set_liquidity_profile` argument. Rungs past the profile's capacity
+/// are dropped. The bootstrap seeds the opening book with [`SEED_LADDER`]
+/// through here (so it opens with several price levels of depth), and the TUI's
+/// "Reset ladder" reshape returns to that same ladder.
+pub fn ladder_profile_bytes(rungs: &[(u32, u16)], expiry_offset: u32) -> [u8; 160] {
+    let mut profile = LiquidityProfile::zeroed();
+    let n = rungs.len().min(profile.bids.len());
+    for (i, &(offset_ppm, size_bps)) in rungs.iter().take(n).enumerate() {
+        for side in [&mut profile.bids, &mut profile.asks] {
+            side[i].price_offset = offset_ppm.into();
+            side[i].size_bps = size_bps.into();
+            side[i].expiry_offset = expiry_offset.into();
+        }
+    }
+    profile_bytes(&profile)
 }
 
 #[cfg(test)]
@@ -429,18 +458,33 @@ mod tests {
         assert_eq!(profile.asks[1].size_bps.get(), 0);
     }
 
-    /// A symmetric profile fills exactly the top bid and ask, leaving the
-    /// rest of the ladder zeroed.
+    /// The seed ladder serializes symmetrically across every rung, leaving the
+    /// levels past its length zeroed — the multi-level book the bootstrap opens.
     #[test]
-    fn symmetric_profile_fills_top_of_book_only() {
-        let bytes = symmetric_profile_bytes(5_000, 10_000, u32::MAX);
+    fn seed_ladder_fills_every_rung_symmetrically() {
+        let bytes = ladder_profile_bytes(&SEED_LADDER, u32::MAX);
         assert_eq!(bytes.len(), 160);
         let profile: &LiquidityProfile = bytemuck::from_bytes(&bytes);
-        assert_eq!(profile.bids[0].price_offset.get(), 5_000);
-        assert_eq!(profile.bids[0].size_bps.get(), 10_000);
-        assert_eq!(profile.asks[0].price_offset.get(), 5_000);
-        assert_eq!(profile.asks[0].size_bps.get(), 10_000);
-        assert_eq!(profile.bids[1].size_bps.get(), 0);
-        assert_eq!(profile.asks[1].size_bps.get(), 0);
+        for (i, &(offset_ppm, size_bps)) in SEED_LADDER.iter().enumerate() {
+            assert_eq!(profile.bids[i].price_offset.get(), offset_ppm);
+            assert_eq!(profile.bids[i].size_bps.get(), size_bps);
+            assert_eq!(profile.asks[i].price_offset.get(), offset_ppm);
+            assert_eq!(profile.asks[i].size_bps.get(), size_bps);
+        }
+        // The rung past the ladder's length stays zeroed.
+        assert_eq!(profile.bids[SEED_LADDER.len()].size_bps.get(), 0);
+        assert_eq!(profile.asks[SEED_LADDER.len()].size_bps.get(), 0);
+    }
+
+    /// The seed ladder commits the full inventory leg per side (Σ = 10000 bps),
+    /// matching the maker's own ladder invariant, and its widths thin outward.
+    #[test]
+    fn seed_ladder_fully_commits_each_side_and_thins_outward() {
+        let total: u32 = SEED_LADDER.iter().map(|(_, bps)| *bps as u32).sum();
+        assert_eq!(total, 10_000);
+        for w in SEED_LADDER.windows(2) {
+            assert!(w[1].0 > w[0].0, "offsets must widen outward");
+            assert!(w[1].1 < w[0].1, "depth must thin outward");
+        }
     }
 }

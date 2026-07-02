@@ -286,7 +286,11 @@ fn draw_accounts(f: &mut Frame<'_>, app: &mut App, area: Rect) {
     }
     let lines: Vec<Line> = rows.into_iter().map(|(line, _)| line).collect();
     f.render_widget(
-        Paragraph::new(lines).block(Block::default().title(" accounts ").borders(Borders::ALL)),
+        Paragraph::new(lines).block(
+            Block::default()
+                .title(" accounts · click to open ")
+                .borders(Borders::ALL),
+        ),
         area,
     );
 }
@@ -437,9 +441,13 @@ fn account_line(
         Span::raw(format!("{label:<14} ")),
     ];
     if exists {
+        // Underlined to read as a hyperlink — the whole row is a click target
+        // that opens the account in the explorer (see [`draw_accounts`]).
         spans.push(Span::styled(
             short_pubkey(address),
-            Style::new().fg(Color::Gray),
+            Style::new()
+                .fg(Color::Gray)
+                .add_modifier(Modifier::UNDERLINED),
         ));
         if let Some(l) = lamports {
             spans.push(Span::styled(
@@ -474,7 +482,13 @@ fn participant_line(
     Line::from(vec![
         Span::styled("\u{2022} ", Style::new().fg(liveness_color(p.liveness))),
         Span::raw(format!("{label:<14} ")),
-        Span::styled(short_pubkey(&p.address), Style::new().fg(Color::Gray)),
+        // Underlined like the account rows — a clickable link to the explorer.
+        Span::styled(
+            short_pubkey(&p.address),
+            Style::new()
+                .fg(Color::Gray)
+                .add_modifier(Modifier::UNDERLINED),
+        ),
         Span::styled(
             format!("  {base_symbol} {base:>12.2} · {quote_symbol} {quote:>12.2}"),
             Style::new().fg(Color::DarkGray),
@@ -524,7 +538,11 @@ fn draw_markets(f: &mut Frame<'_>, app: &App, area: Rect) {
             .collect()
     };
     f.render_widget(
-        Paragraph::new(lines).block(Block::default().title(" markets ").borders(Borders::ALL)),
+        Paragraph::new(lines).block(
+            Block::default()
+                .title(" markets · [ ] to select ")
+                .borders(Borders::ALL),
+        ),
         area,
     );
 }

@@ -27,8 +27,12 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-/// Host port the explorer container publishes (compose maps `3000:3000`).
-pub const EXPLORER_PORT: u16 = 3000;
+/// Host port the explorer container publishes (compose maps `3100:3000`).
+/// Deliberately not `3000`: the frontend's `next dev` (`make frontend`) owns
+/// `localhost:3000`, so serving the explorer there too collided — running both
+/// left one unreachable. `3100` keeps the local explorer and the frontend up
+/// side by side.
+pub const EXPLORER_PORT: u16 = 3100;
 
 /// Lifecycle state of the managed explorer container, shared (as an
 /// [`AtomicU8`]) between the background starter, the "Open explorer" action,
@@ -216,7 +220,7 @@ mod tests {
         let url = account_url(&addr, "http://127.0.0.1:8899");
         // Served from the local container, not the hosted HTTPS origin — that
         // is the whole point (loopback page -> loopback RPC).
-        assert!(url.starts_with("http://localhost:3000/address/"));
+        assert!(url.starts_with("http://localhost:3100/address/"));
         assert!(url.contains("cluster=custom"));
         assert!(url.contains("customUrl=http%3A%2F%2F127.0.0.1%3A8899"));
         assert!(url.contains(&addr.to_string()));
