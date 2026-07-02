@@ -63,6 +63,7 @@ jobs:
           code:
           - '**'
           - '!frontend/**'
+          - '!decks/**'
           - '!docs/**'
           - '!**/*.md'
           - '!sdk/ts/**'

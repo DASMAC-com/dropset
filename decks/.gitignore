@@ -1,0 +1,23 @@
+# cspell:word vercel
+/node_modules
+/.pnp
+.pnp.*
+
+/.next/
+/out/
+
+/build
+
+.DS_Store
+*.pem
+
+npm-debug.log*
+.pnpm-debug.log*
+
+.env*
+!.env.example
+
+.vercel
+
+*.tsbuildinfo
+next-env.d.ts
