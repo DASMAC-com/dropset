@@ -6,7 +6,7 @@
 //! Anchor handler calls it, and the hand-written sBPF `entrypoint.s`
 //! mirrors it byte-for-byte (see the architecture spec's
 //! **SetReferencePrice**). Keeping the logic here — pure byte math over
-//! `&mut [u8]`, no Anchor `Context`, no solana syscalls — lets the exact
+//! `&mut [u8]`, no Anchor `Context`, no solana system calls — lets the exact
 //! edge cases (authority mismatch, sector bounds, nonce bump, flush bit,
 //! price / slot packing) be unit-tested in-process, and gives the ASM a
 //! concrete reference to match.
@@ -47,7 +47,7 @@ const NONCE_OFF: usize = DISC_SIZE + offset_of!(MarketHeader, nonce);
 const LEN_OFF: usize = DISC_SIZE + size_of::<MarketHeader>();
 /// First `Vault` sector. `Slab` rounds the byte after the `len` field up
 /// to `align_of::<Vault>()` — which is 4 (`Vault` embeds `Price`, a
-/// `u32`-aligned newtype), not 1 — so the same `align_up` must be applied
+/// `u32`-aligned wrapper), not 1 — so the same `align_up` must be applied
 /// here or every sector read lands short by the padding. Computed exactly
 /// as `Slab::ITEMS_OFFSET` and cross-checked against it below.
 const ITEMS_OFF: usize = {
@@ -212,7 +212,10 @@ mod tests {
         // `Custom(index + 6000)`; pin the kernel's domain codes to that so
         // ASM and Anchor can't drift apart.
         const OFFSET: u32 = 6000;
-        assert_eq!(err::UNAUTHORIZED, DropsetError::Unauthorized as u32 + OFFSET);
+        assert_eq!(
+            err::UNAUTHORIZED,
+            DropsetError::Unauthorized as u32 + OFFSET
+        );
         assert_eq!(
             err::INVALID_SECTOR_INDEX,
             DropsetError::InvalidSectorIndex as u32 + OFFSET

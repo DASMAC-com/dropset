@@ -74,12 +74,13 @@ admin-teardown = []
 # Production entrypoint: the `SetReferencePrice` discriminator is handled
 # by the hand-written sBPF `src/asm/entrypoint.s`, which short-circuits it
 # ahead of Anchor's dispatcher and `call`s the dispatcher for everything
-# else. Off by default until Rust↔ASM parity and the CU saving are
-# validated; the default (feature-off) build keeps the plain Anchor
-# entrypoint + the reference Rust handler, which doubles as the parity
-# oracle. See the architecture spec's **SetReferencePrice**. The build
-# wiring (anchor-lang-v2 `no-entrypoint` + the asm include) is added with
-# the entrypoint itself.
+# else. **On by default** now that Rust↔ASM parity and the CU saving are
+# validated, so the deployed / CI-primary `dropset.so` is the asm build.
+# The reference build — plain Anchor entrypoint + the Rust kernel handler
+# — is the parity oracle; it is produced by turning this feature off
+# (`--no-default-features --features admin-teardown`, see
+# `make program-parity`, artifact `dropset_ref.so`). See the architecture
+# spec's **SetReferencePrice**.
 #
 # Enables the crate's `no-entrypoint` feature — the `#[program]` macro
 # reads that cfg to suppress Anchor's generated entrypoint (and allocator
@@ -89,7 +90,7 @@ admin-teardown = []
 # this feature, and pulls in the `include_asm!()` runtime crate.
 asm-entrypoint = ["no-entrypoint", "dep:anchor-asm-v2-runtime"]
 cpi = ["no-entrypoint"]
-default = ["admin-teardown"]
+default = ["admin-teardown", "asm-entrypoint"]
 # Anchor v2 derive macros emit `cfg(feature = "idl-build")` gated code in
 # user crates. The lang-v2 / spl-v2 crates removed the matching forwarded
 # features (e3cf7608 V2: Remove idl-build from Anchor crates), so this

@@ -23,7 +23,7 @@
 use super::{
     associated_token_address, create_associated_token_account, create_mock_usdc_mint,
     create_spl_mint, deploy_with_authority, deploy_with_authority_from, mint_to, send_ixn,
-    send_ixn_meta, ASM_PROGRAM_SO_PATH, ATA_PROGRAM_ID, CREATE_MARKET_FEE_ATOMS, PROGRAM_ID,
+    send_ixn_meta, ATA_PROGRAM_ID, CREATE_MARKET_FEE_ATOMS, PROGRAM_ID, REF_PROGRAM_SO_PATH,
     SIGNER_FUNDING_LAMPORTS, SPL_TOKEN_PROGRAM_ID,
 };
 use anchor_lang_v2::{bytemuck, programs::System, Id, InstructionData};
@@ -224,12 +224,13 @@ impl Fixture {
         Self::bootstrap_on(svm, authority)
     }
 
-    /// Like [`Self::bootstrap`] but on the `asm-entrypoint` artifact
-    /// (`make program-asm`). Used by the Rust↔ASM parity tests so the same
-    /// bootstrap runs against the assembly fast-path build.
-    pub fn bootstrap_asm() -> Self {
+    /// Like [`Self::bootstrap`] but on the reference (feature-off) build —
+    /// the parity oracle (`make program-parity`, `dropset_ref.so`). The
+    /// default `bootstrap` now deploys the asm build, so the parity tests
+    /// compare the two.
+    pub fn bootstrap_ref() -> Self {
         let authority = Keypair::new();
-        let svm = deploy_with_authority_from(&authority, ASM_PROGRAM_SO_PATH);
+        let svm = deploy_with_authority_from(&authority, REF_PROGRAM_SO_PATH);
         Self::bootstrap_on(svm, authority)
     }
 

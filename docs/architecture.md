@@ -1249,17 +1249,19 @@ arms a pending materialization of `Vault.remaining`, deferred to the
 next taker — so the leader write stays at two stores regardless of
 `N_LEVELS`. No vault iteration, no reallocations, no profile touch.
 
-**ASM fast path.** Because this is the steady-state hot path, the
-production build (`asm-entrypoint` feature) handles this one
+**ASM fast path.** Because this is the steady-state hot path, the default
+build (the `asm-entrypoint` feature, on by default) handles this one
 discriminator in a hand-written sBPF entrypoint (`src/asm/entrypoint.s`)
 that short-circuits it ahead of Anchor's dispatcher and `call`s the
-dispatcher for everything else. It mirrors a solana-free
-`stamp_reference_price` kernel byte-for-byte; a Rust reference build
-(default features) runs the same kernel and serves as the parity oracle
-(`tests/asm_parity.rs` deploys both and asserts identical stamps and
-domain error codes). On litesvm the fast path costs ~47 CU versus ~256
-for the Rust entrypoint. See the **SetReferencePrice** implementation
-notes for the offset-pinning and error-code details.
+dispatcher for everything else. It mirrors the solana-free
+`stamp_reference_price` kernel byte-for-byte; the reference build
+(feature-off, `dropset_ref.so`) runs the same kernel through the plain
+Anchor entrypoint and serves as the parity oracle (`tests/asm_parity.rs`
+deploys both and asserts identical stamps and domain error codes). On
+litesvm the fast path costs ~47 CU versus ~256 for the Rust entrypoint —
+a ~82% saving. The offsets the assembly hardcodes are pinned against the
+live layout by an `offset_of!` test, so a `layout.rs` change breaks the
+build rather than silently mis-stamping.
 
 Off-chain pre-signing: because `quote_slot` is supplied by the leader
 rather than read from the clock, a quote can be signed at slot N and

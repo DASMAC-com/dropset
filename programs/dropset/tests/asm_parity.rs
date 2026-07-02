@@ -1,3 +1,4 @@
+// cspell:word nocapture
 //! Rust↔ASM parity for the `set_reference_price` fast path, plus the
 //! offset assertions that pin what `src/asm/entrypoint.s` hardcodes.
 //!
@@ -7,15 +8,16 @@
 //!    hardcodes — from the real `#[repr(C)]` / `#[account]` layout and
 //!    agave's aligned account serialization — and asserts it against the
 //!    literal the `.s` uses. A `layout.rs` reorder / width change (or a
-//!    miscomputed ABI offset) breaks this test rather than silently
-//!    mis-stamping on-chain. Always runs.
+//!    wrong ABI offset) breaks this test rather than silently mis-stamping
+//!    on-chain. Always runs.
 //!
-//! 2. The `*_parity` tests deploy the `asm-entrypoint` artifact
-//!    (`make program-asm`) beside the default reference build and push
-//!    identical inputs through both, asserting the assembly and the Rust
-//!    kernel produce the same stamp and the same domain error codes. They
-//!    **skip** (rather than fail) when the asm `.so` is absent, so a plain
-//!    `cargo test` — which only builds the reference `.so` — stays green.
+//! 2. The `*_parity` tests deploy the reference (feature-off) build beside
+//!    the default asm `.so` and push identical inputs through both,
+//!    asserting the assembly and the Rust kernel produce the same stamp and
+//!    the same domain error codes. They **skip** (rather than fail) when the
+//!    reference oracle `.so` is absent, so a plain `cargo test` — which only
+//!    builds the default asm `.so` — stays green. `make program-parity`
+//!    builds both.
 //!
 //! Only *legitimate* inputs are compared for byte-parity: a real wallet
 //! signer carries no data, so the assembly's signer-empty / writable
@@ -58,11 +60,17 @@ fn asm_offsets_match_layout() {
     assert_eq!(NUM_ACCOUNTS_SIZE + HDR_PUBKEY, 16, "SIGNER_PUBKEY_OFF");
     assert_eq!(NUM_ACCOUNTS_SIZE + HDR_DATA_LEN, 88, "SIGNER_DATA_LEN_OFF");
 
-    // account 1 (market) base, with the signer carrying zero data.
+    // account 1 (market) base, with the signer carrying zero data — its
+    // data region is therefore just the DATA_INCREASE pad, contributing
+    // nothing between the header and the rent-epoch tail.
     let market_base =
-        NUM_ACCOUNTS_SIZE + ACCT_HEADER_SIZE + 0 + MAX_PERMITTED_DATA_INCREASE + RENT_EPOCH_SIZE;
+        NUM_ACCOUNTS_SIZE + ACCT_HEADER_SIZE + MAX_PERMITTED_DATA_INCREASE + RENT_EPOCH_SIZE;
     assert_eq!(market_base, 10344, "MARKET_BASE");
-    assert_eq!(market_base + HDR_IS_WRITABLE, 10346, "MARKET_IS_WRITABLE_OFF");
+    assert_eq!(
+        market_base + HDR_IS_WRITABLE,
+        10346,
+        "MARKET_IS_WRITABLE_OFF"
+    );
     assert_eq!(market_base + HDR_DATA_LEN, 10424, "MARKET_DATA_LEN_OFF");
     assert_eq!(market_base + HDR_DATA, 10432, "MARKET_DATA_OFF");
 
@@ -84,11 +92,19 @@ fn asm_offsets_match_layout() {
     assert_eq!(size_of::<Vault>(), 560, "VAULT_SIZE");
 
     // Vault field offsets the stamp writes to.
-    assert_eq!(offset_of!(Vault, quote_authority), 40, "VAULT_QUOTE_AUTHORITY_OFF");
+    assert_eq!(
+        offset_of!(Vault, quote_authority),
+        40,
+        "VAULT_QUOTE_AUTHORITY_OFF"
+    );
     let rp = offset_of!(Vault, reference_price);
     assert_eq!(rp + offset_of!(ReferencePrice, stamp), 72, "RP_STAMP_OFF");
     assert_eq!(rp + offset_of!(ReferencePrice, price), 80, "RP_PRICE_OFF");
-    assert_eq!(rp + offset_of!(ReferencePrice, quote_slot), 84, "RP_QUOTE_SLOT_OFF");
+    assert_eq!(
+        rp + offset_of!(ReferencePrice, quote_slot),
+        84,
+        "RP_QUOTE_SLOT_OFF"
+    );
 }
 
 /// The stamped reference price plus the post-stamp market nonce — the
@@ -99,8 +115,8 @@ fn valid_price() -> u32 {
     Price::encode(10_850_000, 0).unwrap().as_u32()
 }
 
-fn asm_built() -> bool {
-    std::path::Path::new(common::ASM_PROGRAM_SO_PATH).exists()
+fn ref_built() -> bool {
+    std::path::Path::new(common::REF_PROGRAM_SO_PATH).exists()
 }
 
 /// Open vault 0, stamp `(price_bits, quote_slot)`, and read back
@@ -123,19 +139,26 @@ fn stamp_and_read(mut f: Fixture, price_bits: u32, quote_slot: u32) -> Stamp {
 
 #[test]
 fn happy_path_parity() {
-    if !asm_built() {
-        eprintln!("skipping happy_path_parity: asm .so absent (run `make program-asm`)");
+    if !ref_built() {
+        eprintln!("skipping happy_path_parity: reference oracle absent (`make program-parity`)");
         return;
     }
     // Identical bootstrap + op sequence on each build, so the pre-stamp
     // nonce matches; the resulting stamp is then byte-identical only if the
-    // assembly writes the same bytes the kernel does.
-    let reference = stamp_and_read(Fixture::bootstrap(), valid_price(), 7);
-    let asm = stamp_and_read(Fixture::bootstrap_asm(), valid_price(), 7);
-    assert_eq!(reference, asm, "asm stamp must byte-match the reference build");
+    // assembly (default build) writes the same bytes the kernel does.
+    let reference = stamp_and_read(Fixture::bootstrap_ref(), valid_price(), 7);
+    let asm = stamp_and_read(Fixture::bootstrap(), valid_price(), 7);
+    assert_eq!(
+        reference, asm,
+        "asm stamp must byte-match the reference build"
+    );
     // And the stamp is what we expect: flush armed over a zero pre-nonce,
     // price + slot stored raw, nonce bumped to 1.
-    assert_eq!(asm.0, dropset::FLUSH_BIT, "stamp = pre_nonce(0) | FLUSH_BIT");
+    assert_eq!(
+        asm.0,
+        dropset::FLUSH_BIT,
+        "stamp = pre_nonce(0) | FLUSH_BIT"
+    );
     assert_eq!(asm.1, valid_price());
     assert_eq!(asm.2, 7);
     assert_eq!(asm.3, 1, "nonce bumped");
@@ -143,15 +166,15 @@ fn happy_path_parity() {
 
 #[test]
 fn invalid_price_stored_raw_parity() {
-    if !asm_built() {
-        eprintln!("skipping invalid_price_stored_raw_parity: asm .so absent");
+    if !ref_built() {
+        eprintln!("skipping invalid_price_stored_raw_parity: reference oracle absent");
         return;
     }
     // The write validates neither the price nor the slot; both builds store
     // an invalid significand and a far-future slot verbatim.
     let bits = 5_000_000;
-    let reference = stamp_and_read(Fixture::bootstrap(), bits, 1_000_000);
-    let asm = stamp_and_read(Fixture::bootstrap_asm(), bits, 1_000_000);
+    let reference = stamp_and_read(Fixture::bootstrap_ref(), bits, 1_000_000);
+    let asm = stamp_and_read(Fixture::bootstrap(), bits, 1_000_000);
     assert_eq!(reference, asm);
     assert_eq!(asm.1, bits);
     assert_eq!(asm.2, 1_000_000);
@@ -159,12 +182,12 @@ fn invalid_price_stored_raw_parity() {
 
 #[test]
 fn unauthorized_parity() {
-    if !asm_built() {
-        eprintln!("skipping unauthorized_parity: asm .so absent");
+    if !ref_built() {
+        eprintln!("skipping unauthorized_parity: reference oracle absent");
         return;
     }
-    let ref_err = unauthorized_err(Fixture::bootstrap());
-    let asm_err = unauthorized_err(Fixture::bootstrap_asm());
+    let ref_err = unauthorized_err(Fixture::bootstrap_ref());
+    let asm_err = unauthorized_err(Fixture::bootstrap());
     // Domain error: both surface DropsetError::Unauthorized (Custom 6005).
     assert!(
         ref_err.contains("Custom(6005)"),
@@ -187,12 +210,12 @@ fn unauthorized_err(mut f: Fixture) -> String {
 
 #[test]
 fn out_of_range_sector_parity() {
-    if !asm_built() {
-        eprintln!("skipping out_of_range_sector_parity: asm .so absent");
+    if !ref_built() {
+        eprintln!("skipping out_of_range_sector_parity: reference oracle absent");
         return;
     }
-    let ref_err = oob_err(Fixture::bootstrap());
-    let asm_err = oob_err(Fixture::bootstrap_asm());
+    let ref_err = oob_err(Fixture::bootstrap_ref());
+    let asm_err = oob_err(Fixture::bootstrap());
     // Domain error: both surface DropsetError::InvalidSectorIndex (6010).
     assert!(ref_err.contains("Custom(6010)"), "reference oob: {ref_err}");
     assert!(asm_err.contains("Custom(6010)"), "asm oob: {asm_err}");
@@ -226,12 +249,12 @@ fn stamp_cu(mut f: Fixture) -> u64 {
 /// see the table.
 #[test]
 fn cu_report() {
-    if !asm_built() {
-        eprintln!("skipping cu_report: asm .so absent (run `make program-asm`)");
+    if !ref_built() {
+        eprintln!("skipping cu_report: reference oracle absent (run `make program-parity`)");
         return;
     }
-    let reference = stamp_cu(Fixture::bootstrap());
-    let asm = stamp_cu(Fixture::bootstrap_asm());
+    let reference = stamp_cu(Fixture::bootstrap_ref());
+    let asm = stamp_cu(Fixture::bootstrap());
     let saved = reference.saturating_sub(asm);
     eprintln!("set_reference_price compute units");
     eprintln!("  reference (Rust entrypoint): {reference}");

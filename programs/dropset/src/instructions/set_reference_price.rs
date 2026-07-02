@@ -57,7 +57,7 @@ impl SetReferencePrice {
         }
         #[cfg(not(feature = "asm-entrypoint"))]
         {
-            // `Address` is a 32-byte `Pod` newtype; reinterpret it as the
+            // `Address` is a 32-byte `Pod` wrapper; reinterpret it as the
             // raw key bytes the kernel compares, without depending on its
             // inherent accessors.
             let signer_key: &[u8; 32] = anchor_lang_v2::bytemuck::cast_ref(self.signer.address());

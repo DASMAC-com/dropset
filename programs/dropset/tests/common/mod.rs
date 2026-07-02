@@ -22,11 +22,13 @@ const PROGRAM_SO_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../target/deploy/dropset.so"
 );
-/// The `asm-entrypoint` build, produced by `make program-asm`. Used only
-/// by the Rust↔ASM parity tests; absent in a plain `cargo test` run.
-pub const ASM_PROGRAM_SO_PATH: &str = concat!(
+/// The reference (feature-off) build — the Rust↔ASM parity oracle,
+/// produced by `make program-parity`. `dropset.so` is now the asm build
+/// (the default feature set), so this is the *reference* artifact the
+/// parity tests compare it against. Absent in a plain `cargo test` run.
+pub const REF_PROGRAM_SO_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../target/deploy/dropset_asm.so"
+    "/../../target/deploy/dropset_ref.so"
 );
 const PROGRAM_KEYPAIR_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -48,8 +50,8 @@ pub fn deploy_with_authority(authority: &Keypair) -> LiteSVM {
 }
 
 /// Like [`deploy_with_authority`] but deploys the `.so` at `so_path` — the
-/// hook the parity tests use to stand up the `asm-entrypoint` artifact
-/// (`ASM_PROGRAM_SO_PATH`) alongside the default reference build.
+/// hook the parity tests use to stand up the reference oracle
+/// (`REF_PROGRAM_SO_PATH`) alongside the default asm build.
 pub fn deploy_with_authority_from(authority: &Keypair, so_path: &str) -> LiteSVM {
     let mut svm = anchor_v2_testing::svm();
 
