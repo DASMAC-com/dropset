@@ -217,9 +217,9 @@ function flushLevelPrice(reference: PriceBits, offsetPpm: number, isAsk: boolean
 /**
  * A level's materialized size in atoms: `size_bps` of the matching
  * inventory leg. Returns `null` when `size_bps > BPS` — the corrupt-bytes
- * case a collected side is skipped whole for (see `flushSideSumExceedsBps`),
- * so on a materialized side this is never `null`. Mirrors
- * `matching_math::level_fill_atoms`.
+ * case for which a collected side is skipped whole (see
+ * `flushSideSumExceedsBps`), so on a materialized side this is never `null`.
+ * Mirrors `matching_math::level_fill_atoms`.
  */
 function levelFillAtoms(sizeBps: number, legAtoms: bigint): bigint | null {
   if (BigInt(sizeBps) > BPS) return null;
