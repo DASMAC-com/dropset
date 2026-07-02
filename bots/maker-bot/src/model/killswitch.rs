@@ -58,11 +58,13 @@ pub enum Action {
 
 /// Evaluate the kill switches for this tick. `launch_tvl` is the vault's TVL at
 /// startup (the caller reads it from the first snapshot), against which the
-/// drawdown floor is measured. `degraded` (any single stale feed, per
+/// drawdown floor is measured. `degraded` (no live market price — the mid
+/// comes from a peg-rate fallback tier, per
 /// [`super::fair_mid::Health::Degraded`]) tightens the whole switch set by 50%
 /// (§4 row 5): the imbalance thresholds halve, and the TVL floor halves its
-/// permitted drawdown from launch (the peg band is tightened upstream in
-/// `compose`, since `peg_breach` is composed there).
+/// permitted drawdown from launch. The peg band is not scaled here; in the
+/// degraded state there is no market price, so `peg` is `None` and
+/// `peg_breach` is `false`.
 pub fn evaluate(
     fair: &FairMid,
     inv: &Inventory,

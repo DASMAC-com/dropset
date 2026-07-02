@@ -176,7 +176,7 @@ vaults; the physical sector array sits immediately after the header
 (see **Storage layout**).
 
 The byte-exact layout is owned by
-[`state/market.rs`](../programs/dropset/src/state/market.rs)
+[`state/market/layout.rs`](../programs/dropset/src/state/market/layout.rs)
 (`MarketHeader`) and canonicalized in the IDL. Conceptually the header
 carries the market-wide `nonce`, the three DLL heads + `active_count`
 that thread the vault sectors (see **Storage layout**), the
@@ -332,7 +332,7 @@ renders that vault unmatchable.
 The byte-exact layout of the vault sector and its inline records
 (`ReferencePrice`, `LiquidityProfile`, the materialized `Remaining` /
 `Position`) is owned by
-[`state/market.rs`](../programs/dropset/src/state/market.rs)
+[`state/market/layout.rs`](../programs/dropset/src/state/market/layout.rs)
 (`Vault`, `ReferencePrice`, `Remaining`, `Position`) and canonicalized
 in the IDL. A vault carries the `leader` and `quote_authority`, the
 `reference_price`, pooled `base_atoms` / `quote_atoms`, the share
@@ -672,7 +672,7 @@ current `(base_atoms, quote_atoms)` without any further input from
 the leader.
 
 The byte-exact layout is owned by
-[`state/market.rs`](../programs/dropset/src/state/market.rs)
+[`state/market/layout.rs`](../programs/dropset/src/state/market/layout.rs)
 (`LiquidityProfile`, `Level`) and canonicalized in the IDL: per-side
 arrays of `N_LEVELS` `Level`s, each a
 `(price_offset, size_bps, expiry_offset)` triple, top of book first. The

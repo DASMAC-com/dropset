@@ -71,14 +71,7 @@ baseTreasury: Address;
 /** Same as `base_treasury`, for the quote leg. */
 quoteTreasury: Address; 
 /** Market PDA bump. */
-bump: number; 
-/**
- * Bump for the base treasury ATA derivation. Stored so transfers
- * out can sign with the market PDA without re-deriving.
- */
-baseTreasuryBump: number; 
-/** Bump for the quote treasury ATA derivation. */
-quoteTreasuryBump: number;  };
+bump: number;  };
 
 export type MarketHeaderArgs = { 
 /** Per-fill / per-quote monotonic counter. */
@@ -138,23 +131,16 @@ baseTreasury: Address;
 /** Same as `base_treasury`, for the quote leg. */
 quoteTreasury: Address; 
 /** Market PDA bump. */
-bump: number; 
-/**
- * Bump for the base treasury ATA derivation. Stored so transfers
- * out can sign with the market PDA without re-deriving.
- */
-baseTreasuryBump: number; 
-/** Bump for the quote treasury ATA derivation. */
-quoteTreasuryBump: number;  };
+bump: number;  };
 
 /** Gets the encoder for {@link MarketHeaderArgs} account data. */
 export function getMarketHeaderEncoder(): FixedSizeEncoder<MarketHeaderArgs> {
-    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['nonce', getU64Encoder()], ['head', getU32Encoder()], ['tombstoneHead', getU32Encoder()], ['freeHead', getU32Encoder()], ['activeCount', getU32Encoder()], ['outstandingVaultDepositors', getU32Encoder()], ['feeConfig', getFeeConfigEncoder()], ['takerFee', getU16Encoder()], ['defaultMinLeaderShare', getU32Encoder()], ['baseMint', getAddressEncoder()], ['quoteMint', getAddressEncoder()], ['baseTreasury', getAddressEncoder()], ['quoteTreasury', getAddressEncoder()], ['bump', getU8Encoder()], ['baseTreasuryBump', getU8Encoder()], ['quoteTreasuryBump', getU8Encoder()]]), (value) => ({ ...value, discriminator: MARKET_HEADER_DISCRIMINATOR }));
+    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['nonce', getU64Encoder()], ['head', getU32Encoder()], ['tombstoneHead', getU32Encoder()], ['freeHead', getU32Encoder()], ['activeCount', getU32Encoder()], ['outstandingVaultDepositors', getU32Encoder()], ['feeConfig', getFeeConfigEncoder()], ['takerFee', getU16Encoder()], ['defaultMinLeaderShare', getU32Encoder()], ['baseMint', getAddressEncoder()], ['quoteMint', getAddressEncoder()], ['baseTreasury', getAddressEncoder()], ['quoteTreasury', getAddressEncoder()], ['bump', getU8Encoder()]]), (value) => ({ ...value, discriminator: MARKET_HEADER_DISCRIMINATOR }));
 }
 
 /** Gets the decoder for {@link MarketHeader} account data. */
 export function getMarketHeaderDecoder(): FixedSizeDecoder<MarketHeader> {
-    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['nonce', getU64Decoder()], ['head', getU32Decoder()], ['tombstoneHead', getU32Decoder()], ['freeHead', getU32Decoder()], ['activeCount', getU32Decoder()], ['outstandingVaultDepositors', getU32Decoder()], ['feeConfig', getFeeConfigDecoder()], ['takerFee', getU16Decoder()], ['defaultMinLeaderShare', getU32Decoder()], ['baseMint', getAddressDecoder()], ['quoteMint', getAddressDecoder()], ['baseTreasury', getAddressDecoder()], ['quoteTreasury', getAddressDecoder()], ['bump', getU8Decoder()], ['baseTreasuryBump', getU8Decoder()], ['quoteTreasuryBump', getU8Decoder()]]);
+    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['nonce', getU64Decoder()], ['head', getU32Decoder()], ['tombstoneHead', getU32Decoder()], ['freeHead', getU32Decoder()], ['activeCount', getU32Decoder()], ['outstandingVaultDepositors', getU32Decoder()], ['feeConfig', getFeeConfigDecoder()], ['takerFee', getU16Decoder()], ['defaultMinLeaderShare', getU32Decoder()], ['baseMint', getAddressDecoder()], ['quoteMint', getAddressDecoder()], ['baseTreasury', getAddressDecoder()], ['quoteTreasury', getAddressDecoder()], ['bump', getU8Decoder()]]);
 }
 
 /** Gets the codec for {@link MarketHeader} account data. */
@@ -207,5 +193,5 @@ export async function fetchAllMaybeMarketHeader(
 }
 
 export function getMarketHeaderSize(): number {
-  return 245;
+  return 243;
 }

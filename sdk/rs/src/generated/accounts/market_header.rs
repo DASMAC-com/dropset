@@ -74,17 +74,12 @@ pub struct MarketHeader {
     pub quote_treasury: Pubkey,
     /// Market PDA bump.
     pub bump: u8,
-    /// Bump for the base treasury ATA derivation. Stored so transfers
-    /// out can sign with the market PDA without re-deriving.
-    pub base_treasury_bump: u8,
-    /// Bump for the quote treasury ATA derivation.
-    pub quote_treasury_bump: u8,
 }
 
 pub const MARKET_HEADER_DISCRIMINATOR: [u8; 8] = [56, 105, 191, 242, 226, 243, 198, 164];
 
 impl MarketHeader {
-    pub const LEN: usize = 245;
+    pub const LEN: usize = 243;
 
     #[inline(always)]
     pub fn from_bytes(data: &[u8]) -> Result<Self, std::io::Error> {

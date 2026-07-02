@@ -212,7 +212,12 @@ primary key, the one frozen in `interface.md` §1:
 PRIMARY KEY (slot, txn_index, signature, event_ordinal)
 ```
 
-`event_ordinal` is the inner-instruction index (heap-pop order). Every
+`event_ordinal` is a dense rank over the transaction's *recognized*
+event-CPIs, in walk (heap-pop emission) order — not the true
+inner-instruction index. That relative order is what the PK needs for
+dedup; a tagged-but-undecodable event shifts every later ordinal, and
+the geyser path can supply the true inner-instruction index (see
+`indexer/src/decode.rs`). Every
 write is an idempotent `INSERT … ON CONFLICT DO NOTHING`, so a replayed
 slot is a no-op — the PK *is* the dedup contract, end to end. Promoting
 the cold events out of the JSONB `events` table into their own typed

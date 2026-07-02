@@ -15,7 +15,7 @@
 //! refuses to initialize a treasury against a non-mint, so no extra
 //! mint plumbing is needed in this handler.
 
-use anchor_lang_v2::{address_eq, find_and_verify_program_address, prelude::*};
+use anchor_lang_v2::{address_eq, prelude::*};
 // `associated_token::{self, ...}` keeps the module in scope so the
 // derive can expand `associated_token::*` constraint expressions to
 // `anchor_spl_v2::associated_token::<Marker>` paths.
@@ -164,31 +164,6 @@ impl CreateMarket {
             }
         }
 
-        // The ATA bumps aren't tracked in `ctx.bumps` (the framework
-        // only records seed-derived bumps for `seeds = …` accounts on
-        // this struct). Recover them via
-        // `find_and_verify_program_address`, which short-circuits once
-        // it matches the already-created ATA.
-        let ata_program = anchor_lang_v2::programs::AssociatedToken::id();
-        let base_treasury_bump = find_and_verify_program_address(
-            &[
-                self.market.address().as_ref(),
-                self.base_token_program.address().as_ref(),
-                self.base_mint.address().as_ref(),
-            ],
-            &ata_program,
-            self.base_treasury.address(),
-        )?;
-        let quote_treasury_bump = find_and_verify_program_address(
-            &[
-                self.market.address().as_ref(),
-                self.quote_token_program.address().as_ref(),
-                self.quote_mint.address().as_ref(),
-            ],
-            &ata_program,
-            self.quote_treasury.address(),
-        )?;
-
         // Stamp the header. `init` zeroed the slab, so list heads
         // start at `NULL_SECTOR` (`u32::MAX`); we set them explicitly
         // anyway so the invariant is local to this handler.
@@ -204,8 +179,6 @@ impl CreateMarket {
 
         let market = &mut self.market;
         market.bump = bump;
-        market.base_treasury_bump = base_treasury_bump;
-        market.quote_treasury_bump = quote_treasury_bump;
         market.head = NULL_SECTOR.into();
         market.tombstone_head = NULL_SECTOR.into();
         market.free_head = NULL_SECTOR.into();

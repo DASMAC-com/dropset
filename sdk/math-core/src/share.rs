@@ -29,8 +29,9 @@ pub fn isqrt_u128(n: u128) -> u128 {
     if n < 2 {
         return n;
     }
-    // Initial estimate: half the bit-width of `n` shifted up by one —
-    // gives an over-estimate that Newton's method then refines down.
+    // Seed with `x = n` and `y = ceil(n/2)`; Newton's iteration
+    // (`y = (x + n/x)/2`) descends monotonically until `y >= x`, at
+    // which point `x` is `floor(sqrt(n))`.
     let mut x = n;
     let mut y = x.div_ceil(2);
     while y < x {
