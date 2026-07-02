@@ -68,15 +68,19 @@ impl Default for FlowConfig {
     fn default() -> Self {
         Self {
             seed: None,
-            // A quiet tick averages well under one order; a burst, a few.
-            lambda_quiet: 0.3,
-            lambda_burst: 3.0,
-            // Rare entries, short-lived bursts (~1 / 0.3 ≈ 3 ticks).
-            burst_entry_prob: 0.05,
+            // Frequent flow so the book visibly moves and the fills tape stays
+            // busy: a quiet tick now averages ~0.8 orders and a burst ~4, with
+            // bursts entered more readily.
+            lambda_quiet: 0.8,
+            lambda_burst: 4.0,
+            burst_entry_prob: 0.1,
             burst_exit_prob: 0.3,
-            // ~$200 median take with a healthy tail.
-            median_notional: 200.0,
-            size_log_sigma: 0.9,
+            // ~$4 median take — small relative to the ~$100 seeded book
+            // (SEED_USD_PER_SIDE), so each take nibbles a level or two rather
+            // than overrunning the book: many small fills, not a few skips. The
+            // tighter σ keeps even the tail well within book depth.
+            median_notional: 4.0,
+            size_log_sigma: 0.7,
             // Balanced, gently autocorrelated flow.
             buy_bias_init: 0.5,
             buy_bias_reversion: 0.1,
@@ -122,7 +126,9 @@ impl Default for BotConfig {
     fn default() -> Self {
         Self {
             rpc_url: DEFAULT_RPC_URL.to_string(),
-            tick: Duration::from_secs(5),
+            // A short tick so orders arrive often enough to keep the book moving
+            // through a walkthrough (the flow's regime still clusters activity).
+            tick: Duration::from_secs(2),
             flow: FlowConfig::default(),
             slippage_tolerance: 0.01,
             airdrop_lamports: 2 * LAMPORTS_PER_SOL,

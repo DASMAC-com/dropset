@@ -15,6 +15,7 @@ pub mod bot;
 pub mod chain;
 pub mod deploy;
 pub mod explorer;
+pub mod fills;
 pub mod job;
 pub mod market;
 pub mod teardown;

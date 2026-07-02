@@ -27,8 +27,12 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-/// Host port the explorer container publishes (compose maps `3000:3000`).
-pub const EXPLORER_PORT: u16 = 3000;
+/// Host port the explorer container publishes (compose maps `3100:3000`).
+/// Deliberately not `3000`: the frontend's `next dev` (`make frontend`) owns
+/// `localhost:3000`, so serving the explorer there too collided — running both
+/// left one unreachable. `3100` keeps the local explorer and the frontend up
+/// side by side.
+pub const EXPLORER_PORT: u16 = 3100;
 
 /// Lifecycle state of the managed explorer container, shared (as an
 /// [`AtomicU8`]) between the background starter, the "Open explorer" action,
@@ -108,6 +112,24 @@ pub fn account_url(address: &Pubkey, rpc_url: &str) -> String {
 pub fn hosted_account_url(address: &Pubkey, rpc_url: &str) -> String {
     format!(
         "https://explorer.solana.com/address/{address}?cluster=custom&customUrl={}",
+        percent_encode(rpc_url)
+    )
+}
+
+/// The local-container transaction URL for `signature`, pointed at the loopback
+/// validator — the CU pane's per-instruction "latest tx" link.
+pub fn tx_url(signature: &str, rpc_url: &str) -> String {
+    format!(
+        "http://localhost:{EXPLORER_PORT}/tx/{signature}?cluster=custom&customUrl={}",
+        percent_encode(rpc_url)
+    )
+}
+
+/// The hosted-explorer transaction URL — the fallback when Docker isn't
+/// available (same browser caveat as [`hosted_account_url`]).
+pub fn hosted_tx_url(signature: &str, rpc_url: &str) -> String {
+    format!(
+        "https://explorer.solana.com/tx/{signature}?cluster=custom&customUrl={}",
         percent_encode(rpc_url)
     )
 }
@@ -216,7 +238,7 @@ mod tests {
         let url = account_url(&addr, "http://127.0.0.1:8899");
         // Served from the local container, not the hosted HTTPS origin — that
         // is the whole point (loopback page -> loopback RPC).
-        assert!(url.starts_with("http://localhost:3000/address/"));
+        assert!(url.starts_with("http://localhost:3100/address/"));
         assert!(url.contains("cluster=custom"));
         assert!(url.contains("customUrl=http%3A%2F%2F127.0.0.1%3A8899"));
         assert!(url.contains(&addr.to_string()));
@@ -228,5 +250,16 @@ mod tests {
         let url = hosted_account_url(&addr, "http://127.0.0.1:8899");
         assert!(url.starts_with("https://explorer.solana.com/address/"));
         assert!(url.contains("customUrl=http%3A%2F%2F127.0.0.1%3A8899"));
+    }
+
+    #[test]
+    fn tx_urls_target_the_tx_route_on_each_origin() {
+        let sig = "5xY5s1Vd7z9Kq2Rp8";
+        let local = tx_url(sig, "http://127.0.0.1:8899");
+        assert!(local.starts_with("http://localhost:3100/tx/5xY5s1Vd7z9Kq2Rp8"));
+        assert!(local.contains("cluster=custom"));
+        assert!(local.contains("customUrl=http%3A%2F%2F127.0.0.1%3A8899"));
+        let hosted = hosted_tx_url(sig, "http://127.0.0.1:8899");
+        assert!(hosted.starts_with("https://explorer.solana.com/tx/5xY5s1Vd7z9Kq2Rp8"));
     }
 }

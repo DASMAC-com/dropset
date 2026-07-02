@@ -3,9 +3,11 @@
 # cspell:word isready
 # Localnet Docker stack.
 #
-# Seed service: the Solana Explorer, served on http://localhost:3000 so a
+# Seed service: the Solana Explorer, served on http://localhost:3100 so a
 # loopback page reaches the loopback validator RPC without the
-# public-site -> localhost block that stalls the hosted explorer.
+# public-site -> localhost block that stalls the hosted explorer. Host port
+# 3100 (not 3000) leaves localhost:3000 to the frontend's `next dev`, so the
+# explorer and the frontend can run at the same time.
 #
 # The indexer stack (postgres + indexer + indexer-api) joins this same stack
 # (docs/indexer.md §8): the worker polls the host validator for events and
@@ -35,9 +37,10 @@ services:
     # reach a host-run validator at http://host.docker.internal:8899.
     extra_hosts:
     - 'host.docker.internal:host-gateway'
-    # Bind to loopback only — a local dev viewer, not a LAN service.
+    # Bind to loopback only — a local dev viewer, not a LAN service. Host port
+    # 3100 dodges the frontend's localhost:3000; the container serves 3000.
     ports:
-    - '127.0.0.1:3000:3000'
+    - '127.0.0.1:3100:3000'
     restart: 'unless-stopped'
   indexer:
     # Decode + persist + aggregate. Polls the host-run validator's events.

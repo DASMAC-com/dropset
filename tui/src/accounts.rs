@@ -92,6 +92,11 @@ pub struct MarketView {
     /// has no live vault; `Some(0)` for a vault that has never quoted (reads as
     /// maximally stale).
     pub leader_quote_slot: Option<u32>,
+    /// The first live vault's stamped reference price, in human quote-per-base
+    /// units — the fair value the maker pegs to, shown per market in the markets
+    /// pane. `None` when the market has no live vault or its reference is unset /
+    /// sentinel (zero / infinity), so the pane can show a placeholder.
+    pub reference_price: Option<f64>,
     /// `(sector_index, owner)` for every open `VaultDepositor` on this
     /// market — the first leg of teardown (`force_withdraw_depositor`).
     pub depositors: Vec<(u32, Pubkey)>,
@@ -389,9 +394,14 @@ fn read_markets(client: &RpcClient, current_slot: u32, target: Option<Pubkey>) -
         // its quote slot for the leader's liveness.
         let mut live_vaults: Vec<(u32, Pubkey)> = Vec::new();
         let mut leader_quote_slot: Option<u32> = None;
+        let mut leader_reference: Option<Price> = None;
         for (idx, v) in view.active_vaults() {
             if live_vaults.is_empty() {
                 leader_quote_slot = Some(v.reference_price.quote_slot.get());
+                let p = v.reference_price.price();
+                if p.is_valid() && !p.is_zero() && !p.is_infinity() {
+                    leader_reference = Some(p);
+                }
             }
             live_vaults.push((idx, Pubkey::new_from_array(v.leader)));
         }
@@ -424,6 +434,15 @@ fn read_markets(client: &RpcClient, current_slot: u32, target: Option<Pubkey>) -
         let at = |i: usize| fetched.get(i).and_then(|o| o.as_ref());
         let lamports = |i: usize| at(i).map_or(0, |a| a.lamports);
         let decimals = |i: usize| at(i).and_then(|a| a.data.get(44).copied()).unwrap_or(0);
+        let base_decimals = decimals(2);
+        let quote_decimals = decimals(3);
+        // Scale the leader's atoms-ratio reference to human quote-per-base with
+        // the pair's decimals, so the markets pane shows the fair value the
+        // maker pegs to (distinct from the reconstructed book mid).
+        let reference_price = leader_reference.map(|p| {
+            p.quote_for_base(10u64.pow(base_decimals as u32)) as f64
+                / 10f64.powi(quote_decimals as i32)
+        });
 
         out.push(MarketView {
             address: *address,
@@ -437,9 +456,10 @@ fn read_markets(client: &RpcClient, current_slot: u32, target: Option<Pubkey>) -
             active_count: header.active_count.get(),
             live_vaults,
             leader_quote_slot,
+            reference_price,
             depositors,
-            base_decimals: decimals(2),
-            quote_decimals: decimals(3),
+            base_decimals,
+            quote_decimals,
             asks,
             bids,
         });
@@ -466,6 +486,7 @@ mod tests {
             active_count,
             live_vaults: Vec::new(),
             leader_quote_slot: None,
+            reference_price: None,
             depositors: Vec::new(),
             base_decimals: 6,
             quote_decimals: 6,

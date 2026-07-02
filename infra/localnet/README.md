@@ -47,6 +47,11 @@ make explorer       # build (first run) + start, detached
 make explorer-down  # stop and remove
 ```
 
+The explorer is published on host port **3100** (the container serves
+`3000` internally). That leaves `localhost:3000` to the frontend's
+`next dev` (`make frontend`), so the explorer and the frontend can run
+at the same time.
+
 The first build clones and compiles the explorer from source and takes
 a few minutes; later starts reuse the cached image and are instant.
 
@@ -57,7 +62,7 @@ to `master`.
 Open an account against the localnet at (one line; wrapped here):
 
 ```txt
-http://localhost:3000/address/<PUBKEY>
+http://localhost:3100/address/<PUBKEY>
     ?cluster=custom&customUrl=http://127.0.0.1:8899
 ```
 

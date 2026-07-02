@@ -17,11 +17,26 @@ pub enum JobEvent {
     /// than waiting for the next periodic poll.
     AccountsChanged,
     /// A transaction's measured compute-unit cost, keyed by a short operation
-    /// `label` — feeds the CU pane. Re-emitting a label updates its row.
-    Cu { label: String, units: u64 },
+    /// `label` — feeds the CU pane. Re-emitting a label updates its row (units
+    /// and the `signature` of the latest transaction, which the pane links to
+    /// the explorer).
+    Cu {
+        label: String,
+        units: u64,
+        signature: String,
+    },
     /// The job finished. `ok` drives the summary's color; `summary` is the
     /// one-line result shown in the log.
     Done { ok: bool, summary: String },
+    /// A decoded fill from the program's `emit_cpi!` `FillEvent` subscription
+    /// (the [`crate::fills`] thread), tagged with the signature of the swap that
+    /// produced it so the fills pane can link each row to the explorer — the
+    /// pane keeps a per-market ring of these. Not produced by the single-job
+    /// harness.
+    Fill {
+        signature: String,
+        event: dropset_sdk::types::FillEvent,
+    },
 }
 
 /// Where a [`Logger`] sends its progress. The TUI streams [`JobEvent`]s over
@@ -78,13 +93,15 @@ impl Logger {
     }
 
     /// Record a transaction's compute-unit cost under `label` for the CU pane
-    /// (or a plain stdout line, headless).
-    pub fn cu(&self, label: impl Into<String>, units: u64) {
+    /// (or a plain stdout line, headless), tagged with the `signature` of the
+    /// transaction it measured so the pane can link to it.
+    pub fn cu(&self, label: impl Into<String>, units: u64, signature: impl Into<String>) {
         match &self.sink {
             Sink::Channel(tx) => {
                 let _ = tx.send(JobEvent::Cu {
                     label: label.into(),
                     units,
+                    signature: signature.into(),
                 });
             }
             Sink::Stdout => println!("{}: {units} CU", label.into()),

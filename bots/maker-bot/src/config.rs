@@ -13,8 +13,6 @@
 //! currency the keyless FX-rate tier pegs to — plus the mock-mint keypair and
 //! decimals the localnet bootstrap and inventory valuation need.
 
-// cspell:word rsplit
-
 use std::time::Duration;
 
 /// Default localnet RPC endpoint (the `solana-test-validator` the TUI spawns).
@@ -300,7 +298,14 @@ pub const CMC_KEY_ENV: &str = "CMC_API_KEY";
 impl Default for FeedConfig {
     fn default() -> Self {
         Self {
-            coingecko_poll: Duration::from_secs(10),
+            // CoinGecko's keyless tier rate-limits by IP, and the localnet demo
+            // runs one maker process per market — so seven processes share that
+            // budget. A 60 s base, plus the on-failure exponential backoff in
+            // `tasks.rs`, keeps the aggregate request rate well under the limit;
+            // the FX-rate / static tiers cover any gaps. (The definitive fix is
+            // one maker process for the whole roster — one batched call — but
+            // that trades away the per-market start/stop the demo uses.)
+            coingecko_poll: Duration::from_secs(60),
             coinmarketcap_poll: Duration::from_secs(60),
             fx_poll: Duration::from_secs(300),
             coingecko_base_url: "https://api.coingecko.com/api/v3".to_string(),

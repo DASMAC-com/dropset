@@ -1754,9 +1754,12 @@ name = "dropset-tui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "borsh",
+ "bs58",
  "bytemuck",
  "crossterm",
  "dropset-sdk",
+ "libc",
  "open",
  "ratatui",
  "solana-client",
@@ -1766,8 +1769,10 @@ dependencies = [
  "solana-loader-v3-interface",
  "solana-native-token",
  "solana-pubkey 3.0.0",
+ "solana-signature",
  "solana-signer",
  "solana-transaction",
+ "solana-transaction-status-client-types",
  "tempfile",
 ]
 

@@ -64,11 +64,11 @@ pub struct PairConfig {
     /// ~$1.14 … IDRX ~$0.000056), so this is converted to the on-chain
     /// atoms-ratio per [`reference_atoms_ratio`] before encoding.
     pub reference_price: f64,
-    /// Symmetric quote: a `±offset_ppm` spread around the reference, each
-    /// side sized `size_bps` of its inventory leg, expiring `expiry_offset`
-    /// slots after the quote.
-    pub offset_ppm: u32,
-    pub size_bps: u16,
+    /// How many slots after the quote each ladder rung expires. The bootstrap
+    /// stamps this on the seeded profile; `u32::MAX` means never (the maker
+    /// re-arms expiry itself once it takes over). The rung geometry (offsets and
+    /// per-side depth) lives in [`SEED_LADDER`] / [`ladder_at_spread_bps`], not
+    /// here — every market opens with the same shape.
     pub expiry_offset: u32,
 }
 
@@ -98,8 +98,6 @@ const fn fx_market(
         },
         leader_keypair_file: "keys/EEEE.json",
         reference_price,
-        offset_ppm: 5_000,       // ±0.5%
-        size_bps: 10_000,        // 100% of each leg
         expiry_offset: u32::MAX, // never expires (re-armed by the maker bot)
     }
 }
@@ -122,6 +120,36 @@ pub const PAIRS: [&PairConfig; 7] = [
     &MARKET_XSGD,
     &MARKET_IDRX,
 ];
+
+/// The opening / reset quote ladder: a four-rung symmetric ladder of
+/// `(offset_ppm, size_bps)` mirroring the maker bot's own `DEFAULT_LADDER`
+/// (`bots/maker-bot`). The bootstrap seeds the book with this so it opens with
+/// visible depth across several price levels — not the single rung the maker
+/// only later fans out — and the TUI's "Reset ladder" reshape returns to it.
+/// Offsets are relative ppm and sizes are bps of the inventory leg (Σ = 10000,
+/// the full per-side commit), so the ladder is market-agnostic. Widths spread
+/// ±0.5% / ±1% / ±2% / ±5% with depth thinning outward.
+pub const SEED_LADDER: [(u32, u16); 4] = [
+    (5_000, 4_000),
+    (10_000, 3_000),
+    (20_000, 2_000),
+    (50_000, 1_000),
+];
+
+/// The default top-of-book bid-ask spread (bps) the book opens at and the eCLOB
+/// widen / tighten controls step from. [`SEED_LADDER`]'s top rung (5000 ppm =
+/// ±0.5% = a 100 bps spread) is the shape template; the default scales it to
+/// this tighter opening spread.
+pub const DEFAULT_SPREAD_BPS: u32 = 50;
+
+/// The seed ladder scaled to a target bid-ask `spread_bps` — the shape of
+/// [`SEED_LADDER`] with its rung offsets scaled so the top rung yields
+/// `spread_bps` at the top of book (the seed's 5000 ppm top ≡ 100 bps, so the
+/// scale is `spread_bps / 100`). The book opens at [`DEFAULT_SPREAD_BPS`] and
+/// the widen / tighten controls step this by ±5 bps, keeping all four levels.
+pub fn ladder_at_spread_bps(spread_bps: u32) -> [(u32, u16); 4] {
+    seed_ladder_scaled_offsets(spread_bps as f64 / 100.0)
+}
 
 /// Convert a pair's human quote-per-base price into the atoms-ratio the
 /// on-chain `Price` encodes — `quote_atoms` per `base_atoms`. They coincide
@@ -270,9 +298,14 @@ pub fn seed_vault(
     )
     .context("set_reference_price")?;
 
-    // 2. Quote ladder — a symmetric one-level profile.
+    // 2. Quote ladder — a multi-rung symmetric ladder at the default spread, so
+    //    the book opens with depth across several price levels (not a single
+    //    rung the maker only later fans out) and at the tighter default spread.
     log.log("set_liquidity_profile");
-    let bytes = symmetric_profile_bytes(config.offset_ppm, config.size_bps, config.expiry_offset);
+    let bytes = ladder_profile_bytes(
+        &ladder_at_spread_bps(DEFAULT_SPREAD_BPS),
+        config.expiry_offset,
+    );
     let ix = set_liquidity_profile_ix(leader.pubkey(), market.address, VAULT_IDX, bytes);
     chain::send_logged(
         client,
@@ -330,33 +363,51 @@ fn load_key(repo_root: &Path, rel: &str) -> Result<Keypair> {
         .map_err(|e| anyhow::anyhow!("read keypair {}: {e}", path.display()))
 }
 
-/// Serialize a one-level-per-side [`LiquidityProfile`] to the 160-byte
-/// `set_liquidity_profile` argument, taking an independent `(offset_ppm,
-/// size_bps)` for the top bid and ask rung and a shared `expiry_offset`.
-/// Unused rungs stay zeroed. The bootstrap's symmetric seed and the TUI's
-/// eCLOB reshape presets are both single-rung profiles differing only in these
-/// numbers, so both encode through here — the book's shape (spread width and
-/// per-side depth) is then a direct readout of the profile.
-pub fn one_level_profile_bytes(bid: (u32, u16), ask: (u32, u16), expiry_offset: u32) -> [u8; 160] {
+/// Serialize an asymmetric multi-rung ladder — an independent
+/// `(offset_ppm, size_bps)` list per side, sharing `expiry_offset` — to the
+/// 160-byte `set_liquidity_profile` argument. Rungs past the profile's capacity
+/// are dropped. The symmetric [`ladder_profile_bytes`] is the common case; the
+/// "thin the far side" reshape uses the asymmetric form (a full bid ladder over
+/// a thinned ask ladder), so the book's shape is a direct readout of both
+/// sides' rungs.
+pub fn ladder_profile_bytes_asym(
+    bids: &[(u32, u16)],
+    asks: &[(u32, u16)],
+    expiry_offset: u32,
+) -> [u8; 160] {
     let mut profile = LiquidityProfile::zeroed();
-    profile.bids[0].price_offset = bid.0.into();
-    profile.bids[0].size_bps = bid.1.into();
-    profile.bids[0].expiry_offset = expiry_offset.into();
-    profile.asks[0].price_offset = ask.0.into();
-    profile.asks[0].size_bps = ask.1.into();
-    profile.asks[0].expiry_offset = expiry_offset.into();
+    for (i, &(offset_ppm, size_bps)) in bids.iter().take(profile.bids.len()).enumerate() {
+        profile.bids[i].price_offset = offset_ppm.into();
+        profile.bids[i].size_bps = size_bps.into();
+        profile.bids[i].expiry_offset = expiry_offset.into();
+    }
+    for (i, &(offset_ppm, size_bps)) in asks.iter().take(profile.asks.len()).enumerate() {
+        profile.asks[i].price_offset = offset_ppm.into();
+        profile.asks[i].size_bps = size_bps.into();
+        profile.asks[i].expiry_offset = expiry_offset.into();
+    }
     profile_bytes(&profile)
 }
 
-/// Serialize a symmetric one-level [`LiquidityProfile`] — the same
-/// `±offset_ppm` / `size_bps` / `expiry_offset` on the top bid and ask — to
-/// the 160-byte `set_liquidity_profile` argument.
-fn symmetric_profile_bytes(offset_ppm: u32, size_bps: u16, expiry_offset: u32) -> [u8; 160] {
-    one_level_profile_bytes(
-        (offset_ppm, size_bps),
-        (offset_ppm, size_bps),
-        expiry_offset,
-    )
+/// Serialize a symmetric multi-rung ladder — the same `(offset_ppm, size_bps)`
+/// list on both sides — to the 160-byte `set_liquidity_profile` argument. The
+/// bootstrap seeds the opening book with [`SEED_LADDER`] through here (so it
+/// opens with several price levels of depth), and the TUI's widen / tighten /
+/// reset reshapes all encode a full multi-level ladder through here too.
+pub fn ladder_profile_bytes(rungs: &[(u32, u16)], expiry_offset: u32) -> [u8; 160] {
+    ladder_profile_bytes_asym(rungs, rungs, expiry_offset)
+}
+
+/// The seed ladder with every rung's price offset scaled by `scale` (sizes
+/// unchanged) — a widen (`scale > 1`) or tighten (`scale < 1`) reshape that
+/// keeps all four rungs, so the book stays multi-level and only the spread
+/// moves.
+pub fn seed_ladder_scaled_offsets(scale: f64) -> [(u32, u16); 4] {
+    let mut out = SEED_LADDER;
+    for (offset_ppm, _) in &mut out {
+        *offset_ppm = ((*offset_ppm as f64) * scale).round() as u32;
+    }
+    out
 }
 
 #[cfg(test)]
@@ -413,34 +464,83 @@ mod tests {
         }
     }
 
-    /// An asymmetric one-level profile encodes each side's own
-    /// `(offset_ppm, size_bps)` — the shape behind the "thin the far side"
-    /// reshape, where the ask leg is shrunk while the bid stays full.
+    /// An asymmetric ladder encodes each side's own rungs — the shape behind
+    /// "thin the far side": a full bid ladder over a thinned ask ladder.
     #[test]
-    fn one_level_profile_encodes_each_side_independently() {
-        let bytes = one_level_profile_bytes((5_000, 10_000), (5_000, 3_000), u32::MAX);
+    fn asymmetric_ladder_encodes_each_side_independently() {
+        // Thinned asks: the seed ladder with each rung's depth scaled to 30% —
+        // built inline the way `do_reshape`'s thin-far-side path does.
+        let mut asks = SEED_LADDER;
+        for (_, size_bps) in &mut asks {
+            *size_bps = (*size_bps as f64 * 0.3).round() as u16;
+        }
+        let bytes = ladder_profile_bytes_asym(&SEED_LADDER, &asks, u32::MAX);
         let profile: &LiquidityProfile = bytemuck::from_bytes(&bytes);
-        assert_eq!(profile.bids[0].size_bps.get(), 10_000);
-        assert_eq!(profile.asks[0].size_bps.get(), 3_000);
-        assert_eq!(profile.bids[0].price_offset.get(), 5_000);
-        assert_eq!(profile.asks[0].price_offset.get(), 5_000);
-        // Only the top rung is populated.
-        assert_eq!(profile.bids[1].size_bps.get(), 0);
-        assert_eq!(profile.asks[1].size_bps.get(), 0);
+        // Bid stays at the full seed ladder; ask depth is thinned to 30%.
+        assert_eq!(profile.bids[0].size_bps.get(), SEED_LADDER[0].1);
+        assert_eq!(
+            profile.asks[0].size_bps.get(),
+            (SEED_LADDER[0].1 as f64 * 0.3).round() as u16
+        );
+        // Offsets are untouched on both sides.
+        assert_eq!(profile.bids[0].price_offset.get(), SEED_LADDER[0].0);
+        assert_eq!(profile.asks[0].price_offset.get(), SEED_LADDER[0].0);
     }
 
-    /// A symmetric profile fills exactly the top bid and ask, leaving the
-    /// rest of the ladder zeroed.
+    /// The spread→ladder mapping: the default 50 bps halves the seed's 100-bps
+    /// top rung, and 100 bps reproduces the seed offsets exactly — every rung
+    /// stays, depths unchanged.
     #[test]
-    fn symmetric_profile_fills_top_of_book_only() {
-        let bytes = symmetric_profile_bytes(5_000, 10_000, u32::MAX);
+    fn ladder_at_spread_scales_offsets_to_the_target() {
+        let half = ladder_at_spread_bps(DEFAULT_SPREAD_BPS);
+        let full = ladder_at_spread_bps(100);
+        for (i, seed) in SEED_LADDER.iter().enumerate() {
+            assert_eq!(half[i].0, seed.0 / 2);
+            assert_eq!(half[i].1, seed.1);
+            assert_eq!(full[i].0, seed.0);
+        }
+    }
+
+    /// Scaling the seed ladder's offsets fans (or pulls) every rung by the same
+    /// factor while keeping all four rungs and their depths — the widen /
+    /// tighten reshape that stays multi-level.
+    #[test]
+    fn scaled_offsets_move_every_rung_and_keep_depth() {
+        let wide = seed_ladder_scaled_offsets(3.0);
+        assert_eq!(wide.len(), SEED_LADDER.len());
+        for (scaled, seed) in wide.iter().zip(SEED_LADDER.iter()) {
+            assert_eq!(scaled.0, seed.0 * 3);
+            assert_eq!(scaled.1, seed.1);
+        }
+    }
+
+    /// The seed ladder serializes symmetrically across every rung, leaving the
+    /// levels past its length zeroed — the multi-level book the bootstrap opens.
+    #[test]
+    fn seed_ladder_fills_every_rung_symmetrically() {
+        let bytes = ladder_profile_bytes(&SEED_LADDER, u32::MAX);
         assert_eq!(bytes.len(), 160);
         let profile: &LiquidityProfile = bytemuck::from_bytes(&bytes);
-        assert_eq!(profile.bids[0].price_offset.get(), 5_000);
-        assert_eq!(profile.bids[0].size_bps.get(), 10_000);
-        assert_eq!(profile.asks[0].price_offset.get(), 5_000);
-        assert_eq!(profile.asks[0].size_bps.get(), 10_000);
-        assert_eq!(profile.bids[1].size_bps.get(), 0);
-        assert_eq!(profile.asks[1].size_bps.get(), 0);
+        for (i, &(offset_ppm, size_bps)) in SEED_LADDER.iter().enumerate() {
+            assert_eq!(profile.bids[i].price_offset.get(), offset_ppm);
+            assert_eq!(profile.bids[i].size_bps.get(), size_bps);
+            assert_eq!(profile.asks[i].price_offset.get(), offset_ppm);
+            assert_eq!(profile.asks[i].size_bps.get(), size_bps);
+        }
+        // The rung past the ladder's length stays zeroed.
+        assert_eq!(profile.bids[SEED_LADDER.len()].size_bps.get(), 0);
+        assert_eq!(profile.asks[SEED_LADDER.len()].size_bps.get(), 0);
+    }
+
+    /// The seed ladder commits the full inventory leg per side (Σ = 10000 bps),
+    /// matching the maker's own ladder invariant, and its widths thin outward.
+    #[test]
+    fn seed_ladder_fully_commits_each_side_and_thins_outward() {
+        let total: u32 = SEED_LADDER.iter().map(|(_, bps)| *bps as u32).sum();
+        assert_eq!(total, 10_000);
+        for w in SEED_LADDER.windows(2) {
+            assert!(w[1].0 > w[0].0, "offsets must widen outward");
+            assert!(w[1].1 < w[0].1, "depth must thin outward");
+        }
     }
 }

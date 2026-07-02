@@ -2,11 +2,11 @@
 //!
 //! Reconstructs a price ladder from the resting book the shared SDK matcher
 //! returns ([`crate::accounts::MarketView::asks`] / `bids`) and renders it in
-//! the style of the dropset-alpha terminal book: asks above a mid/spread
-//! divider (red), bids below (green), each row a right-aligned price and a
-//! horizontal depth bar proportional to its size, with the size in human
-//! units trailing in a faded column. Pure formatting — the data is decoded
-//! at poll time, so drawing never touches the chain.
+//! the style of the dropset-alpha terminal book: a column header, then asks
+//! above a mid/spread divider (red), bids below (green), each row a horizontal
+//! depth bar that grows right-to-left toward a right-aligned price, with the
+//! size in human units trailing in a faded column. Pure formatting — the data
+//! is decoded at poll time, so drawing never touches the chain.
 
 use crate::accounts::MarketView;
 use dropset_sdk::matching::BookLevel;
@@ -53,7 +53,9 @@ pub fn lines(market: &MarketView) -> Vec<Line<'static>> {
         .map(|r| r.size)
         .fold(0.0_f64, f64::max);
 
-    let mut out = Vec::with_capacity(asks.len() + bids.len() + 1);
+    let mut out = Vec::with_capacity(asks.len() + bids.len() + 2);
+    // A column header over the ladder, like a common exchange book.
+    out.push(header_line());
     // Asks ascend best-first, so render highest first to seat the best ask
     // just above the divider.
     for r in asks.iter().rev() {
@@ -65,6 +67,23 @@ pub fn lines(market: &MarketView) -> Vec<Line<'static>> {
         out.push(row_line(r, max_size, BID_COLOR));
     }
     out
+}
+
+/// Format a human price with adaptive precision — roughly four significant
+/// figures whatever the magnitude — so a small-value token (IDRX ≈ 0.000056)
+/// keeps its figures instead of collapsing to a single `0.0001`, while a
+/// ~1-valued token (EURC 1.14) still reads cleanly. The decimal count grows as
+/// the price shrinks, clamped to a sane range.
+pub fn fmt_price(p: f64) -> String {
+    if !p.is_finite() || p <= 0.0 {
+        return format!("{p:.4}");
+    }
+    // 10^exp ≤ p < 10^(exp+1). Four significant figures ⇒ (3 − exp) decimals,
+    // with a four-decimal floor so ~1-valued tokens still read as e.g. 1.1400
+    // while a sub-cent token grows its decimals to keep its figures.
+    let exp = p.log10().floor() as i32;
+    let decimals = (3 - exp).clamp(4, 12) as usize;
+    format!("{p:.decimals$}")
 }
 
 /// The mid price (quote per base, human units) from the best bid and ask —
@@ -118,8 +137,23 @@ fn ladder(levels: &[BookLevel], base_dec: u8, quote_dec: u8) -> Vec<Row> {
     rows
 }
 
-/// One book row: right-aligned price · depth bar · faded human size, all on
-/// the side's color.
+/// The column header over the ladder — a `depth · price · size` banner in the
+/// style of a common exchange book, its widths matching [`row_line`] so the
+/// labels sit over their columns.
+fn header_line() -> Line<'static> {
+    let style = Style::new().fg(Color::Gray).add_modifier(Modifier::BOLD);
+    Line::from(vec![
+        Span::styled(format!("{:>BAR_WIDTH$}", "depth"), style),
+        Span::styled(format!("  {:>10}", "price"), style),
+        Span::styled(format!("  {:>12}", "size"), style),
+        Span::styled(format!("  {:>12}", "volume"), style),
+    ])
+}
+
+/// One book row: a depth bar that grows right-to-left toward the price column ·
+/// right-aligned price · faded human size · the quote-denominated volume
+/// (price × size). The bar is right-aligned so deeper levels reach further
+/// left, seating the freshest depth against the price.
 fn row_line(r: &Row, max_size: f64, color: Color) -> Line<'static> {
     let scaled = if max_size > 0.0 {
         ((r.size / max_size) * BAR_WIDTH as f64).round() as usize
@@ -130,11 +164,17 @@ fn row_line(r: &Row, max_size: f64, color: Color) -> Line<'static> {
     let filled = scaled.clamp(usize::from(r.size > 0.0), BAR_WIDTH);
     let bar = "\u{2588}".repeat(filled);
     Line::from(vec![
-        Span::styled(format!("{:>10.4}", r.price), Style::new().fg(color)),
-        Span::raw("  "),
-        Span::styled(format!("{bar:<BAR_WIDTH$}"), Style::new().fg(color)),
+        Span::styled(format!("{bar:>BAR_WIDTH$}"), Style::new().fg(color)),
+        Span::styled(
+            format!("  {:>10}", fmt_price(r.price)),
+            Style::new().fg(color),
+        ),
         Span::styled(
             format!("  {:>12.2}", r.size),
+            Style::new().fg(Color::DarkGray),
+        ),
+        Span::styled(
+            format!("  {:>12.2}", r.price * r.size),
             Style::new().fg(Color::DarkGray),
         ),
     ])
@@ -151,10 +191,23 @@ fn divider(best_ask: Option<&Row>, best_bid: Option<&Row>) -> Line<'static> {
             } else {
                 0.0
             };
-            format!("\u{2500}\u{2500} mid {mid:.4}  \u{b7}  spread {spread_bps:.1} bps \u{2500}\u{2500}")
+            format!(
+                "\u{2500}\u{2500} mid {}  \u{b7}  spread {spread_bps:.1} bps \u{2500}\u{2500}",
+                fmt_price(mid)
+            )
         }
-        (Some(a), None) => format!("\u{2500}\u{2500} best ask {:.4} \u{2500}\u{2500}", a.price),
-        (None, Some(b)) => format!("\u{2500}\u{2500} best bid {:.4} \u{2500}\u{2500}", b.price),
+        (Some(a), None) => {
+            format!(
+                "\u{2500}\u{2500} best ask {} \u{2500}\u{2500}",
+                fmt_price(a.price)
+            )
+        }
+        (None, Some(b)) => {
+            format!(
+                "\u{2500}\u{2500} best bid {} \u{2500}\u{2500}",
+                fmt_price(b.price)
+            )
+        }
         (None, None) => "\u{2500}\u{2500}".to_string(),
     };
     Line::from(Span::styled(
@@ -192,6 +245,7 @@ mod tests {
             active_count: 1,
             live_vaults: Vec::new(),
             leader_quote_slot: None,
+            reference_price: None,
             depositors: Vec::new(),
             base_decimals: 6,
             quote_decimals: 6,
@@ -203,6 +257,19 @@ mod tests {
     /// Flatten a line's spans back to plain text for assertions.
     fn text(line: &Line) -> String {
         line.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    #[test]
+    fn fmt_price_keeps_significant_figures_across_magnitudes() {
+        // ~1-valued tokens read cleanly at four decimals.
+        assert_eq!(fmt_price(1.14), "1.1400");
+        assert_eq!(fmt_price(0.7705), "0.7705");
+        // A small-value token keeps its figures instead of collapsing to a
+        // single 0.0001 (the IDRX case).
+        assert_eq!(fmt_price(0.000056), "0.00005600");
+        assert_ne!(fmt_price(0.000056), "0.0001");
+        // Sentinels / non-finite fall back to a plain four-decimal render.
+        assert_eq!(fmt_price(0.0), "0.0000");
     }
 
     #[test]
@@ -219,13 +286,36 @@ mod tests {
             vec![lvl(0.74, 1_000_000), lvl(0.75, 500_000)],
             vec![lvl(0.72, 2_000_000)],
         ));
-        // two asks + divider + one bid
-        assert_eq!(out.len(), 4);
+        // header + two asks + divider + one bid
+        assert_eq!(out.len(), 5);
+        assert!(text(&out[0]).contains("price"));
         // Highest ask at the top; best (lowest) ask just above the divider.
-        assert!(text(&out[0]).contains("0.7500"));
-        assert!(text(&out[1]).contains("0.7400"));
-        assert!(text(&out[2]).contains("mid"));
-        assert!(text(&out[3]).contains("0.7200"));
+        assert!(text(&out[1]).contains("0.7500"));
+        assert!(text(&out[2]).contains("0.7400"));
+        assert!(text(&out[3]).contains("mid"));
+        assert!(text(&out[4]).contains("0.7200"));
+    }
+
+    #[test]
+    fn rows_lead_with_the_right_to_left_depth_bar() {
+        let out = lines(&market(vec![lvl(0.75, 1_000_000)], Vec::new()));
+        // header + one ask + one-sided divider.
+        assert_eq!(out.len(), 3);
+        // The header names its columns depth · price · size · volume, in order.
+        let header = text(&out[0]);
+        let depth_at = header.find("depth").unwrap();
+        let price_at = header.find("price").unwrap();
+        let size_at = header.find("size").unwrap();
+        let volume_at = header.find("volume").unwrap();
+        assert!(depth_at < price_at && price_at < size_at && size_at < volume_at);
+        // The row leads with the full-block depth bar (right-aligned, so it
+        // grows right-to-left), then price, size, and the price×size volume.
+        let row = &out[1];
+        assert_eq!(row.spans.len(), 4);
+        assert!(row.spans[0].content.contains('\u{2588}'));
+        assert!(row.spans[1].content.contains("0.7500"));
+        // volume = price × size = 0.75 × 1.0 = 0.75.
+        assert!(row.spans[3].content.contains("0.75"));
     }
 
     #[test]
@@ -247,9 +337,9 @@ mod tests {
             vec![lvl(0.74, 1_000_000), lvl(0.74, 500_000)],
             Vec::new(),
         ));
-        // one ask row + a one-sided divider
-        assert_eq!(out.len(), 2);
-        assert!(text(&out[0]).contains("1.50"));
-        assert!(text(&out[1]).contains("best ask"));
+        // header + one ask row + a one-sided divider
+        assert_eq!(out.len(), 3);
+        assert!(text(&out[1]).contains("1.50"));
+        assert!(text(&out[2]).contains("best ask"));
     }
 }

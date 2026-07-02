@@ -62,7 +62,20 @@ struct FeedHub {
     /// Whether the most recent CoinGecko poll produced at least one price — the
     /// signal that gates the CoinMarketCap fallback.
     cg_ok: bool,
+    /// Whether the current CoinGecko-down state has already been logged, so a
+    /// persistent failure (e.g. CoinGecko unreachable on localnet) reports once
+    /// and then stays quiet until it recovers — rather than one line per tick.
+    cg_logged_down: bool,
+    /// Current CoinGecko poll interval after on-failure backoff. `None` uses the
+    /// configured base; a failure doubles it (capped) so a rate-limited feed is
+    /// retried ever less often instead of hammered, and the backoff resets to
+    /// the base once a poll succeeds.
+    cg_backoff: Option<Duration>,
 }
+
+/// Upper bound on the CoinGecko backoff interval — a rate-limited feed is
+/// retried at most this rarely before a success resets it.
+const CG_BACKOFF_CAP: Duration = Duration::from_secs(300);
 
 impl FeedHub {
     fn new() -> Self {
@@ -74,7 +87,18 @@ impl FeedHub {
             cmc_last_poll: None,
             fx_last_poll: None,
             cg_ok: false,
+            cg_logged_down: false,
+            cg_backoff: None,
         }
+    }
+
+    /// Grow the CoinGecko backoff interval after a failed / empty poll: double
+    /// the current interval (starting from `base`), capped at [`CG_BACKOFF_CAP`],
+    /// so a rate-limited or unreachable feed is retried ever less often. A
+    /// successful poll resets it back to `None` (the configured base).
+    fn grow_cg_backoff(&mut self, base: Duration) {
+        let current = self.cg_backoff.unwrap_or(base);
+        self.cg_backoff = Some(current.saturating_mul(2).min(CG_BACKOFF_CAP).max(base));
     }
 
     /// Refresh whichever tiers are due, batched across the whole roster.
@@ -87,23 +111,48 @@ impl FeedHub {
         cmc_ids: &[u32],
         currencies: &[&str],
     ) {
-        // Primary: CoinGecko, one batched call for every token.
-        if due(self.cg_last_poll, now, cfg.coingecko_poll) {
+        // Primary: CoinGecko, one batched call for every token. The effective
+        // interval is the configured base, or the current backoff while failing.
+        let cg_interval = self.cg_backoff.unwrap_or(cfg.coingecko_poll);
+        if due(self.cg_last_poll, now, cg_interval) {
             self.cg_last_poll = Some(now);
             match feeds.poll_coingecko(cg_ids) {
                 Ok(map) if !map.is_empty() => {
                     self.cg_ok = true;
+                    self.cg_backoff = None;
+                    if self.cg_logged_down {
+                        eprintln!("[feed] coingecko recovered");
+                        self.cg_logged_down = false;
+                    }
                     for (k, v) in map {
                         self.cg.insert(k, (v, now));
                     }
                 }
+                // Both empty and errored polls mean CoinGecko can't price the
+                // roster this cycle; `compose` already cascades to the FX-rate /
+                // static fallback, so log the transition once and stay quiet
+                // until it recovers rather than spamming a line per tick.
                 Ok(_) => {
                     self.cg_ok = false;
-                    eprintln!("[feed] coingecko returned no prices");
+                    self.grow_cg_backoff(cfg.coingecko_poll);
+                    if !self.cg_logged_down {
+                        eprintln!(
+                            "[feed] coingecko returned no prices; cascading to the \
+                             fallback tier (silencing repeats until it recovers)"
+                        );
+                        self.cg_logged_down = true;
+                    }
                 }
                 Err(e) => {
                     self.cg_ok = false;
-                    eprintln!("[feed] coingecko poll failed: {e}");
+                    self.grow_cg_backoff(cfg.coingecko_poll);
+                    if !self.cg_logged_down {
+                        eprintln!(
+                            "[feed] coingecko poll failed: {e}; cascading to the \
+                             fallback tier (silencing repeats until it recovers)"
+                        );
+                        self.cg_logged_down = true;
+                    }
                 }
             }
         }
@@ -352,6 +401,7 @@ fn quote_market(
             tvl
         }
     };
+
     let degraded = fair.health == Health::Degraded;
     let action = killswitch::evaluate(&fair, &inv, &cfg.kill, degraded, launch_tvl);
     let skew_bps = skew::ref_skew_bps(&inv, &cfg.strategy);
@@ -626,5 +676,23 @@ mod tests {
         let now = Instant::now();
         assert!(due(None, now, Duration::from_secs(10)));
         assert!(!due(Some(now), now, Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn cg_backoff_doubles_from_base_and_caps() {
+        let base = Duration::from_secs(60);
+        let mut hub = FeedHub::new();
+        assert_eq!(hub.cg_backoff, None);
+        // First failure starts the backoff at 2× the base.
+        hub.grow_cg_backoff(base);
+        assert_eq!(hub.cg_backoff, Some(base * 2));
+        // Subsequent failures keep doubling, then clamp at the cap.
+        for _ in 0..10 {
+            hub.grow_cg_backoff(base);
+        }
+        assert_eq!(hub.cg_backoff, Some(CG_BACKOFF_CAP));
+        // A success resets it back to the base.
+        hub.cg_backoff = None;
+        assert_eq!(hub.cg_backoff, None);
     }
 }

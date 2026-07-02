@@ -461,6 +461,20 @@ pub fn create_mint(
     mint: &Keypair,
     decimals: u8,
 ) -> Result<Pubkey> {
+    // Idempotent, like `create_ata_idempotent`: every FX market shares the one
+    // fixed USDC quote mint (and a re-run after a partial bootstrap re-touches a
+    // market's own mints), so a mint at this address can already exist. Creating
+    // it again would fail with System "account already in use" (custom error
+    // 0x0) — which aborted the multi-market bootstrap at the second market — so
+    // reuse an existing mint rather than recreating it.
+    if client
+        .get_account_with_commitment(&mint.pubkey(), client.commitment())?
+        .value
+        .is_some()
+    {
+        return Ok(mint.pubkey());
+    }
+
     let lamports = client
         .get_minimum_balance_for_rent_exemption(MINT_LEN)
         .context("rent for mint account")?;
@@ -638,7 +652,7 @@ pub fn send_logged(
     let (sig, cu) = send_measured(client, payer, signers, ixs)?;
     log.log(format!("{label}: {sig}"));
     if let Some(units) = cu {
-        log.cu(label.to_string(), units);
+        log.cu(label.to_string(), units, sig.clone());
     }
     Ok(sig)
 }
