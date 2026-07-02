@@ -19,7 +19,6 @@ import { useSameToken, useSwapStore, useSwapStoreApi } from "@/lib/store";
 import { useGoToVaultsForPair, useSwapNav } from "@/lib/ui/swapUrl";
 import { PlatformFee } from "./PlatformFee";
 import { QuoteError } from "./QuoteError";
-import { RouteModeToggle } from "./RouteModeToggle";
 import { SwapArrowButton } from "./SwapArrowButton";
 import { SwapResult } from "./SwapResult";
 import { TokenRow } from "./TokenRow";
@@ -214,10 +213,6 @@ export function SwapPanel() {
   return (
     <>
       <div className="relative rounded-xl border border-border p-3">
-        <div className="mb-[14px] flex items-center justify-between">
-          <span className="font-medium text-muted-fg text-sm">Route</span>
-          <RouteModeToggle />
-        </div>
         <div className="relative flex flex-col gap-[14px]">
           <TokenRow side="from" label="From" />
           <TokenRow
