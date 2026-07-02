@@ -9,6 +9,7 @@ use crate::action::{self, Action};
 use crate::app::{App, LogKind};
 use crate::book;
 use crate::explorer;
+use dropset_sdk::types::FillEvent;
 use dropset_sdk::DROPSET_ID;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -26,6 +27,7 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
     // Rebuilt every frame from the current layout: stale rectangles from a
     // prior size/state must not catch clicks.
     app.click_targets.clear();
+    app.cu_targets.clear();
     let area = f.area();
     let [status, body, log, footer] = Layout::new(
         Direction::Vertical,
@@ -60,15 +62,23 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
     draw_accounts(f, app, accounts_area);
     draw_cu(f, app, cu_area);
     // The markets list is as tall as its rows (plus borders), capped so the
-    // book keeps most of the column; the book takes the rest.
+    // book + fills keep most of the column; they take the rest.
     let markets_height = (app.chain.markets.len() as u16 + 2).clamp(3, 12);
-    let [markets_area, book_area] = Layout::new(
+    let [markets_area, lower_area] = Layout::new(
         Direction::Vertical,
-        [Constraint::Length(markets_height), Constraint::Min(6)],
+        [Constraint::Length(markets_height), Constraint::Min(8)],
     )
     .areas(right_area);
     draw_markets(f, app, markets_area);
+    // The book (top) sits over a recent-fills tape (bottom), mirroring the
+    // accounts / CU split in the middle column.
+    let [book_area, fills_area] = Layout::new(
+        Direction::Vertical,
+        [Constraint::Percentage(60), Constraint::Percentage(40)],
+    )
+    .areas(lower_area);
     draw_book(f, app, book_area);
+    draw_fills(f, app, fills_area);
 
     draw_log(f, app, log);
 
@@ -84,12 +94,12 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
 fn draw_help(f: &mut Frame<'_>, area: Rect) {
     let help = Paragraph::new(vec![
         Line::from(
-            "j/k menu  ·  enter/1-9 run  ·  [ ] market  ·  s maker  ·  S all  ·  \
-             T taker  ·  x stop all  ·  a swap amount  ·  r refresh  ·  q quit",
+            "j/k menu  ·  enter/1-9 run  ·  [ ] market  ·  s/S maker/all  ·  \
+             t/T taker/all  ·  x stop all  ·  a swap amount  ·  r refresh  ·  q quit",
         ),
         Line::from(
             "eCLOB · selected market:  < > re-peg \u{00b1}5 bps  ·  w widen  ·  \
-             t tighten  ·  f thin far side  ·  g reset ladder",
+             n narrow (tighten)  ·  f thin far side  ·  g reset ladder",
         ),
     ])
     .block(Block::default().borders(Borders::ALL))
@@ -519,10 +529,10 @@ fn short_pubkey(p: &Pubkey) -> String {
 }
 
 /// Render the markets list — every discovered market with its per-market
-/// status: a ✓/○ liquidity glyph, its ticker, the book mid (or "idle"), a green
-/// ● when its maker bot is running, and a cyan ● when its taker is. The selected
-/// market is marked and bold; `[` / `]` move the selection, which drives the
-/// order book below.
+/// status: a ✓/○ liquidity glyph, its flag + ticker, the book mid (or "idle"),
+/// a green ● when its maker bot is running, and a cyan ● when its taker is. The
+/// selected market is marked and bold; `[` / `]` move the selection, which
+/// drives the order book below.
 fn draw_markets(f: &mut Frame<'_>, app: &App, area: Rect) {
     let lines: Vec<Line> = if app.chain.markets.is_empty() {
         vec![Line::from(Span::styled(
@@ -548,10 +558,11 @@ fn draw_markets(f: &mut Frame<'_>, app: &App, area: Rect) {
 }
 
 /// One markets-list row for market `i`: selection marker · liquidity glyph ·
-/// ticker · book mid (or "idle") · a green ● when its maker is running · a cyan
-/// ● when its taker is.
+/// flag · ticker · book mid (or "idle") · a green ● when its maker is running ·
+/// a cyan ● when its taker is.
 fn market_row(app: &App, i: usize, market: &crate::accounts::MarketView) -> Line<'static> {
     let symbol = symbol_for(&app.mint_symbols, &market.base_mint, "?");
+    let flag = flag_for(symbol);
     let selected = i == app.selected_market;
     let mid = book::mid_price(market);
 
@@ -572,6 +583,7 @@ fn market_row(app: &App, i: usize, market: &crate::accounts::MarketView) -> Line
     let mut spans = vec![
         Span::raw(marker.to_string()),
         Span::styled(format!("{glyph} "), Style::new().fg(glyph_color)),
+        Span::raw(format!("{flag} ")),
         Span::styled(format!("{symbol:<6}"), symbol_style),
         Span::styled(format!(" {price:>10}"), Style::new().fg(Color::Gray)),
     ];
@@ -597,7 +609,8 @@ fn draw_book(f: &mut Frame<'_>, app: &App, area: Rect) {
     let (title, lines) = match app.chain.selected_market(app.selected_market) {
         Some(market) => {
             let symbol = symbol_for(&app.mint_symbols, &market.base_mint, "market");
-            (format!(" order book · {symbol} "), book::lines(market))
+            let flag = flag_for(symbol);
+            (format!(" order book · {flag} {symbol} "), book::lines(market))
         }
         None => (
             " order book ".to_string(),
@@ -613,36 +626,175 @@ fn draw_book(f: &mut Frame<'_>, app: &App, area: Rect) {
     );
 }
 
-/// Render the compute-unit pane: one row per measured operation (in
-/// first-seen order), the latest cost for each.
-fn draw_cu(f: &mut Frame<'_>, app: &App, area: Rect) {
-    let lines: Vec<Line> = if app.cu.is_empty() {
-        vec![Line::from(Span::styled(
-            "  run an action to measure CU",
-            Style::new().fg(Color::DarkGray),
-        ))]
-    } else {
-        app.cu
-            .iter()
-            .map(|(label, units)| {
-                Line::from(vec![
-                    Span::raw(format!("{label:<22}")),
-                    Span::styled(
-                        format!("{:>9} CU", fmt_units(*units)),
-                        Style::new().fg(Color::Cyan),
-                    ),
-                ])
-            })
-            .collect()
+/// Render the recent-fills tape for the selected market — newest first, one
+/// row per fill (a buy/sell tag, the fill price, and the base size). Fed by the
+/// `emit_cpi!` `FillEvent` subscription ([`crate::fills`]); empty until a swap
+/// lands on this market.
+fn draw_fills(f: &mut Frame<'_>, app: &App, area: Rect) {
+    let (title, lines) = match app.chain.selected_market(app.selected_market) {
+        Some(market) => {
+            let symbol = symbol_for(&app.mint_symbols, &market.base_mint, "market");
+            let flag = flag_for(symbol);
+            // Only as many rows as fit inside the borders, newest first.
+            let height = area.height.saturating_sub(2) as usize;
+            let rows: Vec<Line> = app
+                .fills
+                .iter()
+                .rev()
+                .filter(|e| e.market == market.address)
+                .take(height)
+                .map(|e| fill_line(e, market.base_decimals, market.quote_decimals))
+                .collect();
+            let lines = if rows.is_empty() {
+                vec![Line::from(Span::styled(
+                    "  no fills yet — run a swap or the taker",
+                    Style::new().fg(Color::DarkGray),
+                ))]
+            } else {
+                rows
+            };
+            (format!(" recent fills · {flag} {symbol} "), lines)
+        }
+        None => (
+            " recent fills ".to_string(),
+            vec![Line::from(Span::styled(
+                "  no market",
+                Style::new().fg(Color::DarkGray),
+            ))],
+        ),
     };
+    f.render_widget(
+        Paragraph::new(lines).block(Block::default().title(title).borders(Borders::ALL)),
+        area,
+    );
+}
+
+/// One fills-tape row: a colored buy/sell tag (green buy, red sell — the taker's
+/// aggressor side), the fill price (quote per base), and the base size, scaled
+/// to human units by the market's decimals. Price is derived from the fill's
+/// quote/base atoms, so it needs no `Price` decode.
+fn fill_line(event: &FillEvent, base_dec: u8, quote_dec: u8) -> Line<'static> {
+    let size = event.fill_base as f64 / 10f64.powi(base_dec as i32);
+    let value = event.fill_quote as f64 / 10f64.powi(quote_dec as i32);
+    let price = if size > 0.0 { value / size } else { 0.0 };
+    // side: 0 = taker Buy (lifts the ask), 1 = taker Sell (hits the bid).
+    let (label, color) = if event.side == 0 {
+        ("buy ", Color::Rgb(30, 135, 80))
+    } else {
+        ("sell", Color::Rgb(240, 75, 90))
+    };
+    Line::from(vec![
+        Span::styled(label, Style::new().fg(color).add_modifier(Modifier::BOLD)),
+        Span::styled(format!("  {price:>10.4}"), Style::new().fg(color)),
+        Span::styled(
+            format!("  {size:>12.2}"),
+            Style::new().fg(Color::DarkGray),
+        ),
+    ])
+}
+
+/// A country / region flag emoji for a known token symbol — the fiat it tracks
+/// — so the markets list and book read like the frontend's flagged rows. Empty
+/// for a symbol outside the bootstrap roster (no known flag to show).
+fn flag_for(symbol: &str) -> &'static str {
+    match symbol {
+        "EURC" => "\u{1F1EA}\u{1F1FA}", // 🇪🇺
+        "VCHF" => "\u{1F1E8}\u{1F1ED}", // 🇨🇭
+        "TGBP" => "\u{1F1EC}\u{1F1E7}", // 🇬🇧
+        "ZARP" => "\u{1F1FF}\u{1F1E6}", // 🇿🇦
+        "MXNe" => "\u{1F1F2}\u{1F1FD}", // 🇲🇽
+        "XSGD" => "\u{1F1F8}\u{1F1EC}", // 🇸🇬
+        "IDRX" => "\u{1F1EE}\u{1F1E9}", // 🇮🇩
+        "USDC" => "\u{1F1FA}\u{1F1F8}", // 🇺🇸
+        _ => "",
+    }
+}
+
+/// Render the compute-unit pane: one row per measured operation (in first-seen
+/// order), each with its latest cost and a link to the transaction that
+/// measured it. Registers each row as a click target (like the accounts pane)
+/// so a left-click opens that operation's latest tx in the explorer — re-running
+/// an operation (e.g. a repeg) updates both the cost and the linked tx.
+fn draw_cu(f: &mut Frame<'_>, app: &mut App, area: Rect) {
+    if app.cu.is_empty() {
+        f.render_widget(
+            Paragraph::new(vec![Line::from(Span::styled(
+                "  run an action to measure CU",
+                Style::new().fg(Color::DarkGray),
+            ))])
+            .block(
+                Block::default()
+                    .title(" compute units ")
+                    .borders(Borders::ALL),
+            ),
+            area,
+        );
+        return;
+    }
+    // Snapshot the rows so the target-registration borrow of `app.cu_targets`
+    // doesn't overlap the read borrow of `app.cu` (cheap — a handful of rows).
+    let rows = app.cu.clone();
+    let inner_x = area.x + 1;
+    let inner_y = area.y + 1;
+    let inner_w = area.width.saturating_sub(2);
+    let max_y = area.y + area.height.saturating_sub(1);
+    let mut lines = Vec::with_capacity(rows.len());
+    for (i, (label, units, sig)) in rows.iter().enumerate() {
+        let y = inner_y + i as u16;
+        // Register the row as a tx click target (skip once past the bottom
+        // border, where it wouldn't be drawn and so shouldn't catch clicks).
+        if !sig.is_empty() && y < max_y {
+            app.cu_targets.push((
+                Rect {
+                    x: inner_x,
+                    y,
+                    width: inner_w,
+                    height: 1,
+                },
+                sig.clone(),
+            ));
+        }
+        lines.push(cu_line(label, *units, sig));
+    }
     f.render_widget(
         Paragraph::new(lines).block(
             Block::default()
-                .title(" compute units ")
+                .title(" compute units · click tx ")
                 .borders(Borders::ALL),
         ),
         area,
     );
+}
+
+/// One CU-pane row: the operation label, its latest measured cost, and an
+/// underlined short signature that links to the transaction in the explorer.
+fn cu_line(label: &str, units: u64, sig: &str) -> Line<'static> {
+    let mut spans = vec![
+        Span::raw(format!("{label:<16}")),
+        Span::styled(
+            format!("{:>9} CU", fmt_units(units)),
+            Style::new().fg(Color::Cyan),
+        ),
+    ];
+    if !sig.is_empty() {
+        spans.push(Span::styled(
+            format!("  {}", short_sig(sig)),
+            Style::new()
+                .fg(Color::Gray)
+                .add_modifier(Modifier::UNDERLINED),
+        ));
+    }
+    Line::from(spans)
+}
+
+/// `AAAAAA…oiV`-style abbreviation of a base58 transaction signature (ASCII, so
+/// byte slicing is safe), for the CU pane's link column.
+fn short_sig(s: &str) -> String {
+    if s.len() > 12 {
+        format!("{}\u{2026}{}", &s[..6], &s[s.len() - 4..])
+    } else {
+        s.to_string()
+    }
 }
 
 /// Group a CU count into thousands (`41203` → `41,203`) for the pane.
@@ -698,10 +850,20 @@ fn phase_style(phase: Phase) -> (Color, Modifier) {
 
 #[cfg(test)]
 mod tests {
-    use super::{fmt_units, liveness_color, symbol_for};
+    use super::{flag_for, fmt_units, liveness_color, symbol_for};
     use crate::accounts::Liveness;
     use ratatui::style::Color;
     use solana_pubkey::Pubkey;
+
+    #[test]
+    fn flag_for_maps_known_symbols_and_falls_back() {
+        // Each bootstrap token resolves to its fiat's flag emoji…
+        assert_eq!(flag_for("EURC"), "\u{1F1EA}\u{1F1FA}");
+        assert_eq!(flag_for("IDRX"), "\u{1F1EE}\u{1F1E9}");
+        assert_eq!(flag_for("USDC"), "\u{1F1FA}\u{1F1F8}");
+        // …and an unknown symbol shows no flag rather than a wrong one.
+        assert_eq!(flag_for("????"), "");
+    }
 
     #[test]
     fn liveness_color_maps_each_state() {

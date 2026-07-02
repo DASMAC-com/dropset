@@ -116,6 +116,24 @@ pub fn hosted_account_url(address: &Pubkey, rpc_url: &str) -> String {
     )
 }
 
+/// The local-container transaction URL for `signature`, pointed at the loopback
+/// validator — the CU pane's per-instruction "latest tx" link.
+pub fn tx_url(signature: &str, rpc_url: &str) -> String {
+    format!(
+        "http://localhost:{EXPLORER_PORT}/tx/{signature}?cluster=custom&customUrl={}",
+        percent_encode(rpc_url)
+    )
+}
+
+/// The hosted-explorer transaction URL — the fallback when Docker isn't
+/// available (same browser caveat as [`hosted_account_url`]).
+pub fn hosted_tx_url(signature: &str, rpc_url: &str) -> String {
+    format!(
+        "https://explorer.solana.com/tx/{signature}?cluster=custom&customUrl={}",
+        percent_encode(rpc_url)
+    )
+}
+
 /// Whether a `docker` CLI is on PATH. A `false` steers "Open explorer" to the
 /// hosted fallback; a daemon that's installed-but-not-running surfaces later
 /// as an `up` failure with docker's own message.
@@ -232,5 +250,16 @@ mod tests {
         let url = hosted_account_url(&addr, "http://127.0.0.1:8899");
         assert!(url.starts_with("https://explorer.solana.com/address/"));
         assert!(url.contains("customUrl=http%3A%2F%2F127.0.0.1%3A8899"));
+    }
+
+    #[test]
+    fn tx_urls_target_the_tx_route_on_each_origin() {
+        let sig = "5xY5s1gnaturebase58";
+        let local = tx_url(sig, "http://127.0.0.1:8899");
+        assert!(local.starts_with("http://localhost:3100/tx/5xY5s1gnaturebase58"));
+        assert!(local.contains("cluster=custom"));
+        assert!(local.contains("customUrl=http%3A%2F%2F127.0.0.1%3A8899"));
+        let hosted = hosted_tx_url(sig, "http://127.0.0.1:8899");
+        assert!(hosted.starts_with("https://explorer.solana.com/tx/5xY5s1gnaturebase58"));
     }
 }

@@ -17,6 +17,7 @@ use crate::action::{self, Action, JobContext};
 use crate::bot::{self, BotManager};
 use crate::chain;
 use crate::explorer;
+use crate::fills;
 use crate::job::{JobEvent, Logger};
 use crate::market;
 use crate::ui;
@@ -36,6 +37,7 @@ use ratatui::{
     widgets::ListState,
     Terminal,
 };
+use dropset_sdk::types::FillEvent;
 use solana_client::rpc_client::RpcClient;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
@@ -53,6 +55,9 @@ const MENU_LEN: usize = action::MENU.len();
 const REFRESH_INTERVAL: Duration = Duration::from_millis(700);
 /// How many log lines to retain.
 const LOG_CAPACITY: usize = 1_000;
+/// How many recent fills to retain across all markets — the fills pane shows a
+/// per-market slice of this ring, newest first.
+const FILLS_CAPACITY: usize = 500;
 /// Longest swap-amount the taker can type, in digits — bounded so the entered
 /// value always parses as a `u64` (its max is 20 digits).
 const MAX_AMOUNT_DIGITS: usize = 18;
@@ -81,10 +86,12 @@ pub struct App {
     pub(crate) menu: ListState,
     pub(crate) log: VecDeque<(LogKind, String)>,
     pub(crate) job_running: bool,
-    /// Measured compute-unit cost per operation, in first-seen order — one
-    /// row per `label`, updated in place when an operation runs again. Drives
-    /// the CU pane.
-    pub(crate) cu: Vec<(String, u64)>,
+    /// Measured compute-unit cost per operation, in first-seen order — one row
+    /// per `label`, updated in place when an operation runs again. Each row also
+    /// carries the signature of the latest transaction for that operation, which
+    /// the CU pane links to the explorer (so re-running e.g. a repeg refreshes
+    /// the link to the newest `set_reference_price` tx). Drives the CU pane.
+    pub(crate) cu: Vec<(String, u64, String)>,
     /// Path the log is mirrored to on disk (shown in the log pane title).
     pub(crate) log_path: PathBuf,
     /// The swapper / taker (`FFFF`) pubkey, resolved once at startup, so each
@@ -118,6 +125,14 @@ pub struct App {
     /// each frame: a left-click inside one of these rectangles opens that
     /// account in the explorer.
     pub(crate) click_targets: Vec<(Rect, Pubkey)>,
+    /// Transaction click targets for the CU pane, rebuilt by [`ui::draw`] each
+    /// frame: a left-click inside one of these rectangles opens that operation's
+    /// latest transaction in the explorer.
+    pub(crate) cu_targets: Vec<(Rect, String)>,
+    /// Recent decoded fills across every market (newest at the back), fed by
+    /// the [`fills`] subscription thread. The fills pane renders the slice for
+    /// the selected market; the ring is trimmed to [`FILLS_CAPACITY`].
+    pub(crate) fills: VecDeque<FillEvent>,
     tx: Sender<JobEvent>,
     rx: Receiver<JobEvent>,
     /// Append handle for the on-disk log mirror, if it opened.
@@ -162,6 +177,8 @@ impl App {
             bots: BotManager::new(),
             takers: BotManager::new(),
             click_targets: Vec::new(),
+            cu_targets: Vec::new(),
+            fills: VecDeque::new(),
             tx,
             rx,
             log_file,
@@ -175,6 +192,9 @@ impl App {
     pub fn run(&mut self) -> Result<()> {
         self.log(LogKind::Info, "Starting solana-test-validator…".to_string());
         self.start_explorer();
+        // Watch the program's fills so the recent-fills pane fills in as swaps
+        // land — survives a wipe by reconnecting to the respawned validator.
+        fills::spawn(self.ctx.rpc_url.clone(), self.tx.clone());
         let backend = CrosstermBackend::new(io::stdout());
         let terminal = Terminal::new(backend)?;
         let mut guard = TerminalGuard::new(terminal);
@@ -227,14 +247,17 @@ impl App {
         }
     }
 
-    /// Handle a mouse event: a left-click on an account row (a [`ui`] click
-    /// target) opens that account in the explorer; everything else is ignored.
+    /// Handle a mouse event: a left-click on an account row opens that account
+    /// in the explorer; a click on a CU row opens that operation's latest
+    /// transaction in the explorer; everything else is ignored.
     fn handle_mouse(&mut self, m: MouseEvent) {
         if !matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
             return;
         }
         if let Some(addr) = self.address_at(m.column, m.row) {
             self.open_in_explorer(addr);
+        } else if let Some(sig) = self.signature_at(m.column, m.row) {
+            self.open_tx_in_explorer(&sig);
         }
     }
 
@@ -242,6 +265,12 @@ impl App {
     /// any.
     fn address_at(&self, col: u16, row: u16) -> Option<Pubkey> {
         hit_target(&self.click_targets, col, row)
+    }
+
+    /// The transaction signature whose CU click-target rect contains
+    /// `(col, row)`, if any.
+    fn signature_at(&self, col: u16, row: u16) -> Option<String> {
+        hit_target(&self.cu_targets, col, row)
     }
 
     /// Open `address` in the explorer — the local container when it's ready,
@@ -255,6 +284,21 @@ impl App {
             explorer::hosted_account_url(&address, &self.ctx.rpc_url)
         };
         self.log(LogKind::Info, format!("Opening {address} in the explorer…"));
+        if let Err(e) = open::that(&url) {
+            self.log(LogKind::Err, format!("open explorer: {e:#}"));
+        }
+    }
+
+    /// Open transaction `signature` in the explorer — the local container when
+    /// ready, else the hosted explorer (same browser caveat as
+    /// [`App::open_in_explorer`]). Best-effort: a launch failure is logged.
+    fn open_tx_in_explorer(&mut self, signature: &str) {
+        let url = if self.ctx.explorer_state.load(Ordering::SeqCst) == explorer::state::READY {
+            explorer::tx_url(signature, &self.ctx.rpc_url)
+        } else {
+            explorer::hosted_tx_url(signature, &self.ctx.rpc_url)
+        };
+        self.log(LogKind::Info, format!("Opening tx {signature} in the explorer…"));
         if let Err(e) = open::that(&url) {
             self.log(LogKind::Err, format!("open explorer: {e:#}"));
         }
@@ -277,12 +321,15 @@ impl App {
             // Book selector — cycle which market's book and accounts show.
             KeyCode::Char('[') | KeyCode::BackTab => self.select_market(-1),
             KeyCode::Char(']') | KeyCode::Tab => self.select_market(1),
-            // Per-bot control: toggle the selected market's maker, or all at
-            // once; `T` toggles the selected market's taker (opt-in flow). `T`
-            // dodges `t` (eCLOB tighten, below).
+            // Per-bot control, makers and takers symmetric: lower-case toggles
+            // the selected market's bot, upper-case starts every market's. The
+            // taker is opt-in (off by default), so `t` / `T` only ever start or
+            // stop flow, never quote. eCLOB tighten moved to `n` (narrow) to
+            // free `t` for the taker.
             KeyCode::Char('s') => self.toggle_selected_bot(),
             KeyCode::Char('S') => self.start_all_bots(),
-            KeyCode::Char('T') => self.toggle_selected_taker(),
+            KeyCode::Char('t') => self.toggle_selected_taker(),
+            KeyCode::Char('T') => self.start_all_takers(),
             KeyCode::Char('x') => self.stop_all_bots(),
             KeyCode::Char('r') => self.dirty = true,
             // Open the swap-amount input — subsequent keys edit the amount.
@@ -292,7 +339,7 @@ impl App {
             KeyCode::Char('>') | KeyCode::Char('.') => self.run_action(Action::RepegUp),
             KeyCode::Char('<') | KeyCode::Char(',') => self.run_action(Action::RepegDown),
             KeyCode::Char('w') => self.run_action(Action::WidenSpread),
-            KeyCode::Char('t') => self.run_action(Action::TightenSpread),
+            KeyCode::Char('n') => self.run_action(Action::TightenSpread),
             KeyCode::Char('f') => self.run_action(Action::ThinFarSide),
             KeyCode::Char('g') => self.run_action(Action::ResetLadder),
             KeyCode::Enter => self.run_selected(),
@@ -421,6 +468,39 @@ impl App {
         self.dirty = true;
     }
 
+    /// Start every discovered market's taker bot that isn't already running —
+    /// the "give every book organic flow" moment, mirroring [`start_all_bots`]
+    /// for makers. Each taker is scoped to its own market by PDA, so this walks
+    /// the discovered markets and starts one per book that resolves to a known
+    /// symbol. Opt-in like the per-market taker: nothing runs a taker until the
+    /// operator presses `T`.
+    fn start_all_takers(&mut self) {
+        let targets: Vec<(&'static str, Pubkey)> = self
+            .chain
+            .markets
+            .iter()
+            .filter_map(|m| {
+                self.mint_symbols
+                    .iter()
+                    .find(|(mint, _)| *mint == m.base_mint)
+                    .map(|(_, s)| (*s, m.address))
+            })
+            .collect();
+        let log = Logger::new(self.tx.clone());
+        for (symbol, address) in targets {
+            if !self.takers.is_running(symbol) {
+                let cmd = bot::taker_command(&self.ctx.repo_root, &address, &self.ctx.rpc_url);
+                if let Err(e) = self.takers.start(symbol, cmd, &log) {
+                    self.log(
+                        LogKind::Err,
+                        format!("[{symbol}] taker start failed: {e:#}"),
+                    );
+                }
+            }
+        }
+        self.dirty = true;
+    }
+
     /// Stop every running bot — makers and takers alike, so `x` quiets the
     /// whole demo in one keystroke.
     fn stop_all_bots(&mut self) {
@@ -540,8 +620,10 @@ impl App {
             Ok(()) => {
                 self.client = chain::rpc(self.validator.rpc_url());
                 // The fresh ledger has no history, so the measured CU costs
-                // from the wiped one are stale — clear the pane with it.
+                // and the recent fills from the wiped one are stale — clear
+                // both panes with it.
                 self.cu.clear();
+                self.fills.clear();
                 self.dirty = true;
                 self.log(
                     LogKind::Ok,
@@ -558,7 +640,12 @@ impl App {
             match ev {
                 JobEvent::Log(s) => self.log(LogKind::Info, s),
                 JobEvent::AccountsChanged => self.dirty = true,
-                JobEvent::Cu { label, units } => self.record_cu(label, units),
+                JobEvent::Cu {
+                    label,
+                    units,
+                    signature,
+                } => self.record_cu(label, units, signature),
+                JobEvent::Fill(event) => self.record_fill(event),
                 JobEvent::Done { ok, summary } => {
                     self.job_running = false;
                     self.dirty = true;
@@ -604,13 +691,27 @@ impl App {
         }
     }
 
-    /// Record an operation's measured CU, updating its row in place if the
-    /// operation has run before so the pane shows the latest cost per label
-    /// rather than an ever-growing history.
-    fn record_cu(&mut self, label: String, units: u64) {
-        match self.cu.iter_mut().find(|(l, _)| *l == label) {
-            Some(entry) => entry.1 = units,
-            None => self.cu.push((label, units)),
+    /// Append a decoded fill to the ring (newest at the back), trimming to
+    /// [`FILLS_CAPACITY`], and mark the view dirty so the fills pane redraws.
+    fn record_fill(&mut self, event: FillEvent) {
+        self.fills.push_back(event);
+        while self.fills.len() > FILLS_CAPACITY {
+            self.fills.pop_front();
+        }
+        self.dirty = true;
+    }
+
+    /// Record an operation's measured CU and the signature of the transaction
+    /// it measured, updating its row in place if the operation has run before —
+    /// so the pane shows the latest cost and links to the latest transaction per
+    /// label rather than an ever-growing history.
+    fn record_cu(&mut self, label: String, units: u64, signature: String) {
+        match self.cu.iter_mut().find(|(l, _, _)| *l == label) {
+            Some(entry) => {
+                entry.1 = units;
+                entry.2 = signature;
+            }
+            None => self.cu.push((label, units, signature)),
         }
     }
 
@@ -654,14 +755,15 @@ fn parse_swap_amount(buf: &str) -> Option<u64> {
     }
 }
 
-/// The address whose click-target rectangle contains `(col, row)`, if any —
-/// the lookup behind [`App::address_at`], split out so it's testable without
-/// an `App`.
-fn hit_target(targets: &[(Rect, Pubkey)], col: u16, row: u16) -> Option<Pubkey> {
+/// The payload whose click-target rectangle contains `(col, row)`, if any — the
+/// lookup behind [`App::address_at`] and [`App::signature_at`], generic over the
+/// target payload (an account [`Pubkey`] or a transaction signature `String`)
+/// and split out so it's testable without an `App`.
+fn hit_target<T: Clone>(targets: &[(Rect, T)], col: u16, row: u16) -> Option<T> {
     let pos = Position { x: col, y: row };
     targets
         .iter()
-        .find_map(|(rect, addr)| rect.contains(pos).then_some(*addr))
+        .find_map(|(rect, payload)| rect.contains(pos).then(|| payload.clone()))
 }
 
 /// RAII guard for the alternate-screen / raw-mode terminal. Restores the
@@ -751,6 +853,6 @@ mod tests {
         // Outside every target — the border column and an empty row.
         assert_eq!(hit_target(&targets, 1, 3), None);
         assert_eq!(hit_target(&targets, 5, 9), None);
-        assert_eq!(hit_target(&[], 5, 3), None);
+        assert_eq!(hit_target::<Pubkey>(&[], 5, 3), None);
     }
 }

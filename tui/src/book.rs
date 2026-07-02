@@ -129,12 +129,14 @@ fn header_line() -> Line<'static> {
         Span::styled(format!("{:>BAR_WIDTH$}", "depth"), style),
         Span::styled(format!("  {:>10}", "price"), style),
         Span::styled(format!("  {:>12}", "size"), style),
+        Span::styled(format!("  {:>12}", "volume"), style),
     ])
 }
 
 /// One book row: a depth bar that grows right-to-left toward the price column ·
-/// right-aligned price · faded human size. The bar is right-aligned so deeper
-/// levels reach further left, seating the freshest depth against the price.
+/// right-aligned price · faded human size · the quote-denominated volume
+/// (price × size). The bar is right-aligned so deeper levels reach further
+/// left, seating the freshest depth against the price.
 fn row_line(r: &Row, max_size: f64, color: Color) -> Line<'static> {
     let scaled = if max_size > 0.0 {
         ((r.size / max_size) * BAR_WIDTH as f64).round() as usize
@@ -149,6 +151,10 @@ fn row_line(r: &Row, max_size: f64, color: Color) -> Line<'static> {
         Span::styled(format!("  {:>10.4}", r.price), Style::new().fg(color)),
         Span::styled(
             format!("  {:>12.2}", r.size),
+            Style::new().fg(Color::DarkGray),
+        ),
+        Span::styled(
+            format!("  {:>12.2}", r.price * r.size),
             Style::new().fg(Color::DarkGray),
         ),
     ])
@@ -248,18 +254,21 @@ mod tests {
         let out = lines(&market(vec![lvl(0.75, 1_000_000)], Vec::new()));
         // header + one ask + one-sided divider.
         assert_eq!(out.len(), 3);
-        // The header names its columns depth · price · size, in that order.
+        // The header names its columns depth · price · size · volume, in order.
         let header = text(&out[0]);
         let depth_at = header.find("depth").unwrap();
         let price_at = header.find("price").unwrap();
         let size_at = header.find("size").unwrap();
-        assert!(depth_at < price_at && price_at < size_at);
+        let volume_at = header.find("volume").unwrap();
+        assert!(depth_at < price_at && price_at < size_at && size_at < volume_at);
         // The row leads with the full-block depth bar (right-aligned, so it
-        // grows right-to-left), and the price follows it.
+        // grows right-to-left), then price, size, and the price×size volume.
         let row = &out[1];
-        assert_eq!(row.spans.len(), 3);
+        assert_eq!(row.spans.len(), 4);
         assert!(row.spans[0].content.contains('\u{2588}'));
         assert!(row.spans[1].content.contains("0.7500"));
+        // volume = price × size = 0.75 × 1.0 = 0.75.
+        assert!(row.spans[3].content.contains("0.75"));
     }
 
     #[test]

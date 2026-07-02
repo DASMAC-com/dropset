@@ -652,7 +652,7 @@ pub fn send_logged(
     let (sig, cu) = send_measured(client, payer, signers, ixs)?;
     log.log(format!("{label}: {sig}"));
     if let Some(units) = cu {
-        log.cu(label.to_string(), units);
+        log.cu(label.to_string(), units, sig.clone());
     }
     Ok(sig)
 }
