@@ -4,6 +4,14 @@
 # to take effect. The frontend + SDK packages share this one workspace.
 onlyBuiltDependencies:
 - 'sharp'
+# The decks package runs React 18 (Spectacle's supported range) while the
+# frontend runs React 19. Both pull in shared @radix-ui primitives, so
+# without this pin pnpm collapses them onto a single @types/react major and
+# the wrong React typings leak across packages. Force one @types major for
+# the whole workspace so type resolution is deterministic.
+overrides:
+  '@types/react': '^19'
+  '@types/react-dom': '^19'
 packages:
 - 'frontend'
 - 'decks'

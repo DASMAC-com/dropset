@@ -1,9 +1,11 @@
+<!-- cspell:word kbar -->
+
 # decks
 
 Presentation decks for Dropset, deployed to **decks.dropset.io**. A
-standalone Next.js (app router) + [Spectacle](https://commerce.nearform.com/open-source/spectacle/)
-package in the monorepo workspace, kept separate from `frontend` so its
-deploy config, deps, and theme don't fight the product build.
+standalone Next.js (app router) + [Spectacle] package in the
+monorepo workspace, kept separate from `frontend` so its deploy config,
+deps, and theme don't fight the product build.
 
 > Pinned to **React 18 / Next 14**: Spectacle (and its transitive deps —
 > `react-spring`, `kbar`, `use-resize-observer`) cap at React ≤18, so this
@@ -30,7 +32,7 @@ ticket ids, which must not leak into shareable URLs.
 make decks
 ```
 
-Installs, serves on **http://localhost:3200** (port set in the `dev`
+Installs, serves on **<http://localhost:3200>** (port set in the `dev`
 script so it never collides with `frontend`'s 3000), and opens a browser
 once it's up. Arrow keys drive a deck; `p` opens presenter mode (speaker
 notes + next-slide preview); `f` goes fullscreen.
@@ -38,7 +40,7 @@ notes + next-slide preview); `f` goes fullscreen.
 ## Add a deck
 
 1. Create `app/<public-route>/page.tsx` + `<Deck>.tsx` (copy `demo-v1`).
-2. Add an entry to `lib/decks.ts`.
+1. Add an entry to `lib/decks.ts`.
 
 ## Deploy
 
@@ -47,3 +49,5 @@ Directory = `decks/`**. `vercel.json` gates deploys to `main` only,
 mirroring `frontend`. The custom domain `decks.dropset.io` is mapped in
 Vercel with a `CNAME decks -> cname.vercel-dns.com` DNS record. Creating
 that Vercel project + DNS record is a one-time out-of-band step.
+
+[spectacle]: https://commerce.nearform.com/open-source/spectacle/

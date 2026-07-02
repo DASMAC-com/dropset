@@ -43,6 +43,7 @@ eurc
 eurcv
 eurozone
 fieldless
+forex
 frankfurter
 frontmatter
 getpid

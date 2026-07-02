@@ -1,5 +1,8 @@
 "use client";
 
+// cspell:word illiquidity
+// cspell:word sealevel
+
 import {
   Appear,
   Box,
