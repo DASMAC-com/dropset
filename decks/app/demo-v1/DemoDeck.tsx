@@ -53,7 +53,7 @@ const template = () => (
     zIndex={1}
   >
     <Box padding="0 1.25em">
-      <Image src="/watermark.svg" width={110} />
+      <Image src="/dropset-wordmark.png" width={110} />
     </Box>
     <Box padding="0 1.25em">
       <Progress color={colors.accent} size={8} />
@@ -286,7 +286,7 @@ export default function DemoDeck() {
             Seven FX markets, one SDK, credible depth on demand — on mainnet.
           </Text>
           <Box margin="40px 0 0 0">
-            <Image src="/watermark.svg" width={170} />
+            <Image src="/dropset-wordmark.png" width={170} />
           </Box>
         </FlexBox>
       </Slide>

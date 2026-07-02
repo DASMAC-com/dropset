@@ -21,7 +21,7 @@ deps, and theme don't fight the product build.
   Spectacle `<Deck>` (`page.tsx` dynamic-imports it with `ssr: false`).
 - `theme/tokens.ts` — Dropset design tokens, mirrored from
   `frontend/app/globals.css` and reshaped into a Spectacle theme.
-- `public/` — deck assets (e.g. `watermark.svg`).
+- `public/` — deck assets (e.g. `dropset-wordmark.png`).
 
 Deck routes use **public-facing names** (e.g. `/demo-v1`) — never internal
 ticket ids, which must not leak into shareable URLs.
