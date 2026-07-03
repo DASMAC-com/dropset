@@ -44,17 +44,20 @@ pub fn flush_level_price(reference: Price, offset_ppm: u32, is_ask: bool) -> Pri
 /// Returns `None` when `size_bps > BPS`. `set_liquidity_profile` bounds
 /// the per-side Σ `size_bps` to `BPS`, and each `size_bps` is a
 /// non-negative `u16`, so every *individual* level is `<= BPS` for any
-/// profile written through that path — the `None` case is implied by the
-/// sum check and only fires on account bytes the program never wrote
-/// (corruption, or a future profile-writing path that skips the sum
-/// check). With the invariant held the product is at most `leg_atoms *
-/// BPS`, which divided by `BPS` is `<= leg_atoms <= u64::MAX`, so the cast
-/// is lossless. Both callers refuse the take on `None` rather than
-/// silently clamping (which would mask the bug by shrinking the level):
-/// the on-chain caller maps it to a hard error that aborts the whole
-/// `swap`, and the off-chain simulator yields an empty quote (it rejects
-/// the whole take up front — see `matching::vault_has_oversize_flush_level`
-/// — so a router never quotes a fill the engine won't honor).
+/// profile written through that path — the `None` case only fires on
+/// account bytes the program never wrote (corruption, or a future
+/// profile-writing path that skips the sum check). With the invariant held
+/// the product is at most `leg_atoms * BPS`, which divided by `BPS` is
+/// `<= leg_atoms <= u64::MAX`, so the cast is lossless.
+///
+/// Both callers guard this at the *side* granularity before calling: a side
+/// whose `Σ size_bps > BPS` is thrown out of matching whole (the engine
+/// zeroes its `remaining`; the simulator skips that vault's side — see
+/// `matching::flush_side_sum_exceeds_bps`), so on any side that is still
+/// materialized every level is `<= Σ <= BPS` and `None` is unreachable.
+/// Callers therefore treat `None` as an unreachable `0` fallback rather
+/// than aborting the take — skipping an oversized side is strictly safer
+/// than letting one corrupt vault reject every taker.
 #[inline]
 pub fn level_fill_atoms(size_bps: u16, leg_atoms: u64) -> Option<u64> {
     if size_bps as u64 > BPS {

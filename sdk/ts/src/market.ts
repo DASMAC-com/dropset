@@ -217,7 +217,9 @@ function flushLevelPrice(reference: PriceBits, offsetPpm: number, isAsk: boolean
 /**
  * A level's materialized size in atoms: `size_bps` of the matching
  * inventory leg. Returns `null` when `size_bps > BPS` — the corrupt-bytes
- * case the on-chain engine hard-rejects. Mirrors `matching_math::level_fill_atoms`.
+ * case for which a collected side is skipped whole (see
+ * `flushSideSumExceedsBps`), so on a materialized side this is never `null`.
+ * Mirrors `matching_math::level_fill_atoms`.
  */
 function levelFillAtoms(sizeBps: number, legAtoms: bigint): bigint | null {
   if (BigInt(sizeBps) > BPS) return null;
@@ -229,13 +231,19 @@ function sortKey(price: PriceBits, isAsk: boolean): number {
   return isAsk ? price >>> 0 : priceBidKey(price);
 }
 
-/** True when any flush-profile level sizes past its full leg (`size_bps > BPS`). */
-function vaultHasOversizeFlushLevel(v: VaultView): boolean {
-  for (let i = 0; i < N_LEVELS; i++) {
-    if (levelFillAtoms(v.profileAsks[i]!.sizeBps, v.baseAtoms) === null) return true;
-    if (levelFillAtoms(v.profileBids[i]!.sizeBps, v.quoteAtoms) === null) return true;
-  }
-  return false;
+/**
+ * True when the flush profile's collected side (`isAsk` ⇒ asks) sums past
+ * `BPS` — `Σ size_bps > BPS`, which subsumes any single level `> BPS`. The
+ * on-chain matcher zeroes such a side's `remaining` at flush time, dropping
+ * it from matching without aborting the take, so the simulator mirrors that
+ * by skipping the vault's contribution on the collected side. Mirrors
+ * `matching::flush_side_sum_exceeds_bps`.
+ */
+function flushSideSumExceedsBps(v: VaultView, isAsk: boolean): boolean {
+  const side = isAsk ? v.profileAsks : v.profileBids;
+  let sum = 0;
+  for (let i = 0; i < N_LEVELS; i++) sum += side[i]!.sizeBps;
+  return BigInt(sum) > BPS;
 }
 
 /** A live, matchable level pulled from a vault during book construction. */
@@ -265,9 +273,10 @@ function levelState(
     const lvl = (isAsk ? v.profileAsks[i] : v.profileBids[i])!;
     const price = flushLevelPrice(reference, lvl.priceOffset, isAsk);
     const leg = isAsk ? v.baseAtoms : v.quoteAtoms;
-    // An oversize `size_bps` is caught up front by
-    // `vaultHasOversizeFlushLevel`, so the `?? 0n` is an unreachable
-    // total-function fallback, not a silent level drop.
+    // A side that sums past BPS is skipped whole by the
+    // `flushSideSumExceedsBps` gate in `collectSideLevels` before this runs,
+    // so on a collected side every level is `≤ Σ ≤ BPS` and `?? 0n` is an
+    // unreachable total-function fallback, not a silent level drop.
     const size = levelFillAtoms(lvl.sizeBps, leg) ?? 0n;
     // Saturating add, clamped to u32 like the on-chain `saturating_add`.
     const expiresAt = Math.min(refSlot + lvl.expiryOffset, NULL_SECTOR);
@@ -311,9 +320,12 @@ function activeVaults(slab: MarketSlab): Array<[number, VaultView]> {
  * Collect one side's live, matchable levels across all active vaults,
  * sorted into cross-vault price-time priority: best price first, then
  * older quote (lower nonce), then lower sector, then lower level. Returns
- * `null` when the book is in a state the on-chain engine hard-rejects (a
- * corrupt active DLL, or an oversize flush level), so callers refuse to
- * show depth the engine won't fill. Mirrors `matching::collect_side_levels`.
+ * `null` only when the book is in a state the on-chain engine hard-rejects
+ * (a corrupt active DLL). An oversized flush side (`Σ size_bps > BPS`) is
+ * *not* a hard reject: the engine zeroes that side's `remaining` so it
+ * contributes nothing while the rest of the book still matches, and this
+ * collector mirrors that by skipping the offending vault's contribution on
+ * the collected side. Mirrors `matching::collect_side_levels`.
  */
 function collectSideLevels(slab: MarketSlab, isAsk: boolean, currentSlot: number): Lvl[] | null {
   if (activeDllIsCorrupt(slab)) return null;
@@ -332,7 +344,7 @@ function collectSideLevels(slab: MarketSlab, isAsk: boolean, currentSlot: number
     }
     const nonce = v.referenceStamp & ~FLUSH_BIT;
     const flush = (v.referenceStamp & FLUSH_BIT) !== 0n;
-    if (flush && vaultHasOversizeFlushLevel(v)) return null;
+    if (flush && flushSideSumExceedsBps(v, isAsk)) continue;
     const refSlot = v.quoteSlot;
 
     for (let i = 0; i < N_LEVELS; i++) {

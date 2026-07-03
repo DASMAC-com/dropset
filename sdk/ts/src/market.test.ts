@@ -140,3 +140,23 @@ test('flush-armed vault materializes levels from its profile', () => {
   const bidPrice = enc(10_844_575);
   assert.deepEqual(view.bids, [{ price: bidPrice, size: baseForQuote(bidPrice, 1_000_000n) }]);
 });
+
+test('oversized flush side is skipped, the healthy side still materializes', () => {
+  // Ask side sums past BPS (20000 bps), bid side healthy (5000). Mirrors the
+  // Rust `oversize_flush_side_is_skipped_not_the_whole_book`: the oversized
+  // side is thrown out of matching (like the engine zeroing its `remaining`),
+  // while the healthy side still reconstructs — not a whole-book refusal.
+  const data = buildMarket((dv, b) => {
+    dv.setBigUint64(b + V_REF_STAMP, (1n << 63n) | 1n, true); // flush armed
+    dv.setUint32(b + V_REF_PRICE, enc(10_850_000), true);
+    dv.setUint32(b + V_REF_QUOTE_SLOT, 0, true);
+    dv.setBigUint64(b + V_BASE_ATOMS, 1_000_000n, true);
+    dv.setBigUint64(b + V_QUOTE_ATOMS, 1_000_000n, true);
+    writeProfileLevel(dv, b + V_PROFILE_ASKS, 500, 20_000, 1_000); // Σ ask = 20000 > BPS
+    writeProfileLevel(dv, b + V_PROFILE_BIDS, 500, 5_000, 1_000); // Σ bid = 5000, healthy
+  });
+  const view = marketViewFromSlab(decodeMarketSlab(data), 1);
+  assert.equal(view.asks.length, 0, 'oversized ask side contributes no depth');
+  const bidPrice = enc(10_844_575);
+  assert.deepEqual(view.bids, [{ price: bidPrice, size: baseForQuote(bidPrice, 500_000n) }]);
+});

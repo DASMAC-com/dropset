@@ -197,69 +197,69 @@ fn sdk_simulate_swap_limit_price_stops_fill() {
 }
 
 #[test]
-fn sdk_simulate_swap_rejects_oversize_size_bps_consumed_side() {
+fn sdk_simulate_swap_skips_oversize_ask_side_not_the_whole_take() {
     // A flush profile with `size_bps > BPS` can't be written through
     // `set_liquidity_profile` (it bounds the per-side Σ to BPS), but a
-    // corrupt account could hold one. The engine materializes the book up
-    // front and `flush_level_size` hard-rejects the whole `swap`; the SDK
-    // simulator must refuse to quote rather than predict a fill the engine
-    // will abort. Here the corruption is on the consumed side (a Buy
-    // consumes asks). BPS = 10_000, so 20_000 bps is 200% of the leg.
+    // corrupt account could hold one. The matcher no longer aborts the whole
+    // `swap` on it — it throws out just the offending side (zeroing its
+    // `remaining`), exactly like an invalid reference price skips a vault —
+    // so one bad vault can't DoS every take. Here the ask side is oversized
+    // (BPS = 10_000, so 20_000 bps is 200% of the leg); a Buy consumes asks.
     let mut f = Fixture::seeded(1_000_000, 1_000_000);
     f.poke_level_size_bps(0, true, 0, 20_000);
 
+    // The Buy's only depth is the corrupted ask side, so it contributes
+    // nothing and — with no other vault — the take is an honest no-fill,
+    // crucially not an abort. The SDK predicts the same empty quote.
     let data = market_bytes(&f);
     let view = MarketView::load(&data).expect("SDK decodes the market account");
     let q = simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1);
     assert_eq!(
         q,
         Quote::default(),
-        "simulator must reject a corrupt book, not quote a partial fill"
+        "the oversized ask side contributes no depth"
     );
 
-    let taker = f.funded_depositor(0, 500_000);
-    let err = f
-        .swap(
-            &taker,
-            SwapSide::Buy as u8,
-            500_000,
-            Price::INFINITY.as_u32(),
-            0,
-        )
-        .expect_err("engine must hard-reject size_bps > BPS");
-    common::assert_program_error(&err, dropset::DropsetError::LiquidityProfileSizeOverflow);
+    let buyer = f.funded_depositor(0, 500_000);
+    let buyer_quote_ata = f.quote_ata(&buyer.pubkey());
+    let quote_before = f.token_balance(&buyer_quote_ata);
+    f.swap(
+        &buyer,
+        SwapSide::Buy as u8,
+        500_000,
+        Price::INFINITY.as_u32(),
+        0,
+    )
+    .expect("swap must not abort on an oversized ask side");
+    assert_eq!(
+        f.token_balance(&buyer_quote_ata),
+        quote_before,
+        "no fill, but no abort — the taker's input is untouched"
+    );
+
+    // The healthy bid side still matches: a Sell fills, and the SDK predicts
+    // it exactly — proving the oversized ask side didn't poison the quote.
+    let seller = f.funded_depositor(500_000, 0);
+    let sell = predict_and_execute(&mut f, &seller, SwapSide::Sell, 500_000, Price::ZERO, 1);
+    assert!(sell.out_amount > 0, "the healthy bid side must still fill");
 }
 
 #[test]
-fn sdk_simulate_swap_rejects_oversize_size_bps_other_side() {
-    // Same contract, corruption on the side the take does *not* consume: a
-    // Buy consumes asks, but here a bid level is out of range. The engine
-    // flushes both sides during book construction, so it still aborts — and
-    // the simulator must too. This guards against a consumed-side-only
-    // check that would quote a fill the engine rejects.
+fn sdk_buy_unaffected_by_oversize_bid_side() {
+    // The old engine flushed *both* sides during book construction, so a
+    // corrupt bid level aborted even a Buy (which consumes asks). Under the
+    // match-time per-side gate a Buy no longer depends on the bid side's sum:
+    // the oversized bids are skipped and the healthy asks fill normally, SDK
+    // prediction matching the chain leg-for-leg.
     let mut f = Fixture::seeded(1_000_000, 1_000_000);
     f.poke_level_size_bps(0, false, 0, 20_000);
 
-    let data = market_bytes(&f);
-    let view = MarketView::load(&data).expect("SDK decodes the market account");
-    let q = simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1);
-    assert_eq!(
-        q,
-        Quote::default(),
-        "simulator must reject on a bad bid even for a Buy"
+    let buyer = f.funded_depositor(0, 500_000);
+    let q = predict_and_execute(&mut f, &buyer, SwapSide::Buy, 500_000, Price::INFINITY, 1);
+    assert!(
+        q.out_amount > 0,
+        "a Buy fills the healthy ask side regardless of a bad bid"
     );
-
-    let taker = f.funded_depositor(0, 500_000);
-    let err = f
-        .swap(
-            &taker,
-            SwapSide::Buy as u8,
-            500_000,
-            Price::INFINITY.as_u32(),
-            0,
-        )
-        .expect_err("engine aborts on a bad bid even for a Buy");
-    common::assert_program_error(&err, dropset::DropsetError::LiquidityProfileSizeOverflow);
 }
 
 #[test]

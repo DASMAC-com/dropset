@@ -101,6 +101,38 @@ pub struct LiquidityProfile {
     pub asks: [Level; N_LEVELS],
 }
 
+/// A per-side `Σ size_bps` that crosses [`BPS`] — the two totals, for the
+/// caller to report. Returned by [`LiquidityProfile::validate_size_sums`].
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct SizeSumViolation {
+    pub bid_sum: u32,
+    pub ask_sum: u32,
+}
+
+impl LiquidityProfile {
+    /// The per-side `(bids, asks)` `Σ size_bps`. At `N_LEVELS = 8` the
+    /// widest sum is `8 × u16::MAX = 524_280`, well inside `u32`.
+    pub fn size_bps_sums(&self) -> (u32, u32) {
+        let bid = self.bids.iter().map(|l| l.size_bps.get() as u32).sum();
+        let ask = self.asks.iter().map(|l| l.size_bps.get() as u32).sum();
+        (bid, ask)
+    }
+
+    /// The canonical per-side `Σ size_bps ≤ BPS` check — the same threshold
+    /// the on-chain matcher applies at flush time to decide whether a side
+    /// is materialized or thrown out. Every off-chain profile builder routes
+    /// through this before submitting so an honest client never emits a side
+    /// the engine would silently skip (a no-fill). `Σ == BPS` is valid; only
+    /// `> BPS` fails.
+    pub fn validate_size_sums(&self) -> Result<(), SizeSumViolation> {
+        let (bid_sum, ask_sum) = self.size_bps_sums();
+        if bid_sum > BPS as u32 || ask_sum > BPS as u32 {
+            return Err(SizeSumViolation { bid_sum, ask_sum });
+        }
+        Ok(())
+    }
+}
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct Position {
@@ -307,5 +339,55 @@ impl<'a> MarketView<'a> {
             cur = sectors[cur as usize].next.get();
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytemuck::Zeroable;
+
+    fn profile_with(bid_bps: &[u16], ask_bps: &[u16]) -> LiquidityProfile {
+        let mut p = LiquidityProfile::zeroed();
+        for (i, &b) in bid_bps.iter().enumerate() {
+            p.bids[i].size_bps = b.into();
+        }
+        for (i, &a) in ask_bps.iter().enumerate() {
+            p.asks[i].size_bps = a.into();
+        }
+        p
+    }
+
+    #[test]
+    fn size_sums_at_and_below_bps_are_valid() {
+        // `Σ == BPS` is valid — only strictly over the cap fails.
+        assert!(profile_with(&[9_999], &[0]).validate_size_sums().is_ok());
+        assert!(profile_with(&[6_000, 4_000], &[10_000])
+            .validate_size_sums()
+            .is_ok());
+    }
+
+    #[test]
+    fn size_sums_over_bps_are_rejected_per_side() {
+        // Bid side one over the cap; ask side clean.
+        let err = profile_with(&[6_000, 4_001], &[0])
+            .validate_size_sums()
+            .unwrap_err();
+        assert_eq!(err.bid_sum, 10_001);
+        assert_eq!(err.ask_sum, 0);
+        // Ask side over; bid side clean. A single level past BPS trips it too.
+        let err = profile_with(&[0], &[10_001])
+            .validate_size_sums()
+            .unwrap_err();
+        assert_eq!(err.ask_sum, 10_001);
+        assert_eq!(err.bid_sum, 0);
+    }
+
+    #[test]
+    fn size_bps_sums_reports_both_sides() {
+        assert_eq!(
+            profile_with(&[1_000, 2_000], &[3_000]).size_bps_sums(),
+            (3_000, 3_000)
+        );
     }
 }

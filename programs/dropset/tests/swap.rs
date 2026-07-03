@@ -314,6 +314,42 @@ fn multi_vault_cheaper_price_fills_first() {
 }
 
 #[test]
+fn oversize_ask_side_skips_that_vault_but_not_the_swap() {
+    // A vault whose ask side sums past BPS (only reachable by poking corrupt
+    // bytes — `set_liquidity_profile` bounds it at write time) must be thrown
+    // out of matching, not abort the whole swap. Before the match-time gate a
+    // single such level made `flush_level_size` `?`-propagate and reject the
+    // entire `swap`, so one corrupt vault could DoS every taker. Here sector
+    // 0's ask side is corrupted and sector 1 is healthy: the Buy fills
+    // entirely against sector 1 and the take succeeds.
+    let same = Price::encode(10_850_000, 0).unwrap().as_u32();
+    let mut f = Fixture::seeded_two_vaults(same, same);
+    f.poke_level_size_bps(0, true, 0, 20_000); // 200% of the leg — Σ ask > BPS
+
+    let taker = f.funded_depositor(0, 200_000);
+    f.swap(&taker, 0, 50_000, Price::INFINITY.as_u32(), 1)
+        .expect("swap succeeds despite an oversized ask side on sector 0");
+
+    // The oversized-ask vault contributed no asks; the healthy vault absorbed
+    // the whole buy. A zeroed side takes no fill at all — not even dust.
+    let fill_bad = 1_000_000 - f.vault(0).base_atoms.get();
+    let fill_good = 1_000_000 - f.vault(1).base_atoms.get();
+    assert_eq!(fill_bad, 0, "the oversized-ask vault contributed no asks");
+    assert!(
+        fill_good >= 40_000,
+        "the healthy vault absorbed the buy (filled {fill_good})"
+    );
+    // The stored profile bytes are left intact, so the leader's ladder
+    // self-heals the moment they resubmit a valid one: the poked 20_000 is
+    // still there, untouched by the flush that zeroed only `remaining`.
+    assert_eq!(
+        f.vault(0).profile.asks[0].size_bps.get(),
+        20_000,
+        "the stored (corrupt) profile is left intact, not rewritten"
+    );
+}
+
+#[test]
 fn multi_vault_equal_price_older_nonce_wins() {
     // Both vaults anchored at the same 1.0850 reference → identical ask
     // price, so the fill order is decided purely by the price-time

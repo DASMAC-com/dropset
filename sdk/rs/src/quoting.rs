@@ -124,21 +124,21 @@ impl NativeBook {
             return Err(QuotingError::TooManyLevels);
         }
         let mut profile = LiquidityProfile::zeroed();
-        let mut ask_bps = 0u32;
         for (i, lvl) in self.asks.iter().enumerate() {
-            let level = level_to_relative(lvl, base_atoms, reference, true)?;
-            ask_bps += level.size_bps.get() as u32;
-            profile.asks[i] = level;
+            profile.asks[i] = level_to_relative(lvl, base_atoms, reference, true)?;
         }
-        let mut bid_bps = 0u32;
         for (i, lvl) in self.bids.iter().enumerate() {
-            let level = level_to_relative(lvl, quote_atoms, reference, false)?;
-            bid_bps += level.size_bps.get() as u32;
-            profile.bids[i] = level;
+            profile.bids[i] = level_to_relative(lvl, quote_atoms, reference, false)?;
         }
-        if ask_bps > BPS as u32 || bid_bps > BPS as u32 {
-            return Err(QuotingError::SizeExceedsInventory);
-        }
+        // Canonical per-side `Σ size_bps ≤ BPS` gate — the same threshold the
+        // on-chain matcher applies at flush time to decide whether a side is
+        // materialized or thrown out. Routing every builder through it keeps
+        // an honest client from emitting a side the engine would silently
+        // skip (a no-fill). `level_to_relative` already floors each level and
+        // rejects any single one `> BPS`; this bounds the per-side sum.
+        profile
+            .validate_size_sums()
+            .map_err(|_| QuotingError::SizeExceedsInventory)?;
         Ok(profile)
     }
 
@@ -272,6 +272,50 @@ mod tests {
                 .unwrap_err(),
             QuotingError::SizeExceedsInventory
         );
+    }
+
+    #[test]
+    fn per_side_sum_at_bps_exactly_is_accepted() {
+        // Two asks 60% + 40% of base = 100% = 10_000 bps exactly — the strict
+        // gate accepts `Σ == BPS`, so an honest client sizing to full commit
+        // is never silently skipped by the chain.
+        let reference = Price::encode(10_000_000, 0).unwrap();
+        let book = NativeBook {
+            asks: vec![
+                NativeLevel {
+                    price: Price::encode(10_100_000, 0).unwrap(),
+                    size: 600_000,
+                    expiry_offset: 0,
+                },
+                NativeLevel {
+                    price: Price::encode(10_200_000, 0).unwrap(),
+                    size: 400_000,
+                    expiry_offset: 0,
+                },
+            ],
+            ..Default::default()
+        };
+        let p = book.to_profile(reference, 1_000_000, 1_000_000).unwrap();
+        let ask: u32 = p.asks.iter().map(|l| l.size_bps.get() as u32).sum();
+        assert_eq!(ask, 10_000);
+    }
+
+    #[test]
+    fn size_bps_floors_and_never_rounds_up_past_bps() {
+        // 999_999 / 1_000_000 = 99.9999% → 9999.99 bps, which floors to 9999,
+        // never rounding up to 10_000. Flooring is what keeps a per-side sum
+        // from overshooting the cap.
+        let reference = Price::encode(10_000_000, 0).unwrap();
+        let book = NativeBook {
+            asks: vec![NativeLevel {
+                price: Price::encode(10_100_000, 0).unwrap(),
+                size: 999_999,
+                expiry_offset: 0,
+            }],
+            ..Default::default()
+        };
+        let p = book.to_profile(reference, 1_000_000, 1_000_000).unwrap();
+        assert_eq!(p.asks[0].size_bps.get(), 9_999);
     }
 
     #[test]
