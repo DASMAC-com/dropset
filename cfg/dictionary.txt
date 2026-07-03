@@ -9,6 +9,7 @@ audc
 audd
 audm
 autocorrelated
+bareverb
 bindgen
 birdeye
 blockhash
@@ -45,6 +46,7 @@ eurc
 eurcv
 eurozone
 fieldless
+firmable
 forex
 frankfurter
 frontmatter
@@ -76,6 +78,7 @@ mxne
 paytrie
 pdas
 permissionless
+pkill
 prebuild
 predev
 programdata
@@ -130,6 +133,7 @@ transfero
 tryb
 tsup
 txns
+unfirmable
 unmirrored
 ureq
 usdg
@@ -140,6 +144,7 @@ veur
 vgbp
 vwap
 wakeup
+webfetch
 wincode
 wordmark
 worktree

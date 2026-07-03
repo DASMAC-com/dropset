@@ -1,4 +1,3 @@
-# cspell:word pkill
 .PHONY: all
 .PHONY: bots-down
 .PHONY: bots-up

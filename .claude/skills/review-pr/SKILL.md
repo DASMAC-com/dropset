@@ -1175,44 +1175,40 @@ PR-authoring **writes** (`create_pull_request`,
    skill-to-skill handoff, so gate it on the same TUI
    selector the merge-queue prompt uses (per `CLAUDE.md` →
    "The PR workflow and skill handoffs"): ask whether to
-   firm permissions now, offering "yes, run /firm-perms"
-   (**first**, the recommended default) and "skip". This
-   is a second, lighter gate *in front of* `firm-perms`'
-   own propose-then-confirm gate — intentional: the
-   `AskUserQuestion` decides *whether to firm at all this
-   run*; `firm-perms`' internal gate still governs *what
-   gets written*.
+   firm permissions now, offering "yes, firm permissions"
+   (**first**, the recommended default) and "skip".
 
    - On **decline**, skip this step and note in the
      report that permissions were **not** firmed this run.
-   - On **approve**, invoke `/firm-perms` to collapse the
-     per-worktree and per-arg `permissions.allow` entries
-     into reusable globs and propagate them to the base
-     repo so future worktrees inherit them. This is
-     housekeeping on the gitignored
+
+   - On **approve**, firm the just-approved command into
+     the **base repo only** — this worktree is about to be
+     pruned once the PR merges, so writing its copy is
+     pointless. Run the deterministic tool with
+     `--base-only`:
+
+     ```sh
+     python3 .claude/tools/firm_last.py --base-only
+     ```
+
+     This is housekeeping on the gitignored base
      `.claude/settings.local.json` — it does **not** affect
      the PR diff or its ready state, so run it regardless
-     of the gate or CI outcome.
+     of the gate or CI outcome. Relay the one-line result.
 
-   **Account for what the review agents requested.**
-   The diff-review and cross-check agents (steps 5–6)
-   run in this session, so every command they made you
-   approve is part of this run's churn. Tell
-   `/firm-perms` to fold those in too — its harvest
-   covers sub-agent approvals, not just commands you
-   typed. Two outcomes, and report both:
-
-   - A request that **can** be firmed (a bare command
-     that just needed a `:*` glob) gets generalized
-     and propagated like any other.
-   - A request that **can't** — a `find / … | head`, a
-     `sed … | grep`, a heredoc — is malformed, not
-     missing a glob; `/firm-perms` sets it aside. When
-     it does, that's a signal the **step-5 reviewer
-     brief leaked**: an agent emitted shell the brief
-     forbids. Tighten the brief (or the prompt) so the
-     pattern stops recurring, rather than trying to
-     allow-list it.
+   **When a broader sweep is warranted.** `firm_last`
+   firms the single most-recent approval. If this run piled
+   up many per-worktree or per-arg approvals worth
+   collapsing at once — including commands the diff-review
+   and cross-check agents (steps 5–6) made you approve —
+   run `/firm-perms sweep` instead, which harvests the
+   whole session (sub-agent approvals included) behind its
+   propose-then-confirm gate. Watch for what it reports as
+   **unfirmable**: a `find / … | head`, a `sed … | grep`,
+   or a heredoc is malformed, not missing a glob, and when
+   an agent emitted it that's a signal the **step-5
+   reviewer brief leaked** — tighten the brief so the
+   pattern stops recurring, rather than allow-listing it.
 
 1. **Capture session metrics** (while the PR sits in the
    queue). A review run is long and tool-heavy, so it is the
