@@ -1348,6 +1348,22 @@ PR-authoring **writes** (`create_pull_request`,
 
      If no notification matches (already cleared), skip it.
 
+     Finally, **reclaim this worktree's disk**. Now the PR
+     has landed, its worktree is dead weight until
+     `housekeeping` prunes it — and if that prune is delayed
+     (or the tree is left dirty and skipped), its multi-GB
+     Rust `target/` and pnpm `node_modules` sit around. Nuke
+     them with the `clean` target, which reduces to a
+     `Bash(make clean:*)` allow-rule:
+
+     ```sh
+     make clean
+     ```
+
+     Run this **only** on a confirmed merge — a still-queued
+     or dequeued PR keeps its build tree for a possible
+     re-run.
+
    - `state: "OPEN"` with `mergeQueueEntry` non-null (or, on
      a classic-auto-merge repo, `autoMergeRequest` non-null)
      → still queued; keep polling.

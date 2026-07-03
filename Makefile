@@ -35,7 +35,16 @@
 .PHONY: wasm
 
 all: lint test
+# Nuke this worktree's heavy build artifacts to reclaim disk: the Rust
+# target/ tree, every pnpm node_modules, and the Next.js .next build caches
+# (all cheaply rebuilt). Leaves the committed generated trees (sdk/idl,
+# sdk/ts, sdk/conformance) alone. Run at PR merge time (by review-pr) so a
+# worktree that lingers before it is pruned doesn't keep its build tree.
 clean:
+	cargo clean
+	rm -rf node_modules frontend/node_modules decks/node_modules \
+		sdk/ts/node_modules sdk/codama/node_modules
+	rm -rf frontend/.next decks/.next sdk/ts/dist
 
 # Required toolchain: anchor-cli 2.x, the Solana SBF toolchain, and a
 # solana-cli / solana-test-validator on the 3.1 minor — matching the SDK's
