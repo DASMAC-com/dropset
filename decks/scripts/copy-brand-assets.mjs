@@ -21,3 +21,5 @@ mkdirSync(deckPublic, { recursive: true });
 for (const asset of assets) {
   copyFileSync(join(frontendPublic, asset), join(deckPublic, asset));
 }
+
+console.log(`Copied ${assets.length} brand asset(s) from frontend/public.`);

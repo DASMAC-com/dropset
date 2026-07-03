@@ -22,8 +22,8 @@
     "check": "tsc --noEmit",
     "copy-brand-assets": "node scripts/copy-brand-assets.mjs",
     "dev": "next dev --port 3300",
-    "prebuild": "node scripts/copy-brand-assets.mjs",
-    "predev": "node scripts/copy-brand-assets.mjs",
+    "prebuild": "pnpm run copy-brand-assets",
+    "predev": "pnpm run copy-brand-assets",
     "start": "next start"
   },
   "version": "0.1.0"
