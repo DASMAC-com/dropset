@@ -123,6 +123,28 @@ repos:
     id: 'sqlfluff-lint'
   repo: 'https://github.com/sqlfluff/sqlfluff'
   rev: '4.2.2'
+# shfmt formats and shellcheck lints the committed shell-integration scripts
+# under `.claude/scripts/`. Both hooks pip-install a prebuilt binary, so neither
+# needs Go nor Docker (matching the taplo / hadolint-py pattern). They are
+# scoped to `.claude/scripts/` so the POSIX-sh scripts under `.github/` are left
+# byte-for-byte as they are. These are user shell-integration scripts, not skill
+# helpers, so bash + shfmt is the deliberate call here (skill helpers stay
+# Python per docs/conventions/skill-tooling.md).
+- hooks:
+  - args:
+    - '-w'
+    - '-i'
+    - '2'
+    - '-ci'
+    files: '^\.claude/scripts/.*\.sh$'
+    id: 'shfmt'
+  repo: 'https://github.com/maxwinterstein/shfmt-py'
+  rev: 'v3.7.0.1'
+- hooks:
+  - files: '^\.claude/scripts/.*\.sh$'
+    id: 'shellcheck'
+  repo: 'https://github.com/shellcheck-py/shellcheck-py'
+  rev: 'v0.10.0.1'
 - hooks:
   - entry: 'cargo fmt --'
     id: 'rustfmt'
