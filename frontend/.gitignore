@@ -16,6 +16,11 @@
 /lib/data/icon-manifest.gen.json
 /lib/data/wallet-manifest.gen.json
 
+# Brand assets copied from the repo-root brand-assets/ at dev/build time
+# (see ../scripts/copy-brand-assets.mjs); sourced, not committed.
+/public/dropset-wordmark.png
+/public/favicon-with-stroke.svg
+
 .DS_Store
 *.pem
 
