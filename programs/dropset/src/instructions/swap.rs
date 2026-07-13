@@ -402,12 +402,17 @@ impl Swap {
                 // Materialize Remaining from LiquidityProfile +
                 // current inventory, then clear FLUSH_BIT.
                 let v = self.market.mutate_vault(cur)?;
-                // Per-side `Σ size_bps ≤ BPS` gate, enforced here at match
-                // time rather than at the `set_liquidity_profile` write. A
-                // side whose sum exceeds BPS is thrown out of matching —
-                // its `remaining` sizes are written as zero, which the
-                // collection loop below skips — exactly like an invalid
-                // reference price skips a whole vault, instead of aborting
+                // Per-side `Σ size_bps ≤ BPS` gate, a match-time mirror of
+                // the write-time reject in `set_liquidity_profile` (which
+                // rejects `Σ > BPS` before any `profile` bytes are stored).
+                // Because no stored profile can currently exceed BPS, this
+                // match-time gate is unreachable defense-in-depth today; it
+                // keeps the hot path robust should that write-time reject
+                // ever move here. A side whose sum exceeds BPS is thrown
+                // out of matching — its `remaining` sizes are written as
+                // zero, which the collection loop below skips — exactly
+                // like an invalid reference price skips a whole vault,
+                // instead of aborting
                 // every taker's swap. This subsumes the per-level case: a
                 // single level `> BPS` forces its side's sum `> BPS`. The
                 // stored `profile` bytes are left intact, so the leader's

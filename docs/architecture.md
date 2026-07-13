@@ -423,7 +423,7 @@ regular price.
 and the significand normalized to a fixed width, an unsigned `u32`
 compare of two `Price`s matches comparing the values they encode. The
 matching engine leans on this: price-time priority — the
-`(price, nonce)` heap keys, including the bid-side `Price::MAX − price`
+`(price, nonce)` heap keys, including the bid-side `Price::INFINITY − price`
 inversion — is a raw integer compare with no decode. Normalization
 also makes the encoding canonical (one bit pattern per representable
 price), so equality and tie-breaks are unambiguous.
@@ -1006,8 +1006,8 @@ caller; the third is the per-ix authority gate.
      `vault.outside_deposits_approved == 1` (admin approval).
    - **Withdraw**: leader path requires `vault.leader == signer`;
      otherwise outside path requires a `VaultDepositor` PDA seeded by
-     `(vault, signer)` with `shares >= shares_in` (the seeds bind the
-     account to the signer, proving ownership). See
+     `(market, sector_idx, signer)` with `shares >= shares_in` (the seeds
+     bind the account to the signer, proving ownership). See
      **Vault → Frozen and tombstoned vaults** for the wind-down
      behavior on non-active vaults.
    - **Permissionless.** There is no permissionless vault-targeting
@@ -1446,8 +1446,8 @@ for both the leader and outside depositors. The path splits
 internally on `signer == vault.leader`: the leader updates
 `Vault.leader_shares` directly, while outside depositors update
 `shares` on their `VaultDepositor` account (PDA seeded by
-`("vault_depositor", vault, owner)`; see **Depositor positions and
-cost basis**). The `VaultDepositor` account is required on the
+`("vault_depositor", market, sector_idx, owner)`; see **Depositor
+positions and cost basis**). The `VaultDepositor` account is required on the
 outside path — `init_if_needed` on `Deposit`, `close`-on-empty on
 `Withdraw` — and **omitted on the leader path**. No SPL share mint or
 ATA exists anymore; shares are pure on-vault bookkeeping on both
@@ -1623,6 +1623,11 @@ taker, and discards it when the instruction returns. Levels are
 read from `Vault.remaining`, where prices, sizes, and per-level
 expiries are already materialized — the matching engine does no bps
 arithmetic at match time.
+
+The taker instruction is exposed on-chain as `swap` — that is its name in
+code, the IDL, and the SDK, and its errors are `Swap*`. This document calls
+it "the take" as a role name (and "the swap hot path" elsewhere); both name
+the same instruction.
 
 ### Book construction
 
@@ -2041,7 +2046,7 @@ rent and close with their parent.
 | 4   | **Vault** sectors inside the market slab                      | n/a (inline)           | **no separate rent** — covered by Market's   | closed implicitly by `close_market`; there is no per-vault close instruction. Reclaim (to the free DLL) does not refund any rent.                                                                                                     | n/a                                       |
 | 5   | **Base treasury** ATA, derived from market PDA                | SPL Token / Token-2022 | yes                                          | `close_market_treasury` (admin, feature-gated). Pre-condition: `amount == 0`. CPI `CloseAccount` signed by market PDA.                                                                                                                | passed-in `rent_recipient`                |
 | 6   | **Quote treasury** ATA, derived from market PDA               | SPL Token / Token-2022 | yes                                          | same instruction, run for the quote leg.                                                                                                                                                                                              | passed-in `rent_recipient`                |
-| 7   | **VaultDepositor** PDA, seeds `("vault_depositor", v, owner)` | dropset                | yes                                          | (a) existing close-on-empty in `Withdraw` when `shares == 0`; (b) `force_withdraw_depositor` (see **Depositor positions and cost basis → Admin force-withdraw**). Either path decrements `MarketHeader.outstanding_vault_depositors`. | depositor `owner` — their PDA, their rent |
+| 7   | **VaultDepositor** PDA, seeds `("vault_depositor", market, sector_idx, owner)` | dropset                | yes                                          | (a) existing close-on-empty in `Withdraw` when `shares == 0`; (b) `force_withdraw_depositor` (see **Depositor positions and cost basis → Admin force-withdraw**). Either path decrements `MarketHeader.outstanding_vault_depositors`. | depositor `owner` — their PDA, their rent |
 
 Everything outside this table (`system_program`, `token_program`,
 `ProgramData`, the program executable itself) is not program state
