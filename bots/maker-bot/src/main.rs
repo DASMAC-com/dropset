@@ -17,8 +17,9 @@
 //!   --drop <tier>          dry-run only: suppress coingecko | cmc | fx
 
 use anyhow::{anyhow, Context, Result};
+use dropset_localnet_support::ws_url_from_rpc;
 use dropset_maker_bot::config::{
-    ws_url_from_rpc, BotConfig, MarketConfig, DEFAULT_LEADER_KEY, MARKETS, QUOTE_KEYPAIR_FILE,
+    BotConfig, MarketConfig, DEFAULT_LEADER_KEY, MARKETS, QUOTE_KEYPAIR_FILE,
 };
 use dropset_maker_bot::context::Context as BotContext;
 use dropset_maker_bot::model::fair_mid::{compose, Quote};

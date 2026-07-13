@@ -12,6 +12,7 @@
 
 use crate::job::Logger;
 use anyhow::{Context, Result};
+use dropset_localnet_support::{create_ata_idempotent_ix, mint_to_ix};
 use dropset_sdk::instructions::{
     CloseMarket, CloseMarketTreasury, CloseRegistry, CloseRegistryFeeVault, CreateMarket,
     CreateVault, CreateVaultInstructionArgs, DepositLeader, DepositLeaderInstructionArgs,
@@ -28,12 +29,14 @@ use solana_pubkey::{pubkey, Pubkey};
 use solana_signer::Signer;
 use solana_transaction::Transaction;
 
-/// SPL Token program.
-pub const SPL_TOKEN_PROGRAM_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
-/// Associated Token Account program.
-pub const ATA_PROGRAM_ID: Pubkey = pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
-/// System program.
-pub const SYSTEM_PROGRAM_ID: Pubkey = pubkey!("11111111111111111111111111111111");
+// The SPL / ATA / System program-id consts and the ATA derivation are the
+// shared localnet-host plumbing; re-exported so `chain::SPL_TOKEN_PROGRAM_ID`
+// (etc.) and `chain::associated_token_address` keep resolving for the callers
+// in this crate (e.g. `accounts.rs`).
+pub use dropset_localnet_support::{
+    associated_token_address, ATA_PROGRAM_ID, SPL_TOKEN_PROGRAM_ID, SYSTEM_PROGRAM_ID,
+};
+
 /// Clock sysvar — the `swap` instruction reads it for level-expiry checks.
 pub const CLOCK_SYSVAR_ID: Pubkey = pubkey!("SysvarC1ock11111111111111111111111111111111");
 
@@ -94,17 +97,6 @@ pub fn event_authority() -> Pubkey {
 /// authenticate the upgrade authority.
 pub fn program_data() -> Pubkey {
     get_program_data_address(&DROPSET_ID)
-}
-
-/// Canonical associated-token-account address for `(wallet, mint,
-/// token_program)` — seeds `[wallet, token_program, mint]` under the ATA
-/// program.
-pub fn associated_token_address(wallet: &Pubkey, mint: &Pubkey, token_program: &Pubkey) -> Pubkey {
-    Pubkey::find_program_address(
-        &[wallet.as_ref(), token_program.as_ref(), mint.as_ref()],
-        &ATA_PROGRAM_ID,
-    )
-    .0
 }
 
 // ── Bootstrap instruction builders ───────────────────────────────────
@@ -518,18 +510,7 @@ pub fn mint_to(
     ata: &Pubkey,
     amount: u64,
 ) -> Result<String> {
-    // SPL Token `MintTo` (index 7): the u64 amount.
-    let mut data = vec![7u8];
-    data.extend_from_slice(&amount.to_le_bytes());
-    let ix = Instruction::new_with_bytes(
-        SPL_TOKEN_PROGRAM_ID,
-        &data,
-        vec![
-            AccountMeta::new(*mint, false),
-            AccountMeta::new(*ata, false),
-            AccountMeta::new_readonly(authority.pubkey(), true),
-        ],
-    );
+    let ix = mint_to_ix(&authority.pubkey(), mint, ata, amount);
     send(client, authority, &[authority], &[ix])
 }
 
@@ -544,18 +525,7 @@ pub fn create_ata_idempotent(
     mint: &Pubkey,
 ) -> Result<Pubkey> {
     let ata = associated_token_address(wallet, mint, &SPL_TOKEN_PROGRAM_ID);
-    let ix = Instruction::new_with_bytes(
-        ATA_PROGRAM_ID,
-        &[1u8],
-        vec![
-            AccountMeta::new(payer.pubkey(), true),
-            AccountMeta::new(ata, false),
-            AccountMeta::new_readonly(*wallet, false),
-            AccountMeta::new_readonly(*mint, false),
-            AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
-            AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
-        ],
-    );
+    let ix = create_ata_idempotent_ix(&payer.pubkey(), wallet, mint, &SPL_TOKEN_PROGRAM_ID);
     send(client, payer, &[payer], &[ix]).context("create ATA")?;
     Ok(ata)
 }

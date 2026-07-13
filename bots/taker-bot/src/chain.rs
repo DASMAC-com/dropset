@@ -12,6 +12,9 @@
 //! built with the generated [`SwapBuilder`] and signed by the taker.
 
 use anyhow::{anyhow, Context as _, Result};
+use dropset_localnet_support::{
+    associated_token_address, create_ata_idempotent_ix, mint_to_ix, SPL_TOKEN_PROGRAM_ID,
+};
 use dropset_sdk::accounts::MARKET_HEADER_DISCRIMINATOR;
 use dropset_sdk::instructions::SwapBuilder;
 use dropset_sdk::layout::MarketView;
@@ -20,22 +23,15 @@ use dropset_sdk::price::Price;
 use dropset_sdk::DROPSET_ID;
 use solana_client::rpc_client::RpcClient;
 use solana_commitment_config::CommitmentConfig;
-use solana_instruction::{AccountMeta, Instruction};
+use solana_instruction::Instruction;
 use solana_keypair::Keypair;
-use solana_pubkey::{pubkey, Pubkey};
+use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 use solana_transaction::Transaction;
 use std::time::Duration;
 
 use crate::context::MarketAddrs;
 use crate::model::Order;
-
-/// SPL Token program (the mock demo mints live here, not Token-2022).
-pub const SPL_TOKEN_PROGRAM_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
-/// Associated Token Account program.
-pub const ATA_PROGRAM_ID: Pubkey = pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
-/// System program.
-pub const SYSTEM_PROGRAM_ID: Pubkey = pubkey!("11111111111111111111111111111111");
 
 /// SPL Token Mint `decimals` byte offset (after `COption<Pubkey>` authority +
 /// `u64` supply).
@@ -98,20 +94,6 @@ pub fn assert_localnet(client: &RpcClient) -> Result<()> {
 /// The self-CPI event-authority PDA — seeds `[b"__event_authority"]`.
 fn event_authority() -> Pubkey {
     Pubkey::find_program_address(&[b"__event_authority"], &DROPSET_ID).0
-}
-
-/// Canonical associated-token-account address for `(wallet, mint)` under the
-/// SPL Token program — seeds `[wallet, token_program, mint]`.
-pub fn associated_token_address(wallet: &Pubkey, mint: &Pubkey) -> Pubkey {
-    Pubkey::find_program_address(
-        &[
-            wallet.as_ref(),
-            SPL_TOKEN_PROGRAM_ID.as_ref(),
-            mint.as_ref(),
-        ],
-        &ATA_PROGRAM_ID,
-    )
-    .0
 }
 
 /// Airdrop `lamports` to `who` and block until it confirms (localnet faucet).
@@ -189,33 +171,23 @@ fn token_balance(client: &RpcClient, ata: &Pubkey) -> Result<u64> {
     Ok(u64::from_le_bytes(bytes.try_into().unwrap()))
 }
 
-/// Create the associated token account for `(wallet, mint)` idempotently (ATA
-/// program `CreateIdempotent`, index 1), paid by `payer`. Returns the ATA.
+/// Create the associated token account for `(wallet, mint)` under the SPL
+/// Token program idempotently (`CreateIdempotent`), paid by `payer`. Returns
+/// the ATA.
 pub fn create_ata_idempotent(
     client: &RpcClient,
     payer: &Keypair,
     wallet: &Pubkey,
     mint: &Pubkey,
 ) -> Result<Pubkey> {
-    let ata = associated_token_address(wallet, mint);
-    let ix = Instruction::new_with_bytes(
-        ATA_PROGRAM_ID,
-        &[1u8],
-        vec![
-            AccountMeta::new(payer.pubkey(), true),
-            AccountMeta::new(ata, false),
-            AccountMeta::new_readonly(*wallet, false),
-            AccountMeta::new_readonly(*mint, false),
-            AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
-            AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
-        ],
-    );
+    let ata = associated_token_address(wallet, mint, &SPL_TOKEN_PROGRAM_ID);
+    let ix = create_ata_idempotent_ix(&payer.pubkey(), wallet, mint, &SPL_TOKEN_PROGRAM_ID);
     send(client, payer, &[payer], &[ix]).context("create ATA")?;
     Ok(ata)
 }
 
 /// Mint `amount` atoms of `mint` to `ata`; `authority` must be the mint
-/// authority (SPL Token `MintTo`, index 7).
+/// authority (SPL Token `MintTo`).
 pub fn mint_to(
     client: &RpcClient,
     authority: &Keypair,
@@ -223,17 +195,7 @@ pub fn mint_to(
     ata: &Pubkey,
     amount: u64,
 ) -> Result<String> {
-    let mut data = vec![7u8];
-    data.extend_from_slice(&amount.to_le_bytes());
-    let ix = Instruction::new_with_bytes(
-        SPL_TOKEN_PROGRAM_ID,
-        &data,
-        vec![
-            AccountMeta::new(*mint, false),
-            AccountMeta::new(*ata, false),
-            AccountMeta::new_readonly(authority.pubkey(), true),
-        ],
-    );
+    let ix = mint_to_ix(&authority.pubkey(), mint, ata, amount);
     send(client, authority, &[authority], &[ix])
 }
 
@@ -415,10 +377,15 @@ pub fn send_swap(
         .quote_mint(market.quote_mint)
         .base_token_program(SPL_TOKEN_PROGRAM_ID)
         .quote_token_program(SPL_TOKEN_PROGRAM_ID)
-        .taker_base_ata(associated_token_address(&taker.pubkey(), &market.base_mint))
+        .taker_base_ata(associated_token_address(
+            &taker.pubkey(),
+            &market.base_mint,
+            &SPL_TOKEN_PROGRAM_ID,
+        ))
         .taker_quote_ata(associated_token_address(
             &taker.pubkey(),
             &market.quote_mint,
+            &SPL_TOKEN_PROGRAM_ID,
         ))
         .market_base_treasury(market.base_treasury)
         .market_quote_treasury(market.quote_treasury)
@@ -469,23 +436,6 @@ mod tests {
         assert_eq!(to_atoms(1.0, 6), 1_000_000);
         assert_eq!(to_atoms(0.73, 6), 730_000);
         assert_eq!(to_atoms(2.5, 0), 2);
-    }
-
-    /// The taker ATA derivation matches the canonical seed order.
-    #[test]
-    fn ata_is_canonical() {
-        let wallet = Pubkey::new_unique();
-        let mint = Pubkey::new_unique();
-        let expected = Pubkey::find_program_address(
-            &[
-                wallet.as_ref(),
-                SPL_TOKEN_PROGRAM_ID.as_ref(),
-                mint.as_ref(),
-            ],
-            &ATA_PROGRAM_ID,
-        )
-        .0;
-        assert_eq!(associated_token_address(&wallet, &mint), expected);
     }
 
     /// The event-authority PDA matches the program's `[b"__event_authority"]`

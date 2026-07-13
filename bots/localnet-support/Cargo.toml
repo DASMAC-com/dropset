@@ -1,0 +1,32 @@
+# Shared localnet-host plumbing for the FX-stablecoin demo crates (the TUI
+# and the maker / taker bots). Three parallel copies of the same code had
+# drifted across those crates; this hoists them into one home so a fix lands
+# once: the SPL / ATA / System program-id consts, the associated-token-account
+# derivation and its raw SPL byte-instruction builders (create-idempotent-ATA,
+# mint-to), and the Agave `http`→`ws` PubSub-URL derivation. Pure — no
+# `RpcClient`, no `Keypair`, no signing: it builds `Instruction`s and derives
+# addresses, and each consumer keeps its own send path (the TUI's carries CU
+# measurement the bots don't). Rust-only, not published.
+
+[dependencies]
+# Pinned to the SDK's 3.x line (sdk/rs/Cargo.toml) so there is one
+# `Pubkey` / `Instruction` type across the builder and transaction paths in
+# every consumer — NOT the workspace's solana-pubkey 4.x, which the on-chain
+# crate uses.
+solana-instruction = "3"
+# `curve25519` supplies `Pubkey::find_program_address` (the off-curve PDA
+# check the ATA derivation needs).
+solana-pubkey = { version = "3", features = ["curve25519"] }
+
+[lib]
+name = "dropset_localnet_support"
+path = "src/lib.rs"
+
+[package]
+description = "Shared localnet-host chain plumbing for the Dropset FX-stablecoin demo crates."
+name = "dropset-localnet-support"
+publish = false
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true

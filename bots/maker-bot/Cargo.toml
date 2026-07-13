@@ -12,14 +12,7 @@ name = "dropset-maker-bot"
 path = "src/main.rs"
 
 [dependencies]
-# The fill-event subscription decodes `emit_cpi!` inner instructions, which
-# anchor frames with its `EVENT_IX_TAG_LE` self-CPI tag — sourced here rather
-# than hand-copied. Default features only — host build, no on-chain
-# (`const-rent` / `testing`) extras.
-anchor-lang-v2 = { workspace = true }
 anyhow = "1"
-# Decode the borsh wire form of `FillEvent` off the event inner instruction.
-borsh = "1"
 # Inner-instruction `data` comes back base58-encoded from `getTransaction`
 # even under base64 transaction encoding, so decode it before parsing.
 bs58 = "0.5"
@@ -27,18 +20,18 @@ bs58 = "0.5"
 # on-chain `Vault` slab mirror for live inventory (matches the SDK's own
 # profile construction and the TUI's account decoding).
 bytemuck = "1"
+# Shared localnet-host plumbing: the Agave `http`→`ws` PubSub-URL derivation
+# (the fill subscription's endpoint). The `emit_cpi!` fill decode is the SDK's
+# shared `events` codec, not a hand-rolled discriminator.
+dropset-localnet-support = { path = "../localnet-support" }
 # The off-chain client: Codama instruction builders + the `quoting` helpers
 # (set_reference_price_ix / set_liquidity_profile_ix / NativeBook), the typed
 # `fetch_*` account decoders, the `layout` slab mirror (active-vault walk for
-# inventory), the `Price` codec, and the blocking `RpcClient` — all behind
-# `fetch`.
+# inventory), the `Price` codec, the shared `events` fill-event codec, and the
+# blocking `RpcClient` — all behind `fetch`.
 dropset-sdk = { path = "../../sdk/rs", features = ["fetch"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# Reproduce `FillEvent`'s event discriminator off-chain via anchor's
-# name-based scheme, `sha256("event:FillEvent")[..8]` — the on-chain type
-# lives in the SBF-only program crate the bot can't depend on.
-sha2 = "0.10"
 # Pinned to the SDK's 3.x line (sdk/rs/Cargo.toml) so there is one
 # `Pubkey` / `Instruction` / `RpcClient` type across the builder, fetch, and
 # transaction paths — NOT the workspace's solana-pubkey 4.x. `~3.1` on
@@ -59,6 +52,14 @@ solana-transaction-status-client-types = "3"
 # Blocking HTTP for the price feeds (CoinGecko / CoinMarketCap / Frankfurter),
 # the same synchronous JSON client tools/sync-blockers uses for Linear.
 ureq = { version = "2", features = ["json"] }
+
+# Test-only: forge the `[tag][discriminator][body]` fill-event envelope the
+# decoder consumes. `borsh` serializes the event body and `sha2` reproduces
+# the `sha256("event:FillEvent")[..8]` discriminator — neither is needed at
+# runtime, where the SDK's shared `events` codec owns the decode.
+[dev-dependencies]
+borsh = "1"
+sha2 = "0.10"
 
 [package]
 description = "Localnet FX-stablecoin market-maker bot for the Dropset demo markets."

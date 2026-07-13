@@ -13,6 +13,10 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+# Shared localnet-host plumbing: the SPL / ATA / System program-id consts, the
+# ATA derivation, and the `CreateIdempotent` / `MintTo` byte-instruction
+# builders. Each is pure — the crate keeps its own sign-and-send path.
+dropset-localnet-support = { path = "../localnet-support" }
 # The off-chain client: the `matching` book simulator (size each order and
 # derive `min_out` off-chain before sending), the `layout` slab mirror
 # (market discovery + live book read), the `Price` codec (encode the swap's
