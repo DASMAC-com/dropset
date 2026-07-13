@@ -110,6 +110,8 @@ async def _reorder_window(window, seq: dict, last_group: dict, counter: int) -> 
     order, counter = plan_order(entries, seq, last_group, counter)
     desired = [tabs[i] for i in order]
     if desired != tabs:
+        # async_set_tabs preserves the selected tab, so a tab you're working in
+        # moves to its queue slot but stays focused — it never steals focus.
         await window.async_set_tabs(desired)
     return counter
 

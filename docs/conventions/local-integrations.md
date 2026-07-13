@@ -172,6 +172,11 @@ to the *back* of its group (just before the next group). So position 1 is
 always the longest-waiting item — clear it, it drops below all attention
 tabs, and the next-oldest slides into position 1.
 
+The reorderer never steals focus: `async_set_tabs` preserves the selected
+tab, so a tab you're working in slides to its queue position but stays
+focused until *you* navigate away (e.g. `Cmd-1` to jump to the
+longest-waiting item).
+
 Reordering a tab is **only possible through iTerm2's Python API**
 (`window.async_set_tabs`) — no escape sequence moves a tab — so this half
 of the integration is a Python daemon, separate from the per-TTY color
