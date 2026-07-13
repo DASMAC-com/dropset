@@ -62,19 +62,13 @@ impl CloseVault {
             _ => return Err(DropsetError::CorruptVaultList.into()),
         }
 
-        // Active → tombstone: unlink, drop the active count, re-thread.
-        self.market.unlink(DllList::Active, vault_idx)?;
-        let prev = self.market.active_count.get();
-        let active_count_after = prev.saturating_sub(1);
-        self.market.active_count = active_count_after.into();
-        self.market.link_head(DllList::Tombstone, vault_idx)?;
-
-        // Flag the vault tombstoned so deposit / realize handlers can
-        // treat it as dead with a cheap local read rather than an O(n)
-        // `vault_list_of` walk. Mirrors how `freeze_vault` sets
-        // `vault.frozen`. Cleared implicitly on reclaim+reuse, since
-        // `allocate_sector` re-zeroes the whole struct.
-        self.market.mutate_vault(vault_idx)?.tombstoned = true.into();
+        // Active → tombstone: unlink from the active list, drop
+        // `active_count`, re-thread onto the tombstone list, and stamp
+        // `tombstoned` — all encapsulated in `tombstone_sector` so the
+        // counter moves atomically with the list membership. Mirrors how
+        // `freeze_vault` sets `vault.frozen`; cleared implicitly on
+        // reclaim+reuse, since `allocate_sector` re-zeroes the struct.
+        let active_count_after = self.market.tombstone_sector(vault_idx)?;
 
         Ok(CloseVaultEvent {
             market: *self.market.address(),

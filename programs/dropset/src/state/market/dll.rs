@@ -60,6 +60,29 @@ pub trait VaultDll {
     /// vaults → Reclaim** step describes (no rent is refunded; sectors
     /// are inline in the market slab).
     fn reclaim_sector(&mut self, sector: u32) -> Result<()>;
+
+    /// Move an active sector onto the tombstone DLL: unlink it from the
+    /// active list, decrement `active_count`, thread it onto
+    /// `tombstone_head`, and stamp `tombstoned` so deposit / realize
+    /// handlers can treat it as dead with a cheap local read rather than
+    /// an O(n) `vault_list_of` walk. The active→tombstone mirror of
+    /// [`reclaim_sector`] — routing every active-list membership change
+    /// through the trait keeps `active_count` from drifting when a
+    /// handler open-codes the transition and forgets the counter. Returns
+    /// the post-decrement `active_count` for the `CloseVaultEvent`.
+    ///
+    /// The caller must have confirmed the sector is on the active list
+    /// (`vault_list_of == Active`); the inner `unlink` rejects a corrupt
+    /// or absent one.
+    fn tombstone_sector(&mut self, sector: u32) -> Result<u32>;
+
+    /// Thread an already-stamped sector onto the active DLL and increment
+    /// `active_count` — the free/new→active counterpart to
+    /// [`tombstone_sector`]. The caller stamps the sector's
+    /// leader-controlled fields **before** this call so the matching
+    /// engine's "a vault on the active DLL has a non-default leader"
+    /// invariant holds at every step (see `create_vault`).
+    fn link_active(&mut self, sector: u32) -> Result<()>;
 }
 
 /// Identifies which of the three DLL heads on the [`MarketHeader`] a
@@ -217,6 +240,24 @@ impl VaultDll for Market {
         // true in the interim matches what every other reader expects.
         self.as_mut_slice()[sector as usize].leader = Address::default();
         self.link_head(DllList::Free, sector)?;
+        Ok(())
+    }
+
+    fn tombstone_sector(&mut self, sector: u32) -> Result<u32> {
+        self.unlink(DllList::Active, sector)?;
+        let active_count_after = self.active_count.get().saturating_sub(1);
+        self.active_count = active_count_after.into();
+        self.link_head(DllList::Tombstone, sector)?;
+        // Flag the sector so deposit / realize handlers short-circuit on a
+        // cheap local read. Cleared implicitly on reclaim+reuse, since
+        // `allocate_sector` re-zeroes the whole struct.
+        self.as_mut_slice()[sector as usize].tombstoned = true.into();
+        Ok(active_count_after)
+    }
+
+    fn link_active(&mut self, sector: u32) -> Result<()> {
+        self.link_head(DllList::Active, sector)?;
+        self.active_count = self.active_count.get().saturating_add(1).into();
         Ok(())
     }
 }
@@ -550,6 +591,41 @@ mod tests {
         assert_eq!(market.active_count.get(), 1);
         assert!(walk(&market, DllList::Tombstone).is_empty());
         assert_eq!(walk(&market, DllList::Free), [1]);
+    }
+
+    #[test]
+    fn tombstone_sector_moves_active_to_tombstone_and_decrements() {
+        let buf = setup();
+        let mut market = load_market(&buf);
+        market.link_head(DllList::Active, 0).unwrap();
+        market.link_head(DllList::Active, 1).unwrap();
+        market.active_count = 2u32.into();
+
+        let after = market.tombstone_sector(0).unwrap();
+
+        // Sector 0 left the active list for the tombstone list.
+        assert_eq!(walk(&market, DllList::Active), [1]);
+        assert_eq!(walk(&market, DllList::Tombstone), [0]);
+        // Active count dropped by one and is returned for the event.
+        assert_eq!(after, 1);
+        assert_eq!(market.active_count.get(), 1);
+        // The sector is flagged tombstoned so handlers read it as dead.
+        assert!(market.as_slice()[0].tombstoned.get());
+    }
+
+    #[test]
+    fn link_active_links_and_increments() {
+        let buf = setup();
+        let mut market = load_market(&buf);
+        market.link_head(DllList::Active, 0).unwrap();
+        market.active_count = 1u32.into();
+
+        // A freshly-allocated (detached) sector threads onto the active
+        // list and bumps the counter in one move.
+        market.link_active(1).unwrap();
+
+        assert_eq!(walk(&market, DllList::Active), [1, 0]);
+        assert_eq!(market.active_count.get(), 2);
     }
 
     #[test]

@@ -28,7 +28,7 @@ use anchor_spl_v2::{
 use crate::{
     errors::DropsetError,
     events::CreateVaultEvent,
-    state::{DllList, Market, VaultAccess, VaultDll},
+    state::{Market, VaultAccess, VaultDll},
     AdminSet, Registry, PPM, Q32_32_ONE,
 };
 
@@ -188,9 +188,9 @@ impl CreateVault {
         }
 
         // Now thread the fully-stamped sector onto the active DLL and
-        // bump the active count.
-        self.market.link_head(DllList::Active, sector)?;
-        self.market.active_count = (active + 1).into();
+        // bump the active count — both inside `link_active` so the
+        // counter moves atomically with active-list membership.
+        self.market.link_active(sector)?;
 
         Ok(CreateVaultEvent {
             market: market_addr,
