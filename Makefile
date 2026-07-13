@@ -12,6 +12,7 @@
 .PHONY: check-wasm
 .PHONY: clean
 .PHONY: conformance-vectors
+.PHONY: debugger
 .PHONY: decks
 .PHONY: explorer
 .PHONY: explorer-down
@@ -23,6 +24,10 @@
 .PHONY: install-anchor-v2
 .PHONY: lint
 .PHONY: localnet
+.PHONY: program
+.PHONY: program-keypair
+.PHONY: program-no-teardown
+.PHONY: program-parity
 .PHONY: sdk
 .PHONY: sdk-test
 .PHONY: session-metrics
@@ -31,12 +36,27 @@
 .PHONY: teardown
 .PHONY: test
 .PHONY: test-no-teardown
+.PHONY: test-parity
 .PHONY: tools-tests
 .PHONY: tui
 .PHONY: wasm
 
 all: lint test
 clean:
+
+# Local dev-server port allocation (the "reservation table"). There is no
+# runtime enforcement — the OS fails-loud when a port is taken — so this
+# comment is the single source of truth; pin each server to its slot and
+# add a row when a new one lands.
+#   3000  frontend (make frontend) AND explorer (make explorer) — these
+#         two collide if run together; keep only one up at a time
+#   3100  (free)
+#   3200  (free)
+#   3300  decks (make decks)
+#   8080  indexer /v1 API (make indexer-up)
+#   8899  solana-test-validator RPC (validator, not a web port)
+
+# === Toolchain & prerequisite checks ===
 
 # Required toolchain: anchor-cli 2.x, the Solana SBF toolchain, and a
 # solana-cli / solana-test-validator on the 3.1 minor — matching the SDK's
@@ -79,6 +99,60 @@ check-docker:
 check-pnpm:
 	@command -v pnpm >/dev/null \
 		|| { echo "pnpm not found (npm i -g pnpm)"; exit 1; }
+
+# === On-chain program: build & keypair ===
+
+# Materialize the program keypair into the (git-ignored) build dir from
+# its canonical home, keys/AAAA.json, so anchor's build-time program-ID
+# check — and the litesvm tests in programs/dropset/tests/common/mod.rs
+# that read the file — see keypair == declare_id!. keys/AAAA.json is the
+# single committed source; target/deploy/ is a pure build artifact.
+program-keypair:
+	mkdir -p target/deploy
+	cp keys/AAAA.json target/deploy/dropset-keypair.json
+
+program: check-toolchain program-keypair
+	anchor keys sync && anchor build
+
+# Build the program .so WITHOUT `admin-teardown` (the shape of the final
+# immutable deploy). `anchor build`'s trailing args are forwarded to
+# `cargo build-sbf`, so this rebuilds `dropset.so` feature-off. Split out
+# from `test-no-teardown` so CI can cache this .so and skip the rebuild on
+# a cache hit (see .github/workflows/test.yml).
+program-no-teardown: check-toolchain program-keypair
+	anchor build -- --no-default-features
+
+# Build BOTH artifacts the Rust↔ASM parity tests need: the reference
+# (feature-off) build stashed as `dropset_ref.so`, then the default asm
+# build left in `dropset.so`. The reference build runs first because
+# `anchor build` always writes `dropset.so`; the trailing default build
+# restores the asm artifact every other test deploys.
+program-parity: check-toolchain program-keypair
+	anchor build -- --no-default-features --features admin-teardown
+	cp target/deploy/dropset.so target/deploy/dropset_ref.so
+	anchor build
+
+debugger: program
+	anchor debugger
+
+# === Program tests ===
+
+test: program
+	cargo test
+
+# Feature-off coverage: build the program WITHOUT `admin-teardown` and
+# assert every teardown instruction returns `TeardownDisabled` — only the
+# feature-off-gated test target is run.
+test-no-teardown: program-no-teardown
+	cargo test --no-default-features --test teardown_disabled
+
+# Rust↔ASM parity: deploy both artifacts and assert the assembly fast path
+# (the default `dropset.so`) matches the reference kernel — identical stamp
+# bytes and domain error codes.
+test-parity: program-parity
+	cargo test --test asm_parity
+
+# === SDK & codegen ===
 
 # Regenerate the checked-in IDL from the program. Pin anchor-cli to the
 # same anchor-next rev as the program crate (see install-anchor-v2) so
@@ -133,8 +207,7 @@ sdk-test: check-pnpm
 	cargo test -p dropset-math-core -p dropset-interface -p dropset-sdk
 	cd sdk/ts && pnpm test
 
-debugger: program
-	anchor debugger
+# === Dev servers & control plane ===
 
 # Localnet control-plane TUI. Spawns its own
 # solana-test-validator (ledger in a temp dir), so it needs no running
@@ -151,6 +224,47 @@ tui:
 teardown:
 	cargo run -p dropset-tui --bin dropset-teardown -- \
 		$(if $(WALLET),--wallet $(WALLET)) $(ARGS)
+
+# Run next dev and open the browser once it's accepting connections.
+frontend: check-pnpm
+	cd frontend && pnpm install
+	@( until nc -z localhost 3000 2>/dev/null; do sleep 0.2; done; \
+		opener=$$(command -v open || command -v xdg-open) \
+			&& $$opener http://localhost:3000 ) &
+	cd frontend && pnpm dev
+
+# Run the frontend against a local validator (open http://localhost:3000): the
+# localnet cluster + local RPC/WS, overriding the mainnet endpoints in
+# .env.local (a process env var wins over .env files in Next). Assumes a
+# validator is up with the markets seeded, which the `tui` control plane does;
+# run `make tui` alongside this, or use `make localnet` to launch both.
+frontend-localnet: check-pnpm
+	cd frontend && pnpm install
+	cd frontend && NEXT_PUBLIC_CLUSTER=localnet \
+		NEXT_PUBLIC_RPC_URL=http://127.0.0.1:8899 \
+		NEXT_PUBLIC_WS_URL=ws://127.0.0.1:8900 pnpm dev
+
+# Run the decks deck dev server (port 3300, set in the dev script) and
+# open the browser once it's accepting connections.
+decks: check-pnpm
+	cd decks && pnpm install
+	@( until nc -z localhost 3300 2>/dev/null; do sleep 0.2; done; \
+		opener=$$(command -v open || command -v xdg-open) \
+			&& $$opener http://localhost:3300 ) &
+	cd decks && pnpm dev
+
+# The whole localnet demo in one command: the TUI control plane in the
+# foreground (it spawns the validator and seeds the markets) plus the
+# localnet frontend in the background, pointed at that validator. Quitting the
+# TUI stops the frontend too; the frontend retries until the validator is up,
+# so start order doesn't matter. Cleanup runs a broad `pkill -f "next dev"`,
+# so it also stops any unrelated next dev you have running (dev-only target).
+localnet:
+	@$(MAKE) --no-print-directory frontend-localnet & \
+	trap 'kill %1 2>/dev/null; pkill -f "next dev"' INT TERM EXIT; \
+	$(MAKE) --no-print-directory tui
+
+# === Localnet Docker stacks ===
 
 # Localnet Docker stack: the local Solana Explorer (infra/localnet). The
 # dropset-tui control plane manages this automatically; these targets drive
@@ -198,63 +312,7 @@ taker-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		rm -sf taker-bot
 
-# Local dev-server port allocation (the "reservation table"). There is no
-# runtime enforcement — the OS fails-loud when a port is taken — so this
-# comment is the single source of truth; pin each server to its slot and
-# add a row when a new one lands.
-#   3000  frontend (make frontend) AND explorer (make explorer) — these
-#         two collide if run together; keep only one up at a time
-#   3100  (free)
-#   3200  (free)
-#   3300  decks (make decks)
-#   8080  indexer /v1 API (make indexer-up)
-#   8899  solana-test-validator RPC (validator, not a web port)
-
-# Run next dev and open the browser once it's accepting connections.
-frontend: check-pnpm
-	cd frontend && pnpm install
-	@( until nc -z localhost 3000 2>/dev/null; do sleep 0.2; done; \
-		opener=$$(command -v open || command -v xdg-open) \
-			&& $$opener http://localhost:3000 ) &
-	cd frontend && pnpm dev
-
-# Run the decks deck dev server (port 3300, set in the dev script) and
-# open the browser once it's accepting connections.
-decks: check-pnpm
-	cd decks && pnpm install
-	@( until nc -z localhost 3300 2>/dev/null; do sleep 0.2; done; \
-		opener=$$(command -v open || command -v xdg-open) \
-			&& $$opener http://localhost:3300 ) &
-	cd decks && pnpm dev
-
-# Run the frontend against a local validator (open http://localhost:3000): the
-# localnet cluster + local RPC/WS, overriding the mainnet endpoints in
-# .env.local (a process env var wins over .env files in Next). Assumes a
-# validator is up with the markets seeded, which the `tui` control plane does;
-# run `make tui` alongside this, or use `make localnet` to launch both.
-frontend-localnet: check-pnpm
-	cd frontend && pnpm install
-	cd frontend && NEXT_PUBLIC_CLUSTER=localnet \
-		NEXT_PUBLIC_RPC_URL=http://127.0.0.1:8899 \
-		NEXT_PUBLIC_WS_URL=ws://127.0.0.1:8900 pnpm dev
-
-# The whole localnet demo in one command: the TUI control plane in the
-# foreground (it spawns the validator and seeds the markets) plus the
-# localnet frontend in the background, pointed at that validator. Quitting the
-# TUI stops the frontend too; the frontend retries until the validator is up,
-# so start order doesn't matter. Cleanup runs a broad `pkill -f "next dev"`,
-# so it also stops any unrelated next dev you have running (dev-only target).
-localnet:
-	@$(MAKE) --no-print-directory frontend-localnet & \
-	trap 'kill %1 2>/dev/null; pkill -f "next dev"' INT TERM EXIT; \
-	$(MAKE) --no-print-directory tui
-
-# https://github.com/solana-foundation/anchor/tree/anchor-next/lang-v2
-install-anchor-v2:
-	CARGO_PROFILE_RELEASE_LTO=off cargo install \
-		--git https://github.com/solana-foundation/anchor.git \
-		--branch anchor-next \
-		anchor-cli --force
+# === Repo tooling ===
 
 lint:
 	pre-commit run --config cfg/pre-commit-lint.yml --all-files
@@ -278,47 +336,9 @@ tools-tests:
 	python3 -m unittest discover -s tools/sync-blockers -p 'test_*.py'
 	python3 -m unittest discover -s .claude/tools -p 'test_*.py'
 
-# Materialize the program keypair into the (git-ignored) build dir from
-# its canonical home, keys/AAAA.json, so anchor's build-time program-ID
-# check — and the litesvm tests in programs/dropset/tests/common/mod.rs
-# that read the file — see keypair == declare_id!. keys/AAAA.json is the
-# single committed source; target/deploy/ is a pure build artifact.
-program-keypair:
-	mkdir -p target/deploy
-	cp keys/AAAA.json target/deploy/dropset-keypair.json
-
-program: check-toolchain program-keypair
-	anchor keys sync && anchor build
-
-test: program
-	cargo test
-
-# Build the program .so WITHOUT `admin-teardown` (the shape of the final
-# immutable deploy). `anchor build`'s trailing args are forwarded to
-# `cargo build-sbf`, so this rebuilds `dropset.so` feature-off. Split out
-# from `test-no-teardown` so CI can cache this .so and skip the rebuild on
-# a cache hit (see .github/workflows/test.yml).
-program-no-teardown: check-toolchain program-keypair
-	anchor build -- --no-default-features
-
-# Feature-off coverage: build the program WITHOUT `admin-teardown` and
-# assert every teardown instruction returns `TeardownDisabled` — only the
-# feature-off-gated test target is run.
-test-no-teardown: program-no-teardown
-	cargo test --no-default-features --test teardown_disabled
-
-# Build BOTH artifacts the Rust↔ASM parity tests need: the reference
-# (feature-off) build stashed as `dropset_ref.so`, then the default asm
-# build left in `dropset.so`. The reference build runs first because
-# `anchor build` always writes `dropset.so`; the trailing default build
-# restores the asm artifact every other test deploys.
-program-parity: check-toolchain program-keypair
-	anchor build -- --no-default-features --features admin-teardown
-	cp target/deploy/dropset.so target/deploy/dropset_ref.so
-	anchor build
-
-# Rust↔ASM parity: deploy both artifacts and assert the assembly fast path
-# (the default `dropset.so`) matches the reference kernel — identical stamp
-# bytes and domain error codes.
-test-parity: program-parity
-	cargo test --test asm_parity
+# https://github.com/solana-foundation/anchor/tree/anchor-next/lang-v2
+install-anchor-v2:
+	CARGO_PROFILE_RELEASE_LTO=off cargo install \
+		--git https://github.com/solana-foundation/anchor.git \
+		--branch anchor-next \
+		anchor-cli --force
