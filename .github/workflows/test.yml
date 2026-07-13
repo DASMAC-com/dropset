@@ -64,6 +64,8 @@ jobs:
           - '**'
           - '!frontend/**'
           - '!decks/**'
+          - '!brand-assets/**'
+          - '!scripts/**'
           - '!docs/**'
           - '!**/*.md'
           - '!sdk/ts/**'
