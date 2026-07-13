@@ -82,6 +82,7 @@ permissionless
 pkill
 prebuild
 predev
+prefs
 programdata
 pubkeys
 pytest

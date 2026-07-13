@@ -1,6 +1,8 @@
 <!-- cspell:word zshrc -->
 
-<!-- cspell:word Prefs -->
+<!-- cspell:word reorderer -->
+
+<!-- cspell:word venv -->
 
 # Local integrations
 
@@ -126,6 +128,9 @@ All live in `.claude/scripts/` and are dependency-free bash:
   mark-as-unread.
 - `iterm-restart-monitors.sh` / `iterm-reset-windows.sh` — recovery
   sweeps (see "Recovery" below).
+- `iterm-reorder.py` — the FIFO tab-reorderer (see "FIFO attention
+  ordering" below). Python, not bash, because reordering is only possible
+  through iTerm2's Python API.
 
 Per-TTY state and pid files live under `/tmp/iterm-color-<tty>` and
 `/tmp/iterm-monitor-<tty>.pid`; the shell-registered session→tty map
@@ -151,6 +156,37 @@ event on stdin, makes the color a deterministic function of the event:
 
 `AskUserQuestion` does not fire a `Notification`, so the tool's green is
 never overwritten by a stray permission yellow.
+
+### FIFO attention ordering
+
+Beyond coloring, `iterm-reorder.py` keeps each window's tabs sorted into
+attention groups so you can park at position 1 and sweep right:
+
+```txt
+[ yellow (permission) … ] [ green (reply wanted) … ] [ everything else … ]
+```
+
+Within each attention group the order is **FIFO**: the tab that has
+waited longest stays leftmost, and a tab that newly needs attention goes
+to the *back* of its group (just before the next group). So position 1 is
+always the longest-waiting item — clear it, it drops below all attention
+tabs, and the next-oldest slides into position 1.
+
+Reordering a tab is **only possible through iTerm2's Python API**
+(`window.async_set_tabs`) — no escape sequence moves a tab — so this half
+of the integration is a Python daemon, separate from the per-TTY color
+hooks. It reads the same `/tmp/iterm-color-<tty>` state the hooks write,
+maps each tab to it via the session's `tty` variable, and tracks the FIFO
+sequence itself. The pure ordering (`plan_order`) is unit-tested under
+`make tools-tests`; the live reordering can only be exercised against a
+running iTerm2.
+
+To run it: enable the API (Prefs → General → Magic → **Enable Python
+API**), then run `iterm-reorder.py` as a long-lived script — either drop
+it in `~/Library/Application Support/iTerm2/Scripts/AutoLaunch/` (iTerm2
+provisions its `iterm2`-package venv and launches it at startup) or run
+it by hand in a venv that has the `iterm2` package. It is additive: the
+color hooks keep working whether or not the reorderer is running.
 
 ### Wiring the hooks
 
@@ -262,3 +298,9 @@ hooks and an iTerm coprocess, where bash is the natural fit. So bash is
 the deliberate call here, kept consistent by `shfmt` (format) and
 `shellcheck` (lint), both wired into `cfg/pre-commit-lint.yml` scoped to
 `.claude/scripts/`.
+
+The one exception is `iterm-reorder.py`: tab reordering is only exposed
+through iTerm2's **Python** API, so that file has to be Python. It is
+linted by `ruff` like the rest of the repo's Python, and its ordering
+logic is unit-tested under `make tools-tests` (the `.claude/scripts/`
+discovery root).

@@ -278,13 +278,15 @@ session-metrics:
 	python3 .claude/tools/session_metrics.py --session-id $(SESSION) $(ARGS)
 
 # Run every Python skill-tool's unit tests (stdlib `unittest`, no third-party
-# dep). Covers both tool homes: the `tools/` deterministic skill cores and the
-# `.claude/tools/` skill helpers. Each tool dir is its own discovery root
-# because `tools/sync-blockers` is a hyphenated, non-package directory that a
-# single top-level `discover -s tools` can't import. Run in CI's lint job.
+# dep). Covers the tool homes — the `tools/` deterministic skill cores and the
+# `.claude/tools/` skill helpers — plus the `.claude/scripts/` shell-integration
+# Python (the iTerm reorderer's ordering logic). Each dir is its own discovery
+# root because `tools/sync-blockers` is a hyphenated, non-package directory that
+# a single top-level `discover -s tools` can't import. Run in CI's lint job.
 tools-tests:
 	python3 -m unittest discover -s tools/sync-blockers -p 'test_*.py'
 	python3 -m unittest discover -s .claude/tools -p 'test_*.py'
+	python3 -m unittest discover -s .claude/scripts -p 'test_*.py'
 
 # Materialize the program keypair into the (git-ignored) build dir from
 # its canonical home, keys/AAAA.json, so anchor's build-time program-ID
