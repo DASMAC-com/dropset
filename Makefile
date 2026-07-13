@@ -279,10 +279,10 @@ session-metrics:
 
 # Run every Python skill-tool's unit tests (stdlib `unittest`, no third-party
 # dep). Covers the tool homes — the `tools/` deterministic skill cores and the
-# `.claude/tools/` skill helpers — plus the `.claude/scripts/` shell-integration
-# Python (the iTerm reorderer's ordering logic). Each dir is its own discovery
-# root because `tools/sync-blockers` is a hyphenated, non-package directory that
-# a single top-level `discover -s tools` can't import. Run in CI's lint job.
+# `.claude/tools/` skill helpers — plus the Python under `.claude/scripts/`
+# (the iTerm tab-ordering logic). Each dir is its own discovery root because
+# `tools/sync-blockers` is a hyphenated, non-package directory that a single
+# top-level `discover -s tools` can't import. Run in CI's lint job.
 tools-tests:
 	python3 -m unittest discover -s tools/sync-blockers -p 'test_*.py'
 	python3 -m unittest discover -s .claude/tools -p 'test_*.py'

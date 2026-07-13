@@ -29,6 +29,7 @@ local-integrations convention doc.
 # cspell:word ttys
 
 import asyncio
+import sys
 from pathlib import Path
 
 try:
@@ -63,7 +64,9 @@ def _read_group(tty: str) -> str:
     name = tty.rsplit("/", 1)[-1]
     try:
         color = Path(f"{STATE_PREFIX}{name}").read_text(encoding="utf-8").strip()
-    except OSError:
+    except (OSError, ValueError):
+        # Missing file, or a torn concurrent write (non-UTF-8) — both self-correct
+        # on the next poll, so read as neutral rather than crashing.
         return "neutral"
     return _group_for_color(color)
 
@@ -113,7 +116,19 @@ async def _reorder_window(window, seq: dict, last_group: dict, counter: int) -> 
         # async_set_tabs preserves the selected tab, so a tab you're working in
         # moves to its queue slot but stays focused — it never steals focus.
         await window.async_set_tabs(desired)
-    return counter
+    return counter, [tid for tid, _ in entries]
+
+
+def _prune(seq: dict, last_group: dict, live: set) -> None:
+    """Drop per-tab state for tabs that no longer exist, so the dicts don't grow
+    unbounded over a long-running daemon.
+    """
+    for tid in list(seq):
+        if tid not in live:
+            del seq[tid]
+    for tid in list(last_group):
+        if tid not in live:
+            del last_group[tid]
 
 
 async def main(connection):
@@ -122,8 +137,23 @@ async def main(connection):
     last_group: dict = {}  # tab_id -> last-seen group (to detect entry)
     counter = 0
     while True:
+        live: set = set()
+        clean = True
         for window in app.terminal_windows:
-            counter = await _reorder_window(window, seq, last_group, counter)
+            # A tab or window closing between the snapshot and async_set_tabs is a
+            # real race; isolate it so one bad window never kills the daemon.
+            try:
+                counter, tab_ids = await _reorder_window(
+                    window, seq, last_group, counter
+                )
+                live.update(tab_ids)
+            except Exception as exc:  # noqa: BLE001 - daemon must survive any window error
+                clean = False
+                print(f"iterm-reorder: skipped a window: {exc}", file=sys.stderr)
+        # Only prune when every window enumerated cleanly, so a transiently-erroring
+        # window's live tabs aren't dropped (which would reset their FIFO slot).
+        if clean:
+            _prune(seq, last_group, live)
         await asyncio.sleep(POLL_SECONDS)
 
 
