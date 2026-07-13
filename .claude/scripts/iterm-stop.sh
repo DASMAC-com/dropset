@@ -7,18 +7,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/iterm-colors.sh"
 
 # Find the controlling TTY from the process tree.
-TTY_NAME=""
-pid=$PPID
-while [ "$pid" -gt 1 ] 2>/dev/null; do
-  t=$(ps -o tty= -p "$pid" 2>/dev/null | tr -d ' ')
-  if [ -n "$t" ] && [ "$t" != "??" ] && [ -c "/dev/$t" ]; then
-    TTY_NAME="$t"
-    break
-  fi
-  pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
-done
-
-[ -z "$TTY_NAME" ] && exit 0
+TTY_PATH=$(resolve_tty) || exit 0
+TTY_NAME=$(basename "$TTY_PATH")
 
 PID_FILE="$MONITOR_PID_PREFIX$TTY_NAME.pid"
 

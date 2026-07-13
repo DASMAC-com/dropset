@@ -13,8 +13,7 @@ Both `.claude/settings.json` (hook + permission wiring) and
 `.claude/settings.local.json` (the per-machine allowlist) are
 git-ignored — the repo *documents* how to configure your own Claude
 Code, it does not push hooks or permissions onto a contributor or a CI
-runner (see [commits and PRs](commits-and-prs.md) for why settings stay
-out of the tree). So everything here is **opt-in**: a fresh worktree or
+runner. So everything here is **opt-in**: a fresh worktree or
 a new contributor gets none of it until they wire it into their own
 local `settings.json`. That is the intended tradeoff — configuration is
 the user's, not the checkout's.

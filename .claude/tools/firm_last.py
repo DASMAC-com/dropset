@@ -46,7 +46,7 @@ def claude_home() -> Path:
     return Path(home) / ".claude"
 
 
-def _slugify(path: Path) -> str:
+def slugify(path: Path) -> str:
     """Claude Code names each project's transcript dir after the working dir,
     replacing every ``/`` and ``.`` with ``-``.
     """
@@ -62,7 +62,7 @@ def resolve_active_transcript(session_id: str | None = None) -> Path:
     projects = claude_home() / "projects"
     session_id = session_id or os.environ.get("CLAUDE_SESSION_ID", "").strip() or None
     if session_id:
-        primary = projects / _slugify(Path.cwd()) / f"{session_id}.jsonl"
+        primary = projects / slugify(Path.cwd()) / f"{session_id}.jsonl"
         if primary.is_file():
             return primary
         for entry in projects.iterdir() if projects.is_dir() else []:
@@ -71,7 +71,7 @@ def resolve_active_transcript(session_id: str | None = None) -> Path:
                 return candidate
         raise FileNotFoundError(f"no transcript for session {session_id}")
 
-    slug_dir = projects / _slugify(Path.cwd())
+    slug_dir = projects / slugify(Path.cwd())
     candidates = list(slug_dir.glob("*.jsonl")) if slug_dir.is_dir() else []
     if not candidates and projects.is_dir():
         candidates = list(projects.glob("*/*.jsonl"))
@@ -95,7 +95,10 @@ def _is_self_call(name: str, tool_input: dict) -> bool:
     Bash run, or the skill invocation), which must never be the firm target.
     """
     if name == "Skill":
-        return True
+        # Only the /f and /firm-perms invocations are the firm machinery; other
+        # skills are ordinary calls the user might legitimately want to firm.
+        skill = tool_input.get("skill") or tool_input.get("name")
+        return skill in {"f", "firm-perms"}
     if name == "Bash":
         command = tool_input.get("command", "")
         if isinstance(command, str) and "firm_last.py" in command:
@@ -146,8 +149,13 @@ def iter_tool_calls(lines) -> list[dict]:
                 if entry is None:
                     continue
                 entry["has_result"] = True
+                # A denial is structural: the rejection tool_result carries
+                # `is_error`. Require it *and* a marker phrase, so an approved
+                # call whose output merely contains "user rejected" (a grep hit,
+                # a diff, this file's own source) isn't mistaken for a denial.
+                is_error = bool(item.get("is_error"))
                 text = _content_text(item.get("content"))
-                if any(marker in text for marker in _DENIAL_MARKERS):
+                if is_error and any(marker in text for marker in _DENIAL_MARKERS):
                     entry["denied"] = True
     return calls
 
@@ -217,6 +225,9 @@ def firm_into(path: Path, rule: str) -> bool:
     settings, allow = load_settings(path)
     if firm_core.is_covered(rule, allow):
         return False
+    # Drop any existing entry the new (broader) rule now subsumes, so firming a
+    # generalized rule doesn't leave the redundant narrower ones behind.
+    allow = [r for r in allow if not firm_core.is_covered(r, [rule])]
     allow.append(rule)
     write_settings(path, settings, allow)
     return True
@@ -276,6 +287,11 @@ def main(argv: list[str] | None = None) -> int:
             targets.append(("base repo", base_settings))
     elif not args.base_only:
         print("firm-last: no main worktree found — firming only this worktree.")
+
+    if not targets:
+        # --base-only with no base repo resolvable: nothing to write anywhere.
+        print("firm-last: no base repo found — nothing firmed.")
+        return 0
 
     changed = [label for label, path in targets if firm_into(path, rule)]
     if changed:

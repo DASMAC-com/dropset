@@ -12,7 +12,10 @@ while keeping the command + subcommand prefix literal, so a rule never grants
 more verb than the approval did.
 """
 
+# cspell:word chgrp
+# cspell:word doas
 # cspell:word rustup
+# cspell:word setsid
 
 from __future__ import annotations
 
@@ -20,11 +23,13 @@ import re
 import shlex
 from urllib.parse import urlparse
 
-# Programs that take subcommands, so collapsing one to a bare-verb wildcard
-# (``git:*``) would grant far more than any single approval. The safety floor
-# refuses to auto-firm these without a subcommand; it doubles as the set of
-# verbs too dangerous to wildcard (``rm``, ``kill``).
-SUBCOMMAND_PROGRAMS = {
+# Programs whose bare-verb wildcard (``git:*``, ``rm:*``) would grant far more
+# than any single approval, so the safety floor refuses to auto-firm one without
+# a subcommand kept. Two kinds live here: programs that take subcommands (``git``,
+# ``cargo``) and no-subcommand programs whose *arguments* are the whole hazard
+# (``rm``, ``dd``, ``chmod``, ``curl``). ``is_bareverb_wildcard`` reads this set.
+NO_BARE_WILDCARD = {
+    # subcommand-taking programs
     "git",
     "gh",
     "pnpm",
@@ -44,27 +49,78 @@ SUBCOMMAND_PROGRAMS = {
     "apt",
     "apt-get",
     "systemctl",
+    "go",
+    "terraform",
+    # no-subcommand programs whose args are the hazard
     "rm",
     "kill",
     "pkill",
-    "go",
-    "terraform",
+    "dd",
+    "chmod",
+    "chown",
+    "chgrp",
+    "cp",
+    "mv",
+    "ln",
+    "tee",
+    "rsync",
+    "scp",
+    "curl",
+    "wget",
+    "ssh",
+    "shred",
+    "truncate",
 }
 
-# Interpreters whose inline-code / eval forms can't reduce to a safe rule.
-_INTERPRETERS = {"python", "python3", "node", "ruby", "perl", "bash", "sh", "zsh"}
-_INLINE_CODE_FLAGS = {"-c", "-e", "--eval", "--command"}
+# Command-runners / wrappers whose real verb is a *child* command they prefix —
+# firming the runner (``Bash(sudo:*)``, ``Bash(env:*)``, ``Bash(xargs:*)``)
+# grants arbitrary execution, and reconstructing the child safely is more than a
+# fast firm should attempt. Refuse them outright (like ``cd`` / ``jq``).
+_COMMAND_RUNNERS = {
+    "sudo",
+    "doas",
+    "env",
+    "xargs",
+    "nohup",
+    "nice",
+    "timeout",
+    "time",
+    "watch",
+    "stdbuf",
+    "command",
+    "setsid",
+}
+
+# Programs that never reduce to a safe rule at all.
+_REFUSE_PROGRAMS = {"cd", "jq"} | _COMMAND_RUNNERS
+
+# Interpreters: firm the *script path* they run, not a bare ``python3:*`` (which
+# would subsume ``python3 -c '<arbitrary>'`` — the inline-code shape refused
+# below). Any leading flag (``-c`` / ``-m`` / ``-e`` / …) can't reduce safely.
+_INTERPRETERS = {
+    "python",
+    "python3",
+    "node",
+    "deno",
+    "bun",
+    "ruby",
+    "perl",
+    "bash",
+    "sh",
+    "zsh",
+}
 
 # Value-taking flags that name a *stable* path/dir, so they stay in the literal
-# prefix (with their value) rather than being generalized away — matching rules
-# like ``git -C <path> <sub>`` and ``pnpm --dir frontend <sub>``.
+# prefix with their value (``git -C <path> <sub>``, ``pnpm --dir frontend <sub>``).
 _VALUE_FLAGS = {"-C", "--dir"}
 
 # A worktree path segment: `.claude/worktrees/<tag>` -> `.claude/worktrees/*`.
 _WORKTREE_RE = re.compile(r"(\.claude/worktrees/)[^/\s]+")
 
-# Non-command-substitution shell operators (checked after quotes are stripped).
-_OPERATOR_RE = re.compile(r"\|\||&&|<<|[|;<>&]")
+# Shell compound / redirect operators — a newline is a real separator too, so a
+# multi-line command is a compound. (Command substitution is checked separately,
+# before quotes are stripped.)
+_OPERATOR_RE = re.compile(r"\|\||&&|<<|[|;<>&\n\r]")
 
 
 def collapse_worktree_tags(text: str) -> str:
@@ -95,11 +151,13 @@ def _is_subcommand_word(token: str) -> bool:
 
 def _stable_head(rest: list[str]) -> list[str]:
     """The run of leading tokens (after the program) that belong in the literal
-    prefix: value-flags with their value, and subcommand words. Stops at the
+    prefix: value-flags with their value, global long-options that precede the
+    subcommand (``git --no-pager <sub>``), and subcommand words. Stops at the
     first token that looks like a variable argument.
     """
     kept: list[str] = []
     i = 0
+    seen_subcommand = False
     while i < len(rest):
         tok = rest[i]
         if tok in _VALUE_FLAGS and i + 1 < len(rest):
@@ -107,8 +165,15 @@ def _stable_head(rest: list[str]) -> list[str]:
             kept.append(rest[i + 1])
             i += 2
             continue
+        # A global long-option before the subcommand (e.g. `git --no-pager diff`)
+        # must stay in the literal prefix, or the rule won't match the command.
+        if not seen_subcommand and tok.startswith("--") and "=" not in tok:
+            kept.append(tok)
+            i += 1
+            continue
         if _is_subcommand_word(tok):
             kept.append(tok)
+            seen_subcommand = True
             i += 1
             continue
         break
@@ -118,7 +183,8 @@ def _stable_head(rest: list[str]) -> list[str]:
 def generalize_bash(command: str) -> str | None:
     """Generalize a Bash command into a ``Bash(<prefix>:*)`` rule, or ``None`` if
     the command can't reduce to a safe rule (a compound/redirect, a ``cd``, a
-    ``jq`` parse, or an interpreter inline-code one-liner).
+    ``jq``, a command-runner like ``sudo`` / ``env``, or an interpreter
+    inline-code one-liner).
     """
     command = command.strip()
     if not command or _has_compound(command):
@@ -130,9 +196,14 @@ def generalize_bash(command: str) -> str | None:
     if not tokens:
         return None
     prog = tokens[0]
-    if prog in {"cd", "jq"}:
+    if prog in _REFUSE_PROGRAMS:
         return None
-    if prog in _INTERPRETERS and len(tokens) >= 2 and tokens[1] in _INLINE_CODE_FLAGS:
+    if prog in _INTERPRETERS:
+        # Keep the script path; refuse inline-code / module / bare-REPL forms
+        # (any leading flag), which can't reduce to a rule narrower than the
+        # whole interpreter.
+        if len(tokens) >= 2 and not tokens[1].startswith("-"):
+            return f"Bash({collapse_worktree_tags(f'{prog} {tokens[1]}')}:*)"
         return None
     literal = " ".join([prog, *_stable_head(tokens[1:])])
     literal = collapse_worktree_tags(literal)
@@ -142,12 +213,12 @@ def generalize_bash(command: str) -> str | None:
 def _make_verbatim_bash(command: str) -> str | None:
     """The exact-mode rule for a Bash command: the command verbatim (worktree
     tags still collapsed so it isn't pinned to one worktree). ``None`` for a
-    compound, which can't be firmed even verbatim.
+    compound or a program that can't be firmed even verbatim.
     """
     command = command.strip()
     if not command or _has_compound(command):
         return None
-    if command.split(" ", 1)[0] in {"cd", "jq"}:
+    if command.split(" ", 1)[0] in _REFUSE_PROGRAMS:
         return None
     return f"Bash({collapse_worktree_tags(command)}:*)"
 
@@ -278,11 +349,11 @@ def is_covered(rule: str, allow_rules: list[str]) -> bool:
 
 def is_bareverb_wildcard(rule: str) -> bool:
     """Whether the rule is an over-broad bare-verb wildcard the safety floor
-    forbids — a single subcommand-taking program reduced to ``prog:*`` /
-    ``prog *`` with no subcommand kept (``git:*``, ``pnpm:*``, ``rm:*``).
+    forbids — a single hazardous program reduced to ``prog:*`` / ``prog *`` with
+    no subcommand kept (``git:*``, ``pnpm:*``, ``rm:*``, ``curl:*``).
     """
     parsed = _split_rule(rule)
     if parsed is None or parsed[0] != "Bash":
         return False
     prefix = _bash_prefix(parsed[1]).strip()
-    return prefix in SUBCOMMAND_PROGRAMS
+    return prefix in NO_BARE_WILDCARD

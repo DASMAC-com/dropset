@@ -60,15 +60,7 @@ if [ -z "$COLOR" ]; then
 fi
 [ -z "$COLOR" ] && exit 0
 
-# Walk up the process tree to this session's controlling TTY, then record the
-# state (for the monitor and the attend toggle) and paint it now.
-pid=$PPID
-while [ "$pid" -gt 1 ] 2>/dev/null; do
-  t=$(ps -o tty= -p "$pid" 2>/dev/null | tr -d ' ')
-  if [ -n "$t" ] && [ "$t" != "??" ] && [ -c "/dev/$t" ]; then
-    echo "$COLOR" >"$STATE_PREFIX$t"
-    emit_set_colors "$COLOR" >"/dev/$t"
-    exit 0
-  fi
-  pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
-done
+# Record the state (for the monitor and the attend toggle) and paint it now.
+TTY_PATH=$(resolve_tty) || exit 0
+echo "$COLOR" >"$STATE_PREFIX$(basename "$TTY_PATH")"
+emit_set_colors "$COLOR" >"$TTY_PATH"

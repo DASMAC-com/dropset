@@ -24,16 +24,28 @@ def _use(tid, name, tool_input):
     )
 
 
-def _result(tid, content):
+def _result(tid, content, is_error=False):
     return json.dumps(
         {
             "message": {
                 "content": [
-                    {"type": "tool_result", "tool_use_id": tid, "content": content}
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tid,
+                        "content": content,
+                        "is_error": is_error,
+                    }
                 ]
             }
         }
     )
+
+
+def _allow(root):
+    path = root / ".claude" / "settings.local.json"
+    if path.is_file():
+        return json.loads(path.read_text())["permissions"]["allow"]
+    return []
 
 
 class MostRecentApprovedCall(unittest.TestCase):
@@ -57,10 +69,34 @@ class MostRecentApprovedCall(unittest.TestCase):
             _use("t1", "Bash", {"command": "git add -A"}),
             _result("t1", "ok"),
             _use("t2", "Bash", {"command": "rm -rf /"}),
-            _result("t2", "The user doesn't want to proceed with this tool use."),
+            _result(
+                "t2",
+                "The user doesn't want to proceed with this tool use.",
+                is_error=True,
+            ),
         ]
         call = fl.most_recent_approved_call(fl.iter_tool_calls(lines))
         self.assertEqual(call["input"]["command"], "git add -A")
+
+    def test_approved_call_with_marker_text_not_skipped(self):
+        # An approved command whose *output* contains a denial phrase (is_error
+        # false) must not be misclassified as denied.
+        lines = [
+            _use("t1", "Bash", {"command": "cargo build"}),
+            _result("t1", "ok"),
+            _use("t2", "Bash", {"command": "grep rejected log"}),
+            _result("t2", "hit: the user rejected the change", is_error=False),
+        ]
+        call = fl.most_recent_approved_call(fl.iter_tool_calls(lines))
+        self.assertEqual(call["input"]["command"], "grep rejected log")
+
+    def test_non_firm_skill_is_not_self(self):
+        lines = [
+            _use("t1", "Skill", {"skill": "commit-changes"}),
+            _result("t1", "ok"),
+        ]
+        call = fl.most_recent_approved_call(fl.iter_tool_calls(lines))
+        self.assertEqual(call["name"], "Skill")
 
     def test_call_without_result_is_skipped(self):
         lines = [
@@ -114,14 +150,35 @@ class SettingsIO(unittest.TestCase):
             self.assertTrue(fl.firm_into(path, "Bash(cargo test:*)"))
             self.assertTrue(path.is_file())
 
+    def test_firm_into_prunes_subsumed_existing(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "settings.local.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "permissions": {
+                            "allow": ["Bash(cargo test -p dropset:*)", "Bash(ls:*)"]
+                        }
+                    }
+                )
+            )
+            self.assertTrue(fl.firm_into(path, "Bash(cargo test:*)"))
+            allow = json.loads(path.read_text())["permissions"]["allow"]
+            self.assertIn("Bash(cargo test:*)", allow)
+            self.assertNotIn("Bash(cargo test -p dropset:*)", allow)  # pruned
+            self.assertIn("Bash(ls:*)", allow)  # untouched
+
 
 class MainFlow(unittest.TestCase):
-    def _run_with(self, lines, argv, base_dir=None):
+    def _run_with(self, lines, argv, with_base=False):
         with tempfile.TemporaryDirectory() as d:
             transcript = Path(d) / "s.jsonl"
             transcript.write_text("\n".join(lines))
             worktree = Path(d) / "wt"
             worktree.mkdir()
+            base = Path(d) / "base"
+            base.mkdir()
+            base_dir = str(base) if with_base else None
             with (
                 mock.patch.object(
                     fl, "resolve_active_transcript", return_value=transcript
@@ -130,41 +187,44 @@ class MainFlow(unittest.TestCase):
                 mock.patch.object(Path, "cwd", return_value=worktree),
             ):
                 rc = fl.main(argv)
-            allow_path = worktree / ".claude" / "settings.local.json"
-            allow = []
-            if allow_path.is_file():
-                allow = json.loads(allow_path.read_text())["permissions"]["allow"]
-            return rc, allow
+            return rc, _allow(worktree), _allow(base)
 
     def test_generalized_firm_writes_worktree(self):
         lines = [
             _use("t1", "Bash", {"command": "cargo test -p dropset"}),
             _result("t1", "ok"),
         ]
-        rc, allow = self._run_with(lines, [])
+        rc, wt, base = self._run_with(lines, [])
         self.assertEqual(rc, 0)
-        self.assertIn("Bash(cargo test:*)", allow)
+        self.assertIn("Bash(cargo test:*)", wt)
 
     def test_exact_mode_writes_verbatim(self):
         lines = [
             _use("t1", "Bash", {"command": "cargo test -p dropset"}),
             _result("t1", "ok"),
         ]
-        rc, allow = self._run_with(lines, ["exact"])
-        self.assertIn("Bash(cargo test -p dropset:*)", allow)
+        rc, wt, base = self._run_with(lines, ["exact"])
+        self.assertIn("Bash(cargo test -p dropset:*)", wt)
 
-    def test_base_only_skips_worktree(self):
+    def test_writes_both_worktree_and_base(self):
         lines = [_use("t1", "Bash", {"command": "git add -A"}), _result("t1", "ok")]
-        rc, allow = self._run_with(lines, ["--base-only"], base_dir=None)
-        self.assertEqual(allow, [])
+        rc, wt, base = self._run_with(lines, [], with_base=True)
+        self.assertIn("Bash(git add:*)", wt)
+        self.assertIn("Bash(git add:*)", base)
+
+    def test_base_only_writes_base_skips_worktree(self):
+        lines = [_use("t1", "Bash", {"command": "git add -A"}), _result("t1", "ok")]
+        rc, wt, base = self._run_with(lines, ["--base-only"], with_base=True)
+        self.assertEqual(wt, [])
+        self.assertIn("Bash(git add:*)", base)
 
     def test_bareverb_is_not_written(self):
         lines = [
-            _use("t1", "Bash", {"command": "git --no-pager foo"}),
+            _use("t1", "Bash", {"command": "curl https://example.com/x"}),
             _result("t1", "ok"),
         ]
-        rc, allow = self._run_with(lines, [])
-        self.assertEqual(allow, [])
+        rc, wt, base = self._run_with(lines, [])
+        self.assertEqual(wt, [])
 
 
 if __name__ == "__main__":

@@ -64,3 +64,19 @@ emit_reset() {
     printf '\033]1337;SetColors=tab=default\a'
   fi
 }
+
+# Walk up the process tree to this session's controlling TTY and echo its
+# /dev/ttys* path (empty + non-zero exit if none is found). Shared by the
+# painter and the start/stop hooks so the walk lives in one place.
+resolve_tty() {
+  local pid=$PPID t
+  while [ "$pid" -gt 1 ] 2>/dev/null; do
+    t=$(ps -o tty= -p "$pid" 2>/dev/null | tr -d ' ')
+    if [ -n "$t" ] && [ "$t" != "??" ] && [ -c "/dev/$t" ]; then
+      echo "/dev/$t"
+      return 0
+    fi
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+  done
+  return 1
+}

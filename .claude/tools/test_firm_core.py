@@ -50,10 +50,9 @@ class GeneralizeBash(unittest.TestCase):
             "cat a; cat b",
             "echo $(date)",
             "echo `date`",
-            "python3 -c 'print(1)'",
-            "node -e 'x'",
             "jq '.a' f.json",
             "cd /somewhere",
+            "git status\nrm -rf /tmp",
         ]:
             with self.subTest(cmd=cmd):
                 self.assertIsNone(fc.generalize("Bash", {"command": cmd}))
@@ -65,12 +64,46 @@ class GeneralizeBash(unittest.TestCase):
             "Bash(git log:*)",
         )
 
-    def test_firmable_python_tool_invocation(self):
+    def test_interpreter_keeps_script_path(self):
         self.assertEqual(
             fc.generalize(
                 "Bash", {"command": "python3 .claude/tools/firm_last.py exact"}
             ),
-            "Bash(python3:*)",
+            "Bash(python3 .claude/tools/firm_last.py:*)",
+        )
+        self.assertEqual(
+            fc.generalize("Bash", {"command": "bash scripts/deploy.sh a b"}),
+            "Bash(bash scripts/deploy.sh:*)",
+        )
+
+    def test_interpreter_inline_or_module_refused(self):
+        # A bare interpreter or any leading flag (-c/-m/-e) can't reduce to a
+        # rule narrower than the whole interpreter, so it is refused.
+        for cmd in [
+            "python3 -c 'print(1)'",
+            "python3 -m pytest",
+            "node -e 'x'",
+            "python3",
+        ]:
+            with self.subTest(cmd=cmd):
+                self.assertIsNone(fc.generalize("Bash", {"command": cmd}))
+
+    def test_command_runners_refused(self):
+        for cmd in [
+            "sudo rm -rf /tmp/x",
+            "sudo -v",
+            "env FOO=1 cargo test",
+            "xargs rm",
+            "nohup cargo run",
+            "timeout 5 cargo test",
+        ]:
+            with self.subTest(cmd=cmd):
+                self.assertIsNone(fc.generalize("Bash", {"command": cmd}))
+
+    def test_global_flag_kept_before_subcommand(self):
+        self.assertEqual(
+            fc.generalize("Bash", {"command": "git --no-pager diff --stat"}),
+            "Bash(git --no-pager diff:*)",
         )
 
     def test_exact_mode_keeps_command_verbatim(self):
@@ -140,7 +173,16 @@ class IsCovered(unittest.TestCase):
 
 class BareVerbWildcard(unittest.TestCase):
     def test_flags_dangerous_bare_verbs(self):
-        for rule in ["Bash(git:*)", "Bash(pnpm:*)", "Bash(rm:*)", "Bash(cargo *)"]:
+        for rule in [
+            "Bash(git:*)",
+            "Bash(pnpm:*)",
+            "Bash(rm:*)",
+            "Bash(cargo *)",
+            "Bash(curl:*)",
+            "Bash(dd:*)",
+            "Bash(cp:*)",
+            "Bash(chmod:*)",
+        ]:
             with self.subTest(rule=rule):
                 self.assertTrue(fc.is_bareverb_wildcard(rule))
 
