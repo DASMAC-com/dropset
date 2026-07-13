@@ -27,8 +27,17 @@ const monoStack = "var(--font-geist-mono), ui-monospace, monospace";
  * Spectacle consumes a theme via the `<Deck theme={...}>` prop. The color
  * keys map onto Spectacle's semantic slots: `primary` is body text,
  * `secondary` is the accent used by headings/links, `tertiary` is the deck
- * backdrop. `backdropStyle` pins the full-screen backdrop explicitly so it
- * never depends on Spectacle's token defaults.
+ * backdrop.
+ *
+ * `backdropStyle` must carry the full-viewport sizing itself: a theme-level
+ * `backdropStyle` *replaces* Spectacle's default backdrop object wholesale,
+ * and that default is what pins the backdrop to `position: fixed` at
+ * `100vw × 100vh`. Spectacle's aspect-ratio fitter scales and centers each
+ * slide by measuring this backdrop, so if it collapses out of the viewport
+ * (as a bare `{ backgroundColor }` override does) the slide renders small and
+ * top-anchored on a large monitor instead of centered. We keep the fitter's
+ * transform-origin centering — don't add flex centering here, which would
+ * double-offset the already-transformed slide.
  */
 export const deckTheme = {
   colors: {
@@ -39,6 +48,11 @@ export const deckTheme = {
     quinary: colors.border,
   },
   backdropStyle: {
+    position: "fixed",
+    top: 0,
+    left: 0,
+    width: "100vw",
+    height: "100vh",
     backgroundColor: colors.background,
   },
   fonts: {
