@@ -124,6 +124,34 @@ pub fn single_leg_basket(
     })
 }
 
+/// Apply a deposit's post-transfer inventory + total-share mutation to
+/// the vault: add the transferred legs onto `base_atoms` / `quote_atoms`
+/// and mint `shares_out` into `total_shares`. Returns
+/// `(new_total_shares, new_base_atoms, new_quote_atoms)`.
+///
+/// Shared by `deposit` (outside) and `deposit_leader` so the inventory /
+/// share write block stays byte-identical across both paths — a
+/// divergence here is a silent value-leak, not a compile error (the same
+/// hazard [`single_leg_basket`] is factored out for). The leg amounts are
+/// the seeding / single-leg finals the caller already computed. The
+/// leader-only `leader_shares` bump stays in `deposit_leader` — the
+/// outside path leaves `leader_shares` untouched — so it is deliberately
+/// not part of this shared mutation.
+pub fn apply_deposit_inventory(
+    vault: &mut Vault,
+    base_in_final: u64,
+    quote_in_final: u64,
+    shares_out: u64,
+) -> (u64, u64, u64) {
+    let new_base = vault.base_atoms.get() + base_in_final;
+    let new_quote = vault.quote_atoms.get() + quote_in_final;
+    let new_total = vault.total_shares.get() + shares_out;
+    vault.base_atoms = new_base.into();
+    vault.quote_atoms = new_quote.into();
+    vault.total_shares = new_total.into();
+    (new_total, new_base, new_quote)
+}
+
 // ── realize_in_place wrapper ─────────────────────────────────────
 //
 // The pure perf-fee formula (unseeded / VPS-vs-HWM / mint / zero-fee
