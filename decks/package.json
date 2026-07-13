@@ -20,7 +20,7 @@
   "scripts": {
     "build": "next build",
     "check": "tsc --noEmit",
-    "copy-brand-assets": "node scripts/copy-brand-assets.mjs",
+    "copy-brand-assets": "node ../scripts/copy-brand-assets.mjs decks/public",
     "dev": "next dev --port 3300",
     "prebuild": "pnpm run copy-brand-assets",
     "predev": "pnpm run copy-brand-assets",
