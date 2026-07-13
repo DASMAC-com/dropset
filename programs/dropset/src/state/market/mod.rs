@@ -38,7 +38,7 @@ pub use reference_price::*;
 // thin wrapper in `accrual` (one maps the math-core error back onto
 // `DropsetError`, the other reads/writes `&mut Vault` state around the pure
 // formula).
-pub use dropset_math_core::share::{compute_pro_rata_slice, isqrt_u128};
+pub use dropset_math_core::share::{compute_pro_rata_slice, isqrt_u128, min_leader_share_ok};
 
 /// Number of bid / ask levels in a [`LiquidityProfile`]. Chosen small for
 /// the initial bring-up; widen once the matching engine lands and CU

@@ -20,7 +20,10 @@ use super::transfer_out_leg;
 use crate::{
     errors::DropsetError,
     events::{RealizeEvent, WithdrawEvent},
-    state::{compute_pro_rata_slice, realize_in_place, Market, VaultAccess, VaultDll, PPM},
+    state::{
+        compute_pro_rata_slice, min_leader_share_ok, realize_in_place, Market, VaultAccess,
+        VaultDll,
+    },
 };
 
 #[event_cpi]
@@ -133,9 +136,10 @@ impl WithdrawLeader {
         if !winding_down {
             let new_total = total_shares - shares_in;
             if new_total > 0 {
-                let lhs = (new_leader as u128) * (PPM as u128);
-                let rhs = (min_leader_share as u128) * (new_total as u128);
-                require!(lhs >= rhs, DropsetError::MinLeaderShareViolated);
+                require!(
+                    min_leader_share_ok(new_leader, new_total, min_leader_share),
+                    DropsetError::MinLeaderShareViolated
+                );
             }
         }
 
