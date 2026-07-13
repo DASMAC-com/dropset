@@ -21,7 +21,7 @@ use anyhow::{Context, Result};
 use solana_pubkey::Pubkey;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::thread;
 
@@ -142,38 +142,24 @@ pub fn taker_command(repo_root: &Path, address: &Pubkey, rpc_url: &str) -> Comma
     )
 }
 
-/// Build a command running the bot binary `bin_name` with `args`. Prefers a
-/// binary of that name sitting beside the running TUI (the same cargo target
-/// dir, when it has been built), and otherwise falls back to `cargo run` from
-/// the repo root — which builds it on first use, streaming the build into the
-/// log. Either way the working directory is `repo_root` so the role-key paths
-/// resolve.
+/// Build a command running the bot binary `bin_name` with `args`, always
+/// through `cargo run` from the repo root (working directory `repo_root`, so
+/// the role-key paths resolve). cargo rebuilds the bot incrementally if its
+/// sources moved and otherwise runs the built binary unchanged — so the spawned
+/// bot is always current with the deployed program's account layout. `make tui`
+/// builds the bots up front, so in practice this is a no-op that just launches
+/// the fresh binary.
+///
+/// Launching a prebuilt binary sitting in the target dir directly would be a
+/// footgun: a stale one (built against a superseded `MarketHeader` size) decodes
+/// a current market at the wrong offsets and dies with `SectorOverflow`. Going
+/// through cargo makes that impossible — a drifted binary is rebuilt, not run.
 fn bot_command(repo_root: &Path, bin_name: &str, args: &[&str]) -> Command {
-    match sibling_binary(bin_name) {
-        Some(bin) => {
-            let mut cmd = Command::new(bin);
-            cmd.args(args).current_dir(repo_root);
-            cmd
-        }
-        None => {
-            let mut cmd = Command::new("cargo");
-            cmd.args(["run", "--quiet", "-p", bin_name, "--"])
-                .args(args)
-                .current_dir(repo_root);
-            cmd
-        }
-    }
-}
-
-/// A bot executable named `bin_name` next to the current one (same target dir),
-/// if it has been built — otherwise `None`, steering the caller to `cargo run`.
-/// The cargo package and its binary share a name (`dropset-maker-bot`,
-/// `dropset-taker-bot`), so the same string works as the `-p` target and the
-/// sibling filename.
-fn sibling_binary(bin_name: &str) -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    let bin = exe.with_file_name(bin_name);
-    bin.exists().then_some(bin)
+    let mut cmd = Command::new("cargo");
+    cmd.args(["run", "--quiet", "-p", bin_name, "--"])
+        .args(args)
+        .current_dir(repo_root);
+    cmd
 }
 
 /// Forward a child pipe's lines into `log`, each tagged `[symbol]`, on a

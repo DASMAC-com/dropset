@@ -21,6 +21,10 @@ use solana_native_token::LAMPORTS_PER_SOL;
 use solana_pubkey::Pubkey;
 use std::sync::atomic::Ordering;
 
+/// Number of grouped control rows the "other actions" pane renders (bots, swap,
+/// eCLOB, view) — its box height is this plus the top/bottom borders.
+const OTHER_ACTIONS_ROWS: u16 = 4;
+
 /// Render the whole dashboard.
 pub fn draw(f: &mut Frame<'_>, app: &mut App) {
     // Rebuilt every frame from the current layout: stale rectangles from a
@@ -53,15 +57,21 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
         ],
     )
     .areas(body);
-    // The action menu is a fixed height (its entries + borders); alerts take the
-    // rest of the column, right below the actions.
+    // The left column stacks the phase-action menu (its entries + borders) over
+    // the grouped "other actions" pane (a fixed number of control rows +
+    // borders), with alerts taking the rest of the column below them.
     let menu_height = (action::MENU.len() as u16 + 2).clamp(3, 14);
-    let [menu_area, alerts_area] = Layout::new(
+    let [menu_area, other_area, alerts_area] = Layout::new(
         Direction::Vertical,
-        [Constraint::Length(menu_height), Constraint::Min(3)],
+        [
+            Constraint::Length(menu_height),
+            Constraint::Length(OTHER_ACTIONS_ROWS + 2),
+            Constraint::Min(3),
+        ],
     )
     .areas(left_area);
     draw_menu(f, app, menu_area);
+    draw_other_actions(f, app, other_area);
     draw_alerts(f, app, alerts_area);
     let [accounts_area, cu_area] = Layout::new(
         Direction::Vertical,
@@ -103,8 +113,9 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
 fn draw_help(f: &mut Frame<'_>, area: Rect) {
     let help = Paragraph::new(vec![
         Line::from(
-            "j/k menu  ·  enter/1-9 run  ·  [ ] market  ·  s/S maker/all  ·  \
-             t/T taker/all  ·  x stop all  ·  a swap amount  ·  r refresh  ·  q quit",
+            "j/k menu  ·  enter/1-9 run  ·  [ ] market  ·  m/M maker/all  ·  \
+             t/T taker/all  ·  x stop all  ·  s swap  ·  S flip side  ·  \
+             a amount  ·  r refresh  ·  q quit",
         ),
         Line::from(
             "eCLOB · selected market:  < > re-peg \u{00b1}5 bps  ·  w/n spread \
@@ -173,7 +184,11 @@ fn draw_status(f: &mut Frame<'_>, app: &App, area: Rect) {
         takers_status(app),
         Span::raw("  ·  swap "),
         Span::styled(
-            format!("{} units", app.swap_quote_units),
+            format!(
+                "{} units {}",
+                app.swap_units,
+                crate::app::swap_side_label(app.swap_side)
+            ),
             Style::new().fg(Color::Cyan),
         ),
         Span::raw("  ·  explorer "),
@@ -244,7 +259,11 @@ fn draw_menu(f: &mut Frame<'_>, app: &mut App, area: Rect) {
         .map(|(i, &a)| menu_item(i, a, phase, next))
         .collect();
     let list = List::new(items)
-        .block(Block::default().title(" actions ").borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title(" actions · phase ")
+                .borders(Borders::ALL),
+        )
         .highlight_style(
             Style::new()
                 .bg(Color::DarkGray)
@@ -275,6 +294,52 @@ fn menu_item(i: usize, action: Action, phase: Phase, next: Option<Action>) -> Li
         ));
     }
     ListItem::new(Line::from(spans))
+}
+
+/// Render the "other actions" pane beneath the phase menu: the letter-key
+/// controls that aren't part of the numbered bootstrap lifecycle — bot toggles,
+/// the swap (with its current amount and side), the eCLOB reshape controls, and
+/// the view keys. Grouped by kind with a dim tag so the top pane, not the
+/// footer, is the single place that lists what's runnable. The market-scoped
+/// groups (swap, eCLOB) dim when no live vault is selected, mirroring how the
+/// phase menu greys steps that can't run yet. Keep the line count in sync with
+/// [`OTHER_ACTIONS_ROWS`], which sizes the box.
+fn draw_other_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
+    let ready = app.chain.phase() == Phase::Ready;
+    let tag = |s: &'static str| Span::styled(format!("{s:<6}"), Style::new().fg(Color::DarkGray));
+    let live = Style::new().fg(Color::Gray);
+    // Market-scoped controls read live only once a seeded vault exists.
+    let market_style = if ready {
+        live
+    } else {
+        Style::new().fg(Color::DarkGray)
+    };
+
+    let swap = format!(
+        "s swap · S flip · a amount   [{}u {}]",
+        app.swap_units,
+        crate::app::swap_side_label(app.swap_side)
+    );
+    let lines = vec![
+        Line::from(vec![
+            tag("bots"),
+            Span::styled("m/M maker · t/T taker · x stop all", live),
+        ]),
+        Line::from(vec![tag("swap"), Span::styled(swap, market_style)]),
+        Line::from(vec![
+            tag("eCLOB"),
+            Span::styled("< > re-peg · w/n spread · f thin · g reset", market_style),
+        ]),
+        Line::from(vec![tag("view"), Span::styled("r refresh · q quit", live)]),
+    ];
+    f.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .title(" actions · other ")
+                .borders(Borders::ALL),
+        ),
+        area,
+    );
 }
 
 /// Render the alerts pane beneath the actions — environment / config

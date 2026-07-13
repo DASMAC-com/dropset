@@ -231,15 +231,18 @@ impl JobContext {
 /// Spawn the background job for `action`. [`Action::Wipe`] is handled by the
 /// event loop instead (it mutates the owned validator), so it is a no-op
 /// here. `selected` picks which discovered market the market-scoped actions
-/// (the probe swap, the explorer targets) act on; `swap_quote_units` is the
-/// taker-selected notional (whole quote units) a [`Action::ProbeSwap`] spends.
+/// (the probe swap, the explorer targets) act on; `swap_units` is the
+/// taker-selected notional (whole units of the input token) and `swap_side`
+/// the direction a [`Action::ProbeSwap`] takes.
+#[allow(clippy::too_many_arguments)]
 pub fn dispatch(
     action: Action,
     ctx: &JobContext,
     state: &ChainState,
     tx: Sender<JobEvent>,
     selected: usize,
-    swap_quote_units: u64,
+    swap_units: u64,
+    swap_side: SwapSide,
     reshape_spread_bps: u32,
 ) {
     let rpc_url = ctx.rpc_url.clone();
@@ -321,7 +324,8 @@ pub fn dispatch(
                     &wallet,
                     &repo_root,
                     target_market,
-                    swap_quote_units,
+                    swap_units,
+                    swap_side,
                     log,
                 )
             });
@@ -707,12 +711,13 @@ fn do_create_vault(
 /// amount with this; the taker overrides it via the amount input (`a`).
 pub const DEFAULT_PROBE_QUOTE_UNITS: u64 = 10;
 
-/// Exercise — and measure the CU of — the swap path with a small taker Buy
-/// against the seeded vault. The swapper is the dedicated `FFFF` taker role
-/// key, never the admin: it signs and pays for the take, so the probe
+/// Exercise — and measure the CU of — the swap path with a small taker take
+/// against the seeded vault, on `side` (a Buy pays quote / receives base, a
+/// Sell pays base / receives quote). The swapper is the dedicated `FFFF` taker
+/// role key, never the admin: it signs and pays for the take, so the probe
 /// exercises a real third-party taker against the bot's quotes rather than
 /// the admin trading with itself. The admin stays the mint authority — it
-/// funds the taker's quote leg and creates its ATAs, but takes no part in the
+/// funds the taker's input leg and creates its ATAs, but takes no part in the
 /// swap transaction. The realized CU lands in the CU pane under "swap" via
 /// [`chain::send_logged`]; depth and balances refresh after.
 fn do_probe_swap(
@@ -720,7 +725,8 @@ fn do_probe_swap(
     wallet: &Keypair,
     repo_root: &Path,
     target: Option<Pubkey>,
-    quote_units: u64,
+    units: u64,
+    side: SwapSide,
     log: &Logger,
 ) -> Result<String> {
     ensure_funded(client, &wallet.pubkey(), log);
@@ -738,25 +744,41 @@ fn do_probe_swap(
         anyhow::bail!("no live vault to swap against — create the vault first");
     }
 
-    // Buy: pay quote, receive base. The taker is FFFF — fund it with SOL so it
-    // pays its own fee, give it the quote leg (admin is the mint authority),
-    // and ensure a base ATA to receive into.
+    // The taker is FFFF — fund it with SOL so it pays its own fee, and give it
+    // both ATAs (admin is the mint authority): one holds the leg it pays, the
+    // other receives the leg it gets. Which is which flips with the side.
     let taker = market::taker(repo_root)?;
     let taker_pk = taker.pubkey();
     ensure_funded(client, &taker_pk, log);
     let quote_ata = chain::create_ata_idempotent(client, wallet, &taker_pk, &market.quote_mint)
         .context("taker quote ATA")?;
-    chain::create_ata_idempotent(client, wallet, &taker_pk, &market.base_mint)
+    let base_ata = chain::create_ata_idempotent(client, wallet, &taker_pk, &market.base_mint)
         .context("taker base ATA")?;
-    let notional = 10u64
-        .pow(market.quote_decimals as u32)
-        .saturating_mul(quote_units);
-    chain::mint_to(client, wallet, &market.quote_mint, &quote_ata, notional)
-        .context("fund taker quote")?;
 
-    log.log(format!(
-        "probe swap: {taker_pk} buys with {quote_units} quote units"
-    ));
+    // Fund the input leg the take spends — quote on a Buy, base on a Sell, each
+    // scaled to atoms by its mint's decimals. `limit_price_bits` disables the
+    // price bound in the take's favor (INFINITY = no ceiling for a Buy, ZERO =
+    // no floor for a Sell), since the probe accepts any fill.
+    let (input_mint, input_ata, input_decimals, limit_price) = match side {
+        SwapSide::Buy => (
+            market.quote_mint,
+            quote_ata,
+            market.quote_decimals,
+            Price::INFINITY,
+        ),
+        SwapSide::Sell => (market.base_mint, base_ata, market.base_decimals, Price::ZERO),
+    };
+    let notional = 10u64
+        .pow(input_decimals as u32)
+        .saturating_mul(units);
+    chain::mint_to(client, wallet, &input_mint, &input_ata, notional)
+        .context("fund taker input leg")?;
+
+    let verb = match side {
+        SwapSide::Buy => "buys",
+        SwapSide::Sell => "sells",
+    };
+    log.log(format!("probe swap: {taker_pk} {verb} with {units} units"));
     let ix = chain::build_swap_ix(
         &taker_pk,
         &market.address,
@@ -764,10 +786,10 @@ fn do_probe_swap(
         &market.quote_mint,
         &market.base_treasury,
         &market.quote_treasury,
-        SwapSide::Buy as u8,
+        side as u8,
         notional,
-        Price::INFINITY.as_u32(), // no limit price for the probe
-        0,                        // accept any output (probe)
+        limit_price.as_u32(),
+        0, // accept any output (probe)
     );
     chain::send_logged(client, &taker, &[&taker], &[ix], "swap", log).context("swap")?;
     log.accounts_changed();
