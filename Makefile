@@ -1,4 +1,3 @@
-# cspell:word pkill
 .PHONY: all
 .PHONY: bots-down
 .PHONY: bots-up
@@ -42,7 +41,16 @@
 .PHONY: wasm
 
 all: lint test
+# Nuke this worktree's heavy build artifacts to reclaim disk: the Rust
+# target/ tree, every pnpm node_modules, and the Next.js .next build caches
+# (all cheaply rebuilt). Leaves the committed generated trees (sdk/idl,
+# sdk/ts, sdk/conformance) alone. Run at PR merge time (by review-pr) so a
+# worktree that lingers before it is pruned doesn't keep its build tree.
 clean:
+	cargo clean
+	rm -rf node_modules frontend/node_modules decks/node_modules \
+		sdk/ts/node_modules sdk/codama/node_modules
+	rm -rf frontend/.next decks/.next sdk/ts/dist
 
 # Local dev-server port allocation (the "reservation table"). There is no
 # runtime enforcement — the OS fails-loud when a port is taken — so this
@@ -328,13 +336,15 @@ session-metrics:
 	python3 .claude/tools/session_metrics.py --session-id $(SESSION) $(ARGS)
 
 # Run every Python skill-tool's unit tests (stdlib `unittest`, no third-party
-# dep). Covers both tool homes: the `tools/` deterministic skill cores and the
-# `.claude/tools/` skill helpers. Each tool dir is its own discovery root
-# because `tools/sync-blockers` is a hyphenated, non-package directory that a
-# single top-level `discover -s tools` can't import. Run in CI's lint job.
+# dep). Covers the tool homes — the `tools/` deterministic skill cores and the
+# `.claude/tools/` skill helpers — plus the Python under `.claude/scripts/`
+# (the iTerm tab-ordering logic). Each dir is its own discovery root because
+# `tools/sync-blockers` is a hyphenated, non-package directory that a single
+# top-level `discover -s tools` can't import. Run in CI's lint job.
 tools-tests:
 	python3 -m unittest discover -s tools/sync-blockers -p 'test_*.py'
 	python3 -m unittest discover -s .claude/tools -p 'test_*.py'
+	python3 -m unittest discover -s .claude/scripts -p 'test_*.py'
 
 # https://github.com/solana-foundation/anchor/tree/anchor-next/lang-v2
 install-anchor-v2:

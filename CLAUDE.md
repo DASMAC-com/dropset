@@ -115,14 +115,12 @@ no `$(…)` / backticks, no redirects or heredocs, no `cd`. Prefer the
 Read / Grep / Glob tools over `cat` / `grep` / `find`; never `git grep`.
 Keep a stable command + subcommand prefix and let only the args vary.
 This holds for shell you **author** in skills, scripts, and Makefile
-targets too, and for work you hand a sub-agent. A `PreToolUse` hook
-(`.claude/hooks/no_compound_bash.py`) mechanically blocks compounds
-(escape marker `#compound-ok`) — but the repo does **not** commit its
-`.claude/settings.json` wiring or the permission allowlist, so the
-guard is **opt-in**: wire it into your own user-local `settings.json`
-per the doc. Full detail, incl. the always-re-prompt patterns, the
-guard hook, and how to wire it:
-`docs/conventions/shell-commands.md`.
+targets too, and for work you hand a sub-agent. An opt-in `PreToolUse`
+guard hook (`.claude/hooks/no_compound_bash.py`, escape marker
+`#compound-ok`) mechanically blocks compounds; its script is committed
+but its `settings.json` wiring is **user-local, not committed**. Full
+detail — the rules, the always-re-prompt patterns, and where the guard
+hook is wired: `docs/conventions/shell-commands.md`.
 
 ## Briefing sub-agents
 
