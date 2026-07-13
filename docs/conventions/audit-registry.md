@@ -27,6 +27,7 @@ ci-infra (ci, low): .github/**, cfg/**, infra/**, keys/**, scripts/**,
 tools (rust-tool, low): tools/**
 maker-bot (rust-tool, low): bots/maker-bot/**
 taker-bot (rust-tool, low): bots/taker-bot/**
+localnet-support (rust-lib, low): bots/localnet-support/**
 indexer (rust-tool, low): indexer/**
 ```
 

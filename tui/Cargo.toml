@@ -26,6 +26,11 @@ bs58 = "0.5"
 # the bootstrap quote ladder (matches the SDK's own profile construction).
 bytemuck = "1"
 crossterm = "0.28"
+# Shared localnet-host plumbing: the SPL / ATA / System program-id consts, the
+# ATA derivation and its `CreateIdempotent` / `MintTo` byte-instruction
+# builders, and the Agave `http`→`ws` PubSub-URL derivation (the recent-fills
+# subscription's endpoint). Pure — this crate keeps its own CU-measuring send.
+dropset-localnet-support = { path = "../bots/localnet-support" }
 # Local-time conversion (localtime_r) for the fills / CU timestamps — thread-
 # safe, unlike the `time` crate's local-offset, which refuses in a
 # multithreaded process (the TUI has background threads by then).

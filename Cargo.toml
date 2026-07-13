@@ -14,6 +14,7 @@ overflow-checks = true
 
 [workspace]
 members = [
+  "bots/localnet-support",
   "bots/maker-bot",
   "bots/taker-bot",
   "indexer",

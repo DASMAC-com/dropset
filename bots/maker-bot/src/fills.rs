@@ -19,13 +19,13 @@
 //! `program_id_index` against the transaction's full account-key list and
 //! requires it to be the dropset program before trusting the bytes.
 //!
-//! `FillEvent` is `#[event(bytemuck)]`
-//! on-chain — a fixed `repr(C)` struct with explicit padding fields chosen so
-//! it has no implicit padding, which makes its raw bytes byte-identical to the
-//! borsh serialization of the SDK's generated [`FillEvent`] (`Price` is a
-//! `u32`). So the body decodes straight through `BorshDeserialize`; the
-//! program's own `events.rs` test pins the on-chain size, and the round-trip
-//! test below pins this decoder against the same wire format.
+//! The `[tag][discriminator][body]` decode is the shared SDK codec
+//! ([`dropset_sdk::events`]) — the same one the TUI's recent-fills
+//! subscription uses. `FillEvent` is `#[event(bytemuck)]` on-chain (a fixed
+//! `repr(C)` struct with explicit padding fields, so its raw bytes are
+//! byte-identical to the borsh form of the SDK's generated [`FillEvent`]); the
+//! SDK's own `events.rs` tests pin that wire format, and the round-trip test
+//! below pins this crate's thin wrapper against it.
 //!
 //! This runs on a dedicated thread so the `getTransaction` round-trips never
 //! stall the synchronous quoting tick. It forwards each attributed fill over
@@ -33,12 +33,10 @@
 //! `tasks.rs` is the fallback for when the subscription is down or a fill is
 //! missed.
 
-use anchor_lang_v2::event::EVENT_IX_TAG_LE;
 use anyhow::{anyhow, Context as _, Result};
-use borsh::BorshDeserialize;
+use dropset_sdk::events::{decode_event_payload, strip_event_tag, DropsetEvent};
 use dropset_sdk::types::FillEvent;
 use dropset_sdk::DROPSET_ID;
-use sha2::{Digest, Sha256};
 use solana_client::pubsub_client::PubsubClient;
 use solana_client::rpc_client::RpcClient;
 use solana_client::rpc_config::{
@@ -53,24 +51,11 @@ use solana_transaction_status_client_types::{
 };
 use std::str::FromStr;
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::LazyLock;
 use std::time::Duration;
 
 /// How long to wait before re-subscribing after the websocket drops or a
 /// subscribe attempt fails (e.g. the validator isn't up yet).
 const RECONNECT_DELAY: Duration = Duration::from_secs(5);
-
-/// `FillEvent`'s 8-byte event discriminator, reproduced via anchor's
-/// name-based scheme: `sha256("event:<Name>")[..8]` (see anchor-lang-v2's
-/// event macro, which hashes `format!("event:{name}")`). The on-chain type
-/// carrying the real impl lives in the program crate, which the bot can't
-/// depend on (it compiles for SBF), so the bot recomputes the same bytes.
-/// Pinned end-to-end by the round-trip test below; the program's `events.rs`
-/// test pins the on-chain side of the same wire format.
-static FILL_EVENT_DISCRIMINATOR: LazyLock<[u8; 8]> = LazyLock::new(|| {
-    let hash = Sha256::digest(b"event:FillEvent");
-    hash[..8].try_into().expect("sha256 digest is 32 bytes")
-});
 
 /// One attributed fill leg: a decoded [`FillEvent`] and the signature of the
 /// swap that produced it (for logging / dedup).
@@ -302,24 +287,32 @@ fn full_account_keys(
 }
 
 /// Decode one inner-instruction blob as a [`FillEvent`], or `None` if it is a
-/// different event / not an event at all. The trailing `try_from_slice` also
-/// length-checks the body (borsh rejects trailing bytes).
+/// different event / not an event at all. Delegates to the shared SDK codec
+/// ([`dropset_sdk::events`]): strip the `EVENT_IX_TAG_LE` self-CPI tag, then
+/// decode the `[discriminator][body]` payload and keep only the `Fill` variant.
 fn decode_fill_event(data: &[u8]) -> Option<FillEvent> {
-    let discriminator: &[u8; 8] = &FILL_EVENT_DISCRIMINATOR;
-    let prefix = EVENT_IX_TAG_LE.len() + discriminator.len();
-    if data.len() < prefix
-        || &data[..EVENT_IX_TAG_LE.len()] != EVENT_IX_TAG_LE
-        || &data[EVENT_IX_TAG_LE.len()..prefix] != discriminator.as_slice()
-    {
-        return None;
+    match decode_event_payload(strip_event_tag(data)?)? {
+        DropsetEvent::Fill(event) => Some(event),
+        _ => None,
     }
-    FillEvent::try_from_slice(&data[prefix..]).ok()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dropset_sdk::events::EVENT_IX_TAG_LE;
+    use sha2::{Digest, Sha256};
     use solana_transaction_status_client_types::UiCompiledInstruction;
+
+    /// `FillEvent`'s 8-byte event discriminator, the anchor name-based scheme
+    /// `sha256("event:FillEvent")[..8]` — recomputed here (not a runtime dep)
+    /// only to forge the `[tag][discriminator][body]` envelope the decoder
+    /// under test consumes. The SDK codec owns the runtime constant.
+    fn fill_discriminator() -> [u8; 8] {
+        Sha256::digest(b"event:FillEvent")[..8]
+            .try_into()
+            .expect("sha256 digest is 32 bytes")
+    }
 
     /// A `FillEvent` with distinct, recognizable field values.
     fn sample_event(quote_authority: Pubkey) -> FillEvent {
@@ -347,8 +340,8 @@ mod tests {
     /// `emit_cpi!` inner instruction carries.
     fn wrap(event: &FillEvent) -> Vec<u8> {
         let mut data = Vec::new();
-        data.extend_from_slice(EVENT_IX_TAG_LE);
-        data.extend_from_slice(FILL_EVENT_DISCRIMINATOR.as_slice());
+        data.extend_from_slice(&EVENT_IX_TAG_LE);
+        data.extend_from_slice(&fill_discriminator());
         data.extend_from_slice(&borsh::to_vec(event).unwrap());
         data
     }
