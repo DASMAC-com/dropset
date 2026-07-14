@@ -224,7 +224,7 @@ sdk-test: check-pnpm
 # the same `anchor build --no-idl` deploy uses means that publish is a fast
 # no-op) and the maker/taker bot binaries (the TUI spawns them as children —
 # building them here means the spawned bot is always current with the just-
-# built program's account layout, closing the stale-binary footgun where an
+# built program's account layout, closing the stale-binary hazard where an
 # old bot decodes a current market against a superseded `MarketHeader` size
 # and dies with `SectorOverflow`). After `make clean && make tui`, every
 # in-TUI command runs without further building.

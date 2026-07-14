@@ -151,7 +151,7 @@ pub fn taker_command(repo_root: &Path, address: &Pubkey, rpc_url: &str) -> Comma
 /// the fresh binary.
 ///
 /// Launching a prebuilt binary sitting in the target dir directly would be a
-/// footgun: a stale one (built against a superseded `MarketHeader` size) decodes
+/// hazard: a stale one (built against a superseded `MarketHeader` size) decodes
 /// a current market at the wrong offsets and dies with `SectorOverflow`. Going
 /// through cargo makes that impossible — a drifted binary is rebuilt, not run.
 fn bot_command(repo_root: &Path, bin_name: &str, args: &[&str]) -> Command {
