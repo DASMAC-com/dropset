@@ -1,6 +1,6 @@
 ---
 name: pr-title-description
-description: Write or update a PR title and description for the current branch, matching the style of recent PRs.
+description: Write or update a PR title and description for the current branch, using this skill's standard format.
 user-invocable: true
 ---
 
@@ -40,28 +40,14 @@ takes `owner: "DASMAC-com"`, `repo: "dropset"`.
    `git diff main..HEAD` and
    `git log main..HEAD --oneline`.
 
-1. Fetch the 3 most recent merged PRs to match their
-   style — with a **field-selected `gh pr list`**, the one
-   place this skill uses `gh` over the MCP (a documented
-   exception, per `CLAUDE.md` → "GitHub via MCP"):
-
-   ```sh
-   gh pr list --json number,title,body --state merged --limit 3
-   ```
-
-   This is strictly better than the MCP `list_pull_requests`
-   here on both counts that bit before: `gh` has a `merged`
-   state filter the MCP lacks (so no listing *every* closed
-   PR and filtering on `merged_at` by hand), and `--json`
-   returns the `body` in the **same** call (so no per-PR
-   `pull_request_read` follow-up). The MCP path returned
-   *every* closed PR with full bodies — ~104k tokens
-   observed, replayed every later turn (per `CLAUDE.md` →
-   "Context economy"); field-selecting three merged PRs'
-   `number` / `title` / `body` is all the style lookup needs.
-   `--json` is a command **flag**, not a shell pipe, so it
-   stays shell-rule-clean and reduces to a
-   `Bash(gh pr list:*)` allow-rule.
+   Don't look up recent merged PRs for their style — the
+   title and description formats are **standardized below**
+   (steps 3–4), so a style lookup adds nothing but a payload
+   that's replayed every later turn (per `CLAUDE.md` →
+   "Context economy"). House style drifts run-to-run anyway;
+   the standard format below *is* the style. Follow steps
+   3–4 verbatim rather than mirroring whatever the last few
+   PRs happened to do.
 
 1. Write the PR title using the **Semantic PR /
    Conventional Commits** format:
@@ -95,12 +81,13 @@ takes `owner: "DASMAC-com"`, `repo: "dropset"`.
    title starts with `Claude:`. Drop the token — don't
    copy it from the issue title into the PR title.
 
-1. Write a concise PR description that mirrors
-   the format and tone of those recent PRs.
-   Typically this means a `# Changes` section
-   with a numbered list. Add a `# Background`
-   section only if the changes need non-obvious
-   context.
+1. Write a concise PR description in the **standard
+   format**: a `# Changes` section with a numbered list
+   of what the PR does, one entry per logical change, in
+   imperative-ish summary form. Add a `# Background`
+   section **only** if the changes need non-obvious
+   context; omit it otherwise. Keep it tight — the diff
+   is the detail, the description is the map.
 
    **Keep Linear tags out of the body** (per
    `CLAUDE.md` → "Keep Linear tags out of PR bodies
@@ -110,7 +97,7 @@ takes `owner: "DASMAC-com"`, `repo: "dropset"`.
    issue into this PR's lifecycle. Refer to other work
    by **title** or a **plain GitHub link**, never its
    Linear tag. The `ENG-###` scope in the **title**
-   (step 4) is the one exception — that's required by
+   (step 3) is the one exception — that's required by
    `semantic-pr` and stays.
 
 1. If a PR already exists for the branch, update it with

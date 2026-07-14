@@ -21,22 +21,50 @@ into the transcript**:
   with `offset`/`limit`; don't pull a 1000-line file to use 80 lines
   of it. This is **main-loop** discipline during a study phase too, not
   just a sub-agent rule: when you only need a few symbols from a
-  reference or generated file, Grep to them first and slice-read — on a
-  generated instruction file read only the `Builder` section you'll
-  call, and skip a file's trailing `#[cfg(test)]` / `mod tests` when
-  you need its API, not its tests. Whole-file `Read` is consistently
-  the single largest token sink across review/build sessions. Brief
-  review sub-agents to do the same.
+  reference or generated file, Grep to them first and slice-read — and
+  skip a file's trailing `#[cfg(test)]` / `mod tests` when you need its
+  API, not its tests. Whole-file `Read` is consistently the single
+  largest token sink across review/build sessions. Brief review
+  sub-agents to do the same. Families this bites repeatedly:
+  - **Codama-generated SDK instruction files** (`sdk/rs/src/generated/**`,
+    e.g. `set_reference_price.rs`, `set_liquidity_profile.rs`). To wire
+    a CPI you need only the `Accounts` struct and the `InstructionArgs`
+    fields; the CPI-`Builder` bulk below them is ~80% of the file and
+    usually unread. Grep to `InstructionArgs` (and the accounts struct),
+    then `Read` that slice — don't pull the whole ~4k-line-equivalent
+    file.
+  - **A config / workflow file read for one narrow question.** Grep to
+    the block that answers it and slice-read that, not the whole file —
+    e.g. to check whether CI's path filter excludes a file, Grep
+    `.github/workflows/test.yml` to the `code:` / `predicate-quantifier`
+    block (~20 lines) rather than reading all ~4k of it.
+  - **A large test-fixture file** (e.g. a 1600-line `fixture.rs`) opened
+    for a few helpers. Grep to the helpers you need (the `poke_*`
+    builders, a specific `fn`) and slice-read those, rather than
+    paginating the whole fixture.
 - **Route verbose build logs away from context.** Prefer `-q` /
   `--quiet` so a `cargo` / `make` "Compiling …" cascade doesn't land
   inline. For a noisy target with no quiet flag, run it through the
   quiet runner, `python3 .claude/tools/run_quiet.py -- CMD ARGS…`
   (with optional `--tail N` / `--label L`): it captures the output to a
-  temp log and prints only a one-line summary on success, or the
-  failing tail plus the exit code and log path on failure (so you can
-  `Read` more by slice). A green build is then paid once, not replayed
-  every later turn. (Do this within the shell rules — the runner
-  captures inside Python, so the command line carries no redirect.)
+  temp log and prints only a one-line summary on success, or — on
+  failure — an index of every `…Failed` hook-result line found anywhere
+  in the log, then the failing tail plus the exit code and log path (so
+  you can `Read` more by slice). A green build is then paid once, not
+  replayed every later turn. This works for ad-hoc `cargo` /
+  `pnpm` / any command, not just `make` — route a bare
+  `cargo check` / `cargo test` / `cargo clippy` verification through
+  it too, since those emit the same "Compiling …" cascade. (Do this
+  within the shell rules — the runner captures inside Python, so the
+  command line carries no redirect.)
+- **Inspect a run_quiet log by its printed path, not a glob.** When you
+  need more than the summary, grep the **specific log path the runner
+  printed** for that run — never a `*.log` / `make-*.log` wildcard,
+  which matches every historical run in the temp dir and balloons the
+  result with cross-run noise. And when the run is a **background**
+  quiet-runner task, wait for its completion notification, then tail
+  **once** for the summary — don't poll the interim log (it suppresses
+  output mid-run, so repeated tails just return "(no output)").
 - **Scope a sub-agent fan-out.** Inlining the same large diff into N
   reviewers pays for N resident copies; scope each agent to its files,
   or have them read one shared file, rather than inlining N times.

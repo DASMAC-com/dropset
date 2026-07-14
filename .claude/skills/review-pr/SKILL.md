@@ -8,6 +8,8 @@ user-invocable: true
 
 <!-- cspell:word unstarted -->
 
+<!-- cspell:word pathspec -->
+
 # `review-pr`
 
 Act as an adversarial reviewer before the human
@@ -147,7 +149,7 @@ PR-authoring **writes** (`create_pull_request`,
      actually contains it.
 
    - For each requirement, decide from the diff
-     (`git diff main..HEAD`) and the branch's commits
+     (`git diff origin/main..HEAD`) and the branch's commits
      whether it is **addressed**, **partial**, or
      **missing**. A requirement that is out of scope
      for this PR by design (e.g. explicitly deferred,
@@ -283,7 +285,7 @@ PR-authoring **writes** (`create_pull_request`,
      ```
 
      Take `<changed files...>` from
-     `git diff --name-only main..HEAD`. Only fall back to a
+     `git diff --name-only origin/main..HEAD`. Only fall back to a
      full `python3 .claude/tools/run_quiet.py -- make lint`
      when a hook is repo-global (it has no per-file scope) or
      when you've changed enough that a scoped re-run wouldn't
@@ -304,6 +306,33 @@ PR-authoring **writes** (`create_pull_request`,
    allow-rule) **and** keeps the bulky diff out of the main
    transcript entirely.
 
+   **Diff against `origin/main`, not local `main`, and
+   exclude the generated families.** Two adjustments to the
+   `git diff` below:
+
+   - **Ref: `origin/main..HEAD`.** In a worktree, local
+     `main` is stale behind origin by already-merged PRs, so
+     `git diff main..HEAD` pulls unrelated merged-PR files
+     into `review-diff.txt` (the stale-diff hazard, reached
+     via the wrong ref). Step 2 already ran
+     `git fetch origin main`, so `origin/main` is fresh —
+     diff and size against it.
+   - **Exclude generated files with pathspec `:(exclude)`
+     globs.** A review lens reads source, not regenerated
+     output — yet a lockfile or a regenerated SDK/IDL tree
+     can be the *bulk* of a diff (a 6001-line diff that was
+     ~3607 lines of `pnpm-lock.yaml`, read by all 7 agents),
+     replayed per agent and per turn. Exclude the known
+     generated families so each lens reads source-only:
+     lock files (`pnpm-lock.yaml`, `Cargo.lock`), the
+     generated SDK clients (`sdk/ts/src/generated`,
+     `sdk/rs/src/generated`), and the generated IDL
+     (`sdk/idl/dropset.json`). (These are regenerated and
+     gate-checked in step 9 — reviewing their diff by eye
+     adds nothing.) The `:(exclude)` pathspec globs ride the
+     `git diff` command line, so it still reduces to the
+     `Bash(git diff:*)` allow-rule.
+
    **Write it to the session scratchpad, not `/tmp`.** The
    environment designates a per-session scratchpad directory
    (the harness prints its path at session start) that **is
@@ -319,8 +348,11 @@ PR-authoring **writes** (`create_pull_request`,
    caught now, not after N agents have read it:
 
    ```sh
-   git diff main..HEAD --output=<scratchpad>/review-diff.txt
-   git log main..HEAD --oneline
+   git diff origin/main..HEAD --output=<scratchpad>/review-diff.txt -- . \
+     ':(exclude)pnpm-lock.yaml' ':(exclude)Cargo.lock' \
+     ':(exclude)sdk/ts/src/generated' ':(exclude)sdk/rs/src/generated' \
+     ':(exclude)sdk/idl/dropset.json'
+   git log origin/main..HEAD --oneline
    wc -l <scratchpad>/review-diff.txt
    ```
 
@@ -401,6 +433,19 @@ PR-authoring **writes** (`create_pull_request`,
    handoff above, an agent should rarely need to shell out
    again.
 
+   **Give each lens an explicit read/turn budget, and one
+   hard negative.** In the brief, tell the lens to adjudicate
+   from the diff plus a **single** up-front read of each file
+   it needs, and to finish in a handful of turns — not by
+   re-deriving a file from scratch across many. The hard
+   negative, stated verbatim: **do NOT re-open a file a
+   finding already cites** unless you are resolving a
+   specific, named dispute about that exact file. Re-reading
+   a file the diff already handed the lens (`swap.rs`,
+   `matching.rs`) to "double-check" has run a single lens to
+   700k+ input for facts it already had. The same budget and
+   negative apply to the step-6 cross-check below.
+
    **Scale the fan-out to the diff.** The full lens set
    below plus the step-6 cross-check is the right spend for
    a substantial diff with real new logic (a new
@@ -412,7 +457,7 @@ PR-authoring **writes** (`create_pull_request`,
    doc-only diff a 375.4k one; a 24-line infra diff four
    agents including a 277.8k cross-check for a single nit).
    So first size the diff from the commit log and the line
-   count (`git diff --stat main..HEAD`), and **short-circuit
+   count (`git diff --stat origin/main..HEAD`), and **short-circuit
    when it is trivial** — small and confined to one of:
    comment / doc / Markdown-only, a config or workflow
    tweak, a rename, or a handful of lines with no new
@@ -457,6 +502,23 @@ PR-authoring **writes** (`create_pull_request`,
      production change) — cannot alter runtime behavior, so a
      single **test-validity** lens (do the tests assert the
      right thing?) is the whole review.
+
+   **Small single-crate tier — correctness + completeness, no
+   cross-check.** One step up from the single-lens cases: a
+   diff that is small and confined to **one crate**,
+   **self-contained** (it comes with its own tests and adds
+   no new cross-cutting control flow), even at a couple
+   hundred lines, has repeatedly drawn the full 4-lens +
+   cross-check fan-out (~0.8M–1.4M sub-agent input) only to
+   surface nits the **lint** pass already owned — the real
+   defects in that shape are the mechanical ones lint catches,
+   not ones a six-agent panel finds. For it, run **just
+   correctness + completeness** — the two lenses that catch a
+   genuine logic slip or a missing test — and **skip the
+   cross-check**, noting the reduced fan-out in the summary.
+   Reserve the full lens set + cross-check for **cross-cutting
+   or multi-crate** diffs, where the blast radius is exactly
+   what the extra lenses and the adversarial pass exist for.
 
    **Gate the two freshness lenses on the diff's touched
    surfaces.** The four substantive lenses below
@@ -558,10 +620,13 @@ PR-authoring **writes** (`create_pull_request`,
      config tree, a non-test workflow) leaves the
      exclude-list stale: PRs touching only that tree will
      needlessly run the full suite, and a renamed exclude
-     points at a path that no longer exists. Read
-     `.github/workflows/test.yml`, compare the `code`
-     filter's `'!…'` excludes against the trees the diff
-     adds or renames, and if one is not yet excluded (or
+     points at a path that no longer exists. **Grep
+     `.github/workflows/test.yml` to the `code:` /
+     `predicate-quantifier` block and slice-read just that**
+     (~20 lines) rather than reading the whole ~4k workflow —
+     the exclude-list is all this lens needs. Compare the
+     `code` filter's `'!…'` excludes against the trees the
+     diff adds or renames, and if one is not yet excluded (or
      now misnamed) flag the one-line `'!tree/**'` exclude
      addition/rename. Severity is **warning**, never
      blocking — a stale exclude-list only over-runs tests
@@ -592,11 +657,13 @@ PR-authoring **writes** (`create_pull_request`,
    — tell it to reason from those plus a single up-front read
    of any file a finding cites, and to shell out again only
    to settle a **genuine** dispute it can't resolve from
-   them. A cross-check that re-reads and re-greps the whole
-   diff's files from scratch has cost 676.7k input
-   re-deriving facts the primary lenses already passed it;
-   the findings + diff are enough to adjudicate almost
-   every call.
+   them. Same hard negative as the lenses: **do NOT re-open a
+   file a finding already cites** unless resolving a specific,
+   named dispute about it. A cross-check that re-reads and
+   re-greps the whole diff's files from scratch has cost
+   676.7k input re-deriving facts the primary lenses already
+   passed it; the findings + diff are enough to adjudicate
+   almost every call.
 
    If the cross-check produces material
    disagreements, iterate: re-spawn the relevant
@@ -617,14 +684,19 @@ PR-authoring **writes** (`create_pull_request`,
    decisions — leave those as warnings for the
    human reviewer.
 
-   Any inline quick-check you run to confirm a fix — a
-   scoped `cargo test -p <crate> --lib`, a `cargo clippy`,
-   a targeted `cargo test` — emits a `Compiling …` cascade
-   ahead of its result that is pure noise once it passes, so
-   run it **through the quiet runner** too
-   (`python3 .claude/tools/run_quiet.py -- cargo test -p <crate> --lib`,
-   per `CLAUDE.md` → "Context economy") — only the
-   `test result:` / error line needs to reach context.
+   Any inline quick-check you run to confirm a fix — a bare
+   `cargo check`, a scoped `cargo test -p <crate> --lib`, a
+   `cargo clippy`, a targeted `cargo test` — emits a
+   `Compiling …` cascade ahead of its result that is pure
+   noise once it passes, so run it **through the quiet
+   runner** too (the runner wraps **any** command, not just
+   `make`:
+   `python3 .claude/tools/run_quiet.py -- cargo check`, per
+   `CLAUDE.md` → "Context economy") — only the
+   `test result:` / error line needs to reach context. Don't
+   run these `cargo` verifications unwrapped; a bare
+   `cargo check` cascade has landed ~15k of `Compiling …` in
+   context for a green result.
 
 1. **Re-lint after fixes.** If any fix commits
    were made in the previous step, re-run
@@ -645,9 +717,16 @@ PR-authoring **writes** (`create_pull_request`,
    author's diff (or a fix from step 8) may have changed
    the program without regenerating these, so refresh them
    here and commit any diff; otherwise the ready PR fails
-   CI on a stale artifact. Regenerate **in dependency
-   order** — the SDK is generated from the IDL, which is
-   built from the program. Each of these targets emits a
+   CI on a stale artifact. **Run all three regeneration
+   gates unconditionally — even when the author says they
+   already regenerated.** A subset spot-check has twice let a stale
+   artifact through to a required-CI failure (a `MarketHeader`
+   that shrank two bytes left the conformance vectors stale;
+   the `sdk/ts` fixture went stale on the same layout change),
+   each costing a full CI round-trip — so verify the whole
+   set locally, don't trust a partial regeneration. Regenerate **in
+   dependency order** — the SDK is generated from the IDL,
+   which is built from the program. Each of these targets emits a
    full `Compiling …` cascade that is pure noise once it
    succeeds, so run them **through the quiet runner**
    (`python3 .claude/tools/run_quiet.py -- <make …>`, per
@@ -781,6 +860,21 @@ PR-authoring **writes** (`create_pull_request`,
      **cannot** verify that workflow locally — say
      so explicitly in the report (do not claim CI
      will pass), rather than counting it as green.
+
+   - **Also run the `sdk/ts` node test suite** — the SDK
+     job's mirror. It is **node-only** (no Solana
+     toolchain), so unlike the two targets above it is
+     **always runnable locally**, and it is the *only*
+     local gate that catches an on-chain layout change
+     breaking the SDK's hand-built fixture (`market.test.ts`)
+     — a break that otherwise surfaces only as a red SDK
+     job in CI. Install the workspace deps once if needed
+     (`pnpm --filter @dropset/sdk install`), then:
+
+     ```sh
+     python3 .claude/tools/run_quiet.py -- pnpm --filter @dropset/sdk test
+     ```
+
    - If a test fails, fix it when the fix is
      mechanical (commit signed, then re-run the
      failed target), otherwise catalogue it as a
@@ -880,7 +974,8 @@ PR-authoring **writes** (`create_pull_request`,
    reported unverifiable if the toolchain is absent — SDK
    clients, conformance vectors), `make test` and
    `make test-no-teardown` pass (or are honestly
-   reported as unverifiable locally), the title
+   reported as unverifiable locally), the **`sdk/ts` node
+   suite passes** (always runnable — no toolchain), the title
    passes `Semantic PR`, and `mergeable` is not
    `CONFLICTING` (no merge conflict). Take the PR out of draft
    with
@@ -950,6 +1045,14 @@ PR-authoring **writes** (`create_pull_request`,
    and foreground `sleep` is blocked anyway). To pace the
    re-calls across turns rather than busy-looping, schedule
    a wakeup (e.g. `ScheduleWakeup`) — one probe per wake.
+   **Schedule that wakeup on the very first `pending`
+   snapshot** — do not re-issue `gh pr checks` several times
+   in-turn first. The first poll after the push almost always
+   comes back with checks still `pending`; re-polling it
+   two or three times in the same turn just returns identical
+   still-pending snapshots (observed 4× on one run). The
+   moment a poll shows any check `pending`, pace the next one
+   with a wakeup instead of an immediate re-poll.
    Tell the human **once**, up front, that CI is in flight
    and you're standing by, then stay silent: don't narrate
    each poll. Ping again only on a **terminal** outcome (no
@@ -1036,7 +1139,8 @@ PR-authoring **writes** (`create_pull_request`,
      toolchain.
    - Test status: `make test` and
      `make test-no-teardown` — pass, fail, or
-     unverified locally (toolchain absent).
+     unverified locally (toolchain absent) — plus the
+     `sdk/ts` node suite (always runnable): pass or fail.
    - Title status: passes `Semantic PR` or not.
    - Merge status: `mergeable` — `CONFLICTING` vs.
      `MERGEABLE` (no conflict).
@@ -1069,6 +1173,23 @@ PR-authoring **writes** (`create_pull_request`,
    ready, CI is green, and the human has the full picture
    in front of them. (If CI failed, no checks ran, or the
    gate was never reached, skip this entirely.)
+
+   **This handoff goes through `AskUserQuestion` —
+   unconditionally, never silently.** It is a skill-to-skill
+   handoff (per `CLAUDE.md` → "The PR workflow and skill
+   handoffs"), so **both** actions it performs are gated on
+   the TUI selector, not a free-text question and not an
+   unprompted state change: (a) the **In Review** move and
+   (b) the **enqueue** offer are one gated handoff — the
+   `AskUserQuestion` below is what authorizes advancing the
+   issue and enqueueing. Do **not** advance the issue to In
+   Review and then enqueue without surfacing the selector,
+   and do **not** substitute a plain-text "shall I enqueue?"
+   for it. The recommended default ("yes, add it to the merge
+   queue") goes **first** in the options. The only paths that
+   skip the selector are the non-happy ones spelled out below
+   (a `CONFLICTING`/`UNKNOWN` mergeability re-check, or no
+   resolvable tag).
 
    **First, re-check mergeability — a PR that was
    `MERGEABLE` at the ready gate can turn `CONFLICTING`

@@ -93,17 +93,45 @@ class ReadTailAndCount(unittest.TestCase):
 
     def test_counts_all_and_tails_last(self):
         path = self._write_lines(100)
-        total, tail_text = rq.read_tail_and_count(path, 10)
+        total, tail_text, failed = rq.read_tail_and_count(path, 10)
         self.assertEqual(total, 100)
         self.assertEqual(tail_text.count("\n"), 10)
         self.assertIn("line 99", tail_text)
         self.assertNotIn("line 89", tail_text)
+        self.assertEqual(failed, [])
 
     def test_zero_tail_keeps_no_text(self):
         path = self._write_lines(5)
-        total, tail_text = rq.read_tail_and_count(path, 0)
+        total, tail_text, failed = rq.read_tail_and_count(path, 0)
         self.assertEqual(total, 5)
         self.assertEqual(tail_text, "")
+        self.assertEqual(failed, [])
+
+    def _write_raw(self, lines):
+        path = rq.os.path.join(rq.LOG_DIR, "test-raw-%d.log" % rq.os.getpid())
+        rq.os.makedirs(rq.LOG_DIR, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("".join(ln + "\n" for ln in lines))
+        return path
+
+    def test_collects_failed_hook_lines_beyond_tail(self):
+        # A failing hook near the top must be surfaced even with a tiny tail.
+        lines = ["yamllint" + "." * 30 + "Failed"]
+        lines += ["detail %d" % k for k in range(60)]
+        path = self._write_raw(lines)
+        _, _, failed = rq.read_tail_and_count(path, 5)
+        self.assertEqual(len(failed), 1)
+        self.assertTrue(failed[0].endswith("Failed"))
+
+    def test_passed_lines_are_not_collected(self):
+        path = self._write_raw(["cspell" + "." * 10 + "Passed", "all good"])
+        _, _, failed = rq.read_tail_and_count(path, 5)
+        self.assertEqual(failed, [])
+
+    def test_failed_lines_capped(self):
+        path = self._write_raw(["h%d.....Failed" % k for k in range(100)])
+        _, _, failed = rq.read_tail_and_count(path, 5)
+        self.assertEqual(len(failed), rq.MAX_FAILED_LINES)
 
 
 class Run(unittest.TestCase):
@@ -134,6 +162,16 @@ class Run(unittest.TestCase):
         self.assertTrue(out.startswith("✗ fail (exit 3,"))
         self.assertIn("--- last", out)
         self.assertIn("boom", out)
+
+    def test_failure_surfaces_failed_hook_index(self):
+        code, out, _ = self._run(
+            rq.DEFAULT_TAIL,
+            "lint",
+            [PY, "-c", "print('yamllint....Failed'); import sys; sys.exit(1)"],
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("--- failed hooks (1) ---", out)
+        self.assertIn("yamllint....Failed", out)
 
     def test_label_defaults_to_joined_command(self):
         code, out, _ = self._run(rq.DEFAULT_TAIL, None, [PY, "-c", "pass"])

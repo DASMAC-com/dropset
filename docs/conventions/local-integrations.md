@@ -8,8 +8,9 @@
 
 This doc covers the **user-local Claude Code configuration** the repo
 *documents but does not commit*: the compound-shell guard hook, the
-iTerm2 tab-color integration, and the shell (`~/.zshrc`) setup they lean
-on. None of it is enforced on a checkout.
+worktree edit-path guard hook, the iTerm2 tab-color integration, and the
+shell (`~/.zshrc`) setup they lean on. None of it is enforced on a
+checkout.
 
 Both `.claude/settings.json` (hook + permission wiring) and
 `.claude/settings.local.json` (the per-machine allowlist) are
@@ -82,6 +83,59 @@ base repo's copy automatically; `firm-perms`' full sweep is what
 propagates a firmed allowlist from the base repo into a worktree (and
 back), so run it once in a cold worktree if the guard or a familiar
 allow-rule is missing.
+
+## The worktree edit-path guard hook
+
+In a worktree session the build and tests run against the *worktree*
+checkout, so editing a file through its **base-repo absolute path**
+(`/…/dropset/foo.rs`) instead of the worktree path
+(`/…/dropset/.claude/worktrees/<tag>/foo.rs`) writes to a copy the
+worktree build never sees — a new test "doesn't appear," a fix "doesn't
+take," and the slip surfaces only after a wasted rebuild. It is a
+recurring, expensive mistake. A `PreToolUse` guard
+(`.claude/hooks/worktree_edit_guard.py`) catches it at the tool call:
+when the active checkout is a worktree and a **file-mutating** tool
+(`Edit` / `Write` / `MultiEdit` / `NotebookEdit`) targets a base-repo
+absolute path, it **blocks** and names the worktree-local path to use
+instead. A `Read` of a base path is merely wasteful, not corrupting, so
+it is left alone.
+
+Two carve-outs pass through: the base `.claude/settings.json` /
+`settings.local.json` files (which `firm-perms` and `firm_last.py` write
+on purpose), and the env escape `ALLOW_BASE_REPO_EDITS=1` for a rare
+deliberate base edit. The guard fails *open* — a missing field or parse
+problem is allowed — so it never wedges a session, and relative paths
+(which resolve against the worktree cwd) are always allowed.
+
+Like the compound guard, the **script** is committed with a built-in
+self-test —
+`python3 .claude/hooks/worktree_edit_guard.py --self-test` — but its
+`PreToolUse` **wiring** is not committed. To turn it on, add to your
+`.claude/settings.json`:
+
+<!-- markdownlint-disable MD013 -->
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/worktree_edit_guard.py\"",
+            "statusMessage": "Checking edit target",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+<!-- markdownlint-enable MD013 -->
 
 ## iTerm2 tab-color integration
 
