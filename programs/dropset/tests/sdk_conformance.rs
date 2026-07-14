@@ -82,6 +82,24 @@ fn predict_and_execute(
     predicted
 }
 
+/// The `emit_cpi!` self-CPI framing tag is the 8-byte prefix every event
+/// decoder strips before reading a discriminator. The off-chain SDK
+/// hand-copies it as a literal (`dropset_sdk::events::EVENT_IX_TAG_LE`) and
+/// deliberately doesn't pull in the heavy on-chain `anchor_lang_v2` crate, so
+/// nothing there cross-checks the copy against anchor's real constant — and
+/// this repo tracks an unreleased anchor-v2 fork. If a fork bump moved the
+/// tag, the SDK and the whole indexer would silently decode zero events with
+/// no other test failing. This pins the two together at build/test time,
+/// mirroring how `dropset_sdk::events` already pins the event discriminators.
+#[test]
+fn sdk_event_tag_matches_anchor() {
+    assert_eq!(
+        dropset_sdk::events::EVENT_IX_TAG_LE,
+        anchor_lang_v2::event::EVENT_IX_TAG_LE,
+        "the SDK's hand-copied EVENT_IX_TAG_LE drifted from anchor's constant"
+    );
+}
+
 #[test]
 fn sdk_layout_decodes_live_market() {
     let f = Fixture::seeded(10_000_000, 10_000_000);
