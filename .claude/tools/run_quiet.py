@@ -12,8 +12,18 @@ model's command line stays free of shell redirects and passes the
 
 * on success — a single line naming the command, its exit code, the line count,
   and the log path;
-* on failure — the last ``--tail`` lines of the log, the exit code, and the log
-  path, so the model can ``Read`` more of the log by slice if it needs to.
+* on failure — first an index of every *failed-hook* result line found anywhere
+  in the log (a ``make lint`` / pre-commit run prints one
+  ``<hook name>………Failed`` line per hook, and the one that actually failed
+  often scrolls off the top past the ``--tail`` window), then the last
+  ``--tail`` lines of the log, the exit code, and the log path, so the model
+  can ``Read`` more of the log by slice if it needs to.
+
+The failed-hook index exists because trusting the tail alone has bitten us: a
+``make lint`` failure in an *early* hook (yamllint, cspell) scrolled off the
+50-line tail behind a later hook's output and the run was wrongly judged clean,
+costing CI round-trips. Scanning the whole log for ``…Failed`` result lines
+surfaces every failing hook regardless of where it sits.
 
 The child's exit code is propagated, so callers (and CI) still see pass/fail.
 
@@ -42,6 +52,10 @@ import tempfile
 
 # Default number of trailing log lines shown on failure.
 DEFAULT_TAIL = 50
+
+# Cap on how many failed-hook index lines to surface, so a pathological log that
+# prints "…Failed" thousands of times can't balloon the summary.
+MAX_FAILED_LINES = 40
 
 # Where captured logs land: a stable subdir of the system temp dir (usually
 # /tmp/claude-run-quiet). One file per run, named for the command and pid so
@@ -119,19 +133,45 @@ def sanitize(cmd):
     return safe or "cmd"
 
 
-def read_tail_and_count(path, tail):
-    """Return (total_line_count, last-`tail`-lines-as-text) for the log file.
+def is_failed_hook_line(line):
+    """True for a pre-commit / ``make lint`` per-hook result line that failed.
 
-    Uses a bounded deque so a huge log never has to sit in memory in full.
+    Pre-commit prints one ``<hook name>………Failed`` line per hook (passing
+    hooks end in ``Passed``); the actual failure detail follows below it.
+    Matching the
+    result line on a trailing ``Failed`` gives a compact index of *which* hooks
+    failed, independent of where in the log they sit.
+    """
+    return line.rstrip().endswith("Failed")
+
+
+def read_tail_and_count(path, tail):
+    """Return (line_count, last-`tail`-lines-as-text, failed_hook_lines, truncated).
+
+    ``failed_hook_lines`` is the list of ``…Failed`` result lines found anywhere
+    in the log (newline-stripped, order preserved, capped at MAX_FAILED_LINES) —
+    surfaced on failure so a failing hook that scrolled off the tail window is
+    still reported. ``truncated`` is True only when *more* than
+    MAX_FAILED_LINES such lines were found (so the list holds just the first
+    MAX_FAILED_LINES) — this is what distinguishes a genuine cap from a log with
+    exactly MAX_FAILED_LINES failures and no more. Uses a bounded deque so a
+    huge log never sits in memory in full.
     """
     count = 0
     dq = collections.deque(maxlen=tail if tail > 0 else 0)
+    failed = []
+    truncated = False
     with open(path, "r", encoding="utf-8", errors="replace") as fh:
         for line in fh:
             count += 1
             if tail > 0:
                 dq.append(line)
-    return count, "".join(dq)
+            if is_failed_hook_line(line):
+                if len(failed) < MAX_FAILED_LINES:
+                    failed.append(line.rstrip("\n"))
+                else:
+                    truncated = True
+    return count, "".join(dq), failed, truncated
 
 
 def run(tail, label, cmd):
@@ -164,7 +204,7 @@ def run(tail, label, cmd):
         sys.stderr.write("✗ %s — could not launch: %s\n" % (display, exc))
         return LAUNCH_FAILURE_CODE
 
-    lines, tail_text = read_tail_and_count(log_path, tail)
+    lines, tail_text, failed, truncated = read_tail_and_count(log_path, tail)
 
     if code == 0:
         sys.stdout.write(
@@ -175,6 +215,11 @@ def run(tail, label, cmd):
     sys.stdout.write(
         "✗ %s (exit %d, %d lines; log: %s)\n" % (display, code, lines, log_path)
     )
+    if failed:
+        more = " (truncated, more omitted)" if truncated else ""
+        sys.stdout.write("--- failed hooks (%d)%s ---\n" % (len(failed), more))
+        for fl in failed:
+            sys.stdout.write(fl + "\n")
     if tail > 0 and tail_text:
         shown = min(tail, lines)
         sys.stdout.write("--- last %d line(s) ---\n" % shown)

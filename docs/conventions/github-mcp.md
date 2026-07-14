@@ -9,7 +9,7 @@ CLI, **with the deliberate exceptions below**. The skills (`init-pr`,
 `pr-title-description`, `review-pr`, `housekeeping`, `linear-task`)
 are written against it. `gh` survives in four places — two in
 `review-pr`, one in `init-pr`, and the field-selected `gh pr list`
-read shared by `pr-title-description` and `housekeeping`:
+read used by `housekeeping`:
 
 - **The merge-queue handoff** — the enqueue (a `gh pr merge --auto`
   write, **no** strategy flag: this repo's merge queue sets the
@@ -80,22 +80,21 @@ read shared by `pr-title-description` and `housekeeping`:
   `Bash(gh api graphql:*)` for the mutation — so no new permission is
   needed.
 
-- **The field-selected `gh pr list --json` read** (`pr-title-description`
-  and `housekeeping`) — `gh` has a `merged` state filter the MCP
-  `list_pull_requests` lacks **and** selects only the fields the
-  decision needs, so one field-selected read replaces a
-  list-every-closed-PR call (~104k tokens of full bodies, replayed
-  every later turn — see [context economy](context-economy.md)) *plus*
-  the per-PR body fetches it would otherwise need. `pr-title-description`
-  uses `gh pr list --json number,title,body --state merged --limit 3`
-  to read the last few merged PRs' bodies for style;
-  `housekeeping`'s worktree-prune uses `gh pr list --state merged`
-  selecting only `number,headRefName,mergedAt` (with `--limit 100`)
-  **once** to learn which worktree branches merged, in place of one
-  full-body `list_pull_requests` per branch. `--json` is a flag, not a
-  pipe, so
-  both reduce to the `Bash(gh pr list:*)` allow-rule (a routine,
-  low-blast-radius read).
+- **The field-selected `gh pr list --json` read** (`housekeeping`) —
+  `gh` has a `merged` state filter the MCP `list_pull_requests` lacks
+  **and** selects only the fields the decision needs, so one
+  field-selected read replaces a list-every-closed-PR call (~104k
+  tokens of full bodies, replayed every later turn — see
+  [context economy](context-economy.md)) *plus* the per-PR body
+  fetches it would otherwise need. `housekeeping`'s worktree-prune uses
+  `gh pr list --state merged` selecting only
+  `number,headRefName,mergedAt` (with `--limit 100`) **once** to learn
+  which worktree branches merged, in place of one full-body
+  `list_pull_requests` per branch. `--json` is a flag, not a pipe, so
+  it reduces to the `Bash(gh pr list:*)` allow-rule (a routine,
+  low-blast-radius read). (`pr-title-description` no longer does a
+  style lookup at all — its title and body formats are standardized in
+  the skill, so it makes no `gh pr list` read.)
 
 Everything else stays MCP-first; `gh` is not a general-purpose escape
 hatch.

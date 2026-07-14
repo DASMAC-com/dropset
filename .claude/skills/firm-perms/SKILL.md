@@ -184,6 +184,15 @@ base. It runs only when explicitly asked:
    when the harvest yields **≥1** new / uncovered rule is the dual read
    below worth its cost.
 
+   The empty harvest is **terminal — do not read the allowlist to
+   "double-check" it.** The harvest is authoritative: it already tells
+   you whether any prompt fired, and reading `settings.local.json` to
+   re-confirm the working set is empty defeats the whole point of the
+   gate (that read has been the top single token sink of a firm-nothing
+   sweep). An empty harvest means *stop and report*, full stop — no
+   confirming read of either copy. In practice most sessions firm
+   nothing, so this gate fires far more often than the dual read does.
+
 1. **Read both allowlists** with the Read tool (never shell out to
    `jq` / `node` / `python` to read or edit JSON):
 

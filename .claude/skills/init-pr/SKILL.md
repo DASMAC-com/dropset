@@ -51,14 +51,14 @@ at its merge-queue handoff — the same TUI-selector
 pattern, applied one stage earlier at the
 init-pr → review-pr boundary.
 
-## Surveying reference repos: prefer the `Explore` agent
+## Surveying code: prefer the `Explore` agent — and scope it
 
 When the surfaced task is greenfield and the work begins
-with **surveying reference implementations** — reading one
-or more *external* repos to learn a pattern before building
-— spawn the **`Explore`** agent for that survey, **not** a
-`general-purpose` agent, and pass it an explicit file/dir
-**path allowlist** scoped to what's worth reading.
+with **surveying implementations** — reading one or more
+repos (external *or* in-repo) to learn a pattern before
+building — spawn the **`Explore`** agent for that survey,
+**not** a `general-purpose` agent, and pass it an explicit
+file/dir **path allowlist** scoped to what's worth reading.
 
 `Explore` reads **excerpts** (it locates and slice-reads)
 rather than ingesting whole files, so it caps the dominant
@@ -73,6 +73,22 @@ the agent the canonical sub-agent brief
 (`docs/conventions/sub-agent-brief.md`) and name the
 specific paths it should look at, rather than turning it
 loose on a whole tree.
+
+**In-repo / in-workspace surveys need the same scoping —
+they are not exempt.** An open-ended "map how the TUI + the
+bots work" over this workspace was the single top token
+sink of three consecutive sessions, each time answering a
+question that ultimately needed only ~3–6 named modules the
+main loop then Read anyway (duplicating the survey). So when
+the survey is an in-repo map, don't hand the agent a broad
+mandate: give it an **explicit named-path file allowlist**
+(the specific modules you expect to matter) **and a turn
+budget** (e.g. "≤ 8 turns, then report"), and ask for a
+compact map — file → responsibility → the few symbols that
+matter — not a narration of everything it read. And weigh
+whether to spawn an agent at all: a **≤ ~3-file question is
+cheaper Read directly** from the main loop than surveyed,
+since a sub-agent survey of it just gets re-Read afterward.
 
 ## The branch/worktree helper tool
 
@@ -141,6 +157,17 @@ Steps 1, 2, and 4 read their answers from this one call.
      base repo (`base_repo` from the helper). If it
      doesn't exist, main has no env file — skip and move
      on.
+
+   **If Glob is unavailable this session** (the harness
+   sometimes reports "No such tool available: Glob"), fall
+   back to a **bare `find <path>`** — one path per call, and
+   crucially **no `2>/dev/null` redirect**: the redirect
+   trips the `no_compound_bash` guard and burns blocked
+   attempts (a bare `find <missing-path>` already prints its
+   own "No such file" to stderr and exits non-zero, which is
+   the signal you want). A `Read` of the path works too — a
+   read error means "doesn't exist." Don't reach for
+   `test`/`if` or a redirected `find` as the fallback.
 
    Only when this worktree has none and main has one,
    create the link (the bare `ln` matches an existing
