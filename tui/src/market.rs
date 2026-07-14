@@ -278,7 +278,10 @@ pub fn ensure_quote_mints(
     for config in PAIRS {
         let quote = load_key(repo_root, config.quote.keypair_file)?;
         if seen.insert(quote.pubkey()) {
-            log.log(format!("Creating shared {} quote mint…", config.quote.symbol));
+            log.log(format!(
+                "Creating shared {} quote mint…",
+                config.quote.symbol
+            ));
             chain::create_mint(client, wallet, &quote, config.quote.decimals)
                 .with_context(|| format!("create shared quote mint {}", config.quote.symbol))?;
         }
@@ -313,9 +316,8 @@ pub fn prefund_leader_quotes(
         *totals.entry((leader.pubkey(), quote_mint)).or_default() += quote_atoms;
     }
     for ((leader_pubkey, quote_mint), total) in totals {
-        let quote_ata =
-            chain::create_ata_idempotent(client, wallet, &leader_pubkey, &quote_mint)
-                .context("leader quote ATA")?;
+        let quote_ata = chain::create_ata_idempotent(client, wallet, &leader_pubkey, &quote_mint)
+            .context("leader quote ATA")?;
         log.log(format!(
             "Pre-funding leader {leader_pubkey} quote ATA with {total} atoms…"
         ));

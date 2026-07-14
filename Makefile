@@ -1,6 +1,7 @@
 .PHONY: all
 .PHONY: bots-down
 .PHONY: bots-up
+.PHONY: browser-3000
 .PHONY: check-anchor
 .PHONY: check-conformance-vectors
 .PHONY: check-docker
@@ -40,6 +41,7 @@
 .PHONY: tools-tests
 .PHONY: tui
 .PHONY: tui-prebuild
+.PHONY: tui-prebuild-explorer
 .PHONY: wasm
 
 all: lint test
@@ -227,22 +229,24 @@ sdk-test: check-pnpm
 # building them here means the spawned bot is always current with the just-
 # built program's account layout, closing the stale-binary hazard where an
 # old bot decodes a current market against a superseded `MarketHeader` size
-# and dies with `SectorOverflow`). Finally warm the local explorer's Docker
-# image: the TUI brings the explorer up in the background at launch, and
-# without a cached image that `docker compose up` builds it lazily — streaming
-# a multi-minute image build into the TUI log, the same class of stall the
-# program/bot prebuild kills. The build is guarded on a `docker` CLI so a
-# no-Docker host (which falls back to the hosted explorer) is unaffected.
-# After `make clean && make tui`, every in-TUI command runs without building.
-tui-prebuild: check-toolchain program-keypair
+# and dies with `SectorOverflow`). The `tui-prebuild-explorer` prerequisite
+# warms the explorer's Docker image too, so after `make clean && make tui`
+# every in-TUI command runs without building.
+tui-prebuild: check-toolchain program-keypair tui-prebuild-explorer
 	anchor keys sync && anchor build --no-idl
 	cargo build -p dropset-maker-bot -p dropset-taker-bot
+
+# Warm the local explorer's Docker image so the `docker compose up` the TUI
+# runs in the background at launch is a cache hit, not a multi-minute image
+# build streaming into the log (the same class of stall the program/bot
+# prebuild kills). Guarded on a `docker` CLI so a no-Docker host (which falls
+# back to the hosted explorer) is unaffected. A `tui-prebuild` prerequisite,
+# so `make tui` warms it too.
+tui-prebuild-explorer:
 	@if command -v docker >/dev/null 2>&1; then \
 		docker compose -f infra/localnet/docker-compose.yml \
 			build explorer; \
-	else \
-		echo "docker not found — skipping explorer image prebuild"; \
-	fi
+	else echo "docker not found — skipping explorer image prebuild"; fi
 
 # Localnet control-plane TUI. Spawns its own
 # solana-test-validator (ledger in a temp dir), so it needs no running
@@ -296,9 +300,7 @@ decks: check-pnpm
 # TUI stops the frontend too; the frontend retries until the validator is up,
 # so start order doesn't matter. Cleanup runs a broad `pkill -f "next dev"`,
 # so it also stops any unrelated next dev you have running (dev-only target).
-# A third background job opens the browser on the frontend once its port is
-# accepting connections — `frontend-localnet` (unlike `frontend`) doesn't, so
-# the demo would otherwise leave the operator to open localhost:3000 by hand.
+# The browser auto-opens via the `browser-3000` prerequisite below.
 #
 # The TUI runs on the alternate screen, so the background frontend's stdout
 # would paint over it — `next dev`'s output is redirected to a log file, and
@@ -309,12 +311,18 @@ decks: check-pnpm
 # passes `--bootstrap`, so the TUI auto-runs "Bootstrap all" once the localnet
 # is up. Wiping or tearing down does not re-bootstrap on its own — re-run it
 # from the menu.
-FRONTEND_LOG ?= /tmp/dropset-frontend.log
-demo:
-	@echo "frontend logs → $(FRONTEND_LOG) (kept off the TUI screen)"
+
+# Open the browser on the frontend once :3000 accepts connections, in a
+# silenced background job — `frontend-localnet` (unlike `frontend`) doesn't, so
+# the demo would otherwise leave the operator to open localhost:3000 by hand.
+browser-3000:
 	@( until nc -z localhost 3000 2>/dev/null; do sleep 0.2; done; \
 		opener=$$(command -v open || command -v xdg-open) \
 			&& $$opener http://localhost:3000 ) >/dev/null 2>&1 &
+
+FRONTEND_LOG ?= /tmp/dropset-frontend.log
+demo: browser-3000
+	@echo "frontend logs → $(FRONTEND_LOG) (kept off the TUI screen)"
 	@$(MAKE) --no-print-directory frontend-localnet \
 		>$(FRONTEND_LOG) 2>&1 & \
 	trap 'kill %1 2>/dev/null; pkill -f "next dev"' INT TERM EXIT; \

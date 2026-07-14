@@ -85,6 +85,7 @@ pkill
 prebuild
 predev
 prefs
+prefund
 programdata
 pubkeys
 pytest
