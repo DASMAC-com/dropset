@@ -41,6 +41,7 @@ use ratatui::{
 };
 use solana_client::rpc_client::RpcClient;
 use solana_pubkey::Pubkey;
+use solana_native_token::LAMPORTS_PER_SOL;
 use solana_signer::Signer;
 use std::collections::VecDeque;
 use std::fs::File;
@@ -234,6 +235,7 @@ impl App {
     pub fn run(&mut self) -> Result<()> {
         self.log(LogKind::Info, "Starting solana-test-validator…".to_string());
         self.start_explorer();
+        self.start_airdrops();
         // Watch the program's fills so the recent-fills pane fills in as swaps
         // land — survives a wipe by reconnecting to the respawned validator.
         fills::spawn(self.ctx.rpc_url.clone(), self.tx.clone());
@@ -275,6 +277,32 @@ impl App {
         let lock = self.ctx.explorer_lock.clone();
         std::thread::spawn(move || {
             explorer::start_in_background(&log, &repo_root, &status, &lock);
+        });
+    }
+
+    /// Pre-fund the admin (every bootstrap tx's fee payer) and the taker
+    /// (`FFFF`, the probe swap's signer) with a working SOL balance on a
+    /// background thread at launch, so neither the first bootstrap step nor the
+    /// first swap stalls waiting on an airdrop. Best-effort: a failure is
+    /// logged, and the per-job `ensure_funded` still covers anything this
+    /// misses (e.g. the validator not yet accepting requests at launch).
+    fn start_airdrops(&self) {
+        let log = Logger::new(self.tx.clone());
+        let rpc_url = self.ctx.rpc_url.clone();
+        let admin = self.ctx.wallet.pubkey();
+        let taker = self.swapper;
+        std::thread::spawn(move || {
+            let client = chain::rpc(&rpc_url);
+            for (label, who) in [("admin", Some(admin)), ("taker", taker)] {
+                let Some(who) = who else { continue };
+                if client.get_balance(&who).unwrap_or(0) >= LAMPORTS_PER_SOL {
+                    continue;
+                }
+                log.log(format!("Pre-funding the {label} wallet…"));
+                if let Err(e) = chain::airdrop(&client, &who, 100 * LAMPORTS_PER_SOL) {
+                    log.log(format!("{label} airdrop warning: {e:#}"));
+                }
+            }
         });
     }
 

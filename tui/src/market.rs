@@ -259,6 +259,33 @@ pub fn create_pair_mints(
     Ok((base.pubkey(), quote.pubkey()))
 }
 
+/// Create every pair's shared quote mint once, up front, deduped by address.
+/// All FX pairs quote in the same fixed USDC mint, and [`create_pair_mints`]'
+/// underlying [`chain::create_mint`] is existence-checked but *not*
+/// concurrency-safe — two threads creating the same mint would both find it
+/// absent and one would fail with "account already in use". So the parallel
+/// per-market bootstrap pre-creates the shared quote mint(s) here, sequentially,
+/// leaving each market to create only its unique base mint concurrently. The
+/// dedup keeps this correct if a future pair ever quotes in something other
+/// than USDC.
+pub fn ensure_quote_mints(
+    client: &RpcClient,
+    wallet: &Keypair,
+    repo_root: &Path,
+    log: &Logger,
+) -> Result<()> {
+    let mut seen = std::collections::HashSet::new();
+    for config in PAIRS {
+        let quote = load_key(repo_root, config.quote.keypair_file)?;
+        if seen.insert(quote.pubkey()) {
+            log.log(format!("Creating shared {} quote mint…", config.quote.symbol));
+            chain::create_mint(client, wallet, &quote, config.quote.decimals)
+                .with_context(|| format!("create shared quote mint {}", config.quote.symbol))?;
+        }
+    }
+    Ok(())
+}
+
 /// Bring the market's freshly-created vault up live: stamp the reference
 /// price, set the quote ladder, then fund the leader's ATAs (from the admin
 /// mint authority) and seed the vault with `deposit_leader`. The `leader`
