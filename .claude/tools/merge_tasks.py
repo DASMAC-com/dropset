@@ -35,7 +35,7 @@ import sys
 # — the surface the ``Claude:`` issue-title prefix batches. The canonical
 # definition is ``docs/conventions/linear-automation.md`` → "The Claude:
 # meta-work prefix"; keep this copy in sync with it.
-META_BASES = (".claude", "docs/conventions", "tools")
+META_BASES = (".claude", "docs/conventions")
 
 CLAUDE_PREFIX = "Claude: "
 

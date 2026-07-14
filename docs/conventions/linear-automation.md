@@ -64,8 +64,8 @@ over the MCP.
 The **sync-blockers Python tool** (the deterministic core of the
 `sync-blockers` skill — see "Structured filing fields" below) is a
 single, dependency-free `python3` script at
-`tools/sync-blockers/sync_blockers.py`, run directly (the
-`Bash(python3 tools/sync-blockers/sync_blockers.py:*)` allow-rule —
+`.claude/tools/sync_blockers.py`, run directly (the
+`Bash(python3 .claude/tools/sync_blockers.py:*)` allow-rule —
 there is no `make` target). Its one job is **edge maintenance**: it
 reads the open Backlog's `**Touches**:` globs and declared `blockedBy`
 / `blocks` edges, and files a real `blocks` relation (lower number
@@ -123,9 +123,10 @@ been printed for the human.
 ## The `Claude:` meta-work prefix
 
 **Meta-work** is agent-infra change — work whose touched paths sit
-**entirely** under `.claude/**`, `CLAUDE.md`, `docs/conventions/**`, or
-`tools/**`. Anything that also touches product / on-chain / SDK /
-frontend code is **not** meta. Every meta-work Linear issue title
+**entirely** under `.claude/**`, `CLAUDE.md`, or `docs/conventions/**`.
+Anything that also touches product / on-chain / SDK / frontend code is
+**not** meta — including the shared build scripts under `brand-assets/`,
+which are product-adjacent, not agent-infra. Every meta-work Linear issue title
 carries a leading **`Claude:`** token (capital C, colon, space) —
 e.g. `Claude: Add a /merge-tasks skill` — so all agent-infra work
 batches together and can be filtered, staged, and reviewed apart from

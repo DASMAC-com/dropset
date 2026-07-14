@@ -5,20 +5,21 @@
 // Vercel Root Directory and may not survive Vercel's build-time static
 // collection).
 //
-// Usage: node tools/scripts/copy-brand-assets.mjs <dest-dir>
+// Usage: node brand-assets/copy-brand-assets.mjs <dest-dir>
 //   where <dest-dir> is the app's public/ dir relative to the repo root,
 //   e.g. `frontend/public` or `decks/public`.
 import { copyFileSync, mkdirSync, readdirSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(here, "..", "..");
-const source = join(repoRoot, "brand-assets");
+const repoRoot = resolve(here, "..");
+const source = here;
+const selfName = basename(fileURLToPath(import.meta.url));
 
 const destArg = process.argv[2];
 if (!destArg) {
-  console.error("usage: node tools/scripts/copy-brand-assets.mjs <dest-dir>");
+  console.error("usage: node brand-assets/copy-brand-assets.mjs <dest-dir>");
   process.exit(1);
 }
 // Resolve the destination against the repo root so the argv is independent
@@ -26,9 +27,10 @@ if (!destArg) {
 const dest = resolve(repoRoot, destArg);
 
 // Copy the contents of brand-assets/ rather than a hardcoded list, so a new
-// shared brand asset is a drop-in file with no edit to this script.
+// shared brand asset is a drop-in file with no edit to this script. Skip this
+// script's own file — it lives among the assets it copies, and it isn't one.
 const assets = readdirSync(source, { withFileTypes: true })
-  .filter((entry) => entry.isFile())
+  .filter((entry) => entry.isFile() && entry.name !== selfName)
   .map((entry) => entry.name);
 
 mkdirSync(dest, { recursive: true });

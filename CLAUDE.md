@@ -51,7 +51,7 @@ Detail: `docs/conventions/linear-automation.md`.
 ### Claude: meta-work prefix
 
 **Meta-work** issues — those whose `**Touches**:` sit entirely under
-`.claude/**`, `CLAUDE.md`, `docs/conventions/**`, or `tools/**` — carry
+`.claude/**`, `CLAUDE.md`, or `docs/conventions/**` — carry
 a leading **`Claude:`** token on their **Linear issue title** (capital
 C, colon, space) so agent-infra work batches apart from product code.
 Filing skills (`linear-task`, `audit`, `audit-scope`, `housekeeping`)

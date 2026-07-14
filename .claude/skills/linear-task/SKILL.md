@@ -70,7 +70,7 @@ what to file.
      period (e.g. "Harden vault swap against
      partial fills"). If the to-do is **meta-work** —
      its `**Touches**:` sit entirely under `.claude/**`,
-     `CLAUDE.md`, `docs/conventions/**`, or `tools/**` —
+     `CLAUDE.md`, or `docs/conventions/**` —
      prepend the **`Claude:`** prefix (e.g. "Claude:
      Harden the audit dedup key"), per `CLAUDE.md` →
      "Claude: meta-work prefix". Anything also touching
@@ -143,12 +143,12 @@ what to file.
    file-overlap `blocks` edges against the open Backlog
    with the incremental sweep — one bare command that
    reduces to the
-   `Bash(python3 tools/sync-blockers/sync_blockers.py:*)`
+   `Bash(python3 .claude/tools/sync_blockers.py:*)`
    allow-rule (the overlap scan happens in the tool's own
    process, so nothing enters context):
 
    ```sh
-   python3 tools/sync-blockers/sync_blockers.py --for <ENG-###>
+   python3 .claude/tools/sync_blockers.py --for <ENG-###>
    ```
 
    Best-effort: it needs `LINEAR_API_KEY` /

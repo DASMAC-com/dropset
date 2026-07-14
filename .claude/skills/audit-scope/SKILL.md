@@ -223,7 +223,7 @@ Optional (ask on a direct run if not provided):
 
      **Meta-work prefix.** If the finding's `**Touches**:`
      sit entirely under the meta surface (`.claude/**`,
-     `CLAUDE.md`, `docs/conventions/**`, `tools/**`),
+     `CLAUDE.md`, `docs/conventions/**`),
      prepend the **`Claude:`** token to the title —
      `Claude: <file>: <imperative fix>` — per `CLAUDE.md` →
      "Claude: meta-work prefix". A finding touching product
@@ -266,12 +266,12 @@ Optional (ask on a direct run if not provided):
    `save_issue` returns a new identifier, file that issue's
    file-overlap `blocks` edges against the open Backlog with
    the incremental sweep — one bare command reducing to the
-   `Bash(python3 tools/sync-blockers/sync_blockers.py:*)`
+   `Bash(python3 .claude/tools/sync_blockers.py:*)`
    allow-rule (the scan runs in the tool's own process, so
    nothing enters context):
 
    ```sh
-   python3 tools/sync-blockers/sync_blockers.py --for <ENG-###>
+   python3 .claude/tools/sync_blockers.py --for <ENG-###>
    ```
 
    Best-effort: it needs `LINEAR_API_KEY` / `LINEAR_PROJECT_ID`;

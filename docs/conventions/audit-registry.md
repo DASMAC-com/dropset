@@ -22,8 +22,8 @@ frontend (web-app, med): frontend/**
 decks (web-app, low): decks/**
 tui (rust-lib, low): tui/**
 docs (specs, med): docs/**
-ci-infra (ci, low): .github/**, cfg/**, infra/**, keys/**, tools/**,
-  Makefile, Anchor.toml
+ci-infra (ci, low): .github/**, brand-assets/**, cfg/**, infra/**,
+  keys/**, Makefile, Anchor.toml
 maker-bot (rust-tool, low): bots/maker-bot/**
 taker-bot (rust-tool, low): bots/taker-bot/**
 localnet-support (rust-lib, low): bots/localnet-support/**

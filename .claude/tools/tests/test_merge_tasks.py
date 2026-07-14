@@ -1,7 +1,7 @@
 """Stdlib ``unittest`` tests for the merge-tasks consolidation helper.
 
-Run from ``.claude/tools`` with ``python3 -m unittest`` (or via the repo's
-``make tools-tests``).
+Run via the repo's ``make tools-tests`` (discovery adds ``.claude/tools`` as
+the top-level dir so the bare ``import merge_tasks`` below resolves).
 """
 
 import unittest
@@ -69,9 +69,11 @@ class TouchesTests(unittest.TestCase):
         self.assertTrue(is_meta_glob(".claude/skills/x"))
         self.assertTrue(is_meta_glob("CLAUDE.md"))
         self.assertTrue(is_meta_glob("docs/conventions/**"))
-        self.assertTrue(is_meta_glob("tools/sync-blockers/**"))
+        self.assertTrue(is_meta_glob(".claude/tools/**"))
         self.assertFalse(is_meta_glob("programs/dropset/src/lib.rs"))
         self.assertFalse(is_meta_glob("docs/indexer.md"))
+        # the relocated build script's home is product-adjacent, not meta-work
+        self.assertFalse(is_meta_glob("brand-assets/**"))
 
     def test_strip_claude_prefix(self):
         self.assertEqual(strip_claude_prefix("Claude: Do x"), "Do x")
@@ -98,7 +100,7 @@ class AssembleTests(unittest.TestCase):
                     "title": "Claude: Tweak sync-blockers",
                     "description": (
                         "Folded body.\n\n**Fingerprint**: stage:tweak\n"
-                        "**Touches**: tools/sync-blockers/**\n"
+                        "**Touches**: .claude/tools/**\n"
                     ),
                 },
             ],
@@ -116,14 +118,14 @@ class AssembleTests(unittest.TestCase):
     def test_unions_touches_into_one_line(self):
         out = assemble(self._issues())
         self.assertEqual(
-            out["touches"], [".claude/skills/audit/**", "tools/sync-blockers/**"]
+            out["touches"], [".claude/skills/audit/**", ".claude/tools/**"]
         )
         # exactly one consolidated Touches line, at the end
         self.assertEqual(out["description"].count("**Touches**:"), 1)
         self.assertTrue(
             out["description"]
             .rstrip()
-            .endswith("**Touches**: .claude/skills/audit/**, tools/sync-blockers/**")
+            .endswith("**Touches**: .claude/skills/audit/**, .claude/tools/**")
         )
 
     def test_all_meta_applies_claude_prefix(self):

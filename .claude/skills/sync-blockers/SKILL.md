@@ -1,6 +1,6 @@
 ---
 name: sync-blockers
-description: Keep the Dropset Linear Backlog's blocking edges in sync with file overlap. The whole job is deterministic and lives in a committed, dependency-free Python tool (`tools/sync-blockers/sync_blockers.py`, run directly with `python3`): read the open Backlog, find every `**Touches**:` file-overlap collision with no declared blockedBy/blocks edge, and file a real `blocks` relation (lower ENG-### blocks higher) so Linear's native blocking icons reflect it. Two modes — `--for ENG-###` (incremental, file-time: just the named issue vs. the backlog) and a bare full sweep (reconciliation). It never renders or writes a document, and never merges or closes issues. The filing skills call `--for` after `save_issue`; run the full sweep by hand to reconcile after backfilling a `**Touches**:` line on an older issue.
+description: Keep the Dropset Linear Backlog's blocking edges in sync with file overlap. The whole job is deterministic and lives in a committed, dependency-free Python tool (`.claude/tools/sync_blockers.py`, run directly with `python3`): read the open Backlog, find every `**Touches**:` file-overlap collision with no declared blockedBy/blocks edge, and file a real `blocks` relation (lower ENG-### blocks higher) so Linear's native blocking icons reflect it. Two modes — `--for ENG-###` (incremental, file-time: just the named issue vs. the backlog) and a bare full sweep (reconciliation). It never renders or writes a document, and never merges or closes issues. The filing skills call `--for` after `save_issue`; run the full sweep by hand to reconcile after backfilling a `**Touches**:` line on an older issue.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -27,7 +27,7 @@ to keep those edges honest.
 The whole job is pure mechanism — string/glob work plus a
 couple of HTTP calls — so it lives in a committed,
 dependency-free Python tool
-(`tools/sync-blockers/sync_blockers.py`, run directly with
+(`.claude/tools/sync_blockers.py`, run directly with
 `python3`) rather than being re-derived by hand. The tool:
 
 - reads every **open** Backlog issue for the project (with
@@ -56,7 +56,7 @@ re-scan — so each filing skill calls it right after
 `save_issue`:
 
 ```sh
-python3 tools/sync-blockers/sync_blockers.py --for ENG-###
+python3 .claude/tools/sync_blockers.py --for ENG-###
 ```
 
 No race gap: if A then B are filed, B's file-time check
@@ -71,14 +71,14 @@ reconcile after backfilling a `**Touches**:` line on an
 *older* issue, or as an occasional catch-up:
 
 ```sh
-python3 tools/sync-blockers/sync_blockers.py
+python3 .claude/tools/sync_blockers.py
 ```
 
 Add `--dry-run` (either mode) to print the edges it *would*
 file and write nothing:
 
 ```sh
-python3 tools/sync-blockers/sync_blockers.py --dry-run
+python3 .claude/tools/sync_blockers.py --dry-run
 ```
 
 Its unit tests (Python's `unittest`, no third-party test
@@ -145,7 +145,7 @@ the overlap edges a real sweep would file and the
 missing-`Touches:` warnings:
 
 ```sh
-python3 tools/sync-blockers/sync_blockers.py --dry-run
+python3 .claude/tools/sync_blockers.py --dry-run
 ```
 
 The stderr output names every open issue with no
@@ -161,7 +161,7 @@ its work will edit, comma-separated, per `CLAUDE.md` →
 **3. Sweep.** Run the tool (no `--dry-run`):
 
 ```sh
-python3 tools/sync-blockers/sync_blockers.py
+python3 .claude/tools/sync_blockers.py
 ```
 
 It reads the Backlog and files any undeclared overlap edges.

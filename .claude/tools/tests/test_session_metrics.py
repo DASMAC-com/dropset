@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Unit tests for ``session_metrics.py``.
 
-Stdlib ``unittest`` only — run with ``python3 .claude/tools/test_session_metrics.py``
-(no pytest dependency). These mirror the former Rust ``model.rs`` tests and add
-coverage for the hardening-candidate detector.
+Stdlib ``unittest`` only — run via the repo's ``make tools-tests`` (no pytest
+dependency). These mirror the former Rust ``model.rs`` tests and add coverage
+for the hardening-candidate detector.
 """
 
 from __future__ import annotations

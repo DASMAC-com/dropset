@@ -130,11 +130,11 @@ approval:
 run the incremental sweep on it to file any new file-overlap
 `blocks` edges against the open Backlog — one bare command
 that reduces to the
-`Bash(python3 tools/sync-blockers/sync_blockers.py:*)`
+`Bash(python3 .claude/tools/sync_blockers.py:*)`
 allow-rule:
 
 ```sh
-python3 tools/sync-blockers/sync_blockers.py --for <survivor>
+python3 .claude/tools/sync_blockers.py --for <survivor>
 ```
 
 Best-effort: it needs `LINEAR_API_KEY` / `LINEAR_PROJECT_ID`;
