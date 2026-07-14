@@ -68,6 +68,10 @@ Resources:
       PolicyDocument:
         Statement:
         - Action: 's3:GetBucketAcl'
+          Condition:
+            StringEquals:
+              'aws:SourceArn': !Sub >-
+                arn:aws:cloudtrail:${AWS::Region}:${AWS::AccountId}:trail/${EnvironmentName}-cloudtrail
           Effect: 'Allow'
           Principal:
             Service: 'cloudtrail.amazonaws.com'
@@ -76,6 +80,8 @@ Resources:
         - Action: 's3:PutObject'
           Condition:
             StringEquals:
+              'aws:SourceArn': !Sub >-
+                arn:aws:cloudtrail:${AWS::Region}:${AWS::AccountId}:trail/${EnvironmentName}-cloudtrail
               's3:x-amz-acl': 'bucket-owner-full-control'
           Effect: 'Allow'
           Principal:

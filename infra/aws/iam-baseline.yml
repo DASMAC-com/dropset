@@ -91,6 +91,7 @@ Resources:
               Bool:
                 'aws:ViaAWSMCPService': 'true'
               StringEquals:
+                'aws:CalledViaAWSMCP': !Ref 'McpServicePrincipal'
                 'iam:PassedToService': 'cloudformation.amazonaws.com'
             Effect: 'Allow'
             Resource: !GetAtt 'CloudFormationDeploymentRole.Arn'
