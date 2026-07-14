@@ -72,7 +72,7 @@ class TouchesTests(unittest.TestCase):
         self.assertTrue(is_meta_glob(".claude/tools/**"))
         self.assertFalse(is_meta_glob("programs/dropset/src/lib.rs"))
         self.assertFalse(is_meta_glob("docs/indexer.md"))
-        # top-level tools/ is gone, so it no longer counts as meta-work
+        # the relocated build script's home is product-adjacent, not meta-work
         self.assertFalse(is_meta_glob("brand-assets/**"))
 
     def test_strip_claude_prefix(self):
