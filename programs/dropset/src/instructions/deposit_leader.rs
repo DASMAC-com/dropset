@@ -194,7 +194,12 @@ impl DepositLeader {
                 // build).
                 debug_assert_eq!(v.hwm.get(), Q32_32_ONE);
             }
-            (new_total, new_leader_shares, new_base_atoms, new_quote_atoms)
+            (
+                new_total,
+                new_leader_shares,
+                new_base_atoms,
+                new_quote_atoms,
+            )
         };
 
         let realize_event = RealizeEvent::from_outcome(
