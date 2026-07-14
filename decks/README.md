@@ -24,9 +24,10 @@ deps, and theme don't fight the product build.
 - `public/` — deck assets. `dropset-wordmark.png` and
   `favicon-with-stroke.svg` are **copied** from the repo-root
   `brand-assets/` — the single source of truth for shared brand assets —
-  by `../scripts/copy-brand-assets.mjs` on the `predev` / `prebuild` hooks,
-  so the brand assets stay DRY without a symlink escaping the deck's Vercel
-  Root Directory. They're generated, so both are gitignored.
+  by `../tools/scripts/copy-brand-assets.mjs` on the `predev` /
+  `prebuild` hooks, so the brand assets stay DRY without a symlink
+  escaping the deck's Vercel Root Directory. They're generated, so both
+  are gitignored.
 
 Deck routes use **public-facing names** (e.g. `/demo-v1`) — never internal
 ticket ids, which must not leak into shareable URLs.

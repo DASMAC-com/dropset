@@ -39,9 +39,24 @@ Today `.claude/tools/` holds `session_metrics.py` (the
 branch/worktree checks), and `run_quiet.py` (a generic quiet runner
 that captures a noisy command's output to a log and surfaces only a
 summary — see [context economy](context-economy.md)).
-`tools/sync-blockers/` (`sync_blockers.py`, the deterministic core of
-the `sync-blockers` skill) is the one helper under `tools/` rather than
-`.claude/tools/`; it is run directly with `python3` (no `make` target).
+
+The sibling `tools/` tree (no leading dot) is **not** part of the
+Cargo workspace — the root `Cargo.toml` lists its `members` explicitly
+and never globs `tools/*`, so nothing under `tools/` compiles with the
+on-chain project. It is the home for repo tooling that is neither a
+workspace crate nor Claude-skill glue:
+
+- `tools/sync-blockers/` (`sync_blockers.py`) — the deterministic core
+  of the `sync-blockers` skill, the one skill helper kept under
+  `tools/` rather than `.claude/tools/`; run directly with `python3`
+  (no `make` target).
+- `tools/scripts/` — shared JS/Node build scripts run from the apps'
+  `predev` / `prebuild` hooks. `copy-brand-assets.mjs` copies the
+  repo-root `brand-assets/` into each app's `public/`, and both
+  `frontend` and `decks` invoke it as `../tools/scripts/…`. A build
+  script that only one app uses stays in that app's own `scripts/`
+  (e.g. `frontend/scripts/`); it moves to `tools/scripts/` only once a
+  second app needs it.
 
 ## MCP first for prototyping and fallback; harden settled workflows
 
