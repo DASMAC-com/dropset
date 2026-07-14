@@ -1,6 +1,6 @@
 ---
 name: audit-scope
-description: Audit a defined scope — one file, a PR's files, a subsystem, or the whole codebase — across the dimensions its platform kind calls for (security, comment accuracy, DRY, modularity, naming, doc-freshness), with adversarial sub-agent cross-checking, and file each confirmed finding as a Linear Backlog issue. The shared audit engine that `audit` drives one file at a time.
+description: Audit a defined scope — one file, a PR's files, a subsystem, or the whole codebase — across the dimensions its platform kind calls for (security, comment accuracy, DRY, modularity, naming, doc-freshness), with adversarial sub-agent cross-checking, folding coupled findings and filing the fewest coherent Linear Backlog issues. The shared audit engine that `audit` drives one file at a time.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -9,12 +9,14 @@ user-invocable: true
 
 # `audit-scope`
 
-Audit a defined scope of the codebase and file each
-confirmed finding as its own Linear **Backlog** issue —
-the same destination and format `linear-task` and
-`audit` use. Use when a milestone lands, a feature
-ships, or before declaring a subsystem "stable", and as
-the engine `audit` calls for its per-file passes.
+Audit a defined scope of the codebase and file the
+confirmed findings as Linear **Backlog** issues — folded
+into the fewest coherent PRs (coupled findings that share a
+PR become one issue; see Notes), in the same destination and
+format `linear-task` and `audit` use. Use when a milestone
+lands, a feature ships, or before declaring a subsystem
+"stable", and as the engine `audit` calls for its per-file
+passes.
 
 This replaces the old `audit-codebase`, which wrote a
 gitignored checklist. Findings now live in the Backlog,
@@ -185,9 +187,12 @@ Optional (ask on a direct run if not provided):
      severities) to the caller (`audit`). Do **not** file —
      the caller dedups against live Linear first. Stop here.
 
-   - **Direct run:** file each surviving finding as its
-     own Linear **Backlog** issue, exactly as `linear-task`
-     does. Resolve the destination IDs from the
+   - **Direct run:** file the surviving findings as Linear
+     **Backlog** issues, exactly as `linear-task` does —
+     **folding coupled findings into the fewest coherent
+     PRs** (see the folding rule in Notes), one issue per
+     PR-group rather than one per finding. Resolve the
+     destination IDs from the
      environment (never hard-code them) with a bare
      `printenv` per variable (each reduces to the same
      `Bash(printenv:*)` allow-rule):
@@ -291,12 +296,20 @@ Optional (ask on a direct run if not provided):
   edits source files; it only files Linear issues (or
   returns findings). Fixes happen in normal PRs picked up
   from the Backlog.
-- If a finding spans multiple files that obviously belong
-  in one PR, file them as one combined issue with a
-  `**Fingerprint**:` line per finding (the union), the way
-  `audit` does — nothing merges issues for you,
-  so combining at file time is the only way coupled
-  findings become one issue.
+- **Fold coupled findings into the fewest coherent issues.**
+  When findings share a PR — same subsystem, crate, or
+  language-domain, and they would land as one change (e.g.
+  all doc-/comment-freshness fixes, or all low-risk refactors
+  in one crate) — file them as **one** combined issue: a
+  `**Fingerprint**:` line per finding (the union) and a union
+  `**Touches**:`, the way `audit` does. The bar is **same-PR
+  coherence**, not same-file; but never fold across separate
+  apps, languages, or deploy units (the **coherence floor**).
+  Nothing merges issues for you, so coupled findings become
+  one issue only if you file them that way. Full rule:
+  `CLAUDE.md` → "Structured filing fields" /
+  `docs/conventions/linear-automation.md` → "Fold coupled
+  findings into one issue".
 - Shell discipline (per `CLAUDE.md`): every command is a
   single bare call that reduces to an allow-glob — no
   `&&`, pipes, `$(…)`, redirects, or heredocs; content

@@ -46,7 +46,12 @@ Full detail — every env var and which skill reads it:
 Every filed issue carries stable machine-readable fields the automation
 parses: `**Fingerprint**: <basename>:<slug>` (the dedup key) and
 `**Touches**: <glob>[, …]` (the path globs, for collision detection).
-Detail: `docs/conventions/linear-automation.md`.
+A rotation folds coupled findings into the **fewest coherent PRs** —
+fold every set that would land as one PR (same subsystem / crate /
+language-domain) into a single issue, keeping each finding's own
+`**Fingerprint**:` line and a union `**Touches**:`, but never across
+separate apps / languages / deploy units (the coherence floor). Detail:
+`docs/conventions/linear-automation.md`.
 
 ### Claude: meta-work prefix
 

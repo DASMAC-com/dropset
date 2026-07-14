@@ -148,6 +148,16 @@ blocking edges were synced.
 
 ## Notes
 
+- **This skill is how aggressive folding lands on the
+  board.** The filing/audit default is to file the **fewest
+  coherent PRs** (`docs/conventions/linear-automation.md` →
+  "Fold coupled findings into one issue"); when coupled
+  issues nonetheless landed separately, `merge-tasks` folds
+  them back into one. `housekeeping` proactively proposes
+  such merge groups. The **coherence floor** — never fold
+  across separate apps, languages, or deploy units — is
+  enforced by the `cross_area` warning in step 4: don't
+  confirm a merge that mixes unrelated surfaces.
 - **Read-only with respect to source.** This skill writes
   only to Linear (the survivor update, the cancellations,
   and the survivor's `sync-blockers` overlap edges). It

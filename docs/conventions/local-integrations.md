@@ -210,8 +210,18 @@ event on stdin, makes the color a deterministic function of the event:
   any other notification leaves the tab unchanged.
 - `Stop` → green. `PostToolUse` / `UserPromptSubmit` → neutral.
 
-`AskUserQuestion` does not fire a `Notification`, so the tool's green is
-never overwritten by a stray permission yellow.
+`AskUserQuestion` **does** fire a companion `Notification`
+(`permission_prompt`) — from the harness's side the selector is a block
+on user input, which looks like a permission — so the raw event mapping
+above would paint the tab yellow right after the tool's green, by
+last-write. The `permission_prompt` payload carries nothing that tells
+that companion apart from a genuine tool-permission prompt, so the
+painter makes the `AskUserQuestion` green **sticky**: painting it drops a
+short-lived per-tty sentinel (`/tmp/iterm-color-<tty>.askq`), and a
+`permission_prompt` `Notification` arriving while that sentinel is fresh
+(within `ASKQ_STICKY_SECONDS`) is suppressed, so the green survives. The
+sentinel is cleared on any other paint, so a genuine permission prompt
+that follows unrelated work still turns the tab yellow.
 
 ### FIFO attention ordering
 
