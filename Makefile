@@ -250,7 +250,7 @@ tui-prebuild: check-toolchain program-keypair
 # build the panel will need. Named `tui` (not `localnet`) because the same
 # panel will later drive mainnet too.
 tui: tui-prebuild
-	cargo run -p dropset-tui
+	cargo run -p dropset-tui -- $(TUI_ARGS)
 
 # Headless rent reclamation — the same teardown the TUI's "Teardown & reclaim"
 # action runs, with no UI. Defaults to localnet; pass WALLET to override the
@@ -304,6 +304,11 @@ decks: check-pnpm
 # would paint over it — `next dev`'s output is redirected to a log file, and
 # the browser-opener job is silenced, so only the TUI draws to the terminal.
 # The frontend log is tailable at $(FRONTEND_LOG) while the demo runs.
+#
+# Unlike `make tui` (the step-by-step control plane), the demo is turnkey: it
+# passes `--bootstrap`, so the TUI auto-runs "Bootstrap all" once the localnet
+# is up. Wiping or tearing down does not re-bootstrap on its own — re-run it
+# from the menu.
 FRONTEND_LOG ?= /tmp/dropset-frontend.log
 demo:
 	@echo "frontend logs → $(FRONTEND_LOG) (kept off the TUI screen)"
@@ -313,7 +318,7 @@ demo:
 	@$(MAKE) --no-print-directory frontend-localnet \
 		>$(FRONTEND_LOG) 2>&1 & \
 	trap 'kill %1 2>/dev/null; pkill -f "next dev"' INT TERM EXIT; \
-	$(MAKE) --no-print-directory tui
+	$(MAKE) --no-print-directory tui TUI_ARGS=--bootstrap
 
 # === Localnet Docker stacks ===
 

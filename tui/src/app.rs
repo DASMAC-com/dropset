@@ -185,6 +185,11 @@ pub struct App {
     /// controls step. Seeded at the default; `w` / `n` step it by
     /// [`SPREAD_STEP_BPS`] and rebuild the ladder at the new spread.
     spread_bps: u32,
+    /// One-shot: when set (via `run`'s `auto_bootstrap`, the turnkey `make demo`
+    /// path), the loop fires "Bootstrap all" once as soon as the fresh localnet
+    /// is ready, then clears it — so a later wipe / teardown does *not*
+    /// re-bootstrap on its own; the operator re-runs it by hand.
+    auto_bootstrap: bool,
 }
 
 impl App {
@@ -234,11 +239,16 @@ impl App {
             dirty: true,
             feed_degraded: false,
             spread_bps: market::DEFAULT_SPREAD_BPS,
+            auto_bootstrap: false,
         })
     }
 
-    /// Run the event loop until the user quits.
-    pub fn run(&mut self) -> Result<()> {
+    /// Run the event loop until the user quits. `auto_bootstrap` fires
+    /// "Bootstrap all" once, as soon as the fresh localnet is ready — the
+    /// turnkey `make demo` path; a plain `make tui` leaves it `false` so the
+    /// operator drives the numbered steps by hand.
+    pub fn run(&mut self, auto_bootstrap: bool) -> Result<()> {
+        self.auto_bootstrap = auto_bootstrap;
         self.log(LogKind::Info, "Starting solana-test-validator…".to_string());
         self.start_explorer();
         self.start_airdrops();
@@ -268,8 +278,25 @@ impl App {
 
             self.drain_jobs();
             self.maybe_refresh();
+            self.maybe_auto_bootstrap();
         }
         Ok(())
+    }
+
+    /// Fire "Bootstrap all" once when the turnkey `auto_bootstrap` is armed and
+    /// the fresh localnet is ready for it (validator up, nothing yet deployed).
+    /// Clears the flag on the first fire, so a later wipe / teardown — which
+    /// returns to a bootstrappable phase — does not silently re-bootstrap; the
+    /// operator re-runs it by hand. Waits out the `job_running` slot and the
+    /// pre-validator phase by simply retrying on the next tick.
+    fn maybe_auto_bootstrap(&mut self) {
+        if self.auto_bootstrap
+            && !self.job_running
+            && Action::BootstrapAll.enabled(self.chain.phase())
+        {
+            self.auto_bootstrap = false;
+            self.run_action(Action::BootstrapAll);
+        }
     }
 
     /// Bring the local explorer container up on a background thread, so it is
