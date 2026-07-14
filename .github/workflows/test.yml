@@ -77,12 +77,11 @@ jobs:
           - '!pnpm-workspace.yaml'
           - '!cfg/**'
           - '!infra/**'
-          - '!tools/**'
         predicate-quantifier: 'every'
-  # The Python skill-tools under tools/** are pure-Python scripts (no
+  # The Python skill-tools under .claude/tools/ are pure-Python scripts (no
   # third-party deps, no Solana/Rust toolchain), so their unit tests run in the
   # lint workflow's `make tools-tests` step rather than this gated Rust suite —
-  # which is why tools/** is on the `code` exclude-list above: a change there
+  # which is why .claude/** is on the `code` exclude-list above: a change there
   # skips the expensive Rust build and is covered by lint (which always runs)
   # instead.
   test:

@@ -50,7 +50,8 @@ solana-transaction = "3"
 # light client-types crate, not the full `solana-transaction-status`.
 solana-transaction-status-client-types = "3"
 # Blocking HTTP for the price feeds (CoinGecko / CoinMarketCap / Frankfurter),
-# the same synchronous JSON client tools/sync-blockers uses for Linear.
+# the same synchronous JSON-over-HTTP style the sync-blockers skill tool
+# uses for Linear.
 ureq = { version = "2", features = ["json"] }
 
 # Test-only: forge the `[tag][discriminator][body]` fill-event envelope the

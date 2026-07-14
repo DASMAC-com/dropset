@@ -38,8 +38,8 @@ operators in CMD ARGS are passed verbatim as arguments rather than interpreted.
 The tool fails safe: a launch error (missing binary, etc.) prints a clear
 message and exits non-zero rather than raising an uncaught traceback.
 
-Tests live in the sibling ``test_run_quiet.py`` (stdlib ``unittest``), runnable
-as ``python3 .claude/tools/test_run_quiet.py``.
+Tests live in ``tests/test_run_quiet.py`` (stdlib ``unittest``), run via the
+repo's ``make tools-tests``.
 """
 
 from __future__ import annotations

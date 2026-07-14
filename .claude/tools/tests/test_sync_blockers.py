@@ -3,8 +3,8 @@
 Covers the pure path-glob helpers and the overlap-materialization sweep in both
 modes — the full pairwise sweep and the ``--for`` incremental (focus) mode. The
 old chips-tree renderer, its tally, and the ``Claude:`` bucketing are gone with
-the Task Staging document, so their cases are gone too. Run with
-``python3 -m unittest`` from ``tools/sync-blockers``.
+the Task Staging document, so their cases are gone too. Run via the repo's
+``make tools-tests``.
 """
 
 import unittest

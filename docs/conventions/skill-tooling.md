@@ -25,10 +25,12 @@ coupling skill tooling to the program's toolchain.
   already covers `.claude/tools/**` by default.
 - **Stdlib only** where practical (JSON + filesystem), so a tool runs
   with a bare `python3` and needs no install step.
-- **Cover them with stdlib `unittest`** in a sibling
-  `test_<tool>.py`, runnable as `python3 .claude/tools/test_<tool>.py`
-  (no pytest dependency). The `Bash(python3 .claude/tools/*)`
-  allow-rule covers running both the tools and their tests.
+- **Cover them with stdlib `unittest`** in `.claude/tools/tests/`
+  (one `test_<tool>.py` per tool), run via `make tools-tests` (no
+  pytest dependency). The tests `import <tool>` bare, so discovery uses
+  the tests dir as start and `.claude/tools` as the top-level
+  (`-t .claude/tools`) to keep those imports resolving — an empty
+  `tests/__init__.py` marks the package.
 - A skill drives its tool through a stable interface — usually a
   `make` target (e.g. `make session-metrics`) so the skill's
   allow-rule (`Bash(make session-metrics:*)`) is unchanged if the tool
@@ -36,27 +38,25 @@ coupling skill tooling to the program's toolchain.
 
 Today `.claude/tools/` holds `session_metrics.py` (the
 `session-metrics` core), `init_pr_branch.py` (the `init-pr`
-branch/worktree checks), and `run_quiet.py` (a generic quiet runner
-that captures a noisy command's output to a log and surfaces only a
-summary — see [context economy](context-economy.md)).
+branch/worktree checks), `run_quiet.py` (a generic quiet runner that
+captures a noisy command's output to a log and surfaces only a summary
+— see [context economy](context-economy.md)), and `sync_blockers.py`
+(the deterministic core of the `sync-blockers` skill). `.claude/tools/`
+is the single home for skill glue: there is **no** top-level `tools/`
+tree. `sync_blockers.py` is the one skill tool run directly with
+`python3` (no `make` target); everything else drives through a `make`
+target.
 
-The sibling `tools/` tree (no leading dot) is **not** part of the
-Cargo workspace — the root `Cargo.toml` lists its `members` explicitly
-and never globs `tools/*`, so nothing under `tools/` compiles with the
-on-chain project. It is the home for repo tooling that is neither a
-workspace crate nor Claude-skill glue:
+Repo build tooling that is neither a workspace crate nor Claude-skill
+glue lives **with what it serves**, not in a tooling tree:
 
-- `tools/sync-blockers/` (`sync_blockers.py`) — the deterministic core
-  of the `sync-blockers` skill, the one skill helper kept under
-  `tools/` rather than `.claude/tools/`; run directly with `python3`
-  (no `make` target).
-- `tools/scripts/` — shared JS/Node build scripts run from the apps'
-  `predev` / `prebuild` hooks. `copy-brand-assets.mjs` copies the
-  repo-root `brand-assets/` into each app's `public/`, and both
-  `frontend` and `decks` invoke it as `../tools/scripts/…`. A build
-  script that only one app uses stays in that app's own `scripts/`
-  (e.g. `frontend/scripts/`); it moves to `tools/scripts/` only once a
-  second app needs it.
+- `brand-assets/copy-brand-assets.mjs` — a shared JS/Node build script
+  run from the apps' `predev` / `prebuild` hooks. It copies the
+  repo-root `brand-assets/` into each app's `public/` (skipping its own
+  file), and both `frontend` and `decks` invoke it as
+  `../brand-assets/…`. It lives among the assets it copies rather than
+  in a separate scripts tree. A build script that only one app uses
+  stays in that app's own `scripts/` (e.g. `frontend/scripts/`).
 
 ## MCP first for prototyping and fallback; harden settled workflows
 

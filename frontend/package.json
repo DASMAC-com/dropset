@@ -43,7 +43,7 @@
   "scripts": {
     "build": "next build",
     "check": "tsc --noEmit",
-    "copy-brand-assets": "node ../tools/scripts/copy-brand-assets.mjs frontend/public",
+    "copy-brand-assets": "node ../brand-assets/copy-brand-assets.mjs frontend/public",
     "copy-flags": "node scripts/copy-flags.mjs",
     "dev": "next dev",
     "fetch-token-icons": "node scripts/fetch-token-icons.mjs",

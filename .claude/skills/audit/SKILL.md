@@ -334,8 +334,8 @@ mcp__claude_ai_Linear__save_issue(
 ```
 
 **Meta-work prefix.** When a finding's `**Touches**:` sit entirely under
-the meta surface (`.claude/**`, `CLAUDE.md`, `docs/conventions/**`,
-`tools/**`), prepend the **`Claude:`** token to the title (per
+the meta surface (`.claude/**`, `CLAUDE.md`, `docs/conventions/**`),
+prepend the **`Claude:`** token to the title (per
 `CLAUDE.md` → "Claude: meta-work prefix") so it reads
 `Claude: <file>: <imperative fix>`. This composes with the `arch:`
 fingerprint prefix above (a fingerprint-slug convention, not a title
@@ -395,11 +395,11 @@ The description must let a cold agent act on it in its own worktree
 `save_issue` returns a new identifier, file that issue's file-overlap
 `blocks` edges against the open Backlog with the incremental sweep — one
 bare command that reduces to the
-`Bash(python3 tools/sync-blockers/sync_blockers.py:*)` allow-rule (the
+`Bash(python3 .claude/tools/sync_blockers.py:*)` allow-rule (the
 scan runs in the tool's own process, so nothing enters context):
 
 ```sh
-python3 tools/sync-blockers/sync_blockers.py --for <ENG-###>
+python3 .claude/tools/sync_blockers.py --for <ENG-###>
 ```
 
 Filing in `ENG-###` order means the later filer always sees the earlier

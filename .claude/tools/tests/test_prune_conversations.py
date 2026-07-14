@@ -1,7 +1,7 @@
 """Stdlib ``unittest`` tests for prune_conversations' pure decision logic —
 the age/open-PR rule, worktree parsing, the dropset-set derivation, the
 under-root path guard, and the destructive ``safe_delete`` guard's refusal
-branches. Run with ``python3 -m unittest`` from ``.claude/tools``.
+branches. Run via the repo's ``make tools-tests``.
 """
 
 import os
