@@ -11,7 +11,7 @@ use crate::book;
 use crate::explorer;
 use dropset_sdk::DROPSET_ID;
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
@@ -33,13 +33,12 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
     app.click_targets.clear();
     app.tx_targets.clear();
     let area = f.area();
-    let [status, body, log, footer] = Layout::new(
+    let [status, body, log] = Layout::new(
         Direction::Vertical,
         [
             Constraint::Length(3),
             Constraint::Percentage(60),
             Constraint::Min(6),
-            Constraint::Length(4),
         ],
     )
     .areas(area);
@@ -101,24 +100,6 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
     draw_fills(f, app, fills_area);
 
     draw_log(f, app, log);
-
-    // The swap-amount input is rendered inline on the runtime pane's swap row
-    // (see `draw_other_actions`), so the footer stays the navigation help
-    // throughout — the input happens in the runtime column, not the footer.
-    draw_help(f, footer);
-}
-
-/// Render the keybinds-help footer — menu navigation only. The runtime
-/// controls (bots, swap, the eCLOB peg / reshape presets) live in the "runtime"
-/// pane above and are intentionally not repeated here, so each control has a
-/// single home.
-fn draw_help(f: &mut Frame<'_>, area: Rect) {
-    let help = Paragraph::new(Line::from(
-        "j/k select step  ·  enter / 1-8 run  ·  [ ] switch market",
-    ))
-    .block(Block::default().borders(Borders::ALL))
-    .alignment(Alignment::Center);
-    f.render_widget(help, area);
 }
 
 fn draw_status(f: &mut Frame<'_>, app: &App, area: Rect) {
