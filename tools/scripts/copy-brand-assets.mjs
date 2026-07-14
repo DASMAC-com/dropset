@@ -5,7 +5,7 @@
 // Vercel Root Directory and may not survive Vercel's build-time static
 // collection).
 //
-// Usage: node scripts/copy-brand-assets.mjs <dest-dir>
+// Usage: node tools/scripts/copy-brand-assets.mjs <dest-dir>
 //   where <dest-dir> is the app's public/ dir relative to the repo root,
 //   e.g. `frontend/public` or `decks/public`.
 import { copyFileSync, mkdirSync, readdirSync } from "node:fs";
@@ -13,12 +13,12 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(here, "..");
+const repoRoot = resolve(here, "..", "..");
 const source = join(repoRoot, "brand-assets");
 
 const destArg = process.argv[2];
 if (!destArg) {
-  console.error("usage: node scripts/copy-brand-assets.mjs <dest-dir>");
+  console.error("usage: node tools/scripts/copy-brand-assets.mjs <dest-dir>");
   process.exit(1);
 }
 // Resolve the destination against the repo root so the argv is independent

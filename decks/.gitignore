@@ -23,6 +23,6 @@ npm-debug.log*
 next-env.d.ts
 
 # Brand assets copied from the repo-root brand-assets/ at dev/build time
-# (see ../scripts/copy-brand-assets.mjs); sourced, not committed.
+# (see ../tools/scripts/copy-brand-assets.mjs); sourced, not committed.
 /public/dropset-wordmark.png
 /public/favicon-with-stroke.svg
