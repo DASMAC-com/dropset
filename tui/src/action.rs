@@ -312,18 +312,23 @@ pub fn dispatch(
                     deploy::deploy_program(log, &repo_root, &rpc_url, &wallet_path, &pubkey)?;
                 }
                 let client = chain::rpc(&rpc_url);
-                // Sequential prelude — the two accounts every market depends on
-                // and would otherwise race to create in the parallel phase: the
-                // registry (once) and the shared USDC quote mint (once).
+                // Sequential prelude — everything the parallel phase would race
+                // on. The registry and the shared USDC quote mint are created
+                // once here (both are create-once accounts). The shared leader's
+                // USDC ATA is pre-funded with the full deposit total, so the
+                // concurrent per-market deposit_leader calls draw from a pool
+                // that already covers them all and never underflow mid-race.
                 do_init(&client, &wallet, log)?;
                 market::ensure_quote_mints(&client, &wallet, &repo_root, log)?;
+                market::prefund_leader_quotes(&client, &wallet, &repo_root, log)?;
                 // Parallel phase: each pair's create_market → create_vault is an
                 // independent chain against its own market PDA and unique base
                 // mint, so the seven markets pipeline against the one validator
-                // instead of running back-to-back. The accounts they still share
-                // past the prelude — the leader's USDC ATA, the USDC mint supply,
-                // the per-market USDC deposit — are written under the runtime's
-                // per-account transaction locks, which serialize those writes.
+                // instead of running back-to-back. What they still share past the
+                // prelude — the leader's USDC ATA and the USDC mint supply — is
+                // written under the runtime's per-account transaction locks
+                // (serialized, additive), and the prelude's pre-funding means the
+                // shared USDC deposits never underflow regardless of interleaving.
                 std::thread::scope(|scope| {
                     let workers: Vec<_> = market::PAIRS
                         .into_iter()

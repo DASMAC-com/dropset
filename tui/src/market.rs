@@ -286,6 +286,45 @@ pub fn ensure_quote_mints(
     Ok(())
 }
 
+/// Pre-fund each shared leader's quote (USDC) ATA once, up front, with the
+/// total quote deposit across the markets that share it. Every FX pair deposits
+/// from the one leader's one USDC ATA, so seeding them concurrently races that
+/// single shared balance: one market's `deposit_leader` can execute before
+/// another market's quote mint is visible, draining the pool past zero so the
+/// SPL transfer fails with `InsufficientFunds` (0x1). Front-loading the full
+/// total gives the pool a floor that covers every concurrent deposit whatever
+/// the interleaving; the per-market quote mint in [`seed_vault`] then just tops
+/// it back up (the base leg needs no such floor — each market's base ATA is its
+/// own, funded and drawn down entirely within its own thread). Grouped by
+/// `(leader, quote mint)` so it stays correct if a future pair uses a different
+/// leader or quote.
+pub fn prefund_leader_quotes(
+    client: &RpcClient,
+    wallet: &Keypair,
+    repo_root: &Path,
+    log: &Logger,
+) -> Result<()> {
+    let mut totals: std::collections::HashMap<(Pubkey, Pubkey), u64> =
+        std::collections::HashMap::new();
+    for config in PAIRS {
+        let leader = leader(repo_root, config)?;
+        let (_, quote_mint) = pair_mints(repo_root, config)?;
+        let (_, quote_atoms) = seed_deposit(config);
+        *totals.entry((leader.pubkey(), quote_mint)).or_default() += quote_atoms;
+    }
+    for ((leader_pubkey, quote_mint), total) in totals {
+        let quote_ata =
+            chain::create_ata_idempotent(client, wallet, &leader_pubkey, &quote_mint)
+                .context("leader quote ATA")?;
+        log.log(format!(
+            "Pre-funding leader {leader_pubkey} quote ATA with {total} atoms…"
+        ));
+        chain::mint_to(client, wallet, &quote_mint, &quote_ata, total)
+            .context("pre-fund leader quote")?;
+    }
+    Ok(())
+}
+
 /// Bring the market's freshly-created vault up live: stamp the reference
 /// price, set the quote ladder, then fund the leader's ATAs (from the admin
 /// mint authority) and seed the vault with `deposit_leader`. The `leader`
