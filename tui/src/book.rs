@@ -4,9 +4,10 @@
 //! returns ([`crate::accounts::MarketView::asks`] / `bids`) and renders it in
 //! the style of the dropset-alpha terminal book: a column header, then asks
 //! above a mid/spread divider (red), bids below (green), each row a horizontal
-//! depth bar that grows right-to-left toward a right-aligned price, with the
-//! size in human units trailing in a faded column. Pure formatting — the data
-//! is decoded at poll time, so drawing never touches the chain.
+//! depth bar that grows right-to-left toward a right-aligned price, then the
+//! size in human units and a quote-denominated volume (price × size) trailing
+//! in two faded columns. Pure formatting — the data is decoded at poll time,
+//! so drawing never touches the chain.
 
 use crate::accounts::MarketView;
 use dropset_sdk::matching::BookLevel;
@@ -23,6 +24,14 @@ const MAX_LEVELS: usize = 8;
 /// dropset-alpha's ask (sell) red and bid (buy) green.
 const ASK_COLOR: Color = Color::Rgb(240, 75, 90);
 const BID_COLOR: Color = Color::Rgb(30, 135, 80);
+/// Widest the adaptive price render (`fmt_price`) may grow: its decimal count
+/// is clamped to this ceiling, and [`PRICE_WIDTH`] is derived from it, so the
+/// rendered precision and the column that holds it can't drift apart. FX prices
+/// carry a single integer digit, so the worst-case render is `0.` plus this
+/// many decimals.
+const MAX_PRICE_DECIMALS: usize = 10;
+/// Price-column width: `0.` (two chars) plus the [`MAX_PRICE_DECIMALS`] ceiling.
+const PRICE_WIDTH: usize = 2 + MAX_PRICE_DECIMALS;
 
 /// A display row: human price (quote per base) and human size (base units).
 struct Row {
@@ -82,7 +91,7 @@ pub fn fmt_price(p: f64) -> String {
     // with a four-decimal floor so ~1-valued tokens still read as e.g. 1.1400
     // while a sub-cent token grows its decimals to keep its figures.
     let exp = p.log10().floor() as i32;
-    let decimals = (3 - exp).clamp(4, 12) as usize;
+    let decimals = (3 - exp).clamp(4, MAX_PRICE_DECIMALS as i32) as usize;
     format!("{p:.decimals$}")
 }
 
@@ -144,7 +153,7 @@ fn header_line() -> Line<'static> {
     let style = Style::new().fg(Color::Gray).add_modifier(Modifier::BOLD);
     Line::from(vec![
         Span::styled(format!("{:>BAR_WIDTH$}", "depth"), style),
-        Span::styled(format!("  {:>10}", "price"), style),
+        Span::styled(format!("  {:>PRICE_WIDTH$}", "price"), style),
         Span::styled(format!("  {:>12}", "size"), style),
         Span::styled(format!("  {:>12}", "volume"), style),
     ])
@@ -166,7 +175,7 @@ fn row_line(r: &Row, max_size: f64, color: Color) -> Line<'static> {
     Line::from(vec![
         Span::styled(format!("{bar:>BAR_WIDTH$}"), Style::new().fg(color)),
         Span::styled(
-            format!("  {:>10}", fmt_price(r.price)),
+            format!("  {:>PRICE_WIDTH$}", fmt_price(r.price)),
             Style::new().fg(color),
         ),
         Span::styled(
@@ -270,6 +279,18 @@ mod tests {
         assert_ne!(fmt_price(0.000056), "0.0001");
         // Sentinels / non-finite fall back to a plain four-decimal render.
         assert_eq!(fmt_price(0.0), "0.0000");
+    }
+
+    #[test]
+    fn fmt_price_never_overflows_the_price_column() {
+        // The decimal count is clamped to MAX_PRICE_DECIMALS and PRICE_WIDTH is
+        // derived from it, so a sub-cent FX price (single integer digit) must
+        // always fit the column that holds it — no misaligned size/volume.
+        let smallest = 1e-9; // well below any real token, exercises the ceiling.
+        assert!(fmt_price(smallest).len() <= PRICE_WIDTH);
+        // The clamp caps decimals: even 1e-9 renders at MAX_PRICE_DECIMALS, not
+        // the 12 significant figures its magnitude would otherwise ask for.
+        assert_eq!(fmt_price(smallest), format!("{smallest:.MAX_PRICE_DECIMALS$}"));
     }
 
     #[test]
