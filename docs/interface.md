@@ -179,8 +179,8 @@ control:
 | **MM bots** (incl. the reference bot) | Read book/vault/fill state from `/v1`; drive quoting via the SDK.                                                                                                                   | Ours / community                                      |
 
 **Routers (B1) — take-ix limit semantics.** *(Canonical name: the take is
-exposed on-chain, in the IDL, and in the SDK as the `swap` instruction, and
-its errors are `Swap*`; "take" is this spec's role name for the same call.)*
+exposed on-chain, in the IDL, and in the SDK as the `swap` instruction;
+"take" is this spec's role name for the same call.)*
 The take instruction's limit
 argument is a **regular 8-significant-figure `Price`** (the worst acceptable
 fill). The reserved encodings `0x0` and `0xFFFFFFFF` are **no-bound sentinels**
