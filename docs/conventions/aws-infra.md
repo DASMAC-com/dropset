@@ -1,3 +1,5 @@
+<!-- cspell:word awslabs -->
+
 # AWS infrastructure and the Agent Toolkit
 
 AWS resources are defined as **CloudFormation YAML** under `infra/aws/`.
@@ -42,17 +44,31 @@ yamllint -c cfg/yamllint.yml infra/aws/network.yml
 ## Agent Toolkit for AWS
 
 CloudFormation authoring, deployment, and troubleshooting are
-agent-assisted through the **AWS MCP Server** (the managed remote
-server from the [Agent Toolkit for AWS][toolkit]). The rules:
+agent-assisted through **two** MCP servers with a deliberate division of
+labour — documentation reads need no credentials, so they don't go
+through the credentialed server. The rules:
 
-- **Prefer the MCP server** for AWS actions, documentation lookups, and
-  skills. It exposes `aws___search_documentation`,
-  `aws___retrieve_skill`, and CLI execution behind one IAM-authenticated
-  endpoint. Do not vendor the toolkit's skills into the repo — the
-  server discovers and retrieves them on demand.
-- **Discover before acting.** Search the AWS docs and retrieve the
-  relevant skill *before* writing a template or running a command, so
-  the work follows current AWS guidance rather than memory.
+- **Documentation lookups → the credential-free `aws-docs` server.**
+  This is the dedicated read-only AWS Documentation MCP server (the
+  canonical "just docs" server from the [awslabs/mcp][awslabs] catalog).
+  It runs local over stdio, needs **no AWS credentials**, and exposes
+  `search_documentation`, `read_documentation`, and `recommend`. Use it
+  for all doc reads — not `aws___search_documentation` on the SigV4
+  proxy, which couples credential-free reads to a heavyweight,
+  IAM-authenticated server that has proven flaky to reconnect. (The
+  remote **AWS Knowledge MCP server**,
+  `https://knowledge-mcp.global.api.aws/mcp`, is a zero-install,
+  also-credential-free alternative with a broader corpus; the dedicated
+  Documentation server is the canonical pick.)
+- **Account actions → the SigV4 `aws-mcp` server.** The credentialed
+  remote server (the managed [Agent Toolkit for AWS][toolkit] proxy) is
+  scoped to actual account work — deploy, inspect, CLI execution, and
+  skill retrieval (`aws___retrieve_skill`) — where the IAM auth and
+  least-privilege roles below actually matter. Do not vendor the
+  toolkit's skills into the repo — the server retrieves them on demand.
+- **Discover before acting.** Search the AWS docs (via `aws-docs`) and
+  retrieve the relevant skill *before* writing a template or running a
+  command, so the work follows current AWS guidance rather than memory.
 - **Least privilege.** Agent-driven provisioning uses the dedicated
   `*-agent-provisioning` role (`infra/aws/iam-baseline.yml`), whose
   permissions activate only when the request flows through the MCP
@@ -64,15 +80,23 @@ server from the [Agent Toolkit for AWS][toolkit]). The rules:
 
 ## Local setup (not committed)
 
-The MCP server and AWS credentials are wired into **user-local**
-settings, never the repo — the same not-committed-settings convention
-as [the GitHub MCP](github-mcp.md) and
+Both MCP servers are wired into **user-local** settings (`--scope user`),
+never the repo — the same not-committed-settings convention as
+[the GitHub MCP](github-mcp.md) and
 [local integrations](local-integrations.md). Nothing here belongs in a
 tracked file.
 
-Authentication is **SigV4** (the mode the Agent Toolkit recommends for
-terminal coding agents), which reuses the AWS CLI credentials the
-templates are deployed with:
+The **`aws-docs`** documentation server is credential-free and runs
+local over stdio — no `aws login`, no signing:
+
+```sh
+claude mcp add aws-docs --scope user -- \
+  uvx awslabs.aws-documentation-mcp-server@latest
+```
+
+The **`aws-mcp`** account-action server authenticates with **SigV4**
+(the mode the Agent Toolkit recommends for terminal coding agents),
+which reuses the AWS CLI credentials the templates are deployed with:
 
 ```sh
 aws login
@@ -86,4 +110,5 @@ servers, a newly added server loads on the **next** Claude Code
 session, not mid-session. Credentials are never committed: no access
 keys in the repo, no secrets in templates (see `infra/aws/README.md`).
 
+[awslabs]: https://github.com/awslabs/mcp
 [toolkit]: https://docs.aws.amazon.com/agent-toolkit/

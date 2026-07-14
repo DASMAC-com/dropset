@@ -97,11 +97,12 @@ IAM, and audit baseline; the survey app stack builds on top). Templates
 pass **both** `cfn-lint` (scoped hook) and the repo's strict `yamllint`,
 so they are written to fit the latter — alphabetical keys, single-quoted
 strings, block style, folded block scalars for long ARNs. Authoring is
-agent-assisted through the **AWS MCP Server** (SigV4): prefer the MCP
-server, discover skills / search AWS docs before acting, keep to least
-privilege (the MCP-gated `*-agent-provisioning` role, deploys via the
-passed `*-cfn-deployment` role). The MCP + credential wiring is
-user-local, never committed. Full detail:
+agent-assisted through **two** MCP servers: documentation lookups go to
+the credential-free `aws-docs` server; account actions (deploy /
+inspect / CLI, skill retrieval) go to the SigV4 `aws-mcp` server. Search
+the AWS docs before acting and keep to least privilege (the MCP-gated
+`*-agent-provisioning` role, deploys via the passed `*-cfn-deployment`
+role). Both servers' wiring is user-local, never committed. Full detail:
 `docs/conventions/aws-infra.md`.
 
 ## Skill tooling
