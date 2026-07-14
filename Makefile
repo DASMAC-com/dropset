@@ -14,6 +14,7 @@
 .PHONY: conformance-vectors
 .PHONY: debugger
 .PHONY: decks
+.PHONY: demo
 .PHONY: explorer
 .PHONY: explorer-down
 .PHONY: frontend
@@ -23,7 +24,6 @@
 .PHONY: indexer-up
 .PHONY: install-anchor-v2
 .PHONY: lint
-.PHONY: localnet
 .PHONY: program
 .PHONY: program-keypair
 .PHONY: program-no-teardown
@@ -273,7 +273,7 @@ frontend: check-pnpm
 # localnet cluster + local RPC/WS, overriding the mainnet endpoints in
 # .env.local (a process env var wins over .env files in Next). Assumes a
 # validator is up with the markets seeded, which the `tui` control plane does;
-# run `make tui` alongside this, or use `make localnet` to launch both.
+# run `make tui` alongside this, or use `make demo` to launch both.
 frontend-localnet: check-pnpm
 	cd frontend && pnpm install
 	cd frontend && NEXT_PUBLIC_CLUSTER=localnet \
@@ -289,8 +289,9 @@ decks: check-pnpm
 			&& $$opener http://localhost:3300 ) &
 	cd decks && pnpm dev
 
-# The whole localnet demo in one command: the TUI control plane in the
-# foreground (it spawns the validator and seeds the markets) plus the
+# The whole localnet demo in one command (`make tui` already runs the
+# control-plane TUI on its own localnet; this adds the web frontend): the TUI
+# in the foreground (it spawns the validator and seeds the markets) plus the
 # localnet frontend in the background, pointed at that validator. Quitting the
 # TUI stops the frontend too; the frontend retries until the validator is up,
 # so start order doesn't matter. Cleanup runs a broad `pkill -f "next dev"`,
@@ -304,7 +305,7 @@ decks: check-pnpm
 # the browser-opener job is silenced, so only the TUI draws to the terminal.
 # The frontend log is tailable at $(FRONTEND_LOG) while the demo runs.
 FRONTEND_LOG ?= /tmp/dropset-frontend.log
-localnet:
+demo:
 	@echo "frontend logs → $(FRONTEND_LOG) (kept off the TUI screen)"
 	@( until nc -z localhost 3000 2>/dev/null; do sleep 0.2; done; \
 		opener=$$(command -v open || command -v xdg-open) \
