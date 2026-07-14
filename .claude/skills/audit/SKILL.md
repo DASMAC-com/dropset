@@ -18,7 +18,7 @@ no-parent Backlog `linear-task` files into) so the work can be picked
 up in parallel without blocking the repo. What gates what is recorded
 as native Linear blocking edges; keeping those edges honest against
 file overlap is a separate job, owned by `sync-blockers` (this skill
-calls it per finding — see the File and Done steps).
+calls it per filed issue — see the File and Done steps).
 
 Invoke it directly — `/audit` — when you want a fresh batch of findings.
 It is **finite**: it runs the seven units once, files what they surface
@@ -411,10 +411,12 @@ The description must let a cold agent act on it in its own worktree
   `docs/conventions/linear-automation.md` → "Structured filing fields".
 - `**Discovered by**: audit <unit> @ <commit SHA>`
 
-**Sync overlap edges for each finding as you file it.** Right after
-`save_issue` returns a new identifier, file that issue's file-overlap
-`blocks` edges against the open Backlog with the incremental sweep — one
-bare command that reduces to the
+**Sync overlap edges for each issue as you file or grow it.** Right
+after `save_issue` returns a new identifier — **and also after an
+append-fold** that grows an existing issue's `**Touches**:` union (per
+the folding rule above) — file that issue's file-overlap `blocks` edges
+against the open Backlog with the incremental sweep, keyed by that
+issue's `ENG-###`. It reduces to one bare command matching the
 `Bash(python3 .claude/tools/sync_blockers.py:*)` allow-rule (the
 scan runs in the tool's own process, so nothing enters context):
 
@@ -422,10 +424,12 @@ scan runs in the tool's own process, so nothing enters context):
 python3 .claude/tools/sync_blockers.py --for <ENG-###>
 ```
 
-Filing in `ENG-###` order means the later filer always sees the earlier
-sibling, so an intra-rotation overlap pair is filed by the second of
-the two — no end-of-rotation full sweep is needed. Best-effort: it needs
-`LINEAR_API_KEY`; if unset the tool says so — note it and continue.
+Re-run it on an append because the grown union can imply new overlaps
+the original `--for` didn't cover. Filing in `ENG-###` order means the
+later filer always sees the earlier sibling, so an intra-rotation
+overlap pair is filed by the second of the two — no end-of-rotation full
+sweep is needed. Best-effort: it needs `LINEAR_API_KEY`; if unset the
+tool says so — note it and continue.
 
 **Structural findings** (SUBSYSTEM / INTERFACE / LAYOUT) are filed the
 same way (plain Backlog issue, same IDs, no parent) but as **one
@@ -464,7 +468,7 @@ send no notification.
 **Done.** After all seven units have been processed (each cross-checked
 where applicable, deduped, filed, and its overlap edges synced via
 `sync-blockers --for`), the rotation is complete. The blocking edges are
-already current — the per-finding `--for` calls filed them at file time,
+already current — the per-issue `--for` calls filed them at file time,
 so there is no end-of-rotation sweep. Print a single final line and
 **stop** — there is no re-invocation:
 
