@@ -5,16 +5,18 @@ for the ``permissions.allow`` array that both ``firm-perms`` and
 into the model's context (per ``CLAUDE.md`` → "Context economy" / "Skill
 tooling").
 
-Two subcommands, each reading a settings file and printing JSON to stdout:
+Two subcommands, each reading a settings file and printing JSON to stdout.
+``--settings PATH`` is a top-level option, so it precedes the subcommand
+(``allowlist.py --settings PATH covers RULE``):
 
-* ``covers RULE [--settings PATH]`` — is ``RULE`` already granted by the
+* ``covers RULE`` — is ``RULE`` already granted by the
   allowlist (exactly, or subsumed by a broader existing rule)? Prints
   ``{covered, insertion_index, would_subsume, count}`` — ``insertion_index`` is
   where an uncovered rule would append (end of the array), and
   ``would_subsume`` lists the indices of existing narrower entries the new rule
   would make redundant. The membership + subsumption logic is ``firm_core``'s,
   so it matches what ``firm_last.py`` writes.
-* ``cruft [--settings PATH]`` — return only the **suspicious** entries
+* ``cruft`` — return only the **suspicious** entries
   (``{index, rule, category, reason}``) plus the total ``count``, so the audit
   reasons over a short shortlist instead of the whole array. Categories mirror
   ``housekeeping`` step 7: ``over-broad`` (a bare-verb wildcard or an unscoped
@@ -63,7 +65,9 @@ class AllowlistError(Exception):
 
 def load_allow(path: Path) -> list[str]:
     """The ``permissions.allow`` array from a settings file. A missing or
-    malformed file yields an empty list (nothing to check / audit)."""
+    unreadable/malformed file raises ``AllowlistError`` (the caller passed a
+    bad path); a well-formed file with no ``permissions.allow`` array yields an
+    empty list (nothing to check / audit)."""
     try:
         settings = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
@@ -99,23 +103,53 @@ def _unscoped_file_root(rule: str) -> bool:
     return bool(_UNSCOPED_ROOT_RE.match(m.group(2).strip()))
 
 
-def classify(rule: str, earlier: list[str]) -> tuple[str, str] | None:
-    """Classify one allow entry as cruft, or ``None`` if it looks fine.
-    ``earlier`` is the entries before it (so a duplicate is flagged once, on the
-    later copy, not mutually)."""
+def _over_broad_reason(rule: str) -> str | None:
+    """The reason ``rule`` is over-broad, or ``None`` if it isn't."""
     if rule.strip() in ("Bash(:*)", "Bash( *)", "Bash(*)"):
-        return "over-broad", "bare Bash wildcard — grants every command"
+        return "bare Bash wildcard — grants every command"
     if firm_core.is_bareverb_wildcard(rule):
-        return "over-broad", "bare-verb wildcard — grants the whole program"
+        return "bare-verb wildcard — grants the whole program"
     if _unscoped_file_root(rule):
-        return "over-broad", "unscoped file-access root"
+        return "unscoped file-access root"
+    return None
+
+
+def _is_subsumed(index: int, allow: list[str]) -> bool:
+    """Whether ``allow[index]`` is dead weight another entry already covers.
+    Checks the **whole** list, not just earlier entries — ``firm-perms``
+    *appends* generalized rules, so the common layout is a narrow rule with the
+    broader one that subsumes it sitting *after* it. A **strictly broader**
+    coverer flags the narrow rule regardless of position; an **exact-equivalent**
+    duplicate flags only the later copy (so one survives). A coverer that is
+    itself **over-broad** is skipped — it's flagged for removal on its own, so
+    the entries under it aren't the dead weight to report."""
+    rule = allow[index]
+    for j, other in enumerate(allow):
+        if j == index or _over_broad_reason(other) is not None:
+            continue
+        if not firm_core.is_covered(rule, [other]):
+            continue
+        if not firm_core.is_covered(other, [rule]):
+            return True  # `other` is strictly broader
+        if j < index:
+            return True  # exact-equivalent duplicate — keep the earlier one
+    return False
+
+
+def classify(rule: str, index: int, allow: list[str]) -> tuple[str, str] | None:
+    """Classify ``allow[index]`` as cruft, or ``None`` if it looks fine.
+    ``allow`` is the whole array (``index`` names the entry) so the subsumed
+    check can see broader rules on either side of it."""
+    over_broad = _over_broad_reason(rule)
+    if over_broad is not None:
+        return "over-broad", over_broad
     for reason, pattern in _DANGEROUS_RES:
         if pattern.search(rule):
             return "dangerous", reason
     if _MACHINE_PATH_RE.search(rule):
         return "machine-path", "absolute home path pinned into the rule"
-    if firm_core.is_covered(rule, earlier):
-        return "subsumed", "an earlier rule already covers this"
+    if _is_subsumed(index, allow):
+        return "subsumed", "another rule already covers this"
     return None
 
 
@@ -123,7 +157,7 @@ def cruft(allow: list[str]) -> dict:
     """The suspicious-entry shortlist, keeping the full array out of context."""
     flagged = []
     for i, rule in enumerate(allow):
-        verdict = classify(rule, allow[:i])
+        verdict = classify(rule, i, allow)
         if verdict is not None:
             category, reason = verdict
             flagged.append(

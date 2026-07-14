@@ -490,12 +490,11 @@ permission is low-blast-radius, but silently editing the
 allowlist unattended is surprising. In an **attended** pass,
 surface the shortlist via **`AskUserQuestion`** and remove
 (with the Edit tool, per the JSON-editing convention) only
-the entries the human approves (with the Edit tool, per the
-JSON-editing convention — and confirm the edited file still
-parses with an **exit-code-only** check,
+the entries the human approves — and confirm the edited file
+still parses with an **exit-code-only** check,
 `python3 -m json.tool <file> >/dev/null` or the same routed
 through `run_quiet`, never a full pretty-print echo that
-re-dumps the array into context); in an **unattended** pass,
+re-dumps the array into context; in an **unattended** pass,
 file the candidates **propose-only** (or just list them) and
 delete nothing. This is the pruning half; `firm-perms` is
 the add-only half, and the allowlist is `settings.local.json`

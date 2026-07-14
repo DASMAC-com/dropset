@@ -12,6 +12,8 @@ from pathlib import Path
 from cspell_place import (
     comment_style,
     count_word_files,
+    load_dictionary,
+    run_verdicts,
     tokenize,
     verdict,
 )
@@ -88,6 +90,36 @@ class VerdictTests(unittest.TestCase):
         out = verdict("newword", [], ["docs/x.md"], set())
         self.assertEqual(out["placement"], "inline")
         self.assertEqual(out["directive"], "<!-- cspell:word newword -->")
+
+    def test_no_file_located_is_unknown(self):
+        # zero repo hits AND no changed file → nowhere to place it
+        out = verdict("newword", [], [], set())
+        self.assertEqual(out["placement"], "unknown")
+
+
+class LoadDictionaryTests(unittest.TestCase):
+    def test_reads_words_lowercased_skipping_blanks_and_comments(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "dictionary.txt")
+            Path(p).write_text("Borsh\n\naudc\n# a comment\n", encoding="utf-8")
+            self.assertEqual(load_dictionary(Path(p)), {"borsh", "audc"})
+
+    def test_missing_dictionary_is_empty(self):
+        self.assertEqual(load_dictionary(Path("/no/such/dictionary.txt")), set())
+
+
+class RunVerdictsTests(unittest.TestCase):
+    def test_two_file_word_goes_to_dictionary(self):
+        # a word absent from the real cfg/dictionary.txt, used in two temp repo
+        # files → the ≥2-file rule routes it to the dictionary.
+        with tempfile.TemporaryDirectory() as d:
+            f1 = os.path.join(d, "a.rs")
+            f2 = os.path.join(d, "b.md")
+            Path(f1).write_text("let kumquat = 1;", encoding="utf-8")
+            Path(f2).write_text("kumquat again", encoding="utf-8")
+            out = run_verdicts(["kumquat"], [], [f1, f2])
+        self.assertEqual(len(out["words"]), 1)
+        self.assertEqual(out["words"][0]["placement"], "dictionary")
 
 
 if __name__ == "__main__":

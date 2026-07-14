@@ -4,9 +4,18 @@ Run via the repo's ``make tools-tests`` (discovery adds ``.claude/tools`` as
 the top-level dir so the bare ``import prune_worktrees`` below resolves).
 """
 
+import os
+import tempfile
 import unittest
+from types import SimpleNamespace
 
-from prune_worktrees import is_base, normalize_branch, parse_worktrees, prune
+from prune_worktrees import (
+    _read_merged,
+    is_base,
+    normalize_branch,
+    parse_worktrees,
+    prune,
+)
 
 PORCELAIN = """\
 worktree /repo/dropset
@@ -90,8 +99,8 @@ class PruneTests(unittest.TestCase):
         out = prune({"eng-701"}, dry_run=True, git=git)
         self.assertEqual([r["branch"] for r in out["removed"]], ["eng-701"])
         self.assertFalse(out["pruned"])
-        # no mutating git call happened
-        self.assertNotIn(["worktree", "remove", "eng-701"], git.calls)
+        # no mutating git call happened — no worktree remove, no branch delete
+        self.assertFalse(any(c[:2] == ["worktree", "remove"] for c in git.calls))
         self.assertTrue(all(c[:2] != ["branch", "-D"] for c in git.calls))
 
     def test_prune_not_run_when_nothing_removed(self):
@@ -100,6 +109,22 @@ class PruneTests(unittest.TestCase):
         self.assertEqual(out["removed"], [])
         self.assertFalse(out["pruned"])
         self.assertNotIn(["worktree", "prune"], git.calls)
+
+
+class ReadMergedTests(unittest.TestCase):
+    def test_merged_args_and_file_union_normalized(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = os.path.join(d, "merged.txt")
+            with open(f, "w", encoding="utf-8") as fh:
+                fh.write("refs/heads/eng-702\neng-703\n")
+            args = SimpleNamespace(
+                merged=["eng-701", "refs/heads/eng-701"], merged_file=f
+            )
+            self.assertEqual(_read_merged(args), {"eng-701", "eng-702", "eng-703"})
+
+    def test_no_input_is_empty(self):
+        args = SimpleNamespace(merged=[], merged_file=None)
+        self.assertEqual(_read_merged(args), set())
 
 
 if __name__ == "__main__":
