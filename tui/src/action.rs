@@ -40,7 +40,7 @@ use std::sync::{Arc, Mutex};
 /// the ladder's shape at a fixed peg (`set_liquidity_profile`).
 ///
 /// Both compete with a running maker bot, which re-quotes every tick and
-/// overwrites a manual nudge within ~1s — stop the market's bot (`s` / `x`)
+/// overwrites a manual nudge within ~1s — stop the market's bot (`m` / `x`)
 /// for a stable on-stage demo.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -766,11 +766,14 @@ fn do_probe_swap(
             market.quote_decimals,
             Price::INFINITY,
         ),
-        SwapSide::Sell => (market.base_mint, base_ata, market.base_decimals, Price::ZERO),
+        SwapSide::Sell => (
+            market.base_mint,
+            base_ata,
+            market.base_decimals,
+            Price::ZERO,
+        ),
     };
-    let notional = 10u64
-        .pow(input_decimals as u32)
-        .saturating_mul(units);
+    let notional = 10u64.pow(input_decimals as u32).saturating_mul(units);
     chain::mint_to(client, wallet, &input_mint, &input_ata, notional)
         .context("fund taker input leg")?;
 

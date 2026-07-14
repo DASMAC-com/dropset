@@ -633,10 +633,7 @@ impl App {
             }
             None => self.log(
                 LogKind::Err,
-                format!(
-                    "Invalid swap amount — keeping {} units.",
-                    self.swap_units
-                ),
+                format!("Invalid swap amount — keeping {} units.", self.swap_units),
             ),
         }
     }
