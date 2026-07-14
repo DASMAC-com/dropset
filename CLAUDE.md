@@ -85,6 +85,20 @@ CI / PR-state reads `gh pr checks` / `gh pr view --json`), the
 PAT-not-OAuth auth setup, and the read/write permission split all live
 in `docs/conventions/github-mcp.md`.
 
+## AWS infrastructure
+
+AWS resources are **CloudFormation YAML** under `infra/aws/` (network,
+IAM, and audit baseline; the survey app stack builds on top). Templates
+pass **both** `cfn-lint` (scoped hook) and the repo's strict `yamllint`,
+so they are written to fit the latter — alphabetical keys, single-quoted
+strings, block style, folded block scalars for long ARNs. Authoring is
+agent-assisted through the **AWS MCP Server** (SigV4): prefer the MCP
+server, discover skills / search AWS docs before acting, keep to least
+privilege (the MCP-gated `*-agent-provisioning` role, deploys via the
+passed `*-cfn-deployment` role). The MCP + credential wiring is
+user-local, never committed. Full detail:
+`docs/conventions/aws-infra.md`.
+
 ## Skill tooling
 
 A skill's deterministic helper (transcript parser, branch check, doc

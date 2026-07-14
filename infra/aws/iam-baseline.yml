@@ -1,0 +1,152 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Dropset AWS IAM baseline: the CloudFormation deployment role that stacks are
+  provisioned with, a dedicated least-privilege role for agent-driven
+  provisioning (gated to the AWS MCP Server), and a reusable secrets-read
+  managed policy for service roles. No credentials are stored in this template.
+Outputs:
+  AgentProvisioningRoleArn:
+    Description: 'ARN of the MCP-gated agent provisioning role.'
+    Export:
+      Name: !Sub '${EnvironmentName}-agent-provisioning-role-arn'
+    Value: !GetAtt 'AgentProvisioningRole.Arn'
+  CloudFormationDeploymentRoleArn:
+    Description: 'ARN of the CloudFormation deployment role.'
+    Export:
+      Name: !Sub '${EnvironmentName}-cfn-deployment-role-arn'
+    Value: !GetAtt 'CloudFormationDeploymentRole.Arn'
+  SecretsReadPolicyArn:
+    Description: 'ARN of the reusable secrets-read managed policy.'
+    Export:
+      Name: !Sub '${EnvironmentName}-secrets-read-policy-arn'
+    Value: !Ref 'SecretsReadPolicy'
+Parameters:
+  EnvironmentName:
+    Default: 'dropset-dev'
+    Description: 'Name prefix applied to role names, tags, and stack exports.'
+    Type: 'String'
+  McpServicePrincipal:
+    Default: 'aws-mcp.amazonaws.com'
+    Description: >-
+      Service principal of the AWS MCP Server, matched by the
+      aws:CalledViaAWSMCP condition key on the agent provisioning role.
+    Type: 'String'
+Resources:
+  AgentProvisioningRole:
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: 'sts:AssumeRole'
+          Effect: 'Allow'
+          Principal:
+            AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+        Version: '2012-10-17'
+      Description: >-
+        Least-privilege role for agent-driven infrastructure provisioning. Its
+        permissions activate only when the request flows through the AWS MCP
+        Server, so raw credentials cannot exercise them (defense in depth).
+      MaxSessionDuration: 3600
+      Policies:
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - 'cloudformation:CreateChangeSet'
+            - 'cloudformation:CreateStack'
+            - 'cloudformation:DeleteStack'
+            - 'cloudformation:ExecuteChangeSet'
+            - 'cloudformation:UpdateStack'
+            Condition:
+              Bool:
+                'aws:ViaAWSMCPService': 'true'
+              StringEquals:
+                'aws:CalledViaAWSMCP': !Ref 'McpServicePrincipal'
+            Effect: 'Allow'
+            Resource: !Sub >-
+              arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${EnvironmentName}-*/*
+            Sid: 'AgentDrivenStackMutations'
+          - Action:
+            - 'cloudformation:DescribeChangeSet'
+            - 'cloudformation:DescribeStackEvents'
+            - 'cloudformation:DescribeStackResources'
+            - 'cloudformation:DescribeStacks'
+            - 'cloudformation:GetTemplate'
+            - 'cloudformation:GetTemplateSummary'
+            - 'cloudformation:ListStackResources'
+            - 'cloudformation:ListStacks'
+            - 'cloudformation:ValidateTemplate'
+            - 'ec2:Describe*'
+            - 'logs:Describe*'
+            - 'rds:Describe*'
+            Condition:
+              Bool:
+                'aws:ViaAWSMCPService': 'true'
+              StringEquals:
+                'aws:CalledViaAWSMCP': !Ref 'McpServicePrincipal'
+            Effect: 'Allow'
+            Resource: '*'
+            Sid: 'AgentDrivenReadOnly'
+          - Action: 'iam:PassRole'
+            Condition:
+              Bool:
+                'aws:ViaAWSMCPService': 'true'
+              StringEquals:
+                'aws:CalledViaAWSMCP': !Ref 'McpServicePrincipal'
+                'iam:PassedToService': 'cloudformation.amazonaws.com'
+            Effect: 'Allow'
+            Resource: !GetAtt 'CloudFormationDeploymentRole.Arn'
+            Sid: 'PassDeploymentRoleToCloudFormation'
+          Version: '2012-10-17'
+        PolicyName: 'agent-provisioning'
+      RoleName: !Sub '${EnvironmentName}-agent-provisioning'
+      Tags:
+      - Key: 'Name'
+        Value: !Sub '${EnvironmentName}-agent-provisioning'
+    Type: 'AWS::IAM::Role'
+  CloudFormationDeploymentRole:
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: 'sts:AssumeRole'
+          Effect: 'Allow'
+          Principal:
+            Service: 'cloudformation.amazonaws.com'
+        Version: '2012-10-17'
+      Description: >-
+        Role CloudFormation assumes to provision stack resources. Pass it with
+        `aws cloudformation deploy --role-arn` so deploys do not require the
+        calling principal to hold IAM-write permissions directly.
+      ManagedPolicyArns:
+      - 'arn:aws:iam::aws:policy/PowerUserAccess'
+      - 'arn:aws:iam::aws:policy/IAMFullAccess'
+      RoleName: !Sub '${EnvironmentName}-cfn-deployment'
+      Tags:
+      - Key: 'Name'
+        Value: !Sub '${EnvironmentName}-cfn-deployment'
+    Type: 'AWS::IAM::Role'
+  SecretsReadPolicy:
+    Properties:
+      Description: >-
+        Least-privilege read access to this environment's Secrets Manager
+        secrets and SSM parameters. Attach to service roles that read config.
+      ManagedPolicyName: !Sub '${EnvironmentName}-secrets-read'
+      PolicyDocument:
+        Statement:
+        - Action:
+          - 'secretsmanager:DescribeSecret'
+          - 'secretsmanager:GetSecretValue'
+          Effect: 'Allow'
+          Resource: !Sub >-
+            arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${EnvironmentName}/*
+          Sid: 'ReadEnvironmentSecrets'
+        - Action:
+          - 'ssm:GetParameter'
+          - 'ssm:GetParameters'
+          - 'ssm:GetParametersByPath'
+          Effect: 'Allow'
+          Resource: !Sub >-
+            arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${EnvironmentName}/*
+          Sid: 'ReadEnvironmentParameters'
+        Version: '2012-10-17'
+    Type: 'AWS::IAM::ManagedPolicy'
+...
