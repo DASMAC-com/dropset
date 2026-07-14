@@ -313,8 +313,8 @@ decks: check-pnpm
 # from the menu.
 
 # Open the browser on the frontend once :3000 accepts connections, in a
-# silenced background job — `frontend-localnet` (unlike `frontend`) doesn't, so
-# the demo would otherwise leave the operator to open localhost:3000 by hand.
+# silenced background job. `frontend-localnet` (unlike `frontend`) doesn't
+# open one, so the demo would otherwise leave the operator to do it by hand.
 browser-3000:
 	@( until nc -z localhost 3000 2>/dev/null; do sleep 0.2; done; \
 		opener=$$(command -v open || command -v xdg-open) \
