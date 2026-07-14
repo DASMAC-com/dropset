@@ -31,8 +31,10 @@ use std::sync::{Arc, Mutex};
 
 /// A menu action.
 ///
-/// The first block is the bootstrap-lifecycle menu (the numbered `1..=9`
-/// entries in [`MENU`]). The trailing block are the eCLOB demo controls —
+/// The first block is the bootstrap-lifecycle plus the utility actions; the
+/// numbered `1..=8` entries in [`MENU`] are drawn from it (the swap is a
+/// runtime control reached via `s`, not a numbered entry). The trailing block
+/// are the eCLOB demo controls —
 /// market-scoped keybinds, *not* menu entries — that fire the two quoting
 /// instructions independently on the selected market to show the "reprice vs
 /// reshape" distinction live: [`Action::RepegUp`] / [`Action::RepegDown`] move
@@ -296,8 +298,11 @@ pub fn dispatch(
         Action::CreateVault => {
             job::spawn(tx, "Create vaults", move |log| {
                 let client = chain::rpc(&rpc_url);
+                // Sequential, so the per-market quote top-up in `seed_vault` is
+                // safe (no concurrent identical mints) — pass `prefunded_quote:
+                // false` and let each market fund its own quote leg.
                 for config in market::PAIRS {
-                    do_create_vault(&client, &wallet, &repo_root, config, log)?;
+                    do_create_vault(&client, &wallet, &repo_root, config, false, log)?;
                 }
                 Ok(format!("Created {} vaults", market::PAIRS.len()))
             });
@@ -312,23 +317,24 @@ pub fn dispatch(
                     deploy::deploy_program(log, &repo_root, &rpc_url, &wallet_path, &pubkey)?;
                 }
                 let client = chain::rpc(&rpc_url);
-                // Sequential prelude — everything the parallel phase would race
-                // on. The registry and the shared USDC quote mint are created
-                // once here (both are create-once accounts). The shared leader's
-                // USDC ATA is pre-funded with the full deposit total, so the
-                // concurrent per-market deposit_leader calls draw from a pool
-                // that already covers them all and never underflow mid-race.
+                // Sequential prelude — everything the parallel phase must not
+                // race on. The registry and the shared USDC quote mint are
+                // created once here (both create-once accounts). The shared
+                // leader's USDC ATA is funded with the *whole* deposit total up
+                // front, so the parallel phase can skip the per-market quote
+                // top-up entirely — those top-ups are byte-identical across
+                // markets and would collide on transaction signature if run
+                // concurrently (and the pool would underflow as dedup drops
+                // all but one). See `market::prefund_leader_quotes`.
                 do_init(&client, &wallet, log)?;
                 market::ensure_quote_mints(&client, &wallet, &repo_root, log)?;
                 market::prefund_leader_quotes(&client, &wallet, &repo_root, log)?;
                 // Parallel phase: each pair's create_market → create_vault is an
-                // independent chain against its own market PDA and unique base
-                // mint, so the seven markets pipeline against the one validator
-                // instead of running back-to-back. What they still share past the
-                // prelude — the leader's USDC ATA and the USDC mint supply — is
-                // written under the runtime's per-account transaction locks
-                // (serialized, additive), and the prelude's pre-funding means the
-                // shared USDC deposits never underflow regardless of interleaving.
+                // independent chain against its own market PDA, unique base mint,
+                // and unique amounts, so the seven markets pipeline against the
+                // one validator with no colliding transactions (the shared quote
+                // leg was handled by the prelude). `prefunded_quote: true` tells
+                // `seed_vault` to skip that shared top-up.
                 std::thread::scope(|scope| {
                     let workers: Vec<_> = market::PAIRS
                         .into_iter()
@@ -341,7 +347,7 @@ pub fn dispatch(
                                 let client = chain::rpc(&rpc_url);
                                 log.log(format!("— {} —", config.base.symbol));
                                 do_create_market(&client, &wallet, repo_root, config, &log)?;
-                                do_create_vault(&client, &wallet, repo_root, config, &log)?;
+                                do_create_vault(&client, &wallet, repo_root, config, true, &log)?;
                                 Ok(())
                             })
                         })
@@ -746,12 +752,17 @@ fn do_create_market(
 
 /// Create the leader vault on the market via the admin path, then bring it
 /// up live — set `config`'s reference price + quote ladder and seed it with
-/// the leader's opening deposit (see [`market::seed_vault`]).
+/// the leader's opening deposit (see [`market::seed_vault`]). `prefunded_quote`
+/// is forwarded to `seed_vault`: the parallel `BootstrapAll` path pre-funds the
+/// shared leader quote balance up front and passes `true` so the per-market
+/// quote top-up (which would collide across concurrent workers) is skipped; the
+/// sequential `CreateVault` path passes `false` and funds it per market.
 fn do_create_vault(
     client: &solana_client::rpc_client::RpcClient,
     wallet: &Keypair,
     repo_root: &Path,
     config: &PairConfig,
+    prefunded_quote: bool,
     log: &Logger,
 ) -> Result<String> {
     ensure_funded(client, &wallet.pubkey(), log);
@@ -790,7 +801,15 @@ fn do_create_vault(
         .context("send create_vault")?;
     log.accounts_changed();
     // Bring the vault up quotable + seeded.
-    market::seed_vault(client, wallet, &leader, config, &market, log)?;
+    market::seed_vault(
+        client,
+        wallet,
+        &leader,
+        config,
+        &market,
+        prefunded_quote,
+        log,
+    )?;
     log.accounts_changed();
     Ok("Vault created, quoting, and seeded".into())
 }
@@ -988,6 +1007,7 @@ mod tests {
             Action::TightenSpread,
             Action::ThinFarSide,
             Action::ResetLadder,
+            Action::ResetAllLadders,
         ];
         for c in controls {
             for p in PHASES {
