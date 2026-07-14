@@ -312,18 +312,42 @@ pub fn dispatch(
                     deploy::deploy_program(log, &repo_root, &rpc_url, &wallet_path, &pubkey)?;
                 }
                 let client = chain::rpc(&rpc_url);
+                // Sequential prelude — the two accounts every market depends on
+                // and would otherwise race to create in the parallel phase: the
+                // registry (once) and the shared USDC quote mint (once).
                 do_init(&client, &wallet, log)?;
-                // Bring up every demo market sequentially: its mints, market PDA,
-                // and a seeded, quotable vault. The markets share one leader
-                // (EEEE) and one USDC quote mint, so their seed transactions
-                // (fund the leader's shared USDC ATA, then deposit_leader) must
-                // run one market at a time — seeding them concurrently races on
-                // that shared leader balance and fails deposit_leader.
-                for config in market::PAIRS {
-                    log.log(format!("— {} —", config.base.symbol));
-                    do_create_market(&client, &wallet, &repo_root, config, log)?;
-                    do_create_vault(&client, &wallet, &repo_root, config, log)?;
-                }
+                market::ensure_quote_mints(&client, &wallet, &repo_root, log)?;
+                // Parallel phase: each pair's create_market → create_vault is an
+                // independent chain against its own market PDA and unique base
+                // mint, so the seven markets pipeline against the one validator
+                // instead of running back-to-back. The accounts they still share
+                // past the prelude — the leader's USDC ATA, the USDC mint supply,
+                // the per-market USDC deposit — are written under the runtime's
+                // per-account transaction locks, which serialize those writes.
+                std::thread::scope(|scope| {
+                    let workers: Vec<_> = market::PAIRS
+                        .into_iter()
+                        .map(|config| {
+                            let rpc_url = rpc_url.clone();
+                            let wallet = wallet.insecure_clone();
+                            let repo_root = &repo_root;
+                            let log = log.clone();
+                            scope.spawn(move || -> Result<()> {
+                                let client = chain::rpc(&rpc_url);
+                                log.log(format!("— {} —", config.base.symbol));
+                                do_create_market(&client, &wallet, repo_root, config, &log)?;
+                                do_create_vault(&client, &wallet, repo_root, config, &log)?;
+                                Ok(())
+                            })
+                        })
+                        .collect();
+                    for worker in workers {
+                        worker
+                            .join()
+                            .map_err(|_| anyhow::anyhow!("a bootstrap worker panicked"))??;
+                    }
+                    Ok::<(), anyhow::Error>(())
+                })?;
                 Ok(format!(
                     "Bootstrap complete — {} markets",
                     market::PAIRS.len()
