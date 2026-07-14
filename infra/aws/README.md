@@ -85,6 +85,31 @@ aws cloudformation validate-template \
   --template-body file://infra/aws/network.yml
 ```
 
+## Tearing down
+
+Most stacks delete cleanly and recreate from the templates:
+
+```sh
+aws cloudformation delete-stack --stack-name dropset-dev-network
+aws cloudformation delete-stack --stack-name dropset-dev-cloudtrail
+```
+
+The CloudTrail **log bucket is deliberately kept** when its stack is
+deleted: it carries `DeletionPolicy: Retain` so an accidental stack
+deletion cannot destroy the audit logs. Its name is deterministic
+(`${EnvironmentName}-cloudtrail-${AWS::AccountId}`), so a later redeploy
+collides with the retained bucket. A *full* teardown — e.g. to recreate
+the trail from scratch — is therefore a deliberate extra step: empty and
+delete the retained bucket first, then redeploy.
+
+```sh
+aws s3 rb s3://dropset-dev-cloudtrail-ACCOUNT_ID --force
+```
+
+Because the one deterministic name is reused each cycle, this never
+accumulates orphan buckets; `Retain` only makes the delete explicit
+rather than automatic.
+
 ## Secrets
 
 Application secrets (database passwords, API keys) go in Secrets
