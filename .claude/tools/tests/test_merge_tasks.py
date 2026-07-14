@@ -4,7 +4,12 @@ Run via the repo's ``make tools-tests`` (discovery adds ``.claude/tools`` as
 the top-level dir so the bare ``import merge_tasks`` below resolves).
 """
 
+import io
+import json
+import os
+import tempfile
 import unittest
+from contextlib import redirect_stdout
 
 from merge_tasks import (
     MergeTasksError,
@@ -13,6 +18,7 @@ from merge_tasks import (
     is_meta_glob,
     parse_token,
     plan,
+    run,
     strip_claude_prefix,
 )
 
@@ -161,6 +167,70 @@ class AssembleTests(unittest.TestCase):
         data["survivor"] = "ENG-999"
         with self.assertRaises(MergeTasksError):
             assemble(data)
+
+
+class AssembleCliTests(unittest.TestCase):
+    """The ``--out`` file-handoff lives in ``run()``, not ``assemble()``."""
+
+    def _issues(self):
+        return {
+            "survivor": "ENG-615",
+            "issues": [
+                {
+                    "id": "ENG-615",
+                    "number": 615,
+                    "title": "Refine the audit dedup",
+                    "description": "Survivor.\n\n**Touches**: .claude/skills/audit/**\n",
+                },
+                {
+                    "id": "ENG-622",
+                    "number": 622,
+                    "title": "Tweak sync-blockers",
+                    "description": "Folded.\n\n**Touches**: .claude/tools/**\n",
+                },
+            ],
+        }
+
+    def _run_capture(self, argv):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = run(argv)
+        return rc, json.loads(buf.getvalue())
+
+    def test_without_out_prints_description_inline(self):
+        with tempfile.TemporaryDirectory() as d:
+            issues = os.path.join(d, "issues.json")
+            with open(issues, "w", encoding="utf-8") as fh:
+                json.dump(self._issues(), fh)
+            rc, out = self._run_capture(["merge_tasks.py", "assemble", issues])
+        self.assertEqual(rc, 0)
+        self.assertIn("description", out)
+        self.assertNotIn("description_path", out)
+
+    def test_out_writes_body_and_omits_it_from_stdout(self):
+        with tempfile.TemporaryDirectory() as d:
+            issues = os.path.join(d, "issues.json")
+            body = os.path.join(d, "body.md")
+            with open(issues, "w", encoding="utf-8") as fh:
+                json.dump(self._issues(), fh)
+            rc, out = self._run_capture(
+                ["merge_tasks.py", "assemble", issues, "--out", body]
+            )
+            self.assertEqual(rc, 0)
+            # the large body is gone from stdout, replaced by its path
+            self.assertNotIn("description", out)
+            self.assertEqual(out["description_path"], body)
+            # metadata still rides inline
+            self.assertEqual(out["title"], "Claude: Refine the audit dedup")
+            self.assertTrue(out["all_meta"])
+            self.assertEqual(
+                out["touches"], [".claude/skills/audit/**", ".claude/tools/**"]
+            )
+            # and the file holds the merged body
+            with open(body, encoding="utf-8") as fh:
+                written = fh.read()
+            self.assertIn("# Part 1 — Tweak sync-blockers", written)
+            self.assertTrue(written.rstrip().endswith(".claude/tools/**"))
 
 
 if __name__ == "__main__":

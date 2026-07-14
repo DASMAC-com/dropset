@@ -53,8 +53,18 @@ the [`/f` skill](../f/SKILL.md); the two are the same tool.
 Both modes generalize and dedupe by the **same rules**, and those rules
 live in **one place**: the Python module `.claude/tools/firm_core.py`
 (`generalize`, `is_covered`, `is_bareverb_wildcard`), which the fast-firm
-tool calls directly. When you generalize by hand in the full sweep,
-follow what `firm_core` does — don't re-derive a different behavior:
+tool calls directly. To check whether a **single** candidate rule is
+already granted without whole-reading a `settings.local.json` into
+context (per `CLAUDE.md` → "Context economy"), ask the allowlist helper —
+it prints `{covered, insertion_index, would_subsume, count}`:
+
+```sh
+python3 .claude/tools/allowlist.py \
+  --settings <path>/.claude/settings.local.json covers 'Bash(git status:*)'
+```
+
+When you generalize by hand in the full sweep, follow what `firm_core`
+does — don't re-derive a different behavior:
 
 1. **Collapse worktree tags to `*`.** Any literal
    `.claude/worktrees/<tag>` path segment becomes

@@ -72,6 +72,25 @@ into the transcript**:
   read polled across a CI / merge wait is paid per poll *and* per
   later turn — that's why `review-pr`'s waits use the compact `gh`
   reads above rather than the full-object MCP calls.
+- **Minimize live-verification screenshots.** A full-viewport
+  (2560×1440) screenshot `Read`s at ~30–50k tokens, so a set of them to
+  prove one visual fix dominates the run's Read cost. Capture **only the
+  frames that prove the claim** — the broken→fixed pair, not a gallery —
+  at a **reduced resolution** (≤1280-wide, or JPEG), so each screenshot
+  costs a few k rather than ~45k. This is the live-verification
+  discipline (the `/verify` and `/run` flows); a proof needs two frames,
+  not four full-res ones.
+- **Don't hand-run a check a hook already owns.** `make lint`
+  enforces line length (MD013 for Markdown, the "Lines over 80
+  columns" hook for code); a manual `grep -nE '^.{81,}$'` pre-check
+  over a doc / Markdown diff just re-buys that result into context.
+  Trust the lint hook's output instead of a manual over-80 grep. Same
+  for validating edited JSON: an exit-code-only check
+  (`python3 -m json.tool … >/dev/null`, or the check routed through
+  `run_quiet`) confirms the file still parses without a full pretty-print
+  echo — `json.tool` re-emits the **whole file** into context, and on
+  a large `settings.local.json` that dump has landed twice in one
+  pass.
 
 **Track consumption ideas as you go.** When something reads as
 wasteful mid-session — a payload you only needed a slice of, a call

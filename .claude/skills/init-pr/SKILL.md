@@ -90,6 +90,25 @@ whether to spawn an agent at all: a **≤ ~3-file question is
 cheaper Read directly** from the main loop than surveyed,
 since a sub-agent survey of it just gets re-Read afterward.
 
+## Implementing the task: keep context discipline on
+
+The same context economy `review-pr` enforces applies during
+the **implement** phase this skill hands off into — it slips
+here precisely because no skill is driving. Two habits, per
+`CLAUDE.md` → "Context economy":
+
+- **Slice-read large files.** To find an append point,
+  confirm an import, or edit one function in a big source
+  (a 600–1000-line module whose `#[cfg(test)]` block is half
+  the file), **Grep to the region** then `Read` with
+  `offset`/`limit` — don't pull the whole file.
+- **Route `cargo` / `make` through the quiet runner.** Run
+  `cargo test` / `cargo check` / `make …` through
+  `python3 .claude/tools/run_quiet.py -- <cmd>` **during
+  implementation**, not only during `review-pr` — an
+  unwrapped `cargo test` lands its whole `Compiling …`
+  cascade in context for a result that is one line.
+
 ## The branch/worktree helper tool
 
 The deterministic string/path work this bootstrap needs —
