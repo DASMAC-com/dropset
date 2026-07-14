@@ -60,6 +60,10 @@ pub enum Action {
     TightenSpread,
     ThinFarSide,
     ResetLadder,
+    /// Reset every market's ladder to the default shape in one job — the
+    /// broadcast form of [`Action::ResetLadder`], for re-arming the whole demo
+    /// after nudging several books.
+    ResetAllLadders,
 }
 
 /// Whole book shift per reprice nudge — ±5 bps re-anchors the ladder without
@@ -76,15 +80,18 @@ const THIN_DEPTH_SCALE: f64 = 0.3;
 /// expiry itself).
 const NEVER_EXPIRES: u32 = u32::MAX;
 
-/// The menu in display order. Indices map to the `1..=9` number keys.
-pub const MENU: [Action; 9] = [
+/// The numbered setup menu in display order — the bootstrap lifecycle plus the
+/// explorer / teardown / wipe utilities. Indices map to the `1..=8` number
+/// keys. The swap is deliberately absent: it is a runtime control, reached only
+/// via `s` (and listed in the "runtime" pane), so it appears in exactly one
+/// place rather than doubling as a numbered step.
+pub const MENU: [Action; 8] = [
     Action::Deploy,
     Action::InitRegistry,
     Action::CreateMarket,
     Action::CreateVault,
     Action::OpenExplorer,
     Action::BootstrapAll,
-    Action::ProbeSwap,
     Action::Teardown,
     Action::Wipe,
 ];
@@ -116,6 +123,7 @@ impl Action {
             Action::TightenSpread => "Tighten spread",
             Action::ThinFarSide => "Thin far side",
             Action::ResetLadder => "Reset ladder",
+            Action::ResetAllLadders => "Reset all ladders",
         }
     }
 
@@ -151,7 +159,8 @@ impl Action {
             | Action::WidenSpread
             | Action::TightenSpread
             | Action::ThinFarSide
-            | Action::ResetLadder => phase == Phase::Ready,
+            | Action::ResetLadder
+            | Action::ResetAllLadders => phase == Phase::Ready,
         }
     }
 
@@ -180,7 +189,8 @@ impl Action {
             | Action::WidenSpread
             | Action::TightenSpread
             | Action::ThinFarSide
-            | Action::ResetLadder => "needs a live, seeded vault",
+            | Action::ResetLadder
+            | Action::ResetAllLadders => "needs a live, seeded vault",
         }
     }
 }
@@ -405,6 +415,39 @@ pub fn dispatch(
                     reshape_spread_bps,
                     log,
                 )
+            });
+        }
+        Action::ResetAllLadders => {
+            // Reset every market's first live vault, not just the selected one,
+            // in one job — resolve each market's reshape target up front so the
+            // job thread owns them (the same `(market, base_mint, vault_idx)`
+            // triple `eclob_target` yields for a single market).
+            let targets: Vec<(Pubkey, Pubkey, u32)> = state
+                .markets
+                .iter()
+                .filter_map(|m| {
+                    m.live_vaults
+                        .first()
+                        .map(|(idx, _)| (m.address, m.base_mint, *idx))
+                })
+                .collect();
+            job::spawn(tx, "Reset all ladders", move |log| {
+                let client = chain::rpc(&rpc_url);
+                let total = targets.len();
+                for (market, base_mint, vault_idx) in targets {
+                    do_reshape(
+                        &client,
+                        &wallet,
+                        &repo_root,
+                        Some(market),
+                        Some(base_mint),
+                        Some(vault_idx),
+                        Action::ResetLadder,
+                        reshape_spread_bps,
+                        log,
+                    )?;
+                }
+                Ok(format!("Reset {total} ladders to the default shape"))
             });
         }
         // Wipe is handled by the event loop (owns the validator).

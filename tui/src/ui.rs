@@ -21,9 +21,10 @@ use solana_native_token::LAMPORTS_PER_SOL;
 use solana_pubkey::Pubkey;
 use std::sync::atomic::Ordering;
 
-/// Number of grouped control rows the "other actions" pane renders (bots, swap,
-/// eCLOB, view) — its box height is this plus the top/bottom borders.
-const OTHER_ACTIONS_ROWS: u16 = 4;
+/// Number of grouped control rows the "runtime actions" pane renders (bots,
+/// swap, eCLOB peg, eCLOB shape, view) — its box height is this plus the
+/// top/bottom borders.
+const OTHER_ACTIONS_ROWS: u16 = 5;
 
 /// Render the whole dashboard.
 pub fn draw(f: &mut Frame<'_>, app: &mut App) {
@@ -109,19 +110,14 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
     }
 }
 
-/// Render the keybinds-help footer.
+/// Render the keybinds-help footer — menu navigation only. The runtime
+/// controls (bots, swap, the eCLOB peg / reshape presets) live in the "runtime"
+/// pane above and are intentionally not repeated here, so each control has a
+/// single home.
 fn draw_help(f: &mut Frame<'_>, area: Rect) {
-    let help = Paragraph::new(vec![
-        Line::from(
-            "j/k menu  ·  enter/1-9 run  ·  [ ] market  ·  m/M maker/all  ·  \
-             t/T taker/all  ·  x stop all  ·  s swap  ·  S flip side  ·  \
-             a amount  ·  r refresh  ·  q quit",
-        ),
-        Line::from(
-            "eCLOB · selected market:  < > re-peg \u{00b1}5 bps  ·  w/n spread \
-             \u{00b1}5 bps  ·  f thin far side  ·  g reset ladder",
-        ),
-    ])
+    let help = Paragraph::new(Line::from(
+        "j/k select step  ·  enter / 1-8 run  ·  [ ] switch market",
+    ))
     .block(Block::default().borders(Borders::ALL))
     .alignment(Alignment::Center);
     f.render_widget(help, area);
@@ -175,7 +171,7 @@ fn draw_status(f: &mut Frame<'_>, app: &App, area: Rect) {
             Style::new().fg(phase_color).add_modifier(Modifier::BOLD),
         ),
         Span::raw(format!(
-            "  ·  wallet {:.3} SOL",
+            "  ·  admin {:.3} SOL",
             app.chain.wallet_lamports as f64 / LAMPORTS_PER_SOL as f64
         )),
         Span::raw("  ·  bots "),
@@ -261,7 +257,7 @@ fn draw_menu(f: &mut Frame<'_>, app: &mut App, area: Rect) {
     let list = List::new(items)
         .block(
             Block::default()
-                .title(" actions · phase ")
+                .title(" actions · setup ")
                 .borders(Borders::ALL),
         )
         .highlight_style(
@@ -296,15 +292,15 @@ fn menu_item(i: usize, action: Action, phase: Phase, next: Option<Action>) -> Li
     ListItem::new(Line::from(spans))
 }
 
-/// Render the "other actions" pane beneath the phase menu: the letter-key
+/// Render the "runtime actions" pane beneath the setup menu: the letter-key
 /// controls that aren't part of the numbered bootstrap lifecycle — bot toggles,
-/// the swap (with its current amount and side), the eCLOB reshape controls, and
-/// the view keys. Grouped by kind with a dim tag so the top pane — not the
-/// footer, which stays a compact reminder — is the primary place that lists
-/// what's runnable. The market-scoped
-/// groups (swap, eCLOB) dim when no live vault is selected, mirroring how the
-/// phase menu greys steps that can't run yet. Keep the line count in sync with
-/// [`OTHER_ACTIONS_ROWS`], which sizes the box.
+/// the swap (with its current amount and side), the eCLOB peg / reshape
+/// controls (each annotated with its step size), and the view keys. This pane
+/// is the single home for these runtime controls; the footer carries only menu
+/// navigation, so nothing here is duplicated there. Grouped by kind with a dim
+/// tag. The market-scoped groups (swap, eCLOB) dim when no live vault is
+/// selected, mirroring how the setup menu greys steps that can't run yet. Keep
+/// the line count in sync with [`OTHER_ACTIONS_ROWS`], which sizes the box.
 fn draw_other_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
     let ready = app.chain.phase() == Phase::Ready;
     let tag = |s: &'static str| Span::styled(format!("{s:<6}"), Style::new().fg(Color::DarkGray));
@@ -321,6 +317,10 @@ fn draw_other_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
         app.swap_units,
         swap_side_label(app.swap_side)
     );
+    // eCLOB controls split across two rows so each keeps its step-size
+    // annotation (±bps) without overflowing the narrow left column: the peg /
+    // spread nudges on one row, the shape presets (thin, reset one / all) on
+    // the next.
     let lines = vec![
         Line::from(vec![
             tag("bots"),
@@ -328,15 +328,22 @@ fn draw_other_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
         ]),
         Line::from(vec![tag("swap"), Span::styled(swap, market_style)]),
         Line::from(vec![
-            tag("eCLOB"),
-            Span::styled("< > re-peg · w/n spread · f thin · g reset", market_style),
+            tag("peg"),
+            Span::styled(
+                "< > re-peg \u{00b1}5 bps · w/n spread \u{00b1}5 bps",
+                market_style,
+            ),
+        ]),
+        Line::from(vec![
+            tag("shape"),
+            Span::styled("f thin far side · g reset · G reset all", market_style),
         ]),
         Line::from(vec![tag("view"), Span::styled("r refresh · q quit", live)]),
     ];
     f.render_widget(
         Paragraph::new(lines).block(
             Block::default()
-                .title(" actions · other ")
+                .title(" actions · runtime ")
                 .borders(Borders::ALL),
         ),
         area,
