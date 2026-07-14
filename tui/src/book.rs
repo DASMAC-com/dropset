@@ -146,9 +146,9 @@ fn ladder(levels: &[BookLevel], base_dec: u8, quote_dec: u8) -> Vec<Row> {
     rows
 }
 
-/// The column header over the ladder — a `depth · price · size` banner in the
-/// style of a common exchange book, its widths matching [`row_line`] so the
-/// labels sit over their columns.
+/// The column header over the ladder — a `depth · price · size · volume` banner
+/// in the style of a common exchange book, its widths matching [`row_line`] so
+/// the labels sit over their columns.
 fn header_line() -> Line<'static> {
     let style = Style::new().fg(Color::Gray).add_modifier(Modifier::BOLD);
     Line::from(vec![
@@ -289,7 +289,7 @@ mod tests {
         let smallest = 1e-9; // well below any real token, exercises the ceiling.
         assert!(fmt_price(smallest).len() <= PRICE_WIDTH);
         // The clamp caps decimals: even 1e-9 renders at MAX_PRICE_DECIMALS, not
-        // the 12 significant figures its magnitude would otherwise ask for.
+        // the 12 decimals its magnitude would otherwise ask for.
         assert_eq!(
             fmt_price(smallest),
             format!("{smallest:.MAX_PRICE_DECIMALS$}")
