@@ -38,6 +38,7 @@
 .PHONY: test-parity
 .PHONY: tools-tests
 .PHONY: tui
+.PHONY: tui-prebuild
 .PHONY: wasm
 
 all: lint test
@@ -217,11 +218,26 @@ sdk-test: check-pnpm
 
 # === Dev servers & control plane ===
 
+# Build everything the running TUI shells out to, up front, so no in-TUI
+# action stalls the demo with a compile mid-log: the on-chain program `.so`
+# (the "Deploy" / "Bootstrap all" action publishes it — building it here with
+# the same `anchor build --no-idl` deploy uses means that publish is a fast
+# no-op) and the maker/taker bot binaries (the TUI spawns them as children —
+# building them here means the spawned bot is always current with the just-
+# built program's account layout, closing the stale-binary hazard where an
+# old bot decodes a current market against a superseded `MarketHeader` size
+# and dies with `SectorOverflow`). After `make clean && make tui`, every
+# in-TUI command runs without further building.
+tui-prebuild: check-toolchain program-keypair
+	anchor keys sync && anchor build --no-idl
+	cargo build -p dropset-maker-bot -p dropset-taker-bot
+
 # Localnet control-plane TUI. Spawns its own
 # solana-test-validator (ledger in a temp dir), so it needs no running
-# validator first — just the toolchain check-toolchain gates. Named `tui`
-# (not `localnet`) because the same panel will later drive mainnet too.
-tui:
+# validator first — `tui-prebuild` handles the toolchain gate and warms every
+# build the panel will need. Named `tui` (not `localnet`) because the same
+# panel will later drive mainnet too.
+tui: tui-prebuild
 	cargo run -p dropset-tui
 
 # Headless rent reclamation — the same teardown the TUI's "Teardown & reclaim"

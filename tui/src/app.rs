@@ -31,6 +31,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use dropset_sdk::matching::SwapSide;
 use dropset_sdk::types::FillEvent;
 use ratatui::{
     backend::CrosstermBackend,
@@ -132,13 +133,17 @@ pub struct App {
     /// accounts are shown — the "which bot's book am I looking at" selection,
     /// moved with `[` / `]`.
     pub(crate) selected_market: usize,
-    /// Whole quote units a probe swap spends, editable by the taker via the
-    /// amount input (`a`). Seeded from [`action::DEFAULT_PROBE_QUOTE_UNITS`].
-    pub(crate) swap_quote_units: u64,
+    /// Whole units of the input token a probe swap spends — quote units on a
+    /// Buy, base units on a Sell — editable by the taker via the amount input
+    /// (`a`). Seeded from [`action::DEFAULT_PROBE_UNITS`].
+    pub(crate) swap_units: u64,
+    /// Which side a probe swap (`s`) takes: `Buy` pays quote and receives base,
+    /// `Sell` pays base and receives quote. Flipped with `S`; defaults to `Buy`.
+    pub(crate) swap_side: SwapSide,
     /// When set, the taker is typing a new swap amount — the digits entered so
     /// far. While it is `Some`, keystrokes edit this buffer and the normal
     /// keybinds are suppressed, so a digit types a number rather than firing a
-    /// menu action; Enter commits it to `swap_quote_units`, Esc cancels.
+    /// menu action; Enter commits it to `swap_units`, Esc cancels.
     pub(crate) amount_input: Option<String>,
     /// The per-market maker-bot child processes the operator starts and stops.
     pub(crate) bots: BotManager,
@@ -206,7 +211,8 @@ impl App {
             swapper,
             mint_symbols,
             selected_market: 0,
-            swap_quote_units: action::DEFAULT_PROBE_QUOTE_UNITS,
+            swap_units: action::DEFAULT_PROBE_UNITS,
+            swap_side: SwapSide::Buy,
             amount_input: None,
             bots: BotManager::new(),
             takers: BotManager::new(),
@@ -364,13 +370,18 @@ impl App {
             // the selected market's bot, upper-case toggles every market's (start
             // all if none are running, else stop them all). The taker is opt-in
             // (off by default), so `t` / `T` only ever start or stop flow, never
-            // quote. eCLOB tighten moved to `n` (narrow) to free `t`.
-            KeyCode::Char('s') => self.toggle_selected_bot(),
-            KeyCode::Char('S') => self.toggle_all_bots(),
+            // quote. Makers live on `m` / `M` (not `s` / `S`) so `s` is free for
+            // the swap; eCLOB tighten is on `n` (narrow) to free `t`.
+            KeyCode::Char('m') => self.toggle_selected_bot(),
+            KeyCode::Char('M') => self.toggle_all_bots(),
             KeyCode::Char('t') => self.toggle_selected_taker(),
             KeyCode::Char('T') => self.toggle_all_takers(),
             KeyCode::Char('x') => self.stop_all_bots(),
             KeyCode::Char('r') => self.dirty = true,
+            // Swap on the selected market: `s` dispatches the probe at the
+            // current amount / side, `S` flips the side (Buy ⇄ Sell).
+            KeyCode::Char('s') => self.run_action(Action::ProbeSwap),
+            KeyCode::Char('S') => self.flip_swap_side(),
             // Open the swap-amount input — subsequent keys edit the amount.
             KeyCode::Char('a') => self.begin_amount_input(),
             // eCLOB demo (selected market): reprice the anchor (whole-book
@@ -565,6 +576,21 @@ impl App {
         self.dirty = true;
     }
 
+    /// Flip which side the probe swap takes (Buy ⇄ Sell) and force a redraw so
+    /// the status bar and actions pane reflect it. The next `s` dispatches on
+    /// the new side.
+    fn flip_swap_side(&mut self) {
+        self.swap_side = match self.swap_side {
+            SwapSide::Buy => SwapSide::Sell,
+            SwapSide::Sell => SwapSide::Buy,
+        };
+        self.log(
+            LogKind::Info,
+            format!("Swap side set to {}.", swap_side_label(self.swap_side)),
+        );
+        self.dirty = true;
+    }
+
     /// Enter swap-amount input mode with an empty buffer. Subsequent keys edit
     /// the buffer (see [`App::handle_amount_key`]) until Enter or Esc.
     fn begin_amount_input(&mut self) {
@@ -595,25 +621,19 @@ impl App {
         }
     }
 
-    /// Leave input mode, applying the typed buffer to `swap_quote_units` when it
+    /// Leave input mode, applying the typed buffer to `swap_units` when it
     /// is a positive integer — an empty, zero, or non-numeric buffer is rejected
     /// and the current amount kept.
     fn commit_amount_input(&mut self) {
         let buf = self.amount_input.take().unwrap_or_default();
         match parse_swap_amount(&buf) {
             Some(units) => {
-                self.swap_quote_units = units;
-                self.log(
-                    LogKind::Ok,
-                    format!("Swap amount set to {units} quote units."),
-                );
+                self.swap_units = units;
+                self.log(LogKind::Ok, format!("Swap amount set to {units} units."));
             }
             None => self.log(
                 LogKind::Err,
-                format!(
-                    "Invalid swap amount — keeping {} quote units.",
-                    self.swap_quote_units
-                ),
+                format!("Invalid swap amount — keeping {} units.", self.swap_units),
             ),
         }
     }
@@ -673,7 +693,8 @@ impl App {
             &self.chain,
             self.tx.clone(),
             self.selected_market,
-            self.swap_quote_units,
+            self.swap_units,
+            self.swap_side,
             self.spread_bps,
         );
     }
@@ -864,7 +885,7 @@ fn now_hms() -> String {
     format!("{:02}:{:02}:{:02}", tm.tm_hour, tm.tm_min, tm.tm_sec)
 }
 
-/// Parse a typed swap-amount buffer into whole quote units — `Some(n)` for a
+/// Parse a typed swap-amount buffer into whole units — `Some(n)` for a
 /// positive integer, `None` for empty, zero, or non-numeric input (the caller
 /// keeps the current amount and warns). Split out so it's testable without an
 /// `App`.
@@ -872,6 +893,15 @@ fn parse_swap_amount(buf: &str) -> Option<u64> {
     match buf.parse::<u64>() {
         Ok(n) if n > 0 => Some(n),
         _ => None,
+    }
+}
+
+/// Human label for a probe-swap side — for the status bar, the actions pane,
+/// and the flip log line.
+pub(crate) fn swap_side_label(side: SwapSide) -> &'static str {
+    match side {
+        SwapSide::Buy => "Buy",
+        SwapSide::Sell => "Sell",
     }
 }
 
@@ -921,9 +951,15 @@ impl Drop for TerminalGuard {
 
 #[cfg(test)]
 mod tests {
-    use super::{hit_target, parse_swap_amount};
+    use super::{hit_target, parse_swap_amount, swap_side_label, SwapSide};
     use ratatui::layout::Rect;
     use solana_pubkey::Pubkey;
+
+    #[test]
+    fn swap_side_label_names_each_side() {
+        assert_eq!(swap_side_label(SwapSide::Buy), "Buy");
+        assert_eq!(swap_side_label(SwapSide::Sell), "Sell");
+    }
 
     #[test]
     fn parse_swap_amount_accepts_positive_integers_only() {
