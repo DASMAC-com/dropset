@@ -305,7 +305,7 @@ decks: check-pnpm
 # The TUI runs on the alternate screen, so the background frontend's stdout
 # would paint over it — `next dev`'s output is redirected to a log file, and
 # the browser-opener job is silenced, so only the TUI draws to the terminal.
-# The frontend log is tailable at $(FRONTEND_LOG) while the demo runs.
+# The frontend log is written to $(FRONTEND_LOG) while the demo runs.
 #
 # Unlike `make tui` (the step-by-step control plane), the demo is turnkey: it
 # passes `--bootstrap`, so the TUI auto-runs "Bootstrap all" once the localnet
