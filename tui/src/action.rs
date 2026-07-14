@@ -706,10 +706,11 @@ fn do_create_vault(
     Ok("Vault created, quoting, and seeded".into())
 }
 
-/// Whole quote units a swap probe spends by default (e.g. 10 USDC), scaled by
-/// the quote mint's decimals at send time. The TUI seeds its editable swap
-/// amount with this; the taker overrides it via the amount input (`a`).
-pub const DEFAULT_PROBE_QUOTE_UNITS: u64 = 10;
+/// Whole units of the input token a swap probe spends by default — scaled to
+/// atoms by that leg's mint decimals at send time (quote on a Buy, base on a
+/// Sell). The TUI seeds its editable swap amount with this; the taker overrides
+/// it via the amount input (`a`).
+pub const DEFAULT_PROBE_UNITS: u64 = 10;
 
 /// Exercise — and measure the CU of — the swap path with a small taker take
 /// against the seeded vault, on `side` (a Buy pays quote / receives base, a

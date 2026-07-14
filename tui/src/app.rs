@@ -135,7 +135,7 @@ pub struct App {
     pub(crate) selected_market: usize,
     /// Whole units of the input token a probe swap spends — quote units on a
     /// Buy, base units on a Sell — editable by the taker via the amount input
-    /// (`a`). Seeded from [`action::DEFAULT_PROBE_QUOTE_UNITS`].
+    /// (`a`). Seeded from [`action::DEFAULT_PROBE_UNITS`].
     pub(crate) swap_units: u64,
     /// Which side a probe swap (`s`) takes: `Buy` pays quote and receives base,
     /// `Sell` pays base and receives quote. Flipped with `S`; defaults to `Buy`.
@@ -211,7 +211,7 @@ impl App {
             swapper,
             mint_symbols,
             selected_market: 0,
-            swap_units: action::DEFAULT_PROBE_QUOTE_UNITS,
+            swap_units: action::DEFAULT_PROBE_UNITS,
             swap_side: SwapSide::Buy,
             amount_input: None,
             bots: BotManager::new(),
@@ -885,7 +885,7 @@ fn now_hms() -> String {
     format!("{:02}:{:02}:{:02}", tm.tm_hour, tm.tm_min, tm.tm_sec)
 }
 
-/// Parse a typed swap-amount buffer into whole quote units — `Some(n)` for a
+/// Parse a typed swap-amount buffer into whole units — `Some(n)` for a
 /// positive integer, `None` for empty, zero, or non-numeric input (the caller
 /// keeps the current amount and warns). Split out so it's testable without an
 /// `App`.
@@ -951,9 +951,15 @@ impl Drop for TerminalGuard {
 
 #[cfg(test)]
 mod tests {
-    use super::{hit_target, parse_swap_amount};
+    use super::{hit_target, parse_swap_amount, swap_side_label, SwapSide};
     use ratatui::layout::Rect;
     use solana_pubkey::Pubkey;
+
+    #[test]
+    fn swap_side_label_names_each_side() {
+        assert_eq!(swap_side_label(SwapSide::Buy), "Buy");
+        assert_eq!(swap_side_label(SwapSide::Sell), "Sell");
+    }
 
     #[test]
     fn parse_swap_amount_accepts_positive_integers_only() {

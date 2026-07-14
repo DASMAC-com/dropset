@@ -6,7 +6,7 @@
 
 use crate::accounts::{ChainState, Liveness, ParticipantView, Phase};
 use crate::action::{self, Action};
-use crate::app::{App, LogKind};
+use crate::app::{swap_side_label, App, LogKind};
 use crate::book;
 use crate::explorer;
 use dropset_sdk::DROPSET_ID;
@@ -132,7 +132,7 @@ fn draw_help(f: &mut Frame<'_>, area: Rect) {
 fn draw_amount_prompt(f: &mut Frame<'_>, buf: &str, area: Rect) {
     let prompt = Line::from(vec![
         Span::styled(
-            "swap amount (quote units): ",
+            "swap amount (units): ",
             Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
         ),
         Span::styled(format!("{buf}\u{2588}"), Style::new().fg(Color::White)),
@@ -187,7 +187,7 @@ fn draw_status(f: &mut Frame<'_>, app: &App, area: Rect) {
             format!(
                 "{} units {}",
                 app.swap_units,
-                crate::app::swap_side_label(app.swap_side)
+                swap_side_label(app.swap_side)
             ),
             Style::new().fg(Color::Cyan),
         ),
@@ -299,8 +299,9 @@ fn menu_item(i: usize, action: Action, phase: Phase, next: Option<Action>) -> Li
 /// Render the "other actions" pane beneath the phase menu: the letter-key
 /// controls that aren't part of the numbered bootstrap lifecycle — bot toggles,
 /// the swap (with its current amount and side), the eCLOB reshape controls, and
-/// the view keys. Grouped by kind with a dim tag so the top pane, not the
-/// footer, is the single place that lists what's runnable. The market-scoped
+/// the view keys. Grouped by kind with a dim tag so the top pane — not the
+/// footer, which stays a compact reminder — is the primary place that lists
+/// what's runnable. The market-scoped
 /// groups (swap, eCLOB) dim when no live vault is selected, mirroring how the
 /// phase menu greys steps that can't run yet. Keep the line count in sync with
 /// [`OTHER_ACTIONS_ROWS`], which sizes the box.
@@ -318,7 +319,7 @@ fn draw_other_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
     let swap = format!(
         "s swap · S flip · a amount   [{}u {}]",
         app.swap_units,
-        crate::app::swap_side_label(app.swap_side)
+        swap_side_label(app.swap_side)
     );
     let lines = vec![
         Line::from(vec![
