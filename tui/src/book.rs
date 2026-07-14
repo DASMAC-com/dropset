@@ -290,7 +290,10 @@ mod tests {
         assert!(fmt_price(smallest).len() <= PRICE_WIDTH);
         // The clamp caps decimals: even 1e-9 renders at MAX_PRICE_DECIMALS, not
         // the 12 significant figures its magnitude would otherwise ask for.
-        assert_eq!(fmt_price(smallest), format!("{smallest:.MAX_PRICE_DECIMALS$}"));
+        assert_eq!(
+            fmt_price(smallest),
+            format!("{smallest:.MAX_PRICE_DECIMALS$}")
+        );
     }
 
     #[test]
