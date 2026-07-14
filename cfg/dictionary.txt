@@ -9,6 +9,7 @@ audc
 audd
 audm
 autocorrelated
+awsmcp
 bareverb
 bindgen
 birdeye

@@ -1,0 +1,258 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Conditions:
+  CreateSecondNatGateway: !Equals
+  - !Ref 'SingleNatGateway'
+  - 'false'
+Description: >-
+  Dropset AWS network baseline: a VPC with public and private subnets across
+  two Availability Zones, an internet gateway, NAT gateways, and routing. This
+  is the foundation the survey application stack (RDS, Fargate) attaches to.
+Outputs:
+  IntraVpcSecurityGroupId:
+    Description: 'Baseline security group id allowing intra-VPC traffic.'
+    Export:
+      Name: !Sub '${EnvironmentName}-intra-vpc-sg-id'
+    Value: !Ref 'IntraVpcSecurityGroup'
+  PrivateSubnet1Id:
+    Description: 'Private subnet id in Availability Zone 1.'
+    Export:
+      Name: !Sub '${EnvironmentName}-private-subnet-1-id'
+    Value: !Ref 'PrivateSubnet1'
+  PrivateSubnet2Id:
+    Description: 'Private subnet id in Availability Zone 2.'
+    Export:
+      Name: !Sub '${EnvironmentName}-private-subnet-2-id'
+    Value: !Ref 'PrivateSubnet2'
+  PublicSubnet1Id:
+    Description: 'Public subnet id in Availability Zone 1.'
+    Export:
+      Name: !Sub '${EnvironmentName}-public-subnet-1-id'
+    Value: !Ref 'PublicSubnet1'
+  PublicSubnet2Id:
+    Description: 'Public subnet id in Availability Zone 2.'
+    Export:
+      Name: !Sub '${EnvironmentName}-public-subnet-2-id'
+    Value: !Ref 'PublicSubnet2'
+  VpcCidrBlock:
+    Description: 'The CIDR block of the VPC.'
+    Export:
+      Name: !Sub '${EnvironmentName}-vpc-cidr'
+    Value: !GetAtt 'Vpc.CidrBlock'
+  VpcId:
+    Description: 'The VPC id.'
+    Export:
+      Name: !Sub '${EnvironmentName}-vpc-id'
+    Value: !Ref 'Vpc'
+Parameters:
+  EnvironmentName:
+    Default: 'dropset-dev'
+    Description: 'Name prefix applied to resource tags and stack exports.'
+    Type: 'String'
+  PrivateSubnet1Cidr:
+    Default: '10.0.16.0/20'
+    Description: 'CIDR block for the private subnet in Availability Zone 1.'
+    Type: 'String'
+  PrivateSubnet2Cidr:
+    Default: '10.0.32.0/20'
+    Description: 'CIDR block for the private subnet in Availability Zone 2.'
+    Type: 'String'
+  PublicSubnet1Cidr:
+    Default: '10.0.0.0/22'
+    Description: 'CIDR block for the public subnet in Availability Zone 1.'
+    Type: 'String'
+  PublicSubnet2Cidr:
+    Default: '10.0.4.0/22'
+    Description: 'CIDR block for the public subnet in Availability Zone 2.'
+    Type: 'String'
+  SingleNatGateway:
+    AllowedValues:
+    - 'true'
+    - 'false'
+    Default: 'true'
+    Description: >-
+      Use one shared NAT gateway (cheaper, single AZ) instead of one per AZ
+      (highly available). Set to false for production-grade redundancy.
+    Type: 'String'
+  VpcCidr:
+    Default: '10.0.0.0/16'
+    Description: 'CIDR block for the VPC.'
+    Type: 'String'
+Resources:
+  InternetGateway:
+    Properties:
+      Tags:
+      - Key: 'Name'
+        Value: !Sub '${EnvironmentName}-igw'
+    Type: 'AWS::EC2::InternetGateway'
+  IntraVpcSecurityGroup:
+    Properties:
+      GroupDescription: 'Allow all traffic within the VPC; no public ingress.'
+      SecurityGroupIngress:
+      - CidrIp: !Ref 'VpcCidr'
+        Description: 'All protocols and ports from within the VPC CIDR.'
+        IpProtocol: '-1'
+      Tags:
+      - Key: 'Name'
+        Value: !Sub '${EnvironmentName}-intra-vpc'
+      VpcId: !Ref 'Vpc'
+    Type: 'AWS::EC2::SecurityGroup'
+  NatGateway1:
+    Properties:
+      AllocationId: !GetAtt 'NatGateway1Eip.AllocationId'
+      SubnetId: !Ref 'PublicSubnet1'
+      Tags:
+      - Key: 'Name'
+        Value: !Sub '${EnvironmentName}-nat-1'
+    Type: 'AWS::EC2::NatGateway'
+  NatGateway1Eip:
+    DependsOn: 'VpcGatewayAttachment'
+    Properties:
+      Domain: 'vpc'
+      Tags:
+      - Key: 'Name'
+        Value: !Sub '${EnvironmentName}-nat-eip-1'
+    Type: 'AWS::EC2::EIP'
+  NatGateway2:
+    Condition: 'CreateSecondNatGateway'
+    Properties:
+      AllocationId: !GetAtt 'NatGateway2Eip.AllocationId'
+      SubnetId: !Ref 'PublicSubnet2'
+      Tags:
+      - Key: 'Name'
+        Value: !Sub '${EnvironmentName}-nat-2'
+    Type: 'AWS::EC2::NatGateway'
+  NatGateway2Eip:
+    Condition: 'CreateSecondNatGateway'
+    DependsOn: 'VpcGatewayAttachment'
+    Properties:
+      Domain: 'vpc'
+      Tags:
+      - Key: 'Name'
+        Value: !Sub '${EnvironmentName}-nat-eip-2'
+    Type: 'AWS::EC2::EIP'
+  PrivateRoute1:
+    Properties:
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref 'NatGateway1'
+      RouteTableId: !Ref 'PrivateRouteTable1'
+    Type: 'AWS::EC2::Route'
+  PrivateRoute2:
+    Properties:
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !If
+      - 'CreateSecondNatGateway'
+      - !Ref 'NatGateway2'
+      - !Ref 'NatGateway1'
+      RouteTableId: !Ref 'PrivateRouteTable2'
+    Type: 'AWS::EC2::Route'
+  PrivateRouteTable1:
+    Properties:
+      Tags:
+      - Key: 'Name'
+        Value: !Sub '${EnvironmentName}-private-rt-1'
+      VpcId: !Ref 'Vpc'
+    Type: 'AWS::EC2::RouteTable'
+  PrivateRouteTable2:
+    Properties:
+      Tags:
+      - Key: 'Name'
+        Value: !Sub '${EnvironmentName}-private-rt-2'
+      VpcId: !Ref 'Vpc'
+    Type: 'AWS::EC2::RouteTable'
+  PrivateSubnet1:
+    Properties:
+      AvailabilityZone: !Select
+      - 0
+      - !GetAZs ''
+      CidrBlock: !Ref 'PrivateSubnet1Cidr'
+      Tags:
+      - Key: 'Name'
+        Value: !Sub '${EnvironmentName}-private-1'
+      VpcId: !Ref 'Vpc'
+    Type: 'AWS::EC2::Subnet'
+  PrivateSubnet1RouteTableAssociation:
+    Properties:
+      RouteTableId: !Ref 'PrivateRouteTable1'
+      SubnetId: !Ref 'PrivateSubnet1'
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+  PrivateSubnet2:
+    Properties:
+      AvailabilityZone: !Select
+      - 1
+      - !GetAZs ''
+      CidrBlock: !Ref 'PrivateSubnet2Cidr'
+      Tags:
+      - Key: 'Name'
+        Value: !Sub '${EnvironmentName}-private-2'
+      VpcId: !Ref 'Vpc'
+    Type: 'AWS::EC2::Subnet'
+  PrivateSubnet2RouteTableAssociation:
+    Properties:
+      RouteTableId: !Ref 'PrivateRouteTable2'
+      SubnetId: !Ref 'PrivateSubnet2'
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+  PublicRoute:
+    DependsOn: 'VpcGatewayAttachment'
+    Properties:
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref 'InternetGateway'
+      RouteTableId: !Ref 'PublicRouteTable'
+    Type: 'AWS::EC2::Route'
+  PublicRouteTable:
+    Properties:
+      Tags:
+      - Key: 'Name'
+        Value: !Sub '${EnvironmentName}-public-rt'
+      VpcId: !Ref 'Vpc'
+    Type: 'AWS::EC2::RouteTable'
+  PublicSubnet1:
+    Properties:
+      AvailabilityZone: !Select
+      - 0
+      - !GetAZs ''
+      CidrBlock: !Ref 'PublicSubnet1Cidr'
+      MapPublicIpOnLaunch: true
+      Tags:
+      - Key: 'Name'
+        Value: !Sub '${EnvironmentName}-public-1'
+      VpcId: !Ref 'Vpc'
+    Type: 'AWS::EC2::Subnet'
+  PublicSubnet1RouteTableAssociation:
+    Properties:
+      RouteTableId: !Ref 'PublicRouteTable'
+      SubnetId: !Ref 'PublicSubnet1'
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+  PublicSubnet2:
+    Properties:
+      AvailabilityZone: !Select
+      - 1
+      - !GetAZs ''
+      CidrBlock: !Ref 'PublicSubnet2Cidr'
+      MapPublicIpOnLaunch: true
+      Tags:
+      - Key: 'Name'
+        Value: !Sub '${EnvironmentName}-public-2'
+      VpcId: !Ref 'Vpc'
+    Type: 'AWS::EC2::Subnet'
+  PublicSubnet2RouteTableAssociation:
+    Properties:
+      RouteTableId: !Ref 'PublicRouteTable'
+      SubnetId: !Ref 'PublicSubnet2'
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+  Vpc:
+    Properties:
+      CidrBlock: !Ref 'VpcCidr'
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      InstanceTenancy: 'default'
+      Tags:
+      - Key: 'Name'
+        Value: !Sub '${EnvironmentName}-vpc'
+    Type: 'AWS::EC2::VPC'
+  VpcGatewayAttachment:
+    Properties:
+      InternetGatewayId: !Ref 'InternetGateway'
+      VpcId: !Ref 'Vpc'
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+...

@@ -12,6 +12,14 @@ repos:
     id: 'yamllint'
   repo: 'https://github.com/adrienverge/yamllint'
   rev: 'v1.38.0'
+# cfn-lint validates the CloudFormation templates under infra/aws/. It is
+# scoped by `files` so it only parses those templates (not every repo YAML),
+# and runs in addition to yamllint, which still enforces house style on them.
+- hooks:
+  - files: '^infra/aws/.*\.yml$'
+    id: 'cfn-lint'
+  repo: 'https://github.com/aws-cloudformation/cfn-lint'
+  rev: 'v1.53.0'
 - hooks:
   - args:
     - '--config'
