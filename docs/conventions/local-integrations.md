@@ -4,6 +4,8 @@
 
 <!-- cspell:word venv -->
 
+<!-- cspell:word repoint -->
+
 # Local integrations
 
 This doc covers the **user-local Claude Code configuration** the repo
@@ -320,10 +322,16 @@ automation needs its ids in the environment. Put all of it in one place:
 Some of this lives only in iTerm2's own preferences:
 
 - **The attend shortcut.** Prefs → Keys → Key Bindings → add a binding
-  whose action is **Run Coprocess…**, pointing at
-  `.claude/scripts/iterm-attend.sh`. (A coprocess inherits
+  whose action is **Run Coprocess…**, pointing at the **absolute path**
+  of `iterm-attend.sh` in your deployed scripts dir (e.g.
+  `~/.claude/scripts/iterm-attend.sh`). (A coprocess inherits
   `$ITERM_SESSION_ID`, which is why the attend script can resolve its tty
-  from the registration above.)
+  from the registration above.) **This binding is a stored absolute path,
+  so renaming or moving the script silently breaks it** — a coprocess
+  aimed at a missing file throws an error on the keypress. If you
+  migrated from an earlier script family (see "Deploying to `~/.claude`"
+  below), **repoint this binding** to the new `iterm-attend.sh`; it is
+  not updated by copying the new scripts in.
 - **Drop the job-name title suffix.** Profiles → General → Title →
   uncheck **Job Name**, so the tab title stops showing the `(python)`
   suffix of the running process.
@@ -334,6 +342,37 @@ Some of this lives only in iTerm2's own preferences:
 - **Bright tints are intentional.** iTerm mutes the color of an inactive
   tab and offers no setting to disable that, so the palette is picked
   bright enough to read while muted.
+
+### Deploying to `~/.claude` (and migrating the script family)
+
+The wiring above uses `$CLAUDE_PROJECT_DIR`, which resolves to the active
+checkout — convenient, but it only colors sessions *inside a checkout
+that has these scripts*. To get the coloring in **every** Claude Code
+session regardless of directory, deploy the integration **globally**:
+copy the `iterm-*.sh` scripts (and `iterm-reorder.py`) into
+`~/.claude/scripts/`, and wire the hooks in `~/.claude/settings.json`
+using **absolute** `~/.claude/scripts/…` paths instead of
+`$CLAUDE_PROJECT_DIR`. The reorderer goes live per "FIFO attention
+ordering" above (drop `iterm-reorder.py` in the iTerm2 `AutoLaunch/`
+folder; it needs iTerm2's **Python Runtime** installed — Scripts →
+Manage → Install Python Runtime — and the API enabled).
+
+Migrating from an **older, differently-named** script family (a rename,
+e.g. an `iterm-bg-*` set) has four gotchas, none of which a plain
+file-copy handles:
+
+1. **Remove the old scripts** — a leftover family just confuses.
+1. **Rewire `settings.json`** to the current single-painter shape (one
+   `PreToolUse` `matcher: "*"` → `iterm-paint.sh`), not the old
+   multi-matcher wiring — the painter derives the color from the event,
+   so parallel matchers are a race (see "How the color is chosen").
+1. **Hook changes load only in a new session** — the running session
+   keeps the old wiring until you start a fresh one.
+1. **Repoint the attend key binding.** The Cmd-Shift-A "Run Coprocess"
+   binding stores an **absolute script path** in iTerm2's prefs; a
+   rename leaves it aimed at the deleted script, so the keypress throws
+   a coprocess error until you repoint it (see "The attend shortcut"
+   above). Copying the new scripts does **not** fix it.
 
 ### Recovery
 
