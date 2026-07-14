@@ -178,7 +178,10 @@ control:
 | **Dropset frontend**                  | Consumes `/v1` (vaults, positions, prices).                                                                                                                                         | Ours                                                  |
 | **MM bots** (incl. the reference bot) | Read book/vault/fill state from `/v1`; drive quoting via the SDK.                                                                                                                   | Ours / community                                      |
 
-**Routers (B1) — take-ix limit semantics.** The take instruction's limit
+**Routers (B1) — take-ix limit semantics.** *(Canonical name: the take is
+exposed on-chain, in the IDL, and in the SDK as the `swap` instruction;
+"take" is this spec's role name for the same call.)*
+The take instruction's limit
 argument is a **regular 8-significant-figure `Price`** (the worst acceptable
 fill). The reserved encodings `0x0` and `0xFFFFFFFF` are **no-bound sentinels**
 (see **architecture.md → Price**), so a router must pass a real `Price` to get
@@ -276,6 +279,13 @@ saturating `f64`→`u64` cast normalized huge values to a bogus finite
 the two forks agree; the `share_vectors.json` `merge_entry_basis` set
 likewise pins the `weighted_average` blend for structurally-valid prices
 above the FX band (exact-bigint precision and `u128` saturation).
+
+A fourth fixture, `simulate_swap_vectors.json`, is scoped narrower and is
+**not** a both-forks set: it is replayed only by the interface crate's WASM
+conformance test (`sdk/interface/tests/wasm_conformance.rs`, run under
+`wasm-pack test --node`), pinning the compiled `simulate_swap` binding to the
+native matcher — closing the wasm-binding == native == engine chain — rather
+than exercising the shared math-core kernels the three above do.
 
 On-chain CPI builders (instruction builders + account layouts for a `no_std`,
 entrypoint-free CPI parser, shared with the engine and any router doing an
