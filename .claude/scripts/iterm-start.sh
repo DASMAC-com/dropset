@@ -19,5 +19,9 @@ fi
 nohup "$SCRIPT_DIR/iterm-monitor.sh" "$TTY_PATH" &>/dev/null &
 echo "$!" >"$PID_FILE"
 
-# Seed the neutral state so the monitor paints something immediately.
+# Seed the neutral state so the monitor paints something immediately, and drop
+# any AskUserQuestion sticky-green sentinel a crashed prior session left on this
+# TTY (see iterm-paint.sh) so it can't suppress this session's first real
+# permission prompt.
 echo "$STATE_NEUTRAL" >"$STATE_PREFIX$TTY_NAME"
+rm -f "$STATE_PREFIX$TTY_NAME.askq"

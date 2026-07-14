@@ -217,11 +217,16 @@ above would paint the tab yellow right after the tool's green, by
 last-write. The `permission_prompt` payload carries nothing that tells
 that companion apart from a genuine tool-permission prompt, so the
 painter makes the `AskUserQuestion` green **sticky**: painting it drops a
-short-lived per-tty sentinel (`/tmp/iterm-color-<tty>.askq`), and a
-`permission_prompt` `Notification` arriving while that sentinel is fresh
-(within `ASKQ_STICKY_SECONDS`) is suppressed, so the green survives. The
-sentinel is cleared on any other paint, so a genuine permission prompt
-that follows unrelated work still turns the tab yellow.
+per-tty sentinel (`/tmp/iterm-color-<tty>.askq`), and **every**
+`permission_prompt` `Notification` is suppressed while that sentinel is
+present. The harness **re-fires** that notification periodically while
+the selector waits, so the suppression must last until the selector is
+answered (its `PostToolUse`) or any other paint clears the sentinel —
+there is deliberately **no time window** (a fixed window let a re-fired
+notification repaint yellow mid-wait). The sentinel is cleared on any
+other paint, and a stale one from a crashed session is dropped at session
+start, so a genuine permission prompt that follows unrelated work still
+turns the tab yellow.
 
 ### FIFO attention ordering
 
