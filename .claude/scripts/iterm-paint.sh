@@ -47,20 +47,66 @@ color_for_event() { # $1 = payload
     Stop) printf '%s' "$STATE_REPLY" ;;
     Notification)
       notification_type="$(json_field notification_type "$1")"
-      # Only a genuine permission prompt is yellow. AskUserQuestion does not
-      # fire a Notification; other notification types leave the tab unchanged.
+      # A permission_prompt is yellow. The harness ALSO fires this for an
+      # AskUserQuestion selector (from its side it is blocked on user input),
+      # so this branch fires there too; the sticky-green guard in the main body
+      # suppresses that companion yellow so the tool's green survives. Other
+      # notification types leave the tab unchanged.
       [ "$notification_type" = "permission_prompt" ] && printf '%s' "$STATE_PERMISSION"
       ;;
   esac
 }
 
+# --- AskUserQuestion "sticky green" ------------------------------------------
+# The harness fires BOTH a PreToolUse(AskUserQuestion) — painted green (reply
+# wanted) — AND a companion Notification(permission_prompt) for the same
+# selector, and RE-fires that notification periodically while the selector
+# waits for an answer. With no guard, each yellow overwrites the green by
+# last-write and the tab misreads as "go approve". The permission_prompt
+# payload carries no field that tells the AskUserQuestion companion apart from a
+# genuine tool-permission prompt, so instead the AskUserQuestion green is made
+# *sticky*: painting it drops a per-tty sentinel, and EVERY permission_prompt
+# Notification is suppressed while that sentinel is present — until the selector
+# is answered (its PostToolUse) or any other paint clears it. There is
+# deliberately NO time window: a selector can wait indefinitely, so a fixed
+# window would let a re-fired notification repaint yellow mid-wait (the bug this
+# guard replaced). A stale sentinel from a crashed session is cleared by the
+# next non-AskUserQuestion paint (below) and by iterm-start.sh at session start.
+askq_sentinel_path() { printf '%s%s.askq' "$STATE_PREFIX" "$1"; } # $1 = tty base
+
+# True while an unanswered AskUserQuestion green is in effect on this tty.
+askq_sentinel_present() { [ -f "$(askq_sentinel_path "$1")" ]; } # $1 = tty base
+
 COLOR="$1"
+PAYLOAD=""
 if [ -z "$COLOR" ]; then
-  COLOR="$(color_for_event "$(cat)")"
+  PAYLOAD="$(cat)"
+  COLOR="$(color_for_event "$PAYLOAD")"
 fi
 [ -z "$COLOR" ] && exit 0
 
 # Record the state (for the monitor and the attend toggle) and paint it now.
 TTY_PATH=$(resolve_tty) || exit 0
-echo "$COLOR" >"$STATE_PREFIX$(basename "$TTY_PATH")"
+TTY_BASE="$(basename "$TTY_PATH")"
+
+EVENT="$(json_field hook_event_name "$PAYLOAD")"
+
+# Suppress the AskUserQuestion companion permission_prompt yellow while the
+# green sentinel says the selector is still awaiting a reply. This fires for
+# every re-fired notification until the sentinel is cleared below.
+if [ "$EVENT" = "Notification" ] && [ "$COLOR" = "$STATE_PERMISSION" ] &&
+  [ "$(json_field notification_type "$PAYLOAD")" = "permission_prompt" ] &&
+  askq_sentinel_present "$TTY_BASE"; then
+  exit 0
+fi
+
+# Maintain the sentinel: set it when painting an AskUserQuestion green, clear it
+# on any other paint so a later genuine permission prompt is not suppressed.
+if [ "$EVENT" = "PreToolUse" ] && [ "$(json_field tool_name "$PAYLOAD")" = "AskUserQuestion" ]; then
+  : >"$(askq_sentinel_path "$TTY_BASE")"
+else
+  rm -f "$(askq_sentinel_path "$TTY_BASE")"
+fi
+
+echo "$COLOR" >"$STATE_PREFIX$TTY_BASE"
 emit_set_colors "$COLOR" >"$TTY_PATH"

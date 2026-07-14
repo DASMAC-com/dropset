@@ -112,6 +112,33 @@ filing skills emit them and `sync-blockers` parses them:
   the moment it lands. An issue that predates the `**Touches**:`
   convention has no globs to check; backfill one and re-run the sweep.
 
+### Fold coupled findings into one issue
+
+A rotation should yield the **fewest coherent PRs**, not one issue per
+finding. When a run turns up multiple findings, fold together every set
+that would sensibly land as **one PR** and file each set as a single
+issue — *before* the dedup check and the `save_issue`.
+
+The bar is **same-PR coherence**, not same-file: fold findings that
+share a subsystem, crate, or language-domain and that a reviewer would
+naturally review and land together. So every doc-/comment-freshness fix
+across the run → one issue; every low-risk refactor within one crate →
+one issue. This is wider than "same file or symbol" and spans **units
+within a rotation**, not only findings within a single unit.
+
+A folded issue keeps **every** finding's own `**Fingerprint**:` line
+(one per line, so per-finding dedup still matches) and a **union** of
+their `**Touches**:` globs.
+
+**The coherence floor — do not fold across deploy units.** Never merge
+findings a single PR can't sensibly review or land as a whole: different
+apps, languages, or deploy units stay apart. A TUI Rust rendering fix, a
+frontend TS hook fix, and an on-chain program refactor are **three** PRs,
+not one — even though all three are "cleanup from the same rotation".
+Fold *within* a coherent PR boundary; never across one. "Aggressive"
+means minimize PR count up to that floor, not build an incoherent
+mega-PR past it.
+
 A worktree branch and its Linear issue **share one `ENG-###`
 number**: branch `eng-499` ↔ issue `ENG-499`. Skills resolve the
 issue from the branch (or the PR title scope) on that basis —
@@ -199,6 +226,7 @@ they may assert a relation **only on concrete evidence** that one
 finding's fix cannot land until another issue resolves (e.g. a nit
 that depends on an `arch:` proposal filed the same run), never a
 speculative "these feel related" edge. Mere coupling — work that
-belongs in *one PR* — is handled by combining into a single issue,
-not a relation. When the blocker is filed in the same run, file it
+belongs in *one PR* — is handled by combining into a single issue
+(see "Fold coupled findings into one issue" above), not a relation.
+When the blocker is filed in the same run, file it
 first so its `ENG-###` exists, then reference it.

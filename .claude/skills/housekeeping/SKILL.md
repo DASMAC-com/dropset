@@ -1,6 +1,6 @@
 ---
 name: housekeeping
-description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, upgrade the Claude Code CLI (best-effort brew cask), prune the worktrees of already-merged PRs and dismiss their stale GitHub notifications, mine the Session Metrics inbox via trim-context (one aggregated propose-only task), reconcile Backlog blocking edges via a sync-blockers sweep, then — only when given the `audit` flag (`/housekeeping audit`) — run one finite `/audit` rotation inline and exit; with no flag the audit is skipped. The cspell dictionary check is opt-in (pass `cspell`) and off by default. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
+description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, upgrade the Claude Code CLI (best-effort brew cask), prune the worktrees of already-merged PRs and dismiss their stale GitHub notifications, mine the Session Metrics inbox via trim-context (one aggregated propose-only task), reconcile Backlog blocking edges via a sync-blockers sweep and propose merge groups for coupled issues to minimize open PRs, then — only when given the `audit` flag (`/housekeeping audit`) — run one finite `/audit` rotation inline and exit; with no flag the audit is skipped. The cspell dictionary check is opt-in (pass `cspell`) and off by default. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -30,9 +30,12 @@ committed skills and upgrades the Claude Code CLI
    points at a `CLAUDE.md` section or `docs/conventions/`
    doc that no longer exists, filing the drift
    **propose-only**.
-1. **Reconcile blocking edges** — run an optional full
-   `sync-blockers` sweep to catch any file-overlap edge
-   the file-time `--for` calls didn't already file.
+1. **Reconcile blocking edges and propose merge groups** —
+   run an optional full `sync-blockers` sweep to catch any
+   file-overlap edge the file-time `--for` calls didn't
+   already file, then propose `merge-tasks` groups for
+   coherent coupled Backlog issues (propose-only) to keep
+   open PR count minimal.
 1. **Run one audit rotation** — **only when the `audit`
    flag was passed**, invoke `/audit` once (a single
    finite rotation) inline, then **exit**. With no flag,
@@ -435,9 +438,9 @@ freshness lens does on the PR path — here, periodically.
   lands later through a normal PR. If everything resolves,
   file nothing and note "in sync" in the report.
 
-**6. Reconcile blocking edges.** Invoke the
-`sync-blockers` skill (via the Skill tool) to run a
-**full sweep** over the open Backlog, filing any
+**6. Reconcile blocking edges and propose merge groups.**
+Invoke the `sync-blockers` skill (via the Skill tool) to run
+a **full sweep** over the open Backlog, filing any
 file-overlap `blocks` edge that isn't already declared.
 The deterministic Python tool does all the work in its own
 process; this skill just triggers it and reports the
@@ -449,6 +452,28 @@ new issue's overlap edges at file time via
 a `**Touches**:` line backfilled onto an *older* issue
 would newly imply. It needs `LINEAR_API_KEY` /
 `LINEAR_PROJECT_ID`; if either is unset, skip it and say so.
+
+**Then aggressively propose merge groups — minimize open
+PRs.** The filing default is the **fewest coherent PRs**
+(`docs/conventions/linear-automation.md` → "Fold coupled
+findings into one issue"), but issues still land separately
+over time. So after the sweep, scan the open Backlog for
+clusters that would sensibly land as **one PR** — issues
+sharing a subsystem, crate, or language-domain (the
+file-overlap pairs the sweep just materialized are the
+strongest signal, but a cluster needn't overlap files:
+several doc-/comment-freshness issues, or several low-risk
+refactors in one crate, also fold). For each cluster,
+**propose a `merge-tasks` group** rather than leaving it
+fragmented — propose-only: in an attended pass surface the
+groups via `AskUserQuestion` and run `/merge-tasks <ids>` on
+the ones approved; in an unattended pass just list the
+suggested groups and merge nothing. **Respect the coherence
+floor**: never propose folding across separate apps,
+languages, or deploy units (`merge-tasks`' own `cross_area`
+warning is the backstop). This is the board-level companion
+to the filing-time fold — it catches coupling that slipped
+through as separate issues.
 
 **7. Audit the base-repo permission allowlist for cruft.**
 `firm-perms` only ever **adds** to
@@ -601,6 +626,10 @@ sweep.
   sweep's one-line tally (backlog issue count + overlap
   edges filed), or why it was skipped (e.g. a missing env
   var).
+- Merge-group proposals: the coherent coupled-issue clusters
+  proposed for folding via `merge-tasks` and which the human
+  approved merging (attended), or the suggested groups listed
+  (unattended) — or that the Backlog had none worth folding.
 - Permission allowlist: the base-repo `settings.local.json`
   entries flagged as cruft and, for an attended pass, which
   the human approved removing — or that it was clean.

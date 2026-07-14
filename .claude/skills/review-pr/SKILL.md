@@ -1,6 +1,6 @@
 ---
 name: review-pr
-description: Adversarial pre-review — mark the Linear issue In Progress on invocation, verify its checklist is fully addressed, lint, catalogue issues, fix what's mechanical, ready the PR, wait for GitHub CI to pass, print the review summary, then at the merge-queue handoff re-check the PR still merges cleanly before moving the issue In Review and offering to enqueue the PR, firm up permissions and capture session metrics while it sits in the queue, and report whether it merges or gets taken back out.
+description: Adversarial pre-review — mark the Linear issue In Progress on invocation, verify its checklist is fully addressed, lint, catalogue issues, fix what's mechanical, ready the PR, wait for GitHub CI to pass, print the review summary, then at the merge-queue handoff re-check the PR still merges cleanly before moving the issue In Review and offering to enqueue the PR, capture session metrics and then firm up permissions (the last interactive step) while it sits in the queue, and report whether it merges or gets taken back out.
 user-invocable: true
 ---
 
@@ -1120,11 +1120,11 @@ PR-authoring **writes** (`create_pull_request`,
 1. **Print the review summary.** With CI green, print the
    structured summary now — *before* the merge-queue
    prompt — so the human reviews the full picture at the
-   moment they decide whether to enqueue. The merge-queue
-   outcome, the `firm-perms` results, and the session-metrics
-   capture aren't known yet (all resolve in the steps below);
-   they're surfaced separately as they land, not folded in
-   here.
+   moment they decide whether to enqueue. The
+   session-metrics capture, the `firm-perms` results, and the
+   merge-queue outcome aren't known yet (all resolve in the
+   steps below); they're surfaced separately as they land,
+   not folded in here.
 
    - Linear coverage: the resolved tag, and each
      checklist item marked addressed / partial /
@@ -1284,67 +1284,23 @@ PR-authoring **writes** (`create_pull_request`,
      issue In Review, and note that they can merge it (or
      enable "Merge when ready") themselves.
 
-1. **Firm up the permission allowlist** (while the PR
-   sits in the queue). A review run approves a lot of
-   one-off commands, so it is the natural moment to
-   generalize them. Run this **after** the enqueue,
-   **not** gated on the merge landing — the merge resolves
-   asynchronously in the queue, so this is the productive
-   thing to do while it does.
+1. **Capture session metrics** (while the PR sits in the
+   queue). A review run is long and tool-heavy, so it is the
+   natural moment to account for where its tokens went and
+   bank trim recommendations for the skill suite. Run it
+   **after** the enqueue, **not** gated on the merge landing
+   — the merge resolves asynchronously in the queue, so this
+   is productive work to do while it does — and regardless of
+   the merge outcome (it analyzes the session, not the PR).
+   It runs **before** `firm-perms` by design: `/session-metrics`
+   itself triggers command approvals, and the `firm-perms`
+   **sweep** that follows should harvest them, so metrics comes
+   first and firm-perms is the **last interactive step**.
 
    **Ask first, via `AskUserQuestion`.** This is a
    skill-to-skill handoff, so gate it on the same TUI
    selector the merge-queue prompt uses (per `CLAUDE.md` →
-   "The PR workflow and skill handoffs"): ask whether to
-   firm permissions now, offering "yes, firm permissions"
-   (**first**, the recommended default) and "skip".
-
-   - On **decline**, skip this step and note in the
-     report that permissions were **not** firmed this run.
-
-   - On **approve**, firm the just-approved command into
-     the **base repo only** — this worktree is about to be
-     pruned once the PR merges, so writing its copy is
-     pointless. Run the deterministic tool with
-     `--base-only`:
-
-     ```sh
-     python3 .claude/tools/firm_last.py --base-only
-     ```
-
-     This is housekeeping on the gitignored base
-     `.claude/settings.local.json` — it does **not** affect
-     the PR diff or its ready state, so run it regardless
-     of the gate or CI outcome. Relay the one-line result.
-
-   **When a broader sweep is warranted.** `firm_last`
-   firms the single most-recent approval. If this run piled
-   up many per-worktree or per-arg approvals worth
-   collapsing at once — including commands the diff-review
-   and cross-check agents (steps 5–6) made you approve —
-   run `/firm-perms sweep` instead, which harvests the
-   whole session (sub-agent approvals included) behind its
-   propose-then-confirm gate. Watch for what it reports as
-   **unfirmable**: a `find / … | head`, a `sed … | grep`,
-   or a heredoc is malformed, not missing a glob, and when
-   an agent emitted it that's a signal the **step-5
-   reviewer brief leaked** — tighten the brief so the
-   pattern stops recurring, rather than allow-listing it.
-
-1. **Capture session metrics** (while the PR sits in the
-   queue). A review run is long and tool-heavy, so it is the
-   natural moment to account for where its tokens went and
-   bank trim recommendations for the skill suite. Like
-   `firm-perms`, this is productive work to do while the
-   merge resolves asynchronously — run it **after** the
-   enqueue, **not** gated on the merge landing, and run it
-   regardless of the merge outcome (it analyzes the session,
-   not the PR).
-
-   **Ask first, via `AskUserQuestion`.** This is a
-   skill-to-skill handoff, so gate it on the same TUI
-   selector the merge-queue and `firm-perms` prompts use
-   (per `CLAUDE.md` → "The PR workflow and skill handoffs"):
+   "The PR workflow and skill handoffs"):
    ask whether to capture session metrics now, offering
    "yes, run /session-metrics" (**first**, the recommended
    default) and "skip".
@@ -1372,12 +1328,85 @@ PR-authoring **writes** (`create_pull_request`,
    observations into `/session-metrics` so its prose names
    concrete levers, not just the tool's raw sink ranking.
 
+1. **Firm up the permission allowlist** — the **last
+   interactive step**, so it sees the whole run's approvals.
+   A review run approves a lot of one-off commands (the
+   diff-review and cross-check agents in steps 5–6, the
+   enqueue, and the `session-metrics` step just above all
+   pile them up), so the natural moment to generalize them
+   is *after* all of them, while the user is still present to
+   confirm. Run this **after** `session-metrics` and
+   **before** the async merge-queue outcome watch below —
+   **not** gated on the merge landing (it resolves
+   asynchronously), and crucially **not** deferred past it:
+   the merge can land minutes later via a scheduled wakeup,
+   and a propose-then-confirm gate firing then would prompt
+   an absent user.
+
+   **Ask first, via `AskUserQuestion`.** This is a
+   skill-to-skill handoff, so gate it on the same TUI
+   selector the merge-queue and `session-metrics` prompts use
+   (per `CLAUDE.md` → "The PR workflow and skill handoffs"):
+   ask whether to firm permissions now, offering
+   "yes, run /firm-perms sweep" (**first**, the recommended
+   default) and "skip".
+
+   - On **decline**, skip this step and note in the
+     report that permissions were **not** firmed this run.
+
+   - On **approve**, run the **sweep** — `/firm-perms sweep`.
+     Because this step now sits at the tail of the
+     interactive sequence, the whole-session harvest is the
+     right default — **not** the single-approval `firm_last`
+     fast-firm, which made sense only when this step ran
+     mid-run. The sweep collects every approval this run made
+     (sub-agent and `session-metrics` commands included),
+     generalizes and dedupes them, and propagates the result
+     to this worktree and the base repo behind its
+     propose-then-confirm gate. Relay what it firmed.
+
+     Watch for what it reports as **unfirmable**: a
+     `find / … | head`, a `sed … | grep`, or a heredoc is
+     malformed, not missing a glob, and when an agent emitted
+     it that's a signal the **step-5 reviewer brief leaked** —
+     tighten the brief so the pattern stops recurring, rather
+     than allow-listing it.
+
+   **The one residual gap.** The `gh api graphql` merge-queue
+   probe in the outcome-watch step below runs *after* this
+   sweep — unattended, during the queue wait — so its
+   approval falls outside the harvest. Rather than chase it
+   every run, **pre-firm that one fixed probe shape** once:
+   confirm the `Bash(gh api graphql:*)` allow-rule the probe
+   reduces to is present (the sweep will propose it if this
+   run approved it), so the probe never prompts while the
+   user is away.
+
 1. **Surface the merge-queue outcome** (separately). Run
    this **only** if the user approved the enqueue (skip it
    if they declined — there's nothing queued to watch). The
    merge lands asynchronously, so this is its own note,
    printed after `firm-perms` and after the review summary
    above — the summary couldn't know this outcome yet.
+
+   **Treat the Linear status as not-yet-settled until this
+   probe returns the terminal merge.** After enqueue the PR
+   sits in the queue asynchronously
+   (`mergeQueueEntry.state: AWAITING_CHECKS`), and the
+   Linear/GitHub integration auto-transitions the issue to
+   **Done on merge** — no manual move, and effectively no lag
+   once the merge lands. So while the PR is still queued, do
+   **not** read, report, or act on the issue's Linear status:
+   polled mid-queue it reads a
+   stale **In Review** and invites a premature hand-move. Only
+   after the probe returns `merged: true` / `state: "MERGED"`
+   should you (re-)report the Linear status, and then **expect
+   the integration to have already set it to Done** — confirm
+   and report that, rather than offering to move it or
+   flagging it as "stuck In Review". The **In Review**
+   transition made at the enqueue handoff stays as-is; this
+   governs only what's reported/acted on *after* enqueue,
+   while the merge resolves.
 
    Watch whether the PR lands or gets kicked back out with
    the **same model-driven poll** as the CI wait, but with a
@@ -1445,7 +1474,10 @@ PR-authoring **writes** (`create_pull_request`,
    file, not the command line. Branch on the single result:
 
    - `merged: true` (or `state: "MERGED"` / `"CLOSED"`) → it
-     landed; report the merge. Key on `merged` / `state`.
+     landed; report the merge (the Linear/GitHub integration
+     will have moved the issue to **Done** on this signal —
+     report that it did, don't hand-move it). Key on `merged`
+     / `state`.
      Then **dismiss this PR's own GitHub notification** so it
      doesn't linger (the immediate companion to
      `housekeeping`'s merged-PR notification sweep): list the

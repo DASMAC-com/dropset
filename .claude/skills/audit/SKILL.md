@@ -1,6 +1,6 @@
 ---
 name: audit
-description: One bounded platform-audit rotation, run once to completion — a fixed 7-unit pass that interleaves four randomly-chosen non-generated files (each audited via the `audit-scope` engine) with one randomly-chosen subsystem (internal-architecture lens), one randomly-chosen inter-subsystem interface (seam / contract-drift lens), and one repo-layout + spec-health pass, each adversarially cross-checked. Dedups against open or resolved Linear issues, files one self-contained Backlog issue per confirmed finding, syncs each new issue's file-overlap blocking edges via sync-blockers `--for`, announces, and stops. No loop, no finding cap, no re-invocation — run it again for another rotation.
+description: One bounded platform-audit rotation, run once to completion — a fixed 7-unit pass that interleaves four randomly-chosen non-generated files (each audited via the `audit-scope` engine) with one randomly-chosen subsystem (internal-architecture lens), one randomly-chosen inter-subsystem interface (seam / contract-drift lens), and one repo-layout + spec-health pass, each adversarially cross-checked. Dedups against open or resolved Linear issues, files confirmed findings as the fewest coherent Backlog issues (folding coupled findings that share a PR), syncs each new issue's file-overlap blocking edges via sync-blockers `--for`, announces, and stops. No loop, no finding cap, no re-invocation — run it again for another rotation.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -12,13 +12,13 @@ user-invocable: true
 Run **one bounded audit rotation** and exit. A rotation is a fixed
 sequence of **seven units** — four random files plus three structural
 passes — each audited across the dimensions its subject calls for, with
-adversarial cross-checking, filing one self-contained **Backlog** issue
-per confirmed finding (no parent — the same no-parent Backlog
-`linear-task` files into) so the work can be picked up in parallel
-without blocking the repo. What gates what is recorded as native Linear
-blocking edges; keeping those edges honest against file overlap is a
-separate job, owned by `sync-blockers` (this skill calls it per finding
-— see the File and Done steps).
+adversarial cross-checking, folding coupled findings and filing the
+fewest self-contained **Backlog** issues (no parent — the same
+no-parent Backlog `linear-task` files into) so the work can be picked
+up in parallel without blocking the repo. What gates what is recorded
+as native Linear blocking edges; keeping those edges honest against
+file overlap is a separate job, owned by `sync-blockers` (this skill
+calls it per filed issue — see the File and Done steps).
 
 Invoke it directly — `/audit` — when you want a fresh batch of findings.
 It is **finite**: it runs the seven units once, files what they surface
@@ -46,7 +46,7 @@ passes:
 5. FILE       — another random non-generated file  → audit-scope
 6. LAYOUT     — repo-layout + spec-health pass      → one agent
 7. FILE       — another random non-generated file  → audit-scope
-→ per unit: cross-check, dedup, file findings, sync-blockers --for each
+→ per unit: cross-check, dedup, file/fold findings, sync-blockers --for each
 → at the end: DONE
 ```
 
@@ -298,7 +298,10 @@ filing**. A resolved match means the finding was already triaged
 (Done / Won't-fix / Canceled); refiling it would reopen settled noise.
 Only findings that survive the check proceed.
 
-**File one Linear issue per finding.** File exactly as the
+**File the confirmed findings as Backlog issues** — folded into the
+fewest coherent PRs (see "Fold coupled findings into the fewest coherent
+issues" below), one issue per PR-group rather than one per finding.
+File exactly as the
 `linear-task` skill does: a **plain Backlog issue with no parent**,
 assigned to the configured assignee, into the shared destination.
 There is **no umbrella issue** — the project Backlog is the queue, and
@@ -351,17 +354,34 @@ not a relation. One audit-specific detail: a finding that carries a
 line and replace it with `**Depends on**: <ENG-###> — <one line why>`
 so the description doesn't contradict the relation.
 
-**File obviously-coupled findings together up front.** If a unit
-surfaced more than one finding that plainly belongs in the **same PR**
-— same file or symbol, the work would obviously land as one change —
-file them as **one combined Backlog issue** instead of several: one
-title, the per-finding notes under per-source sub-headings, and a
-`**Fingerprint**:` line for **each** finding (the union). Nothing
-**merges or closes issues** for you, so coupled findings only
-become one issue if you file them that way — combining at file time is
-the only way. Findings that don't obviously share a PR stay separate;
+**Fold coupled findings into the fewest coherent issues.** A rotation
+should file the **fewest coherent PRs**, not one issue per finding.
+Whenever findings belong in the **same PR**, file them as **one combined
+Backlog issue**: one title, the per-finding notes under per-source
+sub-headings, a `**Fingerprint**:` line for **each** finding (the
+union), and a union `**Touches**:`.
+
+The bar is **same-PR coherence**, not same-file: fold findings that
+share a subsystem, crate, or language-domain and would obviously land as
+one change — e.g. all doc-/comment-freshness fixes → one issue; all
+low-risk refactors in one crate → one issue. This holds **across units
+within the rotation**, not only within one unit. Because units file as
+they go, keep a running note of the issues you've filed *this rotation*
+and each one's coherence group; when a later unit's finding joins a
+group you've already filed, **append it to that issue** — `save_issue`
+by `id` to add its sub-heading and its `**Fingerprint**:` line and fold
+its globs into the union `**Touches**:` — rather than filing a fresh
+one. Nothing **merges or closes issues** for you, so coupled findings
+only become one issue if you file — or fold — them that way.
+
+**The coherence floor.** Never fold across separate apps, languages, or
+deploy units — a TUI Rust rendering fix, a frontend TS hook fix, and an
+on-chain program refactor are **three** issues even in one rotation.
+Findings that don't share a coherent PR boundary stay separate;
 `sync-blockers` then materializes any file-overlap between them into a
-`blocks` edge (Linear's blocking icon).
+`blocks` edge (Linear's blocking icon). Full rule:
+`docs/conventions/linear-automation.md` → "Fold coupled findings into
+one issue".
 
 The description must let a cold agent act on it in its own worktree
 (literal newlines, not `\n`):
@@ -391,10 +411,12 @@ The description must let a cold agent act on it in its own worktree
   `docs/conventions/linear-automation.md` → "Structured filing fields".
 - `**Discovered by**: audit <unit> @ <commit SHA>`
 
-**Sync overlap edges for each finding as you file it.** Right after
-`save_issue` returns a new identifier, file that issue's file-overlap
-`blocks` edges against the open Backlog with the incremental sweep — one
-bare command that reduces to the
+**Sync overlap edges for each issue as you file or grow it.** Right
+after `save_issue` returns a new identifier — **and also after an
+append-fold** that grows an existing issue's `**Touches**:` union (per
+the folding rule above) — file that issue's file-overlap `blocks` edges
+against the open Backlog with the incremental sweep, keyed by that
+issue's `ENG-###`. It reduces to one bare command matching the
 `Bash(python3 .claude/tools/sync_blockers.py:*)` allow-rule (the
 scan runs in the tool's own process, so nothing enters context):
 
@@ -402,10 +424,12 @@ scan runs in the tool's own process, so nothing enters context):
 python3 .claude/tools/sync_blockers.py --for <ENG-###>
 ```
 
-Filing in `ENG-###` order means the later filer always sees the earlier
-sibling, so an intra-rotation overlap pair is filed by the second of
-the two — no end-of-rotation full sweep is needed. Best-effort: it needs
-`LINEAR_API_KEY`; if unset the tool says so — note it and continue.
+Re-run it on an append because the grown union can imply new overlaps
+the original `--for` didn't cover. Filing in `ENG-###` order means the
+later filer always sees the earlier sibling, so an intra-rotation
+overlap pair is filed by the second of the two — no end-of-rotation full
+sweep is needed. Best-effort: it needs `LINEAR_API_KEY`; if unset the
+tool says so — note it and continue.
 
 **Structural findings** (SUBSYSTEM / INTERFACE / LAYOUT) are filed the
 same way (plain Backlog issue, same IDs, no parent) but as **one
@@ -444,7 +468,7 @@ send no notification.
 **Done.** After all seven units have been processed (each cross-checked
 where applicable, deduped, filed, and its overlap edges synced via
 `sync-blockers --for`), the rotation is complete. The blocking edges are
-already current — the per-finding `--for` calls filed them at file time,
+already current — the per-issue `--for` calls filed them at file time,
 so there is no end-of-rotation sweep. Print a single final line and
 **stop** — there is no re-invocation:
 
