@@ -146,25 +146,32 @@ def is_failed_hook_line(line):
 
 
 def read_tail_and_count(path, tail):
-    """Return (line_count, last-`tail`-lines-as-text, failed_hook_lines).
+    """Return (line_count, last-`tail`-lines-as-text, failed_hook_lines, truncated).
 
     ``failed_hook_lines`` is the list of ``…Failed`` result lines found anywhere
     in the log (newline-stripped, order preserved, capped at MAX_FAILED_LINES) —
     surfaced on failure so a failing hook that scrolled off the tail window is
-    still reported. Uses a bounded deque so a huge log never sits in memory in
-    full.
+    still reported. ``truncated`` is True only when *more* than
+    MAX_FAILED_LINES such lines were found (so the list holds just the first
+    MAX_FAILED_LINES) — this is what distinguishes a genuine cap from a log with
+    exactly MAX_FAILED_LINES failures and no more. Uses a bounded deque so a
+    huge log never sits in memory in full.
     """
     count = 0
     dq = collections.deque(maxlen=tail if tail > 0 else 0)
     failed = []
+    truncated = False
     with open(path, "r", encoding="utf-8", errors="replace") as fh:
         for line in fh:
             count += 1
             if tail > 0:
                 dq.append(line)
-            if len(failed) < MAX_FAILED_LINES and is_failed_hook_line(line):
-                failed.append(line.rstrip("\n"))
-    return count, "".join(dq), failed
+            if is_failed_hook_line(line):
+                if len(failed) < MAX_FAILED_LINES:
+                    failed.append(line.rstrip("\n"))
+                else:
+                    truncated = True
+    return count, "".join(dq), failed, truncated
 
 
 def run(tail, label, cmd):
@@ -197,7 +204,7 @@ def run(tail, label, cmd):
         sys.stderr.write("✗ %s — could not launch: %s\n" % (display, exc))
         return LAUNCH_FAILURE_CODE
 
-    lines, tail_text, failed = read_tail_and_count(log_path, tail)
+    lines, tail_text, failed, truncated = read_tail_and_count(log_path, tail)
 
     if code == 0:
         sys.stdout.write(
@@ -209,8 +216,8 @@ def run(tail, label, cmd):
         "✗ %s (exit %d, %d lines; log: %s)\n" % (display, code, lines, log_path)
     )
     if failed:
-        capped = " (capped)" if len(failed) >= MAX_FAILED_LINES else ""
-        sys.stdout.write("--- failed hooks (%d)%s ---\n" % (len(failed), capped))
+        more = " (truncated, more omitted)" if truncated else ""
+        sys.stdout.write("--- failed hooks (%d)%s ---\n" % (len(failed), more))
         for fl in failed:
             sys.stdout.write(fl + "\n")
     if tail > 0 and tail_text:

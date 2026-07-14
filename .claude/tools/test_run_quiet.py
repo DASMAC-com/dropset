@@ -93,19 +93,21 @@ class ReadTailAndCount(unittest.TestCase):
 
     def test_counts_all_and_tails_last(self):
         path = self._write_lines(100)
-        total, tail_text, failed = rq.read_tail_and_count(path, 10)
+        total, tail_text, failed, truncated = rq.read_tail_and_count(path, 10)
         self.assertEqual(total, 100)
         self.assertEqual(tail_text.count("\n"), 10)
         self.assertIn("line 99", tail_text)
         self.assertNotIn("line 89", tail_text)
         self.assertEqual(failed, [])
+        self.assertFalse(truncated)
 
     def test_zero_tail_keeps_no_text(self):
         path = self._write_lines(5)
-        total, tail_text, failed = rq.read_tail_and_count(path, 0)
+        total, tail_text, failed, truncated = rq.read_tail_and_count(path, 0)
         self.assertEqual(total, 5)
         self.assertEqual(tail_text, "")
         self.assertEqual(failed, [])
+        self.assertFalse(truncated)
 
     def _write_raw(self, lines):
         path = rq.os.path.join(rq.LOG_DIR, "test-raw-%d.log" % rq.os.getpid())
@@ -119,19 +121,32 @@ class ReadTailAndCount(unittest.TestCase):
         lines = ["yamllint" + "." * 30 + "Failed"]
         lines += ["detail %d" % k for k in range(60)]
         path = self._write_raw(lines)
-        _, _, failed = rq.read_tail_and_count(path, 5)
+        _, _, failed, truncated = rq.read_tail_and_count(path, 5)
         self.assertEqual(len(failed), 1)
         self.assertTrue(failed[0].endswith("Failed"))
+        self.assertFalse(truncated)
 
     def test_passed_lines_are_not_collected(self):
         path = self._write_raw(["cspell" + "." * 10 + "Passed", "all good"])
-        _, _, failed = rq.read_tail_and_count(path, 5)
+        _, _, failed, truncated = rq.read_tail_and_count(path, 5)
         self.assertEqual(failed, [])
+        self.assertFalse(truncated)
 
-    def test_failed_lines_capped(self):
+    def test_failed_lines_capped_and_flagged_truncated(self):
+        # More than MAX failed lines: list is capped AND truncated is set.
         path = self._write_raw(["h%d.....Failed" % k for k in range(100)])
-        _, _, failed = rq.read_tail_and_count(path, 5)
+        _, _, failed, truncated = rq.read_tail_and_count(path, 5)
         self.assertEqual(len(failed), rq.MAX_FAILED_LINES)
+        self.assertTrue(truncated)
+
+    def test_exactly_max_failed_lines_is_not_truncated(self):
+        # Exactly MAX failures fill the list but nothing was omitted.
+        path = self._write_raw(
+            ["h%d.....Failed" % k for k in range(rq.MAX_FAILED_LINES)]
+        )
+        _, _, failed, truncated = rq.read_tail_and_count(path, 5)
+        self.assertEqual(len(failed), rq.MAX_FAILED_LINES)
+        self.assertFalse(truncated)
 
 
 class Run(unittest.TestCase):
@@ -172,6 +187,24 @@ class Run(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("--- failed hooks (1) ---", out)
         self.assertIn("yamllint....Failed", out)
+        # A small, uncapped index carries no truncation marker.
+        self.assertNotIn("truncated", out)
+
+    def test_failure_index_marks_truncation_when_capped(self):
+        # More than MAX failed-hook lines → the index is capped and labeled.
+        n = rq.MAX_FAILED_LINES + 5
+        code, out, _ = self._run(
+            rq.DEFAULT_TAIL,
+            "lint",
+            [
+                PY,
+                "-c",
+                "import sys\nfor i in range(%d): print('h%%d....Failed' %% i)\n"
+                "sys.exit(1)" % n,
+            ],
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("--- failed hooks (%d) (truncated" % rq.MAX_FAILED_LINES, out)
 
     def test_label_defaults_to_joined_command(self):
         code, out, _ = self._run(rq.DEFAULT_TAIL, None, [PY, "-c", "pass"])

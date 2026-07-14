@@ -57,6 +57,20 @@ DENY_MESSAGE = (
     "{escape}=1 in the environment to bypass this guard."
 )
 
+# A sibling worktree has no sensible worktree-local equivalent path, so its
+# deny message names the target without a (would-be-nonsense) "edit this
+# instead" suggestion.
+SIBLING_DENY_MESSAGE = (
+    "Blocked: this edit targets another worktree's path\n"
+    "  {target}\n"
+    "from the worktree session rooted at\n"
+    "  {worktree}\n"
+    "Edits to a sibling worktree are invisible to this one's build. Make the "
+    "edit from a session rooted in that worktree instead.\n\n"
+    "If you truly mean to write it from here, set "
+    "{escape}=1 in the environment to bypass this guard."
+)
+
 
 def _base_repo_of(worktree_root):
     """Return the base-repo root for a worktree checkout, or None.
@@ -131,6 +145,15 @@ def evaluate(payload, project_dir, env):
     if target == base or target.startswith(base + os.sep):
         if _is_allowed_base_settings(target, base):
             return 0, ""
+        # A target under base's worktrees dir (but not this worktree, excluded
+        # above) is a *sibling* worktree — there is no worktree-local copy of
+        # it to point at, so use the suggestion-free message.
+        if target.startswith(base + WORKTREE_MARKER):
+            return 2, SIBLING_DENY_MESSAGE.format(
+                target=target,
+                worktree=worktree_root,
+                escape=ESCAPE_ENV,
+            )
         suggested = os.path.join(worktree_root, os.path.relpath(target, base))
         return 2, DENY_MESSAGE.format(
             target=target,
@@ -144,7 +167,7 @@ def evaluate(payload, project_dir, env):
 
 
 def _self_test():
-    """Built-in cases; run with `--self-test` so it needs no piped stdin."""
+    """Built-in cases, run with `--self-test` so it needs no piped stdin."""
     base = "/Users/x/repos/dropset"
     wt = base + "/.claude/worktrees/eng-690"
 
@@ -185,6 +208,22 @@ def _self_test():
                 "  %-50s expected block=%s got block=%s"
                 % (_target_path(pl), should_block, blocked)
             )
+
+    # Message-body checks. A base-repo target's message names the
+    # worktree-local path to use; a sibling-worktree target's message does not
+    # carry a (nonsensical) nested suggestion.
+    _, base_msg = evaluate(payload("Edit", base + "/program/src/lib.rs"), wt, {})
+    if wt + "/program/src/lib.rs" not in base_msg:
+        failures.append("  base-repo deny message lacks the worktree suggestion")
+    _, sib_msg = evaluate(
+        payload("Edit", base + "/.claude/worktrees/eng-1/x.rs"), wt, {}
+    )
+    if (
+        "another worktree" not in sib_msg
+        or "eng-690/.claude/worktrees/eng-1" in sib_msg
+    ):
+        failures.append("  sibling deny message is wrong or has a bogus suggestion")
+
     if failures:
         sys.stderr.write("self-test FAILED:\n" + "\n".join(failures) + "\n")
         return 1
