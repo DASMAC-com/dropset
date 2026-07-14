@@ -1,8 +1,18 @@
-<!-- cspell:word illiquidity -->
+<!-- cspell:word depeg -->
+
+<!-- cspell:word fomc -->
 
 <!-- cspell:word guéant -->
 
+<!-- cspell:word illiquidity -->
+
+<!-- cspell:word kalman -->
+
+<!-- cspell:word laggy -->
+
 <!-- cspell:word lehalle -->
+
+<!-- cspell:word oanda -->
 
 <!-- cspell:word parameterizes -->
 
@@ -69,71 +79,144 @@ ______________________________________________________________________
 
 ## 1. Reference-price construction
 
-### Tiered sources (with failover)
+Fair value is a **fast, deep, exogenous FX driver corrected by a slow,
+thin stablecoin basis**:
 
-Each market's USD reference cascades through four sources, primary-first.
-A tier that errors, times out, or goes stale fails over to the next; the
-bot surfaces which tier is live per market.
+```text
+fair = fx_rate × basis
+```
 
-| Tier | Source                                                       | Role                | Notes                                                                                                              |
-| ---- | ------------------------------------------------------------ | ------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| 1    | **CoinGecko** `/api/v3/simple/price?ids=…&vs_currencies=usd` | Primary token/USD   | One batched call prices every market. Free tier ~30 req/min; CoinGecko already aggregates exchanges (a meta-feed). |
-| 2    | **CoinMarketCap** `/v2/cryptocurrency/quotes/latest?id=…`    | Secondary token/USD | Batched by numeric id, `X-CMC_PRO_API_KEY` from env. Free-tier ~10k/mo quota → polled only on primary failure.     |
-| 3    | **ECB/Frankfurter** `/latest?base=USD&symbols=…`             | Keyless FX peg rate | `<ccy>` per USD, inverted to USD per unit — a pure peg rate, not a market price. ECB publishes once a working day. |
-| 4    | **Static**                                                   | Last-resort peg     | A per-market constant spot value, used when every live source is down.                                             |
+- `fx_rate` is the fiat cross (EUR/USD for the EURC market, GBP/USD for
+  TGBP, …) — the **anchor**. It is deep, continuously priced on
+  interbank / CME venues, and exogenous to Dropset: it does not move
+  because we quote.
+- `basis` is the token's **peg discount** against that fiat, a
+  multiplicative correction near 1. Correcting the anchor is the token
+  price's only job — it is slow and thin, so it is smoothed, not chased.
 
-The tiers measure **two different quantities**:
+This inverts the earlier cascade, which made the token's crypto/USD price
+(CoinGecko) the primary mid and FX a degraded fallback. That is backwards
+for the pricing edge: the crypto/USD feed is laggy and *reflexive* (it is
+derived in part from the very Orca / CEX prints we race), so anchoring on
+it makes the bot lag exactly when the edge appears.
 
-- CoinGecko and CoinMarketCap measure the token's **market price** in
-  USD. These are the quoting mid when live.
-- Frankfurter and the static fallback are the underlying **FX peg rate**.
-  For a sound peg these sit within a few bps of the market price; when a
-  market tier is down they are the best estimate the bot has, but they
-  carry no independent market signal.
+### Two-peg decomposition
+
+`basis` is not one number — USDC is **not** assumed equal to USD. Each
+market quotes `<token>/USDC`, so the basis carries **both** pegs:
+
+```text
+basis = (token / fiat) ÷ (USDC / USD)
+```
+
+Worked for EURC/USDC: `basis = (EURC/EUR) ÷ (USDC/USD)`, so
+`fair = (EUR/USD) × (EURC/EUR) ÷ (USDC/USD)` — the EUR/USD anchor scaled
+by how EURC trades against EUR and how USDC trades against USD. Both peg
+legs are first-class inputs; collapsing `USDC/USD → 1` hides a correlated
+risk (failure mode 1).
+
+### Sources, by leg
+
+The two legs draw from **different** feeds — the anchor from real FX, the
+basis from crypto venues. The token's crypto/USD price (CoinGecko / CMC)
+is **demoted to a last-resort fallback** for the reasons above.
+
+| Leg                              | Primary                                     | Peg-truth / cross-check         | Fallback                          |
+| -------------------------------- | ------------------------------------------- | ------------------------------- | --------------------------------- |
+| FX anchor (`fiat/USD`)           | Pyth Hermes FX / OANDA, streaming           | CME 6E during session hours     | ECB / Frankfurter daily reference |
+| Basis (`token/fiat`, `USDC/USD`) | Coinbase `<token>/USDC`, Binance `EUR/USDT` | Circle / issuer redemption rate | CoinGecko / CMC token/USD         |
+
+The bot surfaces which source is live per leg, per market.
+
+### Basis estimation
+
+`basis` is a **slow, smoothed multiplicative correction**, not a chased
+price: an EMA over the live basis observations. A Kalman filter is
+warranted only if the bot fuses several basis sources or drives spread
+width from the basis variance — deferred (§5). The smoothing half-life is
+**TBD — set by the survey (ENG-700)**; it is not guessed here.
 
 ### Composition
 
-For one market, the highest live tier anchors the mid:
+For one market, per tick:
 
 ```text
-mid  = first live of (coingecko, coinmarketcap, fx_rate, static)
-peg  = mid / fx_rate    # only when a market tier AND a fresh FX rate exist
+fx    = live FX anchor (fiat/USD)
+basis = EMA of (token/fiat ÷ USDC/USD) over its window
+fair  = fx × basis        # the mid the rest of this spec refers to
 ```
 
-- A live **market price** (tier 1 or 2) quotes healthy.
-- A **peg-rate fallback** (tier 3 or 4) has no live market price, so the
-  vault runs **degraded**: quoting continues off the peg, but the kill
-  switches tighten by 50% (§4 row 5). The "full degrade" the failover
-  calls out — every live source down to the static peg — is the deepest
-  case of this.
-- When a market price and a fresh FX rate coexist, `peg` cross-checks the
-  token against its fiat (`≈ 1` for a sound peg); the peg-rate tiers have
-  nothing independent to check against themselves, so they carry no peg.
+`fair` replaces the old "first live tier is the mid" cascade: no single
+tier *is* the price — two legs compose one. A missing or stale leg is a
+regime change (below), not a silent failover to a lower-quality mid.
 
-### Peg sanity bound
+### Regimes and failure modes
 
-When `peg` exists it gates a freeze:
+The model is only as sound as its legs, and each way a leg can fail is a
+first-class regime, not an exception:
 
-```text
-0.97 ≤ peg ≤ 1.03
-```
+1. **USDC common-mode.** A USDC depeg moves the `USDC/USD` leg of
+   **every** market's basis at once — a correlated, portfolio-wide event
+   the per-market FX anchors say nothing about. It needs a **separate
+   USDC/USD anchor** and a portfolio-level guard, not seven independent
+   per-market checks.
+1. **Weekend / session role-flip.** Interbank FX and CME 6E are closed
+   Fri ~5pm → Sun ~5pm ET — structural, not an outage. On weekends the
+   crypto reference (Coinbase `<token>/USDC`, Binance `EUR/USDT`) is the
+   **only** live EUR/USD price discovery, so the model **switches the
+   anchor to the crypto reference** for that window rather than treating
+   FX-stale as "fall back to a static peg." The CME Sunday reopen is the
+   reversion / gap event — a taker's moment, and a maker's risk to brace
+   into.
+1. **Per-market reversion is a gate, not a global truth.** The basis
+   mean-reverts only as hard as redemption arbitrage enforces it: strong
+   for EURC (Circle Mint), weak or absent for the thin exotics (VCHF,
+   TGBP, ZARP, MXNe, XSGD, IDRX). "Basis reverts" is asserted per market,
+   never assumed for the roster.
+1. **Redemption arb suspends under stress.** Circle paused USDC
+   redemptions over the SVB weekend; a "temporary" dislocation can
+   persist for days. Never size a position as if reversion is guaranteed
+   on any horizon.
+1. **Reflexivity of the crypto/USD fallback.** A thin token's
+   CoinGecko / CMC price echoes its one venue — using it as the anchor
+   feeds our own prints back to us. This is why it is a fallback of last
+   resort, never the driver.
+1. **Confidence widens at the edge moment.** Around ECB / FOMC / NFP the
+   FX oracle's confidence interval blows out precisely when the move
+   happens. Separate **fresh-but-uncertain** (quote, but widen the
+   spread) from **stale** (do not quote) — a wide confidence band is not
+   a dead feed.
+1. **Ladder vs macro vol.** The §2 ladder assumes a calm σ; the regimes
+   that create the edge are macro spikes that sweep a static ladder. This
+   promotes the deferred realized-σ estimator (§3 cold-path trigger 2)
+   from a nicety toward load-bearing.
 
-Outside this band → halt quotes (peg event). 300 bps is generous for
-these stablecoins, which historically hold within ~50 bps of FX spot,
-and gives room for an FX gap on a Monday open without spuriously
-freezing. A missing FX rate is non-fatal — it only disarms the peg
-switch; quoting continues against the market price.
+### Degraded and halt conditions
+
+The composition maps onto the kill-switch policy (§4):
+
+- **Basis-band breach** — `basis` outside its per-market sane band → halt
+  quotes (peg event). The band is **TBD — set by the survey (ENG-700)**
+  per market; the old fixed `[0.97, 1.03]` and its "300 bps for a Monday
+  gap" rationale were guesses and are **not** reasserted here.
+- **FX anchor stale (outside the weekend regime)** — no live anchor when
+  one is expected → run degraded (§4). Inside the weekend regime this is
+  the normal state, not a fault: the crypto reference is the anchor.
+- **USDC/USD anchor breach** — the portfolio-wide guard of failure
+  mode 1.
 
 ### Polling cadence
 
-| Tier            | Poll interval                                             |
-| --------------- | --------------------------------------------------------- |
-| CoinGecko       | 10 s (one batched call, well under the free-tier ceiling) |
-| CoinMarketCap   | ≥ 60 s, and only while CoinGecko is down (quota guard)    |
-| ECB/Frankfurter | 300 s (ECB publishes daily; a slow poll suffices)         |
+| Leg                          | Cadence                                                                 |
+| ---------------------------- | ----------------------------------------------------------------------- |
+| FX anchor                    | Streamed (Pyth Hermes / OANDA push); no fixed poll                      |
+| Basis (crypto venues)        | Slow poll — the basis is smoothed, so sub-second freshness buys nothing |
+| Peg-truth / daily references | Slowest — issuer rate and ECB publish on the order of a day             |
 
-Local `mid` is recomputed every tick; `SetReferencePrice` is only called
-per the cadence rules in §3 — not on every poll.
+Exact intervals, and every staleness / session threshold, are **TBD —
+set by the survey (ENG-700)**. `fair` is recomputed every tick;
+`SetReferencePrice` fires only per the §3 cadence rules, not on every
+observation.
 
 ______________________________________________________________________
 
@@ -321,15 +404,16 @@ ______________________________________________________________________
 
 ## 4. Inventory bounds & kill switches
 
-| Trigger                                       | Action                                                                         |
-| --------------------------------------------- | ------------------------------------------------------------------------------ |
-| Imbalance > 30% from launch                   | Reshape: shrink the accumulating side so the heavy side dominates and offloads |
-| Imbalance > 50%                               | Freeze heavy side (zero `size_bps` on that side; only the rebuild side quotes) |
-| Imbalance > 80%                               | `FreezeVault` — alert and review by hand                                       |
-| Peg deviation outside `[0.97, 1.03]` of FX    | `FreezeVault`                                                                  |
-| No live market price (peg-rate fallback only) | Run degraded; tighten kill switches by 50%                                     |
-| Every live source down → static peg           | Full degrade (the deepest degraded case)                                       |
-| Vault TVL drops below 80% of launch TVL       | `FreezeVault`, post-mortem                                                     |
+| Trigger                                      | Action                                                                         |
+| -------------------------------------------- | ------------------------------------------------------------------------------ |
+| Imbalance > 30% from launch                  | Reshape: shrink the accumulating side so the heavy side dominates and offloads |
+| Imbalance > 50%                              | Freeze heavy side (zero `size_bps` on that side; only the rebuild side quotes) |
+| Imbalance > 80%                              | `FreezeVault` — alert and review by hand                                       |
+| `basis` outside its per-market band (§1)     | `FreezeVault` (peg event) — band is TBD by survey (ENG-700)                    |
+| USDC/USD anchor breach (common-mode, §1)     | `FreezeVault` portfolio-wide — one depeg hits every market's basis at once     |
+| FX anchor stale outside the weekend regime   | Run degraded; tighten kill switches by 50%                                     |
+| Basis (crypto) leg also down → last fallback | Full degrade (the deepest degraded case)                                       |
+| Vault TVL drops below 80% of launch TVL      | `FreezeVault`, post-mortem                                                     |
 
 `FreezeVault` is admin-only and irreversible, so the bot maps these hard
 triggers to a leader-authorized halt (zero the profile, let levels
@@ -343,9 +427,11 @@ ______________________________________________________________________
 
 - Full A-S optimization for finite `Q` ([Guéant 2017][gueant2017]) —
   hand-tuned ladder for MVP.
-- Weighted multi-oracle composition across many simultaneous sources
-  (Jupiter, Raydium, Orca, Manifest, DFlow, …) — the tiered cascade uses
-  one source at a time, failing over rather than blending.
+- Weighted multi-oracle fusion — a Kalman filter blending several basis
+  sources (and driving spread width from the basis variance), or fusing
+  many simultaneous venues (Jupiter, Raydium, Orca, Manifest, DFlow, …).
+  The MVP smooths **one** source per leg with an EMA (§1) and fails over
+  rather than blending.
 - Adversarial taker bot for hardening — separate effort. The localnet MVP
   does ship a *benign* stochastic flow taker (a quiet/burst Markov arrival
   process with LogNormal order sizes) to move the book and exercise the
