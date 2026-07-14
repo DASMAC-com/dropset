@@ -30,14 +30,14 @@ pub use dll::*;
 pub use layout::*;
 pub use reference_price::*;
 
-// The pure seeding / withdrawal kernels are solana-free, so they live in
-// `dropset-math-core` and are re-exported here unchanged — every
-// `crate::state::{isqrt_u128, compute_pro_rata_slice}` call site keeps
-// resolving, and the on-chain program runs byte-identical math to the
-// off-chain consumers. The perf-fee accrual and single-leg sizing keep a
-// thin wrapper in `accrual` (one maps the math-core error back onto
-// `DropsetError`, the other reads/writes `&mut Vault` state around the pure
-// formula).
+// The pure seeding / withdrawal / floor kernels are solana-free, so they
+// live in `dropset-math-core` and are re-exported here unchanged — every
+// `crate::state::{isqrt_u128, compute_pro_rata_slice, min_leader_share_ok}`
+// call site keeps resolving, and the on-chain program runs byte-identical
+// math to the off-chain consumers. The perf-fee accrual and single-leg
+// sizing keep a thin wrapper in `accrual` (one maps the math-core error
+// back onto `DropsetError`, the other reads/writes `&mut Vault` state
+// around the pure formula).
 pub use dropset_math_core::share::{compute_pro_rata_slice, isqrt_u128, min_leader_share_ok};
 
 /// Number of bid / ask levels in a [`LiquidityProfile`]. Chosen small for
