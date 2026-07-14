@@ -298,11 +298,19 @@ decks: check-pnpm
 # A third background job opens the browser on the frontend once its port is
 # accepting connections — `frontend-localnet` (unlike `frontend`) doesn't, so
 # the demo would otherwise leave the operator to open localhost:3000 by hand.
+#
+# The TUI runs on the alternate screen, so the background frontend's stdout
+# would paint over it — `next dev`'s output is redirected to a log file, and
+# the browser-opener job is silenced, so only the TUI draws to the terminal.
+# The frontend log is tailable at $(FRONTEND_LOG) while the demo runs.
+FRONTEND_LOG ?= /tmp/dropset-frontend.log
 localnet:
+	@echo "frontend logs → $(FRONTEND_LOG) (kept off the TUI screen)"
 	@( until nc -z localhost 3000 2>/dev/null; do sleep 0.2; done; \
 		opener=$$(command -v open || command -v xdg-open) \
-			&& $$opener http://localhost:3000 ) &
-	@$(MAKE) --no-print-directory frontend-localnet & \
+			&& $$opener http://localhost:3000 ) >/dev/null 2>&1 &
+	@$(MAKE) --no-print-directory frontend-localnet \
+		>$(FRONTEND_LOG) 2>&1 & \
 	trap 'kill %1 2>/dev/null; pkill -f "next dev"' INT TERM EXIT; \
 	$(MAKE) --no-print-directory tui
 

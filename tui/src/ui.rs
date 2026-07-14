@@ -102,12 +102,10 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
 
     draw_log(f, app, log);
 
-    // While the taker is typing a swap amount, the footer becomes the input
-    // prompt; otherwise it shows the keybinds help.
-    match &app.amount_input {
-        Some(buf) => draw_amount_prompt(f, buf, footer),
-        None => draw_help(f, footer),
-    }
+    // The swap-amount input is rendered inline on the runtime pane's swap row
+    // (see `draw_other_actions`), so the footer stays the navigation help
+    // throughout — the input happens in the runtime column, not the footer.
+    draw_help(f, footer);
 }
 
 /// Render the keybinds-help footer — menu navigation only. The runtime
@@ -121,28 +119,6 @@ fn draw_help(f: &mut Frame<'_>, area: Rect) {
     .block(Block::default().borders(Borders::ALL))
     .alignment(Alignment::Center);
     f.render_widget(help, area);
-}
-
-/// Render the swap-amount input prompt in place of the help footer, echoing the
-/// digits typed so far with a block cursor.
-fn draw_amount_prompt(f: &mut Frame<'_>, buf: &str, area: Rect) {
-    let prompt = Line::from(vec![
-        Span::styled(
-            "swap amount (units): ",
-            Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(format!("{buf}\u{2588}"), Style::new().fg(Color::White)),
-    ]);
-    let hint = Line::from(Span::styled(
-        "type digits  ·  Enter confirm  ·  Backspace delete  ·  Esc cancel",
-        Style::new().fg(Color::DarkGray),
-    ));
-    f.render_widget(
-        Paragraph::new(vec![prompt, hint])
-            .block(Block::default().borders(Borders::ALL))
-            .alignment(Alignment::Center),
-        area,
-    );
 }
 
 fn draw_status(f: &mut Frame<'_>, app: &App, area: Rect) {
@@ -312,11 +288,30 @@ fn draw_other_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
         Style::new().fg(Color::DarkGray)
     };
 
-    let swap = format!(
-        "s swap · S flip · a amount   [{}u {}]",
-        app.swap_units,
-        swap_side_label(app.swap_side)
-    );
+    // The swap row doubles as the amount input: while the taker is typing a new
+    // amount (`a`), it echoes the digits with a block cursor instead of the
+    // static control hint, so the input happens here in the runtime pane rather
+    // than hijacking the footer.
+    let swap_line = match &app.amount_input {
+        Some(buf) => Line::from(vec![
+            tag("swap"),
+            Span::styled(
+                format!("amount: {buf}\u{2588}  Enter ok · Esc cancel"),
+                Style::new().fg(Color::White).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        None => Line::from(vec![
+            tag("swap"),
+            Span::styled(
+                format!(
+                    "s swap · S flip · a amount   [{}u {}]",
+                    app.swap_units,
+                    swap_side_label(app.swap_side)
+                ),
+                market_style,
+            ),
+        ]),
+    };
     // eCLOB controls split across two rows so each keeps its step-size
     // annotation (±bps) without overflowing the narrow left column: the peg /
     // spread nudges on one row, the shape presets (thin, reset one / all) on
@@ -326,7 +321,7 @@ fn draw_other_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
             tag("bots"),
             Span::styled("m/M maker · t/T taker · x stop all", live),
         ]),
-        Line::from(vec![tag("swap"), Span::styled(swap, market_style)]),
+        swap_line,
         Line::from(vec![
             tag("peg"),
             Span::styled(

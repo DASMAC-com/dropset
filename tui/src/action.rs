@@ -413,6 +413,7 @@ pub fn dispatch(
                     target_vault,
                     action,
                     reshape_spread_bps,
+                    swap_side,
                     log,
                 )
             });
@@ -444,6 +445,7 @@ pub fn dispatch(
                         Some(vault_idx),
                         Action::ResetLadder,
                         reshape_spread_bps,
+                        swap_side,
                         log,
                     )?;
                 }
@@ -524,6 +526,9 @@ fn do_repeg(
 /// path. Rewrites the quote profile (spread / per-side depth) while the peg
 /// stays put, so the book's *shape* changes without moving the anchor. The
 /// preset is chosen by `action`; the leader co-signs, the admin wallet pays.
+/// `swap_side` orients the [`Action::ThinFarSide`] preset — the "far" side is
+/// the one the current swap would take from (ask on a Buy, bid on a Sell), so
+/// flipping the swap side (`S`) flips which ladder thins.
 #[allow(clippy::too_many_arguments)]
 fn do_reshape(
     client: &solana_client::rpc_client::RpcClient,
@@ -534,6 +539,7 @@ fn do_reshape(
     vault_idx: Option<u32>,
     action: Action,
     spread_bps: u32,
+    swap_side: SwapSide,
     log: &Logger,
 ) -> Result<String> {
     let (market, base_mint, vault_idx) = eclob_target(market, base_mint, vault_idx)?;
@@ -550,14 +556,21 @@ fn do_reshape(
             format!("Spread now {spread_bps} bps — multi-level ladder, peg unchanged"),
         ),
         Action::ThinFarSide => {
-            let bids = market::ladder_at_spread_bps(spread_bps);
-            let mut asks = bids;
-            for (_, size_bps) in &mut asks {
+            let full = market::ladder_at_spread_bps(spread_bps);
+            let mut thinned = full;
+            for (_, size_bps) in &mut thinned {
                 *size_bps = (f64::from(*size_bps) * THIN_DEPTH_SCALE).round() as u16;
             }
+            // Thin the far side relative to the current swap: a Buy lifts asks,
+            // so its far side is the ask ladder; a Sell hits bids, so its far
+            // side is the bid ladder. The near side keeps the full ladder.
+            let (bids, asks, side) = match swap_side {
+                SwapSide::Buy => (full, thinned, "ask"),
+                SwapSide::Sell => (thinned, full, "bid"),
+            };
             (
                 market::ladder_profile_bytes_asym(&bids, &asks, NEVER_EXPIRES),
-                "Thinned the far (ask) side — offer depth shrinks, peg unchanged".to_string(),
+                format!("Thinned the far ({side}) side — that depth shrinks, peg unchanged"),
             )
         }
         Action::ResetLadder => (
