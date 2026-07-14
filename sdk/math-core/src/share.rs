@@ -109,6 +109,30 @@ pub fn single_leg_basket(
     ))
 }
 
+/// Skin-in-the-game floor predicate: whether the leader still holds at
+/// least `min_leader_share` (in PPM) of the vault *after* an operation.
+/// `true` iff `leader_shares_after / total_shares_after ≥
+/// min_leader_share / PPM`, evaluated as the cross-multiplied
+/// `leader_shares_after × PPM ≥ min_leader_share × total_shares_after`
+/// in `u128` so neither side overflows at u64 share scales.
+///
+/// Shared by `deposit` (outside) and `withdraw_leader` so the floor is
+/// single-sourced — a future `>` vs `≥` / rounding / rescale edit can't
+/// silently loosen it on only one path. The conditions the floor does
+/// **not** cover stay with the caller: `withdraw_leader`'s winding-down
+/// bypass (a frozen / tombstoned vault lets the leader drain their final
+/// stake) and its `total_shares_after == 0` full-drain skip.
+#[inline]
+pub fn min_leader_share_ok(
+    leader_shares_after: u64,
+    total_shares_after: u64,
+    min_leader_share: u32,
+) -> bool {
+    let lhs = (leader_shares_after as u128) * (PPM as u128);
+    let rhs = (min_leader_share as u128) * (total_shares_after as u128);
+    lhs >= rhs
+}
+
 /// Floored pro-rata basket slice for a withdrawal of `shares_in` out of
 /// `total_shares` against a `(base_atoms, quote_atoms)` inventory:
 ///
@@ -468,6 +492,35 @@ mod tests {
             single_leg_basket(100, 1_000_000, 1_000_000, 1, 0, u64::MAX, u64::MAX),
             Err(BasketError::MathOverflow)
         );
+    }
+
+    // ── min_leader_share_ok ─────────────────────────────────────────
+
+    #[test]
+    fn min_leader_share_boundary_is_inclusive() {
+        // Floor of 20% (200_000 ppm). Holding exactly 20% satisfies the
+        // floor — the boundary is inclusive (`≥`) — while one share below
+        // it is a violation.
+        assert!(min_leader_share_ok(200, 1_000, 200_000));
+        assert!(!min_leader_share_ok(199, 1_000, 200_000));
+        assert!(min_leader_share_ok(500, 1_000, 200_000));
+    }
+
+    #[test]
+    fn min_leader_share_zero_floor_always_ok() {
+        // A zero floor (a leader book with no skin requirement) is
+        // satisfied by any holding, down to none.
+        assert!(min_leader_share_ok(0, 1_000, 0));
+        assert!(min_leader_share_ok(0, 0, 0));
+    }
+
+    #[test]
+    fn min_leader_share_no_overflow_at_u64_ceiling() {
+        // The cross-multiplication runs in u128, so a full-PPM (100%)
+        // floor against u64-ceiling share counts neither overflows nor
+        // mis-compares: leader == total exactly meets a 100% floor.
+        assert!(min_leader_share_ok(u64::MAX, u64::MAX, PPM as u32));
+        assert!(!min_leader_share_ok(u64::MAX - 1, u64::MAX, PPM as u32));
     }
 
     // ── realize_perf_fee ────────────────────────────────────────────

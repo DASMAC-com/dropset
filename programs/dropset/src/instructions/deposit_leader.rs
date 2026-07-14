@@ -23,7 +23,10 @@ use super::transfer_in_leg;
 use crate::{
     errors::DropsetError,
     events::{DepositEvent, RealizeEvent},
-    state::{isqrt_u128, realize_in_place, single_leg_basket, Market, VaultAccess},
+    state::{
+        apply_deposit_inventory, isqrt_u128, realize_in_place, single_leg_basket, Market,
+        VaultAccess,
+    },
     Q32_32_ONE,
 };
 
@@ -173,10 +176,11 @@ impl DepositLeader {
         let market_addr = *self.market.address();
         let (new_total, new_leader_shares, new_base_atoms, new_quote_atoms) = {
             let v = self.market.mutate_vault(vault_idx)?;
-            v.base_atoms = (base_atoms + base_in_final).into();
-            v.quote_atoms = (quote_atoms + quote_in_final).into();
-            let new_total = total_shares + shares_out;
-            v.total_shares = new_total.into();
+            let (new_total, new_base_atoms, new_quote_atoms) =
+                apply_deposit_inventory(v, base_in_final, quote_in_final, shares_out);
+            // Leader path: the leader's own stake grows by the minted
+            // shares (the outside `deposit` path leaves `leader_shares`
+            // untouched, so this bump is not part of the shared helper).
             let new_leader_shares = v.leader_shares.get() + shares_out;
             v.leader_shares = new_leader_shares.into();
             if is_seeding {
@@ -193,8 +197,8 @@ impl DepositLeader {
             (
                 new_total,
                 new_leader_shares,
-                v.base_atoms.get(),
-                v.quote_atoms.get(),
+                new_base_atoms,
+                new_quote_atoms,
             )
         };
 

@@ -27,7 +27,10 @@ use super::transfer_in_leg;
 use crate::{
     errors::DropsetError,
     events::{DepositEvent, RealizeEvent},
-    state::{isqrt_u128, realize_in_place, single_leg_basket, Market, VaultAccess, PPM},
+    state::{
+        apply_deposit_inventory, isqrt_u128, min_leader_share_ok, realize_in_place,
+        single_leg_basket, Market, VaultAccess,
+    },
     VaultDepositorHeader,
 };
 
@@ -236,13 +239,12 @@ impl Deposit {
         // Skin-in-the-game floor: post-deposit
         // `leader_shares / total_shares >= min_leader_share / PPM`.
         // Always enforced here — this handler is outside-only by
-        // construction.
-        {
-            let new_total = (total_shares as u128) + (shares_out as u128);
-            let lhs = (leader_shares as u128) * (PPM as u128);
-            let rhs = (min_leader_share as u128) * new_total;
-            require!(lhs >= rhs, DropsetError::MinLeaderShareViolated);
-        }
+        // construction, so `leader_shares` is unchanged and the new
+        // total is `total_shares + shares_out`.
+        require!(
+            min_leader_share_ok(leader_shares, total_shares + shares_out, min_leader_share),
+            DropsetError::MinLeaderShareViolated
+        );
 
         // Transfer base + quote into the treasuries. `transfer_in_leg`
         // skips the CPI on a zero leg (`transfer_checked` rejects zero
@@ -272,16 +274,12 @@ impl Deposit {
         let market_addr = *self.market.address();
         let (new_total, new_leader_shares, new_base_atoms, new_quote_atoms) = {
             let v = self.market.mutate_vault(vault_idx)?;
-            v.base_atoms = (base_atoms + base_in_final).into();
-            v.quote_atoms = (quote_atoms + quote_in_final).into();
-            let new_total = total_shares + shares_out;
-            v.total_shares = new_total.into();
-            (
-                new_total,
-                leader_shares,
-                v.base_atoms.get(),
-                v.quote_atoms.get(),
-            )
+            let (new_total, new_base_atoms, new_quote_atoms) =
+                apply_deposit_inventory(v, base_in_final, quote_in_final, shares_out);
+            // Outside path: `Vault.leader_shares` is unchanged — the
+            // depositor's shares-out lands on the `VaultDepositor` PDA
+            // below.
+            (new_total, leader_shares, new_base_atoms, new_quote_atoms)
         };
 
         // Update the VaultDepositor basis fields. The first-deposit vs

@@ -40,6 +40,18 @@ const SIGNIFICAND_MASK: u32 = (1u32 << SIGNIFICAND_BITS) - 1;
 /// Exponent bias. `unbiased = biased − BIAS`.
 const BIAS: u8 = 16;
 
+/// Significant decimal digits carried by a normalized significand
+/// (`10_000_000..=99_999_999` is exactly 8 digits).
+const SIGNIFICAND_DIGITS: i32 = 8;
+
+/// Decimal-place shift baked into the significand: an 8-digit
+/// significand with one digit before the implicit point represents its
+/// value scaled up by `10^(SIGNIFICAND_DIGITS − 1)`, so the encoded
+/// value is `significand × 10^(unbiased_exponent − MANTISSA_SHIFT)`.
+/// Named so the three decode sites stay in lockstep with the TS
+/// re-impl instead of open-coding the literal `7`.
+const MANTISSA_SHIFT: i32 = SIGNIFICAND_DIGITS - 1;
+
 /// Smallest valid significand (8 significant digits).
 const SIGNIFICAND_MIN: u32 = 10_000_000;
 
@@ -289,7 +301,7 @@ impl Price {
             return u128::MAX;
         }
         let sig = self.significand() as u128;
-        let unb = self.unbiased_exponent() as i32 - 7;
+        let unb = self.unbiased_exponent() as i32 - MANTISSA_SHIFT;
         let mut x = (base as u128).saturating_mul(sig);
         if unb >= 0 {
             for _ in 0..unb {
@@ -321,7 +333,7 @@ impl Price {
             return 0;
         }
         let sig = self.significand() as u128;
-        let unb = self.unbiased_exponent() as i32 - 7;
+        let unb = self.unbiased_exponent() as i32 - MANTISSA_SHIFT;
         // num / den, where price = sig × 10^unb / 10^7 → unb < 0
         // means dividing by a small price (scale numerator up); unb ≥ 0
         // means dividing by a large price (scale denominator up).
@@ -406,7 +418,7 @@ impl Price {
             return f64::INFINITY;
         }
         let sig = self.significand() as f64;
-        let shift = self.biased_exponent() as i32 - BIAS as i32 - 7;
+        let shift = self.biased_exponent() as i32 - BIAS as i32 - MANTISSA_SHIFT;
         sig * 10f64.powi(shift)
     }
 }
