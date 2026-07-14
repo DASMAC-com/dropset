@@ -222,52 +222,31 @@ already-pre-approved `Bash(gh pr list:*)` read-rule (see
 gh pr list --state merged --json number,headRefName,mergedAt --limit 100
 ```
 
-Build a local set of the returned `headRefName`s — those
-are the branches whose PR **merged**. Then, for every
-worktree in the porcelain list **other than** the
-`refs/heads/main` base, take its literal path and branch
-and decide from that set (no per-branch network call):
-
-- the worktree's branch **is** in the merged set → the
-  branch is done. Remove
-  the worktree (bare command, no `--force` — a
-  worktree with uncommitted changes refuses, which is
-  the safe outcome; leave it and note it):
-
-  ```sh
-  git worktree remove <path>
-  ```
-
-  Then delete the local branch. A squash- or
-  rebase-merged branch tip is **not** an ancestor of
-  `main`, so `git branch -d` would wrongly refuse;
-  since `gh` already confirmed the PR merged, force
-  the delete:
-
-  ```sh
-  git branch -D <branch>
-  ```
-
-- the branch is **not** in the merged set (PR still open,
-  closed without merging, or no PR exists), or the removal
-  refused on a dirty worktree → **leave it**.
-  Closed-without-merge and dirty worktrees are not safe
-  to drop automatically; list them in the report so the
-  user can decide.
-
-After processing them all, tidy any stale worktree
-admin entries:
+The returned `headRefName`s are the branches whose PR
+**merged**. Hand that set to the prune helper, which does the
+deterministic git work — for every worktree **other than**
+the `refs/heads/main` base, remove the ones whose branch
+merged (bare `git worktree remove`, no `--force`, so a dirty
+or locked tree refuses and is recorded as skipped, not
+dropped), force-delete each removed branch (a squash/rebase
+tip isn't an ancestor of `main`, so `-d` would wrongly
+refuse; the PR is confirmed merged), then
+`git worktree prune` the stale admin entries. Pass the
+merged branches (run from the base repo root):
 
 ```sh
-git worktree prune
+python3 .claude/tools/prune_worktrees.py --merged <branch> <branch> ...
 ```
 
-(The prune sequence — the `remove` / `branch -D` / `prune`
-trio per merged branch — is a settled,
-repeated deterministic shape; if it grows, it's a candidate
-to harden into a `.claude/tools/` Python helper per
-`CLAUDE.md` → "Skill tooling", leaving the skill to report
-the tally.)
+It prints `{removed, skipped, left, pruned, dry_run}` — the
+tally to report: `removed` (worktree + branch dropped),
+`skipped` (a dirty/locked merged tree that refused — the safe
+outcome), and `left` (branches not in the merged set: PR
+still open, closed-without-merge, or no PR). Preview with
+`--dry-run` first if you want to see the candidates without
+touching anything. Closed-without-merge and dirty worktrees
+are not dropped automatically — they land in `skipped` /
+`left` so the user can decide.
 
 **Then clear notifications for merged PRs.** Merged PRs
 leave GitHub notifications that otherwise pile up with no
@@ -478,36 +457,52 @@ through as separate issues.
 **7. Audit the base-repo permission allowlist for cruft.**
 `firm-perms` only ever **adds** to
 `<base>/.claude/settings.local.json` (unions, generalizes),
-never prunes — so dead weight accumulates. Review the base
-allowlist's `allow` array (the ~244-entry set; `<base>` was
-resolved in step 1) for entries that shouldn't be there:
+never prunes — so dead weight accumulates. Get the suspicious
+shortlist from the helper (`<base>` was resolved in step 1)
+rather than whole-reading the ~250-entry array into context
+(per `CLAUDE.md` → "Context economy" / "Skill tooling"):
 
-- **over-broad grants** — a bare `Bash(:*)`, an unscoped
-  `Read(…)` / `Edit(…)` root, or a wildcard that subsumes
-  many narrower rules;
-- **secrets or absolute machine paths** that leaked into a
-  rule;
-- **dangerous one-offs** — `rm -rf`, `curl … | sh`,
-  `git push --force`;
-- **stale single-use commands** a stable prefix already
-  covers (the dead weight `firm-perms` never removes).
+```sh
+python3 .claude/tools/allowlist.py \
+  --settings <base>/.claude/settings.local.json cruft
+```
+
+It prints `{count, flagged: [{index, rule, category, reason}]}`
+— only the entries that look wrong, keyed by category:
+
+- **over-broad grants** (`category: over-broad`) — a bare
+  `Bash(:*)`, an unscoped `Read(…)` / `Edit(…)` root, or a
+  bare-verb wildcard that subsumes many narrower rules;
+- **dangerous one-offs** (`category: dangerous`) — `rm -rf`,
+  `curl … | sh`, `git push --force`;
+- **machine paths** (`category: machine-path`) — an absolute
+  home path that leaked into a rule;
+- **stale single-use commands** (`category: subsumed`) — a
+  narrower rule an earlier one already covers (the dead weight
+  `firm-perms` never removes).
+
+The helper is deterministic and pattern-based, so also skim
+its `flagged` list for a **secret** that leaked into a rule
+(it can't classify those) before proposing removals.
 
 **Autonomy bound: propose, never auto-delete.** Dropping a
 permission is low-blast-radius, but silently editing the
 allowlist unattended is surprising. In an **attended** pass,
 surface the shortlist via **`AskUserQuestion`** and remove
 (with the Edit tool, per the JSON-editing convention) only
-the entries the human approves; in an **unattended** pass,
+the entries the human approves (with the Edit tool, per the
+JSON-editing convention — and confirm the edited file still
+parses with an **exit-code-only** check,
+`python3 -m json.tool <file> >/dev/null` or the same routed
+through `run_quiet`, never a full pretty-print echo that
+re-dumps the array into context); in an **unattended** pass,
 file the candidates **propose-only** (or just list them) and
 delete nothing. This is the pruning half; `firm-perms` is
 the add-only half, and the allowlist is `settings.local.json`
-(git-ignored per the settings.json decision). **Keep the
-full file out of context:** a `.claude/tools/` helper that
-parses the allowlist and returns only the suspicious
-shortlist is the intended hardening (per `CLAUDE.md` → "Skill
-tooling") — until it exists, read the file once in this
-step's own reasoning and report only the flagged entries,
-never the whole 244-entry array.
+(git-ignored per the settings.json decision). The
+`allowlist.py cruft` helper above is what keeps the full file
+out of context — it returns only the shortlist, so this step
+never reads the whole ~250-entry array.
 
 **8. Review saved auto-memory for staleness.** The saved
 auto-memory (`~/.claude/projects/<slug>/memory/*.md` plus the

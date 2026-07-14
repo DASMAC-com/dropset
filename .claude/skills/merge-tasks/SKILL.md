@@ -74,21 +74,28 @@ no heredoc) — shape:
 }
 ```
 
-Then run the tool over it:
+Then run the tool over it, passing **`--out`** so the large
+merged body is written to a file and kept out of context
+(per `CLAUDE.md` → "Context economy"):
 
 ```sh
-python3 .claude/tools/merge_tasks.py assemble /tmp/merge-tasks.json
+python3 .claude/tools/merge_tasks.py assemble \
+  /tmp/merge-tasks.json --out /tmp/merge-tasks-body.md
 ```
 
-It returns the keys `title`, `description`, `touches`,
-`all_meta`, and `cross_area`: the merged `description`
-(survivor body + each non-survivor folded as a
-`# Part N — <title>` section,
-every fingerprint preserved, one consolidated
-`**Touches**:` line), the `title` with the **`Claude:`**
-prefix applied when `all_meta` is true (per `CLAUDE.md` →
-"Claude: meta-work prefix"), and `cross_area` set when the
-merge mixes meta-work with product code.
+With `--out` it returns the keys `title`, `touches`,
+`all_meta`, `cross_area`, and **`description_path`** — the
+metadata inline, and the merged body **written to
+`description_path`** rather than echoed to stdout. The body
+is the survivor body + each non-survivor folded as a
+`# Part N — <title>` section (every fingerprint preserved,
+one consolidated `**Touches**:` line); the `title` carries
+the **`Claude:`** prefix when `all_meta` is true (per
+`CLAUDE.md` → "Claude: meta-work prefix"), and `cross_area`
+is set when the merge mixes meta-work with product code. In
+step 5, **`Read` `description_path` and pass its contents to
+`save_issue`** — the merged body never transits context as a
+tool result.
 
 Union the relations yourself (a plain set union the tool
 doesn't need the network for): collect every

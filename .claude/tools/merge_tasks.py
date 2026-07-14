@@ -11,14 +11,19 @@ Two subcommands, each reading stdin/argv and printing JSON to stdout:
   resolve the survivor (the lowest-numbered by default, or ``--survivor N``).
   Prints ``{"survivor": "ENG-###", "ids": [...]}`` (ids sorted by number) so the
   skill knows what to ``get_issue`` before assembling.
-* ``assemble ISSUES_JSON`` — given a JSON file
+* ``assemble ISSUES_JSON [--out PATH]`` — given a JSON file
   ``{"survivor": "ENG-###", "issues": [{id, number, title, description}, ...]}``,
   build the merged issue: the survivor body followed by each non-survivor body
   as a labeled ``# Part N — <title>`` section (every ``**Fingerprint**:`` line
   preserved verbatim), one consolidated ``**Touches**:`` line holding the union
   of all the globs, the title (``Claude:`` prefix applied when every folded
   issue is meta-work), and a cross-area flag when the set mixes meta and product
-  surfaces. Prints ``{title, description, touches, all_meta, cross_area}``.
+  surfaces. With ``--out PATH`` (the way the skill drives it) the large merged
+  ``description`` is **written to PATH** and kept **out of stdout** — prints
+  ``{title, touches, all_meta, cross_area, description_path}`` so the skill hands
+  the path to ``save_issue`` without the whole body transiting the model's
+  context (see ``CLAUDE.md`` → "Context economy"). Without ``--out`` it prints
+  the full ``{title, description, touches, all_meta, cross_area}`` inline.
 
 Stdlib only. This is a Python skill-tool under ``.claude/tools/`` — deliberately
 **not** a Cargo workspace member (see ``CLAUDE.md`` → "Skill tooling").
@@ -212,6 +217,11 @@ def run(argv: list[str]) -> int:
 
     p_asm = sub.add_parser("assemble", help="build the merged issue body")
     p_asm.add_argument("issues_json", help="path to the fetched-issues JSON file")
+    p_asm.add_argument(
+        "--out",
+        default=None,
+        help="write the merged description here and keep it out of stdout",
+    )
 
     args = parser.parse_args(argv[1:])
 
@@ -221,6 +231,14 @@ def run(argv: list[str]) -> int:
         with open(args.issues_json, encoding="utf-8") as fh:
             data = json.load(fh)
         result = assemble(data)
+        if args.out is not None:
+            # File-handoff: the merged body is the large payload, so write it
+            # out and replace it with its path — the skill passes the path to
+            # save_issue, never echoing the body through context.
+            with open(args.out, "w", encoding="utf-8") as fh:
+                fh.write(result["description"])
+            del result["description"]
+            result["description_path"] = args.out
 
     json.dump(result, sys.stdout, indent=2)
     sys.stdout.write("\n")

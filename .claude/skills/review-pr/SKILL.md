@@ -486,10 +486,23 @@ PR-authoring **writes** (`create_pull_request`,
      the image than by a prose fan-out; scope to one
      ops-correctness lens.
    - **faithful extraction / move refactor** — code deleted
-     in one place reappears verbatim as additions elsewhere;
-     scope to one lens checking the move is faithful (no
-     dropped or altered lines), not six re-reviewing
-     unchanged logic.
+     in one place reappears verbatim as additions elsewhere.
+     This case scales down the **substantive** lenses, not
+     just the cross-check: run **one** scoped move-fidelity +
+     straggler-refs lens (is the move faithful — no dropped or
+     altered lines — and are all references to the moved code
+     updated to its new home?), **plus one** small new-logic
+     lens **only** when a few genuinely-new additions rode
+     along with the move. Do **not** turn loose all of
+     correctness / completeness / style re-reviewing unchanged
+     logic. This holds **even when the diff is large** — a
+     1000-line extraction is still a move, and the "four
+     substantive lenses are unconditional" default below is
+     the *full-fan-out* rule, which this reduced-fan-out case
+     explicitly overrides. (The counterpart small-single-crate
+     tier already scales such diffs down to ~196k–240k; the
+     point here is to make the extraction shape reach that same
+     scale-down instead of the full 4-lens spend.)
    - **mechanical repo-wide reformat** (a formatter / lint
      autofix applied tree-wide) — discount the reformat
      noise from the sizing and scope to one lens spot-checking
@@ -523,7 +536,46 @@ PR-authoring **writes** (`create_pull_request`,
    **Gate the two freshness lenses on the diff's touched
    surfaces.** The four substantive lenses below
    (correctness, security, style, completeness) are
-   **unconditional** — run them on every non-trivial diff.
+   **unconditional** on every non-trivial diff that took the
+   **full-fan-out** path — but a diff that matched a
+   reduced-fan-out case above (a move refactor, a small
+   single-crate change, a security-lens skip, a meta-work
+   diff) has **already** narrowed which substantive lenses
+   run; this "unconditional" default does not re-expand them.
+
+   **Gate the security lens on the diff's trust surface.**
+   Security is unconditional in name only — it does genuine
+   work solely where the diff carries a **trust boundary**.
+   On the on-chain consensus-critical handlers (a program
+   instruction like `deposit` / `withdraw_leader` /
+   `close_vault`), on account/argument **deserialization**,
+   on **auth** checks, or on **external I/O** (network,
+   untrusted files, user input), it earns its ~195k — spawn
+   it. On **host / localnet tooling** with no such surface (a
+   TUI, a bot's display code, a localnet bootstrap, a
+   dev-only script) it is near-pure fixed cost — a recent run
+   spent 148.8k only to flag a pre-existing non-saturating
+   `pow` on trusted decimals. So **spawn the security lens
+   only** when the diff touches a program handler,
+   deserialization, an auth path, or external I/O; **skip it**
+   on a diff confined to host / localnet tooling, and note the
+   skip in the summary.
+
+   **Meta-work tier — skip security AND style.** A diff
+   confined to `.claude/**`, `CLAUDE.md`, `docs/**` (plus at
+   most small Python glue) has **no trust boundary** (nothing
+   the security lens gates) **and no product idioms** (nothing
+   the style lens measures against the Rust/TS codebase), so
+   both are near-pure fixed cost. For such a diff, run
+   **correctness + completeness** and the **surface-gated
+   freshness lenses** (which the meta-work surfaces almost
+   always trip), and **skip security & style** — unless a
+   Python helper in the diff carries **real logic** (parsing,
+   control flow, filesystem mutation), in which case run
+   correctness/completeness over it and add the security lens
+   back if it reads untrusted input. This tier composes with
+   the freshness gate above: a meta-work diff runs
+   correctness + completeness + freshness, and nothing else.
    The two **freshness** lenses, by contrast, near-always
    return an "in sync, no-op" verdict on a pure source diff
    yet each costs ~100k+ of sub-agent input, so spawn them
@@ -574,12 +626,17 @@ PR-authoring **writes** (`create_pull_request`,
    - **Correctness** — logic errors, off-by-ones,
      unhandled edge cases, incorrect assumptions,
      broken invariants.
-   - **Security** — injection, unchecked input,
-     missing validation, unsafe operations,
-     secrets in code.
-   - **Style & consistency** — naming, patterns,
-     idioms that diverge from the rest of the
-     codebase.
+   - **Security** (conditional — spawn only when the trust-
+     surface gate above fires: a program handler,
+     deserialization, an auth path, or external I/O; skipped
+     on host / localnet tooling and on meta-work diffs) —
+     injection, unchecked input, missing validation, unsafe
+     operations, secrets in code.
+   - **Style & consistency** (skipped on a meta-work diff —
+     `.claude/**` / `CLAUDE.md` / `docs/**` with no product
+     code — which has no codebase idioms to measure against)
+     — naming, patterns, idioms that diverge from the rest of
+     the codebase.
    - **Completeness** — missing tests, TODO/FIXME
      left behind, partial implementations,
      unused imports or dead code introduced by
@@ -1099,6 +1156,28 @@ PR-authoring **writes** (`create_pull_request`,
      )
      ```
 
+     **If the failed check is the pre-commit `Lint` job, do
+     NOT re-fetch a larger tail.** That job runs the hooks
+     over `--all-files`, so its log is a per-file cascade and
+     the failing hook's batch (e.g. cspell) sits **above**
+     even a 400-line tail — a bigger `tail_lines` just re-buys
+     the same passing-batch noise (one run paid `get_job_logs`
+     at tail=120 then tail=400 to relearn this). Instead,
+     **reproduce the failing hook locally over `--all-files`
+     and trust its exit code** — the local run surfaces the
+     actual offending files, which the CI tail does not:
+
+     ```sh
+     python3 .claude/tools/run_quiet.py -- pre-commit run <hook-id> --all-files
+     ```
+
+     `run_quiet` already indexes the failing hook and prints
+     its offending-file tail (PR #235), so a non-zero exit
+     names the violation directly. Skip any hook that can't
+     run in this worktree (`biome` / `tsc` without frontend
+     deps) — treat it as unverifiable, exactly as the lint
+     step does, rather than chasing it in the CI log.
+
      Then convert the PR back to draft — which also
      cancels any pending "Merge when ready" — and leave
      the Linear issue in its current state (do **not**
@@ -1130,6 +1209,13 @@ PR-authoring **writes** (`create_pull_request`,
      checklist item marked addressed / partial /
      missing (or "no Linear task checked" if none
      was resolvable).
+   - Fan-out: which tier the diff took (full, small
+     single-crate, move-refactor / other reduced-fan-out,
+     meta-work, or trivial short-circuit) and, for a
+     scaled-down run, which lenses were skipped and why
+     (security lens skipped — no trust surface; style skipped
+     — meta-work; cross-check skipped; freshness skipped —
+     surface gate).
    - Lint status: pass, fail with details, or which
      hooks were unverifiable locally (deps not
      installed) and why that's safe for this diff.

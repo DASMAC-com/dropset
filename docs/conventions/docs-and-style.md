@@ -12,6 +12,17 @@ about **prose only** — the env-var-resolved assignee / filing-destination
 ids (`LINEAR_ASSIGNEE_ID`, etc.) are configuration, not prose, and are
 unaffected.
 
+## Line length
+
+Docs and Markdown wrap at **80 columns** (MD013), and code at the
+project's configured limit — both enforced by the `make lint` hook set
+(the "Lines over 80 columns" hook for code, markdownlint for docs). So
+**let the hook flag over-long lines** rather than pre-checking with a
+manual `grep -nE '^.{81,}$'`: the manual grep just re-buys a result
+`make lint` already produces, and its output lands in context (per
+`docs/conventions/context-economy.md` → "Don't hand-run a check a hook
+already owns").
+
 ## Spelling (cspell)
 
 `cfg/dictionary.txt` is the **project-wide** spelling allow-list —
@@ -42,6 +53,23 @@ to lead: after a `---` YAML frontmatter block, after a `#!` shebang, or
 after a leading module doc-comment / inner-attribute header. One known
 place, one word per line, means a reader — and the audit — finds every
 escape at a glance instead of hunting the file.
+
+**Placing new words: use the helper, don't hand-loop cspell.** When a
+diff introduces cspell-unknown words, don't iterate
+`pre-commit run cspell` deciding dictionary-vs-inline by hand (that loop
+has run ~20 round-trips and still slipped a word to CI). Ask
+`.claude/tools/cspell_place.py`, which counts each word's spread across
+the repo and prints the verdict per the ≥2-file rule — the dictionary
+target, or the inline directive in the right comment style for the file:
+
+```sh
+python3 .claude/tools/cspell_place.py scan \
+  --files path/to/changed.rs path/to/other.md
+```
+
+`scan` runs cspell to list the unknown words first (needs the cspell
+CLI); `verdict WORD...` skips cspell and just places words you already
+have.
 
 The `cspell-audit` skill reconciles the dictionary against actual usage
 **and** normalizes escape placement on this rule; run it when the

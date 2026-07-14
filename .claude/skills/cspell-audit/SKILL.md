@@ -25,6 +25,15 @@ escapes tidy. The skill enforces two rules:
    the comment style (see "Placement" below); the skill
    normalizes any file whose escapes have drifted from it.
 
+This skill reconciles words **already** in the tree. Its
+forward counterpart — deciding where a **new**
+cspell-unknown word from a diff should go by the same
+≥2-file rule — is `.claude/tools/cspell_place.py` (see
+`docs/conventions/docs-and-style.md` → "Spelling (cspell)"):
+run that while writing a diff to place words without a
+hand-run cspell loop; run this skill to keep the accumulated
+dictionary + escapes honest.
+
 ## The policy
 
 For each word `w` in `cfg/dictionary.txt`, count the
