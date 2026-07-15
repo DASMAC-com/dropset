@@ -13,6 +13,7 @@
 //! currency the keyless FX-rate tier pegs to — plus the mock-mint keypair and
 //! decimals the localnet bootstrap and inventory valuation need.
 
+use dropset_fair_value::FairValueConfig;
 use std::time::Duration;
 
 /// Default localnet RPC endpoint (the `solana-test-validator` the TUI spawns).
@@ -32,6 +33,11 @@ pub const DEFAULT_LEADER_KEY: &str = "keys/EEEE.json";
 /// localnet USDC mint keypair and its decimals.
 pub const QUOTE_KEYPAIR_FILE: &str = "keys/USDC.json";
 pub const QUOTE_DECIMALS: u8 = 6;
+
+/// CoinGecko id for USDC, priced in USD — the USDC/USD common-mode leg (§1
+/// fm1). One id shared by every market (all quote against the same USDC), so it
+/// rides the existing batched CoinGecko call rather than a per-market lookup.
+pub const USDC_COINGECKO_ID: &str = "usd-coin";
 
 /// One FX-stablecoin market: a base token quoted against USDC, with the
 /// per-tier feed identifiers and the mint / decimals the bot needs to address
@@ -228,7 +234,12 @@ pub struct StrategyConfig {
     pub reshape_accumulating_scale: f64,
 }
 
-/// Inventory / peg / staleness kill-switch bounds (§1, §4).
+/// Inventory / TVL kill-switch bounds (§4).
+///
+/// The fair-value guards (the basis band, the USDC/USD common-mode band, and
+/// per-leg staleness) moved to [`FairValueConfig`], which the engine evaluates;
+/// the breaches arrive here as flags on the composed reference. What stays are
+/// the inventory-imbalance ladder and the TVL drawdown floor.
 #[derive(Clone, Copy, Debug)]
 pub struct KillSwitchConfig {
     /// Per-side imbalance (% off the 50/50 launch split) that triggers a cold
@@ -238,11 +249,6 @@ pub struct KillSwitchConfig {
     pub imbalance_freeze_side_pct: f64,
     /// Imbalance that halts the whole vault for review (§4 row 3).
     pub imbalance_halt_pct: f64,
-    /// Lower / upper token-peg bound vs FX spot; outside → halt (§1, §4).
-    pub peg_low: f64,
-    pub peg_high: f64,
-    /// A feed older than this is stale → run degraded (§1, §4).
-    pub feed_stale: Duration,
     /// TVL floor that halts the vault for post-mortem (§4 last row), as a
     /// *fraction of launch TVL* — `0.8` halts on a 20% drawdown. Launch TVL is
     /// read from the vault at startup (not a config constant), so the floor
@@ -266,6 +272,9 @@ pub struct BotConfig {
     pub feeds: FeedConfig,
     pub strategy: StrategyConfig,
     pub kill: KillSwitchConfig,
+    /// The fair-value engine's calibration (`fair = fx × basis`, §1). Almost
+    /// every value is a survey-set placeholder — see [`FairValueConfig`].
+    pub fair_value: FairValueConfig,
 }
 
 /// Environment variable holding the CoinMarketCap API key (never committed).
@@ -312,9 +321,6 @@ impl Default for KillSwitchConfig {
             imbalance_reshape_pct: 30.0,
             imbalance_freeze_side_pct: 50.0,
             imbalance_halt_pct: 80.0,
-            peg_low: 0.97,
-            peg_high: 1.03,
-            feed_stale: Duration::from_secs(5 * 60),
             tvl_floor_frac: 0.8,
         }
     }
@@ -330,6 +336,15 @@ impl Default for BotConfig {
             feeds: FeedConfig::default(),
             strategy: StrategyConfig::default(),
             kill: KillSwitchConfig::default(),
+            fair_value: FairValueConfig {
+                // The bot's FX anchor is currently the daily Frankfurter feed,
+                // polled every `fx_poll` (300 s); a staleness bound comfortably
+                // above that keeps the slow anchor from flapping in and out of
+                // the composition each cycle. TBD(survey): split per leg so the
+                // fast crypto leg can be checked on a tighter bound.
+                leg_stale: Duration::from_secs(15 * 60),
+                ..FairValueConfig::default()
+            },
         }
     }
 }

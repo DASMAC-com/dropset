@@ -130,7 +130,10 @@ mod tests {
         long.update(1.0, secs(5));
         let vs = short.update(2.0, secs(30));
         let vl = long.update(2.0, secs(300));
-        assert!(vl > vs, "longer gap ({vl}) should move more than short ({vs})");
+        assert!(
+            vl > vs,
+            "longer gap ({vl}) should move more than short ({vs})"
+        );
     }
 
     #[test]

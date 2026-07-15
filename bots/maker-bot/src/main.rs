@@ -17,12 +17,13 @@
 //!   --drop <tier>          dry-run only: suppress coingecko | cmc | fx
 
 use anyhow::{anyhow, Context, Result};
+use dropset_fair_value::{FairValueEngine, Reading};
 use dropset_localnet_support::ws_url_from_rpc;
 use dropset_maker_bot::config::{
-    BotConfig, MarketConfig, DEFAULT_LEADER_KEY, MARKETS, QUOTE_KEYPAIR_FILE,
+    BotConfig, MarketConfig, DEFAULT_LEADER_KEY, MARKETS, QUOTE_KEYPAIR_FILE, USDC_COINGECKO_ID,
 };
 use dropset_maker_bot::context::Context as BotContext;
-use dropset_maker_bot::model::fair_mid::{compose, Quote};
+use dropset_maker_bot::model::fair_mid::build_legs;
 use dropset_maker_bot::model::feeds::Feeds;
 use dropset_maker_bot::{chain, fills, tasks};
 use solana_pubkey::Pubkey;
@@ -179,6 +180,7 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
             cfg.vault_idx,
             addrs.clone(),
             *market,
+            cfg.fair_value,
         ));
     }
     if contexts.is_empty() {
@@ -214,7 +216,9 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
     let drop = |tier: &str| args.drop.iter().any(|d| d == tier);
 
     let roster = args.selected();
-    let cg_ids: Vec<&str> = roster.iter().map(|m| m.coingecko_id).collect();
+    let mut cg_ids: Vec<&str> = roster.iter().map(|m| m.coingecko_id).collect();
+    // The USDC/USD common-mode leg rides the same batched CoinGecko call.
+    cg_ids.push(USDC_COINGECKO_ID);
     let cmc_ids: Vec<u32> = roster.iter().filter_map(|m| m.coinmarketcap_id).collect();
     let mut currencies: Vec<&str> = roster.iter().map(|m| m.currency).collect();
     currencies.sort_unstable();
@@ -250,23 +254,29 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
     if !args.drop.is_empty() {
         println!("Suppressed tiers: {}", args.drop.join(", "));
     }
-    println!("\n  market      mid (USD)     tier           health     peg");
+    println!("\n  market      mid (USDC)    anchor         health     basis");
 
     let now = Duration::from_secs(0);
-    let q = |v: Option<f64>| v.map(|v| Quote::new(v, now));
+    let q = |v: Option<f64>| v.map(|v| Reading::new(v, now));
+    // USDC/USD common-mode leg, shared by every market.
+    let usdc_q = q(cg.get(USDC_COINGECKO_ID).copied());
     for &m in &roster {
         let cg_q = q(cg.get(m.coingecko_id).copied());
         let cmc_q = q(m.coinmarketcap_id.and_then(|id| cmc.get(&id)).copied());
         let fx_q = q(fx.get(m.currency).copied());
-        let fair = compose(cg_q, cmc_q, fx_q, m.static_usd, &cfg.kill);
-        let tier = fair.tier.map_or("—", |t| t.label());
-        let mid = fair.mid.map_or("—".to_string(), |v| format!("{v:.8}"));
-        let peg = fair.peg.map_or("—".to_string(), |p| {
-            format!("{p:.4}{}", if fair.peg_breach { " BREACH" } else { "" })
+        // Frankfurter USD/`<ccy>` is the FX anchor; CoinGecko/CMC token-USD is
+        // the (demoted) crypto basis leg — a fresh engine per row (no history).
+        let legs = build_legs(fx_q, cg_q.or(cmc_q), usdc_q, m.static_usd);
+        let mut engine = FairValueEngine::new(cfg.fair_value);
+        let fair = engine.compose(legs, now, false);
+        let anchor = format!("{:?}", fair.anchor);
+        let mid = fair.fair.map_or("—".to_string(), |v| format!("{v:.8}"));
+        let basis = fair.basis.map_or("—".to_string(), |b| {
+            format!("{b:.4}{}", if fair.basis_breach { " BREACH" } else { "" })
         });
         println!(
             "  {:<10}  {:>12}  {:<13}  {:<9?}  {}",
-            m.symbol, mid, tier, fair.health, peg
+            m.symbol, mid, anchor, fair.health, basis
         );
     }
     Ok(())

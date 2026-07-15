@@ -1,20 +1,29 @@
-//! Inventory / peg / TVL kill switches (§4).
+//! Inventory / basis / TVL kill switches (§4).
 //!
 //! Maps a tick's composed reference and live inventory to the single most
-//! severe action the bot should take. The spec's hard triggers (peg breach,
-//! TVL floor, >80% imbalance) name `FreezeVault`, but that instruction is
-//! **admin-only and irreversible** (`programs/dropset` → `freeze_vault`: no
-//! unfreeze) — the bot signs only as the leader. So those map to a
-//! leader-authorized [`Action::Halt`]: stop quoting (zero the profile, let
-//! existing levels expire) and alert for human review, which is what the spec
-//! asks for on those rows. A real `FreezeVault` stays a human (admin) decision
-//! so a transient feed glitch can't autonomously brick the vault.
+//! severe action the bot should take. The spec's hard triggers (basis-band
+//! breach, USDC/USD common-mode breach, TVL floor, >80% imbalance) name
+//! `FreezeVault`, but that instruction is **admin-only and irreversible**
+//! (`programs/dropset` → `freeze_vault`: no unfreeze) — the bot signs only as
+//! the leader. So those map to a leader-authorized [`Action::Halt`]: stop
+//! quoting (zero the profile, let existing levels expire) and alert for human
+//! review, which is what the spec asks for on those rows. A real `FreezeVault`
+//! stays a human (admin) decision so a transient feed glitch can't autonomously
+//! brick the vault.
 //!
-//! When no live market price remains and the bot quotes off a peg-rate
-//! fallback (the FX-rate or static tier) the vault runs *degraded* (§4 row 5):
-//! the whole switch set tightens by 50% so the bot pulls back sooner on
-//! thinner information — the imbalance bounds halve here and the TVL floor
-//! halves its permitted drawdown from launch here.
+//! The fair-value guards — the **basis-band breach** (a peg event) and the
+//! portfolio-wide **USDC/USD common-mode breach** (§1 fm1) — are computed by
+//! the [`dropset_fair_value`] engine and arrive here as flags on the
+//! [`FairValue`]; this module only maps them to actions. The common-mode guard
+//! is the most systemic (a USDC depeg hits every market's basis at once), so it
+//! is checked first.
+//!
+//! When the composition is degraded — no live FX anchor outside the weekend
+//! regime, or only the last basis / static peg left (see
+//! [`dropset_fair_value::Regime`]) — the vault runs *degraded* (§4): the whole
+//! switch set tightens by 50% so the bot pulls back sooner on thinner
+//! information — the imbalance bounds halve here and the TVL floor halves its
+//! permitted drawdown from launch here.
 //!
 //! The TVL floor is expressed as a *fraction of launch TVL* (the
 //! `tvl_floor_frac` config knob) against the launch TVL the caller reads from
@@ -24,15 +33,19 @@
 //! drawdown fraction is correct in all of them at once.
 
 use crate::config::KillSwitchConfig;
-use crate::model::fair_mid::FairMid;
 use crate::model::inventory::Inventory;
 use crate::model::ladder::Side;
+use dropset_fair_value::FairValue;
 
 /// Why the bot halted — carried into the alert log.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HaltReason {
-    /// Token peg left `[peg_low, peg_high]` vs FX spot.
-    PegBreach,
+    /// USDC/USD left its common-mode band — a correlated, portfolio-wide depeg
+    /// that moves every market's basis at once (§1 fm1, §4). The most systemic
+    /// halt, so it is evaluated before the per-market peg event.
+    UsdcCommonMode,
+    /// The smoothed basis left its per-market sane band — a peg event (§1, §4).
+    BasisBreach,
     /// Vault TVL fell to the floor.
     TvlFloor,
     /// Per-side imbalance past the critical bound.
@@ -58,15 +71,14 @@ pub enum Action {
 
 /// Evaluate the kill switches for this tick. `launch_tvl` is the vault's TVL at
 /// startup (the caller reads it from the first snapshot), against which the
-/// drawdown floor is measured. `degraded` (no live market price — the mid
-/// comes from a peg-rate fallback tier, per
-/// [`super::fair_mid::Health::Degraded`]) tightens the whole switch set by 50%
-/// (§4 row 5): the imbalance thresholds halve, and the TVL floor halves its
-/// permitted drawdown from launch. The peg band is not scaled here; in the
-/// degraded state there is no market price, so `peg` is `None` and
-/// `peg_breach` is `false`.
+/// drawdown floor is measured. `degraded` (from [`FairValue::degraded`] — no
+/// live FX anchor outside the weekend regime, or a peg-rate fallback tier)
+/// tightens the whole switch set by 50% (§4): the imbalance thresholds halve,
+/// and the TVL floor halves its permitted drawdown from launch. The basis and
+/// common-mode bands are not scaled here — they are absolute peg events the
+/// engine already evaluated against its (survey-set) bands.
 pub fn evaluate(
-    fair: &FairMid,
+    fair: &FairValue,
     inv: &Inventory,
     kill: &KillSwitchConfig,
     degraded: bool,
@@ -74,9 +86,14 @@ pub fn evaluate(
 ) -> Action {
     let scale = if degraded { 0.5 } else { 1.0 };
 
-    // Hard halts first — these want a human, not a self-healing reshape.
-    if fair.peg_breach {
-        return Action::Halt(HaltReason::PegBreach);
+    // Hard halts first — these want a human, not a self-healing reshape. The
+    // portfolio-wide common-mode guard precedes the per-market basis event: a
+    // USDC depeg is the more systemic signal (§1 fm1).
+    if fair.usdc_breach {
+        return Action::Halt(HaltReason::UsdcCommonMode);
+    }
+    if fair.basis_breach {
+        return Action::Halt(HaltReason::BasisBreach);
     }
     // The floor is launch TVL less the permitted drawdown. Degraded halves the
     // permitted drawdown, so the floor rises toward launch TVL (e.g. a 0.8
@@ -111,15 +128,18 @@ pub fn evaluate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::fair_mid::Health;
+    use dropset_fair_value::{Anchor, Health, Regime};
 
-    fn ok_fair() -> FairMid {
-        FairMid {
-            mid: Some(1.14),
-            tier: Some(crate::model::feeds::FeedTier::CoinGecko),
-            peg: Some(1.0),
+    fn ok_fair() -> FairValue {
+        FairValue {
+            fair: Some(1.14),
+            anchor: Anchor::Fx,
+            regime: Regime::Normal,
+            basis: Some(1.0),
             health: Health::Ok,
-            peg_breach: false,
+            uncertain: false,
+            basis_breach: false,
+            usdc_breach: false,
         }
     }
 
@@ -185,13 +205,26 @@ mod tests {
     }
 
     #[test]
-    fn peg_breach_halts_over_everything() {
+    fn basis_breach_halts_over_everything() {
         let mut fair = ok_fair();
-        fair.peg_breach = true;
-        // Even a balanced vault halts on a peg breach.
+        fair.basis_breach = true;
+        // Even a balanced vault halts on a basis-band breach.
         assert_eq!(
             evaluate(&fair, &inv(50.0, 50.0), &kill(), false, LAUNCH),
-            Action::Halt(HaltReason::PegBreach)
+            Action::Halt(HaltReason::BasisBreach)
+        );
+    }
+
+    #[test]
+    fn usdc_common_mode_halts_before_the_basis_event() {
+        // A USDC depeg is the more systemic signal, so it wins even when the
+        // per-market basis has also breached.
+        let mut fair = ok_fair();
+        fair.usdc_breach = true;
+        fair.basis_breach = true;
+        assert_eq!(
+            evaluate(&fair, &inv(50.0, 50.0), &kill(), false, LAUNCH),
+            Action::Halt(HaltReason::UsdcCommonMode)
         );
     }
 

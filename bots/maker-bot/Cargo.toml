@@ -20,6 +20,11 @@ bs58 = "0.5"
 # on-chain `Vault` slab mirror for live inventory (matches the SDK's own
 # profile construction and the TUI's account decoding).
 bytemuck = "1"
+# The shared off-chain fair-value engine: `fair = fx × basis` with the two-peg
+# basis decomposition, the basis EMA, the composition regimes, and the
+# basis-band / USDC common-mode guard signals (docs/market-making-mvp.md §1).
+# The bot owns the feed transport and hands the engine `Reading`s.
+dropset-fair-value = { path = "../../fair-value" }
 # Shared localnet-host plumbing: the Agave `http`→`ws` PubSub-URL derivation
 # (the fill subscription's endpoint). The `emit_cpi!` fill decode is the SDK's
 # shared `events` codec, not a hand-rolled discriminator.
