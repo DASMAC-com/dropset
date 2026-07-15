@@ -103,7 +103,7 @@ class ParseArgsTests(unittest.TestCase):
 
     def test_bad_mode_raises(self):
         with self.assertRaises(MemoryScanGateError):
-            _parse_args(["frobnicate", "/tmp/mem"])
+            _parse_args(["invalid", "/tmp/mem"])
 
 
 if __name__ == "__main__":

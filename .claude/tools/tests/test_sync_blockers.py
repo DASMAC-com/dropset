@@ -174,10 +174,10 @@ def raw_issue(ident, blockers=()):
                     "type": "blocks",
                     "issue": {
                         "identifier": bid,
-                        "state": {"name": sname, "type": stype},
+                        "state": {"name": state_name, "type": state_type},
                     },
                 }
-                for bid, stype, sname in blockers
+                for bid, state_type, state_name in blockers
             ]
         },
     }
