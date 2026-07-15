@@ -40,6 +40,19 @@ body {
   font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
 }
 
+/* Order-book "flash liquidity" cue: a level's tint fades out after it
+ * updates. Remounting the overlay (keyed on the level's size) restarts the
+ * fade, so a freshly-flashed or re-quoted level blinks as the maker bot
+ * fills in the book. */
+@keyframes ob-flash {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
 /* Force a persistent, non-overlay scrollbar so users see there is more
  * content to read. Without this, macOS hides the bar until scrolling. */
 .scrollbar-always {

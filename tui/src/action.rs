@@ -359,6 +359,8 @@ pub fn dispatch(
                     }
                     Ok::<(), anyhow::Error>(())
                 })?;
+                // Fund the taker so a browser-wallet swap works out of the box.
+                fund_taker(&client, &wallet, &repo_root, log)?;
                 Ok(format!(
                     "Bootstrap complete — {} markets",
                     market::PAIRS.len()
@@ -678,6 +680,44 @@ fn ensure_funded(client: &solana_client::rpc_client::RpcClient, wallet: &Pubkey,
             log.log(format!("airdrop warning: {e:#}"));
         }
     }
+}
+
+/// Fund the taker (`FFFF`) at bootstrap so importing it into a browser wallet
+/// (Phantom on `localhost:8899`) lands on spendable balances immediately —
+/// SOL for fees, plus every seeded market's base mint and the shared quote
+/// (USDC), at the same per-side amounts a vault opens with. Runs sequentially
+/// after the parallel seed phase, so the shared-USDC top-up is a single summed
+/// mint rather than a byte-identical race across markets. Localnet-only: it
+/// mints mock tokens whose authority is the admin wallet.
+fn fund_taker(
+    client: &solana_client::rpc_client::RpcClient,
+    wallet: &Keypair,
+    repo_root: &Path,
+    log: &Logger,
+) -> Result<()> {
+    let taker = market::taker(repo_root)?.pubkey();
+    ensure_funded(client, &taker, log);
+    log.log(format!("Funding taker {taker} for wallet swaps…"));
+    // Base leg per market; accumulate the shared quote to mint once at the end.
+    let mut total_quote: u64 = 0;
+    let mut quote_mint = None;
+    for config in market::PAIRS {
+        let (base_mint, qmint) = market::pair_mints(repo_root, config)?;
+        let (base_atoms, quote_atoms) = market::seed_deposit(config);
+        let base_ata = chain::create_ata_idempotent(client, wallet, &taker, &base_mint)
+            .context("taker base ATA")?;
+        chain::mint_to(client, wallet, &base_mint, &base_ata, base_atoms)
+            .context("fund taker base leg")?;
+        total_quote = total_quote.saturating_add(quote_atoms);
+        quote_mint = Some(qmint);
+    }
+    if let Some(qmint) = quote_mint {
+        let quote_ata = chain::create_ata_idempotent(client, wallet, &taker, &qmint)
+            .context("taker quote ATA")?;
+        chain::mint_to(client, wallet, &qmint, &quote_ata, total_quote)
+            .context("fund taker quote leg")?;
+    }
+    Ok(())
 }
 
 /// Create the registry: mint a mock fee mint, then send `init` (genesis

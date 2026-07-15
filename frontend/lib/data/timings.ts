@@ -55,6 +55,14 @@ export const JUPITER_FETCH_TIMEOUT_MS = 10_000;
 // account state.
 export const BALANCE_REFETCH_DELAY_MS = 1_500;
 
+// ───────────── Order book ─────────────
+
+// Live-poll cadence for the on-chain order-book viz. One getAccountInfo +
+// getSlot per tick against the local (or mainnet) RPC. 1 s reads as live —
+// the maker bot's flashed depth appears within a tick — without hammering
+// the node the way the alpha viz's 500 ms poll did.
+export const ORDER_BOOK_REFRESH_MS = 1_000;
+
 // ───────────── UI feedback ─────────────
 
 // How long the clipboard-copy "Copied!" feedback stays on screen.
