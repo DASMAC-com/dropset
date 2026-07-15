@@ -1668,6 +1668,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "dropset-feeds"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bs58",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "solana-client",
+ "solana-commitment-config",
+ "solana-pubkey 3.0.0",
+ "solana-signature",
+ "solana-transaction-status",
+ "sqlx",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "dropset-indexer"
 version = "0.1.0"
 dependencies = [
