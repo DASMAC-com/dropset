@@ -64,6 +64,9 @@ pub struct RpcPollSource {
 }
 
 impl RpcPollSource {
+    /// A source polling `program_id` at `rpc_url`, up to `batch_limit`
+    /// signatures per poll. Starts from the present; use [`Self::resume_from`]
+    /// to continue from a saved cursor.
     pub fn new(rpc_url: String, program_id: Pubkey, batch_limit: usize) -> Self {
         Self {
             name: format!("rpc:{program_id}"),
@@ -105,7 +108,9 @@ impl Source for RpcPollSource {
             return Ok(Batch::new(vec![]));
         }
         // A full page means a backlog may remain; the runner should keep polling
-        // rather than sleep.
+        // rather than sleep. Until the paged-backfill helper lands this only
+        // buys one extra empty poll — the cursor still advances to the newest
+        // below, so the skipped middle isn't re-fetched (see the struct doc).
         let caught_up = sigs.len() < self.batch_limit;
         // RPC returns newest-first: remember the newest, process oldest-first.
         let newest = Signature::from_str(&sigs[0].signature)?;
@@ -134,7 +139,9 @@ impl Source for RpcPollSource {
         let cursor = Cursor::new(&RpcCursor {
             last_signature: newest.to_string(),
         })?;
-        Ok(Batch::new(out).with_cursor(cursor).caught_up(caught_up))
+        Ok(Batch::new(out)
+            .with_cursor(cursor)
+            .with_caught_up(caught_up))
     }
 }
 

@@ -20,8 +20,12 @@ const DRAIN_CAP: usize = 256;
 ///
 /// `next` awaits the next record, then drains any already-queued ones into the
 /// same batch (up to [`DRAIN_CAP`]), and returns it with no cursor — a live
-/// stream has nothing to resume. When every sender is dropped it yields empty
-/// caught-up batches, so the runner idles rather than spins.
+/// stream has nothing to resume. A non-empty batch reports `caught_up = false`
+/// so the runner loops straight back for the next batch instead of sleeping
+/// `poll_interval` — the following `recv().await` blocks until a record
+/// arrives, which paces the loop without adding latency to the live path. When
+/// every sender is dropped it yields empty `caught_up` batches, so the runner
+/// idles at `poll_interval` rather than spins.
 pub struct ChannelSource<R> {
     name: String,
     rx: mpsc::Receiver<R>,
@@ -63,7 +67,9 @@ impl<R: Send + 'static> Source for ChannelSource<R> {
                 Err(_) => break,
             }
         }
-        Ok(Batch::new(records))
+        // Non-empty: don't sleep — loop straight back into the blocking
+        // `recv().await`, which paces without throttling the live path.
+        Ok(Batch::new(records).with_caught_up(false))
     }
 }
 
@@ -80,7 +86,9 @@ mod tests {
 
         let batch = source.next().await.unwrap();
         assert_eq!(batch.records, vec![1, 2, 3]);
-        assert!(batch.caught_up);
+        // A non-empty live batch is not "caught up" — the runner loops straight
+        // back rather than sleeping poll_interval.
+        assert!(!batch.caught_up);
         assert!(batch.cursor.is_none());
     }
 

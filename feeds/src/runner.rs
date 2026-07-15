@@ -155,7 +155,7 @@ mod tests {
             // A backlog batch (caught_up = false → loop immediately) then a
             // caught-up batch.
             batches: VecDeque::from(vec![
-                Batch::new(vec![1, 2]).caught_up(false),
+                Batch::new(vec![1, 2]).with_caught_up(false),
                 Batch::new(vec![3]),
             ]),
             done: Some(done_tx),

@@ -70,11 +70,12 @@ where
 {
     async fn handle(&mut self, batch: &Batch<W::Record>) -> Result<()> {
         let mut tx = self.pool.begin().await?;
-        self.writer.write_batch(&mut tx, &batch.records).await?;
+        let written = self.writer.write_batch(&mut tx, &batch.records).await?;
         tx.commit().await?;
         if let Some(cursor) = &batch.cursor {
             self.cursors.save(&self.feed, cursor).await?;
         }
+        tracing::debug!(feed = %self.feed, written, "store sink committed batch");
         Ok(())
     }
 }
@@ -86,6 +87,8 @@ pub struct PgCursorStore {
 }
 
 impl PgCursorStore {
+    /// A cursor store over the given pool. Call [`Self::migrate`] once before
+    /// use to ensure the `feed_cursors` table exists.
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }

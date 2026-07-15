@@ -36,15 +36,17 @@ impl<R> Batch<R> {
     }
 
     /// Set whether the source has caught up to the present.
-    pub fn caught_up(mut self, caught_up: bool) -> Self {
+    pub fn with_caught_up(mut self, caught_up: bool) -> Self {
         self.caught_up = caught_up;
         self
     }
 
+    /// Whether this batch carries no records.
     pub fn is_empty(&self) -> bool {
         self.records.is_empty()
     }
 
+    /// The number of records in this batch.
     pub fn len(&self) -> usize {
         self.records.len()
     }
