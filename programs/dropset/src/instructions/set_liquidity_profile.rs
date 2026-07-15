@@ -72,6 +72,12 @@ impl SetLiquidityProfile {
                 address_eq(&vault.quote_authority, &signer_addr),
                 DropsetError::Unauthorized
             );
+            // Reject a frozen vault here even though the sibling
+            // `set_reference_price` path does not: that path's ASM kernel
+            // stays minimal (the freeze is ultimately enforced at match
+            // time, where `swap` skips frozen vaults), whereas this handler
+            // already reads the vault, so the guard is near-free and fails
+            // fast.
             require!(!vault.frozen.get(), DropsetError::VaultFrozen);
             // Per-spec rule: a vault's reference price must be
             // set before its profile is — the profile is pure ppm
@@ -82,7 +88,9 @@ impl SetLiquidityProfile {
             );
         }
 
-        // Bump market.nonce (header borrow).
+        // Bump market.nonce (header borrow). `checked_add` here — same as
+        // `swap`; the `set_reference_price` ASM kernel is the one path that
+        // `wrapping_add`s instead (see `state/market/reference_price.rs`).
         let nonce = self.market.nonce.get();
         let new_nonce = nonce.checked_add(1).ok_or(DropsetError::MathOverflow)?;
         self.market.nonce = new_nonce.into();
