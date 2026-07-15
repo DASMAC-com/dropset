@@ -26,10 +26,14 @@
 name: 'dropset-localnet'
 services:
   explorer:
+    # `.github/workflows/explorer-image.yml` builds this image (multi-arch) and
+    # pushes it to the `image:` tag below; `pull` / `up` prefer that prebuilt
+    # image so a cold localnet doesn't pay the from-source build. This `build:`
+    # is the fallback compose uses when the tag can't be pulled (offline, or a
+    # freshly-bumped version CI hasn't published yet). The explorer source ref
+    # is pinned in explorer.Dockerfile (`ARG EXPLORER_REF`); bump it and the
+    # `image:` tag together to cut a new version.
     build:
-      args:
-        # Override to move the explorer version (branch, tag, or commit SHA).
-        EXPLORER_REF: '${DROPSET_EXPLORER_REF:-master}'
       context: '.'
       dockerfile: 'explorer.Dockerfile'
     # The explorer reads localnet state client-side (the browser hits the
@@ -37,10 +41,17 @@ services:
     # reach a host-run validator at http://host.docker.internal:8899.
     extra_hosts:
     - 'host.docker.internal:host-gateway'
+    # The CI-published image localnet pulls. Bump this tag (with EXPLORER_REF
+    # in explorer.Dockerfile) in one commit to cut a new version; the workflow
+    # publishes it and localnet pulls it instead of building from source.
+    image: 'dasmac/dropset-localnet-explorer:v1'
     # Bind to loopback only — a local dev viewer, not a LAN service. Host port
     # 3100 dodges the frontend's localhost:3000; the container serves 3000.
     ports:
     - '127.0.0.1:3100:3000'
+    # Prefer a locally-cached image, else pull the tag above; the `build:`
+    # falls in only when that pull is unavailable.
+    pull_policy: 'missing'
     restart: 'unless-stopped'
   indexer:
     # Decode + persist + aggregate. Polls the host-run validator's events.

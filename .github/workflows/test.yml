@@ -70,6 +70,7 @@ jobs:
           - '!sdk/ts/**'
           - '!sdk/codama/**'
           - '!.claude/**'
+          - '!.github/workflows/explorer-image.yml'
           - '!.github/workflows/lint.yml'
           - '!.github/workflows/sdk.yml'
           - '!.github/workflows/semantic-pr.yml'

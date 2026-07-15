@@ -236,15 +236,15 @@ tui-prebuild: check-toolchain program-keypair tui-prebuild-explorer
 	cargo build -p dropset-maker-bot -p dropset-taker-bot
 
 # Warm the local explorer's Docker image so the `docker compose up` the TUI
-# runs in the background at launch is a cache hit, not a multi-minute image
-# build streaming into the log (the same class of stall the program/bot
-# prebuild kills). Guarded on a `docker` CLI so a no-Docker host (which falls
-# back to the hosted explorer) is unaffected. A `tui-prebuild` prerequisite,
-# so `make tui` warms it too.
+# runs in the background at launch is instant. `create` resolves the image the
+# same way `up` will — pull the CI-published tag, or build from source as a
+# fallback — but without starting it, and it is a no-op when the image is
+# already cached (so it never fails offline on a warm cache). Guarded on a
+# `docker` CLI so a no-Docker host (which falls back to the hosted explorer) is
+# unaffected. A `tui-prebuild` prerequisite, so `make tui` warms it too.
 tui-prebuild-explorer:
 	@if command -v docker >/dev/null 2>&1; then \
-		docker compose -f infra/localnet/docker-compose.yml \
-			build explorer; \
+		docker compose -f infra/localnet/docker-compose.yml create explorer; \
 	else echo "docker not found — skipping explorer image prebuild"; fi
 
 # Localnet control-plane TUI. Spawns its own
@@ -330,10 +330,11 @@ demo:
 # === Localnet Docker stacks ===
 
 # Localnet Docker stack: the local Solana Explorer (infra/localnet). The
-# dropset-tui control plane manages this automatically; these targets drive
-# it by hand. First `explorer` run builds the image from source (a few
-# minutes); later runs reuse the cache. Set DROPSET_EXPLORER_REF to pin the
-# explorer version (branch, tag, or commit SHA).
+# dropset-tui control plane manages this automatically; these targets drive it
+# by hand. `up` pulls the CI-published image (or builds from source as a
+# fallback, or reuses a cached one) per the compose `pull_policy`; later runs
+# reuse the cache. Pin or bump the version via the `image:` tag in
+# docker-compose.yml (with EXPLORER_REF in explorer.Dockerfile).
 explorer: check-docker
 	docker compose -f infra/localnet/docker-compose.yml up -d explorer
 explorer-down: check-docker
@@ -341,14 +342,15 @@ explorer-down: check-docker
 
 # Nuke the localnet Docker state for a fully cold start: stop and remove every
 # stack container (explorer, indexer, bots, postgres — the `taker` profile
-# included), drop its volumes and any orphans, remove the images compose built
-# locally, and prune the build cache. The container removal takes each
-# container's logs with it. Use it to validate a cold `make tui`: the next
-# launch rebuilds the explorer image from scratch, and `tui-prebuild` warms it
-# again. Pulled base images (e.g. postgres) survive `--rmi local`; run
-# `docker system prune` by hand if you want those gone too. Note the
-# `docker builder prune -f` is host-wide — it clears every project's build
-# cache on this machine, not only this stack's.
+# included), drop its volumes and any orphans, remove the untagged images
+# compose built locally (indexer + bots), and prune the build cache. The
+# container removal takes each container's logs with it. `--rmi local` removes
+# only untagged local builds, so the tagged explorer image
+# (dasmac/dropset-localnet-explorer, pulled or built) and pulled base images
+# (e.g. postgres) survive it — `tui-prebuild` then reuses the cached explorer;
+# `docker rmi` it by name (or `docker system prune`) for a fully cold explorer.
+# Note the `docker builder prune -f` is host-wide — it clears every project's
+# build cache on this machine, not only this stack's.
 clean-docker: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		--profile taker down --rmi local -v --remove-orphans

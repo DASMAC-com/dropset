@@ -37,13 +37,13 @@ browser blocks it.
 
 ## Usage
 
-The `dropset-tui` control plane owns the stack's lifecycle: it builds
-and starts the explorer in the background at launch (so it is serving
-by the time you open it) and tears it down on quit. Drive it by hand
-with:
+The `dropset-tui` control plane owns the stack's lifecycle: it pulls
+the explorer image and starts it in the background at launch (so it is
+serving by the time you open it) and tears it down on quit. Drive it by
+hand with:
 
 ```sh
-make explorer       # build (first run) + start, detached
+make explorer       # pull (or build) + start, detached
 make explorer-down  # stop and remove
 ```
 
@@ -52,12 +52,20 @@ The explorer is published on host port **3100** (the container serves
 `next dev` (`make frontend`), so the explorer and the frontend can run
 at the same time.
 
-The first build clones and compiles the explorer from source and takes
-a few minutes; later starts reuse the cached image and are instant.
+The image is prebuilt in CI (`.github/workflows/explorer-image.yml`,
+multi-arch amd64 + arm64) and published to Docker Hub, so a cold
+localnet **pulls** it in seconds rather than compiling the explorer from
+source. The from-source build is the fallback, used only when the pull
+is unavailable (offline, or a freshly-bumped version CI hasn't published
+yet); that build takes a few minutes.
 
-Pin or bump the explorer version with the `DROPSET_EXPLORER_REF`
-environment variable (a branch, tag, or full commit SHA); it defaults
-to `master`.
+Pin or bump the explorer version by editing two coupled values in one
+commit: the `image:` tag on the `explorer` service in
+`docker-compose.yml` (what localnet pulls) and `ARG EXPLORER_REF` in
+`explorer.Dockerfile` (the explorer source it is built from). The tag is
+the version identity: CI publishes a tag it has not pushed before, so a
+new source must come with a new tag — changing `EXPLORER_REF` alone,
+without bumping the tag, will not republish.
 
 Open an account against the localnet at (one line; wrapped here):
 

@@ -12,10 +12,11 @@
 //! loopback -> loopback and no browser blocks it.
 //!
 //! The explorer runs as the seed service of the localnet Docker stack
-//! (`infra/localnet/docker-compose.yml`). The TUI owns its lifecycle: built
-//! (first run) and started in the background at launch, so it is serving by
-//! the time the operator opens it, and torn down on quit — the same ownership
-//! the validator has.
+//! (`infra/localnet/docker-compose.yml`). The TUI owns its lifecycle: its
+//! image is pulled from Docker Hub (built from source only as a fallback) and
+//! the container started in the background at launch, so it is serving by the
+//! time the operator opens it, and torn down on quit — the same ownership the
+//! validator has.
 
 use crate::job::{self, Logger};
 use anyhow::{bail, Context, Result};
@@ -61,7 +62,7 @@ pub fn state_label(s: u8) -> &'static str {
 
 /// Bring the explorer up on a background thread at TUI launch, recording
 /// progress in `status` so it is serving by the time the operator opens it —
-/// built lazily the first time, reused after. Serialized via `lock` so it
+/// pulled (or built) the first time, reused after. Serialized via `lock` so it
 /// never races the "Open explorer" action's own [`ensure_running`]; streams
 /// build output into `log`.
 pub fn start_in_background(log: &Logger, repo_root: &Path, status: &AtomicU8, lock: &Mutex<()>) {
@@ -148,14 +149,21 @@ pub fn docker_available() -> bool {
         .unwrap_or(false)
 }
 
-/// Build (first run) and start the explorer container, then wait for its
-/// port. Idempotent — compose reuses the cached image and a running
-/// container, so repeat calls are cheap. Output is streamed into `log`.
+/// Start the explorer container, then wait for its port. Idempotent — the
+/// first call pulls the published image (or builds from source as a fallback)
+/// and later calls reuse the cached image and a running container, so repeat
+/// calls are cheap. Output is streamed into `log`.
 pub fn ensure_running(log: &Logger, repo_root: &Path) -> Result<()> {
     let compose = repo_root.join(COMPOSE_REL);
     if !compose.exists() {
         bail!("compose file not found at {}", compose.display());
     }
+    // `up` resolves the image itself from the compose file's `image` + `build`
+    // + `pull_policy: missing`: a locally-cached image is used as-is (so a
+    // repeat launch, and an offline one, is instant and needs no registry),
+    // an absent one is pulled from Docker Hub, and only a failed pull falls
+    // back to the from-source build. So the common path pulls rather than
+    // builds without any explicit pull/build orchestration here.
     let mut up = Command::new("docker");
     up.args(["compose", "-f"])
         .arg(&compose)
