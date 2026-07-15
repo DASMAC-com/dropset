@@ -240,10 +240,11 @@ All run in SQL over Postgres. Each names the tables it reads / writes.
   band and alert threshold.
 - **Maker-vs-taker capturability by regime** — does each dislocation
   revert intra-window (maker-capturable) or only at a discrete event
-  like the Sunday FX reopen (taker-only)? Attribute the edge across the
-  regimes above — calm, weekend / session role-flip, macro-vol spike, and
-  depeg / stress — since the split flips by regime: what a maker captures
-  in calm is a taker-only gap at the reopen and pure risk under a depeg.
+  like the Sunday FX reopen (taker-only)? Attribute the edge across
+  regimes — a calm baseline, the weekend / session role-flip, a macro-vol
+  spike, and depeg / stress — since the split flips between them: what a
+  maker captures in calm is a taker-only gap at the reopen and pure risk
+  under a depeg.
   Distinguishes a maker-viable edge from a taker-only one.
 
 ______________________________________________________________________
