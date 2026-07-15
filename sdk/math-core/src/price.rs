@@ -47,10 +47,10 @@ const SIGNIFICAND_DIGITS: i32 = 8;
 /// Decimal-place shift baked into the significand: an 8-digit
 /// significand with one digit before the implicit point represents its
 /// value scaled up by `10^(SIGNIFICAND_DIGITS − 1)`, so the encoded
-/// value is `significand × 10^(unbiased_exponent − MANTISSA_SHIFT)`.
+/// value is `significand × 10^(unbiased_exponent − SIGNIFICAND_SHIFT)`.
 /// Named so the three decode sites stay in lockstep with the TS
 /// re-impl instead of open-coding the literal `7`.
-const MANTISSA_SHIFT: i32 = SIGNIFICAND_DIGITS - 1;
+const SIGNIFICAND_SHIFT: i32 = SIGNIFICAND_DIGITS - 1;
 
 /// Smallest valid significand (8 significant digits).
 const SIGNIFICAND_MIN: u32 = 10_000_000;
@@ -301,7 +301,7 @@ impl Price {
             return u128::MAX;
         }
         let sig = self.significand() as u128;
-        let unb = self.unbiased_exponent() as i32 - MANTISSA_SHIFT;
+        let unb = self.unbiased_exponent() as i32 - SIGNIFICAND_SHIFT;
         let mut x = (base as u128).saturating_mul(sig);
         if unb >= 0 {
             for _ in 0..unb {
@@ -333,7 +333,7 @@ impl Price {
             return 0;
         }
         let sig = self.significand() as u128;
-        let unb = self.unbiased_exponent() as i32 - MANTISSA_SHIFT;
+        let unb = self.unbiased_exponent() as i32 - SIGNIFICAND_SHIFT;
         // num / den, where price = sig × 10^unb / 10^7 → unb < 0
         // means dividing by a small price (scale numerator up); unb ≥ 0
         // means dividing by a large price (scale denominator up).
@@ -394,6 +394,8 @@ impl Price {
         // Lift to `value × 10^9` so the weighted-avg integer math
         // doesn't lose sub-1.0 digits at FX scales.
         const SCALE: u64 = 1_000_000_000;
+        // `SCALE == 10^SCALE_DIGITS`; keep the two in lockstep.
+        const SCALE_DIGITS: i16 = 9;
         let v_self = self.quote_for_base(SCALE);
         let v_other = other.quote_for_base(SCALE);
         let total = w_self.saturating_add(w_other);
@@ -403,9 +405,14 @@ impl Price {
         let avg =
             (w_self.saturating_mul(v_self)).saturating_add(w_other.saturating_mul(v_other)) / total;
         let avg_u64 = avg.min(u64::MAX as u128) as u64;
-        // `value × 10^9 = sig × 10^(biased - 14)` ⟹ for `from_scaled`
-        // with input scaled by 10^9, the input "biased_exp" is `14`.
-        Self::from_scaled(avg_u64, 14).unwrap_or(Self::ZERO)
+        // The encoded value is `sig × 10^(biased − BIAS − SIGNIFICAND_SHIFT)`,
+        // so `value × 10^SCALE_DIGITS = sig × 10^(biased − BIAS −
+        // SIGNIFICAND_SHIFT + SCALE_DIGITS)`. Passing the lifted value as
+        // `from_scaled`'s significand makes its input biased exponent
+        // `BIAS + SIGNIFICAND_SHIFT − SCALE_DIGITS` (= 14) — derived here so
+        // it can't silently diverge from those three constants.
+        const AVG_BIASED_EXP: i16 = BIAS as i16 + SIGNIFICAND_SHIFT as i16 - SCALE_DIGITS;
+        Self::from_scaled(avg_u64, AVG_BIASED_EXP).unwrap_or(Self::ZERO)
     }
 
     /// Decode to `f64`. Display / diagnostics only — never used in fill
@@ -418,7 +425,7 @@ impl Price {
             return f64::INFINITY;
         }
         let sig = self.significand() as f64;
-        let shift = self.biased_exponent() as i32 - BIAS as i32 - MANTISSA_SHIFT;
+        let shift = self.biased_exponent() as i32 - BIAS as i32 - SIGNIFICAND_SHIFT;
         sig * 10f64.powi(shift)
     }
 }
