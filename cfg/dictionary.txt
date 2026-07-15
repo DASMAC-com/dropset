@@ -63,12 +63,14 @@ idempotently
 idrx
 impls
 iterm
+kalman
 kapsule
 keybinds
 keypair
 keypairs
 killswitch
 kripto
+laggy
 lamports
 libc
 litesvm
@@ -80,6 +82,7 @@ mpsc
 multisigs
 mxne
 nohup
+oanda
 paytrie
 pdas
 permissionless

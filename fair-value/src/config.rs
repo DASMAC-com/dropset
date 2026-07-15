@@ -8,7 +8,7 @@
 //! the basis band) behaves, but explicitly **not** calibrated for mainnet.
 //! Recalibration is a data edit to this one struct, never a code change; each
 //! placeholder carries a `TBD(survey)` marker so the uncalibrated knobs are
-//! greppable.
+//! easy to find.
 //!
 //! The spec is deliberate that the old fixed `[0.97, 1.03]` basis band and its
 //! "300 bps for a Monday gap" rationale were guesses and are **not** reasserted
