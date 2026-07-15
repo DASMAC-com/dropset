@@ -6,11 +6,7 @@
 
 <!-- cspell:word Fargate -->
 
-<!-- cspell:word reqwest -->
-
 <!-- cspell:word TIMESTAMPTZ -->
-
-<!-- cspell:word upserts -->
 
 # Dropset Data Feeds — Ingestion Framework Design
 

@@ -37,7 +37,7 @@ async fn start_pg() -> (ContainerAsync<Postgres>, PgPool) {
 }
 
 #[tokio::test]
-#[ignore = "requires a Docker daemon (Postgres testcontainer)"]
+#[ignore = "requires a Docker daemon (Postgres container)"]
 async fn cursor_store_round_trips_and_overwrites() {
     let (_pg, pool) = start_pg().await;
     let cursors = PgCursorStore::new(pool.clone());
@@ -82,7 +82,7 @@ impl StoreWriter for PingWriter {
 }
 
 #[tokio::test]
-#[ignore = "requires a Docker daemon (Postgres testcontainer)"]
+#[ignore = "requires a Docker daemon (Postgres container)"]
 async fn store_sink_persists_batch_and_advances_cursor_idempotently() {
     let (_pg, pool) = start_pg().await;
     let cursors = PgCursorStore::new(pool.clone());
