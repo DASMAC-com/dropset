@@ -48,7 +48,24 @@ sqlx = { version = "0.8", default-features = false, features = [
 ], optional = true }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["test-util"] }
+anyhow = "1"
+async-trait = "0.1"
+serde_json = "1"
+# The store path is exercised against a real Postgres in a throwaway
+# container (feeds/tests/store_postgres.rs), so the migration, the
+# `feed_cursors` upsert, and the store sink's cursor-advance are covered end
+# to end. Those tests are `#[ignore]`d — they need a Docker daemon; run them
+# with `cargo test -p dropset-feeds --features store -- --ignored`.
+sqlx = { version = "0.8", default-features = false, features = [
+  "runtime-tokio",
+  "tls-rustls",
+  "postgres",
+  "macros",
+  "migrate",
+  "json",
+] }
+testcontainers-modules = { version = "0.11", features = ["postgres"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
 
 [features]
 default = []
