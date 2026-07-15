@@ -1,7 +1,6 @@
 .PHONY: all
 .PHONY: bots-down
 .PHONY: bots-up
-.PHONY: browser-3000
 .PHONY: check-anchor
 .PHONY: check-conformance-vectors
 .PHONY: check-docker
@@ -252,7 +251,10 @@ tui-prebuild-explorer:
 # solana-test-validator (ledger in a temp dir), so it needs no running
 # validator first — `tui-prebuild` handles the toolchain gate and warms every
 # build the panel will need. Named `tui` (not `localnet`) because the same
-# panel will later drive mainnet too.
+# panel will later drive mainnet too. Passes `--bootstrap` by default so the
+# panel auto-runs "Bootstrap all" once the localnet is up; override with
+# `make tui TUI_ARGS=` for the step-by-step manual control plane.
+TUI_ARGS ?= --bootstrap
 tui: tui-prebuild
 	cargo run -p dropset-tui -- $(TUI_ARGS)
 
@@ -265,21 +267,29 @@ teardown:
 	cargo run -p dropset-tui --bin dropset-teardown -- \
 		$(if $(WALLET),--wallet $(WALLET)) $(ARGS)
 
+# Open the default browser on a localhost port once it accepts connections, as
+# a silenced background job: `$(call open-browser,<port>)`. Shared by the dev
+# server targets so the wait-then-open block lives in one place.
+define open-browser
+@( until nc -z localhost $(1) 2>/dev/null; do sleep 0.2; done; \
+	opener=$$(command -v open || command -v xdg-open) \
+		&& $$opener http://localhost:$(1) ) >/dev/null 2>&1 &
+endef
+
 # Run next dev and open the browser once it's accepting connections.
 frontend: check-pnpm
 	cd frontend && pnpm install
-	@( until nc -z localhost 3000 2>/dev/null; do sleep 0.2; done; \
-		opener=$$(command -v open || command -v xdg-open) \
-			&& $$opener http://localhost:3000 ) &
+	$(call open-browser,3000)
 	cd frontend && pnpm dev
 
-# Run the frontend against a local validator (open http://localhost:3000): the
-# localnet cluster + local RPC/WS, overriding the mainnet endpoints in
+# Run the frontend against a local validator and open the browser once it's up:
+# the localnet cluster + local RPC/WS, overriding the mainnet endpoints in
 # .env.local (a process env var wins over .env files in Next). Assumes a
 # validator is up with the markets seeded, which the `tui` control plane does;
 # run `make tui` alongside this, or use `make demo` to launch both.
 frontend-localnet: check-pnpm
 	cd frontend && pnpm install
+	$(call open-browser,3000)
 	cd frontend && NEXT_PUBLIC_CLUSTER=localnet \
 		NEXT_PUBLIC_RPC_URL=http://127.0.0.1:8899 \
 		NEXT_PUBLIC_WS_URL=ws://127.0.0.1:8900 pnpm dev
@@ -288,18 +298,8 @@ frontend-localnet: check-pnpm
 # open the browser once it's accepting connections.
 decks: check-pnpm
 	cd decks && pnpm install
-	@( until nc -z localhost 3300 2>/dev/null; do sleep 0.2; done; \
-		opener=$$(command -v open || command -v xdg-open) \
-			&& $$opener http://localhost:3300 ) &
+	$(call open-browser,3300)
 	cd decks && pnpm dev
-
-# Open the browser on the frontend once :3000 accepts connections, in a
-# silenced background job. `frontend-localnet` (unlike `frontend`) doesn't
-# open one, so the demo would otherwise leave the operator to do it by hand.
-browser-3000:
-	@( until nc -z localhost 3000 2>/dev/null; do sleep 0.2; done; \
-		opener=$$(command -v open || command -v xdg-open) \
-			&& $$opener http://localhost:3000 ) >/dev/null 2>&1 &
 
 # The whole localnet demo in one command (`make tui` already runs the
 # control-plane TUI on its own localnet; this adds the web frontend): the TUI
@@ -308,24 +308,24 @@ browser-3000:
 # TUI stops the frontend too; the frontend retries until the validator is up,
 # so start order doesn't matter. Cleanup runs a broad `pkill -f "next dev"`,
 # so it also stops any unrelated next dev you have running (dev-only target).
-# The browser auto-opens via the `browser-3000` prerequisite above.
+# The browser auto-opens because `frontend-localnet` opens it by default.
 #
 # The TUI runs on the alternate screen, so the background frontend's stdout
 # would paint over it — `next dev`'s output is redirected to a log file, and
 # the browser-opener job is silenced, so only the TUI draws to the terminal.
 # The frontend log is written to $(FRONTEND_LOG) while the demo runs.
 #
-# Unlike `make tui` (the step-by-step control plane), the demo is turnkey: it
-# passes `--bootstrap`, so the TUI auto-runs "Bootstrap all" once the localnet
-# is up. Wiping or tearing down does not re-bootstrap on its own — re-run it
-# from the menu.
+# Both halves are turnkey by default: `frontend-localnet` opens the browser and
+# `tui` passes `--bootstrap`, so the TUI auto-runs "Bootstrap all" once the
+# localnet is up. Wiping or tearing down does not re-bootstrap on its own —
+# re-run it from the menu.
 FRONTEND_LOG ?= /tmp/dropset-frontend.log
-demo: browser-3000
+demo:
 	@echo "frontend logs → $(FRONTEND_LOG) (kept off the TUI screen)"
 	@$(MAKE) --no-print-directory frontend-localnet \
 		>$(FRONTEND_LOG) 2>&1 & \
 	trap 'kill %1 2>/dev/null; pkill -f "next dev"' INT TERM EXIT; \
-	$(MAKE) --no-print-directory tui TUI_ARGS=--bootstrap
+	$(MAKE) --no-print-directory tui
 
 # === Localnet Docker stacks ===
 
