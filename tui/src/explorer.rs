@@ -149,36 +149,26 @@ pub fn docker_available() -> bool {
         .unwrap_or(false)
 }
 
-/// Build a `docker compose -f <compose> <args…>` command rooted at the repo.
-fn compose_cmd(compose: &Path, repo_root: &Path, args: &[&str]) -> Command {
-    let mut cmd = Command::new("docker");
-    cmd.args(["compose", "-f"])
-        .arg(compose)
-        .args(args)
-        .current_dir(repo_root);
-    cmd
-}
-
-/// Pull the published explorer image (building from source only as a fallback),
-/// start the container, then wait for its port. Idempotent — compose reuses a
-/// cached image and a running container, so repeat calls are cheap. Output is
-/// streamed into `log`.
+/// Start the explorer container, then wait for its port. Idempotent — the
+/// first call pulls the published image (or builds from source as a fallback)
+/// and later calls reuse the cached image and a running container, so repeat
+/// calls are cheap. Output is streamed into `log`.
 pub fn ensure_running(log: &Logger, repo_root: &Path) -> Result<()> {
     let compose = repo_root.join(COMPOSE_REL);
     if !compose.exists() {
         bail!("compose file not found at {}", compose.display());
     }
-    // Prefer the CI-published image: pulling it is quiet and quick, where a
-    // from-source build is minutes long and used to stream into this log. If
-    // the pull fails — offline, or the pinned tag isn't published yet — fall
-    // back to building from source (the compose file's `build:` section).
-    let pull = compose_cmd(&compose, repo_root, &["pull", SERVICE]);
-    if job::run_streaming(log, "docker compose pull explorer", pull).is_err() {
-        log.log("Explorer image unavailable to pull — building from source…");
-        let build = compose_cmd(&compose, repo_root, &["build", SERVICE]);
-        job::run_streaming(log, "docker compose build explorer", build)?;
-    }
-    let up = compose_cmd(&compose, repo_root, &["up", "-d", SERVICE]);
+    // `up` resolves the image itself from the compose file's `image` + `build`
+    // + `pull_policy: missing`: a locally-cached image is used as-is (so a
+    // repeat launch, and an offline one, is instant and needs no registry),
+    // an absent one is pulled from Docker Hub, and only a failed pull falls
+    // back to the from-source build. So the common path pulls rather than
+    // builds without any explicit pull/build orchestration here.
+    let mut up = Command::new("docker");
+    up.args(["compose", "-f"])
+        .arg(&compose)
+        .args(["up", "-d", SERVICE])
+        .current_dir(repo_root);
     job::run_streaming(log, "docker compose up -d explorer", up)?;
     wait_for_port(log)
 }

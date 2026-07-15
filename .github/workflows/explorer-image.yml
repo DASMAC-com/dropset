@@ -10,8 +10,16 @@
 # skips when that tag is already published, and otherwise pushes it + `latest`.
 # On a pull_request it builds both arches without pushing, so a Dockerfile /
 # version change is validated before merge.
+#
+# Requires repo secrets DOCKERHUB_USERNAME + DOCKERHUB_TOKEN (a Read/Write
+# access token) for the push; the target Docker Hub repo must be public, since
+# localnet pulls it unauthenticated and the skip-if-published check inspects
+# the manifest anonymously.
 concurrency:
-  cancel-in-progress: true
+  # Cancel a superseded PR-validation run, but never a main / dispatch publish
+  # mid-push.
+  cancel-in-progress: >-
+    ${{ github.event_name == 'pull_request' }}
   group: 'explorer-image-${{ github.ref }}'
 jobs:
   explorer-image:

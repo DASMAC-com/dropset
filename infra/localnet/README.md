@@ -62,9 +62,10 @@ yet); that build takes a few minutes.
 Pin or bump the explorer version by editing two coupled values in one
 commit: the `image:` tag on the `explorer` service in
 `docker-compose.yml` (what localnet pulls) and `ARG EXPLORER_REF` in
-`explorer.Dockerfile` (the explorer source it is built from). CI
-republishes on a change to either, so the pushed image matches its
-pinned source.
+`explorer.Dockerfile` (the explorer source it is built from). The tag is
+the version identity: CI publishes a tag it has not pushed before, so a
+new source must come with a new tag — changing `EXPLORER_REF` alone,
+without bumping the tag, will not republish.
 
 Open an account against the localnet at (one line; wrapped here):
 

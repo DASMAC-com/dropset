@@ -22,8 +22,10 @@ ARG NODE_VERSION=22
 FROM node:${NODE_VERSION}-bookworm-slim AS build
 # Pin the explorer source. EXPLORER_REF takes a branch, tag, or full commit
 # SHA; it defaults to a pinned commit so a published image tag is reproducible.
-# Bump it together with the `image:` tag in docker-compose.yml (CI republishes
-# on a change to either), and Docker's layer cache busts only when it changes.
+# Bump it together with the `image:` tag in docker-compose.yml. CI publishes a
+# tag it has not pushed before, so a new version needs a new tag; changing this
+# ref alone (tag unchanged) will not republish. Docker's layer cache busts only
+# when this ref changes.
 # Override with `--build-arg EXPLORER_REF=<ref>` for a one-off local build.
 ARG EXPLORER_REPO=https://github.com/solana-foundation/explorer.git
 ARG EXPLORER_REF=8a52fb97096db7e57b8fbf0890a48ee7c1cda22f
