@@ -2,10 +2,16 @@
 //!
 //! Sets `Vault.frozen = true`. The vault stays on the active DLL, so
 //! existing materialized levels keep matching until their `expires_at`,
-//! but it can no longer be re-quoted: `set_reference_price` /
-//! `set_liquidity_profile` reject frozen vaults, and `realize_in_place`
-//! pins the HWM at freeze time. Per the spec's **FreezeVault**, there is
-//! no "unfreeze" — to re-enter, the same leader opens a fresh vault.
+//! but the freeze takes effect the first instruction after it lands:
+//! `swap`'s matching walk skips frozen vaults entirely, so no new fills
+//! accrue against them — that match-time skip is where the freeze is
+//! actually enforced. Of the two quote-write paths only
+//! `set_liquidity_profile` also rejects a frozen vault outright;
+//! `set_reference_price` does not re-read `frozen`, since its kernel /
+//! `entrypoint.s` ASM path is kept minimal for CU and re-quoting a
+//! frozen vault is harmless (matching skips it). `realize_in_place`
+//! pins the HWM at freeze time. Per the spec's **FreezeVault**, there
+//! is no "unfreeze" — to re-enter, the same leader opens a fresh vault.
 //!
 //! Admin-only: authorized via the registry admin set, mirroring
 //! `set_outside_deposits_approved`. Freezing an already-frozen vault is

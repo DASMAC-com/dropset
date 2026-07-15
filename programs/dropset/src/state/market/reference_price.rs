@@ -95,7 +95,10 @@ const _: () = assert!(RP_QUOTE_SLOT_OFF == 12);
 /// domain guard is that it equals the target vault's `quote_authority`
 /// (per the architecture spec's **SetReferencePrice**, price / slot
 /// values are stored raw — matching skips an invalid price, so no
-/// write-time validation is needed).
+/// write-time validation is needed). This kernel deliberately does *not*
+/// reject a frozen vault (unlike `set_liquidity_profile`): the freeze is
+/// enforced at match time — `swap` skips frozen vaults — and re-stamping
+/// one is harmless, so the ASM path stays minimal by omitting the check.
 ///
 /// On any domain failure it returns an [`err`] code with `data`
 /// unmodified: every check runs before the nonce is bumped, so a rejected
@@ -134,6 +137,8 @@ pub fn stamp_reference_price(
     // add: the nonce is a u64 monotonic counter that can't overflow in any
     // realistic horizon, and the ASM path can't cheaply raise a custom
     // overflow error — wrapping keeps the two implementations identical.
+    // This is the deliberate outlier: the other two nonce-bumping paths
+    // (`set_liquidity_profile`, `swap`) `checked_add` and reject overflow.
     let nonce = read_u64(data, NONCE_OFF);
     let stamp = nonce | FLUSH_BIT;
     write_u64(data, NONCE_OFF, nonce.wrapping_add(1));
