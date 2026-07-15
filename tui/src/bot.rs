@@ -154,12 +154,17 @@ pub fn taker_command(repo_root: &Path, address: &Pubkey, rpc_url: &str) -> Comma
 ///
 /// The stale-binary hazard the cargo path guarded against — an old binary
 /// (built against a superseded `MarketHeader` size) decoding a current market
-/// at the wrong offsets and dying with `SectorOverflow` — is instead closed by
-/// the prebuild: the same `make tui` that launches the panel rebuilds the bots
-/// first, so the binary on disk matches the deployed program. When it is absent
-/// (someone ran `cargo run -p dropset-tui` directly, skipping the prebuild), or
-/// a custom `CARGO_TARGET_DIR` moves it, fall back to `cargo run`, which builds
-/// and runs a current binary — correct, just without the fast path.
+/// at the wrong offsets and dying with `SectorOverflow` — is closed by the
+/// prebuild: the same `make tui` that launches the panel rebuilds the bots
+/// first, so the binary on disk matches the deployed program. The cargo
+/// fallback only fires when the binary is **absent** (a direct
+/// `cargo run -p dropset-tui`, skipping the prebuild) or a custom
+/// `CARGO_TARGET_DIR` moves it — it rebuilds and runs a current binary. The
+/// one gap it does *not* cover: a binary left over from an earlier `make tui`
+/// is exec'd as-is, so editing bot/program sources and then launching via a
+/// bare `cargo run -p dropset-tui` (no fresh prebuild) can run it stale. The
+/// standard `make tui` / `make demo` flow rebuilds first, so this only bites a
+/// deliberately-skipped prebuild.
 fn bot_command(repo_root: &Path, bin_name: &str, args: &[&str]) -> Command {
     let built = repo_root.join("target").join("debug").join(bin_name);
     let mut cmd = if built.exists() {

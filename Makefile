@@ -293,6 +293,14 @@ decks: check-pnpm
 			&& $$opener http://localhost:3300 ) &
 	cd decks && pnpm dev
 
+# Open the browser on the frontend once :3000 accepts connections, in a
+# silenced background job. `frontend-localnet` (unlike `frontend`) doesn't
+# open one, so the demo would otherwise leave the operator to do it by hand.
+browser-3000:
+	@( until nc -z localhost 3000 2>/dev/null; do sleep 0.2; done; \
+		opener=$$(command -v open || command -v xdg-open) \
+			&& $$opener http://localhost:3000 ) >/dev/null 2>&1 &
+
 # The whole localnet demo in one command (`make tui` already runs the
 # control-plane TUI on its own localnet; this adds the web frontend): the TUI
 # in the foreground (it spawns the validator and seeds the markets) plus the
@@ -300,7 +308,7 @@ decks: check-pnpm
 # TUI stops the frontend too; the frontend retries until the validator is up,
 # so start order doesn't matter. Cleanup runs a broad `pkill -f "next dev"`,
 # so it also stops any unrelated next dev you have running (dev-only target).
-# The browser auto-opens via the `browser-3000` prerequisite below.
+# The browser auto-opens via the `browser-3000` prerequisite above.
 #
 # The TUI runs on the alternate screen, so the background frontend's stdout
 # would paint over it — `next dev`'s output is redirected to a log file, and
@@ -311,15 +319,6 @@ decks: check-pnpm
 # passes `--bootstrap`, so the TUI auto-runs "Bootstrap all" once the localnet
 # is up. Wiping or tearing down does not re-bootstrap on its own — re-run it
 # from the menu.
-
-# Open the browser on the frontend once :3000 accepts connections, in a
-# silenced background job. `frontend-localnet` (unlike `frontend`) doesn't
-# open one, so the demo would otherwise leave the operator to do it by hand.
-browser-3000:
-	@( until nc -z localhost 3000 2>/dev/null; do sleep 0.2; done; \
-		opener=$$(command -v open || command -v xdg-open) \
-			&& $$opener http://localhost:3000 ) >/dev/null 2>&1 &
-
 FRONTEND_LOG ?= /tmp/dropset-frontend.log
 demo: browser-3000
 	@echo "frontend logs → $(FRONTEND_LOG) (kept off the TUI screen)"
@@ -347,7 +346,9 @@ explorer-down: check-docker
 # container's logs with it. Use it to validate a cold `make tui`: the next
 # launch rebuilds the explorer image from scratch, and `tui-prebuild` warms it
 # again. Pulled base images (e.g. postgres) survive `--rmi local`; run
-# `docker system prune` by hand if you want those gone too.
+# `docker system prune` by hand if you want those gone too. Note the
+# `docker builder prune -f` is host-wide — it clears every project's build
+# cache on this machine, not only this stack's.
 clean-docker: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		--profile taker down --rmi local -v --remove-orphans

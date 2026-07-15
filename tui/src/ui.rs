@@ -24,7 +24,7 @@ use std::sync::atomic::Ordering;
 /// Number of grouped control rows the "runtime actions" pane renders (bots,
 /// swap, eCLOB peg, eCLOB shape, view) — its box height is this plus the
 /// top/bottom borders.
-const OTHER_ACTIONS_ROWS: u16 = 5;
+const RUNTIME_ACTIONS_ROWS: u16 = 5;
 
 /// Render the whole dashboard.
 pub fn draw(f: &mut Frame<'_>, app: &mut App) {
@@ -65,13 +65,13 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
         Direction::Vertical,
         [
             Constraint::Length(menu_height),
-            Constraint::Length(OTHER_ACTIONS_ROWS + 2),
+            Constraint::Length(RUNTIME_ACTIONS_ROWS + 2),
             Constraint::Min(3),
         ],
     )
     .areas(left_area);
     draw_menu(f, app, menu_area);
-    draw_other_actions(f, app, other_area);
+    draw_runtime_actions(f, app, other_area);
     draw_alerts(f, app, alerts_area);
     let [accounts_area, cu_area] = Layout::new(
         Direction::Vertical,
@@ -253,12 +253,12 @@ fn menu_item(i: usize, action: Action, phase: Phase, next: Option<Action>) -> Li
 /// controls that aren't part of the numbered bootstrap lifecycle — bot toggles,
 /// the swap (with its current amount and side), the eCLOB peg / reshape
 /// controls (each annotated with its step size), and the view keys. This pane
-/// is the single home for these runtime controls; the footer carries only menu
-/// navigation, so nothing here is duplicated there. Grouped by kind with a dim
-/// tag. The market-scoped groups (swap, eCLOB) dim when no live vault is
-/// selected, mirroring how the setup menu greys steps that can't run yet. Keep
-/// the line count in sync with [`OTHER_ACTIONS_ROWS`], which sizes the box.
-fn draw_other_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
+/// is the single on-screen home for these runtime controls. Grouped by kind
+/// with a dim tag. The market-scoped groups (swap, eCLOB) dim when no live
+/// vault is selected, mirroring how the setup menu greys steps that can't run
+/// yet. Keep the line count in sync with [`RUNTIME_ACTIONS_ROWS`], which sizes
+/// the box.
+fn draw_runtime_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
     let ready = app.chain.phase() == Phase::Ready;
     let tag = |s: &'static str| Span::styled(format!("{s:<6}"), Style::new().fg(Color::DarkGray));
     let live = Style::new().fg(Color::Gray);
@@ -271,8 +271,8 @@ fn draw_other_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
 
     // The swap row doubles as the amount input: while the taker is typing a new
     // amount (`a`), it echoes the digits with a block cursor instead of the
-    // static control hint, so the input happens here in the runtime pane rather
-    // than hijacking the footer.
+    // static control hint, so the input happens inline on this row rather than
+    // in a separate prompt.
     let swap_line = match &app.amount_input {
         Some(buf) => Line::from(vec![
             tag("swap"),
