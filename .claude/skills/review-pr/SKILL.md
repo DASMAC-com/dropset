@@ -446,6 +446,27 @@ PR-authoring **writes** (`create_pull_request`,
    700k+ input for facts it already had. The same budget and
    negative apply to the step-6 cross-check below.
 
+   **Hand each lens the module map you already built.** If
+   the implement phase already produced a file→symbol map of
+   the touched area — an `Explore` survey, or a map the main
+   loop assembled while writing the change — pass it
+   **inline** to the lenses that must reason about the
+   surrounding code, the **correctness** lens above all. On a
+   concurrency- or invariant-heavy diff, correctness
+   genuinely needs the surrounding modules to check a
+   shared-state invariant, and it has re-derived that map
+   from scratch (one run hit 923k input / 12 turns on a
+   944-line TUI diff) despite the "read each file once" rule.
+   Feeding it the map it would otherwise rebuild lets you
+   hold its budget **tighter**: state an explicit low turn
+   cap (≈6 turns) in its brief, since with the map in hand it
+   should be *adjudicating*, not surveying. This is distinct
+   from scaling the lens *count* down for an extraction/move
+   diff (above) — here the lens must run at full depth; the
+   map just spares it the re-survey. When no such map exists,
+   don't manufacture one for this — the lens reads what it
+   needs once, per the budget above.
+
    **Scale the fan-out to the diff.** The full lens set
    below plus the step-6 cross-check is the right spend for
    a substantial diff with real new logic (a new
@@ -618,6 +639,43 @@ PR-authoring **writes** (`create_pull_request`,
      manifest**, fold or skip the CI-skip-list and
      audit-registry checks (nothing new for them to learn).
 
+   **Standing suppressions — drop these before emitting.**
+   Give every lens a short repo-specific "do NOT flag" list
+   so it discards known-noise findings *before* they reach
+   the cross-check — cheaper than refuting them downstream (a
+   recent security run spent 148.8k only to flag a
+   pre-existing non-saturating `pow` on trusted decimals). Do
+   **not** flag:
+
+   - **pre-existing code the diff doesn't touch** — judge the
+     `+`/`-` lines and their immediate context, not the
+     surrounding file's existing choices;
+   - **tuning constants / threshold values or their
+     "why this value" comments** — thresholds move during
+     calibration and aren't the diff's concern;
+   - **an assertion that "could be tighter"** when the
+     existing assertion already covers the behavior under
+     test;
+   - **harmless redundancy that aids readability** (an
+     explicit match arm, a clarifying local binding) — don't
+     demand it be collapsed;
+   - **consistency-only nits** ("wrap X the way Y is
+     guarded") when both forms are already correct.
+
+   The list is Rust/Solana/TS-flavored on purpose; it is
+   **not** a free pass to skip hard findings — a real bug that
+   happens to sit on a suppressed *line* is still a finding.
+
+   **Pre-emit gate — quote the changed line, or drop it.**
+   Tell every lens (and the step-6 cross-check) that each
+   finding must quote the exact `+`/`-` diff line it rests
+   on; a finding that can't cite a concrete changed line is
+   **dropped, not emitted**. This kills the speculative
+   findings the cross-check would otherwise have to refute
+   (the ~676.7k re-derivation rounds). Adopt the principle
+   only — **no** numeric confidence scale; severity stays the
+   existing **blocking** / **warning** / **nit**.
+
    Spawn parallel sub-agents via the `Agent` tool
    (single message, multiple calls) to review the
    diff — each with the brief above prepended. At
@@ -690,9 +748,11 @@ PR-authoring **writes** (`create_pull_request`,
      (the safe direction), never under-runs.
 
    Each sub-agent must return findings with file
-   path, line number, severity (**blocking** /
-   **warning** / **nit**), and a one-line
-   rationale.
+   path, line number, **the exact `+`/`-` diff line the
+   finding rests on** (the pre-emit gate above — drop any
+   finding it can't tie to a concrete changed line),
+   severity (**blocking** / **warning** / **nit**), and a
+   one-line rationale.
 
 1. **Adversarial cross-check.** (Skipped for a trivial
    diff that took the scaled-down path above.) Spawn a fresh
@@ -707,6 +767,10 @@ PR-authoring **writes** (`create_pull_request`,
      Flag false positives.
    - Identify issues the first pass missed.
    - Push back on rationale that doesn't hold up.
+   - Apply the **pre-emit gate** to its own new findings
+     too: quote the exact `+`/`-` diff line, or drop it —
+     and drop any inherited finding that cites no concrete
+     changed line.
 
    **Challenge from what it was given, not by re-deriving
    the codebase.** The cross-check's inputs are the
