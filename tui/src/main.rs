@@ -27,7 +27,7 @@ fn main() -> Result<()> {
         explorer_state: Arc::new(AtomicU8::new(explorer::state::STARTING)),
         explorer_lock: Arc::new(Mutex::new(())),
     };
-    app::App::new(ctx)?.run()
+    app::App::new(ctx)?.run(has_flag("--bootstrap"))
 }
 
 /// Parse `--wallet <path>` / `-w <path>`, or a single positional path.
@@ -42,4 +42,10 @@ fn parse_wallet_arg() -> Option<String> {
         }
     }
     None
+}
+
+/// Whether `flag` was passed — the turnkey `make demo` path passes
+/// `--bootstrap` so the TUI auto-runs "Bootstrap all" once at launch.
+fn has_flag(flag: &str) -> bool {
+    std::env::args().skip(1).any(|a| a == flag)
 }

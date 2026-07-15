@@ -1,6 +1,7 @@
 .PHONY: all
 .PHONY: bots-down
 .PHONY: bots-up
+.PHONY: browser-3000
 .PHONY: check-anchor
 .PHONY: check-conformance-vectors
 .PHONY: check-docker
@@ -10,9 +11,11 @@
 .PHONY: check-toolchain
 .PHONY: check-wasm
 .PHONY: clean
+.PHONY: clean-docker
 .PHONY: conformance-vectors
 .PHONY: debugger
 .PHONY: decks
+.PHONY: demo
 .PHONY: explorer
 .PHONY: explorer-down
 .PHONY: frontend
@@ -22,7 +25,6 @@
 .PHONY: indexer-up
 .PHONY: install-anchor-v2
 .PHONY: lint
-.PHONY: localnet
 .PHONY: program
 .PHONY: program-keypair
 .PHONY: program-no-teardown
@@ -39,6 +41,7 @@
 .PHONY: tools-tests
 .PHONY: tui
 .PHONY: tui-prebuild
+.PHONY: tui-prebuild-explorer
 .PHONY: wasm
 
 all: lint test
@@ -226,11 +229,24 @@ sdk-test: check-pnpm
 # building them here means the spawned bot is always current with the just-
 # built program's account layout, closing the stale-binary hazard where an
 # old bot decodes a current market against a superseded `MarketHeader` size
-# and dies with `SectorOverflow`). After `make clean && make tui`, every
-# in-TUI command runs without further building.
-tui-prebuild: check-toolchain program-keypair
+# and dies with `SectorOverflow`). The `tui-prebuild-explorer` prerequisite
+# warms the explorer's Docker image too, so after `make clean && make tui`
+# every in-TUI command runs without building.
+tui-prebuild: check-toolchain program-keypair tui-prebuild-explorer
 	anchor keys sync && anchor build --no-idl
 	cargo build -p dropset-maker-bot -p dropset-taker-bot
+
+# Warm the local explorer's Docker image so the `docker compose up` the TUI
+# runs in the background at launch is a cache hit, not a multi-minute image
+# build streaming into the log (the same class of stall the program/bot
+# prebuild kills). Guarded on a `docker` CLI so a no-Docker host (which falls
+# back to the hosted explorer) is unaffected. A `tui-prebuild` prerequisite,
+# so `make tui` warms it too.
+tui-prebuild-explorer:
+	@if command -v docker >/dev/null 2>&1; then \
+		docker compose -f infra/localnet/docker-compose.yml \
+			build explorer; \
+	else echo "docker not found — skipping explorer image prebuild"; fi
 
 # Localnet control-plane TUI. Spawns its own
 # solana-test-validator (ledger in a temp dir), so it needs no running
@@ -238,7 +254,7 @@ tui-prebuild: check-toolchain program-keypair
 # build the panel will need. Named `tui` (not `localnet`) because the same
 # panel will later drive mainnet too.
 tui: tui-prebuild
-	cargo run -p dropset-tui
+	cargo run -p dropset-tui -- $(TUI_ARGS)
 
 # Headless rent reclamation — the same teardown the TUI's "Teardown & reclaim"
 # action runs, with no UI. Defaults to localnet; pass WALLET to override the
@@ -261,7 +277,7 @@ frontend: check-pnpm
 # localnet cluster + local RPC/WS, overriding the mainnet endpoints in
 # .env.local (a process env var wins over .env files in Next). Assumes a
 # validator is up with the markets seeded, which the `tui` control plane does;
-# run `make tui` alongside this, or use `make localnet` to launch both.
+# run `make tui` alongside this, or use `make demo` to launch both.
 frontend-localnet: check-pnpm
 	cd frontend && pnpm install
 	cd frontend && NEXT_PUBLIC_CLUSTER=localnet \
@@ -277,16 +293,39 @@ decks: check-pnpm
 			&& $$opener http://localhost:3300 ) &
 	cd decks && pnpm dev
 
-# The whole localnet demo in one command: the TUI control plane in the
-# foreground (it spawns the validator and seeds the markets) plus the
+# Open the browser on the frontend once :3000 accepts connections, in a
+# silenced background job. `frontend-localnet` (unlike `frontend`) doesn't
+# open one, so the demo would otherwise leave the operator to do it by hand.
+browser-3000:
+	@( until nc -z localhost 3000 2>/dev/null; do sleep 0.2; done; \
+		opener=$$(command -v open || command -v xdg-open) \
+			&& $$opener http://localhost:3000 ) >/dev/null 2>&1 &
+
+# The whole localnet demo in one command (`make tui` already runs the
+# control-plane TUI on its own localnet; this adds the web frontend): the TUI
+# in the foreground (it spawns the validator and seeds the markets) plus the
 # localnet frontend in the background, pointed at that validator. Quitting the
 # TUI stops the frontend too; the frontend retries until the validator is up,
 # so start order doesn't matter. Cleanup runs a broad `pkill -f "next dev"`,
 # so it also stops any unrelated next dev you have running (dev-only target).
-localnet:
-	@$(MAKE) --no-print-directory frontend-localnet & \
+# The browser auto-opens via the `browser-3000` prerequisite above.
+#
+# The TUI runs on the alternate screen, so the background frontend's stdout
+# would paint over it — `next dev`'s output is redirected to a log file, and
+# the browser-opener job is silenced, so only the TUI draws to the terminal.
+# The frontend log is written to $(FRONTEND_LOG) while the demo runs.
+#
+# Unlike `make tui` (the step-by-step control plane), the demo is turnkey: it
+# passes `--bootstrap`, so the TUI auto-runs "Bootstrap all" once the localnet
+# is up. Wiping or tearing down does not re-bootstrap on its own — re-run it
+# from the menu.
+FRONTEND_LOG ?= /tmp/dropset-frontend.log
+demo: browser-3000
+	@echo "frontend logs → $(FRONTEND_LOG) (kept off the TUI screen)"
+	@$(MAKE) --no-print-directory frontend-localnet \
+		>$(FRONTEND_LOG) 2>&1 & \
 	trap 'kill %1 2>/dev/null; pkill -f "next dev"' INT TERM EXIT; \
-	$(MAKE) --no-print-directory tui
+	$(MAKE) --no-print-directory tui TUI_ARGS=--bootstrap
 
 # === Localnet Docker stacks ===
 
@@ -299,6 +338,21 @@ explorer: check-docker
 	docker compose -f infra/localnet/docker-compose.yml up -d explorer
 explorer-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml down
+
+# Nuke the localnet Docker state for a fully cold start: stop and remove every
+# stack container (explorer, indexer, bots, postgres — the `taker` profile
+# included), drop its volumes and any orphans, remove the images compose built
+# locally, and prune the build cache. The container removal takes each
+# container's logs with it. Use it to validate a cold `make tui`: the next
+# launch rebuilds the explorer image from scratch, and `tui-prebuild` warms it
+# again. Pulled base images (e.g. postgres) survive `--rmi local`; run
+# `docker system prune` by hand if you want those gone too. Note the
+# `docker builder prune -f` is host-wide — it clears every project's build
+# cache on this machine, not only this stack's.
+clean-docker: check-docker
+	docker compose -f infra/localnet/docker-compose.yml \
+		--profile taker down --rmi local -v --remove-orphans
+	docker builder prune -f
 
 # Localnet indexer stack: Postgres + the event indexer worker + the /v1 API
 # (infra/localnet, docs/indexer.md §8). Needs a running validator (the tui or

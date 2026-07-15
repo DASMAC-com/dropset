@@ -259,17 +259,101 @@ pub fn create_pair_mints(
     Ok((base.pubkey(), quote.pubkey()))
 }
 
+/// Create every pair's shared quote mint once, up front, deduped by address.
+/// All FX pairs quote in the same fixed USDC mint, and [`create_pair_mints`]'
+/// underlying [`chain::create_mint`] is existence-checked but *not*
+/// concurrency-safe — two threads creating the same mint would both find it
+/// absent and one would fail with "account already in use". So the parallel
+/// per-market bootstrap pre-creates the shared quote mint(s) here, sequentially,
+/// leaving each market to create only its unique base mint concurrently. The
+/// dedup keeps this correct if a future pair ever quotes in something other
+/// than USDC.
+pub fn ensure_quote_mints(
+    client: &RpcClient,
+    wallet: &Keypair,
+    repo_root: &Path,
+    log: &Logger,
+) -> Result<()> {
+    let mut seen = std::collections::HashSet::new();
+    for config in PAIRS {
+        let quote = load_key(repo_root, config.quote.keypair_file)?;
+        if seen.insert(quote.pubkey()) {
+            log.log(format!(
+                "Creating shared {} quote mint…",
+                config.quote.symbol
+            ));
+            chain::create_mint(client, wallet, &quote, config.quote.decimals)
+                .with_context(|| format!("create shared quote mint {}", config.quote.symbol))?;
+        }
+    }
+    Ok(())
+}
+
+/// Pre-fund each shared leader's quote (USDC) ATA once, up front, with the
+/// total quote deposit across the markets that share it — so the parallel
+/// bootstrap can skip the per-market quote top-up entirely (see
+/// [`seed_vault`]'s `prefunded_quote`).
+///
+/// Every FX pair deposits from the one leader's one USDC ATA in the identical
+/// amount, so if each market minted its own quote top-up concurrently, those
+/// `mint_to`s would be byte-identical transactions: workers sharing a blockhash
+/// produce the same signature and the validator drops all but one, so most
+/// top-ups silently vanish and the deposits then underflow the shared balance
+/// (`InsufficientFunds`, 0x1). Front-loading the whole total in one sequential
+/// mint here sidesteps that: the pool already covers every deposit, and no
+/// colliding per-market quote mint runs at all. The base leg needs no
+/// equivalent — each market's base ATA / amount is its own, funded and drawn
+/// down within its own thread. Grouped by `(leader, quote mint)` so it stays
+/// correct if a future pair uses a different leader or quote.
+pub fn prefund_leader_quotes(
+    client: &RpcClient,
+    wallet: &Keypair,
+    repo_root: &Path,
+    log: &Logger,
+) -> Result<()> {
+    let mut totals: std::collections::HashMap<(Pubkey, Pubkey), u64> =
+        std::collections::HashMap::new();
+    for config in PAIRS {
+        let leader = leader(repo_root, config)?;
+        let (_, quote_mint) = pair_mints(repo_root, config)?;
+        let (_, quote_atoms) = seed_deposit(config);
+        *totals.entry((leader.pubkey(), quote_mint)).or_default() += quote_atoms;
+    }
+    for ((leader_pubkey, quote_mint), total) in totals {
+        let quote_ata = chain::create_ata_idempotent(client, wallet, &leader_pubkey, &quote_mint)
+            .context("leader quote ATA")?;
+        log.log(format!(
+            "Pre-funding leader {leader_pubkey} quote ATA with {total} atoms…"
+        ));
+        chain::mint_to(client, wallet, &quote_mint, &quote_ata, total)
+            .context("pre-fund leader quote")?;
+    }
+    Ok(())
+}
+
 /// Bring the market's freshly-created vault up live: stamp the reference
 /// price, set the quote ladder, then fund the leader's ATAs (from the admin
 /// mint authority) and seed the vault with `deposit_leader`. The `leader`
 /// must be `config`'s leader key — it co-signs each instruction as the
 /// vault's quote authority / leader, while `wallet` (admin) pays the fees.
+///
+/// `prefunded_quote` skips the per-market quote (USDC) top-up: when the caller
+/// has already funded the shared leader quote ATA with the whole deposit total
+/// up front (via [`prefund_leader_quotes`], the parallel bootstrap path), that
+/// top-up is both redundant *and* unsafe to run concurrently — every market's
+/// `mint_to(USDC, leader_ata, <same amount>)` is byte-identical, so parallel
+/// workers sharing a blockhash produce the same signature and all but one are
+/// dropped by the validator's dedup (or surface as an error). The sequential
+/// caller leaves it `false` and funds the quote leg here as before — the work
+/// between its identical mints advances the blockhash, so their signatures
+/// differ.
 pub fn seed_vault(
     client: &RpcClient,
     wallet: &Keypair,
     leader: &Keypair,
     config: &PairConfig,
     market: &MarketView,
+    prefunded_quote: bool,
     log: &Logger,
 ) -> Result<()> {
     // 1. Reference price. The engine stores the atoms-ratio, so scale the
@@ -317,18 +401,24 @@ pub fn seed_vault(
     )
     .context("set_liquidity_profile")?;
 
-    // 3. Fund the leader's ATAs (admin is the mint authority), then seed.
+    // 3. Fund the leader's ATAs (admin is the mint authority), then seed. The
+    //    base leg is always funded here — each market's base mint / amount is
+    //    unique, so it can't collide across parallel workers. The quote leg is
+    //    funded here only when it wasn't pre-funded up front: see
+    //    `prefunded_quote` and [`prefund_leader_quotes`].
     let (base_atoms, quote_atoms) = seed_deposit(config);
     let base_ata =
         chain::create_ata_idempotent(client, wallet, &leader.pubkey(), &market.base_mint)
             .context("leader base ATA")?;
-    let quote_ata =
-        chain::create_ata_idempotent(client, wallet, &leader.pubkey(), &market.quote_mint)
-            .context("leader quote ATA")?;
     chain::mint_to(client, wallet, &market.base_mint, &base_ata, base_atoms)
         .context("mint base to leader")?;
-    chain::mint_to(client, wallet, &market.quote_mint, &quote_ata, quote_atoms)
-        .context("mint quote to leader")?;
+    if !prefunded_quote {
+        let quote_ata =
+            chain::create_ata_idempotent(client, wallet, &leader.pubkey(), &market.quote_mint)
+                .context("leader quote ATA")?;
+        chain::mint_to(client, wallet, &market.quote_mint, &quote_ata, quote_atoms)
+            .context("mint quote to leader")?;
+    }
     log.log(format!(
         "deposit_leader {} {} / {} {}",
         base_atoms, config.base.symbol, quote_atoms, config.quote.symbol

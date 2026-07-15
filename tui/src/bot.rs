@@ -142,23 +142,39 @@ pub fn taker_command(repo_root: &Path, address: &Pubkey, rpc_url: &str) -> Comma
     )
 }
 
-/// Build a command running the bot binary `bin_name` with `args`, always
-/// through `cargo run` from the repo root (working directory `repo_root`, so
-/// the role-key paths resolve). cargo rebuilds the bot incrementally if its
-/// sources moved and otherwise runs the built binary unchanged — so the spawned
-/// bot is always current with the deployed program's account layout. `make tui`
-/// builds the bots up front, so in practice this is a no-op that just launches
-/// the fresh binary.
+/// Build a command running the bot binary `bin_name` with `args` from the repo
+/// root (working directory `repo_root`, so the role-key paths resolve).
 ///
-/// Launching a prebuilt binary sitting in the target dir directly would be a
-/// hazard: a stale one (built against a superseded `MarketHeader` size) decodes
-/// a current market at the wrong offsets and dies with `SectorOverflow`. Going
-/// through cargo makes that impossible — a drifted binary is rebuilt, not run.
+/// Prefers the prebuilt binary in `target/debug/`: `make tui` / `tui-prebuild`
+/// builds the bots up front, so the fast path is a direct fork+exec. This
+/// matters most when starting every market's bot at once — routing each launch
+/// through `cargo run` spawns N cargo processes that contend on the build lock
+/// and serialize, so "start all makers" stalls on a row of "starting…" while
+/// each waits its turn for the lock. Exec-ing the built binary sidesteps that.
+///
+/// The stale-binary hazard the cargo path guarded against — an old binary
+/// (built against a superseded `MarketHeader` size) decoding a current market
+/// at the wrong offsets and dying with `SectorOverflow` — is closed by the
+/// prebuild: the same `make tui` that launches the panel rebuilds the bots
+/// first, so the binary on disk matches the deployed program. The cargo
+/// fallback only fires when the binary is **absent** (a direct
+/// `cargo run -p dropset-tui`, skipping the prebuild) or a custom
+/// `CARGO_TARGET_DIR` moves it — it rebuilds and runs a current binary. The
+/// one gap it does *not* cover: a binary left over from an earlier `make tui`
+/// is exec'd as-is, so editing bot/program sources and then launching via a
+/// bare `cargo run -p dropset-tui` (no fresh prebuild) can run it stale. The
+/// standard `make tui` / `make demo` flow rebuilds first, so this only bites a
+/// deliberately-skipped prebuild.
 fn bot_command(repo_root: &Path, bin_name: &str, args: &[&str]) -> Command {
-    let mut cmd = Command::new("cargo");
-    cmd.args(["run", "--quiet", "-p", bin_name, "--"])
-        .args(args)
-        .current_dir(repo_root);
+    let built = repo_root.join("target").join("debug").join(bin_name);
+    let mut cmd = if built.exists() {
+        Command::new(built)
+    } else {
+        let mut c = Command::new("cargo");
+        c.args(["run", "--quiet", "-p", bin_name, "--"]);
+        c
+    };
+    cmd.args(args).current_dir(repo_root);
     cmd
 }
 

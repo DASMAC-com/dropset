@@ -8,6 +8,7 @@
 //! terminal on the way out; the owned [`Validator`] kills the child and
 //! wipes its temp ledger on `Drop`, so quitting leaves no orphan.
 
+// cspell:word bootstrappable
 // cspell:word Deque
 // cspell:word pasteable
 // cspell:word RAII
@@ -40,6 +41,7 @@ use ratatui::{
     Terminal,
 };
 use solana_client::rpc_client::RpcClient;
+use solana_native_token::LAMPORTS_PER_SOL;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 use std::collections::VecDeque;
@@ -178,6 +180,11 @@ pub struct App {
     /// controls step. Seeded at the default; `w` / `n` step it by
     /// [`SPREAD_STEP_BPS`] and rebuild the ladder at the new spread.
     spread_bps: u32,
+    /// One-shot: when set (via `run`'s `auto_bootstrap`, the turnkey `make demo`
+    /// path), the loop fires "Bootstrap all" once as soon as the fresh localnet
+    /// is ready, then clears it — so a later wipe / teardown does *not*
+    /// re-bootstrap on its own; the operator re-runs it by hand.
+    auto_bootstrap: bool,
 }
 
 impl App {
@@ -227,13 +234,19 @@ impl App {
             dirty: true,
             feed_degraded: false,
             spread_bps: market::DEFAULT_SPREAD_BPS,
+            auto_bootstrap: false,
         })
     }
 
-    /// Run the event loop until the user quits.
-    pub fn run(&mut self) -> Result<()> {
+    /// Run the event loop until the user quits. `auto_bootstrap` fires
+    /// "Bootstrap all" once, as soon as the fresh localnet is ready — the
+    /// turnkey `make demo` path; a plain `make tui` leaves it `false` so the
+    /// operator drives the numbered steps by hand.
+    pub fn run(&mut self, auto_bootstrap: bool) -> Result<()> {
+        self.auto_bootstrap = auto_bootstrap;
         self.log(LogKind::Info, "Starting solana-test-validator…".to_string());
         self.start_explorer();
+        self.start_airdrops();
         // Watch the program's fills so the recent-fills pane fills in as swaps
         // land — survives a wipe by reconnecting to the respawned validator.
         fills::spawn(self.ctx.rpc_url.clone(), self.tx.clone());
@@ -260,8 +273,25 @@ impl App {
 
             self.drain_jobs();
             self.maybe_refresh();
+            self.maybe_auto_bootstrap();
         }
         Ok(())
+    }
+
+    /// Fire "Bootstrap all" once when the turnkey `auto_bootstrap` is armed and
+    /// the fresh localnet is ready for it (validator up, nothing yet deployed).
+    /// Clears the flag on the first fire, so a later wipe / teardown — which
+    /// returns to a bootstrappable phase — does not silently re-bootstrap; the
+    /// operator re-runs it by hand. Waits out the `job_running` slot and the
+    /// pre-validator phase by simply retrying on the next tick.
+    fn maybe_auto_bootstrap(&mut self) {
+        if self.auto_bootstrap
+            && !self.job_running
+            && Action::BootstrapAll.enabled(self.chain.phase())
+        {
+            self.auto_bootstrap = false;
+            self.run_action(Action::BootstrapAll);
+        }
     }
 
     /// Bring the local explorer container up on a background thread, so it is
@@ -275,6 +305,35 @@ impl App {
         let lock = self.ctx.explorer_lock.clone();
         std::thread::spawn(move || {
             explorer::start_in_background(&log, &repo_root, &status, &lock);
+        });
+    }
+
+    /// Pre-fund the admin (every bootstrap tx's fee payer) and the taker
+    /// (`FFFF`, the probe swap's signer) with a working SOL balance on a
+    /// background thread at launch, so neither the first bootstrap step nor the
+    /// first swap stalls waiting on an airdrop. Best-effort: a failure is
+    /// logged, and the per-job `ensure_funded` still covers anything this
+    /// misses (e.g. the validator not yet accepting requests at launch).
+    fn start_airdrops(&self) {
+        let log = Logger::new(self.tx.clone());
+        let rpc_url = self.ctx.rpc_url.clone();
+        let admin = self.ctx.wallet.pubkey();
+        let taker = self.swapper;
+        std::thread::spawn(move || {
+            let client = chain::rpc(&rpc_url);
+            for (label, who) in [("admin", Some(admin)), ("taker", taker)] {
+                let Some(who) = who else { continue };
+                if client.get_balance(&who).unwrap_or(0) >= LAMPORTS_PER_SOL {
+                    continue;
+                }
+                log.log(format!("Pre-funding the {label} wallet…"));
+                // `chain::airdrop` retries the request past the faucet's
+                // start-up rate-limit window; the per-job `ensure_funded` is the
+                // final fallback if every attempt is throttled.
+                if let Err(e) = chain::airdrop(&client, &who, 100 * LAMPORTS_PER_SOL) {
+                    log.log(format!("{label} airdrop warning: {e:#}"));
+                }
+            }
         });
     }
 
@@ -315,12 +374,43 @@ impl App {
         hit_target(&self.tx_targets, col, row)
     }
 
+    /// Whether the local explorer is serving, logging a hint before a hosted
+    /// fallback so a click that lands on explorer.solana.com isn't a silent
+    /// surprise. The hint only fires while the container is still coming up or
+    /// after it failed — the two cases where the local explorer *would* have
+    /// served; a no-Docker host has no local explorer to wait on, so it falls
+    /// back quietly.
+    fn explorer_ready(&mut self) -> bool {
+        match self.ctx.explorer_state.load(Ordering::SeqCst) {
+            explorer::state::READY => true,
+            explorer::state::STARTING => {
+                self.log(
+                    LogKind::Info,
+                    "Local explorer not ready yet (still starting) — \
+                     opening the hosted explorer, which may not reach localnet."
+                        .to_string(),
+                );
+                false
+            }
+            explorer::state::FAILED => {
+                self.log(
+                    LogKind::Info,
+                    "Local explorer failed to start — opening the hosted \
+                     explorer, which may not reach localnet."
+                        .to_string(),
+                );
+                false
+            }
+            _ => false,
+        }
+    }
+
     /// Open `address` in the explorer — the local container when it's ready,
     /// else the hosted explorer as a fallback (which can't reach the localnet
     /// in some browsers; see [`explorer`]). Best-effort: a launch failure is
     /// logged, not fatal.
     fn open_in_explorer(&mut self, address: Pubkey) {
-        let url = if self.ctx.explorer_state.load(Ordering::SeqCst) == explorer::state::READY {
+        let url = if self.explorer_ready() {
             explorer::account_url(&address, &self.ctx.rpc_url)
         } else {
             explorer::hosted_account_url(&address, &self.ctx.rpc_url)
@@ -335,7 +425,7 @@ impl App {
     /// ready, else the hosted explorer (same browser caveat as
     /// [`App::open_in_explorer`]). Best-effort: a launch failure is logged.
     fn open_tx_in_explorer(&mut self, signature: &str) {
-        let url = if self.ctx.explorer_state.load(Ordering::SeqCst) == explorer::state::READY {
+        let url = if self.explorer_ready() {
             explorer::tx_url(signature, &self.ctx.rpc_url)
         } else {
             explorer::hosted_tx_url(signature, &self.ctx.rpc_url)
@@ -395,8 +485,14 @@ impl App {
                 self.spread_bps = market::DEFAULT_SPREAD_BPS;
                 self.run_action(Action::ResetLadder);
             }
+            // Broadcast reset: return every market's ladder to the default
+            // shape at once (re-arm the whole demo after nudging several books).
+            KeyCode::Char('G') => {
+                self.spread_bps = market::DEFAULT_SPREAD_BPS;
+                self.run_action(Action::ResetAllLadders);
+            }
             KeyCode::Enter => self.run_selected(),
-            KeyCode::Char(d @ '1'..='9') => {
+            KeyCode::Char(d @ '1'..='8') => {
                 let idx = (d as usize) - ('1' as usize);
                 if idx < MENU_LEN {
                     self.menu.select(Some(idx));
