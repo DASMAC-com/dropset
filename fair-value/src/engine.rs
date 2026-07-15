@@ -9,9 +9,11 @@
 //!   the observed `crypto_usdc / fx`, and `fair = fx × basis`.
 //! - **Crypto-only** — no live FX. On a weekend/session close (§1 fm2) this is
 //!   the *normal* state: interbank FX is shut, so the crypto reference *is* the
-//!   only EUR/USD discovery and becomes the anchor — healthy, not degraded.
-//!   This is also the **localnet demo path**: the demo wires no FX anchor, so
-//!   it runs here on the crypto reference (today's CoinGecko mid), unchanged.
+//!   only price discovery and becomes the anchor — healthy, not degraded. This
+//!   regime fires only when the FX anchor is a *session* feed that goes absent
+//!   off-session (the streaming primary). With a daily-reference anchor that
+//!   serves frozen weekend rates (the current Frankfurter fallback) the FX leg
+//!   stays present, so the flip is forward-plumbing for the streaming anchor.
 //! - **Degraded** — an *unexpected* gap: FX stale outside the weekend regime
 //!   (crypto reference carries the mid, kill switches tighten, §4), or FX up
 //!   but the basis leg down (anchor on the last smoothed basis), or every live
@@ -149,10 +151,20 @@ impl FairValue {
 
 /// Per-market fair-value engine: the calibration constants plus the stateful
 /// basis EMA. One instance per market (each carries its own basis history).
-#[derive(Clone, Copy, Debug)]
+/// Not `Copy`: the basis EMA is a mutating accumulator, and a silent
+/// copy-on-assign would fork that history.
+#[derive(Clone, Debug)]
 pub struct FairValueEngine {
     cfg: FairValueConfig,
     basis: BasisEma,
+    /// Time accumulated across ticks since the basis EMA was last updated. The
+    /// EMA folds an observation only in the normal regime, but `compose` runs
+    /// every tick — so the decay must see the elapsed time since the last
+    /// *basis update*, not since the last `compose`. Accumulating here means a
+    /// long gap with no live basis (an FX outage) yields a blend weight near 1
+    /// on the returning observation — a natural re-seed rather than a crawl
+    /// off a stale estimate.
+    since_basis: Duration,
 }
 
 impl FairValueEngine {
@@ -160,22 +172,21 @@ impl FairValueEngine {
     pub fn new(cfg: FairValueConfig) -> Self {
         Self {
             basis: BasisEma::new(cfg.basis_half_life),
+            since_basis: Duration::ZERO,
             cfg,
         }
     }
 
-    /// The current smoothed basis (for logging / inspection), or `None` before
-    /// the first FX-anchored observation.
-    pub fn basis(&self) -> Option<f64> {
-        self.basis.value()
-    }
-
     /// Compose the fair value for this market from its live `legs`. `dt` is the
-    /// elapsed time since the previous `compose` (feeds the basis EMA decay);
-    /// `weekend` marks the FX-closed session window (§1 fm2), inside which
-    /// FX-stale is the normal crypto-only state rather than a degrade.
+    /// elapsed time since the previous `compose`; the engine accumulates it so
+    /// the basis EMA sees the time since the last basis update. `weekend` marks
+    /// the FX-closed session window (§1 fm2), inside which FX-stale is the
+    /// normal crypto-only state rather than a degrade.
     pub fn compose(&mut self, legs: Legs, dt: Duration, weekend: bool) -> FairValue {
         let stale = self.cfg.leg_stale;
+        // Carry the inter-tick time forward; the normal arm consumes it and
+        // resets it when it actually folds an observation into the EMA.
+        self.since_basis = self.since_basis.saturating_add(dt);
         let fx = legs.fx.filter(|r| r.fresh(stale));
         let crypto = legs.crypto_usdc.filter(|r| r.fresh(stale));
         let usdc = legs.usdc_usd.filter(|r| r.fresh(stale));
@@ -190,7 +201,8 @@ impl FairValueEngine {
             // NORMAL: both legs live — fair = fx × basis, basis = EMA(crypto/fx).
             (Some(fx), Some(crypto)) => {
                 let basis_obs = crypto.value / fx.value;
-                let basis = self.basis.update(basis_obs, dt);
+                let basis = self.basis.update(basis_obs, self.since_basis);
+                self.since_basis = Duration::ZERO;
                 let fair = fx.value * basis;
                 FairValue {
                     fair: Some(fair),
@@ -221,7 +233,7 @@ impl FairValueEngine {
             }
             // No live FX: the crypto reference is the anchor. Structural on a
             // weekend (healthy, §1 fm2); an unexpected degrade otherwise (§4).
-            // This is the localnet demo path. No FX ⇒ no observable basis.
+            // No FX ⇒ no observable basis.
             (None, Some(crypto)) => {
                 let (regime, health) = if weekend {
                     (Regime::CryptoOnly, Health::Ok)
@@ -328,11 +340,14 @@ mod tests {
 
     #[test]
     fn does_not_collapse_usdc_to_one() {
-        // The basis is observed from crypto/fx, which folds in the USDC leg —
-        // so a USDC premium is reflected in the mid, never assumed away.
+        // When the crypto reference is genuinely USDC-denominated (Coinbase
+        // <token>/USDC), a USDC premium shows up in that price and rides
+        // through basis = crypto_usdc / fx into the mid — the model never
+        // assumes USDC = USD. (The engine does not read the separate usdc_usd
+        // leg into the mid; that leg drives only the common-mode guard.)
         let mut e = engine();
-        // FX 1.0; token trades at 0.98 USDC because USDC itself trades at 1.02
-        // USD. observed basis = 0.98 → fair = 0.98 (in USDC per token).
+        // FX 1.0; the token trades at 0.98 USDC (USDC itself rich at 1.02 USD).
+        // observed basis = 0.98 → fair = 0.98 USDC per token.
         let legs = Legs {
             fx: Some(fresh(1.0)),
             crypto_usdc: Some(fresh(0.98)),
@@ -510,5 +525,44 @@ mod tests {
         assert!(r.uncertain);
         assert_eq!(r.health, Health::Ok);
         assert!(r.fair.is_some());
+    }
+
+    #[test]
+    fn basis_reseeds_after_a_long_fx_gap() {
+        // Seed the basis at 1.0, lose FX for a long stretch of ticks, then let
+        // it return at a materially different basis. The engine accumulates the
+        // gap, so the returning observation is weighted near 1 (a re-seed) —
+        // not blended onto the stale 1.0 with a per-tick alpha. This is the
+        // whole point of decaying on time-since-basis-update, not per compose.
+        let mut e = engine();
+        let normal = |crypto: f64| Legs {
+            fx: Some(fresh(1.0)),
+            crypto_usdc: Some(fresh(crypto)),
+            usdc_usd: None,
+            static_usd: 1.0,
+        };
+        // Seed basis 1.0.
+        e.compose(normal(1.0), secs(5), false);
+        // ~2.5 days with no FX (crypto-only), each tick accumulating time.
+        for _ in 0..10 {
+            e.compose(
+                Legs {
+                    fx: None,
+                    crypto_usdc: Some(fresh(1.0)),
+                    usdc_usd: None,
+                    static_usd: 1.0,
+                },
+                secs(6 * 3_600),
+                false,
+            );
+        }
+        // FX returns; the token now trades 10% rich in USDC → observed basis
+        // 1.10. The ~60h accumulated gap vs a 10-min half-life gives alpha ≈ 1.
+        let r = e.compose(normal(1.10), secs(5), false);
+        assert!(
+            r.basis.unwrap() > 1.09,
+            "expected re-seed near 1.10, got {}",
+            r.basis.unwrap()
+        );
     }
 }

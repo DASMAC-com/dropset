@@ -57,13 +57,6 @@ impl BasisEma {
         self.value = Some(next);
         next
     }
-
-    /// Forget the running estimate — used when a market's FX anchor drops so
-    /// long that the last basis is no longer meaningful, so the next live tick
-    /// re-seeds rather than blending onto a stale estimate.
-    pub fn reset(&mut self) {
-        self.value = None;
-    }
 }
 
 /// The EMA blend weight for an elapsed `dt` and a smoothing `half_life`:
@@ -141,14 +134,5 @@ mod tests {
         let mut ema = BasisEma::new(Duration::ZERO);
         ema.update(1.0, secs(5));
         assert_eq!(ema.update(1.5, secs(5)), 1.5);
-    }
-
-    #[test]
-    fn reset_re_seeds() {
-        let mut ema = BasisEma::new(secs(600));
-        ema.update(1.2, secs(5));
-        ema.reset();
-        assert_eq!(ema.value(), None);
-        assert_eq!(ema.update(0.9, secs(5)), 0.9);
     }
 }

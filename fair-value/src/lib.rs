@@ -34,7 +34,7 @@
 //! # Calibration
 //!
 //! Almost every constant the engine reads is **TBD — set by the pricing-model
-//! survey (ENG-700)**. The [`FairValueConfig`] defaults are marked, demo-safe
+//! survey**. The [`FairValueConfig`] defaults are marked, demo-safe
 //! placeholders, not calibrated values; recalibration is a data edit to that
 //! one surface. See its module docs.
 //!
@@ -64,7 +64,6 @@ mod config;
 mod engine;
 mod reading;
 
-pub use basis::BasisEma;
 pub use config::FairValueConfig;
 pub use engine::{Anchor, Degrade, FairValue, FairValueEngine, Health, Legs, Regime};
 pub use reading::Reading;

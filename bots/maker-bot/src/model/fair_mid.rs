@@ -27,7 +27,7 @@
 
 use dropset_fair_value::{Legs, Reading};
 
-pub use dropset_fair_value::{Anchor, Degrade, FairValue, Health, Regime};
+pub use dropset_fair_value::FairValue;
 
 /// Build the engine's [`Legs`] for one market from the bot's cached readings.
 /// Each `Option` is `None` when that source didn't answer this tick; the engine

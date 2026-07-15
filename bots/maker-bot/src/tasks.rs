@@ -129,10 +129,11 @@ impl FeedHub {
                         self.cg.insert(k, (v, now));
                     }
                 }
-                // Both empty and errored polls mean CoinGecko can't price the
-                // roster this cycle; `compose` already cascades to the FX-rate /
-                // static fallback, so log the transition once and stay quiet
-                // until it recovers rather than spamming a line per tick.
+                // Both empty and errored polls mean CoinGecko can't supply the
+                // basis leg this cycle; the engine composes without it (the FX
+                // anchor with the last basis, or the static peg), so log the
+                // transition once and stay quiet until it recovers rather than
+                // spamming a line per tick.
                 Ok(_) => {
                     self.cg_ok = false;
                     self.grow_cg_backoff(cfg.coingecko_poll);
@@ -176,8 +177,8 @@ impl FeedHub {
             }
         }
 
-        // Tertiary: ECB/Frankfurter FX rates, keyless — both the peg
-        // cross-check and the next fallback tier, on a slow cadence.
+        // FX anchor: ECB/Frankfurter USD/<ccy>, keyless, on a slow cadence
+        // (the daily reference; the streaming primary is a follow-up).
         if !currencies.is_empty() && due(self.fx_last_poll, now, cfg.fx_poll) {
             self.fx_last_poll = Some(now);
             match feeds.poll_frankfurter(currencies) {

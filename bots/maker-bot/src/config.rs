@@ -54,17 +54,17 @@ pub struct MarketConfig {
     /// exercises the same per-market decimal/atoms-ratio path mainnet will.
     pub base_decimals: u8,
     /// ISO 4217 code of the fiat the token tracks — the symbol the keyless
-    /// ECB/Frankfurter FX-rate tier and the static last-resort peg to.
+    /// ECB/Frankfurter FX anchor and the static last-resort peg to.
     pub currency: &'static str,
-    /// CoinGecko coin id (primary tier, batched `/simple/price`).
+    /// CoinGecko coin id — the crypto basis leg (batched `/simple/price`).
     pub coingecko_id: &'static str,
-    /// CoinMarketCap numeric id (secondary tier, batched by id). `None` for a
-    /// token CMC doesn't list (MXNe), which simply skips the CMC tier and
-    /// cascades CoinGecko → FX-rate → static.
+    /// CoinMarketCap numeric id — the basis-leg fallback when CoinGecko is down
+    /// (batched by id). `None` for a token CMC doesn't list (MXNe), which
+    /// simply leaves CoinGecko as the sole crypto basis source.
     pub coinmarketcap_id: Option<u32>,
-    /// Last-resort static USD-per-token peg, used when every live feed is down.
-    /// A representative spot value; the FX-rate tier supersedes it whenever the
-    /// keyless ECB feed answers.
+    /// Last-resort static USD-per-token peg, used only when every live leg is
+    /// down. A representative spot value; a live FX anchor and basis supersede
+    /// it whenever the feeds answer.
     pub static_usd: f64,
 }
 
@@ -177,11 +177,11 @@ pub const DEFAULT_LADDER: [LadderLevel; 4] = [
     },
 ];
 
-/// The tiered price feed (§1): poll cadences and base URLs for the four
-/// sources `fair_mid` cascades through, primary-first. The per-token
-/// identifiers live on each [`MarketConfig`]; only the transport settings are
-/// here. Base URLs are fields so tests can point them at a local stub. The
-/// CoinMarketCap API key is read from `CMC_API_KEY` at run time, never a field.
+/// The price feeds (§1): poll cadences and base URLs for the sources the
+/// fair-value engine composes its legs from. The per-token identifiers live on
+/// each [`MarketConfig`]; only the transport settings are here. Base URLs are
+/// fields so tests can point them at a local stub. The CoinMarketCap API key
+/// is read from `CMC_API_KEY` at run time, never a field.
 #[derive(Clone, Debug)]
 pub struct FeedConfig {
     /// CoinGecko poll interval (primary). One batched `/simple/price` call
@@ -191,8 +191,8 @@ pub struct FeedConfig {
     /// down or throttled — the free tier's ~10k/mo quota rules out a hot poll —
     /// so this is the *minimum* spacing between fallback calls, not a cadence.
     pub coinmarketcap_poll: Duration,
-    /// ECB/Frankfurter FX-rate poll interval (tertiary). ECB publishes once a
-    /// working day, so a slow poll suffices.
+    /// ECB/Frankfurter FX-anchor poll interval. ECB publishes once a working
+    /// day, so a slow poll suffices.
     pub fx_poll: Duration,
     /// CoinGecko REST base URL (`/simple/price` is appended).
     pub coingecko_base_url: String,

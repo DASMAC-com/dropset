@@ -1,11 +1,13 @@
 //! The engine's calibration surface — every constant `fair = fx × basis`
 //! consumes, in one place (§1, §4).
 //!
-//! **Almost every value here is TBD — set by the pricing-model survey
-//! (ENG-700).** Until that survey runs, the defaults are *marked placeholders*:
-//! chosen wide and demo-safe so the localnet demo (which runs in the
-//! crypto-only regime — no live FX anchor — so it never forms a basis or trips
-//! the basis band) behaves, but explicitly **not** calibrated for mainnet.
+//! **Almost every value here is TBD — set by the pricing-model survey.** Until
+//! that survey runs, the defaults are *marked placeholders*: chosen wide and
+//! demo-safe. The localnet demo runs the full `fair = fx × basis` model live
+//! (a Frankfurter FX anchor and a CoinGecko basis leg), so it *does* form a
+//! basis — the placeholder bands are set loose enough that a pegged demo token
+//! (basis ≈ 1) never trips them, but they are explicitly **not** calibrated
+//! for mainnet.
 //! Recalibration is a data edit to this one struct, never a code change; each
 //! placeholder carries a `TBD(survey)` marker so the uncalibrated knobs are
 //! easy to find.
