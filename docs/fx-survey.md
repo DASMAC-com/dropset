@@ -213,8 +213,11 @@ All run in SQL over Postgres. Each names the tables it reads / writes.
 - **Flow regimes** — tag every window by FX session (the London–NY
   overlap is peak), the weekend / overnight gap (FX thin or closed while
   Orca drifts on crypto — the Sunday FX-reopen gap is likely the largest
-  repeatable dislocation), scheduled macro events, and post-large-swap
-  windows; slice all stats by regime.
+  repeatable dislocation), scheduled macro events, post-large-swap
+  windows, and depeg / stress episodes (a USDC or token depeg, or a
+  redemption-arb suspension like the SVB weekend — the regime where the
+  basis stops mean-reverting and the maker is most exposed); slice all
+  stats by regime.
 - **Large-swap classification** — direction vs. fair (toward = toxic
   arb, away = liquidity), a permanent-vs-temporary impact decomposition
   (snap-back = benign, sticky = informed / toxic), by signer / routing /
@@ -227,13 +230,22 @@ All run in SQL over Postgres. Each names the tables it reads / writes.
   frequency, **per market**. Whether the basis mean-reverts is the
   assumption the whole maker thesis rests on — this block proves or
   kills it.
-- **Observability** — when FX / basis moves, is it visible on Coinbase
-  before Orca reprints? The single most important number for whether the
-  edge is maker-capturable or a latency race.
+- **Observability** — two questions. Survey-time: when FX / basis moves,
+  is it visible on Coinbase before Orca reprints? The single most
+  important number for whether the edge is maker-capturable or a latency
+  race. Production: define the **realized-vs-modeled basis error** — the
+  gap between the live basis and the engine's EMA estimate of it — as the
+  standing signal the deployed maker is monitored on, so it runs against
+  this characterization rather than blind. The survey sets its healthy
+  band and alert threshold.
 - **Maker-vs-taker capturability by regime** — does each dislocation
   revert intra-window (maker-capturable) or only at a discrete event
-  like the Sunday FX reopen (taker-only)? Distinguishes a maker-viable
-  edge from a taker-only one.
+  like the Sunday FX reopen (taker-only)? Attribute the edge across
+  regimes — a calm baseline, the weekend / session role-flip, a macro-vol
+  spike, and depeg / stress — since the split flips between them: what a
+  maker captures in calm is a taker-only gap at the reopen and pure risk
+  under a depeg.
+  Distinguishes a maker-viable edge from a taker-only one.
 
 ______________________________________________________________________
 
