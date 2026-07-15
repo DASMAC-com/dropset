@@ -1,5 +1,3 @@
-<!-- cspell:word depeg -->
-
 <!-- cspell:word fomc -->
 
 <!-- cspell:word guéant -->
