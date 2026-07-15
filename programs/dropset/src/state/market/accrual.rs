@@ -1,17 +1,26 @@
 //! Thin program-side wrappers around the solana-free
-//! [`dropset_math_core::share`] kernels: perf-fee realization
-//! ([`realize_in_place`], which reads/writes `&mut Vault` state and honors
-//! the on-chain `frozen` / `tombstoned` flags) and single-leg
-//! subsequent-deposit sizing ([`single_leg_basket`], which maps the
-//! kernel's [`BasketError`] back onto [`DropsetError`]). The pure formulas
-//! live in `dropset-math-core` so the off-chain NAV consumers reuse them.
+//! [`dropset_math_core`] kernels — each reads/writes `&mut Vault` state
+//! around a pure formula, so the layering contract holds and handlers stop
+//! touching the physical slab layout:
+//! - perf-fee realization ([`realize_in_place`], which honors the on-chain
+//!   `frozen` / `tombstoned` flags);
+//! - single-leg subsequent-deposit sizing ([`single_leg_basket`], which
+//!   maps the kernel's [`BasketError`] back onto [`DropsetError`]);
+//! - flush materialization ([`Vault::materialize_remaining`], which
+//!   rebuilds [`Vault::remaining`] from [`Vault::profile`] + current
+//!   inventory via the [`matching_math`](dropset_math_core::matching_math)
+//!   kernels and clears `FLUSH_BIT`).
+//!
+//! The pure formulas live in `dropset-math-core` so the off-chain NAV and
+//! simulator consumers reuse them.
 
 use anchor_lang_v2::prelude::*;
+use dropset_math_core::matching_math::{flush_level_price, level_fill_atoms};
 use dropset_math_core::share::{self, BasketError};
 
 use crate::errors::DropsetError;
 
-use super::Vault;
+use super::{Vault, BPS, FLUSH_BIT, N_LEVELS};
 
 /// Outcome of a `realize_in_place` call — returned so callers can emit
 /// a `RealizeEvent` only when `m > 0`.
@@ -73,6 +82,78 @@ pub fn realize_in_place(vault: &mut Vault) -> RealizeOutcome {
     RealizeOutcome {
         shares_minted: r.shares_minted,
         hwm_after: r.hwm_after,
+    }
+}
+
+impl Vault {
+    /// Materialize [`Vault::remaining`] from the stored
+    /// [`LiquidityProfile`](super::LiquidityProfile) + current inventory,
+    /// then clear `FLUSH_BIT` from the stamp — the transform the matching
+    /// engine arms via `FLUSH_BIT` and the first taker after a
+    /// `SetReferencePrice` / `SetLiquidityProfile` runs. All inputs are
+    /// vault-local (reference price, quote slot, inventory, profile), so
+    /// the flush lives behind this accessor and the matching handler no
+    /// longer open-codes the slab-touching loop.
+    ///
+    /// Per-side `Σ size_bps ≤ BPS` gate, a match-time mirror of the
+    /// write-time reject in `set_liquidity_profile` (which rejects
+    /// `Σ > BPS` before any `profile` bytes are stored) — both read the
+    /// per-side sums from
+    /// [`LiquidityProfile::side_size_sums`](super::LiquidityProfile::side_size_sums).
+    /// Because no stored profile can currently exceed BPS, this match-time
+    /// gate is unreachable defense-in-depth today; it keeps the hot path
+    /// robust should that write-time reject ever move here. A side whose
+    /// sum exceeds BPS is thrown out of matching — its `remaining` sizes
+    /// are written as zero, which the collection loop skips — exactly like
+    /// an invalid reference price skips a whole vault, instead of aborting
+    /// every taker's swap. This subsumes the per-level case: a single level
+    /// `> BPS` forces its side's sum `> BPS`. The stored `profile` bytes
+    /// are left intact, so the leader's ladder self-heals the moment they
+    /// resubmit a valid one. Writing zeros is not an extra write — the
+    /// flush overwrites every `remaining` slot regardless. When a side's
+    /// sum holds, every level is `≤ sum ≤ BPS`, so `level_fill_atoms` can
+    /// never reject and its `unwrap_or(0)` fallback is unreachable on that
+    /// side.
+    ///
+    /// `#[inline(always)]` so the hot-path codegen is identical to the
+    /// former open-coded block — the accessor lift is layering-only and
+    /// does not cost the matching loop CU.
+    #[inline(always)]
+    pub fn materialize_remaining(&mut self) {
+        let ref_price = self.reference_price.price;
+        let ref_slot = self.reference_price.quote_slot.get();
+        let stamp = self.reference_price.stamp.get();
+        let base_atoms = self.base_atoms.get();
+        let quote_atoms = self.quote_atoms.get();
+
+        let (bid_sum, ask_sum) = self.profile.side_size_sums();
+        let bids_ok = bid_sum <= BPS as u32;
+        let asks_ok = ask_sum <= BPS as u32;
+        for i in 0..N_LEVELS {
+            let bid = self.profile.bids[i];
+            let ask = self.profile.asks[i];
+            self.remaining.bids[i].price =
+                flush_level_price(ref_price, bid.price_offset.get(), false);
+            self.remaining.bids[i].size = if bids_ok {
+                level_fill_atoms(bid.size_bps.get(), quote_atoms).unwrap_or(0)
+            } else {
+                0
+            }
+            .into();
+            self.remaining.bids[i].expires_at =
+                ref_slot.saturating_add(bid.expiry_offset.get()).into();
+            self.remaining.asks[i].price =
+                flush_level_price(ref_price, ask.price_offset.get(), true);
+            self.remaining.asks[i].size = if asks_ok {
+                level_fill_atoms(ask.size_bps.get(), base_atoms).unwrap_or(0)
+            } else {
+                0
+            }
+            .into();
+            self.remaining.asks[i].expires_at =
+                ref_slot.saturating_add(ask.expiry_offset.get()).into();
+        }
+        self.reference_price.stamp = (stamp & !FLUSH_BIT).into();
     }
 }
 
@@ -165,6 +246,7 @@ pub fn apply_deposit_inventory(
 mod tests {
     use super::super::Q32_32_ONE;
     use super::*;
+    use crate::Price;
     use anchor_lang_v2::bytemuck::Zeroable;
 
     fn seeded_vault(b: u64, q: u64, total: u64, leader: u64, hwm: u64, fee_ppm: u32) -> Vault {
@@ -218,5 +300,83 @@ mod tests {
         // HWM advanced to the post-mint VPS.
         assert_eq!(v.hwm.get(), r.hwm_after);
         assert!(r.hwm_after > Q32_32_ONE);
+    }
+
+    // ── materialize_remaining flush wrapper ──────────────────────────
+    //
+    // The pure per-level pricing / sizing (`flush_level_price`,
+    // `level_fill_atoms`) is tested in `dropset_math_core::matching_math`.
+    // These exercise the program's `&mut Vault` wrapper specifically: the
+    // profile→remaining wiring (correct leg per side, offset direction,
+    // absolute expiry), the per-side `Σ size_bps > BPS` zeroing gate, and
+    // the `FLUSH_BIT` clear. They run on a stack-allocated `Vault` — no
+    // slab, no AccountBuffer, no SVM.
+
+    #[test]
+    fn materialize_remaining_wires_profile_and_clears_flush_bit() {
+        let reference = Price::from_value(2.0).unwrap();
+        let mut v = Vault::zeroed();
+        v.reference_price.price = reference;
+        v.reference_price.quote_slot = 1_000u32.into();
+        // Arm the flush: nonce 5 with FLUSH_BIT set.
+        v.reference_price.stamp = (5u64 | FLUSH_BIT).into();
+        v.quote_atoms = 2_000_000u64.into();
+        v.base_atoms = 1_000_000u64.into();
+        // Top-of-book bid (50% of quote) and ask (25% of base).
+        v.profile.bids[0].price_offset = 500u32.into();
+        v.profile.bids[0].size_bps = 5_000u16.into();
+        v.profile.bids[0].expiry_offset = 50u32.into();
+        v.profile.asks[0].price_offset = 500u32.into();
+        v.profile.asks[0].size_bps = 2_500u16.into();
+        v.profile.asks[0].expiry_offset = 60u32.into();
+
+        v.materialize_remaining();
+
+        // FLUSH_BIT cleared, nonce preserved.
+        assert_eq!(v.reference_price.stamp.get(), 5);
+        // Price materialized off the reference — bids subtract, asks add.
+        assert_eq!(
+            v.remaining.bids[0].price,
+            flush_level_price(reference, 500, false)
+        );
+        assert_eq!(
+            v.remaining.asks[0].price,
+            flush_level_price(reference, 500, true)
+        );
+        // Size is `size_bps` of the matching leg (quote for bids, base for
+        // asks).
+        assert_eq!(v.remaining.bids[0].size.get(), 1_000_000);
+        assert_eq!(v.remaining.asks[0].size.get(), 250_000);
+        // Expiry is absolute: `quote_slot + expiry_offset`.
+        assert_eq!(v.remaining.bids[0].expires_at.get(), 1_050);
+        assert_eq!(v.remaining.asks[0].expires_at.get(), 1_060);
+        // Empty levels flush to zero size.
+        assert_eq!(v.remaining.bids[1].size.get(), 0);
+        assert_eq!(v.remaining.asks[1].size.get(), 0);
+    }
+
+    #[test]
+    fn materialize_remaining_zeroes_side_over_bps() {
+        let mut v = Vault::zeroed();
+        v.reference_price.price = Price::from_value(1.0).unwrap();
+        v.reference_price.stamp = FLUSH_BIT.into();
+        v.quote_atoms = 1_000_000u64.into();
+        v.base_atoms = 1_000_000u64.into();
+        // Bid side `Σ size_bps = 12_000 > BPS`: the whole side is thrown
+        // out of matching (every level size zeroed), leaving the stored
+        // profile intact. The ask side is valid and materializes normally.
+        v.profile.bids[0].size_bps = 6_000u16.into();
+        v.profile.bids[1].size_bps = 6_000u16.into();
+        v.profile.asks[0].size_bps = 5_000u16.into();
+        assert!(v.profile.side_size_sums().0 > BPS as u32);
+
+        v.materialize_remaining();
+
+        assert_eq!(v.remaining.bids[0].size.get(), 0);
+        assert_eq!(v.remaining.bids[1].size.get(), 0);
+        assert_eq!(v.remaining.asks[0].size.get(), 500_000);
+        // The oversized side's profile bytes are untouched — it self-heals
+        // on the leader's next valid write.
+        assert_eq!(v.profile.bids[0].size_bps.get(), 6_000);
     }
 }

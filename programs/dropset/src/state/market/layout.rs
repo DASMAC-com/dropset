@@ -162,6 +162,31 @@ pub struct Vault {
     pub remaining: Remaining,
 }
 
+impl LiquidityProfile {
+    /// Per-side `Σ size_bps`, returned as `(bid_sum, ask_sum)`. A `u32`
+    /// accumulator: at `N_LEVELS = 8` the upper bound is
+    /// `8 × u16::MAX = 524_280`, far inside `u32` range, so the
+    /// `saturating_add` never actually saturates on a real profile.
+    ///
+    /// Single source for the two `Σ size_bps ≤ BPS` gates that would
+    /// otherwise re-derive this loop independently: the write-time reject
+    /// in `set_liquidity_profile` (which rejects `Σ > BPS` before any
+    /// `profile` bytes are stored) and the match-time flush gate in
+    /// [`Vault::materialize_remaining`] (which zeroes an oversized side
+    /// out of matching rather than aborting the taker's swap). Each caller
+    /// applies its own `≤ BPS` comparison and failure behavior.
+    #[inline(always)]
+    pub fn side_size_sums(&self) -> (u32, u32) {
+        let mut bid_sum: u32 = 0;
+        let mut ask_sum: u32 = 0;
+        for i in 0..N_LEVELS {
+            bid_sum = bid_sum.saturating_add(self.bids[i].size_bps.get() as u32);
+            ask_sum = ask_sum.saturating_add(self.asks[i].size_bps.get() as u32);
+        }
+        (bid_sum, ask_sum)
+    }
+}
+
 impl Vault {
     /// True when this sector currently holds a live vault rather than a
     /// free-list slot. `leader == Address::default()` is the spec's

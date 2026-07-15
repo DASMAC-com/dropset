@@ -33,14 +33,12 @@ use anchor_spl_v2::{
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
 
-use dropset_math_core::matching_math::{
-    flush_level_price, level_fill_atoms, sort_key, taker_fee_atoms,
-};
+use dropset_math_core::matching_math::{sort_key, taker_fee_atoms};
 
 use crate::{
     errors::DropsetError,
     events::FillEvent,
-    state::{Market, VaultAccess, BPS, FLUSH_BIT},
+    state::{Market, VaultAccess, FLUSH_BIT},
     Price, N_LEVELS,
 };
 
@@ -373,9 +371,8 @@ impl Swap {
             // invalid / sentinel reference price skips the vault
             // (rather than aborting) — spec § Order matching → Book
             // construction.
-            let (vault_active, stamp, ref_price, ref_slot, base_atoms, quote_atoms) = {
+            let (vault_active, stamp) = {
                 let v = self.market.read_vault(cur)?;
-                let p = v.reference_price.price;
                 // Spec § Vault → Frozen and tombstoned vaults: frozen
                 // vaults stay on the active DLL but their levels die
                 // off as `expires_at` passes. Implement that
@@ -388,10 +385,6 @@ impl Swap {
                 (
                     v.has_valid_reference_price() && !frozen,
                     v.reference_price.stamp.get(),
-                    p,
-                    v.reference_price.quote_slot.get(),
-                    v.base_atoms.get(),
-                    v.quote_atoms.get(),
                 )
             };
             if !vault_active {
@@ -399,62 +392,13 @@ impl Swap {
                 continue;
             }
             if stamp & FLUSH_BIT != 0 {
-                // Materialize Remaining from LiquidityProfile +
-                // current inventory, then clear FLUSH_BIT.
-                let v = self.market.mutate_vault(cur)?;
-                // Per-side `Σ size_bps ≤ BPS` gate, a match-time mirror of
-                // the write-time reject in `set_liquidity_profile` (which
-                // rejects `Σ > BPS` before any `profile` bytes are stored).
-                // Because no stored profile can currently exceed BPS, this
-                // match-time gate is unreachable defense-in-depth today; it
-                // keeps the hot path robust should that write-time reject
-                // ever move here. A side whose sum exceeds BPS is thrown
-                // out of matching — its `remaining` sizes are written as
-                // zero, which the collection loop below skips — exactly
-                // like an invalid reference price skips a whole vault,
-                // instead of aborting
-                // every taker's swap. This subsumes the per-level case: a
-                // single level `> BPS` forces its side's sum `> BPS`. The
-                // stored `profile` bytes are left intact, so the leader's
-                // ladder self-heals the moment they resubmit a valid one.
-                // Writing zeros is not an extra write — the flush overwrites
-                // every `remaining` slot regardless. When a side's sum
-                // holds, every level is `≤ sum ≤ BPS`, so `level_fill_atoms`
-                // can never reject and its `unwrap_or(0)` fallback is
-                // unreachable on that side.
-                let mut bid_sum: u32 = 0;
-                let mut ask_sum: u32 = 0;
-                for i in 0..N_LEVELS {
-                    bid_sum = bid_sum.saturating_add(v.profile.bids[i].size_bps.get() as u32);
-                    ask_sum = ask_sum.saturating_add(v.profile.asks[i].size_bps.get() as u32);
-                }
-                let bids_ok = bid_sum <= BPS as u32;
-                let asks_ok = ask_sum <= BPS as u32;
-                for i in 0..N_LEVELS {
-                    let bid = v.profile.bids[i];
-                    let ask = v.profile.asks[i];
-                    v.remaining.bids[i].price =
-                        flush_level_price(ref_price, bid.price_offset.get(), false);
-                    v.remaining.bids[i].size = if bids_ok {
-                        level_fill_atoms(bid.size_bps.get(), quote_atoms).unwrap_or(0)
-                    } else {
-                        0
-                    }
-                    .into();
-                    v.remaining.bids[i].expires_at =
-                        ref_slot.saturating_add(bid.expiry_offset.get()).into();
-                    v.remaining.asks[i].price =
-                        flush_level_price(ref_price, ask.price_offset.get(), true);
-                    v.remaining.asks[i].size = if asks_ok {
-                        level_fill_atoms(ask.size_bps.get(), base_atoms).unwrap_or(0)
-                    } else {
-                        0
-                    }
-                    .into();
-                    v.remaining.asks[i].expires_at =
-                        ref_slot.saturating_add(ask.expiry_offset.get()).into();
-                }
-                v.reference_price.stamp = (stamp & !FLUSH_BIT).into();
+                // Materialize `remaining` from the stored profile +
+                // current inventory and clear FLUSH_BIT. The transform and
+                // its per-side `Σ size_bps ≤ BPS` gate live behind
+                // `Vault::materialize_remaining` (all inputs are
+                // vault-local), so this handler no longer open-codes the
+                // slab-touching flush loop.
+                self.market.mutate_vault(cur)?.materialize_remaining();
                 flushed_sectors.push(cur);
             }
             // Collect live levels of the chosen side from this vault.

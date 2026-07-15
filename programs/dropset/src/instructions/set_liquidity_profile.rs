@@ -47,15 +47,13 @@ impl SetLiquidityProfile {
     ) -> Result<()> {
         let profile: &LiquidityProfile = bytemuck::from_bytes(&profile_bytes);
 
-        // Per-side `Σ size_bps ≤ 10_000`. `u32` accumulator: at
-        // N_LEVELS = 8 the upper bound is `8 × u16::MAX = 524_280`,
-        // far inside `u32` range.
-        let mut bid_sum: u32 = 0;
-        let mut ask_sum: u32 = 0;
-        for i in 0..N_LEVELS {
-            bid_sum = bid_sum.saturating_add(profile.bids[i].size_bps.get() as u32);
-            ask_sum = ask_sum.saturating_add(profile.asks[i].size_bps.get() as u32);
-        }
+        // Per-side `Σ size_bps ≤ BPS`, rejected here before any `profile`
+        // bytes are stored. Shares the summation with the match-time flush
+        // gate in `Vault::materialize_remaining` via
+        // `LiquidityProfile::side_size_sums`; this write-time path rejects
+        // an over-BPS profile outright, whereas the flush path zeroes the
+        // offending side out of matching.
+        let (bid_sum, ask_sum) = profile.side_size_sums();
         require!(
             bid_sum <= BPS as u32 && ask_sum <= BPS as u32,
             DropsetError::LiquidityProfileSizeOverflow
