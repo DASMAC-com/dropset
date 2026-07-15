@@ -11,6 +11,8 @@ import unittest
 
 from sync_blockers import (
     Issue,
+    SyncBlockersError,
+    _parse_args,
     _raw_to_issue,
     materialize_overlap_edges,
     missing_touches,
@@ -222,6 +224,26 @@ class TodoBlocksBacklogTests(unittest.TestCase):
     def test_no_todo_blockers_is_empty(self):
         issues = [Issue(id="ENG-1", number=1, blocked_by=["ENG-2"])]
         self.assertEqual(todo_blocks_backlog(issues), [])
+
+
+class ParseArgsTests(unittest.TestCase):
+    """The report-only flag and its mutual exclusion with --for."""
+
+    def test_report_todo_flag(self):
+        dry_run, focus_id, report_todo = _parse_args(["--report-todo-blocks"])
+        self.assertFalse(dry_run)
+        self.assertIsNone(focus_id)
+        self.assertTrue(report_todo)
+
+    def test_report_todo_rejects_for(self):
+        with self.assertRaises(SyncBlockersError):
+            _parse_args(["--report-todo-blocks", "--for", "ENG-1"])
+
+    def test_bare_full_sweep(self):
+        self.assertEqual(_parse_args([]), (False, None, False))
+
+    def test_for_normalizes_to_upper(self):
+        self.assertEqual(_parse_args(["--for", "eng-9"]), (False, "ENG-9", False))
 
 
 if __name__ == "__main__":
