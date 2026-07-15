@@ -237,15 +237,16 @@ tui-prebuild: check-toolchain program-keypair tui-prebuild-explorer
 	cargo build -p dropset-maker-bot -p dropset-taker-bot
 
 # Warm the local explorer's Docker image so the `docker compose up` the TUI
-# runs in the background at launch is a cache hit, not a multi-minute image
-# build streaming into the log (the same class of stall the program/bot
-# prebuild kills). Guarded on a `docker` CLI so a no-Docker host (which falls
-# back to the hosted explorer) is unaffected. A `tui-prebuild` prerequisite,
-# so `make tui` warms it too.
+# runs in the background at launch is instant. Pull the CI-published image
+# (quick), building from source only when the pull is unavailable (offline, or
+# a freshly-bumped version CI hasn't published) — the multi-minute build that
+# used to stall launch. Guarded on a `docker` CLI so a no-Docker host (which
+# falls back to the hosted explorer) is unaffected. A `tui-prebuild`
+# prerequisite, so `make tui` warms it too.
 tui-prebuild-explorer:
 	@if command -v docker >/dev/null 2>&1; then \
-		docker compose -f infra/localnet/docker-compose.yml \
-			build explorer; \
+		docker compose -f infra/localnet/docker-compose.yml pull explorer \
+		|| docker compose -f infra/localnet/docker-compose.yml build explorer; \
 	else echo "docker not found — skipping explorer image prebuild"; fi
 
 # Localnet control-plane TUI. Spawns its own
@@ -331,10 +332,13 @@ demo: browser-3000
 
 # Localnet Docker stack: the local Solana Explorer (infra/localnet). The
 # dropset-tui control plane manages this automatically; these targets drive
-# it by hand. First `explorer` run builds the image from source (a few
-# minutes); later runs reuse the cache. Set DROPSET_EXPLORER_REF to pin the
-# explorer version (branch, tag, or commit SHA).
+# it by hand. Pull the CI-published image (building from source only when the
+# pull is unavailable), then start it; later runs reuse the cache. Pin or bump
+# the version via the `image:` tag in docker-compose.yml (with EXPLORER_REF in
+# explorer.Dockerfile).
 explorer: check-docker
+	docker compose -f infra/localnet/docker-compose.yml pull explorer \
+		|| docker compose -f infra/localnet/docker-compose.yml build explorer
 	docker compose -f infra/localnet/docker-compose.yml up -d explorer
 explorer-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml down

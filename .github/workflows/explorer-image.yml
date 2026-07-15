@@ -1,0 +1,94 @@
+---
+# cspell:word buildx
+# cspell:word dockerhub
+# cspell:word qemu
+# Build the localnet explorer image and publish it, versioned + multi-arch, to
+# Docker Hub, so a cold localnet pulls a prebuilt image instead of building the
+# explorer from source (infra/localnet/explorer.Dockerfile). The version tag
+# lives on the `image:` line of infra/localnet/docker-compose.yml (bumped with
+# the pinned EXPLORER_REF in explorer.Dockerfile); this workflow reads it,
+# skips when that tag is already published, and otherwise pushes it + `latest`.
+# On a pull_request it builds both arches without pushing, so a Dockerfile /
+# version change is validated before merge.
+concurrency:
+  cancel-in-progress: true
+  group: 'explorer-image-${{ github.ref }}'
+jobs:
+  explorer-image:
+    name: 'Explorer image'
+    permissions:
+      contents: 'read'
+    runs-on: 'ubuntu-latest'
+    steps:
+    - uses: 'actions/checkout@v6'
+    # Resolve the image ref from compose — the single source of truth for the
+    # version tag. `docker compose config` (v2 ships on the runner) expands it
+    # via compose's own parser, so a rename or bump can't drift from here.
+    - id: 'image'
+      run: |
+        f=infra/localnet/docker-compose.yml
+        ref="$(docker compose -f "$f" config --format json \
+        | jq -r '.services.explorer.image')"
+        echo "ref=${ref}" >>"$GITHUB_OUTPUT"
+        echo "repo=${ref%:*}" >>"$GITHUB_OUTPUT"
+        echo "Explorer image: ${ref}"
+    # Skip the (slow, emulated arm64) build when the tag is already on Docker
+    # Hub, so re-running the workflow for an unrelated change is a no-op rather
+    # than a rebuild-and-push. PR runs skip this and always build.
+    - id: 'published'
+      if: |
+        github.event_name != 'pull_request'
+      run: |
+        ref='${{ steps.image.outputs.ref }}'
+        if docker manifest inspect "$ref" >/dev/null 2>&1; then
+        echo 'exists=true' >>"$GITHUB_OUTPUT"
+        echo "$ref already published; skipping the build."
+        else
+        echo 'exists=false' >>"$GITHUB_OUTPUT"
+        fi
+    - if: |
+        steps.published.outputs.exists != 'true'
+      uses: 'docker/setup-qemu-action@v3'
+    - if: |
+        steps.published.outputs.exists != 'true'
+      uses: 'docker/setup-buildx-action@v3'
+    # Credentials only on the push path (main / manual dispatch); PR validation
+    # builds without them.
+    - if: >-
+        github.event_name != 'pull_request'
+        && steps.published.outputs.exists != 'true'
+      uses: 'docker/login-action@v3'
+      with:
+        password: '${{ secrets.DOCKERHUB_TOKEN }}'
+        username: '${{ secrets.DOCKERHUB_USERNAME }}'
+    # Build both arches (amd64 for CI / Linux dev, arm64 for Apple Silicon). A
+    # PR validates the build with push=false; main / dispatch pushes the pinned
+    # version tag and moves `latest`.
+    - if: |
+        steps.published.outputs.exists != 'true'
+      uses: 'docker/build-push-action@v6'
+      with:
+        context: 'infra/localnet'
+        file: 'infra/localnet/explorer.Dockerfile'
+        platforms: 'linux/amd64,linux/arm64'
+        push: >-
+          ${{ github.event_name != 'pull_request' }}
+        tags: |
+          ${{ steps.image.outputs.ref }}
+          ${{ steps.image.outputs.repo }}:latest
+name: 'Explorer image'
+'on':
+  pull_request:
+    paths:
+    - '.github/workflows/explorer-image.yml'
+    - 'infra/localnet/docker-compose.yml'
+    - 'infra/localnet/explorer.Dockerfile'
+  push:
+    branches:
+    - 'main'
+    paths:
+    - '.github/workflows/explorer-image.yml'
+    - 'infra/localnet/docker-compose.yml'
+    - 'infra/localnet/explorer.Dockerfile'
+  workflow_dispatch: null
+...
