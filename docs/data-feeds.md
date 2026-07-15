@@ -83,7 +83,7 @@ ______________________________________________________________________
 ## 2. What already exists — the reuse surface
 
 The framework is an **extraction and unification**, not a green-field
-invention. Three consumers already ingest data their own way; the
+invention. Two consumers already ingest data their own way; the
 framework lifts the common shape out of them:
 
 - **Indexer — durable RPC poll.** `RpcPollSource`
