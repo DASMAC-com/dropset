@@ -1,3 +1,5 @@
+<!-- cspell:word Defi -->
+
 <!-- cspell:word ohlcv -->
 
 <!-- cspell:word rollups -->
@@ -165,18 +167,97 @@ ______________________________________________________________________
 
 ## 4. Integrators / consumers
 
-Split by **how each vendor ingests** — and whether the integration is in our
-control:
+This is the **single home** for how every outside consumer integrates —
+the aggregator vendors, the routers, and our own frontend / bots — split
+by **how each ingests** and whether the integration is in our control.
+`indexer.md` §11 owns only the *net-new `/v1` surfaces* the
+transform-over-`/v1` vendors drive; the per-vendor scoping here is
+authoritative.
 
-| Consumer                              | Model                                                                                                                                                                               | Control                                               |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| **CoinGecko / GeckoTerminal**         | **Project-hosted adapter** conforming to GeckoTerminal's non-EVM on-chain DEX endpoint spec (`/latest-block`, `/asset`, `/pair`, `/events`), derived from `/v1`. Order-book shaped. | **Ours — fixtures-ready** (most listable Solana path) |
-| **DEXScreener / Birdeye**             | **Vendor-side ingestion / partner request**: deliver a stable program ID + this spec + a reference decoder; the vendor builds the parser.                                           | **Out of our control — "live on vendor"**             |
-| **DeFiLlama**                         | A `dimension-adapters` **JS PR** that calls `/v1`. Report **self-trade-adjusted `dailyVolume`** (DeFiLlama de-washes); OHLCV/order-book vendors get **raw** fills.                  | PR + their review                                     |
-| **Routers — Jupiter / DFlow / Titan** | Off-chain **quoting Rust adapter (B1)** that reads market state and prices it; see §below.                                                                                          | Ours + each router's onboarding                       |
-| **beethoven (B2)**                    | CPI taker-swap composability. **Post-MVP, blocked on an upstream swap-context extension** (named owner + fallback). **Does not gate B1.**                                           | External dependency                                   |
-| **Dropset frontend**                  | Consumes `/v1` (vaults, positions, prices).                                                                                                                                         | Ours                                                  |
-| **MM bots** (incl. the reference bot) | Read book/vault/fill state from `/v1`; drive quoting via the SDK.                                                                                                                   | Ours / community                                      |
+Checked against each vendor's current (2025–2026) onboarding, §5's "thin
+transforms over `/v1`" framing holds cleanly for essentially **one** path
+(CoinGecko), partly for a **second** (DeFiLlama's volume adapter), and
+**not at all** for the other five — they either never touch `/v1` or need
+surfaces it does not yet expose. The seven aggregator vendors fall into
+**three integration shapes** (DeFiLlama spans two — its volume and TVL
+adapters differ), and only the first is the indexer's to serve.
+
+| Consumer                              | Integration shape                                                                                                                                                                                    | Feeds from               | Control / adapter owner                               | Needs from us                                                              |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ | ----------------------------------------------------- | -------------------------------------------------------------------------- |
+| **CoinGecko / GeckoTerminal**         | Project-hosted, read-only REST adapter conforming to GeckoTerminal's non-EVM on-chain DEX spec (`/latest-block`, `/asset`, `/pair`, `/events`); the vendor polls it. Order-book shaped.              | **`/v1`**                | **Ours — fixtures-ready** (most listable Solana path) | GeckoTerminal on-chain DEX endpoints + new `/v1` surfaces (indexer.md §11) |
+| **DeFiLlama** (volume / fees)         | `dimension-adapters` **JS PR** whose per-day `fetch` may call `/v1`. Report **self-trade-adjusted `dailyVolume`** (DeFiLlama de-washes) + `dailyFees`; OHLCV / order-book vendors get **raw** fills. | **`/v1`**                | Ours (PR + their review)                              | de-washed `dailyVolume` + `dailyFees`                                      |
+| **DeFiLlama** (TVL)                   | `DefiLlama-Adapters` **JS PR**                                                                                                                                                                       | **on-chain vault reads** | Ours (PR)                                             | vault balances (the deferred TVL rollup)                                   |
+| **DEXScreener**                       | Vendor-side crawler / partner request                                                                                                                                                                | on-chain (their parser)  | **Out of our control — "live on vendor"**             | listing packet: program id + audit + decoder                               |
+| **Birdeye**                           | Vendor-side crawler / BD partner                                                                                                                                                                     | on-chain (their parser)  | **Out of our control — "live on vendor"**             | same listing packet                                                        |
+| **Jupiter**                           | Off-chain **quoting Rust adapter (B1)** implementing the `Amm` trait                                                                                                                                 | **on-chain state**       | Ours (SDK) + Jupiter onboarding                       | slippage-bounded take ix + stable account metas                            |
+| **DFlow**                             | Routing venue (aggregator); same off-chain-quote + on-chain-swap shape                                                                                                                               | **on-chain state**       | Ours (SDK) + DFlow BD                                 | same as Jupiter                                                            |
+| **Titan**                             | Meta-aggregator — inherits via Jupiter                                                                                                                                                               | via Jupiter              | via Jupiter                                           | nothing direct                                                             |
+| **beethoven (B2)**                    | CPI taker-swap composability. **Post-MVP, blocked on an upstream swap-context extension** (named owner + fallback). **Does not gate B1.**                                                            | on-chain CPI             | External dependency                                   | swap-context extension (named owner + fallback)                            |
+| **Dropset frontend**                  | Consumes `/v1` (vaults, positions, prices).                                                                                                                                                          | **`/v1`**                | Ours                                                  | —                                                                          |
+| **MM bots** (incl. the reference bot) | Read book / vault / fill state from `/v1`; drive quoting via the SDK.                                                                                                                                | **`/v1`** + SDK          | Ours / community                                      | —                                                                          |
+
+### Transforms over `/v1` — the listable path (CoinGecko, DeFiLlama volume)
+
+Only **CoinGecko / GeckoTerminal** and **DeFiLlama's volume adapter** are
+genuine transforms over `/v1`, and both need `/v1` to grow first (the
+net-new surfaces are tracked in **indexer.md §11**).
+
+- **CoinGecko / GeckoTerminal.** Non-EVM Solana venues are not
+  auto-crawled, so the listable path is a small **project-hosted,
+  read-only REST adapter** conforming to GeckoTerminal's on-chain DEX
+  spec — `/latest-block`, `/asset`, `/pair`, `/events` — which
+  GeckoTerminal **polls** (public, no auth). Submission is a form plus a
+  manual review (order of a week or two), free. The adapter is a thin
+  transform, but an order book has no pool reserves, so `reserves` /
+  `priceNative` are **synthesized** — price from last-fill / mid,
+  "liquidity" from matchable depth or vault TVL; the LP `join` / `exit`
+  event types have no analog and are omitted (or mapped to vault deposit
+  / withdraw). The USD figures wait on the conditional price feed
+  (open: h).
+- **DeFiLlama (volume / fees).** A JavaScript PR to `dimension-adapters`
+  whose per-day `fetch` may legitimately call `/v1`. It must report
+  **self-trade-adjusted `dailyVolume`** (DeFiLlama de-washes) and
+  `dailyFees`. Raw volume ships today; the de-washed flavor is the added
+  surface.
+
+### Vendor-side crawlers — no `/v1` role (DEXScreener, Birdeye)
+
+Both build their **own** on-chain parser and consume nothing from `/v1`;
+their public APIs are read surfaces, not submission channels. Our
+deliverable is a **listing packet, not code**: a stable program id, an
+open-source + audited program, and an IDL / reference decoder — which
+`dropset_sdk::events` already is — so the vendor can decode fills.
+Onboarding is relationship-driven: DEXScreener via a Discord request gated
+on liquidity / volume; Birdeye via its BD channel, likely a paid
+partnership. Both model a venue as an AMM pool (liquidity = pooled
+reserves), so expect the same order-book-mapping friction as the CoinGecko
+case; the order-book precedent (OpenBook, Phoenix are indexed) shows it is
+workable but bespoke on the vendor's side.
+
+### Routers / order-flow — a different model (Jupiter, DFlow, Titan)
+
+A router integration is an **off-chain quoting adapter** that reads
+market-account state and prices a swap, backed by a **slippage-bounded
+take CPI** into the program — the SDK + on-chain layer (the "B1" note
+below), never the REST surface.
+
+- **Jupiter.** Implement `jupiter-amm-interface`'s `Amm` trait
+  (`from_keyed_account`, `get_accounts_to_update`, `update`, `quote`,
+  `get_swap_and_account_metas`). Jupiter **forks** the adapter and calls
+  `quote()` in-process against cached account bytes — network calls are
+  forbidden inside it. The gate is code health, an independent security
+  audit, demonstrated traction, and a reputable team; no fee. It leans
+  entirely on the on-chain take ix exposing a real `Price` limit, a
+  deterministic revert, and a stable `AccountMeta` set — exactly the
+  "Routers (B1)" note below.
+- **DFlow.** An aggregator that treats venues as interchangeable liquidity
+  sources (AMMs, prop AMMs, order-book venues alike); becoming a routable
+  venue is the same off-chain-quote + on-chain-swap shape as Jupiter, plus
+  DFlow's own BD onboarding. It reads chain state, not `/v1`.
+- **Titan.** A **meta-aggregator** sitting above Jupiter / DFlow / its own
+  router, so a Dropset market becomes routable in Titan **for free once it
+  is in Jupiter**. Direct integration is a private BD conversation with no
+  published interface — scope it as "via Jupiter," not a separate build.
 
 **Routers (B1) — take-ix limit semantics.** *(Canonical name: the take is
 exposed on-chain, in the IDL, and in the SDK as the `swap` instruction;
@@ -196,6 +277,19 @@ escape hatch. The dominant cost is **CU** (the in-memory book reconstruction),
 not account loading — consider a bounded top-of-book fast path if a full
 reconstruction is too heavy, and validate each router's actual swap-CPI contract
 before assuming a shared trait.
+
+### MCP servers — orthogonal to listing
+
+Whether a vendor ships a Model Context Protocol server is **mostly
+irrelevant to getting listed**. As of writing, official MCPs exist for
+CoinGecko (read-only market data), Jupiter (docs-only), and DFlow (agent /
+trading tools); DEXScreener, DeFiLlama, and Birdeye have only community
+wrappers (and "Birdeye MCP" collides with an unrelated reputation-SaaS
+product — not the crypto-data vendor); Titan has none. Every one is a
+**consume-data / agent-tooling** surface, not a submit-your-DEX channel,
+so none shortcuts the integration work above. DFlow's is the only one with
+operational weight, and only as a consumer of DFlow's routing — still not
+a listing path for us.
 
 **Price feed — optional, display-only, conditional (open: h).** The protocol
 and indexer are oracle-free. A USD/FX feed is deferred **only if every
