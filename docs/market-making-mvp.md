@@ -134,7 +134,8 @@ The bot surfaces which source is live per leg, per market.
 price: an EMA over the live basis observations. A Kalman filter is
 warranted only if the bot fuses several basis sources or drives spread
 width from the basis variance — deferred (§5). The smoothing half-life is
-**TBD — set by the survey (ENG-700)**; it is not guessed here.
+**TBD — set by the survey's basis-process characterization**
+(`fx-survey.md` §6); it is not guessed here.
 
 ### Composition
 
@@ -196,9 +197,10 @@ first-class regime, not an exception:
 The composition maps onto the kill-switch policy (§4):
 
 - **Basis-band breach** — `basis` outside its per-market sane band → halt
-  quotes (peg event). The band is **TBD — set by the survey (ENG-700)**
-  per market; the old fixed `[0.97, 1.03]` and its "300 bps for a Monday
-  gap" rationale were guesses and are **not** reasserted here.
+  quotes (peg event). The band is **TBD — set per market by the survey's
+  basis-process characterization** (`fx-survey.md` §6); the old fixed
+  `[0.97, 1.03]` and its "300 bps for a Monday gap" rationale were guesses
+  and are **not** reasserted here.
 - **FX anchor stale (outside the weekend regime)** — no live anchor when
   one is expected → run degraded (§4). Inside the weekend regime this is
   the normal state, not a fault: the crypto reference is the anchor.
@@ -214,7 +216,8 @@ The composition maps onto the kill-switch policy (§4):
 | Peg-truth / daily references | Slowest — issuer rate and ECB publish on the order of a day             |
 
 Exact intervals, and every staleness / session threshold, are **TBD —
-set by the survey (ENG-700)**. `fair` is recomputed every tick;
+set by the survey's flow-regime and observability analyses**
+(`fx-survey.md` §6). `fair` is recomputed every tick;
 `SetReferencePrice` fires only per the §3 cadence rules, not on every
 observation.
 
@@ -409,7 +412,7 @@ ______________________________________________________________________
 | Imbalance > 30% from launch                  | Reshape: shrink the accumulating side so the heavy side dominates and offloads |
 | Imbalance > 50%                              | Freeze heavy side (zero `size_bps` on that side; only the rebuild side quotes) |
 | Imbalance > 80%                              | `FreezeVault` — alert and review by hand                                       |
-| `basis` outside its per-market band (§1)     | `FreezeVault` (peg event) — band is TBD by survey (ENG-700)                    |
+| `basis` outside its per-market band (§1)     | `FreezeVault` (peg event) — band is TBD by survey (`fx-survey.md` §6)          |
 | USDC/USD anchor breach (common-mode, §1)     | `FreezeVault` portfolio-wide — one depeg hits every market's basis at once     |
 | FX anchor stale outside the weekend regime   | Run degraded; tighten kill switches by 50%                                     |
 | Basis (crypto) leg also down → last fallback | Full degrade (the deepest degraded case)                                       |
