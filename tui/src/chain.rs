@@ -545,12 +545,33 @@ pub fn system_transfer_ix(from: &Pubkey, to: &Pubkey, lamports: u64) -> Instruct
     )
 }
 
-/// Request `lamports` from the validator faucet for `to` and block until
-/// the airdrop confirms (or time out after ~10s). Localnet only.
+/// How many times to place the airdrop request before giving up — enough to
+/// outlast the faucet's burst rate-limit window, which is tightest in the first
+/// moments after the validator starts (a launch-time pre-fund and an
+/// auto-bootstrap deploy both hit it at once).
+const AIRDROP_REQUEST_ATTEMPTS: usize = 5;
+/// Backoff between airdrop-request attempts.
+const AIRDROP_REQUEST_BACKOFF: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Request `lamports` from the validator faucet for `to` and block until the
+/// airdrop confirms (or time out after ~10s). Localnet only. The faucet
+/// rate-limits a burst of requests, so the request itself is retried with a
+/// backoff before giving up — every caller (deploy funding, the per-job
+/// `ensure_funded`, the launch-time pre-fund) gets that resilience.
 pub fn airdrop(client: &RpcClient, to: &Pubkey, lamports: u64) -> Result<()> {
-    let sig = client
-        .request_airdrop(to, lamports)
-        .context("request airdrop")?;
+    let mut attempt = 0;
+    let sig = loop {
+        match client.request_airdrop(to, lamports) {
+            Ok(sig) => break sig,
+            Err(e) => {
+                attempt += 1;
+                if attempt >= AIRDROP_REQUEST_ATTEMPTS {
+                    return Err(anyhow::Error::new(e).context("request airdrop"));
+                }
+                std::thread::sleep(AIRDROP_REQUEST_BACKOFF);
+            }
+        }
+    };
     for _ in 0..50 {
         if client.confirm_transaction(&sig).unwrap_or(false) {
             return Ok(());

@@ -70,12 +70,6 @@ const SPREAD_STEP_BPS: u32 = 5;
 /// Clamp on the manually-stepped spread so it stays a sane, encodable book.
 const MIN_SPREAD_BPS: u32 = 5;
 const MAX_SPREAD_BPS: u32 = 1_000;
-/// How many times the launch-time pre-fund retries an airdrop before giving up
-/// to the per-job `ensure_funded` fallback — enough to outlast the faucet's
-/// start-up rate-limit window.
-const AIRDROP_ATTEMPTS: usize = 5;
-/// Backoff between launch-time airdrop retries.
-const AIRDROP_RETRY_BACKOFF: Duration = Duration::from_secs(1);
 
 /// Kind of a log line — drives its color.
 #[derive(Clone, Copy)]
@@ -333,19 +327,11 @@ impl App {
                     continue;
                 }
                 log.log(format!("Pre-funding the {label} wallet…"));
-                // The validator's faucet rate-limits a burst of requests in the
-                // first moments after it starts, so a naive single airdrop here
-                // usually loses to that window. Retry with a backoff until one
-                // lands; the per-job `ensure_funded` is the final fallback if
-                // every attempt is throttled.
-                for attempt in 0..AIRDROP_ATTEMPTS {
-                    match chain::airdrop(&client, &who, 100 * LAMPORTS_PER_SOL) {
-                        Ok(()) => break,
-                        Err(e) if attempt + 1 == AIRDROP_ATTEMPTS => {
-                            log.log(format!("{label} airdrop warning: {e:#}"));
-                        }
-                        Err(_) => std::thread::sleep(AIRDROP_RETRY_BACKOFF),
-                    }
+                // `chain::airdrop` retries the request past the faucet's
+                // start-up rate-limit window; the per-job `ensure_funded` is the
+                // final fallback if every attempt is throttled.
+                if let Err(e) = chain::airdrop(&client, &who, 100 * LAMPORTS_PER_SOL) {
+                    log.log(format!("{label} airdrop warning: {e:#}"));
                 }
             }
         });
