@@ -38,8 +38,12 @@ in favor of embedded Bash search
 so it would mean enumerating the whole built-in set in every launcher —
 too brittle). So the "use the Grep tool" guidance below is conditional:
 use Grep / Glob **when they exist**, but where they don't, fall back to
-a **bare, single** `grep` / `find` Bash command — never a piped
-compound. Bare `grep` / `find` reduce to the retained `Bash(grep:*)` /
+a **bare, single** `grep` / `find` Bash command — never `git grep` (the
+bullet below), and never a piped compound. This holds on the
+**main-loop** path, not only in the sub-agent brief: whichever agent
+loses the Grep tool reaches for the same fallback, so bare `grep` is the
+answer for both. Bare `grep` / `find` reduce to the retained
+`Bash(grep:*)` /
 `Bash(find:*)` allow-rules and prompt once; it's the `grep … | head` /
 `find … | xargs` **pipes** that can't generalize and re-prompt forever.
 The `Bash(grep:*)`, `Bash(find:*)`, `Bash(head:*)`, and `Bash(tail:*)`

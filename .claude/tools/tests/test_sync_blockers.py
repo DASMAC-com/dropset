@@ -11,10 +11,14 @@ import unittest
 
 from sync_blockers import (
     Issue,
+    SyncBlockersError,
+    _parse_args,
+    _raw_to_issue,
     materialize_overlap_edges,
     missing_touches,
     parse_number,
     parse_touches,
+    todo_blocks_backlog,
     touches_overlap,
 )
 
@@ -156,6 +160,90 @@ class IncrementalFocusTests(unittest.TestCase):
         self.assertEqual(
             materialize_overlap_edges(issues, None, True, focus_id="ENG-30"), []
         )
+
+
+def raw_issue(ident, blockers=()):
+    """Build a raw GraphQL issue node. ``blockers`` is an iterable of
+    ``(identifier, state_type, state_name)`` for its ``blockedBy`` edges."""
+    return {
+        "id": f"uuid-{ident}",
+        "identifier": ident,
+        "description": "",
+        "relations": {"nodes": []},
+        "inverseRelations": {
+            "nodes": [
+                {
+                    "type": "blocks",
+                    "issue": {
+                        "identifier": bid,
+                        "state": {"name": state_name, "type": state_type},
+                    },
+                }
+                for bid, state_type, state_name in blockers
+            ]
+        },
+    }
+
+
+class TodoBlocksBacklogTests(unittest.TestCase):
+    """A Todo (``unstarted``) issue blocking a Backlog issue is a scheduling
+    smell; the report-only detector surfaces it."""
+
+    def test_raw_to_issue_extracts_only_unstarted_blockers(self):
+        raw = raw_issue(
+            "ENG-50",
+            blockers=[
+                ("ENG-10", "unstarted", "Todo"),
+                ("ENG-20", "started", "In Progress"),
+                ("ENG-30", "backlog", "Backlog"),
+            ],
+        )
+        got = _raw_to_issue(raw)
+        # blocked_by carries every blocker; todo_blockers only the unstarted one.
+        self.assertEqual(got.blocked_by, ["ENG-10", "ENG-20", "ENG-30"])
+        self.assertEqual(got.todo_blockers, [("ENG-10", "Todo")])
+
+    def test_detector_returns_sorted_triples(self):
+        issues = [
+            Issue(id="ENG-40", number=40, todo_blockers=[("ENG-9", "Todo")]),
+            Issue(
+                id="ENG-20",
+                number=20,
+                todo_blockers=[("ENG-15", "Todo"), ("ENG-5", "Todo")],
+            ),
+        ]
+        self.assertEqual(
+            todo_blocks_backlog(issues),
+            [
+                ("ENG-5", "Todo", "ENG-20"),
+                ("ENG-15", "Todo", "ENG-20"),
+                ("ENG-9", "Todo", "ENG-40"),
+            ],
+        )
+
+    def test_no_todo_blockers_is_empty(self):
+        issues = [Issue(id="ENG-1", number=1, blocked_by=["ENG-2"])]
+        self.assertEqual(todo_blocks_backlog(issues), [])
+
+
+class ParseArgsTests(unittest.TestCase):
+    """The report-only flag and its mutual exclusion with --for."""
+
+    def test_report_todo_flag(self):
+        dry_run, focus_id, report_todo = _parse_args(["--report-todo-blocks"])
+        self.assertFalse(dry_run)
+        self.assertIsNone(focus_id)
+        self.assertTrue(report_todo)
+
+    def test_report_todo_rejects_for(self):
+        with self.assertRaises(SyncBlockersError):
+            _parse_args(["--report-todo-blocks", "--for", "ENG-1"])
+
+    def test_bare_full_sweep(self):
+        self.assertEqual(_parse_args([]), (False, None, False))
+
+    def test_for_normalizes_to_upper(self):
+        self.assertEqual(_parse_args(["--for", "eng-9"]), (False, "ENG-9", False))
 
 
 if __name__ == "__main__":

@@ -130,33 +130,41 @@ mcp__claude_ai_Linear__save_issue(
 )
 ```
 
-**4. Write the disposition back** with
-`mcp__claude_ai_Linear__save_document` (id = the resolved value,
-literal newlines): tick each consumed entry (`- [ ]` → `- [x]`) and add
-a nested note — `✓ filed: ENG-### (<lever>)` for one that drove a task,
-or `⚠ noted: <reason>` for a one-off that implied no change. Build the
-new body from the body you just fetched in step 1, changing only those
-lines; if the doc `updatedAt` is newer than your fetch (a concurrent
-edit), re-fetch and rebuild rather than clobbering it.
+**4. Decide the clear first — before writing anything back.** The
+disposition write-back (step 5) re-authors the **whole** inbox body, so
+deciding the clear *after* it means a "yes, clear" throws that
+re-author away — the expensive tick-and-annotate pass is written, then
+immediately deleted. So resolve the clear decision **up front**, via
+**`AskUserQuestion`**, recommended default **first**: "yes, clear the
+processed entries (Recommended)" and "no, leave them". Clear **only on
+an explicit yes**; on "no" (or if nothing was consumed this pass) the
+entries stay. When a caller has already fixed the decision — e.g.
+`housekeeping`'s one-shot pass defaults to *leave* and passes that in —
+take the inherited answer and don't re-ask. Whichever way it resolves,
+step 5 makes exactly **one** `save_document` write.
 
-**5. Offer to clear the processed entries** so the inbox doesn't grow
-unbounded. After the dispositions are written, ask via
-**`AskUserQuestion`** whether to clear the now-**checked** (`- [x]`,
-processed) entries, with the recommended default **first**: "yes, clear
-the processed entries (Recommended)" and "no, leave them". Clear **only
-on an explicit yes** — on "no" (or if nothing is checked) leave the doc
-as written and move on. This step applies whether the skill runs
-standalone or under `housekeeping` (which inherits it through the
-delegation rather than re-implementing it). To clear: rebuild the body
-from the **live** doc (re-fetch first, as in step 4) and drop only the
-lines of entries that are checked **and** carry a disposition note,
-collapsing to the empty-inbox template when none remain. Diff against
-the live body, not your step-1 snapshot, so an unprocessed entry the
-user (or a concurrent `session-metrics` run) added mid-pass is never
-dropped. Write it back with `save_document`. When this runs right before
-a `session-metrics` producer step (e.g. under `housekeeping`), evaluate
-the clear against the inbox state **before** that step appends a fresh
-entry.
+**5. Write the doc back once, per the step-4 decision** with
+`mcp__claude_ai_Linear__save_document` (id = the resolved value,
+literal newlines). Rebuild from the **live** doc — re-fetch first, and
+if its `updatedAt` is newer than your step-1 fetch (a concurrent
+`session-metrics` run or a hand edit added an entry mid-pass), rebuild
+from the re-fetched body — then, per the decision:
+
+- **Clear = yes:** drop the lines of the entries this pass consumed,
+  collapsing to the empty-inbox template when none remain. **Skip the
+  tick + disposition note entirely** — the entries are being removed, so
+  annotating them first is pure waste (this is the whole reason the
+  clear is decided before the write-back). Diff against the live body,
+  not your step-1 snapshot, so an entry added mid-pass is never dropped.
+- **Clear = no:** leave every entry in place but tick each consumed one
+  (`- [ ]` → `- [x]`) and add a nested disposition note — a
+  `✓ filed: ENG-### (<lever>)` for one that drove a task, or a
+  `⚠ noted: <reason>` for a one-off that implied no change — changing
+  only those lines.
+
+When this runs right before a `session-metrics` producer step (e.g.
+under `housekeeping`), evaluate the clear against the inbox state
+**before** that step appends a fresh entry.
 
 **6. Report** in one line: the aggregated skill-improvement task —
 whether new levers were filed into a fresh one or appended to the open

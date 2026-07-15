@@ -74,6 +74,11 @@ class Issue:
     touches: list[str] = field(default_factory=list)
     blocked_by: list[str] = field(default_factory=list)
     blocks: list[str] = field(default_factory=list)
+    # (blocker ``ENG-###``, blocker state name) for each ``blockedBy`` blocker
+    # whose workflow state is the *Todo* (``unstarted``) type. Every issue here
+    # is itself Backlog (the fetch filters to it), so a populated list is a
+    # Todo→Backlog block — the scheduling smell the report mode surfaces.
+    todo_blockers: list[tuple[str, str]] = field(default_factory=list)
 
 
 def parse_number(ident: str) -> int | None:
@@ -160,6 +165,26 @@ def missing_touches(issues: list[Issue]) -> list[str]:
     return [i.id for i in issues if not i.touches]
 
 
+def todo_blocks_backlog(issues: list[Issue]) -> list[tuple[str, str, str]]:
+    """Flag the scheduling smell where a **Todo** (``unstarted``) issue blocks a
+    **Backlog** issue: the blocked item sits in the pull queue but can't actually
+    be started because a not-yet-pulled or initiative-level item gates it (per
+    the Todo/Backlog convention). Every issue in ``issues`` is Backlog (the fetch
+    filters to it), so this just walks each one's Todo-state blockers.
+
+    Returns ``(blocker_id, blocker_state_name, blocked_backlog_id)`` triples,
+    sorted by blocked then blocker for a stable report. Read-only — the caller
+    resolves each pair (move the blocker into Backlog, drop a stale edge, or
+    re-prioritize); this never writes.
+    """
+    pairs: list[tuple[str, str, str]] = []
+    for i in issues:
+        for blocker_id, blocker_state in i.todo_blockers:
+            pairs.append((blocker_id, blocker_state, i.id))
+    pairs.sort(key=lambda p: (parse_number(p[2]) or 0, parse_number(p[0]) or 0))
+    return pairs
+
+
 # --------------------------------------------------------------------------
 # The sweep — materialize undeclared file-overlaps into ``blocks`` relations.
 # --------------------------------------------------------------------------
@@ -233,7 +258,9 @@ query Backlog($projectId: ID!, $first: Int!) {
       identifier
       description
       relations { nodes { type relatedIssue { identifier } } }
-      inverseRelations { nodes { type issue { identifier } } }
+      inverseRelations {
+        nodes { type issue { identifier state { name type } } }
+      }
     }
   }
 }
@@ -294,6 +321,13 @@ def _raw_to_issue(raw: dict) -> Issue:
         for r in raw["inverseRelations"]["nodes"]
         if r.get("type") == "blocks" and r.get("issue")
     ]
+    todo_blockers = [
+        (r["issue"]["identifier"], (r["issue"].get("state") or {}).get("name") or "")
+        for r in raw["inverseRelations"]["nodes"]
+        if r.get("type") == "blocks"
+        and r.get("issue")
+        and (r["issue"].get("state") or {}).get("type") == "unstarted"
+    ]
     description = raw.get("description") or ""
     touches = parse_touches(description)
     ident = raw["identifier"]
@@ -304,6 +338,7 @@ def _raw_to_issue(raw: dict) -> Issue:
         touches=touches,
         blocked_by=blocked_by,
         blocks=blocks,
+        todo_blockers=todo_blockers,
     )
 
 
@@ -346,6 +381,10 @@ Usage:
       open Dropset Backlog.
   sync_blockers.py --for ENG-### [--dry-run]
       Incremental: file overlap edges for just the named (just-filed) issue.
+  sync_blockers.py --report-todo-blocks
+      Report-only: print, as JSON, every Todo-state issue that blocks an open
+      Backlog issue (a scheduling smell). Writes nothing; cannot combine with
+      --for.
   --dry-run  Print the edges that would be filed; write nothing."""
 
 
@@ -359,17 +398,21 @@ def env_var(name: str) -> str:
     return value
 
 
-def _parse_args(args: list[str]) -> tuple[bool, str | None]:
-    """Return ``(dry_run, focus_id)`` from the CLI args, or raise on a bad one.
-    ``focus_id`` is the ``ENG-###`` from ``--for`` in upper case (else
-    ``None``)."""
+def _parse_args(args: list[str]) -> tuple[bool, str | None, bool]:
+    """Return ``(dry_run, focus_id, report_todo)`` from the CLI args, or raise on
+    a bad one. ``focus_id`` is the ``ENG-###`` from ``--for`` in upper case (else
+    ``None``); ``report_todo`` is the ``--report-todo-blocks`` report-only mode.
+    """
     dry_run = False
     focus_id: str | None = None
+    report_todo = False
     i = 0
     while i < len(args):
         arg = args[i]
         if arg == "--dry-run":
             dry_run = True
+        elif arg == "--report-todo-blocks":
+            report_todo = True
         elif arg == "--for":
             i += 1
             if i >= len(args):
@@ -378,7 +421,9 @@ def _parse_args(args: list[str]) -> tuple[bool, str | None]:
         else:
             raise SyncBlockersError(f"unknown argument: {arg} (try --help)")
         i += 1
-    return dry_run, focus_id
+    if report_todo and focus_id is not None:
+        raise SyncBlockersError("--report-todo-blocks cannot combine with --for")
+    return dry_run, focus_id, report_todo
 
 
 def run(argv: list[str]) -> int:
@@ -387,12 +432,27 @@ def run(argv: list[str]) -> int:
         print(HELP)
         return 0
 
-    dry_run, focus_id = _parse_args(args)
+    dry_run, focus_id, report_todo = _parse_args(args)
 
     api_key = env_var("LINEAR_API_KEY")
     project_id = env_var("LINEAR_PROJECT_ID")
 
     issues = fetch_backlog(api_key, project_id)
+
+    if report_todo:
+        pairs = todo_blocks_backlog(issues)
+        print(
+            json.dumps(
+                {
+                    "todo_blocks_backlog": [
+                        {"blocker": b, "blocker_state": s, "blocked": d}
+                        for b, s, d in pairs
+                    ]
+                },
+                indent=2,
+            )
+        )
+        return 0
 
     if focus_id is not None and focus_id not in {i.id for i in issues}:
         raise SyncBlockersError(

@@ -1,6 +1,6 @@
 ---
 name: housekeeping
-description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, upgrade the Claude Code CLI (best-effort brew cask), prune the worktrees of already-merged PRs and dismiss their stale GitHub notifications, mine the Session Metrics inbox via trim-context (one aggregated propose-only task), reconcile Backlog blocking edges via a sync-blockers sweep and propose merge groups for coupled issues to minimize open PRs, then — only when given the `audit` flag (`/housekeeping audit`) — run one finite `/audit` rotation inline and exit; with no flag the audit is skipped. The cspell dictionary check is opt-in (pass `cspell`) and off by default. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
+description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, upgrade the Claude Code CLI (best-effort brew cask), prune the worktrees of already-merged PRs and dismiss their stale GitHub notifications, mine the Session Metrics inbox via trim-context (one aggregated propose-only task), reconcile Backlog blocking edges via a sync-blockers sweep and propose merge groups for coupled issues to minimize open PRs, then — only when given the `audit` flag (`/housekeeping audit`) — run one finite `/audit` rotation inline and exit; with no flag the audit is skipped. The cspell dictionary check is opt-in (pass `cspell`) and off by default. By default it runs one-shot — start to finish with no prompts, flagging deferred items in its report (pass `interactive` to restore the AskUserQuestion gates). Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -43,9 +43,13 @@ committed skills and upgrades the Claude Code CLI
 
 The morning entry point is a **single one-shot run**:
 upkeep → one `/audit` rotation (only when the `audit` flag
-was passed) → exit. It does *not* stay on a timer; the
-`/loop 30m housekeeping` cadence is there for ad-hoc
-upkeep while you work, but the morning driver is the
+was passed) → exit. By default that run goes
+**start-to-finish with no `AskUserQuestion` gate** — it
+files or flags its deferred items and reports rather than
+stopping to ask (see "One-shot vs. interactive mode"); pass
+`interactive` to restore the prompts. It does *not* stay on
+a timer; the `/loop 30m housekeeping` cadence is there for
+ad-hoc upkeep while you work, but the morning driver is the
 one-shot. Each invocation is one pass and safe to repeat.
 
 **Opt-in: spelling-escape hygiene.** The `cspell-audit`
@@ -80,8 +84,54 @@ order:
   `/loop 30m housekeeping cspell`), the pass runs the
   opt-in spelling-escape check (step 3); without it that
   step is skipped.
+- **The `interactive` flag** — by default the pass runs
+  **one-shot**: start to finish with **no**
+  `AskUserQuestion` gate, every interactive step taking its
+  non-prompting branch so the morning driver never stalls
+  waiting on an answer. Passing `interactive` (e.g.
+  `housekeeping interactive`) restores the prompts — the
+  merge-group and Todo-blocks-Backlog gates (step 6), the
+  perms-cruft removal (step 7), the stale-memory purge
+  (step 8), and the session-metrics (step 9) and
+  purge-conversations (step 10) offers. See "One-shot vs.
+  interactive mode" for the full mapping.
 
 Any other argument is ignored.
+
+## One-shot vs. interactive mode
+
+The morning driver has to **run to completion** — a direct
+`/housekeeping` that stops at half a dozen
+`AskUserQuestion` gates isn't a one-shot. So the pass has
+two modes, and the default is the non-interrupting one:
+
+- **One-shot (the default).** A bare `/housekeeping` (with
+  or without `audit` / `cspell`) and **every** `/loop`
+  cadence run. It fires **no** `AskUserQuestion`: each
+  interactive step takes its **non-prompting branch** — the
+  same branch the steps below label the *unattended* pass.
+  Concretely: step 4 hands `trim-context` a **leave**
+  decision so it doesn't ask about clearing the inbox;
+  step 6 **lists** its merge-group candidates and its
+  Todo-blocks-Backlog pairs and resolves nothing; steps 7
+  and 8 **propose / list** the perms cruft and the stale
+  memories and delete nothing; and steps 9 and 10 (the
+  session-metrics and purge-conversations offers) are
+  **skipped**. The deferred items are filed or flagged in
+  the report for a later attended pass — nothing is ever
+  deleted unattended. The **only** thing that may interrupt
+  a one-shot is a genuine high-severity `/audit` finding on
+  the `PushNotification` path (step 11); that stays.
+- **Interactive** (`/housekeeping interactive`). Restores
+  every `AskUserQuestion` gate listed above, so you can act
+  on the candidates in the same pass. Use it for an
+  attended cleanup.
+
+**Mapping.** Below, wherever a step distinguishes an
+**attended** pass from an **unattended** one, read
+*attended* = interactive and *unattended* = one-shot. The
+per-step wording already spells out both branches; this
+gate just fixes which branch the default takes.
 
 ## Run it from the base repo root
 
@@ -378,12 +428,16 @@ writes each consumed
 entry's disposition back into the doc. `trim-context` has
 **no** attended / propose-only split — filing a task *is*
 the proposal, so it never edits a skill or convention
-doc. At the end of its run `trim-context` also offers (via
-`AskUserQuestion`) to clear the now-processed inbox
-entries; that prompt lives in `trim-context` itself, so
-this step **inherits** it through the delegation — don't
-re-implement it here. If `LINEAR_SESSION_METRICS_DOC_ID`
-is unset, `trim-context` says so and this step is a no-op.
+doc. `trim-context` then decides whether to clear the
+now-processed inbox entries (its own step 4/5), and this
+step **inherits** that decision through the delegation —
+don't re-implement it here. In a **one-shot** pass, hand
+`trim-context` a **leave** decision up front (per its
+"caller has already fixed the decision" hook) so it doesn't
+stop to ask mid-pass; in an **interactive** pass, let it
+run its own `AskUserQuestion` clear prompt. If
+`LINEAR_SESSION_METRICS_DOC_ID` is unset, `trim-context`
+says so and this step is a no-op.
 
 **5. Check the convention ↔ skill reference sync.**
 `CLAUDE.md` is the **index**; the full operating
@@ -454,6 +508,32 @@ warning is the backstop). This is the board-level companion
 to the filing-time fold — it catches coupling that slipped
 through as separate issues.
 
+**Then flag any Todo-state issue that blocks a Backlog
+issue.** Per the Todo/Backlog convention
+(`docs/conventions/linear-automation.md`) initiatives /
+meta live in `Todo` and pullable work in `Backlog`, so a
+**`Todo` blocker gating a `Backlog` issue** is a scheduling
+smell: a not-yet-pulled or initiative-level item gates work
+that sits in the pull queue, so the Backlog item can't
+actually be started. Get the pairs from the same
+`sync_blockers.py` tool (read-only — it writes nothing):
+
+```sh
+python3 .claude/tools/sync_blockers.py --report-todo-blocks
+```
+
+It prints `{todo_blocks_backlog: [{blocker, blocker_state, blocked}]}` —
+keyed by the Backlog issue's `unstarted`-state blockers. **Always
+list** each pair in the report (blocker `ENG-###`/state → blocked
+`ENG-###`). In an **interactive**
+pass, also **ask to resolve** each via `AskUserQuestion` —
+move the Todo blocker into Backlog so it's pullable, drop
+the edge if it isn't a real dependency, or re-prioritize;
+in a **one-shot** pass, just list the pairs and resolve
+nothing. It needs the same `LINEAR_API_KEY` /
+`LINEAR_PROJECT_ID` as the sweep; skip and say so if either
+is unset.
+
 **7. Audit the base-repo permission allowlist for cruft.**
 `firm-perms` only ever **adds** to
 `<base>/.claude/settings.local.json` (unions, generalizes),
@@ -505,9 +585,30 @@ never reads the whole ~250-entry array.
 
 **8. Review saved auto-memory for staleness.** The saved
 auto-memory (`~/.claude/projects/<slug>/memory/*.md` plus the
-`MEMORY.md` index) accretes; curate it for freshness. Read
-the memory bodies **in this step's own pass** and flag a
-memory as stale when it:
+`MEMORY.md` index) accretes; curate it for freshness.
+
+**Gate the scan on a cadence first.** Reading the whole
+store and repo-verifying every reference is the pass's
+**dominant compute**, and the store changes slowly, so
+don't re-run it on every 30-minute `/loop` iteration. Ask
+the gate whether a fresh scan is warranted — the memory dir
+is `~/.claude/projects/<slug>/memory` (`<slug>` the cwd
+slug, the same path used below):
+
+```sh
+python3 .claude/tools/memory_scan_gate.py check <memory_dir>
+```
+
+It prints `{scan, reason, …}` and returns `scan: true` when
+the store changed since the last scan **or** the daily floor
+(~20h) has elapsed — so the morning one-shot still re-scans,
+but a tight `/loop` within that window skips. **If `scan`
+is `false`, skip the rest of this step** and note "memory
+scan skipped (`<reason>`)" in the report. Only when `scan`
+is `true`, do the review below.
+
+Read the memory bodies **in this step's own pass** and flag
+a memory as stale when it:
 
 - names a **file / function / flag / `ENG-###`** that no
   longer exists (a dangling reference — the same check the
@@ -530,6 +631,15 @@ replay full memory bodies into the main loop. (Distinct from
 the `purge-conversations` skill, which reclaims *disk* from
 transcripts/caches; this curates the knowledge store for
 freshness.)
+
+**Record the scan** once the review has run (in either mode
+— a one-shot that only *listed* stale candidates still
+performed the scan) so the next `check` measures against
+it:
+
+```sh
+python3 .claude/tools/memory_scan_gate.py record <memory_dir>
+```
 
 **9. Offer a session-metrics run.** The morning pass both
 *mines* the Session Metrics inbox (step 4) and can
@@ -587,6 +697,8 @@ sweep.
 
 **12. Report.** Print a short summary:
 
+- Mode: **one-shot** (the default — ran to completion with
+  no prompts, deferred items flagged) or **interactive**.
 - `main`: fast-forwarded to the latest, or left at its
   current commit (with the reason) if the pull couldn't
   fast-forward — so a pass that ran on a stale checkout
@@ -619,7 +731,10 @@ sweep.
 - Blocking edges: the `sync-blockers` reconciliation
   sweep's one-line tally (backlog issue count + overlap
   edges filed), or why it was skipped (e.g. a missing env
-  var).
+  var); and any **Todo-blocks-Backlog** pairs flagged
+  (blocker `ENG-###`/state → blocked `ENG-###`), plus which
+  were resolved in an interactive pass — or that there were
+  none.
 - Merge-group proposals: the coherent coupled-issue clusters
   proposed for folding via `merge-tasks` and which the human
   approved merging (attended), or the suggested groups listed
@@ -629,7 +744,8 @@ sweep.
   the human approved removing — or that it was clean.
 - Auto-memory: the memory slugs flagged stale (with the
   one-line reason each) and, for an attended pass, which
-  were purged — or that all are fresh.
+  were purged — or that all are fresh; or that the scan was
+  **skipped this pass** (with the cadence-gate reason).
 - Session metrics run: whether a `/session-metrics` run
   was offered and accepted for this session, or skipped.
 - Purge-conversations: whether a `/purge-conversations` run

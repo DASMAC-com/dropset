@@ -1,6 +1,6 @@
 ---
 name: sync-blockers
-description: Keep the Dropset Linear Backlog's blocking edges in sync with file overlap. The whole job is deterministic and lives in a committed, dependency-free Python tool (`.claude/tools/sync_blockers.py`, run directly with `python3`): read the open Backlog, find every `**Touches**:` file-overlap collision with no declared blockedBy/blocks edge, and file a real `blocks` relation (lower ENG-### blocks higher) so Linear's native blocking icons reflect it. Two modes — `--for ENG-###` (incremental, file-time: just the named issue vs. the backlog) and a bare full sweep (reconciliation). It never renders or writes a document, and never merges or closes issues. The filing skills call `--for` after `save_issue`; run the full sweep by hand to reconcile after backfilling a `**Touches**:` line on an older issue.
+description: Keep the Dropset Linear Backlog's blocking edges in sync with file overlap. The whole job is deterministic and lives in a committed, dependency-free Python tool (`.claude/tools/sync_blockers.py`, run directly with `python3`): read the open Backlog, find every `**Touches**:` file-overlap collision with no declared blockedBy/blocks edge, and file a real `blocks` relation (lower ENG-### blocks higher) so Linear's native blocking icons reflect it. Two write modes — `--for ENG-###` (incremental, file-time: just the named issue vs. the backlog) and a bare full sweep (reconciliation) — plus a read-only `--report-todo-blocks` scan that flags any Todo-state issue blocking a Backlog issue (a scheduling smell). It never renders or writes a document, and never merges or closes issues. The filing skills call `--for` after `save_issue`; run the full sweep by hand to reconcile after backfilling a `**Touches**:` line on an older issue.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -79,6 +79,21 @@ file and write nothing:
 
 ```sh
 python3 .claude/tools/sync_blockers.py --dry-run
+```
+
+**Report-only — `--report-todo-blocks`.** A read-only scan
+(not a sweep — it files nothing) that surfaces a scheduling
+smell: a **`Todo`-state issue blocking a `Backlog` issue**.
+Per the Todo/Backlog convention initiatives / meta sit in
+`Todo` and pullable work in `Backlog`, so a Todo blocker
+gating a Backlog item means the pullable item can't
+actually start. It prints the pairs as JSON —
+`{todo_blocks_backlog: [{blocker, blocker_state, blocked}]}` — and
+`housekeeping` drives it after the sweep, deciding what to do with each
+pair. Cannot combine with `--for`:
+
+```sh
+python3 .claude/tools/sync_blockers.py --report-todo-blocks
 ```
 
 Its unit tests (Python's `unittest`, no third-party test

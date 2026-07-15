@@ -90,6 +90,7 @@ prefund
 prefunded
 programdata
 pubkeys
+pullable
 pytest
 ratatui
 readback
@@ -142,6 +143,7 @@ tsup
 txns
 unfirmable
 unmirrored
+unstarted
 ureq
 usdg
 usize
