@@ -1,0 +1,95 @@
+# cspell:word rustls
+# The shared ingestion framework (docs/data-feeds.md): source → records →
+# sinks. A `Source` (poll or subscribe) yields typed records; a runner fans
+# each batch to one or more `Sink`s — a durable Postgres store sink behind a
+# resumable JSONB cursor, and/or an in-process forward sink a co-located
+# consumer reads. Source adapters are feature-gated so a consumer compiles
+# only the transport it uses; the whole survey gate is `http` + `store`.
+
+[dependencies]
+anyhow = "1"
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = [
+  "rt-multi-thread",
+  "macros",
+  "signal",
+  "sync",
+  "time",
+] }
+tracing = "0.1"
+
+# Inner-instruction `data` arrives base58-encoded in the RPC `getTransaction`
+# response; decode it before handing blobs to a consumer's event decoder.
+bs58 = { version = "0.5", optional = true }
+# The async JSON-over-HTTPS client for REST poll sources. `rustls` matches the
+# store sink's TLS backend so a consumer never pulls in openssl.
+reqwest = { version = "0.12", default-features = false, features = [
+  "json",
+  "rustls-tls",
+], optional = true }
+# Same 3.x solana line as the indexer and maker-bot so there is one `Pubkey`
+# type across decode and RPC.
+solana-client = { version = "~3.1", optional = true }
+solana-commitment-config = { version = "3", optional = true }
+solana-pubkey = { version = "3", optional = true }
+solana-signature = { version = "3", optional = true }
+solana-transaction-status = { version = "~3", optional = true }
+# String-typed runtime queries (no compile-time `DATABASE_URL`); `migrate`
+# embeds `./migrations`.
+sqlx = { version = "0.8", default-features = false, features = [
+  "runtime-tokio",
+  "tls-rustls",
+  "postgres",
+  "macros",
+  "migrate",
+  "json",
+], optional = true }
+
+[dev-dependencies]
+# The store path is exercised against a real Postgres in a throwaway
+# container (feeds/tests/store_postgres.rs), so the migration, the
+# `feed_cursors` upsert, and the store sink's cursor-advance are covered end
+# to end. Those tests are `#[ignore]`d — they need a Docker daemon; run them
+# with `cargo test -p dropset-feeds --features store -- --ignored`.
+sqlx = { version = "0.8", default-features = false, features = [
+  "runtime-tokio",
+  "tls-rustls",
+  "postgres",
+  "macros",
+  "migrate",
+  "json",
+] }
+testcontainers-modules = { version = "0.11", features = ["postgres"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
+
+[features]
+default = []
+# The durable warehouse path: Postgres store sink + framework-owned cursor
+# store (the `feed_cursors` table).
+store = ["dep:sqlx"]
+# The HTTP-REST poll transport (Coinbase, FX, Circle feeds).
+http = ["dep:reqwest"]
+# The RPC-poll transport (the eCLOB indexer, the Orca swap feed).
+rpc = [
+  "dep:solana-client",
+  "dep:solana-commitment-config",
+  "dep:solana-pubkey",
+  "dep:solana-signature",
+  "dep:solana-transaction-status",
+  "dep:bs58",
+]
+# The subscribe / streaming seam: the channel bridge a WebSocket /
+# `logsSubscribe` / geyser transport pushes into. The concrete socket lands
+# with its first bot consumer (docs/data-feeds.md §4, §7).
+stream = []
+
+[package]
+description = "Shared data-ingestion framework for the Dropset survey, indexer, and bots."
+name = "dropset-feeds"
+publish = false
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true

@@ -6,11 +6,7 @@
 
 <!-- cspell:word Fargate -->
 
-<!-- cspell:word reqwest -->
-
 <!-- cspell:word TIMESTAMPTZ -->
-
-<!-- cspell:word upserts -->
 
 # Dropset Data Feeds — Ingestion Framework Design
 
@@ -31,11 +27,15 @@ never *what* a consumer does with it — the survey's schema and analyses,
 the indexer's `/v1`, and the bots' quoting logic all stay with the
 consumers.
 
-**Status.** Greenfield — there is no `feeds/` tree yet. The seams this
-crate unifies already exist in the repo (see §2); this spec is the plan
-to lift them into one framework and prove it with the survey's first
-feed. Building the crate, and migrating each existing consumer onto it,
-are separate tracked tasks — the survey is the first consumer.
+**Status.** The framework crate has landed under `feeds/` — the
+`Source` / `Sink` traits, the runner, the store and forward sinks, the
+framework-owned cursor store, and the feature-gated HTTP / RPC /
+streaming adapters, with the streaming path exercised through an
+in-memory channel bridge (the concrete socket phases in with its first
+bot consumer, §7). The seams it unifies already existed in the repo
+(see §2); proving it end-to-end with the survey's first feed, and
+migrating each existing consumer onto it, are separate tracked tasks —
+the survey is the first consumer.
 
 ______________________________________________________________________
 

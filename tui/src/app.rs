@@ -9,7 +9,6 @@
 //! wipes its temp ledger on `Drop`, so quitting leaves no orphan.
 
 // cspell:word bootstrappable
-// cspell:word Deque
 // cspell:word pasteable
 // cspell:word RAII
 

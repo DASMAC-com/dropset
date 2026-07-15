@@ -36,6 +36,7 @@ dasmac
 dedup
 dedups
 depeg
+deque
 devnet
 dflow
 discordapp
@@ -96,6 +97,7 @@ ratatui
 readback
 repeg
 repr
+reqwest
 respawn
 respawned
 retunable
@@ -144,6 +146,7 @@ txns
 unfirmable
 unmirrored
 unstarted
+upserts
 ureq
 usdg
 usize

@@ -6,8 +6,6 @@
 
 <!-- cspell:word PostgREST -->
 
-<!-- cspell:word upserts -->
-
 # Dropset Indexer — Prototype Design
 
 The off-chain **event indexer**: it subscribes to the program's

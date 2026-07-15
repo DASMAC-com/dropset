@@ -28,6 +28,7 @@ maker-bot (rust-tool, low): bots/maker-bot/**
 taker-bot (rust-tool, low): bots/taker-bot/**
 localnet-support (rust-lib, low): bots/localnet-support/**
 indexer (rust-tool, low): indexer/**
+feeds (rust-lib, low): feeds/**
 ```
 
 **Inter-subsystem interfaces** — the seams where contract drift
@@ -70,6 +71,12 @@ indexer <-> sdk-clients: the indexer extracts and decodes emit_cpi
   events through the shared dropset_sdk::events codec; its decoded event
   layouts and the 8-byte discriminators must track the IDL
   (sdk/idl/dropset.json).
+feeds <-> indexer: the feeds RPC-poll source and store sink
+  (feeds/src/rpc.rs, feeds/src/store.rs) are extracted from the indexer's
+  ingest/store (indexer/src/ingest.rs, indexer/src/store.rs) and held at
+  parity until the indexer migrates onto the framework — the RawTx layout,
+  the getSignaturesForAddress + getTransaction poll window, and the
+  idempotent ON CONFLICT write must track the indexer's originals.
 sdk-clients <-> sdk-math: the TS market reader (sdk/ts/src/market.ts)
   hand-decodes the opaque Vault slab and reconstructs the resting book,
   mirroring the on-chain byte layout (sdk/interface/src/layout.rs) and the
