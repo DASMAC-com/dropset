@@ -48,18 +48,25 @@ export const useEclobQuote = (
     }
     let timer: number | undefined;
     let cancelled = false;
+    // A monotonically-increasing id for the live fire→schedule chain. Only the
+    // current generation may reschedule; a fire that was superseded (e.g. by a
+    // tab-refocus that starts a fresh chain) sees a stale `gen` and drops its
+    // reschedule, so exactly one timer stays live and the RPC cadence can't
+    // double on refocus.
+    let generation = 0;
     const rpc = client.runtime.rpc;
 
-    const schedule = (delay: number) => {
-      if (cancelled) return;
-      timer = window.setTimeout(() => void fire(), delay);
+    const schedule = (delay: number, gen: number) => {
+      if (cancelled || gen !== generation) return;
+      if (timer !== undefined) window.clearTimeout(timer);
+      timer = window.setTimeout(() => void fire(gen), delay);
     };
 
-    const fire = async (): Promise<void> => {
-      if (cancelled) return;
+    const fire = async (gen: number): Promise<void> => {
+      if (cancelled || gen !== generation) return;
       // Pause when the tab is hidden, but keep the chain alive to resume.
       if (document.visibilityState !== "visible") {
-        schedule(QUOTE_REFRESH_MS);
+        schedule(QUOTE_REFRESH_MS, gen);
         return;
       }
 
@@ -70,14 +77,18 @@ export const useEclobQuote = (
         inputMint === outputMint ||
         atomic === 0n
       ) {
+        // Nothing to quote for this input; the effect re-runs when the inputs
+        // change, so no reschedule.
         setQuote({ ...INITIAL, status: "skipped" });
         return;
       }
 
       try {
         const route = await resolveEclobRoute(rpc, inputMint, outputMint);
-        if (cancelled) return;
+        if (cancelled || gen !== generation) return;
         if (!route) {
+          // Terminal: no market exists for this pair. Re-simulating won't
+          // conjure one, so stop the chain until the inputs change.
           setQuote({
             ...INITIAL,
             status: "error",
@@ -87,11 +98,11 @@ export const useEclobQuote = (
         }
 
         const slot = await rpc.getSlot({ commitment: "confirmed" }).send();
-        if (cancelled) return;
+        if (cancelled || gen !== generation) return;
 
         // Idempotent; instantiates the WASM module on the first quote.
         await initSimulator();
-        if (cancelled) return;
+        if (cancelled || gen !== generation) return;
 
         const q = simulateSwap(
           route.marketData,
@@ -100,13 +111,16 @@ export const useEclobQuote = (
           route.limitPriceBits,
           Number(slot),
         );
-        if (cancelled) return;
+        if (cancelled || gen !== generation) return;
         if (q.outAmount === 0n) {
+          // A thin book is transient — the maker bot re-quotes it — so keep
+          // the loop alive to self-heal, unlike the terminal no-market case.
           setQuote({
             ...INITIAL,
             status: "error",
             error: "No liquidity for this size",
           });
+          schedule(QUOTE_REFRESH_MS, gen);
           return;
         }
 
@@ -121,19 +135,26 @@ export const useEclobQuote = (
           hasQuote: true,
           error: null,
         });
-        schedule(QUOTE_REFRESH_MS);
+        schedule(QUOTE_REFRESH_MS, gen);
       } catch (e) {
-        if (cancelled) return;
+        if (cancelled || gen !== generation) return;
+        // An RPC hiccup is transient; keep the loop alive so a single failed
+        // read doesn't freeze the quote until the user edits an input.
         setQuote({ ...INITIAL, status: "error", error: getErrorMessage(e) });
+        schedule(QUOTE_REFRESH_MS, gen);
       }
     };
 
-    schedule(QUOTE_DEBOUNCE_MS);
+    schedule(QUOTE_DEBOUNCE_MS, generation);
 
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
+      // Supersede any in-flight fire so its reschedule is dropped, then start a
+      // fresh chain. Without the generation bump an in-flight fire whose timer
+      // already elapsed would reschedule alongside this one, doubling cadence.
+      generation += 1;
       if (timer !== undefined) window.clearTimeout(timer);
-      schedule(0);
+      schedule(0, generation);
     };
     document.addEventListener("visibilitychange", onVisible);
 

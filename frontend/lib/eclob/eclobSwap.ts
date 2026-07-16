@@ -13,6 +13,7 @@ import {
   compileTransaction,
   createNoopSigner,
   createTransactionMessage,
+  getBase64EncodedWireTransaction,
   pipe,
   type SendableTransaction,
   type Signature,
@@ -87,9 +88,9 @@ export async function executeEclobSwap(
     rpc,
   } = input;
 
-  if (!walletSession.sendTransaction) {
+  if (!walletSession.signTransaction && !walletSession.sendTransaction) {
     throw new DflowSwapError(
-      "Connected wallet doesn't support sendTransaction",
+      "Connected wallet can't sign or send transactions",
       "wallet",
     );
   }
@@ -190,14 +191,35 @@ export async function executeEclobSwap(
   let signature: Signature;
   try {
     // Cast via unknown: the compiled tx has an empty signature slot for the
-    // taker (and carries a blockhash-lifetime brand), while the parameter type
-    // wants a fully-signed SendableTransaction. The wallet adds the signature
-    // during signing, so the hand-off is runtime-safe — the same
-    // partially-signed hand-off the DFlow path relies on.
-    signature = await walletSession.sendTransaction(
-      tx as unknown as Transaction & SendableTransaction,
-      { commitment: "confirmed" },
-    );
+    // taker (and carries a blockhash-lifetime brand), while the wallet's
+    // parameter types want a fully-signed SendableTransaction. The wallet adds
+    // the signature during signing, so the hand-off is runtime-safe.
+    const unsigned = tx as unknown as SendableTransaction & Transaction;
+    if (walletSession.signTransaction) {
+      // Preferred path: the wallet only *signs*; we submit to our own RPC —
+      // the same cluster we quoted against (localnet under `make demo`,
+      // mainnet in normal mode). Submission therefore never depends on the
+      // wallet's selected network, so a localnet swap works without switching
+      // the wallet (e.g. Phantom) off mainnet. The blockhash was fetched from
+      // this same RPC, so it's valid on the node we submit to.
+      const signed = await walletSession.signTransaction(unsigned);
+      signature = await rpc
+        .sendTransaction(getBase64EncodedWireTransaction(signed), {
+          encoding: "base64",
+          preflightCommitment: "confirmed",
+        })
+        .send();
+    } else if (walletSession.sendTransaction) {
+      // Fallback for a wallet that can only sign-and-submit in one step: it
+      // submits over its own network (fine on mainnet; a localnet demo needs
+      // the wallet pointed at the local RPC in that case).
+      signature = await walletSession.sendTransaction(
+        tx as unknown as Transaction & SendableTransaction,
+        { commitment: "confirmed" },
+      );
+    } else {
+      throw new DflowSwapError("Connected wallet can't sign", "wallet");
+    }
   } catch (e) {
     const msg = getErrorMessage(e);
     const cancelled = CANCEL_PATTERN.test(msg);
