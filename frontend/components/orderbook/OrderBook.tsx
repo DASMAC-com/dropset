@@ -8,10 +8,10 @@ import type { BookToken, OrderBookState } from "@/lib/hooks/useOrderBook";
 import { useOrderBook } from "@/lib/hooks/useOrderBook";
 import { useSwapStore } from "@/lib/store";
 
-// Rows per side. Matches the protocol's per-side ladder depth (N_LEVELS = 8).
-// Sides are padded to this length with empty spacer rows so the panel keeps a
-// constant height as the book fills and empties — the empty→flashed moment
-// reads as levels appearing in place, not the panel resizing.
+// Max rows rendered per side — a cap, not a pad. Matches the protocol's
+// per-side ladder depth (N_LEVELS = 8). Only the resting levels are rendered
+// (no spacer padding), so the panel shrinks to the book; the empty→flashed
+// moment reads as levels appearing in place.
 const MAX_ROWS = 8;
 const ROW_H = "h-[22px]";
 
@@ -83,16 +83,12 @@ function LevelRow({
   fractionDigits,
   decimals,
 }: {
-  row: Row | null;
+  row: Row;
   side: "ask" | "bid";
   barPct: number;
   fractionDigits: number;
   decimals: number;
 }) {
-  // Empty padding slot: a plain spacer that holds the row height. No fill, so
-  // the unfilled part of the ladder stays blank instead of a solid block.
-  if (!row) return <div className={ROW_H} />;
-
   const tone = TONE[side];
   return (
     <div
@@ -201,7 +197,7 @@ function OrderBookView({
           key={id}
           row={row}
           side="ask"
-          barPct={row ? barPct(row.total) : 0}
+          barPct={barPct(row.total)}
           fractionDigits={fractionDigits}
           decimals={base.decimals}
         />
@@ -223,7 +219,7 @@ function OrderBookView({
           key={id}
           row={row}
           side="bid"
-          barPct={row ? barPct(row.total) : 0}
+          barPct={barPct(row.total)}
           fractionDigits={fractionDigits}
           decimals={base.decimals}
         />

@@ -57,10 +57,13 @@ export function useOrderBook(
   const [state, setState] = useState<OrderBookState>(INITIAL);
 
   useEffect(() => {
-    if (!enabled) {
-      setState(INITIAL);
-      return;
-    }
+    // Clear any prior pair's book on every (re)run. Without this, a pair
+    // switch leaves the previous market's ladder and symbols on screen (status
+    // stays "ready") through the whole resolve + first-fetch round-trip —
+    // showing the wrong pair's book beside the swap panel. Resetting hides the
+    // panel until the new market's first poll lands.
+    setState(INITIAL);
+    if (!enabled) return;
     let timer: number | undefined;
     let cancelled = false;
     // See useEclobQuote: only the current generation may reschedule, so a
