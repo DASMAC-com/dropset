@@ -1729,6 +1729,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "dropset-fair-value"
+version = "0.1.0"
+
+[[package]]
 name = "dropset-feeds"
 version = "0.1.0"
 dependencies = [
