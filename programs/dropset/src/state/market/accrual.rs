@@ -379,4 +379,29 @@ mod tests {
         // on the leader's next valid write.
         assert_eq!(v.profile.bids[0].size_bps.get(), 6_000);
     }
+
+    #[test]
+    fn materialize_remaining_zeroes_ask_side_over_bps() {
+        let mut v = Vault::zeroed();
+        v.reference_price.price = Price::from_value(1.0).unwrap();
+        v.reference_price.stamp = FLUSH_BIT.into();
+        v.quote_atoms = 1_000_000u64.into();
+        v.base_atoms = 1_000_000u64.into();
+        // Mirror of `materialize_remaining_zeroes_side_over_bps`: the ask
+        // side is `Σ size_bps = 12_000 > BPS`, so it is thrown out of
+        // matching while the valid bid side materializes normally.
+        v.profile.asks[0].size_bps = 6_000u16.into();
+        v.profile.asks[1].size_bps = 6_000u16.into();
+        v.profile.bids[0].size_bps = 5_000u16.into();
+        assert!(v.profile.side_size_sums().1 > BPS as u32);
+
+        v.materialize_remaining();
+
+        assert_eq!(v.remaining.asks[0].size.get(), 0);
+        assert_eq!(v.remaining.asks[1].size.get(), 0);
+        assert_eq!(v.remaining.bids[0].size.get(), 500_000);
+        // The oversized side's profile bytes are untouched — it self-heals
+        // on the leader's next valid write.
+        assert_eq!(v.profile.asks[0].size_bps.get(), 6_000);
+    }
 }
