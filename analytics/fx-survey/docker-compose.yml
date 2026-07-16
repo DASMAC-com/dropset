@@ -1,0 +1,65 @@
+---
+# cspell:word healthcheck
+# cspell:word isready
+# The fx-survey local gate (docs/fx-survey.md §2, docs/data-feeds.md §5): a
+# Postgres store, a one-shot migrate, and the Coinbase EURC/USDC reference feed
+# — the whole store-sink shape the forward-stack task later translates to
+# CloudFormation without changing images or process boundaries. Bring it up
+# from this directory with `docker compose up --build`.
+#
+# The migrate service provisions the schema (framework `feed_cursors` +
+# `cex_prices`) and exits; the feed waits for it to succeed, then backfills and
+# polls. Data is ephemeral (no named volume): every feed is cursor-resumable,
+# so a fresh Postgres just re-backfills from the configured window.
+name: 'dropset-fx-survey'
+services:
+  coinbase:
+    # The Coinbase EURC/USDC reference feed: backfill then poll, persisting
+    # closed candles into `cex_prices`. Keyless — the Coinbase Exchange public
+    # REST API needs no credentials.
+    build:
+      context: '../..'
+      dockerfile: 'analytics/fx-survey/Dockerfile'
+    command:
+    - 'fx-survey-coinbase'
+    depends_on:
+      migrate:
+        condition: 'service_completed_successfully'
+    environment:
+      BACKFILL_DAYS: '${BACKFILL_DAYS:-60}'
+      DATABASE_URL: 'postgres://survey:survey@postgres:5432/fx_survey'
+      PRODUCT_ID: '${PRODUCT_ID:-EURC-USDC}'
+      RUST_LOG: 'info'
+    restart: 'unless-stopped'
+  migrate:
+    # Run-once schema provisioning; idempotent, so a re-run is a no-op.
+    build:
+      context: '../..'
+      dockerfile: 'analytics/fx-survey/Dockerfile'
+    command:
+    - 'fx-survey-migrate'
+    depends_on:
+      postgres:
+        condition: 'service_healthy'
+    environment:
+      DATABASE_URL: 'postgres://survey:survey@postgres:5432/fx_survey'
+      RUST_LOG: 'info'
+    restart: 'no'
+  postgres:
+    # Prototype: data is ephemeral (no named volume) — the feed re-backfills
+    # from its configured window, so a fresh container just re-syncs.
+    environment:
+      POSTGRES_DB: 'fx_survey'
+      POSTGRES_PASSWORD: 'survey'
+      POSTGRES_USER: 'survey'
+    healthcheck:
+      interval: '5s'
+      retries: 10
+      test:
+      - 'CMD-SHELL'
+      - 'pg_isready -U survey -d fx_survey'
+    image: 'postgres:16-alpine'
+    ports:
+    - '127.0.0.1:5433:5432'
+    restart: 'unless-stopped'
+...
