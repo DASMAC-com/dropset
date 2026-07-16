@@ -145,9 +145,6 @@ impl WithdrawLeader {
 
         // Apply share + inventory burn.
         let market_addr = *self.market.address();
-        let market_bump = self.market.bump;
-        let base_mint_addr = self.market.base_mint;
-        let quote_mint_addr = self.market.quote_mint;
         let (new_total, new_base_atoms, new_quote_atoms) = {
             let v = self.market.mutate_vault(vault_idx)?;
             let new_total = total_shares - shares_in;
@@ -161,11 +158,9 @@ impl WithdrawLeader {
         };
 
         // CPI signer seeds for treasury → caller transfers.
-        let bump_arr = [market_bump];
-        let base_seed: &[u8] = base_mint_addr.as_ref();
-        let quote_seed: &[u8] = quote_mint_addr.as_ref();
-        let bump_seed: &[u8] = &bump_arr;
-        let signer_seeds_inner: [&[u8]; 3] = [base_seed, quote_seed, bump_seed];
+        let (mint_seeds, bump_arr) = self.market.signer_seed_parts();
+        let signer_seeds_inner: [&[u8]; 3] =
+            [mint_seeds[0].as_ref(), mint_seeds[1].as_ref(), &bump_arr];
         let signer_seeds: [&[&[u8]]; 1] = [&signer_seeds_inner];
 
         transfer_out_leg(

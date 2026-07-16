@@ -265,6 +265,24 @@ pub struct MarketHeader {
     pub bump: u8,
 }
 
+impl MarketHeader {
+    /// Owned parts of the market PDA's signer seeds — the two leg mints
+    /// and the single-byte bump, in the exact PDA-derivation order
+    /// `[base_mint, quote_mint], [bump]`. Every treasury-signing CPI
+    /// site (both `withdraw` legs, both `withdraw_leader` legs, all four
+    /// `force_withdraw` legs, `swap`'s return leg, and `close_market`'s
+    /// `CloseAccount`) reconstructs the borrowed `[&[&[u8]]; 1]` slice
+    /// array from these parts on its own stack — a fully-owning helper
+    /// can't return that array, since it would reference locals it
+    /// drops. Keeping the seed order and count defined here once guards
+    /// against a per-site drift, which would be a silent signing failure
+    /// at runtime rather than a compile error.
+    #[inline(always)]
+    pub fn signer_seed_parts(&self) -> ([Address; 2], [u8; 1]) {
+        ([self.base_mint, self.quote_mint], [self.bump])
+    }
+}
+
 // Size regression guards: `#[derive(Pod)]` already rejects implicit
 // padding, but it can't catch a field reorder that lands at the same
 // total size by accident, nor a silent bump to a `Pod*` wrapper width.
@@ -321,5 +339,21 @@ mod tests {
         // `is_valid()` is false, so it never anchors a ladder.
         v.reference_price.price = Price::from_bits(1);
         assert!(!v.has_valid_reference_price());
+    }
+
+    #[test]
+    fn signer_seed_parts_pins_order_and_count() {
+        let mut m = MarketHeader::zeroed();
+        m.base_mint = [0xAA; 32].into();
+        m.quote_mint = [0xBB; 32].into();
+        m.bump = 0xCD;
+        let (mints, bump) = m.signer_seed_parts();
+        // Exactly two mint seeds followed by a one-byte bump, base
+        // before quote — the order a treasury CPI signs with. A silent
+        // reorder or dropped seed here is a runtime signing failure, so
+        // this pins the contract every call site now depends on.
+        assert_eq!(mints[0].as_ref(), &[0xAA; 32]);
+        assert_eq!(mints[1].as_ref(), &[0xBB; 32]);
+        assert_eq!(bump, [0xCD]);
     }
 }

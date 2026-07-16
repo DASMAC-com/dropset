@@ -87,13 +87,9 @@ impl CloseMarketTreasury {
 
         // Close the ATA, signed by the market PDA. Lamports flow to
         // `rent_recipient` inside the token program's `CloseAccount`.
-        let base_mint_addr = self.market.base_mint;
-        let quote_mint_addr = self.market.quote_mint;
-        let bump_arr = [self.market.bump];
-        let base_seed: &[u8] = base_mint_addr.as_ref();
-        let quote_seed: &[u8] = quote_mint_addr.as_ref();
-        let bump_seed: &[u8] = &bump_arr;
-        let signer_seeds_inner: [&[u8]; 3] = [base_seed, quote_seed, bump_seed];
+        let (mint_seeds, bump_arr) = self.market.signer_seed_parts();
+        let signer_seeds_inner: [&[u8]; 3] =
+            [mint_seeds[0].as_ref(), mint_seeds[1].as_ref(), &bump_arr];
         let signer_seeds: [&[&[u8]]; 1] = [&signer_seeds_inner];
         let cpi = CpiContext::new_with_signer(
             self.token_program.address(),

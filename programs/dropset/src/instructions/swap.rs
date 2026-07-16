@@ -321,9 +321,7 @@ impl Swap {
 
         // Snapshot market-wide constants the loop needs.
         let market_addr = *self.market.address();
-        let market_bump = self.market.bump;
-        let base_mint_addr = self.market.base_mint;
-        let quote_mint_addr = self.market.quote_mint;
+        let (mint_seeds, bump_arr) = self.market.signer_seed_parts();
         let taker_fee_ppm = self.market.taker_fee.get() as u64;
         let current_slot = self.clock.slot as u32;
         let head = self.market.head.get();
@@ -456,11 +454,8 @@ impl Swap {
             .collect();
 
         // Build the market PDA signer seeds (for the return-leg CPI).
-        let bump_arr = [market_bump];
-        let base_seed: &[u8] = base_mint_addr.as_ref();
-        let quote_seed: &[u8] = quote_mint_addr.as_ref();
-        let bump_seed: &[u8] = &bump_arr;
-        let signer_seeds_inner: [&[u8]; 3] = [base_seed, quote_seed, bump_seed];
+        let signer_seeds_inner: [&[u8]; 3] =
+            [mint_seeds[0].as_ref(), mint_seeds[1].as_ref(), &bump_arr];
         let signer_seeds: [&[&[u8]]; 1] = [&signer_seeds_inner];
 
         // The caller supplies one side's "input" amount. The other
