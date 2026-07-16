@@ -43,8 +43,10 @@ VALUE_FLAGS = {
 
 # Shell control operators that begin a new command word; a `git` token right
 # after one is a command (like `git` at position 0), not an argument to some
-# earlier command (`echo git grep`).
-CONTROL = {"|", "||", "&&", ";", "&", "|&", "\n"}
+# earlier command (`echo git grep`). Newline separation is handled by scanning
+# per line in is_git_grep, not here — shlex swallows `\n` so it never surfaces
+# as a token.
+CONTROL = {"|", "||", "&&", ";", "&", "|&"}
 
 
 def _subcommand_is_grep(rest):
@@ -74,20 +76,26 @@ def _subcommand_is_grep(rest):
 def is_git_grep(cmd):
     """Return True iff `cmd` invokes `git grep` as a command.
 
-    Quote-aware via `shlex`; fails open (returns False) on a tokenize error
-    such as an unbalanced quote, so a malformed command is never blocked
-    *by this guard* (the compound guard, or manual approval, handles those).
+    Scans **per logical line**: a newline separates commands, but `shlex`
+    swallows it, so a `git grep` on a later line (`ls\\ngit grep foo`) would
+    otherwise escape the control-operator anchoring. `comments=True` drops an
+    unquoted trailing `#…` comment (matching the compound guard), so a
+    `git grep` sitting inside a comment isn't flagged. Quote-aware via
+    `shlex`; a line whose quotes don't balance raises `ValueError` and is
+    skipped (fail open), so a malformed command is never blocked *by this
+    guard* — the compound guard, or manual approval, handles those.
     """
-    try:
-        tokens = shlex.split(cmd)
-    except ValueError:
-        return False
-    for idx, tok in enumerate(tokens):
-        if tok != "git":
+    for line in cmd.split("\n"):
+        try:
+            tokens = shlex.split(line, comments=True)
+        except ValueError:
             continue
-        if idx == 0 or tokens[idx - 1] in CONTROL:
-            if _subcommand_is_grep(tokens[idx + 1 :]):
-                return True
+        for idx, tok in enumerate(tokens):
+            if tok != "git":
+                continue
+            if idx == 0 or tokens[idx - 1] in CONTROL:
+                if _subcommand_is_grep(tokens[idx + 1 :]):
+                    return True
     return False
 
 
@@ -134,7 +142,11 @@ def _self_test():
         ("git -C /path/to/repo --no-pager grep -n bar", True),
         ("ls && git grep foo", True),
         ("git grep -n 'x' | head", True),
+        # Newline-separated command on a later line is still caught.
+        ("ls\ngit grep foo", True),
         # Not git grep.
+        # A git grep inside a trailing comment is inert, not a real command.
+        ("git log # note ; git grep foo", False),
         ("grep -rn foo .", False),
         ("git log --grep=foo", False),
         ("git log -n 5", False),
