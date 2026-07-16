@@ -1,23 +1,34 @@
-//! Price feeds (§1).
+//! Price-feed transport (§1).
 //!
-//! A tiered USD price source behind one [`Feeds`] poller, cascaded
-//! primary-first by [`super::fair_mid`]:
+//! The blocking pollers behind one [`Feeds`] handle. Their readings feed the
+//! [`dropset_fair_value`] engine's `fair = fx × basis` composition (mapped onto
+//! its legs in [`super::fair_mid`]); they are no longer a primary-first cascade
+//! over one mid. By leg:
 //!
-//! 1. **CoinGecko** `/simple/price` — one batched call prices every market's
-//!    token in USD (the primary market feed).
-//! 2. **CoinMarketCap** `/v2/cryptocurrency/quotes/latest` — batched by numeric
-//!    id, keyed from `CMC_API_KEY`. The free tier's ~10k/mo quota rules out a
-//!    hot poll, so it is the secondary, polled only when CoinGecko is down.
-//! 3. **ECB/Frankfurter** `/latest` — the keyless FX-rate tier: `USD/<ccy>`
-//!    inverted to a USD-per-unit peg, a pure peg rate (not a market price).
-//! 4. **Static** — a per-market constant ([`super::super::config::MarketConfig::static_usd`]),
-//!    the last resort, supplied by the caller without a poll.
+//! - **ECB/Frankfurter** `/latest` — keyless `USD/<ccy>` inverted to a
+//!   USD-per-unit rate: the **FX anchor** (the spec's designated anchor
+//!   *fallback* tier; the streaming primaries below are a follow-up).
+//! - **CoinGecko** `/simple/price` — one batched call prices every market's
+//!   token in USD, plus `usd-coin` for the USDC/USD common-mode leg. This is
+//!   the **crypto basis leg**, and it also supplies the anchor in the
+//!   crypto-only (weekend / localnet) regime. It is **demoted** from the old
+//!   cascade's primary mid — laggy and reflexive, never the FX anchor (§1).
+//! - **CoinMarketCap** `/v2/cryptocurrency/quotes/latest` — batched by numeric
+//!   id, keyed from `CMC_API_KEY`; the basis-leg fallback when CoinGecko is
+//!   down (its ~10k/mo free quota rules out a hot poll).
+//! - **Static** — a per-market constant ([`super::super::config::MarketConfig::static_usd`]),
+//!   the last resort, supplied by the caller without a poll.
+//!
+//! The spec's streaming primaries — Pyth Hermes / OANDA for the anchor,
+//! Coinbase `<token>/USDC` and Binance `EUR/USDT` for the basis, Circle
+//! redemption for peg-truth — are a separate follow-up; until they land the
+//! anchor runs on the Frankfurter fallback, so the two-peg model is live on
+//! real data today.
 //!
 //! Each `poll_*` returns the latest batch keyed by the identifier the caller
-//! asked for; the caller stamps the read time for the freshness rules in
-//! [`super::fair_mid`]. The JSON shapes are decoded by the free `parse_*`
-//! functions, unit tested against captured responses; only the transport needs
-//! a network.
+//! asked for; the caller stamps the read time for the engine's freshness rules.
+//! The JSON shapes are decoded by the free `parse_*` functions, unit tested
+//! against captured responses; only the transport needs a network.
 
 use crate::config::{FeedConfig, CMC_KEY_ENV};
 use anyhow::{anyhow, Context, Result};
@@ -25,39 +36,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::time::Duration;
 
-/// Which feed tier produced a reading — surfaced in logs and the dry run so an
-/// operator can see which source is live for each market.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FeedTier {
-    /// CoinGecko market price (primary).
-    CoinGecko,
-    /// CoinMarketCap market price (secondary).
-    CoinMarketCap,
-    /// ECB/Frankfurter FX peg rate (tertiary).
-    FxRate,
-    /// Static configured peg (last resort).
-    Static,
-}
-
-impl FeedTier {
-    /// A short label for logs.
-    pub fn label(self) -> &'static str {
-        match self {
-            FeedTier::CoinGecko => "coingecko",
-            FeedTier::CoinMarketCap => "coinmarketcap",
-            FeedTier::FxRate => "fx-rate",
-            FeedTier::Static => "static",
-        }
-    }
-
-    /// Whether this tier is a real market price (not a peg-rate fallback). A
-    /// market tier quotes healthy; the FX-rate and static tiers run degraded.
-    pub fn is_market_price(self) -> bool {
-        matches!(self, FeedTier::CoinGecko | FeedTier::CoinMarketCap)
-    }
-}
-
-/// Blocking poller over the tiered feeds.
+/// Blocking poller over the price-feed sources.
 pub struct Feeds {
     agent: ureq::Agent,
     cfg: FeedConfig,
@@ -273,13 +252,5 @@ mod tests {
         let out = parse_frankfurter(&body, &["EUR", "ZAR"]);
         assert!(out.contains_key("EUR"));
         assert!(!out.contains_key("ZAR"));
-    }
-
-    #[test]
-    fn tier_market_price_classification() {
-        assert!(FeedTier::CoinGecko.is_market_price());
-        assert!(FeedTier::CoinMarketCap.is_market_price());
-        assert!(!FeedTier::FxRate.is_market_price());
-        assert!(!FeedTier::Static.is_market_price());
     }
 }

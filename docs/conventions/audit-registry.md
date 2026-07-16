@@ -29,6 +29,7 @@ taker-bot (rust-tool, low): bots/taker-bot/**
 localnet-support (rust-lib, low): bots/localnet-support/**
 indexer (rust-tool, low): indexer/**
 feeds (rust-lib, low): feeds/**
+fair-value (rust-lib, med): fair-value/**
 ```
 
 **Inter-subsystem interfaces** — the seams where contract drift
@@ -63,6 +64,12 @@ tui <-> sdk-math: the resting-book matcher surface (sdk/interface
 maker-bot <-> program: the bot quotes and submits against the on-chain
   account/instruction contract (docs/interface.md) through the generated
   SDK clients (sdk/rs) — instruction args and accounts must match.
+maker-bot <-> fair-value: the maker maps its feed cache onto the engine's
+  Legs (fx / crypto_usdc / usdc_usd / static_usd) and reads the composed
+  FairValue (fair, anchor, regime, basis, health + basis/usdc breach flags)
+  from dropset-fair-value; the leg mapping and the result fields the
+  killswitch and quoting path read must track the engine's model. (The
+  fair-value taker is a declared follow-up that shares this seam.)
 taker-bot <-> program: the bot sizes orders off-chain against the live
   book (sdk/interface matching `simulate_swap`) and submits `swap`s
   through the generated SDK clients (sdk/rs) — the off-chain fill math

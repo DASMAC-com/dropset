@@ -9,6 +9,7 @@
 
 use crate::config::MarketConfig;
 use crate::model::ladder::Side;
+use dropset_fair_value::{FairValueConfig, FairValueEngine};
 use solana_client::rpc_client::RpcClient;
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
@@ -65,8 +66,14 @@ pub struct Context {
     pub vault_idx: u32,
     pub market: MarketAddrs,
     /// The market's feed identity (CoinGecko / CoinMarketCap ids, the FX
-    /// currency, the static peg) — what `compose` needs to price this token.
+    /// currency, the static peg) — what the engine needs to price this token.
     pub cfg: MarketConfig,
+    /// This market's fair-value engine — `fair = fx × basis` plus the stateful
+    /// basis EMA (§1). One per market: each carries its own basis history.
+    pub engine: FairValueEngine,
+    /// When the engine last composed for this market, for the basis-EMA decay.
+    /// `None` until the first tick.
+    pub last_compose: Option<Instant>,
 
     /// The vault's TVL (USD) the first time this run valued it — the baseline
     /// the §4 drawdown floor is measured against. Seeded on the first tick that
@@ -106,6 +113,7 @@ impl Context {
         vault_idx: u32,
         market: MarketAddrs,
         cfg: MarketConfig,
+        fair_value: FairValueConfig,
     ) -> Self {
         let now = Instant::now();
         Self {
@@ -114,6 +122,8 @@ impl Context {
             vault_idx,
             market,
             cfg,
+            engine: FairValueEngine::new(fair_value),
+            last_compose: None,
             launch_tvl_usd: None,
             fills_active: false,
             last_set_price: None,

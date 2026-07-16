@@ -1,0 +1,27 @@
+# Off-chain fair-value engine: `fair = fx_rate × basis` with the two-peg
+# `basis = (token/fiat) ÷ (USDC/USD)` decomposition (docs/market-making-mvp.md
+# §1). It is stateful (the basis EMA), `f64`, and network-fed — deliberately
+# NOT in `sdk/math-core`, which is the audit-pinned, integer, on-chain
+# consensus math. Keeping this off-chain model out of math-core keeps that
+# audit surface minimal. The maker bot consumes it today; the fair-value taker
+# and the pricing-survey harness (separate follow-ups) exercise the same code.
+#
+# The core is `std`-only on purpose: the model (compose, basis EMA, regime,
+# guards) is the shared, unit-tested edge, while each consumer owns its own
+# thin feed transport. No network, no serde, no Solana here.
+
+[dependencies]
+
+[lib]
+crate-type = ["rlib"]
+
+[package]
+description = "Off-chain FX-anchor × basis fair-value engine for the market-making bots (docs/market-making-mvp.md §1)."
+name = "dropset-fair-value"
+publish = false
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true

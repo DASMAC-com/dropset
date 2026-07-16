@@ -21,10 +21,10 @@
 //! used — it bumps on every re-quote, so it can't tell a fill from a re-quote.)
 
 use crate::chain;
-use crate::config::{BotConfig, FeedConfig, MarketConfig};
+use crate::config::{BotConfig, FeedConfig, MarketConfig, USDC_COINGECKO_ID};
 use crate::context::{Context, ProfileKind, VaultSnapshot};
 use crate::fills::Fill;
-use crate::model::fair_mid::{compose, FairMid, Health, Quote};
+use crate::model::fair_mid::{build_legs, FairValue};
 use crate::model::feeds::Feeds;
 use crate::model::inventory::Inventory;
 use crate::model::killswitch::{self, Action, HaltReason};
@@ -32,11 +32,12 @@ use crate::model::ladder::{self, Side};
 use crate::model::skew;
 use crate::model::triggers::{self, RefTrigger};
 use anyhow::Result;
+use dropset_fair_value::{Legs, Reading};
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, TryRecvError};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Whether a feed tier is due to poll again given its last poll and interval.
 fn due(last: Option<Instant>, now: Instant, interval: Duration) -> bool {
@@ -128,10 +129,11 @@ impl FeedHub {
                         self.cg.insert(k, (v, now));
                     }
                 }
-                // Both empty and errored polls mean CoinGecko can't price the
-                // roster this cycle; `compose` already cascades to the FX-rate /
-                // static fallback, so log the transition once and stay quiet
-                // until it recovers rather than spamming a line per tick.
+                // Both empty and errored polls mean CoinGecko can't supply the
+                // basis leg this cycle; the engine composes without it (the FX
+                // anchor with the last basis, or the static peg), so log the
+                // transition once and stay quiet until it recovers rather than
+                // spamming a line per tick.
                 Ok(_) => {
                     self.cg_ok = false;
                     self.grow_cg_backoff(cfg.coingecko_poll);
@@ -175,8 +177,8 @@ impl FeedHub {
             }
         }
 
-        // Tertiary: ECB/Frankfurter FX rates, keyless — both the peg
-        // cross-check and the next fallback tier, on a slow cadence.
+        // FX anchor: ECB/Frankfurter USD/<ccy>, keyless, on a slow cadence
+        // (the daily reference; the streaming primary is a follow-up).
         if !currencies.is_empty() && due(self.fx_last_poll, now, cfg.fx_poll) {
             self.fx_last_poll = Some(now);
             match feeds.poll_frankfurter(currencies) {
@@ -190,23 +192,54 @@ impl FeedHub {
         }
     }
 
-    /// This market's cached readings as `Quote`s aged to `now` — the inputs
-    /// `compose` cascades over.
-    fn quotes(
-        &self,
-        now: Instant,
-        market: &MarketConfig,
-    ) -> (Option<Quote>, Option<Quote>, Option<Quote>) {
+    /// This market's cached readings, aged to `now`, mapped onto the engine's
+    /// [`Legs`] (§1): Frankfurter USD/`<ccy>` is the FX anchor, CoinGecko / CMC
+    /// token-USD is the demoted crypto basis leg, CoinGecko `usd-coin` is the
+    /// USDC/USD common-mode leg, and the market's static peg is the last resort.
+    fn legs(&self, now: Instant, market: &MarketConfig) -> Legs {
         let aged =
-            |o: Option<&(f64, Instant)>| o.map(|(v, t)| Quote::new(*v, now.duration_since(*t)));
+            |o: Option<&(f64, Instant)>| o.map(|(v, t)| Reading::new(*v, now.duration_since(*t)));
+        // FX anchor: the exogenous fiat cross (USD per the market's fiat).
+        let fx = aged(self.fx.get(market.currency));
+        // Crypto basis leg (demoted from the old primary): CoinGecko token-USD,
+        // falling back to CoinMarketCap.
         let cg = aged(self.cg.get(market.coingecko_id));
         let cmc = market
             .coinmarketcap_id
             .and_then(|id| self.cmc.get(&id))
-            .map(|(v, t)| Quote::new(*v, now.duration_since(*t)));
-        let fx = aged(self.fx.get(market.currency));
-        (cg, cmc, fx)
+            .map(|(v, t)| Reading::new(*v, now.duration_since(*t)));
+        let crypto_usdc = cg.or(cmc);
+        // USDC/USD common-mode leg, shared across every market.
+        let usdc_usd = aged(self.cg.get(USDC_COINGECKO_ID));
+        build_legs(fx, crypto_usdc, usdc_usd, market.static_usd)
     }
+}
+
+/// Whether the Unix timestamp `secs` falls in the FX-closed weekend window.
+/// Interbank FX and CME 6E are shut Fri ~17:00 → Sun ~17:00 ET (§1 fm2);
+/// approximated here in UTC as Fri 21:00 → Sun 22:00 (≈ 17:00 ET, ignoring
+/// DST). The exact session thresholds are TBD(survey). Inside this window a
+/// missing FX anchor is the normal crypto-only regime, not a fault.
+fn weekend_from_unix(secs: u64) -> bool {
+    let days = secs / 86_400; // whole days since 1970-01-01 (a Thursday)
+    let hour = (secs % 86_400) / 3_600; // hour of the UTC day
+    let dow = (days + 4) % 7; // 0 = Sun … 6 = Sat (epoch day was Thursday = 4)
+    match dow {
+        5 => hour >= 21, // Friday, after the interbank close
+        6 => true,       // all of Saturday
+        0 => hour < 22,  // Sunday, until the CME reopen
+        _ => false,
+    }
+}
+
+/// [`weekend_from_unix`] for the wall clock. A clock before the Unix epoch
+/// (unreachable in practice) reads as a weekday.
+fn is_weekend(now: SystemTime) -> bool {
+    let secs = now
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    weekend_from_unix(secs)
 }
 
 /// Run the supervisor over every market until interrupted. Each loop iteration
@@ -228,8 +261,10 @@ pub fn run_supervisor(
         if fills_active { "on" } else { "off" }
     );
 
-    // The batched feed identifiers, collected once.
-    let cg_ids: Vec<&str> = markets.iter().map(|m| m.cfg.coingecko_id).collect();
+    // The batched feed identifiers, collected once. The shared USDC/USD
+    // common-mode leg rides the same CoinGecko call as the per-market tokens.
+    let mut cg_ids: Vec<&str> = markets.iter().map(|m| m.cfg.coingecko_id).collect();
+    cg_ids.push(USDC_COINGECKO_ID);
     let cmc_ids: Vec<u32> = markets
         .iter()
         .filter_map(|m| m.cfg.coinmarketcap_id)
@@ -252,9 +287,15 @@ pub fn run_supervisor(
             }
         }
 
+        // The FX session is closed the same wall-clock window for every market.
+        let weekend = is_weekend(SystemTime::now());
         for ctx in &mut markets {
-            let (cg, cmc, fx) = hub.quotes(now, &ctx.cfg);
-            let fair = compose(cg, cmc, fx, ctx.cfg.static_usd, &cfg.kill);
+            let legs = hub.legs(now, &ctx.cfg);
+            let dt = ctx
+                .last_compose
+                .map_or(Duration::ZERO, |t| now.duration_since(t));
+            ctx.last_compose = Some(now);
+            let fair = ctx.engine.compose(legs, dt, weekend);
             let got_fill = routed.get(&ctx.market.market).copied();
             if let Err(e) = quote_market(ctx, &cfg, now, fair, got_fill) {
                 eprintln!("[{}] tick error: {e}", ctx.cfg.symbol);
@@ -334,7 +375,7 @@ fn quote_market(
     ctx: &mut Context,
     cfg: &BotConfig,
     now: Instant,
-    fair: FairMid,
+    fair: FairValue,
     got_fill: Option<(u64, u64)>,
 ) -> Result<()> {
     let vault = chain::read_vault(
@@ -361,22 +402,20 @@ fn quote_market(
         return Ok(());
     }
 
-    let Some(mid) = fair.mid else {
+    let Some(mid) = fair.fair else {
         println!(
             "[{}][pause] {:?}: no usable feed, holding reference",
-            ctx.cfg.symbol, fair.health
+            ctx.cfg.symbol, fair.regime
         );
         return Ok(());
     };
-    if let Some(tier) = fair.tier {
-        // Surface the live tier so an operator can see the cascade per market.
-        if !tier.is_market_price() {
-            println!(
-                "[{}] quoting off the {} tier (degraded)",
-                ctx.cfg.symbol,
-                tier.label()
-            );
-        }
+    // Surface the live anchor / regime so an operator sees which leg is pricing
+    // this market whenever the composition is running degraded (§1, §4).
+    if fair.degraded() {
+        println!(
+            "[{}] quoting off {:?} ({:?}, degraded)",
+            ctx.cfg.symbol, fair.anchor, fair.regime
+        );
     }
 
     let inv = Inventory::from_atoms(
@@ -402,7 +441,7 @@ fn quote_market(
         }
     };
 
-    let degraded = fair.health == Health::Degraded;
+    let degraded = fair.degraded();
     let action = killswitch::evaluate(&fair, &inv, &cfg.kill, degraded, launch_tvl);
     let skew_bps = skew::ref_skew_bps(&inv, &cfg.strategy);
     let reference = skew::apply_skew(mid, skew_bps);
@@ -676,6 +715,25 @@ mod tests {
         let now = Instant::now();
         assert!(due(None, now, Duration::from_secs(10)));
         assert!(!due(Some(now), now, Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn weekend_window_brackets_the_fx_session_close() {
+        // Anchored to known UTC instants in Jan 2021: the 1st was a Friday.
+        const FRI_00: u64 = 1_609_459_200; // 2021-01-01 00:00 UTC (Friday)
+        let h = |base: u64, hour: u64| base + hour * 3_600;
+        let d = |base: u64, days: u64| base + days * 86_400;
+
+        // Friday: open through the day, closed from 21:00 UTC.
+        assert!(!weekend_from_unix(h(FRI_00, 12)));
+        assert!(weekend_from_unix(h(FRI_00, 21)));
+        // Saturday: closed all day.
+        assert!(weekend_from_unix(h(d(FRI_00, 1), 3)));
+        // Sunday: closed until the 22:00 UTC reopen, then open.
+        assert!(weekend_from_unix(h(d(FRI_00, 2), 21)));
+        assert!(!weekend_from_unix(h(d(FRI_00, 2), 23)));
+        // Monday: open.
+        assert!(!weekend_from_unix(h(d(FRI_00, 3), 12)));
     }
 
     #[test]

@@ -4,13 +4,7 @@
 
 <!-- cspell:word illiquidity -->
 
-<!-- cspell:word kalman -->
-
-<!-- cspell:word laggy -->
-
 <!-- cspell:word lehalle -->
-
-<!-- cspell:word oanda -->
 
 <!-- cspell:word parameterizes -->
 

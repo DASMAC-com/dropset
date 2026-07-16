@@ -17,6 +17,7 @@ members = [
   "bots/localnet-support",
   "bots/maker-bot",
   "bots/taker-bot",
+  "fair-value",
   "feeds",
   "indexer",
   "programs/dropset",
