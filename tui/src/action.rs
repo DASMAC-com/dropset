@@ -700,21 +700,21 @@ fn fund_taker(
     log.log(format!("Funding taker {taker} for wallet swaps…"));
     // Base leg per market; accumulate the shared quote to mint once at the end.
     let mut total_quote: u64 = 0;
-    let mut quote_mint = None;
+    let mut shared_quote_mint = None;
     for config in market::PAIRS {
-        let (base_mint, qmint) = market::pair_mints(repo_root, config)?;
+        let (base_mint, quote_mint) = market::pair_mints(repo_root, config)?;
         let (base_atoms, quote_atoms) = market::seed_deposit(config);
         let base_ata = chain::create_ata_idempotent(client, wallet, &taker, &base_mint)
             .context("taker base ATA")?;
         chain::mint_to(client, wallet, &base_mint, &base_ata, base_atoms)
             .context("fund taker base leg")?;
         total_quote = total_quote.saturating_add(quote_atoms);
-        quote_mint = Some(qmint);
+        shared_quote_mint = Some(quote_mint);
     }
-    if let Some(qmint) = quote_mint {
-        let quote_ata = chain::create_ata_idempotent(client, wallet, &taker, &qmint)
+    if let Some(quote_mint) = shared_quote_mint {
+        let quote_ata = chain::create_ata_idempotent(client, wallet, &taker, &quote_mint)
             .context("taker quote ATA")?;
-        chain::mint_to(client, wallet, &qmint, &quote_ata, total_quote)
+        chain::mint_to(client, wallet, &quote_mint, &quote_ata, total_quote)
             .context("fund taker quote leg")?;
     }
     Ok(())

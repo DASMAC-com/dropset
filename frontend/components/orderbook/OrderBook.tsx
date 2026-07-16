@@ -1,5 +1,7 @@
 "use client";
 
+// cspell:word Hyperliquid
+
 import { type BookLevel, decodePrice } from "@dropset/sdk";
 import { useMemo } from "react";
 import type { BookToken, OrderBookState } from "@/lib/hooks/useOrderBook";
