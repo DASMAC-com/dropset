@@ -1750,6 +1750,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "dropset-fx-survey"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "dropset-feeds",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "dropset-indexer"
 version = "0.1.0"
 dependencies = [

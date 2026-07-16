@@ -80,6 +80,7 @@ mpsc
 multisigs
 mxne
 nohup
+ohlcv
 paytrie
 pdas
 permissionless
