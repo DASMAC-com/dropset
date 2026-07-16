@@ -58,6 +58,24 @@ glue lives **with what it serves**, not in a tooling tree:
   in a separate scripts tree. A build script that only one app uses
   stays in that app's own `scripts/` (e.g. `frontend/scripts/`).
 
+- **The linter/formatter configs stay in `cfg/`, not `.claude/`.**
+  `cfg/` holds `pre-commit-lint.yml` (the pre-commit config) and the
+  per-linter configs it points at — `taplo.toml`, `yamllint.yml`,
+  `markdownlint.yml`, `cspell.yml`, `dictionary.txt`, `sqlfluff.cfg`.
+  These are consumed by **pre-commit, the `Makefile`, and CI** (the lint
+  job passes `--config cfg/pre-commit-lint.yml`), so they run
+  independent of any agent — they are not Claude-skill glue. `.claude/`
+  is *agent infrastructure* (skills, hooks, tools, settings); moving
+  CI-critical lint config there would conflate build tooling with the
+  agent directory and couple CI to it (a contributor who never runs
+  Claude would still need `.claude/` intact for `make lint` to pass).
+  So `cfg/` is the correct tool-agnostic home, by the same "lives with
+  what it serves" rule as `brand-assets/`. This is recorded so the
+  `cfg/` ↔ `.claude/` split isn't re-litigated: a move would touch a
+  broad reference surface (`pre-commit-lint.yml`'s own `--config`
+  paths, `Makefile`, both CI workflows, `.claude/tools/cspell_place.py`,
+  and the docs) for no structural gain.
+
 ## MCP first for prototyping and fallback; harden settled workflows
 
 The MCP servers (`mcp__github__*`, `mcp__claude_ai_Linear__*`, …) are

@@ -138,26 +138,30 @@ present), the fallback is a bare, single `grep`, on the **main-loop**
 path too, not only in the sub-agent brief. Keep a stable command +
 subcommand prefix and let only the args vary.
 This holds for shell you **author** in skills, scripts, and Makefile
-targets too, and for work you hand a sub-agent. An opt-in `PreToolUse`
-guard hook (`.claude/hooks/no_compound_bash.py`, escape marker
-`#compound-ok`) mechanically blocks compounds; its script is committed
-but its `settings.json` wiring is **user-local, not committed**. The
-rules and the always-re-prompt patterns are in
-`docs/conventions/shell-commands.md`; the guard's `settings.json`
+targets too, and for work you hand a sub-agent. Two opt-in `PreToolUse`
+guard hooks mechanically enforce these rules:
+`.claude/hooks/no_compound_bash.py` blocks compounds (escape marker
+`#compound-ok`), and `.claude/hooks/no_git_grep.py` blocks `git grep`
+(no escape hatch — use the Grep tool). Each script is committed but its
+`settings.json` wiring is **user-local, not committed**. The rules and
+the always-re-prompt patterns are in
+`docs/conventions/shell-commands.md`; the guards' `settings.json`
 wiring lives with the other local integrations — see "Local
 integrations and guard hooks" below.
 
 ## Local integrations and guard hooks
 
 The **user-local Claude Code configuration** the repo documents but
-does **not** commit: the compound-shell guard hook, the **worktree
-edit-path guard** (blocks a file-mutating tool that targets a
-base-repo absolute path from a worktree session — editing the base
-copy the worktree build never sees is a recurring, expensive slip),
-the iTerm2 tab-color integration, and the `~/.zshrc` setup they lean
-on. Both settings files are git-ignored, so all of it is opt-in — a
-fresh worktree gets none of it until it is wired into that checkout's
-own `settings.json`. Each guard's **script** is committed; its
+does **not** commit: the compound-shell guard hook, the **git-grep
+guard** (blocks `git grep` in Bash calls, nudging to the Grep tool —
+no escape hatch, since Grep or a bare `grep` covers every legitimate
+search), the **worktree edit-path guard** (blocks a file-mutating tool
+that targets a base-repo absolute path from a worktree session —
+editing the base copy the worktree build never sees is a recurring,
+expensive slip), the iTerm2 tab-color integration, and the `~/.zshrc`
+setup they lean on. Both settings files are git-ignored, so all of it
+is opt-in — a fresh worktree gets none of it until it is wired into
+that checkout's own `settings.json`. Each guard's **script** is committed; its
 `PreToolUse` **wiring** is not. Full detail — every hook's wiring and
 the iTerm setup: `docs/conventions/local-integrations.md`.
 
