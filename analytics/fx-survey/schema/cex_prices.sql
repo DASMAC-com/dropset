@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS cex_prices (
     PRIMARY KEY (source, product_id, granularity_secs, bucket_start)
 );
 
--- The dominant analysis access pattern is a time-ordered scan of one series
--- (lead-lag, dislocation overlay); index the pair by bucket for it.
-CREATE INDEX IF NOT EXISTS cex_prices_series_idx
-    ON cex_prices (source, product_id, granularity_secs, bucket_start);
+-- No secondary index: the dominant access pattern is a time-ordered scan of
+-- one series (lead-lag, dislocation overlay), and the primary key's implicit
+-- index — leading pair/granularity equality, trailing bucket_start ordered —
+-- already serves it. A separate index on the same tuple would be pure write
+-- overhead.
