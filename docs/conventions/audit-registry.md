@@ -30,6 +30,7 @@ localnet-support (rust-lib, low): bots/localnet-support/**
 indexer (rust-tool, low): indexer/**
 feeds (rust-lib, low): feeds/**
 fair-value (rust-lib, med): fair-value/**
+fx-survey (rust-tool, low): analytics/fx-survey/**
 ```
 
 **Inter-subsystem interfaces** — the seams where contract drift
@@ -84,6 +85,13 @@ feeds <-> indexer: the feeds RPC-poll source and store sink
   parity until the indexer migrates onto the framework — the RawTx layout,
   the getSignaturesForAddress + getTransaction poll window, and the
   idempotent ON CONFLICT write must track the indexer's originals.
+fx-survey <-> feeds: the survey app is the first consumer of the feeds
+  framework — it implements Source (analytics/fx-survey/src/coinbase.rs)
+  and StoreWriter (analytics/fx-survey/src/store.rs) and composes
+  HttpClient / PgCursorStore / StoreSink / run — so the trait signatures,
+  the Batch/Cursor/caught_up contract, and the store sink's
+  cursor-after-commit ordering must track the framework. The schema split
+  is part of the seam: feeds owns feed_cursors, the app owns cex_prices.
 sdk-clients <-> sdk-math: the TS market reader (sdk/ts/src/market.ts)
   hand-decodes the opaque Vault slab and reconstructs the resting book,
   mirroring the on-chain byte layout (sdk/interface/src/layout.rs) and the
