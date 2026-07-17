@@ -30,7 +30,9 @@ copy, so the wording stays in one place.
 >   by the cross-checkout rule below, but it isn't: a clean single
 >   pattern only re-prompts until firmed, and a quoted `\|` alternation
 >   trips the harness's per-subcommand `|` guard and **can't be firmed
->   at all**. Grep sidesteps both.
+>   at all**. Grep sidesteps both. A `PreToolUse` guard hook
+>   (`.claude/hooks/no_git_grep.py`) blocks `git grep` outright, so it
+>   won't run even if you reach for it — use Grep (or a bare `grep`).
 > - **Reading large files — Grep to the relevant section, then `Read`
 >   with `offset`/`limit`.** Don't pull a whole `CLAUDE.md`, doc, or
 >   SKILL.md into context to use a fraction of it; a whole-file Read of

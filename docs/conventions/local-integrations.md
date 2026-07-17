@@ -10,9 +10,9 @@
 
 This doc covers the **user-local Claude Code configuration** the repo
 *documents but does not commit*: the compound-shell guard hook, the
-worktree edit-path guard hook, the iTerm2 tab-color integration, and the
-shell (`~/.zshrc`) setup they lean on. None of it is enforced on a
-checkout.
+git-grep guard hook, the worktree edit-path guard hook, the iTerm2
+tab-color integration, and the shell (`~/.zshrc`) setup they lean on.
+None of it is enforced on a checkout.
 
 Both `.claude/settings.json` (hook + permission wiring) and
 `.claude/settings.local.json` (the per-machine allowlist) are
@@ -85,6 +85,66 @@ base repo's copy automatically; `firm-perms`' full sweep is what
 propagates a firmed allowlist from the base repo into a worktree (and
 back), so run it once in a cold worktree if the guard or a familiar
 allow-rule is missing.
+
+## The git-grep guard hook
+
+The [shell-commands](shell-commands.md) rule "never `git grep`" is also
+enforced **mechanically**. A `PreToolUse` Bash hook
+(`.claude/hooks/no_git_grep.py`) inspects each Bash command and
+**blocks** any that runs `git grep` — including `git -C <path> grep`,
+`git --no-pager grep`, `git -c core.pager=cat grep`, `--flag=value`
+global-option variants, and a `git grep` that follows a shell control
+operator (`&&` / `|` / `;`). It nudges the model to the **Grep tool**
+(or a bare `grep` where Grep is absent). The scan is **quote-aware**
+and the guard fails *open* — any payload it can't parse is allowed — so
+it never wedges a session.
+
+Why a guard beats allow-listing `git grep`: a plain `git grep foo`
+re-prompts until firmed, and a quoted `\|` alternation trips the
+harness's per-subcommand `|` guard so it **can't be firmed at all** —
+allow-listing would leave the alternation broken and might *increase*
+`git grep` use. The Grep tool sidesteps both (real regex, cross-path,
+zero prompts), so — unlike the compound guard — this hook has **no
+escape hatch**: there is no legitimate `git grep` worth letting through.
+
+### Wiring the git-grep guard
+
+Like the compound guard, the **script** (`.claude/hooks/no_git_grep.py`)
+is committed with a built-in self-test —
+`python3 .claude/hooks/no_git_grep.py --self-test` — but its
+`PreToolUse` **wiring** is not. It shares the `Bash` matcher with the
+compound guard, so add its `command` entry alongside that guard's under
+the same matcher (matching `PreToolUse` hooks all run, order-independent):
+
+<!-- markdownlint-disable MD013 -->
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/no_compound_bash.py\"",
+            "statusMessage": "Checking for compound shell",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/no_git_grep.py\"",
+            "statusMessage": "Checking for git grep",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+<!-- markdownlint-enable MD013 -->
 
 ## The worktree edit-path guard hook
 

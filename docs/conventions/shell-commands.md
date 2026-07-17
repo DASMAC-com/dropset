@@ -78,7 +78,10 @@ Concrete rules:
   but it isn't: a clean single pattern only re-prompts until firmed, and
   a quoted `\|` alternation trips the per-subcommand `|` guard and can't
   be firmed at all. Reserve `git -C <path>` for **metadata** subcommands
-  (`log` / `show` / `diff` / `status` / `ls-files`), never `grep`.
+  (`log` / `show` / `diff` / `status` / `ls-files`), never `grep`. This
+  rule is enforced **mechanically** by the git-grep guard hook
+  (`.claude/hooks/no_git_grep.py`) — see [the guard hooks](#the-guard-hooks)
+  below.
 - One command per Bash call. Avoid `&&`, `;`, and pipes when separate
   calls work; a chained command can't be generalized into a glob and
   always re-prompts.
@@ -178,17 +181,24 @@ If a one-off like these still gets approved during a session, do
 `firm-perms` skill flags it and points back here so the source stops
 emitting it.
 
-## The compound-shell guard hook
+## The guard hooks
 
-These rules are also enforced **mechanically**, not just by convention:
-an opt-in `PreToolUse` guard hook inspects each Bash command and
-**blocks** any unquoted compound / redirect operator before it runs (the
-`#compound-ok` marker is the escape hatch). The guard **script**
-(`.claude/hooks/no_compound_bash.py`) is committed, but its wiring is
-not — like the iTerm color integration, it is user-local configuration
-the repo documents rather than enforces. The hook's quote-aware
-behavior, its escape hatch, and the exact `settings.json` wiring live
-with the other local integrations in
+These rules are also enforced **mechanically**, not just by convention,
+by two opt-in `PreToolUse` Bash guard hooks that inspect each command
+before it runs:
+
+- **`.claude/hooks/no_compound_bash.py`** blocks any unquoted compound /
+  redirect operator (the `#compound-ok` marker is the escape hatch).
+- **`.claude/hooks/no_git_grep.py`** blocks `git grep` (including
+  `git -C <path> grep` and other global-flag variants), nudging to the
+  Grep tool. It has **no** escape hatch — Grep, or a bare `grep`, covers
+  every legitimate content search.
+
+Each guard **script** is committed, but its wiring is not — like the
+iTerm color integration, they are user-local configuration the repo
+documents rather than enforces. Both hooks are quote-aware and fail
+open. Their behavior and the exact `settings.json` wiring live with the
+other local integrations in
 [local-integrations](local-integrations.md).
 
 Baseline permission allow-rules (the `Bash(prefix:*)` globs this doc's
