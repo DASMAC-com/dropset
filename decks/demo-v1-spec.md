@@ -1,4 +1,6 @@
 <!-- cspell:word Aptos -->
+<!-- cspell:word AUDD -->
+<!-- cspell:word CADC -->
 <!-- cspell:word Cargobill -->
 <!-- cspell:word Dragonfly -->
 <!-- cspell:word Econia -->
@@ -36,18 +38,20 @@ pages:
 > control panel, and here's a swap clearing on the frontend. Now watch
 > a brand-new market come alive: the book starts empty, I turn the
 > makers on, and real depth fills in within seconds. And just like
-> that, my 2021 laptop is quoting FX on Solana — and Dropset is already
-> live on mainnet, clearing real trades. Why won't this work? Arc,
-> Tempo, Hibachi, and Canton are all chasing onchain settlement — but
-> they're private, permissioned, or walled gardens, and the big DEXes
-> like Jupiter aren't focused on FX. Dropset is the open, neutral,
-> composable venue anyone can quote on and anyone can trade against, and
-> we're beating them to it. We bootstrap the liquidity ourselves the way
-> Hyperliquid did, and help stablecoin issuers land their first trades
-> onchain — Colosseum partners like Altitude and Cargobill already need
-> FX. The team has built exchanges before — I authored the Econia order
-> book and co-authored the Solana Opcode Guide, and Judy runs the
-> operations that get us banked. Dropset — Forex on Solana.
+> that, my 2021 laptop is quoting FX on Solana — Dropset already clears
+> trades on mainnet today by routing through aggregators, and the eCLOB
+> is how we bootstrap the markets that don't exist yet. Why won't this
+> work? Arc, Tempo, Hibachi, and Canton are all chasing onchain
+> settlement — but they're private, permissioned, or walled gardens,
+> and big apps like Jupiter aren't focused on FX. Dropset is the open,
+> neutral, composable venue anyone can quote on and anyone can trade
+> against, and we're beating them to it. We bootstrap the liquidity
+> ourselves the way Hyperliquid did — through a vault others can top off
+> — and help stablecoin issuers land their first trades onchain;
+> Colosseum partners like Altitude and Cargobill already need FX. The
+> team has built exchanges before — I authored the Econia order book and
+> the Solana Opcode Guide, and Judy owns the operations that get us
+> banked. Dropset — Forex on Solana.
 
 ### Page-by-page
 
@@ -55,8 +59,8 @@ pages:
 
 - **On-slide:** Forex on Solana.
 - **Visual:** Dropset wordmark, centered, on the dark theme.
-- **Spoken:** "Dropset is onchain Forex on Solana — the open, efficient
-  exchange of the world's currencies at scale."
+- **Spoken:** "Dropset is onchain Forex on Solana — providing open and
+  efficient exchange of the world's currencies at scale."
 
 #### Page 2 — The gap · ~12s
 
@@ -79,8 +83,12 @@ pages:
 - **Visual:** A clean order-book ladder (the TUI/frontend book view).
 - **Spoken:** "Our edge is a new exchange design — the eCLOB. You get
   the liquidity guarantees of a central limit order book, but quote
-  updates as cheap as a propAMM. That lets us source the nascent
-  liquidity that already exists, and onboard market makers far faster."
+  updates as cheap as a propAMM. That lets us bootstrap brand-new
+  markets and onboard market makers far faster."
+- **Note:** Two ways we source liquidity — worth having straight: where
+  a currency already has some onchain liquidity, we route through
+  **aggregators**; the **eCLOB** is how we **bootstrap the new markets**
+  where there's none yet. The demo shows the second.
 
 #### Page 4 — The stack: maker panel + a swap [DEMO · localnet] · ~25s
 
@@ -106,10 +114,10 @@ pages:
   I trade against real eCLOB depth and it fills the size. This is the
   market-maker's view; the frontend is the user's view."
 - **Note:** The point of this beat: we have a working market-maker
-  control panel and frontend. The *next* step is wiring it up on
-  mainnet and bootstrapping real liquidity (Page 9). Optional flourish
-  if time allows: from the TUI, reshape the ladder or reprice the whole
-  book in a single instruction.
+  control panel and frontend, and this is exactly how we bootstrap
+  liquidity. The *next* step is wiring it up on mainnet (Page 9).
+  Optional flourish if time allows: from the TUI, reshape the ladder or
+  reprice the whole book in a single instruction.
 
 #### Page 6 — Traction · ~8s
 
@@ -118,12 +126,14 @@ pages:
 - **Visual:** The presenter's actual laptop, or the multi-market TUI
   showing several books quoting at once.
 - **Spoken:** "And just like that, my 2021 MacBook is quoting FX on
-  Solana. And this isn't only a demo — Dropset is already live on
-  mainnet, clearing real trades, with the rest built out in the open."
-- **Note:** The live demo is localnet; the *mainnet* claim here is the
-  standing traction fact (Dropset.io is live and clearing trades), not
-  a claim about the demo. Don't assert "most liquid right now" — that
-  isn't true during a localnet demo.
+  Solana. This isn't only a demo — Dropset already clears trades on
+  mainnet today by routing through aggregators, and what you just saw is
+  how we bootstrap the brand-new markets with the eCLOB."
+- **Note:** The live demo is localnet. The mainnet traction is real but
+  specific: today Dropset clears trades by routing existing liquidity
+  through **aggregators**; the eCLOB + maker demo is how we **bootstrap**
+  liquidity where none exists. Don't assert "most liquid right now" —
+  that isn't true during a localnet demo.
 
 #### Page 7 — Why this will fail · ~12s
 
@@ -139,20 +149,20 @@ pages:
 
 #### Page 8 — Why it will work · ~8s
 
-- **On-slide:** They're private or walled — and the big DEXes aren't
+- **On-slide:** They're private or walled — and the big apps aren't
   focused on FX.
 - **Visual:** A single open door vs. a row of locked ones.
 - **Spoken:** "But those are private, permissioned, or walled gardens.
-  And the big Solana DEXes like Jupiter aren't focused on FX — it's a
-  smaller market today, so it's a classic innovator's dilemma: only a
-  small, focused team goes after it now. Dropset is the open, neutral,
+  And big Solana apps like Jupiter aren't focused on FX — it's a smaller
+  market today, so it's a classic innovator's dilemma: only a small,
+  focused team goes after it now. Dropset is the open, neutral,
   composable venue — anyone can quote, anyone can trade, any app can
   integrate — and we're beating everyone to it."
 - **Note:** Two rebuttals in one breath — (1) the closed-garden
-  competitors, (2) the unfocused incumbents (Jupiter / innovator's
-  dilemma, smaller market now). The composability angle (general-purpose
-  Solana vs. a verticalized venue like Hyperliquid) is expanded in the
-  appendix.
+  competitors, (2) the unfocused incumbents (an app like Jupiter /
+  innovator's dilemma, smaller market now). The composability angle
+  (general-purpose Solana vs. a verticalized venue like Hyperliquid) is
+  expanded in the appendix.
 
 #### Page 9 — How we grow · ~6s
 
@@ -160,9 +170,10 @@ pages:
 - **Visual:** A curve of depth growing; logos of Colosseum partners
   (Altitude, Cargobill).
 - **Spoken:** "We seed the markets ourselves the way Hyperliquid did —
-  and we help stablecoin issuers land their first real trades on
-  mainnet. Colosseum partners like Altitude and Cargobill already need
-  to source FX onchain — that's our first demand."
+  through a vault others can top off with inventory — and we help
+  stablecoin issuers land their first real trades on mainnet. Colosseum
+  partners like Altitude and Cargobill already need to source FX onchain
+  — that's our first demand."
 
 #### Page 10 — Team & close · ~4s
 
@@ -170,10 +181,10 @@ pages:
 - **Visual:** Alex + Judy, then the Dropset wordmark.
 - **Spoken:** "I've built two onchain exchanges already, including an
   order book — I authored Econia on Aptos, which cleared around five
-  hundred million in volume, and co-authored emojicoin.fun and the
-  Solana Opcode Guide. Judy runs operations — banking, the stablecoin
-  providers, onramps, and accounting — so I stay on product. Dropset —
-  Forex on Solana."
+  hundred million in volume, and wrote the Solana Opcode Guide, the
+  playbook for squeezing performance out of Solana programs. Judy owns
+  operations end-to-end — banking, the stablecoin providers, onramps,
+  and accounting. Dropset — Forex on Solana."
 
 ---
 
@@ -187,16 +198,17 @@ investor grills.
 
 - **Alex — product / exchange design.** Exchange designer; has built
   two onchain exchanges (including an order book) before. Authored
-  Econia, the onchain order book on Aptos (~$500M cleared);
-  co-authored emojicoin.fun, a top consumer product on Aptos, and the
-  Solana Opcode Guide — that low-level experience is what drives down
-  market-making costs in the eCLOB. Previously cofounded Econia Labs.
-  Founder stays on product.
-- **Judy — operations.** Formerly EA at Dragonfly. Running the
-  operational spine: opening accounts with the stablecoin providers and
+  Econia, the onchain order book on Aptos (~$500M cleared); co-authored
+  emojicoin.fun, a top consumer product on Aptos; and authored the
+  Solana Opcode Guide — the playbook for squeezing performance out of
+  Solana programs with high-efficiency techniques, which is what drives
+  down market-making costs in the eCLOB. Previously cofounded Econia
+  Labs.
+- **Judy — operations.** Formerly EA at Dragonfly. Owns the operational
+  spine end-to-end: opening accounts with the stablecoin providers and
   onramps, plus corporate accounting and service providers — the work
-  that gets an FX venue actually banked, so the founder can focus on
-  product.
+  that gets an FX venue actually banked. A deliberate split: product and
+  operations each have a dedicated owner.
 
 ### Why this will fail — the steelman, and the answer
 
@@ -209,7 +221,7 @@ investor grills.
   Arc/Tempo camp are chasing settlement; Canton is regulated onchain
   markets. But they're permissioned or walled — a different animal from
   an open, composable FX book.
-- **"Why wouldn't Jupiter or a big DEX just do this?"** — They aren't
+- **"Why wouldn't Jupiter or a big app just do this?"** — They aren't
   focused on FX, and we're beating them to it. It's an innovator's
   dilemma: an open, FX-specialized venue only makes sense for a small,
   focused team to chase right now — the volume (a few million a day
@@ -232,8 +244,11 @@ the deck:
 
 - "What's the market?" → FX, the biggest market on earth ($9T/day,
   24/5), with no liquid onchain home yet.
-- "Who's using it?" → Live on mainnet now; Colosseum partners (Altitude,
-  Cargobill) and stablecoin issuers are the first FX demand.
+- "Who's using it?" → Live on mainnet now (clearing trades via
+  aggregators); Colosseum partners (Altitude, Cargobill) and stablecoin
+  issuers are the first FX demand. We've also spoken with providers like
+  CADC and AUDD coming online on Solana who already have distribution
+  networks.
 - "Why you?" → We've built onchain exchanges before (Econia, ~$500M);
   this is our domain.
 - "Why now?" → Non-US-dollar stablecoins are only just arriving onchain
@@ -336,20 +351,21 @@ expects. Mapping to our pages in brackets.
    *composably* — DevEx convenience for payments providers, merchants,
    manufacturers, and retail — because Solana is general-purpose, not
    verticalized like Hyperliquid. [Pages 2, 8; appendix]
-1. **Solution / product.** Dropset sources nascent liquidity and adds a
-   novel eCLOB for inexpensive quote updates that accelerate
-   market-maker onboarding. [Pages 3, 4, 5]
-1. **Traction.** Dropset.io is live and clearing trades on mainnet, with
-   more market-making and exchange components built in the open. [Page
-   6]
+1. **Solution / product.** Dropset routes existing onchain liquidity
+   through aggregators and adds a novel eCLOB to bootstrap new markets
+   with inexpensive quote updates that accelerate market-maker
+   onboarding. [Pages 3, 4, 5]
+1. **Traction.** Dropset.io is live and clearing trades on mainnet
+   (today via aggregators), with more market-making and exchange
+   components built in the open. [Page 6]
 1. **Why the market is massive.** FX is >$9T/day and 24/5; Solana as
    intermediary gives atomic settlement and faster on/off-ramps. [Page
    2]
 1. **Why now.** The non-US stablecoin market has only just started to
    expand — EUR stablecoins drive most volume, more currencies going
    live (14 on Solana). [Page 2]
-1. **Founders' bio.** Exchange-design background — authored Econia
-   ($500M on Aptos), co-authored emojicoin.fun and the Solana Opcode
-   Guide; that experience drives down market-making costs via the
-   eCLOB. Operations lead (Judy) handles accounting and service
-   providers so the founder focuses on product. [Page 10; appendix]
+1. **Founders' bio.** Exchange-design background — authored the Econia
+   order book (~$500M on Aptos) and the Solana Opcode Guide — with a
+   dedicated operations owner (Judy) on banking and accounting. Full
+   detail on Page 10 and in the appendix (kept there to stay DRY).
+   [Page 10; appendix]
