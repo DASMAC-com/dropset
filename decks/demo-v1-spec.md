@@ -38,7 +38,7 @@ pages:
 > control panel, and here's a swap clearing on the frontend. Now watch
 > a brand-new market come alive: the book starts empty, I turn the
 > makers on, and real depth fills in within seconds. And just like
-> that, my 2021 laptop is quoting FX on Solana — Dropset already clears
+> that, my laptop is quoting FX on Solana technology — Dropset already clears
 > trades on mainnet today by routing through aggregators, and the eCLOB
 > is how we bootstrap the markets that don't exist yet. Why won't this
 > work? Arc, Tempo, Hibachi, and Canton are all chasing onchain
@@ -51,7 +51,7 @@ pages:
 > Colosseum partners like Altitude and Cargobill already need FX. The
 > team has built exchanges before — I authored the Econia order book and
 > the Solana Opcode Guide, and Judy owns the operations that get us
-> banked. Dropset — Forex on Solana.
+> integrated with stablecoin rails. Dropset — Forex on Solana.
 
 ### Page-by-page
 
@@ -121,11 +121,11 @@ pages:
 
 #### Page 6 — Traction · ~8s
 
-- **On-slide:** And just like that, my 2021 laptop is quoting FX on
+- **On-slide:** And just like that, my laptop is quoting FX on
   Solana.
 - **Visual:** The presenter's actual laptop, or the multi-market TUI
   showing several books quoting at once.
-- **Spoken:** "And just like that, my 2021 MacBook is quoting FX on
+- **Spoken:** "And just like that, my laptop is quoting FX on
   Solana. This isn't only a demo — Dropset already clears trades on
   mainnet today by routing through aggregators, and what you just saw is
   how we bootstrap the brand-new markets with the eCLOB."
@@ -207,8 +207,8 @@ investor grills.
 - **Judy — operations.** Formerly EA at Dragonfly. Owns the operational
   spine end-to-end: opening accounts with the stablecoin providers and
   onramps, plus corporate accounting and service providers — the work
-  that gets an FX venue actually banked. A deliberate split: product and
-  operations each have a dedicated owner.
+  that gets an FX venue integrated with the stablecoin rails. A
+  deliberate split: product and operations each have a dedicated owner.
 
 ### Why this will fail — the steelman, and the answer
 
