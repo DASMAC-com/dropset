@@ -17,6 +17,7 @@ into the transcript**:
   narrowest method / subcommand, field-select where the transport
   allows it (`gh … --json <fields>`, a GraphQL projection), paginate
   instead of dumping, and **never re-fetch what's already in context**.
+
 - **Read large known files by slice.** Grep to locate, then `Read`
   with `offset`/`limit`; don't pull a 1000-line file to use 80 lines
   of it. This is **main-loop** discipline during a study phase too, not
@@ -26,6 +27,7 @@ into the transcript**:
   API, not its tests. Whole-file `Read` is consistently the single
   largest token sink across review/build sessions. Brief review
   sub-agents to do the same. Families this bites repeatedly:
+
   - **Codama-generated SDK instruction files** (`sdk/rs/src/generated/**`,
     e.g. `set_reference_price.rs`, `set_liquidity_profile.rs`). To wire
     a CPI you need only the `Accounts` struct and the `InstructionArgs`
@@ -42,6 +44,7 @@ into the transcript**:
     for a few helpers. Grep to the helpers you need (the `poke_*`
     builders, a specific `fn`) and slice-read those, rather than
     paginating the whole fixture.
+
 - **Route verbose build logs away from context.** Prefer `-q` /
   `--quiet` so a `cargo` / `make` "Compiling …" cascade doesn't land
   inline. For a noisy target with no quiet flag, run it through the
@@ -57,6 +60,7 @@ into the transcript**:
   it too, since those emit the same "Compiling …" cascade. (Do this
   within the shell rules — the runner captures inside Python, so the
   command line carries no redirect.)
+
 - **Inspect a run_quiet log by its printed path, not a glob.** When you
   need more than the summary, grep the **specific log path the runner
   printed** for that run — never a `*.log` / `make-*.log` wildcard,
@@ -65,21 +69,47 @@ into the transcript**:
   quiet-runner task, wait for its completion notification, then tail
   **once** for the summary — don't poll the interim log (it suppresses
   output mid-run, so repeated tails just return "(no output)").
+
 - **Scope a sub-agent fan-out.** Inlining the same large diff into N
   reviewers pays for N resident copies; scope each agent to its files,
   or have them read one shared file, rather than inlining N times.
+
 - **Polls multiply payload.** A read issued once is cheap; the same
   read polled across a CI / merge wait is paid per poll *and* per
   later turn — that's why `review-pr`'s waits use the compact `gh`
   reads above rather than the full-object MCP calls.
-- **Minimize live-verification screenshots.** A full-viewport
-  (2560×1440) screenshot `Read`s at ~30–50k tokens, so a set of them to
-  prove one visual fix dominates the run's Read cost. Capture **only the
-  frames that prove the claim** — the broken→fixed pair, not a gallery —
-  at a **reduced resolution** (≤1280-wide, or JPEG), so each screenshot
-  costs a few k rather than ~45k. This is the live-verification
-  discipline (the `/verify` and `/run` flows); a proof needs two frames,
-  not four full-res ones.
+
+- **Treat a screenshot as a 25–60k-token result class.** An image is
+  not a cheap glance: a full-viewport (2560×1440) screenshot `Read`s at
+  ~30–50k tokens, and on a visual-iteration run image Reads have been
+  the top sink outright (~180k, ~88% of all Read in one session — three
+  separate captures ≈94k of it answering a single question). Request
+  one deliberately, and:
+
+  - **Never re-`Read` an image already in context.** Like every tool
+    result it is replayed each turn; a second Read buys the same
+    ~40k twice.
+  - **Prefer ONE composite capture per round** over several separate
+    ones — a single frame showing the whole state beats a gallery of
+    partial views at the same total question answered.
+  - **Capture only the frames that prove the claim** — the
+    broken→fixed pair, not a gallery — at a **reduced resolution**
+    (≤1280-wide, or JPEG), so each costs a few k rather than ~45k.
+
+  This is the live-verification discipline (the `/verify` and `/run`
+  flows); a proof needs two frames, not four full-res ones.
+
+- **Route Docker image operations away from context too.** A
+  `docker compose pull` / `up` / `build` dumps a per-layer
+  "Downloading / Extracting / Waiting" progress cascade — the same
+  noise class as an unwrapped `cargo` build log, and on one run the
+  single largest result of the session purely from progress lines.
+  Pass **`--quiet-pull`** to `docker compose up` / `create` (it keeps
+  the final per-image line and drops the layer churn), or wrap the
+  call in `python3 .claude/tools/run_quiet.py -- …` when the target
+  also builds. This applies to shell you author in **skills and
+  Makefile targets**, not just ad-hoc calls.
+
 - **Don't hand-run a check a hook already owns.** `make lint`
   enforces line length (MD013 for Markdown, the "Lines over 80
   columns" hook for code); a manual `grep -nE '^.{81,}$'` pre-check

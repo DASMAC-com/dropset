@@ -242,9 +242,13 @@ tui-prebuild: check-toolchain program-keypair tui-prebuild-explorer
 # already cached (so it never fails offline on a warm cache). Guarded on a
 # `docker` CLI so a no-Docker host (which falls back to the hosted explorer) is
 # unaffected. A `tui-prebuild` prerequisite, so `make tui` warms it too.
+# `--quiet-pull` drops the per-layer download progress cascade, keeping only the
+# final per-image line (per docs/conventions/context-economy.md — that cascade
+# is a top token sink when an agent runs this).
 tui-prebuild-explorer:
 	@if command -v docker >/dev/null 2>&1; then \
-		docker compose -f infra/localnet/docker-compose.yml create explorer; \
+		docker compose -f infra/localnet/docker-compose.yml \
+			create --quiet-pull explorer; \
 	else echo "docker not found — skipping explorer image prebuild"; fi
 
 # Localnet control-plane TUI. Spawns its own
@@ -334,9 +338,12 @@ demo:
 # by hand. `up` pulls the CI-published image (or builds from source as a
 # fallback, or reuses a cached one) per the compose `pull_policy`; later runs
 # reuse the cache. Pin or bump the version via the `image:` tag in
-# docker-compose.yml (with EXPLORER_REF in explorer.Dockerfile).
+# docker-compose.yml (with EXPLORER_REF in explorer.Dockerfile). Every `up`
+# target here passes `--quiet-pull` to drop the per-layer progress cascade
+# (per docs/conventions/context-economy.md).
 explorer: check-docker
-	docker compose -f infra/localnet/docker-compose.yml up -d explorer
+	docker compose -f infra/localnet/docker-compose.yml \
+		up -d --quiet-pull explorer
 explorer-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml down
 
@@ -363,7 +370,7 @@ clean-docker: check-docker
 # /v1 surface comes up on http://localhost:8080.
 indexer-up: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
-		up -d postgres indexer indexer-api
+		up -d --quiet-pull postgres indexer indexer-api
 indexer-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		rm -sf postgres indexer indexer-api
@@ -377,7 +384,7 @@ indexer-down: check-docker
 # an operator asks for organic flow.
 bots-up: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
-		up -d maker-bot
+		up -d --quiet-pull maker-bot
 bots-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		rm -sf maker-bot taker-bot
@@ -387,7 +394,7 @@ bots-down: check-docker
 # `taker` profile); flip it on for a walkthrough, off to leave the market quiet.
 taker-up: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
-		--profile taker up -d taker-bot
+		--profile taker up -d --quiet-pull taker-bot
 taker-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		rm -sf taker-bot

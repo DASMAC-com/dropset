@@ -10,6 +10,8 @@ user-invocable: true
 
 <!-- cspell:word pathspec -->
 
+<!-- cspell:word retarget -->
+
 # `review-pr`
 
 Act as an adversarial reviewer before the human
@@ -58,29 +60,46 @@ PR-authoring **writes** (`create_pull_request`,
    economy" / "GitHub via MCP"):
 
    ```sh
-   gh pr view <branch> --json number,title,state,isDraft
+   gh pr view <branch> --json number,title,state,isDraft,baseRefName
    ```
 
-   That returns just `number`, `title`, `state`, and
-   `isDraft`. If the branch has no PR, `gh` exits non-zero
+   That returns just `number`, `title`, `state`, `isDraft`,
+   and `baseRefName`. **`baseRefName` is the branch this PR
+   actually merges into** — `main` in the common case, but
+   another PR's branch on a *stacked* PR. Every base-relative
+   step below (the step-2 rebase, the step-5 review diff, the
+   step-9/10 gates) is written against **`origin/<base>`**,
+   which means `origin/` + this `baseRefName` — substitute it
+   once here rather than assuming `main` and hand-correcting
+   at each call site. If the branch has no PR, `gh` exits
+   non-zero
    ("no pull requests found") — treat that as "no PR" and
    stop, telling the user to run `/init-pr` first. (This is a
    read; the routine PR-authoring **writes** in later steps
    stay on the MCP.)
 
-1. **Clean tree, then rebase onto `main`.** First run
+1. **Clean tree, then rebase onto the PR's base.** First run
    `git status` — if there are uncommitted changes,
    stop and tell the user to commit first (or run
    `/commit-changes`). Then rebase onto the latest
-   `main` so the review runs on the state the branch
-   will actually merge as, instead of a base that has
-   drifted while the work was in flight — this is what
-   minimizes file conflicts at merge time:
+   **`origin/<base>`** — the `baseRefName` step 1 read, not a
+   hard-coded `main` — so the review runs on the state the
+   branch will actually merge as, instead of a base that has
+   drifted while the work was in flight; this is what
+   minimizes file conflicts at merge time. Pass the base
+   literally (it's `main` on an ordinary PR, another PR's
+   branch on a stacked one):
 
    ```sh
-   git fetch origin main
-   git rebase origin/main
+   git fetch origin <base>
+   git rebase origin/<base>
    ```
+
+   Reading the base rather than assuming `main` is what keeps
+   a **stacked** review from needing hand-substitution at
+   every base-relative step — and, when the base PR merges
+   mid-review, the fix is to retarget the PR base and re-read
+   `baseRefName`, not to patch each command.
 
    - If the rebase **conflicts**, abort it
      (`git rebase --abort`), catalogue the conflict as
@@ -149,7 +168,7 @@ PR-authoring **writes** (`create_pull_request`,
      actually contains it.
 
    - For each requirement, decide from the diff
-     (`git diff origin/main..HEAD`) and the branch's commits
+     (`git diff origin/<base>..HEAD`) and the branch's commits
      whether it is **addressed**, **partial**, or
      **missing**. A requirement that is out of scope
      for this PR by design (e.g. explicitly deferred,
@@ -285,7 +304,7 @@ PR-authoring **writes** (`create_pull_request`,
      ```
 
      Take `<changed files...>` from
-     `git diff --name-only origin/main..HEAD`. Only fall back to a
+     `git diff --name-only origin/<base>..HEAD`. Only fall back to a
      full `python3 .claude/tools/run_quiet.py -- make lint`
      when a hook is repo-global (it has no per-file scope) or
      when you've changed enough that a scoped re-run wouldn't
@@ -306,16 +325,16 @@ PR-authoring **writes** (`create_pull_request`,
    allow-rule) **and** keeps the bulky diff out of the main
    transcript entirely.
 
-   **Diff against `origin/main`, not local `main`, and
+   **Diff against `origin/<base>`, not a local branch, and
    exclude the generated families.** Two adjustments to the
    `git diff` below:
 
-   - **Ref: `origin/main..HEAD`.** In a worktree, local
-     `main` is stale behind origin by already-merged PRs, so
-     `git diff main..HEAD` pulls unrelated merged-PR files
-     into `review-diff.txt` (the stale-diff hazard, reached
-     via the wrong ref). Step 2 already ran
-     `git fetch origin main`, so `origin/main` is fresh —
+   - **Ref: `origin/<base>..HEAD`.** In a worktree, the local
+     base branch is stale behind origin by already-merged
+     PRs, so `git diff <base>..HEAD` pulls unrelated
+     merged-PR files into `review-diff.txt` (the stale-diff
+     hazard, reached via the wrong ref). Step 2 already ran
+     `git fetch origin <base>`, so `origin/<base>` is fresh —
      diff and size against it.
    - **Exclude generated files with pathspec `:(exclude)`
      globs.** A review lens reads source, not regenerated
@@ -343,23 +362,62 @@ PR-authoring **writes** (`create_pull_request`,
    bug that has cost an entire 6-agent pass. Write to
    `<scratchpad>/review-diff.txt` (substitute the actual
    scratchpad path), then **verify the file is this branch's
-   diff before fanning out** — a one-line `wc -l` (and, if in
-   any doubt, a `head`) so a zero-length or stale file is
-   caught now, not after N agents have read it:
+   diff before fanning out** — the freshness gate below, plus
+   a one-line `wc -l` (and, if in any doubt, a `head`) so a
+   zero-length or stale file is caught now, not after N agents
+   have read it:
 
    ```sh
-   git diff origin/main..HEAD --output=<scratchpad>/review-diff.txt -- . \
+   git fetch origin <base>
+   git log HEAD..origin/<base> --oneline
+   git diff origin/<base>..HEAD --output=<scratchpad>/review-diff.txt -- . \
      ':(exclude)pnpm-lock.yaml' ':(exclude)Cargo.lock' \
      ':(exclude)sdk/ts/src/generated' ':(exclude)sdk/rs/src/generated' \
      ':(exclude)sdk/idl/dropset.json'
-   git log origin/main..HEAD --oneline
+   git log origin/<base>..HEAD --oneline
+   git diff --stat origin/<base>..HEAD
    wc -l <scratchpad>/review-diff.txt
    ```
 
    The commit log is small, so it prints to context and is
    passed inline; the diff lives only in
-   `<scratchpad>/review-diff.txt`. Do not fan out until the
-   `wc -l` confirms the file holds this branch's diff.
+   `<scratchpad>/review-diff.txt`.
+
+   **Assert base-freshness before fanning out — `wc -l` alone
+   is not the gate.** The base can advance *past* the step-2
+   rebase while the review is in flight: worktrees share one
+   `.git`, so a sibling session's fetch (or a merge landing on
+   `main`) moves `origin/<base>` under this session with no
+   fetch of its own. The review diff then reads as if this
+   branch **deleted** whatever the base just added — a phantom
+   `-` hunk. That is not hypothetical: on one run a
+   newly-landed test showed up as a phantom deletion and
+   **both** the correctness and completeness lenses
+   independently flagged it as a blocking coverage regression;
+   the whole fan-out was spent adjudicating a false positive,
+   then re-run from scratch on a corrected base along with the
+   full test suite. The prescribed `wc -l` check **passed**
+   throughout — a line count cannot distinguish a phantom
+   deletion from real content, so it never surfaces this.
+
+   So gate on the two checks the command block above adds,
+   both **before** spawning any agent:
+
+   - **`git log HEAD..origin/<base> --oneline` must be
+     empty.** A non-empty result means the base has commits
+     this branch doesn't — re-fetch, re-rebase onto
+     `origin/<base>`, regenerate `review-diff.txt`, and only
+     then fan out. (This is the same command you'd otherwise
+     reach for to *diagnose* the pollution after the lenses
+     report it; running it first costs one line and saves the
+     pass.)
+   - **Scan `git diff --stat origin/<base>..HEAD` for foreign
+     files.** Any path this branch never touched is base drift
+     leaking in. The `--stat` view catches what `wc -l`
+     structurally cannot, and it is cheap — one line per file.
+
+   Do not fan out until the freshness gate is clean **and**
+   the `wc -l` confirms the file holds this branch's diff.
 
    **Brief every sub-agent on the shell rules.** Prepend
    the standing sub-agent brief from
@@ -446,26 +504,61 @@ PR-authoring **writes** (`create_pull_request`,
    700k+ input for facts it already had. The same budget and
    negative apply to the step-6 cross-check below.
 
-   **Hand each lens the module map you already built.** If
-   the implement phase already produced a file→symbol map of
-   the touched area — an `Explore` survey, or a map the main
-   loop assembled while writing the change — pass it
-   **inline** to the lenses that must reason about the
-   surrounding code, the **correctness** lens above all. On a
-   concurrency- or invariant-heavy diff, correctness
-   genuinely needs the surrounding modules to check a
-   shared-state invariant, and it has re-derived that map
-   from scratch (one run hit 923k input / 12 turns on a
+   **Hand every lens the context you already hold — not just
+   correctness.** This is the single highest-value lever in
+   the whole step, and it applies to **every** lens: an agent
+   that cold-reads the very files the main loop authored or
+   read this session is re-buying context the session already
+   paid for, and that has been the largest sink in ten
+   consecutive PR runs (freshness 379.3k; completeness 653.1k
+   and cross-check 631.0k on one PR; style 485.8k on another).
+   Note what the lever is **not**: it is *input*-scoping, not
+   "spawn fewer lenses" — those same full fan-outs each caught
+   real blocking bugs, and the gating rules above already
+   decide the lens *count*. What recurs is the wasted
+   **inputs**.
+
+   So for each lens you do spawn:
+
+   - **Pass the excerpts and the section-map the main loop
+     already has** — inline, in the prompt. If the implement
+     phase produced a file→symbol map of the touched area (an
+     `Explore` survey, or a map the main loop assembled while
+     writing the change), that map goes to every lens that
+     must reason about the surrounding code. When no such map
+     exists, don't manufacture one — the lens reads what it
+     needs once, per the budget above.
+   - **State the scope line verbatim:** *"adjudicate from the
+     provided diff + excerpts; cold-read only a file no
+     excerpt covers."* This is what turns a survey back into
+     an adjudication.
+   - **With the map in hand, hold the budget tighter** —
+     state an explicit low turn cap (≈6 turns), since the
+     lens should be adjudicating, not surveying.
+   - **Name the efficient exemplar.** The correctness /
+     move-fidelity lens has returned a clean verdict on
+     202.3k — roughly **a quarter** of what the completeness
+     lens spent on the same PR. Tell each lens that is the
+     shape to match: read once, adjudicate, report.
+
+   This is distinct from scaling the lens *count* down for an
+   extraction/move diff (above) — here the lens runs at full
+   depth; the provided context just spares it the re-survey.
+   On a concurrency- or invariant-heavy diff the correctness
+   lens genuinely needs the surrounding modules to check a
+   shared-state invariant, and without the map it has
+   re-derived one from scratch (923k input / 12 turns on a
    944-line TUI diff) despite the "read each file once" rule.
-   Feeding it the map it would otherwise rebuild lets you
-   hold its budget **tighter**: state an explicit low turn
-   cap (≈6 turns) in its brief, since with the map in hand it
-   should be *adjudicating*, not surveying. This is distinct
-   from scaling the lens *count* down for an extraction/move
-   diff (above) — here the lens must run at full depth; the
-   map just spares it the re-survey. When no such map exists,
-   don't manufacture one for this — the lens reads what it
-   needs once, per the budget above.
+
+   **For the style lens, name the comparison files.** Style
+   is the lens most prone to a broad discovery scan — turned
+   loose it globs `components/**` (or the crate's whole module
+   tree) hunting for the local idiom, which is how one run
+   reached 485.8k. When the touched files were authored or
+   read in-session, the main loop **already knows** which
+   siblings define the idiom: name the specific **one or two**
+   of them in the brief and scope the comparison to those,
+   rather than letting the lens rediscover them.
 
    **Scale the fan-out to the diff.** The full lens set
    below plus the step-6 cross-check is the right spend for
@@ -478,7 +571,7 @@ PR-authoring **writes** (`create_pull_request`,
    doc-only diff a 375.4k one; a 24-line infra diff four
    agents including a 277.8k cross-check for a single nit).
    So first size the diff from the commit log and the line
-   count (`git diff --stat origin/main..HEAD`), and **short-circuit
+   count (`git diff --stat origin/<base>..HEAD`), and **short-circuit
    when it is trivial** — small and confined to one of:
    comment / doc / Markdown-only, a config or workflow
    tweak, a rename, or a handful of lines with no new
@@ -639,6 +732,39 @@ PR-authoring **writes** (`create_pull_request`,
      manifest**, fold or skip the CI-skip-list and
      audit-registry checks (nothing new for them to learn).
 
+   **The clippy gate already owns every compile-time fact —
+   say so in the completeness and cross-check briefs.** Step 4
+   runs `make lint`, whose `clippy` hook is
+   `cargo clippy --all-targets -- -D warnings`. A green run is
+   **proof**, not evidence: nothing is unresolved, nothing is
+   an unused import, nothing is unreachable, the tree
+   compiles. Yet the completeness lens (815.3k on one PR) and
+   the cross-check (631.0k on another) have ballooned by
+   cold-reading transitive dependency files to re-derive
+   exactly those facts by hand. Put three lines in both
+   briefs:
+
+   - **Unused-import / does-it-resolve / does-it-compile /
+     unused-symbol checks are OWNED by the clippy
+     deny-warnings gate this skill already ran green.** The
+     lens must **not** cold-read a file merely to confirm a
+     symbol resolves — that call is already settled.
+   - **Run the dead-code / unused-symbol grep ONCE, here in
+     the main loop**, and hand the result set to both lenses,
+     the same way the broad-scan greps above are hoisted.
+   - **What is left for the lens is judgment, not
+     compilation**: genuine test adequacy, whether code that
+     *does* compile is nonetheless dead by design, and
+     leftover artifacts (TODO/FIXME, debug prints, stray
+     fixtures) — adjudicated from the diff plus a single read
+     of the touched files.
+
+   Note the ordering dependency: this holds because step 4
+   ran **before** the fan-out and passed. If lint was skipped
+   or is failing, the gate proves nothing and the lens is back
+   to reading for itself — say which case applies in the
+   brief.
+
    **Standing suppressions — drop these before emitting.**
    Give every lens a short repo-specific "do NOT flag" list
    so it discards known-noise findings *before* they reach
@@ -696,9 +822,13 @@ PR-authoring **writes** (`create_pull_request`,
      — naming, patterns, idioms that diverge from the rest of
      the codebase.
    - **Completeness** — missing tests, TODO/FIXME
-     left behind, partial implementations,
-     unused imports or dead code introduced by
-     the diff.
+     left behind, partial implementations, and code the diff
+     introduces that is dead **by design** (reachable-nowhere
+     logic, a parameter nothing supplies). Not unused imports
+     or does-it-resolve — the clippy deny-warnings gate owns
+     those (see the clippy-gate block above); this lens
+     adjudicates judgment calls, from the diff plus one read
+     of each touched file.
    - **`CLAUDE.md` + `docs/conventions/` freshness**
      (conditional — spawn only when the surface gate above
      fires) — does the project's convention set still match
@@ -785,6 +915,16 @@ PR-authoring **writes** (`create_pull_request`,
    676.7k input re-deriving facts the primary lenses already
    passed it; the findings + diff are enough to adjudicate
    almost every call.
+
+   **And the same clippy carve-out the completeness lens
+   gets.** Give the cross-check the block above verbatim:
+   unused-import / does-it-resolve / does-it-compile /
+   unused-symbol are settled by the green
+   `cargo clippy --all-targets -- -D warnings` gate from
+   step 4 — do not cold-read a transitive dependency to
+   re-derive one, and **refute** any inherited finding that
+   rests on such a claim rather than going to read for it.
+   Hand it the same hoisted grep result set the lenses got.
 
    If the cross-check produces material
    disagreements, iterate: re-spawn the relevant
@@ -1041,9 +1181,9 @@ PR-authoring **writes** (`create_pull_request`,
    message must itself match the title — squash or
    reword so they agree.
 
-1. **Confirm the PR still merges cleanly.** Step 1
-   already rebased onto `main`, so this is normally
-   clean — but `main` can advance again during a
+1. **Confirm the PR still merges cleanly.** Step 2
+   already rebased onto `origin/<base>`, so this is normally
+   clean — but the base can advance again during a
    long review, so confirm rather than assume. Fetch
    the latest base, then ask GitHub with a
    **field-selected** `gh pr view` — only the two merge
@@ -1052,7 +1192,7 @@ PR-authoring **writes** (`create_pull_request`,
    economy" / "GitHub via MCP"):
 
    ```sh
-   git fetch origin main
+   git fetch origin <base>
    ```
 
    ```sh
