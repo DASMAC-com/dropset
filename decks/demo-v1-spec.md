@@ -1,7 +1,3 @@
-<!-- cspell:word AUDD -->
-
-<!-- cspell:word CADC -->
-
 <!-- cspell:word cofounded -->
 
 <!-- cspell:word composably -->
@@ -42,26 +38,27 @@ pages:
 
 > Dropset is Forex on Solana. The biggest market in the world — over
 > nine trillion dollars a day, trading 24/5 — barely exists onchain:
-> only about 14 of the world's currencies live on Solana so far. So we
-> built the eCLOB: the depth of an order book, with quote updates as
-> cheap as a propAMM. Here's the stack — this is the market-maker's
-> control panel, and here's a swap clearing on the frontend. Now watch
-> a brand-new market come alive: the book starts empty, I turn the
-> makers on, and real depth fills in within seconds. And just like
-> that, my laptop is quoting FX on Solana technology — Dropset already clears
-> trades on mainnet today by routing through aggregators, and the eCLOB
-> is how we bootstrap the markets that don't exist yet. Why won't this
-> work? Arc, Tempo, and Canton are all chasing onchain
-> settlement — but they're private, permissioned, or walled gardens,
-> and big apps like Jupiter aren't focused on FX. Dropset is the open,
-> neutral, composable venue anyone can quote on and anyone can trade
-> against, and we're beating them to it. We bootstrap the liquidity
-> ourselves the way Hyperliquid did — through a vault others can top off
-> — and help stablecoin issuers land their first trades onchain;
-> Colosseum partners like Altitude and Cargobill already need FX. The
-> team has built exchanges before — I authored the Econia order book and
-> the Solana Opcode Guide, and Judy owns the operations that get us
-> integrated with stablecoin rails. Dropset — Forex on Solana.
+> only about 14 of the world's currencies live on Solana so far. And
+> this already works: Dropset is live on mainnet today, clearing real
+> trades by routing FX through aggregators — pick a currency and the
+> swap settles. But we're just getting started, because the markets
+> that don't exist yet need a venue. So we built the eCLOB: the depth
+> of an order book, with quote updates as cheap as a propAMM — a maker
+> repricing the whole book costs forty-seven compute units. Watch a
+> brand-new market come alive: the book starts empty, the makers come
+> on, and real depth fills in within seconds. Why won't this work? Arc,
+> Tempo, and Canton are all chasing onchain settlement — but they're
+> private, permissioned, or walled gardens, and big apps like Jupiter
+> aren't focused on FX. Dropset is the open, neutral, composable venue
+> anyone can quote on and anyone can trade against, and we're beating
+> them to it. We bootstrap the vaults for a public liquidity flywheel —
+> anyone can top them off — and we help issuers land their first trades
+> onchain; we've talked with Colosseum partners like Altitude and
+> Cargobill who need to buy FX, and issuers like AUDD and CADC who need
+> their currency to trade. The team has built exchanges before — I
+> authored the Econia order book and the Solana Opcode Guide, and Judy
+> owns the operations that get us integrated with stablecoin rails.
+> Dropset — Forex on Solana.
 
 ### Page-by-page
 
@@ -75,80 +72,63 @@ pages:
 #### Page 2 — The gap · ~12s
 
 - **On-slide:** The biggest market on earth barely exists onchain.
-- **Visual:** The Dropset frontend's currencies page — e.g. "14 of 159
-  currencies listed," the rest greyed out. (One image — not a stat
-  table.)
+- **Visual:** The Dropset frontend's currencies count — "14 of 162
+  currencies represented on Solana, 148 not yet listed" — captioned with
+  the page it's from, `dropset.io/currencies`, so the audience can go
+  check the number themselves. (One image — not a stat table.)
 - **Spoken:** "Foreign exchange is over nine trillion dollars a day,
   and it trades 24/5 — but onchain it has no liquid home. Only about 14
   of the world's currencies are represented on Solana today, with the
-  euro driving most of the volume. Settle FX through Solana and you get
-  atomic settlement and near-instant on- and off-ramps."
+  euro driving most of the volume — that count is live on
+  dropset.io/currencies, where this is from. Settle FX through Solana
+  and you get atomic settlement and near-instant on- and off-ramps."
 - **Note:** This is the one place FX size is mentioned. Frame it as the
   *gap*, said out loud, never as a market-size slide (per Mert).
 
-#### Page 3 — The eCLOB · ~15s
+#### Page 3 — Live on mainnet [DEMO VIDEO · mainnet] · ~25s
 
-- **On-slide:** So we built the eCLOB: order-book depth, propAMM-cheap
-  quotes.
-- **Visual:** A clean order-book ladder (the TUI/frontend book view).
-- **Spoken:** "Our edge is a new exchange design — the eCLOB. You get
-  the liquidity guarantees of a central limit order book, but quote
-  updates as cheap as a propAMM. That lets us bootstrap brand-new
-  markets and onboard market makers far faster."
-- **Note:** Two ways we source liquidity — worth having straight: where
-  a currency already has some onchain liquidity, we route through
-  **aggregators**; the **eCLOB** is how we **bootstrap the new markets**
-  where there's none yet. The demo shows the second.
+- **On-slide:** This already works — today, on mainnet.
+- **Visual:** The globe, currencies pinned to the countries that issue
+  them, with a route drawn across it. Badge: **demo video · mainnet**.
+- **Spoken:** "Start with what already works. Dropset is live on
+  mainnet today, clearing real trades by routing FX through aggregators
+  — pick the currency you want on the globe and the swap settles. \[play
+  the mainnet demo video\]"
+- **Note:** Lead with the mainnet demo, per Mert's "put your best point
+  first": the strongest thing we have is that it already works on the
+  real network. Keep the claim exact — today we clear by routing through
+  **aggregators**; the eCLOB (next page) is how we **bootstrap** the
+  markets that have no liquidity yet. Don't assert "most liquid."
 
-#### Page 4 — The stack: maker panel + a swap [DEMO · localnet] · ~25s
+#### Page 4 — The eCLOB [DEMO VIDEO · localnet] · ~30s
 
-- **On-slide:** Here's the market-maker's control panel — and a swap
-  clearing.
-- **Visual:** The maker TUI / control panel, then a swap on the
-  frontend. Slide shows the command **`make demo`**.
-- **Spoken:** "Let me show you the stack. This is our market-maker
-  control panel — the TUI a maker uses to quote a book. And here's the
-  user side: I run a swap on the frontend and it clears. \[run
-  `make demo`\]"
-- **Demo ops:** This whole demo runs on **localnet**, driven by
-  `make demo`. If anything fails live, fall back to the recorded video.
-
-#### Page 5 — A market comes alive [DEMO · localnet] · ~25s
-
-- **On-slide:** Empty book, makers on — real depth in seconds.
-- **Visual:** Split view — the maker TUI on one side, the frontend
-  order book on the other, book filling from empty. Slide shows
-  **`make demo`**.
-- **Spoken:** "Now watch a brand-new market come alive. The book starts
-  empty — I turn the maker bots on, and top-of-book fills in live. Then
-  I trade against real eCLOB depth and it fills the size. This is the
-  market-maker's view; the frontend is the user's view."
-- **Note:** The point of this beat: we have a working market-maker
-  control panel and frontend, and this is exactly how we bootstrap
-  liquidity. The *next* step is wiring it up on mainnet (Page 9).
+- **On-slide:** And we're just getting started: order-book depth,
+  propAMM-cheap quotes.
+- **Visual:** Two captures side by side — the maker's control panel
+  (markets list + a live book) and the compute-unit pane showing what a
+  quote update costs. Badge: **demo video · localnet**.
+- **Spoken:** "The routing works today, but the markets that don't exist
+  yet need a venue — so we built one. The eCLOB gives you the liquidity
+  guarantees of a central limit order book with quote updates as cheap
+  as a propAMM: a maker repricing the whole book costs forty-seven
+  compute units, reshaping the ladder about five hundred. That's what
+  lets us bootstrap a brand-new market and onboard makers fast. \[play
+  the localnet demo video: the book starts empty, the maker bots come
+  on, real depth fills in within seconds, then a trade fills against
+  it\]"
+- **Note:** This page carries both halves of the eCLOB pitch — the
+  design (cheap quotes, shown as real compute-unit numbers) and the
+  proof (a market bootstrapped from empty). The video is **localnet**,
+  and the badge says so: the flash-liquidity beat isn't a mainnet claim.
   Optional flourish if time allows: from the TUI, reshape the ladder or
   reprice the whole book in a single instruction.
 
-#### Page 6 — Traction · ~8s
-
-- **On-slide:** And just like that, my laptop is quoting FX on
-  Solana.
-- **Visual:** The presenter's actual laptop, or the multi-market TUI
-  showing several books quoting at once.
-- **Spoken:** "And just like that, my laptop is quoting FX on
-  Solana. This isn't only a demo — Dropset already clears trades on
-  mainnet today by routing through aggregators, and what you just saw is
-  how we bootstrap the brand-new markets with the eCLOB."
-- **Note:** The live demo is localnet. The mainnet traction is real but
-  specific: today Dropset clears trades by routing existing liquidity
-  through **aggregators**; the eCLOB + maker demo is how we **bootstrap**
-  liquidity where none exists. Don't assert "most liquid right now" —
-  that isn't true during a localnet demo.
-
-#### Page 7 — Why this will fail · ~12s
+#### Page 5 — Why this will fail · ~12s
 
 - **On-slide:** Why won't this work? Arc, Tempo, Canton.
-- **Visual:** The competitor logos as a wall closing in.
+- **Visual:** The competitor logos as a wall closing in — each captioned
+  with the chain the presenter names, since a mark isn't always the name
+  (Arc is Circle's, so Circle's logo is what an audience recognizes).
 - **Spoken:** "The honest risk: everyone wants onchain settlement. Arc
   and Tempo are building payment-and-settlement rails, and Canton is
   doing regulated onchain markets. Any of them could decide FX is
@@ -157,7 +137,7 @@ pages:
   named the threat first. The rebuttal is the very next page. Fuller
   framing in the appendix.
 
-#### Page 8 — Why it will work · ~8s
+#### Page 6 — Why it will work · ~8s
 
 - **On-slide:** They're private or walled — and the big apps aren't
   focused on FX.
@@ -174,21 +154,30 @@ pages:
   (general-purpose Solana vs. a verticalized venue like Hyperliquid) is
   expanded in the appendix.
 
-#### Page 9 — How we grow · ~6s
+#### Page 7 — How we grow · ~8s
 
 - **On-slide:** We bootstrap the liquidity ourselves — like Hyperliquid.
-- **Visual:** A curve of depth growing; logos of Colosseum partners
-  (Altitude, Cargobill).
+- **Visual:** A curve of depth growing, over the line "we bootstrap
+  vaults for a public liquidity flywheel" and the logos of the people
+  we've talked to about sourcing liquidity: Colosseum partners
+  (Altitude, Cargobill) and issuers (AUDD, CADC).
 - **Spoken:** "We seed the markets ourselves the way Hyperliquid did —
-  through a vault others can top off with inventory — and we help
-  stablecoin issuers land their first real trades on mainnet. Colosseum
-  partners like Altitude and Cargobill already need to source FX onchain
-  — that's our first demand."
+  we bootstrap the vaults, and anyone can top them off with inventory,
+  so the flywheel is public rather than ours alone. And we help
+  stablecoin issuers land their first real trades on mainnet. We've
+  talked with all of these about sourcing liquidity: Colosseum partners
+  like Altitude and Cargobill need to buy FX onchain, and issuers like
+  AUDD and CADC need their currency to actually trade."
+- **Note:** The vault framing is deliberate — *we* bootstrap it, but the
+  flywheel is public and anyone can add inventory. Two distinct kinds of
+  counterparty on this page: partners who need to **buy** FX, issuers who
+  need their currency to **trade**.
 
-#### Page 10 — Team & close · ~4s
+#### Page 8 — Team & close · ~6s
 
 - **On-slide:** Built by people who've built exchanges.
-- **Visual:** Alex + Judy, then the Dropset wordmark.
+- **Visual:** Alex + Judy, square and unframed, with the wordmark in the
+  persistent footer.
 - **Spoken:** "I've built two onchain exchanges already, including an
   order book — I authored Econia on Aptos, which cleared around five
   hundred million in volume, and wrote the Solana Opcode Guide, the
@@ -270,13 +259,18 @@ ______________________________________________________________________
 
 ### How to read this
 
-- **One page = one slide.** Ten pages, hard cap (see "Format rules").
+- **One page = one slide.** Eight pages, against a ten-page cap (see
+  "Format rules").
 - Each page gives: the **on-slide line** (the single big sentence the
   audience reads), the **visual** (the one big image), the **spoken
   copy** (what the presenter says — this is the real script), and a
   **time** budget.
-- Total spoken time targets **~120 seconds**. The two live-demo beats
-  eat ~50s of that, so every other page has to be fast.
+- Total spoken time targets **~120 seconds**. The two demo beats eat
+  ~55s of that, so every other page has to be fast.
+- The demos are **recorded videos**, one per network, cued by a badge on
+  their page (**demo video · mainnet**, **demo video · localnet**).
+  Nothing on stage depends on a live network or a working room
+  connection.
 - Anything nuanced — the competitor rebuttals, the investor grilling,
   the numbers behind a claim — is **not on a slide**. It lives in the
   appendices (section 2) and only comes out if a conversation goes
@@ -320,7 +314,7 @@ good enough; open access isn't actually important"). Then show you've
 thought it through — **surface the lazy-VC questions and answer them**,
 and be ready to **reply to the counters** rather than hoping they don't
 come up. An investor respects that the risk was named first and met
-with an answer. The honest threat is Page 7; the answer is Page 8; the
+with an answer. The honest threat is Page 5; the answer is Page 6; the
 fuller counters-and-replies live in the appendices.
 
 ### Format rules (distilled from the above)
@@ -328,18 +322,20 @@ fuller counters-and-replies live in the appendices.
 Design it like a children's book, because a demo-day audience scrolls
 it like Twitter — they will not read a word salad.
 
-1. **Max 10 pages.** This deck is exactly 10.
-1. **One big sentence per page.** No bullet lists. Where the current
-   built deck uses three-bullet lists (pages 2, 3, 6), the deck should
-   collapse each to a single line to match this spec.
+1. **Max 10 pages.** This deck is 8 — the cap is a ceiling, not a
+   target, and two of the original ten pages (a "here's the stack" beat
+   and a separate traction page) turned out to be saying what the
+   mainnet demo already says.
+1. **One big sentence per page.** No bullet lists anywhere — the built
+   deck's three bullet-list pages are what this rule removed.
 1. **One big image per page.** Name the image in the "visual" field.
 1. **The sentences tell a story as you flip through.** Read the ten
    on-slide lines top to bottom and they should read as one arc.
 1. **Super simple words.**
 1. **Lead with the strongest selling point, not a template.** The
-   strongest point here is *it works and I can show it running in front
-   of you* — so the demo comes early and the arc is built around it. No
-   generic problem → solution → market-size structure.
+   strongest point here is *it already works, on mainnet, and I can show
+   you* — so the mainnet demo is Page 3 and the arc is built around it.
+   No generic problem → solution → market-size structure.
 1. **No market-opportunity slide.** We do not put up a "\$9T TAM"
    slide. FX size appears once, as the *shape of the gap* ("the
    biggest market on earth barely exists onchain"), never as a
@@ -355,19 +351,19 @@ expects. Mapping to our pages in brackets.
 
 1. **One-liner.** DASMAC is building Dropset, an onchain Forex platform
    that harnesses Solana for open, efficient exchange of multinational
-   currencies at scale. [Pages 1, 10]
+   currencies at scale. [Pages 1, 8]
 1. **Problem / unique insight.** ~14 currencies now live on Solana via
    stablecoins; Solana settlement can support the massive FX market
    *composably* — DevEx convenience for payments providers, merchants,
    manufacturers, and retail — because Solana is general-purpose, not
-   verticalized like Hyperliquid. [Pages 2, 8; appendix]
+   verticalized like Hyperliquid. [Pages 2, 6; appendix]
 1. **Solution / product.** Dropset routes existing onchain liquidity
    through aggregators and adds a novel eCLOB to bootstrap new markets
    with inexpensive quote updates that accelerate market-maker
-   onboarding. [Pages 3, 4, 5]
+   onboarding. [Pages 3, 4]
 1. **Traction.** Dropset.io is live and clearing trades on mainnet
    (today via aggregators), with more market-making and exchange
-   components built in the open. [Page 6]
+   components built in the open. [Page 3]
 1. **Why the market is massive.** FX is >\$9T/day and 24/5; Solana as
    intermediary gives atomic settlement and faster on/off-ramps. \[Page
    2\]
@@ -377,5 +373,5 @@ expects. Mapping to our pages in brackets.
 1. **Founders' bio.** Exchange-design background — authored the Econia
    order book (~\$500M on Aptos) and the Solana Opcode Guide — with a
    dedicated operations owner (Judy) on banking and accounting. Full
-   detail on Page 10 and in the appendix (kept there to stay DRY).
-   [Page 10; appendix]
+   detail on Page 8 and in the appendix (kept there to stay DRY).
+   [Page 8; appendix]

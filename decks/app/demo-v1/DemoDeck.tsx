@@ -6,6 +6,7 @@ import {
   FlexBox,
   Heading,
   Image,
+  Link,
   Notes,
   Progress,
   Slide,
@@ -14,17 +15,20 @@ import {
 import { colors, deckTheme } from "@/theme/tokens";
 
 /**
- * The demo-day pitch deck — a ~2-minute accelerator pitch built around a
- * live product demo. Slides are minimal backdrops the presenter talks over;
- * the full spoken script lives in each slide's `<Notes>` (presenter mode,
- * `p`), never on the slide itself. Route name is public-facing (`/demo-v1`);
- * internal ticket ids never appear here or in the URL.
+ * The demo-day pitch deck — a ~2-minute accelerator pitch built around two
+ * recorded product demos. Slides are minimal backdrops the presenter talks
+ * over; the full spoken script lives in each slide's `<Notes>` (presenter
+ * mode, `p`), never on the slide itself. Route name is public-facing
+ * (`/demo-v1`); internal ticket ids never appear here or in the URL.
  *
- * The copy is reconciled to `../../demo-v1-spec.md`, which is the source of
- * truth: ten pages, one big sentence and one big visual per page, nuance kept
- * off the slides and in that doc's appendices. Edit the spec first, then the
- * deck. Timing guide: pages 1–3 ≈ 32s, the two demo beats (4–5) ≈ 50s,
- * pages 6–10 ≈ 38s.
+ * The copy follows `../../demo-v1-spec.md`, which is the source of truth for
+ * it: one big sentence and one big visual per page, with the nuance kept off
+ * the slides and in that doc's appendices. Edit the spec first, then the deck.
+ *
+ * Eight pages: the gap, then the mainnet demo (it already works), then the
+ * eCLOB (we're just getting started), then the honest threat and its answer,
+ * how we grow, and the team. The two demo beats are **recorded videos**, cued
+ * by the badge on those pages, so nothing depends on a live network.
  */
 
 // Persistent footer: wordmark on the left, progress dots on the right.
@@ -75,93 +79,101 @@ const Statement = ({
   </Heading>
 );
 
-// A live-demo cue the presenter reads as "run the demo here". The command is
-// on the slide deliberately: it's the same one both demo beats run.
-const DemoCue = ({ children }: { children: React.ReactNode }) => (
-  <Box
-    border={`1px solid ${colors.accent}`}
-    borderRadius="8px"
-    padding="12px 20px"
-    margin="36px 0 0 0"
-  >
-    <Text
-      color="secondary"
-      fontFamily="monospace"
-      fontSize="24px"
-      margin="0"
+/**
+ * Marks a page whose visual is a recorded demo the presenter plays, and says
+ * which network it was recorded on — the mainnet demo is the real venue, the
+ * localnet one is a market bootstrapped from empty, and conflating the two
+ * would overstate what is live. Deliberately small: a label, not the page.
+ */
+const DemoBadge = ({ network }: { network: string }) => (
+  <FlexBox margin="26px 0 0 0">
+    <Box
+      border={`1px solid ${colors.accent}`}
+      borderRadius="6px"
+      padding="7px 14px"
     >
-      ▶ Live demo · {children}
-    </Text>
-  </Box>
+      <Text
+        color="secondary"
+        fontFamily="monospace"
+        fontSize="19px"
+        margin="0"
+      >
+        ▶ demo video · {network}
+      </Text>
+    </Box>
+  </FlexBox>
 );
 
-// Frames a screen capture so it reads as a window rather than floating art.
+/**
+ * Frames a screen capture so it reads as a window rather than floating art,
+ * with an optional caption underneath — `source` for a capture the audience
+ * can go look at themselves, `caption` for what to notice in it.
+ */
 const Screenshot = ({
   src,
   width,
   alt,
+  source,
+  caption,
 }: {
   src: string;
   width: number;
   alt: string;
+  source?: string;
+  caption?: string;
 }) => (
-  <Box
-    border={`1px solid ${colors.border}`}
-    borderRadius="10px"
-    padding="18px 24px"
-    margin="36px 0 0 0"
-    backgroundColor={colors.muted}
-  >
-    <Image src={src} width={width} alt={alt} />
+  <Box margin="30px 0 0 0">
+    <Box
+      border={`1px solid ${colors.border}`}
+      borderRadius="10px"
+      padding="14px 18px"
+      backgroundColor={colors.muted}
+    >
+      <Image src={src} width={width} alt={alt} />
+    </Box>
+    {source ? (
+      <Link href={`https://${source}`} fontSize="20px" margin="8px 0 0 0">
+        {source}
+      </Link>
+    ) : null}
+    {caption ? (
+      <Text color="quaternary" fontSize="20px" margin="8px 0 0 0">
+        {caption}
+      </Text>
+    ) : null}
   </Box>
 );
 
 /**
- * A book with depth on both sides (page 3) — asks above, bids below, size
- * growing away from top of book. Drawn rather than captured, and deliberately
- * unlabelled: it's the *shape* of order-book depth, not a claim about a
- * specific market's prices or size.
+ * The competitors, as a wall closing in (page 5). Each is captioned with the
+ * chain the presenter names out loud, which isn't always what its mark says —
+ * Arc is Circle's, so Circle's logo is what an audience recognizes.
  */
-const OrderBookLadder = () => (
-  <Box margin="34px 0 0 0">
-    {[78, 62, 48, 34, 22].map((size, i) => (
-      <FlexBox key={`ask-${i}`} justifyContent="center" margin="0 0 7px 0">
-        <Box width="640px">
-          <Box width={`${size}%`} height="16px" backgroundColor={colors.sell} />
-        </Box>
-      </FlexBox>
-    ))}
-    <Box width="640px" height="1px" backgroundColor={colors.border} />
-    {[22, 34, 48, 62, 78].map((size, i) => (
-      <FlexBox key={`bid-${i}`} justifyContent="center" margin="7px 0 0 0">
-        <Box width="640px">
-          <Box width={`${size}%`} height="16px" backgroundColor={colors.buy} />
-        </Box>
-      </FlexBox>
-    ))}
-  </Box>
-);
+const COMPETITORS = [
+  { name: "Arc", src: "/remote/logo-circle.svg" },
+  { name: "Tempo", src: "/remote/logo-tempo.svg" },
+  { name: "Canton", src: "/remote/logo-canton.svg" },
+];
 
-/**
- * The competitors, as a wall closing in (page 7). Rendered as type rather than
- * logos: the deck ships no third-party marks, and the names are what the
- * presenter says out loud anyway.
- */
 const CompetitorWall = () => (
-  <FlexBox margin="40px 0 0 0" justifyContent="center">
-    {["Arc", "Tempo", "Canton"].map((name) => (
-      <Box
-        key={name}
-        border={`1px solid ${colors.sell}`}
-        borderRadius="10px"
-        padding="18px 34px"
-        margin="0 12px"
-      >
+  <FlexBox margin="40px 0 0 0" justifyContent="center" alignItems="flex-start">
+    {COMPETITORS.map(({ name, src }) => (
+      <Box key={name} margin="0 12px">
+        <Box
+          border={`1px solid ${colors.sell}`}
+          borderRadius="10px"
+          padding="22px 30px"
+        >
+          {/* Height-matched, not width-matched: these logos have different
+              aspect ratios, so a shared width would make one read twice the
+              size of another. */}
+          <Image src={src} height={48} alt={name} />
+        </Box>
         <Text
           color={colors.sell}
           fontFamily="monospace"
-          fontSize="34px"
-          margin="0"
+          fontSize="24px"
+          margin="10px 0 0 0"
         >
           {name}
         </Text>
@@ -171,7 +183,7 @@ const CompetitorWall = () => (
 );
 
 /**
- * One open venue against a row of closed ones (page 8) — the visual answer to
+ * One open venue against a row of closed ones (page 6) — the visual answer to
  * the wall on the previous page. Doors are drawn, not photographed, so the
  * shape reads instantly at the back of a room.
  */
@@ -209,59 +221,85 @@ const OpenVsClosed = () => (
 );
 
 /**
- * Depth growing from a seeded book (page 9), with the first sources of FX
- * demand named underneath. An inline SVG keeps it crisp at projector size and
+ * The people we've talked to about sourcing liquidity — the payments companies
+ * that need FX, and the issuers who need their currency to trade (page 7).
+ *
+ * Each entry renders its logo once one is listed in `remote-assets.json` (add
+ * the URL there, then set `src` to the mirrored path); until then it renders as
+ * type, so the page is never waiting on an asset to be presentable.
+ */
+const PARTNERS: { name: string; src?: string }[] = [
+  { name: "Altitude" },
+  { name: "Cargobill" },
+  { name: "AUDD" },
+  { name: "CADC" },
+];
+
+const PartnerRow = () => (
+  <FlexBox alignItems="center" justifyContent="center" margin="10px 0 0 0">
+    {PARTNERS.map(({ name, src }) => (
+      <Box key={name} margin="0 18px">
+        {src ? (
+          <Image src={src} width={124} alt={name} />
+        ) : (
+          <Text color="quaternary" fontSize="28px" margin="0">
+            {name}
+          </Text>
+        )}
+      </Box>
+    ))}
+  </FlexBox>
+);
+
+/**
+ * Depth growing from a seeded book (page 7), over the partners and issuers that
+ * bring the flow. An inline SVG keeps the curve crisp at projector size and
  * needs no asset pipeline.
  */
 const GrowthCurve = () => (
-  <Box margin="36px 0 0 0">
+  <Box margin="30px 0 0 0">
     <svg
       width="720"
-      height="230"
-      viewBox="0 0 720 230"
+      height="200"
+      viewBox="0 0 720 200"
       role="img"
       aria-label="Order-book depth growing over time"
     >
       <path
-        d="M0 220 C 210 214, 380 176, 500 112 C 590 64, 660 28, 720 12 L 720 230 L 0 230 Z"
+        d="M0 190 C 210 185, 380 152, 500 96 C 590 55, 660 24, 720 10 L 720 200 L 0 200 Z"
         fill={colors.accent}
         opacity="0.14"
       />
       <path
-        d="M0 220 C 210 214, 380 176, 500 112 C 590 64, 660 28, 720 12"
+        d="M0 190 C 210 185, 380 152, 500 96 C 590 55, 660 24, 720 10"
         fill="none"
         stroke={colors.accent}
         strokeWidth="4"
       />
     </svg>
     <Text color="quaternary" fontSize="26px" margin="6px 0 0 0">
-      Our vault seeds it · Altitude and Cargobill bring the flow
+      We bootstrap vaults for a public liquidity flywheel
     </Text>
+    <PartnerRow />
   </Box>
 );
 
-// Team headshots, mirrored from the marketing site at build time, captioned.
+/**
+ * Team headshots, mirrored from the marketing site at build time, captioned.
+ * Left square and unframed — the sources are already square, and both photos
+ * are shot on a dark background that reads as part of the slide.
+ */
 const Portrait = ({
   src,
   name,
   role,
-  size,
 }: {
   src: string;
   name: string;
   role: string;
-  size: number;
 }) => (
   <Box margin="0 32px">
-    <Box
-      width={`${size}px`}
-      height={`${size}px`}
-      borderRadius="50%"
-      overflow="hidden"
-      border={`1px solid ${colors.border}`}
-    >
-      <Image src={src} width={size} height={size} alt={name} />
-    </Box>
+    <Image src={src} width={140} height={140} alt={name} />
     <Text fontSize="26px" margin="14px 0 0 0">
       {name}
     </Text>
@@ -277,8 +315,8 @@ export default function DemoDeck() {
       {/* 1 — Title */}
       <Slide>
         <FlexBox height="100%" flexDirection="column" justifyContent="center">
-          <Box margin="0 0 32px 0">
-            <Image src="/dropset-wordmark.png" width={280} />
+          <Box margin="0 0 40px 0">
+            <Image src="/dropset-wordmark.png" width={520} />
           </Box>
           <Statement fontSize="72px">Forex on Solana.</Statement>
         </FlexBox>
@@ -297,87 +335,83 @@ export default function DemoDeck() {
           </Statement>
           <Screenshot
             src="/screens/currencies-listed.png"
-            width={780}
+            width={720}
             alt="14 of 162 currencies represented on Solana; 148 not yet listed"
+            source="dropset.io/currencies"
           />
         </FlexBox>
         <Notes>
           Foreign exchange is over nine trillion dollars a day, and it trades
           24/5 — but onchain it has no liquid home. Only about fourteen of the
           world’s currencies are represented on Solana today, with the euro
-          driving most of the volume. Settle FX through Solana and you get
-          atomic settlement and near-instant on- and off-ramps.
+          driving most of the volume — that count is live on
+          dropset.io/currencies, where this is from. Settle FX through Solana
+          and you get atomic settlement and near-instant on- and off-ramps.
         </Notes>
       </Slide>
 
-      {/* 3 — The eCLOB */}
+      {/* 3 — The mainnet demo */}
+      <Slide>
+        <FlexBox height="100%" flexDirection="column" justifyContent="center">
+          <Eyebrow>Live on mainnet</Eyebrow>
+          <Statement>This already works — today, on mainnet.</Statement>
+          <Screenshot
+            src="/screens/mainnet-globe.png"
+            width={430}
+            alt="The Dropset globe, currencies pinned to the countries that issue them"
+          />
+          <DemoBadge network="mainnet" />
+        </FlexBox>
+        <Notes>
+          Start with what already works. Dropset is live on mainnet today,
+          clearing real trades by routing FX through aggregators — pick the
+          currency you want on the globe and the swap settles. [Play the mainnet
+          demo video.]
+        </Notes>
+      </Slide>
+
+      {/* 4 — The eCLOB */}
       <Slide>
         <FlexBox height="100%" flexDirection="column" justifyContent="center">
           <Eyebrow>The eCLOB</Eyebrow>
-          <Statement>
-            So we built the eCLOB: order-book depth, propAMM-cheap quotes.
+          <Statement fontSize="48px">
+            And we’re just getting started: order-book depth, propAMM-cheap
+            quotes.
           </Statement>
-          <OrderBookLadder />
+          <FlexBox alignItems="center" justifyContent="center">
+            <Box margin="0 18px 0 0">
+              <Screenshot
+                src="/screens/maker-tui.png"
+                width={370}
+                alt="The maker control panel: seven FX markets and a live EURC book"
+                caption="The maker’s control panel"
+              />
+            </Box>
+            <Box margin="0 0 0 18px">
+              <Screenshot
+                src="/screens/compute-units.png"
+                width={370}
+                alt="Compute units per instruction: a reprice costs 47, a reshape 491"
+                caption="Reprice: 47 CU · reshape: 491 CU"
+              />
+            </Box>
+          </FlexBox>
+          <DemoBadge network="localnet" />
         </FlexBox>
         <Notes>
-          Our edge is a new exchange design — the eCLOB. You get the liquidity
-          guarantees of a central limit order book, but quote updates as cheap
-          as a propAMM. That lets us bootstrap brand-new markets and onboard
-          market makers far faster.
+          The routing works today, but the markets that don’t exist yet need a
+          venue — so we built one. The eCLOB gives you the liquidity guarantees
+          of a central limit order book with quote updates as cheap as a
+          propAMM: a maker repricing the whole book costs forty-seven compute
+          units, reshaping the ladder about five hundred. That’s what lets us
+          bootstrap a brand-new market and onboard makers fast. [Play the
+          localnet demo video: the book starts empty, the maker bots come on,
+          and real depth fills in within seconds — then a trade fills against
+          it.]
         </Notes>
       </Slide>
 
-      {/* 4 — The stack: maker panel + a swap [demo · localnet] */}
-      <Slide>
-        <FlexBox height="100%" flexDirection="column" justifyContent="center">
-          <Eyebrow>The stack</Eyebrow>
-          <Statement>
-            Here’s the market-maker’s control panel — and a swap clearing.
-          </Statement>
-          <DemoCue>make demo</DemoCue>
-        </FlexBox>
-        <Notes>
-          Let me show you the stack. This is our market-maker control panel —
-          the TUI a maker uses to quote a book. And here’s the user side: I
-          run a swap on the frontend and it clears. [Run `make demo`. If
-          anything fails live, fall back to the recorded video.]
-        </Notes>
-      </Slide>
-
-      {/* 5 — A market comes alive [demo · localnet] */}
-      <Slide>
-        <FlexBox height="100%" flexDirection="column" justifyContent="center">
-          <Eyebrow>A market comes alive</Eyebrow>
-          <Statement>Empty book, makers on — real depth in seconds.</Statement>
-          <DemoCue>make demo</DemoCue>
-        </FlexBox>
-        <Notes>
-          Now watch a brand-new market come alive. The book starts empty — I
-          turn the maker bots on, and top-of-book fills in live. Then I trade
-          against real eCLOB depth and it fills the size. This is the
-          market-maker’s view; the frontend is the user’s view.
-          [Optional flourish, if time allows: from the TUI, reshape the ladder
-          or reprice the whole book in a single instruction.]
-        </Notes>
-      </Slide>
-
-      {/* 6 — Traction */}
-      <Slide>
-        <FlexBox height="100%" flexDirection="column" justifyContent="center">
-          <Eyebrow>Traction</Eyebrow>
-          <Statement fontSize="62px">
-            And just like that, my laptop is quoting FX on Solana.
-          </Statement>
-        </FlexBox>
-        <Notes>
-          And just like that, my laptop is quoting FX on Solana. This isn’t
-          only a demo — Dropset already clears trades on mainnet today by
-          routing through aggregators, and what you just saw is how we bootstrap
-          the brand-new markets with the eCLOB.
-        </Notes>
-      </Slide>
-
-      {/* 7 — Why this will fail */}
+      {/* 5 — Why this will fail */}
       <Slide>
         <FlexBox height="100%" flexDirection="column" justifyContent="center">
           <Eyebrow>Why this will fail</Eyebrow>
@@ -391,7 +425,7 @@ export default function DemoDeck() {
         </Notes>
       </Slide>
 
-      {/* 8 — Why it will work */}
+      {/* 6 — Why it will work */}
       <Slide>
         <FlexBox height="100%" flexDirection="column" justifyContent="center">
           <Eyebrow>Why it will work</Eyebrow>
@@ -410,7 +444,7 @@ export default function DemoDeck() {
         </Notes>
       </Slide>
 
-      {/* 9 — How we grow */}
+      {/* 7 — How we grow */}
       <Slide>
         <FlexBox height="100%" flexDirection="column" justifyContent="center">
           <Eyebrow>How we grow</Eyebrow>
@@ -420,15 +454,17 @@ export default function DemoDeck() {
           <GrowthCurve />
         </FlexBox>
         <Notes>
-          We seed the markets ourselves the way Hyperliquid did — through a
-          vault others can top off with inventory — and we help stablecoin
-          issuers land their first real trades on mainnet. Colosseum partners
-          like Altitude and Cargobill already need to source FX onchain —
-          that’s our first demand.
+          We seed the markets ourselves the way Hyperliquid did — we bootstrap
+          the vaults, and anyone can top them off with inventory, so the
+          flywheel is public rather than ours alone. And we help stablecoin
+          issuers land their first real trades on mainnet. We’ve talked with all
+          of these about sourcing liquidity: Colosseum partners like Altitude
+          and Cargobill need to buy FX onchain, and issuers like AUDD and CADC
+          need their currency to actually trade.
         </Notes>
       </Slide>
 
-      {/* 10 — Team & close */}
+      {/* 8 — Team & close */}
       <Slide>
         <FlexBox height="100%" flexDirection="column" justifyContent="center">
           <Eyebrow>Team</Eyebrow>
@@ -438,23 +474,21 @@ export default function DemoDeck() {
               src="/remote/team-alex.png"
               name="Alex"
               role="Product · exchange design"
-              size={148}
             />
             <Portrait
               src="/remote/team-judy.png"
               name="Judy"
               role="Operations · stablecoin rails"
-              size={132}
             />
           </FlexBox>
         </FlexBox>
         <Notes>
-          I’ve built two onchain exchanges already, including an order book
-          — I authored Econia on Aptos, which cleared around five hundred
-          million in volume, and wrote the Solana Opcode Guide, the playbook for
-          squeezing performance out of Solana programs. Judy owns operations
-          end-to-end — banking, the stablecoin providers, onramps, and
-          accounting. Dropset — Forex on Solana.
+          I’ve built two onchain exchanges already, including an order book — I
+          authored Econia on Aptos, which cleared around five hundred million in
+          volume, and wrote the Solana Opcode Guide, the playbook for squeezing
+          performance out of Solana programs. Judy owns operations end-to-end —
+          banking, the stablecoin providers, onramps, and accounting. Dropset —
+          Forex on Solana.
         </Notes>
       </Slide>
     </Deck>
