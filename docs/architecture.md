@@ -1038,8 +1038,23 @@ in-bounds and alignment checks on every call. It was **dropped** in
 favor of the `vault_idx: u32` slab index above: indexing a `[Vault]`
 is bounds-checked by the slice accessor, lands on a vault boundary
 by construction (no alignment check), and needs no zero-data
-precondition on the leader account. There is therefore no zero-data
-requirement on any account.
+precondition on the leader account.
+
+**Zero-data signer on the two quote writes.** The one exception, and
+only in the `asm-entrypoint` build: `SetReferencePrice` and
+`SetLiquidityProfile` require their signer to carry `data_len == 0`,
+rejecting otherwise with an asm-specific structural code. Nothing about
+the *addressing* needs it — `vault_idx` still indexes the slab — but
+pinning the signer's size keeps the **market's account record** at a
+static input-buffer offset, so the assembly's market offsets are
+assemble-time constants rather than arithmetic off a runtime `data_len`.
+A keypair wallet carries no data, so every ordinary caller satisfies it;
+what it does exclude is a data-carrying PDA delegated as
+`quote_authority` and signing via CPI, which the reference build would
+accept. That asymmetry is why the structural guards are deliberately
+outside the Rust↔ASM parity contract (see **SetReferencePrice → ASM
+fast path**) — they are mapped, not equated. No other instruction and no
+other account has a zero-data requirement.
 
 ### Admin authority
 
