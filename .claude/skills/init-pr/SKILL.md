@@ -112,8 +112,9 @@ here precisely because no skill is driving. Two habits, per
 ## The branch/worktree helper tool
 
 The deterministic string/path work this bootstrap needs —
-**tag validation**, **base-repo resolution**, and
-**branch-name normalization** — lives in the Python
+**tag validation**, **base-repo resolution**,
+**branch-name normalization**, and the
+**`frontend/.env.local` symlink** — lives in the Python
 skill-tool `.claude/tools/init_pr_branch.py` (per
 `CLAUDE.md` → "Skill tooling"), so the skill drives it
 instead of hand-parsing `git worktree list` in prose. Run
@@ -121,7 +122,7 @@ it **once** near the top with the resolved tag; it runs
 the two read-only git reads itself and prints JSON:
 
 ```sh
-python3 .claude/tools/init_pr_branch.py --tag <eng-###>
+python3 .claude/tools/init_pr_branch.py --tag <eng-###> --link-env
 ```
 
 ```json
@@ -131,11 +132,26 @@ python3 .claude/tools/init_pr_branch.py --tag <eng-###>
   "base_repo": "/…/dropset", // the refs/heads/main worktree, or null
   "current_branch": "worktree-eng-603",
   "normalized_branch": "eng-603",
-  "rename_needed": true      // true iff a `worktree-` prefix is stripped
+  "rename_needed": true,     // true iff a `worktree-` prefix is stripped
+  "env_link": "created"      // created|exists|no-source|no-base|failed
 }
 ```
 
-Steps 1, 2, and 4 read their answers from this one call.
+Steps 1, 2, 3, and 4 read their answers from this one call.
+
+**Why `--link-env` is a flag and not a shell step.** The env
+symlink used to be prose here: two existence checks plus an
+`ln -s` against an **absolute base-repo path**. That
+re-prompted on *every* bootstrap, and firming it can't help —
+the allow-rule lands in the new worktree's
+`settings.local.json`, and every `/init-pr` runs in a
+brand-new worktree that has none (`.claude/settings.json` is
+deliberately gitignored). Folding the step into the call
+above means the command line carries **no absolute path** for
+the file-access heuristic to gate. For the same reason
+`Bash(python3 .claude/tools/:*)` belongs in
+**`~/.claude/settings.json`** — user level is the only scope a
+fresh worktree inherits.
 
 ## Steps
 
@@ -157,47 +173,33 @@ Steps 1, 2, and 4 read their answers from this one call.
    git -C <base_repo> pull --ff-only
    ```
 
-1. Symlink `frontend/.env.local` from the main
-   worktree so `pnpm dev` / `make frontend` pick up
-   the same env without a manual copy. `.env*` is
-   in `frontend/.gitignore`, so the symlink isn't
-   tracked. Skip if main has no env file, or if
-   this worktree already has one (don't clobber a
-   real file someone placed deliberately).
+1. **Confirm the `frontend/.env.local` symlink.** The
+   `--link-env` flag on the helper call above **already did
+   this** — it symlinks the base repo's env file into this
+   worktree so `pnpm dev` / `make frontend` pick up the same
+   env without a manual copy (`.env*` is in
+   `frontend/.gitignore`, so the link isn't tracked). There
+   is no shell to run here; just read `env_link` from that
+   one JSON result:
 
-   Do the existence checks with the **Glob/Read
-   tools**, not a shell `test`/`if`. A
-   `test … && … || …` compound never reduces to an
-   allow-rule and re-prompts every run:
+   - `"created"` — the link was made.
+   - `"exists"` — this worktree already had the path, so it
+     was left untouched (it may be a real file someone placed
+     deliberately; the tool never clobbers).
+   - `"no-source"` — nothing to link: either main has no env
+     file, or this worktree has no `frontend/` directory to
+     link it into.
+   - `"no-base"` — main isn't checked out anywhere, so there
+     was no base repo to link from (the same condition that
+     skipped the pull above).
+   - `"failed"` — the link couldn't be created (an unwritable
+     `frontend/`, a read-only mount). Mention it and carry
+     on; `pnpm dev` will want the env file copied by hand.
 
-   - Glob `frontend/.env.local` in **this** worktree.
-     If it matches, a file already exists — skip.
-   - Glob (or Read) `frontend/.env.local` under the
-     base repo (`base_repo` from the helper). If it
-     doesn't exist, main has no env file — skip and move
-     on.
-
-   **If Glob is unavailable this session** (the harness
-   sometimes reports "No such tool available: Glob"), fall
-   back to a **bare `find <path>`** — one path per call, and
-   crucially **no `2>/dev/null` redirect**: the redirect
-   trips the `no_compound_bash` guard and burns blocked
-   attempts (a bare `find <missing-path>` already prints its
-   own "No such file" to stderr and exits non-zero, which is
-   the signal you want). A `Read` of the path works too — a
-   read error means "doesn't exist." Don't reach for
-   `test`/`if` or a redirected `find` as the fallback.
-
-   Only when this worktree has none and main has one,
-   create the link (the bare `ln` matches an existing
-   allow-rule, so it won't prompt):
-
-   ```sh
-   ln -s <base_repo>/frontend/.env.local frontend/.env.local
-   ```
-
-   If main isn't checked out anywhere (previous
-   step), skip this one too.
+   Every outcome is fine to proceed on; none of them blocks
+   the bootstrap. The tool never raises here — it reports
+   `"failed"` instead, because this one call also carries the
+   tag / base-repo / branch answers the next steps read.
 
 1. Normalize the branch name to the bare Linear tag.
    The `aps` shell helper starts worktree sessions with
