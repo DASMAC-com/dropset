@@ -215,8 +215,9 @@ pub fn run_supervisor(
 /// its market by `event.market`, keeping the chain-latest (highest
 /// `nonce_after`) per market — channel-arrival order isn't guaranteed to be
 /// slot order. Returns `market → (base_after, quote_after)` plus whether the
-/// subscription channel disconnected (the thread died), so the caller can
-/// revert every market to the inventory-diff fallback.
+/// live sink closed (the `feeds` runner stopped — a bare subscription-thread
+/// panic instead idles the stream seam), so the caller can revert every market
+/// to the inventory-diff fallback.
 ///
 /// Routing is by market alone: the bootstrap opens exactly one leader vault
 /// (sector) per market, and the leader quotes only that sector, so a fill

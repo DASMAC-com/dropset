@@ -69,12 +69,7 @@ solana-transaction-status-client-types = "3"
 # the fill-stream bridge); the quoting tick loop stays synchronous and reads
 # the resulting broadcast channels with `try_recv`. `net` + `time` back the
 # reqwest reactor the HTTP sources use.
-tokio = { version = "1", features = [
-  "rt-multi-thread",
-  "sync",
-  "net",
-  "time",
-] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "net", "time"] }
 # Surface the `feeds` runner's `tracing` diagnostics (a source failing / backing
 # off) on stderr — the migration moved feed polling behind the framework, whose
 # only failure signal is a `tracing` event, so without a subscriber a down feed

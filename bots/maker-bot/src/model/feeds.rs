@@ -35,8 +35,8 @@
 //! freshest live leg (CoinGecko, else CoinMarketCap), so a stale tier simply
 //! ages out rather than gating the next poll. The JSON shapes are decoded by
 //! the free `parse_*` functions, unit tested against captured responses; only
-//! the transport needs a network. A one-shot [`Source::poll`]-style call backs
-//! the `--dry-run` credentials check.
+//! the transport needs a network. Each source also exposes a one-shot `poll`
+//! that backs the `--dry-run` credentials check.
 
 use crate::config::CMC_KEY_ENV;
 use anyhow::Result;

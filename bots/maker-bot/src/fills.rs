@@ -84,9 +84,12 @@ pub struct Fill {
 /// is a plain blocking call, never an in-runtime panic.
 ///
 /// Returns `None` if the thread can't be spawned, so the caller leaves the
-/// forward sink unwired and the tick uses the inventory-diff fallback. (A thread
-/// that dies *later* is caught by the closed-channel check in `tasks.rs`, which
-/// clears `ctx.fills_active` and reverts to the same fallback.)
+/// forward sink unset and the tick falls back to the inventory diff. The thread
+/// otherwise reconnects forever; if it dies *later* (a decode-path panic), the
+/// `feeds` stream seam reports the dropped sender as an idle source, not a
+/// close, so `ctx.fills_active` stays set — but the position stays correct
+/// because the per-cycle vault reconcile (`decide_position` in `tasks.rs`)
+/// tracks the chain whenever the position and vault diverge.
 pub fn spawn(
     ws_url: String,
     rpc_url: String,
