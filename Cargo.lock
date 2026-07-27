@@ -1836,6 +1836,7 @@ dependencies = [
  "solana-transaction",
  "solana-transaction-status-client-types",
  "tokio",
+ "tracing-subscriber",
 ]
 
 [[package]]

@@ -40,6 +40,13 @@ use tokio::sync::broadcast;
 /// buffer never fills; the sink drops to the latest if one ever did.
 const FEED_CHANNEL_CAP: usize = 64;
 
+/// How long a price source waits to retry after a failed poll — deliberately
+/// far shorter than the steady-state poll interval (300 s for FX). The keyless
+/// CoinGecko / Frankfurter tiers rate-limit, so a transient failure must
+/// recover within a tick or two rather than dark the anchor for a whole
+/// interval; the static peg covers the gap meanwhile.
+const FEED_ERROR_BACKOFF: Duration = Duration::from_secs(20);
+
 /// Lamports per SOL.
 const LAMPORTS_PER_SOL: u64 = 1_000_000_000;
 /// Below this leader balance, airdrop on startup (localnet).
@@ -76,6 +83,17 @@ impl Args {
 }
 
 fn main() -> Result<()> {
+    // Surface the feeds runner's tracing diagnostics (a price / fill source
+    // failing and backing off) on stderr; the framework has no other failure
+    // signal. Default to `info`; `RUST_LOG` overrides.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .with_writer(std::io::stderr)
+        .init();
+
     let mut cfg = BotConfig::default();
     let args = parse_args(&mut cfg);
     if args.dry_run {
@@ -266,9 +284,10 @@ where
 }
 
 /// Spawn the three price sources on `rt` and bundle their live-sink receivers.
-/// Each source owns its poll cadence (its `RunConfig::poll_interval`) and backs
-/// off by that same interval on error. CoinMarketCap is wired only when a key
-/// is set and the roster names any CMC id.
+/// Each source owns its steady-state poll cadence (its `RunConfig::poll_interval`)
+/// but retries on the short [`FEED_ERROR_BACKOFF`] so a transient rate-limit
+/// doesn't dark the anchor for a whole interval. CoinMarketCap is wired only
+/// when a key is set and the roster names any CMC id.
 fn spawn_price_feeds(
     rt: &Runtime,
     cfg: &FeedConfig,
@@ -281,7 +300,7 @@ fn spawn_price_feeds(
         CoinGeckoSource::new(&cfg.coingecko_base_url, cg_ids)?,
         RunConfig {
             poll_interval: cfg.coingecko_poll,
-            error_backoff: cfg.coingecko_poll,
+            error_backoff: FEED_ERROR_BACKOFF,
         },
     );
     let coinmarketcap = match cmc_api_key() {
@@ -290,7 +309,7 @@ fn spawn_price_feeds(
             CmcSource::new(&cfg.coinmarketcap_base_url, cmc_ids, &key)?,
             RunConfig {
                 poll_interval: cfg.coinmarketcap_poll,
-                error_backoff: cfg.coinmarketcap_poll,
+                error_backoff: FEED_ERROR_BACKOFF,
             },
         )),
         _ => None,
@@ -300,7 +319,7 @@ fn spawn_price_feeds(
         FrankfurterSource::new(&cfg.frankfurter_base_url, currencies)?,
         RunConfig {
             poll_interval: cfg.fx_poll,
-            error_backoff: cfg.fx_poll,
+            error_backoff: FEED_ERROR_BACKOFF,
         },
     );
     Ok(FeedReceivers {
