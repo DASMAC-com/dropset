@@ -19,7 +19,11 @@ import {
   type FetchAccountConfig,
   fetchEncodedAccount,
 } from '@solana/kit';
-import { findMarketPda } from './generated';
+import {
+  findMarketPda,
+  getMarketHeaderDecoder,
+  getMarketHeaderSize,
+} from './generated';
 import { PRICE_INFINITY, PRICE_ZERO, type PriceBits } from './price';
 import type { SwapSide } from './simulate';
 
@@ -42,7 +46,43 @@ export type EclobRoute = {
   side: SwapSide;
   /** `PRICE_INFINITY` for a buy, `PRICE_ZERO` for a sell — an unbounded take. */
   limitPriceBits: PriceBits;
+  /**
+   * The leg the taker *receives* — base on a buy, quote on a sell. Derived here,
+   * beside the `side` it follows from, rather than re-deduced at each use: the
+   * platform fee is paid in this mint, and picking the wrong one yields an ATA
+   * the program's `create_idempotent` CPI rejects. These are the on-chain mints
+   * (mock demo mints on localnet), which is what the fee destination must be
+   * derived against.
+   */
+  outputMint: Address;
+  outputTokenProgram: Address;
+  /**
+   * This market's on-chain ceiling on a declared `platform_fee_bps`. The program
+   * rejects any swap above it, so callers clamp to this rather than sending the
+   * configured rate blind — see {@link platformFeeBpsFor}.
+   */
+  maxPlatformFeeBps: number;
 };
+
+/**
+ * The platform fee a route may actually declare: the configured rate, clamped
+ * to the market's own ceiling.
+ *
+ * Clamping rather than failing, because the two outcomes are not symmetric. If
+ * an operator configures a rate above some market's ceiling, charging that
+ * market's maximum earns slightly less than intended; refusing the swap breaks
+ * trading on that pair outright and surfaces to the user as a broken quote (the
+ * simulator returns an all-zero quote for an over-ceiling rate, which a UI would
+ * report as "no liquidity" — a misleading diagnosis of what is really a
+ * config/ceiling mismatch). Under-charging is the safe direction for a knob that
+ * only sets our own revenue.
+ */
+export function platformFeeBpsFor(
+  route: EclobRoute,
+  configuredBps: number,
+): number {
+  return Math.min(configuredBps, route.maxPlatformFeeBps);
+}
 
 /**
  * The mints to route between, in **on-chain** terms: whatever mints actually
@@ -132,15 +172,26 @@ export async function resolveEclobRoute(
     });
     const account = await fetchEncodedAccount(rpc, market, config);
     if (!account.exists) continue;
+    const marketData = new Uint8Array(account.data);
     return {
       market,
-      marketData: new Uint8Array(account.data),
+      marketData,
       baseMint: c.baseMint,
       quoteMint: c.quoteMint,
       baseTokenProgram: c.baseTokenProgram,
       quoteTokenProgram: c.quoteTokenProgram,
       side: c.side,
       limitPriceBits: c.side === 'buy' ? PRICE_INFINITY : PRICE_ZERO,
+      outputMint: c.side === 'buy' ? c.baseMint : c.quoteMint,
+      outputTokenProgram:
+        c.side === 'buy' ? c.baseTokenProgram : c.quoteTokenProgram,
+      // Header-only decode: the ceiling is one scalar, and this runs on the
+      // quote timer, so decoding the whole slab tail here would be waste. (The
+      // generated `decodeMarketHeader` wants a fetched `EncodedAccount`; we
+      // already hold the raw bytes, so slice and decode directly.)
+      maxPlatformFeeBps: getMarketHeaderDecoder().decode(
+        marketData.subarray(0, getMarketHeaderSize()),
+      ).maxPlatformFee,
     };
   }
   return null;

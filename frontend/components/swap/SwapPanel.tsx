@@ -9,11 +9,13 @@ import { useFeeVaultExists } from "@/lib/dflow/feeVault";
 import { emit, useAppEvent } from "@/lib/events";
 import { parseAmountToBase } from "@/lib/format/balance";
 import { useAllBalances } from "@/lib/hooks/useAllBalances";
-import { formatAtomic, useDflowQuote } from "@/lib/hooks/useDflowQuote";
 import { useDflowSwap } from "@/lib/hooks/useDflowSwap";
+import { useEclobAvailable } from "@/lib/hooks/useEclobAvailable";
 import { useEclobQuote } from "@/lib/hooks/useEclobQuote";
 import { useEclobSwap } from "@/lib/hooks/useEclobSwap";
+import { useRouterQuote } from "@/lib/hooks/useRouterQuote";
 import { useTokenInfoRefresh, useUsdQuote } from "@/lib/hooks/useUsdQuote";
+import { formatAtomic } from "@/lib/quote";
 import { useSameToken, useSwapStore, useSwapStoreApi } from "@/lib/store";
 import { useGoToVaultsForPair, useSwapNav } from "@/lib/ui/swapUrl";
 import { PlatformFee } from "./PlatformFee";
@@ -44,17 +46,22 @@ export function SwapPanel() {
   const toMint = stablecoinMint(toStablecoin);
   const fromDecimals = stablecoinDecimals(fromStablecoin);
   const toDecimals = stablecoinDecimals(toStablecoin);
-  // Route the quote through the selected path: "best" hits the DFlow
-  // aggregator, "eclob" simulates against our own market via the SDK. Both
-  // hooks run (rules of hooks), but only the active one fetches — the other
-  // is gated to "skipped" — so the eCLOB route never calls DFlow.
+  // Route the quote through the selected path: "best" asks the SDK router to
+  // price our own book against the DFlow aggregator and take the better fill,
+  // "eclob" simulates against our own market alone. Both hooks run (rules of
+  // hooks), but only the active one fetches — the other is gated to "skipped"
+  // — so the eCLOB-only route never calls DFlow.
   const useBestRoute = routeMode === "best";
-  const dflowQuote = useDflowQuote(
+  // Resolved once per pair and shared with the route toggle, so a pair we
+  // don't have a market for doesn't pay market-discovery reads on every tick.
+  const eclobAvailable = useEclobAvailable(fromMint, toMint) === "available";
+  const routerQuote = useRouterQuote(
     fromMint,
     toMint,
     fromDecimals,
     amount,
     useBestRoute,
+    eclobAvailable,
   );
   const eclobQuote = useEclobQuote(
     fromMint,
@@ -63,7 +70,15 @@ export function SwapPanel() {
     amount,
     !useBestRoute,
   );
-  const quote = useBestRoute ? dflowQuote : eclobQuote;
+  const quote = useBestRoute ? routerQuote : eclobQuote;
+
+  // Freshness check — the quote hook holds the previous result during
+  // its debounce/refetch window, so right after a swap-sides or token-pick
+  // the cached `outAmount` is in the OLD mints' units. Consumers must gate
+  // any derivation (rate, slippage, to-side amount, the routed venue) on this
+  // to avoid briefly displaying 1000× wrong numbers when decimals differ.
+  const quoteFresh =
+    quote.inputMint === fromMint && quote.outputMint === toMint;
 
   // Toggling direction promotes the current quote's output amount into the
   // new input. The promotion logic lives in the store action — it reads
@@ -113,11 +128,17 @@ export function SwapPanel() {
   const quoteInDecimal =
     quote.inAmount !== null ? formatAtomic(quote.inAmount, fromDecimals) : "0";
   const quoteFromUsd = useUsdQuote(fromStablecoin, quoteInDecimal);
-  // Pick the swap executor to match the quote route. Both hooks mount; only
-  // the selected one's `execute` is ever called (see the Swap button).
+  // Pick the swap executor to match the venue the router actually chose — not
+  // the route *mode*. Under "Best route" our own book can win, and the swap
+  // then has to go through our program rather than the aggregator. Both hooks
+  // mount; only the selected one's `execute` is ever called (see the Swap
+  // button). Before the first fresh quote lands there's nothing to swap yet,
+  // so the mode's default venue stands in.
   const dflowSwap = useDflowSwap();
   const eclobSwap = useEclobSwap();
-  const swap = useBestRoute ? dflowSwap : eclobSwap;
+  const routedVenue =
+    (quoteFresh ? quote.venue : null) ?? (useBestRoute ? "dflow" : "dropset");
+  const swap = routedVenue === "dropset" ? eclobSwap : dflowSwap;
   const swapInFlight =
     swap.status === "preparing" ||
     swap.status === "signing" ||
@@ -163,14 +184,6 @@ export function SwapPanel() {
     onClick();
   });
 
-  // Freshness check — the quote hook holds the previous result during
-  // its debounce/refetch window, so right after a swap-sides or token-pick
-  // the cached `outAmount` is in the OLD mints' units. Consumers must gate
-  // any derivation (rate, slippage, to-side amount) on this to avoid
-  // briefly displaying 1000× wrong numbers when decimals differ.
-  const quoteFresh =
-    quote.inputMint === fromMint && quote.outputMint === toMint;
-
   // Mirror the live to-side amount (as a decimal string in the to-side's
   // units) into the store so picker/swap actions on other pages can
   // promote it on a direction flip — see store.setToken / store.swapSides.
@@ -209,13 +222,15 @@ export function SwapPanel() {
   // The eCLOB route has no such precondition; its `swap` instruction creates
   // the fee account itself, so the fee is always charged there.
   //
-  // Hence the `useBestRoute` gate: without it this fires a pointless
-  // getAccountInfo on a route that never consults the answer, and — worse —
-  // the fee row below would hide a fee the eCLOB route really does charge
-  // whenever that ATA happens not to exist yet.
+  // Keyed on the venue the router *chose*, not the route mode: under "Best
+  // route" our own book can win, and gating on the mode would then impose
+  // DFlow's ATA precondition on a swap going through our own program — hiding
+  // a fee we really do charge. It also avoids a pointless getAccountInfo on a
+  // route that never consults the answer.
+  const aggregatorRoute = routedVenue === "dflow";
   const feeVaultExists = useFeeVaultExists(
     toMint,
-    useBestRoute && canSwap && routeFound,
+    aggregatorRoute && canSwap && routeFound,
   );
   // The platform-fee rate to advertise, or null when none is charged.
   //
@@ -230,7 +245,7 @@ export function SwapPanel() {
   // DFlow keeps its extra precondition on top: its /order rejects a missing
   // fee account, so the fee is only charged once that ATA exists.
   const feeBps =
-    canSwap && (useBestRoute ? feeVaultExists : true)
+    canSwap && (aggregatorRoute ? feeVaultExists : true)
       ? quote.platformFeeBps
       : null;
 
@@ -264,6 +279,7 @@ export function SwapPanel() {
         {routeFound && quote.inAmount !== null && quote.outAmount !== null ? (
           <PlatformFee
             bps={feeBps}
+            venue={quoteFresh ? quote.venue : null}
             inAmount={quote.inAmount}
             outAmount={quote.outAmount}
             fromSymbol={fromStablecoin}

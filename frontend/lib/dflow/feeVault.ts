@@ -1,13 +1,11 @@
 // cspell:word atas
 "use client";
 
+import { resolvePlatformFee } from "@dropset/sdk";
 import type { SolanaClientRuntime } from "@solana/client";
 import { type Address, address } from "@solana/kit";
 import { useSolanaClient } from "@solana/react-hooks";
-import {
-  findAssociatedTokenPda,
-  TOKEN_PROGRAM_ADDRESS,
-} from "@solana-program/token";
+import { TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
 import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import { useEffect, useSyncExternalStore } from "react";
 import { stablecoinByMint, type TokenProgramKind } from "../data/currencies";
@@ -37,10 +35,11 @@ const PROGRAM_FOR_KIND: Record<TokenProgramKind, Address> = {
 
 // mint → { ata, exists }. A present entry means the mint has been checked;
 // `exists` reflects whether the ATA was found on-chain, and `ata` is cached so
-// the swap path doesn't re-derive it. A failed check leaves no entry, so the
-// next trigger (a re-selection or a swap attempt) retries — bounded to one
-// getAccountInfo per attempt.
-type VaultInfo = { ata: Address; exists: boolean };
+// the swap path doesn't re-derive it (null when the vault is missing — there's
+// no account to point at). A failed check leaves no entry, so the next trigger
+// (a re-selection or a swap attempt) retries — bounded to one check per
+// attempt.
+type VaultInfo = { ata: Address | null; exists: boolean };
 const vaults = new Map<string, VaultInfo>();
 // Per-mint dedupe so a re-render, the swap path, and rapid to-token toggles
 // don't fan out into parallel checks for the same mint.
@@ -72,17 +71,20 @@ function checkFeeVault(rpc: Rpc, outputMint: string): Promise<void> {
   const stable = stablecoinByMint(outputMint);
   if (!stable) return Promise.resolve();
 
-  const owner = PLATFORM_FEE.wallet;
+  const fee = PLATFORM_FEE;
   const promise = (async () => {
-    const [ata] = await findAssociatedTokenPda({
-      owner,
+    // The SDK owns the guard itself — derive the fee ATA, check it exists,
+    // and return the fee only when it does. What stays here is the caching
+    // and the store notification the UI needs.
+    const resolved = await resolvePlatformFee(rpc, {
+      fee,
       mint: address(outputMint),
       tokenProgram: PROGRAM_FOR_KIND[stable.tokenProgram],
     });
-    const { value } = await rpc
-      .getAccountInfo(ata, { encoding: "base64", commitment: "confirmed" })
-      .send();
-    vaults.set(outputMint, { ata, exists: value != null });
+    vaults.set(outputMint, {
+      ata: resolved?.feeAccount ?? null,
+      exists: resolved !== null,
+    });
     bump();
   })()
     .catch((e) => {

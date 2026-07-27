@@ -17,10 +17,15 @@
  *
  * ## Comparing the two legs fairly
  *
- * Both `outAmount`s are **net**: an eCLOB simulation already subtracts the
- * on-chain taker fee, and the aggregator quote is fetched with the platform
- * fee declared (see {@link ./dflow | resolvePlatformFee}) so DFlow prices it
- * in. An eCLOB quote is eligible only when it consumes the **whole** input —
+ * Both `outAmount`s are **net** — what actually lands in the taker's account.
+ * The eCLOB simulation subtracts the on-chain taker fee *and* the platform fee
+ * it was quoted with, and the aggregator quote is fetched with its platform fee
+ * declared (see {@link ./dflow | resolvePlatformFee}) so DFlow prices it in.
+ * The two platform fees need not be equal — ours is clamped to the market's
+ * on-chain ceiling while DFlow's is not — but each leg's figure is what that
+ * route would deliver, which is what makes them comparable.
+ *
+ * An eCLOB quote is eligible only when it consumes the **whole** input —
  * a partial fill would leave the user holding unspent input, which is not the
  * same trade as an aggregator quote that spends all of it, so its raw output
  * is not comparable and it does not compete.
@@ -44,6 +49,7 @@ import {
   type AccountRpc,
   type EclobRoute,
   type EclobRouteInput,
+  platformFeeBpsFor,
   resolveEclobRoute,
 } from './route';
 import { initSimulator, simulateSwap } from './simulate';
@@ -55,10 +61,17 @@ export type RouterVenue = 'dropset' | 'dflow';
 export type EclobQuote = {
   venue: 'dropset';
   inAmount: bigint;
-  /** Net of the on-chain taker fee. */
+  /** Net of **both** the on-chain taker fee and the declared platform fee. */
   outAmount: bigint;
-  /** Taker fee atoms included in the fill. */
+  /** Taker fee atoms retained in the matched vaults. */
   feeAmount: bigint;
+  /** Platform-fee atoms paid through to the integrator; zero when none declared. */
+  platformFeeAmount: bigint;
+  /**
+   * The platform-fee rate this quote was computed with — the configured rate
+   * clamped to the market ceiling, which is what the swap will actually charge.
+   */
+  platformFeeBps: number;
   /** Resting levels the take crossed. */
   legs: number;
   route: EclobRoute;
@@ -93,6 +106,12 @@ export type Candidate<Q> = {
   quote: Q | null;
   /** Why it did not win, when it didn't. */
   reason: string | null;
+  /**
+   * The error behind a `failed` status, unwrapped — e.g. a {@link ./dflow |
+   * DflowError}, whose `kind` tells a polling caller whether to back off (a
+   * rate limit), stop (a rejected pair), or retry (a transport blip).
+   */
+  cause?: unknown;
 };
 
 export type BestRoute = {
@@ -176,6 +195,13 @@ const errorMessage = (e: unknown): string =>
  * slot if not supplied, and simulates with the WASM binding, which runs the
  * same matching math as the program. Returns `null` when no market exists for
  * the pair on this cluster.
+ *
+ * `platformFeeBps` is the integrator fee the caller intends to declare on the
+ * `swap` instruction; it is clamped to the market's ceiling here (see
+ * {@link ./route | platformFeeBpsFor}) so an over-configured rate under-charges
+ * rather than returning an all-zero quote. Quoting with the fee the executor
+ * will actually declare is what keeps the displayed output equal to what lands
+ * in the taker's account.
  */
 export async function quoteEclob(
   rpc: AccountRpc & SlotRpc,
@@ -184,6 +210,8 @@ export async function quoteEclob(
     amount: bigint;
     /** Read via `getSlot` when omitted. */
     currentSlot?: number;
+    /** Configured integrator fee in bps; clamped to the market ceiling. */
+    platformFeeBps?: number;
   },
 ): Promise<EclobQuote | null> {
   const route = hasResolvedRoute(input.leg)
@@ -191,6 +219,7 @@ export async function quoteEclob(
     : await resolveEclobRoute(rpc, input.leg);
   if (!route) return null;
 
+  const platformFeeBps = platformFeeBpsFor(route, input.platformFeeBps ?? 0);
   const currentSlot = input.currentSlot ?? Number(await rpc.getSlot().send());
   await initSimulator();
   const q = simulateSwap(
@@ -199,12 +228,15 @@ export async function quoteEclob(
     input.amount,
     route.limitPriceBits,
     currentSlot,
+    platformFeeBps,
   );
   return {
     venue: 'dropset',
     inAmount: q.inAmount,
     outAmount: q.outAmount,
     feeAmount: q.feeAmount,
+    platformFeeAmount: q.platformFeeAmount,
+    platformFeeBps,
     legs: q.legs,
     route,
   };
@@ -268,17 +300,18 @@ async function eclobCandidate(
   leg: EclobLeg | null,
   amount: bigint,
   currentSlot: number | undefined,
+  platformFeeBps: number | undefined,
 ): Promise<Candidate<EclobQuote>> {
   if (!leg) {
     return { status: 'unavailable', quote: null, reason: 'not requested' };
   }
   try {
     return classifyEclobQuote(
-      await quoteEclob(rpc, { leg, amount, currentSlot }),
+      await quoteEclob(rpc, { leg, amount, currentSlot, platformFeeBps }),
       amount,
     );
   } catch (e) {
-    return { status: 'failed', quote: null, reason: errorMessage(e) };
+    return { status: 'failed', quote: null, reason: errorMessage(e), cause: e };
   }
 }
 
@@ -306,7 +339,11 @@ async function aggregatorCandidate(
 
     const q = await fetchDflowQuote({ ...leg, amount, platformFee, signal });
     if (q.outAmount === 0n) {
-      return { status: 'failed', quote: null, reason: 'aggregator returned no output' };
+      return {
+        status: 'failed',
+        quote: null,
+        reason: 'aggregator returned no output',
+      };
     }
     return {
       status: 'quoted',
@@ -322,7 +359,7 @@ async function aggregatorCandidate(
     };
   } catch (e) {
     if (e instanceof DOMException && e.name === 'AbortError') throw e;
-    return { status: 'failed', quote: null, reason: errorMessage(e) };
+    return { status: 'failed', quote: null, reason: errorMessage(e), cause: e };
   }
 }
 
@@ -345,11 +382,18 @@ export async function quoteBestRoute(
     aggregator: AggregatorLeg | null;
     currentSlot?: number;
     signal?: AbortSignal;
+    /**
+     * Configured integrator fee for the **eCLOB** leg, in bps — clamped to the
+     * market ceiling. The aggregator leg carries its own fee on
+     * `aggregator.platformFee`, since the two are settled by different parties
+     * against different constraints.
+     */
+    platformFeeBps?: number;
   },
 ): Promise<BestRoute> {
-  const { amount, currentSlot, signal } = input;
+  const { amount, currentSlot, signal, platformFeeBps } = input;
   const [eclob, aggregator] = await Promise.all([
-    eclobCandidate(rpc, input.eclob, amount, currentSlot),
+    eclobCandidate(rpc, input.eclob, amount, currentSlot, platformFeeBps),
     aggregatorCandidate(rpc, input.aggregator, amount, signal),
   ]);
   return { best: selectBestRoute(eclob, aggregator), eclob, aggregator };

@@ -1,5 +1,6 @@
 "use client";
 
+import type { RouterVenue } from "@dropset/sdk";
 import NumberFlow from "@number-flow/react";
 import { useState } from "react";
 import { ArrowRightLeft, ChevronDown, ChevronUp } from "@/components/icons";
@@ -22,6 +23,7 @@ function readInitialExpanded(): boolean {
 
 export function PlatformFee({
   bps,
+  venue,
   inAmount,
   outAmount,
   fromSymbol,
@@ -32,6 +34,8 @@ export function PlatformFee({
   // chevron or platform-fee row is shown. Callers should pass null when
   // the swap button isn't actionable (or when no fee is configured).
   bps: number | null;
+  // Which venue the router picked, or null before a fresh quote lands.
+  venue: RouterVenue | null;
   inAmount: bigint;
   outAmount: bigint;
   fromSymbol: string;
@@ -70,7 +74,16 @@ export function PlatformFee({
     ? { base: toSymbol, quote: fromSymbol, rate: inDecimal / outDecimal }
     : { base: fromSymbol, quote: toSymbol, rate: outDecimal / inDecimal };
 
-  const showFeeDropdown = bps !== null;
+  const showFeeRow = bps !== null;
+  // Name the venue the router settled on. Worth surfacing because "Best route"
+  // now genuinely compares our own book against the aggregator, so which one
+  // won is real information rather than a foregone conclusion.
+  const showRouteRow = venue !== null;
+  const routeLabel = venue === "dropset" ? "Dropset" : "DFlow";
+  // One chevron governs both rows, so it appears whenever there is anything to
+  // disclose — otherwise a route with no chargeable fee would leave the Route
+  // row expanded with no way to collapse it.
+  const showDisclosure = showFeeRow || showRouteRow;
   const Chevron = expanded ? ChevronUp : ChevronDown;
 
   return (
@@ -107,7 +120,7 @@ export function PlatformFee({
         </span>
         <span className="flex shrink-0 items-center gap-2">
           <RouteModeToggle />
-          {showFeeDropdown ? (
+          {showDisclosure ? (
             <button
               type="button"
               onClick={toggleExpanded}
@@ -120,7 +133,13 @@ export function PlatformFee({
           ) : null}
         </span>
       </div>
-      {showFeeDropdown && expanded ? (
+      {showRouteRow && expanded ? (
+        <div className="flex items-center justify-between px-1 pb-1 text-xs">
+          <span className="text-muted-fg">Route</span>
+          <span className="text-foreground">via {routeLabel}</span>
+        </div>
+      ) : null}
+      {showFeeRow && expanded ? (
         <div className="flex items-center justify-between px-1 pb-1 text-xs">
           <span className="text-muted-fg">Platform fee</span>
           <span className="tabular-nums text-foreground">
