@@ -93,6 +93,12 @@ export type Candidate<Q> = {
   quote: Q | null;
   /** Why it did not win, when it didn't. */
   reason: string | null;
+  /**
+   * The error behind a `failed` status, unwrapped — e.g. a {@link ./dflow |
+   * DflowError}, whose `kind` tells a polling caller whether to back off (a
+   * rate limit), stop (a rejected pair), or retry (a transport blip).
+   */
+  cause?: unknown;
 };
 
 export type BestRoute = {
@@ -278,7 +284,7 @@ async function eclobCandidate(
       amount,
     );
   } catch (e) {
-    return { status: 'failed', quote: null, reason: errorMessage(e) };
+    return { status: 'failed', quote: null, reason: errorMessage(e), cause: e };
   }
 }
 
@@ -306,7 +312,11 @@ async function aggregatorCandidate(
 
     const q = await fetchDflowQuote({ ...leg, amount, platformFee, signal });
     if (q.outAmount === 0n) {
-      return { status: 'failed', quote: null, reason: 'aggregator returned no output' };
+      return {
+        status: 'failed',
+        quote: null,
+        reason: 'aggregator returned no output',
+      };
     }
     return {
       status: 'quoted',
@@ -322,7 +332,7 @@ async function aggregatorCandidate(
     };
   } catch (e) {
     if (e instanceof DOMException && e.name === 'AbortError') throw e;
-    return { status: 'failed', quote: null, reason: errorMessage(e) };
+    return { status: 'failed', quote: null, reason: errorMessage(e), cause: e };
   }
 }
 

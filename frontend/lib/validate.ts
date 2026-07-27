@@ -1,6 +1,6 @@
-// Tiny hand-rolled validators for the four external response shapes we
-// trust the least: DFlow /quote, DFlow /order, Jupiter /tokens/v2/search,
-// and Solana RPC's jsonParsed token-account payload. These boundaries
+// Tiny hand-rolled validators for the external response shapes we trust the
+// least: DFlow /order, Jupiter /tokens/v2/search, and Solana RPC's jsonParsed
+// token-account payload. These boundaries
 // previously cast directly to a hand-typed shape and then BigInt-coerced
 // fields without checking — a malformed body would surface to the UI as a
 // generic "Network error" with no diagnostic.
@@ -48,25 +48,8 @@ export class ValidationError extends Error {
   }
 }
 
-export type ParsedDflowQuote = {
-  inAmount: bigint;
-  outAmount: bigint;
-  priceImpactPct: string | null;
-  slippageBps: number | null;
-};
-
-export const parseDflowQuote = (raw: unknown): ParsedDflowQuote => {
-  if (!isObject(raw)) {
-    throw new ValidationError("quote response is not an object");
-  }
-  return {
-    inAmount: parseBigIntString(raw.inAmount, "quote.inAmount"),
-    outAmount: parseBigIntString(raw.outAmount, "quote.outAmount"),
-    priceImpactPct: isString(raw.priceImpactPct) ? raw.priceImpactPct : null,
-    slippageBps: isNumber(raw.slippageBps) ? raw.slippageBps : null,
-  };
-};
-
+// DFlow's /quote shape is validated by `@dropset/sdk` (the router owns that
+// call now); only /order is still parsed here.
 export type ParsedDflowOrder = {
   transaction: string;
   inAmount: bigint;

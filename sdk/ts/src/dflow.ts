@@ -191,6 +191,13 @@ export type DflowQuoteInput = {
   /** Optional production API key, sent as `x-api-key`. */
   apiKey?: string;
   signal?: AbortSignal;
+  /**
+   * Called with every response before it is interpreted, including non-2xx
+   * ones. The seam exists for rate-limit accounting: a caller tracking DFlow's
+   * `x-ratelimit-*` headers needs the raw `Response`, which this module
+   * otherwise consumes. Must not throw.
+   */
+  onResponse?: (res: Response) => void;
 };
 
 /** A validated DFlow quote. `outAmount` is net of any declared platform fee. */
@@ -264,6 +271,8 @@ export async function fetchDflowQuote(
     const detail = e instanceof Error ? e.message : String(e);
     throw new DflowError(`Network error reaching DFlow: ${detail}`, 'network');
   }
+
+  input.onResponse?.(res);
 
   if (res.status === 429) {
     throw new DflowError('DFlow rate limit reached', 'rateLimited', 429);

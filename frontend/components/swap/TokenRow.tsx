@@ -14,13 +14,13 @@ import {
 import { useAppEvent } from "@/lib/events";
 import { FORMATS } from "@/lib/format/formats";
 import { groupThousands, sanitizeAmount } from "@/lib/format/input";
-import type { DflowQuote } from "@/lib/hooks/useDflowQuote";
 import { useMediaQuery } from "@/lib/hooks/useMediaQuery";
 import {
   type UsdQuote,
   useLiquidityLookup,
   useUsdQuote,
 } from "@/lib/hooks/useUsdQuote";
+import type { QuoteState } from "@/lib/quote";
 import { type Side, useSwapStore } from "@/lib/store";
 import { FromBalanceButtons } from "./FromBalanceButtons";
 import { MaxSlippageButton } from "./MaxSlippageButton";
@@ -41,9 +41,9 @@ export function TokenRow({
 }: {
   side: Side;
   label: string;
-  // DFlow quote driving the to-side display. Always passed by SwapPanel
+  // The routed quote driving the to-side display. Always passed by SwapPanel
   // (which owns the single hook call); the from-side ignores it.
-  quote?: DflowQuote;
+  quote?: QuoteState;
   // From-side USD value, passed in on the to-side so we can show the
   // slippage % against the input. Ignored on the from-side.
   fromUsd?: UsdQuote;
