@@ -53,10 +53,19 @@ sdk-math <-> frontend: the frontend's eCLOB route (frontend/lib/eclob/,
   swaps via @dropset/sdk's simulateSwap — the WASM binding compiled from
   sdk/interface — so its off-chain fill math must compute identically to
   the on-chain engine; the conformance vectors (sdk/conformance) pin that
-  parity. The best-route path still quotes via DFlow's API
-  (frontend/lib/dflow/). A separate drift to watch: the display-only float
-  PnL re-implementation (frontend/lib/data/pnl.ts) that no conformance
-  vector pins.
+  parity. Both quoting paths now go through the SDK router
+  (sdk/ts/src/router.ts), so the frontend hooks are lifecycle-only and must
+  not re-derive routing decisions the router already owns. A separate drift
+  to watch: the display-only float PnL re-implementation
+  (frontend/lib/data/pnl.ts) that no conformance vector pins.
+sdk-clients <-> DFlow: the router's aggregator leg (sdk/ts/src/dflow.ts)
+  against DFlow's /quote, and the swap path (frontend/lib/dflow/) against
+  /order. Two contracts to keep aligned — the platform-fee guard (declare a
+  fee only when its ATA exists, since a declared fee eats slippage budget
+  even uncollected) and platformFeeMode, which both callers pin explicitly
+  rather than inheriting the server default. A best-route comparison is only
+  honest while the aggregator quote is fetched net of the same fee the order
+  will charge.
 tui <-> sdk-math: the resting-book matcher surface (sdk/interface
   matching `resting_levels` / `BookLevel`) the TUI's order-book pane
   reconstructs depth from — the SDK normalizes a bid's quote leg to base
