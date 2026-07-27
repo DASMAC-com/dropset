@@ -29,6 +29,7 @@ clob
 cngn
 codama
 codegen
+cofounder
 coingecko
 coinmarketcap
 coprocess
@@ -106,6 +107,7 @@ pubkeys
 pullable
 pytest
 ratatui
+raydium
 readback
 repeg
 repr

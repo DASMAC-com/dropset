@@ -15,9 +15,8 @@ export type Deck = {
 export const decks: Deck[] = [
   {
     route: "/demo-v1",
-    title: "Demo-day pitch",
-    subtitle:
-      "The 2-minute accelerator pitch — onchain Forex on Solana, built around a live demo.",
-    updated: "2026-08-26",
+    title: "Colosseum Demo Day",
+    subtitle: "Forex on Solana: vision, mainnet and localnet demos.",
+    updated: "2026-07-27",
   },
 ];

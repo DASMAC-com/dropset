@@ -38,25 +38,28 @@ pages:
 
 > Dropset is Forex on Solana. The biggest market in the world — over
 > nine trillion dollars a day, trading 24/5 — barely exists onchain:
-> only about 14 of the world's currencies live on Solana so far. And
-> this already works: Dropset is live on mainnet today, clearing real
-> trades by routing FX through aggregators — pick a currency and the
-> swap settles. But we're just getting started, because the markets
-> that don't exist yet need a venue. So we built the eCLOB: the depth
-> of an order book, with quote updates as cheap as a propAMM — a maker
-> repricing the whole book costs forty-seven compute units. Watch a
+> only about 14 of the world's currencies live on Solana so far. But
+> Dropset is changing that, and it already works: we're live on mainnet
+> today, clearing real trades by routing FX through aggregators — pick a
+> currency and the swap settles. And we're just getting started, because
+> the markets that don't exist yet need a venue. So we built the eCLOB:
+> the depth of an order book, with quote updates as cheap as a propAMM —
+> a maker repricing the whole book costs forty-seven compute units. Watch a
 > brand-new market come alive: the book starts empty, the makers come
-> on, and real depth fills in within seconds. Why won't this work? Arc,
-> Tempo, and Canton are all chasing onchain settlement — but they're
-> private, permissioned, or walled gardens, and big apps like Jupiter
-> aren't focused on FX. Dropset is the open, neutral, composable venue
-> anyone can quote on and anyone can trade against, and we're beating
-> them to it. We bootstrap the vaults for a public liquidity flywheel —
-> anyone can top them off — and we help issuers land their first trades
-> onchain; we've talked with Colosseum partners like Altitude and
-> Cargobill who need to buy FX, and issuers like AUDD and CADC who need
-> their currency to trade. The team has built exchanges before — I
-> authored the Econia order book and the Solana Opcode Guide, and Judy
+> on, and real depth fills in within seconds. So why will this fail?
+> Permissioned distribution: Arc, Tempo, and Canton are all chasing
+> onchain settlement, and each arrives with the customers already on it.
+> But their liquidity isn't public — you can't make a market unless they
+> let you — and the big Solana DEXes, Jupiter and Orca and Raydium, focus
+> on SOL and memes. Dropset is the open, neutral, composable venue anyone
+> can quote on and anyone can trade against, and we're beating them to
+> it. We bootstrap a public liquidity flywheel — we seed the vaults,
+> anyone can top them off — and it has two ends we've already talked to:
+> upstream the issuers like CADC and AUDD who need their currency to
+> trade, downstream payments companies like Altitude and CargoBill who
+> need to buy FX to settle. The team has built exchanges before — I
+> cofounded Econia Labs and authored the Econia order book and the Solana
+> Opcode Guide, and Judy — previously at Dragonfly Capital Partners —
 > owns the operations that get us integrated with stablecoin rails.
 > Dropset — Forex on Solana.
 
@@ -87,13 +90,15 @@ pages:
 
 #### Page 3 — Live on mainnet [DEMO VIDEO · mainnet] · ~25s
 
-- **On-slide:** This already works — today, on mainnet.
+- **On-slide:** But Dropset is changing this.
 - **Visual:** The globe, currencies pinned to the countries that issue
-  them, with a route drawn across it. Badge: **demo video · mainnet**.
-- **Spoken:** "Start with what already works. Dropset is live on
-  mainnet today, clearing real trades by routing FX through aggregators
-  — pick the currency you want on the globe and the swap settles. \[play
-  the mainnet demo video\]"
+  them, with a route drawn across it. Badge **demo video · mainnet**,
+  set beside the globe rather than under it — the capture is tall, and a
+  badge below it collides with the footer.
+- **Spoken:** "But Dropset is changing that, and it already works: we're
+  live on mainnet today, clearing real trades by routing FX through
+  aggregators — pick the currency you want on the globe and the swap
+  settles. [play the mainnet demo video]"
 - **Note:** Lead with the mainnet demo, per Mert's "put your best point
   first": the strongest thing we have is that it already works on the
   real network. Keep the claim exact — today we clear by routing through
@@ -104,9 +109,10 @@ pages:
 
 - **On-slide:** And we're just getting started: order-book depth,
   propAMM-cheap quotes.
-- **Visual:** Two captures side by side — the maker's control panel
-  (markets list + a live book) and the compute-unit pane showing what a
-  quote update costs. Badge: **demo video · localnet**.
+- **Visual:** Two captures side by side, top-aligned — the "Market maker
+  TUI" (markets list + a live book) and the compute-unit pane showing
+  what a quote update costs. Badge **demo video · localnet** at the foot
+  of the right column, in the space the shorter capture leaves.
 - **Spoken:** "The routing works today, but the markets that don't exist
   yet need a venue — so we built one. The eCLOB gives you the liquidity
   guarantees of a central limit order book with quote updates as cheap
@@ -125,58 +131,70 @@ pages:
 
 #### Page 5 — Why this will fail · ~12s
 
-- **On-slide:** Why won't this work? Arc, Tempo, Canton.
-- **Visual:** The competitor logos as a wall closing in — each captioned
-  with the chain the presenter names, since a mark isn't always the name
-  (Arc is Circle's, so Circle's logo is what an audience recognizes).
-- **Spoken:** "The honest risk: everyone wants onchain settlement. Arc
+- **On-slide:** Why this will fail: permissioned distribution.
+- **Visual:** Arc, Tempo and Canton as a row of equal logo tiles, tinted
+  red — each captioned with the chain the presenter names, since a mark
+  isn't always the name (Arc is Circle's, so Circle's logo is what an
+  audience recognizes).
+- **Spoken:** "The honest risk: everyone wants onchain settlement, and
+  the ones with distribution are the ones who get to permission it. Arc
   and Tempo are building payment-and-settlement rails, and Canton is
-  doing regulated onchain markets. Any of them could decide FX is
-  theirs."
+  doing regulated onchain markets. Any of them could decide FX is theirs,
+  and each arrives with the customers already on it."
 - **Note:** This slide is deliberate — an investor respects that we
   named the threat first. The rebuttal is the very next page. Fuller
   framing in the appendix.
 
 #### Page 6 — Why it will work · ~8s
 
-- **On-slide:** They're private or walled — and the big apps aren't
-  focused on FX.
-- **Visual:** A single open door vs. a row of locked ones.
-- **Spoken:** "But those are private, permissioned, or walled gardens.
-  And big Solana apps like Jupiter aren't focused on FX — it's a smaller
-  market today, so it's a classic innovator's dilemma: only a small,
-  focused team goes after it now. Dropset is the open, neutral,
-  composable venue — anyone can quote, anyone can trade, any app can
-  integrate — and we're beating everyone to it."
-- **Note:** Two rebuttals in one breath — (1) the closed-garden
-  competitors, (2) the unfocused incumbents (an app like Jupiter /
-  innovator's dilemma, smaller market now). The composability angle
-  (general-purpose Solana vs. a verticalized venue like Hyperliquid) is
-  expanded in the appendix.
+- **On-slide:** But their liquidity isn't public — and the big Solana
+  DEXes focus on SOL, memes.
+- **Visual:** Jupiter, Orca and Raydium as a row of logo tiles, matching
+  the previous page's row — the public venues, whose attention is
+  elsewhere.
+- **Spoken:** "But their liquidity isn't public: it sits inside private
+  or permissioned rails, where you can't make a market unless they let
+  you. And the venues that are public — Jupiter, Orca, Raydium — are
+  focused on SOL and memes, because that's where the volume is today.
+  It's a classic innovator's dilemma: FX is too small to move them and
+  big enough for us. Dropset is the open, neutral, composable venue —
+  anyone can quote, anyone can trade, any app can integrate — and we're
+  beating everyone to it."
+- **Note:** Two rebuttals in one breath — (1) the closed rails from the
+  previous page have no public liquidity, (2) the venues that *are* public
+  aren't pointed at FX (innovator's dilemma, smaller market now). The
+  composability angle (general-purpose Solana vs. a verticalized venue
+  like Hyperliquid) is expanded in the appendix. Note this page shows the
+  incumbents, not us — resist the urge to draw Dropset as a taller box
+  beside them; an unlabelled shape next to real logos reads as a bug.
 
 #### Page 7 — How we grow · ~8s
 
-- **On-slide:** We bootstrap the liquidity ourselves — like Hyperliquid.
-- **Visual:** A curve of depth growing, over the line "we bootstrap
-  vaults for a public liquidity flywheel" and the logos of the people
-  we've talked to about sourcing liquidity: Colosseum partners
-  (Altitude, Cargobill) and issuers (AUDD, CADC).
-- **Spoken:** "We seed the markets ourselves the way Hyperliquid did —
-  we bootstrap the vaults, and anyone can top them off with inventory,
-  so the flywheel is public rather than ours alone. And we help
-  stablecoin issuers land their first real trades on mainnet. We've
-  talked with all of these about sourcing liquidity: Colosseum partners
-  like Altitude and Cargobill need to buy FX onchain, and issuers like
-  AUDD and CADC need their currency to actually trade."
+- **On-slide:** We bootstrap a public liquidity flywheel.
+- **Visual:** A curve of depth growing, over the flywheel's two ends,
+  split by a rule: **upstream** the issuers (CADC, AUDD), **downstream**
+  the payments companies (Altitude, CargoBill) — all people we've
+  actually talked to about sourcing liquidity.
+- **Spoken:** "We seed the markets ourselves the way Hyperliquid did — we
+  bootstrap the vaults, and anyone can top them off with inventory, so
+  the flywheel is public rather than ours alone. It has two ends, and
+  we've talked with both. Upstream are the issuers — CADC, AUDD — who
+  mint a currency and need it to actually trade. Downstream are the
+  payments companies — Colosseum partners like Altitude and CargoBill —
+  who need to buy FX onchain to settle. Connect the two ends and the
+  depth compounds."
 - **Note:** The vault framing is deliberate — *we* bootstrap it, but the
-  flywheel is public and anyone can add inventory. Two distinct kinds of
-  counterparty on this page: partners who need to **buy** FX, issuers who
-  need their currency to **trade**.
+  flywheel is public and anyone can add inventory. The upstream /
+  downstream split is the substance of the page: a venue needs both ends,
+  and naming which is which shows we know where liquidity comes from and
+  where it goes.
 
 #### Page 8 — Team & close · ~6s
 
 - **On-slide:** Built by people who've built exchanges.
-- **Visual:** Alex + Judy, square and unframed, with the wordmark in the
+- **Visual:** Alex + Judy, square and unframed, each captioned with their
+  function and the credential that earns it — "Cofounder, Econia Labs"
+  and "prev. Dragonfly Capital Partners" — with the wordmark in the
   persistent footer.
 - **Spoken:** "I've built two onchain exchanges already, including an
   order book — I authored Econia on Aptos, which cleared around five

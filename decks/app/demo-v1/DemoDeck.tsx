@@ -145,142 +145,143 @@ const Screenshot = ({
 );
 
 /**
- * The competitors, as a wall closing in (page 5). Each is captioned with the
- * chain the presenter names out loud, which isn't always what its mark says —
- * Arc is Circle's, so Circle's logo is what an audience recognizes.
+ * A row of captioned logos — the one visual on the three pages that are about
+ * other companies (the threats, the incumbents, the demand).
+ *
+ * The marks come from each company's own site or icon, so they arrive with
+ * wildly different backgrounds: white JPEGs, black squares, transparent SVGs.
+ * Equal-size rounded tiles with `overflow: hidden` give the row its rhythm
+ * regardless, the way a row of app icons reads. Captions carry the name the
+ * presenter says, which isn't always what the mark says — Arc is Circle's, so
+ * Circle's logo is what an audience actually recognizes.
  */
-const COMPETITORS = [
+type Logo = { name: string; src: string; note?: string };
+
+const LogoRow = ({
+  logos,
+  size = 88,
+  tint,
+  margin = "34px 0 0 0",
+}: {
+  logos: Logo[];
+  size?: number;
+  tint?: string;
+  margin?: string;
+}) => (
+  <FlexBox margin={margin} justifyContent="center" alignItems="flex-start">
+    {logos.map(({ name, src, note }) => (
+      <Box key={name} margin="0 20px" width={`${size + 40}px`}>
+        <FlexBox justifyContent="center">
+          <Box
+            width={`${size}px`}
+            height={`${size}px`}
+            borderRadius="16px"
+            overflow="hidden"
+            border={`1px solid ${tint ?? colors.border}`}
+          >
+            <Image src={src} width={size} height={size} alt={name} />
+          </Box>
+        </FlexBox>
+        <Text
+          color={tint ?? colors.mutedFg}
+          fontFamily="monospace"
+          fontSize="20px"
+          margin="12px 0 0 0"
+        >
+          {name}
+        </Text>
+        {note ? (
+          <Text color="quaternary" fontSize="17px" margin="2px 0 0 0">
+            {note}
+          </Text>
+        ) : null}
+      </Box>
+    ))}
+  </FlexBox>
+);
+
+// Page 5 — the chains that could decide FX is theirs.
+const THREATS: Logo[] = [
   { name: "Arc", src: "/remote/logo-circle.svg" },
   { name: "Tempo", src: "/remote/logo-tempo.svg" },
   { name: "Canton", src: "/remote/logo-canton.svg" },
 ];
 
-const CompetitorWall = () => (
-  <FlexBox margin="40px 0 0 0" justifyContent="center" alignItems="flex-start">
-    {COMPETITORS.map(({ name, src }) => (
-      <Box key={name} margin="0 12px">
-        <Box
-          border={`1px solid ${colors.sell}`}
-          borderRadius="10px"
-          padding="22px 30px"
-        >
-          {/* Height-matched, not width-matched: these logos have different
-              aspect ratios, so a shared width would make one read twice the
-              size of another. */}
-          <Image src={src} height={48} alt={name} />
-        </Box>
-        <Text
-          color={colors.sell}
-          fontFamily="monospace"
-          fontSize="24px"
-          margin="10px 0 0 0"
-        >
-          {name}
-        </Text>
-      </Box>
-    ))}
-  </FlexBox>
-);
-
-/**
- * One open venue against a row of closed ones (page 6) — the visual answer to
- * the wall on the previous page. Doors are drawn, not photographed, so the
- * shape reads instantly at the back of a room.
- */
-const OpenVsClosed = () => (
-  <FlexBox margin="44px 0 0 0" alignItems="flex-end" justifyContent="center">
-    {[0, 1, 2, 3].map((i) => (
-      <Box
-        key={i}
-        width="88px"
-        height="150px"
-        border={`1px solid ${colors.border}`}
-        borderRadius="6px 6px 0 0"
-        backgroundColor={colors.muted}
-        margin="0 10px"
-      />
-    ))}
-    <Box margin="0 10px">
-      <Box
-        width="118px"
-        height="196px"
-        border={`2px solid ${colors.accent}`}
-        borderRadius="6px 6px 0 0"
-        backgroundColor={colors.background}
-      />
-      <Text
-        color="secondary"
-        fontFamily="monospace"
-        fontSize="22px"
-        margin="10px 0 0 0"
-      >
-        Dropset
-      </Text>
-    </Box>
-  </FlexBox>
-);
-
-/**
- * The people we've talked to about sourcing liquidity — the payments companies
- * that need FX, and the issuers who need their currency to trade (page 7).
- *
- * Each entry renders its logo once one is listed in `remote-assets.json` (add
- * the URL there, then set `src` to the mirrored path); until then it renders as
- * type, so the page is never waiting on an asset to be presentable.
- */
-const PARTNERS: { name: string; src?: string }[] = [
-  { name: "Altitude" },
-  { name: "Cargobill" },
-  { name: "AUDD" },
-  { name: "CADC" },
+// Page 6 — the big Solana venues, whose attention is elsewhere.
+const INCUMBENTS: Logo[] = [
+  { name: "Jupiter", src: "/remote/logo-jupiter.jpg" },
+  { name: "Orca", src: "/remote/logo-orca.png" },
+  { name: "Raydium", src: "/remote/logo-raydium.jpg" },
 ];
 
-const PartnerRow = () => (
-  <FlexBox alignItems="center" justifyContent="center" margin="10px 0 0 0">
-    {PARTNERS.map(({ name, src }) => (
-      <Box key={name} margin="0 18px">
-        {src ? (
-          <Image src={src} width={124} alt={name} />
-        ) : (
-          <Text color="quaternary" fontSize="28px" margin="0">
-            {name}
-          </Text>
-        )}
-      </Box>
-    ))}
-  </FlexBox>
-);
+/**
+ * Page 7 — the two ends of the flywheel. Issuers sit **upstream**: they mint
+ * the currency and need it to trade. Payments companies sit **downstream**:
+ * they consume the liquidity to settle real invoices. Naming both directions
+ * is the point of the page — a venue needs each end to bootstrap.
+ */
+const UPSTREAM: Logo[] = [
+  { name: "CADC", src: "/remote/logo-cadc.png", note: "issuer" },
+  { name: "AUDD", src: "/remote/logo-audd.png", note: "issuer" },
+];
+
+const DOWNSTREAM: Logo[] = [
+  { name: "Altitude", src: "/remote/logo-altitude.png", note: "payments" },
+  { name: "CargoBill", src: "/remote/logo-cargobill.jpg", note: "payments" },
+];
 
 /**
- * Depth growing from a seeded book (page 7), over the partners and issuers that
- * bring the flow. An inline SVG keeps the curve crisp at projector size and
- * needs no asset pipeline.
+ * The flywheel, as its two ends (page 7): the issuers whose currency needs a
+ * market, and the payments companies that need to buy FX. The curve behind
+ * them is depth growing once both ends are connected — an inline SVG, so it
+ * stays crisp at projector size with no asset pipeline.
  */
-const GrowthCurve = () => (
-  <Box margin="30px 0 0 0">
+const Flywheel = () => (
+  <Box margin="18px 0 0 0">
     <svg
-      width="720"
-      height="200"
-      viewBox="0 0 720 200"
+      width="620"
+      height="120"
+      viewBox="0 0 620 120"
       role="img"
       aria-label="Order-book depth growing over time"
     >
       <path
-        d="M0 190 C 210 185, 380 152, 500 96 C 590 55, 660 24, 720 10 L 720 200 L 0 200 Z"
+        d="M0 112 C 180 108, 330 88, 430 56 C 510 30, 570 14, 620 6 L 620 120 L 0 120 Z"
         fill={colors.accent}
         opacity="0.14"
       />
       <path
-        d="M0 190 C 210 185, 380 152, 500 96 C 590 55, 660 24, 720 10"
+        d="M0 112 C 180 108, 330 88, 430 56 C 510 30, 570 14, 620 6"
         fill="none"
         stroke={colors.accent}
         strokeWidth="4"
       />
     </svg>
-    <Text color="quaternary" fontSize="26px" margin="6px 0 0 0">
-      We bootstrap vaults for a public liquidity flywheel
-    </Text>
-    <PartnerRow />
+    <FlexBox justifyContent="center" alignItems="flex-start">
+      <Box margin="0 26px 0 0">
+        <Text
+          color="secondary"
+          fontFamily="monospace"
+          fontSize="19px"
+          margin="0"
+        >
+          upstream
+        </Text>
+        <LogoRow logos={UPSTREAM} size={72} margin="14px 0 0 0" />
+      </Box>
+      <Box width="1px" height="150px" backgroundColor={colors.border} />
+      <Box margin="0 0 0 26px">
+        <Text
+          color="secondary"
+          fontFamily="monospace"
+          fontSize="19px"
+          margin="0"
+        >
+          downstream
+        </Text>
+        <LogoRow logos={DOWNSTREAM} size={72} margin="14px 0 0 0" />
+      </Box>
+    </FlexBox>
   </Box>
 );
 
@@ -293,10 +294,12 @@ const Portrait = ({
   src,
   name,
   role,
+  prior,
 }: {
   src: string;
   name: string;
   role: string;
+  prior: string;
 }) => (
   <Box margin="0 32px">
     <Image src={src} width={140} height={140} alt={name} />
@@ -305,6 +308,14 @@ const Portrait = ({
     </Text>
     <Text color="quaternary" fontSize="20px" margin="0">
       {role}
+    </Text>
+    <Text
+      color="secondary"
+      fontFamily="monospace"
+      fontSize="18px"
+      margin="4px 0 0 0"
+    >
+      {prior}
     </Text>
   </Box>
 );
@@ -354,19 +365,25 @@ export default function DemoDeck() {
       <Slide>
         <FlexBox height="100%" flexDirection="column" justifyContent="center">
           <Eyebrow>Live on mainnet</Eyebrow>
-          <Statement>This already works — today, on mainnet.</Statement>
-          <Screenshot
-            src="/screens/mainnet-globe.png"
-            width={430}
-            alt="The Dropset globe, currencies pinned to the countries that issue them"
-          />
-          <DemoBadge network="mainnet" />
+          <Statement>But Dropset is changing this.</Statement>
+          {/* Badge beside the capture rather than under it: this page's visual
+              is tall, so a badge below it lands on the footer. */}
+          <FlexBox alignItems="center" justifyContent="center">
+            <Screenshot
+              src="/screens/mainnet-globe.png"
+              width={400}
+              alt="The Dropset globe, currencies pinned to the countries that issue them"
+            />
+            <Box margin="0 0 0 44px">
+              <DemoBadge network="mainnet" />
+            </Box>
+          </FlexBox>
         </FlexBox>
         <Notes>
-          Start with what already works. Dropset is live on mainnet today,
-          clearing real trades by routing FX through aggregators — pick the
-          currency you want on the globe and the swap settles. [Play the mainnet
-          demo video.]
+          But Dropset is changing that, and it already works: we’re live on
+          mainnet today, clearing real trades by routing FX through aggregators
+          — pick the currency you want on the globe and the swap settles. [Play
+          the mainnet demo video.]
         </Notes>
       </Slide>
 
@@ -374,29 +391,34 @@ export default function DemoDeck() {
       <Slide>
         <FlexBox height="100%" flexDirection="column" justifyContent="center">
           <Eyebrow>The eCLOB</Eyebrow>
-          <Statement fontSize="48px">
+          <Statement fontSize="44px">
             And we’re just getting started: order-book depth, propAMM-cheap
             quotes.
           </Statement>
-          <FlexBox alignItems="center" justifyContent="center">
-            <Box margin="0 18px 0 0">
+          {/* Top-aligned, not centre-aligned: the two captures are very
+              different heights, and centring them left the short one floating
+              beside the middle of the tall one with both captions adrift. The
+              badge sits at the foot of the right column, which is the free
+              space that column's shorter capture leaves. */}
+          <FlexBox alignItems="flex-start" justifyContent="center">
+            <Box margin="0 20px 0 0">
               <Screenshot
                 src="/screens/maker-tui.png"
-                width={370}
+                width={330}
                 alt="The maker control panel: seven FX markets and a live EURC book"
-                caption="The maker’s control panel"
+                caption="Market maker TUI"
               />
             </Box>
-            <Box margin="0 0 0 18px">
+            <Box margin="0 0 0 20px">
               <Screenshot
                 src="/screens/compute-units.png"
-                width={370}
+                width={330}
                 alt="Compute units per instruction: a reprice costs 47, a reshape 491"
                 caption="Reprice: 47 CU · reshape: 491 CU"
               />
+              <DemoBadge network="localnet" />
             </Box>
           </FlexBox>
-          <DemoBadge network="localnet" />
         </FlexBox>
         <Notes>
           The routing works today, but the markets that don’t exist yet need a
@@ -415,13 +437,15 @@ export default function DemoDeck() {
       <Slide>
         <FlexBox height="100%" flexDirection="column" justifyContent="center">
           <Eyebrow>Why this will fail</Eyebrow>
-          <Statement>Why won’t this work? Arc, Tempo, Canton.</Statement>
-          <CompetitorWall />
+          <Statement>Why this will fail: permissioned distribution.</Statement>
+          <LogoRow logos={THREATS} tint={colors.sell} />
         </FlexBox>
         <Notes>
-          The honest risk: everyone wants onchain settlement. Arc and Tempo are
+          The honest risk: everyone wants onchain settlement, and the ones with
+          distribution are the ones who get to permission it. Arc and Tempo are
           building payment-and-settlement rails, and Canton is doing regulated
-          onchain markets. Any of them could decide FX is theirs.
+          onchain markets. Any of them could decide FX is theirs, and each
+          arrives with the customers already on it.
         </Notes>
       </Slide>
 
@@ -429,16 +453,19 @@ export default function DemoDeck() {
       <Slide>
         <FlexBox height="100%" flexDirection="column" justifyContent="center">
           <Eyebrow>Why it will work</Eyebrow>
-          <Statement fontSize="52px">
-            They’re private or walled — and the big apps aren’t focused on FX.
+          <Statement fontSize="50px">
+            But their liquidity isn’t public — and the big Solana DEXes focus on
+            SOL, memes.
           </Statement>
-          <OpenVsClosed />
+          <LogoRow logos={INCUMBENTS} />
         </FlexBox>
         <Notes>
-          But those are private, permissioned, or walled gardens. And big Solana
-          apps like Jupiter aren’t focused on FX — it’s a smaller market today,
-          so it’s a classic innovator’s dilemma: only a small, focused team goes
-          after it now. Dropset is the open, neutral, composable venue — anyone
+          But their liquidity isn’t public: it sits inside private or
+          permissioned rails, where you can’t make a market unless they let you.
+          And the venues that are public — Jupiter, Orca, Raydium — are focused
+          on SOL and memes, because that’s where the volume is today. It’s a
+          classic innovator’s dilemma: FX is too small to move them and big
+          enough for us. Dropset is the open, neutral, composable venue — anyone
           can quote, anyone can trade, any app can integrate — and we’re beating
           everyone to it.
         </Notes>
@@ -449,18 +476,19 @@ export default function DemoDeck() {
         <FlexBox height="100%" flexDirection="column" justifyContent="center">
           <Eyebrow>How we grow</Eyebrow>
           <Statement fontSize="52px">
-            We bootstrap the liquidity ourselves — like Hyperliquid.
+            We bootstrap a public liquidity flywheel.
           </Statement>
-          <GrowthCurve />
+          <Flywheel />
         </FlexBox>
         <Notes>
           We seed the markets ourselves the way Hyperliquid did — we bootstrap
           the vaults, and anyone can top them off with inventory, so the
-          flywheel is public rather than ours alone. And we help stablecoin
-          issuers land their first real trades on mainnet. We’ve talked with all
-          of these about sourcing liquidity: Colosseum partners like Altitude
-          and Cargobill need to buy FX onchain, and issuers like AUDD and CADC
-          need their currency to actually trade.
+          flywheel is public rather than ours alone. It has two ends, and
+          we’ve talked with both. Upstream are the issuers — CADC, AUDD — who
+          mint a currency and need it to actually trade. Downstream are the
+          payments companies — Colosseum partners like Altitude and CargoBill —
+          who need to buy FX onchain to settle. Connect the two ends and the
+          depth compounds.
         </Notes>
       </Slide>
 
@@ -474,11 +502,13 @@ export default function DemoDeck() {
               src="/remote/team-alex.png"
               name="Alex"
               role="Product · exchange design"
+              prior="Cofounder, Econia Labs"
             />
             <Portrait
               src="/remote/team-judy.png"
               name="Judy"
               role="Operations · stablecoin rails"
+              prior="prev. Dragonfly Capital Partners"
             />
           </FlexBox>
         </FlexBox>

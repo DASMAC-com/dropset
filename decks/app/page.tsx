@@ -18,7 +18,7 @@ export default function Home() {
           Presentation decks
         </h1>
         <p className="mt-4 max-w-xl text-lg text-muted-fg">
-          Talks and demos for Dropset — forex on Solana. Pick a deck; arrow
+          Talks and demos for Dropset — Forex on Solana. Pick a deck; arrow
           keys drive it, <span className="font-mono text-foreground">p</span>{" "}
           opens presenter mode.
         </p>
