@@ -223,10 +223,15 @@ ______________________________________________________________________
   sources on this crate into a store sink: an HTTP Coinbase reference
   feed first (the proof feed), then FX / Circle / econ-calendar feeds and
   an Orca swap feed. See [`fx-survey.md`](fx-survey.md).
-- **Maker / taker bots (live sink).** A bot's price / fill sources move
-  onto `feeds` and read a live sink, replacing the bespoke cascade and
-  `logsSubscribe` walk (§2). Migrating them is a follow-up task, folded
-  into the bot work; the source/sink split exists so they can.
+- **Maker bot (live sink, landed).** The maker-bot's price cascade and
+  `logsSubscribe` fill walk run on `feeds`: three HTTP price sources
+  (CoinGecko, CoinMarketCap, ECB/Frankfurter) and the fill `logsSubscribe`
+  socket — bridged through the stream seam (§4) — fan onto in-process
+  forward (live) sinks its synchronous tick loop drains with `try_recv`, on
+  a small background runtime. The taker bot has no bespoke price or fill
+  feed to migrate: it is a stochastic flow generator sizing orders against
+  the live on-chain book, so it stays as the *producer* of the fills the
+  maker now consumes.
 - **The eCLOB indexer (store sink, migration).** The indexer adopts the
   RPC source + store sink + cursor while keeping its own writers,
   aggregator, and `/v1`. Deferred so the extraction does not destabilize
@@ -236,14 +241,16 @@ ______________________________________________________________________
 
 ## 7. Open questions
 
-- **Live-sink backpressure.** A slow bot consumer must not stall a
-  source shared with a store sink. A bounded broadcast channel that
-  drops to the latest (a bot wants freshest, not complete) is the likely
-  policy — confirmed when the first bot consumer lands.
-- **Streaming adapter phasing.** The subscribe source (§4) is a seam
-  until a bot needs it; the survey gate does not. Whether the first
-  streaming adapter is a CEX socket or an RPC `logsSubscribe` follows the
-  first consumer's need.
+- **Live-sink backpressure.** *Resolved — the maker bot (§6) is the first
+  live-sink consumer.* The bounded broadcast that drops to the latest is
+  the policy: the maker's tick keeps only the freshest reading per price
+  tier and the highest-`nonce_after` fill per market, so a lagged receiver
+  loses nothing the reconcile needs and a slow bot never stalls a source
+  shared with a store sink.
+- **Streaming adapter phasing.** *Resolved.* The first streaming adapter is
+  the RPC `logsSubscribe` fill socket, landed as the maker bot's fill feed
+  through the `ChannelSource` stream seam (§4). A CEX socket for the price
+  primaries follows when the survey's streaming primaries land.
 - **Backfill windowing.** The indexer's poll takes the newest batch and
   advances, so a backlog larger than one batch skips the middle
   (`indexer.md` §9). The framework should offer a paged-backfill helper

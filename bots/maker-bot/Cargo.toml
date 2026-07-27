@@ -4,8 +4,11 @@
 # per-market fair mid, and drive the relative-quoting hot path
 # (set_reference_price) and cold path (set_liquidity_profile) with an inventory
 # skew and kill-switch policy. Rust-only, not published. No tokio: a
-# synchronous tick loop drives blocking feed polls (ureq) and the blocking
-# RpcClient (sdk/rs `fetch` feature), matching the TUI and sync-blockers.
+# RpcClient (sdk/rs `fetch` feature), matching the TUI and sync-blockers. The
+# price / fill *transport* runs on the shared `feeds` framework (source → live
+# forward sink), so a small background tokio runtime drives those async
+# sources; the quoting tick loop stays synchronous and drains the broadcast
+# tail with `try_recv` (docs/data-feeds.md §6).
 
 [[bin]]
 name = "dropset-maker-bot"
@@ -13,6 +16,9 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+# Implement the `feeds` `Source` trait on the price / fill adapters (the trait
+# is `#[async_trait]`).
+async-trait = "0.1"
 # Inner-instruction `data` comes back base58-encoded from `getTransaction`
 # even under base64 transaction encoding, so decode it before parsing.
 bs58 = "0.5"
@@ -25,6 +31,11 @@ bytemuck = "1"
 # basis-band / USDC common-mode guard signals (docs/market-making-mvp.md §1).
 # The bot owns the feed transport and hands the engine `Reading`s.
 dropset-fair-value = { path = "../../fair-value" }
+# The shared ingestion framework: the price sources poll over its async
+# `HttpClient` (`http`), the fill subscription bridges through its `stream`
+# seam (`ChannelSource`), and both fan into an in-process forward (live) sink
+# the tick loop reads (docs/data-feeds.md §6).
+dropset-feeds = { path = "../../feeds", features = ["http", "stream"] }
 # Shared localnet-host plumbing: the Agave `http`→`ws` PubSub-URL derivation
 # (the fill subscription's endpoint). The `emit_cpi!` fill decode is the SDK's
 # shared `events` codec, not a hand-rolled discriminator.
@@ -54,10 +65,16 @@ solana-transaction = "3"
 # `UiInstruction`, the inner-instruction list) the fill decoder walks. The
 # light client-types crate, not the full `solana-transaction-status`.
 solana-transaction-status-client-types = "3"
-# Blocking HTTP for the price feeds (CoinGecko / CoinMarketCap / Frankfurter),
-# the same synchronous JSON-over-HTTP style the sync-blockers skill tool
-# uses for Linear.
-ureq = { version = "2", features = ["json"] }
+# A background runtime for the `feeds` source runners only (the price polls and
+# the fill-stream bridge); the quoting tick loop stays synchronous and reads
+# the resulting broadcast channels with `try_recv`. `net` + `time` back the
+# reqwest reactor the HTTP sources use.
+tokio = { version = "1", features = [
+  "rt-multi-thread",
+  "sync",
+  "net",
+  "time",
+] }
 
 # Test-only: forge the `[tag][discriminator][body]` fill-event envelope the
 # decoder consumes. `borsh` serializes the event body and `sha2` reproduces
