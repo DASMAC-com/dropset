@@ -5,7 +5,6 @@
 <!-- cspell:word Dragonfly -->
 <!-- cspell:word Econia -->
 <!-- cspell:word emojicoin -->
-<!-- cspell:word Hibachi -->
 <!-- cspell:word onramps -->
 
 # Demo-day pitch spec — `demo-v1`
@@ -41,7 +40,7 @@ pages:
 > that, my laptop is quoting FX on Solana technology — Dropset already clears
 > trades on mainnet today by routing through aggregators, and the eCLOB
 > is how we bootstrap the markets that don't exist yet. Why won't this
-> work? Arc, Tempo, Hibachi, and Canton are all chasing onchain
+> work? Arc, Tempo, and Canton are all chasing onchain
 > settlement — but they're private, permissioned, or walled gardens,
 > and big apps like Jupiter aren't focused on FX. Dropset is the open,
 > neutral, composable venue anyone can quote on and anyone can trade
@@ -137,15 +136,15 @@ pages:
 
 #### Page 7 — Why this will fail · ~12s
 
-- **On-slide:** Why won't this work? Arc, Tempo, Hibachi, Canton.
+- **On-slide:** Why won't this work? Arc, Tempo, Canton.
 - **Visual:** The competitor logos as a wall closing in.
-- **Spoken:** "The honest risk: everyone wants onchain settlement. Arc,
-  Tempo, and Hibachi are building payment-and-settlement rails, and
-  Canton is doing regulated onchain markets. Any of them could decide
-  FX is theirs."
+- **Spoken:** "The honest risk: everyone wants onchain settlement. Arc
+  and Tempo are building payment-and-settlement rails, and Canton is
+  doing regulated onchain markets. Any of them could decide FX is
+  theirs."
 - **Note:** This slide is deliberate — an investor respects that we
-  named the threat first (Clay's + Alex's advice). The rebuttal is the
-  very next page. Fuller framing in the appendix.
+  named the threat first. The rebuttal is the very next page. Fuller
+  framing in the appendix.
 
 #### Page 8 — Why it will work · ~8s
 
@@ -217,10 +216,10 @@ investor grills.
   The moment FX needs a *neutral* venue where anyone can make a market
   and anyone can trade, a closed garden can't serve it. We're building
   the open venue and getting there first.
-- **"Hibachi / Canton are direct competitors."** — Hibachi and the
-  Arc/Tempo camp are chasing settlement; Canton is regulated onchain
-  markets. But they're permissioned or walled — a different animal from
-  an open, composable FX book.
+- **"Canton is a direct competitor."** — The Arc/Tempo camp is chasing
+  settlement, and Canton is regulated onchain markets. But they're
+  permissioned or walled — a different animal from an open, composable
+  FX book.
 - **"Why wouldn't Jupiter or a big app just do this?"** — They aren't
   focused on FX, and we're beating them to it. It's an innovator's
   dilemma: an open, FX-specialized venue only makes sense for a small,
@@ -302,7 +301,7 @@ Source: <https://x.com/mert/status/1843591496181702766>
 > (they will not read it) — put those in an appendix and cover them if
 > you get a call.
 
-#### Clay — name why it will fail, then answer the counters
+#### Name why it will fail, then answer the counters
 
 Put up a **"why this will fail"** beat and don't flinch: say the honest
 version an investor is already thinking ("Arc, Stripe, and Tempo are
@@ -337,7 +336,7 @@ it like Twitter — they will not read a word salad.
 
 ### Reference — the accelerator's 7-point pitch structure
 
-The Colosseum "basic pitch" framework (via Nate), from the pitch review
+The Colosseum "basic pitch" framework, from the pitch review
 in the fundraise tracker. Not the deck's structure — Mert's
 children's-book arc wins for a 2-minute demo — but every point below
 must be *covered* somewhere, and this is the checklist the accelerator
