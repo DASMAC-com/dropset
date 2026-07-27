@@ -22,8 +22,9 @@
     "check": "tsc --noEmit",
     "copy-brand-assets": "node ../brand-assets/copy-brand-assets.mjs decks/public",
     "dev": "next dev --port 3300",
-    "prebuild": "pnpm run copy-brand-assets",
-    "predev": "pnpm run copy-brand-assets",
+    "fetch-remote-assets": "node scripts/fetch-remote-assets.mjs",
+    "prebuild": "pnpm run copy-brand-assets && pnpm run fetch-remote-assets",
+    "predev": "pnpm run copy-brand-assets && pnpm run fetch-remote-assets",
     "start": "next start"
   },
   "version": "0.1.0"

@@ -38,6 +38,13 @@ jobs:
     # Python skill-tool unit tests (stdlib only, reuses the cached Python set up
     # above — no new cache). Folds in the old dedicated stage-backlog-tests job.
     - run: 'make tools-tests'
+    # Production-build the decks. `decks` is a member of the pnpm workspace the
+    # install above already provisioned, so this is one `next build` with no new
+    # setup or cache. It runs here rather than in the Rust-gated test workflow
+    # because that one path-filters decks/** out. The build's `prebuild` hook
+    # hard-fails on a remote asset it can't mirror, so a deck with a broken
+    # image can't reach main: this job gates both pull_request and merge_group.
+    - run: 'make decks-build'
     - id: 'pre-commit-cache'
       uses: 'actions/cache/restore@v5'
       with:

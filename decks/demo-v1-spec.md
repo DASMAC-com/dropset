@@ -1,10 +1,6 @@
-<!-- cspell:word Aptos -->
-
 <!-- cspell:word AUDD -->
 
 <!-- cspell:word CADC -->
-
-<!-- cspell:word Cargobill -->
 
 <!-- cspell:word cofounded -->
 
@@ -12,19 +8,11 @@
 
 <!-- cspell:word Dragonfly -->
 
-<!-- cspell:word Econia -->
-
 <!-- cspell:word emojicoin -->
 
 <!-- cspell:word fundraise -->
 
-<!-- cspell:word Hyperliquid -->
-
 <!-- cspell:word Mert -->
-
-<!-- cspell:word onramps -->
-
-<!-- cspell:word permissioned -->
 
 <!-- cspell:word steelman -->
 

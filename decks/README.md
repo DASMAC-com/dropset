@@ -21,13 +21,28 @@ deps, and theme don't fight the product build.
   Spectacle `<Deck>` (`page.tsx` dynamic-imports it with `ssr: false`).
 - `theme/tokens.ts` — Dropset design tokens, mirrored from
   `frontend/app/globals.css` and reshaped into a Spectacle theme.
-- `public/` — deck assets. `dropset-wordmark.png` and
-  `favicon-with-stroke.svg` are **copied** from the repo-root
-  `brand-assets/` — the single source of truth for shared brand assets —
-  by `../brand-assets/copy-brand-assets.mjs` on the `predev` /
-  `prebuild` hooks, so the brand assets stay DRY without a symlink
-  escaping the deck's Vercel Root Directory. They're generated, so both
-  are gitignored.
+- `public/` — deck assets, from three sources:
+  - `dropset-wordmark.png` and `favicon-with-stroke.svg` are **copied**
+    from the repo-root `brand-assets/` — the single source of truth for
+    shared brand assets — by `../brand-assets/copy-brand-assets.mjs` on
+    the `predev` / `prebuild` hooks, so the brand assets stay DRY without
+    a symlink escaping the deck's Vercel Root Directory. They're
+    generated, so both are gitignored.
+  - `public/remote/` is **mirrored** from the URLs in
+    `remote-assets.json` by `scripts/fetch-remote-assets.mjs`, on the
+    same two hooks — images we don't hold a copy of, like the team
+    headshots the marketing site serves. Also generated, also gitignored.
+  - `public/screens/` holds our own screen captures, which are
+    **committed**: nothing external hosts them, so there's nothing to
+    mirror.
+- `remote-assets.json` — the `<filename>: <url>` manifest the mirror
+  reads. Adding a remote image to a slide is one line here plus an
+  `<Image src="/remote/<filename>">`. A fetch that fails **exits
+  non-zero**, which fails `prebuild` and so the whole build: a deck that
+  can't show a face or a logo shouldn't build at all, rather than build
+  with a broken image nobody notices until it's on the projector. The
+  manifest is on cspell's `ignorePaths` (`cfg/cspell.yml`) because CDN
+  paths are opaque hashes, not prose.
 
 Deck routes use **public-facing names** (e.g. `/demo-v1`) — never internal
 ticket ids, which must not leak into shareable URLs.
@@ -47,6 +62,27 @@ a browser once it's up. Arrow keys drive a deck; `p` opens presenter mode
 
 1. Create `app/<public-route>/page.tsx` + `<Deck>.tsx` (copy `demo-v1`).
 1. Add an entry to `lib/decks.ts`.
+
+## Check
+
+```sh
+make decks-build
+```
+
+The production build, which is what CI gates on — a step in the `lint`
+workflow, since the `test` workflow path-filters `decks/**` out. It
+type-checks every deck and runs the asset hooks, so a broken deck (or an
+asset that can't be sourced) fails the merge queue rather than surfacing
+mid-presentation.
+
+## Write a deck
+
+`demo-v1` is reconciled to `demo-v1-spec.md` — the reviewable copy for
+that pitch, and the source of truth for it: ten pages, one big sentence
+and one big visual per page, with the nuance kept off the slides and in
+that doc's appendices. Edit the spec first, then the deck. Spoken script
+belongs in each slide's `<Notes>` (presenter mode, `p`), never on the
+slide.
 
 ## Deploy
 

@@ -14,6 +14,7 @@
 .PHONY: conformance-vectors
 .PHONY: debugger
 .PHONY: decks
+.PHONY: decks-build
 .PHONY: demo
 .PHONY: explorer
 .PHONY: explorer-down
@@ -304,6 +305,13 @@ decks: check-pnpm
 	cd decks && pnpm install
 	$(call open-browser,3300)
 	cd decks && pnpm dev
+
+# Production-build the decks (what CI gates on). The `prebuild` hook sources
+# the brand assets and mirrors the remote ones, so a deck that references a
+# missing image fails here rather than on a projector.
+decks-build: check-pnpm
+	cd decks && pnpm install
+	cd decks && pnpm build
 
 # The whole localnet demo in one command (`make tui` already runs the
 # control-plane TUI on its own localnet; this adds the web frontend): the TUI
