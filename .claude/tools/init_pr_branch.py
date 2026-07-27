@@ -101,7 +101,7 @@ def normalize_branch(branch: str) -> tuple[str, bool]:
 
 def link_env(base_repo: str | None, worktree_root: str) -> str:
     """Symlink ``frontend/.env.local`` in ``worktree_root`` to the base repo's
-    copy. Returns the outcome as one of four strings:
+    copy. Returns the outcome as one of five strings:
 
     * ``"no-base"`` — no worktree has ``main`` checked out, so there is no base
       repo to link from;
@@ -109,10 +109,18 @@ def link_env(base_repo: str | None, worktree_root: str) -> str:
       may be a real file someone placed deliberately);
     * ``"no-source"`` — nothing to link: the base repo has no env file, or this
       worktree has no ``frontend/`` directory to link it into;
-    * ``"created"`` — the symlink was created.
+    * ``"created"`` — the symlink was created;
+    * ``"failed"`` — the symlink couldn't be created (an unwritable
+      ``frontend/``, a read-only mount, a racing writer).
 
     Never clobbers: the ``"exists"`` check uses ``lexists``, so even a dangling
     symlink is left as found rather than replaced.
+
+    Never raises. The caller evaluates this while building the result dict, so
+    an escaping ``OSError`` would abort before any JSON is printed — costing
+    the skill the ``tag_valid`` / ``base_repo`` / ``rename_needed`` answers it
+    reads from the same call, over an optional convenience link. ``"failed"``
+    keeps the bootstrap contract intact.
     """
     if base_repo is None:
         return "no-base"
@@ -129,7 +137,10 @@ def link_env(base_repo: str | None, worktree_root: str) -> str:
     if not os.path.isdir(os.path.dirname(dest)):
         return "no-source"
 
-    os.symlink(source, dest)
+    try:
+        os.symlink(source, dest)
+    except OSError:
+        return "failed"
     return "created"
 
 
@@ -160,8 +171,8 @@ def main(argv: list[str] | None = None) -> int:
         "--link-env",
         action="store_true",
         help="also symlink frontend/.env.local from the base repo into this "
-        "worktree (never clobbers an existing path); the outcome is reported "
-        "as `env_link` in the JSON",
+        "worktree (never clobbers an existing path, never raises); the outcome "
+        "is reported as `env_link` in the JSON",
     )
     parser.add_argument(
         "--worktree-root",

@@ -133,7 +133,7 @@ python3 .claude/tools/init_pr_branch.py --tag <eng-###> --link-env
   "current_branch": "worktree-eng-603",
   "normalized_branch": "eng-603",
   "rename_needed": true,     // true iff a `worktree-` prefix is stripped
-  "env_link": "created"      // created | exists | no-source | no-base
+  "env_link": "created"      // created|exists|no-source|no-base|failed
 }
 ```
 
@@ -186,13 +186,20 @@ fresh worktree inherits.
    - `"exists"` — this worktree already had the path, so it
      was left untouched (it may be a real file someone placed
      deliberately; the tool never clobbers).
-   - `"no-source"` — nothing to link: main has no env file.
+   - `"no-source"` — nothing to link: either main has no env
+     file, or this worktree has no `frontend/` directory to
+     link it into.
    - `"no-base"` — main isn't checked out anywhere, so there
      was no base repo to link from (the same condition that
      skipped the pull above).
+   - `"failed"` — the link couldn't be created (an unwritable
+     `frontend/`, a read-only mount). Mention it and carry
+     on; `pnpm dev` will want the env file copied by hand.
 
    Every outcome is fine to proceed on; none of them blocks
-   the bootstrap.
+   the bootstrap. The tool never raises here — it reports
+   `"failed"` instead, because this one call also carries the
+   tag / base-repo / branch answers the next steps read.
 
 1. Normalize the branch name to the bare Linear tag.
    The `aps` shell helper starts worktree sessions with

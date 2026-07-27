@@ -105,10 +105,16 @@ into the transcript**:
   noise class as an unwrapped `cargo` build log, and on one run the
   single largest result of the session purely from progress lines.
   Pass **`--quiet-pull`** to `docker compose up` / `create` (it keeps
-  the final per-image line and drops the layer churn), or wrap the
-  call in `python3 .claude/tools/run_quiet.py -- …` when the target
-  also builds. This applies to shell you author in **skills and
-  Makefile targets**, not just ad-hoc calls.
+  the final per-image line and drops the layer churn); a bare
+  `docker compose pull` takes plain **`--quiet`** instead. Note
+  `--quiet-pull` silences only the *pull* — a target that falls back
+  to **building** the image still emits a full BuildKit log, so route
+  that one through `python3 .claude/tools/run_quiet.py -- …` (or add
+  `--quiet-build`) when you're the one invoking it. This applies to
+  shell you author in **skills and Makefile targets**, not just
+  ad-hoc calls — though a Makefile recipe a human watches is the one
+  place to leave a slow build's output visible, since a silent
+  multi-minute build reads as a hang.
 
 - **Don't hand-run a check a hook already owns.** `make lint`
   enforces line length (MD013 for Markdown, the "Lines over 80

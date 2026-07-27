@@ -107,9 +107,9 @@ PR-authoring **writes** (`create_pull_request`,
      to rebase and resolve manually, then re-run — this
      skill does not auto-resolve conflicts.
    - If it **succeeds but integrated new commits from
-     `main`**, the diff now reflects that integration.
+     the base**, the diff now reflects that integration.
      A clean *textual* rebase can still leave a
-     *semantic* conflict (main renamed or changed
+     *semantic* conflict (the base renamed or changed
      something this branch still calls), so flag those
      for the adversarial review (step 5) and the test
      run (step 10) to catch. The rebase rewrote history,
@@ -732,8 +732,8 @@ PR-authoring **writes** (`create_pull_request`,
      manifest**, fold or skip the CI-skip-list and
      audit-registry checks (nothing new for them to learn).
 
-   **The clippy gate already owns every compile-time fact —
-   say so in the completeness and cross-check briefs.** Step 4
+   **The lint gate already owns the compile-time facts — say
+   so in the completeness and cross-check briefs.** Step 4
    runs `make lint`, whose `clippy` hook is
    `cargo clippy --all-targets -- -D warnings`. A green run is
    **proof**, not evidence: nothing is unresolved, nothing is
@@ -745,13 +745,26 @@ PR-authoring **writes** (`create_pull_request`,
    briefs:
 
    - **Unused-import / does-it-resolve / does-it-compile /
-     unused-symbol checks are OWNED by the clippy
-     deny-warnings gate this skill already ran green.** The
-     lens must **not** cold-read a file merely to confirm a
-     symbol resolves — that call is already settled.
+     unused-symbol checks are OWNED by the lint gate this
+     skill already ran green.** The lens must **not**
+     cold-read a file merely to confirm a symbol resolves —
+     that call is already settled.
+
+     **Name the hook that actually covers this diff's
+     languages** — clippy is **Rust only**. `ruff check` owns
+     the Python surface, `biome` and `tsc` the TS/JS one. A
+     green `make lint` on a TS-only diff proves nothing if
+     `biome` / `tsc` were the hooks that couldn't run (they
+     need frontend deps, and a fresh worktree has none — see
+     step 4). So state which hook covers the diff in front of
+     you, and if that hook **didn't run**, say so instead:
+     the gate proves nothing there and the lens reads for
+     itself.
+
    - **Run the dead-code / unused-symbol grep ONCE, here in
      the main loop**, and hand the result set to both lenses,
      the same way the broad-scan greps above are hoisted.
+
    - **What is left for the lens is judgment, not
      compilation**: genuine test adequacy, whether code that
      *does* compile is nonetheless dead by design, and
@@ -825,10 +838,11 @@ PR-authoring **writes** (`create_pull_request`,
      left behind, partial implementations, and code the diff
      introduces that is dead **by design** (reachable-nowhere
      logic, a parameter nothing supplies). Not unused imports
-     or does-it-resolve — the clippy deny-warnings gate owns
-     those (see the clippy-gate block above); this lens
-     adjudicates judgment calls, from the diff plus one read
-     of each touched file.
+     or does-it-resolve — the step-4 lint gate owns those
+     (see the lint-gate block above, and name the hook that
+     covers this diff's language); this lens adjudicates
+     judgment calls, from the diff plus one read of each
+     touched file.
    - **`CLAUDE.md` + `docs/conventions/` freshness**
      (conditional — spawn only when the surface gate above
      fires) — does the project's convention set still match
@@ -916,15 +930,19 @@ PR-authoring **writes** (`create_pull_request`,
    passed it; the findings + diff are enough to adjudicate
    almost every call.
 
-   **And the same clippy carve-out the completeness lens
-   gets.** Give the cross-check the block above verbatim:
+   **And the same lint carve-out the completeness lens gets.**
+   Give the cross-check the block above verbatim:
    unused-import / does-it-resolve / does-it-compile /
-   unused-symbol are settled by the green
-   `cargo clippy --all-targets -- -D warnings` gate from
-   step 4 — do not cold-read a transitive dependency to
-   re-derive one, and **refute** any inherited finding that
-   rests on such a claim rather than going to read for it.
-   Hand it the same hoisted grep result set the lenses got.
+   unused-symbol are settled by the green step-4 gate — for
+   Rust that's `cargo clippy --all-targets -- -D warnings`,
+   for Python `ruff check`, for TS/JS `biome` / `tsc`. Name
+   the hook that covers **this** diff, and say so plainly when
+   it's one that couldn't run. Where the gate does hold, the
+   cross-check must not cold-read a transitive dependency to
+   re-derive it, and should **refute** any inherited finding
+   that rests on such a claim rather than going to read for
+   it. Hand it the same hoisted grep result set the lenses
+   got.
 
    If the cross-check produces material
    disagreements, iterate: re-spawn the relevant
@@ -1209,7 +1227,7 @@ PR-authoring **writes** (`create_pull_request`,
    - `mergeable: "CONFLICTING"` (or `mergeStateStatus: "DIRTY"`) → the
      PR has merge conflicts. Catalogue this as a **blocking** issue
      and do **not** mark the PR ready. Tell the user to rebase onto
-     `main` and resolve the conflicts (this skill does not
+     `origin/<base>` and resolve the conflicts (this skill does not
      auto-resolve them), then re-run `/review-pr`.
    - `mergeable: "UNKNOWN"` → GitHub hasn't finished
      computing mergeability yet. Wait a few seconds and
@@ -1220,7 +1238,7 @@ PR-authoring **writes** (`create_pull_request`,
      gate. `BLOCKED` / `UNSTABLE` just mean branch
      protection, the required checks, or human review
      haven't cleared yet (expected for a draft PR
-     mid-review); `BEHIND` means `main` moved (the step-1
+     mid-review); `BEHIND` means the base moved (the step-2
      rebase already handled it). None of these are a
      conflict, and the gate + CI wait below cover them.
 
@@ -1483,7 +1501,7 @@ PR-authoring **writes** (`create_pull_request`,
 
    **First, re-check mergeability — a PR that was
    `MERGEABLE` at the ready gate can turn `CONFLICTING`
-   while CI ran, if `main` advanced.** So before moving the
+   while CI ran, if the base advanced.** So before moving the
    issue and before the prompt, re-read the conflict signal
    (the same read the ready gate used):
 
@@ -1494,8 +1512,8 @@ PR-authoring **writes** (`create_pull_request`,
    - `mergeable: "CONFLICTING"`
      (or `mergeStateStatus: "DIRTY"`) → **do not** offer to
      enqueue and **do not** advance the issue. Report the
-     conflict, tell the human to rebase onto `main` to
-     resolve it (this skill does not auto-resolve), and leave
+     conflict, tell the human to rebase onto `origin/<base>`
+     to resolve it (this skill does not auto-resolve), and leave
      the issue **In Progress**. Stop here — the enqueue offer
      is off the table until the rebase clears the conflict.
    - `mergeable: "UNKNOWN"` → GitHub hasn't finished

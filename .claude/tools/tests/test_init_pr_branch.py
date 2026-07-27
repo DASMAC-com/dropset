@@ -121,6 +121,15 @@ class LinkEnv(unittest.TestCase):
         self.assertFalse(self.dest.is_symlink())
         self.assertEqual(self.dest.read_text(encoding="utf-8"), "DELIBERATE=1\n")
 
+    def test_failed_when_the_link_cannot_be_created(self):
+        # An unwritable frontend/ must not raise: the caller evaluates this
+        # while building the JSON the skill's other answers ride in.
+        self.source.write_text("KEY=value\n", encoding="utf-8")
+        frontend = self.worktree / "frontend"
+        frontend.chmod(0o500)
+        self.addCleanup(frontend.chmod, 0o700)
+        self.assertEqual(ipb.link_env(str(self.base), str(self.worktree)), "failed")
+
     def test_exists_leaves_a_dangling_symlink_as_found(self):
         # `lexists`, not `exists` — an occupied path is occupied either way.
         self.source.write_text("FROM_BASE=1\n", encoding="utf-8")
@@ -136,7 +145,13 @@ class MainCli(unittest.TestCase):
     overrides so no real git is invoked.
     """
 
-    def _run(self, tag: str, branch: str, porcelain: str, extra: list[str] = []):
+    def _run(
+        self,
+        tag: str,
+        branch: str,
+        porcelain: str,
+        extra: list[str] | None = None,
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             pfile = Path(tmp) / "wt.txt"
             pfile.write_text(porcelain, encoding="utf-8")
@@ -144,7 +159,7 @@ class MainCli(unittest.TestCase):
             with redirect_stdout(buf):
                 code = ipb.main(
                     ["--tag", tag, "--branch", branch, "--porcelain-file", str(pfile)]
-                    + extra
+                    + (extra or [])
                 )
             return code, json.loads(buf.getvalue())
 
@@ -190,7 +205,15 @@ class MainCli(unittest.TestCase):
             self.assertTrue((worktree / "frontend" / ".env.local").is_symlink())
 
     def test_env_link_reports_no_base_when_main_is_absent(self):
-        _, out = self._run("eng-603", "eng-603", PORCELAIN_NO_MAIN, ["--link-env"])
+        # Isolate the root like every sibling case, so the run can never reach
+        # the real checkout even if link_env's guard order changes.
+        with tempfile.TemporaryDirectory() as wt:
+            _, out = self._run(
+                "eng-603",
+                "eng-603",
+                PORCELAIN_NO_MAIN,
+                ["--link-env", "--worktree-root", wt],
+            )
         self.assertEqual(out["env_link"], "no-base")
 
     def test_env_link_is_skipped_on_an_invalid_tag(self):

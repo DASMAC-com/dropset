@@ -149,6 +149,7 @@ txns
 unfirmable
 unmirrored
 unstarted
+unwritable
 upserts
 ureq
 usdg

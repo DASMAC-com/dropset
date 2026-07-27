@@ -38,14 +38,23 @@ coupling skill tooling to the program's toolchain.
 
 Today `.claude/tools/` holds `session_metrics.py` (the
 `session-metrics` core), `init_pr_branch.py` (the `init-pr`
-branch/worktree checks), `run_quiet.py` (a generic quiet runner that
-captures a noisy command's output to a log and surfaces only a summary
-— see [context economy](context-economy.md)), and `sync_blockers.py`
-(the deterministic core of the `sync-blockers` skill). `.claude/tools/`
-is the single home for skill glue: there is **no** top-level `tools/`
-tree. `sync_blockers.py` is the one skill tool run directly with
-`python3` (no `make` target); everything else drives through a `make`
-target.
+branch/worktree checks **and**, under `--link-env`, the
+`frontend/.env.local` symlink — so it is not purely read-only),
+`run_quiet.py` (a generic quiet runner that captures a noisy command's
+output to a log and surfaces only a summary — see
+[context economy](context-economy.md)), and `sync_blockers.py` (the
+deterministic core of the `sync-blockers` skill), alongside the
+`firm-perms` / `housekeeping` / `cspell-audit` glue.
+`.claude/tools/` is the single home for skill glue: there is **no**
+top-level `tools/` tree.
+
+A `make` target is the usual interface, but not the only one:
+`sync_blockers.py` and `init_pr_branch.py` are both driven directly
+with `python3`. Where a skill does that, the allow-rule it needs is
+the **directory-wide** `Bash(python3 .claude/tools/:*)` rather than a
+per-tool rule — and for a skill that runs in a **fresh worktree**
+(`init-pr`), that rule has to live in `~/.claude/settings.json`, since
+user level is the only scope a brand-new worktree inherits.
 
 Repo build tooling that is neither a workspace crate nor Claude-skill
 glue lives **with what it serves**, not in a tooling tree:
