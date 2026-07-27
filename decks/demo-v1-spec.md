@@ -1,11 +1,34 @@
 <!-- cspell:word Aptos -->
+
 <!-- cspell:word AUDD -->
+
 <!-- cspell:word CADC -->
+
 <!-- cspell:word Cargobill -->
+
+<!-- cspell:word cofounded -->
+
+<!-- cspell:word composably -->
+
 <!-- cspell:word Dragonfly -->
+
 <!-- cspell:word Econia -->
+
 <!-- cspell:word emojicoin -->
+
+<!-- cspell:word fundraise -->
+
+<!-- cspell:word Hyperliquid -->
+
+<!-- cspell:word Mert -->
+
 <!-- cspell:word onramps -->
+
+<!-- cspell:word permissioned -->
+
+<!-- cspell:word steelman -->
+
+<!-- cspell:word verticalized -->
 
 # Demo-day pitch spec — `demo-v1`
 
@@ -20,7 +43,7 @@ Sections are ordered for Google Docs toggles: **1. Slide contents**
 Q&A material) next, and **3. Formatting / structure rules** (how to
 read this, the design principles, the reference structure) last.
 
----
+______________________________________________________________________
 
 ## 1. Slide contents
 
@@ -97,8 +120,8 @@ pages:
   frontend. Slide shows the command **`make demo`**.
 - **Spoken:** "Let me show you the stack. This is our market-maker
   control panel — the TUI a maker uses to quote a book. And here's the
-  user side: I run a swap on the frontend and it clears. [run
-  `make demo`]"
+  user side: I run a swap on the frontend and it clears. \[run
+  `make demo`\]"
 - **Demo ops:** This whole demo runs on **localnet**, driven by
   `make demo`. If anything fails live, fall back to the recorded video.
 
@@ -185,7 +208,7 @@ pages:
   operations end-to-end — banking, the stablecoin providers, onramps,
   and accounting. Dropset — Forex on Solana."
 
----
+______________________________________________________________________
 
 ## 2. Presentation appendices
 
@@ -197,7 +220,7 @@ investor grills.
 
 - **Alex — product / exchange design.** Exchange designer; has built
   two onchain exchanges (including an order book) before. Authored
-  Econia, the onchain order book on Aptos (~$500M cleared); co-authored
+  Econia, the onchain order book on Aptos (~\$500M cleared); co-authored
   emojicoin.fun, a top consumer product on Aptos; and authored the
   Solana Opcode Guide — the playbook for squeezing performance out of
   Solana programs with high-efficiency techniques, which is what drives
@@ -236,24 +259,24 @@ investor grills.
   section: an investor wants to see the failure modes named and
   answered, not hidden.
 
-### Lazy-VC questions to pre-empt
+### Lazy-VC questions to preempt
 
 Have crisp one-liners ready for the questions a VC asks without reading
 the deck:
 
-- "What's the market?" → FX, the biggest market on earth ($9T/day,
+- "What's the market?" → FX, the biggest market on earth (\$9T/day,
   24/5), with no liquid onchain home yet.
 - "Who's using it?" → Live on mainnet now (clearing trades via
   aggregators); Colosseum partners (Altitude, Cargobill) and stablecoin
   issuers are the first FX demand. We've also spoken with providers like
   CADC and AUDD coming online on Solana who already have distribution
   networks.
-- "Why you?" → We've built onchain exchanges before (Econia, ~$500M);
+- "Why you?" → We've built onchain exchanges before (Econia, ~\$500M);
   this is our domain.
 - "Why now?" → Non-US-dollar stablecoins are only just arriving onchain
   (~14 currencies today, euro leading), and payments are following.
 
----
+______________________________________________________________________
 
 ## 3. Formatting / structure rules
 
@@ -329,7 +352,7 @@ it like Twitter — they will not read a word salad.
    strongest point here is *it works and I can show it running in front
    of you* — so the demo comes early and the arc is built around it. No
    generic problem → solution → market-size structure.
-1. **No market-opportunity slide.** We do not put up a "$9T TAM"
+1. **No market-opportunity slide.** We do not put up a "\$9T TAM"
    slide. FX size appears once, as the *shape of the gap* ("the
    biggest market on earth barely exists onchain"), never as a
    trillion-dollar brag.
@@ -357,14 +380,14 @@ expects. Mapping to our pages in brackets.
 1. **Traction.** Dropset.io is live and clearing trades on mainnet
    (today via aggregators), with more market-making and exchange
    components built in the open. [Page 6]
-1. **Why the market is massive.** FX is >$9T/day and 24/5; Solana as
-   intermediary gives atomic settlement and faster on/off-ramps. [Page
-   2]
+1. **Why the market is massive.** FX is >\$9T/day and 24/5; Solana as
+   intermediary gives atomic settlement and faster on/off-ramps. \[Page
+   2\]
 1. **Why now.** The non-US stablecoin market has only just started to
    expand — EUR stablecoins drive most volume, more currencies going
    live (14 on Solana). [Page 2]
 1. **Founders' bio.** Exchange-design background — authored the Econia
-   order book (~$500M on Aptos) and the Solana Opcode Guide — with a
+   order book (~\$500M on Aptos) and the Solana Opcode Guide — with a
    dedicated operations owner (Judy) on banking and accounting. Full
    detail on Page 10 and in the appendix (kept there to stay DRY).
    [Page 10; appendix]
