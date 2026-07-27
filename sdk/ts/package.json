@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "@solana-program/token": "^0.13.0",
     "@solana/kit": "^6.9.0"
   },
   "description": "Dropset TypeScript SDK (@solana/kit): instruction builders, account & event codecs, PDA helpers, and the Price codec.",
@@ -43,7 +44,7 @@
     "build": "tsup",
     "check": "tsc --noEmit",
     "prepack": "tsup",
-    "test": "node --import tsx --test src/conformance.test.ts src/events.test.ts src/market.test.ts src/quoting.conformance.test.ts src/share.conformance.test.ts src/wasm.conformance.test.ts"
+    "test": "node --import tsx --test src/conformance.test.ts src/events.test.ts src/market.test.ts src/quoting.conformance.test.ts src/router.test.ts src/share.conformance.test.ts src/wasm.conformance.test.ts"
   },
   "type": "module",
   "types": "./src/index.ts",
