@@ -11,6 +11,10 @@
 //!   over the active / tombstone / free sector lists.
 //! - [`accrual`] — perf-fee realization ([`realize_in_place`]) and
 //!   single-leg subsequent-deposit sizing ([`single_leg_basket`]).
+//! - [`quote_write`] / [`reference_price`] / [`liquidity_profile`] — the two
+//!   solana-free quote-write kernels the hand-written sBPF entrypoint
+//!   mirrors ([`stamp_reference_price`], [`write_liquidity_profile`]), over
+//!   the preamble and byte accessors they share.
 //!
 //! Every public name is glob-re-exported here, so `crate::state::*` and the
 //! crate-root `crate::{Vault, MarketHeader, …}` re-exports resolve exactly
@@ -22,12 +26,16 @@ mod access;
 mod accrual;
 mod dll;
 mod layout;
+mod liquidity_profile;
+mod quote_write;
 mod reference_price;
 
 pub use access::*;
 pub use accrual::*;
 pub use dll::*;
 pub use layout::*;
+pub use liquidity_profile::*;
+pub use quote_write::err;
 pub use reference_price::*;
 
 // The pure seeding / withdrawal / floor kernels are solana-free, so they

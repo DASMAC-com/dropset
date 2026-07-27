@@ -1,7 +1,9 @@
-//! Integration tests for `set_liquidity_profile` — the reference-price
-//! precondition, the happy write (profile stored, FLUSH_BIT armed,
-//! price untouched), the per-side `size_bps` overflow, and the
-//! authority / frozen gates. Built on the shared [`Fixture`].
+//! Integration tests for `set_liquidity_profile` — the happy write
+//! (profile stored, FLUSH_BIT armed, price untouched), the single
+//! write-time domain gate (`quote_authority`), the sector-bounds gate, and
+//! the three conditions the write deliberately *accepts* because matching
+//! enforces them instead: an over-cap `Σ size_bps`, a ladder armed before a
+//! reference price, and a frozen vault. Built on the shared [`Fixture`].
 
 mod common;
 
@@ -11,8 +13,10 @@ use common::fixture::{simple_profile, Fixture, PROFILE_BYTES};
 use dropset::{DropsetError, LiquidityProfile, Price, FLUSH_BIT};
 use solana_pubkey::Pubkey;
 
-/// Open an admin vault (sector 0) with a reference price already set,
-/// so `set_liquidity_profile` clears its `ReferencePriceNotSet` gate.
+/// Open an admin vault (sector 0) with a reference price already set — the
+/// normal lifecycle order (`CreateVault` → `SetReferencePrice` →
+/// `SetLiquidityProfile`), which every test but
+/// [`accepts_write_before_reference_price_is_set`] follows.
 fn fixture_with_priced_vault() -> Fixture {
     let mut f = Fixture::bootstrap();
     f.create_vault(0, f.authority.pubkey(), false, Pubkey::default())
@@ -32,24 +36,6 @@ fn oversized_profile(bid_side: bool) -> [u8; PROFILE_BYTES] {
     let mut bytes = [0u8; PROFILE_BYTES];
     bytes.copy_from_slice(bytemuck::bytes_of(&p));
     bytes
-}
-
-#[test]
-fn rejects_when_reference_price_not_set() {
-    // A freshly-opened vault has no reference price; the profile is pure
-    // ppm offsets, so applying it before an anchor price is set would
-    // flush to garbage absolute prices. The gate rejects it.
-    let mut f = Fixture::bootstrap();
-    f.create_vault(0, f.authority.pubkey(), false, Pubkey::default())
-        .expect("create_vault");
-    let err = f
-        .set_liquidity_profile(
-            &f.authority.insecure_clone(),
-            0,
-            simple_profile(5_000, 10_000, u32::MAX),
-        )
-        .expect_err("set_liquidity_profile must reject before set_reference_price");
-    common::assert_program_error(&err, DropsetError::ReferencePriceNotSet);
 }
 
 #[test]
@@ -81,23 +67,80 @@ fn happy_path_writes_profile_arms_flush_keeps_price() {
 }
 
 #[test]
-fn rejects_bid_size_overflow() {
-    let mut f = fixture_with_priced_vault();
+fn accepts_write_before_reference_price_is_set() {
+    // The write no longer gates on a set reference price. A ladder armed
+    // ahead of its anchor is inert rather than dangerous: matching gates the
+    // whole vault on `has_valid_reference_price()` before the flush, so the
+    // profile never materializes to garbage absolute prices, and FLUSH_BIT
+    // stays armed until a real price lands.
+    let mut f = Fixture::bootstrap();
+    f.create_vault(0, f.authority.pubkey(), false, Pubkey::default())
+        .expect("create_vault");
     let signer = f.authority.insecure_clone();
-    let err = f
-        .set_liquidity_profile(&signer, 0, oversized_profile(true))
-        .expect_err("Σ bid size_bps > 10_000 must reject");
-    common::assert_program_error(&err, DropsetError::LiquidityProfileSizeOverflow);
+
+    f.set_liquidity_profile(&signer, 0, simple_profile(5_000, 10_000, u32::MAX))
+        .expect("a price-less vault accepts a profile");
+
+    let v = f.vault(0);
+    assert_eq!(v.profile.asks[0].size_bps.get(), 10_000, "profile stored");
+    assert!(
+        v.reference_price.stamp.get() & FLUSH_BIT != 0,
+        "flush armed"
+    );
+    assert!(
+        !v.has_valid_reference_price(),
+        "still parked out of the book until a price is stamped"
+    );
 }
 
 #[test]
-fn rejects_ask_size_overflow() {
+fn accepts_bid_size_overflow() {
+    // Σ size_bps > BPS is enforced at match time, not write time: the flush
+    // zeroes the offending side out of the book (see the
+    // `materialize_remaining` coverage in `state/market/accrual.rs`) instead
+    // of hard-rejecting the write, so an over-cap ladder stores verbatim and
+    // the leader self-heals with their next valid profile.
     let mut f = fixture_with_priced_vault();
     let signer = f.authority.insecure_clone();
-    let err = f
-        .set_liquidity_profile(&signer, 0, oversized_profile(false))
-        .expect_err("Σ ask size_bps > 10_000 must reject");
-    common::assert_program_error(&err, DropsetError::LiquidityProfileSizeOverflow);
+    let bytes = oversized_profile(true);
+
+    f.set_liquidity_profile(&signer, 0, bytes)
+        .expect("an over-cap bid side is stored, not rejected");
+
+    let v = f.vault(0);
+    assert_eq!(v.profile.bids[0].size_bps.get(), 6_000);
+    assert_eq!(v.profile.bids[1].size_bps.get(), 5_000);
+}
+
+#[test]
+fn accepts_ask_size_overflow() {
+    // Mirror of `accepts_bid_size_overflow` on the ask side.
+    let mut f = fixture_with_priced_vault();
+    let signer = f.authority.insecure_clone();
+
+    f.set_liquidity_profile(&signer, 0, oversized_profile(false))
+        .expect("an over-cap ask side is stored, not rejected");
+
+    let v = f.vault(0);
+    assert_eq!(v.profile.asks[0].size_bps.get(), 6_000);
+    assert_eq!(v.profile.asks[1].size_bps.get(), 5_000);
+}
+
+#[test]
+fn accepts_write_to_frozen_vault() {
+    // Neither quote-write path re-reads `frozen`: the freeze is enforced at
+    // match time, where `swap` skips frozen vaults entirely, so re-quoting
+    // one is a no-op the ASM fast path need not spend CU rejecting.
+    let mut f = fixture_with_priced_vault();
+    let signer = f.authority.insecure_clone();
+    f.freeze_vault(&signer, 0).expect("admin freezes vault");
+
+    f.set_liquidity_profile(&signer, 0, simple_profile(5_000, 10_000, u32::MAX))
+        .expect("a frozen vault accepts an inert profile update");
+
+    let v = f.vault(0);
+    assert!(v.frozen.get(), "still frozen");
+    assert_eq!(v.profile.asks[0].size_bps.get(), 10_000, "profile stored");
 }
 
 #[test]
@@ -111,12 +154,11 @@ fn rejects_unauthorized_signer() {
 }
 
 #[test]
-fn rejects_frozen_vault() {
+fn rejects_out_of_range_sector() {
     let mut f = fixture_with_priced_vault();
     let signer = f.authority.insecure_clone();
-    f.freeze_vault(&signer, 0).expect("admin freezes vault");
     let err = f
-        .set_liquidity_profile(&signer, 0, simple_profile(5_000, 10_000, u32::MAX))
-        .expect_err("frozen vault must reject a profile update");
-    common::assert_program_error(&err, DropsetError::VaultFrozen);
+        .set_liquidity_profile(&signer, 99, simple_profile(5_000, 10_000, u32::MAX))
+        .expect_err("vault_idx past the slab length must reject");
+    common::assert_program_error(&err, DropsetError::InvalidSectorIndex);
 }

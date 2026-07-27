@@ -15,7 +15,12 @@ pub const SET_LIQUIDITY_PROFILE_DISCRIMINATOR: [u8; 1] = [6];
 pub struct SetLiquidityProfile {
     /// Quote authority — same gate as `set_reference_price`.
     pub signer: solana_pubkey::Pubkey,
-    /// Market account holding the target vault.
+    /// CHECK: taken unchecked so the handler can borrow the raw account
+    /// data and drive the shared kernel (a typed `Market` locks the
+    /// account exclusively and would deny that borrow). The account's
+    /// discriminator and owner are not re-validated here: the authority
+    /// check plus runtime program-ownership at the store are the guards,
+    /// exactly as on the asm fast path this build mirrors.
     pub market: solana_pubkey::Pubkey,
 }
 
@@ -114,7 +119,12 @@ impl SetLiquidityProfileBuilder {
         self.signer = Some(signer);
         self
     }
-    /// Market account holding the target vault.
+    /// CHECK: taken unchecked so the handler can borrow the raw account
+    /// data and drive the shared kernel (a typed `Market` locks the
+    /// account exclusively and would deny that borrow). The account's
+    /// discriminator and owner are not re-validated here: the authority
+    /// check plus runtime program-ownership at the store are the guards,
+    /// exactly as on the asm fast path this build mirrors.
     #[inline(always)]
     pub fn market(&mut self, market: solana_pubkey::Pubkey) -> &mut Self {
         self.market = Some(market);
@@ -167,7 +177,12 @@ impl SetLiquidityProfileBuilder {
 pub struct SetLiquidityProfileCpiAccounts<'a, 'b> {
     /// Quote authority — same gate as `set_reference_price`.
     pub signer: &'b solana_account_info::AccountInfo<'a>,
-    /// Market account holding the target vault.
+    /// CHECK: taken unchecked so the handler can borrow the raw account
+    /// data and drive the shared kernel (a typed `Market` locks the
+    /// account exclusively and would deny that borrow). The account's
+    /// discriminator and owner are not re-validated here: the authority
+    /// check plus runtime program-ownership at the store are the guards,
+    /// exactly as on the asm fast path this build mirrors.
     pub market: &'b solana_account_info::AccountInfo<'a>,
 }
 
@@ -177,7 +192,12 @@ pub struct SetLiquidityProfileCpi<'a, 'b> {
     pub __program: &'b solana_account_info::AccountInfo<'a>,
     /// Quote authority — same gate as `set_reference_price`.
     pub signer: &'b solana_account_info::AccountInfo<'a>,
-    /// Market account holding the target vault.
+    /// CHECK: taken unchecked so the handler can borrow the raw account
+    /// data and drive the shared kernel (a typed `Market` locks the
+    /// account exclusively and would deny that borrow). The account's
+    /// discriminator and owner are not re-validated here: the authority
+    /// check plus runtime program-ownership at the store are the guards,
+    /// exactly as on the asm fast path this build mirrors.
     pub market: &'b solana_account_info::AccountInfo<'a>,
     /// The arguments for the instruction.
     pub __args: SetLiquidityProfileInstructionArgs,
@@ -291,7 +311,12 @@ impl<'a, 'b> SetLiquidityProfileCpiBuilder<'a, 'b> {
         self.instruction.signer = Some(signer);
         self
     }
-    /// Market account holding the target vault.
+    /// CHECK: taken unchecked so the handler can borrow the raw account
+    /// data and drive the shared kernel (a typed `Market` locks the
+    /// account exclusively and would deny that borrow). The account's
+    /// discriminator and owner are not re-validated here: the authority
+    /// check plus runtime program-ownership at the store are the guards,
+    /// exactly as on the asm fast path this build mirrors.
     #[inline(always)]
     pub fn market(&mut self, market: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
         self.instruction.market = Some(market);

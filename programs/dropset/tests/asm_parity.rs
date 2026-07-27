@@ -1,6 +1,7 @@
 // cspell:word nocapture
-//! Rust↔ASM parity for the `set_reference_price` fast path, plus the
-//! offset assertions that pin what `src/asm/entrypoint.s` hardcodes.
+//! Rust↔ASM parity for the two quote-write fast paths —
+//! `set_reference_price` and `set_liquidity_profile` — plus the offset
+//! assertions that pin what `src/asm/entrypoint.s` hardcodes.
 //!
 //! Two layers:
 //!
@@ -13,11 +14,11 @@
 //!
 //! 2. The `*_parity` tests deploy the reference (feature-off) build beside
 //!    the default asm `.so` and push identical inputs through both,
-//!    asserting the assembly and the Rust kernel produce the same stamp and
-//!    the same domain error codes. They **skip** (rather than fail) when the
-//!    reference oracle `.so` is absent, so a plain `cargo test` — which only
-//!    builds the default asm `.so` — stays green. `make program-parity`
-//!    builds both.
+//!    asserting the assembly and the Rust kernels produce the same market
+//!    bytes and the same domain error codes. They **skip** (rather than
+//!    fail) when the reference oracle `.so` is absent, so a plain
+//!    `cargo test` — which only builds the default asm `.so` — stays green.
+//!    `make program-parity` builds both.
 //!
 //! Only *legitimate* inputs are compared for byte-parity: a real wallet
 //! signer carries no data, so the assembly's signer-empty / writable
@@ -25,13 +26,18 @@
 //! Those structural guards are asm-only (they keep the market at a static
 //! input offset) and are intentionally not part of the parity contract —
 //! see the architecture spec's **SetReferencePrice**.
+//!
+//! Keep new parity cases **in this file**: the required `Tests (asm parity)`
+//! CI job is the only one that builds the reference oracle, and it runs
+//! exactly `--test asm_parity`. A case in another test binary would only
+//! ever run against the default asm `.so`, so a divergence could pass CI.
 
 mod common;
 
 use anchor_v2_testing::Signer;
-use common::fixture::Fixture;
+use common::fixture::{simple_profile, Fixture, PROFILE_BYTES};
 use core::mem::{offset_of, size_of};
-use dropset::{Market, MarketHeader, Price, ReferencePrice, Vault};
+use dropset::{LiquidityProfile, Market, MarketHeader, Price, ReferencePrice, Vault};
 use solana_pubkey::Pubkey;
 
 // ── agave aligned account serialization (the input-buffer ABI) ──────────
@@ -91,7 +97,7 @@ fn asm_offsets_match_layout() {
     assert_eq!(Market::space_for(0), 248, "SLAB_ITEMS_OFF");
     assert_eq!(size_of::<Vault>(), 560, "VAULT_SIZE");
 
-    // Vault field offsets the stamp writes to.
+    // Vault field offsets the two payloads write to.
     assert_eq!(
         offset_of!(Vault, quote_authority),
         40,
@@ -105,6 +111,14 @@ fn asm_offsets_match_layout() {
         84,
         "RP_QUOTE_SLOT_OFF"
     );
+    assert_eq!(offset_of!(Vault, profile), 144, "VAULT_PROFILE_OFF");
+    assert_eq!(size_of::<LiquidityProfile>(), 160, "PROFILE_SIZE");
+
+    // Instruction-data offsets: both payloads sit past the 1-byte
+    // discriminator + the u32 `vault_idx`, so the profile blob — the
+    // `sol_memcpy_` source — starts at 5.
+    assert_eq!(1 + size_of::<u32>(), 5, "IX_PROFILE_OFF");
+    assert_eq!(PROFILE_BYTES, size_of::<LiquidityProfile>());
 }
 
 /// The stamped reference price plus the post-stamp market nonce — the
@@ -230,6 +244,225 @@ fn oob_err(mut f: Fixture) -> String {
         .expect_err("vault_idx past the slab length must reject")
 }
 
+// ── set_liquidity_profile (disc 6) ──────────────────────────────────────
+
+/// Every byte of the 160-byte blob non-zero and distinct per level, so a
+/// truncated, shifted, or partially-applied `sol_memcpy_` shows up rather
+/// than hiding behind zeroed tail levels.
+fn full_ladder() -> [u8; PROFILE_BYTES] {
+    let levels: Vec<(u32, u16, u32)> = (0..8)
+        .map(|i| (1_000 + i as u32 * 37, 100 + i as u16 * 11, 500 + i as u32))
+        .collect();
+    let bids: Vec<(u32, u16, u32)> = levels
+        .iter()
+        .map(|&(o, s, e)| (o + 7, s + 3, e + 9))
+        .collect();
+    common::fixture::ladder_profile(&levels, &bids)
+}
+
+/// The observable state of a profile write: the stored blob, the reference
+/// price triple it must leave untouched, and the post-write market nonce.
+type ProfileWrite = (Vec<u8>, u64, u32, u32, u64);
+
+/// Open vault 0, stamp a price, then write `profile` and read back
+/// everything the two builds must agree on.
+fn write_profile_and_read(mut f: Fixture, profile: [u8; PROFILE_BYTES]) -> ProfileWrite {
+    let auth = f.authority.pubkey();
+    f.create_vault(0, auth, false, Pubkey::default())
+        .expect("create_vault");
+    let signer = f.authority.insecure_clone();
+    f.set_reference_price(&signer, 0, valid_price(), 11)
+        .expect("set_reference_price");
+    f.set_liquidity_profile(&signer, 0, profile)
+        .expect("set_liquidity_profile");
+    let v = f.vault(0);
+    (
+        anchor_lang_v2::bytemuck::bytes_of(&v.profile).to_vec(),
+        v.reference_price.stamp.get(),
+        v.reference_price.price.as_u32(),
+        v.reference_price.quote_slot.get(),
+        f.market_header().nonce.get(),
+    )
+}
+
+#[test]
+fn profile_happy_path_parity() {
+    if !ref_built() {
+        eprintln!("skipping profile_happy_path_parity: reference oracle absent");
+        return;
+    }
+    let ladder = full_ladder();
+    let reference = write_profile_and_read(Fixture::bootstrap_ref(), ladder);
+    let asm = write_profile_and_read(Fixture::bootstrap(), ladder);
+    assert_eq!(
+        reference, asm,
+        "asm profile write must byte-match the reference build"
+    );
+    // And it is what we expect: the blob verbatim, flush armed over the
+    // pre-write nonce (1, after the price stamp), price / slot preserved.
+    assert_eq!(asm.0, ladder, "profile stored verbatim");
+    assert_eq!(
+        asm.1,
+        1 | dropset::FLUSH_BIT,
+        "stamp = pre_nonce(1) | FLUSH"
+    );
+    assert_eq!(asm.2, valid_price(), "reference price untouched");
+    assert_eq!(asm.3, 11, "quote_slot untouched");
+    assert_eq!(asm.4, 2, "nonce bumped by the profile write");
+}
+
+#[test]
+fn profile_over_bps_stored_raw_parity() {
+    if !ref_built() {
+        eprintln!("skipping profile_over_bps_stored_raw_parity: reference oracle absent");
+        return;
+    }
+    // Neither build validates the ladder's contents: an over-cap side (and a
+    // far-future expiry) is stored verbatim on both, with the size invariant
+    // left to the match-time flush.
+    let over = common::fixture::ladder_profile(&[(5_000, 20_000, u32::MAX)], &[(0, 30_000, 0)]);
+    let reference = write_profile_and_read(Fixture::bootstrap_ref(), over);
+    let asm = write_profile_and_read(Fixture::bootstrap(), over);
+    assert_eq!(reference, asm);
+    assert_eq!(asm.0, over, "over-cap ladder stored raw");
+}
+
+#[test]
+fn profile_write_footprint_parity() {
+    if !ref_built() {
+        eprintln!("skipping profile_write_footprint_parity: reference oracle absent");
+        return;
+    }
+    // Bound the write's blast radius on each build, then compare. A 160-byte
+    // `sol_memcpy_` is the one payload here big enough to run off its field,
+    // so the assertion is which bytes of the *whole* market account moved:
+    // only `market.nonce`, the target sector's `reference_price.stamp`, and
+    // its `profile`. A bleed into `remaining`, into `reference_price.price`,
+    // or into the neighboring sector shows up as an out-of-range index.
+    let ladder = full_ladder();
+    let reference = profile_write_footprint(Fixture::bootstrap_ref(), ladder);
+    let asm = profile_write_footprint(Fixture::bootstrap(), ladder);
+    // The footprint is identity-free (the changed bytes are the nonce, the
+    // stamp and the ladder — no pubkeys), so the two fixtures' independently
+    // generated keypairs don't make the builds incomparable.
+    assert_eq!(
+        reference, asm,
+        "asm and reference must move the same bytes to the same values"
+    );
+
+    // Vault 1 of two is the target; everything outside these three ranges
+    // must be untouched.
+    let vault1 = common::fixture::vault_byte_offset(1);
+    let nonce = 8..8 + size_of::<u64>();
+    let stamp = vault1 + offset_of!(Vault, reference_price) + offset_of!(ReferencePrice, stamp);
+    let stamp = stamp..stamp + size_of::<u64>();
+    let profile = vault1 + offset_of!(Vault, profile);
+    let profile = profile..profile + PROFILE_BYTES;
+    for (idx, _) in &asm.0 {
+        assert!(
+            nonce.contains(idx) || stamp.contains(idx) || profile.contains(idx),
+            "byte {idx} changed outside nonce / stamp / profile of sector 1"
+        );
+    }
+    // And the payload really did land: every non-zero ladder byte moved.
+    let moved: Vec<usize> = asm.0.iter().map(|&(i, _)| i).collect();
+    for (i, &b) in ladder.iter().enumerate() {
+        if b != 0 {
+            assert!(
+                moved.contains(&(profile.start + i)),
+                "ladder byte {i} was not written"
+            );
+        }
+    }
+}
+
+/// Open two vaults, write `profile` onto the *second*, and return every
+/// `(index, new_value)` the write changed in the market account's data.
+fn profile_write_footprint(
+    mut f: Fixture,
+    profile: [u8; PROFILE_BYTES],
+) -> (Vec<(usize, u8)>, u64) {
+    let auth = f.authority.pubkey();
+    // Two vaults; the slab allocates them into sectors 0 then 1. The
+    // `perf_fee_rate` differs only to keep the two transactions distinct
+    // (identical ones in the same slot are rejected as `AlreadyProcessed`).
+    f.create_vault(0, auth, false, Pubkey::default())
+        .expect("create_vault 0");
+    f.create_vault(1, auth, false, Pubkey::default())
+        .expect("create_vault 1");
+    let signer = f.authority.insecure_clone();
+    // Seed sector 0 with a different ladder, so a copy that lands one sector
+    // low would overwrite recognizable bytes rather than zeros.
+    f.set_liquidity_profile(&signer, 0, simple_profile(5_000, 10_000, u32::MAX))
+        .expect("seed vault 0's ladder");
+
+    let before = f.market_data();
+    f.set_liquidity_profile(&signer, 1, profile)
+        .expect("set_liquidity_profile");
+    let after = f.market_data();
+
+    let changed = before
+        .iter()
+        .zip(after.iter())
+        .enumerate()
+        .filter(|(_, (b, a))| b != a)
+        .map(|(i, (_, &a))| (i, a))
+        .collect();
+    (changed, f.market_header().nonce.get())
+}
+
+#[test]
+fn profile_unauthorized_parity() {
+    if !ref_built() {
+        eprintln!("skipping profile_unauthorized_parity: reference oracle absent");
+        return;
+    }
+    let ref_err = profile_unauthorized_err(Fixture::bootstrap_ref());
+    let asm_err = profile_unauthorized_err(Fixture::bootstrap());
+    // Domain error: both surface DropsetError::Unauthorized (Custom 6005).
+    assert!(
+        ref_err.contains("Custom(6005)"),
+        "reference unauthorized: {ref_err}"
+    );
+    assert!(
+        asm_err.contains("Custom(6005)"),
+        "asm unauthorized: {asm_err}"
+    );
+}
+
+fn profile_unauthorized_err(mut f: Fixture) -> String {
+    let auth = f.authority.pubkey();
+    f.create_vault(0, auth, false, Pubkey::default())
+        .expect("create_vault");
+    let stranger = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
+    f.set_liquidity_profile(&stranger, 0, full_ladder())
+        .expect_err("non quote-authority must reject")
+}
+
+#[test]
+fn profile_out_of_range_sector_parity() {
+    if !ref_built() {
+        eprintln!("skipping profile_out_of_range_sector_parity: reference oracle absent");
+        return;
+    }
+    let ref_err = profile_oob_err(Fixture::bootstrap_ref());
+    let asm_err = profile_oob_err(Fixture::bootstrap());
+    // Domain error: both surface DropsetError::InvalidSectorIndex (6010).
+    assert!(ref_err.contains("Custom(6010)"), "reference oob: {ref_err}");
+    assert!(asm_err.contains("Custom(6010)"), "asm oob: {asm_err}");
+}
+
+fn profile_oob_err(mut f: Fixture) -> String {
+    let auth = f.authority.pubkey();
+    f.create_vault(0, auth, false, Pubkey::default())
+        .expect("create_vault");
+    let signer = f.authority.insecure_clone();
+    f.set_liquidity_profile(&signer, 99, full_ladder())
+        .expect_err("vault_idx past the slab length must reject")
+}
+
+// ── CU report ──────────────────────────────────────────────────────────
+
 /// Compute units for one happy-path stamp.
 fn stamp_cu(mut f: Fixture) -> u64 {
     let auth = f.authority.pubkey();
@@ -241,27 +474,51 @@ fn stamp_cu(mut f: Fixture) -> u64 {
         .compute_units_consumed
 }
 
-/// The CU report the issue asks for: measure a `set_reference_price` stamp
-/// on each build and print the assembly-vs-reference comparison. The
-/// fast path skips Anchor's dispatch + account deserialization, so it must
-/// come in cheaper — asserted so a regression that erodes the saving fails
-/// the test. Run with `--nocapture` (or read the make-test-parity log) to
-/// see the table.
+/// Compute units for one happy-path profile write.
+fn profile_cu(mut f: Fixture) -> u64 {
+    let auth = f.authority.pubkey();
+    f.create_vault(0, auth, false, Pubkey::default())
+        .expect("create_vault");
+    let signer = f.authority.insecure_clone();
+    f.set_liquidity_profile_meta(&signer, 0, full_ladder())
+        .expect("set_liquidity_profile")
+        .compute_units_consumed
+}
+
+/// The CU report the issues ask for: measure each quote write on both builds
+/// and print the assembly-vs-reference comparison. Both fast paths skip
+/// Anchor's dispatch + account deserialization, so each must come in
+/// cheaper — asserted so a regression that erodes the saving fails the test.
+/// The profile row is also the `sol_memcpy_`-versus-chunked measurement: the
+/// syscall is metered at `max(10, len / 250)` CU, against ~40 for the 20
+/// 8-byte load/store pairs a hand-rolled 160-byte copy would need. Run with
+/// `--nocapture` (or read the make-test-parity log) to see the table.
 #[test]
 fn cu_report() {
     if !ref_built() {
         eprintln!("skipping cu_report: reference oracle absent (run `make program-parity`)");
         return;
     }
-    let reference = stamp_cu(Fixture::bootstrap_ref());
-    let asm = stamp_cu(Fixture::bootstrap());
-    let saved = reference.saturating_sub(asm);
-    eprintln!("set_reference_price compute units");
-    eprintln!("  reference (Rust entrypoint): {reference}");
-    eprintln!("  asm fast path:               {asm}");
-    eprintln!("  saved:                       {saved}");
-    assert!(
-        asm < reference,
-        "asm fast path ({asm} CU) should undercut the reference ({reference} CU)"
-    );
+    for (label, reference, asm) in [
+        (
+            "set_reference_price",
+            stamp_cu(Fixture::bootstrap_ref()),
+            stamp_cu(Fixture::bootstrap()),
+        ),
+        (
+            "set_liquidity_profile",
+            profile_cu(Fixture::bootstrap_ref()),
+            profile_cu(Fixture::bootstrap()),
+        ),
+    ] {
+        let saved = reference.saturating_sub(asm);
+        eprintln!("{label} compute units");
+        eprintln!("  reference (Rust entrypoint): {reference}");
+        eprintln!("  asm fast path:               {asm}");
+        eprintln!("  saved:                       {saved}");
+        assert!(
+            asm < reference,
+            "{label}: asm fast path ({asm} CU) should undercut the reference ({reference} CU)"
+        );
+    }
 }

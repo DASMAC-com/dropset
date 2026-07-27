@@ -95,14 +95,12 @@ impl Vault {
     /// the flush lives behind this accessor and the matching handler no
     /// longer open-codes the slab-touching loop.
     ///
-    /// Per-side `Σ size_bps ≤ BPS` gate, a match-time mirror of the
-    /// write-time reject in `set_liquidity_profile` (which rejects
-    /// `Σ > BPS` before any `profile` bytes are stored) — both read the
-    /// per-side sums from
+    /// Per-side `Σ size_bps ≤ BPS` gate — the **sole** enforcement of that
+    /// invariant, reading the per-side sums from
     /// [`LiquidityProfile::side_size_sums`](super::LiquidityProfile::side_size_sums).
-    /// Because no stored profile can currently exceed BPS, this match-time
-    /// gate is unreachable defense-in-depth today; it keeps the hot path
-    /// robust should that write-time reject ever move here. A side whose
+    /// `set_liquidity_profile` stores whatever ladder the leader hands it
+    /// (its ASM fast path carries no validation at all), so an over-cap
+    /// profile really does reach here. A side whose
     /// sum exceeds BPS is thrown out of matching — its `remaining` sizes
     /// are written as zero, which the collection loop skips — exactly like
     /// an invalid reference price skips a whole vault, instead of aborting

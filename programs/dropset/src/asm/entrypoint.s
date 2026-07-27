@@ -7,13 +7,24 @@
 # cspell:word stxw
 # Hybrid sBPF entrypoint for the dropset program.
 #
-# Short-circuits the `set_reference_price` discriminator (5) and stamps the
-# vault's reference price inline, then exits; every other discriminator is
-# forwarded to `__anchor_dispatch` (the dispatcher `#[program]` emits under
-# the crate's `no-entrypoint` feature). Mirrors the solana-free
-# `stamp_reference_price` kernel byte-for-byte — see
-# `src/state/market/reference_price.rs`. Modeled on the anchor-next
-# `prop-amm` oracle fast-path demo.
+# Short-circuits the two quote-write discriminators — `set_reference_price`
+# (5) and `set_liquidity_profile` (6) — and writes the target vault inline,
+# then exits; every other discriminator is forwarded to `__anchor_dispatch`
+# (the dispatcher `#[program]` emits under the crate's `no-entrypoint`
+# feature). Mirrors the solana-free kernels byte-for-byte — see
+# `quote_write.rs`, `reference_price.rs` and `liquidity_profile.rs` under
+# `src/state/market/`. (This file is embedded in a `global_asm!` template
+# string, so curly braces must not appear anywhere in it — comments
+# included — or they are read as operand placeholders.) Modeled on the
+# anchor-next `prop-amm` oracle fast-path demo.
+#
+# Both discriminators share one preamble (layout integrity, sector bounds,
+# the `quote_authority` compare, the nonce bump and flush arm) exactly as
+# the Rust kernels share `quote_write.rs`, and diverge only at the payload:
+# `set_reference_price` stores two u32s, `set_liquidity_profile` copies the
+# 160-byte profile blob with `sol_memcpy_`. Neither validates its payload —
+# matching skips an invalid price, and an over-cap ladder side is dropped at
+# flush time.
 #
 # Entry ABI (anchor-next asm): r1 = serialized accounts region
 # (num_accounts at r1+0, then account records), r2 = instruction data
@@ -23,17 +34,27 @@
 # with header fields: +1 is_signer, +2 is_writable, +8 pubkey(32),
 # +80 data_len(8), +88 data.
 #
-# Account order is [signer(0), market(1)]. The signer is required to carry
-# NO data (data_len == 0) so the market record sits at a *static* input
-# offset regardless of the market's (variable) size. Every offset below is
-# pinned by the `offset_of!` assertion test so the assembly and the Rust
-# layout cannot drift.
+# Account order is [signer(0), market(1)] on both paths. The signer is
+# required to carry NO data (data_len == 0) so the market record sits at a
+# *static* input offset regardless of the market's (variable) size. Every
+# offset below is pinned by the `offset_of!` assertion test so the assembly
+# and the Rust layout cannot drift.
+#
+# Register discipline through the shared preamble: r1 = accounts region,
+# r2 = instruction data, r6 = the discriminator (held for the payload
+# branch), r9 = absolute pointer to the target vault, r3/r4/r5 = scratch.
+# `sol_memcpy_` clobbers r0-r5 and preserves r6-r9, and the profile branch
+# exits immediately after it, so nothing needs stashing across the call.
 
-# --- instruction ---
-.equ DISCRIM, 5
+# --- instructions ---
+.equ DISCRIM_SET_REFERENCE_PRICE, 5
+.equ DISCRIM_SET_LIQUIDITY_PROFILE, 6
 .equ IX_VAULT_IDX_OFF, 1          # u32, right after the 1-byte discriminator
+# set_reference_price payload
 .equ IX_PRICE_BITS_OFF, 5         # u32
 .equ IX_QUOTE_SLOT_OFF, 9         # u32
+# set_liquidity_profile payload
+.equ IX_PROFILE_OFF, 5            # [u8; 160], past disc(1) + vault_idx(4)
 
 # --- account 0: signer ---
 .equ SIGNER_IS_SIGNER_OFF, 9      # acct0_base(8) + header is_signer(1)
@@ -61,6 +82,8 @@
 .equ RP_STAMP_OFF, 72             # reference_price.stamp (u64)
 .equ RP_PRICE_OFF, 80             # reference_price.price (u32)
 .equ RP_QUOTE_SLOT_OFF, 84        # reference_price.quote_slot (u32)
+.equ VAULT_PROFILE_OFF, 144       # profile (LiquidityProfile, 160 B)
+.equ PROFILE_SIZE, 160            # size_of::<LiquidityProfile>()
 
 # --- constants ---
 .equ FLUSH_BIT, 0x8000000000000000
@@ -80,10 +103,18 @@
 .global entrypoint
 
 entrypoint:
-    # Fast-path only our discriminator; forward everything else.
-    ldxb r3, [r2 + 0]
-    jne r3, DISCRIM, dispatch
+    # Fast-path the two quote writes; forward everything else. r6 keeps the
+    # discriminator for the payload branch at the end of the preamble.
+    ldxb r6, [r2 + 0]
+    jeq r6, DISCRIM_SET_REFERENCE_PRICE, quote_write
+    jeq r6, DISCRIM_SET_LIQUIDITY_PROFILE, quote_write
 
+dispatch:
+    call __anchor_dispatch
+    exit
+
+# --- shared quote-write preamble (mirrors quote_write.rs) ---------------
+quote_write:
     # Layout integrity: need [signer, market].
     ldxdw r3, [r1 + 0]
     jlt r3, 2, err_few_accounts
@@ -100,19 +131,18 @@ entrypoint:
     ldxw r4, [r2 + IX_VAULT_IDX_OFF]     # r4 = vault_idx
     ldxw r5, [r1 + MARKET_LEN_OFF]       # r5 = slab len
     jge r4, r5, err_invalid_sector       # idx >= len
-    mov64 r6, r4
-    mul64 r6, VAULT_SIZE
-    add64 r6, SLAB_ITEMS_OFF             # r6 = vault offset within data
-    mov64 r7, r6
-    add64 r7, VAULT_SIZE                 # r7 = vault end within data
-    ldxdw r8, [r1 + MARKET_DATA_LEN_OFF] # r8 = market data_len
-    jgt r7, r8, err_invalid_sector       # idx >= capacity
+    mul64 r4, VAULT_SIZE
+    add64 r4, SLAB_ITEMS_OFF             # r4 = vault offset within data
+    mov64 r5, r4
+    add64 r5, VAULT_SIZE                 # r5 = vault end within data
+    ldxdw r3, [r1 + MARKET_DATA_LEN_OFF] # r3 = market data_len
+    jgt r5, r3, err_invalid_sector       # idx >= capacity
 
     # Absolute pointer to the target vault (keeps subsequent loads/stores
     # within the i16 offset range whatever vault_idx is).
     mov64 r9, r1
     add64 r9, MARKET_DATA_OFF
-    add64 r9, r6                         # r9 = &vault
+    add64 r9, r4                         # r9 = &vault
 
     # Only domain guard: signer.key == vault.quote_authority (4x u64).
     ldxdw r3, [r1 + SIGNER_PUBKEY_OFF + 0]
@@ -129,6 +159,7 @@ entrypoint:
     jne r3, r4, err_unauthorized
 
     # Bump the nonce; stamp carries the OLD nonce OR'd with the flush bit.
+    # Leaves price / quote_slot alone — each payload writes its own field.
     ldxdw r3, [r1 + MARKET_NONCE_OFF]    # r3 = old nonce
     lddw r4, FLUSH_BIT
     or64 r4, r3                          # r4 = old_nonce | FLUSH_BIT
@@ -136,6 +167,9 @@ entrypoint:
     add64 r3, 1
     stxdw [r1 + MARKET_NONCE_OFF], r3    # nonce += 1
 
+    jeq r6, DISCRIM_SET_LIQUIDITY_PROFILE, write_profile
+
+# --- set_reference_price payload (mirrors reference_price.rs) -----------
     # Store the raw price and quote_slot (two adjacent u32s).
     ldxw r3, [r2 + IX_PRICE_BITS_OFF]
     stxw [r9 + RP_PRICE_OFF], r3
@@ -145,8 +179,20 @@ entrypoint:
     mov64 r0, 0
     exit
 
-dispatch:
-    call __anchor_dispatch
+# --- set_liquidity_profile payload (mirrors liquidity_profile.rs) -------
+write_profile:
+    # One `sol_memcpy_` of the whole 160-byte blob: the syscall is metered
+    # at max(10, len / 250) CU, so ~10 CU against ~40 for the 20 hand-rolled
+    # ldxdw/stxdw pairs a chunked copy would need. dst is the program-owned
+    # writable market data, src the readable instruction-data region — the
+    # two never overlap.
+    add64 r2, IX_PROFILE_OFF             # r2 = &ix.profile_bytes  (src)
+    mov64 r1, r9
+    add64 r1, VAULT_PROFILE_OFF          # r1 = &vault.profile     (dst)
+    mov64 r3, PROFILE_SIZE               # r3 = len
+    call sol_memcpy_
+
+    mov64 r0, 0
     exit
 
 err_few_accounts:

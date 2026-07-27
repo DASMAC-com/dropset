@@ -168,13 +168,13 @@ impl LiquidityProfile {
     /// `8 × u16::MAX = 524_280`, far inside `u32` range, so the
     /// `saturating_add` never actually saturates on a real profile.
     ///
-    /// Single source for the two `Σ size_bps ≤ BPS` gates that would
-    /// otherwise re-derive this loop independently: the write-time reject
-    /// in `set_liquidity_profile` (which rejects `Σ > BPS` before any
-    /// `profile` bytes are stored) and the match-time flush gate in
-    /// [`Vault::materialize_remaining`] (which zeroes an oversized side
-    /// out of matching rather than aborting the taker's swap). Each caller
-    /// applies its own `≤ BPS` comparison and failure behavior.
+    /// Feeds the one on-chain gate on that invariant: the match-time flush
+    /// in [`Vault::materialize_remaining`], which zeroes an oversized side
+    /// out of matching rather than aborting the taker's swap. The write path
+    /// (`set_liquidity_profile`) stores the ladder raw and does not call
+    /// this — off-chain, the SDK simulator and the bot's ladder builder
+    /// carry their own mirrors of the same sum, so an honest leader never
+    /// arms an over-cap side in the first place.
     #[inline(always)]
     pub fn side_size_sums(&self) -> (u32, u32) {
         let mut bid_sum: u32 = 0;

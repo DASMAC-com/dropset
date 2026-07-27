@@ -2,8 +2,6 @@
 
 <!-- cspell:word reentrancy -->
 
-<!-- cspell:word syscall -->
-
 <!-- cspell:word syscalls -->
 
 <!-- markdownlint-disable MD013 -->
