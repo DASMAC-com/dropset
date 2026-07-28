@@ -7,7 +7,7 @@ import type { BookToken, OrderBookState } from "@/lib/hooks/useOrderBook";
 import { useOrderBook } from "@/lib/hooks/useOrderBook";
 import { useSwapStore } from "@/lib/store";
 import { formatAmount, formatPrice, priceFractionDigits } from "./format";
-import { RecentFills } from "./RecentFills";
+import { Trades } from "./Trades";
 import { GREEN, GREEN_BAR, GREEN_FLASH, RED, RED_BAR, RED_FLASH } from "./tone";
 
 // Max rows rendered per side — a cap, not a pad. Matches the protocol's
@@ -148,13 +148,13 @@ function OrderBookView({
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-background">
       <div className="flex items-center justify-between border-border border-b px-3 py-2.5">
-        <h3 className="font-semibold text-foreground text-sm">Order book</h3>
+        <h3 className="font-semibold text-foreground text-sm">Order Book</h3>
         <span className="font-mono text-muted-fg text-xs">
           {base.symbol}/{quote.symbol}
         </span>
       </div>
 
-      <div className="grid grid-cols-3 px-3 py-1 text-[10px] text-muted-fg uppercase tracking-wide">
+      <div className="grid grid-cols-3 px-3 py-1 text-[10px] text-muted-fg tracking-wide">
         <span>Price</span>
         <span className="text-right">Size ({base.symbol})</span>
         <span className="text-right">Total ({base.symbol})</span>
@@ -171,7 +171,9 @@ function OrderBookView({
         />
       ))}
 
-      <div className="flex items-center justify-center gap-3 border-border/60 border-y py-1 font-mono text-[10px] text-muted-fg tabular-nums">
+      {/* The spread row carries the grey `muted` fill, the same tone the trades
+          tape stripes with — it reads as the divider between the two sides. */}
+      <div className="flex items-center justify-center gap-3 border-border/60 border-y bg-muted py-1 font-mono text-[10px] text-muted-fg tabular-nums">
         {spread !== null ? (
           <>
             <span>spread {formatPrice(spread, fractionDigits)}</span>
@@ -201,7 +203,7 @@ function OrderBookView({
 // market actually exists for the pair — so it only appears when there is a
 // live market to show (and stays out of the layout otherwise).
 //
-// The recent-fills tape sits directly below the ladder, sharing this panel's
+// The trades tape sits directly below the ladder, sharing this panel's
 // market/book gating: it is the same instrument seen live rather than at rest.
 // Localnet-only for now — the tape's per-row links resolve against the local
 // explorer, and enabling it on mainnet rides with the env-promotion work.
@@ -221,7 +223,7 @@ export function OrderBookPanel({ className }: { className?: string }) {
   return (
     <div className={`flex flex-col gap-3 ${className ?? ""}`}>
       <OrderBookView view={view} base={base} quote={quote} />
-      <RecentFills market={market} base={base} enabled={IS_LOCALNET} />
+      <Trades market={market} base={base} enabled={IS_LOCALNET} />
     </div>
   );
 }

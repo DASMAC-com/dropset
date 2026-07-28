@@ -18,13 +18,36 @@ export function formatPrice(price: number, fractionDigits: number): string {
   });
 }
 
-// Compact 2-dp size, matching the ladder's size/total columns. Demo sizes are
-// small, so the Number conversion is well inside f64's exact-integer range.
-export function formatAmount(atoms: bigint, decimals: number): string {
-  const value = Number(atoms) / 10 ** decimals;
-  return value.toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+// An atom count as a decimal token amount. Demo sizes are small, so the Number
+// conversion is well inside f64's exact-integer range.
+export function amountValue(atoms: bigint, decimals: number): number {
+  return Number(atoms) / 10 ** decimals;
+}
+
+// How many fraction digits `value` needs to show at least `minSigFigs`
+// significant digits — never fewer than 2, so ordinary sizes keep their usual
+// look, and never more than 8, so one speck of dust can't blow the column out.
+//
+// Without this a sub-0.01 fill renders as a flat "0.00": a real trade that
+// reads like a broken feed. A sweep that clears one level and takes a sliver of
+// the next produces exactly that.
+export function amountFractionDigits(value: number, minSigFigs = 2): number {
+  if (!Number.isFinite(value) || value === 0) return 2;
+  const magnitude = Math.floor(Math.log10(Math.abs(value)));
+  return Math.min(8, Math.max(2, minSigFigs - 1 - magnitude));
+}
+
+// Compact size, matching the ladder's size/total columns. `fractionDigits` is
+// the caller's choice so a whole column can share one count and stay aligned —
+// a per-row count would jitter the decimal point down the column.
+export function formatAmount(
+  atoms: bigint,
+  decimals: number,
+  fractionDigits = 2,
+): string {
+  return amountValue(atoms, decimals).toLocaleString("en-US", {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
   });
 }
 
