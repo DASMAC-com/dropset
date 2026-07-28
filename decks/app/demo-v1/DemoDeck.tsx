@@ -352,44 +352,35 @@ const FlywheelEnd = ({ label, logos }: { label: string; logos: Logo[] }) => (
 const Flywheel = () => (
   <Box margin="18px 0 0 0" width={`${FLYWHEEL_WIDTH}px`}>
     {/* The curve is centred over both ends of the flywheel — it's the depth
-        that appears once the two are connected — and deliberately narrower
-        than the row beneath it, since the same rise across less width is a
-        steeper, more emphatic climb. */}
-    <FlexBox justifyContent="center">
+        that appears once the two are connected. Wide enough to carry the page
+        on its own: when it was narrow and a divider ran down from under it,
+        the pair read as a chart mounted on a stick. */}
+    <FlexBox justifyContent="center" margin="0 0 30px 0">
       <svg
-        width="440"
-        height="118"
-        viewBox="0 0 440 118"
+        width="660"
+        height="172"
+        viewBox="0 0 660 172"
         role="img"
         aria-label="Order-book depth growing over time"
       >
         <path
-          d="M0 110 C 150 106, 250 92, 320 58 C 372 32, 406 14, 440 4 L 440 118 L 0 118 Z"
+          d="M0 164 C 210 160, 360 138, 470 88 C 560 47, 610 22, 660 6 L 660 172 L 0 172 Z"
           fill={colors.accent}
-          opacity="0.14"
+          opacity="0.18"
         />
         <path
-          d="M0 110 C 150 106, 250 92, 320 58 C 372 32, 406 14, 440 4"
+          d="M0 164 C 210 160, 360 138, 470 88 C 560 47, 610 22, 660 6"
           fill="none"
           stroke={colors.accent}
-          strokeWidth="4"
+          strokeWidth="5"
         />
       </svg>
     </FlexBox>
-    <FlexBox justifyContent="space-between" alignItems="stretch">
+    {/* No divider between the ends: each heading's rule already brackets its
+        own pair, and the vertical line only survived as the stick the curve
+        appeared to stand on. */}
+    <FlexBox justifyContent="space-between" alignItems="flex-start">
       <FlywheelEnd label="Upstream" logos={UPSTREAM} />
-      {/* The rule between the two ends. `flexShrink: 0` keeps it visible: a
-          1px flex item is otherwise free to collapse to nothing the moment the
-          row is tight. */}
-      <div
-        style={{
-          backgroundColor: colors.mutedFg,
-          flexShrink: 0,
-          margin: "0 26px",
-          opacity: 0.45,
-          width: "1px",
-        }}
-      />
       <FlywheelEnd label="Downstream" logos={DOWNSTREAM} />
     </FlexBox>
   </Box>

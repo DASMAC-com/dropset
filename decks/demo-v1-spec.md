@@ -178,18 +178,20 @@ pages:
 #### Page 7 — How we grow · ~8s
 
 - **On-slide:** Vaults bootstrap a public FX liquidity flywheel.
-- **Visual:** A curve of depth growing, over the flywheel's two ends —
+- **Visual:** A big curve of depth growing, over the flywheel's two ends —
   **Upstream** (Loon, who issues CADC; AUDD Digital) and **Downstream**
   (Altitude, CargoBill), all people we've actually talked to about
   sourcing liquidity. Each heading sits over a rule spanning its own two
-  tiles, with a divider between the ends. Each tile is captioned with the
-  company, then what they are to us: "Loon / CADC issuer", "Altitude /
+  tiles, and nothing runs between the ends. Each tile is captioned with
+  the company, then what they are to us: "Loon / CADC issuer", "Altitude /
   Banking".
-- **Note:** Getting the grouping to read took three tries, so don't undo
-  it: four evenly-spaced tiles look like one row of four, and a hairline
-  between them doesn't change that. Boxing each end in a filled panel did
-  work, but the two slabs then dominated the page. The heading-plus-rule
-  is what says "these two belong together" without the weight.
+- **Note:** Getting this page to read took several tries, so don't undo
+  it. Four evenly-spaced tiles look like one row of four, and a hairline
+  between them doesn't change that; boxing each end in a filled panel does
+  work, but the two slabs then dominate the page. Heading-plus-rule is what
+  brackets a pair without the weight. And the curve has to be wide: a
+  narrow one above a vertical divider read as a chart mounted on a stick,
+  which is why there's no divider now.
 - **Spoken:** "We seed the markets ourselves the way Hyperliquid did —
   our vaults bootstrap each book, and anyone can top them off with
   inventory, so the flywheel is public rather than ours alone. It has two
