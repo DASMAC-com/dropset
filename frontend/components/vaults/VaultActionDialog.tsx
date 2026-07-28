@@ -24,7 +24,7 @@ import {
   type VaultMarket,
   vaultReserveRatio,
 } from "@/lib/data/vaults";
-import { explorerAddressUrl } from "@/lib/explorer";
+import { EXPLORER_NAME, explorerAddressUrl } from "@/lib/explorer";
 import { FORMATS } from "@/lib/format/formats";
 import { sanitizeAmount } from "@/lib/format/input";
 import { BPS_SCALE, cappedPercentLabel } from "@/lib/format/percent";
@@ -579,8 +579,8 @@ export function VaultActionDialog({
                 href={explorerAddressUrl(vault.leader)}
                 target="_blank"
                 rel="noopener noreferrer"
-                title="View leader on Solscan"
-                aria-label="View leader on Solscan"
+                title={`View leader on ${EXPLORER_NAME}`}
+                aria-label={`View leader on ${EXPLORER_NAME}`}
                 className="inline-flex shrink-0 items-center rounded p-1 text-muted-fg hover:bg-muted hover:text-accent"
               >
                 <ExternalLink size={12} />

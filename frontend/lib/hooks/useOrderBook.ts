@@ -18,6 +18,10 @@ export type OrderBookState = {
   // "ready" once a book has been polled at least once.
   status: "idle" | "no-market" | "ready";
   view: DropsetMarketView | null;
+  // The resolved market account. Exposed so a consumer that watches the same
+  // market from a different transport (the recent-fills subscription) can
+  // filter on it without re-resolving the route itself.
+  market: Address | null;
   // The market's base/quote in display terms, oriented by the resolved
   // take side (a from→to sell makes `from` the base; a buy makes `to` the
   // base). Null until the market resolves.
@@ -28,6 +32,7 @@ export type OrderBookState = {
 const INITIAL: OrderBookState = {
   status: "idle",
   view: null,
+  market: null,
   base: null,
   quote: null,
 };
@@ -123,7 +128,7 @@ export function useOrderBook(
           commitment: "confirmed",
         });
         if (cancelled || gen !== generation) return;
-        setState({ status: "ready", view, base, quote });
+        setState({ status: "ready", view, market, base, quote });
         schedule(ORDER_BOOK_REFRESH_MS, gen);
       } catch {
         // A transient RPC hiccup shouldn't freeze the book — keep polling so

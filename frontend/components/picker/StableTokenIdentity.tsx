@@ -7,7 +7,7 @@ import {
   tokenIconUrl,
   truncateTokenName,
 } from "@/lib/data/currencies";
-import { explorerTokenUrl } from "@/lib/explorer";
+import { EXPLORER_NAME, explorerTokenUrl } from "@/lib/explorer";
 import { useLiquidityLookup } from "@/lib/hooks/useUsdQuote";
 import { TokenInfoLink } from "./TokenInfoLink";
 
@@ -50,7 +50,7 @@ export function StableTokenIdentity({
             </span>
           )}
         </span>
-        {/* Secondary line: truncating name + always-visible Solscan link on
+        {/* Secondary line: truncating name + always-visible explorer link on
             the shortened mint. Layout uses a nested flex with `min-w-0
             truncate` on the name and `shrink-0` on the bullet + mint so long
             names (e.g. "World Liberty Financial USD") collapse with an
@@ -68,7 +68,7 @@ export function StableTokenIdentity({
             target="_blank"
             rel="noreferrer"
             onClick={(e) => e.stopPropagation()}
-            title={`View ${s.symbol} on Solscan`}
+            title={`View ${s.symbol} on ${EXPLORER_NAME}`}
             className="shrink-0 font-mono hover:text-foreground hover:underline"
           >
             {shortenMint(s.mint)}

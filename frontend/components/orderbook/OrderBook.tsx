@@ -1,12 +1,14 @@
 "use client";
 
-// cspell:word Hyperliquid
-
 import { type BookLevel, decodePrice } from "@dropset/sdk";
 import { useMemo } from "react";
+import { IS_LOCALNET } from "@/lib/env";
 import type { BookToken, OrderBookState } from "@/lib/hooks/useOrderBook";
 import { useOrderBook } from "@/lib/hooks/useOrderBook";
 import { useSwapStore } from "@/lib/store";
+import { formatAmount, formatPrice, priceFractionDigits } from "./format";
+import { RecentFills } from "./RecentFills";
+import { GREEN, GREEN_BAR, GREEN_FLASH, RED, RED_BAR, RED_FLASH } from "./tone";
 
 // Max rows rendered per side — a cap, not a pad. Matches the protocol's
 // per-side ladder depth (N_LEVELS = 8). Only the resting levels are rendered
@@ -15,51 +17,17 @@ import { useSwapStore } from "@/lib/store";
 const MAX_ROWS = 8;
 const ROW_H = "h-[22px]";
 
-// Hyperliquid-style soft red/green. Text is the saturated tone; the depth bar
-// and the update-flash are low-alpha washes of it.
+// Asks red, bids green. Text is the saturated tone; the depth bar and the
+// update-flash are low-alpha washes of it. The palette is shared with the
+// fills tape below the ladder — see ./tone.
 const TONE = {
-  ask: {
-    text: "#ff6b81",
-    bar: "rgba(255,107,129,0.12)",
-    flash: "rgba(255,107,129,0.30)",
-  },
-  bid: {
-    text: "#3fd39b",
-    bar: "rgba(63,211,155,0.12)",
-    flash: "rgba(63,211,155,0.30)",
-  },
+  ask: { text: RED, bar: RED_BAR, flash: RED_FLASH },
+  bid: { text: GREEN, bar: GREEN_BAR, flash: GREEN_FLASH },
 } as const;
 
 // One rendered ladder row: absolute price, this level's size, and the
 // cumulative size from the spread out to this level (the "Total" column).
 type Row = { price: number; size: bigint; total: bigint };
-
-// FX stablecoin pairs span a wide price range (EUR ≈ 1.1, MXN ≈ 0.05,
-// IDR ≈ 0.00006), so pick the fraction digits from the price magnitude and
-// apply the same count to every row, keeping the price column aligned.
-function priceFractionDigits(price: number): number {
-  if (price >= 1000) return 2;
-  if (price >= 1) return 4;
-  if (price >= 0.01) return 6;
-  return 8;
-}
-
-function formatPrice(price: number, fractionDigits: number): string {
-  return price.toLocaleString("en-US", {
-    minimumFractionDigits: fractionDigits,
-    maximumFractionDigits: fractionDigits,
-  });
-}
-
-// Compact 2-dp size, like Hyperliquid's size/total columns. Demo sizes are
-// small, so the Number conversion is well inside f64's exact-integer range.
-function formatAmount(atoms: bigint, decimals: number): string {
-  const value = Number(atoms) / 10 ** decimals;
-  return value.toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
 
 // Best-first levels → rows with a running cumulative total (from the spread
 // outward). Drops anything that doesn't decode to a real, positive price.
@@ -232,12 +200,17 @@ function OrderBookView({
 // store, polls the book from chain via the SDK, and renders nothing until a
 // market actually exists for the pair — so it only appears when there is a
 // live market to show (and stays out of the layout otherwise).
+//
+// The recent-fills tape sits directly below the ladder, sharing this panel's
+// market/book gating: it is the same instrument seen live rather than at rest.
+// Localnet-only for now — the tape's per-row links resolve against the local
+// explorer, and enabling it on mainnet rides with the env-promotion work.
 export function OrderBookPanel({ className }: { className?: string }) {
   const fromStablecoin = useSwapStore((s) => s.from.stablecoin);
   const toStablecoin = useSwapStore((s) => s.to.stablecoin);
   const sameToken = fromStablecoin === toStablecoin;
 
-  const { status, view, base, quote } = useOrderBook(
+  const { status, view, market, base, quote } = useOrderBook(
     fromStablecoin,
     toStablecoin,
     !sameToken,
@@ -246,8 +219,9 @@ export function OrderBookPanel({ className }: { className?: string }) {
   if (status !== "ready" || !view || !base || !quote) return null;
 
   return (
-    <div className={className}>
+    <div className={`flex flex-col gap-3 ${className ?? ""}`}>
       <OrderBookView view={view} base={base} quote={quote} />
+      <RecentFills market={market} base={base} enabled={IS_LOCALNET} />
     </div>
   );
 }

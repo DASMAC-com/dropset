@@ -17,7 +17,7 @@ import {
 import { COPY_FEEDBACK_DURATION_MS } from "@/lib/data/timings";
 import { buildPickerWallets, type PickerWallet } from "@/lib/data/wallets";
 import { emit, useAppEvent } from "@/lib/events";
-import { explorerAddressUrl } from "@/lib/explorer";
+import { EXPLORER_NAME, explorerAddressUrl } from "@/lib/explorer";
 import { useWalletAccountWatch } from "@/lib/hooks/useWalletAccountWatch";
 import { isMobile } from "@/lib/ua";
 import { DIALOG_CONTENT_POSITION, DIALOG_OVERLAY_CLASS } from "@/lib/ui/dialog";
@@ -355,7 +355,7 @@ export function WalletButton() {
             className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-foreground text-sm no-underline transition-colors hover:bg-muted"
           >
             <ExternalLink size={14} />
-            Open on Solscan
+            Open on {EXPLORER_NAME}
           </a>
           <button
             type="button"
