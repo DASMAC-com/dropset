@@ -223,34 +223,39 @@ const LogoRow = ({
 }) => (
   <FlexBox margin={margin} justifyContent="center" alignItems="flex-start">
     {logos.map(({ name, src, note }) => (
-      <Box key={name} margin="0 12px" width={`${width}px`}>
+      // The column is wider than its tile so a long caption ("AUDD Digital")
+      // sits on one line: a wrapped caption pushes its note down and breaks
+      // the row's shared baseline.
+      <Box key={name} margin="0 10px" width={`${width + 56}px`}>
         {/* Every tile in a row is the same box; the mark is contained inside
             it rather than sized to it, so a wide logotype and a square icon
             share a footprint without either being stretched. */}
-        <div
-          style={{
-            alignItems: "center",
-            border: `1px solid ${tint ?? colors.border}`,
-            borderRadius: "14px",
-            boxSizing: "border-box",
-            display: "flex",
-            height: `${height + 46}px`,
-            justifyContent: "center",
-            padding: "0 18px",
-            width: "100%",
-          }}
-        >
-          <img
-            src={src}
-            alt={name}
+        <FlexBox justifyContent="center">
+          <div
             style={{
-              display: "block",
-              maxHeight: `${height}px`,
-              maxWidth: "100%",
-              objectFit: "contain",
+              alignItems: "center",
+              border: `1px solid ${tint ?? colors.border}`,
+              borderRadius: "14px",
+              boxSizing: "border-box",
+              display: "flex",
+              height: `${height + 46}px`,
+              justifyContent: "center",
+              padding: "0 18px",
+              width: `${width}px`,
             }}
-          />
-        </div>
+          >
+            <img
+              src={src}
+              alt={name}
+              style={{
+                display: "block",
+                maxHeight: `${height}px`,
+                maxWidth: "100%",
+                objectFit: "contain",
+              }}
+            />
+          </div>
+        </FlexBox>
         <Text
           color={tint ?? colors.mutedFg}
           fontFamily="monospace"
@@ -299,8 +304,8 @@ const UPSTREAM: Logo[] = [
 ];
 
 const DOWNSTREAM: Logo[] = [
-  { name: "Altitude", src: "/remote/logo-altitude.png", note: "banking" },
-  { name: "CargoBill", src: "/remote/logo-cargobill.jpg", note: "supply chain" },
+  { name: "Altitude", src: "/remote/logo-altitude.png", note: "Banking" },
+  { name: "CargoBill", src: "/remote/logo-cargobill.jpg", note: "Supply chain" },
 ];
 
 /**
@@ -309,32 +314,36 @@ const DOWNSTREAM: Logo[] = [
  * them is depth growing once both ends are connected — an inline SVG, so it
  * stays crisp at projector size with no asset pipeline.
  */
-const FLYWHEEL_WIDTH = 840;
-const FLYWHEEL_TILE = 168;
+const FLYWHEEL_WIDTH = 780;
+const FLYWHEEL_TILE = 124;
 
 const Flywheel = () => (
   <Box margin="18px 0 0 0" width={`${FLYWHEEL_WIDTH}px`}>
-    {/* The curve spans both ends of the flywheel rather than sitting over one
-        of them: it's the depth that appears once the two are connected. */}
-    <svg
-      width={FLYWHEEL_WIDTH}
-      height="112"
-      viewBox="0 0 840 112"
-      role="img"
-      aria-label="Order-book depth growing over time"
-    >
-      <path
-        d="M0 104 C 250 100, 460 84, 590 52 C 700 26, 770 12, 840 5 L 840 112 L 0 112 Z"
-        fill={colors.accent}
-        opacity="0.14"
-      />
-      <path
-        d="M0 104 C 250 100, 460 84, 590 52 C 700 26, 770 12, 840 5"
-        fill="none"
-        stroke={colors.accent}
-        strokeWidth="4"
-      />
-    </svg>
+    {/* The curve is centred over both ends of the flywheel — it's the depth
+        that appears once the two are connected — and deliberately narrower
+        than the row beneath it, since the same rise across less width is a
+        steeper, more emphatic climb. */}
+    <FlexBox justifyContent="center">
+      <svg
+        width="440"
+        height="118"
+        viewBox="0 0 440 118"
+        role="img"
+        aria-label="Order-book depth growing over time"
+      >
+        <path
+          d="M0 110 C 150 106, 250 92, 320 58 C 372 32, 406 14, 440 4 L 440 118 L 0 118 Z"
+          fill={colors.accent}
+          opacity="0.14"
+        />
+        <path
+          d="M0 110 C 150 106, 250 92, 320 58 C 372 32, 406 14, 440 4"
+          fill="none"
+          stroke={colors.accent}
+          strokeWidth="4"
+        />
+      </svg>
+    </FlexBox>
     <FlexBox justifyContent="space-between" alignItems="flex-start">
       <Box>
         <Text
@@ -473,7 +482,7 @@ export default function DemoDeck() {
           </FlexBox>
         </SlideBody>
         <Notes>
-          But Dropset is changing that, and it already works: we’re live on
+          But Dropset is changing that, and it already works: it’s live on
           mainnet today, clearing real trades by routing FX through aggregators
           — pick the currency you want on the globe and the swap settles. [Play
           the mainnet demo video.]
@@ -537,7 +546,7 @@ export default function DemoDeck() {
         </SlideBody>
         <Notes>
           The honest risk: everyone wants onchain settlement, and the ones with
-          distribution are the ones who get to permission it. Arc and Tempo are
+          distribution are permissioning it. Arc and Tempo are
           building payment-and-settlement rails, and Canton is doing regulated
           onchain markets. Any of them could decide FX is theirs, and each
           arrives with the customers already on it.
@@ -580,11 +589,11 @@ export default function DemoDeck() {
           We seed the markets ourselves the way Hyperliquid did — our vaults
           bootstrap each book, and anyone can top them off with inventory, so
           the flywheel is public rather than ours alone. It has two ends, and
-          we’ve talked with both. Upstream are the issuers — Loon, who issues
-          CADC, and AUDD Digital — who mint a currency and need it to actually
-          trade. Downstream is the demand: Colosseum partners like Altitude in
-          banking and CargoBill in supply chain, who need to buy FX onchain to
-          settle. Connect the two ends and the depth compounds.
+          we’re talking to partners at both. Upstream, issuers like Loon, who
+          issues CADC, and AUDD Digital: they mint a currency and need it to
+          actually trade. Downstream, the demand — Colosseum partners like
+          Altitude in banking and CargoBill in supply chain, who need to buy FX
+          onchain to settle. Connect the two ends and the depth compounds.
         </Notes>
       </Slide>
 
@@ -614,9 +623,10 @@ export default function DemoDeck() {
           I’ve built two onchain exchanges already, including an order book — I
           authored Econia on Aptos, which cleared around five hundred million in
           volume, and wrote the Solana Opcode Guide, the playbook for squeezing
-          performance out of Solana programs. Judy owns operations end-to-end —
-          banking, the stablecoin providers, onramps, and accounting. Dropset —
-          Forex on Solana.
+          performance out of Solana programs. Judy came with me from Econia
+          Labs, and was at Dragonfly before that; she owns operations end-to-end
+          — banking, the stablecoin providers, onramps, and accounting. Dropset
+          — Forex on Solana.
         </Notes>
       </Slide>
     </Deck>

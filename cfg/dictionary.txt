@@ -96,6 +96,7 @@ onramps
 paytrie
 pdas
 permissioned
+permissioning
 permissionless
 pkill
 prebuild

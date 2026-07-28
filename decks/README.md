@@ -61,6 +61,21 @@ take a modifier — **`⌘⇧P`** (`Ctrl⇧P` off macOS) for presenter mode
 `⌘⇧R` for print. A bare `p` does nothing, which reads as presenter mode
 being broken when it isn't.
 
+## Presenting
+
+Present from **decks.dropset.io** or from `make decks` — they behave
+identically, because a deck is client-only (`page.tsx` dynamic-imports it
+with `ssr: false`) and there is no server-side deck state to differ.
+
+Presenter mode syncs to the audience window over the browser's
+`BroadcastChannel`, which is scoped to **one origin in one browser on one
+machine**. So the working setup is two windows on the presenting laptop —
+notes on your screen, the deck on the projector — and **a second machine
+cannot remote-control the first**. Opening presenter mode elsewhere just
+gives that machine its own independent copy of the deck. Nothing about
+deploying changes this, and nothing about running locally fixes it; for
+remote control you'd need a shared backend the package doesn't have.
+
 ## Add a deck
 
 1. Create `app/<public-route>/page.tsx` + `<Deck>.tsx` (copy `demo-v1`).

@@ -21,7 +21,25 @@ export default function Home() {
           Talks and demos for Dropset — Forex on Solana. Pick a deck; arrow
           keys drive it,{" "}
           <span className="font-mono text-foreground">⌘⇧P</span> opens
-          presenter mode with the speaker notes.
+          presenter mode with the speaker notes, and{" "}
+          <span className="font-mono text-foreground">⌘⇧O</span> the slide
+          overview.
+        </p>
+        <p className="mt-3 max-w-xl text-muted-fg text-sm">
+          Every deck is a{" "}
+          <a
+            href="https://commerce.nearform.com/open-source/spectacle/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-foreground underline underline-offset-4 hover:text-accent"
+          >
+            Spectacle
+          </a>{" "}
+          presentation, so those shortcuts are the library's own. Presenter
+          mode syncs to the audience window over the browser&apos;s{" "}
+          <span className="font-mono">BroadcastChannel</span> — same machine,
+          same browser, two windows. It does not drive a deck on someone
+          else&apos;s screen.
         </p>
       </header>
 

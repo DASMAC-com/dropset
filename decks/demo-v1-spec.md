@@ -95,7 +95,7 @@ pages:
   them, with a route drawn across it. Badge **demo video · mainnet**,
   set beside the globe rather than under it — the capture is tall, and a
   badge below it collides with the footer.
-- **Spoken:** "But Dropset is changing that, and it already works: we're
+- **Spoken:** "But Dropset is changing that, and it already works: it's
   live on mainnet today, clearing real trades by routing FX through
   aggregators — pick the currency you want on the globe and the swap
   settles. [play the mainnet demo video]"
@@ -142,10 +142,10 @@ pages:
   threat page reads as a setup rather than a concession. Don't explain it
   out loud; let them find it.
 - **Spoken:** "The honest risk: everyone wants onchain settlement, and
-  the ones with distribution are the ones who get to permission it. Arc
-  and Tempo are building payment-and-settlement rails, and Canton is
-  doing regulated onchain markets. Any of them could decide FX is theirs,
-  and each arrives with the customers already on it."
+  the ones with distribution are permissioning it. Arc and Tempo are
+  building payment-and-settlement rails, and Canton is doing regulated
+  onchain markets. Any of them could decide FX is theirs, and each
+  arrives with the customers already on it."
 - **Note:** This slide is deliberate — an investor respects that we
   named the threat first. The rebuttal is the very next page. Fuller
   framing in the appendix.
