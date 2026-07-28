@@ -129,17 +129,20 @@ const Statement = ({
 );
 
 /**
- * The recordings behind the two demo beats. Both point at the same placeholder
- * Short for now; when the real captures exist, each beat gets its own id (and
- * `portrait: false` if it's a landscape screen recording).
+ * The recordings behind the two demo beats, each with the pixel dimensions of
+ * the upload it plays — both are near-square screen captures rather than either
+ * standard shape, and the player is sized from these (see `DemoVideo`). Both
+ * are 2160 across, so they should read 2160p in the quality menu on a screen
+ * with the pixels to show it — a lower reading means either the player box
+ * came out smaller than the source or the connection made YouTube step down.
  *
  * Naming the network on the badge is deliberate — the mainnet demo is the real
  * venue, the localnet one is a market bootstrapped from empty, and conflating
  * the two would overstate what is live.
  */
 const DEMOS = {
-  mainnet: { videoId: "blHXBmt6RI0", portrait: true },
-  localnet: { videoId: "blHXBmt6RI0", portrait: true },
+  mainnet: { videoId: "RLpIncX5DkE", width: 2160, height: 2430 },
+  localnet: { videoId: "5FHACigAu_E", width: 2160, height: 2380 },
 } as const;
 
 // The badge is small on purpose: it labels the page, it isn't the page. Clicking
