@@ -107,8 +107,8 @@ pages:
 
 #### Page 4 — The eCLOB [DEMO VIDEO · localnet] · ~30s
 
-- **On-slide:** And we're just getting started: order-book depth,
-  propAMM-cheap quotes.
+- **On-slide:** So we built the venue the rest of them need: order book
+  transparency, propAMM efficiency.
 - **Visual:** Two captures side by side, top-aligned — the "Market maker
   TUI" (markets list + a live book) and the compute-unit pane showing
   what a quote update costs. Badge **demo video · localnet** at the foot
@@ -152,8 +152,8 @@ pages:
 
 #### Page 6 — Why it will work · ~8s
 
-- **On-slide:** But their liquidity isn't public — and the big Solana
-  DEXes focus on SOL, memes.
+- **On-slide:** But Dropset liquidity is public, and the biggest Solana
+  DEXes are chasing SOL, memes.
 - **Eyebrow:** \*Why Dropset won't actually fail — the payoff to the
   previous page's asterisk.
 - **Visual:** Jupiter, Orca and Raydium as a row of logo tiles, matching
@@ -177,19 +177,21 @@ pages:
 
 #### Page 7 — How we grow · ~8s
 
-- **On-slide:** We bootstrap a public liquidity flywheel.
+- **On-slide:** Vaults bootstrap a public FX liquidity flywheel.
 - **Visual:** A curve of depth growing, over the flywheel's two ends,
-  split by a rule: **upstream** the issuers (CADC, AUDD), **downstream**
-  the payments companies (Altitude, CargoBill) — all people we've
-  actually talked to about sourcing liquidity.
-- **Spoken:** "We seed the markets ourselves the way Hyperliquid did — we
-  bootstrap the vaults, and anyone can top them off with inventory, so
-  the flywheel is public rather than ours alone. It has two ends, and
-  we've talked with both. Upstream are the issuers — CADC, AUDD — who
-  mint a currency and need it to actually trade. Downstream are the
-  payments companies — Colosseum partners like Altitude and CargoBill —
-  who need to buy FX onchain to settle. Connect the two ends and the
-  depth compounds."
+  split by a rule: **upstream** the issuers (Loon, who issues CADC; AUDD
+  Digital), **downstream** the demand (Altitude in banking, CargoBill in
+  supply chain) — all people we've actually talked to about sourcing
+  liquidity. Each tile is captioned with the company, then what they are
+  to us: "Loon / CADC issuer", "Altitude / banking".
+- **Spoken:** "We seed the markets ourselves the way Hyperliquid did —
+  our vaults bootstrap each book, and anyone can top them off with
+  inventory, so the flywheel is public rather than ours alone. It has two
+  ends, and we've talked with both. Upstream are the issuers — Loon, who
+  issues CADC, and AUDD Digital — who mint a currency and need it to
+  actually trade. Downstream is the demand: Colosseum partners like
+  Altitude in banking and CargoBill in supply chain, who need to buy FX
+  onchain to settle. Connect the two ends and the depth compounds."
 - **Note:** The vault framing is deliberate — *we* bootstrap it, but the
   flywheel is public and anyone can add inventory. The upstream /
   downstream split is the substance of the page: a venue needs both ends,
@@ -299,7 +301,9 @@ ______________________________________________________________________
 - Every page carries the same footer: the Dropset wordmark at the left,
   "Courtesy of DASMAC" in the middle (mirroring the frontend's own
   footer), and progress dots at the right. It isn't page content — don't
-  budget words or space for it.
+  budget words or space for it; the slide body already reserves room
+  above it so a busy page doesn't crowd the credit.
+- Presenter mode is **`⌘⇧P`** (`Ctrl⇧P` off macOS), not a bare `p`.
 - Anything nuanced — the competitor rebuttals, the investor grilling,
   the numbers behind a claim — is **not on a slide**. It lives in the
   appendices (section 2) and only comes out if a conversation goes

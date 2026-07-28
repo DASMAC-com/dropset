@@ -55,8 +55,11 @@ make decks
 
 Installs, serves on **<http://localhost:3300>** (port set in the `dev`
 script; see the port-allocation table in the repo `Makefile`), and opens
-a browser once it's up. Arrow keys drive a deck; `p` opens presenter mode
-(speaker notes + next-slide preview); `f` goes fullscreen.
+a browser once it's up. Arrow keys drive a deck. The mode shortcuts all
+take a modifier — **`⌘⇧P`** (`Ctrl⇧P` off macOS) for presenter mode
+(speaker notes + next-slide preview), `⌘⇧O` for the slide overview,
+`⌘⇧R` for print. A bare `p` does nothing, which reads as presenter mode
+being broken when it isn't.
 
 ## Add a deck
 

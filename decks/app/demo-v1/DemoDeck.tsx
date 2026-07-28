@@ -18,7 +18,8 @@ import { colors, deckTheme } from "@/theme/tokens";
  * The demo-day pitch deck — a ~2-minute accelerator pitch built around two
  * recorded product demos. Slides are minimal backdrops the presenter talks
  * over; the full spoken script lives in each slide's `<Notes>` (presenter
- * mode, `p`), never on the slide itself. Route name is public-facing
+ * mode, `⌘⇧P` — a bare `p` does nothing), never on the slide itself. Route
+ * name is public-facing
  * (`/demo-v1`); internal ticket ids never appear here or in the URL.
  *
  * The copy follows `../../demo-v1-spec.md`, which is the source of truth for
@@ -77,6 +78,22 @@ const template = () => (
     <Box padding="0 1.25em">
       <Progress color={colors.accent} size={8} />
     </Box>
+  </FlexBox>
+);
+
+/**
+ * Every slide's content column. The bottom padding is the point: slide content
+ * is centred in the full slide, and the footer sits on top of that same space,
+ * so without it the lowest element on a busy page crowds the DASMAC credit.
+ */
+const SlideBody = ({ children }: { children: React.ReactNode }) => (
+  <FlexBox
+    height="100%"
+    flexDirection="column"
+    justifyContent="center"
+    padding="0 0 76px 0"
+  >
+    {children}
   </FlexBox>
 );
 
@@ -263,13 +280,13 @@ const INCUMBENTS: Logo[] = [
  * is the point of the page — a venue needs each end to bootstrap.
  */
 const UPSTREAM: Logo[] = [
-  { name: "CADC", src: "/remote/logo-cadc.png", note: "issuer" },
-  { name: "AUDD", src: "/remote/logo-audd.png", note: "issuer" },
+  { name: "Loon", src: "/remote/logo-cadc.png", note: "CADC issuer" },
+  { name: "AUDD Digital", src: "/remote/logo-audd.png", note: "AUDD issuer" },
 ];
 
 const DOWNSTREAM: Logo[] = [
-  { name: "Altitude", src: "/remote/logo-altitude.png", note: "payments" },
-  { name: "CargoBill", src: "/remote/logo-cargobill.jpg", note: "payments" },
+  { name: "Altitude", src: "/remote/logo-altitude.png", note: "banking" },
+  { name: "CargoBill", src: "/remote/logo-cargobill.jpg", note: "supply chain" },
 ];
 
 /**
@@ -367,12 +384,12 @@ export default function DemoDeck() {
     <Deck theme={deckTheme} template={template}>
       {/* 1 — Title */}
       <Slide>
-        <FlexBox height="100%" flexDirection="column" justifyContent="center">
+        <SlideBody>
           <Box margin="0 0 44px 0">
             <Wordmark width={700} />
           </Box>
           <Statement fontSize="72px">Forex on Solana.</Statement>
-        </FlexBox>
+        </SlideBody>
         <Notes>
           Dropset is onchain Forex on Solana — providing open and efficient
           exchange of the world’s currencies at scale.
@@ -381,7 +398,7 @@ export default function DemoDeck() {
 
       {/* 2 — The gap */}
       <Slide>
-        <FlexBox height="100%" flexDirection="column" justifyContent="center">
+        <SlideBody>
           <Eyebrow>The gap</Eyebrow>
           <Statement>
             The biggest market on earth barely exists onchain.
@@ -392,7 +409,7 @@ export default function DemoDeck() {
             alt="14 of 162 currencies represented on Solana; 148 not yet listed"
             source="dropset.io/currencies"
           />
-        </FlexBox>
+        </SlideBody>
         <Notes>
           Foreign exchange is over nine trillion dollars a day, and it trades
           24/5 — but onchain it has no liquid home. Only about fourteen of the
@@ -405,7 +422,7 @@ export default function DemoDeck() {
 
       {/* 3 — The mainnet demo */}
       <Slide>
-        <FlexBox height="100%" flexDirection="column" justifyContent="center">
+        <SlideBody>
           <Eyebrow>Live on mainnet</Eyebrow>
           <Statement>But Dropset is changing this.</Statement>
           {/* Badge beside the capture rather than under it: this page's visual
@@ -420,7 +437,7 @@ export default function DemoDeck() {
               <DemoBadge network="mainnet" />
             </Box>
           </FlexBox>
-        </FlexBox>
+        </SlideBody>
         <Notes>
           But Dropset is changing that, and it already works: we’re live on
           mainnet today, clearing real trades by routing FX through aggregators
@@ -431,11 +448,11 @@ export default function DemoDeck() {
 
       {/* 4 — The eCLOB */}
       <Slide>
-        <FlexBox height="100%" flexDirection="column" justifyContent="center">
+        <SlideBody>
           <Eyebrow>The eCLOB</Eyebrow>
           <Statement fontSize="44px">
-            And we’re just getting started: order-book depth, propAMM-cheap
-            quotes.
+            So we built the venue the rest of them need: order book
+            transparency, propAMM efficiency.
           </Statement>
           {/* Top-aligned, not centre-aligned: the two captures are very
               different heights, and centring them left the short one floating
@@ -461,7 +478,7 @@ export default function DemoDeck() {
               <DemoBadge network="localnet" />
             </Box>
           </FlexBox>
-        </FlexBox>
+        </SlideBody>
         <Notes>
           The routing works today, but the markets that don’t exist yet need a
           venue — so we built one. The eCLOB gives you the liquidity guarantees
@@ -477,13 +494,13 @@ export default function DemoDeck() {
 
       {/* 5 — Why this will fail */}
       <Slide>
-        <FlexBox height="100%" flexDirection="column" justifyContent="center">
+        <SlideBody>
           <Eyebrow>Permissioned distribution</Eyebrow>
           {/* The asterisk is the joke: it promises a footnote the audience
               doesn't get until the next page's title answers it. */}
           <Statement>Why Dropset will fail*</Statement>
           <LogoRow logos={THREATS} tint={colors.sell} />
-        </FlexBox>
+        </SlideBody>
         <Notes>
           The honest risk: everyone wants onchain settlement, and the ones with
           distribution are the ones who get to permission it. Arc and Tempo are
@@ -495,14 +512,14 @@ export default function DemoDeck() {
 
       {/* 6 — Why it will work */}
       <Slide>
-        <FlexBox height="100%" flexDirection="column" justifyContent="center">
+        <SlideBody>
           <Eyebrow>*Why Dropset won’t actually fail</Eyebrow>
           <Statement fontSize="50px">
-            But their liquidity isn’t public — and the big Solana DEXes focus on
-            SOL, memes.
+            But Dropset liquidity is public, and the biggest Solana DEXes are
+            chasing SOL, memes.
           </Statement>
           <LogoRow logos={INCUMBENTS} />
-        </FlexBox>
+        </SlideBody>
         <Notes>
           But their liquidity isn’t public: it sits inside private or
           permissioned rails, where you can’t make a market unless they let you.
@@ -517,28 +534,28 @@ export default function DemoDeck() {
 
       {/* 7 — How we grow */}
       <Slide>
-        <FlexBox height="100%" flexDirection="column" justifyContent="center">
+        <SlideBody>
           <Eyebrow>How we grow</Eyebrow>
           <Statement fontSize="52px">
-            We bootstrap a public liquidity flywheel.
+            Vaults bootstrap a public FX liquidity flywheel.
           </Statement>
           <Flywheel />
-        </FlexBox>
+        </SlideBody>
         <Notes>
-          We seed the markets ourselves the way Hyperliquid did — we bootstrap
-          the vaults, and anyone can top them off with inventory, so the
-          flywheel is public rather than ours alone. It has two ends, and
-          we’ve talked with both. Upstream are the issuers — CADC, AUDD — who
-          mint a currency and need it to actually trade. Downstream are the
-          payments companies — Colosseum partners like Altitude and CargoBill —
-          who need to buy FX onchain to settle. Connect the two ends and the
-          depth compounds.
+          We seed the markets ourselves the way Hyperliquid did — our vaults
+          bootstrap each book, and anyone can top them off with inventory, so
+          the flywheel is public rather than ours alone. It has two ends, and
+          we’ve talked with both. Upstream are the issuers — Loon, who issues
+          CADC, and AUDD Digital — who mint a currency and need it to actually
+          trade. Downstream is the demand: Colosseum partners like Altitude in
+          banking and CargoBill in supply chain, who need to buy FX onchain to
+          settle. Connect the two ends and the depth compounds.
         </Notes>
       </Slide>
 
       {/* 8 — Team & close */}
       <Slide>
-        <FlexBox height="100%" flexDirection="column" justifyContent="center">
+        <SlideBody>
           <Eyebrow>Team</Eyebrow>
           <Statement>Built by people who’ve built exchanges.</Statement>
           <FlexBox margin="40px 0 0 0" justifyContent="center">
@@ -555,7 +572,7 @@ export default function DemoDeck() {
               prior="prev. Dragonfly Capital Partners"
             />
           </FlexBox>
-        </FlexBox>
+        </SlideBody>
         <Notes>
           I’ve built two onchain exchanges already, including an order book — I
           authored Econia on Aptos, which cleared around five hundred million in
