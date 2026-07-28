@@ -210,33 +210,45 @@ type Logo = { name: string; src: string; note?: string };
 
 const LogoRow = ({
   logos,
+  width = 150,
   height = 54,
   tint,
   margin = "34px 0 0 0",
 }: {
   logos: Logo[];
+  width?: number;
   height?: number;
   tint?: string;
   margin?: string;
 }) => (
   <FlexBox margin={margin} justifyContent="center" alignItems="flex-start">
     {logos.map(({ name, src, note }) => (
-      <Box key={name} margin="0 16px">
+      <Box key={name} margin="0 12px" width={`${width}px`}>
+        {/* Every tile in a row is the same box; the mark is contained inside
+            it rather than sized to it, so a wide logotype and a square icon
+            share a footprint without either being stretched. */}
         <div
           style={{
             alignItems: "center",
             border: `1px solid ${tint ?? colors.border}`,
             borderRadius: "14px",
+            boxSizing: "border-box",
             display: "flex",
             height: `${height + 46}px`,
             justifyContent: "center",
-            padding: "0 26px",
+            padding: "0 18px",
+            width: "100%",
           }}
         >
           <img
             src={src}
             alt={name}
-            style={{ display: "block", height: `${height}px`, width: "auto" }}
+            style={{
+              display: "block",
+              maxHeight: `${height}px`,
+              maxWidth: "100%",
+              objectFit: "contain",
+            }}
           />
         </div>
         <Text
@@ -265,12 +277,14 @@ const THREATS: Logo[] = [
 ];
 
 // Page 6 — the big Solana venues, whose attention is elsewhere. Sourced from
-// each project's own asset (Jupiter) or the Solana token list, so every mark
-// is transparent and reads on black rather than in a white box.
+// each project's own asset (Jupiter, Meteora) or the Solana token list, so
+// every mark is transparent and reads on black rather than in a white box.
 const INCUMBENTS: Logo[] = [
   { name: "Jupiter", src: "/remote/logo-jupiter.svg" },
   { name: "Orca", src: "/remote/logo-orca.png" },
   { name: "Raydium", src: "/remote/logo-raydium.png" },
+  { name: "Meteora", src: "/remote/logo-meteora.svg" },
+  { name: "pump.fun", src: "/remote/logo-pump-fun.png" },
 ];
 
 /**
@@ -295,29 +309,34 @@ const DOWNSTREAM: Logo[] = [
  * them is depth growing once both ends are connected — an inline SVG, so it
  * stays crisp at projector size with no asset pipeline.
  */
+const FLYWHEEL_WIDTH = 840;
+const FLYWHEEL_TILE = 168;
+
 const Flywheel = () => (
-  <Box margin="18px 0 0 0">
+  <Box margin="18px 0 0 0" width={`${FLYWHEEL_WIDTH}px`}>
+    {/* The curve spans both ends of the flywheel rather than sitting over one
+        of them: it's the depth that appears once the two are connected. */}
     <svg
-      width="620"
-      height="120"
-      viewBox="0 0 620 120"
+      width={FLYWHEEL_WIDTH}
+      height="112"
+      viewBox="0 0 840 112"
       role="img"
       aria-label="Order-book depth growing over time"
     >
       <path
-        d="M0 112 C 180 108, 330 88, 430 56 C 510 30, 570 14, 620 6 L 620 120 L 0 120 Z"
+        d="M0 104 C 250 100, 460 84, 590 52 C 700 26, 770 12, 840 5 L 840 112 L 0 112 Z"
         fill={colors.accent}
         opacity="0.14"
       />
       <path
-        d="M0 112 C 180 108, 330 88, 430 56 C 510 30, 570 14, 620 6"
+        d="M0 104 C 250 100, 460 84, 590 52 C 700 26, 770 12, 840 5"
         fill="none"
         stroke={colors.accent}
         strokeWidth="4"
       />
     </svg>
-    <FlexBox justifyContent="center" alignItems="flex-start">
-      <Box margin="0 26px 0 0">
+    <FlexBox justifyContent="space-between" alignItems="flex-start">
+      <Box>
         <Text
           color="secondary"
           fontFamily="monospace"
@@ -326,10 +345,15 @@ const Flywheel = () => (
         >
           upstream
         </Text>
-        <LogoRow logos={UPSTREAM} height={46} margin="14px 0 0 0" />
+        <LogoRow
+          logos={UPSTREAM}
+          width={FLYWHEEL_TILE}
+          height={44}
+          margin="14px 0 0 0"
+        />
       </Box>
-      <Box width="1px" height="150px" backgroundColor={colors.border} />
-      <Box margin="0 0 0 26px">
+      <Box width="1px" height="152px" backgroundColor={colors.border} />
+      <Box>
         <Text
           color="secondary"
           fontFamily="monospace"
@@ -338,7 +362,12 @@ const Flywheel = () => (
         >
           downstream
         </Text>
-        <LogoRow logos={DOWNSTREAM} height={46} margin="14px 0 0 0" />
+        <LogoRow
+          logos={DOWNSTREAM}
+          width={FLYWHEEL_TILE}
+          height={44}
+          margin="14px 0 0 0"
+        />
       </Box>
     </FlexBox>
   </Box>
@@ -353,11 +382,13 @@ const Portrait = ({
   src,
   name,
   role,
+  focus,
   prior,
 }: {
   src: string;
   name: string;
   role: string;
+  focus: string;
   prior: string;
 }) => (
   <Box margin="0 32px">
@@ -365,14 +396,17 @@ const Portrait = ({
     <Text fontSize="26px" margin="14px 0 0 0">
       {name}
     </Text>
-    <Text color="quaternary" fontSize="20px" margin="0">
+    <Text fontSize="21px" margin="4px 0 0 0">
       {role}
+    </Text>
+    <Text color="quaternary" fontSize="19px" margin="2px 0 0 0">
+      {focus}
     </Text>
     <Text
       color="secondary"
       fontFamily="monospace"
       fontSize="18px"
-      margin="4px 0 0 0"
+      margin="6px 0 0 0"
     >
       {prior}
     </Text>
@@ -451,8 +485,8 @@ export default function DemoDeck() {
         <SlideBody>
           <Eyebrow>The eCLOB</Eyebrow>
           <Statement fontSize="44px">
-            So we built the venue the rest of them need: order book
-            transparency, propAMM efficiency.
+            Institutional-grade atomic settlement: order book transparency,
+            propAMM efficiency.
           </Statement>
           {/* Top-aligned, not centre-aligned: the two captures are very
               different heights, and centring them left the short one floating
@@ -499,7 +533,7 @@ export default function DemoDeck() {
           {/* The asterisk is the joke: it promises a footnote the audience
               doesn't get until the next page's title answers it. */}
           <Statement>Why Dropset will fail*</Statement>
-          <LogoRow logos={THREATS} tint={colors.sell} />
+          <LogoRow logos={THREATS} width={210} height={46} tint={colors.sell} />
         </SlideBody>
         <Notes>
           The honest risk: everyone wants onchain settlement, and the ones with
@@ -514,19 +548,20 @@ export default function DemoDeck() {
       <Slide>
         <SlideBody>
           <Eyebrow>*Why Dropset won’t actually fail</Eyebrow>
-          <Statement fontSize="50px">
-            But Dropset liquidity is public, and the biggest Solana DEXes are
-            chasing SOL, memes.
+          <Statement fontSize="48px">
+            But Dropset liquidity is public, and the biggest Solana DEXes face
+            an innovator’s dilemma (SOL, memes).
           </Statement>
-          <LogoRow logos={INCUMBENTS} />
+          <LogoRow logos={INCUMBENTS} width={132} height={52} />
         </SlideBody>
         <Notes>
-          But their liquidity isn’t public: it sits inside private or
-          permissioned rails, where you can’t make a market unless they let you.
-          And the venues that are public — Jupiter, Orca, Raydium — are focused
-          on SOL and memes, because that’s where the volume is today. It’s a
-          classic innovator’s dilemma: FX is too small to move them and big
-          enough for us. Dropset is the open, neutral, composable venue — anyone
+          Their liquidity isn’t public: it sits inside private or permissioned
+          rails, where you can’t make a market unless they let you. Dropset’s
+          is. And the venues that are public — Jupiter, Orca, Raydium, Meteora,
+          pump.fun — are chasing SOL and memes, because that’s where the volume
+          is today. It’s a classic innovator’s dilemma: FX is too small to move
+          them and big enough for us. Dropset is the open, neutral, composable
+          venue — anyone
           can quote, anyone can trade, any app can integrate — and we’re beating
           everyone to it.
         </Notes>
@@ -563,12 +598,14 @@ export default function DemoDeck() {
               src="/remote/team-alex.png"
               name="Alex"
               role="Founder, DASMAC"
+              focus="Product · exchange design"
               prior="prev. Cofounder, Econia Labs"
             />
             <Portrait
               src="/remote/team-judy.png"
               name="Judy"
               role="Operations, DASMAC"
+              focus="Stablecoin rails · onramps · accounting"
               prior="prev. Dragonfly Capital Partners"
             />
           </FlexBox>

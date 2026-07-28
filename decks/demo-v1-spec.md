@@ -107,7 +107,7 @@ pages:
 
 #### Page 4 — The eCLOB [DEMO VIDEO · localnet] · ~30s
 
-- **On-slide:** So we built the venue the rest of them need: order book
+- **On-slide:** Institutional-grade atomic settlement: order book
   transparency, propAMM efficiency.
 - **Visual:** Two captures side by side, top-aligned — the "Market maker
   TUI" (markets list + a live book) and the compute-unit pane showing
@@ -153,20 +153,20 @@ pages:
 #### Page 6 — Why it will work · ~8s
 
 - **On-slide:** But Dropset liquidity is public, and the biggest Solana
-  DEXes are chasing SOL, memes.
+  DEXes face an innovator's dilemma (SOL, memes).
 - **Eyebrow:** \*Why Dropset won't actually fail — the payoff to the
   previous page's asterisk.
-- **Visual:** Jupiter, Orca and Raydium as a row of logo tiles, matching
-  the previous page's row — the public venues, whose attention is
-  elsewhere.
-- **Spoken:** "But their liquidity isn't public: it sits inside private
-  or permissioned rails, where you can't make a market unless they let
-  you. And the venues that are public — Jupiter, Orca, Raydium — are
-  focused on SOL and memes, because that's where the volume is today.
-  It's a classic innovator's dilemma: FX is too small to move them and
-  big enough for us. Dropset is the open, neutral, composable venue —
-  anyone can quote, anyone can trade, any app can integrate — and we're
-  beating everyone to it."
+- **Visual:** Jupiter, Orca, Raydium, Meteora and pump.fun as a row of
+  logo tiles, matching the previous page's row — the public venues, whose
+  attention is elsewhere.
+- **Spoken:** "Their liquidity isn't public: it sits inside private or
+  permissioned rails, where you can't make a market unless they let you.
+  Dropset's is. And the venues that are public — Jupiter, Orca, Raydium,
+  Meteora, pump.fun — are chasing SOL and memes, because that's where the
+  volume is today. It's a classic innovator's dilemma: FX is too small to
+  move them and big enough for us. Dropset is the open, neutral,
+  composable venue — anyone can quote, anyone can trade, any app can
+  integrate — and we're beating everyone to it."
 - **Note:** Two rebuttals in one breath — (1) the closed rails from the
   previous page have no public liquidity, (2) the venues that *are* public
   aren't pointed at FX (innovator's dilemma, smaller market now). The
@@ -201,10 +201,11 @@ pages:
 #### Page 8 — Team & close · ~6s
 
 - **On-slide:** Built by people who've built exchanges.
-- **Visual:** Alex + Judy, square and unframed, each captioned with their
-  role here and the credential behind it — "Founder, DASMAC / prev.
-  Cofounder, Econia Labs" and "Operations, DASMAC / prev. Dragonfly
-  Capital Partners" — with the wordmark in the persistent footer.
+- **Visual:** Alex + Judy, square and unframed. Each carries three lines:
+  the role here, what they own, and the credential behind it — "Founder,
+  DASMAC / Product · exchange design / prev. Cofounder, Econia Labs" and
+  "Operations, DASMAC / Stablecoin rails · onramps · accounting / prev.
+  Dragonfly Capital Partners". Wordmark in the persistent footer.
 - **Spoken:** "I've built two onchain exchanges already, including an
   order book — I authored Econia on Aptos, which cleared around five
   hundred million in volume, and wrote the Solana Opcode Guide, the
