@@ -256,18 +256,32 @@ const LogoRow = ({
             />
           </div>
         </FlexBox>
-        <Text
-          color={tint ?? colors.mutedFg}
-          fontFamily="monospace"
-          fontSize="20px"
-          margin="12px 0 0 0"
+        {/* Captions are plain elements, not `Text`: Spectacle's carries a
+            theme margin of its own that opens a gap between a name and its
+            note far larger than either margin asks for, and on the flywheel
+            that pushed the last line into the footer. */}
+        <div
+          style={{
+            color: tint ?? colors.mutedFg,
+            fontFamily: deckTheme.fonts.monospace,
+            fontSize: "20px",
+            lineHeight: 1.2,
+            marginTop: "12px",
+          }}
         >
           {name}
-        </Text>
+        </div>
         {note ? (
-          <Text color="quaternary" fontSize="17px" margin="2px 0 0 0">
+          <div
+            style={{
+              color: colors.mutedFg,
+              fontSize: "17px",
+              lineHeight: 1.2,
+              marginTop: "5px",
+            }}
+          >
             {note}
-          </Text>
+          </div>
         ) : null}
       </Box>
     ))}
@@ -329,14 +343,17 @@ const FLYWHEEL_WIDTH = 2 * FLYWHEEL_GROUP + 60;
  */
 const FlywheelEnd = ({ label, logos }: { label: string; logos: Logo[] }) => (
   <Box width={`${FLYWHEEL_GROUP}px`}>
-    <Text
-      color="secondary"
-      fontFamily="monospace"
-      fontSize="21px"
-      margin="0 0 10px 0"
+    <div
+      style={{
+        color: colors.accent,
+        fontFamily: deckTheme.fonts.monospace,
+        fontSize: "21px",
+        lineHeight: 1.2,
+        marginBottom: "10px",
+      }}
     >
       {label}
-    </Text>
+    </div>
     <div
       style={{ backgroundColor: colors.accent, height: "2px", width: "100%" }}
     />
@@ -355,21 +372,21 @@ const Flywheel = () => (
         that appears once the two are connected. Wide enough to carry the page
         on its own: when it was narrow and a divider ran down from under it,
         the pair read as a chart mounted on a stick. */}
-    <FlexBox justifyContent="center" margin="0 0 30px 0">
+    <FlexBox justifyContent="center" margin="0 0 22px 0">
       <svg
         width="660"
-        height="172"
-        viewBox="0 0 660 172"
+        height="150"
+        viewBox="0 0 660 150"
         role="img"
         aria-label="Order-book depth growing over time"
       >
         <path
-          d="M0 164 C 210 160, 360 138, 470 88 C 560 47, 610 22, 660 6 L 660 172 L 0 172 Z"
+          d="M0 143 C 210 139, 360 120, 470 77 C 560 41, 610 19, 660 5 L 660 150 L 0 150 Z"
           fill={colors.accent}
           opacity="0.18"
         />
         <path
-          d="M0 164 C 210 160, 360 138, 470 88 C 560 47, 610 22, 660 6"
+          d="M0 143 C 210 139, 360 120, 470 77 C 560 41, 610 19, 660 5"
           fill="none"
           stroke={colors.accent}
           strokeWidth="5"
