@@ -314,7 +314,10 @@ const DOWNSTREAM: Logo[] = [
  * them is depth growing once both ends are connected — an inline SVG, so it
  * stays crisp at projector size with no asset pipeline.
  */
-const FLYWHEEL_WIDTH = 780;
+// Wide enough to hold both columns at their natural size: when the columns
+// overflow, `space-between` has nothing left to distribute and the hairline
+// divider — a 1px flex item — is the first thing squeezed out of existence.
+const FLYWHEEL_WIDTH = 880;
 const FLYWHEEL_TILE = 124;
 
 const Flywheel = () => (
@@ -361,7 +364,16 @@ const Flywheel = () => (
           margin="14px 0 0 0"
         />
       </Box>
-      <Box width="1px" height="152px" backgroundColor={colors.border} />
+      {/* `flexShrink: 0` keeps the rule visible: a 1px flex item is otherwise
+          free to collapse to nothing the moment the row is tight. */}
+      <div
+        style={{
+          backgroundColor: colors.border,
+          flexShrink: 0,
+          height: "152px",
+          width: "1px",
+        }}
+      />
       <Box>
         <Text
           color="secondary"

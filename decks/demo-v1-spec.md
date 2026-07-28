@@ -16,11 +16,11 @@
 
 # Demo-day pitch spec — `demo-v1`
 
-The **copy** for the ~2-minute demo-day pitch, written to be reviewed
-and edited *before* it's turned into slides. This is the script and
-page plan; the built deck lives at `app/demo-v1/` and should follow
-this doc, not the other way around. Drop it into Google Docs, get
-edits from others, then reconcile the deck to match.
+The **copy** for the ~2-minute pitch at **Colosseum Cohort 5 Demo Day**,
+written to be reviewed and edited *before* it's turned into slides. This
+is the script and page plan; the built deck lives at `app/demo-v1/` and
+should follow this doc, not the other way around. Drop it into Google
+Docs, get edits from others, then reconcile the deck to match.
 
 Sections are ordered for Google Docs toggles: **1. Slide contents**
 (the actual copy) first, **2. Presentation appendices** (the off-slide

@@ -15,7 +15,7 @@ export type Deck = {
 export const decks: Deck[] = [
   {
     route: "/demo-v1",
-    title: "Colosseum Demo Day",
+    title: "Colosseum Cohort 5 Demo Day",
     subtitle: "Forex on Solana: vision, mainnet and localnet demos.",
     updated: "2026-07-27",
   },
