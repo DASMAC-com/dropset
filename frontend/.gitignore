@@ -18,6 +18,7 @@
 
 # Brand assets copied from the repo-root brand-assets/ at dev/build time
 # (see ../brand-assets/copy-brand-assets.mjs); sourced, not committed.
+/public/dasmac-wordmark.png
 /public/dropset-wordmark.png
 /public/favicon-with-stroke.svg
 

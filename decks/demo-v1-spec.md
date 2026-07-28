@@ -131,11 +131,16 @@ pages:
 
 #### Page 5 — Why this will fail · ~12s
 
-- **On-slide:** Why this will fail: permissioned distribution.
-- **Visual:** Arc, Tempo and Canton as a row of equal logo tiles, tinted
-  red — each captioned with the chain the presenter names, since a mark
-  isn't always the name (Arc is Circle's, so Circle's logo is what an
-  audience recognizes).
+- **On-slide:** Why Dropset will fail\*
+- **Visual:** Arc, Tempo and Canton as a row of logo tiles, tinted red —
+  each captioned with the chain the presenter names, since a mark isn't
+  always the name (Arc is Circle's, so Circle's logo is what an audience
+  recognizes). Eyebrow: "Permissioned distribution".
+- **The asterisk:** deliberate, and the reason these two pages are a
+  pair. It promises a footnote the audience doesn't get until the next
+  page's title delivers it — "\*Why Dropset won't actually fail" — so the
+  threat page reads as a setup rather than a concession. Don't explain it
+  out loud; let them find it.
 - **Spoken:** "The honest risk: everyone wants onchain settlement, and
   the ones with distribution are the ones who get to permission it. Arc
   and Tempo are building payment-and-settlement rails, and Canton is
@@ -149,6 +154,8 @@ pages:
 
 - **On-slide:** But their liquidity isn't public — and the big Solana
   DEXes focus on SOL, memes.
+- **Eyebrow:** \*Why Dropset won't actually fail — the payoff to the
+  previous page's asterisk.
 - **Visual:** Jupiter, Orca and Raydium as a row of logo tiles, matching
   the previous page's row — the public venues, whose attention is
   elsewhere.
@@ -193,9 +200,9 @@ pages:
 
 - **On-slide:** Built by people who've built exchanges.
 - **Visual:** Alex + Judy, square and unframed, each captioned with their
-  function and the credential that earns it — "Cofounder, Econia Labs"
-  and "prev. Dragonfly Capital Partners" — with the wordmark in the
-  persistent footer.
+  role here and the credential behind it — "Founder, DASMAC / prev.
+  Cofounder, Econia Labs" and "Operations, DASMAC / prev. Dragonfly
+  Capital Partners" — with the wordmark in the persistent footer.
 - **Spoken:** "I've built two onchain exchanges already, including an
   order book — I authored Econia on Aptos, which cleared around five
   hundred million in volume, and wrote the Solana Opcode Guide, the
@@ -289,6 +296,10 @@ ______________________________________________________________________
   their page (**demo video · mainnet**, **demo video · localnet**).
   Nothing on stage depends on a live network or a working room
   connection.
+- Every page carries the same footer: the Dropset wordmark at the left,
+  "Courtesy of DASMAC" in the middle (mirroring the frontend's own
+  footer), and progress dots at the right. It isn't page content — don't
+  budget words or space for it.
 - Anything nuanced — the competitor rebuttals, the investor grilling,
   the numbers behind a claim — is **not on a slide**. It lives in the
   appendices (section 2) and only comes out if a conversation goes

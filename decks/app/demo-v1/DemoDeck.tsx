@@ -31,18 +31,49 @@ import { colors, deckTheme } from "@/theme/tokens";
  * by the badge on those pages, so nothing depends on a live network.
  */
 
-// Persistent footer: wordmark on the left, progress dots on the right.
+/**
+ * The Dropset wordmark.
+ *
+ * `brand-assets/dropset-wordmark.png` is **opaque**: its transparent-looking
+ * surround is really solid black, so on this deck's near-black backdrop it
+ * renders as a subtly different dark rectangle around the mark. Screen
+ * blending fixes that without a second asset — screening black over anything
+ * returns the backdrop untouched, so the box dissolves while the blue braces,
+ * green chevrons and white lettering come through as themselves.
+ */
+const Wordmark = ({ width }: { width: number }) => (
+  <img
+    src="/dropset-wordmark.png"
+    alt="Dropset"
+    width={width}
+    style={{ display: "block", mixBlendMode: "screen" }}
+  />
+);
+
+/**
+ * Persistent footer: wordmark on the left, the DASMAC credit in the middle
+ * (mirroring the frontend's own footer), progress dots on the right. The
+ * DASMAC mark is a transparent PNG, so unlike the Dropset one it needs no
+ * blend to sit on the dark backdrop.
+ */
 const template = () => (
   <FlexBox
     justifyContent="space-between"
+    alignItems="center"
     position="absolute"
     bottom={0}
     width={1}
     zIndex={1}
   >
     <Box padding="0 1.25em">
-      <Image src="/dropset-wordmark.png" width={110} />
+      <Wordmark width={150} />
     </Box>
+    <FlexBox alignItems="center">
+      <Text color="quaternary" fontSize="16px" margin="0 10px 0 0">
+        Courtesy of
+      </Text>
+      <img src="/dasmac-wordmark.png" alt="DASMAC" width={78} />
+    </FlexBox>
     <Box padding="0 1.25em">
       <Progress color={colors.accent} size={8} />
     </Box>
@@ -148,40 +179,49 @@ const Screenshot = ({
  * A row of captioned logos — the one visual on the three pages that are about
  * other companies (the threats, the incumbents, the demand).
  *
- * The marks come from each company's own site or icon, so they arrive with
- * wildly different backgrounds: white JPEGs, black squares, transparent SVGs.
- * Equal-size rounded tiles with `overflow: hidden` give the row its rhythm
- * regardless, the way a row of app icons reads. Captions carry the name the
- * presenter says, which isn't always what the mark says — Arc is Circle's, so
- * Circle's logo is what an audience actually recognizes.
+ * The marks are each company's own, so they come in two shapes: square icons
+ * and logotypes four times as wide as they are tall. Tiles are therefore
+ * **height-matched with the width left free** — forcing every mark into one
+ * square is what squashed the wide ones flat. Every source here is either
+ * transparent or already dark-backed, so tiles carry no fill of their own and
+ * the marks sit straight on the deck's black.
+ *
+ * Captions carry the name the presenter says, which isn't always what the mark
+ * says — Arc is Circle's, so Circle's logo is what an audience recognizes.
  */
 type Logo = { name: string; src: string; note?: string };
 
 const LogoRow = ({
   logos,
-  size = 88,
+  height = 54,
   tint,
   margin = "34px 0 0 0",
 }: {
   logos: Logo[];
-  size?: number;
+  height?: number;
   tint?: string;
   margin?: string;
 }) => (
   <FlexBox margin={margin} justifyContent="center" alignItems="flex-start">
     {logos.map(({ name, src, note }) => (
-      <Box key={name} margin="0 20px" width={`${size + 40}px`}>
-        <FlexBox justifyContent="center">
-          <Box
-            width={`${size}px`}
-            height={`${size}px`}
-            borderRadius="16px"
-            overflow="hidden"
-            border={`1px solid ${tint ?? colors.border}`}
-          >
-            <Image src={src} width={size} height={size} alt={name} />
-          </Box>
-        </FlexBox>
+      <Box key={name} margin="0 16px">
+        <div
+          style={{
+            alignItems: "center",
+            border: `1px solid ${tint ?? colors.border}`,
+            borderRadius: "14px",
+            display: "flex",
+            height: `${height + 46}px`,
+            justifyContent: "center",
+            padding: "0 26px",
+          }}
+        >
+          <img
+            src={src}
+            alt={name}
+            style={{ display: "block", height: `${height}px`, width: "auto" }}
+          />
+        </div>
         <Text
           color={tint ?? colors.mutedFg}
           fontFamily="monospace"
@@ -207,11 +247,13 @@ const THREATS: Logo[] = [
   { name: "Canton", src: "/remote/logo-canton.svg" },
 ];
 
-// Page 6 — the big Solana venues, whose attention is elsewhere.
+// Page 6 — the big Solana venues, whose attention is elsewhere. Sourced from
+// each project's own asset (Jupiter) or the Solana token list, so every mark
+// is transparent and reads on black rather than in a white box.
 const INCUMBENTS: Logo[] = [
-  { name: "Jupiter", src: "/remote/logo-jupiter.jpg" },
+  { name: "Jupiter", src: "/remote/logo-jupiter.svg" },
   { name: "Orca", src: "/remote/logo-orca.png" },
-  { name: "Raydium", src: "/remote/logo-raydium.jpg" },
+  { name: "Raydium", src: "/remote/logo-raydium.png" },
 ];
 
 /**
@@ -267,7 +309,7 @@ const Flywheel = () => (
         >
           upstream
         </Text>
-        <LogoRow logos={UPSTREAM} size={72} margin="14px 0 0 0" />
+        <LogoRow logos={UPSTREAM} height={46} margin="14px 0 0 0" />
       </Box>
       <Box width="1px" height="150px" backgroundColor={colors.border} />
       <Box margin="0 0 0 26px">
@@ -279,7 +321,7 @@ const Flywheel = () => (
         >
           downstream
         </Text>
-        <LogoRow logos={DOWNSTREAM} size={72} margin="14px 0 0 0" />
+        <LogoRow logos={DOWNSTREAM} height={46} margin="14px 0 0 0" />
       </Box>
     </FlexBox>
   </Box>
@@ -326,8 +368,8 @@ export default function DemoDeck() {
       {/* 1 — Title */}
       <Slide>
         <FlexBox height="100%" flexDirection="column" justifyContent="center">
-          <Box margin="0 0 40px 0">
-            <Image src="/dropset-wordmark.png" width={520} />
+          <Box margin="0 0 44px 0">
+            <Wordmark width={700} />
           </Box>
           <Statement fontSize="72px">Forex on Solana.</Statement>
         </FlexBox>
@@ -436,8 +478,10 @@ export default function DemoDeck() {
       {/* 5 — Why this will fail */}
       <Slide>
         <FlexBox height="100%" flexDirection="column" justifyContent="center">
-          <Eyebrow>Why this will fail</Eyebrow>
-          <Statement>Why this will fail: permissioned distribution.</Statement>
+          <Eyebrow>Permissioned distribution</Eyebrow>
+          {/* The asterisk is the joke: it promises a footnote the audience
+              doesn't get until the next page's title answers it. */}
+          <Statement>Why Dropset will fail*</Statement>
           <LogoRow logos={THREATS} tint={colors.sell} />
         </FlexBox>
         <Notes>
@@ -452,7 +496,7 @@ export default function DemoDeck() {
       {/* 6 — Why it will work */}
       <Slide>
         <FlexBox height="100%" flexDirection="column" justifyContent="center">
-          <Eyebrow>Why it will work</Eyebrow>
+          <Eyebrow>*Why Dropset won’t actually fail</Eyebrow>
           <Statement fontSize="50px">
             But their liquidity isn’t public — and the big Solana DEXes focus on
             SOL, memes.
@@ -501,13 +545,13 @@ export default function DemoDeck() {
             <Portrait
               src="/remote/team-alex.png"
               name="Alex"
-              role="Product · exchange design"
-              prior="Cofounder, Econia Labs"
+              role="Founder, DASMAC"
+              prior="prev. Cofounder, Econia Labs"
             />
             <Portrait
               src="/remote/team-judy.png"
               name="Judy"
-              role="Operations · stablecoin rails"
+              role="Operations, DASMAC"
               prior="prev. Dragonfly Capital Partners"
             />
           </FlexBox>
