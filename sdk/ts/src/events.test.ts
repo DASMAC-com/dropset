@@ -16,7 +16,7 @@ import { address, getBase58Decoder, getBase58Encoder } from '@solana/kit';
 import {
   collectFillEvents,
   decodeFillEventPayload,
-  DISCRIMINATOR_LEN,
+  EVENT_DISCRIMINATOR_LEN,
   EVENT_IX_TAG_LE,
   eventAccountKeys,
   FILL_EVENT_DISCRIMINATOR,
@@ -56,11 +56,11 @@ const sampleEvent = (): FillEventArgs => ({
 const envelope = (event: FillEventArgs): Uint8Array => {
   const body = getFillEventEncoder().encode(event);
   const out = new Uint8Array(
-    EVENT_IX_TAG_LE.length + DISCRIMINATOR_LEN + body.length,
+    EVENT_IX_TAG_LE.length + EVENT_DISCRIMINATOR_LEN + body.length,
   );
   out.set(EVENT_IX_TAG_LE, 0);
   out.set(FILL_EVENT_DISCRIMINATOR, EVENT_IX_TAG_LE.length);
-  out.set(body, EVENT_IX_TAG_LE.length + DISCRIMINATOR_LEN);
+  out.set(body, EVENT_IX_TAG_LE.length + EVENT_DISCRIMINATOR_LEN);
   return out;
 };
 
@@ -93,6 +93,30 @@ const txWith = (
   transaction: { message: { accountKeys } },
 });
 
+/**
+ * Build a transaction from explicit inner-instruction sets, so a test can
+ * express the multi-leg and mixed-traffic shapes `txWith` can't: a sweep emits
+ * one FillEvent per level, and a real transaction's sets also carry token
+ * transfers and other programs' instructions.
+ */
+const txWithSets = (
+  sets: readonly { programIdIndex: number; data: Uint8Array }[][],
+): EventTransaction => ({
+  meta: {
+    innerInstructions: sets.map((instructions) => ({
+      instructions: instructions.map(({ programIdIndex, data }) => ({
+        programIdIndex,
+        data: getBase58Decoder().decode(data),
+      })),
+    })),
+  },
+  transaction: {
+    message: {
+      accountKeys: [SOME_ADDRESS as string, DROPSET_PROGRAM_ADDRESS as string],
+    },
+  },
+});
+
 test('the event tag matches the Rust EVENT_IX_TAG_LE literal', () => {
   // 0x1d9acb512ea545e4, little-endian — mirrored from sdk/rs/src/events.rs.
   const expected = new Uint8Array(8);
@@ -108,7 +132,7 @@ test('the fill discriminator matches the anchor sha256 scheme', () => {
   const digest = createHash('sha256').update('event:FillEvent').digest();
   assert.deepStrictEqual(
     new Uint8Array(FILL_EVENT_DISCRIMINATOR),
-    new Uint8Array(digest.subarray(0, DISCRIMINATOR_LEN)),
+    new Uint8Array(digest.subarray(0, EVENT_DISCRIMINATOR_LEN)),
   );
 });
 
@@ -164,19 +188,19 @@ test('strip rejects non-event data', () => {
   short.set(EVENT_IX_TAG_LE, 0);
   assert.equal(stripEventTag(short), null);
   // Tag present with a full discriminator: accepted here, rejected downstream.
-  const exact = new Uint8Array(EVENT_IX_TAG_LE.length + DISCRIMINATOR_LEN);
+  const exact = new Uint8Array(EVENT_IX_TAG_LE.length + EVENT_DISCRIMINATOR_LEN);
   exact.set(EVENT_IX_TAG_LE, 0);
   assert.notEqual(stripEventTag(exact), null);
 });
 
 test('a non-fill discriminator decodes to null', () => {
-  const payload = new Uint8Array(DISCRIMINATOR_LEN + 200);
+  const payload = new Uint8Array(EVENT_DISCRIMINATOR_LEN + 200);
   payload.set([1, 2, 3, 4, 5, 6, 7, 8], 0);
   assert.equal(decodeFillEventPayload(payload), null);
 });
 
 test('a truncated fill body decodes to null', () => {
-  const payload = new Uint8Array(DISCRIMINATOR_LEN + 16);
+  const payload = new Uint8Array(EVENT_DISCRIMINATOR_LEN + 16);
   payload.set(FILL_EVENT_DISCRIMINATOR, 0);
   assert.equal(decodeFillEventPayload(payload), null);
 });
@@ -235,4 +259,94 @@ test('base58 round-trip of the envelope is byte-exact', () => {
   const data = envelope(sampleEvent());
   const text = getBase58Decoder().decode(data);
   assert.deepStrictEqual(new Uint8Array(getBase58Encoder().encode(text)), data);
+});
+
+test('a multi-leg sweep yields every leg in inner-instruction order', () => {
+  // The common real shape: one swap clears several levels and emits one event
+  // per leg. Order is part of the contract — consumers key rows off the leg
+  // index, so a reordering would silently mislabel them.
+  const legs = [1_000_000n, 250_000n, 1n].map((fillBase) =>
+    envelope({ ...sampleEvent(), fillBase }),
+  );
+  const fills = collectFillEvents(
+    txWithSets([legs.map((data) => ({ programIdIndex: 1, data }))]),
+  );
+  assert.deepStrictEqual(
+    fills.map((f) => f.fillBase),
+    [1_000_000n, 250_000n, 1n],
+  );
+});
+
+test('events are collected across sets and around unrelated instructions', () => {
+  // A real transaction's inner instructions also carry token transfers and
+  // other programs' calls, spread over more than one set.
+  const ours = envelope({ ...sampleEvent(), fillBase: 7n });
+  const alsoOurs = envelope({ ...sampleEvent(), fillBase: 9n });
+  const foreign = envelope({ ...sampleEvent(), fillBase: 999n });
+  const fills = collectFillEvents(
+    txWithSets([
+      [
+        // Not an event at all: a token-transfer-shaped instruction from
+        // another program.
+        { programIdIndex: 0, data: new Uint8Array([1, 2, 3, 4]) },
+        { programIdIndex: 1, data: ours },
+      ],
+      [
+        // Well-formed event bytes, but emitted by someone else — the tag and
+        // discriminator are public, so only the program id rejects it.
+        { programIdIndex: 0, data: foreign },
+        { programIdIndex: 1, data: alsoOurs },
+      ],
+    ]),
+  );
+  assert.deepStrictEqual(
+    fills.map((f) => f.fillBase),
+    [7n, 9n],
+  );
+});
+
+test('trailing bytes past the fixed-size body are tolerated', () => {
+  // The decoder documents this tolerance (borsh's `deserialize` does the same
+  // on the Rust side), so pin it rather than leaving the branch unexercised.
+  const exact = envelope(sampleEvent());
+  const padded = new Uint8Array(exact.length + 16);
+  padded.set(exact, 0);
+  const fills = collectFillEvents(txWith(padded));
+  assert.equal(fills.length, 1);
+  assert.equal(fills[0].fillBase, sampleEvent().fillBase);
+});
+
+test('a failed transaction yields no fills', () => {
+  // A failed transaction still carries the inner instructions recorded before
+  // it failed, and a foreign program can get event-shaped bytes recorded
+  // against our program id that way — so the failure itself is the gate.
+  const tx = txWith(envelope(sampleEvent()));
+  assert.deepStrictEqual(
+    collectFillEvents({
+      ...tx,
+      meta: { ...tx.meta, err: { InstructionError: [0, 'Custom'] } },
+    }),
+    [],
+  );
+  // A successful transaction carries `err: null` — that must still decode.
+  assert.equal(
+    collectFillEvents({ ...tx, meta: { ...tx.meta, err: null } }).length,
+    1,
+  );
+});
+
+test('a malformed loadedAddresses fails closed instead of throwing', () => {
+  // Every other bad-input path returns null/[]; a hostile or buggy RPC
+  // shouldn't be able to throw out of the decoder and take the caller with it.
+  const tx = txWith(envelope(sampleEvent()));
+  const malformed = {
+    ...tx,
+    meta: {
+      ...tx.meta,
+      // Shape the declared type forbids, so cast past it deliberately.
+      loadedAddresses: { writable: null, readonly: undefined },
+    },
+  } as unknown as EventTransaction;
+  assert.doesNotThrow(() => collectFillEvents(malformed));
+  assert.equal(collectFillEvents(malformed).length, 1);
 });

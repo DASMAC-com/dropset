@@ -8,10 +8,13 @@ import {
 import type { Address, Signature } from "@solana/kit";
 import { useSolanaClient } from "@solana/react-hooks";
 import { useEffect, useState } from "react";
-import {
-  RECENT_FILLS_MAX_ROWS,
-  RECENT_FILLS_RESUBSCRIBE_MS,
-} from "../data/timings";
+import { RECENT_FILLS_RESUBSCRIBE_MS } from "../data/timings";
+
+// Rows held in the tape. A window, not a pad: the newest fill goes on top and
+// the oldest falls off. Lives here rather than in `data/timings` — that module
+// is millisecond durations, and this is a row count (the ladder keeps its own
+// `MAX_ROWS` beside its pane for the same reason).
+export const MAX_ROWS = 12;
 
 // One rendered row of the tape: a single fill leg.
 export type RecentFill = {
@@ -35,20 +38,27 @@ export type RecentFill = {
 // Cap on remembered signatures. A swap emits several fills, so this stays a
 // few multiples above the row window to keep the dedup honest across a
 // re-subscribe without growing without bound.
-const SEEN_LIMIT = RECENT_FILLS_MAX_ROWS * 8;
+const SEEN_LIMIT = MAX_ROWS * 8;
 
+// Abortable delay. The listener is registered `once` and removed on the timer
+// path, so a long run of backoff cycles against a down validator doesn't pile
+// up listeners on the effect's single long-lived signal.
 const sleep = (ms: number, signal: AbortSignal): Promise<void> =>
   new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener("abort", () => {
+    const onAbort = () => {
       clearTimeout(timer);
       resolve();
-    });
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
   });
 
 /**
  * Live-subscribe to the selected market's fills and keep the newest
- * {@link RECENT_FILLS_MAX_ROWS} of them, newest first.
+ * {@link MAX_ROWS} of them, newest first.
  *
  * Fills come from the chain the same way the TUI and maker-bot read them:
  * `logsSubscribe` on the program tells us a transaction touched it, then
@@ -62,6 +72,12 @@ const sleep = (ms: number, signal: AbortSignal): Promise<void> =>
  * backs off and re-subscribes rather than leaving a dead pane, and every
  * market switch tears the old chain down (the effect's abort) before the new
  * one starts, so two chains can never write to the same state.
+ *
+ * Unlike the polling hooks beside it (`useOrderBook`, `useEclobQuote`), this one
+ * does **not** pause on a hidden tab. Pausing a poll just skips a tick, but
+ * pausing a push subscription means tearing down the socket and losing the
+ * trades that happen while it's down — the tape would come back with a hole in
+ * it. The cost of staying subscribed is the per-notification fetch below.
  */
 export function useRecentFills(
   market: Address | null,
@@ -108,6 +124,13 @@ export function useRecentFills(
       // rather than the logs, so there's nothing cheaper to pre-filter on. The
       // TUI's fill subscription pays the same cost against the same node.
       //
+      // Ingest is awaited per notification, which is what keeps rows prepending
+      // in arrival order. The ceiling that implies: notifications arrive for the
+      // whole program, so if program-wide traffic outpaces the RPC round-trip
+      // the queue grows and the tape lags behind the chain. Fine at demo scale;
+      // a busier market would want the fetches pipelined and re-ordered on the
+      // way out.
+      //
       // Failures are swallowed here rather than thrown: one unreadable
       // transaction must not tear down the subscription that reads the rest.
       let tx: Awaited<ReturnType<typeof fetchTransaction>>;
@@ -147,7 +170,7 @@ export function useRecentFills(
       // order (best price first) — the order they came off the book. The legs
       // of one swap are simultaneous, so there's no newer/older among them to
       // preserve.
-      setFills((prev) => [...rows, ...prev].slice(0, RECENT_FILLS_MAX_ROWS));
+      setFills((prev) => [...rows, ...prev].slice(0, MAX_ROWS));
     };
 
     const run = async (): Promise<void> => {

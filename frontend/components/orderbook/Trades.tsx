@@ -14,9 +14,8 @@ import {
   formatPrice,
   priceFractionDigits,
 } from "./format";
+import { ROW_H } from "./layout";
 import { GREEN, RED } from "./tone";
-
-const ROW_H = "h-[22px]";
 
 // One grid template for the header and every row, so the columns line up.
 // The last two tracks are fixed widths rather than `auto` on purpose: `auto`
@@ -62,13 +61,12 @@ function TradeRow({
     <div
       className={`relative ${COLS} px-3 ${ROW_H} text-[11px] tabular-nums even:bg-muted`}
     >
-      {/* Arrival flash on the top row only, tinted by the taker side. Keyed on
-          the fill id so React mounts a fresh node — and so replays the
-          animation — each time a new trade takes the top slot. Absolute, so it
-          sits outside the grid's tracks. */}
+      {/* Arrival flash on the top row only, tinted by the taker side. The
+          animation replays because the row itself is keyed on the fill id, so a
+          new trade taking the top slot mounts a whole new row subtree — this
+          overlay included. Absolute, so it sits outside the grid's tracks. */}
       {isNewest && (
         <div
-          key={fill.id}
           className="pointer-events-none absolute inset-0"
           style={{
             backgroundColor: sideTone(fill.side),
@@ -128,17 +126,24 @@ export function Trades({
   const [newest] = fills;
   if (!newest) return null;
 
-  // One digit count for the whole tape, taken from the newest fill, so the
-  // price column stays aligned as rows scroll through.
+  // One digit count for the whole price column, from the newest fill. Unlike
+  // the per-row size count, price digits come from magnitude *buckets*, and a
+  // market's prints sit well inside one bucket — so in practice this is stable
+  // even though the source fill changes on every arrival. A market quoting
+  // right at a bucket edge (a 1.0-ish pair straddling the `>= 1` boundary)
+  // would flip the column; the ladder above derives its count the same way and
+  // has the same caveat.
   const fractionDigits = priceFractionDigits(newest.price);
 
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-background">
-      <div className="flex items-center justify-between border-border border-b px-3 py-2.5">
+      <div className="flex items-center border-border border-b px-3 py-2.5">
         <h3 className="font-semibold text-foreground text-sm">Trades</h3>
       </div>
 
-      <div className={`${COLS} px-3 py-1 text-[10px] text-muted-fg`}>
+      <div
+        className={`${COLS} px-3 py-1 text-[10px] text-muted-fg tracking-wide`}
+      >
         <span>Price</span>
         <span className="text-right">Size ({base.symbol})</span>
         <span className="text-right">Time</span>

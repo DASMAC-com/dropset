@@ -1,4 +1,4 @@
-// Number formatting shared by the depth ladder and the fills tape, so a price
+// Number formatting shared by the depth ladder and the trades tape, so a price
 // or a size is written the same way in both panes.
 
 // FX stablecoin pairs span a wide price range (EUR ≈ 1.1, MXN ≈ 0.05,
@@ -24,22 +24,27 @@ export function amountValue(atoms: bigint, decimals: number): number {
   return Number(atoms) / 10 ** decimals;
 }
 
-// How many fraction digits `value` needs to show at least `minSigFigs`
-// significant digits — never fewer than 2, so ordinary sizes keep their usual
-// look, and never more than 8, so one speck of dust can't blow the column out.
+// How many fraction digits `value` needs to show at least two significant
+// digits — never fewer than 2, so ordinary sizes keep their usual look, and
+// never more than 8, so one speck of dust can't blow the column out.
 //
 // Without this a sub-0.01 fill renders as a flat "0.00": a real trade that
 // reads like a broken feed. A sweep that clears one level and takes a sliver of
 // the next produces exactly that.
-export function amountFractionDigits(value: number, minSigFigs = 2): number {
+const MIN_SIG_FIGS = 2;
+
+export function amountFractionDigits(value: number): number {
   if (!Number.isFinite(value) || value === 0) return 2;
   const magnitude = Math.floor(Math.log10(Math.abs(value)));
-  return Math.min(8, Math.max(2, minSigFigs - 1 - magnitude));
+  return Math.min(8, Math.max(2, MIN_SIG_FIGS - 1 - magnitude));
 }
 
 // Compact size, matching the ladder's size/total columns. `fractionDigits` is
-// the caller's choice so a whole column can share one count and stay aligned —
-// a per-row count would jitter the decimal point down the column.
+// the caller's choice because the two panes want different things: the ladder
+// shares one count across its rows (the default 2) to hold the decimal point in
+// column, while the tape derives it per row — a shared count there would be
+// recomputed from whichever fills are in the window and visibly flip the whole
+// column as dust scrolls through.
 export function formatAmount(
   atoms: bigint,
   decimals: number,
@@ -51,8 +56,9 @@ export function formatAmount(
   });
 }
 
-// `HH:MM:SS` in the viewer's locale conventions but always 24-hour, so the
-// column width is stable. Takes unix *seconds* (a transaction's `blockTime`).
+// `HH:MM:SS`, in the viewer's local time zone but always `en-US` 24-hour
+// formatting, so the column width is stable regardless of the browser locale.
+// Takes unix *seconds* (a transaction's `blockTime`).
 export function formatClockTime(unixSeconds: number): string {
   return new Date(unixSeconds * 1000).toLocaleTimeString("en-US", {
     hour: "2-digit",

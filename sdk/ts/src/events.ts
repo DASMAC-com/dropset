@@ -43,7 +43,7 @@ export const EVENT_IX_TAG_LE: ReadonlyUint8Array = new Uint8Array([
 ]);
 
 /** Length of the discriminator that follows the tag. */
-export const DISCRIMINATOR_LEN = 8;
+export const EVENT_DISCRIMINATOR_LEN = 8;
 
 /**
  * `sha256("event:FillEvent")[..8]` — the anchor discriminator scheme. Kept as
@@ -78,15 +78,19 @@ export type EventInnerInstructionSet = {
  * optional-or-null exactly where the RPC may omit it.
  */
 export type EventTransaction = {
-  meta:
-    | ({
-        innerInstructions?: readonly EventInnerInstructionSet[] | null;
-        loadedAddresses?: {
-          readonly: readonly string[];
-          writable: readonly string[];
-        } | null;
-      } | null)
-    | undefined;
+  meta?: {
+    /**
+     * Non-null when the transaction failed. Load-bearing rather than
+     * informational — see {@link collectFillEvents}, which refuses to read
+     * events out of a failed transaction.
+     */
+    err?: unknown;
+    innerInstructions?: readonly EventInnerInstructionSet[] | null;
+    loadedAddresses?: {
+      readonly: readonly string[];
+      writable: readonly string[];
+    } | null;
+  } | null;
   transaction: {
     message: {
       accountKeys?: readonly string[];
@@ -102,7 +106,7 @@ export type EventTransaction = {
 export function stripEventTag(
   data: ReadonlyUint8Array,
 ): ReadonlyUint8Array | null {
-  if (data.length < EVENT_IX_TAG_LE.length + DISCRIMINATOR_LEN) return null;
+  if (data.length < EVENT_IX_TAG_LE.length + EVENT_DISCRIMINATOR_LEN) return null;
   for (let i = 0; i < EVENT_IX_TAG_LE.length; i++) {
     if (data[i] !== EVENT_IX_TAG_LE[i]) return null;
   }
@@ -121,11 +125,11 @@ export function stripEventTag(
 export function decodeFillEventPayload(
   payload: ReadonlyUint8Array,
 ): FillEvent | null {
-  if (payload.length < DISCRIMINATOR_LEN) return null;
-  for (let i = 0; i < DISCRIMINATOR_LEN; i++) {
+  if (payload.length < EVENT_DISCRIMINATOR_LEN) return null;
+  for (let i = 0; i < EVENT_DISCRIMINATOR_LEN; i++) {
     if (payload[i] !== FILL_EVENT_DISCRIMINATOR[i]) return null;
   }
-  const body = payload.slice(DISCRIMINATOR_LEN);
+  const body = payload.slice(EVENT_DISCRIMINATOR_LEN);
   const decoder = getFillEventDecoder();
   if (body.length < decoder.fixedSize) return null;
   try {
@@ -140,6 +144,13 @@ export function decodeFillEventPayload(
  * instruction's `programIdIndex` addresses: the message's static keys first,
  * then the address-lookup-table loaded addresses (writable, then readonly).
  *
+ * Assumes the transaction was fetched with `encoding: 'json'`, where
+ * `accountKeys` holds only the *static* keys and the lookup-table addresses
+ * arrive separately in `meta.loadedAddresses`. Under `jsonParsed` the key list
+ * already includes the loaded addresses (as objects, not strings), so this
+ * assembly would double-count — it fails closed there rather than
+ * misattributing, since an object never matches the program address.
+ *
  * Returns `null` when the static key list is missing — the caller then can't
  * safely attribute an event and skips the transaction rather than trust an
  * unverified emitter.
@@ -149,20 +160,40 @@ export function eventAccountKeys(tx: EventTransaction): readonly string[] | null
   if (!staticKeys) return null;
   const loaded = tx.meta?.loadedAddresses;
   if (!loaded) return staticKeys;
-  return [...staticKeys, ...loaded.writable, ...loaded.readonly];
+  // Tolerate a malformed `loadedAddresses` the declared type forbids: spreading
+  // a non-array would throw out of a decoder whose every other bad-input path
+  // returns null/[], so a hostile or buggy RPC could take out the caller.
+  const writable = Array.isArray(loaded.writable) ? loaded.writable : [];
+  const readonly = Array.isArray(loaded.readonly) ? loaded.readonly : [];
+  return [...staticKeys, ...writable, ...readonly];
 }
 
 /**
  * Every {@link FillEvent} our program emitted in this transaction, in
  * inner-instruction order.
  *
- * Each event's emitting program is verified against
- * {@link DROPSET_PROGRAM_ADDRESS} before its bytes are trusted: the tag and the
- * discriminator are both public, so the emitting program id is what
- * `emit_cpi!`'s self-CPI actually authenticates. A transaction whose key list
- * can't be resolved yields nothing rather than an unattributed fill.
+ * Two conditions gate every event before its bytes are trusted, and both are
+ * necessary:
+ *
+ * 1. **The transaction succeeded.** A failed transaction still carries the
+ *    inner instructions recorded up to the point it failed, so its `meta`
+ *    can hold event-shaped bytes that never took effect. That is reachable by
+ *    an attacker: a foreign program can CPI into this program with
+ *    `[tag][discriminator][fabricated body]`, and because inner instructions
+ *    record the program being *invoked*, the recorded `programIdIndex` resolves
+ *    to us and passes check 2. anchor rejects the call (the event-authority PDA
+ *    can't sign for a foreign invoker) so the transaction fails — which is
+ *    precisely why the failure has to be checked here rather than left to
+ *    callers.
+ * 2. **The emitting program is {@link DROPSET_PROGRAM_ADDRESS}.** The tag and
+ *    the discriminator are both public values, so the emitting program id is
+ *    the only thing `emit_cpi!`'s self-CPI actually authenticates.
+ *
+ * A transaction whose key list can't be resolved yields nothing rather than an
+ * unattributed fill.
  */
 export function collectFillEvents(tx: EventTransaction): FillEvent[] {
+  if (tx.meta?.err != null) return [];
   const sets = tx.meta?.innerInstructions;
   if (!sets) return [];
   const accountKeys = eventAccountKeys(tx);

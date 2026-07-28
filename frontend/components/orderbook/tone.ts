@@ -1,5 +1,5 @@
-// The soft red/green pair shared by the depth ladder and the fills tape, so the
-// two panes read as one instrument.
+// The soft red/green pair shared by the depth ladder and the trades tape, so
+// the two panes read as one instrument.
 //
 // Named by color rather than by meaning on purpose: the ladder colors a
 // *level* (asks red, bids green) while the tape colors a *taker side* (buys

@@ -65,10 +65,6 @@ export const ORDER_BOOK_REFRESH_MS = 1_000;
 
 // ───────────── Recent fills ─────────────
 
-// Rows held in the recent-fills tape. A fixed window: the newest fill goes on
-// top and the oldest falls off, so the pane's height never moves once full.
-export const RECENT_FILLS_MAX_ROWS = 12;
-
 // Backoff before re-subscribing after the fills websocket drops or errors.
 // Long enough not to hot-loop against a validator that's still starting (the
 // localnet case), short enough that the tape resumes within a beat of the node

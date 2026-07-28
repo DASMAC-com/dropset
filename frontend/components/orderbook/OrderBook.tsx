@@ -7,6 +7,7 @@ import type { BookToken, OrderBookState } from "@/lib/hooks/useOrderBook";
 import { useOrderBook } from "@/lib/hooks/useOrderBook";
 import { useSwapStore } from "@/lib/store";
 import { formatAmount, formatPrice, priceFractionDigits } from "./format";
+import { ROW_H } from "./layout";
 import { Trades } from "./Trades";
 import { GREEN, GREEN_BAR, GREEN_FLASH, RED, RED_BAR, RED_FLASH } from "./tone";
 
@@ -15,11 +16,10 @@ import { GREEN, GREEN_BAR, GREEN_FLASH, RED, RED_BAR, RED_FLASH } from "./tone";
 // (no spacer padding), so the panel shrinks to the book; the empty→flashed
 // moment reads as levels appearing in place.
 const MAX_ROWS = 8;
-const ROW_H = "h-[22px]";
 
 // Asks red, bids green. Text is the saturated tone; the depth bar and the
 // update-flash are low-alpha washes of it. The palette is shared with the
-// fills tape below the ladder — see ./tone.
+// trades tape below the ladder — see ./tone.
 const TONE = {
   ask: { text: RED, bar: RED_BAR, flash: RED_FLASH },
   bid: { text: GREEN, bar: GREEN_BAR, flash: GREEN_FLASH },
