@@ -25,7 +25,7 @@ import {
   shortenMint,
 } from "@/lib/data/currencies";
 import { useAppEvent } from "@/lib/events";
-import { explorerTokenUrl } from "@/lib/explorer";
+import { EXPLORER_NAME, explorerTokenUrl } from "@/lib/explorer";
 import { FORMATS } from "@/lib/format/formats";
 import { isFiniteNumber } from "@/lib/guards";
 import { flashBg, useFlashOnChanges } from "@/lib/hooks/useFlashOnChange";
@@ -376,7 +376,7 @@ const StablecoinRow = memo(function StablecoinRow({
             href={explorerTokenUrl(s.mint)}
             target="_blank"
             rel="noopener noreferrer"
-            title={`View ${s.symbol} on Solscan`}
+            title={`View ${s.symbol} on ${EXPLORER_NAME}`}
             className="inline-flex shrink-0 items-center rounded p-1 text-muted-fg hover:bg-muted hover:text-accent"
           >
             <ExternalLink size={12} />

@@ -63,6 +63,14 @@ export const BALANCE_REFETCH_DELAY_MS = 1_500;
 // the node the way the alpha viz's 500 ms poll did.
 export const ORDER_BOOK_REFRESH_MS = 1_000;
 
+// ───────────── Recent fills ─────────────
+
+// Backoff before re-subscribing after the fills websocket drops or errors.
+// Long enough not to hot-loop against a validator that's still starting (the
+// localnet case), short enough that the tape resumes within a beat of the node
+// coming back.
+export const RECENT_FILLS_RESUBSCRIBE_MS = 2_000;
+
 // ───────────── UI feedback ─────────────
 
 // How long the clipboard-copy "Copied!" feedback stays on screen.

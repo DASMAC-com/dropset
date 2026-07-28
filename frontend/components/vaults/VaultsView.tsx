@@ -35,7 +35,7 @@ import {
   vaultReserveRatio,
 } from "@/lib/data/vaults";
 import { emit, useAppEvent } from "@/lib/events";
-import { explorerAddressUrl } from "@/lib/explorer";
+import { EXPLORER_NAME, explorerAddressUrl } from "@/lib/explorer";
 import { FORMATS } from "@/lib/format/formats";
 import { groupedRowClassName } from "@/lib/ui/groupedRows";
 import { pnlTone } from "@/lib/ui/pnlTone";
@@ -320,8 +320,8 @@ function VaultRow({
             href={explorerAddressUrl(vault.leader)}
             target="_blank"
             rel="noopener noreferrer"
-            title="View leader on Solscan"
-            aria-label="View leader on Solscan"
+            title={`View leader on ${EXPLORER_NAME}`}
+            aria-label={`View leader on ${EXPLORER_NAME}`}
             className="inline-flex shrink-0 items-center rounded p-1 text-muted-fg hover:bg-muted hover:text-accent"
           >
             <ExternalLink size={12} />

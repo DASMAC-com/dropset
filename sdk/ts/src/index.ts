@@ -7,6 +7,7 @@
  * `generated/` tree with `make sdk` after `make idl`.
  */
 
+export * from './events';
 export * from './generated';
 export * from './market';
 export * from './price';

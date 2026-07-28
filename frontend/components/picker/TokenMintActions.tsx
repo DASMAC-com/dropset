@@ -2,11 +2,11 @@
 
 import { ExternalLink } from "@/components/icons";
 import { CopyButton } from "@/components/ui/CopyButton";
-import { explorerTokenUrl } from "@/lib/explorer";
+import { EXPLORER_NAME, explorerTokenUrl } from "@/lib/explorer";
 
 // Shared trailing chrome for a stablecoin row: a truncated mint label, the
 // shared `<CopyButton>` (which renders its own inline "Copied:" popover), and
-// a Solscan link. Used by both the swap-page token picker and the on-map
+// an explorer link. Used by both the swap-page token picker and the on-map
 // country picker so behavior + styling stay aligned. The mint label is
 // intentionally a non-interactive `<span>` — copy lives in its own icon.
 export function TokenMintActions({
@@ -26,7 +26,7 @@ export function TokenMintActions({
         href={explorerTokenUrl(mint)}
         target="_blank"
         rel="noopener noreferrer"
-        title={`View ${symbol} on Solscan`}
+        title={`View ${symbol} on ${EXPLORER_NAME}`}
         className="flex shrink-0 items-center rounded p-1 text-muted-fg hover:bg-muted hover:text-accent"
       >
         <ExternalLink size={12} />
