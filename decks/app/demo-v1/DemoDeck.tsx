@@ -250,33 +250,35 @@ const LogoRow = ({
       >
         {/* Every tile in a row is the same box; the mark is contained inside
             it rather than sized to it, so a wide logotype and a square icon
-            share a footprint without either being stretched. */}
-        <FlexBox justifyContent="center">
-          <div
+            share a footprint without either being stretched.
+            Tile, caption and note all sit flush to the column's left edge —
+            centring the tile inside a column wider than itself, while the text
+            below started at the column edge, left the two visibly out of
+            line. */}
+        <div
+          style={{
+            alignItems: "center",
+            border: `1px solid ${tint ?? colors.border}`,
+            borderRadius: "14px",
+            boxSizing: "border-box",
+            display: "flex",
+            height: `${height + 46}px`,
+            justifyContent: "center",
+            padding: "0 18px",
+            width: `${width}px`,
+          }}
+        >
+          <img
+            src={src}
+            alt={name}
             style={{
-              alignItems: "center",
-              border: `1px solid ${tint ?? colors.border}`,
-              borderRadius: "14px",
-              boxSizing: "border-box",
-              display: "flex",
-              height: `${height + 46}px`,
-              justifyContent: "center",
-              padding: "0 18px",
-              width: `${width}px`,
+              display: "block",
+              maxHeight: `${height}px`,
+              maxWidth: "100%",
+              objectFit: "contain",
             }}
-          >
-            <img
-              src={src}
-              alt={name}
-              style={{
-                display: "block",
-                maxHeight: `${height}px`,
-                maxWidth: "100%",
-                objectFit: "contain",
-              }}
-            />
-          </div>
-        </FlexBox>
+          />
+        </div>
         {/* Captions are plain elements, not `Text`: Spectacle's carries a
             theme margin of its own that opens a gap between a name and its
             note far larger than either margin asks for, and on the flywheel
@@ -340,7 +342,7 @@ const UPSTREAM: Logo[] = [
 ];
 
 const DOWNSTREAM: Logo[] = [
-  { name: "Altitude", src: "/remote/logo-altitude.svg", note: "Banking" },
+  { name: "Altitude", src: "/remote/logo-altitude.png", note: "Banking" },
   { name: "CargoBill", src: "/remote/logo-cargobill.png", note: "Supply chain" },
 ];
 
@@ -350,7 +352,9 @@ const DOWNSTREAM: Logo[] = [
  * them is depth growing once both ends are connected — an inline SVG, so it
  * stays crisp at projector size with no asset pipeline.
  */
-const FLYWHEEL_TILE = 124;
+// Square: every mark on this page is a pure icon, so `TILE` matches the tile's
+// own height (`LOGO_TILE_PADDING` + the 58px image cap passed below).
+const FLYWHEEL_TILE = 104;
 // A group is two tile columns, so its heading rule spans exactly its own pair.
 // Derived from `LogoRow`'s constants rather than repeating their values.
 const FLYWHEEL_GROUP =
@@ -382,7 +386,7 @@ const FlywheelEnd = ({ label, logos }: { label: string; logos: Logo[] }) => (
     <LogoRow
       logos={logos}
       width={FLYWHEEL_TILE}
-      height={44}
+      height={58}
       margin="18px 0 0 0"
     />
   </Box>
@@ -604,7 +608,9 @@ export default function DemoDeck() {
             But Dropset liquidity is public, and the biggest Solana DEXes face
             an innovator’s dilemma (SOL, memes).
           </Statement>
-          <LogoRow logos={INCUMBENTS} width={132} height={52} />
+          {/* Square tiles: these are all pure icons. The threats row above
+              keeps wide ones, since those marks are logotypes. */}
+          <LogoRow logos={INCUMBENTS} width={110} height={64} />
         </SlideBody>
         <Notes>
           Their liquidity isn’t public: it sits inside private or permissioned
