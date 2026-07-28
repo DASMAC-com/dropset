@@ -274,11 +274,12 @@ const LogoRow = ({
   </FlexBox>
 );
 
-// Page 5 — the chains that could decide FX is theirs.
+// Page 5 — the chains that could decide FX is theirs, alphabetically, so the
+// row implies no ranking among them.
 const THREATS: Logo[] = [
   { name: "Arc", src: "/remote/logo-circle.svg" },
-  { name: "Tempo", src: "/remote/logo-tempo.svg" },
   { name: "Canton", src: "/remote/logo-canton.svg" },
+  { name: "Tempo", src: "/remote/logo-tempo.svg" },
 ];
 
 // Page 6 — the big Solana venues, whose attention is elsewhere. Sourced from
@@ -314,49 +315,38 @@ const DOWNSTREAM: Logo[] = [
  * them is depth growing once both ends are connected — an inline SVG, so it
  * stays crisp at projector size with no asset pipeline.
  */
-// Wide enough to hold both panels at their natural size: when they overflow,
-// `space-between` has nothing left to distribute and the hairline divider — a
-// 1px flex item — is the first thing squeezed out of existence.
-const FLYWHEEL_WIDTH = 940;
 const FLYWHEEL_TILE = 124;
+// Each tile's column is the tile plus caption room (`+ 56`) plus its margins.
+// Two of those is a group, and the group's underline spans exactly that.
+const FLYWHEEL_GROUP = 2 * (FLYWHEEL_TILE + 56 + 20);
+const FLYWHEEL_WIDTH = 2 * FLYWHEEL_GROUP + 60;
 
 /**
- * One end of the flywheel. A hairline between the two groups wasn't enough on
- * its own: four evenly-spaced tiles read as a single row of four whatever sits
- * between them. Each end is therefore its own panel — boxed, filled, and
- * headed with what that end *is* — so the split is a shape you see before you
- * read anything.
+ * One end of the flywheel: a heading with a rule under it, spanning both of
+ * that end's tiles. Boxing each end in a filled panel did make the split
+ * obvious, but at the cost of two slabs that dominated the page — the
+ * underline says "these two belong together" with none of that weight.
  */
-const FlywheelEnd = ({
-  label,
-  role,
-  logos,
-}: {
-  label: string;
-  role: string;
-  logos: Logo[];
-}) => (
-  <div
-    style={{
-      backgroundColor: colors.muted,
-      border: `1px solid ${colors.border}`,
-      borderRadius: "18px",
-      padding: "18px 14px 22px",
-    }}
-  >
-    <Text color="secondary" fontFamily="monospace" fontSize="20px" margin="0">
+const FlywheelEnd = ({ label, logos }: { label: string; logos: Logo[] }) => (
+  <Box width={`${FLYWHEEL_GROUP}px`}>
+    <Text
+      color="secondary"
+      fontFamily="monospace"
+      fontSize="21px"
+      margin="0 0 10px 0"
+    >
       {label}
     </Text>
-    <Text color="quaternary" fontSize="18px" margin="2px 0 0 0">
-      {role}
-    </Text>
+    <div
+      style={{ backgroundColor: colors.accent, height: "2px", width: "100%" }}
+    />
     <LogoRow
       logos={logos}
       width={FLYWHEEL_TILE}
       height={44}
-      margin="16px 0 0 0"
+      margin="18px 0 0 0"
     />
-  </div>
+  </Box>
 );
 
 const Flywheel = () => (
@@ -387,14 +377,10 @@ const Flywheel = () => (
       </svg>
     </FlexBox>
     <FlexBox justifyContent="space-between" alignItems="stretch">
-      <FlywheelEnd
-        label="upstream"
-        role="Issuers who need a market"
-        logos={UPSTREAM}
-      />
-      {/* The rule between the panels. `flexShrink: 0` keeps it visible: a 1px
-          flex item is otherwise free to collapse to nothing the moment the row
-          is tight. */}
+      <FlywheelEnd label="Upstream" logos={UPSTREAM} />
+      {/* The rule between the two ends. `flexShrink: 0` keeps it visible: a
+          1px flex item is otherwise free to collapse to nothing the moment the
+          row is tight. */}
       <div
         style={{
           backgroundColor: colors.mutedFg,
@@ -404,11 +390,7 @@ const Flywheel = () => (
           width: "1px",
         }}
       />
-      <FlywheelEnd
-        label="downstream"
-        role="Demand that needs FX"
-        logos={DOWNSTREAM}
-      />
+      <FlywheelEnd label="Downstream" logos={DOWNSTREAM} />
     </FlexBox>
   </Box>
 );
