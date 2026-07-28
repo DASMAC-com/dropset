@@ -30,7 +30,7 @@ const ROW_H = "h-[22px]";
 // right-aligned, so any slack falls harmlessly to the left.
 const COLS = "grid grid-cols-[1fr_1fr_4.5rem_1rem] items-center gap-x-4";
 
-// Taker side → colour: a buy is green, a sell is red. (Note this is the
+// Taker side → color: a buy is green, a sell is red. (Note this is the
 // opposite mapping from the ladder above, where the *levels* a buy consumes —
 // the asks — are red. See ./tone.)
 const sideTone = (side: RecentFill["side"]) => (side === "buy" ? GREEN : RED);

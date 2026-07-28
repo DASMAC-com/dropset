@@ -1,8 +1,8 @@
 // The soft red/green pair shared by the depth ladder and the fills tape, so the
 // two panes read as one instrument.
 //
-// Named by colour rather than by meaning on purpose: the ladder colours a
-// *level* (asks red, bids green) while the tape colours a *taker side* (buys
+// Named by color rather than by meaning on purpose: the ladder colors a
+// *level* (asks red, bids green) while the tape colors a *taker side* (buys
 // green, sells red), so an ask-side fill is green even though the ask level it
 // consumed was red. Each pane maps its own semantics onto these.
 export const RED = "#ff6b81";

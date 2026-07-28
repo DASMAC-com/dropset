@@ -20,7 +20,7 @@ export type RecentFill = {
   id: string;
   signature: string;
   // Taker side. `side: 0` is an ask-side fill (the taker bought), `1` is
-  // bid-side (the taker sold) — the colour the row renders in.
+  // bid-side (the taker sold) — the color the row renders in.
   side: "buy" | "sell";
   // Absolute price, decoded from the event's `Price` bits.
   price: number;
