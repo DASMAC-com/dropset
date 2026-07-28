@@ -9,8 +9,4 @@ ignorePaths:
 - '**/pnpm-lock.yaml'
 # Generated wasm-pack glue (make wasm) — its identifiers aren't ours to check.
 - '**/sdk/ts/src/wasm/**'
-# A manifest of remote asset URLs, whose paths are opaque CDN hashes rather
-# than prose. JSON can't host an inline cspell escape, and the hashes are
-# single-use, so they don't belong in the shared dictionary either.
-- '**/decks/remote-assets.json'
 ...

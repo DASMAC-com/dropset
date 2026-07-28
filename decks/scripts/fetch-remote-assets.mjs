@@ -13,7 +13,7 @@
 //
 // Usage: node scripts/fetch-remote-assets.mjs
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -55,16 +55,24 @@ async function download(url) {
   throw lastError;
 }
 
-// Clear the directory first so a filename dropped from the manifest doesn't
-// linger and keep a slide that references it working by accident.
-rmSync(dest, { recursive: true, force: true });
-mkdirSync(dest, { recursive: true });
-
 const names = Object.keys(manifest);
+
+// A manifest key is a filename, not a path. Without this a `..` or absolute
+// key would resolve outside public/remote/ and let a data-only JSON edit write
+// anywhere on a dev machine, in CI, or on Vercel.
+for (const name of names) {
+  if (name !== basename(name)) {
+    console.error(`Manifest key is not a plain filename: ${name}`);
+    process.exit(1);
+  }
+}
+
+// Download everything before touching what's on disk. The mirror is still
+// cleared and re-pulled on every run — nothing stale survives a success — but
+// clearing *first* meant an offline run destroyed a complete mirror and then
+// exited, so `pnpm dev` couldn't start at all. Fetch, then swap.
 const results = await Promise.allSettled(
-  names.map(async (name) => {
-    writeFileSync(resolve(dest, name), await download(manifest[name]));
-  }),
+  names.map((name) => download(manifest[name])),
 );
 
 const failures = results
@@ -76,7 +84,12 @@ if (failures.length > 0) {
     `Failed to mirror ${failures.length}/${names.length} remote asset(s):`,
   );
   for (const { name, result } of failures) {
-    console.error(`  - ${name} (${manifest[name]}): ${result.reason.message}`);
+    // A rejected `fetch` is a TypeError whose own message is the useless
+    // "fetch failed"; the DNS/TLS detail that names the real problem is on
+    // `.cause`.
+    const reason = result.reason;
+    const detail = reason.cause?.message ?? reason.message;
+    console.error(`  - ${name} (${manifest[name]}): ${detail}`);
   }
   console.error(
     "Fix the URL in decks/remote-assets.json, or re-run once the host is back.",
@@ -84,4 +97,12 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log(`Mirrored ${names.length} remote asset(s) into decks/public/remote.`);
+rmSync(dest, { recursive: true, force: true });
+mkdirSync(dest, { recursive: true });
+for (const [i, name] of names.entries()) {
+  writeFileSync(resolve(dest, name), results[i].value);
+}
+
+console.log(
+  `Mirrored ${names.length} remote asset(s) into decks/public/remote.`,
+);

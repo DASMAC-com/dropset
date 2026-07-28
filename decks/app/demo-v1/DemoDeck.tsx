@@ -20,8 +20,8 @@ import { colors, deckTheme } from "@/theme/tokens";
  * recorded product demos. Slides are minimal backdrops the presenter talks
  * over; the full spoken script lives in each slide's `<Notes>` (presenter
  * mode, `⌘⇧P` — a bare `p` does nothing), never on the slide itself. Route
- * name is public-facing
- * (`/demo-v1`); internal ticket ids never appear here or in the URL.
+ * name is public-facing (`/demo-v1`); internal ticket ids never appear here
+ * or in the URL.
  *
  * The copy follows `../../demo-v1-spec.md`, which is the source of truth for
  * it: one big sentence and one big visual per page, with the nuance kept off
@@ -143,9 +143,17 @@ const DEMOS = {
 } as const;
 
 // The badge is small on purpose: it labels the page, it isn't the page. Clicking
-// it plays the recording over the whole window (see `DemoVideo`).
-const DemoBadge = ({ network }: { network: keyof typeof DEMOS }) => (
-  <FlexBox margin="26px 0 0 0">
+// it plays the recording over the whole window (see `DemoVideo`). `margin` is a
+// prop because the badge sits under its visual on one page and beside it on
+// another, where a stacked top offset would be from the wrong layout.
+const DemoBadge = ({
+  network,
+  margin = "26px 0 0 0",
+}: {
+  network: keyof typeof DEMOS;
+  margin?: string;
+}) => (
+  <FlexBox margin={margin}>
     <DemoVideo network={network} {...DEMOS[network]} />
   </FlexBox>
 );
@@ -206,6 +214,17 @@ const Screenshot = ({
  */
 type Logo = { name: string; src: string; note?: string };
 
+/**
+ * A tile's column is wider than the tile by this much, so a long caption sits
+ * on one line; each column also carries `LOGO_GUTTER` on both sides. The
+ * flywheel's group rule spans exactly two columns, so it derives its width from
+ * these — hence named constants rather than numbers in two places, where
+ * editing the caption room here would silently stop the rule there from
+ * matching its own pair of tiles.
+ */
+const LOGO_CAPTION_ROOM = 56;
+const LOGO_GUTTER = 10;
+
 const LogoRow = ({
   logos,
   width = 150,
@@ -224,7 +243,11 @@ const LogoRow = ({
       // The column is wider than its tile so a long caption ("AUDD Digital")
       // sits on one line: a wrapped caption pushes its note down and breaks
       // the row's shared baseline.
-      <Box key={name} margin="0 10px" width={`${width + 56}px`}>
+      <Box
+        key={name}
+        margin={`0 ${LOGO_GUTTER}px`}
+        width={`${width + LOGO_CAPTION_ROOM}px`}
+      >
         {/* Every tile in a row is the same box; the mark is contained inside
             it rather than sized to it, so a wide logotype and a square icon
             share a footprint without either being stretched. */}
@@ -302,7 +325,7 @@ const INCUMBENTS: Logo[] = [
   { name: "Orca", src: "/remote/logo-orca.png" },
   { name: "Raydium", src: "/remote/logo-raydium.png" },
   { name: "Meteora", src: "/remote/logo-meteora.svg" },
-  { name: "pump.fun", src: "/remote/logo-pump-fun.png" },
+  { name: "pump.fun", src: "/remote/logo-pump-fun.svg" },
 ];
 
 /**
@@ -317,8 +340,8 @@ const UPSTREAM: Logo[] = [
 ];
 
 const DOWNSTREAM: Logo[] = [
-  { name: "Altitude", src: "/remote/logo-altitude.png", note: "Banking" },
-  { name: "CargoBill", src: "/remote/logo-cargobill.jpg", note: "Supply chain" },
+  { name: "Altitude", src: "/remote/logo-altitude.svg", note: "Banking" },
+  { name: "CargoBill", src: "/remote/logo-cargobill.png", note: "Supply chain" },
 ];
 
 /**
@@ -328,9 +351,10 @@ const DOWNSTREAM: Logo[] = [
  * stays crisp at projector size with no asset pipeline.
  */
 const FLYWHEEL_TILE = 124;
-// Each tile's column is the tile plus caption room (`+ 56`) plus its margins.
-// Two of those is a group, and the group's underline spans exactly that.
-const FLYWHEEL_GROUP = 2 * (FLYWHEEL_TILE + 56 + 20);
+// A group is two tile columns, so its heading rule spans exactly its own pair.
+// Derived from `LogoRow`'s constants rather than repeating their values.
+const FLYWHEEL_GROUP =
+  2 * (FLYWHEEL_TILE + LOGO_CAPTION_ROOM + 2 * LOGO_GUTTER);
 const FLYWHEEL_WIDTH = 2 * FLYWHEEL_GROUP + 60;
 
 /**
@@ -496,7 +520,7 @@ export default function DemoDeck() {
               alt="The Dropset globe, currencies pinned to the countries that issue them"
             />
             <Box margin="0 0 0 44px">
-              <DemoBadge network="mainnet" />
+              <DemoBadge network="mainnet" margin="0" />
             </Box>
           </FlexBox>
         </SlideBody>
@@ -565,10 +589,10 @@ export default function DemoDeck() {
         </SlideBody>
         <Notes>
           The honest risk: everyone wants onchain settlement, and the ones with
-          distribution are permissioning it. Arc and Tempo are
-          building payment-and-settlement rails, and Canton is doing regulated
-          onchain markets. Any of them could decide FX is theirs, and each
-          arrives with the customers already on it.
+          distribution are permissioning it. Arc and Tempo are building
+          payment-and-settlement rails, and Canton is doing regulated onchain
+          markets. Any of them could decide FX is theirs, and each arrives with
+          the customers already on it.
         </Notes>
       </Slide>
 
@@ -589,9 +613,8 @@ export default function DemoDeck() {
           pump.fun — are chasing SOL and memes, because that’s where the volume
           is today. It’s a classic innovator’s dilemma: FX is too small to move
           them and big enough for us. Dropset is the open, neutral, composable
-          venue — anyone
-          can quote, anyone can trade, any app can integrate — and we’re beating
-          everyone to it.
+          venue — anyone can quote, anyone can trade, any app can integrate —
+          and we’re beating everyone to it.
         </Notes>
       </Slide>
 

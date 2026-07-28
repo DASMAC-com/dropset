@@ -61,7 +61,9 @@ export const DemoVideo = ({
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [open]);
 
-  const src = `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&playsinline=1&modestbranding=1`;
+  // `youtube-nocookie` so a public deck doesn't set tracking cookies for every
+  // viewer; it serves the same player and the same ids.
+  const src = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&rel=0&playsinline=1&modestbranding=1`;
   const label = `demo video · ${network}`;
 
   return (
@@ -117,7 +119,11 @@ export const DemoVideo = ({
                 <iframe
                   src={src}
                   title={`Dropset ${label}`}
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  // Only what playback needs. YouTube's stock embed string also
+                  // delegates accelerometer, gyroscope, clipboard-write and
+                  // web-share, none of which a recording uses.
+                  allow="autoplay; encrypted-media; picture-in-picture"
+                  referrerPolicy="strict-origin-when-cross-origin"
                   allowFullScreen
                   style={{
                     border: 0,

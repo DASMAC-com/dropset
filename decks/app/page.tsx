@@ -35,7 +35,7 @@ export default function Home() {
           >
             Spectacle
           </a>{" "}
-          presentation, so those shortcuts are the library's own. Presenter
+          presentation, so those shortcuts are the library&apos;s own. Presenter
           mode syncs to the audience window over the browser&apos;s{" "}
           <span className="font-mono">BroadcastChannel</span> — same machine,
           same browser, two windows. It does not drive a deck on someone
