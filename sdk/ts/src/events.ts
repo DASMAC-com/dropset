@@ -148,8 +148,9 @@ export function decodeFillEventPayload(
  * `accountKeys` holds only the *static* keys and the lookup-table addresses
  * arrive separately in `meta.loadedAddresses`. Under `jsonParsed` the key list
  * already includes the loaded addresses (as objects, not strings), so this
- * assembly would double-count — it fails closed there rather than
- * misattributing, since an object never matches the program address.
+ * assembly would double-count — it fails closed there rather than crediting an
+ * event to the wrong program, since an object never matches the program
+ * address.
  *
  * Returns `null` when the static key list is missing — the caller then can't
  * safely attribute an event and skips the transaction rather than trust an
