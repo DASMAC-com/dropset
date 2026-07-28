@@ -24,5 +24,12 @@ next-env.d.ts
 
 # Brand assets copied from the repo-root brand-assets/ at dev/build time
 # (see ../brand-assets/copy-brand-assets.mjs); sourced, not committed.
+/public/dasmac-wordmark.png
 /public/dropset-wordmark.png
 /public/favicon-with-stroke.svg
+
+# Remote images (team headshots, third-party logos) mirrored from their
+# canonical URLs at dev/build time by scripts/fetch-remote-assets.mjs, per the
+# remote-assets.json manifest; sourced, not committed. Our own captures under
+# public/screens/ are committed, since nothing external hosts them.
+/public/remote/

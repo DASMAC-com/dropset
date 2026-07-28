@@ -4,7 +4,7 @@ import { GeistSans } from "geist/font/sans";
 import "./globals.css";
 
 const title = "Dropset Decks";
-const description = "Presentation decks for Dropset — forex on Solana.";
+const description = "Presentation decks for Dropset — Forex on Solana.";
 
 export const viewport: Viewport = {
   themeColor: "#0a0a0a",

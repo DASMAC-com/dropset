@@ -14,6 +14,7 @@
 .PHONY: conformance-vectors
 .PHONY: debugger
 .PHONY: decks
+.PHONY: decks-build
 .PHONY: demo
 .PHONY: explorer
 .PHONY: explorer-down
@@ -304,6 +305,20 @@ decks: check-pnpm
 	cd decks && pnpm install
 	$(call open-browser,3300)
 	cd decks && pnpm dev
+
+# Production-build the decks (what CI gates on). The `prebuild` hook sources
+# the brand assets and mirrors the remote ones, so a deck that references a
+# missing image fails here rather than on a projector.
+#
+# The `.next` wipe is load-bearing: a warm cache from an earlier build or dev
+# server intermittently fails this app-router-only package with "Cannot find
+# module for page: /_document", after compiling and type-checking cleanly. CI
+# always starts cold, so clearing first is also what makes a local run mean the
+# same thing as the gate.
+decks-build: check-pnpm
+	cd decks && pnpm install
+	rm -rf decks/.next
+	cd decks && pnpm build
 
 # The whole localnet demo in one command (`make tui` already runs the
 # control-plane TUI on its own localnet; this adds the web frontend): the TUI

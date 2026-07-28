@@ -3,6 +3,7 @@ affordance
 affordances
 airdrop
 anza
+aptos
 askq
 asym
 atas
@@ -20,6 +21,7 @@ bpf
 brale
 bytemuck
 cadc
+cargobill
 cdylib
 cfgs
 clippy
@@ -27,6 +29,7 @@ clob
 cngn
 codama
 codegen
+cofounder
 coingecko
 coinmarketcap
 coprocess
@@ -44,6 +47,7 @@ drainable
 dropset
 dtolnay
 eclob
+econia
 etherfuse
 eurau
 eurc
@@ -58,7 +62,9 @@ getpid
 globbable
 gyen
 générale
+headshots
 heredocs
+hyperliquid
 idempotently
 idrx
 impls
@@ -79,14 +85,18 @@ localtime
 macropod
 memcpy
 metas
+meteora
 mpsc
 multisigs
 mxne
 nohup
 oanda
 ohlcv
+onramps
 paytrie
 pdas
+permissioned
+permissioning
 permissionless
 pkill
 prebuild
@@ -99,6 +109,7 @@ pubkeys
 pullable
 pytest
 ratatui
+raydium
 readback
 repeg
 repr
