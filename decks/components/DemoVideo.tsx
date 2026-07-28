@@ -24,14 +24,20 @@ export type DemoVideoProps = {
   /** YouTube id. Shorts ids work as-is: the /shorts/<id> path is a viewer, and
    *  the id embeds through the ordinary /embed/<id> route. */
   videoId: string;
-  /** Shorts are shot 9:16; a landscape screen capture is 16:9. */
-  portrait?: boolean;
+  /** The source recording's pixel dimensions, taken from the upload rather
+   *  than assumed: our captures are neither 16:9 nor 9:16 but near-square, and
+   *  a player box that doesn't match the source pads the picture with dead
+   *  bars and shrinks it — and a smaller picture is a lower-resolution one,
+   *  since YouTube's auto quality is chosen from the rendered player size. */
+  width: number;
+  height: number;
 };
 
 export const DemoVideo = ({
   network,
   videoId,
-  portrait = false,
+  width,
+  height,
 }: DemoVideoProps) => {
   const [open, setOpen] = useState(false);
   // The portal target only exists in the browser, and this deck is rendered
@@ -65,6 +71,18 @@ export const DemoVideo = ({
   // viewer; it serves the same player and the same ids.
   const src = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&rel=0&playsinline=1&modestbranding=1`;
   const label = `demo video · ${network}`;
+
+  // Fill whichever viewport axis binds first while holding the source's exact
+  // shape. Player size is the only real lever on playback resolution: YouTube's
+  // auto quality is chosen from the rendered box, and the two ways to ask for a
+  // quality directly — the `vq` URL parameter and the IFrame API's
+  // `setPlaybackQuality` — are both ignored by the current player, so a 4K
+  // upload in a 1280px box just plays at 720p. `min()` on both axes keeps the
+  // ratio exact: whichever axis is the binding one, the other resolves to it
+  // divided (or multiplied) by the same ratio.
+  const ratio = width / height;
+  const playerWidth = `min(94vw, ${(92 * ratio).toFixed(3)}vh)`;
+  const playerHeight = `min(92vh, ${(94 / ratio).toFixed(3)}vw)`;
 
   return (
     <>
@@ -106,14 +124,12 @@ export const DemoVideo = ({
                 role="presentation"
                 onClick={(event) => event.stopPropagation()}
                 style={{
-                  aspectRatio: portrait ? "9 / 16" : "16 / 9",
                   backgroundColor: colors.background,
                   border: `1px solid ${colors.border}`,
                   borderRadius: "12px",
-                  height: portrait ? "86vh" : "auto",
-                  maxWidth: "94vw",
+                  height: playerHeight,
                   overflow: "hidden",
-                  width: portrait ? "auto" : "min(92vw, 1280px)",
+                  width: playerWidth,
                 }}
               >
                 <iframe

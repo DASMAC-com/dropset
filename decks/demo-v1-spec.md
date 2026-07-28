@@ -320,6 +320,12 @@ ______________________________________________________________________
   the video opens over the whole window; `esc` or a click outside closes
   it and the deck is where you left it. Arrow keys are swallowed while it's
   open, so the deck can't advance behind the video.
+- Both recordings are **2160p**, and the overlay is sized to each one's
+  exact shape so the player box is as large as the screen allows —
+  YouTube picks its quality from that box, so a smaller player is a
+  blurrier demo. It still steps down on a slow connection: on an unknown
+  room network, open each video once before presenting so it is cached at
+  full quality.
 - Every page carries the same footer: the Dropset wordmark at the left,
   "Courtesy of DASMAC" in the middle (mirroring the frontend's own
   footer), and progress dots at the right. It isn't page content — don't

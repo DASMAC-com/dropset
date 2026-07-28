@@ -29,7 +29,11 @@ deps, and theme don't fight the product build.
   portal to `document.body` (a Spectacle slide sits under a CSS transform,
   which would otherwise trap a `position: fixed` overlay inside the slide
   box). It swallows arrow keys while open so the deck doesn't advance
-  behind the video, and closes on `esc` or a click outside.
+  behind the video, and closes on `esc` or a click outside. Each demo
+  passes the **source recording's pixel dimensions**, and the overlay is
+  sized from them to fill the viewport at that exact shape — YouTube
+  chooses playback quality from the rendered player box, so a mis-shaped
+  or capped player is what makes a 4K upload play at 720p.
 
 - `scripts/fetch-remote-assets.mjs` — the remote-image mirror, run on the
   `predev` / `prebuild` hooks; see `remote-assets.json` below.
