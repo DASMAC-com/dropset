@@ -106,6 +106,14 @@ sdk-clients <-> sdk-math: the TS market reader (sdk/ts/src/market.ts)
   Rust matcher (resting_levels / BookLevel) — the slab is opaque to the
   IDL, so the generated client can't catch drift; market.ts's byte offsets
   and level materialization must track layout.rs / matching.rs.
+frontend <-> sdk-clients: the trades tape decodes emit_cpi FillEvents
+  through the hand-written TS events codec (sdk/ts/src/events.ts), which
+  hand-copies the anchor event-CPI tag and the 8-byte discriminator from
+  the Rust decoder (sdk/rs/src/events.rs) — Codama generates only the
+  post-extraction body codec, so the generated client cannot catch
+  envelope drift. The tag, the discriminators, and the trust guards (the
+  emitting-program check and the failed-transaction refusal) must track
+  the Rust original and the IDL.
 ```
 
 **Skip-globs** — generated / vendored / binary paths the file audit
