@@ -314,11 +314,50 @@ const DOWNSTREAM: Logo[] = [
  * them is depth growing once both ends are connected — an inline SVG, so it
  * stays crisp at projector size with no asset pipeline.
  */
-// Wide enough to hold both columns at their natural size: when the columns
-// overflow, `space-between` has nothing left to distribute and the hairline
-// divider — a 1px flex item — is the first thing squeezed out of existence.
-const FLYWHEEL_WIDTH = 880;
+// Wide enough to hold both panels at their natural size: when they overflow,
+// `space-between` has nothing left to distribute and the hairline divider — a
+// 1px flex item — is the first thing squeezed out of existence.
+const FLYWHEEL_WIDTH = 940;
 const FLYWHEEL_TILE = 124;
+
+/**
+ * One end of the flywheel. A hairline between the two groups wasn't enough on
+ * its own: four evenly-spaced tiles read as a single row of four whatever sits
+ * between them. Each end is therefore its own panel — boxed, filled, and
+ * headed with what that end *is* — so the split is a shape you see before you
+ * read anything.
+ */
+const FlywheelEnd = ({
+  label,
+  role,
+  logos,
+}: {
+  label: string;
+  role: string;
+  logos: Logo[];
+}) => (
+  <div
+    style={{
+      backgroundColor: colors.muted,
+      border: `1px solid ${colors.border}`,
+      borderRadius: "18px",
+      padding: "18px 14px 22px",
+    }}
+  >
+    <Text color="secondary" fontFamily="monospace" fontSize="20px" margin="0">
+      {label}
+    </Text>
+    <Text color="quaternary" fontSize="18px" margin="2px 0 0 0">
+      {role}
+    </Text>
+    <LogoRow
+      logos={logos}
+      width={FLYWHEEL_TILE}
+      height={44}
+      margin="16px 0 0 0"
+    />
+  </div>
+);
 
 const Flywheel = () => (
   <Box margin="18px 0 0 0" width={`${FLYWHEEL_WIDTH}px`}>
@@ -347,49 +386,29 @@ const Flywheel = () => (
         />
       </svg>
     </FlexBox>
-    <FlexBox justifyContent="space-between" alignItems="flex-start">
-      <Box>
-        <Text
-          color="secondary"
-          fontFamily="monospace"
-          fontSize="19px"
-          margin="0"
-        >
-          upstream
-        </Text>
-        <LogoRow
-          logos={UPSTREAM}
-          width={FLYWHEEL_TILE}
-          height={44}
-          margin="14px 0 0 0"
-        />
-      </Box>
-      {/* `flexShrink: 0` keeps the rule visible: a 1px flex item is otherwise
-          free to collapse to nothing the moment the row is tight. */}
+    <FlexBox justifyContent="space-between" alignItems="stretch">
+      <FlywheelEnd
+        label="upstream"
+        role="Issuers who need a market"
+        logos={UPSTREAM}
+      />
+      {/* The rule between the panels. `flexShrink: 0` keeps it visible: a 1px
+          flex item is otherwise free to collapse to nothing the moment the row
+          is tight. */}
       <div
         style={{
-          backgroundColor: colors.border,
+          backgroundColor: colors.mutedFg,
           flexShrink: 0,
-          height: "152px",
+          margin: "0 26px",
+          opacity: 0.45,
           width: "1px",
         }}
       />
-      <Box>
-        <Text
-          color="secondary"
-          fontFamily="monospace"
-          fontSize="19px"
-          margin="0"
-        >
-          downstream
-        </Text>
-        <LogoRow
-          logos={DOWNSTREAM}
-          width={FLYWHEEL_TILE}
-          height={44}
-          margin="14px 0 0 0"
-        />
-      </Box>
+      <FlywheelEnd
+        label="downstream"
+        role="Demand that needs FX"
+        logos={DOWNSTREAM}
+      />
     </FlexBox>
   </Box>
 );
@@ -617,14 +636,14 @@ export default function DemoDeck() {
           <FlexBox margin="40px 0 0 0" justifyContent="center">
             <Portrait
               src="/remote/team-alex.png"
-              name="Alex"
+              name="Alex Kahn"
               role="Founder, DASMAC"
               focus="Product · exchange design"
               prior="prev. Cofounder, Econia Labs"
             />
             <Portrait
               src="/remote/team-judy.png"
-              name="Judy"
+              name="Judy Sosa"
               role="Operations, DASMAC"
               focus="Stablecoin rails · onramps · accounting"
               prior="prev. Dragonfly Capital Partners"

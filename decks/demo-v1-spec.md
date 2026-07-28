@@ -178,12 +178,17 @@ pages:
 #### Page 7 — How we grow · ~8s
 
 - **On-slide:** Vaults bootstrap a public FX liquidity flywheel.
-- **Visual:** A curve of depth growing, over the flywheel's two ends,
-  split by a rule: **upstream** the issuers (Loon, who issues CADC; AUDD
-  Digital), **downstream** the demand (Altitude in banking, CargoBill in
-  supply chain) — all people we've actually talked to about sourcing
+- **Visual:** A curve of depth growing, over the flywheel's two ends. Each
+  end is its own boxed panel, headed with what it is — **upstream,
+  "Issuers who need a market"** (Loon, who issues CADC; AUDD Digital) and
+  **downstream, "Demand that needs FX"** (Altitude, CargoBill) — with a
+  rule between them. All people we've actually talked to about sourcing
   liquidity. Each tile is captioned with the company, then what they are
-  to us: "Loon / CADC issuer", "Altitude / banking".
+  to us: "Loon / CADC issuer", "Altitude / Banking".
+- **Note:** The panels are doing real work. A hairline alone didn't read:
+  four evenly-spaced tiles look like one row of four no matter what sits
+  between them, so the two ends have to be separate *shapes*, not just
+  separated ones.
 - **Spoken:** "We seed the markets ourselves the way Hyperliquid did —
   our vaults bootstrap each book, and anyone can top them off with
   inventory, so the flywheel is public rather than ours alone. It has two
@@ -201,8 +206,9 @@ pages:
 #### Page 8 — Team & close · ~6s
 
 - **On-slide:** Built by people who've built exchanges.
-- **Visual:** Alex + Judy, square and unframed. Each carries three lines:
-  the role here, what they own, and the credential behind it — "Founder,
+- **Visual:** Alex Kahn + Judy Sosa, square and unframed. Each carries
+  three lines under the name: the role here, what they own, and the
+  credential behind it — "Founder,
   DASMAC / Product · exchange design / prev. Cofounder, Econia Labs" and
   "Operations, DASMAC / Stablecoin rails · onramps · accounting / prev.
   Dragonfly Capital Partners". Wordmark in the persistent footer.
