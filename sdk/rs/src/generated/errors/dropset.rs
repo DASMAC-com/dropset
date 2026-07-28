@@ -73,8 +73,8 @@ pub enum DropsetError {
     /// 6020 - quote_slot is invalid
     #[error("quote_slot is invalid")]
     InvalidQuoteSlot = 0x1784,
-    /// 6021 - set_liquidity_profile requires the vault's reference price to be set first
-    #[error("set_liquidity_profile requires the vault's reference price to be set first")]
+    /// 6021 - vault's reference price must be set first
+    #[error("vault's reference price must be set first")]
     ReferencePriceNotSet = 0x1785,
     /// 6022 - liquidity profile size_bps sum exceeds 10_000 on one side
     #[error("liquidity profile size_bps sum exceeds 10_000 on one side")]

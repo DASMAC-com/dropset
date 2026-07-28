@@ -36,7 +36,14 @@ export function getSetLiquidityProfileInstructionDataCodec(): FixedSizeCodec<Set
 export type SetLiquidityProfileInput<TAccountSigner extends string = string, TAccountMarket extends string = string> =  {
   /** Quote authority — same gate as `set_reference_price`. */
 signer: TransactionSigner<TAccountSigner>;
-/** Market account holding the target vault. */
+/**
+ * CHECK: taken unchecked so the handler can borrow the raw account
+ * data and drive the shared kernel (a typed `Market` locks the
+ * account exclusively and would deny that borrow). The account's
+ * discriminator and owner are not re-validated here: the authority
+ * check plus runtime program-ownership at the store are the guards,
+ * exactly as on the asm fast path this build mirrors.
+ */
 market: Address<TAccountMarket>;
 vaultIdx: SetLiquidityProfileInstructionDataArgs["vaultIdx"];
 profileBytes: SetLiquidityProfileInstructionDataArgs["profileBytes"];
@@ -65,7 +72,14 @@ export type ParsedSetLiquidityProfileInstruction<TProgram extends string = typeo
 accounts: {
 /** Quote authority — same gate as `set_reference_price`. */
 signer: TAccountMetas[0];
-/** Market account holding the target vault. */
+/**
+ * CHECK: taken unchecked so the handler can borrow the raw account
+ * data and drive the shared kernel (a typed `Market` locks the
+ * account exclusively and would deny that borrow). The account's
+ * discriminator and owner are not re-validated here: the authority
+ * check plus runtime program-ownership at the store are the guards,
+ * exactly as on the asm fast path this build mirrors.
+ */
 market: TAccountMetas[1];
 };
 data: SetLiquidityProfileInstructionData; };

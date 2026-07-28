@@ -47,8 +47,18 @@ pub enum DropsetError {
     // custom error codes of the variants below it don't shift.
     #[msg("quote_slot is invalid")]
     InvalidQuoteSlot,
-    #[msg("set_liquidity_profile requires the vault's reference price to be set first")]
+    // Raised by `deposit`, which stamps the depositor's `entry_ref_price`
+    // from the vault's reference price and can't do that basis math against
+    // the zero / INF sentinels. `set_liquidity_profile` used to raise it too
+    // and no longer does: a ladder armed before a price is inert, since
+    // matching skips the whole vault ahead of the flush.
+    #[msg("vault's reference price must be set first")]
     ReferencePriceNotSet,
+    // No longer emitted: `set_liquidity_profile` stores the ladder raw (see
+    // the architecture spec's **SetLiquidityProfile**), and the per-side
+    // `Σ size_bps ≤ 10000` invariant is enforced at match time by skipping
+    // the offending side rather than by an error. Retained so the custom
+    // error codes of the variants below it don't shift.
     #[msg("liquidity profile size_bps sum exceeds 10_000 on one side")]
     LiquidityProfileSizeOverflow,
     #[msg("leader has not enabled outside depositors on this vault")]

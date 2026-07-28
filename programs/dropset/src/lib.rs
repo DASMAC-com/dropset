@@ -25,10 +25,11 @@ pub use dropset_math_core::Price;
 declare_id!("AAAAz3pYUMwhX1bsEtPx9LSWYbpRM8qrFaQgmKVX6oiV");
 
 // Link the hand-written sBPF entrypoint (`src/asm/entrypoint.s`, expanded
-// into `$OUT_DIR/combined.s` by `build.rs`). It short-circuits the
-// `set_reference_price` discriminator and `call`s `__anchor_dispatch` —
-// emitted by `#[program]` under the crate's `no-entrypoint` feature — for
-// everything else. `no-entrypoint` also drops Anchor's allocator / panic
+// into `$OUT_DIR/combined.s` by `build.rs`). It short-circuits the two
+// quote-write discriminators (`set_reference_price`,
+// `set_liquidity_profile`) and `call`s `__anchor_dispatch` — emitted by
+// `#[program]` under the crate's `no-entrypoint` feature — for everything
+// else. `no-entrypoint` also drops Anchor's allocator / panic
 // handler, so they are reinstated at the bottom of this file.
 #[cfg(all(target_os = "solana", feature = "asm-entrypoint"))]
 anchor_asm_v2_runtime::include_asm!();

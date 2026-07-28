@@ -682,11 +682,10 @@ load-bearing invariants:
 
 - **Per-side size cap.** `Σ size_bps ≤ 10000` per side. The sum at
   exactly `10000` fully commits that leg; a lower sum leaves a reserve.
-  The invariant is enforced authoritatively **at match time**: a side
-  whose sum exceeds `10000` is skipped (its levels don't materialize)
-  rather than aborting the take — see **Order matching → Book
-  construction**. `SetLiquidityProfile` also rejects an over-cap write up
-  front, a redundant early guard.
+  The invariant is enforced **at match time only**: a side whose sum
+  exceeds `10000` is skipped (its levels don't materialize) rather than
+  aborting the take — see **Order matching → Book construction**.
+  `SetLiquidityProfile` stores an over-cap ladder without complaint.
 - **Unit asymmetry.** `size_bps` is a fraction of the matching
   inventory leg — `base_atoms` for asks, `quote_atoms` for bids — so a
   materialized **bid** size is denominated in quote atoms (the leader
@@ -993,28 +992,51 @@ caller; the third is the per-ix authority gate.
    sector is rejected with `VaultEmpty` before any authority compare.
 1. **Authority.** Differs by instruction:
    - **Quote-mutating** (`SetReferencePrice`, `SetLiquidityProfile`):
-     `vault.quote_authority == signer && !vault.frozen` — single
-     compare on the hot path, no branching for the unset case
-     (`quote_authority` is always populated; see
-     `SetQuoteAuthority`).
+     `vault.quote_authority == signer` — a single compare, and the
+     *only* domain check either path makes. No branching for the unset
+     case (`quote_authority` is always populated; see
+     `SetQuoteAuthority`), and neither path re-reads `frozen` or
+     occupancy: the freeze is enforced at match time, and a write to a
+     free-listed sector is **inert** (see below). Both skip the
+     bounds/occupancy accessor above too — they work the market bytes
+     directly and bounds-check the sector inline against
+     `min(len, capacity)`, returning the same `InvalidSectorIndex`.
+
+     Note the compare does **not** reject a free-listed sector.
+     `reclaim_sector` zeroes only `leader` — the emptiness marker
+     `is_occupied()` reads — so a freed sector keeps its former
+     `quote_authority` until `allocate_sector` re-zeroes the whole struct
+     on reuse, and that ex-authority's compare still passes. What makes it
+     harmless is the blast radius: a quote write touches only
+     `market.nonce`, the sector's `reference_price`, and its `profile` —
+     never the `next` / `prev` links that thread the free list — and
+     matching walks the active DLL only, so a free sector never enters the
+     book. Advancing the nonce is not an attack either: it only pushes the
+     *next* quote to a later (worse) time priority, and never reorders
+     quotes already stamped.
+
    - **Leader-only** (`SetQuoteAuthority`,
      `SetAllowOutsideDepositors`, `CloseVault`):
      `vault.leader == signer`.
+
    - **Deposit**: leader path requires `vault.leader == signer`;
      otherwise outside path requires both
      `vault.allow_outside_depositors == 1` (leader opt-in) and
      `vault.outside_deposits_approved == 1` (admin approval).
+
    - **Withdraw**: leader path requires `vault.leader == signer`;
      otherwise outside path requires a `VaultDepositor` PDA seeded by
      `(market, sector_idx, signer)` with `shares >= shares_in` (the seeds
      bind the account to the signer, proving ownership). See
      **Vault → Frozen and tombstoned vaults** for the wind-down
      behavior on non-active vaults.
+
    - **Permissionless.** There is no permissionless vault-targeting
      *instruction*: perf-fee accrual (`realize_in_place`) is an
      internal step the `Deposit` / `Withdraw` handlers invoke, not a
      standalone entrypoint with its own discriminant (see
      **Vault → Realize**).
+
    - **Admin-only** (`FreezeVault`, `SetOutsideDepositsApproved`,
      `SetMinLeaderShare`, `SetMarketFeeConfig`):
      `signer ∈ registry.admins`.
@@ -1034,8 +1056,23 @@ in-bounds and alignment checks on every call. It was **dropped** in
 favor of the `vault_idx: u32` slab index above: indexing a `[Vault]`
 is bounds-checked by the slice accessor, lands on a vault boundary
 by construction (no alignment check), and needs no zero-data
-precondition on the leader account. There is therefore no zero-data
-requirement on any account.
+precondition on the leader account.
+
+**Zero-data signer on the two quote writes.** The one exception, and
+only in the `asm-entrypoint` build: `SetReferencePrice` and
+`SetLiquidityProfile` require their signer to carry `data_len == 0`,
+rejecting otherwise with an asm-specific structural code. Nothing about
+the *addressing* needs it — `vault_idx` still indexes the slab — but
+pinning the signer's size keeps the **market's account record** at a
+static input-buffer offset, so the assembly's market offsets are
+assemble-time constants rather than arithmetic off a runtime `data_len`.
+A keypair wallet carries no data, so every ordinary caller satisfies it;
+what it does exclude is a data-carrying PDA delegated as
+`quote_authority` and signing via CPI, which the reference build would
+accept. That asymmetry is why the structural guards are deliberately
+outside the Rust↔ASM parity contract (see **SetReferencePrice → ASM
+fast path**) — they are mapped, not equated. No other instruction and no
+other account has a zero-data requirement.
 
 ### Admin authority
 
@@ -1096,7 +1133,6 @@ authoritative.
 | Withdraw of more shares than the caller holds               | `InsufficientShares`           |
 | `VaultDepositor` PDA ≠ `(market, sector, owner)` seeds      | `VaultDepositorMismatch`       |
 | Reference price unset where a basis read needs it           | `ReferencePriceNotSet`         |
-| Per-side `Σ size_bps > 10000` at `SetLiquidityProfile`      | `LiquidityProfileSizeOverflow` |
 | Swap `limit_price` bits not a well-formed `Price`           | `InvalidPrice`                 |
 | Swap `amount_in == 0`                                       | `InvalidAmountIn`              |
 | Swap `side` neither Buy nor Sell                            | `InvalidSwapSide`              |
@@ -1142,10 +1178,11 @@ Caller arguments stamped onto the vault:
 
 - `perf_fee_rate: Ppm32` — immutable thereafter.
 - `quote_authority: Address` — **must not be `Address::default()`**;
-  the zero address is rejected with `Unauthorized`. It doubles as the
-  free-list emptiness marker, and (having no private key) would
-  quote-brick the vault, since `SetReferencePrice` /
-  `SetLiquidityProfile` gate on `signer == quote_authority`. A caller
+  the zero address is rejected with `Unauthorized`. Having no private
+  key, it would quote-brick the vault, since `SetReferencePrice` /
+  `SetLiquidityProfile` gate on `signer == quote_authority`. (The
+  free-list emptiness marker is `Vault.leader`, not this field — see
+  **Storage layout**.) A caller
   that wants no separate delegation passes the leader's own pubkey
   rather than a `None`/default sentinel. Rotatable post-open via
   `SetQuoteAuthority`.
@@ -1187,6 +1224,11 @@ expressed in ppm/bps and slot offsets, never absolute. Called after
 seeding the vault and any time the leader wants to reshape their
 ladder.
 
+**No write-time validation.** The profile bytes are stored raw. The one
+domain guard is that the signer equals the target vault's
+`quote_authority` — the same single gate `SetReferencePrice` applies,
+because the two share one kernel (see **ASM fast path** below).
+
 **Per-side collateral invariant.**
 
 ```text
@@ -1196,30 +1238,31 @@ ladder.
 
 A sum of exactly 10000 commits the full inventory leg across the
 ladder; smaller sums leave an unallocated reserve. The invariant is
-enforced authoritatively **at match time**: a side whose sum exceeds
-10000 is skipped during book construction (its levels don't
-materialize) rather than aborting the taker's swap — see **Order
-matching → Book construction**. `SetLiquidityProfile` also validates it
-before the write and rejects an over-cap ladder up front
-(`LiquidityProfileSizeOverflow`); that early reject is a redundant
-guard — the match-time skip is what makes an over-cap side safe — kept
-so an honest leader isn't left silently arming a dark side. The check
-is N_LEVELS adds and one comparison per side.
+enforced **at match time only**: a side whose sum exceeds 10000 is
+skipped during book construction (its levels don't materialize) rather
+than aborting the taker's swap — see **Order matching → Book
+construction**. That skip is what makes an over-cap side safe, so the
+write path does not re-check it; off-chain, the SDK simulator and the
+maker bot's ladder builder mirror the same sum, so an honest leader
+never arms a dark side by accident.
 
-**Pre-condition: reference price must be set.** `SetLiquidityProfile`
-rejects when `vault.reference_price.price == Price::ZERO` — the
-sentinel a freshly-allocated vault carries before the leader's first
-`SetReferencePrice`. The profile is purely relative (ppm offsets from
-the reference price), so writing a ladder without first anchoring it
-to a real price would arm a flush that materializes to garbage
-absolute prices and instantly burn the per-flush allowance. The
-order is therefore fixed for a vault's lifecycle: open → seed via
-`Deposit` → `SetReferencePrice` → `SetLiquidityProfile`. The check is
-a single comparison against the already-loaded `reference_price.price`
-field.
+**No reference-price pre-condition.** A ladder may be written before the
+vault's first `SetReferencePrice`. The profile is purely relative (ppm
+offsets from the reference price), but a price-less vault fails
+`has_valid_reference_price()` and is skipped whole *before* the flush
+block, so the ladder never materializes to garbage absolute prices and
+`FLUSH_BIT` simply stays armed until a real price lands. The natural
+lifecycle order is still open → seed via `Deposit` →
+`SetReferencePrice` → `SetLiquidityProfile`; arming it out of order is
+inert self-grief, not a state the protocol has to reject.
+
+Occupancy and `frozen` are likewise not re-read: a write to a free-listed
+sector is inert (it cannot touch the free-list links or re-enter the book
+— see **Caller mechanics → Authority**), and re-quoting a frozen vault is
+a no-op because matching skips it.
 
 The instruction reads and increments `market.nonce`, writes
-the new value (OR'd with `FLUSH_BIT`) to `reference_price.stamp`,
+the old value (OR'd with `FLUSH_BIT`) to `reference_price.stamp`,
 and leaves `reference_price.price` and `reference_price.quote_slot`
 unchanged. Bumping the nonce on reshape means the new ladder takes
 fresh time priority at match time; otherwise a leader could quietly
@@ -1227,6 +1270,38 @@ reshape into a more aggressive ladder while keeping a stale stamp
 that beats fresher quotes from other vaults at the same price. The
 next taker re-materializes `Vault.remaining` from the new profile
 and current inventory.
+
+**ASM fast path.** Like `SetReferencePrice`, this discriminator is
+handled in the hand-written sBPF entrypoint (`src/asm/entrypoint.s`) in
+the default `asm-entrypoint` build, sharing that file's preamble with
+its sibling and diverging only at the payload: one `sol_memcpy_` of the
+160-byte profile blob from the instruction data into `Vault.profile`,
+metered at `max(10, len / 250)` compute units versus roughly 40 for a
+hand-rolled chunked copy. It mirrors the solana-free
+`write_liquidity_profile` kernel
+(`state/market/liquidity_profile.rs`) byte-for-byte, over the shared
+`quote_write` half. On litesvm the fast path costs ~59 CU versus ~324
+for the Rust entrypoint — a ~82% saving, and only 12 CU more than the
+two-store `SetReferencePrice` path despite writing 160 bytes.
+`tests/asm_parity.rs` deploys the reference build beside it and asserts
+both write the same bytes to the same offsets — including that the write
+moves *nothing* outside `market.nonce`, the target sector's
+`reference_price.stamp`, and its `profile`.
+
+The fast path does **not** bound the instruction-data length before the
+copy, so a truncated call diverges from the reference build (which rejects
+it at deserialization): under 133 bytes it faults and the caller's own
+transaction fails; at 133–164 it copies the trailing program-id bytes into
+the caller's own ladder and succeeds silently. That is deliberate, and it
+is safe because nothing attacker-controlled reaches the *destination* — it
+is a fixed `(vault + 144, 160)` window inside the bounds-checked sector the
+signer is already `quote_authority` of, so malformed data cannot touch
+another vault, the header beyond the nonce, or any accounting field, and
+the matcher re-validates every level it later reads. The blast radius is a
+leader garbling their own quotes, which the hot-path CU is worth more than
+guarding against; every SDK builder emits the full 165 bytes. Like the
+other structural asymmetries, it is mapped by the parity tests, not
+equated.
 
 ### SetReferencePrice
 
@@ -1261,10 +1336,11 @@ next taker — so the leader write stays at two stores regardless of
 `N_LEVELS`. No vault iteration, no reallocations, no profile touch.
 
 **ASM fast path.** Because this is the steady-state hot path, the default
-build (the `asm-entrypoint` feature, on by default) handles this one
+build (the `asm-entrypoint` feature, on by default) handles this
 discriminator in a hand-written sBPF entrypoint (`src/asm/entrypoint.s`)
 that short-circuits it ahead of Anchor's dispatcher and `call`s the
-dispatcher for everything else. It mirrors the solana-free
+dispatcher for everything but the two quote writes (`SetLiquidityProfile`
+shares the same preamble there). It mirrors the solana-free
 `stamp_reference_price` kernel byte-for-byte; the reference build
 (feature-off, `dropset_ref.so`) runs the same kernel through the plain
 Anchor entrypoint and serves as the parity oracle (`tests/asm_parity.rs`

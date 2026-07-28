@@ -1782,7 +1782,12 @@
         {
           "name": "market",
           "docs": [
-            "Market account holding the target vault."
+            "CHECK: taken unchecked so the handler can borrow the raw account",
+            "data and drive the shared kernel (a typed `Market` locks the",
+            "account exclusively and would deny that borrow). The account's",
+            "discriminator and owner are not re-validated here: the authority",
+            "check plus runtime program-ownership at the store are the guards,",
+            "exactly as on the asm fast path this build mirrors."
           ],
           "writable": true
         }
@@ -3064,7 +3069,7 @@
     {
       "code": 6021,
       "name": "ReferencePriceNotSet",
-      "msg": "set_liquidity_profile requires the vault's reference price to be set first"
+      "msg": "vault's reference price must be set first"
     },
     {
       "code": 6022,

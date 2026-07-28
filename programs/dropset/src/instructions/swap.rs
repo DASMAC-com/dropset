@@ -485,15 +485,14 @@ impl Swap {
         let nonce_at_start = self.market.nonce.get();
         // Set if a per-leg `market.nonce` bump would overflow `u64`.
         // Practically unreachable (the spec sizes `nonce` to never wrap
-        // over a market's lifetime), but we reject it as a hard error,
-        // matching `set_liquidity_profile.rs`'s
-        // `checked_add(1).ok_or(MathOverflow)?`. The third nonce-bumping
-        // path — the `set_reference_price` ASM kernel
-        // (`state/market/reference_price.rs`) — deliberately `wrapping_add`s
-        // instead, since its assembly twin can't cheaply raise a custom
-        // overflow error; that wrap is the intentional outlier. The shared
-        // revert block below restores the pre-swap state before we error,
-        // so a wrap leaves no partial fill behind.
+        // over a market's lifetime), but we reject it as a hard error —
+        // and this is now the *only* nonce-bumping path that does. Both
+        // quote writes go through the shared ASM-mirrored kernel
+        // (`state/market/quote_write.rs`), which deliberately
+        // `wrapping_add`s instead, since its assembly twin can't cheaply
+        // raise a custom overflow error. The shared revert block below
+        // restores the pre-swap state before we error, so a wrap leaves no
+        // partial fill behind.
         let mut nonce_overflow = false;
 
         for &(sector_idx, level_idx, price, level_size, _nonce) in levels.iter().take(live_count) {

@@ -5,11 +5,10 @@
 //! but the freeze takes effect the first instruction after it lands:
 //! `swap`'s matching walk skips frozen vaults entirely, so no new fills
 //! accrue against them — that match-time skip is where the freeze is
-//! actually enforced. Of the two quote-write paths only
-//! `set_liquidity_profile` also rejects a frozen vault outright;
-//! `set_reference_price` does not re-read `frozen`, since its kernel /
-//! `entrypoint.s` ASM path is kept minimal for CU and re-quoting a
-//! frozen vault is harmless (matching skips it). `realize_in_place`
+//! actually enforced. Neither quote-write path re-reads `frozen`:
+//! `set_reference_price` and `set_liquidity_profile` share one kernel /
+//! `entrypoint.s` ASM path kept minimal for CU, and re-quoting a frozen
+//! vault is harmless (matching skips it). `realize_in_place`
 //! pins the HWM at freeze time. Per the spec's **FreezeVault**, there
 //! is no "unfreeze" — to re-enter, the same leader opens a fresh vault.
 //!

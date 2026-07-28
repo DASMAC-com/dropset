@@ -92,7 +92,10 @@ fn vault_items_start() -> usize {
     (after_len + align - 1) & !(align - 1)
 }
 
-fn vault_byte_offset(sector_idx: u32) -> usize {
+/// Byte offset of sector `sector_idx` within the market account's data.
+/// `pub` so the Rust↔ASM parity tests can bound which bytes a write is
+/// allowed to touch.
+pub fn vault_byte_offset(sector_idx: u32) -> usize {
     vault_items_start() + sector_idx as usize * core::mem::size_of::<Vault>()
 }
 
@@ -676,6 +679,19 @@ impl Fixture {
         vault_idx: u32,
         profile_bytes: [u8; PROFILE_BYTES],
     ) -> Result<(), String> {
+        self.set_liquidity_profile_meta(signer, vault_idx, profile_bytes)
+            .map(|_| ())
+    }
+
+    /// Like [`Self::set_liquidity_profile`] but yields the
+    /// [`TransactionMetadata`], whose `compute_units_consumed` the CU
+    /// report reads to compare the asm fast path against the reference.
+    pub fn set_liquidity_profile_meta(
+        &mut self,
+        signer: &Keypair,
+        vault_idx: u32,
+        profile_bytes: [u8; PROFILE_BYTES],
+    ) -> Result<TransactionMetadata, String> {
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
             &SetLiquidityProfileIx {
@@ -688,7 +704,7 @@ impl Fixture {
                 AccountMeta::new(self.market, false),
             ],
         );
-        send_ixn(&mut self.svm, signer, ix)
+        send_ixn_meta(&mut self.svm, signer, ix)
     }
 
     pub fn set_allow_outside_depositors(
@@ -1620,6 +1636,18 @@ impl Fixture {
         bytemuck::pod_read_unaligned::<Vault>(&acct.data[off..off + core::mem::size_of::<Vault>()])
     }
 
+    /// The market account's whole data region. Field accessors above cover
+    /// the usual assertions; this is for the Rust↔ASM parity tests, which
+    /// compare *everything* the two builds wrote — so a stray byte outside
+    /// the field under test can't slip through.
+    pub fn market_data(&self) -> Vec<u8> {
+        self.svm
+            .get_account(&self.market)
+            .expect("market")
+            .data
+            .clone()
+    }
+
     /// `Some(header)` if the outside-depositor PDA exists (i.e. was
     /// init'd and not yet closed), else `None`.
     pub fn vault_depositor(&self, vault_idx: u32, owner: &Pubkey) -> Option<VaultDepositorHeader> {
@@ -1645,12 +1673,14 @@ impl Fixture {
     }
 
     /// Overwrite `Vault.profile.{asks,bids}[level].size_bps` for vault
-    /// `sector_idx`, bypassing the `set_liquidity_profile` per-side Σ ≤ BPS
-    /// bound (`is_ask` selects the side). No instruction writes a
-    /// `size_bps > BPS`, so this is the only way to reach the matcher's
+    /// `sector_idx` (`is_ask` selects the side) to drive the matcher's
     /// match-time per-side skip: at flush the engine throws out a side whose
     /// `Σ size_bps > BPS` (zeroing its `remaining`) rather than aborting the
     /// take, and the simulator mirrors that by skipping the vault's side.
+    /// `set_liquidity_profile` stores an over-cap ladder too (the write-time
+    /// reject is gone), but this poke sets one level without rebuilding the
+    /// whole ladder — and without the nonce bump and re-armed `FLUSH_BIT` a
+    /// real quote-write would bring.
     pub fn poke_level_size_bps(
         &mut self,
         sector_idx: u32,

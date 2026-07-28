@@ -13,7 +13,11 @@
 //! reference `R` becomes a ppm offset `(P/R - 1)·1e6`; a level of `size`
 //! atoms against an inventory leg of `leg` atoms becomes `size/leg·10000`
 //! bps. Sizes are bounded by the per-side `Σ size_bps ≤ 10000` invariant
-//! the program enforces at `set_liquidity_profile`.
+//! the program enforces **at match time** — `set_liquidity_profile` stores
+//! whatever ladder it is handed, and the flush then drops an over-cap side
+//! from the book — so this module applies the bound itself, up front, rather
+//! than relying on the write to reject one (see
+//! [`NativeBook::to_profile`]).
 
 use solana_instruction::Instruction;
 use solana_pubkey::Pubkey;

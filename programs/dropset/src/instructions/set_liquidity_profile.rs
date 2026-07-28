@@ -5,37 +5,48 @@
 //! size_bps, expiry_offset)` triple — leaves `reference_price.price`
 //! and `reference_price.quote_slot` untouched, bumps `market.nonce`,
 //! and arms `FLUSH_BIT` so the next taker re-materializes
-//! `Vault.remaining` from the new ladder + current inventory.
+//! `Vault.remaining` from the new ladder + current inventory. Per the
+//! architecture spec's **SetLiquidityProfile** the profile bytes are stored
+//! raw: the only domain guard is that the signer is the vault's
+//! `quote_authority`, and every content invariant is enforced at match time
+//! (an over-cap side is dropped from the book, and a ladder armed before a
+//! reference price never materializes at all).
 //!
-//! **Pre-condition**: rejects when
-//! `vault.reference_price.price.is_zero()` — i.e. before the leader
-//! has called `set_reference_price` at least once. The profile is
-//! pure-relative; without an anchor price the offsets have no
-//! meaning. See the spec's **SetLiquidityProfile**.
+//! Two builds share one implementation, exactly as `set_reference_price`
+//! does. The production `asm-entrypoint` build handles this discriminator
+//! entirely in `src/asm/entrypoint.s`, so the Rust body here is an
+//! `unreachable_unchecked()` stub kept only so IDL / SDK codegen still emit
+//! the instruction. The default (reference) build runs this handler, which
+//! borrows the market's data bytes and calls the shared
+//! [`write_liquidity_profile`] kernel — the same kernel the assembly
+//! mirrors byte-for-byte.
 
-use anchor_lang_v2::{address_eq, bytemuck, prelude::*};
+use anchor_lang_v2::prelude::*;
 
-use crate::{
-    errors::DropsetError,
-    state::{Market, VaultAccess, BPS, FLUSH_BIT},
-    LiquidityProfile, N_LEVELS,
-};
+#[cfg(not(feature = "asm-entrypoint"))]
+use crate::state::write_liquidity_profile;
 
-/// On-wire byte representation of [`LiquidityProfile`]. The struct is
+/// On-wire byte representation of [`crate::LiquidityProfile`]. The struct is
 /// alignment-1 Pod (`#[repr(C)]` plus 1-byte fields), so an instruction
 /// arg of this width casts back via `bytemuck::from_bytes` without
-/// rewriting the layout. Sized via `size_of` so the compile-time guard
-/// in `state::market.rs` (`size_of::<LiquidityProfile>() == 2 *
-/// N_LEVELS * 10`) and this stay locked together.
-pub const PROFILE_BYTES: usize = 2 * N_LEVELS * 10;
+/// rewriting the layout. Aliases the kernel's `PROFILE_SIZE` — the width
+/// the ASM hands `sol_memcpy_` — so the instruction arg and the copy length
+/// are one value by construction rather than two derivations held equal by
+/// assertion.
+pub const PROFILE_BYTES: usize = crate::state::PROFILE_SIZE;
 
 #[derive(Accounts)]
 pub struct SetLiquidityProfile {
     /// Quote authority — same gate as `set_reference_price`.
     pub signer: Signer,
-    /// Market account holding the target vault.
+    /// CHECK: taken unchecked so the handler can borrow the raw account
+    /// data and drive the shared kernel (a typed `Market` locks the
+    /// account exclusively and would deny that borrow). The account's
+    /// discriminator and owner are not re-validated here: the authority
+    /// check plus runtime program-ownership at the store are the guards,
+    /// exactly as on the asm fast path this build mirrors.
     #[account(mut)]
-    pub market: Market,
+    pub market: UncheckedAccount,
 }
 
 impl SetLiquidityProfile {
@@ -45,61 +56,29 @@ impl SetLiquidityProfile {
         vault_idx: u32,
         profile_bytes: [u8; PROFILE_BYTES],
     ) -> Result<()> {
-        let profile: &LiquidityProfile = bytemuck::from_bytes(&profile_bytes);
-
-        // Per-side `Σ size_bps ≤ BPS`, rejected here before any `profile`
-        // bytes are stored. Shares the summation with the match-time flush
-        // gate in `Vault::materialize_remaining` via
-        // `LiquidityProfile::side_size_sums`; this write-time path rejects
-        // an over-BPS profile outright, whereas the flush path zeroes the
-        // offending side out of matching.
-        let (bid_sum, ask_sum) = profile.side_size_sums();
-        require!(
-            bid_sum <= BPS as u32 && ask_sum <= BPS as u32,
-            DropsetError::LiquidityProfileSizeOverflow
-        );
-
-        // Validate the target vault BEFORE bumping `market.nonce`. A
-        // caller targeting a free-list sector or the wrong vault must
-        // not advance the header counter.
-        let signer_addr = *self.signer.address();
+        #[cfg(feature = "asm-entrypoint")]
         {
-            let vault = self.market.read_vault(vault_idx)?;
-            require!(vault.is_occupied(), DropsetError::VaultEmpty);
-            require!(
-                address_eq(&vault.quote_authority, &signer_addr),
-                DropsetError::Unauthorized
-            );
-            // Reject a frozen vault here even though the sibling
-            // `set_reference_price` path does not: that path's ASM kernel
-            // stays minimal (the freeze is ultimately enforced at match
-            // time, where `swap` skips frozen vaults), whereas this handler
-            // already reads the vault, so the guard is near-free and fails
-            // fast.
-            require!(!vault.frozen.get(), DropsetError::VaultFrozen);
-            // Per-spec rule: a vault's reference price must be
-            // set before its profile is — the profile is pure ppm
-            // offsets and needs a real anchor.
-            require!(
-                !vault.reference_price.price.is_zero(),
-                DropsetError::ReferencePriceNotSet
-            );
+            // The asm entrypoint writes this discriminator before the
+            // anchor dispatcher runs, so this body is never reached. Kept
+            // as a stub purely so IDL / SDK codegen still emit the
+            // instruction interface.
+            let _ = (vault_idx, profile_bytes);
+            unsafe { core::hint::unreachable_unchecked() }
         }
-
-        // Bump market.nonce (header borrow). `checked_add` here — same as
-        // `swap`; the `set_reference_price` ASM kernel is the one path that
-        // `wrapping_add`s instead (see `state/market/reference_price.rs`).
-        let nonce = self.market.nonce.get();
-        let new_nonce = nonce.checked_add(1).ok_or(DropsetError::MathOverflow)?;
-        self.market.nonce = new_nonce.into();
-
-        // Re-borrow the vault mutably and stamp the new profile.
-        let vault = self.market.mutate_vault(vault_idx)?;
-        vault.profile = *profile;
-        // Stamp the new nonce | FLUSH_BIT; leave `price` and
-        // `quote_slot` untouched — that's the SetLiquidityProfile
-        // contract per spec.
-        vault.reference_price.stamp = (nonce | FLUSH_BIT).into();
-        Ok(())
+        #[cfg(not(feature = "asm-entrypoint"))]
+        {
+            // `Address` is a 32-byte `Pod` wrapper; reinterpret it as the
+            // raw key bytes the kernel compares, without depending on its
+            // inherent accessors.
+            let signer_key: &[u8; 32] = anchor_lang_v2::bytemuck::cast_ref(self.signer.address());
+            // `AccountView` is `Copy` and borrow state lives in the shared
+            // account header, so a local copy still tracks the one live
+            // mutable borrow of the market's data.
+            let mut view = *self.market.account();
+            let mut data = view.try_borrow_mut()?;
+            write_liquidity_profile(&mut data, vault_idx, &profile_bytes, signer_key)
+                .map_err(ProgramError::Custom)?;
+            Ok(())
+        }
     }
 }
