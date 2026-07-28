@@ -76,14 +76,14 @@
 .equ MARKET_LEN_OFF, MARKET_DATA_OFF + 243       # slab len (u32)
 .equ SLAB_ITEMS_OFF, 248                         # first Vault, within data
 .equ VAULT_SIZE, 560
+.equ PROFILE_SIZE, 160                           # size_of::<LiquidityProfile>()
 
 # --- Vault field offsets ---
 .equ VAULT_QUOTE_AUTHORITY_OFF, 40
 .equ RP_STAMP_OFF, 72             # reference_price.stamp (u64)
 .equ RP_PRICE_OFF, 80             # reference_price.price (u32)
 .equ RP_QUOTE_SLOT_OFF, 84        # reference_price.quote_slot (u32)
-.equ VAULT_PROFILE_OFF, 144       # profile (LiquidityProfile, 160 B)
-.equ PROFILE_SIZE, 160            # size_of::<LiquidityProfile>()
+.equ VAULT_PROFILE_OFF, 144       # profile (LiquidityProfile, PROFILE_SIZE B)
 
 # --- constants ---
 .equ FLUSH_BIT, 0x8000000000000000
@@ -99,6 +99,22 @@
 .equ E_NOT_SIGNER, 102
 .equ E_SIGNER_HAS_DATA, 103
 .equ E_MARKET_NOT_WRITABLE, 104
+#
+# One further asm-only asymmetry, deliberately UNGUARDED: neither branch
+# bounds the instruction-data length before reading its payload. The
+# reference build rejects a short payload at anchor deserialization; here a
+# truncated disc-6 call makes the 160-byte copy read past the ix-data
+# region. The input region ends at ix_data + len + program_id(32), so a
+# length under 133 faults (AccessViolation, the caller's own tx fails) while
+# 133-164 copies the trailing program-id bytes into the caller's own ladder
+# and succeeds silently. Left unguarded on purpose: the destination is a
+# fixed (vault + VAULT_PROFILE_OFF, PROFILE_SIZE) window inside the
+# bounds-checked sector the caller is already quote_authority of, so no
+# attacker-controlled offset or length is in play — nefarious ix data cannot
+# reach another vault, the header beyond the nonce, or any accounting field,
+# and the matcher validates every level it later reads. The blast radius is
+# the caller garbling their own quotes, so the leader-hot-path CU is worth
+# more than the check. Every SDK builder emits the full 165 bytes.
 
 .global entrypoint
 
@@ -113,7 +129,7 @@ dispatch:
     call __anchor_dispatch
     exit
 
-# --- shared quote-write preamble (mirrors quote_write.rs) ---------------
+# --- shared quote-write preamble (mirrors quote_write.rs) ---
 quote_write:
     # Layout integrity: need [signer, market].
     ldxdw r3, [r1 + 0]
@@ -169,7 +185,7 @@ quote_write:
 
     jeq r6, DISCRIM_SET_LIQUIDITY_PROFILE, write_profile
 
-# --- set_reference_price payload (mirrors reference_price.rs) -----------
+# --- set_reference_price payload (mirrors reference_price.rs) ---
     # Store the raw price and quote_slot (two adjacent u32s).
     ldxw r3, [r2 + IX_PRICE_BITS_OFF]
     stxw [r9 + RP_PRICE_OFF], r3
@@ -179,13 +195,17 @@ quote_write:
     mov64 r0, 0
     exit
 
-# --- set_liquidity_profile payload (mirrors liquidity_profile.rs) -------
+# --- set_liquidity_profile payload (mirrors liquidity_profile.rs) ---
 write_profile:
     # One `sol_memcpy_` of the whole 160-byte blob: the syscall is metered
     # at max(10, len / 250) CU, so ~10 CU against ~40 for the 20 hand-rolled
     # ldxdw/stxdw pairs a chunked copy would need. dst is the program-owned
     # writable market data, src the readable instruction-data region — the
-    # two never overlap.
+    # two never overlap (dst precedes src in the input buffer).
+    #
+    # The source length is NOT bounded against the instruction-data length —
+    # see the note under the error codes above for why that is safe and
+    # deliberate.
     add64 r2, IX_PROFILE_OFF             # r2 = &ix.profile_bytes  (src)
     mov64 r1, r9
     add64 r1, VAULT_PROFILE_OFF          # r1 = &vault.profile     (dst)

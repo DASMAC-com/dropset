@@ -315,9 +315,13 @@ fn multi_vault_cheaper_price_fills_first() {
 
 #[test]
 fn oversize_ask_side_skips_that_vault_but_not_the_swap() {
-    // A vault whose ask side sums past BPS (only reachable by poking corrupt
-    // bytes — `set_liquidity_profile` bounds it at write time) must be thrown
-    // out of matching, not abort the whole swap. Before the match-time gate a
+    // A vault whose ask side sums past BPS must be thrown out of matching,
+    // not abort the whole swap. (`set_liquidity_profile` stores such a ladder
+    // without complaint, so this is reachable through the instruction too —
+    // see `set_liquidity_profile.rs`'s
+    // `over_cap_ladder_is_dropped_from_the_book`; the poke here sets one
+    // level without the nonce bump and re-armed FLUSH_BIT a real write
+    // brings.) Before the match-time gate a
     // single such level made `flush_level_size` `?`-propagate and reject the
     // entire `swap`, so one corrupt vault could DoS every taker. Here sector
     // 0's ask side is corrupted and sector 1 is healthy: the Buy fills

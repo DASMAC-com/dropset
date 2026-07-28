@@ -75,6 +75,7 @@ mod tests {
     };
     use super::*;
     use crate::state::FLUSH_BIT;
+    use anchor_lang_v2::bytemuck::{bytes_of, Zeroable};
 
     /// A recognizable profile blob: byte `i` is `i + 1`, so any
     /// off-by-`n` in the destination offset shows up as a shifted pattern
@@ -84,6 +85,15 @@ mod tests {
         for (i, b) in bytes.iter_mut().enumerate() {
             *b = (i + 1) as u8;
         }
+        bytes
+    }
+
+    /// The wire bytes of a typed profile — the shape the instruction arg
+    /// carries, for the cases that need to set named `Level` fields rather
+    /// than an arbitrary blob.
+    fn wire_bytes(profile: &LiquidityProfile) -> [u8; PROFILE_SIZE] {
+        let mut bytes = [0u8; PROFILE_SIZE];
+        bytes.copy_from_slice(bytes_of(profile));
         bytes
     }
 
@@ -141,7 +151,7 @@ mod tests {
         let before = data.clone();
         // `SECTORS` is one past the last live sector.
         assert_eq!(
-            write_liquidity_profile(&mut data, SECTORS as u32, &profile_bytes(), &AUTH),
+            write_liquidity_profile(&mut data, SECTORS, &profile_bytes(), &AUTH),
             Err(err::INVALID_SECTOR_INDEX)
         );
         // The null-sector sentinel is the worst case.
@@ -159,9 +169,9 @@ mod tests {
         // capacity leg must still reject, matching `min(len, capacity)` —
         // and it must reject *before* a 160-byte copy runs off the end.
         let mut data = market_buf(0);
-        write_u32(&mut data, LEN_OFF, (SECTORS as u32) + 2);
+        write_u32(&mut data, LEN_OFF, SECTORS + 2);
         assert_eq!(
-            write_liquidity_profile(&mut data, SECTORS as u32, &profile_bytes(), &AUTH),
+            write_liquidity_profile(&mut data, SECTORS, &profile_bytes(), &AUTH),
             Err(err::INVALID_SECTOR_INDEX)
         );
     }
@@ -172,11 +182,10 @@ mod tests {
         // accepted and stored verbatim, and `materialize_remaining` zeroes
         // the offending side out of matching at flush time instead.
         let mut data = market_buf(0);
-        let mut over: LiquidityProfile = anchor_lang_v2::bytemuck::Zeroable::zeroed();
+        let mut over = LiquidityProfile::zeroed();
         over.bids[0].size_bps = 6_000u16.into();
         over.bids[1].size_bps = 5_000u16.into(); // 11_000 > BPS
-        let mut bytes = [0u8; PROFILE_SIZE];
-        bytes.copy_from_slice(anchor_lang_v2::bytemuck::bytes_of(&over));
+        let bytes = wire_bytes(&over);
 
         write_liquidity_profile(&mut data, 0, &bytes, &AUTH)
             .expect("an over-cap ladder is the leader's own problem, not a write-time reject");
@@ -224,11 +233,10 @@ mod tests {
             market.as_mut_slice()[1].quote_authority = AUTH.into();
         }
         let mut data = buf.read_data().to_vec();
-        let mut profile: LiquidityProfile = anchor_lang_v2::bytemuck::Zeroable::zeroed();
+        let mut profile = LiquidityProfile::zeroed();
         profile.asks[0].price_offset = 5_000u32.into();
         profile.asks[0].size_bps = 10_000u16.into();
-        let mut bytes = [0u8; PROFILE_SIZE];
-        bytes.copy_from_slice(anchor_lang_v2::bytemuck::bytes_of(&profile));
+        let bytes = wire_bytes(&profile);
 
         write_liquidity_profile(&mut data, 1, &bytes, &AUTH)
             .expect("kernel must find quote_authority at the typed-slab offset");

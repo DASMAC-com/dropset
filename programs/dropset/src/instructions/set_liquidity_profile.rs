@@ -23,18 +23,17 @@
 
 use anchor_lang_v2::prelude::*;
 
-use crate::N_LEVELS;
-
 #[cfg(not(feature = "asm-entrypoint"))]
 use crate::state::write_liquidity_profile;
 
 /// On-wire byte representation of [`crate::LiquidityProfile`]. The struct is
 /// alignment-1 Pod (`#[repr(C)]` plus 1-byte fields), so an instruction
 /// arg of this width casts back via `bytemuck::from_bytes` without
-/// rewriting the layout. Sized via the same `2 * N_LEVELS * 10` derivation
-/// the compile-time guard in `state/market/layout.rs` asserts against
-/// `size_of::<LiquidityProfile>()`, so the two stay locked together.
-pub const PROFILE_BYTES: usize = 2 * N_LEVELS * 10;
+/// rewriting the layout. Aliases the kernel's `PROFILE_SIZE` — the width
+/// the ASM hands `sol_memcpy_` — so the instruction arg and the copy length
+/// are one value by construction rather than two derivations held equal by
+/// assertion.
+pub const PROFILE_BYTES: usize = crate::state::PROFILE_SIZE;
 
 #[derive(Accounts)]
 pub struct SetLiquidityProfile {

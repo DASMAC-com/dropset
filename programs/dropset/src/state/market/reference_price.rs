@@ -129,7 +129,7 @@ mod tests {
         let before = data.clone();
         // `SECTORS` is one past the last live sector.
         assert_eq!(
-            stamp_reference_price(&mut data, SECTORS as u32, 1, 1, &AUTH),
+            stamp_reference_price(&mut data, SECTORS, 1, 1, &AUTH),
             Err(err::INVALID_SECTOR_INDEX)
         );
         // The null-sector sentinel is the worst case.
@@ -146,9 +146,9 @@ mod tests {
         // post-external-resize edge `Slab::effective_len` guards). The
         // capacity leg must still reject, matching `min(len, capacity)`.
         let mut data = market_buf(0);
-        write_u32(&mut data, LEN_OFF, (SECTORS as u32) + 2);
+        write_u32(&mut data, LEN_OFF, SECTORS + 2);
         assert_eq!(
-            stamp_reference_price(&mut data, SECTORS as u32, 1, 1, &AUTH),
+            stamp_reference_price(&mut data, SECTORS, 1, 1, &AUTH),
             Err(err::INVALID_SECTOR_INDEX)
         );
     }

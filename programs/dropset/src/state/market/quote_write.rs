@@ -99,8 +99,17 @@ const _: () = assert!(RP_STAMP_OFF == 0);
 /// the target vault's `quote_authority`. Deliberately *not* checked (on
 /// either path, matching the assembly):
 ///
-/// * **Occupancy** — a free-list sector carries an all-zero
-///   `quote_authority`, so the authority compare already rejects it.
+/// * **Occupancy** — a write to a free-listed sector is **inert**, so it
+///   needs no guard. Note the compare does *not* reject it: `reclaim_sector`
+///   zeroes only `leader` (the emptiness marker `Vault::is_occupied` reads),
+///   so a freed sector keeps its former `quote_authority` until
+///   `allocate_sector` re-zeroes the whole struct on reuse — meaning that
+///   ex-authority's compare still passes. What makes it harmless is the
+///   *blast radius*: a quote write touches only `market.nonce`, the
+///   sector's `reference_price` and its `profile`, never the `next` / `prev`
+///   links (offsets 0 / 4) that thread the free list, and matching walks
+///   the active DLL only, so a free sector never enters the book. Pinned by
+///   [`tests::write_to_a_reclaimed_sector_is_inert`].
 /// * **`frozen`** — the freeze is enforced at match time (`swap` skips
 ///   frozen vaults), and re-quoting one is inert, so both kernels stay
 ///   minimal by omitting it (see `freeze_vault.rs`).
@@ -188,24 +197,29 @@ pub(super) fn write_u64(data: &mut [u8], off: usize, value: u64) {
     data[off..off + 8].copy_from_slice(&value.to_le_bytes());
 }
 
-/// Synthetic market buffers shared by both kernels' unit tests.
+/// Synthetic market buffers shared by both kernels' unit tests — the
+/// raw-bytes counterpart to [`super::test_support`], which builds a real
+/// `Slab`-backed account. The kernels take `&mut [u8]`, so most of their
+/// cases want a hand-framed buffer; the two that must cross-check against
+/// the typed layout use `test_support` directly. Sector count is reused
+/// from there so the two fixtures can't drift apart.
 #[cfg(test)]
 pub(super) mod test_buf {
+    /// Re-exported so a `test_buf::*` import carries the sector count too.
+    pub(crate) use super::super::test_support::SECTORS;
     use super::*;
 
     /// The `quote_authority` the fixtures stamp, i.e. the authorized signer.
-    pub(in crate::state::market) const AUTH: [u8; 32] = [0x11; 32];
+    pub const AUTH: [u8; 32] = [0x11; 32];
     /// Any other signer — rejected with [`err::UNAUTHORIZED`].
-    pub(in crate::state::market) const OTHER: [u8; 32] = [0x22; 32];
-    /// Live sector count in the buffers below.
-    pub(in crate::state::market) const SECTORS: usize = 4;
+    pub const OTHER: [u8; 32] = [0x22; 32];
 
     /// Build a market data region with [`SECTORS`] zeroed sectors, `len`
     /// set, and sector `auth_idx`'s `quote_authority` = [`AUTH`]. Mirrors
     /// the `Slab` framing the on-chain account uses.
-    pub(in crate::state::market) fn market_buf(auth_idx: usize) -> Vec<u8> {
-        let mut data = vec![0u8; ITEMS_OFF + SECTORS * VAULT_SIZE];
-        data[LEN_OFF..LEN_OFF + 4].copy_from_slice(&(SECTORS as u32).to_le_bytes());
+    pub fn market_buf(auth_idx: usize) -> Vec<u8> {
+        let mut data = vec![0u8; ITEMS_OFF + SECTORS as usize * VAULT_SIZE];
+        data[LEN_OFF..LEN_OFF + 4].copy_from_slice(&SECTORS.to_le_bytes());
         let auth_off = ITEMS_OFF + auth_idx * VAULT_SIZE + VAULT_QUOTE_AUTHORITY_OFF;
         data[auth_off..auth_off + 32].copy_from_slice(&AUTH);
         data
@@ -250,8 +264,10 @@ mod tests {
             authorize_quote_write(&data, 1, &OTHER),
             Err(err::UNAUTHORIZED)
         );
-        // A free-list sector (all-zero `quote_authority`) is rejected by the
-        // same compare — no separate occupancy guard needed.
+        // A sector whose `quote_authority` was never populated (all zero) is
+        // rejected by the same compare. This is *not* the reclaimed-sector
+        // case — see `write_to_a_reclaimed_sector_is_inert`, which covers a
+        // sector that keeps a live authority on the free list.
         assert_eq!(
             authorize_quote_write(&data, 0, &AUTH),
             Err(err::UNAUTHORIZED)
@@ -259,11 +275,70 @@ mod tests {
     }
 
     #[test]
+    fn write_to_a_reclaimed_sector_is_inert() {
+        // The occupancy guard both quote writes dropped is safe because the
+        // write is inert on a freed sector — *not* because the authority
+        // compare rejects one. `reclaim_sector` zeroes only `leader`, so the
+        // ex-authority still passes the compare; what must hold is that the
+        // write can't corrupt the free list or re-enter the book.
+        use super::super::test_support::{load_market, setup};
+        use super::super::{DllList, VaultDll};
+
+        let buf = setup();
+        {
+            let mut market = load_market(&buf);
+            // Sector 1 goes live with a real quote authority, then is
+            // reclaimed onto the free list.
+            market.as_mut_slice()[1].quote_authority = AUTH.into();
+            market.as_mut_slice()[1].leader = [0x33; 32].into();
+            market.link_head(DllList::Active, 1).expect("link active");
+            market.reclaim_sector(1).expect("reclaim");
+            // Precondition for this test to mean anything: the authority
+            // survived the reclaim while `leader` was zeroed.
+            assert!(
+                !market.as_slice()[1].is_occupied(),
+                "reclaim zeroes `leader`"
+            );
+            assert_eq!(
+                market.as_slice()[1].quote_authority.to_bytes(),
+                AUTH,
+                "reclaim does NOT zero `quote_authority` — the premise here"
+            );
+        }
+        // Read the post-reclaim bytes directly; `load_market` resets the
+        // list heads on every call, so the raw buffer — not a second load —
+        // is what preserves the free-list state across the write.
+        let before = buf.read_data().to_vec();
+
+        // The ex-authority's write is therefore *authorized*: the compare
+        // passes on a sector that is no longer in use.
+        let mut data = before.clone();
+        let vault_off = authorize_quote_write(&data, 1, &AUTH)
+            .expect("a reclaimed sector keeps its quote_authority, so this is authorized");
+        bump_nonce_and_arm_flush(&mut data, vault_off);
+
+        // …and inert. Bound the blast radius by byte index: only the nonce
+        // and this sector's `reference_price.stamp` may move. That covers the
+        // free-list linkage (`next` / `prev` at sector offsets 0 / 4) and the
+        // header's `free_head` without naming them individually, so a future
+        // payload that strayed into either would fail here.
+        let nonce = NONCE_OFF..NONCE_OFF + 8;
+        let stamp_off = vault_off + VAULT_REFERENCE_PRICE_OFF + RP_STAMP_OFF;
+        let stamp = stamp_off..stamp_off + 8;
+        for (i, (b, a)) in before.iter().zip(data.iter()).enumerate() {
+            assert!(
+                b == a || nonce.contains(&i) || stamp.contains(&i),
+                "byte {i} changed outside the nonce / stamp of the freed sector"
+            );
+        }
+    }
+
+    #[test]
     fn out_of_range_index_rejected() {
         let data = market_buf(0);
         // `SECTORS` is one past the last live sector.
         assert_eq!(
-            authorize_quote_write(&data, SECTORS as u32, &AUTH),
+            authorize_quote_write(&data, SECTORS, &AUTH),
             Err(err::INVALID_SECTOR_INDEX)
         );
         // The null-sector sentinel is the worst case.
@@ -279,9 +354,9 @@ mod tests {
         // post-external-resize edge `Slab::effective_len` guards). The
         // capacity leg must still reject, matching `min(len, capacity)`.
         let mut data = market_buf(0);
-        write_u32(&mut data, LEN_OFF, (SECTORS as u32) + 2);
+        write_u32(&mut data, LEN_OFF, SECTORS + 2);
         assert_eq!(
-            authorize_quote_write(&data, SECTORS as u32, &AUTH),
+            authorize_quote_write(&data, SECTORS, &AUTH),
             Err(err::INVALID_SECTOR_INDEX)
         );
     }

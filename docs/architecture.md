@@ -996,29 +996,47 @@ caller; the third is the per-ix authority gate.
      *only* domain check either path makes. No branching for the unset
      case (`quote_authority` is always populated; see
      `SetQuoteAuthority`), and neither path re-reads `frozen` or
-     occupancy: the freeze is enforced at match time, and a free-list
-     sector's all-zero `quote_authority` fails this compare anyway. Both
-     skip the bounds/occupancy accessor above too — they work the market
-     bytes directly and bounds-check the sector inline against
+     occupancy: the freeze is enforced at match time, and a write to a
+     free-listed sector is **inert** (see below). Both skip the
+     bounds/occupancy accessor above too — they work the market bytes
+     directly and bounds-check the sector inline against
      `min(len, capacity)`, returning the same `InvalidSectorIndex`.
+
+     Note the compare does **not** reject a free-listed sector.
+     `reclaim_sector` zeroes only `leader` — the emptiness marker
+     `is_occupied()` reads — so a freed sector keeps its former
+     `quote_authority` until `allocate_sector` re-zeroes the whole struct
+     on reuse, and that ex-authority's compare still passes. What makes it
+     harmless is the blast radius: a quote write touches only
+     `market.nonce`, the sector's `reference_price`, and its `profile` —
+     never the `next` / `prev` links that thread the free list — and
+     matching walks the active DLL only, so a free sector never enters the
+     book. Advancing the nonce is not an attack either: it only pushes the
+     *next* quote to a later (worse) time priority, and never reorders
+     quotes already stamped.
+
    - **Leader-only** (`SetQuoteAuthority`,
      `SetAllowOutsideDepositors`, `CloseVault`):
      `vault.leader == signer`.
+
    - **Deposit**: leader path requires `vault.leader == signer`;
      otherwise outside path requires both
      `vault.allow_outside_depositors == 1` (leader opt-in) and
      `vault.outside_deposits_approved == 1` (admin approval).
+
    - **Withdraw**: leader path requires `vault.leader == signer`;
      otherwise outside path requires a `VaultDepositor` PDA seeded by
      `(market, sector_idx, signer)` with `shares >= shares_in` (the seeds
      bind the account to the signer, proving ownership). See
      **Vault → Frozen and tombstoned vaults** for the wind-down
      behavior on non-active vaults.
+
    - **Permissionless.** There is no permissionless vault-targeting
      *instruction*: perf-fee accrual (`realize_in_place`) is an
      internal step the `Deposit` / `Withdraw` handlers invoke, not a
      standalone entrypoint with its own discriminant (see
      **Vault → Realize**).
+
    - **Admin-only** (`FreezeVault`, `SetOutsideDepositsApproved`,
      `SetMinLeaderShare`, `SetMarketFeeConfig`):
      `signer ∈ registry.admins`.
@@ -1160,10 +1178,11 @@ Caller arguments stamped onto the vault:
 
 - `perf_fee_rate: Ppm32` — immutable thereafter.
 - `quote_authority: Address` — **must not be `Address::default()`**;
-  the zero address is rejected with `Unauthorized`. It doubles as the
-  free-list emptiness marker, and (having no private key) would
-  quote-brick the vault, since `SetReferencePrice` /
-  `SetLiquidityProfile` gate on `signer == quote_authority`. A caller
+  the zero address is rejected with `Unauthorized`. Having no private
+  key, it would quote-brick the vault, since `SetReferencePrice` /
+  `SetLiquidityProfile` gate on `signer == quote_authority`. (The
+  free-list emptiness marker is `Vault.leader`, not this field — see
+  **Storage layout**.) A caller
   that wants no separate delegation passes the leader's own pubkey
   rather than a `None`/default sentinel. Rotatable post-open via
   `SetQuoteAuthority`.
@@ -1237,10 +1256,10 @@ lifecycle order is still open → seed via `Deposit` →
 `SetReferencePrice` → `SetLiquidityProfile`; arming it out of order is
 inert self-grief, not a state the protocol has to reject.
 
-Occupancy and `frozen` are likewise not re-read: a free-list sector
-carries an all-zero `quote_authority`, which the authority compare
-already rejects, and re-quoting a frozen vault is a no-op because
-matching skips it.
+Occupancy and `frozen` are likewise not re-read: a write to a free-listed
+sector is inert (it cannot touch the free-list links or re-enter the book
+— see **Caller mechanics → Authority**), and re-quoting a frozen vault is
+a no-op because matching skips it.
 
 The instruction reads and increments `market.nonce`, writes
 the old value (OR'd with `FLUSH_BIT`) to `reference_price.stamp`,
@@ -1268,6 +1287,21 @@ two-store `SetReferencePrice` path despite writing 160 bytes.
 both write the same bytes to the same offsets — including that the write
 moves *nothing* outside `market.nonce`, the target sector's
 `reference_price.stamp`, and its `profile`.
+
+The fast path does **not** bound the instruction-data length before the
+copy, so a truncated call diverges from the reference build (which rejects
+it at deserialization): under 133 bytes it faults and the caller's own
+transaction fails; at 133–164 it copies the trailing program-id bytes into
+the caller's own ladder and succeeds silently. That is deliberate, and it
+is safe because nothing attacker-controlled reaches the *destination* — it
+is a fixed `(vault + 144, 160)` window inside the bounds-checked sector the
+signer is already `quote_authority` of, so malformed data cannot touch
+another vault, the header beyond the nonce, or any accounting field, and
+the matcher re-validates every level it later reads. The blast radius is a
+leader garbling their own quotes, which the hot-path CU is worth more than
+guarding against; every SDK builder emits the full 165 bytes. Like the
+other structural asymmetries, it is mapped by the parity tests, not
+equated.
 
 ### SetReferencePrice
 

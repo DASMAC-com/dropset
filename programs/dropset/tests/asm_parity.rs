@@ -27,6 +27,14 @@
 //! input offset) and are intentionally not part of the parity contract —
 //! see the architecture spec's **SetReferencePrice**.
 //!
+//! The same carve-out covers **short instruction data**, which the assembly
+//! deliberately does not bound: the reference build rejects it at
+//! deserialization, while the fast path either faults or copies trailing
+//! input-buffer bytes into the caller's own ladder. Both are self-inflicted
+//! and neither can escape the caller's own bounds-checked sector (see
+//! `entrypoint.s`'s note under the error codes), so no case below feeds a
+//! truncated payload to the two builds expecting equal outcomes.
+//!
 //! Keep new parity cases **in this file**: the required `Tests (asm parity)`
 //! CI job is the only one that builds the reference oracle, and it runs
 //! exactly `--test asm_parity`. A case in another test binary would only
@@ -34,6 +42,7 @@
 
 mod common;
 
+use anchor_lang_v2::InstructionData;
 use anchor_v2_testing::Signer;
 use common::fixture::{simple_profile, Fixture, PROFILE_BYTES};
 use core::mem::{offset_of, size_of};
@@ -114,10 +123,28 @@ fn asm_offsets_match_layout() {
     assert_eq!(offset_of!(Vault, profile), 144, "VAULT_PROFILE_OFF");
     assert_eq!(size_of::<LiquidityProfile>(), 160, "PROFILE_SIZE");
 
-    // Instruction-data offsets: both payloads sit past the 1-byte
-    // discriminator + the u32 `vault_idx`, so the profile blob — the
-    // `sol_memcpy_` source — starts at 5.
-    assert_eq!(1 + size_of::<u32>(), 5, "IX_PROFILE_OFF");
+    // Instruction-data layout: the assembly reads `vault_idx` at +1 and
+    // hands `sol_memcpy_` a source pointer of +5, so pin those against the
+    // *real* serialization rather than re-deriving them arithmetically —
+    // encode a recognizable payload and locate it in the wire bytes.
+    let probe: [u8; PROFILE_BYTES] = core::array::from_fn(|i| (i % 251 + 1) as u8);
+    let wire = dropset::instruction::SetLiquidityProfile {
+        vault_idx: 0x0403_0201,
+        profile_bytes: probe,
+    }
+    .data();
+    assert_eq!(
+        wire.len(),
+        1 + size_of::<u32>() + PROFILE_BYTES,
+        "ix data len"
+    );
+    assert_eq!(wire[0], 6, "discriminator");
+    assert_eq!(
+        &wire[1..5],
+        &0x0403_0201u32.to_le_bytes(),
+        "IX_VAULT_IDX_OFF"
+    );
+    assert_eq!(&wire[5..], &probe, "IX_PROFILE_OFF");
     assert_eq!(PROFILE_BYTES, size_of::<LiquidityProfile>());
 }
 
@@ -246,9 +273,11 @@ fn oob_err(mut f: Fixture) -> String {
 
 // ── set_liquidity_profile (disc 6) ──────────────────────────────────────
 
-/// Every byte of the 160-byte blob non-zero and distinct per level, so a
-/// truncated, shifted, or partially-applied `sol_memcpy_` shows up rather
-/// than hiding behind zeroed tail levels.
+/// A distinct value on every level of both sides, so a truncated, shifted,
+/// or partially-applied `sol_memcpy_` shows up rather than hiding behind
+/// zeroed tail levels. (The little-endian encodings still contain zero
+/// bytes — roughly half the blob — so byte-exactness is asserted directly
+/// against the stored region, never inferred from which bytes *changed*.)
 fn full_ladder() -> [u8; PROFILE_BYTES] {
     let levels: Vec<(u32, u16, u32)> = (0..8)
         .map(|i| (1_000 + i as u32 * 37, 100 + i as u16 * 11, 500 + i as u32))
@@ -364,24 +393,20 @@ fn profile_write_footprint_parity() {
             "byte {idx} changed outside nonce / stamp / profile of sector 1"
         );
     }
-    // And the payload really did land: every non-zero ladder byte moved.
-    let moved: Vec<usize> = asm.0.iter().map(|&(i, _)| i).collect();
-    for (i, &b) in ladder.iter().enumerate() {
-        if b != 0 {
-            assert!(
-                moved.contains(&(profile.start + i)),
-                "ladder byte {i} was not written"
-            );
-        }
-    }
+    // And the payload landed in full. Asserted against the stored region
+    // rather than the changed-byte set: a ladder byte that was already zero
+    // never shows up as "changed", so the changed set can only ever prove a
+    // subset of the copy.
+    assert_eq!(asm.2, ladder, "the whole 160-byte blob is in place");
 }
 
 /// Open two vaults, write `profile` onto the *second*, and return every
-/// `(index, new_value)` the write changed in the market account's data.
+/// `(index, new_value)` the write changed in the market account's data,
+/// the post-write nonce, and the target sector's stored profile region.
 fn profile_write_footprint(
     mut f: Fixture,
     profile: [u8; PROFILE_BYTES],
-) -> (Vec<(usize, u8)>, u64) {
+) -> (Vec<(usize, u8)>, u64, Vec<u8>) {
     let auth = f.authority.pubkey();
     // Two vaults; the slab allocates them into sectors 0 then 1. The
     // `perf_fee_rate` differs only to keep the two transactions distinct
@@ -408,7 +433,12 @@ fn profile_write_footprint(
         .filter(|(_, (b, a))| b != a)
         .map(|(i, (_, &a))| (i, a))
         .collect();
-    (changed, f.market_header().nonce.get())
+    let stored = common::fixture::vault_byte_offset(1) + offset_of!(Vault, profile);
+    (
+        changed,
+        f.market_header().nonce.get(),
+        after[stored..stored + PROFILE_BYTES].to_vec(),
+    )
 }
 
 #[test]
