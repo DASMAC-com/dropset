@@ -21,6 +21,12 @@ deps, and theme don't fight the product build.
   Spectacle `<Deck>` (`page.tsx` dynamic-imports it with `ssr: false`).
 - `theme/tokens.ts` — Dropset design tokens, mirrored from
   `frontend/app/globals.css` and reshaped into a Spectacle theme.
+- `components/` — pieces shared across decks. `DemoVideo.tsx` is the demo
+  badge: click it and the recording plays over the whole window, through a
+  portal to `document.body` (a Spectacle slide sits under a CSS transform,
+  which would otherwise trap a `position: fixed` overlay inside the slide
+  box). It swallows arrow keys while open so the deck doesn't advance
+  behind the video, and closes on `esc` or a click outside.
 - `public/` — deck assets, from three sources:
   - `dropset-wordmark.png` and `favicon-with-stroke.svg` are **copied**
     from the repo-root `brand-assets/` — the single source of truth for

@@ -92,9 +92,9 @@ pages:
 
 - **On-slide:** But Dropset is changing this.
 - **Visual:** The globe, currencies pinned to the countries that issue
-  them, with a route drawn across it. Badge **demo video · mainnet**,
-  set beside the globe rather than under it — the capture is tall, and a
-  badge below it collides with the footer.
+  them, with a route drawn across it. Badge **demo video · mainnet** — the
+  clickable player — set beside the globe rather than under it, since the
+  capture is tall and a badge below it collides with the footer.
 - **Spoken:** "But Dropset is changing that, and it already works: it's
   live on mainnet today, clearing real trades by routing FX through
   aggregators — pick the currency you want on the globe and the swap
@@ -306,8 +306,13 @@ ______________________________________________________________________
   ~55s of that, so every other page has to be fast.
 - The demos are **recorded videos**, one per network, cued by a badge on
   their page (**demo video · mainnet**, **demo video · localnet**).
-  Nothing on stage depends on a live network or a working room
-  connection.
+  Nothing on stage depends on a live network — though the recordings are
+  YouTube embeds, so the room does need a connection; download a local copy
+  as the fallback.
+- **The badge is the player.** Click it (or tab to it and hit Enter) and
+  the video opens over the whole window; `esc` or a click outside closes
+  it and the deck is where you left it. Arrow keys are swallowed while it's
+  open, so the deck can't advance behind the video.
 - Every page carries the same footer: the Dropset wordmark at the left,
   "Courtesy of DASMAC" in the middle (mirroring the frontend's own
   footer), and progress dots at the right. It isn't page content — don't

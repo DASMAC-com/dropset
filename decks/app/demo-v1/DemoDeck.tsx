@@ -12,6 +12,7 @@ import {
   Slide,
   Text,
 } from "spectacle";
+import { DemoVideo } from "@/components/DemoVideo";
 import { colors, deckTheme } from "@/theme/tokens";
 
 /**
@@ -128,27 +129,24 @@ const Statement = ({
 );
 
 /**
- * Marks a page whose visual is a recorded demo the presenter plays, and says
- * which network it was recorded on — the mainnet demo is the real venue, the
- * localnet one is a market bootstrapped from empty, and conflating the two
- * would overstate what is live. Deliberately small: a label, not the page.
+ * The recordings behind the two demo beats. Both point at the same placeholder
+ * Short for now; when the real captures exist, each beat gets its own id (and
+ * `portrait: false` if it's a landscape screen recording).
+ *
+ * Naming the network on the badge is deliberate — the mainnet demo is the real
+ * venue, the localnet one is a market bootstrapped from empty, and conflating
+ * the two would overstate what is live.
  */
-const DemoBadge = ({ network }: { network: string }) => (
+const DEMOS = {
+  mainnet: { videoId: "blHXBmt6RI0", portrait: true },
+  localnet: { videoId: "blHXBmt6RI0", portrait: true },
+} as const;
+
+// The badge is small on purpose: it labels the page, it isn't the page. Clicking
+// it plays the recording over the whole window (see `DemoVideo`).
+const DemoBadge = ({ network }: { network: keyof typeof DEMOS }) => (
   <FlexBox margin="26px 0 0 0">
-    <Box
-      border={`1px solid ${colors.accent}`}
-      borderRadius="6px"
-      padding="7px 14px"
-    >
-      <Text
-        color="secondary"
-        fontFamily="monospace"
-        fontSize="19px"
-        margin="0"
-      >
-        ▶ demo video · {network}
-      </Text>
-    </Box>
+    <DemoVideo network={network} {...DEMOS[network]} />
   </FlexBox>
 );
 
