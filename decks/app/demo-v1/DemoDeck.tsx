@@ -319,10 +319,11 @@ const THREATS: Logo[] = [
   { name: "Tempo", src: "/remote/logo-tempo.svg" },
 ];
 
-// Page 6 — the big Solana venues, whose attention is elsewhere. Alphabetical,
-// like the threats row, so neither implies a ranking. Sourced from each
-// project's own asset (Jupiter, Meteora, pump.fun) or the Solana token list, so
-// every mark is transparent and reads on black rather than in a white box.
+// Page 6 — the existing Solana venues, whose attention is elsewhere.
+// Alphabetical, like the threats row, so neither implies a ranking. Sourced
+// from each project's own asset (Jupiter, Meteora, pump.fun) or the Solana
+// token list, so every mark is transparent and reads on black rather than in a
+// white box.
 const INCUMBENTS: Logo[] = [
   { name: "Jupiter", src: "/remote/logo-jupiter.svg" },
   { name: "Meteora", src: "/remote/logo-meteora.svg" },
@@ -607,7 +608,7 @@ export default function DemoDeck() {
         <SlideBody>
           <Eyebrow>*Why Dropset won’t actually fail</Eyebrow>
           <Statement fontSize="48px">
-            But Dropset liquidity is public, and the biggest Solana DEXes face
+            Dropset liquidity is public, and existing Solana DEXes face
             an innovator’s dilemma (SOL, memes).
           </Statement>
           {/* Square tiles: these are all pure icons. The threats row above
@@ -617,7 +618,7 @@ export default function DemoDeck() {
         <Notes>
           Their liquidity isn’t public: it sits inside private or permissioned
           rails, where you can’t make a market unless they let you. Dropset’s
-          is. And the venues that are public — Jupiter, Meteora, Orca, pump.fun,
+          is. And the existing Solana DEXes — Jupiter, Meteora, Orca, pump.fun,
           Raydium — are chasing SOL and memes, because that’s where the volume
           is today. It’s a classic innovator’s dilemma: FX is too small to move
           them and big enough for us. Dropset is the open, neutral, composable

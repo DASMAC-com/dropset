@@ -51,8 +51,9 @@ pages:
 > Permissioned distribution: Arc, Tempo, and Canton are all chasing
 > onchain settlement, and each arrives with the customers already on it.
 > But their liquidity isn't public — you can't make a market unless they
-> let you — and the big Solana DEXes, Jupiter and Orca and Raydium, focus
-> on SOL and memes. Dropset is the open, neutral, composable venue anyone
+> let you — and the existing Solana DEXes, Jupiter and Meteora and Orca and
+> pump.fun and Raydium, focus on SOL and memes. Dropset is the open,
+> neutral, composable venue anyone
 > can quote on and anyone can trade against, and we're beating them to
 > it. We bootstrap a public liquidity flywheel — we seed the vaults,
 > anyone can top them off — and it has two ends we've already talked to:
@@ -156,8 +157,8 @@ pages:
 
 #### Page 6 — Why it will work · ~8s
 
-- **On-slide:** But Dropset liquidity is public, and the biggest Solana
-  DEXes face an innovator's dilemma (SOL, memes).
+- **On-slide:** Dropset liquidity is public, and existing Solana DEXes
+  face an innovator's dilemma (SOL, memes).
 - **Eyebrow:** \*Why Dropset won't actually fail — the payoff to the
   previous page's asterisk.
 - **Visual:** Jupiter, Meteora, Orca, pump.fun and Raydium as a row of
@@ -166,7 +167,7 @@ pages:
   implies a ranking.
 - **Spoken:** "Their liquidity isn't public: it sits inside private or
   permissioned rails, where you can't make a market unless they let you.
-  Dropset's is. And the venues that are public — Jupiter, Meteora, Orca,
+  Dropset's is. And the existing Solana DEXes — Jupiter, Meteora, Orca,
   pump.fun, Raydium — are chasing SOL and memes, because that's where the
   volume is today. It's a classic innovator's dilemma: FX is too small to
   move them and big enough for us. Dropset is the open, neutral,
