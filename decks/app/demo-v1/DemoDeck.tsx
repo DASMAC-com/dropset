@@ -319,15 +319,16 @@ const THREATS: Logo[] = [
   { name: "Tempo", src: "/remote/logo-tempo.svg" },
 ];
 
-// Page 6 — the big Solana venues, whose attention is elsewhere. Sourced from
-// each project's own asset (Jupiter, Meteora) or the Solana token list, so
+// Page 6 — the big Solana venues, whose attention is elsewhere. Alphabetical,
+// like the threats row, so neither implies a ranking. Sourced from each
+// project's own asset (Jupiter, Meteora, pump.fun) or the Solana token list, so
 // every mark is transparent and reads on black rather than in a white box.
 const INCUMBENTS: Logo[] = [
   { name: "Jupiter", src: "/remote/logo-jupiter.svg" },
-  { name: "Orca", src: "/remote/logo-orca.png" },
-  { name: "Raydium", src: "/remote/logo-raydium.png" },
   { name: "Meteora", src: "/remote/logo-meteora.svg" },
+  { name: "Orca", src: "/remote/logo-orca.png" },
   { name: "pump.fun", src: "/remote/logo-pump-fun.svg" },
+  { name: "Raydium", src: "/remote/logo-raydium.png" },
 ];
 
 /**
@@ -337,8 +338,8 @@ const INCUMBENTS: Logo[] = [
  * is the point of the page — a venue needs each end to bootstrap.
  */
 const UPSTREAM: Logo[] = [
-  { name: "Loon", src: "/remote/logo-cadc.png", note: "CADC issuer" },
   { name: "AUDD Digital", src: "/remote/logo-audd.png", note: "AUDD issuer" },
+  { name: "Loon", src: "/remote/logo-cadc.png", note: "CADC issuer" },
 ];
 
 const DOWNSTREAM: Logo[] = [
@@ -539,7 +540,7 @@ export default function DemoDeck() {
       {/* 4 — The eCLOB */}
       <Slide>
         <SlideBody>
-          <Eyebrow>The eCLOB</Eyebrow>
+          <Eyebrow>The eCLOB · quotes in double-digit CU</Eyebrow>
           <Statement fontSize="44px">
             Institutional-grade atomic settlement: order book transparency,
             propAMM efficiency.
@@ -562,8 +563,8 @@ export default function DemoDeck() {
               <Screenshot
                 src="/screens/compute-units.png"
                 width={330}
-                alt="Compute units per instruction: a reprice costs 47, a reshape 491"
-                caption="Reprice: 47 CU · reshape: 491 CU"
+                alt="Compute units per instruction: a reprice costs 47, a reshape 59"
+                caption="Reprice: 47 CU · reshape: 59 CU"
               />
               <DemoBadge network="localnet" />
             </Box>
@@ -574,8 +575,9 @@ export default function DemoDeck() {
           venue — so we built one. The eCLOB gives you the liquidity guarantees
           of a central limit order book with quote updates as cheap as a
           propAMM: a maker repricing the whole book costs forty-seven compute
-          units, reshaping the ladder about five hundred. That’s what lets us
-          bootstrap a brand-new market and onboard makers fast. [Play the
+          units, and reshaping the ladder fifty-nine — both double digits, on a
+          chain that gives you two hundred thousand per instruction. That’s what
+          lets us bootstrap a brand-new market and onboard makers fast. [Play the
           localnet demo video: the book starts empty, the maker bots come on,
           and real depth fills in within seconds — then a trade fills against
           it.]
@@ -615,8 +617,8 @@ export default function DemoDeck() {
         <Notes>
           Their liquidity isn’t public: it sits inside private or permissioned
           rails, where you can’t make a market unless they let you. Dropset’s
-          is. And the venues that are public — Jupiter, Orca, Raydium, Meteora,
-          pump.fun — are chasing SOL and memes, because that’s where the volume
+          is. And the venues that are public — Jupiter, Meteora, Orca, pump.fun,
+          Raydium — are chasing SOL and memes, because that’s where the volume
           is today. It’s a classic innovator’s dilemma: FX is too small to move
           them and big enough for us. Dropset is the open, neutral, composable
           venue — anyone can quote, anyone can trade, any app can integrate —
@@ -637,9 +639,9 @@ export default function DemoDeck() {
           We seed the markets ourselves the way Hyperliquid did — our vaults
           bootstrap each book, and anyone can top them off with inventory, so
           the flywheel is public rather than ours alone. It has two ends, and
-          we’re talking to partners at both. Upstream, issuers like Loon, who
-          issues CADC, and AUDD Digital: they mint a currency and need it to
-          actually trade. Downstream, the demand — Colosseum partners like
+          we’re talking to partners at both. Upstream, issuers like AUDD
+          Digital, and Loon, who issues CADC: they mint a currency and need it
+          to actually trade. Downstream, the demand — Colosseum partners like
           Altitude in banking and CargoBill in supply chain, who need to buy FX
           onchain to settle. Connect the two ends and the depth compounds.
         </Notes>

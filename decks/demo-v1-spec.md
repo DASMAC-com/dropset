@@ -44,7 +44,8 @@ pages:
 > currency and the swap settles. And we're just getting started, because
 > the markets that don't exist yet need a venue. So we built the eCLOB:
 > the depth of an order book, with quote updates as cheap as a propAMM —
-> a maker repricing the whole book costs forty-seven compute units. Watch a
+> a maker repricing the whole book costs forty-seven compute units and
+> reshaping the ladder fifty-nine. Watch a
 > brand-new market come alive: the book starts empty, the makers come
 > on, and real depth fills in within seconds. So why will this fail?
 > Permissioned distribution: Arc, Tempo, and Canton are all chasing
@@ -108,20 +109,23 @@ pages:
 #### Page 4 — The eCLOB [DEMO VIDEO · localnet] · ~30s
 
 - **On-slide:** Institutional-grade atomic settlement: order book
-  transparency, propAMM efficiency.
+  transparency, propAMM efficiency. Eyebrow: "The eCLOB · quotes in
+  double-digit CU".
 - **Visual:** Two captures side by side, top-aligned — the "Market maker
   TUI" (markets list + a live book) and the compute-unit pane showing
-  what a quote update costs. Badge **demo video · localnet** at the foot
-  of the right column, in the space the shorter capture leaves.
+  what a quote update costs, captioned "Reprice: 47 CU · reshape: 59 CU".
+  Badge **demo video · localnet** at the foot of the right column, in the
+  space the shorter capture leaves.
 - **Spoken:** "The routing works today, but the markets that don't exist
   yet need a venue — so we built one. The eCLOB gives you the liquidity
   guarantees of a central limit order book with quote updates as cheap
   as a propAMM: a maker repricing the whole book costs forty-seven
-  compute units, reshaping the ladder about five hundred. That's what
-  lets us bootstrap a brand-new market and onboard makers fast. \[play
-  the localnet demo video: the book starts empty, the maker bots come
-  on, real depth fills in within seconds, then a trade fills against
-  it\]"
+  compute units, and reshaping the ladder fifty-nine — both double
+  digits, on a chain that gives you two hundred thousand per instruction.
+  That's what lets us bootstrap a brand-new market and onboard makers
+  fast. \[play the localnet demo video: the book starts empty, the maker
+  bots come on, real depth fills in within seconds, then a trade fills
+  against it\]"
 - **Note:** This page carries both halves of the eCLOB pitch — the
   design (cheap quotes, shown as real compute-unit numbers) and the
   proof (a market bootstrapped from empty). The video is **localnet**,
@@ -156,13 +160,14 @@ pages:
   DEXes face an innovator's dilemma (SOL, memes).
 - **Eyebrow:** \*Why Dropset won't actually fail — the payoff to the
   previous page's asterisk.
-- **Visual:** Jupiter, Orca, Raydium, Meteora and pump.fun as a row of
+- **Visual:** Jupiter, Meteora, Orca, pump.fun and Raydium as a row of
   logo tiles, matching the previous page's row — the public venues, whose
-  attention is elsewhere.
+  attention is elsewhere. Alphabetical, like the threats row, so neither
+  implies a ranking.
 - **Spoken:** "Their liquidity isn't public: it sits inside private or
   permissioned rails, where you can't make a market unless they let you.
-  Dropset's is. And the venues that are public — Jupiter, Orca, Raydium,
-  Meteora, pump.fun — are chasing SOL and memes, because that's where the
+  Dropset's is. And the venues that are public — Jupiter, Meteora, Orca,
+  pump.fun, Raydium — are chasing SOL and memes, because that's where the
   volume is today. It's a classic innovator's dilemma: FX is too small to
   move them and big enough for us. Dropset is the open, neutral,
   composable venue — anyone can quote, anyone can trade, any app can
@@ -179,11 +184,12 @@ pages:
 
 - **On-slide:** Vaults bootstrap a public FX liquidity flywheel.
 - **Visual:** A big curve of depth growing, over the flywheel's two ends —
-  **Upstream** (Loon, who issues CADC; AUDD Digital) and **Downstream**
+  **Upstream** (AUDD Digital; Loon, who issues CADC) and **Downstream**
   (Altitude, CargoBill), all people we've actually talked to about
-  sourcing liquidity. Each heading sits over a rule spanning its own two
-  tiles, and nothing runs between the ends. Each tile is captioned with
-  the company, then what they are to us: "Loon / CADC issuer", "Altitude /
+  sourcing liquidity — each group alphabetical. Each heading sits over a
+  rule spanning its own two tiles, and nothing runs between the ends. Each
+  tile is captioned with the company, then what they are to us, left-
+  aligned with the tile above it: "Loon / CADC issuer", "Altitude /
   Banking".
 - **Note:** Getting this page to read took several tries, so don't undo
   it. Four evenly-spaced tiles look like one row of four, and a hairline
@@ -195,8 +201,8 @@ pages:
 - **Spoken:** "We seed the markets ourselves the way Hyperliquid did —
   our vaults bootstrap each book, and anyone can top them off with
   inventory, so the flywheel is public rather than ours alone. It has two
-  ends, and we've talked with both. Upstream are the issuers — Loon, who
-  issues CADC, and AUDD Digital — who mint a currency and need it to
+  ends, and we've talked with both. Upstream are the issuers — AUDD
+  Digital, and Loon, who issues CADC — who mint a currency and need it to
   actually trade. Downstream is the demand: Colosseum partners like
   Altitude in banking and CargoBill in supply chain, who need to buy FX
   onchain to settle. Connect the two ends and the depth compounds."
