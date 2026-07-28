@@ -1,6 +1,7 @@
 //! The HTTP-REST poll transport (`http` feature).
 
 use anyhow::{Context, Result};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::de::DeserializeOwned;
 use std::time::Duration;
 
@@ -14,6 +15,10 @@ use std::time::Duration;
 pub struct HttpClient {
     base_url: String,
     client: reqwest::Client,
+    /// Headers sent on every request — the seam for an auth key a source's API
+    /// requires on each call (CoinMarketCap's `X-CMC_PRO_API_KEY`, a Circle
+    /// bearer token), set with [`HttpClient::with_header`].
+    headers: HeaderMap,
 }
 
 impl HttpClient {
@@ -28,7 +33,19 @@ impl HttpClient {
         Ok(Self {
             base_url: base_url.into(),
             client,
+            headers: HeaderMap::new(),
         })
+    }
+
+    /// Add a header sent on every request, for an API that authenticates a poll
+    /// with a static key (an errored `name` / `value` is rejected here rather
+    /// than per request). Chains from [`HttpClient::new`].
+    pub fn with_header(mut self, name: &str, value: &str) -> Result<Self> {
+        let name = HeaderName::from_bytes(name.as_bytes())
+            .with_context(|| format!("invalid header name {name:?}"))?;
+        let value = HeaderValue::from_str(value).context("invalid header value")?;
+        self.headers.insert(name, value);
+        Ok(self)
     }
 
     /// GET `{base_url}{path}` with optional query params, decoding the JSON
@@ -42,6 +59,7 @@ impl HttpClient {
         let body = self
             .client
             .get(&url)
+            .headers(self.headers.clone())
             .query(query)
             .send()
             .await
@@ -52,5 +70,25 @@ impl HttpClient {
             .await
             .with_context(|| format!("decode JSON from {url}"))?;
         Ok(body)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn with_header_accepts_a_valid_pair_and_rejects_a_malformed_name() {
+        // A valid auth-style header composes onto the client.
+        let ok = HttpClient::new("https://example.test")
+            .unwrap()
+            .with_header("X-CMC_PRO_API_KEY", "secret");
+        assert!(ok.is_ok());
+        // A space is not legal in a header name — caught at wiring time, not on
+        // the first (network) request.
+        let bad = HttpClient::new("https://example.test")
+            .unwrap()
+            .with_header("bad name", "v");
+        assert!(bad.is_err());
     }
 }

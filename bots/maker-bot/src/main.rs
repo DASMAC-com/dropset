@@ -18,17 +18,34 @@
 
 use anyhow::{anyhow, Context, Result};
 use dropset_fair_value::{FairValueEngine, Reading};
+use dropset_feeds::{forward_channel, run_until, RunConfig, Sink, Source};
 use dropset_localnet_support::ws_url_from_rpc;
 use dropset_maker_bot::config::{
-    BotConfig, MarketConfig, DEFAULT_LEADER_KEY, MARKETS, QUOTE_KEYPAIR_FILE, USDC_COINGECKO_ID,
+    BotConfig, FeedConfig, MarketConfig, DEFAULT_LEADER_KEY, MARKETS, QUOTE_KEYPAIR_FILE,
+    USDC_COINGECKO_ID,
 };
 use dropset_maker_bot::context::Context as BotContext;
 use dropset_maker_bot::model::fair_mid::build_legs;
-use dropset_maker_bot::model::feeds::Feeds;
+use dropset_maker_bot::model::feeds::{cmc_api_key, CmcSource, CoinGeckoSource, FrankfurterSource};
+use dropset_maker_bot::tasks::FeedReceivers;
 use dropset_maker_bot::{chain, fills, tasks};
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 use std::time::Duration;
+use tokio::runtime::Runtime;
+use tokio::sync::broadcast;
+
+/// The live-sink channel bound between a feed source and the supervisor. Price
+/// maps arrive once per poll interval and the tick drains every 5 s, so a small
+/// buffer never fills; the sink drops to the latest if one ever did.
+const FEED_CHANNEL_CAP: usize = 64;
+
+/// How long a price source waits to retry after a failed poll — deliberately
+/// far shorter than the steady-state poll interval (300 s for FX). The keyless
+/// CoinGecko / Frankfurter tiers rate-limit, so a transient failure must
+/// recover within a tick or two rather than dark the anchor for a whole
+/// interval; the static peg covers the gap meanwhile.
+const FEED_ERROR_BACKOFF: Duration = Duration::from_secs(20);
 
 /// Lamports per SOL.
 const LAMPORTS_PER_SOL: u64 = 1_000_000_000;
@@ -66,6 +83,17 @@ impl Args {
 }
 
 fn main() -> Result<()> {
+    // Surface the feeds runner's tracing diagnostics (a price / fill source
+    // failing and backing off) on stderr; the framework has no other failure
+    // signal. Default to `info`; `RUST_LOG` overrides.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .with_writer(std::io::stderr)
+        .init();
+
     let mut cfg = BotConfig::default();
     let args = parse_args(&mut cfg);
     if args.dry_run {
@@ -189,16 +217,116 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
         ));
     }
 
-    // One fill subscription covers every market the leader quotes; the
-    // supervisor routes each fill to its market by `event.market`.
+    // A small background runtime drives the async feed sources; the tick loop
+    // below stays synchronous and reads the broadcast tails. `enable_all` backs
+    // the reqwest reactor the HTTP price sources need.
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .context("build feeds runtime")?;
+
+    // The price tiers, batched across the quoted roster: one CoinGecko call
+    // prices every token plus the common-mode USDC leg, one Frankfurter call
+    // covers every currency, CoinMarketCap is the wired-if-keyed basis fallback.
+    let mut cg_ids: Vec<String> = contexts
+        .iter()
+        .map(|c| c.cfg.coingecko_id.to_string())
+        .collect();
+    cg_ids.push(USDC_COINGECKO_ID.to_string());
+    let cmc_ids: Vec<u32> = contexts
+        .iter()
+        .filter_map(|c| c.cfg.coinmarketcap_id)
+        .collect();
+    let mut currencies: Vec<String> = contexts
+        .iter()
+        .map(|c| c.cfg.currency.to_string())
+        .collect();
+    currencies.sort_unstable();
+    currencies.dedup();
+    let feeds = spawn_price_feeds(&rt, &cfg.feeds, cg_ids, cmc_ids, currencies)?;
+
+    // One fill subscription covers every market the leader quotes; its
+    // `logsSubscribe` socket bridges through the feeds stream seam onto a live
+    // sink, and the supervisor routes each fill to its market by `event.market`.
     let ws_url = cfg
         .ws_url
         .clone()
         .unwrap_or_else(|| ws_url_from_rpc(&cfg.rpc_url));
-    let fills = fills::spawn(ws_url, cfg.rpc_url.clone(), leader.pubkey());
+    let fills = fills::spawn(ws_url, cfg.rpc_url.clone(), leader.pubkey())
+        .map(|source| spawn_feed(&rt, source, RunConfig::default()));
 
-    let feeds = Feeds::new(cfg.feeds.clone());
+    // The runtime must outlive the supervisor loop that reads its channels; it
+    // does — `run_supervisor` runs until the process is killed, and `rt` is held
+    // in this frame the whole time.
     tasks::run_supervisor(feeds, cfg.clone(), contexts, fills)
+}
+
+/// Spawn a feeds `source` on `rt`, forwarding its records onto an in-process
+/// live sink, and return the receiver the supervisor drains. The runner is
+/// given a never-resolving shutdown (`pending`) so it lives with the process: a
+/// demo feed has no cursor to flush on exit, and installing a ctrl-c handler
+/// here (as `feeds::run` does) would swallow the signal that stops the
+/// synchronous tick loop.
+fn spawn_feed<S>(rt: &Runtime, source: S, cfg: RunConfig) -> broadcast::Receiver<S::Record>
+where
+    S: Source + Send + 'static,
+    S::Record: Clone + Send + Sync + 'static,
+{
+    let (sink, rx) = forward_channel(FEED_CHANNEL_CAP);
+    let sinks: Vec<Box<dyn Sink<S::Record>>> = vec![Box::new(sink)];
+    rt.spawn(async move {
+        if let Err(e) = run_until(source, sinks, cfg, std::future::pending::<()>()).await {
+            eprintln!("[feed] runner exited: {e}");
+        }
+    });
+    rx
+}
+
+/// Spawn the three price sources on `rt` and bundle their live-sink receivers.
+/// Each source owns its steady-state poll cadence (its `RunConfig::poll_interval`)
+/// but retries on the short [`FEED_ERROR_BACKOFF`] so a transient rate-limit
+/// doesn't dark the anchor for a whole interval. CoinMarketCap is wired only
+/// when a key is set and the roster names any CMC id.
+fn spawn_price_feeds(
+    rt: &Runtime,
+    cfg: &FeedConfig,
+    cg_ids: Vec<String>,
+    cmc_ids: Vec<u32>,
+    currencies: Vec<String>,
+) -> Result<FeedReceivers> {
+    let coingecko = spawn_feed(
+        rt,
+        CoinGeckoSource::new(&cfg.coingecko_base_url, cg_ids)?,
+        RunConfig {
+            poll_interval: cfg.coingecko_poll,
+            error_backoff: FEED_ERROR_BACKOFF,
+        },
+    );
+    let coinmarketcap = match cmc_api_key() {
+        Some(key) if !cmc_ids.is_empty() => Some(spawn_feed(
+            rt,
+            CmcSource::new(&cfg.coinmarketcap_base_url, cmc_ids, &key)?,
+            RunConfig {
+                poll_interval: cfg.coinmarketcap_poll,
+                error_backoff: FEED_ERROR_BACKOFF,
+            },
+        )),
+        _ => None,
+    };
+    let frankfurter = spawn_feed(
+        rt,
+        FrankfurterSource::new(&cfg.frankfurter_base_url, currencies)?,
+        RunConfig {
+            poll_interval: cfg.fx_poll,
+            error_backoff: FEED_ERROR_BACKOFF,
+        },
+    );
+    Ok(FeedReceivers {
+        coingecko,
+        coinmarketcap,
+        frankfurter,
+    })
 }
 
 /// Load a checked-in mint keypair and return its public key.
@@ -212,39 +340,47 @@ fn mint_pubkey(keypair_file: &str) -> Result<Pubkey> {
 /// No validator and no writes — a credentials/cascade check. `--drop` suppresses
 /// a tier so the cascade to the next one is observable.
 fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
-    let feeds = Feeds::new(cfg.feeds.clone());
+    // One-shot polls on a current-thread runtime — no supervisor, no live sink.
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("build dry-run runtime")?;
     let drop = |tier: &str| args.drop.iter().any(|d| d == tier);
+    let cmc_key = cmc_api_key();
 
     let roster = args.selected();
-    let mut cg_ids: Vec<&str> = roster.iter().map(|m| m.coingecko_id).collect();
+    let mut cg_ids: Vec<String> = roster.iter().map(|m| m.coingecko_id.to_string()).collect();
     // The USDC/USD common-mode leg rides the same batched CoinGecko call.
-    cg_ids.push(USDC_COINGECKO_ID);
+    cg_ids.push(USDC_COINGECKO_ID.to_string());
     let cmc_ids: Vec<u32> = roster.iter().filter_map(|m| m.coinmarketcap_id).collect();
-    let mut currencies: Vec<&str> = roster.iter().map(|m| m.currency).collect();
+    let mut currencies: Vec<String> = roster.iter().map(|m| m.currency.to_string()).collect();
     currencies.sort_unstable();
     currencies.dedup();
 
     let cg = if drop("coingecko") {
         Default::default()
     } else {
-        feeds.poll_coingecko(&cg_ids).unwrap_or_default()
+        rt.block_on(CoinGeckoSource::new(&cfg.feeds.coingecko_base_url, cg_ids)?.poll())
+            .unwrap_or_default()
     };
-    let cmc = if drop("cmc") || !feeds.coinmarketcap_enabled() {
-        Default::default()
-    } else {
-        feeds.poll_coinmarketcap(&cmc_ids).unwrap_or_default()
+    let cmc = match &cmc_key {
+        Some(key) if !drop("cmc") && !cmc_ids.is_empty() => rt
+            .block_on(CmcSource::new(&cfg.feeds.coinmarketcap_base_url, cmc_ids, key)?.poll())
+            .unwrap_or_default(),
+        _ => Default::default(),
     };
     let fx = if drop("fx") {
         Default::default()
     } else {
-        feeds.poll_frankfurter(&currencies).unwrap_or_default()
+        rt.block_on(FrankfurterSource::new(&cfg.feeds.frankfurter_base_url, currencies)?.poll())
+            .unwrap_or_default()
     };
 
     println!(
         "Tiers live: coingecko {} ids, coinmarketcap {} ids{}, fx {} currencies",
         cg.len(),
         cmc.len(),
-        if feeds.coinmarketcap_enabled() {
+        if cmc_key.is_some() {
             ""
         } else {
             " (no CMC_API_KEY)"

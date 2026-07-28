@@ -92,6 +92,14 @@ fx-survey <-> feeds: the survey app is the first consumer of the feeds
   the Batch/Cursor/caught_up contract, and the store sink's
   cursor-after-commit ordering must track the framework. The schema split
   is part of the seam: feeds owns feed_cursors, the app owns cex_prices.
+maker-bot <-> feeds: the maker bot is the first consumer of the feeds
+  live (forward) sink — it implements Source for the price tiers
+  (bots/maker-bot/src/model/feeds.rs) and bridges the logs-subscription
+  fill socket through ChannelSource (bots/maker-bot/src/fills.rs), driving
+  both with run_until onto a ForwardSink its synchronous tick loop drains
+  through the broadcast receiver (bots/maker-bot/src/tasks.rs) — so the
+  Source/Sink signatures, the Batch/caught_up contract, and the forward
+  sink's bounded drop-to-latest policy must track the framework.
 sdk-clients <-> sdk-math: the TS market reader (sdk/ts/src/market.ts)
   hand-decodes the opaque Vault slab and reconstructs the resting book,
   mirroring the on-chain byte layout (sdk/interface/src/layout.rs) and the

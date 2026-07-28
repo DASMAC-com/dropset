@@ -1,9 +1,11 @@
-//! Price-feed transport (§1).
+//! Price-feed sources (§1).
 //!
-//! The blocking pollers behind one [`Feeds`] handle. Their readings feed the
-//! [`dropset_fair_value`] engine's `fair = fx × basis` composition (mapped onto
-//! its legs in [`super::fair_mid`]); they are no longer a primary-first cascade
-//! over one mid. By leg:
+//! The price tiers as `feeds`-framework [`Source`]s over the shared async
+//! [`HttpClient`]: each polls its REST endpoint on its own cadence and yields a
+//! keyed batch the runner fans to a live forward sink (the tick loop drains it,
+//! `tasks.rs`). Their readings feed the [`dropset_fair_value`] engine's
+//! `fair = fx × basis` composition (mapped onto its legs in [`super::fair_mid`]);
+//! they are not a primary-first cascade over one mid. By leg:
 //!
 //! - **ECB/Frankfurter** `/latest` — keyless `USD/<ccy>` inverted to a
 //!   USD-per-unit rate: the **FX anchor** (the spec's designated anchor
@@ -14,8 +16,9 @@
 //!   crypto-only (weekend / localnet) regime. It is **demoted** from the old
 //!   cascade's primary mid — laggy and reflexive, never the FX anchor (§1).
 //! - **CoinMarketCap** `/v2/cryptocurrency/quotes/latest` — batched by numeric
-//!   id, keyed from `CMC_API_KEY`; the basis-leg fallback when CoinGecko is
-//!   down (its ~10k/mo free quota rules out a hot poll).
+//!   id, keyed from `CMC_API_KEY` via the client's auth header; the basis-leg
+//!   fallback when CoinGecko is stale (its ~10k/mo free quota rules out a hot
+//!   poll). Wired only when the key is set ([`cmc_api_key`]).
 //! - **Static** — a per-market constant ([`super::super::config::MarketConfig::static_usd`]),
 //!   the last resort, supplied by the caller without a poll.
 //!
@@ -25,103 +28,148 @@
 //! anchor runs on the Frankfurter fallback, so the two-peg model is live on
 //! real data today.
 //!
-//! Each `poll_*` returns the latest batch keyed by the identifier the caller
-//! asked for; the caller stamps the read time for the engine's freshness rules.
-//! The JSON shapes are decoded by the free `parse_*` functions, unit tested
-//! against captured responses; only the transport needs a network.
+//! Each source's `next` yields one record — the latest batch keyed by the
+//! identifier it was built with — which the supervisor caches with a read time
+//! for the engine's freshness rules. The tiers no longer cascade in the
+//! transport: each polls independently and the consumer's `legs()` picks the
+//! freshest live leg (CoinGecko, else CoinMarketCap), so a stale tier simply
+//! ages out rather than gating the next poll. The JSON shapes are decoded by
+//! the free `parse_*` functions, unit tested against captured responses; only
+//! the transport needs a network. Each source also exposes a one-shot `poll`
+//! that backs the `--dry-run` credentials check.
 
-use crate::config::{FeedConfig, CMC_KEY_ENV};
-use anyhow::{anyhow, Context, Result};
+use crate::config::CMC_KEY_ENV;
+use anyhow::Result;
+use async_trait::async_trait;
+use dropset_feeds::{Batch, HttpClient, Source};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::time::Duration;
 
-/// Blocking poller over the price-feed sources.
-pub struct Feeds {
-    agent: ureq::Agent,
-    cfg: FeedConfig,
-    cmc_key: Option<String>,
+/// The CoinMarketCap API key for this run, or `None` when the secondary tier is
+/// not wired up (the localnet demo runs without it). Read from the environment,
+/// never a committed field.
+pub fn cmc_api_key() -> Option<String> {
+    std::env::var(CMC_KEY_ENV).ok().filter(|k| !k.is_empty())
 }
 
-impl Feeds {
-    /// Build a poller, reading the CoinMarketCap key from the environment if
-    /// present.
-    pub fn new(cfg: FeedConfig) -> Self {
-        let agent = ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(5))
-            .build();
-        let cmc_key = std::env::var(CMC_KEY_ENV).ok().filter(|k| !k.is_empty());
-        Self {
-            agent,
-            cfg,
-            cmc_key,
-        }
+/// CoinGecko `/simple/price` source: one batched USD quote for every id it was
+/// built with (the crypto basis leg, plus `usd-coin` for the common-mode leg).
+pub struct CoinGeckoSource {
+    http: HttpClient,
+    ids: Vec<String>,
+}
+
+impl CoinGeckoSource {
+    /// Build the source over `base_url`, batching `ids` in every poll.
+    pub fn new(base_url: &str, ids: Vec<String>) -> Result<Self> {
+        Ok(Self {
+            http: HttpClient::new(base_url)?,
+            ids,
+        })
     }
 
-    /// Whether the CoinMarketCap secondary tier is wired up this run (key set).
-    pub fn coinmarketcap_enabled(&self) -> bool {
-        self.cmc_key.is_some()
-    }
-
-    /// CoinGecko USD price for every `id`, in one batched `/simple/price` call
-    /// (primary tier). Ids absent from the response are omitted from the map.
-    pub fn poll_coingecko(&self, ids: &[&str]) -> Result<HashMap<String, f64>> {
-        let url = format!("{}/simple/price", self.cfg.coingecko_base_url);
+    /// Poll once: USD price for every id, omitting ids absent from the response.
+    pub async fn poll(&self) -> Result<HashMap<String, f64>> {
+        let csv = self.ids.join(",");
         let body: Value = self
-            .agent
-            .get(&url)
-            .query("ids", &ids.join(","))
-            .query("vs_currencies", "usd")
-            .call()
-            .context("coingecko request")?
-            .into_json()
-            .context("coingecko json")?;
-        Ok(parse_coingecko(&body, ids))
+            .http
+            .get_json("/simple/price", &[("ids", &csv), ("vs_currencies", "usd")])
+            .await?;
+        let ids: Vec<&str> = self.ids.iter().map(String::as_str).collect();
+        Ok(parse_coingecko(&body, &ids))
+    }
+}
+
+#[async_trait]
+impl Source for CoinGeckoSource {
+    type Record = HashMap<String, f64>;
+    fn name(&self) -> &str {
+        "coingecko"
+    }
+    async fn next(&mut self) -> Result<Batch<Self::Record>> {
+        Ok(Batch::new(vec![self.poll().await?]))
+    }
+}
+
+/// CoinMarketCap `/v2/cryptocurrency/quotes/latest` source: USD quotes batched
+/// by numeric id (the basis-leg fallback), authenticated with the API key.
+pub struct CmcSource {
+    http: HttpClient,
+    ids: Vec<u32>,
+}
+
+impl CmcSource {
+    /// Build the source over `base_url`, authenticating with `api_key` and
+    /// batching `ids` in every poll.
+    pub fn new(base_url: &str, ids: Vec<u32>, api_key: &str) -> Result<Self> {
+        let http = HttpClient::new(base_url)?.with_header("X-CMC_PRO_API_KEY", api_key)?;
+        Ok(Self { http, ids })
     }
 
-    /// CoinMarketCap USD price for every numeric `id`, batched by id (secondary
-    /// tier). Requires the API key; ids absent from the response are omitted.
-    pub fn poll_coinmarketcap(&self, ids: &[u32]) -> Result<HashMap<u32, f64>> {
-        let key = self
-            .cmc_key
-            .as_ref()
-            .ok_or_else(|| anyhow!("{CMC_KEY_ENV} not set"))?;
-        let csv = ids
+    /// Poll once: USD price for every id, omitting ids absent from the response.
+    pub async fn poll(&self) -> Result<HashMap<u32, f64>> {
+        let csv = self
+            .ids
             .iter()
             .map(|id| id.to_string())
             .collect::<Vec<_>>()
             .join(",");
-        let url = format!(
-            "{}/v2/cryptocurrency/quotes/latest",
-            self.cfg.coinmarketcap_base_url
-        );
         let body: Value = self
-            .agent
-            .get(&url)
-            .set("X-CMC_PRO_API_KEY", key)
-            .query("id", &csv)
-            .call()
-            .context("coinmarketcap request")?
-            .into_json()
-            .context("coinmarketcap json")?;
-        Ok(parse_coinmarketcap(&body, ids))
+            .http
+            .get_json("/v2/cryptocurrency/quotes/latest", &[("id", &csv)])
+            .await?;
+        Ok(parse_coinmarketcap(&body, &self.ids))
+    }
+}
+
+#[async_trait]
+impl Source for CmcSource {
+    type Record = HashMap<u32, f64>;
+    fn name(&self) -> &str {
+        "coinmarketcap"
+    }
+    async fn next(&mut self) -> Result<Batch<Self::Record>> {
+        Ok(Batch::new(vec![self.poll().await?]))
+    }
+}
+
+/// ECB/Frankfurter `/latest?base=USD` source: the keyless FX anchor. The API
+/// quotes `<ccy>` per USD; each reading is inverted to USD per `<ccy>`, the peg
+/// a stablecoin tracks.
+pub struct FrankfurterSource {
+    http: HttpClient,
+    currencies: Vec<String>,
+}
+
+impl FrankfurterSource {
+    /// Build the source over `base_url`, batching `currencies` in every poll.
+    pub fn new(base_url: &str, currencies: Vec<String>) -> Result<Self> {
+        Ok(Self {
+            http: HttpClient::new(base_url)?,
+            currencies,
+        })
     }
 
-    /// ECB/Frankfurter USD-per-unit peg for every `currency`, batched in one
-    /// `/latest?base=USD` call (tertiary tier). The response quotes `<ccy>` per
-    /// USD; this inverts it to USD per `<ccy>`, the peg a stablecoin tracks.
-    pub fn poll_frankfurter(&self, currencies: &[&str]) -> Result<HashMap<String, f64>> {
-        let url = format!("{}/latest", self.cfg.frankfurter_base_url);
+    /// Poll once: USD-per-unit peg for every currency, omitting those unquoted.
+    pub async fn poll(&self) -> Result<HashMap<String, f64>> {
+        let csv = self.currencies.join(",");
         let body: Value = self
-            .agent
-            .get(&url)
-            .query("base", "USD")
-            .query("symbols", &currencies.join(","))
-            .call()
-            .context("frankfurter request")?
-            .into_json()
-            .context("frankfurter json")?;
-        Ok(parse_frankfurter(&body, currencies))
+            .http
+            .get_json("/latest", &[("base", "USD"), ("symbols", &csv)])
+            .await?;
+        let currencies: Vec<&str> = self.currencies.iter().map(String::as_str).collect();
+        Ok(parse_frankfurter(&body, &currencies))
+    }
+}
+
+#[async_trait]
+impl Source for FrankfurterSource {
+    type Record = HashMap<String, f64>;
+    fn name(&self) -> &str {
+        "frankfurter"
+    }
+    async fn next(&mut self) -> Result<Batch<Self::Record>> {
+        Ok(Batch::new(vec![self.poll().await?]))
     }
 }
 

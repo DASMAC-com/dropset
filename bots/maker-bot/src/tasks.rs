@@ -21,11 +21,10 @@
 //! used — it bumps on every re-quote, so it can't tell a fill from a re-quote.)
 
 use crate::chain;
-use crate::config::{BotConfig, FeedConfig, MarketConfig, USDC_COINGECKO_ID};
+use crate::config::{BotConfig, MarketConfig, USDC_COINGECKO_ID};
 use crate::context::{Context, ProfileKind, VaultSnapshot};
 use crate::fills::Fill;
 use crate::model::fair_mid::{build_legs, FairValue};
-use crate::model::feeds::Feeds;
 use crate::model::inventory::Inventory;
 use crate::model::killswitch::{self, Action, HaltReason};
 use crate::model::ladder::{self, Side};
@@ -36,20 +35,50 @@ use dropset_fair_value::{Legs, Reading};
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 use std::collections::HashMap;
-use std::sync::mpsc::{Receiver, TryRecvError};
+use std::hash::Hash;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::sync::broadcast::{self, error::TryRecvError};
 
-/// Whether a feed tier is due to poll again given its last poll and interval.
-fn due(last: Option<Instant>, now: Instant, interval: Duration) -> bool {
-    last.is_none_or(|t| now.duration_since(t) >= interval)
+/// The live-sink receivers the supervisor drains each cycle, one per price
+/// tier. Each is the read end of a `feeds` forward (live) sink fed by that
+/// tier's source running on the background runtime (`main.rs`); the source owns
+/// its own poll cadence and error backoff, so the supervisor only reads the
+/// tail. CoinMarketCap is `None` when the secondary tier isn't wired up (no
+/// `CMC_API_KEY`).
+pub struct FeedReceivers {
+    pub coingecko: broadcast::Receiver<HashMap<String, f64>>,
+    pub coinmarketcap: Option<broadcast::Receiver<HashMap<u32, f64>>>,
+    pub frankfurter: broadcast::Receiver<HashMap<String, f64>>,
 }
 
-/// The shared, batched feed cache. One refresh cycle polls CoinGecko for every
-/// market's token at once and Frankfurter for every currency at once, so the
-/// whole roster costs one request per tier rather than one per market.
-/// CoinMarketCap is the on-failure secondary: polled only when the latest
-/// CoinGecko poll came back empty, and on a slower spacing to respect the
-/// free-tier quota.
+/// Drain every reading queued on `rx` into `cache`, stamping `now` as the read
+/// time the engine's freshness rules age from. Stops on an empty or closed
+/// channel (a closed source's last reading is left to age out); a lag — the
+/// source outran a slow cycle — skips to the retained latest and keeps
+/// draining, since the freshest reading is the one the cache wants.
+fn drain_into<K: Eq + Hash + Clone>(
+    rx: &mut broadcast::Receiver<HashMap<K, f64>>,
+    cache: &mut HashMap<K, (f64, Instant)>,
+    now: Instant,
+) {
+    loop {
+        match rx.try_recv() {
+            Ok(readings) => {
+                for (k, v) in readings {
+                    cache.insert(k, (v, now));
+                }
+            }
+            Err(TryRecvError::Empty | TryRecvError::Closed) => break,
+            Err(TryRecvError::Lagged(_)) => continue,
+        }
+    }
+}
+
+/// The shared, batched feed cache. Each tier's source polls the whole roster in
+/// one batched call and forwards a keyed reading map onto a live sink; a cycle
+/// drains those maps into the per-tier caches below, and `legs()` picks the
+/// freshest live leg per market. CoinMarketCap is the crypto-basis fallback:
+/// `legs()` uses it only when the CoinGecko reading for a market is absent.
 struct FeedHub {
     /// `coingecko_id → (usd, when read)`.
     cg: HashMap<String, (f64, Instant)>,
@@ -57,26 +86,7 @@ struct FeedHub {
     cmc: HashMap<u32, (f64, Instant)>,
     /// `currency → (usd per unit, when read)`.
     fx: HashMap<String, (f64, Instant)>,
-    cg_last_poll: Option<Instant>,
-    cmc_last_poll: Option<Instant>,
-    fx_last_poll: Option<Instant>,
-    /// Whether the most recent CoinGecko poll produced at least one price — the
-    /// signal that gates the CoinMarketCap fallback.
-    cg_ok: bool,
-    /// Whether the current CoinGecko-down state has already been logged, so a
-    /// persistent failure (e.g. CoinGecko unreachable on localnet) reports once
-    /// and then stays quiet until it recovers — rather than one line per tick.
-    cg_logged_down: bool,
-    /// Current CoinGecko poll interval after on-failure backoff. `None` uses the
-    /// configured base; a failure doubles it (capped) so a rate-limited feed is
-    /// retried ever less often instead of hammered, and the backoff resets to
-    /// the base once a poll succeeds.
-    cg_backoff: Option<Duration>,
 }
-
-/// Upper bound on the CoinGecko backoff interval — a rate-limited feed is
-/// retried at most this rarely before a success resets it.
-const CG_BACKOFF_CAP: Duration = Duration::from_secs(300);
 
 impl FeedHub {
     fn new() -> Self {
@@ -84,112 +94,17 @@ impl FeedHub {
             cg: HashMap::new(),
             cmc: HashMap::new(),
             fx: HashMap::new(),
-            cg_last_poll: None,
-            cmc_last_poll: None,
-            fx_last_poll: None,
-            cg_ok: false,
-            cg_logged_down: false,
-            cg_backoff: None,
         }
     }
 
-    /// Grow the CoinGecko backoff interval after a failed / empty poll: double
-    /// the current interval (starting from `base`), capped at [`CG_BACKOFF_CAP`],
-    /// so a rate-limited or unreachable feed is retried ever less often. A
-    /// successful poll resets it back to `None` (the configured base).
-    fn grow_cg_backoff(&mut self, base: Duration) {
-        let current = self.cg_backoff.unwrap_or(base);
-        self.cg_backoff = Some(current.saturating_mul(2).min(CG_BACKOFF_CAP).max(base));
-    }
-
-    /// Refresh whichever tiers are due, batched across the whole roster.
-    fn refresh(
-        &mut self,
-        now: Instant,
-        feeds: &Feeds,
-        cfg: &FeedConfig,
-        cg_ids: &[&str],
-        cmc_ids: &[u32],
-        currencies: &[&str],
-    ) {
-        // Primary: CoinGecko, one batched call for every token. The effective
-        // interval is the configured base, or the current backoff while failing.
-        let cg_interval = self.cg_backoff.unwrap_or(cfg.coingecko_poll);
-        if due(self.cg_last_poll, now, cg_interval) {
-            self.cg_last_poll = Some(now);
-            match feeds.poll_coingecko(cg_ids) {
-                Ok(map) if !map.is_empty() => {
-                    self.cg_ok = true;
-                    self.cg_backoff = None;
-                    if self.cg_logged_down {
-                        eprintln!("[feed] coingecko recovered");
-                        self.cg_logged_down = false;
-                    }
-                    for (k, v) in map {
-                        self.cg.insert(k, (v, now));
-                    }
-                }
-                // Both empty and errored polls mean CoinGecko can't supply the
-                // basis leg this cycle; the engine composes without it (the FX
-                // anchor with the last basis, or the static peg), so log the
-                // transition once and stay quiet until it recovers rather than
-                // spamming a line per tick.
-                Ok(_) => {
-                    self.cg_ok = false;
-                    self.grow_cg_backoff(cfg.coingecko_poll);
-                    if !self.cg_logged_down {
-                        eprintln!(
-                            "[feed] coingecko returned no prices; cascading to the \
-                             fallback tier (silencing repeats until it recovers)"
-                        );
-                        self.cg_logged_down = true;
-                    }
-                }
-                Err(e) => {
-                    self.cg_ok = false;
-                    self.grow_cg_backoff(cfg.coingecko_poll);
-                    if !self.cg_logged_down {
-                        eprintln!(
-                            "[feed] coingecko poll failed: {e}; cascading to the \
-                             fallback tier (silencing repeats until it recovers)"
-                        );
-                        self.cg_logged_down = true;
-                    }
-                }
-            }
+    /// Drain each tier's live-sink receiver into the cache, stamping `now`. The
+    /// CoinMarketCap tier is drained only when it's wired up this run.
+    fn drain(&mut self, now: Instant, rx: &mut FeedReceivers) {
+        drain_into(&mut rx.coingecko, &mut self.cg, now);
+        if let Some(cmc) = rx.coinmarketcap.as_mut() {
+            drain_into(cmc, &mut self.cmc, now);
         }
-
-        // Secondary: CoinMarketCap, only when CoinGecko is down and a key is
-        // set — the quota rules out a hot poll, so this is a min spacing.
-        if !self.cg_ok
-            && feeds.coinmarketcap_enabled()
-            && !cmc_ids.is_empty()
-            && due(self.cmc_last_poll, now, cfg.coinmarketcap_poll)
-        {
-            self.cmc_last_poll = Some(now);
-            match feeds.poll_coinmarketcap(cmc_ids) {
-                Ok(map) => {
-                    for (k, v) in map {
-                        self.cmc.insert(k, (v, now));
-                    }
-                }
-                Err(e) => eprintln!("[feed] coinmarketcap poll failed: {e}"),
-            }
-        }
-
-        // FX anchor: ECB/Frankfurter USD/<ccy>, keyless, on a slow cadence
-        // (the daily reference; the streaming primary is a follow-up).
-        if !currencies.is_empty() && due(self.fx_last_poll, now, cfg.fx_poll) {
-            self.fx_last_poll = Some(now);
-            match feeds.poll_frankfurter(currencies) {
-                Ok(map) => {
-                    for (k, v) in map {
-                        self.fx.insert(k, (v, now));
-                    }
-                }
-                Err(e) => eprintln!("[feed] frankfurter poll failed: {e}"),
-            }
-        }
+        drain_into(&mut rx.frankfurter, &mut self.fx, now);
     }
 
     /// This market's cached readings, aged to `now`, mapped onto the engine's
@@ -245,10 +160,10 @@ fn is_weekend(now: SystemTime) -> bool {
 /// Run the supervisor over every market until interrupted. Each loop iteration
 /// is one cycle; a per-market error is logged and the others continue.
 pub fn run_supervisor(
-    feeds: Feeds,
+    mut feeds: FeedReceivers,
     cfg: BotConfig,
     mut markets: Vec<Context>,
-    mut fills: Option<Receiver<Fill>>,
+    mut fills: Option<broadcast::Receiver<Fill>>,
 ) -> Result<()> {
     let fills_active = fills.is_some();
     for ctx in &mut markets {
@@ -261,25 +176,16 @@ pub fn run_supervisor(
         if fills_active { "on" } else { "off" }
     );
 
-    // The batched feed identifiers, collected once. The shared USDC/USD
-    // common-mode leg rides the same CoinGecko call as the per-market tokens.
-    let mut cg_ids: Vec<&str> = markets.iter().map(|m| m.cfg.coingecko_id).collect();
-    cg_ids.push(USDC_COINGECKO_ID);
-    let cmc_ids: Vec<u32> = markets
-        .iter()
-        .filter_map(|m| m.cfg.coinmarketcap_id)
-        .collect();
-    let mut currencies: Vec<&str> = markets.iter().map(|m| m.cfg.currency).collect();
-    currencies.sort_unstable();
-    currencies.dedup();
-
     let mut hub = FeedHub::new();
     loop {
         let now = Instant::now();
-        hub.refresh(now, &feeds, &cfg.feeds, &cg_ids, &cmc_ids, &currencies);
+        // Drain each price tier's live sink into the cache. The sources on the
+        // background runtime own the poll cadence and error backoff, so the
+        // tick just reads whatever landed since last cycle.
+        hub.drain(now, &mut feeds);
 
-        // Drain the one subscription and route each fill to its market.
-        let (routed, disconnected) = drain_fills(fills.as_ref(), &markets);
+        // Drain the fill live sink and route each fill to its market.
+        let (routed, disconnected) = drain_fills(fills.as_mut(), &markets);
         if disconnected {
             fills = None;
             for ctx in &mut markets {
@@ -309,8 +215,9 @@ pub fn run_supervisor(
 /// its market by `event.market`, keeping the chain-latest (highest
 /// `nonce_after`) per market — channel-arrival order isn't guaranteed to be
 /// slot order. Returns `market → (base_after, quote_after)` plus whether the
-/// subscription channel disconnected (the thread died), so the caller can
-/// revert every market to the inventory-diff fallback.
+/// live sink closed (the `feeds` runner stopped — a bare subscription-thread
+/// panic instead idles the stream seam), so the caller can revert every market
+/// to the inventory-diff fallback.
 ///
 /// Routing is by market alone: the bootstrap opens exactly one leader vault
 /// (sector) per market, and the leader quotes only that sector, so a fill
@@ -318,7 +225,7 @@ pub fn run_supervisor(
 /// with more than one leader-owned sector would need `event.sector_idx`
 /// disambiguation too — not a shape this localnet demo creates.
 fn drain_fills(
-    fills: Option<&Receiver<Fill>>,
+    fills: Option<&mut broadcast::Receiver<Fill>>,
     markets: &[Context],
 ) -> (HashMap<Pubkey, (u64, u64)>, bool) {
     let mut best: HashMap<Pubkey, (u64, u64, u64)> = HashMap::new();
@@ -353,7 +260,15 @@ fn drain_fills(
                 }
             }
             Err(TryRecvError::Empty) => break,
-            Err(TryRecvError::Disconnected) => {
+            // The forward sink dropped fills the cycle didn't keep up with. The
+            // reconcile keeps only the highest-`nonce_after` fill per market and
+            // the sink drops to the latest, so the freshest position survives;
+            // note the gap and keep draining the retained records.
+            Err(TryRecvError::Lagged(n)) => {
+                eprintln!("[fills] lagged {n} fills; reconciling to the latest per market");
+                continue;
+            }
+            Err(TryRecvError::Closed) => {
                 eprintln!(
                     "[fills] subscription channel closed; reverting to inventory-diff fallback"
                 );
@@ -711,13 +626,6 @@ mod tests {
     }
 
     #[test]
-    fn poll_is_due_when_never_polled_or_interval_elapsed() {
-        let now = Instant::now();
-        assert!(due(None, now, Duration::from_secs(10)));
-        assert!(!due(Some(now), now, Duration::from_secs(10)));
-    }
-
-    #[test]
     fn weekend_window_brackets_the_fx_session_close() {
         // Anchored to known UTC instants in Jan 2021: the 1st was a Friday.
         const FRI_00: u64 = 1_609_459_200; // 2021-01-01 00:00 UTC (Friday)
@@ -737,20 +645,33 @@ mod tests {
     }
 
     #[test]
-    fn cg_backoff_doubles_from_base_and_caps() {
-        let base = Duration::from_secs(60);
-        let mut hub = FeedHub::new();
-        assert_eq!(hub.cg_backoff, None);
-        // First failure starts the backoff at 2× the base.
-        hub.grow_cg_backoff(base);
-        assert_eq!(hub.cg_backoff, Some(base * 2));
-        // Subsequent failures keep doubling, then clamp at the cap.
-        for _ in 0..10 {
-            hub.grow_cg_backoff(base);
+    fn drain_into_caches_the_latest_reading() {
+        let (tx, mut rx) = broadcast::channel::<HashMap<String, f64>>(8);
+        tx.send(HashMap::from([("euro-coin".to_string(), 1.10)]))
+            .unwrap();
+        tx.send(HashMap::from([("euro-coin".to_string(), 1.14)]))
+            .unwrap();
+        let mut cache: HashMap<String, (f64, Instant)> = HashMap::new();
+        let now = Instant::now();
+        drain_into(&mut rx, &mut cache, now);
+        // Both readings drained; the later one wins the cache slot.
+        assert_eq!(cache["euro-coin"].0, 1.14);
+        // The channel is now empty — a second drain is a no-op.
+        drain_into(&mut rx, &mut cache, now);
+        assert_eq!(cache["euro-coin"].0, 1.14);
+    }
+
+    #[test]
+    fn drain_into_skips_a_lag_to_the_retained_latest() {
+        // Capacity 2, three readings before the drain: the receiver lags past
+        // the dropped first one and still caches the newest.
+        let (tx, mut rx) = broadcast::channel::<HashMap<String, f64>>(2);
+        for px in [1.10, 1.12, 1.14] {
+            tx.send(HashMap::from([("euro-coin".to_string(), px)]))
+                .unwrap();
         }
-        assert_eq!(hub.cg_backoff, Some(CG_BACKOFF_CAP));
-        // A success resets it back to the base.
-        hub.cg_backoff = None;
-        assert_eq!(hub.cg_backoff, None);
+        let mut cache: HashMap<String, (f64, Instant)> = HashMap::new();
+        drain_into(&mut rx, &mut cache, Instant::now());
+        assert_eq!(cache["euro-coin"].0, 1.14);
     }
 }

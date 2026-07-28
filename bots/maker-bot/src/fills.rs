@@ -28,12 +28,15 @@
 //! below pins this crate's thin wrapper against it.
 //!
 //! This runs on a dedicated thread so the `getTransaction` round-trips never
-//! stall the synchronous quoting tick. It forwards each attributed fill over
-//! an [`mpsc`] channel the tick drains; the per-tick inventory diff in
-//! `tasks.rs` is the fallback for when the subscription is down or a fill is
+//! stall the synchronous quoting tick. It is this bot's concrete socket for the
+//! `feeds` **stream** seam (docs/data-feeds.md §4, §7): each attributed fill is
+//! pushed into a [`ChannelSource`], which the framework runner fans to the
+//! in-process forward (live) sink the tick drains. The per-tick inventory diff
+//! in `tasks.rs` is the fallback for when the subscription is down or a fill is
 //! missed.
 
 use anyhow::{anyhow, Context as _, Result};
+use dropset_feeds::ChannelSource;
 use dropset_sdk::events::{decode_event_payload, strip_event_tag, DropsetEvent};
 use dropset_sdk::types::FillEvent;
 use dropset_sdk::DROPSET_ID;
@@ -50,12 +53,18 @@ use solana_transaction_status_client_types::{
     UiTransactionEncoding,
 };
 use std::str::FromStr;
-use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Duration;
+use tokio::sync::mpsc::Sender;
 
 /// How long to wait before re-subscribing after the websocket drops or a
 /// subscribe attempt fails (e.g. the validator isn't up yet).
 const RECONNECT_DELAY: Duration = Duration::from_secs(5);
+
+/// The channel between the subscription thread and the `feeds` runner. Sized to
+/// absorb a fill burst between ticks; the forward sink downstream drops to the
+/// latest, and the tick keeps only the highest-`nonce_after` fill per market,
+/// so a full channel loses nothing the reconcile needs.
+const FILL_BUFFER: usize = 1024;
 
 /// One attributed fill leg: a decoded [`FillEvent`] and the signature of the
 /// swap that produced it (for logging / dedup).
@@ -65,18 +74,28 @@ pub struct Fill {
     pub event: FillEvent,
 }
 
-/// Spawn the fill-subscription thread and return the channel the tick drains.
+/// Spawn the fill-subscription thread and return the [`ChannelSource`] the
+/// `feeds` runner drives into the live forward sink the tick drains.
 ///
 /// `quote_authority` is the bot's vault key (the leader); only fills against
 /// that vault are forwarded. The thread owns its own [`RpcClient`] and the
-/// blocking pubsub subscription, reconnecting on drop — it never quotes.
+/// blocking pubsub subscription, reconnecting on drop — it never quotes. It is
+/// spawned outside the tokio runtime, so its `blocking_send` into the channel
+/// is a plain blocking call, never an in-runtime panic.
 ///
-/// Returns `None` if the thread can't be spawned, so the caller leaves
-/// `ctx.fills` unset and the tick uses the inventory-diff fallback. (A thread
-/// that dies *later* is caught by the drained-channel check in `tasks.rs`,
-/// which clears `ctx.fills` and reverts to the same fallback.)
-pub fn spawn(ws_url: String, rpc_url: String, quote_authority: Pubkey) -> Option<Receiver<Fill>> {
-    let (tx, rx) = mpsc::channel();
+/// Returns `None` if the thread can't be spawned, so the caller leaves the
+/// forward sink unset and the tick falls back to the inventory diff. The thread
+/// otherwise reconnects forever; if it dies *later* (a decode-path panic), the
+/// `feeds` stream seam reports the dropped sender as an idle source, not a
+/// close, so `ctx.fills_active` stays set — but the position stays correct
+/// because the per-cycle vault reconcile (`decide_position` in `tasks.rs`)
+/// tracks the chain whenever the position and vault diverge.
+pub fn spawn(
+    ws_url: String,
+    rpc_url: String,
+    quote_authority: Pubkey,
+) -> Option<ChannelSource<Fill>> {
+    let (source, tx) = ChannelSource::new("maker-fills", FILL_BUFFER);
     let spawned = std::thread::Builder::new()
         .name("maker-bot-fills".into())
         .spawn(move || {
@@ -84,7 +103,7 @@ pub fn spawn(ws_url: String, rpc_url: String, quote_authority: Pubkey) -> Option
             run(&ws_url, &rpc, &quote_authority, &tx);
         });
     match spawned {
-        Ok(_) => Some(rx),
+        Ok(_) => Some(source),
         Err(e) => {
             eprintln!(
                 "[fills] could not spawn subscription thread: {e}; using inventory-diff fallback"
@@ -146,7 +165,10 @@ fn subscribe_and_forward(
         match decode_fills(rpc, &signature, quote_authority) {
             Ok(fills) => {
                 for fill in fills {
-                    if tx.send(fill).is_err() {
+                    // `blocking_send` blocks this dedicated thread if the
+                    // channel is full, and errors only once the runner's
+                    // receiver is gone — the bot is shutting down, so stop.
+                    if tx.blocking_send(fill).is_err() {
                         return Ok(true);
                     }
                 }
