@@ -1207,7 +1207,8 @@ PR-authoring **writes** (`create_pull_request`,
 
    **Mirror CI's path filter, including when it skips.**
    `test.yml` gates its Tests jobs on a `code` filter that
-   **excludes** these paths, with `predicate-quantifier: every` — so a diff confined entirely to them makes all
+   **excludes** these paths, under a `predicate-quantifier` of
+   `every` — so a diff confined entirely to them makes all
    three Tests jobs pass in seconds as no-ops:
 
    ```txt

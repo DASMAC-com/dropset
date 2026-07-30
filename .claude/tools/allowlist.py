@@ -5,7 +5,7 @@ for the ``permissions.allow`` array that both ``firm-perms`` and
 into the model's context (per ``CLAUDE.md`` → "Context economy" / "Skill
 tooling").
 
-Two subcommands, each reading a settings file and printing JSON to stdout.
+Three subcommands, each reading a settings file and printing JSON to stdout.
 ``--settings PATH`` is a top-level option, so it precedes the subcommand
 (``allowlist.py --settings PATH covers RULE``):
 
@@ -16,6 +16,16 @@ Two subcommands, each reading a settings file and printing JSON to stdout.
   ``would_subsume`` lists the indices of existing narrower entries the new rule
   would make redundant. The membership + subsumption logic is ``firm_core``'s,
   so it matches what ``firm_last.py`` writes.
+* ``add RULE`` — the **write** counterpart of ``covers``, closing the loop so a
+  hand-firm never has to read the allowlist at all. ``covers`` already computes
+  where the rule would land; ``add`` performs that append (via
+  ``firm_core.firm_into``, the same writer ``/f`` uses, so subsumed narrower
+  entries are pruned in the same pass) and prints
+  ``{rule, added, covered, count}``. This exists because ``Edit`` requires a
+  prior ``Read`` of the file it edits: firming one Bash rule by hand cost a
+  whole-file ``Read`` of a 338-entry ``settings.local.json``, which is precisely
+  what this module was written to prevent. ``add`` is idempotent — an
+  already-covered rule reports ``added: false`` and leaves the file untouched.
 * ``cruft`` — return only the **suspicious** entries
   (``{index, rule, category, reason}``) plus the total ``count``, so the audit
   reasons over a short shortlist instead of the whole array. Categories mirror
@@ -92,6 +102,24 @@ def covers(rule: str, allow: list[str]) -> dict:
         "covered": covered,
         "insertion_index": len(allow),
         "would_subsume": would_subsume,
+        "count": len(allow),
+    }
+
+
+def add(rule: str, path: Path) -> dict:
+    """Append ``rule`` to ``path``'s allow array unless already covered.
+
+    Delegates the write to ``firm_core.firm_into`` — the same path ``/f`` takes —
+    so a hand-firm and a fast-firm produce identical files, and neither needs the
+    allowlist in context. Re-reads the array afterwards only to report the new
+    ``count``; the array itself never leaves this process.
+    """
+    added = firm_core.firm_into(path, rule)
+    allow = load_allow(path)
+    return {
+        "rule": rule,
+        "added": added,
+        "covered": not added,
         "count": len(allow),
     }
 
@@ -178,15 +206,22 @@ def run(argv: list[str]) -> int:
     p_covers = sub.add_parser("covers", help="is a candidate rule already granted?")
     p_covers.add_argument("rule", help="the candidate allow-rule to test")
 
+    p_add = sub.add_parser("add", help="append a rule (no prior read needed)")
+    p_add.add_argument("rule", help="the allow-rule to add")
+
     sub.add_parser("cruft", help="return only the suspicious entries")
 
     args = parser.parse_args(argv[1:])
-    allow = load_allow(Path(args.settings))
+    settings_path = Path(args.settings)
 
-    if args.cmd == "covers":
-        result = covers(args.rule, allow)
+    if args.cmd == "add":
+        # `add` scaffolds a missing settings file, so it must not go through
+        # load_allow's "no settings file at …" error first.
+        result = add(args.rule, settings_path)
+    elif args.cmd == "covers":
+        result = covers(args.rule, load_allow(settings_path))
     else:
-        result = cruft(allow)
+        result = cruft(load_allow(settings_path))
 
     json.dump(result, sys.stdout, indent=2)
     sys.stdout.write("\n")

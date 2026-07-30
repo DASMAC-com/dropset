@@ -173,9 +173,18 @@ if either is unset, note it and continue. The canceled
 non-survivors drop out of the open Backlog on their own, so
 their stale overlap edges no longer gate anything.
 
+The tool holds the **priority floor** — no edge that would
+gate an `Urgent` issue behind a non-Urgent one — printing a
+`warning:` per suppressed pair instead (see `sync-blockers`).
+This matters more after a merge than at first filing, since
+the survivor's `**Touches**:` union is wider than any one
+folded issue's and so collides with more of the Backlog.
+**Relay any such warning** in the report below.
+
 **7. Report.** One line: the survivor (with its final
 title), the issues folded in and canceled, and that its
-blocking edges were synced.
+blocking edges were synced (naming any pair the priority
+floor suppressed).
 
 ## Notes
 

@@ -63,6 +63,25 @@ python3 .claude/tools/allowlist.py \
   --settings <path>/.claude/settings.local.json covers 'Bash(git status:*)'
 ```
 
+To **write** a single rule, use the same helper's `add` — never `Edit`.
+`Edit` requires a prior `Read` of the file it edits, so hand-firming one
+rule that way pulls a several-hundred-entry `settings.local.json` into
+context to append one line, which is exactly the cost this helper exists
+to avoid (one run paid a whole-file `Read` of a 338-entry allowlist for a
+single rule). `add` writes through the same `firm_core.firm_into` that
+`/f` uses, so it prunes any narrower entries the new rule subsumes and
+produces a byte-identical file; it is idempotent, reporting
+`added: false` when the rule is already covered:
+
+```sh
+python3 .claude/tools/allowlist.py \
+  --settings <path>/.claude/settings.local.json add 'Bash(cargo test:*)'
+```
+
+Reserve `Edit`/`Write` on `settings.local.json` for a change `add` can't
+express — **removing** a cruft entry, or rewriting several at once in the
+full sweep.
+
 When you generalize by hand in the full sweep, follow what `firm_core`
 does — don't re-derive a different behavior:
 
@@ -237,9 +256,14 @@ base. It runs only when explicitly asked:
    matters most for the base-repo file, since it seeds every future
    worktree.
 
-1. **Write it to both files** once approved, with Edit/Write — replacing
-   only the `allow` array and leaving `additionalDirectories` (and any
-   other keys) intact. Writing the base copy reaches outside this
+1. **Write it to both files** once approved — replacing only the `allow`
+   array and leaving `additionalDirectories` (and any other keys) intact.
+   When the sweep is **pure additions** (no cruft removal), run the
+   helper's `add` per rule against each file instead of `Edit`/`Write`;
+   it preserves the other keys, prunes what each new rule subsumes, and
+   keeps the allowlist out of context. Reach for `Edit`/`Write` only when
+   the plan **removes** entries, which `add` can't express. Writing the
+   base copy reaches outside this
    worktree, so it only works when `<base>` is in this session's
    `additionalDirectories`. If the base write is denied, say so and
    report that only this worktree was firmed.

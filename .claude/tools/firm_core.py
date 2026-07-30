@@ -1,10 +1,16 @@
 """Permission-rule generalization and coverage — the source of truth.
 
 Pure-stdlib helpers shared by ``firm_last.py`` (the ``/f`` fast-firm tool) and
-pointed at by the ``firm-perms`` skill's prose. Turns a just-approved tool call
-into the reusable allow-rule it should have been (``generalize``), decides
-whether an allowlist already covers a rule (``is_covered``), and flags the one
-dangerous outcome the safety floor forbids (``is_bareverb_wildcard``).
+``allowlist.py`` (the ``firm-perms`` / ``housekeeping`` reader), and pointed at
+by the ``firm-perms`` skill's prose. Turns a just-approved tool call into the
+reusable allow-rule it should have been (``generalize``), decides whether an
+allowlist already covers a rule (``is_covered``), and flags the one dangerous
+outcome the safety floor forbids (``is_bareverb_wildcard``).
+
+It also owns the ``settings.local.json`` read/write pair
+(``load_settings`` / ``write_settings`` / ``firm_into``) so every tool that
+appends a rule does it one way — and, crucially, does it **without a prior
+whole-file read** of an allowlist that can run to several hundred entries.
 
 The generalization rules mirror ``docs/conventions/shell-commands.md`` and the
 ``firm-perms`` skill: widen the *variable* parts (worktree tag, trailing args)
@@ -19,8 +25,10 @@ more verb than the approval did.
 
 from __future__ import annotations
 
+import json
 import re
 import shlex
+from pathlib import Path
 from urllib.parse import urlparse
 
 # Programs whose bare-verb wildcard (``git:*``, ``rm:*``) would grant far more
@@ -357,3 +365,48 @@ def is_bareverb_wildcard(rule: str) -> bool:
         return False
     prefix = _bash_prefix(parsed[1]).strip()
     return prefix in NO_BARE_WILDCARD
+
+
+def load_settings(path: Path) -> tuple[dict, list[str]]:
+    """Load a settings.local.json into ``(settings_dict, allow_list)``. A missing
+    or malformed file yields empty scaffolding so a first firm can create it.
+    """
+    try:
+        settings = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        settings = {}
+    if not isinstance(settings, dict):
+        settings = {}
+    allow = settings.get("permissions", {}).get("allow")
+    if not isinstance(allow, list):
+        allow = []
+    return settings, allow
+
+
+def write_settings(path: Path, settings: dict, allow: list[str]) -> None:
+    settings.setdefault("permissions", {})
+    settings["permissions"]["allow"] = allow
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(settings, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+
+
+def firm_into(path: Path, rule: str) -> bool:
+    """Add ``rule`` to a settings file's allow array if not already covered.
+    Returns whether the file was changed.
+
+    Writes **without** any caller having to read the file first, which is the
+    whole point: an ``Edit`` requires a prior ``Read``, and reading a
+    several-hundred-entry ``settings.local.json`` into context to append one line
+    is exactly the cost this tool family exists to avoid.
+    """
+    settings, allow = load_settings(path)
+    if is_covered(rule, allow):
+        return False
+    # Drop any existing entry the new (broader) rule now subsumes, so firming a
+    # generalized rule doesn't leave the redundant narrower ones behind.
+    allow = [r for r in allow if not is_covered(r, [rule])]
+    allow.append(rule)
+    write_settings(path, settings, allow)
+    return True

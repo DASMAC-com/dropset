@@ -24,6 +24,15 @@ Two modes:
   cadence; run it by hand to reconcile after backfilling a ``**Touches**:`` line
   on an *older* issue, or as an occasional catch-up.
 
+Both modes hold one **priority floor**: an overlap edge is never filed where the
+*blocked* issue is Urgent and the blocker is not. The lower-blocks-higher rule is
+an arbitrary-but-stable orientation, and pointed at an Urgent issue it inverts
+the only ordering that matters — a one-atom fix with a live reproduction becomes
+unpullable behind an unstarted feature. Such a pair is reported as a ``warning:``
+instead, so the coupling stays visible for a human to orient correctly. The
+read-only ``--report-todo-blocks`` mode also lists inversions **already** on the
+board, which this tool would no longer create but did not remove.
+
 Configuration comes entirely from the environment (no hard-coded ids, never a
 committed token):
 
@@ -59,6 +68,16 @@ class SyncBlockersError(Exception):
     """A user-facing failure: surfaced to stderr, exits non-zero."""
 
 
+# Linear's priority scale, as the API reports it.
+URGENT_PRIORITY = 1
+PRIORITY_NAMES = {0: "No priority", 1: "Urgent", 2: "High", 3: "Medium", 4: "Low"}
+
+
+def priority_name(value: int) -> str:
+    """A human label for a Linear priority int, for report and warning lines."""
+    return PRIORITY_NAMES.get(value, f"priority {value}")
+
+
 # --------------------------------------------------------------------------
 # Model — the issue shape and the pure path-glob helpers the sweep builds on.
 # --------------------------------------------------------------------------
@@ -74,11 +93,18 @@ class Issue:
     touches: list[str] = field(default_factory=list)
     blocked_by: list[str] = field(default_factory=list)
     blocks: list[str] = field(default_factory=list)
+    # Linear's priority int (see PRIORITY_NAMES). The overlap sweep reads it to
+    # avoid gating an Urgent issue behind a non-Urgent one.
+    priority: int = 0
     # (blocker ``ENG-###``, blocker state name) for each ``blockedBy`` blocker
     # whose workflow state is the *Todo* (``unstarted``) type. Every issue here
     # is itself Backlog (the fetch filters to it), so a populated list is a
     # Todo→Backlog block — the scheduling smell the report mode surfaces.
     todo_blockers: list[tuple[str, str]] = field(default_factory=list)
+    # (blocker ``ENG-###``, blocker priority int) for every declared blocker,
+    # so an already-filed priority inversion can be reported even though this
+    # tool would no longer create one.
+    blocked_by_priority: list[tuple[str, int]] = field(default_factory=list)
 
 
 def parse_number(ident: str) -> int | None:
@@ -185,9 +211,38 @@ def todo_blocks_backlog(issues: list[Issue]) -> list[tuple[str, str, str]]:
     return pairs
 
 
+def urgent_gated_by_non_urgent(issues: list[Issue]) -> list[tuple[str, str, str]]:
+    """Flag every **declared** edge where a non-Urgent blocker gates an Urgent
+    issue — the priority inversion the sweep below now refuses to create.
+
+    An Urgent Backlog issue is meant to be pullable now; an edge from a Medium
+    feature makes it unpullable until that feature ships. The sweep declines to
+    file such an edge, but edges filed before this guard existed (or added by
+    hand) survive, so this reports them for a human to resolve — usually by
+    dropping the edge, or by reversing it so the Urgent fix lands first.
+
+    Returns ``(blocker_id, blocker_priority_name, blocked_urgent_id)`` triples,
+    sorted by blocked then blocker. Read-only — this never writes.
+    """
+    pairs: list[tuple[str, str, str]] = []
+    for i in issues:
+        if i.priority != URGENT_PRIORITY:
+            continue
+        for blocker_id, blocker_priority in i.blocked_by_priority:
+            if blocker_priority != URGENT_PRIORITY:
+                pairs.append((blocker_id, priority_name(blocker_priority), i.id))
+    pairs.sort(key=lambda p: (parse_number(p[2]) or 0, parse_number(p[0]) or 0))
+    return pairs
+
+
 # --------------------------------------------------------------------------
 # The sweep — materialize undeclared file-overlaps into ``blocks`` relations.
 # --------------------------------------------------------------------------
+
+
+def _pair_sort_key(pair: tuple[str, str]) -> tuple[int, int]:
+    """Sort an ``(id, id)`` edge pair by each side's ``ENG-###`` number."""
+    return (parse_number(pair[0]) or 0, parse_number(pair[1]) or 0)
 
 
 def materialize_overlap_edges(
@@ -195,17 +250,31 @@ def materialize_overlap_edges(
     api_key: str | None,
     dry_run: bool,
     focus_id: str | None = None,
-) -> list[tuple[str, str]]:
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
     """Turn each undeclared file-overlap into a real Linear ``blocks`` relation.
 
     For every pair of Backlog issues whose ``**Touches**:`` globs collide and
     that have **no** declared edge in either direction, file the lower-numbered
     issue ``blocks`` the higher-numbered one — materializing the scheduling
     constraint as a tagged edge so Linear's blocking icons reflect the
-    same-file collision. Returns the ``(lower, higher)`` id pairs filed (or that
-    would be filed under ``--dry-run``), lowest-first, for the caller to report.
-    A pair already linked (declared, or filed earlier in this pass) is skipped,
-    so the relation is never duplicated.
+    same-file collision. A pair already linked (declared, or filed earlier in
+    this pass) is skipped, so the relation is never duplicated.
+
+    **Priority floor: never gate an Urgent issue behind a non-Urgent one.** The
+    lower-number-blocks-higher rule is an arbitrary-but-stable orientation, and
+    when it points at an Urgent issue it inverts the only ordering that actually
+    matters — a one-atom fix with a live reproduction becomes unpullable behind
+    an unstarted feature. Such a pair is **suppressed rather than filed**: an
+    overlap edge is a scheduling heuristic, not a real dependency (a real one is
+    already declared, and skipped above), so it isn't worth that cost. The
+    coupling is still returned so the caller can report it, and a human can
+    resolve it — usually by reversing the edge, i.e. landing the Urgent fix
+    first, which is also self-suppressing on later sweeps since it is then
+    declared.
+
+    Returns ``(filed, suppressed)`` — both lists of ``(lower, higher)`` id
+    pairs, lowest-first, for the caller to report. Under ``--dry-run`` ``filed``
+    is what *would* be filed.
 
     When ``focus_id`` is given (incremental mode), only pairs that *include*
     that issue are considered — the bounded one-vs-backlog check a filing skill
@@ -222,6 +291,7 @@ def materialize_overlap_edges(
                 linked.add(frozenset((i.id, b)))
 
     filed: list[tuple[str, str]] = []
+    suppressed: list[tuple[str, str]] = []
     n = len(issues)
     for a in range(n):
         for c in range(a + 1, n):
@@ -234,12 +304,18 @@ def materialize_overlap_edges(
             if pair in linked:
                 continue
             lo, hi = (ia, ic) if ia.number <= ic.number else (ic, ia)
-            filed.append((lo.id, hi.id))
+            # The priority floor documented above. Mark the pair linked either
+            # way so a later iteration doesn't reconsider it.
             linked.add(pair)
+            if hi.priority == URGENT_PRIORITY and lo.priority != URGENT_PRIORITY:
+                suppressed.append((lo.id, hi.id))
+                continue
+            filed.append((lo.id, hi.id))
             if not dry_run:
                 issue_relation_create(api_key, lo.uuid, hi.uuid)
-    filed.sort(key=lambda p: (parse_number(p[0]) or 0, parse_number(p[1]) or 0))
-    return filed
+    filed.sort(key=_pair_sort_key)
+    suppressed.sort(key=_pair_sort_key)
+    return filed, suppressed
 
 
 # --------------------------------------------------------------------------
@@ -257,9 +333,10 @@ query Backlog($projectId: ID!, $first: Int!) {
       id
       identifier
       description
+      priority
       relations { nodes { type relatedIssue { identifier } } }
       inverseRelations {
-        nodes { type issue { identifier state { name type } } }
+        nodes { type issue { identifier priority state { name type } } }
       }
     }
   }
@@ -328,6 +405,11 @@ def _raw_to_issue(raw: dict) -> Issue:
         and r.get("issue")
         and (r["issue"].get("state") or {}).get("type") == "unstarted"
     ]
+    blocked_by_priority = [
+        (r["issue"]["identifier"], int(r["issue"].get("priority") or 0))
+        for r in raw["inverseRelations"]["nodes"]
+        if r.get("type") == "blocks" and r.get("issue")
+    ]
     description = raw.get("description") or ""
     touches = parse_touches(description)
     ident = raw["identifier"]
@@ -338,7 +420,9 @@ def _raw_to_issue(raw: dict) -> Issue:
         touches=touches,
         blocked_by=blocked_by,
         blocks=blocks,
+        priority=int(raw.get("priority") or 0),
         todo_blockers=todo_blockers,
+        blocked_by_priority=blocked_by_priority,
     )
 
 
@@ -382,9 +466,9 @@ Usage:
   sync_blockers.py --for ENG-### [--dry-run]
       Incremental: file overlap edges for just the named (just-filed) issue.
   sync_blockers.py --report-todo-blocks
-      Report-only: print, as JSON, every Todo-state issue that blocks an open
-      Backlog issue (a scheduling smell). Writes nothing; cannot combine with
-      --for.
+      Report-only: print, as JSON, the two scheduling smells — every Todo-state
+      issue that blocks an open Backlog issue, and every non-Urgent issue that
+      blocks an Urgent one. Writes nothing; cannot combine with --for.
   --dry-run  Print the edges that would be filed; write nothing."""
 
 
@@ -441,13 +525,18 @@ def run(argv: list[str]) -> int:
 
     if report_todo:
         pairs = todo_blocks_backlog(issues)
+        inversions = urgent_gated_by_non_urgent(issues)
         print(
             json.dumps(
                 {
                     "todo_blocks_backlog": [
                         {"blocker": b, "blocker_state": s, "blocked": d}
                         for b, s, d in pairs
-                    ]
+                    ],
+                    "urgent_gated_by_non_urgent": [
+                        {"blocker": b, "blocker_priority": p, "blocked_urgent": d}
+                        for b, p, d in inversions
+                    ],
                 },
                 indent=2,
             )
@@ -469,16 +558,25 @@ def run(argv: list[str]) -> int:
             file=sys.stderr,
         )
 
-    filed = materialize_overlap_edges(issues, api_key, dry_run, focus_id)
+    filed, suppressed = materialize_overlap_edges(issues, api_key, dry_run, focus_id)
     verb = "would file" if dry_run else "filed"
     for lo, hi in filed:
         print(f"{verb}: {lo} blocks {hi} (touch overlap)", file=sys.stderr)
+    for lo, hi in suppressed:
+        print(
+            f"warning: {lo} and {hi} touch the same files, but {hi} is Urgent "
+            f"and {lo} is not — declining to gate an Urgent issue behind a "
+            f"non-Urgent one. Resolve by hand if they really are coupled "
+            f"(usually: {hi} blocks {lo}, so the Urgent fix lands first).",
+            file=sys.stderr,
+        )
 
     marker = " (dry-run)" if dry_run else ""
     noun = "edge" if len(filed) == 1 else "edges"
     tail = "would be filed" if dry_run else "filed"
     scope = focus_id if focus_id is not None else f"{len(issues)} backlog issues"
-    print(f"sync-blockers{marker} | {scope} | {len(filed)} overlap {noun} {tail}")
+    held = f" | {len(suppressed)} suppressed (priority floor)" if suppressed else ""
+    print(f"sync-blockers{marker} | {scope} | {len(filed)} overlap {noun} {tail}{held}")
     return 0
 
 

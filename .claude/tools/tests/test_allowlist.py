@@ -12,7 +12,15 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
-from allowlist import AllowlistError, classify, covers, cruft, load_allow, run
+from allowlist import (
+    AllowlistError,
+    add,
+    classify,
+    covers,
+    cruft,
+    load_allow,
+    run,
+)
 
 
 def _settings(allow):
@@ -133,6 +141,65 @@ class CruftTests(unittest.TestCase):
         self.assertNotIn(4, cats)
 
 
+class AddTests(unittest.TestCase):
+    """``add`` is the write counterpart of ``covers`` — no prior read required."""
+
+    def _path(self, d, allow):
+        p = Path(d) / "settings.local.json"
+        p.write_text(json.dumps(_settings(allow)), encoding="utf-8")
+        return p
+
+    def test_appends_an_uncovered_rule(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = self._path(d, ["Bash(git status:*)"])
+            out = add("Bash(cargo test:*)", p)
+            self.assertTrue(out["added"])
+            self.assertFalse(out["covered"])
+            self.assertEqual(out["count"], 2)
+            self.assertEqual(
+                load_allow(p), ["Bash(git status:*)", "Bash(cargo test:*)"]
+            )
+
+    def test_is_idempotent_for_an_exact_duplicate(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = self._path(d, ["Bash(cargo test:*)"])
+            out = add("Bash(cargo test:*)", p)
+            self.assertFalse(out["added"])
+            self.assertTrue(out["covered"])
+            self.assertEqual(load_allow(p), ["Bash(cargo test:*)"])
+
+    def test_skips_a_rule_a_broader_entry_already_covers(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = self._path(d, ["Bash(git:*)"])
+            out = add("Bash(git status:*)", p)
+            self.assertFalse(out["added"])
+            self.assertEqual(load_allow(p), ["Bash(git:*)"])
+
+    def test_prunes_entries_the_new_rule_subsumes(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = self._path(
+                d, ["Bash(cargo test -p a:*)", "Bash(cargo test -p b:*)", "Read(/x/**)"]
+            )
+            out = add("Bash(cargo test:*)", p)
+            self.assertTrue(out["added"])
+            self.assertEqual(load_allow(p), ["Read(/x/**)", "Bash(cargo test:*)"])
+            self.assertEqual(out["count"], 2)
+
+    def test_preserves_unrelated_settings_keys(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = self._path(d, ["Bash(git status:*)"])
+            add("Bash(cargo test:*)", p)
+            settings = json.loads(p.read_text(encoding="utf-8"))
+            self.assertEqual(settings["additionalDirectories"], ["/some/dir"])
+
+    def test_scaffolds_a_missing_settings_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "nested" / "settings.local.json"
+            out = add("Bash(cargo test:*)", p)
+            self.assertTrue(out["added"])
+            self.assertEqual(load_allow(p), ["Bash(cargo test:*)"])
+
+
 class CliTests(unittest.TestCase):
     """The ``--settings`` option + subcommand dispatch live in ``run()``."""
 
@@ -166,6 +233,25 @@ class CliTests(unittest.TestCase):
         self.assertEqual(
             {f["category"] for f in out["flagged"]}, {"over-broad", "machine-path"}
         )
+
+    def test_add_dispatch_writes_the_rule(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = self._write(d, ["Bash(git status:*)"])
+            rc, out = self._run_capture(
+                ["allowlist.py", "--settings", p, "add", "Bash(cargo test:*)"]
+            )
+            self.assertEqual(rc, 0)
+            self.assertTrue(out["added"])
+            self.assertIn("Bash(cargo test:*)", load_allow(Path(p)))
+
+    def test_add_dispatch_on_a_missing_file_does_not_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "settings.local.json")
+            rc, out = self._run_capture(
+                ["allowlist.py", "--settings", p, "add", "Bash(cargo test:*)"]
+            )
+            self.assertEqual(rc, 0)
+            self.assertTrue(out["added"])
 
 
 if __name__ == "__main__":

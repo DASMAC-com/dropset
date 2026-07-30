@@ -112,6 +112,30 @@ filing skills emit them and `sync-blockers` parses them:
   the moment it lands. An issue that predates the `**Touches**:`
   convention has no globs to check; backfill one and re-run the sweep.
 
+### The priority floor
+
+An overlap edge is a **scheduling heuristic**, not a declared
+dependency, and the lower-blocks-higher orientation is arbitrary. So the
+tool refuses one case outright: it never files an edge whose *blocked*
+side is `Urgent` while the blocker is not. Pointed at an Urgent issue,
+the number ordering inverts the only ordering that matters — the fix
+that is Urgent precisely because it should ship now becomes unpullable
+behind work nobody has started.
+
+This is not hypothetical: a reconciliation sweep once filed two
+`Medium` features as blockers of an `Urgent` one-atom fix that had a
+live reproduction, purely on touch overlap, and the fix went
+unpullable until the edges were removed by hand.
+
+Such a pair is **suppressed and reported** rather than filed, so the
+coupling stays visible without the inversion. When the two really are
+coupled, the honest edge is the **reverse** one — the Urgent issue
+blocks the feature, so the fix lands first — which is self-suppressing
+on later sweeps because it is then a declared edge. `housekeeping`'s
+reconciliation step also reports inversions **already** on the board
+(alongside the Todo-blocks-Backlog smell), since a file-time refusal
+can't retract an edge that predates the floor.
+
 ### Fold coupled findings into one issue
 
 A rotation should yield the **fewest coherent PRs**, not one issue per

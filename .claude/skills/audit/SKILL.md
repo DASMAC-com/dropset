@@ -431,6 +431,12 @@ overlap pair is filed by the second of the two — no end-of-rotation full
 sweep is needed. Best-effort: it needs `LINEAR_API_KEY`; if unset the
 tool says so — note it and continue.
 
+The tool holds the **priority floor**: it never files an edge that would
+gate an `Urgent` issue behind a non-Urgent one, printing a `warning:` per
+suppressed pair instead (see `sync-blockers`). **Relay any such warning
+in the rotation announcement** — the overlap is real even though the edge
+wasn't filed, and the human may want the reverse edge.
+
 **Structural findings** (SUBSYSTEM / INTERFACE / LAYOUT) are filed the
 same way (plain Backlog issue, same IDs, no parent) but as **one
 detailed proposal issue each** — they are not atomically fixable, so

@@ -163,6 +163,7 @@ tsup
 txns
 unfirmable
 unmirrored
+unpullable
 unstarted
 unwritable
 upserts

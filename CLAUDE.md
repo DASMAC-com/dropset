@@ -78,7 +78,10 @@ output) and the rationale: `docs/conventions/linear-automation.md`.
 
 Record a real dependency as a native Linear `blockedBy` / `blocks`
 edge (append-only), not just prose — autonomous auditors assert one
-only on concrete evidence. Detail:
+only on concrete evidence. File-overlap edges are a heuristic on top of
+that, and they hold a **priority floor**: never gate an **Urgent** issue
+behind a non-Urgent one (the pair is reported instead, and the honest
+fix is usually the reverse edge). Detail:
 `docs/conventions/linear-automation.md`.
 
 ## GitHub via MCP

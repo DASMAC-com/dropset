@@ -518,31 +518,51 @@ warning is the backstop). This is the board-level companion
 to the filing-time fold — it catches coupling that slipped
 through as separate issues.
 
-**Then flag any Todo-state issue that blocks a Backlog
-issue.** Per the Todo/Backlog convention
-(`docs/conventions/linear-automation.md`) initiatives /
-meta live in `Todo` and pullable work in `Backlog`, so a
-**`Todo` blocker gating a `Backlog` issue** is a scheduling
-smell: a not-yet-pulled or initiative-level item gates work
-that sits in the pull queue, so the Backlog item can't
-actually be started. Get the pairs from the same
-`sync_blockers.py` tool (read-only — it writes nothing):
+**Then flag the two scheduling smells.** Both come from one
+read-only run of the same `sync_blockers.py` tool (it writes
+nothing):
 
 ```sh
 python3 .claude/tools/sync_blockers.py --report-todo-blocks
 ```
 
-It prints `{todo_blocks_backlog: [{blocker, blocker_state, blocked}]}` —
-keyed by the Backlog issue's `unstarted`-state blockers. **Always
-list** each pair in the report (blocker `ENG-###`/state → blocked
-`ENG-###`). In an **interactive**
-pass, also **ask to resolve** each via `AskUserQuestion` —
-move the Todo blocker into Backlog so it's pullable, drop
-the edge if it isn't a real dependency, or re-prioritize;
-in a **one-shot** pass, just list the pairs and resolve
-nothing. It needs the same `LINEAR_API_KEY` /
-`LINEAR_PROJECT_ID` as the sweep; skip and say so if either
-is unset.
+It prints two keys:
+
+```txt
+{
+  todo_blocks_backlog: [{blocker, blocker_state, blocked}],
+  urgent_gated_by_non_urgent: [
+    {blocker, blocker_priority, blocked_urgent}
+  ]
+}
+```
+
+- **A `Todo`-state issue blocking a `Backlog` issue.** Per
+  the Todo/Backlog convention
+  (`docs/conventions/linear-automation.md`) initiatives /
+  meta live in `Todo` and pullable work in `Backlog`, so a
+  `Todo` blocker gating a `Backlog` issue is a smell: a
+  not-yet-pulled or initiative-level item gates work that
+  sits in the pull queue, so the Backlog item can't actually
+  be started. Resolve by moving the blocker into Backlog,
+  dropping a non-dependency edge, or re-prioritizing.
+- **A non-Urgent issue blocking an `Urgent` one.** The sweep
+  above now refuses to *create* this (its priority floor), but
+  edges filed before the floor existed — or added by hand —
+  survive, and suppression can't retract them. An Urgent
+  Backlog issue is meant to be pullable now; a `Medium`
+  feature gating it makes it unpullable until that feature
+  ships. Resolve by dropping the edge, or by **reversing** it
+  so the Urgent fix lands first (which is then declared, so no
+  later sweep re-files the inversion).
+
+**Always list** every pair from both lists in the report
+(blocker `ENG-###` + its state/priority → the blocked
+`ENG-###`). In an **interactive** pass, also **ask to
+resolve** each via `AskUserQuestion`; in a **one-shot** pass,
+just list them and resolve nothing. It needs the same
+`LINEAR_API_KEY` / `LINEAR_PROJECT_ID` as the sweep; skip and
+say so if either is unset.
 
 **7. Audit the base-repo permission allowlist for cruft.**
 `firm-perms` only ever **adds** to
