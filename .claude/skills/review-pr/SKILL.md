@@ -622,7 +622,17 @@ PR-authoring **writes** (`create_pull_request`,
      just the cross-check: run **one** scoped move-fidelity +
      straggler-refs lens (is the move faithful — no dropped or
      altered lines — and are all references to the moved code
-     updated to its new home?), **plus one** small new-logic
+     updated to its new home?). **Name the Grep tool for the
+     straggler search**, and hand over the hit-list per the
+     hoist rule below rather than leaving the transport to the
+     lens: Grep honors gitignore, so it never returns a match
+     from build output. A bare recursive shell `grep` over a
+     *package root* does not — one straggler check aimed at
+     `decks/` matched a minified webpack chunk under the
+     gitignored `decks/.next/` and returned a ≈5.1k grammar
+     blob (48% of that session's entire Bash spend, from one
+     call) for a question whose answer was zero hits. Add
+     **one** small new-logic
      lens **only** when a few genuinely-new additions rode
      along with the move. Do **not** turn loose all of
      correctness / completeness / style re-reviewing unchanged
@@ -1032,8 +1042,33 @@ PR-authoring **writes** (`create_pull_request`,
    author's diff (or a fix from step 8) may have changed
    the program without regenerating these, so refresh them
    here and commit any diff; otherwise the ready PR fails
-   CI on a stale artifact. **Run all three regeneration
-   gates unconditionally — even when the author says they
+   CI on a stale artifact.
+
+   **First, the path gate: does this diff touch a generation
+   *input* at all?** A generated artifact can only go stale
+   if the source it is generated from changed, so check
+   `git diff --stat origin/<base>..HEAD` against the inputs:
+
+   - **IDL** ← the program (`programs/**`).
+   - **SDK clients** ← the committed IDL and the Codama
+     config (`sdk/idl/**`, `sdk/codama/**`).
+   - **Conformance vectors** ← their generators
+     (`sdk/math-core/**`, `sdk/interface/**`).
+
+   If the diff touches **none** of those, all three artifacts
+   are provably unchanged: **skip the gates and say so in the
+   summary.** This is a rule, not a per-run judgment call — a
+   four-file diff confined to `decks/` cannot stale an IDL,
+   and forcing the gates there buys three multi-minute builds
+   to confirm a tautology. (CI agrees structurally: `test.yml`
+   path-filters the diff out entirely, so its Tests jobs
+   return pass in seconds as no-ops.) When in doubt — a diff
+   that touches a Rust crate the generators depend on
+   transitively, say — run them; the carve-out is for the
+   clearly-unrelated diff, not the marginal one.
+
+   Otherwise, when the diff *does* touch an input: **run all
+   three regeneration gates — even when the author says they
    already regenerated.** A subset spot-check has twice let a stale
    artifact through to a required-CI failure (a `MarketHeader`
    that shrank two bytes left the conformance vectors stale;
@@ -1049,7 +1084,18 @@ PR-authoring **writes** (`create_pull_request`,
    log to a temp file and prints only a one-line summary on
    success, or the failing tail + log path on failure (which
    you then `Read` by slice). Only the `git diff` result,
-   not the build cascade, needs to reach context:
+   not the build cascade, needs to reach context.
+
+   **If one of these targets appears to hang, suspect the
+   cargo build lock before anything else.** A concurrent
+   `make demo` / running validator in another worktree holds
+   it, and cargo then blocks silently. The quiet runner
+   surfaces this: it echoes cargo's
+   `Blocking waiting for file lock …` line live and flags it
+   in the final summary, so a blocked run announces itself
+   rather than reading as a slow one. On seeing it, wait or
+   ask the user to stop the other build — don't start
+   diagnosing with `pgrep`:
 
    - **IDL** (needs the Solana/Anchor toolchain):
 
@@ -1157,7 +1203,35 @@ PR-authoring **writes** (`create_pull_request`,
    workflow runs `make test` and
    `make test-no-teardown`; run both locally so the
    green checks GitHub needs for auto-merge are
-   already verified here. Both emit a long `Compiling …`
+   already verified here.
+
+   **Mirror CI's path filter, including when it skips.**
+   `test.yml` gates its Tests jobs on a `code` filter that
+   **excludes** these paths, with `predicate-quantifier: every` — so a diff confined entirely to them makes all
+   three Tests jobs pass in seconds as no-ops:
+
+   ```txt
+   frontend/**   decks/**   brand-assets/**   docs/**
+   **/*.md       sdk/ts/**  sdk/codama/**     .claude/**
+   cfg/**        infra/**   pnpm-lock.yaml    pnpm-workspace.yaml
+   .github/workflows/{explorer-image,lint,sdk,semantic-pr}.yml
+   ```
+
+   When `git diff --stat origin/<base>..HEAD` shows **every**
+   changed path inside that set, **skip both Rust targets**
+   and record the skip (with the reason) in the summary —
+   running them mirrors nothing, because CI isn't running them
+   either. Keep the `sdk/ts` node suite below in mind
+   separately: `sdk/ts/**` is excluded here but the **SDK**
+   workflow has no path filter, so a diff touching it still
+   wants that suite.
+
+   If any changed path falls **outside** the set, run both.
+   This list is a mirror — when `test.yml`'s `code` filter
+   changes, change it here too (the freshness lens in step 5
+   covers exactly this kind of drift).
+
+   Both emit a long `Compiling …`
    cascade ahead of the test result, so run them **through
    the quiet runner** (per `CLAUDE.md` → "Context economy")
    — it routes the build/test log to a temp file and

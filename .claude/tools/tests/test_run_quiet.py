@@ -218,6 +218,79 @@ class Run(unittest.TestCase):
         self.assertEqual(code, rq.LAUNCH_FAILURE_CODE)
         self.assertIn("command not found", err)
 
+    def test_lock_wait_line_is_echoed_and_noted_on_success(self):
+        code, out, _ = self._run(
+            rq.DEFAULT_TAIL,
+            "blocked",
+            [
+                PY,
+                "-c",
+                "print('    Blocking waiting for file lock on build directory')",
+            ],
+        )
+        self.assertEqual(code, 0)
+        # Echoed live, ahead of the summary line.
+        self.assertIn("⏳ Blocking waiting for file lock on build directory", out)
+        self.assertLess(out.index("⏳"), out.index("✓ blocked"))
+        # And recalled in the summary, so a slow green run explains itself.
+        self.assertIn("waited on a cargo file lock", out)
+
+    def test_lock_wait_noted_on_failure_too(self):
+        code, out, _ = self._run(
+            rq.DEFAULT_TAIL,
+            "blocked-fail",
+            [
+                PY,
+                "-c",
+                "print('Blocking waiting for file lock on package cache');"
+                " import sys; sys.exit(4)",
+            ],
+        )
+        self.assertEqual(code, 4)
+        self.assertIn("waited on a cargo file lock", out)
+
+    def test_only_the_first_lock_wait_is_echoed(self):
+        code, out, _ = self._run(
+            rq.DEFAULT_TAIL,
+            "twice",
+            [
+                PY,
+                "-c",
+                "print('Blocking waiting for file lock on A');"
+                " print('Blocking waiting for file lock on B')",
+            ],
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(out.count("⏳"), 1)
+        self.assertIn("lock on A", out)
+
+    def test_ordinary_output_is_not_echoed(self):
+        code, out, _ = self._run(
+            rq.DEFAULT_TAIL, "quiet", [PY, "-c", "print('Compiling dropset v0.1.0')"]
+        )
+        self.assertEqual(code, 0)
+        self.assertNotIn("⏳", out)
+        self.assertNotIn("Compiling", out)
+        self.assertNotIn("waited on a cargo file lock", out)
+
+
+class IsLockWaitLine(unittest.TestCase):
+    def test_matches_cargo_status(self):
+        self.assertTrue(
+            rq.is_lock_wait_line(
+                "    Blocking waiting for file lock on build directory\n"
+            )
+        )
+
+    def test_matches_package_cache_variant(self):
+        self.assertTrue(
+            rq.is_lock_wait_line("Blocking waiting for file lock on package cache")
+        )
+
+    def test_ignores_unrelated_lines(self):
+        self.assertFalse(rq.is_lock_wait_line("   Compiling dropset v0.1.0\n"))
+        self.assertFalse(rq.is_lock_wait_line("waiting for the file\n"))
+
 
 class MainCli(unittest.TestCase):
     def test_usage_error_returns_2(self):

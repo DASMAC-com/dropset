@@ -19,6 +19,16 @@ model's command line stays free of shell redirects and passes the
   ``--tail`` lines of the log, the exit code, and the log path, so the model
   can ``Read`` more of the log by slice if it needs to.
 
+One class of line is echoed *while the run is still in flight*: cargo's
+``Blocking waiting for file lock on <target>`` status. Buffering it into the log
+makes a lock-blocked build indistinguishable from a slow one — the task's output
+is simply empty — and that has cost a run several content-free polls plus a
+``pgrep`` to work out that a concurrent ``make demo`` held the build lock. So
+the child's output is teed through a pipe rather than written straight to the
+log, and a lock-wait line is surfaced to stdout the moment it appears. It is
+also noted in the final summary, so a run that took minutes because it was
+blocked says so rather than looking merely slow.
+
 The failed-hook index exists because trusting the tail alone has bitten us: a
 ``make lint`` failure in an *early* hook (yamllint, cspell) scrolled off the
 50-line tail behind a later hook's output and the run was wrongly judged clean,
@@ -65,6 +75,12 @@ LOG_DIR = os.path.join(tempfile.gettempdir(), "claude-run-quiet")
 # Exit code used when the command can't be launched at all (mirrors the shell's
 # 127 "command not found").
 LAUNCH_FAILURE_CODE = 127
+
+# Cargo's status line when another cargo process holds the build lock, e.g.
+# "Blocking waiting for file lock on build directory". Captured silently it is
+# invisible, and a blocked build then reads as a hung one, so this is the one
+# line the wrapper echoes live (see the module docstring).
+LOCK_WAIT_MARKER = "Blocking waiting for file lock"
 
 
 class UsageError(Exception):
@@ -145,6 +161,44 @@ def is_failed_hook_line(line):
     return line.rstrip().endswith("Failed")
 
 
+def is_lock_wait_line(line):
+    """True for cargo's "Blocking waiting for file lock on …" status line."""
+    return LOCK_WAIT_MARKER in line
+
+
+def stream_to_log(cmd, log_file):
+    """Run `cmd`, tee its output into `log_file`, return (exit_code, lock_wait).
+
+    The child writes into a pipe rather than straight to the log so a *blocking*
+    status line can be surfaced while the run is still in flight; every other
+    line is captured silently, which is the whole point of the wrapper. Lines
+    are handled one at a time, so a huge log never sits in memory.
+
+    ``lock_wait`` is the first lock-wait line seen (stripped), or None. It is
+    echoed to stdout on sight — and flushed, so it can't sit in a buffer behind
+    the very wait it is reporting.
+    """
+    lock_wait = None
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
+        text=True,
+        errors="replace",
+        bufsize=1,
+    )
+    with proc:
+        for line in proc.stdout:
+            log_file.write(line)
+            if lock_wait is None and is_lock_wait_line(line):
+                lock_wait = line.strip()
+                log_file.flush()
+                sys.stdout.write("⏳ %s\n" % lock_wait)
+                sys.stdout.flush()
+    return proc.returncode, lock_wait
+
+
 def read_tail_and_count(path, tail):
     """Return (line_count, last-`tail`-lines-as-text, failed_hook_lines, truncated).
 
@@ -189,14 +243,7 @@ def run(tail, label, cmd):
     try:
         with open(log_path, "w", encoding="utf-8", errors="replace") as log_file:
             os.chmod(log_path, 0o600)
-            completed = subprocess.run(
-                cmd,
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-                text=True,
-            )
-        code = completed.returncode
+            code, lock_wait = stream_to_log(cmd, log_file)
     except FileNotFoundError:
         sys.stderr.write("✗ %s — command not found: %s\n" % (display, cmd[0]))
         return LAUNCH_FAILURE_CODE
@@ -205,15 +252,19 @@ def run(tail, label, cmd):
         return LAUNCH_FAILURE_CODE
 
     lines, tail_text, failed, truncated = read_tail_and_count(log_path, tail)
+    # A run that spent minutes queued behind another cargo process should say so
+    # in its one-line result, not just look slow.
+    waited = " — waited on a cargo file lock" if lock_wait else ""
 
     if code == 0:
         sys.stdout.write(
-            "✓ %s (exit 0, %d lines; log: %s)\n" % (display, lines, log_path)
+            "✓ %s (exit 0, %d lines; log: %s)%s\n" % (display, lines, log_path, waited)
         )
         return 0
 
     sys.stdout.write(
-        "✗ %s (exit %d, %d lines; log: %s)\n" % (display, code, lines, log_path)
+        "✗ %s (exit %d, %d lines; log: %s)%s\n"
+        % (display, code, lines, log_path, waited)
     )
     if failed:
         more = " (truncated, more omitted)" if truncated else ""

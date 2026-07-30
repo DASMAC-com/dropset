@@ -98,6 +98,7 @@ pdas
 permissioned
 permissioning
 permissionless
+pgrep
 pkill
 prebuild
 predev
