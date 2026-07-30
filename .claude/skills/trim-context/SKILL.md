@@ -57,6 +57,13 @@ filing-destination variables is empty, say so and stop before filing.
 note (a nested line beginning `✓ filed:` or `⚠ noted:`). Skip entries
 that already carry one, so a repeat pass doesn't re-file.
 
+**Count them, and note the body's size.** More than **~3** unprocessed
+entries is a **drain trigger** — act on it rather than waiting to be
+asked. Linear has no append API, so `session-metrics` re-emits the whole
+document on every append; an inbox left to grow makes each producer run
+a larger write against a larger read, and eventually the producer's own
+size gate refuses to append at all. Carry both numbers into step 4.
+
 **2. Synthesize across sessions, don't transcribe.** Look for the trim
 levers that **recur** across the unprocessed entries — a verbose build
 log inflating several runs, a whole-file Read where a slice would do, a
@@ -142,6 +149,16 @@ entries stay. When a caller has already fixed the decision — e.g.
 `housekeeping`'s one-shot pass defaults to *leave* and passes that in —
 take the inherited answer and don't re-ask. Whichever way it resolves,
 step 5 makes exactly **one** `save_document` write.
+
+**Past the step-1 drain trigger, say so in the question.** When the
+inbox held more than ~3 unprocessed entries, the clear is no longer a
+neutral tidy-up — it's the thing keeping the producer working, so name
+the count in the question text so the human is choosing with that in
+front of them. And when a caller has fixed the decision to *leave*,
+honor it (don't override an inherited answer) but **flag the backlog in
+the step-6 report**: how many entries the inbox is now carrying and that
+it is past the drain threshold. That way an inbox growing toward the
+producer's refuse-to-append gate is visible rather than silent.
 
 **5. Write the doc back once, per the step-4 decision** with
 `mcp__claude_ai_Linear__save_document` (id = the resolved value,

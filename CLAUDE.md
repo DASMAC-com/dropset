@@ -135,8 +135,9 @@ no `$(…)` / backticks, no redirects or heredocs, no `cd`. Prefer the
 Read / Grep / Glob tools over `cat` / `grep` / `find`; never
 `git grep` — and when the Grep tool is absent (it isn't always
 present), the fallback is a bare, single `grep`, on the **main-loop**
-path too, not only in the sub-agent brief. Keep a stable command +
-subcommand prefix and let only the args vary.
+path too, not only in the sub-agent brief, and a recursive one is
+**scoped to source directories** (it doesn't honor gitignore). Keep a
+stable command + subcommand prefix and let only the args vary.
 This holds for shell you **author** in skills, scripts, and Makefile
 targets too, and for work you hand a sub-agent. Two opt-in `PreToolUse`
 guard hooks mechanically enforce these rules:
