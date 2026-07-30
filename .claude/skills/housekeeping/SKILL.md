@@ -261,7 +261,7 @@ not a repo source edit, so it doesn't break the skill's
 **once**, field-selected, instead of one full-body MCP
 `list_pull_requests` per worktree branch (each of those
 returns the whole PR object, replayed every later turn —
-see [context economy](context-economy.md)). `gh pr list`
+see `docs/conventions/context-economy.md`). `gh pr list`
 has a `merged` state filter the MCP lacks and `--json`
 selects just the three fields the decision needs; it's a
 `--json` **flag**, not a pipe, so it reduces to the
@@ -298,7 +298,7 @@ touching anything. Closed-without-merge and dirty worktrees
 are not dropped automatically — they land in `skipped` /
 `left` so the user can decide.
 
-**Then clear notifications for merged PRs.** Merged PRs
+**Then mark notifications for merged PRs done.** Merged PRs
 leave GitHub notifications that otherwise pile up with no
 easy bulk clear. List the unread notifications through the
 GitHub MCP and dismiss only the ones whose PR has **merged**
@@ -325,23 +325,33 @@ mcp__github__pull_request_read(
 )
 ```
 
-- `merged_at` is **non-null** → dismiss that one
-  notification:
+- `merged_at` is **non-null** → mark that one notification
+  **done**:
 
   ```txt
   mcp__github__dismiss_notification(
     threadID: "<notification id>",
-    state: "read",
+    state: "done",
   )
   ```
 
 - `merged_at` is null (open or closed-unmerged), or the
   subject isn't a PR → **leave it**.
 
+`state: "done"` is load-bearing, and it is the one argument
+this step gets asked about. `"read"` only clears the unread
+marker — the thread **stays in the GitHub inbox**, so a
+sweep that used it looked like a no-op to the human reading
+their notifications. `"done"` removes the thread, which is
+the correct terminal state here precisely because the step
+already gated on `merged_at`: a merged PR has nothing left
+to come back to. Say "done" (not "read") in the report line
+too, so the report matches what the inbox shows.
+
 **Never** call `mark_all_notifications_read` — that would
 clear unread mentions, review requests, and other non-merge
 notifications too. Only a confirmed-merged PR's
-notification is dismissed.
+notification is marked done.
 
 **3. Spelling-escape hygiene — run cspell, file the
 drift as one aggregated issue.** **Opt-in — run this step
@@ -709,7 +719,7 @@ sweep.
 - Worktrees pruned (path + branch), and any left in
   place with the reason (PR open/closed-unmerged, no
   PR, or dirty tree); and how many merged-PR
-  notifications were dismissed.
+  notifications were marked **done**.
 - Spelling-escape drift (only if the `cspell` flag was
   passed; otherwise note the step was skipped): the
   aggregated cspell issue —

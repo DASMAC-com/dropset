@@ -528,6 +528,23 @@ PR-authoring **writes** (`create_pull_request`,
      must reason about the surrounding code. When no such map
      exists, don't manufacture one — the lens reads what it
      needs once, per the budget above.
+   - **The rule covers reference / prior-art files too, not
+     only the diff's own files.** This is the reading that
+     gets missed — the rule above sounds like it is about the
+     files the diff touches. A brief that *names* a reference
+     file for the lens to go read (the exemplar module, the
+     pattern the change imitates, the type it must stay
+     byte-compatible with) re-buys context the session already
+     paid for just as surely. One correctness lens ran
+     **683.5k / 10 turns** against a ≤ 6-turn cap — roughly 4×
+     the cross-check on the same diff — not by sweeping the
+     repo (the failure mode the freshness rules below address)
+     but by cold-reading two named reference files
+     (`sdk/rs/src/events.rs`, `tui/src/fills.rs`) whose
+     relevant excerpts the main loop had already read earlier
+     in the same session. So: **if the main loop has read it,
+     the excerpt goes inline in the brief.** A lens brief never
+     names a file path the main loop could have quoted.
    - **State the scope line verbatim:** *"adjudicate from the
      provided diff + excerpts; cold-read only a file no
      excerpt covers."* This is what turns a survey back into
@@ -716,13 +733,32 @@ PR-authoring **writes** (`create_pull_request`,
    greps for rules the diff barely touches. Tighten the
    briefing:
 
-   - **Name the specific implicated doc**, not "read
-     `CLAUDE.md` and the relevant convention doc(s)". Point
-     the lens at the one section the diff actually bears on.
-   - **Run any needed repo-wide grep once, here in the main
-     loop**, and hand the result set to the lens; cap its
-     shell budget to "adjudicate from the diff + the provided
-     grep — don't re-derive".
+   - **Cap the freshness lens at two named sections, and hand
+     their excerpts inline — not their names.** Not "read
+     `CLAUDE.md` and the relevant convention doc(s)", and not
+     a list of four to six files either: a brief naming
+     several files is a **reading list, not a scope**. Pick at
+     most **two** sections the diff actually bears on, paste
+     those excerpts into the prompt, and state the turn cap as
+     a **hard stop** — at the cap the lens reports what it has
+     rather than reading on. This is the one lens whose
+     positive scope ("read these named convention files")
+     otherwise reads as a *grant* rather than a restriction:
+     three sessions blew their stated cap on an open-ended
+     repo sweep (648.3k / 9 turns, 826.9k / 15 turns, and a
+     2.0M / 19-turn run on the same failure mode) while the
+     lenses handed excerpts came in 3–4× cheaper.
+   - **Hoist every repo-wide grep into the main loop — run it
+     once, here, and hand the lens the hit-list.** This is
+     **unconditional for any "verify X across the repo" ask**,
+     however that ask is dressed up. One run briefed the lens
+     to confirm each new `cfg/dictionary.txt` word appears in
+     ≥ 2 files — a repo-wide census in a diff review's
+     clothing, and precisely the shape this rule already
+     forbids. A lens brief carries the **result set**, never
+     the instruction to sweep; cap its shell budget to
+     "adjudicate from the diff + the provided grep — don't
+     re-derive".
    - **Confirm a rule's presence or absence by `Read`ing the
      current file, never by inferring from the diff's `-`/`+`
      lines.** On a *removal* diff the freshness lens has read
@@ -1735,6 +1771,36 @@ PR-authoring **writes** (`create_pull_request`,
    Each poll is resumable — a fresh call returns the current
    snapshot.
 
+   **Give the queue entry a settle window: the first probe
+   waits.** GitHub does not register the merge-queue entry
+   synchronously with the enqueue, so a probe fired the
+   instant a **successful** `gh pr merge --auto` returns
+   (exit 0) reports:
+
+   ```json
+   {
+     "state": "OPEN",
+     "merged": false,
+     "mergeQueueEntry": null,
+     "autoMergeRequest": null
+   }
+   ```
+
+   — all-null on a PR that isn't registered **yet**; a
+   re-probe seconds later returns
+   `mergeQueueEntry: {"state": "QUEUED"}`. So let the *first*
+   probe wait out the same scheduled-wakeup pacing as every
+   later one, rather than firing immediately. Exit 0 from
+   `gh pr merge --auto` confirms only that auto-merge was
+   **enabled**, not that the queue entry exists.
+
+   This is the **timing twin** of the `autoMergeRequest`
+   false positive described next. That one was fixed by
+   keying on `mergeQueueEntry` instead — but inside the
+   registration window *both* fields are null, so the
+   "both null" test does **not** save you here. Never treat
+   the first post-enqueue probe as authoritative.
+
    This is the one `gh` **read** the skill makes (mirror of
    the enqueue write). The signal that distinguishes "still
    queued" from "silently removed" is the PR's
@@ -1786,8 +1852,8 @@ PR-authoring **writes** (`create_pull_request`,
      will have moved the issue to **Done** on this signal —
      report that it did, don't hand-move it). Key on `merged`
      / `state`.
-     Then **dismiss this PR's own GitHub notification** so it
-     doesn't linger (the immediate companion to
+     Then **mark this PR's own GitHub notification done** so
+     it doesn't linger (the immediate companion to
      `housekeeping`'s merged-PR notification sweep): list the
      notifications and dismiss the one whose
      `subject.url` ends in this PR's number — never
@@ -1803,9 +1869,18 @@ PR-authoring **writes** (`create_pull_request`,
      ```txt
      mcp__github__dismiss_notification(
        threadID: "<this PR's notification id>",
-       state: "read",
+       state: "done",
      )
      ```
+
+     `state: "done"`, **not** `"read"` — `"read"` only clears
+     the unread marker and the thread stays in the GitHub
+     inbox, which is exactly the lingering-notification
+     complaint this step exists to answer. A merged PR has
+     nothing left to come back to, so `"done"` is the right
+     terminal state. Doing it here rather than deferring to
+     the next `housekeeping` pass is the point: otherwise the
+     flow finishes and the notification sits until morning.
 
      If no notification matches (already cleared), skip it.
 
@@ -1830,8 +1905,64 @@ PR-authoring **writes** (`create_pull_request`,
      → still queued; keep polling.
 
    - `state: "OPEN"` with both `mergeQueueEntry` **and**
-     `autoMergeRequest` null → it was **taken out** of the
-     queue (a required check went red, a conflict appeared,
-     or someone dequeued it). Report the removal, naming the
-     cause from a fresh `gh pr checks <number>` if a required
-     check shows `fail`.
+     `autoMergeRequest` null → **not conclusive on its own.**
+     Per the settle window above, this is also what the
+     registration gap looks like. Treat it as terminal — the
+     PR was **taken out** of the queue (a check went red, a
+     conflict appeared, or someone dequeued it) — only when
+     one of these holds:
+
+     - an **earlier** probe in this watch already returned a
+       non-null `mergeQueueEntry`, so the entry demonstrably
+       existed and is now gone; or
+     - **two consecutive** all-null probes, spaced by the
+       pacing delay, have returned.
+
+     Until then it is the registration window: keep polling,
+     and stay silent. A single all-null read right after the
+     enqueue means "not registered yet", not "removed".
+
+     **Diagnose a confirmed removal from the queue branch's
+     CI, not from the PR's checks.** The queue does not
+     re-run the PR branch's checks — it builds a temporary
+     branch (`gh-readonly-queue/<base>/pr-<number>-<sha>`,
+     i.e. `main` with this PR merged into it) and runs CI
+     *there*. A failure on that branch dequeues the PR while
+     leaving **every** check on the PR itself green, so
+     `gh pr checks <number>` reports "nothing failed" on a PR
+     that was demonstrably kicked out. Find the queue run
+     instead — a bare `gh run list` reduces to a
+     `Bash(gh run list:*)` allow-rule — and pick the entry
+     whose `headBranch` carries the `pr-<number>-` prefix:
+
+     ```sh
+     gh run list --limit 20 --json headBranch,name,status,conclusion,url
+     ```
+
+     Key on **job** conclusions, not the parent run's
+     `status`: a run can still read `in_progress` while one of
+     its jobs has already failed and triggered the dequeue.
+     Once the failing job is identified, pull it with the
+     same `get_job_logs` call as the CI-wait failure path
+     (`failed_only: true`, `tail_lines: 100`).
+
+     Then split the response by **what** failed — the two
+     causes want opposite handling:
+
+     - **Transient infrastructure** — a toolchain, network,
+       or cache failure **before any test executed** (e.g.
+       `Cache not found for input keys: toolchain-solana-…`
+       followed by `Failed to install platform-tools`).
+       Nothing is wrong with the code. Re-enqueue, and say
+       that's what you're doing and why.
+     - **A real `main`-integration conflict** — a test
+       assertion failure, compile error, or lint violation on
+       the queue branch. This is exactly what the queue
+       exists to catch, and it means the PR conflicts
+       semantically with code that landed after its last
+       rebase. Do **not** re-enqueue. Catalogue it as
+       blocking, re-draft the PR, and tell the user to rebase
+       on `main` and re-run `/review-pr`.
+
+     Report the removal either way, naming the queue-branch
+     job that caused it.
