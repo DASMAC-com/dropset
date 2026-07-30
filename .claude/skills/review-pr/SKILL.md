@@ -319,38 +319,38 @@ PR-authoring **writes** (`create_pull_request`,
    but write the **diff to a single file** rather than into
    context, so the fan-out below hands each agent a path
    instead of inlining N resident copies (per `CLAUDE.md` →
-   "Context economy"; the file-handoff pattern). `git diff`'s
-   `--output=<file>` flag writes straight to the file with no
-   shell redirect (so it stays a `Bash(git diff:*)`
-   allow-rule) **and** keeps the bulky diff out of the main
-   transcript entirely.
+   "Context economy"; the file-handoff pattern). The tool
+   below streams the diff straight to that file — no shell
+   redirect, and the bulky diff never enters the main
+   transcript.
 
    **Diff against `origin/<base>`, not a local branch, and
-   exclude the generated families.** Two adjustments to the
-   `git diff` below:
+   exclude the generated families.** `review_diff.py` below
+   does both — the reasoning, so the tool's behavior isn't a
+   black box:
 
    - **Ref: `origin/<base>..HEAD`.** In a worktree, the local
      base branch is stale behind origin by already-merged
      PRs, so `git diff <base>..HEAD` pulls unrelated
      merged-PR files into `review-diff.txt` (the stale-diff
-     hazard, reached via the wrong ref). Step 2 already ran
-     `git fetch origin <base>`, so `origin/<base>` is fresh —
-     diff and size against it.
+     hazard, reached via the wrong ref). The tool fetches
+     `origin/<base>` itself and diffs against it.
    - **Exclude generated files with pathspec `:(exclude)`
      globs.** A review lens reads source, not regenerated
      output — yet a lockfile or a regenerated SDK/IDL tree
      can be the *bulk* of a diff (a 6001-line diff that was
      ~3607 lines of `pnpm-lock.yaml`, read by all 7 agents),
-     replayed per agent and per turn. Exclude the known
-     generated families so each lens reads source-only:
-     lock files (`pnpm-lock.yaml`, `Cargo.lock`), the
-     generated SDK clients (`sdk/ts/src/generated`,
-     `sdk/rs/src/generated`), and the generated IDL
-     (`sdk/idl/dropset.json`). (These are regenerated and
-     gate-checked in step 9 — reviewing their diff by eye
-     adds nothing.) The `:(exclude)` pathspec globs ride the
-     `git diff` command line, so it still reduces to the
-     `Bash(git diff:*)` allow-rule.
+     replayed per agent and per turn. The tool's
+     `DIFF_EXCLUDES` holds the known generated families so
+     each lens reads source-only: lock files
+     (`pnpm-lock.yaml`, `Cargo.lock`), the generated SDK
+     clients (`sdk/ts/src/generated`, `sdk/rs/src/generated`),
+     and the generated IDL (`sdk/idl/dropset.json`). (These
+     are regenerated and gate-checked in step 9 — reviewing
+     their diff by eye adds nothing.) Note the verdict's
+     `files` list is **unfiltered**, so an excluded family
+     still shows up there as a changed path — which is what
+     lets step 9 see that it needs to run.
 
    **Write it to the session scratchpad, not `/tmp`.** The
    environment designates a per-session scratchpad directory
@@ -361,63 +361,92 @@ PR-authoring **writes** (`create_pull_request`,
    and the fan-out then reviews the **wrong diff** — a real
    bug that has cost an entire 6-agent pass. Write to
    `<scratchpad>/review-diff.txt` (substitute the actual
-   scratchpad path), then **verify the file is this branch's
-   diff before fanning out** — the freshness gate below, plus
-   a one-line `wc -l` (and, if in any doubt, a `head`) so a
-   zero-length or stale file is caught now, not after N agents
-   have read it:
+   scratchpad path), and **verify the file is this branch's
+   diff before fanning out** — which is what the gate below
+   does, so a zero-length or stale file is caught now, not
+   after N agents have read it.
+
+   This whole preamble — the fetch, the two `git log` range
+   checks, the excluded `git diff` into the file, the per-file
+   stat, and the line count — is fixed string/path logic
+   resolving to a mechanical verdict, so it lives in the
+   skill-tool `.claude/tools/review_diff.py` (per `CLAUDE.md`
+   → "Skill tooling"). **One** call replaces the six commands
+   and returns **one** compact JSON object instead of six tool
+   results:
 
    ```sh
-   git fetch origin <base>
-   git log HEAD..origin/<base> --oneline
-   git diff origin/<base>..HEAD --output=<scratchpad>/review-diff.txt -- . \
-     ':(exclude)pnpm-lock.yaml' ':(exclude)Cargo.lock' \
-     ':(exclude)sdk/ts/src/generated' ':(exclude)sdk/rs/src/generated' \
-     ':(exclude)sdk/idl/dropset.json'
-   git log origin/<base>..HEAD --oneline
-   git diff --stat origin/<base>..HEAD
-   wc -l <scratchpad>/review-diff.txt
+   python3 .claude/tools/review_diff.py --base <base> \
+     --out <scratchpad>/review-diff.txt
    ```
 
-   The commit log is small, so it prints to context and is
-   passed inline; the diff lives only in
+   ```json
+   {
+     "base_fresh": true,          // false iff base_ahead is non-empty
+     "base_ahead": [],            // commits the base has that HEAD lacks
+     "commits": ["abc1234 Subject"],
+     "diff_path": "…/review-diff.txt",
+     "diff_lines": 1234,
+     "diff_empty": false,
+     "files": [{"path": "…", "changes": 12}],
+     "runs_rust_suites": false,   // any path outside CI's code filter?
+     "runs_artifact_gates": false,// any generation input touched?
+     "ready": true,
+     "blockers": []               // why ready is false, if it is
+   }
+   ```
+
+   **`ready` is the gate: do not fan out unless it is `true`.**
+   The tool also exits non-zero when it isn't, so the check
+   can't be skipped by only reading the status. `blockers`
+   names the reason. `commits` is small, so pass it inline to
+   the lenses; the diff itself lives only in
    `<scratchpad>/review-diff.txt`.
 
-   **Assert base-freshness before fanning out — `wc -l` alone
-   is not the gate.** The base can advance *past* the step-2
-   rebase while the review is in flight: worktrees share one
-   `.git`, so a sibling session's fetch (or a merge landing on
-   `main`) moves `origin/<base>` under this session with no
-   fetch of its own. The review diff then reads as if this
-   branch **deleted** whatever the base just added — a phantom
-   `-` hunk. That is not hypothetical: on one run a
-   newly-landed test showed up as a phantom deletion and
-   **both** the correctness and completeness lenses
-   independently flagged it as a blocking coverage regression;
-   the whole fan-out was spent adjudicating a false positive,
-   then re-run from scratch on a corrected base along with the
-   full test suite. The prescribed `wc -l` check **passed**
-   throughout — a line count cannot distinguish a phantom
-   deletion from real content, so it never surfaces this.
+   The tool **owns** three path lists that used to sit as
+   prose here and were re-typed by hand each run — the
+   generated-family diff excludes, the mirror of `test.yml`'s
+   `code` filter, and the generation inputs. Keeping them in
+   one place is why `runs_rust_suites` and
+   `runs_artifact_gates` can be read off the verdict in steps
+   9 and 10 rather than re-derived. When one of those lists
+   changes upstream, change it in `review_diff.py`.
 
-   So gate on the two checks the command block above adds,
-   both **before** spawning any agent:
+   If `--out` is left off, or `<scratchpad>` is guessed rather
+   than substituted, the tool errors instead of writing
+   somewhere surprising — but the stale-file hazard above is
+   about a *previous* session's file at the same path, and
+   `review_diff.py` always rewrites `--out`, so a stale read
+   can no longer happen.
 
-   - **`git log HEAD..origin/<base> --oneline` must be
-     empty.** A non-empty result means the base has commits
-     this branch doesn't — re-fetch, re-rebase onto
-     `origin/<base>`, regenerate `review-diff.txt`, and only
-     then fan out. (This is the same command you'd otherwise
-     reach for to *diagnose* the pollution after the lenses
-     report it; running it first costs one line and saves the
-     pass.)
-   - **Scan `git diff --stat origin/<base>..HEAD` for foreign
-     files.** Any path this branch never touched is base drift
-     leaking in. The `--stat` view catches what `wc -l`
-     structurally cannot, and it is cheap — one line per file.
+   **Why `base_fresh` is a field and not a line count.** The
+   base can advance *past* the step-2 rebase while the review
+   is in flight: worktrees share one `.git`, so a sibling
+   session's fetch (or a merge landing on `main`) moves
+   `origin/<base>` under this session with no fetch of its own.
+   The review diff then reads as if this branch **deleted**
+   whatever the base just added — a phantom `-` hunk. That is
+   not hypothetical: on one run a newly-landed test showed up
+   as a phantom deletion and **both** the correctness and
+   completeness lenses independently flagged it as a blocking
+   coverage regression; the whole fan-out was spent
+   adjudicating a false positive, then re-run from scratch on a
+   corrected base along with the full test suite. A line count
+   **passed** throughout — it cannot distinguish a phantom
+   deletion from real content, so it never surfaces this, which
+   is why `diff_lines` alone is not the gate.
 
-   Do not fan out until the freshness gate is clean **and**
-   the `wc -l` confirms the file holds this branch's diff.
+   So when `base_fresh` is `false` (equivalently, `base_ahead`
+   is non-empty), the base has commits this branch doesn't:
+   re-fetch, re-rebase onto `origin/<base>`, re-run
+   `review_diff.py`, and only then fan out. **Nothing is
+   spawned until `ready` is `true`.**
+
+   Read the `files` list for **sizing and tiering** (which
+   crates and surfaces the diff spans, feeding the fan-out
+   scaling below) — not as a second freshness check: once
+   `base_fresh` holds, a foreign path can't be base drift,
+   because there is no drift to leak.
 
    **Brief every sub-agent on the shell rules.** Prepend
    the standing sub-agent brief from
@@ -587,9 +616,10 @@ PR-authoring **writes** (`create_pull_request`,
    (a 4-line reword spawned a 70.4k-input agent; a 3-file
    doc-only diff a 375.4k one; a 24-line infra diff four
    agents including a 277.8k cross-check for a single nit).
-   So first size the diff from the commit log and the line
-   count (`git diff --stat origin/<base>..HEAD`), and **short-circuit
-   when it is trivial** — small and confined to one of:
+   So first size the diff from the step-5 verdict's `commits`,
+   `diff_lines`, and per-file `files` list, and
+   **short-circuit when it is trivial** — small and confined
+   to one of:
    comment / doc / Markdown-only, a config or workflow
    tweak, a rename, or a handful of lines with no new
    control flow. For a trivial diff, spawn **one** scoped
@@ -1045,9 +1075,10 @@ PR-authoring **writes** (`create_pull_request`,
    CI on a stale artifact.
 
    **First, the path gate: does this diff touch a generation
-   *input* at all?** A generated artifact can only go stale
-   if the source it is generated from changed, so check
-   `git diff --stat origin/<base>..HEAD` against the inputs:
+   *input* at all?** A generated artifact can only go stale if
+   the source it is generated from changed. Step 5's
+   `review_diff.py` verdict already answers this —
+   **`runs_artifact_gates`** — from the inputs it owns:
 
    - **IDL** ← the program (`programs/**`).
    - **SDK clients** ← the committed IDL and the Codama
@@ -1055,17 +1086,17 @@ PR-authoring **writes** (`create_pull_request`,
    - **Conformance vectors** ← their generators
      (`sdk/math-core/**`, `sdk/interface/**`).
 
-   If the diff touches **none** of those, all three artifacts
-   are provably unchanged: **skip the gates and say so in the
-   summary.** This is a rule, not a per-run judgment call — a
-   four-file diff confined to `decks/` cannot stale an IDL,
-   and forcing the gates there buys three multi-minute builds
-   to confirm a tautology. (CI agrees structurally: `test.yml`
-   path-filters the diff out entirely, so its Tests jobs
-   return pass in seconds as no-ops.) When in doubt — a diff
-   that touches a Rust crate the generators depend on
-   transitively, say — run them; the carve-out is for the
-   clearly-unrelated diff, not the marginal one.
+   When it is **`false`**, all three artifacts are provably
+   unchanged: **skip the gates and say so in the summary.**
+   This is a rule, not a per-run judgment call — a four-file
+   diff confined to `decks/` cannot stale an IDL, and forcing
+   the gates there buys three multi-minute builds to confirm a
+   tautology. (CI agrees structurally: `test.yml` path-filters
+   such a diff out entirely, so its Tests jobs return pass in
+   seconds as no-ops.) The flag is deliberately generous about
+   the marginal case — it keys on the inputs, so a Rust crate
+   the generators depend on transitively still trips it; the
+   carve-out only fires on a clearly-unrelated diff.
 
    Otherwise, when the diff *does* touch an input: **run all
    three regeneration gates — even when the author says they
@@ -1207,30 +1238,26 @@ PR-authoring **writes** (`create_pull_request`,
 
    **Mirror CI's path filter, including when it skips.**
    `test.yml` gates its Tests jobs on a `code` filter that
-   **excludes** these paths, under a `predicate-quantifier` of
-   `every` — so a diff confined entirely to them makes all
-   three Tests jobs pass in seconds as no-ops:
+   **excludes** the doc / frontend / decks / `.claude` / config
+   surfaces, under a `predicate-quantifier` of `every` — so a
+   diff confined entirely to them makes all three Tests jobs
+   pass in seconds as path-filtered no-ops. Step 5's
+   `review_diff.py` verdict already decides this:
+   **`runs_rust_suites`**, computed from the mirror of that
+   filter the tool owns (so the two can't drift by hand — when
+   the workflow's filter changes, change
+   `CODE_FILTER_EXCLUDES` in `review_diff.py`).
 
-   ```txt
-   frontend/**   decks/**   brand-assets/**   docs/**
-   **/*.md       sdk/ts/**  sdk/codama/**     .claude/**
-   cfg/**        infra/**   pnpm-lock.yaml    pnpm-workspace.yaml
-   .github/workflows/{explorer-image,lint,sdk,semantic-pr}.yml
-   ```
+   When it is **`false`**, **skip both Rust targets** and
+   record the skip with its reason in the summary — running
+   them mirrors nothing, because CI isn't running them either.
+   When it is `true`, run both.
 
-   When `git diff --stat origin/<base>..HEAD` shows **every**
-   changed path inside that set, **skip both Rust targets**
-   and record the skip (with the reason) in the summary —
-   running them mirrors nothing, because CI isn't running them
-   either. Keep the `sdk/ts` node suite below in mind
-   separately: `sdk/ts/**` is excluded here but the **SDK**
-   workflow has no path filter, so a diff touching it still
-   wants that suite.
-
-   If any changed path falls **outside** the set, run both.
-   This list is a mirror — when `test.yml`'s `code` filter
-   changes, change it here too (the freshness lens in step 5
-   covers exactly this kind of drift).
+   Keep the `sdk/ts` node suite below in mind separately:
+   `sdk/ts/**` sits inside the excluded set, but the **SDK**
+   workflow has no path filter at all, so a diff touching it
+   still wants that suite even when `runs_rust_suites` is
+   `false`.
 
    Both emit a long `Compiling …`
    cascade ahead of the test result, so run them **through
