@@ -4,8 +4,6 @@ description: Adversarial pre-review — mark the Linear issue In Progress on inv
 user-invocable: true
 ---
 
-<!-- cspell:word oneline -->
-
 <!-- cspell:word unstarted -->
 
 <!-- cspell:word pathspec -->
@@ -382,6 +380,8 @@ PR-authoring **writes** (`create_pull_request`,
 
    ```json
    {
+     "fetched": true,             // false if the fetch failed or was skipped
+     "fetch_error": null,         // non-null → freshness is UNVERIFIED
      "base_fresh": true,          // false iff base_ahead is non-empty
      "base_ahead": [],            // commits the base has that HEAD lacks
      "commits": ["abc1234 Subject"],
@@ -391,16 +391,23 @@ PR-authoring **writes** (`create_pull_request`,
      "files": [{"path": "…", "changes": 12}],
      "runs_rust_suites": false,   // any path outside CI's code filter?
      "runs_artifact_gates": false,// any generation input touched?
-     "ready": true,
+     "ready": true,               // exactly `not blockers`
      "blockers": []               // why ready is false, if it is
    }
    ```
 
    **`ready` is the gate: do not fan out unless it is `true`.**
-   The tool also exits non-zero when it isn't, so the check
-   can't be skipped by only reading the status. `blockers`
-   names the reason. `commits` is small, so pass it inline to
-   the lenses; the diff itself lives only in
+   It is defined as `not blockers`, so the two can never
+   disagree, and the tool exits non-zero when it is false — the
+   check can't be skipped by only reading the status.
+   `blockers` names the reason, and there are four: a stale
+   base, a **failed fetch** (freshness unverified rather than
+   verified-fresh — pass `--no-fetch` to accept the local ref
+   deliberately), nothing changed at all, or something changed
+   but every path is an excluded generated family (no source to
+   review, though the step 9/10 gates still apply — reported as
+   its own distinct reason). `commits` is small, so pass it
+   inline to the lenses; the diff itself lives only in
    `<scratchpad>/review-diff.txt`.
 
    The tool **owns** three path lists that used to sit as
@@ -412,12 +419,14 @@ PR-authoring **writes** (`create_pull_request`,
    9 and 10 rather than re-derived. When one of those lists
    changes upstream, change it in `review_diff.py`.
 
-   If `--out` is left off, or `<scratchpad>` is guessed rather
-   than substituted, the tool errors instead of writing
-   somewhere surprising — but the stale-file hazard above is
-   about a *previous* session's file at the same path, and
-   `review_diff.py` always rewrites `--out`, so a stale read
-   can no longer happen.
+   `--out` is **required**, so the path can't be omitted — but
+   it is *not* validated against the scratchpad root, so
+   substitute the real path rather than guessing: a guessed
+   path gets created and written, not rejected. What the tool
+   does remove is the **stale**-file hazard, since it rewrites
+   `--out` on every run (owner-only, `0o600` — a review diff
+   can carry a fixture key or a config token, so it gets the
+   same treatment as a `run_quiet` log).
 
    **Why `base_fresh` is a field and not a line count.** The
    base can advance *past* the step-2 rebase while the review

@@ -68,14 +68,48 @@ class SyncBlockersError(Exception):
     """A user-facing failure: surfaced to stderr, exits non-zero."""
 
 
-# Linear's priority scale, as the API reports it.
+# Linear's priority scale, as the API reports it. Note it is **inverted**:
+# Urgent is the *lowest* number, and 0 means "No priority".
 URGENT_PRIORITY = 1
 PRIORITY_NAMES = {0: "No priority", 1: "Urgent", 2: "High", 3: "Medium", 4: "Low"}
 
 
-def priority_name(value: int) -> str:
-    """A human label for a Linear priority int, for report and warning lines."""
+def priority_name(value: int | None) -> str:
+    """A human label for a Linear priority, for report and warning lines."""
+    if value is None:
+        return "unknown priority"
     return PRIORITY_NAMES.get(value, f"priority {value}")
+
+
+def parse_priority(raw_value) -> int | None:
+    """Coerce a raw GraphQL ``priority`` into an int, or ``None`` if unreadable.
+
+    ``None`` means *unknown*, and is deliberately distinct from ``0``
+    ("No priority"). Because the scale is inverted, coercing an absent, null, or
+    non-numeric value to ``0`` would make it read as "not Urgent" — which is
+    exactly the input that silently disables the priority floor and lets the
+    sweep file the inversion the floor exists to prevent. Keeping unknown
+    separate lets :func:`gates_urgent` fail **closed** instead.
+    """
+    if raw_value is None:
+        return None
+    try:
+        return int(raw_value)
+    except (TypeError, ValueError):
+        return None
+
+
+def gates_urgent(blocked: Issue, blocker: Issue) -> bool:
+    """Whether filing "``blocker`` blocks ``blocked``" would trip the floor.
+
+    True means **do not file it**. An Urgent blocker can never create an
+    inversion, so it is cleared first; after that, an Urgent *or unknown* blocked
+    side is refused, since an unreadable priority must not be treated as proof
+    that the pair is safe.
+    """
+    if blocker.priority == URGENT_PRIORITY:
+        return False
+    return blocked.priority is None or blocked.priority == URGENT_PRIORITY
 
 
 # --------------------------------------------------------------------------
@@ -93,18 +127,19 @@ class Issue:
     touches: list[str] = field(default_factory=list)
     blocked_by: list[str] = field(default_factory=list)
     blocks: list[str] = field(default_factory=list)
-    # Linear's priority int (see PRIORITY_NAMES). The overlap sweep reads it to
-    # avoid gating an Urgent issue behind a non-Urgent one.
-    priority: int = 0
+    # Linear's priority int (see PRIORITY_NAMES), or None when unreadable. The
+    # overlap sweep reads it to avoid gating an Urgent issue behind a non-Urgent
+    # one; None is "unknown" and fails closed (see `gates_urgent`).
+    priority: int | None = 0
     # (blocker ``ENG-###``, blocker state name) for each ``blockedBy`` blocker
     # whose workflow state is the *Todo* (``unstarted``) type. Every issue here
     # is itself Backlog (the fetch filters to it), so a populated list is a
     # Todo→Backlog block — the scheduling smell the report mode surfaces.
     todo_blockers: list[tuple[str, str]] = field(default_factory=list)
-    # (blocker ``ENG-###``, blocker priority int) for every declared blocker,
-    # so an already-filed priority inversion can be reported even though this
-    # tool would no longer create one.
-    blocked_by_priority: list[tuple[str, int]] = field(default_factory=list)
+    # (blocker ``ENG-###``, blocker priority) for every declared blocker, so an
+    # already-filed priority inversion can be reported even though this tool
+    # would no longer create one. The priority may be None (unknown).
+    blocked_by_priority: list[tuple[str, int | None]] = field(default_factory=list)
 
 
 def parse_number(ident: str) -> int | None:
@@ -305,9 +340,10 @@ def materialize_overlap_edges(
                 continue
             lo, hi = (ia, ic) if ia.number <= ic.number else (ic, ia)
             # The priority floor documented above. Mark the pair linked either
-            # way so a later iteration doesn't reconsider it.
+            # way so a later iteration doesn't reconsider it. `lo` would be the
+            # blocker and `hi` the blocked side, so that is the order asked.
             linked.add(pair)
-            if hi.priority == URGENT_PRIORITY and lo.priority != URGENT_PRIORITY:
+            if gates_urgent(blocked=hi, blocker=lo):
                 suppressed.append((lo.id, hi.id))
                 continue
             filed.append((lo.id, hi.id))
@@ -406,7 +442,7 @@ def _raw_to_issue(raw: dict) -> Issue:
         and (r["issue"].get("state") or {}).get("type") == "unstarted"
     ]
     blocked_by_priority = [
-        (r["issue"]["identifier"], int(r["issue"].get("priority") or 0))
+        (r["issue"]["identifier"], parse_priority(r["issue"].get("priority")))
         for r in raw["inverseRelations"]["nodes"]
         if r.get("type") == "blocks" and r.get("issue")
     ]
@@ -420,7 +456,7 @@ def _raw_to_issue(raw: dict) -> Issue:
         touches=touches,
         blocked_by=blocked_by,
         blocks=blocks,
-        priority=int(raw.get("priority") or 0),
+        priority=parse_priority(raw.get("priority")),
         todo_blockers=todo_blockers,
         blocked_by_priority=blocked_by_priority,
     )
@@ -562,12 +598,31 @@ def run(argv: list[str]) -> int:
     verb = "would file" if dry_run else "filed"
     for lo, hi in filed:
         print(f"{verb}: {lo} blocks {hi} (touch overlap)", file=sys.stderr)
+    by_id = {i.id: i for i in issues}
     for lo, hi in suppressed:
+        blocked_label = priority_name(by_id[hi].priority)
+        blocker_label = priority_name(by_id[lo].priority)
         print(
-            f"warning: {lo} and {hi} touch the same files, but {hi} is Urgent "
-            f"and {lo} is not — declining to gate an Urgent issue behind a "
-            f"non-Urgent one. Resolve by hand if they really are coupled "
-            f"(usually: {hi} blocks {lo}, so the Urgent fix lands first).",
+            f"warning: {lo} and {hi} touch the same files, but {hi} is "
+            f"{blocked_label} and {lo} is {blocker_label} — declining to gate an "
+            f"Urgent issue behind a non-Urgent one. Resolve by hand if they "
+            f"really are coupled (usually: {hi} blocks {lo}, so the Urgent fix "
+            f"lands first).",
+            file=sys.stderr,
+        )
+
+    # A priority that wouldn't parse leaves the floor impossible to evaluate for
+    # that issue.
+    # `gates_urgent` fails closed on it, but say so out loud — a schema or
+    # permission change that blanked the field would otherwise look identical to
+    # a clean run, which is how a silently-disabled guard survives.
+    unreadable = sorted(i.id for i in issues if i.priority is None)
+    if unreadable:
+        print(
+            f"warning: {len(unreadable)} issue(s) reported no readable priority "
+            f"({', '.join(unreadable)}) — the priority floor treats these as "
+            f"possibly-Urgent and declines their overlap edges. Check the "
+            f"GraphQL `priority` field is still being returned.",
             file=sys.stderr,
         )
 

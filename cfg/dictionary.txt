@@ -34,6 +34,7 @@ coingecko
 coinmarketcap
 coprocess
 cpis
+creat
 crossterm
 dasmac
 dedup
@@ -90,8 +91,10 @@ mpsc
 multisigs
 mxne
 nohup
+numstat
 oanda
 ohlcv
+oneline
 onramps
 paytrie
 pdas
@@ -182,6 +185,7 @@ wordmark
 worktree
 worktrees
 worldlibertyfi
+wronly
 zarp
 zaru
 zeroable

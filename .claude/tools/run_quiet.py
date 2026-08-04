@@ -82,6 +82,11 @@ LAUNCH_FAILURE_CODE = 127
 # line the wrapper echoes live (see the module docstring).
 LOCK_WAIT_MARKER = "Blocking waiting for file lock"
 
+# Ceiling on the echoed lock-wait line. The marker is a substring match on child
+# output, so the "line" carrying it is attacker-influenced and may have no
+# newline for megabytes; `sanitize_for_echo` clamps it to this.
+MAX_ECHO_CHARS = 200
+
 
 class UsageError(Exception):
     """A malformed invocation: surfaced to stderr, exits non-zero."""
@@ -166,17 +171,44 @@ def is_lock_wait_line(line):
     return LOCK_WAIT_MARKER in line
 
 
+def sanitize_for_echo(line):
+    """Make one line of child output safe to print, and bound its length.
+
+    The wrapper's entire value is that child output does **not** reach the
+    terminal or the model's context. The lock-wait echo is a deliberate hole in
+    that, so what goes through it is scrubbed rather than passed through: any
+    build script, vendored dependency, test, or Makefile recipe can emit a line
+    containing the marker, and without scrubbing it could carry ANSI/OSC escapes
+    (repositioning the cursor, clearing the screen, setting the title) or simply
+    append a convincing fake summary line so a failing run reads as clean. The
+    same text lands in the tool result, so it is a prompt-injection channel too.
+
+    Control characters are dropped, and the result is truncated — a child can
+    emit megabytes with no newline at all, which would otherwise arrive as one
+    enormous "line". The full text is still in the log either way.
+    """
+    cleaned = "".join(c for c in line if c.isprintable())
+    cleaned = cleaned.strip()
+    if len(cleaned) > MAX_ECHO_CHARS:
+        cleaned = cleaned[:MAX_ECHO_CHARS] + "… (truncated; see the log)"
+    return cleaned
+
+
 def stream_to_log(cmd, log_file):
     """Run `cmd`, tee its output into `log_file`, return (exit_code, lock_wait).
 
     The child writes into a pipe rather than straight to the log so a *blocking*
     status line can be surfaced while the run is still in flight; every other
-    line is captured silently, which is the whole point of the wrapper. Lines
-    are handled one at a time, so a huge log never sits in memory.
+    line is captured silently, which is the whole point of the wrapper. Output is
+    handled a line at a time, so a huge log never sits in memory in full — though
+    a child that emits no newline for a long stretch does buffer that stretch as
+    one "line", which is the other reason the echo is length-clamped.
 
-    ``lock_wait`` is the first lock-wait line seen (stripped), or None. It is
-    echoed to stdout on sight — and flushed, so it can't sit in a buffer behind
-    the very wait it is reporting.
+    ``lock_wait`` is the first lock-wait line seen, **scrubbed and truncated** by
+    ``sanitize_for_echo`` (the echo is a channel out of the capture, so nothing
+    reaches it raw), or None. It is echoed to stdout on sight — and flushed, so
+    it can't sit in a buffer behind the very wait it is reporting. Only the
+    *first* is echoed; cargo repeats the line while it waits.
     """
     lock_wait = None
     proc = subprocess.Popen(
@@ -192,7 +224,7 @@ def stream_to_log(cmd, log_file):
         for line in proc.stdout:
             log_file.write(line)
             if lock_wait is None and is_lock_wait_line(line):
-                lock_wait = line.strip()
+                lock_wait = sanitize_for_echo(line)
                 log_file.flush()
                 sys.stdout.write("⏳ %s\n" % lock_wait)
                 sys.stdout.flush()

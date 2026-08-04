@@ -189,6 +189,37 @@ class PriorityFloorTests(unittest.TestCase):
         self.assertEqual(filed, [("ENG-18", "ENG-22")])
         self.assertEqual(suppressed, [])
 
+    def test_unknown_blocked_priority_fails_closed(self):
+        """An unreadable priority must not be treated as proof the pair is safe:
+        coerced to 0 it would read "not Urgent" and file the very inversion the
+        floor exists to prevent."""
+        issues = [
+            with_("ENG-778", touches=["a/"], priority=3),
+            with_("ENG-783", touches=["a/"], priority=None),
+        ]
+        filed, suppressed = materialize_overlap_edges(issues, None, True)
+        self.assertEqual(filed, [])
+        self.assertEqual(suppressed, [("ENG-778", "ENG-783")])
+
+    def test_unknown_blocked_priority_still_links_under_an_urgent_blocker(self):
+        # An Urgent blocker can't create an inversion, so it clears first.
+        issues = [
+            with_("ENG-778", touches=["a/"], priority=URGENT_PRIORITY),
+            with_("ENG-783", touches=["a/"], priority=None),
+        ]
+        filed, suppressed = materialize_overlap_edges(issues, None, True)
+        self.assertEqual(filed, [("ENG-778", "ENG-783")])
+        self.assertEqual(suppressed, [])
+
+    def test_unknown_blocker_priority_suppresses_an_urgent_blocked(self):
+        issues = [
+            with_("ENG-778", touches=["a/"], priority=None),
+            with_("ENG-783", touches=["a/"], priority=URGENT_PRIORITY),
+        ]
+        filed, suppressed = materialize_overlap_edges(issues, None, True)
+        self.assertEqual(filed, [])
+        self.assertEqual(suppressed, [("ENG-778", "ENG-783")])
+
     def test_focus_mode_honors_the_floor(self):
         issues = [
             with_("ENG-778", touches=["a/"], priority=3),
@@ -329,10 +360,21 @@ class TodoBlocksBacklogTests(unittest.TestCase):
         self.assertEqual(got.priority, URGENT_PRIORITY)
         self.assertEqual(got.blocked_by_priority, [("ENG-778", 3)])
 
-    def test_raw_to_issue_defaults_a_missing_priority_to_zero(self):
+    def test_raw_to_issue_maps_a_missing_priority_to_none_not_zero(self):
+        """Linear's scale is inverted (Urgent == 1, "No priority" == 0), so
+        coercing an absent field to 0 would read as "not Urgent" and silently
+        disable the floor. Unknown must stay distinguishable from 0."""
         raw = raw_issue("ENG-50")
         del raw["priority"]
-        self.assertEqual(_raw_to_issue(raw).priority, 0)
+        self.assertIsNone(_raw_to_issue(raw).priority)
+
+    def test_raw_to_issue_keeps_an_explicit_zero_as_zero(self):
+        self.assertEqual(_raw_to_issue(raw_issue("ENG-50", priority=0)).priority, 0)
+
+    def test_raw_to_issue_maps_a_non_numeric_priority_to_none(self):
+        raw = raw_issue("ENG-50")
+        raw["priority"] = "High"
+        self.assertIsNone(_raw_to_issue(raw).priority)
 
     def test_detector_returns_sorted_triples(self):
         issues = [

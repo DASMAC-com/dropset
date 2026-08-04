@@ -78,6 +78,17 @@ python3 .claude/tools/allowlist.py \
   --settings <path>/.claude/settings.local.json add 'Bash(cargo test:*)'
 ```
 
+`add` holds the **same safety floor** the fast firm does, and it has to:
+`firm_into` has no floor of its own — `/f` checks `is_bareverb_wildcard` in
+its *caller* and returns before writing — so a write path that skipped the
+check would grant exactly what `/f` refuses, through a single call that
+never prompts (this tool runs under the pre-approved directory-wide
+`Bash(python3 .claude/tools/:*)` rule). So `add` refuses anything the
+`cruft` classifier would flag — a bare wildcard, a bare-verb wildcard, an
+unscoped `Read(…)` / `Edit(…)` root — reporting
+`added: false` with a `refused` reason and exiting **non-zero**. If you
+genuinely need one of those, that is a decision for the human, by hand.
+
 Reserve `Edit`/`Write` on `settings.local.json` for a change `add` can't
 express — **removing** a cruft entry, or rewriting several at once in the
 full sweep.

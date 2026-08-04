@@ -26,6 +26,7 @@ more verb than the approval did.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 from pathlib import Path
@@ -367,16 +368,39 @@ def is_bareverb_wildcard(rule: str) -> bool:
     return prefix in NO_BARE_WILDCARD
 
 
+class SettingsError(Exception):
+    """The settings file exists but can't be safely rewritten."""
+
+
 def load_settings(path: Path) -> tuple[dict, list[str]]:
-    """Load a settings.local.json into ``(settings_dict, allow_list)``. A missing
-    or malformed file yields empty scaffolding so a first firm can create it.
+    """Load a settings.local.json into ``(settings_dict, allow_list)``.
+
+    A **missing** file yields empty scaffolding so a first firm can create it. A
+    file that exists but does not parse raises :class:`SettingsError` instead of
+    scaffolding — otherwise a stray trailing comma, or a mistyped ``--settings``
+    pointing at some other JSON, would be silently *replaced* by a fresh
+    ``{"permissions": {"allow": […]}}`` document, destroying whatever was there.
+    The file is git-ignored, so there would be nothing to restore from.
     """
     try:
-        settings = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        settings = {}
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}, []
+    except OSError as exc:
+        raise SettingsError(f"cannot read {path}: {exc}") from exc
+    if not raw.strip():
+        return {}, []
+    try:
+        settings = json.loads(raw)
+    except ValueError as exc:
+        raise SettingsError(
+            f"{path} exists but is not valid JSON ({exc}) — refusing to "
+            f"overwrite it; fix or move it by hand"
+        ) from exc
     if not isinstance(settings, dict):
-        settings = {}
+        raise SettingsError(
+            f"{path} is valid JSON but not an object — refusing to overwrite it"
+        )
     allow = settings.get("permissions", {}).get("allow")
     if not isinstance(allow, list):
         allow = []
@@ -384,12 +408,38 @@ def load_settings(path: Path) -> tuple[dict, list[str]]:
 
 
 def write_settings(path: Path, settings: dict, allow: list[str]) -> None:
+    """Write the settings file **atomically**, owner-only.
+
+    A plain ``write_text`` truncates before writing, so an interrupt or a full
+    disk between truncate and flush would leave an empty or half-written
+    allowlist — and since the file is git-ignored there is no copy to recover
+    from. Writing a sibling temp file and ``os.replace``-ing it makes the swap
+    atomic: a reader sees either the old file or the new one, never a partial.
+
+    The mode is ``0o600`` because the file holds local configuration (extra
+    directories, machine paths, any ``env`` block) and is the authority for this
+    agent's own permissions.
+    """
     settings.setdefault("permissions", {})
     settings["permissions"]["allow"] = allow
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(settings, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
+    body = json.dumps(settings, indent=2, ensure_ascii=False) + "\n"
+
+    tmp = path.with_name(path.name + ".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(body)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        # Never leave the temp file behind to be mistaken for real settings.
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def firm_into(path: Path, rule: str) -> bool:

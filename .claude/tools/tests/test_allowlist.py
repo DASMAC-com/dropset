@@ -1,3 +1,4 @@
+# cspell:word unparseable
 """Stdlib ``unittest`` tests for the settings.local.json allowlist helper.
 
 Run via the repo's ``make tools-tests`` (discovery adds ``.claude/tools`` as
@@ -11,6 +12,8 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+
+import firm_core
 
 from allowlist import (
     AllowlistError,
@@ -199,6 +202,66 @@ class AddTests(unittest.TestCase):
             self.assertTrue(out["added"])
             self.assertEqual(load_allow(p), ["Bash(cargo test:*)"])
 
+    def test_refuses_a_bare_verb_wildcard_that_slash_f_would_refuse(self):
+        """`firm_into` has no floor of its own — `firm_last` checks it in the
+        caller — so a write path that skipped the check would grant exactly what
+        /f refuses, via one non-prompting pre-approved call."""
+        for rule in ("Bash(git:*)", "Bash(rm:*)", "Bash(curl:*)"):
+            with tempfile.TemporaryDirectory() as d:
+                p = self._path(d, ["Bash(git status:*)"])
+                out = add(rule, p)
+                self.assertFalse(out["added"], rule)
+                self.assertIsNotNone(out["refused"], rule)
+                # The file is untouched.
+                self.assertEqual(load_allow(p), ["Bash(git status:*)"])
+
+    def test_refuses_a_bare_wildcard_and_an_unscoped_file_root(self):
+        for rule in ("Bash(:*)", "Bash(*)", "Read(/**)", "Edit(**)"):
+            with tempfile.TemporaryDirectory() as d:
+                p = self._path(d, [])
+                out = add(rule, p)
+                self.assertFalse(out["added"], rule)
+                self.assertEqual(load_allow(p), [], rule)
+
+    def test_refusal_never_writes_even_a_scaffold(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "settings.local.json"
+            out = add("Bash(git:*)", p)
+            self.assertFalse(out["added"])
+            self.assertFalse(p.exists())
+
+    def test_a_narrow_rule_the_floor_allows_still_writes(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = self._path(d, [])
+            out = add("Bash(git status:*)", p)
+            self.assertTrue(out["added"])
+            self.assertIsNone(out["refused"])
+
+    def test_written_settings_file_is_owner_only(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "settings.local.json"
+            add("Bash(cargo test:*)", p)
+            self.assertEqual(p.stat().st_mode & 0o777, 0o600)
+
+    def test_refuses_to_clobber_an_unparseable_settings_file(self):
+        """A stray trailing comma, or a mistyped --settings pointing at some
+        other JSON, must not be silently replaced by fresh scaffolding."""
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "settings.local.json"
+            p.write_text('{"permissions": {"allow": ["a"],}}', encoding="utf-8")
+            with self.assertRaises(firm_core.SettingsError):
+                add("Bash(cargo test:*)", p)
+            # Original bytes survive.
+            self.assertIn("allow", p.read_text(encoding="utf-8"))
+
+    def test_leaves_no_temp_file_behind(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "settings.local.json"
+            add("Bash(cargo test:*)", p)
+            self.assertEqual(
+                sorted(x.name for x in Path(d).iterdir()), ["settings.local.json"]
+            )
+
 
 class CliTests(unittest.TestCase):
     """The ``--settings`` option + subcommand dispatch live in ``run()``."""
@@ -252,6 +315,16 @@ class CliTests(unittest.TestCase):
             )
             self.assertEqual(rc, 0)
             self.assertTrue(out["added"])
+
+    def test_add_dispatch_exits_non_zero_when_the_floor_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = self._write(d, ["Bash(git status:*)"])
+            rc, out = self._run_capture(
+                ["allowlist.py", "--settings", p, "add", "Bash(git:*)"]
+            )
+            self.assertEqual(rc, 1)
+            self.assertFalse(out["added"])
+            self.assertIsNotNone(out["refused"])
 
 
 if __name__ == "__main__":

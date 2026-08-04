@@ -261,7 +261,13 @@ def main(argv: list[str] | None = None) -> int:
         print("firm-last: no base repo found — nothing firmed.")
         return 0
 
-    changed = [label for label, path in targets if firm_into(path, rule)]
+    try:
+        changed = [label for label, path in targets if firm_into(path, rule)]
+    except firm_core.SettingsError as exc:
+        # An existing settings file that doesn't parse: report it rather than
+        # letting the writer replace it (or dying on a raw traceback).
+        print(f"firm-last: {exc}", file=sys.stderr)
+        return 1
     if changed:
         print(f"firm-last: firmed {rule} into {', '.join(changed)}.")
     else:

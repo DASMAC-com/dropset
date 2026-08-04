@@ -42,13 +42,21 @@ Prints JSON::
       "files": [{"path": "…", "changes": 12}],
       "runs_rust_suites": false,   // any path outside the CI code filter?
       "runs_artifact_gates": false,// any generation input touched?
-      "ready": true,               // base_fresh and not diff_empty
+      "ready": true,               // exactly `not blockers`
       "blockers": []               // why ready is false, if it is
     }
 
-``ready: false`` means **do not fan out**: either the base advanced past the
-rebase (the phantom-deletion failure the skill documents, which a line count
-structurally cannot catch) or the diff is empty. ``blockers`` names which.
+``ready: false`` means **do not fan out**. It is defined as ``not blockers``, so
+it can never drift from the reasons. Four things block:
+
+* the base advanced past the rebase (the phantom-deletion failure the skill
+  documents, which a line count structurally cannot catch);
+* the ``git fetch`` **failed**, so freshness is *unverified* rather than
+  verified-fresh — pass ``--no-fetch`` to accept the local ref deliberately;
+* nothing changed at all;
+* something changed but every changed path is an excluded generated family, so
+  there is no source to review (the step 9/10 gates still apply — this is
+  reported as its own reason rather than as "nothing to review").
 
 Standard library only. A Python skill-tool under ``.claude/tools/`` —
 deliberately **not** a Cargo workspace member (see ``CLAUDE.md`` → "Skill
@@ -61,6 +69,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -164,20 +173,50 @@ def oneline_log(rev_range: str) -> list[str]:
     return [line for line in out.splitlines() if line.strip()]
 
 
-def parse_numstat(text: str) -> list[dict]:
-    """Parse ``git diff --numstat`` into ``[{path, changes}]``, path-sorted.
+def parse_numstat_z(text: str) -> list[dict]:
+    """Parse ``git diff --numstat -z`` into ``[{path, changes}]``, path-sorted.
 
     ``--numstat`` is used rather than ``--stat`` because it is machine-readable:
-    tab-separated added/deleted counts and a raw path, with no column padding or
-    ``=>`` rename graph to unpick. A binary file reports ``-`` for both counts;
-    it still changed, so it lands with ``changes: 0`` rather than being dropped.
+    counts in decimal with a raw path, no column padding. **``-z`` is not
+    optional**, and this parser only accepts that form. Without it git renders a
+    rename as one *pretty* field — ``{infra/aws => cfg}/x.yaml`` — which begins
+    with ``{`` and so matches none of the real path prefixes the gates key on;
+    a rename that moved a generation input between trees would then read as
+    ``runs_artifact_gates: false`` and silently skip the conformance gate. Plain
+    output also *quotes* non-ASCII paths (``"na\\303\\257ve dir/f.md"``), quote
+    characters and octal escapes included. ``-z`` fixes both.
+
+    The ``-z`` layout is NUL-separated and unambiguous::
+
+        "3\\t4\\tplain/path"        one field: counts and path, tab-separated
+        "-\\t-\\tbinary/path"       a binary file reports "-" for both counts
+        "0\\t0\\t", "old", "new"    a rename: EMPTY path, then two path fields
+
+    So a rename is detected by the trailing-empty path field, and the two
+    following fields are its source and destination; the **destination** is what
+    a review cares about. A binary file still changed, so it lands with
+    ``changes: 0`` rather than being dropped.
     """
+    fields = text.split("\0")
+    if fields and fields[-1] == "":
+        fields.pop()
+
     files: list[dict] = []
-    for line in text.splitlines():
-        parts = line.split("\t")
+    i = 0
+    while i < len(fields):
+        parts = fields[i].split("\t")
         if len(parts) < 3:
+            i += 1
             continue
-        added, deleted, path = parts[0], parts[1], parts[-1]
+        added, deleted, path = parts[0], parts[1], parts[2]
+        if path == "":
+            # Rename/copy: consume this record plus its source and destination.
+            if i + 2 >= len(fields):
+                break  # truncated trailer — nothing trustworthy left to read
+            path = fields[i + 2]
+            i += 3
+        else:
+            i += 1
         changes = 0
         for count in (added, deleted):
             if count.isdigit():
@@ -192,11 +231,26 @@ def write_diff(base_ref: str, out_path: Path) -> int:
 
     The diff is streamed straight to the file — it never passes through this
     process's memory, and never through the model's context.
+
+    Two deliberate choices:
+
+    * **The excludes are ``:(top,exclude)``, with no positive pathspec.** A bare
+      ``"."`` limiter would resolve against the *process* cwd, so running from a
+      subdirectory would silently scope the written diff to that subtree while
+      the repo-wide ``--numstat`` call disagreed with it. ``top`` anchors each
+      exclude at the repo root, and omitting the positive pattern keeps the diff
+      repo-wide from anywhere.
+    * **Owner-only mode.** A review diff carries whatever the branch changed —
+      possibly an added fixture key or a config token — and it lands in a shared
+      temp tree, so it gets ``0o600`` for the same reason ``run_quiet.py`` gives
+      its captured logs. Truncating an existing ``out_path`` *is* intended: the
+      rewrite-every-run behavior is what retires the stale-diff hazard.
     """
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    pathspec = [".", *(f":(exclude){p}" for p in DIFF_EXCLUDES)]
+    out_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    pathspec = [f":(top,exclude){p}" for p in DIFF_EXCLUDES]
     try:
-        with open(out_path, "w", encoding="utf-8", errors="replace") as fh:
+        fd = os.open(out_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8", errors="replace") as fh:
             completed = subprocess.run(
                 ["git", "diff", f"{base_ref}..HEAD", "--", *pathspec],
                 stdout=fh,
@@ -223,7 +277,17 @@ def count_lines(path: Path) -> int:
 
 
 def gate(base: str, out: Path, fetch: bool = True) -> dict:
-    """Run the whole preamble and return the verdict dict (see module docs)."""
+    """Run the whole preamble and return the verdict dict (see module docs).
+
+    ``ready`` is derived from ``blockers`` — never computed alongside it — so the
+    two cannot disagree about whether the fan-out may proceed.
+    """
+    if base.startswith("-"):
+        # `base` is interpolated into argv; a leading dash would be read by git
+        # as an option rather than a ref. No shell is involved, so this is option
+        # injection rather than command injection, but refuse it regardless.
+        raise ReviewDiffError(f"invalid base branch name: {base!r}")
+
     base_ref = f"origin/{base}"
 
     fetched = False
@@ -233,39 +297,57 @@ def gate(base: str, out: Path, fetch: bool = True) -> dict:
             _git(["fetch", "origin", base])
             fetched = True
         except ReviewDiffError as exc:
-            # Offline or a missing remote must not sink the review: fall back to
-            # the local ref and say so, rather than pretending the base is fresh.
             fetch_error = str(exc)
 
     base_ahead = oneline_log(f"HEAD..{base_ref}")
     commits = oneline_log(f"{base_ref}..HEAD")
     diff_lines = write_diff(base_ref, out)
-    files = parse_numstat(_git(["diff", "--numstat", f"{base_ref}..HEAD"]))
+    files = parse_numstat_z(_git(["diff", "--numstat", "-z", f"{base_ref}..HEAD"]))
 
     paths = [f["path"] for f in files]
-    runs_rust_suites = any(
-        not matches_any(p, CODE_FILTER_EXCLUDES) for p in paths
-    )
+    runs_rust_suites = any(not matches_any(p, CODE_FILTER_EXCLUDES) for p in paths)
     runs_artifact_gates = any(matches_any(p, GENERATION_INPUTS) for p in paths)
 
     base_fresh = not base_ahead
     diff_empty = diff_lines == 0
 
     blockers = []
+    if fetch_error is not None:
+        # A failed fetch means `base_ahead` was computed against a possibly-stale
+        # local ref, so freshness is *unverified* — not verified-fresh. Blocking
+        # it is the whole point: an unverified base is exactly the phantom-
+        # deletion condition the gate exists to catch. `--no-fetch` is the
+        # explicit, deliberate way to review against the local ref.
+        blockers.append(
+            f"could not fetch {base_ref} ({fetch_error}) — freshness is "
+            f"unverified against a possibly-stale local ref; fix the remote, or "
+            f"pass --no-fetch to accept the local ref deliberately"
+        )
     if not base_fresh:
         blockers.append(
             f"{base_ref} has {len(base_ahead)} commit(s) HEAD lacks — re-fetch, "
             f"rebase onto {base_ref}, and re-run this gate before fanning out"
         )
-    if diff_empty:
+    if not files:
         blockers.append(
-            f"{out} is empty — nothing to review (check the base and the branch)"
+            f"no files changed between {base_ref} and HEAD — nothing to review "
+            f"(check the base and the branch)"
+        )
+    elif diff_empty:
+        # Distinct from "nothing changed": every changed path is an excluded
+        # generated family, so there is no *source* to fan out over — but the
+        # step 9/10 artifact and suite gates still have real work to do.
+        blockers.append(
+            f"{out} is empty because every changed path is an excluded generated "
+            f"family ({', '.join(DIFF_EXCLUDES)}) — no source to review, but the "
+            f"regeneration and suite gates still apply"
         )
 
-    verdict = {
+    return {
         "base": base,
         "base_ref": base_ref,
         "fetched": fetched,
+        "fetch_error": fetch_error,
         "base_fresh": base_fresh,
         "base_ahead": base_ahead,
         "commits": commits,
@@ -275,12 +357,9 @@ def gate(base: str, out: Path, fetch: bool = True) -> dict:
         "files": files,
         "runs_rust_suites": runs_rust_suites,
         "runs_artifact_gates": runs_artifact_gates,
-        "ready": base_fresh and not diff_empty,
+        "ready": not blockers,
         "blockers": blockers,
     }
-    if fetch_error is not None:
-        verdict["fetch_error"] = fetch_error
-    return verdict
 
 
 def run(argv: list[str]) -> int:
