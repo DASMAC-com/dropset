@@ -201,7 +201,7 @@ export const useRouterQuote = (
           status: "error",
           error: describe(e),
         });
-        // Stop the chain on a terminal rejection — an unroutable pair or an
+        // Stop the chain on a terminal rejection — an un-routable pair or an
         // amount the aggregator won't fill stays that way, and re-asking every
         // QUOTE_REFRESH_MS would burn the rate-limit budget for nothing. The
         // next input change restarts it. Anything else (a thin book, a

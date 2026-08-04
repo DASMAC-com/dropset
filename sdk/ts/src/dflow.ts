@@ -242,7 +242,7 @@ export function parseDflowQuote(raw: unknown): DflowQuote {
  * an ATA of the output mint and the two must agree.
  *
  * Throws {@link DflowError} — `rateLimited` on 429, `api` on any other non-2xx
- * or an unparseable body, `network` when the request never completed.
+ * or a body that fails validation, `network` when the request never completed.
  */
 export async function fetchDflowQuote(
   input: DflowQuoteInput,
