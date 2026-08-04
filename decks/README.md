@@ -41,20 +41,22 @@ deps, and theme don't fight the product build.
 - `public/` — deck assets, from three sources:
 
   - Everything in the repo-root `brand-assets/` — the single source of
-    truth for shared brand assets, currently `dropset-wordmark.png`,
-    `dasmac-wordmark.png` and `favicon-with-stroke.svg` — is **copied** in
-    by `../brand-assets/copy-brand-assets.mjs` on the `predev` /
-    `prebuild` hooks, so the brand assets stay DRY without a symlink
-    escaping the deck's Vercel Root Directory. The script copies the
-    directory rather than a list, so a new shared asset is a drop-in file.
-    They're generated, so each is gitignored.
+    truth for **every** brand asset, including ones only one app renders
+    — is **copied** in by `../brand-assets/copy-brand-assets.mjs` on the
+    `predev` / `prebuild` hooks, so the brand assets stay DRY without a
+    symlink escaping the deck's Vercel Root Directory. The script copies
+    the directory rather than a list, so a new asset is a drop-in file,
+    and the whole folder goes to every app rather than a per-app subset.
   - `public/remote/` is **mirrored** from the URLs in
     `remote-assets.json` by `scripts/fetch-remote-assets.mjs`, on the
     same two hooks — images we don't hold a copy of, like the team
-    headshots the marketing site serves. Also generated, also gitignored.
+    headshots the marketing site serves.
   - `public/screens/` holds our own screen captures, which are
     **committed**: nothing external hosts them, so there's nothing to
     mirror.
+
+  The first two are generated, so `public/`'s entries are gitignored with
+  a carve-out for the committed `public/screens/` — see `.gitignore`.
 
 - `remote-assets.json` — the `<filename>: <url>` manifest the mirror
   reads. Adding a remote image to a slide is one line here plus an
