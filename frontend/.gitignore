@@ -20,8 +20,8 @@
 # fetched (scripts/fetch-token-icons.mjs, scripts/fetch-wallet-icons.mjs).
 # Ignoring the directory keeps that invariant self-maintaining: a new brand
 # asset needs no edit here, and a file committed into public/ by hand is
-# caught. A shared asset belongs in brand-assets/, an app-specific one in a
-# script that generates it.
+# caught. A brand asset belongs in brand-assets/ whether one app renders it
+# or both; anything else under public/ comes from a generator script here.
 /public/
 
 .DS_Store

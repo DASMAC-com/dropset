@@ -34,7 +34,10 @@ const dest = resolve(repoRoot, destArg);
 // Copy the contents of brand-assets/ rather than a hardcoded list, so a new
 // brand asset is a drop-in file with no edit to this script. Subdirectories
 // are copied whole, so assets can later be grouped (e.g. brand-assets/logos/)
-// without touching this script. Skip this script's own file — it lives among
+// without touching this script — though a subdirectory copy merges into the
+// destination, so don't name one after a committed public/ subdirectory
+// (decks/public/screens/ holds captures a brand-assets/screens/ would
+// overwrite on every build). Skip this script's own file — it lives among
 // the assets it copies, and it isn't one.
 const entries = readdirSync(source, { withFileTypes: true }).filter(
   (entry) => entry.name !== selfName,
