@@ -4,8 +4,6 @@ description: Adversarial pre-review — mark the Linear issue In Progress on inv
 user-invocable: true
 ---
 
-<!-- cspell:word oneline -->
-
 <!-- cspell:word unstarted -->
 
 <!-- cspell:word pathspec -->
@@ -319,38 +317,38 @@ PR-authoring **writes** (`create_pull_request`,
    but write the **diff to a single file** rather than into
    context, so the fan-out below hands each agent a path
    instead of inlining N resident copies (per `CLAUDE.md` →
-   "Context economy"; the file-handoff pattern). `git diff`'s
-   `--output=<file>` flag writes straight to the file with no
-   shell redirect (so it stays a `Bash(git diff:*)`
-   allow-rule) **and** keeps the bulky diff out of the main
-   transcript entirely.
+   "Context economy"; the file-handoff pattern). The tool
+   below streams the diff straight to that file — no shell
+   redirect, and the bulky diff never enters the main
+   transcript.
 
    **Diff against `origin/<base>`, not a local branch, and
-   exclude the generated families.** Two adjustments to the
-   `git diff` below:
+   exclude the generated families.** `review_diff.py` below
+   does both — the reasoning, so the tool's behavior isn't a
+   black box:
 
    - **Ref: `origin/<base>..HEAD`.** In a worktree, the local
      base branch is stale behind origin by already-merged
      PRs, so `git diff <base>..HEAD` pulls unrelated
      merged-PR files into `review-diff.txt` (the stale-diff
-     hazard, reached via the wrong ref). Step 2 already ran
-     `git fetch origin <base>`, so `origin/<base>` is fresh —
-     diff and size against it.
+     hazard, reached via the wrong ref). The tool fetches
+     `origin/<base>` itself and diffs against it.
    - **Exclude generated files with pathspec `:(exclude)`
      globs.** A review lens reads source, not regenerated
      output — yet a lockfile or a regenerated SDK/IDL tree
      can be the *bulk* of a diff (a 6001-line diff that was
      ~3607 lines of `pnpm-lock.yaml`, read by all 7 agents),
-     replayed per agent and per turn. Exclude the known
-     generated families so each lens reads source-only:
-     lock files (`pnpm-lock.yaml`, `Cargo.lock`), the
-     generated SDK clients (`sdk/ts/src/generated`,
-     `sdk/rs/src/generated`), and the generated IDL
-     (`sdk/idl/dropset.json`). (These are regenerated and
-     gate-checked in step 9 — reviewing their diff by eye
-     adds nothing.) The `:(exclude)` pathspec globs ride the
-     `git diff` command line, so it still reduces to the
-     `Bash(git diff:*)` allow-rule.
+     replayed per agent and per turn. The tool's
+     `DIFF_EXCLUDES` holds the known generated families so
+     each lens reads source-only: lock files
+     (`pnpm-lock.yaml`, `Cargo.lock`), the generated SDK
+     clients (`sdk/ts/src/generated`, `sdk/rs/src/generated`),
+     and the generated IDL (`sdk/idl/dropset.json`). (These
+     are regenerated and gate-checked in step 9 — reviewing
+     their diff by eye adds nothing.) Note the verdict's
+     `files` list is **unfiltered**, so an excluded family
+     still shows up there as a changed path — which is what
+     lets step 9 see that it needs to run.
 
    **Write it to the session scratchpad, not `/tmp`.** The
    environment designates a per-session scratchpad directory
@@ -361,63 +359,103 @@ PR-authoring **writes** (`create_pull_request`,
    and the fan-out then reviews the **wrong diff** — a real
    bug that has cost an entire 6-agent pass. Write to
    `<scratchpad>/review-diff.txt` (substitute the actual
-   scratchpad path), then **verify the file is this branch's
-   diff before fanning out** — the freshness gate below, plus
-   a one-line `wc -l` (and, if in any doubt, a `head`) so a
-   zero-length or stale file is caught now, not after N agents
-   have read it:
+   scratchpad path), and **verify the file is this branch's
+   diff before fanning out** — which is what the gate below
+   does, so a zero-length or stale file is caught now, not
+   after N agents have read it.
+
+   This whole preamble — the fetch, the two `git log` range
+   checks, the excluded `git diff` into the file, the per-file
+   stat, and the line count — is fixed string/path logic
+   resolving to a mechanical verdict, so it lives in the
+   skill-tool `.claude/tools/review_diff.py` (per `CLAUDE.md`
+   → "Skill tooling"). **One** call replaces the six commands
+   and returns **one** compact JSON object instead of six tool
+   results:
 
    ```sh
-   git fetch origin <base>
-   git log HEAD..origin/<base> --oneline
-   git diff origin/<base>..HEAD --output=<scratchpad>/review-diff.txt -- . \
-     ':(exclude)pnpm-lock.yaml' ':(exclude)Cargo.lock' \
-     ':(exclude)sdk/ts/src/generated' ':(exclude)sdk/rs/src/generated' \
-     ':(exclude)sdk/idl/dropset.json'
-   git log origin/<base>..HEAD --oneline
-   git diff --stat origin/<base>..HEAD
-   wc -l <scratchpad>/review-diff.txt
+   python3 .claude/tools/review_diff.py --base <base> \
+     --out <scratchpad>/review-diff.txt
    ```
 
-   The commit log is small, so it prints to context and is
-   passed inline; the diff lives only in
+   ```json
+   {
+     "fetched": true,             // false if the fetch failed or was skipped
+     "fetch_error": null,         // non-null → freshness is UNVERIFIED
+     "base_fresh": true,          // false iff base_ahead is non-empty
+     "base_ahead": [],            // commits the base has that HEAD lacks
+     "commits": ["abc1234 Subject"],
+     "diff_path": "…/review-diff.txt",
+     "diff_lines": 1234,
+     "diff_empty": false,
+     "files": [{"path": "…", "changes": 12}],
+     "runs_rust_suites": false,   // any path outside CI's code filter?
+     "runs_artifact_gates": false,// any generation input touched?
+     "ready": true,               // exactly `not blockers`
+     "blockers": []               // why ready is false, if it is
+   }
+   ```
+
+   **`ready` is the gate: do not fan out unless it is `true`.**
+   It is defined as `not blockers`, so the two can never
+   disagree, and the tool exits non-zero when it is false — the
+   check can't be skipped by only reading the status.
+   `blockers` names the reason, and there are four: a stale
+   base, a **failed fetch** (freshness unverified rather than
+   verified-fresh — pass `--no-fetch` to accept the local ref
+   deliberately), nothing changed at all, or something changed
+   but every path is an excluded generated family (no source to
+   review, though the step 9/10 gates still apply — reported as
+   its own distinct reason). `commits` is small, so pass it
+   inline to the lenses; the diff itself lives only in
    `<scratchpad>/review-diff.txt`.
 
-   **Assert base-freshness before fanning out — `wc -l` alone
-   is not the gate.** The base can advance *past* the step-2
-   rebase while the review is in flight: worktrees share one
-   `.git`, so a sibling session's fetch (or a merge landing on
-   `main`) moves `origin/<base>` under this session with no
-   fetch of its own. The review diff then reads as if this
-   branch **deleted** whatever the base just added — a phantom
-   `-` hunk. That is not hypothetical: on one run a
-   newly-landed test showed up as a phantom deletion and
-   **both** the correctness and completeness lenses
-   independently flagged it as a blocking coverage regression;
-   the whole fan-out was spent adjudicating a false positive,
-   then re-run from scratch on a corrected base along with the
-   full test suite. The prescribed `wc -l` check **passed**
-   throughout — a line count cannot distinguish a phantom
-   deletion from real content, so it never surfaces this.
+   The tool **owns** three path lists that used to sit as
+   prose here and were re-typed by hand each run — the
+   generated-family diff excludes, the mirror of `test.yml`'s
+   `code` filter, and the generation inputs. Keeping them in
+   one place is why `runs_rust_suites` and
+   `runs_artifact_gates` can be read off the verdict in steps
+   9 and 10 rather than re-derived. When one of those lists
+   changes upstream, change it in `review_diff.py`.
 
-   So gate on the two checks the command block above adds,
-   both **before** spawning any agent:
+   `--out` is **required**, so the path can't be omitted — but
+   it is *not* validated against the scratchpad root, so
+   substitute the real path rather than guessing: a guessed
+   path gets created and written, not rejected. What the tool
+   does remove is the **stale**-file hazard, since it rewrites
+   `--out` on every run (owner-only, `0o600` — a review diff
+   can carry a fixture key or a config token, so it gets the
+   same treatment as a `run_quiet` log).
 
-   - **`git log HEAD..origin/<base> --oneline` must be
-     empty.** A non-empty result means the base has commits
-     this branch doesn't — re-fetch, re-rebase onto
-     `origin/<base>`, regenerate `review-diff.txt`, and only
-     then fan out. (This is the same command you'd otherwise
-     reach for to *diagnose* the pollution after the lenses
-     report it; running it first costs one line and saves the
-     pass.)
-   - **Scan `git diff --stat origin/<base>..HEAD` for foreign
-     files.** Any path this branch never touched is base drift
-     leaking in. The `--stat` view catches what `wc -l`
-     structurally cannot, and it is cheap — one line per file.
+   **Why `base_fresh` is a field and not a line count.** The
+   base can advance *past* the step-2 rebase while the review
+   is in flight: worktrees share one `.git`, so a sibling
+   session's fetch (or a merge landing on `main`) moves
+   `origin/<base>` under this session with no fetch of its own.
+   The review diff then reads as if this branch **deleted**
+   whatever the base just added — a phantom `-` hunk. That is
+   not hypothetical: on one run a newly-landed test showed up
+   as a phantom deletion and **both** the correctness and
+   completeness lenses independently flagged it as a blocking
+   coverage regression; the whole fan-out was spent
+   adjudicating a false positive, then re-run from scratch on a
+   corrected base along with the full test suite. A line count
+   **passed** throughout — it cannot distinguish a phantom
+   deletion from real content, so it never surfaces this, which
+   is why `diff_lines` alone is not the gate.
 
-   Do not fan out until the freshness gate is clean **and**
-   the `wc -l` confirms the file holds this branch's diff.
+   So when `base_fresh` is `false` (equivalently, `base_ahead`
+   is non-empty), the base has commits this branch doesn't:
+   re-fetch, re-rebase onto `origin/<base>`, re-run
+   `review_diff.py`, and only then fan out. **Nothing is
+   spawned until `ready` is `true`.**
+
+   Read the `files` list for **sizing and tiering** (which
+   crates and surfaces the diff spans, feeding the fan-out
+   scaling below) — not as a second freshness check: once
+   `base_fresh` holds, a foreign path can't be base drift,
+   because there is no drift to leak.
 
    **Brief every sub-agent on the shell rules.** Prepend
    the standing sub-agent brief from
@@ -528,6 +566,23 @@ PR-authoring **writes** (`create_pull_request`,
      must reason about the surrounding code. When no such map
      exists, don't manufacture one — the lens reads what it
      needs once, per the budget above.
+   - **The rule covers reference / prior-art files too, not
+     only the diff's own files.** This is the reading that
+     gets missed — the rule above sounds like it is about the
+     files the diff touches. A brief that *names* a reference
+     file for the lens to go read (the exemplar module, the
+     pattern the change imitates, the type it must stay
+     byte-compatible with) re-buys context the session already
+     paid for just as surely. One correctness lens ran
+     **683.5k / 10 turns** against a ≤ 6-turn cap — roughly 4×
+     the cross-check on the same diff — not by sweeping the
+     repo (the failure mode the freshness rules below address)
+     but by cold-reading two named reference files
+     (`sdk/rs/src/events.rs`, `tui/src/fills.rs`) whose
+     relevant excerpts the main loop had already read earlier
+     in the same session. So: **if the main loop has read it,
+     the excerpt goes inline in the brief.** A lens brief never
+     names a file path the main loop could have quoted.
    - **State the scope line verbatim:** *"adjudicate from the
      provided diff + excerpts; cold-read only a file no
      excerpt covers."* This is what turns a survey back into
@@ -570,9 +625,10 @@ PR-authoring **writes** (`create_pull_request`,
    (a 4-line reword spawned a 70.4k-input agent; a 3-file
    doc-only diff a 375.4k one; a 24-line infra diff four
    agents including a 277.8k cross-check for a single nit).
-   So first size the diff from the commit log and the line
-   count (`git diff --stat origin/<base>..HEAD`), and **short-circuit
-   when it is trivial** — small and confined to one of:
+   So first size the diff from the step-5 verdict's `commits`,
+   `diff_lines`, and per-file `files` list, and
+   **short-circuit when it is trivial** — small and confined
+   to one of:
    comment / doc / Markdown-only, a config or workflow
    tweak, a rename, or a handful of lines with no new
    control flow. For a trivial diff, spawn **one** scoped
@@ -605,7 +661,17 @@ PR-authoring **writes** (`create_pull_request`,
      just the cross-check: run **one** scoped move-fidelity +
      straggler-refs lens (is the move faithful — no dropped or
      altered lines — and are all references to the moved code
-     updated to its new home?), **plus one** small new-logic
+     updated to its new home?). **Name the Grep tool for the
+     straggler search**, and hand over the hit-list per the
+     hoist rule below rather than leaving the transport to the
+     lens: Grep honors gitignore, so it never returns a match
+     from build output. A bare recursive shell `grep` over a
+     *package root* does not — one straggler check aimed at
+     `decks/` matched a minified webpack chunk under the
+     gitignored `decks/.next/` and returned a ≈5.1k grammar
+     blob (48% of that session's entire Bash spend, from one
+     call) for a question whose answer was zero hits. Add
+     **one** small new-logic
      lens **only** when a few genuinely-new additions rode
      along with the move. Do **not** turn loose all of
      correctness / completeness / style re-reviewing unchanged
@@ -716,13 +782,32 @@ PR-authoring **writes** (`create_pull_request`,
    greps for rules the diff barely touches. Tighten the
    briefing:
 
-   - **Name the specific implicated doc**, not "read
-     `CLAUDE.md` and the relevant convention doc(s)". Point
-     the lens at the one section the diff actually bears on.
-   - **Run any needed repo-wide grep once, here in the main
-     loop**, and hand the result set to the lens; cap its
-     shell budget to "adjudicate from the diff + the provided
-     grep — don't re-derive".
+   - **Cap the freshness lens at two named sections, and hand
+     their excerpts inline — not their names.** Not "read
+     `CLAUDE.md` and the relevant convention doc(s)", and not
+     a list of four to six files either: a brief naming
+     several files is a **reading list, not a scope**. Pick at
+     most **two** sections the diff actually bears on, paste
+     those excerpts into the prompt, and state the turn cap as
+     a **hard stop** — at the cap the lens reports what it has
+     rather than reading on. This is the one lens whose
+     positive scope ("read these named convention files")
+     otherwise reads as a *grant* rather than a restriction:
+     three sessions blew their stated cap on an open-ended
+     repo sweep (648.3k / 9 turns, 826.9k / 15 turns, and a
+     2.0M / 19-turn run on the same failure mode) while the
+     lenses handed excerpts came in 3–4× cheaper.
+   - **Hoist every repo-wide grep into the main loop — run it
+     once, here, and hand the lens the hit-list.** This is
+     **unconditional for any "verify X across the repo" ask**,
+     however that ask is dressed up. One run briefed the lens
+     to confirm each new `cfg/dictionary.txt` word appears in
+     ≥ 2 files — a repo-wide census in a diff review's
+     clothing, and precisely the shape this rule already
+     forbids. A lens brief carries the **result set**, never
+     the instruction to sweep; cap its shell budget to
+     "adjudicate from the diff + the provided grep — don't
+     re-derive".
    - **Confirm a rule's presence or absence by `Read`ing the
      current file, never by inferring from the diff's `-`/`+`
      lines.** On a *removal* diff the freshness lens has read
@@ -996,8 +1081,34 @@ PR-authoring **writes** (`create_pull_request`,
    author's diff (or a fix from step 8) may have changed
    the program without regenerating these, so refresh them
    here and commit any diff; otherwise the ready PR fails
-   CI on a stale artifact. **Run all three regeneration
-   gates unconditionally — even when the author says they
+   CI on a stale artifact.
+
+   **First, the path gate: does this diff touch a generation
+   *input* at all?** A generated artifact can only go stale if
+   the source it is generated from changed. Step 5's
+   `review_diff.py` verdict already answers this —
+   **`runs_artifact_gates`** — from the inputs it owns:
+
+   - **IDL** ← the program (`programs/**`).
+   - **SDK clients** ← the committed IDL and the Codama
+     config (`sdk/idl/**`, `sdk/codama/**`).
+   - **Conformance vectors** ← their generators
+     (`sdk/math-core/**`, `sdk/interface/**`).
+
+   When it is **`false`**, all three artifacts are provably
+   unchanged: **skip the gates and say so in the summary.**
+   This is a rule, not a per-run judgment call — a four-file
+   diff confined to `decks/` cannot stale an IDL, and forcing
+   the gates there buys three multi-minute builds to confirm a
+   tautology. (CI agrees structurally: `test.yml` path-filters
+   such a diff out entirely, so its Tests jobs return pass in
+   seconds as no-ops.) The flag is deliberately generous about
+   the marginal case — it keys on the inputs, so a Rust crate
+   the generators depend on transitively still trips it; the
+   carve-out only fires on a clearly-unrelated diff.
+
+   Otherwise, when the diff *does* touch an input: **run all
+   three regeneration gates — even when the author says they
    already regenerated.** A subset spot-check has twice let a stale
    artifact through to a required-CI failure (a `MarketHeader`
    that shrank two bytes left the conformance vectors stale;
@@ -1013,7 +1124,18 @@ PR-authoring **writes** (`create_pull_request`,
    log to a temp file and prints only a one-line summary on
    success, or the failing tail + log path on failure (which
    you then `Read` by slice). Only the `git diff` result,
-   not the build cascade, needs to reach context:
+   not the build cascade, needs to reach context.
+
+   **If one of these targets appears to hang, suspect the
+   cargo build lock before anything else.** A concurrent
+   `make demo` / running validator in another worktree holds
+   it, and cargo then blocks silently. The quiet runner
+   surfaces this: it echoes cargo's
+   `Blocking waiting for file lock …` line live and flags it
+   in the final summary, so a blocked run announces itself
+   rather than reading as a slow one. On seeing it, wait or
+   ask the user to stop the other build — don't start
+   diagnosing with `pgrep`:
 
    - **IDL** (needs the Solana/Anchor toolchain):
 
@@ -1121,7 +1243,32 @@ PR-authoring **writes** (`create_pull_request`,
    workflow runs `make test` and
    `make test-no-teardown`; run both locally so the
    green checks GitHub needs for auto-merge are
-   already verified here. Both emit a long `Compiling …`
+   already verified here.
+
+   **Mirror CI's path filter, including when it skips.**
+   `test.yml` gates its Tests jobs on a `code` filter that
+   **excludes** the doc / frontend / decks / `.claude` / config
+   surfaces, under a `predicate-quantifier` of `every` — so a
+   diff confined entirely to them makes all three Tests jobs
+   pass in seconds as path-filtered no-ops. Step 5's
+   `review_diff.py` verdict already decides this:
+   **`runs_rust_suites`**, computed from the mirror of that
+   filter the tool owns (so the two can't drift by hand — when
+   the workflow's filter changes, change
+   `CODE_FILTER_EXCLUDES` in `review_diff.py`).
+
+   When it is **`false`**, **skip both Rust targets** and
+   record the skip with its reason in the summary — running
+   them mirrors nothing, because CI isn't running them either.
+   When it is `true`, run both.
+
+   Keep the `sdk/ts` node suite below in mind separately:
+   `sdk/ts/**` sits inside the excluded set, but the **SDK**
+   workflow has no path filter at all, so a diff touching it
+   still wants that suite even when `runs_rust_suites` is
+   `false`.
+
+   Both emit a long `Compiling …`
    cascade ahead of the test result, so run them **through
    the quiet runner** (per `CLAUDE.md` → "Context economy")
    — it routes the build/test log to a temp file and
@@ -1735,6 +1882,36 @@ PR-authoring **writes** (`create_pull_request`,
    Each poll is resumable — a fresh call returns the current
    snapshot.
 
+   **Give the queue entry a settle window: the first probe
+   waits.** GitHub does not register the merge-queue entry
+   synchronously with the enqueue, so a probe fired the
+   instant a **successful** `gh pr merge --auto` returns
+   (exit 0) reports:
+
+   ```json
+   {
+     "state": "OPEN",
+     "merged": false,
+     "mergeQueueEntry": null,
+     "autoMergeRequest": null
+   }
+   ```
+
+   — all-null on a PR that isn't registered **yet**; a
+   re-probe seconds later returns
+   `mergeQueueEntry: {"state": "QUEUED"}`. So let the *first*
+   probe wait out the same scheduled-wakeup pacing as every
+   later one, rather than firing immediately. Exit 0 from
+   `gh pr merge --auto` confirms only that auto-merge was
+   **enabled**, not that the queue entry exists.
+
+   This is the **timing twin** of the `autoMergeRequest`
+   false positive described next. That one was fixed by
+   keying on `mergeQueueEntry` instead — but inside the
+   registration window *both* fields are null, so the
+   "both null" test does **not** save you here. Never treat
+   the first post-enqueue probe as authoritative.
+
    This is the one `gh` **read** the skill makes (mirror of
    the enqueue write). The signal that distinguishes "still
    queued" from "silently removed" is the PR's
@@ -1786,8 +1963,8 @@ PR-authoring **writes** (`create_pull_request`,
      will have moved the issue to **Done** on this signal —
      report that it did, don't hand-move it). Key on `merged`
      / `state`.
-     Then **dismiss this PR's own GitHub notification** so it
-     doesn't linger (the immediate companion to
+     Then **mark this PR's own GitHub notification done** so
+     it doesn't linger (the immediate companion to
      `housekeeping`'s merged-PR notification sweep): list the
      notifications and dismiss the one whose
      `subject.url` ends in this PR's number — never
@@ -1803,9 +1980,18 @@ PR-authoring **writes** (`create_pull_request`,
      ```txt
      mcp__github__dismiss_notification(
        threadID: "<this PR's notification id>",
-       state: "read",
+       state: "done",
      )
      ```
+
+     `state: "done"`, **not** `"read"` — `"read"` only clears
+     the unread marker and the thread stays in the GitHub
+     inbox, which is exactly the lingering-notification
+     complaint this step exists to answer. A merged PR has
+     nothing left to come back to, so `"done"` is the right
+     terminal state. Doing it here rather than deferring to
+     the next `housekeeping` pass is the point: otherwise the
+     flow finishes and the notification sits until morning.
 
      If no notification matches (already cleared), skip it.
 
@@ -1830,8 +2016,64 @@ PR-authoring **writes** (`create_pull_request`,
      → still queued; keep polling.
 
    - `state: "OPEN"` with both `mergeQueueEntry` **and**
-     `autoMergeRequest` null → it was **taken out** of the
-     queue (a required check went red, a conflict appeared,
-     or someone dequeued it). Report the removal, naming the
-     cause from a fresh `gh pr checks <number>` if a required
-     check shows `fail`.
+     `autoMergeRequest` null → **not conclusive on its own.**
+     Per the settle window above, this is also what the
+     registration gap looks like. Treat it as terminal — the
+     PR was **taken out** of the queue (a check went red, a
+     conflict appeared, or someone dequeued it) — only when
+     one of these holds:
+
+     - an **earlier** probe in this watch already returned a
+       non-null `mergeQueueEntry`, so the entry demonstrably
+       existed and is now gone; or
+     - **two consecutive** all-null probes, spaced by the
+       pacing delay, have returned.
+
+     Until then it is the registration window: keep polling,
+     and stay silent. A single all-null read right after the
+     enqueue means "not registered yet", not "removed".
+
+     **Diagnose a confirmed removal from the queue branch's
+     CI, not from the PR's checks.** The queue does not
+     re-run the PR branch's checks — it builds a temporary
+     branch (`gh-readonly-queue/<base>/pr-<number>-<sha>`,
+     i.e. `main` with this PR merged into it) and runs CI
+     *there*. A failure on that branch dequeues the PR while
+     leaving **every** check on the PR itself green, so
+     `gh pr checks <number>` reports "nothing failed" on a PR
+     that was demonstrably kicked out. Find the queue run
+     instead — a bare `gh run list` reduces to a
+     `Bash(gh run list:*)` allow-rule — and pick the entry
+     whose `headBranch` carries the `pr-<number>-` prefix:
+
+     ```sh
+     gh run list --limit 20 --json headBranch,name,status,conclusion,url
+     ```
+
+     Key on **job** conclusions, not the parent run's
+     `status`: a run can still read `in_progress` while one of
+     its jobs has already failed and triggered the dequeue.
+     Once the failing job is identified, pull it with the
+     same `get_job_logs` call as the CI-wait failure path
+     (`failed_only: true`, `tail_lines: 100`).
+
+     Then split the response by **what** failed — the two
+     causes want opposite handling:
+
+     - **Transient infrastructure** — a toolchain, network,
+       or cache failure **before any test executed** (e.g.
+       `Cache not found for input keys: toolchain-solana-…`
+       followed by `Failed to install platform-tools`).
+       Nothing is wrong with the code. Re-enqueue, and say
+       that's what you're doing and why.
+     - **A real `main`-integration conflict** — a test
+       assertion failure, compile error, or lint violation on
+       the queue branch. This is exactly what the queue
+       exists to catch, and it means the PR conflicts
+       semantically with code that landed after its last
+       rebase. Do **not** re-enqueue. Catalogue it as
+       blocking, re-draft the PR, and tell the user to rebase
+       on `main` and re-run `/review-pr`.
+
+     Report the removal either way, naming the queue-branch
+     job that caused it.

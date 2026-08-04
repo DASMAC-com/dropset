@@ -34,6 +34,7 @@ coingecko
 coinmarketcap
 coprocess
 cpis
+creat
 crossterm
 dasmac
 dedup
@@ -90,14 +91,17 @@ mpsc
 multisigs
 mxne
 nohup
+numstat
 oanda
 ohlcv
+oneline
 onramps
 paytrie
 pdas
 permissioned
 permissioning
 permissionless
+pgrep
 pkill
 prebuild
 predev
@@ -162,6 +166,7 @@ tsup
 txns
 unfirmable
 unmirrored
+unpullable
 unstarted
 unwritable
 upserts
@@ -180,6 +185,7 @@ wordmark
 worktree
 worktrees
 worldlibertyfi
+wronly
 zarp
 zaru
 zeroable

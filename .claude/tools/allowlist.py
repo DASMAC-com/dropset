@@ -5,8 +5,10 @@ for the ``permissions.allow`` array that both ``firm-perms`` and
 into the model's context (per ``CLAUDE.md`` → "Context economy" / "Skill
 tooling").
 
-Two subcommands, each reading a settings file and printing JSON to stdout.
-``--settings PATH`` is a top-level option, so it precedes the subcommand
+Three subcommands. All three print JSON to stdout; ``covers`` and ``cruft``
+only read the settings file, while ``add`` **writes** it (and deliberately does
+not read it first — that is the whole point). ``--settings PATH`` is a top-level
+option, so it precedes the subcommand
 (``allowlist.py --settings PATH covers RULE``):
 
 * ``covers RULE`` — is ``RULE`` already granted by the
@@ -16,6 +18,19 @@ Two subcommands, each reading a settings file and printing JSON to stdout.
   ``would_subsume`` lists the indices of existing narrower entries the new rule
   would make redundant. The membership + subsumption logic is ``firm_core``'s,
   so it matches what ``firm_last.py`` writes.
+* ``add RULE`` — the **write** counterpart of ``covers``, closing the loop so a
+  hand-firm never has to read the allowlist at all. ``covers`` already computes
+  where the rule would land; ``add`` performs that append (via
+  ``firm_core.firm_into``, the same writer ``/f`` uses, so subsumed narrower
+  entries are pruned in the same pass) and prints
+  ``{rule, added, covered, refused, count}``. This exists because ``Edit``
+  requires a prior ``Read`` of the file it edits: firming one Bash rule by hand
+  cost a whole-file ``Read`` of a 338-entry ``settings.local.json``, which is
+  precisely what this module was written to prevent. ``add`` is idempotent — an
+  already-covered rule reports ``added: false`` and leaves the file untouched —
+  and it enforces the **safety floor**, refusing any rule
+  ``_over_broad_reason`` would flag (a bare wildcard, a bare-verb wildcard, an
+  unscoped file-access root) with a non-zero exit rather than granting it.
 * ``cruft`` — return only the **suspicious** entries
   (``{index, rule, category, reason}``) plus the total ``count``, so the audit
   reasons over a short shortlist instead of the whole array. Categories mirror
@@ -92,6 +107,46 @@ def covers(rule: str, allow: list[str]) -> dict:
         "covered": covered,
         "insertion_index": len(allow),
         "would_subsume": would_subsume,
+        "count": len(allow),
+    }
+
+
+def add(rule: str, path: Path) -> dict:
+    """Append ``rule`` to ``path``'s allow array unless already covered.
+
+    Delegates the write to ``firm_core.firm_into`` — the same writer ``/f`` uses,
+    so subsumed narrower entries are pruned identically — and neither path needs
+    the allowlist in context. Re-reads the array afterwards only to report the
+    new ``count``; the array itself never leaves this process.
+
+    **The safety floor is enforced here, not in the writer.** ``firm_into`` has
+    no floor of its own — ``firm_last.py`` checks ``is_bareverb_wildcard`` in its
+    *caller* and returns before writing. So a write path that called
+    ``firm_into`` directly would grant exactly what ``/f`` refuses, and because
+    this tool runs under the pre-approved directory-wide
+    ``Bash(python3 .claude/tools/:*)`` rule, that would be a single
+    non-prompting call that widens the agent's own Bash grant to a whole
+    hazardous verb. ``add`` therefore refuses anything ``_over_broad_reason``
+    flags — the same classifier ``cruft`` reports with, so this tool can never
+    write what its own audit mode would immediately flag — returning
+    ``added: false`` with a ``refused`` reason instead.
+    """
+    over_broad = _over_broad_reason(rule)
+    if over_broad is not None:
+        return {
+            "rule": rule,
+            "added": False,
+            "covered": False,
+            "refused": f"{over_broad} — narrow it by hand instead of firming",
+            "count": len(load_allow(path)) if path.exists() else 0,
+        }
+    added = firm_core.firm_into(path, rule)
+    allow = load_allow(path)
+    return {
+        "rule": rule,
+        "added": added,
+        "covered": not added,
+        "refused": None,
         "count": len(allow),
     }
 
@@ -178,25 +233,36 @@ def run(argv: list[str]) -> int:
     p_covers = sub.add_parser("covers", help="is a candidate rule already granted?")
     p_covers.add_argument("rule", help="the candidate allow-rule to test")
 
+    p_add = sub.add_parser("add", help="append a rule (no prior read needed)")
+    p_add.add_argument("rule", help="the allow-rule to add")
+
     sub.add_parser("cruft", help="return only the suspicious entries")
 
     args = parser.parse_args(argv[1:])
-    allow = load_allow(Path(args.settings))
+    settings_path = Path(args.settings)
 
-    if args.cmd == "covers":
-        result = covers(args.rule, allow)
+    if args.cmd == "add":
+        # `add` scaffolds a missing settings file, so it must not go through
+        # load_allow's "no settings file at …" error first.
+        result = add(args.rule, settings_path)
+    elif args.cmd == "covers":
+        result = covers(args.rule, load_allow(settings_path))
     else:
-        result = cruft(allow)
+        result = cruft(load_allow(settings_path))
 
     json.dump(result, sys.stdout, indent=2)
     sys.stdout.write("\n")
+    # A refused write exits non-zero so a caller that only checks the status
+    # can't mistake "the floor rejected this rule" for "the rule was granted".
+    if result.get("refused"):
+        return 1
     return 0
 
 
 def main() -> int:
     try:
         return run(sys.argv)
-    except AllowlistError as e:
+    except (AllowlistError, firm_core.SettingsError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
 

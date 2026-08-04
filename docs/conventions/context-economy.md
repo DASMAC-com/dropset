@@ -45,6 +45,21 @@ into the transcript**:
     builders, a specific `fn`) and slice-read those, rather than
     paginating the whole fixture.
 
+- **Reach for the Grep tool first, and hoist a repeated sweep into one
+  call.** `grep` has been the single most-repeated Bash shape in four
+  consecutive sessions (×26, ×29, ×63, ×54) — almost all of them
+  one-off single-symbol lookups issued in the shell while the Grep tool
+  was available, and almost none of them reused. Grep is the cheaper
+  transport (it honors gitignore, so it never hands back a match from
+  build output), and it is the default even for a lookup you only make
+  once. When a reference sweep genuinely does recur — the same symbol
+  across a subsystem, the same rule across the convention docs — run it
+  **once** and reuse the result set instead of re-issuing a variant per
+  question; that hoisted result is also what a sub-agent brief should
+  carry rather than the instruction to sweep. The bare-`grep` fallback,
+  for when the Grep tool isn't present, and the scope it must be held
+  to are in `docs/conventions/shell-commands.md`.
+
 - **Route verbose build logs away from context.** Prefer `-q` /
   `--quiet` so a `cargo` / `make` "Compiling …" cascade doesn't land
   inline. For a noisy target with no quiet flag, run it through the
@@ -60,6 +75,15 @@ into the transcript**:
   it too, since those emit the same "Compiling …" cascade. (Do this
   within the shell rules — the runner captures inside Python, so the
   command line carries no redirect.)
+
+- **Match the build to the iteration, not to CI.** A production-build
+  target exists to *mirror CI* — a full dependency install, a wiped
+  output directory, an optimizing compile — which makes it a
+  **pre-commit / pre-push check, not an inner-loop tool**. One layout
+  session ran `make decks-build` **×27**, once after nearly every
+  micro-edit, where the running dev server (`make decks`) hot-reloads
+  the same change instantly and for free. Iterate against the dev
+  target; run the production build **once**, before committing.
 
 - **Inspect a run_quiet log by its printed path, not a glob.** When you
   need more than the summary, grep the **specific log path the runner
@@ -98,6 +122,39 @@ into the transcript**:
 
   This is the live-verification discipline (the `/verify` and `/run`
   flows); a proof needs two frames, not four full-res ones.
+
+- **Downscale a *supplied* screenshot before reading it, when the
+  question is layout.** The rule above governs captures you take; a
+  screenshot the user hands over arrives at full resolution, and cost
+  scales with pixel count. A misaligned caption, an overflowing panel,
+  or a chart standing on a divider is all legible at half resolution —
+  so copy it down first and read the copy. One bare, globbable command:
+
+  ```sh
+  sips -Z 1200 <in> --out <copy>
+  ```
+
+  Two sessions rest on this: eight supplied screenshots were ≈693k of
+  one session's ≈934.7k total `Read`, and two more were ≈104k of
+  ≈132.3k (79%) in another. Both were design-iteration loops where
+  every read was single-use, so repetition wasn't the problem —
+  **resolution** was, and downscaling is roughly a 4× saving on the
+  dominant sink of such a session. Keep full resolution only when the
+  question really is about pixels (anti-aliasing, a hairline, an exact
+  color).
+
+- **When a supplied screenshot carries on-chain data, decode the source
+  instead of reading the picture.** Distinct from the rule above: this
+  one is about the transport of *evidence*, not resolution. An 88.8k
+  screenshot of an explorer token-balance table was one session's
+  single largest `Read`; the same numbers were then established
+  **exactly** by a ~40-line probe that decoded the transaction's fill
+  legs and reconciled them against its token deltas. The image was the
+  *prompt*; the probe was the *evidence*. So when a screenshot shows
+  on-chain state — balances, a transaction, an account — ask for the
+  signature or address and decode that: cheaper, and strictly more
+  precise. Downscaling remains the rule for layout screenshots, where
+  there's no cheaper source of truth to reach for.
 
 - **Route Docker image operations away from context too.** A
   `docker compose pull` / `up` / `build` dumps a per-layer

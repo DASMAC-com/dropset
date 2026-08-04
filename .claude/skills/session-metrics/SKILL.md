@@ -151,6 +151,27 @@ value, literal newlines). If the doc `updatedAt` is newer
 than when you fetched it, re-fetch and rebuild rather than
 overwriting a concurrent edit.
 
+**Gate on the doc's own size before rewriting it.** Linear
+has **no append API** — `save_document` replaces the body
+wholesale — so every append re-emits the *entire* document.
+At ~60KB that is a large write on top of a large read, and it
+puts every prior entry at risk of transcription corruption
+for the sake of adding one. So the first thing to do with the
+fetched body is measure it (its length, and how many `- [ ]`
+unchecked entries it holds). Above roughly **40KB or ~4
+unchecked entries**, do **not** attempt the full-body
+rewrite. Instead print this session's summary, say the inbox
+is past its drain threshold, and recommend running
+`trim-context` to mine and clear it — then stop. The entry is
+not lost: the summary is in the report, and the next run
+appends it once the inbox is drained.
+
+There is no cheaper pre-fetch check (the document has no size
+field to query, and the fetch is the same call that gives you
+the body to append to), so the fetch is paid once regardless
+— **don't re-fetch it**. What the gate saves is the
+same-size *write* and the corruption risk that rides with it.
+
 The entry is **unchecked** (`- [ ]`) so `housekeeping` sees
 it as unprocessed work; housekeeping ticks it once consumed.
 Use this shape (one entry per session):
@@ -171,7 +192,9 @@ put the prose in `Recommends:`.
 
 **6. Report** in one line — the session, the top sink, and
 that the entry was appended (or that the skill no-op'd
-because the doc id was unset).
+because the doc id was unset, or that it stopped at the
+size gate in step 5 and the inbox needs a `trim-context`
+drain).
 
 ## Notes
 

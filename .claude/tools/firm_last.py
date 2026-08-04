@@ -193,44 +193,12 @@ def find_base_repo() -> str | None:
     return None
 
 
-def load_settings(path: Path) -> tuple[dict, list[str]]:
-    """Load a settings.local.json into ``(settings_dict, allow_list)``. A missing
-    or malformed file yields empty scaffolding so a first firm can create it.
-    """
-    try:
-        settings = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        settings = {}
-    if not isinstance(settings, dict):
-        settings = {}
-    allow = settings.get("permissions", {}).get("allow")
-    if not isinstance(allow, list):
-        allow = []
-    return settings, allow
-
-
-def write_settings(path: Path, settings: dict, allow: list[str]) -> None:
-    settings.setdefault("permissions", {})
-    settings["permissions"]["allow"] = allow
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(settings, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
-
-
-def firm_into(path: Path, rule: str) -> bool:
-    """Add ``rule`` to a settings file's allow array if not already covered.
-    Returns whether the file was changed.
-    """
-    settings, allow = load_settings(path)
-    if firm_core.is_covered(rule, allow):
-        return False
-    # Drop any existing entry the new (broader) rule now subsumes, so firming a
-    # generalized rule doesn't leave the redundant narrower ones behind.
-    allow = [r for r in allow if not firm_core.is_covered(r, [rule])]
-    allow.append(rule)
-    write_settings(path, settings, allow)
-    return True
+# The settings read/write pair lives in ``firm_core`` so ``allowlist.py``'s
+# ``add`` writes byte-identically to what ``/f`` writes. Re-exported here under
+# the names this module has always used.
+firm_into = firm_core.firm_into
+load_settings = firm_core.load_settings
+write_settings = firm_core.write_settings
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -293,7 +261,13 @@ def main(argv: list[str] | None = None) -> int:
         print("firm-last: no base repo found — nothing firmed.")
         return 0
 
-    changed = [label for label, path in targets if firm_into(path, rule)]
+    try:
+        changed = [label for label, path in targets if firm_into(path, rule)]
+    except firm_core.SettingsError as exc:
+        # An existing settings file that doesn't parse: report it rather than
+        # letting the writer replace it (or dying on a raw traceback).
+        print(f"firm-last: {exc}", file=sys.stderr)
+        return 1
     if changed:
         print(f"firm-last: firmed {rule} into {', '.join(changed)}.")
     else:

@@ -119,6 +119,13 @@ type-checks every deck and runs the asset hooks, so a broken deck (or an
 asset that can't be sourced) fails the merge queue rather than surfacing
 mid-presentation.
 
+Run it **once before committing** — it is a pre-commit check, not an
+inner-loop tool. It installs, wipes `.next`, and does a full optimizing
+build, so firing it after each micro-edit during layout iteration costs
+minutes and a log per edit for a change `make decks` above hot-reloads
+instantly. Iterate on the dev server; build to check (see
+`docs/conventions/context-economy.md`).
+
 ## Write a deck
 
 `demo-v1` is reconciled to `demo-v1-spec.md` — the reviewable copy for

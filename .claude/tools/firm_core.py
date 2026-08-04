@@ -1,10 +1,16 @@
 """Permission-rule generalization and coverage — the source of truth.
 
 Pure-stdlib helpers shared by ``firm_last.py`` (the ``/f`` fast-firm tool) and
-pointed at by the ``firm-perms`` skill's prose. Turns a just-approved tool call
-into the reusable allow-rule it should have been (``generalize``), decides
-whether an allowlist already covers a rule (``is_covered``), and flags the one
-dangerous outcome the safety floor forbids (``is_bareverb_wildcard``).
+``allowlist.py`` (the ``firm-perms`` / ``housekeeping`` reader), and pointed at
+by the ``firm-perms`` skill's prose. Turns a just-approved tool call into the
+reusable allow-rule it should have been (``generalize``), decides whether an
+allowlist already covers a rule (``is_covered``), and flags the one dangerous
+outcome the safety floor forbids (``is_bareverb_wildcard``).
+
+It also owns the ``settings.local.json`` read/write pair
+(``load_settings`` / ``write_settings`` / ``firm_into``) so every tool that
+appends a rule does it one way — and, crucially, does it **without a prior
+whole-file read** of an allowlist that can run to several hundred entries.
 
 The generalization rules mirror ``docs/conventions/shell-commands.md`` and the
 ``firm-perms`` skill: widen the *variable* parts (worktree tag, trailing args)
@@ -19,8 +25,11 @@ more verb than the approval did.
 
 from __future__ import annotations
 
+import json
+import os
 import re
 import shlex
+from pathlib import Path
 from urllib.parse import urlparse
 
 # Programs whose bare-verb wildcard (``git:*``, ``rm:*``) would grant far more
@@ -357,3 +366,97 @@ def is_bareverb_wildcard(rule: str) -> bool:
         return False
     prefix = _bash_prefix(parsed[1]).strip()
     return prefix in NO_BARE_WILDCARD
+
+
+class SettingsError(Exception):
+    """The settings file exists but can't be safely rewritten."""
+
+
+def load_settings(path: Path) -> tuple[dict, list[str]]:
+    """Load a settings.local.json into ``(settings_dict, allow_list)``.
+
+    A **missing** file yields empty scaffolding so a first firm can create it. A
+    file that exists but does not parse raises :class:`SettingsError` instead of
+    scaffolding — otherwise a stray trailing comma, or a mistyped ``--settings``
+    pointing at some other JSON, would be silently *replaced* by a fresh
+    ``{"permissions": {"allow": […]}}`` document, destroying whatever was there.
+    The file is git-ignored, so there would be nothing to restore from.
+    """
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}, []
+    except OSError as exc:
+        raise SettingsError(f"cannot read {path}: {exc}") from exc
+    if not raw.strip():
+        return {}, []
+    try:
+        settings = json.loads(raw)
+    except ValueError as exc:
+        raise SettingsError(
+            f"{path} exists but is not valid JSON ({exc}) — refusing to "
+            f"overwrite it; fix or move it by hand"
+        ) from exc
+    if not isinstance(settings, dict):
+        raise SettingsError(
+            f"{path} is valid JSON but not an object — refusing to overwrite it"
+        )
+    allow = settings.get("permissions", {}).get("allow")
+    if not isinstance(allow, list):
+        allow = []
+    return settings, allow
+
+
+def write_settings(path: Path, settings: dict, allow: list[str]) -> None:
+    """Write the settings file **atomically**, owner-only.
+
+    A plain ``write_text`` truncates before writing, so an interrupt or a full
+    disk between truncate and flush would leave an empty or half-written
+    allowlist — and since the file is git-ignored there is no copy to recover
+    from. Writing a sibling temp file and ``os.replace``-ing it makes the swap
+    atomic: a reader sees either the old file or the new one, never a partial.
+
+    The mode is ``0o600`` because the file holds local configuration (extra
+    directories, machine paths, any ``env`` block) and is the authority for this
+    agent's own permissions.
+    """
+    settings.setdefault("permissions", {})
+    settings["permissions"]["allow"] = allow
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = json.dumps(settings, indent=2, ensure_ascii=False) + "\n"
+
+    tmp = path.with_name(path.name + ".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(body)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        # Never leave the temp file behind to be mistaken for real settings.
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def firm_into(path: Path, rule: str) -> bool:
+    """Add ``rule`` to a settings file's allow array if not already covered.
+    Returns whether the file was changed.
+
+    Writes **without** any caller having to read the file first, which is the
+    whole point: an ``Edit`` requires a prior ``Read``, and reading a
+    several-hundred-entry ``settings.local.json`` into context to append one line
+    is exactly the cost this tool family exists to avoid.
+    """
+    settings, allow = load_settings(path)
+    if is_covered(rule, allow):
+        return False
+    # Drop any existing entry the new (broader) rule now subsumes, so firming a
+    # generalized rule doesn't leave the redundant narrower ones behind.
+    allow = [r for r in allow if not is_covered(r, [rule])]
+    allow.append(rule)
+    write_settings(path, settings, allow)
+    return True

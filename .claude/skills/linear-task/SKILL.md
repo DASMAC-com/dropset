@@ -156,5 +156,14 @@ what to file.
    so — note it and continue, the full sweep will catch
    the edge later.
 
+   The tool holds the **priority floor** — it never files an
+   edge that would gate an `Urgent` issue behind a
+   non-Urgent one, and prints a `warning:` for each pair it
+   suppressed (see `sync-blockers`). **Relay any such
+   warning** when reporting the new issue: the file overlap
+   is real even though the edge wasn't filed, so the human
+   may want the reverse edge (the Urgent issue blocking this
+   one) instead.
+
 1. Print the new issue's identifier (e.g. ENG-123)
    and URL so the user can jump to it.

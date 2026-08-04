@@ -64,6 +64,7 @@ Concrete rules:
   `--config cfg/pre-commit-lint.yml`); it reports every MD013
   violation with its line number and reduces to the existing
   `Bash(pre-commit run:*)` rule.
+
 - Searching file *contents* — prefer the **Grep tool**; where it's
   absent (the Grep / Glob caveat above) a **bare, single** `grep` is
   the fallback, but **never** `git grep`. This is the same rule the
@@ -82,13 +83,38 @@ Concrete rules:
   rule is enforced **mechanically** by the git-grep guard hook
   (`.claude/hooks/no_git_grep.py`) — see [the guard hooks](#the-guard-hooks)
   below.
+
+  When you do fall back to a bare `grep`, two things the Grep tool was
+  handling for you:
+
+  - **Scope a recursive `grep` to source directories — never a package
+    root.** The Grep tool honors gitignore; a bare `grep -r` does not,
+    so aimed at a package root it walks `.next/`, `target/`,
+    `node_modules/`, and `dist/` too. One straggler-reference check ran
+    a bare recursive `grep` over the `decks/` root, matched a minified
+    webpack chunk under the gitignored `decks/.next/`, and returned a
+    ≈5.1k syntax-highlighter grammar blob — **48% of all Bash spend in
+    that session, from one call** — answering a question whose correct
+    answer was *zero hits*, as the scoped re-run confirmed. Name the
+    source directories (or the specific files), or exclude the build
+    output explicitly with `--exclude-dir`.
+  - **`grep -o -m N` bounds matched *lines*, not matches.** Two field
+    extractions over a fetched page passed `-m 6` expecting six values
+    and got ~150 lines back, because each matched line carried many
+    `-o` matches. To pull a couple of fields out of a fetched page,
+    tighten the **pattern** so it can only match what you want (or save
+    the page and Read it by slice) — `-m` won't bound the output.
+
 - One command per Bash call. Avoid `&&`, `;`, and pipes when separate
   calls work; a chained command can't be generalized into a glob and
   always re-prompts.
+
 - No command substitution. `$(...)` and backticks block globbing —
   compute the value in a prior step (or a tool) and pass it literally.
+
 - Avoid redirects (`>`, `<`, here-strings). Use the Write tool to
   create files rather than `echo … > file`.
+
 - Pass large or special-character arguments through a **file**, not
   inline on the command line. A multi-paragraph commit message — its
   backticks, braces, and quotes trip the "brace with quote character
@@ -102,19 +128,23 @@ Concrete rules:
   the GitHub MCP as structured tool arguments — see
   [GitHub via MCP](github-mcp.md) — so there is no `--body-file`
   workaround to manage.)
+
 - Keep a stable command + subcommand prefix (`pnpm lint …`,
   `cargo test …`, `git log …`) and put only the variable parts in the
   arguments, so the call matches a `:*` allow-glob.
+
 - Stay in your worktree. The shell already starts at the worktree
   root — never `cd` into it (`cd <worktree> && …`). That compound
   forces manual approval every time (path-resolution bypass) and
   can't reduce to a glob. Run commands bare from the cwd.
+
 - No status banners or exit-code plumbing. Don't append
   `; echo "=== exit $? ==="`, pipe through `tail` / `grep`, redirect
   `2>&1`, or read `${PIPESTATUS[0]}`. Run the bare command
   (`make lint`, `cargo fmt -p dropset`) — its full output and exit
   status already come back. Pipes and `$(…)` / `${…}` expansion
   force re-approval on every call.
+
 - Capture a *genuinely noisy* command with the quiet runner, not a
   redirect. `python3 .claude/tools/run_quiet.py -- CMD ARGS…` does its
   capture-and-summarize inside Python with `shell=False`, so the
@@ -124,6 +154,7 @@ Concrete rules:
   exit code, so callers still see pass/fail. Reach for it only when a
   target has no quiet flag and its success output is pure noise — see
   [context economy](context-economy.md).
+
 - Inspect the base repo by path, not by `cd`. To read another branch
   or the base checkout from a worktree, run
   `git -C <base-repo-path> <subcommand>` with a *literal*, stable path
@@ -132,6 +163,7 @@ Concrete rules:
   then pre-approve the read-only subcommands (`log`, `show`, `diff`,
   `status`, `rev-parse`) once in your local `settings.local.json` so
   they never prompt again.
+
 - Operate on a *sibling worktree* by its real path, but approve it
   with a worktree **glob**. A command like
   `git -C <base-repo-path>/.claude/worktrees/<tag> status --short`
@@ -141,6 +173,7 @@ Concrete rules:
   mid-path `*` covers every sibling tag and the `:*` covers the args,
   so one rule firms the whole family. Don't approve the per-tag,
   per-arg variant; it only ever matches that one call.
+
 - When per-worktree or per-arg approvals have already piled up in
   `settings.local.json`, run **`/firm-perms sweep`**. It collapses the
   one-off entries into globs (per the rules above), dedupes them, and

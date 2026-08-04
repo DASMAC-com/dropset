@@ -38,6 +38,23 @@ to override, the user names one explicitly (e.g. "merge
   is the union of every folded issue's globs.
 - **Confirms before any write** (see step 4). Nothing is
   mutated until the human approves the plan.
+- **Won't grow a survivor past the point of being
+  editable.** Every fold re-emits the survivor's **entire**
+  description — `save_issue` replaces `description` wholesale
+  and Linear has no append API — so the cost and the
+  transcription-corruption risk both scale with the body
+  you're folding *into*, not with what you're adding. Folding
+  two issues into a ~28KB survivor meant re-emitting that
+  28KB twice, once per fold, each time putting every existing
+  `# Part` at risk. So when the survivor's body is already
+  large (past roughly **20KB**, or a dozen-plus `# Part`
+  sections), say so at the step-4 confirmation and recommend
+  **splitting** rather than growing: land what's there, or
+  keep the aggregate's detail in a repo doc with the issue
+  carrying only pointers and the `**Fingerprint**:` lines.
+  This is the same hazard `session-metrics` guards on the
+  inbox document — an aggregate past a threshold stops being
+  a container and becomes a liability.
 
 ## Steps
 
@@ -116,7 +133,14 @@ TUI-selector pattern the other skill handoffs use):
 - a **cross-area warning** when `cross_area` is true — the
   issues span unrelated surfaces (meta-work mixed with
   product / on-chain code), so the merge may not be
-  intended; surface it so the user can confirm.
+  intended; surface it so the user can confirm, and
+- an **oversized-survivor warning** when the merged body
+  exceeds roughly **20KB** — per "What it does — and does
+  not" above, a survivor this large pays its whole body per
+  fold and risks corrupting every existing `# Part`. Name the
+  size and recommend **splitting** instead of growing; that
+  makes "cancel" the honest default for this one case, so say
+  which way you'd go.
 
 Offer "yes, merge" (**first**, the recommended default) and
 "cancel". Proceed only on an explicit yes.
@@ -149,9 +173,18 @@ if either is unset, note it and continue. The canceled
 non-survivors drop out of the open Backlog on their own, so
 their stale overlap edges no longer gate anything.
 
+The tool holds the **priority floor** — no edge that would
+gate an `Urgent` issue behind a non-Urgent one — printing a
+`warning:` per suppressed pair instead (see `sync-blockers`).
+This matters more after a merge than at first filing, since
+the survivor's `**Touches**:` union is wider than any one
+folded issue's and so collides with more of the Backlog.
+**Relay any such warning** in the report below.
+
 **7. Report.** One line: the survivor (with its final
 title), the issues folded in and canceled, and that its
-blocking edges were synced.
+blocking edges were synced (naming any pair the priority
+floor suppressed).
 
 ## Notes
 

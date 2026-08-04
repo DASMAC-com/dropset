@@ -261,7 +261,7 @@ not a repo source edit, so it doesn't break the skill's
 **once**, field-selected, instead of one full-body MCP
 `list_pull_requests` per worktree branch (each of those
 returns the whole PR object, replayed every later turn —
-see [context economy](context-economy.md)). `gh pr list`
+see `docs/conventions/context-economy.md`). `gh pr list`
 has a `merged` state filter the MCP lacks and `--json`
 selects just the three fields the decision needs; it's a
 `--json` **flag**, not a pipe, so it reduces to the
@@ -298,7 +298,7 @@ touching anything. Closed-without-merge and dirty worktrees
 are not dropped automatically — they land in `skipped` /
 `left` so the user can decide.
 
-**Then clear notifications for merged PRs.** Merged PRs
+**Then mark notifications for merged PRs done.** Merged PRs
 leave GitHub notifications that otherwise pile up with no
 easy bulk clear. List the unread notifications through the
 GitHub MCP and dismiss only the ones whose PR has **merged**
@@ -325,23 +325,33 @@ mcp__github__pull_request_read(
 )
 ```
 
-- `merged_at` is **non-null** → dismiss that one
-  notification:
+- `merged_at` is **non-null** → mark that one notification
+  **done**:
 
   ```txt
   mcp__github__dismiss_notification(
     threadID: "<notification id>",
-    state: "read",
+    state: "done",
   )
   ```
 
 - `merged_at` is null (open or closed-unmerged), or the
   subject isn't a PR → **leave it**.
 
+`state: "done"` is load-bearing, and it is the one argument
+this step gets asked about. `"read"` only clears the unread
+marker — the thread **stays in the GitHub inbox**, so a
+sweep that used it looked like a no-op to the human reading
+their notifications. `"done"` removes the thread, which is
+the correct terminal state here precisely because the step
+already gated on `merged_at`: a merged PR has nothing left
+to come back to. Say "done" (not "read") in the report line
+too, so the report matches what the inbox shows.
+
 **Never** call `mark_all_notifications_read` — that would
 clear unread mentions, review requests, and other non-merge
 notifications too. Only a confirmed-merged PR's
-notification is dismissed.
+notification is marked done.
 
 **3. Spelling-escape hygiene — run cspell, file the
 drift as one aggregated issue.** **Opt-in — run this step
@@ -508,31 +518,51 @@ warning is the backstop). This is the board-level companion
 to the filing-time fold — it catches coupling that slipped
 through as separate issues.
 
-**Then flag any Todo-state issue that blocks a Backlog
-issue.** Per the Todo/Backlog convention
-(`docs/conventions/linear-automation.md`) initiatives /
-meta live in `Todo` and pullable work in `Backlog`, so a
-**`Todo` blocker gating a `Backlog` issue** is a scheduling
-smell: a not-yet-pulled or initiative-level item gates work
-that sits in the pull queue, so the Backlog item can't
-actually be started. Get the pairs from the same
-`sync_blockers.py` tool (read-only — it writes nothing):
+**Then flag the two scheduling smells.** Both come from one
+read-only run of the same `sync_blockers.py` tool (it writes
+nothing):
 
 ```sh
 python3 .claude/tools/sync_blockers.py --report-todo-blocks
 ```
 
-It prints `{todo_blocks_backlog: [{blocker, blocker_state, blocked}]}` —
-keyed by the Backlog issue's `unstarted`-state blockers. **Always
-list** each pair in the report (blocker `ENG-###`/state → blocked
-`ENG-###`). In an **interactive**
-pass, also **ask to resolve** each via `AskUserQuestion` —
-move the Todo blocker into Backlog so it's pullable, drop
-the edge if it isn't a real dependency, or re-prioritize;
-in a **one-shot** pass, just list the pairs and resolve
-nothing. It needs the same `LINEAR_API_KEY` /
-`LINEAR_PROJECT_ID` as the sweep; skip and say so if either
-is unset.
+It prints two keys:
+
+```txt
+{
+  todo_blocks_backlog: [{blocker, blocker_state, blocked}],
+  urgent_gated_by_non_urgent: [
+    {blocker, blocker_priority, blocked_urgent}
+  ]
+}
+```
+
+- **A `Todo`-state issue blocking a `Backlog` issue.** Per
+  the Todo/Backlog convention
+  (`docs/conventions/linear-automation.md`) initiatives /
+  meta live in `Todo` and pullable work in `Backlog`, so a
+  `Todo` blocker gating a `Backlog` issue is a smell: a
+  not-yet-pulled or initiative-level item gates work that
+  sits in the pull queue, so the Backlog item can't actually
+  be started. Resolve by moving the blocker into Backlog,
+  dropping a non-dependency edge, or re-prioritizing.
+- **A non-Urgent issue blocking an `Urgent` one.** The sweep
+  above now refuses to *create* this (its priority floor), but
+  edges filed before the floor existed — or added by hand —
+  survive, and suppression can't retract them. An Urgent
+  Backlog issue is meant to be pullable now; a `Medium`
+  feature gating it makes it unpullable until that feature
+  ships. Resolve by dropping the edge, or by **reversing** it
+  so the Urgent fix lands first (which is then declared, so no
+  later sweep re-files the inversion).
+
+**Always list** every pair from both lists in the report
+(blocker `ENG-###` + its state/priority → the blocked
+`ENG-###`). In an **interactive** pass, also **ask to
+resolve** each via `AskUserQuestion`; in a **one-shot** pass,
+just list them and resolve nothing. It needs the same
+`LINEAR_API_KEY` / `LINEAR_PROJECT_ID` as the sweep; skip and
+say so if either is unset.
 
 **7. Audit the base-repo permission allowlist for cruft.**
 `firm-perms` only ever **adds** to
@@ -709,7 +739,7 @@ sweep.
 - Worktrees pruned (path + branch), and any left in
   place with the reason (PR open/closed-unmerged, no
   PR, or dirty tree); and how many merged-PR
-  notifications were dismissed.
+  notifications were marked **done**.
 - Spelling-escape drift (only if the `cspell` flag was
   passed; otherwise note the step was skipped): the
   aggregated cspell issue —

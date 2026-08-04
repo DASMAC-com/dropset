@@ -10,6 +10,7 @@ the Task Staging document, so their cases are gone too. Run via the repo's
 import unittest
 
 from sync_blockers import (
+    URGENT_PRIORITY,
     Issue,
     SyncBlockersError,
     _parse_args,
@@ -20,6 +21,7 @@ from sync_blockers import (
     parse_touches,
     todo_blocks_backlog,
     touches_overlap,
+    urgent_gated_by_non_urgent,
 )
 
 
@@ -27,14 +29,20 @@ def issue(ident, touches=()):
     return Issue(id=ident, number=parse_number(ident), touches=list(touches))
 
 
-def with_(ident, touches=(), blocked_by=(), blocks=()):
+def with_(ident, touches=(), blocked_by=(), blocks=(), priority=0):
     return Issue(
         id=ident,
         number=parse_number(ident),
         touches=list(touches),
         blocked_by=list(blocked_by),
         blocks=list(blocks),
+        priority=priority,
     )
+
+
+def sweep(issues, **kwargs):
+    """The ``filed`` half of a dry-run sweep — most cases only assert on it."""
+    return materialize_overlap_edges(issues, None, True, **kwargs)[0]
 
 
 class ModelTests(unittest.TestCase):
@@ -97,8 +105,7 @@ class FullSweepTests(unittest.TestCase):
             with_("ENG-22", touches=["tui/"]),
             with_("ENG-18", touches=["tui/"]),
         ]
-        filed = materialize_overlap_edges(issues, None, True)
-        self.assertEqual(filed, [("ENG-18", "ENG-22")])
+        self.assertEqual(sweep(issues), [("ENG-18", "ENG-22")])
 
     def test_declared_edge_suppresses_overlap_edge(self):
         # A declared edge in either direction wins; no overlap edge is filed.
@@ -106,14 +113,14 @@ class FullSweepTests(unittest.TestCase):
             with_("ENG-18", touches=["tui/"]),
             with_("ENG-22", touches=["tui/"], blocked_by=["ENG-18"]),
         ]
-        self.assertEqual(materialize_overlap_edges(issues, None, True), [])
+        self.assertEqual(sweep(issues), [])
 
     def test_distinct_files_file_no_edge(self):
         issues = [
             with_("ENG-18", touches=["tui/pane.rs"]),
             with_("ENG-22", touches=["tui/action.rs"]),
         ]
-        self.assertEqual(materialize_overlap_edges(issues, None, True), [])
+        self.assertEqual(sweep(issues), [])
 
     def test_sorted_lowest_first(self):
         issues = [
@@ -121,11 +128,148 @@ class FullSweepTests(unittest.TestCase):
             with_("ENG-10", touches=["a/"]),
             with_("ENG-20", touches=["a/"]),
         ]
-        filed = materialize_overlap_edges(issues, None, True)
         # All three share a/: 10↔20, 10↔30, 20↔30, lowest-first.
         self.assertEqual(
-            filed, [("ENG-10", "ENG-20"), ("ENG-10", "ENG-30"), ("ENG-20", "ENG-30")]
+            sweep(issues),
+            [("ENG-10", "ENG-20"), ("ENG-10", "ENG-30"), ("ENG-20", "ENG-30")],
         )
+
+
+class PriorityFloorTests(unittest.TestCase):
+    """The number-ordered edge is never allowed to gate an Urgent issue behind a
+    non-Urgent one — the inversion that made a live one-atom fix unpullable
+    behind two unstarted feature issues."""
+
+    def test_urgent_higher_number_is_not_gated(self):
+        issues = [
+            with_("ENG-778", touches=["a/"], priority=3),
+            with_("ENG-783", touches=["a/"], priority=URGENT_PRIORITY),
+        ]
+        filed, suppressed = materialize_overlap_edges(issues, None, True)
+        self.assertEqual(filed, [])
+        self.assertEqual(suppressed, [("ENG-778", "ENG-783")])
+
+    def test_every_non_urgent_blocker_is_suppressed(self):
+        # The reported case: two Medium issues both colliding with one Urgent.
+        issues = [
+            with_("ENG-778", touches=["a/"], priority=3),
+            with_("ENG-780", touches=["a/"], priority=3),
+            with_("ENG-783", touches=["a/"], priority=URGENT_PRIORITY),
+        ]
+        filed, suppressed = materialize_overlap_edges(issues, None, True)
+        # 778↔780 is an ordinary pair and still files.
+        self.assertEqual(filed, [("ENG-778", "ENG-780")])
+        self.assertEqual(suppressed, [("ENG-778", "ENG-783"), ("ENG-780", "ENG-783")])
+
+    def test_urgent_lower_number_still_blocks_a_non_urgent(self):
+        # No inversion here: the Urgent issue is already the blocker.
+        issues = [
+            with_("ENG-700", touches=["a/"], priority=URGENT_PRIORITY),
+            with_("ENG-783", touches=["a/"], priority=3),
+        ]
+        filed, suppressed = materialize_overlap_edges(issues, None, True)
+        self.assertEqual(filed, [("ENG-700", "ENG-783")])
+        self.assertEqual(suppressed, [])
+
+    def test_two_urgent_issues_still_link(self):
+        issues = [
+            with_("ENG-778", touches=["a/"], priority=URGENT_PRIORITY),
+            with_("ENG-783", touches=["a/"], priority=URGENT_PRIORITY),
+        ]
+        filed, suppressed = materialize_overlap_edges(issues, None, True)
+        self.assertEqual(filed, [("ENG-778", "ENG-783")])
+        self.assertEqual(suppressed, [])
+
+    def test_no_priority_pair_is_unaffected(self):
+        issues = [
+            with_("ENG-18", touches=["a/"]),
+            with_("ENG-22", touches=["a/"]),
+        ]
+        filed, suppressed = materialize_overlap_edges(issues, None, True)
+        self.assertEqual(filed, [("ENG-18", "ENG-22")])
+        self.assertEqual(suppressed, [])
+
+    def test_unknown_blocked_priority_fails_closed(self):
+        """An unreadable priority must not be treated as proof the pair is safe:
+        coerced to 0 it would read "not Urgent" and file the very inversion the
+        floor exists to prevent."""
+        issues = [
+            with_("ENG-778", touches=["a/"], priority=3),
+            with_("ENG-783", touches=["a/"], priority=None),
+        ]
+        filed, suppressed = materialize_overlap_edges(issues, None, True)
+        self.assertEqual(filed, [])
+        self.assertEqual(suppressed, [("ENG-778", "ENG-783")])
+
+    def test_unknown_blocked_priority_still_links_under_an_urgent_blocker(self):
+        # An Urgent blocker can't create an inversion, so it clears first.
+        issues = [
+            with_("ENG-778", touches=["a/"], priority=URGENT_PRIORITY),
+            with_("ENG-783", touches=["a/"], priority=None),
+        ]
+        filed, suppressed = materialize_overlap_edges(issues, None, True)
+        self.assertEqual(filed, [("ENG-778", "ENG-783")])
+        self.assertEqual(suppressed, [])
+
+    def test_unknown_blocker_priority_suppresses_an_urgent_blocked(self):
+        issues = [
+            with_("ENG-778", touches=["a/"], priority=None),
+            with_("ENG-783", touches=["a/"], priority=URGENT_PRIORITY),
+        ]
+        filed, suppressed = materialize_overlap_edges(issues, None, True)
+        self.assertEqual(filed, [])
+        self.assertEqual(suppressed, [("ENG-778", "ENG-783")])
+
+    def test_focus_mode_honors_the_floor(self):
+        issues = [
+            with_("ENG-778", touches=["a/"], priority=3),
+            with_("ENG-783", touches=["a/"], priority=URGENT_PRIORITY),
+        ]
+        filed, suppressed = materialize_overlap_edges(
+            issues, None, True, focus_id="ENG-783"
+        )
+        self.assertEqual(filed, [])
+        self.assertEqual(suppressed, [("ENG-778", "ENG-783")])
+
+
+class UrgentGatedReportTests(unittest.TestCase):
+    """The read-only report for inversions already on the board."""
+
+    def test_reports_a_non_urgent_blocker_of_an_urgent_issue(self):
+        issues = [
+            Issue(
+                id="ENG-783",
+                number=783,
+                priority=URGENT_PRIORITY,
+                blocked_by_priority=[("ENG-778", 3), ("ENG-780", 2)],
+            )
+        ]
+        self.assertEqual(
+            urgent_gated_by_non_urgent(issues),
+            [("ENG-778", "Medium", "ENG-783"), ("ENG-780", "High", "ENG-783")],
+        )
+
+    def test_urgent_blocker_of_an_urgent_issue_is_fine(self):
+        issues = [
+            Issue(
+                id="ENG-783",
+                number=783,
+                priority=URGENT_PRIORITY,
+                blocked_by_priority=[("ENG-778", URGENT_PRIORITY)],
+            )
+        ]
+        self.assertEqual(urgent_gated_by_non_urgent(issues), [])
+
+    def test_non_urgent_blocked_issue_is_not_reported(self):
+        issues = [
+            Issue(
+                id="ENG-783",
+                number=783,
+                priority=3,
+                blocked_by_priority=[("ENG-778", 3)],
+            )
+        ]
+        self.assertEqual(urgent_gated_by_non_urgent(issues), [])
 
 
 class IncrementalFocusTests(unittest.TestCase):
@@ -140,35 +284,36 @@ class IncrementalFocusTests(unittest.TestCase):
             with_("ENG-20", touches=["a/"]),
             with_("ENG-30", touches=["a/"]),
         ]
-        filed = materialize_overlap_edges(issues, None, True, focus_id="ENG-30")
-        self.assertEqual(filed, [("ENG-10", "ENG-30"), ("ENG-20", "ENG-30")])
+        self.assertEqual(
+            sweep(issues, focus_id="ENG-30"),
+            [("ENG-10", "ENG-30"), ("ENG-20", "ENG-30")],
+        )
 
     def test_focus_with_no_overlap_files_nothing(self):
         issues = [
             with_("ENG-10", touches=["a/x.rs"]),
             with_("ENG-30", touches=["b/y.rs"]),
         ]
-        self.assertEqual(
-            materialize_overlap_edges(issues, None, True, focus_id="ENG-30"), []
-        )
+        self.assertEqual(sweep(issues, focus_id="ENG-30"), [])
 
     def test_focus_respects_declared_edge(self):
         issues = [
             with_("ENG-10", touches=["a/"]),
             with_("ENG-30", touches=["a/"], blocked_by=["ENG-10"]),
         ]
-        self.assertEqual(
-            materialize_overlap_edges(issues, None, True, focus_id="ENG-30"), []
-        )
+        self.assertEqual(sweep(issues, focus_id="ENG-30"), [])
 
 
-def raw_issue(ident, blockers=()):
+def raw_issue(ident, blockers=(), priority=0, blocker_priorities=None):
     """Build a raw GraphQL issue node. ``blockers`` is an iterable of
-    ``(identifier, state_type, state_name)`` for its ``blockedBy`` edges."""
+    ``(identifier, state_type, state_name)`` for its ``blockedBy`` edges;
+    ``blocker_priorities`` optionally maps a blocker id to its priority int."""
+    by_id = blocker_priorities or {}
     return {
         "id": f"uuid-{ident}",
         "identifier": ident,
         "description": "",
+        "priority": priority,
         "relations": {"nodes": []},
         "inverseRelations": {
             "nodes": [
@@ -176,6 +321,7 @@ def raw_issue(ident, blockers=()):
                     "type": "blocks",
                     "issue": {
                         "identifier": bid,
+                        "priority": by_id.get(bid, 0),
                         "state": {"name": state_name, "type": state_type},
                     },
                 }
@@ -202,6 +348,33 @@ class TodoBlocksBacklogTests(unittest.TestCase):
         # blocked_by carries every blocker; todo_blockers only the unstarted one.
         self.assertEqual(got.blocked_by, ["ENG-10", "ENG-20", "ENG-30"])
         self.assertEqual(got.todo_blockers, [("ENG-10", "Todo")])
+
+    def test_raw_to_issue_extracts_priorities(self):
+        raw = raw_issue(
+            "ENG-783",
+            blockers=[("ENG-778", "backlog", "Backlog")],
+            priority=URGENT_PRIORITY,
+            blocker_priorities={"ENG-778": 3},
+        )
+        got = _raw_to_issue(raw)
+        self.assertEqual(got.priority, URGENT_PRIORITY)
+        self.assertEqual(got.blocked_by_priority, [("ENG-778", 3)])
+
+    def test_raw_to_issue_maps_a_missing_priority_to_none_not_zero(self):
+        """Linear's scale is inverted (Urgent == 1, "No priority" == 0), so
+        coercing an absent field to 0 would read as "not Urgent" and silently
+        disable the floor. Unknown must stay distinguishable from 0."""
+        raw = raw_issue("ENG-50")
+        del raw["priority"]
+        self.assertIsNone(_raw_to_issue(raw).priority)
+
+    def test_raw_to_issue_keeps_an_explicit_zero_as_zero(self):
+        self.assertEqual(_raw_to_issue(raw_issue("ENG-50", priority=0)).priority, 0)
+
+    def test_raw_to_issue_maps_a_non_numeric_priority_to_none(self):
+        raw = raw_issue("ENG-50")
+        raw["priority"] = "High"
+        self.assertIsNone(_raw_to_issue(raw).priority)
 
     def test_detector_returns_sorted_triples(self):
         issues = [

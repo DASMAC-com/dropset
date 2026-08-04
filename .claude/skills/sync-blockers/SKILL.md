@@ -1,6 +1,6 @@
 ---
 name: sync-blockers
-description: Keep the Dropset Linear Backlog's blocking edges in sync with file overlap. The whole job is deterministic and lives in a committed, dependency-free Python tool (`.claude/tools/sync_blockers.py`, run directly with `python3`): read the open Backlog, find every `**Touches**:` file-overlap collision with no declared blockedBy/blocks edge, and file a real `blocks` relation (lower ENG-### blocks higher) so Linear's native blocking icons reflect it. Two write modes — `--for ENG-###` (incremental, file-time: just the named issue vs. the backlog) and a bare full sweep (reconciliation) — plus a read-only `--report-todo-blocks` scan that flags any Todo-state issue blocking a Backlog issue (a scheduling smell). It never renders or writes a document, and never merges or closes issues. The filing skills call `--for` after `save_issue`; run the full sweep by hand to reconcile after backfilling a `**Touches**:` line on an older issue.
+description: Keep the Dropset Linear Backlog's blocking edges in sync with file overlap. The whole job is deterministic and lives in a committed, dependency-free Python tool (`.claude/tools/sync_blockers.py`, run directly with `python3`): read the open Backlog, find every `**Touches**:` file-overlap collision with no declared blockedBy/blocks edge, and file a real `blocks` relation (lower ENG-### blocks higher) so Linear's native blocking icons reflect it. Two write modes — `--for ENG-###` (incremental, file-time: just the named issue vs. the backlog) and a bare full sweep (reconciliation) — both holding a priority floor that never gates an Urgent issue behind a non-Urgent one, plus a read-only `--report-todo-blocks` scan that flags the two scheduling smells (a Todo-state issue blocking a Backlog issue, and a non-Urgent issue blocking an Urgent one). It never renders or writes a document, and never merges or closes issues. The filing skills call `--for` after `save_issue`; run the full sweep by hand to reconcile after backfilling a `**Touches**:` line on an older issue.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -81,19 +81,56 @@ file and write nothing:
 python3 .claude/tools/sync_blockers.py --dry-run
 ```
 
+### The priority floor
+
+Both write modes refuse one edge: **an Urgent issue is never
+gated behind a non-Urgent one.** Lower-blocks-higher is an
+arbitrary-but-stable orientation, so when the higher-numbered
+side is `Urgent` and the lower isn't, filing the edge inverts
+the only ordering that actually matters. That happened on the
+board: a sweep filed `ENG-778 blocks ENG-783` and
+`ENG-780 blocks ENG-783` purely on touch overlap, and the
+Urgent one-atom fix with a live reproduction became unpullable
+behind two unstarted `Medium` features.
+
+An overlap edge is a scheduling *heuristic*, not a real
+dependency — a real one is already declared, and the tool
+skips declared pairs — so it isn't worth that cost. The pair
+is **suppressed** and reported as a `warning:` naming both
+issues, and the tally gains a
+`| N suppressed (priority floor)` segment. Resolve a genuine
+coupling by hand, usually by **reversing** the edge (the
+Urgent issue blocks the feature, so the fix lands first) —
+which is also self-suppressing on later sweeps, since it is
+then a declared edge.
+
 **Report-only — `--report-todo-blocks`.** A read-only scan
-(not a sweep — it files nothing) that surfaces a scheduling
-smell: a **`Todo`-state issue blocking a `Backlog` issue**.
-Per the Todo/Backlog convention initiatives / meta sit in
-`Todo` and pullable work in `Backlog`, so a Todo blocker
-gating a Backlog item means the pullable item can't
-actually start. It prints the pairs as JSON —
-`{todo_blocks_backlog: [{blocker, blocker_state, blocked}]}` — and
-`housekeeping` drives it after the sweep, deciding what to do with each
-pair. Cannot combine with `--for`:
+(not a sweep — it files nothing) that surfaces two scheduling
+smells. The first is a **`Todo`-state issue blocking a
+`Backlog` issue**: per the Todo/Backlog convention
+initiatives / meta sit in `Todo` and pullable work in
+`Backlog`, so a Todo blocker gating a Backlog item means the
+pullable item can't actually start. The second is a
+**non-Urgent issue blocking an Urgent one** — the inversion
+the priority floor now prevents, reported here for edges
+filed before the floor existed or added by hand, since
+suppression at file time can't retract an edge already on the
+board. `housekeeping` drives it after the sweep, deciding
+what to do with each pair. Cannot combine with `--for`:
 
 ```sh
 python3 .claude/tools/sync_blockers.py --report-todo-blocks
+```
+
+It prints both lists as JSON:
+
+```txt
+{
+  todo_blocks_backlog: [{blocker, blocker_state, blocked}],
+  urgent_gated_by_non_urgent: [
+    {blocker, blocker_priority, blocked_urgent}
+  ]
+}
 ```
 
 Its unit tests (Python's `unittest`, no third-party test

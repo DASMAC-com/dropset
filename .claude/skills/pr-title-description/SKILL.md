@@ -4,8 +4,6 @@ description: Write or update a PR title and description for the current branch, 
 user-invocable: true
 ---
 
-<!-- cspell:word oneline -->
-
 # `pr-title-description`
 
 Write (or update) the title and description

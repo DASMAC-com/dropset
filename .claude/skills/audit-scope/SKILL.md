@@ -285,6 +285,12 @@ Optional (ask on a direct run if not provided):
    here), so `audit` files them and runs the `--for` call —
    skip it here.
 
+   The tool holds the **priority floor** — no edge that would
+   gate an `Urgent` issue behind a non-Urgent one — printing a
+   `warning:` per suppressed pair instead (see
+   `sync-blockers`). **Relay any such warning in the report**;
+   the overlap is real even though the edge wasn't filed.
+
 1. **Report.** Print a short tally — findings by
    dimension and severity, deduped count, and (direct run)
    the filed issue identifiers, or (delegated run) a note
