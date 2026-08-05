@@ -59,10 +59,13 @@ that already carry one, so a repeat pass doesn't re-file.
 
 **Count them, and note the body's size.** More than **~3** unprocessed
 entries is a **drain trigger** — act on it rather than waiting to be
-asked. Linear has no append API, so `session-metrics` re-emits the whole
-document on every append; an inbox left to grow makes each producer run
-a larger write against a larger read, and eventually the producer's own
-size gate refuses to append at all. Carry both numbers into step 4.
+asked. The reason is this skill's own cost, not the producer's:
+`session-metrics` appends with a `patch` op and pays only the length of
+its entry (per `docs/conventions/linear-automation.md` → "Partial edits
+— the `patch` argument"), so it appends happily forever. **Mining** is
+what gets more expensive — step 1 reads the whole body every pass, and
+a long inbox is harder to synthesize honestly and stales the older
+entries. Carry both numbers into step 4.
 
 **2. Synthesize across sessions, don't transcribe.** Look for the trim
 levers that **recur** across the unprocessed entries — a verbose build
@@ -107,12 +110,15 @@ task is meta-work — prepend the **`Claude:`** prefix to its title, per
 - **Append to the open aggregated task if one exists.** If an open
   Backlog issue already carries any `session-metrics:` fingerprint
   (going forward there is at most one aggregated trim-context task),
-  **append** the new levers' sections to its description, extend its
-  `**Touches**:` union, and re-save (`save_issue` with that issue's
-  `id` and the full edited `description`) rather than opening a second.
-  **Diff against the live body** you just read so existing bullets
-  aren't clobbered. If more than one such issue somehow exists, append
-  to the **lowest-ENG** one and note the others in the report for hand
+  add the new levers to it rather than opening a second — with a
+  **`patch`** on that issue's `id`, not a full `description` rebuild
+  (per `docs/conventions/linear-automation.md` → "Partial edits — the
+  `patch` argument"). Two ops in one call: an `append` carrying the new
+  levers' `# Part` sections, and a `replace` on the existing
+  `**Touches**:` line with the extended union. The append can't clobber
+  an existing bullet, and the `**Touches**:` anchor is tag-free, so it
+  matches cleanly. If more than one such issue somehow exists, append to
+  the **lowest-ENG** one and note the others in the report for hand
   consolidation.
 - **Otherwise create one** aggregated task, one section per new lever.
 - **File nothing** when every lever is already open (neither create nor
@@ -137,11 +143,13 @@ mcp__claude_ai_Linear__save_issue(
 )
 ```
 
-**4. Decide the clear first — before writing anything back.** The
-disposition write-back (step 5) re-authors the **whole** inbox body, so
-deciding the clear *after* it means a "yes, clear" throws that
-re-author away — the expensive tick-and-annotate pass is written, then
-immediately deleted. So resolve the clear decision **up front**, via
+**4. Decide the clear first — before writing anything back.** The two
+outcomes want **different** write-back ops (step 5), and on a "yes,
+clear" every tick-and-annotate op is thrown away — the annotations are
+composed, then immediately deleted. Cheaper than it used to be (a
+`patch` write-back doesn't re-author the whole body), but still pure
+waste, and the ordering costs nothing. So resolve the clear decision
+**up front**, via
 **`AskUserQuestion`**, recommended default **first**: "yes, clear the
 processed entries (Recommended)" and "no, leave them". Clear **only on
 an explicit yes**; on "no" (or if nothing was consumed this pass) the
@@ -152,32 +160,52 @@ step 5 makes exactly **one** `save_document` write.
 
 **Past the step-1 drain trigger, say so in the question.** When the
 inbox held more than ~3 unprocessed entries, the clear is no longer a
-neutral tidy-up — it's the thing keeping the producer working, so name
-the count in the question text so the human is choosing with that in
-front of them. And when a caller has fixed the decision to *leave*,
+neutral tidy-up — it's what keeps the next mining pass tractable, so
+name the count in the question text so the human is choosing with that
+in front of them. And when a caller has fixed the decision to *leave*,
 honor it (don't override an inherited answer) but **flag the backlog in
 the step-6 report**: how many entries the inbox is now carrying and that
-it is past the drain threshold. That way an inbox growing toward the
-producer's refuse-to-append gate is visible rather than silent.
+it is past the drain threshold. That way an inbox growing past the point
+where it can be mined honestly is visible rather than silent.
 
 **5. Write the doc back once, per the step-4 decision** with
 `mcp__claude_ai_Linear__save_document` (id = the resolved value,
-literal newlines). Rebuild from the **live** doc — re-fetch first, and
-if its `updatedAt` is newer than your step-1 fetch (a concurrent
-`session-metrics` run or a hand edit added an entry mid-pass), rebuild
-from the re-fetched body — then, per the decision:
+literal newlines) — as a **`patch`**, not a full `content` rebuild.
+This skill's write-back is a *targeted* edit (it ticks and annotates
+specific entries, or removes them), so it is exactly the case `patch`
+serves: one call carrying one op per touched entry, keyed off text from
+your step-1 read, per `docs/conventions/linear-automation.md` →
+"Partial edits — the `patch` argument". Per the decision:
 
-- **Clear = yes:** drop the lines of the entries this pass consumed,
-  collapsing to the empty-inbox template when none remain. **Skip the
-  tick + disposition note entirely** — the entries are being removed, so
-  annotating them first is pure waste (this is the whole reason the
-  clear is decided before the write-back). Diff against the live body,
-  not your step-1 snapshot, so an entry added mid-pass is never dropped.
+- **Clear = yes:** one `replace` op per consumed entry, `new_string`
+  empty, deleting its lines. When none remain, a further `replace` op
+  swaps the residue for the empty-inbox template.
 - **Clear = no:** leave every entry in place but tick each consumed one
   (`- [ ]` → `- [x]`) and add a nested disposition note — a
   `✓ filed: ENG-### (<lever>)` for one that drove a task, or a
-  `⚠ noted: <reason>` for a one-off that implied no change — changing
-  only those lines.
+  `⚠ noted: <reason>` for a one-off that implied no change. One
+  `replace` op per consumed entry; **skip the annotation work
+  entirely** on a "yes, clear" (this is the whole reason the clear is
+  decided first).
+
+**No re-fetch, and no `updatedAt` check.** The ops are applied
+atomically against the live body, and each anchor must match **exactly
+once** — so a concurrent `session-metrics` append can't be clobbered
+(it isn't one of your anchors) and an entry that shifted underneath you
+fails the save loudly instead of being overwritten. On such a failure,
+re-read the doc and rebuild the ops; don't retry blindly.
+
+**Anchor on tag-free text.** An `ENG-###` in the document is stored as
+an issue-mention node, not the literal characters, so an anchor
+containing one **will not match** (same convention section). Anchor each
+op on the entry's **`session <short-uuid>`** fragment, which is unique
+per entry and can't carry a tag — *not* on the whole
+`<date> · <branch or PR> · session <short-uuid>` prefix, since the
+branch field is itself an `eng-###` and may be rewritten. What the op
+*writes* is unconstrained: a disposition note may contain an `ENG-###`
+freely, since only the anchor side has to match. If a needed anchor is
+unavoidably tag-bearing, fall back to a full `content` rebuild for that
+write and say so in the report.
 
 When this runs right before a `session-metrics` producer step (e.g.
 under `housekeeping`), evaluate the clear against the inbox state

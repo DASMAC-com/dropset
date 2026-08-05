@@ -179,22 +179,43 @@ PR-authoring **writes** (`create_pull_request`,
    - **Tick the addressed items in the same write that
      moves the issue to In Progress.** For every
      requirement the diff genuinely delivers, check its
-     box (`- [ ]` → `- [x]`), then write the updated
-     `description` **and** `state: "In Progress"` back in a
-     **single** `save_issue` (id + state + the full edited
-     `description`). Leave **partial** and **missing**
-     boxes unchecked, and don't invent boxes for
-     non-checkbox requirements. Diff against the live body
-     you just fetched so you never clobber a box the author
-     already ticked or other edits made since.
+     box (`- [ ]` → `- [x]`), then write the ticks **and**
+     `state: "In Progress"` back in a **single**
+     `save_issue`. Express the ticks as a **`patch`** — one
+     `replace` op per box, flipping just that line — rather
+     than re-sending the whole edited `description` (per
+     `docs/conventions/linear-automation.md` → "Partial edits
+     — the `patch` argument"). Leave **partial** and
+     **missing** boxes unchecked, and don't invent boxes for
+     non-checkbox requirements.
 
      ```txt
      mcp__claude_ai_Linear__save_issue(
        id: "<ENG-###>",
        state: "In Progress",
-       description: "<the full edited body, boxes ticked>"
+       patch: [
+         { op: "replace",
+           old_string: "- [ ] <the box's exact text>",
+           new_string: "- [x] <the box's exact text>" }
+       ]
      )
      ```
+
+     Each `old_string` must match the body you fetched
+     **exactly once**, which is also what keeps this from
+     clobbering a box the author already ticked or an edit
+     made since — a line that moved or changed fails the save
+     loudly instead. Three cautions: a box whose text is not
+     unique needs more of its surrounding line to
+     disambiguate; a box whose text contains an `ENG-###`
+     **won't match at all** (Linear stores that as a mention
+     node), so fall back to a full `description` write for
+     that one case; and because the save is **atomic**, one
+     stale anchor aborts the **whole** call — the In-Progress
+     move included. So if it fails, don't move on as though
+     the state landed: re-issue once with the state plus only
+     the ops that still match, and note the box you couldn't
+     tick.
 
      If there are **no** boxes to tick (no checklist, or
      none newly delivered), **and** the `get_issue` above
@@ -210,12 +231,18 @@ PR-authoring **writes** (`create_pull_request`,
      "Context economy"): each `save_issue` / `get_issue`
      **echoes the full issue body** back into context, and
      that echo is then replayed every later turn — worst on
-     a large consolidated-spec body. So fetch
-     the issue **once** (the `get_issue` above), don't
-     re-`get_issue` it, and collapse the In-Progress move
-     and **all** the box-ticks into the **one** `save_issue`
-     above — never a separate state write, and never one
-     write per box. On a **re-run / rework**, don't re-flip
+     a large consolidated-spec body. The echo is a **fixed
+     cost per call** — it comes back in full even on a
+     state-only write that sends no body at all, and a
+     `patch` does **not** shrink it — so the only lever on it
+     is **fewer calls**. So fetch the issue **once** (the
+     `get_issue` above), don't re-`get_issue` it, and collapse
+     the In-Progress move and **all** the box-ticks into the
+     **one** `save_issue` above — never a separate state
+     write, and never one write per box. (`patch` is the lever
+     on the *write payload*, not the echo: it keeps the ticks
+     from re-sending the body as input. Both levers apply to
+     that one call.) On a **re-run / rework**, don't re-flip
      the state unless it genuinely changed (the fetched state
      tells you), and if a state-change echo comes back not
      reflecting the change, **verify once and report the

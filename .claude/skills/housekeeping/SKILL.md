@@ -390,11 +390,14 @@ Dedup and refile so a 30-minute loop never duplicates work:
 - If an **open aggregated cspell issue already exists** (an
   open Backlog issue carrying any `dictionary:` /
   `cspell-placement:` fingerprint — going forward there is
-  at most one), **append** the new findings to its
-  description and re-save it (`save_issue` with that issue's
-  `id` and the full edited `description`), rather than
-  opening a second aggregated issue. Diff against the live
-  body you just read so existing bullets aren't clobbered. If
+  at most one), add the new findings to it rather than
+  opening a second aggregated issue — with a **`patch`** on
+  that issue's `id` (one `append` op carrying the new
+  bullets, plus a `replace` on its `**Touches**:` line),
+  not a re-sent `description`, per
+  `docs/conventions/linear-automation.md` → "Partial edits —
+  the `patch` argument". The append can't clobber an existing
+  bullet, so there's no live body to diff against. If
   more than one such issue somehow exists (e.g. a legacy
   per-finding issue alongside an aggregated one), append to
   the **lowest-ENG** one and note the others in the report so

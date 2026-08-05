@@ -30,31 +30,41 @@ to override, the user names one explicitly (e.g. "merge
 - **Append-only on relations.** It unions
   `blockedBy` / `blocks` / `relatedTo` onto the survivor;
   it never clears an existing edge.
+
 - **Never drops a `**Fingerprint**:` line** — each folded
   body is preserved verbatim under its `# Part` heading, so
   the per-lever dedup keys all survive.
+
 - **Unions, never overwrites, `**Touches**:`** — the merged
   issue carries one consolidated `**Touches**:` line that
   is the union of every folded issue's globs.
+
 - **Confirms before any write** (see step 4). Nothing is
   mutated until the human approves the plan.
+
 - **Won't grow a survivor past the point of being
-  editable.** Every fold re-emits the survivor's **entire**
-  description — `save_issue` replaces `description` wholesale
-  and Linear has no append API — so the cost and the
-  transcription-corruption risk both scale with the body
-  you're folding *into*, not with what you're adding. Folding
-  two issues into a ~28KB survivor meant re-emitting that
-  28KB twice, once per fold, each time putting every existing
-  `# Part` at risk. So when the survivor's body is already
-  large (past roughly **20KB**, or a dozen-plus `# Part`
-  sections), say so at the step-4 confirmation and recommend
-  **splitting** rather than growing: land what's there, or
-  keep the aggregate's detail in a repo doc with the issue
-  carrying only pointers and the `**Fingerprint**:` lines.
-  This is the same hazard `session-metrics` guards on the
-  inbox document — an aggregate past a threshold stops being
-  a container and becomes a liability.
+  readable.** When the survivor's body is already large (past
+  roughly **20KB**, or a dozen-plus `# Part` sections), say so
+  at the step-4 confirmation and recommend **splitting**
+  rather than growing: land what's there, or keep the
+  aggregate's detail in a repo doc with the issue carrying
+  only pointers and the `**Fingerprint**:` lines.
+
+  The reason is **human**, not mechanical. An earlier version
+  of this rule rested on cost and transcription risk — every
+  fold re-emitting the survivor's entire description, since
+  "`save_issue` replaces `description` wholesale and Linear
+  has no append API". The second half of that was wrong:
+  `save_issue` takes a `patch` array, so a fold *can* add a
+  `# Part` without re-sending the body, and the server applies
+  it atomically (no corruption risk) — see
+  `docs/conventions/linear-automation.md` → "Partial edits —
+  the `patch` argument". The advice survives anyway on the
+  merit that actually matters: a 28KB issue with a dozen
+  `# Part` sections is a bad artifact for a human to read,
+  prioritize, or scope a PR from, however cheaply it was
+  assembled. Recommend the split for that reason, and don't
+  claim a cost argument that no longer holds.
 
 ## Steps
 
@@ -136,11 +146,11 @@ TUI-selector pattern the other skill handoffs use):
   intended; surface it so the user can confirm, and
 - an **oversized-survivor warning** when the merged body
   exceeds roughly **20KB** — per "What it does — and does
-  not" above, a survivor this large pays its whole body per
-  fold and risks corrupting every existing `# Part`. Name the
-  size and recommend **splitting** instead of growing; that
-  makes "cancel" the honest default for this one case, so say
-  which way you'd go.
+  not" above, a survivor this large stops being a readable
+  artifact for whoever has to prioritize it and scope a PR
+  from it. Name the size and recommend **splitting** instead
+  of growing; that makes "cancel" the honest default for this
+  one case, so say which way you'd go.
 
 Offer "yes, merge" (**first**, the recommended default) and
 "cancel". Proceed only on an explicit yes.
@@ -152,6 +162,15 @@ approval:
   (id = survivor) — the new `title` and `description`, plus
   the union of `blockedBy` / `blocks` / `relatedTo` (these
   args are append-only, so passing the union is safe).
+
+  This one write stays **wholesale** on purpose: the merged
+  body is assembled end-to-end by `merge_tasks.py`, which
+  emits a single file, so there are no per-`# Part` fragments
+  to hand a `patch`. Expressing the fold as `append` ops
+  instead — which would skip re-sending the survivor's
+  existing body entirely — is a change to that tool's output
+  contract, not to this skill.
+
 - For **each** non-survivor, `save_issue` (id = that issue)
   with `state: "Canceled"` and `duplicateOf: "<survivor>"`,
   so the board shows it folded into the survivor.
