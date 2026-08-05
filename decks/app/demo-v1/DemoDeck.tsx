@@ -150,18 +150,6 @@ const Statement = ({
 );
 
 /**
- * A secondary line under a `Statement`, for the one page whose argument needs
- * two beats (the eCLOB: what we're building, then what the design gives you).
- * Deliberately not a bullet — two sentences at different weights read as prose
- * where two bullets read as a list.
- */
-const Supporting = ({ children }: { children: React.ReactNode }) => (
-  <Text color="quaternary" fontSize="34px" margin="22px 0 0 0" maxWidth="1400px">
-    {children}
-  </Text>
-);
-
-/**
  * The three supporting facts on the gap page.
  *
  * `justifyContent` is the load-bearing prop here, and it must stay explicit:
@@ -591,17 +579,17 @@ const BEATS: Beat[] = [
   {
     when: "Now",
     headline: "DASMAC bootstraps liquidity.",
-    body: "We bootstrap illiquid stablecoin pairs the way Hyperliquid did, and help issuers get their currency onchain. Dropset is the protocol underneath.",
+    body: "We bootstrap nascent FX pairs with Hyperliquid-style vaults, and Dropset is the protocol underneath.",
   },
   {
     when: "Next",
     headline: "Protocol fees accrue value.",
-    body: "As markets mature, volumes and fees compound as all currency pairs become liquid.",
+    body: "As markets mature, volumes and fees compound as we help all currency pairs achieve deep liquidity.",
   },
   {
     when: "Later",
     headline: "Derivatives are an expansion opportunity.",
-    body: "Hedging is an extra opportunity once spot is fully mature, and it makes market making more efficient and the markets themselves more mature.",
+    body: "Once spot is fully mature, hedging instruments and additional derivatives enable more efficient market making and more mature markets.",
   },
 ];
 
@@ -847,13 +835,12 @@ export default function DemoDeck() {
           </Statement>
           {/* The swap flow left to right, one step per column — the beat that
               used to be the mainnet recording. The three captures are very
-              different heights, so their captions sit above them on a shared
-              baseline rather than below at three different ones. */}
-          <FlexBox
-            margin="36px 0 0 0"
-            justifyContent="center"
-            alignItems="flex-start"
-          >
+              different heights, and centring them vertically is what makes that
+              read: each caption sits directly above its own capture, so the
+              labels climb like steps as the captures grow taller. The chevrons
+              inherit the same centring, landing on the row's axis rather than
+              pinned to the top of the tallest column. */}
+          <FlexBox margin="36px 0 0 0" justifyContent="center" alignItems="center">
             <Step
               step={1}
               label="Open the currency picker"
@@ -941,14 +928,14 @@ export default function DemoDeck() {
       <Slide>
         <SlideBody>
           <Eyebrow>The eCLOB</Eyebrow>
-          <Statement fontSize="60px">
-            We are building an exchange to solve this.
+          {/* One sentence, not a statement plus a supporting line: the eyebrow
+              already names the thing, so the sentence can go straight to what
+              the design gives you. The compute-unit numbers live on the capture
+              that shows them rather than being restated here. */}
+          <Statement fontSize="64px">
+            Our exchange model provides propAMM efficiency and order-book
+            transparency.
           </Statement>
-          <Supporting>
-            The eCLOB gives order-book transparency with propAMM efficiency —
-            repricing the whole book costs 47 compute units, reshaping the ladder
-            59.
-          </Supporting>
           {/* Left column stacks the two proof captures (the maker's own control
               panel, and what a quote update costs); the right column is the
               payoff — the same market rendered on the frontend, book and trades
@@ -979,7 +966,7 @@ export default function DemoDeck() {
                 src="/screens/eclob-frontend.png"
                 width={530}
                 alt="The eCLOB on the frontend: a EURC/USDC order book, a live trades tape, and a settled order"
-                caption="Liquidity is routed to the frontend"
+                caption="Liquidity routes to the frontend"
                 margin="0"
               />
             </Box>
@@ -989,9 +976,9 @@ export default function DemoDeck() {
           So we’re building the exchange those markets need. Making a market
           onchain used to be prohibitively expensive — gas made continuous
           quoting impossible, so everything before this was a band-aid. We’ve
-          built order books before, so we built one that fits: the eCLOB gives
-          you the transparency of a central limit order book with quote updates
-          as cheap as a propAMM. Repricing the whole book costs forty-seven
+          built order books before, so we built one that fits: our exchange model
+          gives you the transparency of a central limit order book with quote
+          updates as cheap as a propAMM. Repricing the whole book costs forty-seven
           compute units and reshaping the ladder fifty-nine, on a chain that
           gives you two hundred thousand per instruction. On the left is our own
           maker quoting a market locally; on the right that same liquidity routed
@@ -1034,13 +1021,14 @@ export default function DemoDeck() {
           <Roadmap />
         </SlideBody>
         <Notes>
-          Now, DASMAC bootstraps the liquidity: we seed illiquid stablecoin pairs
-          the way Hyperliquid did, and we help issuers get their currency onchain
-          — DASMAC is the company, Dropset is the protocol it runs on. Next,
-          protocol fees accrue value: as markets mature, volumes and fees compound
-          as all the currency pairs become liquid. Later, derivatives are an
-          expansion opportunity — hedging, once spot is fully mature, which makes
-          market making more efficient and the markets themselves more mature.
+          Now, DASMAC bootstraps the liquidity: we seed nascent FX pairs with
+          Hyperliquid-style vaults, so we’re the liquidity leader and Dropset is
+          the protocol underneath — DASMAC the company, Dropset the protocol.
+          Next, protocol fees accrue value: as markets mature, volumes and fees
+          compound as we help all the currency pairs achieve deep liquidity.
+          Later, derivatives are an expansion opportunity: once spot is fully
+          mature, hedging instruments and additional derivatives enable more
+          efficient market making and more mature markets.
         </Notes>
       </Slide>
 
@@ -1054,7 +1042,7 @@ export default function DemoDeck() {
           <FlexBox margin="46px 0 0 0" justifyContent="center">
             <VenuePanel
               tint={colors.sell}
-              caption="Permissioned solutions are blocking composability."
+              caption="Permissioned solutions are blocking composability. Competitive dynamics keep a private ledger from ever being a money-like environment."
             >
               <LogoRow
                 logos={PERMISSIONED}
@@ -1066,7 +1054,7 @@ export default function DemoDeck() {
             </VenuePanel>
             <VenuePanel
               tint={colors.buy}
-              caption="Dropset is open and composable on Solana — the most money-like environment onchain, with the highest ease of transmission."
+              caption="Dropset is open and composable on Solana, the most money-like onchain environment."
             >
               <Wordmark width={420} />
             </VenuePanel>
@@ -1078,11 +1066,12 @@ export default function DemoDeck() {
           regulated onchain markets — any of them could decide FX is theirs, and
           each arrives with the customers already on it. But their liquidity
           isn’t public: you can’t make a market unless they let you, and that
-          blocks composability for everyone downstream. Dropset is open, neutral
-          and composable — anyone can quote, anyone can trade, any app can
-          integrate. And that’s why we started on Solana: it’s the most
-          money-like place value can sit onchain, with the highest ease of
-          transmission.
+          blocks composability for everyone downstream. Their competitive
+          dynamics keep them from ever being a money-like environment — at that
+          point it’s really just a private ledger. Dropset is open, neutral and
+          composable: anyone can quote, anyone can trade, any app can integrate.
+          And that’s why we started on Solana, the most money-like onchain
+          environment there is.
         </Notes>
       </Slide>
 
@@ -1103,26 +1092,26 @@ export default function DemoDeck() {
               name="Alex Kahn"
               role="Founder, DASMAC"
               prior="prev. Cofounder, Econia Labs"
-              bio="Authored two exchanges on Aptos, including the Econia order book, which settled around $500M. Authored the Solana Opcode Guide, the definitive resource for optimizing Solana program efficiency."
+              bio="Authored two exchanges on Aptos, including the Econia order book ($500M lifetime volume). Authored the Solana Opcode Guide, the definitive resource for optimizing Solana program efficiency."
             />
             <Portrait
               src="/remote/team-judy.png"
               name="Judy Sosa"
               role="Operations, DASMAC"
               prior="prev. EA, Dragonfly Capital"
-              bio="Owns the whole operational stack, working with the banks, stablecoin providers, onramps and service providers we build on."
+              bio="Owns the whole operational stack, working with banks, stablecoin providers, onramps and service provider relationships."
             />
           </FlexBox>
         </SlideBody>
         <Notes>
           Dropset is built by people who have built exchanges. I authored two on
-          Aptos, including the Econia order book, which settled around five
-          hundred million in volume, and I authored the Solana Opcode Guide, the
-          definitive resource for optimizing Solana program efficiency — which is
-          what makes quoting on the eCLOB cost double-digit compute units. Judy
-          owns the whole operational stack, and works directly with the banks, the
-          stablecoin providers, the onramps and the service providers we build
-          on. Dropset — where currency trades onchain. [Leave this page up.]
+          Aptos, including the Econia order book, five hundred million dollars of
+          lifetime volume, and I authored the Solana Opcode Guide, the definitive
+          resource for optimizing Solana program efficiency — which is what makes
+          quoting on the eCLOB cost double-digit compute units. Judy owns the
+          whole operational stack, and works directly with banks, stablecoin
+          providers, onramps and our service provider relationships. Dropset —
+          where currency trades onchain. [Leave this page up.]
         </Notes>
       </Slide>
     </Deck>

@@ -64,20 +64,22 @@ pages:
 > curate the market data for every currency on Solana — and when you sort
 > by liquidity, the bottom of that list is currencies with no market
 > whatsoever: the Australian dollar, the Canadian dollar, the yen, the
-> naira, the lira. So we're building the exchange those markets need. The
-> eCLOB gives order-book transparency with propAMM efficiency, where
-> repricing the whole book costs forty-seven compute units and reshaping
-> the ladder fifty-nine. Our vaults bootstrap a public liquidity
+> naira, the lira. So we're building the exchange those markets need. Our
+> exchange model provides propAMM efficiency and order-book transparency,
+> where repricing the whole book costs forty-seven compute units and
+> reshaping the ladder fifty-nine. Our vaults bootstrap a public liquidity
 > flywheel, and it's a two-sided market we're already doing the customer
 > development on — upstream the issuers who need their currency to trade,
 > downstream the payments companies who need to buy FX to settle. The path
-> from here is deliberate: DASMAC bootstraps liquidity now, protocol fees
-> accrue value as markets mature, and derivatives are the expansion
-> opportunity once spot is fully mature. Permissioned onchain liquidity
-> creates major pain points, because permissioned solutions block
-> composability — Dropset is open on Solana, the most money-like
-> environment onchain. Dropset is built by people who have built
-> exchanges. Dropset — where currency trades onchain.
+> from here is deliberate: DASMAC bootstraps nascent FX pairs with
+> Hyperliquid-style vaults now, protocol fees accrue value as markets
+> mature, and derivatives are the expansion opportunity once spot is fully
+> mature. Permissioned onchain liquidity creates major pain points,
+> because permissioned solutions block composability and their competitive
+> dynamics keep a private ledger from ever being money-like — Dropset is
+> open and composable on Solana, the most money-like onchain environment.
+> Dropset is built by people who have built exchanges. Dropset — where
+> currency trades onchain.
 
 ### Page-by-page
 
@@ -143,9 +145,12 @@ pages:
 - **On-slide:** Dropset settles real currency trades on mainnet today.
 - **Visual:** The swap flow **left to right, one step per column**, the
   steps being "open the currency picker", "type the currency you want"
-  and "swap atomically". Captions sit **above** each capture on a shared
-  baseline, because the three are very different heights and captions
-  underneath landed on three different ones.
+  and "swap atomically". Each caption sits **above** its own capture, and
+  the columns (and the chevrons between them) are **vertically centred**.
+  The three captures get progressively taller, so centring makes the
+  labels climb like steps — which is the effect worth keeping. Captions
+  underneath, by contrast, landed on three different baselines and read as
+  ragged.
 - **Spoken:** "This already works. Dropset is live on mainnet today,
   clearing real trades: you open the picker, type the currency you want,
   and the swap settles atomically. The ramps are near instant and the
@@ -193,34 +198,38 @@ pages:
 
 #### Page 6 — The eCLOB · ~18s
 
-- **On-slide:** We are building an exchange to solve this. Beneath it: the
-  eCLOB gives order-book transparency with propAMM efficiency — repricing
-  the whole book costs 47 compute units, reshaping the ladder 59.
+- **On-slide:** Eyebrow "The eCLOB", then one sentence: our exchange
+  model provides propAMM efficiency and order-book transparency.
 - **Visual:** Left column stacks the two proof captures — our maker
-  quoting locally, and the compute-unit pane. Right column is the payoff:
-  that same liquidity routed through to the frontend, captioned
-  "Liquidity is routed to the frontend", showing the order book, the live
-  trades tape and a filled order.
+  quoting locally, and the compute-unit pane captioned "Reprice: 47 CU ·
+  reshape: 59 CU". Right column is the payoff: that same liquidity routed
+  through to the frontend, captioned "Liquidity routes to the frontend",
+  showing the order book, the live trades tape and a filled order.
 - **Spoken:** "So we're building the exchange those markets need. Making
   a market onchain used to be prohibitively expensive — gas made
   continuous quoting impossible, so everything before this was a
   band-aid. We've built order books before, so we built one that fits:
-  the eCLOB gives you the transparency of a central limit order book with
-  quote updates as cheap as a propAMM. Repricing the whole book costs
+  our exchange model gives you the transparency of a central limit order
+  book with quote updates as cheap as a propAMM. Repricing the whole
+  book costs
   forty-seven compute units and reshaping the ladder fifty-nine, on a
   chain that gives you two hundred thousand per instruction. On the left
   is our own maker quoting a market locally; on the right that same
   liquidity routed through to the frontend, with the book, the live
   trades tape, and a filled order. We're building this out so anyone can
   quote onchain with a vault-style approach."
-- **Note:** The on-slide line is the **answer to page 5**, which is why
-  it leads with what we're building rather than with the design's
-  properties; the transparency-and-efficiency claim is the supporting
-  line under it. The two captures are the point of the pairing: local
-  maker on the left, that liquidity showing up on the frontend on the
-  right. This replaced a strip of four small keyframe thumbnails — one
-  screenshot of the whole thing working says more than four stills of it
-  starting up, and needs no localnet capture session to produce.
+- **Note:** **One sentence, not a statement plus a supporting line.** An
+  intermediate draft led with "we are building an exchange to solve this"
+  and put the design's properties underneath — but the eyebrow already
+  names the thing, so the sentence can go straight to what the model
+  gives you, and the spoken track carries the segue from page 5. The
+  compute-unit numbers live on the capture that shows them rather than
+  being restated on the slide. The pairing of captures is the other point
+  of the page: our maker quoting locally on the left, that same liquidity
+  arriving on the frontend on the right. This replaced a strip of four
+  small keyframe thumbnails — one screenshot of the whole thing working
+  says more than four stills of it starting up, and needs no localnet
+  capture session to produce.
 
 #### Page 7 — How we grow · ~15s
 
@@ -257,14 +266,15 @@ pages:
 
 - **On-slide:** A deliberate and methodical path to expansion. Then three
   beats in time order, spanning the page:
-  1. **Now** — DASMAC bootstraps liquidity. We bootstrap illiquid
-     stablecoin pairs the way Hyperliquid did, and help issuers get their
-     currency onchain. Dropset is the protocol underneath.
+  1. **Now** — DASMAC bootstraps liquidity. We bootstrap nascent FX pairs
+     with Hyperliquid-style vaults, and Dropset is the protocol
+     underneath.
   1. **Next** — protocol fees accrue value. As markets mature, volumes
-     and fees compound as all currency pairs become liquid.
-  1. **Later** — derivatives are an expansion opportunity. Hedging is an
-     extra opportunity once spot is fully mature, and it makes market
-     making more efficient and the markets themselves more mature.
+     and fees compound as we help all currency pairs achieve deep
+     liquidity.
+  1. **Later** — derivatives are an expansion opportunity. Once spot is
+     fully mature, hedging instruments and additional derivatives enable
+     more efficient market making and more mature markets.
 - **Visual:** The three beats as a rollout along a rule spanning the full
   page width, not a static list.
 - **Note:** Called a **roadmap** rather than "commercial viability" — the
@@ -281,25 +291,31 @@ pages:
 
 - **On-slide:** Permissioned onchain liquidity creates major pain points.
   Two panels: the permissioned rails (Arc, Canton, Tempo, red-outlined),
-  captioned "Permissioned solutions are blocking composability"; and the
-  Dropset wordmark, green-outlined, captioned "Dropset is open and
-  composable on Solana — the most money-like environment onchain, with
-  the highest ease of transmission."
+  captioned "Permissioned solutions are blocking composability.
+  Competitive dynamics keep a private ledger from ever being a money-like
+  environment."; and the Dropset wordmark, green-outlined, captioned
+  "Dropset is open and composable on Solana, the most money-like onchain
+  environment."
 - **Spoken:** "Permissioned onchain liquidity creates real pain points.
   Arc and Tempo are building payment-and-settlement rails, and Canton is
   doing regulated onchain markets — any of them could decide FX is
   theirs, and each arrives with the customers already on it. But their
   liquidity isn't public: you can't make a market unless they let you,
-  and that blocks composability for everyone downstream. Dropset is open,
-  neutral and composable — anyone can quote, anyone can trade, any app
-  can integrate. And that's why we started on Solana: it's the most
-  money-like place value can sit onchain, with the highest ease of
-  transmission."
+  and that blocks composability for everyone downstream. Their
+  competitive dynamics keep them from ever being a money-like environment
+  — at that point it's really just a private ledger. Dropset is open,
+  neutral and composable: anyone can quote, anyone can trade, any app can
+  integrate. And that's why we started on Solana, the most money-like
+  onchain environment there is."
 - **Note:** The v1 fail / won't-fail **pair collapsed into this one
   page**, and the asterisk device is retired — it cost a page and the
   payoff didn't carry. The framing is now the *pain point* rather than
   "what FX's consumers need", which was a claim about other people's
-  requirements; a pain point is something the audience can check.
+  requirements; a pain point is something the audience can check. The
+  second clause on the permissioned caption is the sharper half of the
+  argument: a permissioned venue's own competitive dynamics stop it from
+  being money-like at all, because what it really is at that point is a
+  private ledger.
 - **Note on the logos:** this page is the **one exception** to keeping
   competitor marks off the deck, and it is deliberate. The red outline is
   what makes it work — the marks are labeled as the unfavorable case
@@ -316,21 +332,21 @@ pages:
 - **On-slide:** Eyebrow "The team", then "Dropset is built by people who
   have built exchanges" — matching every other page's kicker-plus-sentence
   shape. Then one line each: Alex Kahn, Founder — authored two exchanges
-  on Aptos, including the Econia order book, which settled around \$500M;
+  on Aptos, including the Econia order book (\$500M lifetime volume);
   authored the Solana Opcode Guide, the definitive resource for optimizing
   Solana program efficiency. Judy Sosa, Operations — owns the whole
-  operational stack, working with the banks, stablecoin providers, onramps
-  and service providers we build on.
+  operational stack, working with banks, stablecoin providers, onramps and
+  service provider relationships.
 - **Visual:** Both headshots, square and unframed, pulled from the
   marketing site at build time (`remote-assets.json`).
 - **Spoken:** "Dropset is built by people who have built exchanges. I
-  authored two on Aptos, including the Econia order book, which settled
-  around five hundred million in volume, and I authored the Solana Opcode
+  authored two on Aptos, including the Econia order book, five hundred
+  million dollars of lifetime volume, and I authored the Solana Opcode
   Guide, the definitive resource for optimizing Solana program efficiency
   — which is what makes quoting on the eCLOB cost double-digit compute
   units. Judy owns the whole operational stack, and works directly with
-  the banks, the stablecoin providers, the onramps and the service
-  providers we build on. Dropset — where currency trades onchain."
+  banks, stablecoin providers, onramps and our service provider
+  relationships. Dropset — where currency trades onchain."
 - **Note:** **State what each person has done; don't argue for why the
   role matters.** An intermediate draft justified the operations split
   ("this is the work that gets an FX venue integrated with the rails…",
