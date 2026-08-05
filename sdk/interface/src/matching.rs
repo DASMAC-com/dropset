@@ -146,12 +146,13 @@ pub fn simulate_swap(
                 return Quote::default();
             }
             let fill_q = fill_q.min(unfilled) as u64;
-            // The reverse conversion truncates toward zero, so a
-            // one-atom base leg at any price below 1 costs zero quote.
-            // The engine skips that leg (swap.rs `compute_fill`
-            // WARNING 1e) rather than hand out free base, so skip it
-            // here too — quoting it would promise output the chain
-            // won't deliver.
+            // The reverse conversion truncates toward zero, so a base
+            // leg at any price below 1 can cost zero quote — and the
+            // cap makes that leg large, not dust: at 0.00006 one quote
+            // atom buys ~16.5k base. The engine skips such a leg
+            // (`compute_fill` guard 1f) rather than hand out free base,
+            // so skip it here too — quoting it would promise output the
+            // chain won't deliver.
             if fill_q == 0 {
                 continue;
             }
@@ -177,8 +178,10 @@ pub fn simulate_swap(
                 return Quote::default();
             }
             let fill_b = fill_b.min(unfilled) as u64;
-            // Symmetric to the Buy guard: a one-atom quote leg at any
-            // price above 1 costs zero base, and the engine skips it.
+            // Symmetric to the Buy zero-input guard above: a one-atom
+            // quote leg at any price above 1 costs zero base, and the
+            // engine skips it. (Bounded near one atom on this arm,
+            // unlike the Buy side, since the price is above 1.)
             if fill_b == 0 {
                 continue;
             }
@@ -428,13 +431,24 @@ mod tests {
     use crate::price::Price;
     use bytemuck::{bytes_of, cast_slice, Zeroable};
 
-    /// One live `remaining` book level — mirrors the conformance generator.
-    fn position(significand: u32, size: u64) -> Position {
+    /// One live `remaining` book level at an explicit exponent. The
+    /// sub-1 fixture below needs this: `Price::encode`'s significand
+    /// floor is `10_000_000`, so at exponent 0 every representable
+    /// price is `>= 1.0` and a below-1 book can't be expressed.
+    fn position_at(significand: u32, exponent: i8, size: u64) -> Position {
         Position {
-            price: Price::encode(significand, 0).unwrap().as_u32().into(),
+            price: Price::encode(significand, exponent)
+                .unwrap()
+                .as_u32()
+                .into(),
             size: size.into(),
             expires_at: u32::MAX.into(),
         }
+    }
+
+    /// One live `remaining` book level — mirrors the conformance generator.
+    fn position(significand: u32, size: u64) -> Position {
+        position_at(significand, 0, size)
     }
 
     /// A one-vault market whose single active vault carries a live EUR/USD
@@ -538,8 +552,76 @@ mod tests {
         assert_eq!(q.out_amount + q.fee_amount, total_base);
     }
 
+    /// The mirror of [`market_data`] below price 1 — an IDR-scale book
+    /// at 0.00006 quote per base. Every market in the FX demo except
+    /// EURC quotes here, and it is the only shape that reaches the Buy
+    /// arm's zero-input guard: above 1, a dust Buy floors its *output*
+    /// leg instead and the pre-existing output guard catches it first.
+    fn sub_one_market_data() -> Vec<u8> {
+        let mut header = MarketHeader::zeroed();
+        header.head = 0u32.into();
+        header.tombstone_head = NULL_SECTOR.into();
+        header.free_head = NULL_SECTOR.into();
+        header.active_count = 1u32.into();
+        header.base_mint = [2u8; 32];
+        header.quote_mint = [3u8; 32];
+
+        let mut v = Vault::zeroed();
+        v.next = NULL_SECTOR.into();
+        v.prev = NULL_SECTOR.into();
+        v.leader = [1u8; 32];
+        v.reference_price = ReferencePrice {
+            stamp: 1u64.into(),
+            price: Price::encode(60_000_000, -5).unwrap().as_u32().into(),
+            quote_slot: 0u32.into(),
+        };
+        // Deep enough that the level cap never binds before the price
+        // truncation does.
+        v.base_atoms = 1_000_000_000u64.into();
+        v.quote_atoms = 60_000u64.into();
+        v.remaining.asks[0] = position_at(60_300_000, -5, 1_000_000_000);
+        v.remaining.bids[0] = position_at(59_700_000, -5, 60_000);
+
+        let vaults = [v];
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&[0u8; ACCOUNT_DISCRIMINATOR_LEN]);
+        buf.extend_from_slice(bytes_of(&header));
+        buf.extend_from_slice(&(vaults.len() as u32).to_le_bytes());
+        while !buf.len().is_multiple_of(VAULT_ALIGN) {
+            buf.push(0);
+        }
+        buf.extend_from_slice(cast_slice(&vaults));
+        buf
+    }
+
+    /// The Buy-arm half of the guard, which only a below-1 book reaches.
+    ///
+    /// Here the free leg is *base*, and the round trip magnifies it:
+    /// one quote atom converts to ~16.5k base atoms whose reverse
+    /// conversion floors back to zero quote. Without the guard the
+    /// simulator would quote that base as deliverable output.
+    #[test]
+    fn dust_buy_below_price_one_quotes_nothing() {
+        let data = sub_one_market_data();
+        let view = MarketView::load(&data).unwrap();
+        let ask = Price::encode(60_300_000, -5).unwrap();
+        assert_eq!(ask.base_for_quote(1), 16_583);
+        assert_eq!(ask.quote_for_base(16_583), 0);
+
+        let q = simulate_swap(&view, SwapSide::Buy, 1, Price::INFINITY, 1);
+        assert_eq!(
+            q,
+            Quote::default(),
+            "a one-atom Buy below price 1 must quote nothing, not free base"
+        );
+
+        // Dust-only, as on the Sell arm: a normally-sized Buy still fills.
+        let q = simulate_swap(&view, SwapSide::Buy, 1_000_000, Price::INFINITY, 1);
+        assert!(q.in_amount > 0 && q.out_amount > 0 && q.legs > 0);
+    }
+
     /// A dust take whose input leg would truncate to zero quotes nothing
-    /// rather than free output, matching the engine's WARNING 1e guard.
+    /// rather than free output, matching the engine's WARNING 1f guard.
     ///
     /// One base atom into the 1.0796 bid converts to a single quote atom,
     /// but that atom reverse-converts back to **zero** base — the vault

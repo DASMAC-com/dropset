@@ -165,15 +165,20 @@ impl SwapSide {
     ///   `taker_unfilled_in` keeps the per-leg vault credit equal to
     ///   what the taker actually pays and stops `taker_unfilled_in` from
     ///   saturating to 0 and billing the full budget for a partial fill.
-    /// * **1e (zero input leg):** the same toward-zero truncation can
+    /// * **1f (zero input leg):** the same toward-zero truncation can
     ///   floor the reverse-converted input leg to `0` while the output
-    ///   leg is a legitimate 1 atom — `base_for_quote(1) == 0` at any
-    ///   price above 1, `quote_for_base(1) == 0` at any price below 1.
-    ///   That leg would move value in one direction only: the vault
-    ///   pays out and the taker pays nothing. Guarding it here keeps
-    ///   the both-directions invariant, and skipping the leg is the
-    ///   correct outcome — a sub-atom of the input asset is not
-    ///   tradeable, so the taker's final dust simply stays unfilled.
+    ///   leg is legitimate — `base_for_quote(1) == 0` at any price
+    ///   above 1, `quote_for_base(1) == 0` at any price below 1. That
+    ///   leg would move value in one direction only: the vault pays out
+    ///   and the taker pays nothing. Guarding it here keeps the
+    ///   both-directions invariant, and skipping is the correct
+    ///   outcome — a sub-atom of the input asset is not tradeable, so
+    ///   the leg simply goes unfilled and the walk moves on. Note the
+    ///   output leg need not be dust for this to fire: the trigger is
+    ///   whichever cap binds, so a large taker budget against a 1-atom
+    ///   level or vault cap reaches it too, and on the below-1 arm the
+    ///   round trip magnifies it — one quote atom buys ~16.5k base at
+    ///   0.00006, all of it free without this guard.
     #[inline]
     fn compute_fill(
         self,
@@ -885,7 +890,7 @@ mod tests {
                                      side={side:?} price={price:?}"
                                 );
                                 // A matched leg moves value in *both*
-                                // directions (WARNING 1e). Either leg at
+                                // directions (WARNING 1f). Either leg at
                                 // zero is a one-directional transfer and
                                 // must have early-returned `Ok(None)`.
                                 assert!(
@@ -923,7 +928,7 @@ mod tests {
     }
 
     /// The dust remainder that used to hand out a free atom (WARNING
-    /// 1e), pinned on both arms at the prices that actually reach them.
+    /// 1f), pinned on both arms at the prices that actually reach them.
     ///
     /// Which arm trips depends purely on whether the level price sits
     /// above or below 1, so a demo book quoting only above-1 markets

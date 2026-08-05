@@ -124,7 +124,7 @@ fn sell_side_fills_against_bids() {
 ///
 /// The live localnet case: at any bid above 1, one base atom converts to
 /// a single quote atom, and that atom reverse-converts back to **zero**
-/// base. Before the WARNING 1e guard the vault paid out the quote atom
+/// base. Before the WARNING 1f guard the vault paid out the quote atom
 /// against an input of nothing — a real transfer, confirmed at the token
 /// level, not just a mis-reported `FillEvent`.
 #[test]
