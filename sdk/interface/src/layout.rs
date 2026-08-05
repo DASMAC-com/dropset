@@ -159,6 +159,9 @@ pub struct MarketHeader {
     pub outstanding_vault_depositors: LeU32,
     pub fee_config: FeeConfig,
     pub taker_fee: LeU16,
+    /// Ceiling on a swap's caller-declared `platform_fee_bps`. Note the
+    /// denominator differs from `taker_fee` above: bps here, ppm there.
+    pub max_platform_fee: LeU16,
     pub default_min_leader_share: LeU32,
     pub base_mint: [u8; 32],
     pub quote_mint: [u8; 32],
@@ -202,7 +205,7 @@ pub struct Vault {
 // the program layout (without regenerating against a fresh IDL + updating
 // this mirror) breaks the SDK build here rather than silently
 // misdecoding the slab.
-const _: () = assert!(core::mem::size_of::<MarketHeader>() == 251);
+const _: () = assert!(core::mem::size_of::<MarketHeader>() == 253);
 const _: () = assert!(core::mem::size_of::<Vault>() == 560);
 // Sectors stay aligned across the slab: stride must be a multiple of the
 // on-chain Vault alignment (see VAULT_ALIGN / MarketView::load).

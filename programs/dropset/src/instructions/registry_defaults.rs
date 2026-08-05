@@ -2,12 +2,14 @@
 //!
 //! The `Registry` holds the protocol-wide defaults stamped onto *future*
 //! markets at `create_market` (`default_taker_fee`,
-//! `default_min_leader_share`, `default_fee_config`). Before this lever
+//! `default_max_platform_fee`, `default_min_leader_share`,
+//! `default_fee_config`). Before this lever
 //! they were write-once at `init`, so an operator could not adjust the
 //! fee/floor schedule new markets inherit after launch.
 //!
-//! `set_registry_defaults` retunes the two scalar defaults
-//! (`default_taker_fee`, `default_min_leader_share`) — each supplied as an
+//! `set_registry_defaults` retunes the three scalar defaults
+//! (`default_taker_fee`, `default_max_platform_fee`,
+//! `default_min_leader_share`) — each supplied as an
 //! `Option`, so a caller can move one field without restating the others.
 //! A `None` leaves that default untouched. The write is **non-retroactive**:
 //! it changes only what the *next* `create_market` stamps, mirroring how
@@ -37,7 +39,7 @@ use anchor_spl_v2::{
 use crate::{
     errors::DropsetError,
     events::{SetDefaultFeeConfigEvent, SetRegistryDefaultsEvent},
-    FeeConfig, Registry, PPM,
+    FeeConfig, Registry, BPS, PPM,
 };
 
 #[event_cpi]
@@ -59,6 +61,7 @@ impl SetRegistryDefaults {
     pub fn set_registry_defaults(
         &mut self,
         taker_fee: Option<u16>,
+        max_platform_fee: Option<u16>,
         min_leader_share: Option<u32>,
     ) -> Result<SetRegistryDefaultsEvent> {
         // Admin-only — gated at the dispatcher via `#[access_control]`
@@ -67,6 +70,19 @@ impl SetRegistryDefaults {
         // ceiling is the type bound — no range check is possible to fail.
         if let Some(taker_fee) = taker_fee {
             self.registry.default_taker_fee = taker_fee.into();
+        }
+
+        // Unlike `default_taker_fee` this one is bps, where a `u16` reaches
+        // well past `BPS` — so range-check it, on the same reasoning as the
+        // per-market `set_max_platform_fee`. Rejecting here stops an
+        // over-range ceiling from being stamped onto every market created
+        // afterwards, where it would need unwinding one market at a time.
+        if let Some(max_platform_fee) = max_platform_fee {
+            require!(
+                (max_platform_fee as u64) <= BPS,
+                DropsetError::InvalidMaxPlatformFee
+            );
+            self.registry.default_max_platform_fee = max_platform_fee.into();
         }
 
         // The floor is a fraction of total shares, so a value above 100%
@@ -83,6 +99,7 @@ impl SetRegistryDefaults {
 
         Ok(SetRegistryDefaultsEvent {
             default_taker_fee: self.registry.default_taker_fee.get(),
+            default_max_platform_fee: self.registry.default_max_platform_fee.get(),
             default_min_leader_share: self.registry.default_min_leader_share.get(),
         })
     }

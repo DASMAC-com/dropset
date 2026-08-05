@@ -8,16 +8,16 @@
 
 import { combineCodec, getStructDecoder, getStructEncoder, getU16Decoder, getU16Encoder, getU32Decoder, getU32Encoder, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder } from '@solana/kit';
 
-export type SetRegistryDefaultsEvent = { defaultTakerFee: number; defaultMinLeaderShare: number;  };
+export type SetRegistryDefaultsEvent = { defaultTakerFee: number; defaultMaxPlatformFee: number; defaultMinLeaderShare: number;  };
 
 export type SetRegistryDefaultsEventArgs = SetRegistryDefaultsEvent;
 
 export function getSetRegistryDefaultsEventEncoder(): FixedSizeEncoder<SetRegistryDefaultsEventArgs> {
-    return getStructEncoder([['defaultTakerFee', getU16Encoder()], ['defaultMinLeaderShare', getU32Encoder()]]);
+    return getStructEncoder([['defaultTakerFee', getU16Encoder()], ['defaultMaxPlatformFee', getU16Encoder()], ['defaultMinLeaderShare', getU32Encoder()]]);
 }
 
 export function getSetRegistryDefaultsEventDecoder(): FixedSizeDecoder<SetRegistryDefaultsEvent> {
-    return getStructDecoder([['defaultTakerFee', getU16Decoder()], ['defaultMinLeaderShare', getU32Decoder()]]);
+    return getStructDecoder([['defaultTakerFee', getU16Decoder()], ['defaultMaxPlatformFee', getU16Decoder()], ['defaultMinLeaderShare', getU32Decoder()]]);
 }
 
 export function getSetRegistryDefaultsEventCodec(): FixedSizeCodec<SetRegistryDefaultsEventArgs, SetRegistryDefaultsEvent> {

@@ -30,13 +30,28 @@ use crate::DROPSET_ID;
 pub const CLOCK_SYSVAR: Pubkey =
     solana_pubkey::pubkey!("SysvarC1ock11111111111111111111111111111111");
 
+/// The SPL Associated Token Account program — `swap` carries it to create an
+/// integrator's fee ATA on first use. Required even on this no-fee path,
+/// where it is inert.
+pub const ASSOCIATED_TOKEN_PROGRAM_ID: Pubkey =
+    solana_pubkey::pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+
+/// The System program — funds that fee ATA's rent. Same story: present and
+/// inert when no fee is declared.
+pub const SYSTEM_PROGRAM_ID: Pubkey = solana_pubkey::pubkey!("11111111111111111111111111111111");
+
 /// Human-readable venue label (`Amm::label` / `TradingVenue` name).
 pub const LABEL: &str = "Dropset";
 
 /// Account count of the `swap` instruction — the routers' `get_accounts_len`.
 /// Constant: the whole book is one market account, so a take never grows
 /// its account list (interface.md § 4, "not account-hungry").
-pub const SWAP_ACCOUNTS_LEN: usize = 13;
+///
+/// Still constant with the optional platform-fee group in the list: Anchor
+/// encodes an absent optional account as the program id in its slot rather
+/// than by shortening the list, so a no-fee swap and a fee-bearing one both
+/// pass exactly this many metas.
+pub const SWAP_ACCOUNTS_LEN: usize = 17;
 
 /// A Dropset market presented through a router's quoting + swap surface.
 #[derive(Clone)]
@@ -223,7 +238,15 @@ impl DropsetAmm {
             SwapSide::Buy => Price::INFINITY,
             SwapSide::Sell => Price::ZERO,
         };
-        let q = simulate_swap(&view, side, p.amount, limit, p.current_slot);
+        // No platform fee on the router path. This adapter is the
+        // *venue-side* plugin an aggregator calls to price and build a fill
+        // against our book; whatever integrator fee that aggregator charges
+        // it applies in its own program, on top of what we quote here.
+        // Declaring one as well would double-charge the taker and quote a
+        // fee no one on this side is owed. A caller wanting the eCLOB's own
+        // platform fee builds the `swap` instruction directly (see the
+        // frontend's eCLOB route).
+        let q = simulate_swap(&view, side, p.amount, limit, p.current_slot, 0);
         Ok(DropsetQuote {
             in_amount: q.in_amount,
             out_amount: q.out_amount,
@@ -250,6 +273,12 @@ impl DropsetAmm {
             market_base_treasury: self.base_treasury,
             market_quote_treasury: self.quote_treasury,
             clock: CLOCK_SYSVAR,
+            // No integrator on this path — see `quote` above for why the
+            // router's own fee layer sits outside what we build here.
+            platform_fee_authority: None,
+            platform_fee_ata: None,
+            associated_token_program: ASSOCIATED_TOKEN_PROGRAM_ID,
+            system_program: SYSTEM_PROGRAM_ID,
             event_authority,
             program: DROPSET_ID,
         };
@@ -258,6 +287,7 @@ impl DropsetAmm {
             amount_in: p.amount_in,
             limit_price_bits: p.limit_price_bits,
             min_out: p.min_out,
+            platform_fee_bps: 0,
         }))
     }
 

@@ -1945,6 +1945,96 @@
       ]
     },
     {
+      "name": "set_max_platform_fee",
+      "discriminator": [
+        28
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "docs": [
+            "Registry admin — the only signer this lever accepts."
+          ],
+          "signer": true
+        },
+        {
+          "name": "registry",
+          "docs": [
+            "Singleton registry, read for the admin-membership check."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "market",
+          "docs": [
+            "Market whose `max_platform_fee` is being retuned. `mut` for the",
+            "write."
+          ],
+          "writable": true
+        },
+        {
+          "name": "event_authority",
+          "docs": [
+            "CHECK: Only the event authority can invoke self-CPI"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "docs": [
+            "CHECK: Kept for v1-compatible account ordering and IDL shape"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "max_platform_fee",
+          "type": "u16"
+        }
+      ]
+    },
+    {
       "name": "set_min_leader_share",
       "discriminator": [
         22
@@ -2252,6 +2342,12 @@
           }
         },
         {
+          "name": "max_platform_fee",
+          "type": {
+            "option": "u16"
+          }
+        },
+        {
           "name": "min_leader_share",
           "type": {
             "option": "u32"
@@ -2408,6 +2504,66 @@
           "address": "SysvarC1ock11111111111111111111111111111111"
         },
         {
+          "name": "platform_fee_authority",
+          "docs": [
+            "Integrator earning the caller-declared platform fee — the owner of",
+            "`platform_fee_ata`, not a signer. Permissionless: any caller may",
+            "route flow here and name any authority, bounded only by the market's",
+            "`max_platform_fee`. There is deliberately no admin onboarding and so",
+            "nothing to constrain this against.",
+            "",
+            "Optional, together with `platform_fee_ata`: a swap with no",
+            "integrator passes `None` for both and `platform_fee_bps = 0`, so the",
+            "direct paths (maker bot, TUI, tests, taker bot) carry no fee",
+            "plumbing at all. Anchor signals `None` by passing the program id in",
+            "the slot."
+          ],
+          "optional": true
+        },
+        {
+          "name": "platform_fee_ata",
+          "docs": [
+            "The integrator's token account for the swap's **output** mint (base",
+            "on a Buy, quote on a Sell), which the fee is transferred into.",
+            "",
+            "`UncheckedAccount` with no `associated_token::*` constraints",
+            "because the output leg is side-dependent and Anchor's account",
+            "constraints are static — there is no mint to bind it to at",
+            "macro-expansion time. Both properties an",
+            "`init_if_needed`-with-constraints field would buy are instead",
+            "obtained from the ATA program itself, which the handler CPIs",
+            "`create_idempotent` against with the runtime-selected mint: it",
+            "derives the canonical ATA and rejects any account that isn't it,",
+            "*and* creates it when missing. Deferring to that CPI is both",
+            "stronger than a static constraint (the ATA program is the authority",
+            "on its own derivation) and the only form that can key off the leg",
+            "chosen at runtime. The subsequent `transfer_checked` out of the",
+            "output-leg treasury then rejects a fee account on the wrong mint on",
+            "the token program's own terms."
+          ],
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "associated_token_program",
+          "docs": [
+            "Creates `platform_fee_ata` when the integrator has none yet. Not",
+            "optional even though the fee group is: it is one constant address",
+            "the direct paths already have on hand, and folding it into the",
+            "optional group would trade that for a second `None` slot to reason",
+            "about on every non-fee swap."
+          ],
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "docs": [
+            "Funds the `platform_fee_ata` rent-exempt balance on first use. See",
+            "`associated_token_program` on why this isn't optional either."
+          ],
+          "address": "11111111111111111111111111111111"
+        },
+        {
           "name": "event_authority",
           "docs": [
             "CHECK: Only the event authority can invoke self-CPI"
@@ -2462,6 +2618,10 @@
         {
           "name": "min_out",
           "type": "u64"
+        },
+        {
+          "name": "platform_fee_bps",
+          "type": "u16"
         }
       ]
     },
@@ -2994,6 +3154,19 @@
       ]
     },
     {
+      "name": "PlatformFeeEvent",
+      "discriminator": [
+        188,
+        157,
+        159,
+        156,
+        113,
+        199,
+        229,
+        159
+      ]
+    },
+    {
       "name": "RealizeEvent",
       "discriminator": [
         255,
@@ -3030,6 +3203,19 @@
         131,
         204,
         214
+      ]
+    },
+    {
+      "name": "SetMaxPlatformFeeEvent",
+      "discriminator": [
+        45,
+        40,
+        179,
+        93,
+        26,
+        27,
+        196,
+        209
       ]
     },
     {
@@ -3323,6 +3509,21 @@
       "code": 6044,
       "name": "VaultTombstoned",
       "msg": "vault has been closed and moved to the tombstone list"
+    },
+    {
+      "code": 6045,
+      "name": "InvalidMaxPlatformFee",
+      "msg": "max_platform_fee exceeds 10_000 bps (100%)"
+    },
+    {
+      "code": 6046,
+      "name": "PlatformFeeTooHigh",
+      "msg": "declared platform_fee_bps exceeds the market's max_platform_fee"
+    },
+    {
+      "code": 6047,
+      "name": "MissingPlatformFeeAccounts",
+      "msg": "a non-zero platform_fee_bps requires both the fee authority and its fee token account"
     }
   ],
   "types": [
@@ -3722,6 +3923,20 @@
             "type": "u16"
           },
           {
+            "name": "max_platform_fee",
+            "docs": [
+              "Ceiling on the caller-declared platform fee, in **bps** (`Bps16`) —",
+              "note the different denominator from `taker_fee` above. Seeded from",
+              "`Registry.default_max_platform_fee` at creation, then admin-retunable",
+              "via `SetMaxPlatformFee`.",
+              "",
+              "A `u16` reaches past `BPS`, so unlike `taker_fee` the type is not the",
+              "bound: every write path range-checks `<= BPS` so a market can never",
+              "hold a ceiling above 100% of the taker's output."
+            ],
+            "type": "u16"
+          },
+          {
             "name": "default_min_leader_share",
             "docs": [
               "Default min-leader-share for vaults opened on this market.",
@@ -3786,6 +4001,70 @@
               "Market PDA bump."
             ],
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PlatformFeeEvent",
+      "docs": [
+        "Emitted once per `swap` that skimmed a caller-declared platform fee —",
+        "never on the no-integrator path, and never when the declared rate",
+        "rounds the fee down to zero atoms.",
+        "",
+        "Deliberately **not** folded into [`FillEvent`]: the platform fee is",
+        "computed once on the aggregate output after the taker fee, not per",
+        "`(vault, level)` leg, so putting it on a per-leg record would either",
+        "duplicate one number across every leg or arbitrarily attribute it to",
+        "one of them. A multi-leg swap emits N `FillEvent`s and at most one of",
+        "these.",
+        "",
+        "This is the integrator's only on-chain receipt. The fee is paid out",
+        "immediately and accrues no state (per the design: zero new state, no",
+        "claim instruction), so without this event there is nothing for an",
+        "integrator to reconcile revenue against short of re-deriving the",
+        "transfer from raw inner instructions."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "taker",
+            "type": "pubkey"
+          },
+          {
+            "name": "fee_authority",
+            "docs": [
+              "Owner of the destination token account — the integrator being paid."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "docs": [
+              "Mint the fee was paid in: the swap's **output** leg (base on a Buy,",
+              "quote on a Sell), so a consumer needn't re-derive it from `side`."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "atoms",
+            "docs": [
+              "Atoms transferred, after the taker fee and rounded down."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "platform_fee_bps",
+            "docs": [
+              "The rate the caller declared, in bps — recorded alongside `atoms`",
+              "so the rounding is auditable from the event alone."
+            ],
+            "type": "u16"
           }
         ]
       }
@@ -3922,6 +4201,16 @@
             "type": "u16"
           },
           {
+            "name": "default_max_platform_fee",
+            "docs": [
+              "Default platform-fee ceiling (bps, [`Bps16`]) stamped into",
+              "`MarketHeader.max_platform_fee` at creation. Bounds the",
+              "caller-declared `platform_fee_bps` a `swap` may skim off the taker's",
+              "output; retunable per market afterwards via `SetMaxPlatformFee`."
+            ],
+            "type": "u16"
+          },
+          {
             "name": "max_vaults_per_market",
             "docs": [
               "Default cap on vaults per market."
@@ -4000,6 +4289,30 @@
       }
     },
     {
+      "name": "SetMaxPlatformFeeEvent",
+      "docs": [
+        "Emitted by `set_max_platform_fee` when an admin retunes a market's",
+        "ceiling (bps, [`crate::Bps16`]) on the caller-declared platform fee.",
+        "Read on the swap hot path to reject an over-cap declaration. The",
+        "ceiling is what bounds a permissionless integrator's cut of a taker's",
+        "output, so a move here is the one governance action that changes how",
+        "much any router may skim — worth an indexable record of its own."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "max_platform_fee",
+            "type": "u16"
+          }
+        ]
+      }
+    },
+    {
       "name": "SetMinLeaderShareEvent",
       "docs": [
         "Emitted by `set_min_leader_share` when an admin retunes a vault's",
@@ -4039,6 +4352,10 @@
         "fields": [
           {
             "name": "default_taker_fee",
+            "type": "u16"
+          },
+          {
+            "name": "default_max_platform_fee",
             "type": "u16"
           },
           {

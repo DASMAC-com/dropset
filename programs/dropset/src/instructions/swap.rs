@@ -18,26 +18,36 @@
 //! surrounding tx can survive a no-fill. `min_out == 0` opts out
 //! and the legacy any-fill-counts behavior holds.
 //!
+//! Two fees come off the output leg, in this order: the market's
+//! **taker fee** (protocol revenue, ppm, admin-set) and then the
+//! caller-declared **platform fee** (integrator revenue, bps, bounded by
+//! the market's `max_platform_fee`). The platform fee is permissionless —
+//! any caller may route flow and name any beneficiary — and paid out
+//! immediately to the integrator's token account, holding zero new
+//! protocol state. A swap with no integrator declares `0` and passes no
+//! fee accounts.
+//!
 //! Per spec § **Events and emission**, every filled `(vault, level)`
 //! leg emits one bytemuck `FillEvent` via `emit_cpi!`. No
 //! truncation: the matcher accumulates a `Vec<FillEvent>` and
-//! `lib.rs` dispatches each via the macro one at a time.
+//! `lib.rs` dispatches each via the macro one at a time. A fee-bearing
+//! swap adds a single `PlatformFeeEvent` alongside them.
 
 extern crate alloc;
 
 use anchor_lang_v2::prelude::*;
 #[allow(unused_imports)]
 use anchor_spl_v2::{
-    associated_token::AssociatedToken,
+    associated_token::{create_idempotent, AssociatedToken, CreateIdempotent},
     token_2022::{transfer_checked, TransferChecked},
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
 
-use dropset_math_core::matching_math::{sort_key, taker_fee_atoms};
+use dropset_math_core::matching_math::{platform_fee_atoms, sort_key, taker_fee_atoms};
 
 use crate::{
     errors::DropsetError,
-    events::FillEvent,
+    events::{FillEvent, PlatformFeeEvent},
     state::{Market, VaultAccess, FLUSH_BIT},
     Price, N_LEVELS,
 };
@@ -278,6 +288,68 @@ pub struct Swap {
     )]
     pub market_quote_treasury: InterfaceAccount<TokenAccount>,
     pub clock: Sysvar<Clock>,
+    /// Integrator earning the caller-declared platform fee — the owner of
+    /// `platform_fee_ata`, not a signer. Permissionless: any caller may
+    /// route flow here and name any authority, bounded only by the market's
+    /// `max_platform_fee`. There is deliberately no admin onboarding and so
+    /// nothing to constrain this against.
+    ///
+    /// Optional, together with `platform_fee_ata`: a swap with no
+    /// integrator passes `None` for both and `platform_fee_bps = 0`, so the
+    /// direct paths (maker bot, TUI, tests, taker bot) carry no fee
+    /// plumbing at all. Anchor signals `None` by passing the program id in
+    /// the slot.
+    pub platform_fee_authority: Option<UncheckedAccount>,
+    /// The integrator's token account for the swap's **output** mint (base
+    /// on a Buy, quote on a Sell), which the fee is transferred into.
+    ///
+    /// `UncheckedAccount` with no `associated_token::*` constraints
+    /// because the output leg is side-dependent and Anchor's account
+    /// constraints are static — there is no mint to bind it to at
+    /// macro-expansion time. Both properties an
+    /// `init_if_needed`-with-constraints field would buy are instead
+    /// obtained from the ATA program itself, which the handler CPIs
+    /// `create_idempotent` against with the runtime-selected mint: it
+    /// derives the canonical ATA and rejects any account that isn't it,
+    /// *and* creates it when missing. Deferring to that CPI is both
+    /// stronger than a static constraint (the ATA program is the authority
+    /// on its own derivation) and the only form that can key off the leg
+    /// chosen at runtime. The subsequent `transfer_checked` out of the
+    /// output-leg treasury then rejects a fee account on the wrong mint on
+    /// the token program's own terms.
+    ///
+    /// `unsafe(dup)` (which implies `mut`) is **required**, not a shortcut.
+    /// Anchor's duplicate-mutable-account guard on an optional `mut` field
+    /// fires on the `None` slot too, and `None` *is* the program id — which
+    /// `#[event_cpi]` also passes in its trailer and which the sibling
+    /// `platform_fee_authority` slot carries when absent. A plain
+    /// `#[account(mut)]` therefore rejects **every** no-integrator swap with
+    /// `ConstraintDuplicateMutableAccount`, the overwhelmingly common path.
+    ///
+    /// Waiving the guard is sound here because the two things it protects
+    /// against are both already covered:
+    ///
+    /// * **Aliased `&mut` account data.** Impossible — this is an
+    ///   `UncheckedAccount`. The handler never takes a typed borrow of its
+    ///   data, only hands the raw view to two CPIs.
+    /// * **A caller aiming the fee at an account it shouldn't reach** (a
+    ///   treasury, the taker's own ATA, another swap account). Rejected by
+    ///   `create_idempotent`, which derives the canonical ATA for
+    ///   `(platform_fee_authority, output mint, output token program)` and
+    ///   refuses anything else. The one case that does derive — a taker
+    ///   naming themselves the integrator — pays the fee to the taker, i.e.
+    ///   is a zero-fee swap with extra steps.
+    #[account(unsafe(dup))]
+    pub platform_fee_ata: Option<UncheckedAccount>,
+    /// Creates `platform_fee_ata` when the integrator has none yet. Not
+    /// optional even though the fee group is: it is one constant address
+    /// the direct paths already have on hand, and folding it into the
+    /// optional group would trade that for a second `None` slot to reason
+    /// about on every non-fee swap.
+    pub associated_token_program: Program<AssociatedToken>,
+    /// Funds the `platform_fee_ata` rent-exempt balance on first use. See
+    /// `associated_token_program` on why this isn't optional either.
+    pub system_program: Program<System>,
 }
 
 /// One entry on the ephemeral matching heap. Built per-`(vault,
@@ -321,7 +393,8 @@ impl Swap {
         amount_in: u64,
         limit_price_bits: u32,
         min_out: u64,
-    ) -> Result<alloc::vec::Vec<FillEvent>> {
+        platform_fee_bps: u16,
+    ) -> Result<(alloc::vec::Vec<FillEvent>, Option<PlatformFeeEvent>)> {
         let side = SwapSide::from_u8(side_u8).ok_or(DropsetError::InvalidSwapSide)?;
         let limit_price = Price::from_bits(limit_price_bits);
         require!(limit_price.is_valid(), DropsetError::InvalidPrice);
@@ -338,6 +411,28 @@ impl Swap {
             DropsetError::InvalidLimitPrice
         );
         require!(amount_in > 0, DropsetError::InvalidAmountIn);
+
+        // Gate the caller-declared platform fee before any matching work.
+        // Both checks are hard errors rather than a clamp-and-continue: a
+        // caller asking for a fee the market won't allow, or naming a fee
+        // without a destination to pay it to, has mis-built the
+        // instruction. Silently filling at a different fee than declared
+        // would hand the integrator a quote they never agreed to and give
+        // the taker no signal at all.
+        require!(
+            platform_fee_bps <= self.market.max_platform_fee.get(),
+            DropsetError::PlatformFeeTooHigh
+        );
+        // A zero rate is the no-integrator path and needs no accounts. A
+        // non-zero one needs both, or the fee has nowhere to go — and
+        // proceeding would silently pocket it for the taker, i.e. quote a
+        // fee and not pay it.
+        let fee_accounts_present =
+            self.platform_fee_authority.is_some() && self.platform_fee_ata.is_some();
+        require!(
+            platform_fee_bps == 0 || fee_accounts_present,
+            DropsetError::MissingPlatformFeeAccounts
+        );
 
         // Snapshot market-wide constants the loop needs.
         let market_addr = *self.market.address();
@@ -702,6 +797,17 @@ impl Swap {
             });
         }
 
+        // Compose the two fees in program order — fill → taker fee →
+        // platform fee — mirroring
+        // `dropset_math_core::matching_math::platform_fee_atoms`, whose doc
+        // spells out why the integrator's cut is charged on the
+        // already-net-of-taker-fee leg rather than the gross one. Both
+        // round down, so the taker keeps every dust atom neither fee
+        // claims.
+        let net_after_taker_fee = total_out.saturating_sub(total_fee).min(u64::MAX as u128) as u64;
+        let platform_fee =
+            platform_fee_atoms(net_after_taker_fee, platform_fee_bps).min(u64::MAX as u128) as u64;
+
         // Soft-revert check: if the net output the taker would receive
         // is below the caller-specified `min_out`, roll back every
         // mutation and return `Ok(Vec::new())`. The instruction
@@ -710,7 +816,14 @@ impl Swap {
         // with other instructions. `min_out == 0` opts out (the
         // legacy fail-on-zero-fill behavior is recovered by passing
         // any non-zero `min_out`).
-        let achievable_net_out = total_out.saturating_sub(total_fee).min(u64::MAX as u128) as u64;
+        //
+        // The floor is checked against the output net of **both** fees —
+        // what actually lands in the taker's ATA. Checking it against the
+        // taker-fee-net figure would leave the taker's slippage protection
+        // loose by exactly the platform fee: a route could declare the
+        // market's maximum fee and still clear a `min_out` the taker sized
+        // against a quote that never contemplated it.
+        let achievable_net_out = net_after_taker_fee.saturating_sub(platform_fee);
         if nonce_overflow || filled_legs == 0 || achievable_net_out < min_out {
             // Walk snapshots in reverse so two legs that touched the
             // same sector's inventory restore to the earliest
@@ -750,7 +863,7 @@ impl Swap {
             if nonce_overflow {
                 return Err(DropsetError::MathOverflow.into());
             }
-            return Ok(alloc::vec::Vec::new());
+            return Ok((alloc::vec::Vec::new(), None));
         }
 
         // Net taker transfer: pay the input leg in, receive the output
@@ -759,7 +872,6 @@ impl Swap {
         // here (input = budget consumed, output = `total_out`); only the
         // CPI account selection below is keyed on `side`.
         let taker_in_atoms = (amount_in as u128 - taker_unfilled_in) as u64;
-        let taker_out_atoms = total_out as u64;
 
         // Input leg: taker → treasury. The two settlement CPIs (this
         // and the output leg below) are kept as explicit `match side`
@@ -799,42 +911,192 @@ impl Swap {
                 }
             }
         }
-        // Output leg: treasury → taker, signed by market PDA. Net
-        // amount = total_out − fee.
-        let net_out = taker_out_atoms.saturating_sub(total_fee as u64);
-        if net_out > 0 {
+        // Output leg: treasury → taker, then treasury → integrator, both
+        // signed by the market PDA and both drawn from the same output-leg
+        // treasury. Their sum is `net_after_taker_fee` — exactly the total
+        // the matching loop debited from vault inventory across every leg —
+        // so splitting the payout between two destinations leaves the
+        // treasury-vs-vault invariant untouched. The platform fee moves no
+        // vault state of its own; that is why it needs no `LegSnapshot`
+        // entry and no rollback in the soft-revert block above.
+        //
+        // Ordering matters only in one direction: the fee is skimmed from
+        // what remains *after* the taker's transfer, so the taker's leg
+        // goes first and can never be short-changed by a fee larger than
+        // the market's ceiling permits.
+        //
+        // Both arms MUST stay mirror images, on the same reasoning as the
+        // input leg above — Buy pays base out, Sell pays quote out.
+        let fee_authority_addr = self
+            .platform_fee_authority
+            .as_ref()
+            .map(|a| *a.address())
+            .unwrap_or_default();
+        let charge_platform_fee = platform_fee > 0 && fee_accounts_present;
+        if achievable_net_out > 0 || charge_platform_fee {
             match side {
                 SwapSide::Buy => {
                     let decimals = self.base_mint.decimals();
-                    let cpi = CpiContext::new_with_signer(
-                        self.base_token_program.address(),
-                        TransferChecked {
-                            from: self.market_base_treasury.cpi_handle_mut(),
-                            mint: self.base_mint.cpi_handle(),
-                            to: self.taker_base_ata.cpi_handle_mut(),
-                            authority: self.market.cpi_handle(),
-                        },
-                        &signer_seeds,
-                    );
-                    transfer_checked(cpi, net_out, decimals)?;
+                    if achievable_net_out > 0 {
+                        let cpi = CpiContext::new_with_signer(
+                            self.base_token_program.address(),
+                            TransferChecked {
+                                from: self.market_base_treasury.cpi_handle_mut(),
+                                mint: self.base_mint.cpi_handle(),
+                                to: self.taker_base_ata.cpi_handle_mut(),
+                                authority: self.market.cpi_handle(),
+                            },
+                            &signer_seeds,
+                        );
+                        transfer_checked(cpi, achievable_net_out, decimals)?;
+                    }
+                    if charge_platform_fee {
+                        self.pay_platform_fee_base(&signer_seeds, platform_fee, decimals)?;
+                    }
                 }
                 SwapSide::Sell => {
                     let decimals = self.quote_mint.decimals();
-                    let cpi = CpiContext::new_with_signer(
-                        self.quote_token_program.address(),
-                        TransferChecked {
-                            from: self.market_quote_treasury.cpi_handle_mut(),
-                            mint: self.quote_mint.cpi_handle(),
-                            to: self.taker_quote_ata.cpi_handle_mut(),
-                            authority: self.market.cpi_handle(),
-                        },
-                        &signer_seeds,
-                    );
-                    transfer_checked(cpi, net_out, decimals)?;
+                    if achievable_net_out > 0 {
+                        let cpi = CpiContext::new_with_signer(
+                            self.quote_token_program.address(),
+                            TransferChecked {
+                                from: self.market_quote_treasury.cpi_handle_mut(),
+                                mint: self.quote_mint.cpi_handle(),
+                                to: self.taker_quote_ata.cpi_handle_mut(),
+                                authority: self.market.cpi_handle(),
+                            },
+                            &signer_seeds,
+                        );
+                        transfer_checked(cpi, achievable_net_out, decimals)?;
+                    }
+                    if charge_platform_fee {
+                        self.pay_platform_fee_quote(&signer_seeds, platform_fee, decimals)?;
+                    }
                 }
             }
         }
-        Ok(fill_events)
+
+        // One event per fee-bearing swap, and none at all when the rate is
+        // zero or rounds the fee to zero atoms — see `PlatformFeeEvent`.
+        let platform_fee_event = charge_platform_fee.then(|| PlatformFeeEvent {
+            market: market_addr,
+            taker: *self.taker.address(),
+            fee_authority: fee_authority_addr,
+            mint: match side {
+                SwapSide::Buy => *self.base_mint.address(),
+                SwapSide::Sell => *self.quote_mint.address(),
+            },
+            atoms: platform_fee,
+            platform_fee_bps,
+        });
+        Ok((fill_events, platform_fee_event))
+    }
+
+    /// Pay the platform fee out of the **base** treasury (the output leg on
+    /// a Buy). The quote-leg twin is [`Swap::pay_platform_fee_quote`].
+    ///
+    /// Split out per-leg rather than parameterized over the accounts: each
+    /// leg names a distinct fixed set of fields, and Anchor's account
+    /// handles borrow `self` field-wise, so a single generic helper would
+    /// have to take six already-borrowed handles as arguments — more
+    /// wiring, not less. The pair MUST stay mirror images.
+    ///
+    /// Both steps defer their validation to the CPI they invoke, which is
+    /// the whole reason the fee ATA is an `UncheckedAccount`:
+    ///
+    /// * `create_idempotent` derives the canonical ATA for
+    ///   `(fee_authority, mint, token_program)` and rejects any account
+    ///   that isn't it — so this call is what pins the destination address,
+    ///   and it also creates the account when the integrator has none yet.
+    ///   The taker funds that rent (~0.002 SOL, once per integrator/mint
+    ///   pair), the same tradeoff `deposit`'s first-time depositor makes.
+    ///   Called unconditionally rather than behind a "does it exist?"
+    ///   pre-check: the check that would let us skip the CPI is itself an
+    ///   on-chain ATA derivation, so it buys nothing and would leave the
+    ///   address unvalidated on the already-exists path.
+    /// * `transfer_checked` out of the base treasury rejects a fee account
+    ///   whose mint isn't the base mint, on the token program's own terms.
+    ///   That is the check that makes an explicit output-mint constraint
+    ///   unnecessary here.
+    #[inline(always)]
+    fn pay_platform_fee_base(
+        &mut self,
+        signer_seeds: &[&[&[u8]]; 1],
+        atoms: u64,
+        decimals: u8,
+    ) -> Result<()> {
+        // Both are `Some` — `fee_accounts_present` gated the call site.
+        let (Some(fee_authority), Some(fee_ata)) = (
+            self.platform_fee_authority.as_ref(),
+            self.platform_fee_ata.as_mut(),
+        ) else {
+            return Err(DropsetError::MissingPlatformFeeAccounts.into());
+        };
+        create_idempotent(CpiContext::new(
+            self.associated_token_program.address(),
+            CreateIdempotent {
+                payer: self.taker.cpi_handle_mut(),
+                associated_token: fee_ata.cpi_handle_mut(),
+                authority: fee_authority.cpi_handle(),
+                mint: self.base_mint.cpi_handle(),
+                system_program: self.system_program.cpi_handle(),
+                token_program: self.base_token_program.cpi_handle(),
+            },
+        ))?;
+        let cpi = CpiContext::new_with_signer(
+            self.base_token_program.address(),
+            TransferChecked {
+                from: self.market_base_treasury.cpi_handle_mut(),
+                mint: self.base_mint.cpi_handle(),
+                to: fee_ata.cpi_handle_mut(),
+                authority: self.market.cpi_handle(),
+            },
+            signer_seeds,
+        );
+        transfer_checked(cpi, atoms, decimals)?;
+        Ok(())
+    }
+
+    /// Pay the platform fee out of the **quote** treasury (the output leg
+    /// on a Sell). Mirror of [`Swap::pay_platform_fee_base`] — see that
+    /// method for why the fee ATA carries no static constraints and what
+    /// each CPI validates.
+    #[inline(always)]
+    fn pay_platform_fee_quote(
+        &mut self,
+        signer_seeds: &[&[&[u8]]; 1],
+        atoms: u64,
+        decimals: u8,
+    ) -> Result<()> {
+        let (Some(fee_authority), Some(fee_ata)) = (
+            self.platform_fee_authority.as_ref(),
+            self.platform_fee_ata.as_mut(),
+        ) else {
+            return Err(DropsetError::MissingPlatformFeeAccounts.into());
+        };
+        create_idempotent(CpiContext::new(
+            self.associated_token_program.address(),
+            CreateIdempotent {
+                payer: self.taker.cpi_handle_mut(),
+                associated_token: fee_ata.cpi_handle_mut(),
+                authority: fee_authority.cpi_handle(),
+                mint: self.quote_mint.cpi_handle(),
+                system_program: self.system_program.cpi_handle(),
+                token_program: self.quote_token_program.cpi_handle(),
+            },
+        ))?;
+        let cpi = CpiContext::new_with_signer(
+            self.quote_token_program.address(),
+            TransferChecked {
+                from: self.market_quote_treasury.cpi_handle_mut(),
+                mint: self.quote_mint.cpi_handle(),
+                to: fee_ata.cpi_handle_mut(),
+                authority: self.market.cpi_handle(),
+            },
+            signer_seeds,
+        );
+        transfer_checked(cpi, atoms, decimals)?;
+        Ok(())
     }
 }
 

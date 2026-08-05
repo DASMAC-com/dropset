@@ -35,6 +35,45 @@ pub struct Swap {
     pub market_quote_treasury: solana_pubkey::Pubkey,
 
     pub clock: solana_pubkey::Pubkey,
+    /// Integrator earning the caller-declared platform fee — the owner of
+    /// `platform_fee_ata`, not a signer. Permissionless: any caller may
+    /// route flow here and name any authority, bounded only by the market's
+    /// `max_platform_fee`. There is deliberately no admin onboarding and so
+    /// nothing to constrain this against.
+    ///
+    /// Optional, together with `platform_fee_ata`: a swap with no
+    /// integrator passes `None` for both and `platform_fee_bps = 0`, so the
+    /// direct paths (maker bot, TUI, tests, taker bot) carry no fee
+    /// plumbing at all. Anchor signals `None` by passing the program id in
+    /// the slot.
+    pub platform_fee_authority: Option<solana_pubkey::Pubkey>,
+    /// The integrator's token account for the swap's **output** mint (base
+    /// on a Buy, quote on a Sell), which the fee is transferred into.
+    ///
+    /// `UncheckedAccount` with no `associated_token::*` constraints
+    /// because the output leg is side-dependent and Anchor's account
+    /// constraints are static — there is no mint to bind it to at
+    /// macro-expansion time. Both properties an
+    /// `init_if_needed`-with-constraints field would buy are instead
+    /// obtained from the ATA program itself, which the handler CPIs
+    /// `create_idempotent` against with the runtime-selected mint: it
+    /// derives the canonical ATA and rejects any account that isn't it,
+    /// *and* creates it when missing. Deferring to that CPI is both
+    /// stronger than a static constraint (the ATA program is the authority
+    /// on its own derivation) and the only form that can key off the leg
+    /// chosen at runtime. The subsequent `transfer_checked` out of the
+    /// output-leg treasury then rejects a fee account on the wrong mint on
+    /// the token program's own terms.
+    pub platform_fee_ata: Option<solana_pubkey::Pubkey>,
+    /// Creates `platform_fee_ata` when the integrator has none yet. Not
+    /// optional even though the fee group is: it is one constant address
+    /// the direct paths already have on hand, and folding it into the
+    /// optional group would trade that for a second `None` slot to reason
+    /// about on every non-fee swap.
+    pub associated_token_program: solana_pubkey::Pubkey,
+    /// Funds the `platform_fee_ata` rent-exempt balance on first use. See
+    /// `associated_token_program` on why this isn't optional either.
+    pub system_program: solana_pubkey::Pubkey,
     /// CHECK: Only the event authority can invoke self-CPI
     pub event_authority: solana_pubkey::Pubkey,
     /// CHECK: Kept for v1-compatible account ordering and IDL shape
@@ -52,7 +91,7 @@ impl Swap {
         args: SwapInstructionArgs,
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
-        let mut accounts = Vec::with_capacity(13 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(17 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new(self.taker, true));
         accounts.push(solana_instruction::AccountMeta::new(self.market, false));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
@@ -89,6 +128,36 @@ impl Swap {
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.clock, false,
+        ));
+        if let Some(platform_fee_authority) = self.platform_fee_authority {
+            accounts.push(solana_instruction::AccountMeta::new_readonly(
+                platform_fee_authority,
+                false,
+            ));
+        } else {
+            accounts.push(solana_instruction::AccountMeta::new_readonly(
+                crate::DROPSET_ID,
+                false,
+            ));
+        }
+        if let Some(platform_fee_ata) = self.platform_fee_ata {
+            accounts.push(solana_instruction::AccountMeta::new(
+                platform_fee_ata,
+                false,
+            ));
+        } else {
+            accounts.push(solana_instruction::AccountMeta::new_readonly(
+                crate::DROPSET_ID,
+                false,
+            ));
+        }
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.associated_token_program,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.system_program,
+            false,
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.event_authority,
@@ -140,6 +209,7 @@ pub struct SwapInstructionArgs {
     pub amount_in: u64,
     pub limit_price_bits: u32,
     pub min_out: u64,
+    pub platform_fee_bps: u16,
 }
 
 impl SwapInstructionArgs {
@@ -163,8 +233,12 @@ impl SwapInstructionArgs {
 ///   8. `[writable]` market_base_treasury
 ///   9. `[writable]` market_quote_treasury
 ///   10. `[optional]` clock (default to `SysvarC1ock11111111111111111111111111111111`)
-///   11. `[]` event_authority
-///   12. `[]` program
+///   11. `[optional]` platform_fee_authority
+///   12. `[writable, optional]` platform_fee_ata
+///   13. `[optional]` associated_token_program (default to `ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL`)
+///   14. `[optional]` system_program (default to `11111111111111111111111111111111`)
+///   15. `[]` event_authority
+///   16. `[]` program
 #[derive(Clone, Debug, Default)]
 pub struct SwapBuilder {
     taker: Option<solana_pubkey::Pubkey>,
@@ -178,12 +252,17 @@ pub struct SwapBuilder {
     market_base_treasury: Option<solana_pubkey::Pubkey>,
     market_quote_treasury: Option<solana_pubkey::Pubkey>,
     clock: Option<solana_pubkey::Pubkey>,
+    platform_fee_authority: Option<solana_pubkey::Pubkey>,
+    platform_fee_ata: Option<solana_pubkey::Pubkey>,
+    associated_token_program: Option<solana_pubkey::Pubkey>,
+    system_program: Option<solana_pubkey::Pubkey>,
     event_authority: Option<solana_pubkey::Pubkey>,
     program: Option<solana_pubkey::Pubkey>,
     side: Option<u8>,
     amount_in: Option<u64>,
     limit_price_bits: Option<u32>,
     min_out: Option<u64>,
+    platform_fee_bps: Option<u16>,
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
 
@@ -255,6 +334,74 @@ impl SwapBuilder {
         self.clock = Some(clock);
         self
     }
+    /// `[optional account]`
+    /// Integrator earning the caller-declared platform fee — the owner of
+    /// `platform_fee_ata`, not a signer. Permissionless: any caller may
+    /// route flow here and name any authority, bounded only by the market's
+    /// `max_platform_fee`. There is deliberately no admin onboarding and so
+    /// nothing to constrain this against.
+    ///
+    /// Optional, together with `platform_fee_ata`: a swap with no
+    /// integrator passes `None` for both and `platform_fee_bps = 0`, so the
+    /// direct paths (maker bot, TUI, tests, taker bot) carry no fee
+    /// plumbing at all. Anchor signals `None` by passing the program id in
+    /// the slot.
+    #[inline(always)]
+    pub fn platform_fee_authority(
+        &mut self,
+        platform_fee_authority: Option<solana_pubkey::Pubkey>,
+    ) -> &mut Self {
+        self.platform_fee_authority = platform_fee_authority;
+        self
+    }
+    /// `[optional account]`
+    /// The integrator's token account for the swap's **output** mint (base
+    /// on a Buy, quote on a Sell), which the fee is transferred into.
+    ///
+    /// `UncheckedAccount` with no `associated_token::*` constraints
+    /// because the output leg is side-dependent and Anchor's account
+    /// constraints are static — there is no mint to bind it to at
+    /// macro-expansion time. Both properties an
+    /// `init_if_needed`-with-constraints field would buy are instead
+    /// obtained from the ATA program itself, which the handler CPIs
+    /// `create_idempotent` against with the runtime-selected mint: it
+    /// derives the canonical ATA and rejects any account that isn't it,
+    /// *and* creates it when missing. Deferring to that CPI is both
+    /// stronger than a static constraint (the ATA program is the authority
+    /// on its own derivation) and the only form that can key off the leg
+    /// chosen at runtime. The subsequent `transfer_checked` out of the
+    /// output-leg treasury then rejects a fee account on the wrong mint on
+    /// the token program's own terms.
+    #[inline(always)]
+    pub fn platform_fee_ata(
+        &mut self,
+        platform_fee_ata: Option<solana_pubkey::Pubkey>,
+    ) -> &mut Self {
+        self.platform_fee_ata = platform_fee_ata;
+        self
+    }
+    /// `[optional account, default to 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL']`
+    /// Creates `platform_fee_ata` when the integrator has none yet. Not
+    /// optional even though the fee group is: it is one constant address
+    /// the direct paths already have on hand, and folding it into the
+    /// optional group would trade that for a second `None` slot to reason
+    /// about on every non-fee swap.
+    #[inline(always)]
+    pub fn associated_token_program(
+        &mut self,
+        associated_token_program: solana_pubkey::Pubkey,
+    ) -> &mut Self {
+        self.associated_token_program = Some(associated_token_program);
+        self
+    }
+    /// `[optional account, default to '11111111111111111111111111111111']`
+    /// Funds the `platform_fee_ata` rent-exempt balance on first use. See
+    /// `associated_token_program` on why this isn't optional either.
+    #[inline(always)]
+    pub fn system_program(&mut self, system_program: solana_pubkey::Pubkey) -> &mut Self {
+        self.system_program = Some(system_program);
+        self
+    }
     /// CHECK: Only the event authority can invoke self-CPI
     #[inline(always)]
     pub fn event_authority(&mut self, event_authority: solana_pubkey::Pubkey) -> &mut Self {
@@ -285,6 +432,11 @@ impl SwapBuilder {
     #[inline(always)]
     pub fn min_out(&mut self, min_out: u64) -> &mut Self {
         self.min_out = Some(min_out);
+        self
+    }
+    #[inline(always)]
+    pub fn platform_fee_bps(&mut self, platform_fee_bps: u16) -> &mut Self {
+        self.platform_fee_bps = Some(platform_fee_bps);
         self
     }
     /// Add an additional account to the instruction.
@@ -326,6 +478,14 @@ impl SwapBuilder {
             clock: self.clock.unwrap_or(solana_pubkey::pubkey!(
                 "SysvarC1ock11111111111111111111111111111111"
             )),
+            platform_fee_authority: self.platform_fee_authority,
+            platform_fee_ata: self.platform_fee_ata,
+            associated_token_program: self.associated_token_program.unwrap_or(
+                solana_pubkey::pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"),
+            ),
+            system_program: self
+                .system_program
+                .unwrap_or(solana_pubkey::pubkey!("11111111111111111111111111111111")),
             event_authority: self.event_authority.expect("event_authority is not set"),
             program: self.program.expect("program is not set"),
         };
@@ -337,6 +497,10 @@ impl SwapBuilder {
                 .clone()
                 .expect("limit_price_bits is not set"),
             min_out: self.min_out.clone().expect("min_out is not set"),
+            platform_fee_bps: self
+                .platform_fee_bps
+                .clone()
+                .expect("platform_fee_bps is not set"),
         };
 
         accounts.instruction_with_remaining_accounts(args, &self.__remaining_accounts)
@@ -367,6 +531,45 @@ pub struct SwapCpiAccounts<'a, 'b> {
     pub market_quote_treasury: &'b solana_account_info::AccountInfo<'a>,
 
     pub clock: &'b solana_account_info::AccountInfo<'a>,
+    /// Integrator earning the caller-declared platform fee — the owner of
+    /// `platform_fee_ata`, not a signer. Permissionless: any caller may
+    /// route flow here and name any authority, bounded only by the market's
+    /// `max_platform_fee`. There is deliberately no admin onboarding and so
+    /// nothing to constrain this against.
+    ///
+    /// Optional, together with `platform_fee_ata`: a swap with no
+    /// integrator passes `None` for both and `platform_fee_bps = 0`, so the
+    /// direct paths (maker bot, TUI, tests, taker bot) carry no fee
+    /// plumbing at all. Anchor signals `None` by passing the program id in
+    /// the slot.
+    pub platform_fee_authority: Option<&'b solana_account_info::AccountInfo<'a>>,
+    /// The integrator's token account for the swap's **output** mint (base
+    /// on a Buy, quote on a Sell), which the fee is transferred into.
+    ///
+    /// `UncheckedAccount` with no `associated_token::*` constraints
+    /// because the output leg is side-dependent and Anchor's account
+    /// constraints are static — there is no mint to bind it to at
+    /// macro-expansion time. Both properties an
+    /// `init_if_needed`-with-constraints field would buy are instead
+    /// obtained from the ATA program itself, which the handler CPIs
+    /// `create_idempotent` against with the runtime-selected mint: it
+    /// derives the canonical ATA and rejects any account that isn't it,
+    /// *and* creates it when missing. Deferring to that CPI is both
+    /// stronger than a static constraint (the ATA program is the authority
+    /// on its own derivation) and the only form that can key off the leg
+    /// chosen at runtime. The subsequent `transfer_checked` out of the
+    /// output-leg treasury then rejects a fee account on the wrong mint on
+    /// the token program's own terms.
+    pub platform_fee_ata: Option<&'b solana_account_info::AccountInfo<'a>>,
+    /// Creates `platform_fee_ata` when the integrator has none yet. Not
+    /// optional even though the fee group is: it is one constant address
+    /// the direct paths already have on hand, and folding it into the
+    /// optional group would trade that for a second `None` slot to reason
+    /// about on every non-fee swap.
+    pub associated_token_program: &'b solana_account_info::AccountInfo<'a>,
+    /// Funds the `platform_fee_ata` rent-exempt balance on first use. See
+    /// `associated_token_program` on why this isn't optional either.
+    pub system_program: &'b solana_account_info::AccountInfo<'a>,
     /// CHECK: Only the event authority can invoke self-CPI
     pub event_authority: &'b solana_account_info::AccountInfo<'a>,
     /// CHECK: Kept for v1-compatible account ordering and IDL shape
@@ -399,6 +602,45 @@ pub struct SwapCpi<'a, 'b> {
     pub market_quote_treasury: &'b solana_account_info::AccountInfo<'a>,
 
     pub clock: &'b solana_account_info::AccountInfo<'a>,
+    /// Integrator earning the caller-declared platform fee — the owner of
+    /// `platform_fee_ata`, not a signer. Permissionless: any caller may
+    /// route flow here and name any authority, bounded only by the market's
+    /// `max_platform_fee`. There is deliberately no admin onboarding and so
+    /// nothing to constrain this against.
+    ///
+    /// Optional, together with `platform_fee_ata`: a swap with no
+    /// integrator passes `None` for both and `platform_fee_bps = 0`, so the
+    /// direct paths (maker bot, TUI, tests, taker bot) carry no fee
+    /// plumbing at all. Anchor signals `None` by passing the program id in
+    /// the slot.
+    pub platform_fee_authority: Option<&'b solana_account_info::AccountInfo<'a>>,
+    /// The integrator's token account for the swap's **output** mint (base
+    /// on a Buy, quote on a Sell), which the fee is transferred into.
+    ///
+    /// `UncheckedAccount` with no `associated_token::*` constraints
+    /// because the output leg is side-dependent and Anchor's account
+    /// constraints are static — there is no mint to bind it to at
+    /// macro-expansion time. Both properties an
+    /// `init_if_needed`-with-constraints field would buy are instead
+    /// obtained from the ATA program itself, which the handler CPIs
+    /// `create_idempotent` against with the runtime-selected mint: it
+    /// derives the canonical ATA and rejects any account that isn't it,
+    /// *and* creates it when missing. Deferring to that CPI is both
+    /// stronger than a static constraint (the ATA program is the authority
+    /// on its own derivation) and the only form that can key off the leg
+    /// chosen at runtime. The subsequent `transfer_checked` out of the
+    /// output-leg treasury then rejects a fee account on the wrong mint on
+    /// the token program's own terms.
+    pub platform_fee_ata: Option<&'b solana_account_info::AccountInfo<'a>>,
+    /// Creates `platform_fee_ata` when the integrator has none yet. Not
+    /// optional even though the fee group is: it is one constant address
+    /// the direct paths already have on hand, and folding it into the
+    /// optional group would trade that for a second `None` slot to reason
+    /// about on every non-fee swap.
+    pub associated_token_program: &'b solana_account_info::AccountInfo<'a>,
+    /// Funds the `platform_fee_ata` rent-exempt balance on first use. See
+    /// `associated_token_program` on why this isn't optional either.
+    pub system_program: &'b solana_account_info::AccountInfo<'a>,
     /// CHECK: Only the event authority can invoke self-CPI
     pub event_authority: &'b solana_account_info::AccountInfo<'a>,
     /// CHECK: Kept for v1-compatible account ordering and IDL shape
@@ -426,6 +668,10 @@ impl<'a, 'b> SwapCpi<'a, 'b> {
             market_base_treasury: accounts.market_base_treasury,
             market_quote_treasury: accounts.market_quote_treasury,
             clock: accounts.clock,
+            platform_fee_authority: accounts.platform_fee_authority,
+            platform_fee_ata: accounts.platform_fee_ata,
+            associated_token_program: accounts.associated_token_program,
+            system_program: accounts.system_program,
             event_authority: accounts.event_authority,
             program: accounts.program,
             __args: args,
@@ -454,7 +700,7 @@ impl<'a, 'b> SwapCpi<'a, 'b> {
         signers_seeds: &[&[&[u8]]],
         remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
     ) -> solana_program_error::ProgramResult {
-        let mut accounts = Vec::with_capacity(13 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(17 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new(*self.taker.key, true));
         accounts.push(solana_instruction::AccountMeta::new(
             *self.market.key,
@@ -496,6 +742,36 @@ impl<'a, 'b> SwapCpi<'a, 'b> {
             *self.clock.key,
             false,
         ));
+        if let Some(platform_fee_authority) = self.platform_fee_authority {
+            accounts.push(solana_instruction::AccountMeta::new_readonly(
+                *platform_fee_authority.key,
+                false,
+            ));
+        } else {
+            accounts.push(solana_instruction::AccountMeta::new_readonly(
+                crate::DROPSET_ID,
+                false,
+            ));
+        }
+        if let Some(platform_fee_ata) = self.platform_fee_ata {
+            accounts.push(solana_instruction::AccountMeta::new(
+                *platform_fee_ata.key,
+                false,
+            ));
+        } else {
+            accounts.push(solana_instruction::AccountMeta::new_readonly(
+                crate::DROPSET_ID,
+                false,
+            ));
+        }
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.associated_token_program.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.system_program.key,
+            false,
+        ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.event_authority.key,
             false,
@@ -520,7 +796,7 @@ impl<'a, 'b> SwapCpi<'a, 'b> {
             accounts,
             data,
         };
-        let mut account_infos = Vec::with_capacity(14 + remaining_accounts.len());
+        let mut account_infos = Vec::with_capacity(18 + remaining_accounts.len());
         account_infos.push(self.__program.clone());
         account_infos.push(self.taker.clone());
         account_infos.push(self.market.clone());
@@ -533,6 +809,14 @@ impl<'a, 'b> SwapCpi<'a, 'b> {
         account_infos.push(self.market_base_treasury.clone());
         account_infos.push(self.market_quote_treasury.clone());
         account_infos.push(self.clock.clone());
+        if let Some(platform_fee_authority) = self.platform_fee_authority {
+            account_infos.push(platform_fee_authority.clone());
+        }
+        if let Some(platform_fee_ata) = self.platform_fee_ata {
+            account_infos.push(platform_fee_ata.clone());
+        }
+        account_infos.push(self.associated_token_program.clone());
+        account_infos.push(self.system_program.clone());
         account_infos.push(self.event_authority.clone());
         account_infos.push(self.program.clone());
         remaining_accounts
@@ -562,8 +846,12 @@ impl<'a, 'b> SwapCpi<'a, 'b> {
 ///   8. `[writable]` market_base_treasury
 ///   9. `[writable]` market_quote_treasury
 ///   10. `[]` clock
-///   11. `[]` event_authority
-///   12. `[]` program
+///   11. `[optional]` platform_fee_authority
+///   12. `[writable, optional]` platform_fee_ata
+///   13. `[]` associated_token_program
+///   14. `[]` system_program
+///   15. `[]` event_authority
+///   16. `[]` program
 #[derive(Clone, Debug)]
 pub struct SwapCpiBuilder<'a, 'b> {
     instruction: Box<SwapCpiBuilderInstruction<'a, 'b>>,
@@ -584,12 +872,17 @@ impl<'a, 'b> SwapCpiBuilder<'a, 'b> {
             market_base_treasury: None,
             market_quote_treasury: None,
             clock: None,
+            platform_fee_authority: None,
+            platform_fee_ata: None,
+            associated_token_program: None,
+            system_program: None,
             event_authority: None,
             program: None,
             side: None,
             amount_in: None,
             limit_price_bits: None,
             min_out: None,
+            platform_fee_bps: None,
             __remaining_accounts: Vec::new(),
         });
         Self { instruction }
@@ -672,6 +965,75 @@ impl<'a, 'b> SwapCpiBuilder<'a, 'b> {
         self.instruction.clock = Some(clock);
         self
     }
+    /// `[optional account]`
+    /// Integrator earning the caller-declared platform fee — the owner of
+    /// `platform_fee_ata`, not a signer. Permissionless: any caller may
+    /// route flow here and name any authority, bounded only by the market's
+    /// `max_platform_fee`. There is deliberately no admin onboarding and so
+    /// nothing to constrain this against.
+    ///
+    /// Optional, together with `platform_fee_ata`: a swap with no
+    /// integrator passes `None` for both and `platform_fee_bps = 0`, so the
+    /// direct paths (maker bot, TUI, tests, taker bot) carry no fee
+    /// plumbing at all. Anchor signals `None` by passing the program id in
+    /// the slot.
+    #[inline(always)]
+    pub fn platform_fee_authority(
+        &mut self,
+        platform_fee_authority: Option<&'b solana_account_info::AccountInfo<'a>>,
+    ) -> &mut Self {
+        self.instruction.platform_fee_authority = platform_fee_authority;
+        self
+    }
+    /// `[optional account]`
+    /// The integrator's token account for the swap's **output** mint (base
+    /// on a Buy, quote on a Sell), which the fee is transferred into.
+    ///
+    /// `UncheckedAccount` with no `associated_token::*` constraints
+    /// because the output leg is side-dependent and Anchor's account
+    /// constraints are static — there is no mint to bind it to at
+    /// macro-expansion time. Both properties an
+    /// `init_if_needed`-with-constraints field would buy are instead
+    /// obtained from the ATA program itself, which the handler CPIs
+    /// `create_idempotent` against with the runtime-selected mint: it
+    /// derives the canonical ATA and rejects any account that isn't it,
+    /// *and* creates it when missing. Deferring to that CPI is both
+    /// stronger than a static constraint (the ATA program is the authority
+    /// on its own derivation) and the only form that can key off the leg
+    /// chosen at runtime. The subsequent `transfer_checked` out of the
+    /// output-leg treasury then rejects a fee account on the wrong mint on
+    /// the token program's own terms.
+    #[inline(always)]
+    pub fn platform_fee_ata(
+        &mut self,
+        platform_fee_ata: Option<&'b solana_account_info::AccountInfo<'a>>,
+    ) -> &mut Self {
+        self.instruction.platform_fee_ata = platform_fee_ata;
+        self
+    }
+    /// Creates `platform_fee_ata` when the integrator has none yet. Not
+    /// optional even though the fee group is: it is one constant address
+    /// the direct paths already have on hand, and folding it into the
+    /// optional group would trade that for a second `None` slot to reason
+    /// about on every non-fee swap.
+    #[inline(always)]
+    pub fn associated_token_program(
+        &mut self,
+        associated_token_program: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.associated_token_program = Some(associated_token_program);
+        self
+    }
+    /// Funds the `platform_fee_ata` rent-exempt balance on first use. See
+    /// `associated_token_program` on why this isn't optional either.
+    #[inline(always)]
+    pub fn system_program(
+        &mut self,
+        system_program: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.system_program = Some(system_program);
+        self
+    }
     /// CHECK: Only the event authority can invoke self-CPI
     #[inline(always)]
     pub fn event_authority(
@@ -705,6 +1067,11 @@ impl<'a, 'b> SwapCpiBuilder<'a, 'b> {
     #[inline(always)]
     pub fn min_out(&mut self, min_out: u64) -> &mut Self {
         self.instruction.min_out = Some(min_out);
+        self
+    }
+    #[inline(always)]
+    pub fn platform_fee_bps(&mut self, platform_fee_bps: u16) -> &mut Self {
+        self.instruction.platform_fee_bps = Some(platform_fee_bps);
         self
     }
     /// Add an additional account to the instruction.
@@ -758,6 +1125,11 @@ impl<'a, 'b> SwapCpiBuilder<'a, 'b> {
                 .min_out
                 .clone()
                 .expect("min_out is not set"),
+            platform_fee_bps: self
+                .instruction
+                .platform_fee_bps
+                .clone()
+                .expect("platform_fee_bps is not set"),
         };
         let instruction = SwapCpi {
             __program: self.instruction.__program,
@@ -802,6 +1174,20 @@ impl<'a, 'b> SwapCpiBuilder<'a, 'b> {
 
             clock: self.instruction.clock.expect("clock is not set"),
 
+            platform_fee_authority: self.instruction.platform_fee_authority,
+
+            platform_fee_ata: self.instruction.platform_fee_ata,
+
+            associated_token_program: self
+                .instruction
+                .associated_token_program
+                .expect("associated_token_program is not set"),
+
+            system_program: self
+                .instruction
+                .system_program
+                .expect("system_program is not set"),
+
             event_authority: self
                 .instruction
                 .event_authority
@@ -831,12 +1217,17 @@ struct SwapCpiBuilderInstruction<'a, 'b> {
     market_base_treasury: Option<&'b solana_account_info::AccountInfo<'a>>,
     market_quote_treasury: Option<&'b solana_account_info::AccountInfo<'a>>,
     clock: Option<&'b solana_account_info::AccountInfo<'a>>,
+    platform_fee_authority: Option<&'b solana_account_info::AccountInfo<'a>>,
+    platform_fee_ata: Option<&'b solana_account_info::AccountInfo<'a>>,
+    associated_token_program: Option<&'b solana_account_info::AccountInfo<'a>>,
+    system_program: Option<&'b solana_account_info::AccountInfo<'a>>,
     event_authority: Option<&'b solana_account_info::AccountInfo<'a>>,
     program: Option<&'b solana_account_info::AccountInfo<'a>>,
     side: Option<u8>,
     amount_in: Option<u64>,
     limit_price_bits: Option<u32>,
     min_out: Option<u64>,
+    platform_fee_bps: Option<u16>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
     __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,
 }

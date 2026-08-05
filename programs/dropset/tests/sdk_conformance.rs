@@ -51,7 +51,7 @@ fn predict_and_execute(
     let predicted = {
         let data = market_bytes(f);
         let view = MarketView::load(&data).expect("SDK decodes the market account");
-        simulate_swap(&view, side, amount_in, limit_price, current_slot)
+        simulate_swap(&view, side, amount_in, limit_price, current_slot, 0)
     };
 
     let base_ata = f.base_ata(&taker.pubkey());
@@ -231,7 +231,7 @@ fn sdk_simulate_swap_skips_oversize_ask_side_not_the_whole_take() {
     // crucially not an abort. The SDK predicts the same empty quote.
     let data = market_bytes(&f);
     let view = MarketView::load(&data).expect("SDK decodes the market account");
-    let q = simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1);
+    let q = simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1, 0);
     assert_eq!(
         q,
         Quote::default(),
@@ -295,7 +295,7 @@ fn sdk_simulate_swap_rejects_cyclic_vault_list() {
 
     let data = market_bytes(&f);
     let view = MarketView::load(&data).expect("SDK decodes the market account");
-    let q = simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1);
+    let q = simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1, 0);
     assert_eq!(
         q,
         Quote::default(),
@@ -333,7 +333,7 @@ fn sdk_simulate_swap_rejects_out_of_range_vault_next() {
 
     let data = market_bytes(&f);
     let view = MarketView::load(&data).expect("SDK decodes the market account");
-    let q = simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1);
+    let q = simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1, 0);
     assert_eq!(
         q,
         Quote::default(),

@@ -254,6 +254,15 @@ pub struct MarketHeader {
     pub fee_config: FeeConfig,
     /// Taker fee rate, capped at ~6.55% (`Ppm16` max).
     pub taker_fee: PodU16,
+    /// Ceiling on the caller-declared platform fee, in **bps** (`Bps16`) —
+    /// note the different denominator from `taker_fee` above. Seeded from
+    /// `Registry.default_max_platform_fee` at creation, then admin-retunable
+    /// via `SetMaxPlatformFee`.
+    ///
+    /// A `u16` reaches past `BPS`, so unlike `taker_fee` the type is not the
+    /// bound: every write path range-checks `<= BPS` so a market can never
+    /// hold a ceiling above 100% of the taker's output.
+    pub max_platform_fee: PodU16,
     /// Default min-leader-share for vaults opened on this market.
     /// Stamped from `Registry.default_min_leader_share` at creation.
     pub default_min_leader_share: PodU32,
@@ -307,7 +316,7 @@ impl MarketHeader {
 // deliberate update here, paired with the matching account-data
 // migration story.
 const _: () = assert!(core::mem::size_of::<Vault>() == 560);
-const _: () = assert!(core::mem::size_of::<MarketHeader>() == 251);
+const _: () = assert!(core::mem::size_of::<MarketHeader>() == 253);
 const _: () = assert!(core::mem::size_of::<LiquidityProfile>() == 2 * N_LEVELS * 10);
 const _: () = assert!(core::mem::size_of::<Remaining>() == 2 * N_LEVELS * 16);
 

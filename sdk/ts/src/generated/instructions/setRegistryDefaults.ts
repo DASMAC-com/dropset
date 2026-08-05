@@ -18,16 +18,16 @@ export function getSetRegistryDefaultsDiscriminatorBytes() { return fixEncoderSi
 export type SetRegistryDefaultsInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountAdmin extends string | AccountMeta<string> = string, TAccountRegistry extends string | AccountMeta<string> = string, TAccountEventAuthority extends string | AccountMeta<string> = string, TAccountProgram extends string | AccountMeta<string> = string, TRemainingAccounts extends readonly AccountMeta<string>[] = []> =
 Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array> & InstructionWithAccounts<[TAccountAdmin extends string ? ReadonlySignerAccount<TAccountAdmin> & AccountSignerMeta<TAccountAdmin> : TAccountAdmin, TAccountRegistry extends string ? WritableAccount<TAccountRegistry> : TAccountRegistry, TAccountEventAuthority extends string ? ReadonlyAccount<TAccountEventAuthority> : TAccountEventAuthority, TAccountProgram extends string ? ReadonlyAccount<TAccountProgram> : TAccountProgram, ...TRemainingAccounts]>;
 
-export type SetRegistryDefaultsInstructionData = { discriminator: ReadonlyUint8Array; takerFee: Option<number>; minLeaderShare: Option<number>;  };
+export type SetRegistryDefaultsInstructionData = { discriminator: ReadonlyUint8Array; takerFee: Option<number>; maxPlatformFee: Option<number>; minLeaderShare: Option<number>;  };
 
-export type SetRegistryDefaultsInstructionDataArgs = { takerFee: OptionOrNullable<number>; minLeaderShare: OptionOrNullable<number>;  };
+export type SetRegistryDefaultsInstructionDataArgs = { takerFee: OptionOrNullable<number>; maxPlatformFee: OptionOrNullable<number>; minLeaderShare: OptionOrNullable<number>;  };
 
 export function getSetRegistryDefaultsInstructionDataEncoder(): Encoder<SetRegistryDefaultsInstructionDataArgs> {
-    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 1)], ['takerFee', getOptionEncoder(getU16Encoder())], ['minLeaderShare', getOptionEncoder(getU32Encoder())]]), (value) => ({ ...value, discriminator: SET_REGISTRY_DEFAULTS_DISCRIMINATOR }));
+    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 1)], ['takerFee', getOptionEncoder(getU16Encoder())], ['maxPlatformFee', getOptionEncoder(getU16Encoder())], ['minLeaderShare', getOptionEncoder(getU32Encoder())]]), (value) => ({ ...value, discriminator: SET_REGISTRY_DEFAULTS_DISCRIMINATOR }));
 }
 
 export function getSetRegistryDefaultsInstructionDataDecoder(): Decoder<SetRegistryDefaultsInstructionData> {
-    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 1)], ['takerFee', getOptionDecoder(getU16Decoder())], ['minLeaderShare', getOptionDecoder(getU32Decoder())]]);
+    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 1)], ['takerFee', getOptionDecoder(getU16Decoder())], ['maxPlatformFee', getOptionDecoder(getU16Decoder())], ['minLeaderShare', getOptionDecoder(getU32Decoder())]]);
 }
 
 export function getSetRegistryDefaultsInstructionDataCodec(): Codec<SetRegistryDefaultsInstructionDataArgs, SetRegistryDefaultsInstructionData> {
@@ -47,6 +47,7 @@ eventAuthority?: Address<TAccountEventAuthority>;
 /** CHECK: Kept for v1-compatible account ordering and IDL shape */
 program: Address<TAccountProgram>;
 takerFee: SetRegistryDefaultsInstructionDataArgs["takerFee"];
+maxPlatformFee: SetRegistryDefaultsInstructionDataArgs["maxPlatformFee"];
 minLeaderShare: SetRegistryDefaultsInstructionDataArgs["minLeaderShare"];
 }
 
@@ -88,6 +89,7 @@ eventAuthority: Address<TAccountEventAuthority>;
 /** CHECK: Kept for v1-compatible account ordering and IDL shape */
 program: Address<TAccountProgram>;
 takerFee: SetRegistryDefaultsInstructionDataArgs["takerFee"];
+maxPlatformFee: SetRegistryDefaultsInstructionDataArgs["maxPlatformFee"];
 minLeaderShare: SetRegistryDefaultsInstructionDataArgs["minLeaderShare"];
 }
 

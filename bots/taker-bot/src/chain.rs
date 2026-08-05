@@ -403,7 +403,11 @@ pub fn size_against_book(
         return None;
     }
 
-    let quote = simulate_swap(view, order.side, amount_in, limit_price, slot);
+    // No platform fee: the taker bot is our own synthetic flow, not an
+    // integrator routing someone else's, so there is nobody to pay. Quoting
+    // and executing at 0 also keeps the bot's fills a clean read on the
+    // book's own pricing.
+    let quote = simulate_swap(view, order.side, amount_in, limit_price, slot, 0);
     if quote.out_amount == 0 {
         return None;
     }
@@ -480,6 +484,11 @@ pub fn send_swap(
         .amount_in(swap.amount_in)
         .limit_price_bits(swap.limit_price_bits)
         .min_out(swap.min_out)
+        // No integrator, matching the `0` the sizing quote was taken at. The
+        // optional fee accounts are left unset (the builder defaults them to
+        // the `None` sentinel), and the two program ids it fills in for us
+        // ride along inert.
+        .platform_fee_bps(0)
         .instruction();
     send(client, taker, &[taker], &[ix])
 }

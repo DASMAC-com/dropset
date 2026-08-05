@@ -267,6 +267,14 @@ pub fn build_swap_ix(
         market_base_treasury: *base_treasury,
         market_quote_treasury: *quote_treasury,
         clock: CLOCK_SYSVAR_ID,
+        // The probe is a direct take with no integrator, so the optional fee
+        // group is absent and the two programs it would need ride along
+        // inert. Keeping the probe fee-free also keeps its CU reading a clean
+        // measurement of the matching engine rather than of a fee transfer.
+        platform_fee_authority: None,
+        platform_fee_ata: None,
+        associated_token_program: ATA_PROGRAM_ID,
+        system_program: SYSTEM_PROGRAM_ID,
         event_authority: event_authority(),
         program: DROPSET_ID,
     }
@@ -275,6 +283,7 @@ pub fn build_swap_ix(
         amount_in,
         limit_price_bits,
         min_out,
+        platform_fee_bps: 0,
     })
 }
 

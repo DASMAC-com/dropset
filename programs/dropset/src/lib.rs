@@ -149,10 +149,11 @@ pub mod dropset {
         amount_in: u64,
         limit_price_bits: u32,
         min_out: u64,
+        platform_fee_bps: u16,
     ) -> Result<()> {
-        let fill_events = ctx
-            .accounts
-            .swap(side, amount_in, limit_price_bits, min_out)?;
+        let (fill_events, platform_fee_event) =
+            ctx.accounts
+                .swap(side, amount_in, limit_price_bits, min_out, platform_fee_bps)?;
         // Per the architecture spec § Events and emission →
         // Granularity: every leg is recorded, never truncated. The
         // matching engine accumulates `FillEvent`s and we emit them
@@ -161,6 +162,12 @@ pub mod dropset {
         // events are produced — the loop emits nothing and the
         // instruction returns Ok so the surrounding tx can survive.
         for ev in fill_events {
+            emit_cpi!(ev);
+        }
+        // At most one platform-fee record per swap, emitted after the fills
+        // it was skimmed from. `None` on the no-integrator path, on a
+        // soft-revert, and when the declared rate rounds to zero atoms.
+        if let Some(ev) = platform_fee_event {
             emit_cpi!(ev);
         }
         Ok(())
@@ -403,11 +410,12 @@ pub mod dropset {
     pub fn set_registry_defaults(
         ctx: &mut Context<SetRegistryDefaults>,
         taker_fee: Option<u16>,
+        max_platform_fee: Option<u16>,
         min_leader_share: Option<u32>,
     ) -> Result<()> {
-        let event = ctx
-            .accounts
-            .set_registry_defaults(taker_fee, min_leader_share)?;
+        let event =
+            ctx.accounts
+                .set_registry_defaults(taker_fee, max_platform_fee, min_leader_share)?;
         emit_cpi!(event);
         Ok(())
     }
@@ -453,6 +461,22 @@ pub mod dropset {
     #[access_control(require_registry_admin(&ctx.accounts.registry, &ctx.accounts.admin))]
     pub fn sweep_residual(ctx: &mut Context<SweepResidual>) -> Result<()> {
         let event = ctx.accounts.sweep_residual()?;
+        emit_cpi!(event);
+        Ok(())
+    }
+
+    // Appended at the tail for the same reason as `set_quote_authority`
+    // above: discriminants 0–28 keep their numbers so no existing client
+    // breaks. Belongs with the `set_taker_fee` / `set_min_leader_share`
+    // retuning family (`instructions/retune.rs`) by subject, not by
+    // discriminant — 28 went to `sweep_residual` above, so this takes 29.
+    #[discrim = 29]
+    #[access_control(require_registry_admin(&ctx.accounts.registry, &ctx.accounts.admin))]
+    pub fn set_max_platform_fee(
+        ctx: &mut Context<SetMaxPlatformFee>,
+        max_platform_fee: u16,
+    ) -> Result<()> {
+        let event = ctx.accounts.set_max_platform_fee(max_platform_fee)?;
         emit_cpi!(event);
         Ok(())
     }

@@ -25,6 +25,7 @@ export * from './setAllowOutsideDepositors';
 export * from './setDefaultFeeConfig';
 export * from './setLiquidityProfile';
 export * from './setMarketFeeConfig';
+export * from './setMaxPlatformFee';
 export * from './setMinLeaderShare';
 export * from './setOutsideDepositsApproved';
 export * from './setQuoteAuthority';

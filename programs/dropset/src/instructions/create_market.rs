@@ -175,6 +175,7 @@ impl CreateMarket {
         let quote_treasury_addr = *self.quote_treasury.address();
         let default_fee_config = self.registry.default_fee_config;
         let default_taker_fee = self.registry.default_taker_fee.get();
+        let default_max_platform_fee = self.registry.default_max_platform_fee.get();
         let default_min_leader_share = self.registry.default_min_leader_share.get();
 
         let market = &mut self.market;
@@ -190,6 +191,7 @@ impl CreateMarket {
         market.base_treasury = base_treasury_addr;
         market.quote_treasury = quote_treasury_addr;
         market.taker_fee = default_taker_fee.into();
+        market.max_platform_fee = default_max_platform_fee.into();
         market.default_min_leader_share = default_min_leader_share.into();
         market.fee_config = FeeConfig {
             mint: default_fee_config.mint,
