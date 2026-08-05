@@ -301,10 +301,23 @@ const Screenshot = ({
         {source}
       </Link>
     ) : null}
+    {/* Space Mono at the same size the swap-flow labels use, so a capture's
+        label reads identically wherever it appears — the only difference is
+        that these sit under their image and the swap flow's sit above (that
+        page's captures climb in height, so above is what keeps its labels on a
+        shared baseline). */}
     {caption ? (
-      <Text color="quaternary" fontSize="24px" margin="10px 0 0 0">
+      <div
+        style={{
+          color: colors.mutedFg,
+          fontFamily: deckTheme.fonts.monospace,
+          fontSize: "28px",
+          lineHeight: 1.3,
+          marginTop: "12px",
+        }}
+      >
         {caption}
-      </Text>
+      </div>
     ) : null}
   </Box>
 );
@@ -350,8 +363,7 @@ const Step = ({
   width,
   alt,
 }: {
-  /** Omit to label a stage that isn't a numbered user action — see page 6. */
-  step?: number;
+  step: number;
   label: string;
   src: string;
   width: number;
@@ -371,7 +383,7 @@ const Step = ({
         marginBottom: "16px",
       }}
     >
-      {step ? <span style={{ color: colors.accent }}>{step}. </span> : null}
+      <span style={{ color: colors.accent }}>{step}. </span>
       {label}
     </div>
     <Box
@@ -641,39 +653,60 @@ const BEATS: Beat[] = [
   },
 ];
 
-// The full content measure, so the timeline spans the page rather than sitting
-// as a narrow band in the middle of it.
+/**
+ * Timeline geometry. The full content measure, so the roadmap spans the page
+ * rather than sitting as a narrow band in the middle of it.
+ *
+ * **Pitch is derived, and that is the point.** The dots used to be a flex row of
+ * three equal-width segments while the text below was `space-between` on a fixed
+ * column width — two different geometries, so they only agreed on the first
+ * column. The second dot sat 27 units left of its heading and the third 53,
+ * which read as sloppy rather than as a mistake. Both rows now come from the
+ * same pitch, so a dot cannot drift from the word beneath it: change
+ * `ROADMAP_COLUMN` and they move together.
+ */
 const ROADMAP_WIDTH = 1780;
 const ROADMAP_COLUMN = 540;
+const ROADMAP_DOT = 18;
+const ROADMAP_GAP =
+  (ROADMAP_WIDTH - BEATS.length * ROADMAP_COLUMN) / (BEATS.length - 1);
+const ROADMAP_PITCH = ROADMAP_COLUMN + ROADMAP_GAP;
 
 const Roadmap = () => (
   <Box margin="46px 0 0 0" width={`${ROADMAP_WIDTH}px`}>
-    {/* The rule and its dots are one row above the columns rather than a border
-        on each column: a per-column border restarts at every gap, and the
-        unbroken line is what makes the three beats read as one sequence. */}
-    <FlexBox justifyContent="space-between" alignItems="center">
+    {/* One unbroken rule with the dots absolutely placed on it, rather than a
+        rule segment per column: a per-column border restarts at every gap, and
+        the continuous line is what makes the three beats read as one sequence.
+        Absolute placement is also what pins each dot to its own column's left
+        edge. */}
+    <div style={{ height: `${ROADMAP_DOT}px`, position: "relative" }}>
+      {/* Runs centre-of-first-dot to centre-of-last, so it never overshoots
+          into empty space at either end. */}
+      <div
+        style={{
+          backgroundColor: colors.border,
+          height: "2px",
+          left: `${ROADMAP_DOT / 2}px`,
+          position: "absolute",
+          top: `${ROADMAP_DOT / 2 - 1}px`,
+          width: `${(BEATS.length - 1) * ROADMAP_PITCH}px`,
+        }}
+      />
       {BEATS.map(({ when }, index) => (
-        <FlexBox key={when} alignItems="center" width="100%">
-          <div
-            style={{
-              backgroundColor: colors.accent,
-              borderRadius: "50%",
-              flex: "0 0 auto",
-              height: "18px",
-              width: "18px",
-            }}
-          />
-          <div
-            style={{
-              backgroundColor:
-                index === BEATS.length - 1 ? "transparent" : colors.border,
-              height: "2px",
-              width: "100%",
-            }}
-          />
-        </FlexBox>
+        <div
+          key={when}
+          style={{
+            backgroundColor: colors.accent,
+            borderRadius: "50%",
+            height: `${ROADMAP_DOT}px`,
+            left: `${index * ROADMAP_PITCH}px`,
+            position: "absolute",
+            top: 0,
+            width: `${ROADMAP_DOT}px`,
+          }}
+        />
       ))}
-    </FlexBox>
+    </div>
     <FlexBox justifyContent="space-between" alignItems="flex-start">
       {BEATS.map(({ when, headline, body }) => (
         <Box key={when} width={`${ROADMAP_COLUMN}px`} margin="26px 0 0 0">
@@ -1007,41 +1040,41 @@ export default function DemoDeck() {
               top — three review rounds running. Short copy plus `nowrap` ends
               that: the browser now enforces what the budget assumes. */}
           <Statement fontSize="56px" nowrap>
-            Dropset ships propAMM efficiency and order-book transparency.
+            Dropset ships propAMM efficiency and CLOB transparency.
           </Statement>
-          {/* Left to right as a pipeline, not a stack: what a quote costs, then
-              the maker paying that cost to quote a live market, then the same
-              liquidity arriving on the frontend. It reads low-level → system →
-              product, which is the actual story, and three columns of one
-              capture each are far shorter than two stacked in a column — the
-              headroom that finally puts this page comfortably inside its slide.
-              Captions sit above on a shared baseline, as on page 3, because the
-              three captures are very different heights. */}
-          <FlexBox
-            margin="36px 0 0 0"
-            justifyContent="center"
-            alignItems="flex-start"
-          >
-            <Step
-              label="Quoting costs 47 CU"
-              src="/screens/compute-units.png"
-              width={500}
-              alt="Compute units per instruction: a reprice costs 47, a reshape 59"
-            />
-            <SequenceArrow />
-            <Step
-              label="Demo maker quoting locally"
-              src="/screens/maker-tui.png"
-              width={500}
-              alt="The maker control panel: seven FX markets and a live book"
-            />
-            <SequenceArrow />
-            <Step
-              label="Liquidity routes to the frontend"
-              src="/screens/eclob-frontend.png"
-              width={500}
-              alt="The eCLOB on the frontend: a EURC/USDC order book, a live trades tape, and a settled order"
-            />
+          {/* Three captures side by side rather than two stacked in a column:
+              that is what gives this page its headroom, and it still reads
+              left to right as cost → maker → product without needing chevrons
+              to say so. Vertically centred, so the captures share a midline
+              despite being very different heights. */}
+          <FlexBox margin="36px 0 0 0" justifyContent="center" alignItems="center">
+            <Box margin="0 20px">
+              <Screenshot
+                src="/screens/compute-units.png"
+                width={500}
+                alt="Compute units per instruction: a reprice costs 47, a reshape 59"
+                caption="Reprice: 47 CU · reshape: 59 CU"
+                margin="0"
+              />
+            </Box>
+            <Box margin="0 20px">
+              <Screenshot
+                src="/screens/maker-tui.png"
+                width={500}
+                alt="The maker control panel: seven FX markets and a live book"
+                caption="Demo maker quoting locally"
+                margin="0"
+              />
+            </Box>
+            <Box margin="0 20px">
+              <Screenshot
+                src="/screens/eclob-frontend.png"
+                width={500}
+                alt="The eCLOB on the frontend: a EURC/USDC order book, a live trades tape, and a priced swap"
+                caption="Liquidity routes to the frontend"
+                margin="0"
+              />
+            </Box>
           </FlexBox>
         </SlideBody>
         <Notes>
@@ -1088,7 +1121,7 @@ export default function DemoDeck() {
         <SlideBody>
           <Eyebrow>Growth roadmap</Eyebrow>
           <Statement fontSize="68px">
-            A deliberate and methodical path to expansion.
+            Our path to expansion is deliberate and methodical.
           </Statement>
           <Roadmap />
         </SlideBody>

@@ -66,7 +66,7 @@ pages:
 > by liquidity, the bottom of that list is currencies with no market
 > whatsoever: the Australian dollar, the Canadian dollar, the yen, the
 > naira, the lira. So we're building the exchange those markets need.
-> Dropset ships propAMM efficiency and order-book transparency, where
+> Dropset ships propAMM efficiency and CLOB transparency, where
 > repricing the whole book costs forty-seven compute units and
 > reshaping the ladder fifty-nine. FX vaults bootstrap a public liquidity
 > flywheel, and it's a two-sided market we're already doing the customer
@@ -219,12 +219,15 @@ pages:
 #### Page 6 — The eCLOB · ~18s
 
 - **On-slide:** Eyebrow "The eCLOB", then one sentence: Dropset ships
-  propAMM efficiency and order-book transparency.
-- **Visual:** Three captures **left to right as a pipeline**, captions
-  above on a shared baseline: "Quoting costs 47 CU" (the compute-unit
-  pane), "Demo maker quoting locally" (the maker's control panel), then
-  "Liquidity routes to the frontend" (the order book, live trades tape and
-  a priced swap on the product itself).
+  propAMM efficiency and CLOB transparency. (CLOB, the acronym — not
+  "order-book", which spells out a term the page has already named.)
+- **Visual:** Three captures **side by side, vertically centred**, each
+  captioned underneath: "Reprice: 47 CU · reshape: 59 CU" (the
+  compute-unit pane), "Demo maker quoting locally" (the maker's control
+  panel), and "Liquidity routes to the frontend" (the order book, live
+  trades tape and a priced swap on the product itself). No connecting
+  chevrons — left to right already reads as cost → maker → product without
+  being told to.
 - **Spoken:** "So we're building the exchange those markets need. Making
   a market onchain used to be prohibitively expensive — gas made
   continuous quoting impossible, so everything before this was a
@@ -246,14 +249,15 @@ pages:
   budget assumes rather than the author estimating text metrics. The
   compute-unit numbers live on the capture that shows them rather than
   being restated in the heading.
-- **Note on the pipeline:** left to right is **low-level → system →
-  product**: the cost of a quote, the maker paying that cost, the
-  liquidity showing up on the frontend. Three columns of one capture each
-  is also far shorter than two stacked in a column, which is the change
-  that finally gave this page real headroom. It replaced a strip of four
-  small keyframe thumbnails — one screenshot of the thing working says
-  more than four stills of it starting up, and needs no localnet capture
-  session to produce.
+- **Note on the row:** left to right is **low-level → system → product**:
+  the cost of a quote, the maker paying that cost, the liquidity showing up
+  on the frontend. It needs no chevrons to say so — an intermediate draft
+  added them and they only made the row busier. Three columns of one
+  capture each is also far shorter than two stacked in a column, which is
+  the change that finally gave this page real headroom. It replaced a strip
+  of four small keyframe thumbnails — one screenshot of the thing working
+  says more than four stills of it starting up, and needs no localnet
+  capture session to produce.
 
 #### Page 7 — How we grow · ~15s
 
@@ -288,7 +292,8 @@ pages:
 
 #### Page 8 — Growth roadmap · ~15s
 
-- **On-slide:** A deliberate and methodical path to expansion. Then three
+- **On-slide:** Our path to expansion is deliberate and methodical. Then
+  three
   beats in time order, spanning the page:
   1. **Now** — DASMAC bootstraps liquidity. DASMAC bootstraps nascent FX
      pairs by leading Hyperliquid-style vaults using the Dropset protocol.
@@ -297,8 +302,16 @@ pages:
   1. **Later** — derivatives provide an expansion opportunity. Once spot
      is fully mature, hedging instruments and additional derivatives
      enable more efficient market making and more mature markets.
-- **Visual:** The three beats as a rollout along a rule spanning the full
-  page width, not a static list.
+- **Visual:** The three beats as a rollout along one unbroken rule spanning
+  the full page width, not a static list. Each dot sits **directly above
+  its own beat's heading**.
+- **Note on the dots:** their spacing is **derived from the column pitch**,
+  and it has to stay that way. They were originally a flex row of three
+  equal segments while the text below was `space-between` on a fixed column
+  width — two different geometries, agreeing only on the first column, so
+  the second dot sat 27 units left of its heading and the third 53. Both
+  rows now come from one pitch, so changing the column width moves the dots
+  with it.
 - **Note:** Called a **roadmap** rather than "commercial viability" — the
   growth story is the frame, and "viability" invites the question of
   whether it is viable. The headline is a *path*, not a funding
