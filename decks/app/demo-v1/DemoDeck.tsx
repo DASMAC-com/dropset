@@ -297,6 +297,18 @@ const SequenceArrow = () => (
 );
 
 /**
+ * Column width for a swap-flow step.
+ *
+ * This is the number that keeps page 3 inside its slide, so it is a named
+ * constant rather than repeated at three call sites. The third capture is very
+ * tall (820×1371), so it sets the row's height, and the row's height is most of
+ * the page: at 410 the page stacked to ~1008 units against the ~910 a slide
+ * has, and flex centring pushed the eyebrow off the top edge — cropped on
+ * screen, and silently clipped in print.
+ */
+const STEP_WIDTH = 380;
+
+/**
  * A numbered step in the swap flow, caption **above** its capture.
  *
  * Above, not below, because the three captures are wildly different heights —
@@ -832,8 +844,8 @@ export default function DemoDeck() {
       <Slide>
         <SlideBody>
           <Eyebrow>Live today</Eyebrow>
-          <Statement fontSize="64px">
-            Dropset settles real currency trades on mainnet today.
+          <Statement fontSize="60px">
+            Dropset already processes Solana mainnet FX trades.
           </Statement>
           {/* The swap flow left to right, one step per column — the beat that
               used to be the mainnet recording. The three captures are very
@@ -847,32 +859,38 @@ export default function DemoDeck() {
               step={1}
               label="Open the currency picker"
               src="/screens/swap-picker.png"
-              width={410}
+              width={STEP_WIDTH}
               alt="The swap panel's To field, choosing the currency to receive"
             />
             <SequenceArrow />
-            <Step
-              step={2}
-              label="Type the currency you want"
-              src="/screens/swap-search.png"
-              width={410}
-              alt="Searching for a currency and its available stablecoins"
-            />
+            {/* The URL rides under the middle step rather than under the whole
+                row. The third capture is by far the tallest, so a link below the
+                row sat almost on the footer — and it cost the page 64 units of
+                height it did not have. In the space the shorter middle column
+                leaves, it costs nothing and lands under the flow's centre. */}
+            <Box>
+              <Step
+                step={2}
+                label="Type the currency you want"
+                src="/screens/swap-search.png"
+                width={STEP_WIDTH}
+                alt="Searching for a currency and its available stablecoins"
+              />
+              <FlexBox margin="30px 0 0 0">
+                <Link href="https://dropset.io/swap" fontSize="28px">
+                  dropset.io/swap
+                </Link>
+              </FlexBox>
+            </Box>
             <SequenceArrow />
             <Step
               step={3}
               label="Swap atomically"
               src="/screens/swap-settled.png"
-              width={410}
+              width={STEP_WIDTH}
               alt="A priced USDC to EURC swap, with the route drawn on the globe"
             />
           </FlexBox>
-          {/* The URL is the point of putting it here: the captures prove the
-              flow exists, and the link says the audience can go do it
-              themselves. Same job the currencies URL does on the gap page. */}
-          <Link href="https://dropset.io/swap" fontSize="28px" margin="30px 0 0 0">
-            dropset.io/swap
-          </Link>
         </SlideBody>
         <Notes>
           This already works. Dropset is live on mainnet today, clearing real
@@ -937,13 +955,14 @@ export default function DemoDeck() {
       <Slide>
         <SlideBody>
           <Eyebrow>The eCLOB</Eyebrow>
-          {/* One sentence, not a statement plus a supporting line: the eyebrow
-              already names the thing, so the sentence can go straight to what
-              the design gives you. The compute-unit numbers live on the capture
-              that shows them rather than being restated here. */}
+          {/* One sentence, not a statement plus a supporting line. It names the
+              eCLOB even though the eyebrow above already does — the kicker is a
+              small tag and the sentence is the claim, and the name is worth
+              landing twice on the one page that introduces it. The compute-unit
+              numbers live on the capture that shows them rather than being
+              restated here. */}
           <Statement fontSize="64px">
-            Our exchange model provides propAMM efficiency and order-book
-            transparency.
+            The eCLOB provides propAMM efficiency and order-book transparency.
           </Statement>
           {/* Left column stacks the two proof captures (the maker's own control
               panel, and what a quote update costs); the right column is the
@@ -959,7 +978,7 @@ export default function DemoDeck() {
                 src="/screens/maker-tui.png"
                 width={380}
                 alt="The maker control panel: seven FX markets and a live book"
-                caption="Our maker, quoting locally"
+                caption="Demo maker quoting locally"
                 margin="0"
               />
               <Screenshot
@@ -1073,7 +1092,7 @@ export default function DemoDeck() {
             </VenuePanel>
             <VenuePanel
               tint={colors.buy}
-              caption="Dropset is open and composable on Solana, the most money-like onchain environment."
+              caption="Dropset is open and composable on Solana, the most money-like onchain environment, where ease of transmission and public composability are maximized. Public liquidity is what blockchains were built for."
             >
               <Wordmark width={420} />
             </VenuePanel>
@@ -1090,9 +1109,12 @@ export default function DemoDeck() {
           competitor’s private ledger. A bank that competes with Circle won’t
           build on Arc, and a multi-signature banking product isn’t going to run
           on Canton. Dropset is open, neutral and composable: anyone can quote,
-          anyone can trade, any app can integrate.
-          And that’s why we started on Solana, the most money-like onchain
-          environment there is.
+          anyone can trade, any app can integrate. Public liquidity is what
+          blockchains were built for — moving money is the problem they were
+          supposed to solve, and this is that.
+          And that’s why we started on Solana: the most money-like onchain
+          environment there is, where ease of transmission and public
+          composability are both maximized.
         </Notes>
       </Slide>
 

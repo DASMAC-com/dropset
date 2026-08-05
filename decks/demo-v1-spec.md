@@ -59,14 +59,15 @@ pages:
 > day — but it trades only 24/5, its liquidity is fragmented across
 > over-the-counter desks and banks, and less than ten percent of the
 > world's currencies are even available on Solana today. This already
-> works: Dropset is live on mainnet, and you open the picker, type the
-> currency you want, and the swap settles atomically. Alongside that we
+> works: Dropset already processes Solana mainnet FX trades — you open the
+> picker, type the currency you want, and the swap settles atomically, at
+> dropset.io/swap right now. Alongside that we
 > curate the market data for every currency on Solana — and when you sort
 > by liquidity, the bottom of that list is currencies with no market
 > whatsoever: the Australian dollar, the Canadian dollar, the yen, the
-> naira, the lira. So we're building the exchange those markets need. Our
-> exchange model provides propAMM efficiency and order-book transparency,
-> where repricing the whole book costs forty-seven compute units and
+> naira, the lira. So we're building the exchange those markets need. The
+> eCLOB provides propAMM efficiency and order-book transparency, where
+> repricing the whole book costs forty-seven compute units and
 > reshaping the ladder fifty-nine. Our vaults bootstrap a public liquidity
 > flywheel, and it's a two-sided market we're already doing the customer
 > development on — upstream the issuers who need their currency to trade,
@@ -77,7 +78,9 @@ pages:
 > fully mature. Permissioned onchain liquidity creates major pain points:
 > permissioned solutions block composability, and no fintech is going to
 > settle on a competitor's private ledger — Dropset is open and composable
-> on Solana, the most money-like onchain environment.
+> on Solana, the most money-like onchain environment, where ease of
+> transmission and public composability are maximized. Public liquidity is
+> what blockchains were built for.
 > Dropset is built by people who have built exchanges. Dropset — where
 > currency trades onchain.
 
@@ -142,7 +145,7 @@ pages:
 
 #### Page 3 — Live today · ~12s
 
-- **On-slide:** Dropset settles real currency trades on mainnet today.
+- **On-slide:** Dropset already processes Solana mainnet FX trades.
 - **Visual:** The swap flow **left to right, one step per column**, the
   steps being "open the currency picker", "type the currency you want"
   and "swap atomically". Each caption sits **above** its own capture, and
@@ -150,7 +153,8 @@ pages:
   The three captures get progressively taller, so centring makes the
   labels climb like steps — which is the effect worth keeping. Captions
   underneath, by contrast, landed on three different baselines and read as
-  ragged. Beneath the row, the URL: `dropset.io/swap`.
+  ragged. The URL — `dropset.io/swap` — sits **under the middle step**, in
+  the space that shorter column leaves.
 - **Spoken:** "This already works. Dropset is live on mainnet today,
   clearing real trades: you open the picker, type the currency you want,
   and the swap settles atomically. The ramps are near instant and the
@@ -166,6 +170,16 @@ pages:
   the way in — an earlier draft framed the flow as picking a country off
   the globe, which isn't how anyone uses it; the globe appears in the
   third capture as the route being drawn, which is what it's for.
+- **Note on height:** this is the **tightest page in the deck**, and the
+  numbers matter. The third capture is 820×1371, so it sets the row's
+  height and the row is most of the page. At a 410-unit step width, with a
+  two-line statement and the URL below the row, the page stacked to ~1008
+  units against the ~910 a slide has — and because slide content is
+  flex-centred, the overflow split top and bottom and **cropped the
+  eyebrow off the top edge**. Three things brought it back: a shorter
+  statement that fits one line, a 380-unit step width, and moving the URL
+  into the middle column so it stops adding to the page's height. If this
+  page grows again, that is the order to give ground in.
 
 #### Page 4 — Currency curation · ~10s
 
@@ -202,18 +216,19 @@ pages:
 
 #### Page 6 — The eCLOB · ~18s
 
-- **On-slide:** Eyebrow "The eCLOB", then one sentence: our exchange
-  model provides propAMM efficiency and order-book transparency.
-- **Visual:** Left column stacks the two proof captures — our maker
-  quoting locally, and the compute-unit pane captioned "Reprice: 47 CU ·
-  reshape: 59 CU". Right column is the payoff: that same liquidity routed
-  through to the frontend, captioned "Liquidity routes to the frontend",
-  showing the order book, the live trades tape and a filled order.
+- **On-slide:** Eyebrow "The eCLOB", then one sentence: the eCLOB provides
+  propAMM efficiency and order-book transparency.
+- **Visual:** Left column stacks the two proof captures — captioned "Demo
+  maker quoting locally", and the compute-unit pane captioned "Reprice: 47
+  CU · reshape: 59 CU". Right column is the payoff: that same liquidity
+  routed through to the frontend, captioned "Liquidity routes to the
+  frontend", showing the order book, the live trades tape and a filled
+  order.
 - **Spoken:** "So we're building the exchange those markets need. Making
   a market onchain used to be prohibitively expensive — gas made
   continuous quoting impossible, so everything before this was a
   band-aid. We've built order books before, so we built one that fits:
-  our exchange model gives you the transparency of a central limit order
+  the eCLOB gives you the transparency of a central limit order
   book with quote updates as cheap as a propAMM. Repricing the whole
   book costs
   forty-seven compute units and reshaping the ladder fifty-nine, on a
@@ -224,9 +239,11 @@ pages:
   quote onchain with a vault-style approach."
 - **Note:** **One sentence, not a statement plus a supporting line.** An
   intermediate draft led with "we are building an exchange to solve this"
-  and put the design's properties underneath — but the eyebrow already
-  names the thing, so the sentence can go straight to what the model
-  gives you, and the spoken track carries the segue from page 5. The
+  and put the design's properties underneath; the segue now lives in the
+  spoken track instead. The sentence **names the eCLOB even though the
+  eyebrow above already does** — the kicker is a small tag and the
+  sentence is the claim, and the name is worth landing twice on the one
+  page that introduces it. The
   compute-unit numbers live on the capture that shows them rather than
   being restated on the slide. The pairing of captures is the other point
   of the page: our maker quoting locally on the left, that same liquidity
@@ -300,8 +317,10 @@ pages:
   Competitive dynamics prevent fintech companies from adopting a
   competitor's private ledger."; and the Dropset wordmark, green-outlined,
   captioned "Dropset is open and composable on Solana, the most money-like
-  onchain environment." Both badges are **top-aligned** so they sit on one
-  line — see the note below.
+  onchain environment, where ease of transmission and public composability
+  are maximized. Public liquidity is what blockchains were built for."
+  Both badges are **top-aligned** so they sit on one line — see the note
+  below.
 - **Spoken:** "Permissioned onchain liquidity creates real pain points.
   Arc and Tempo are building payment-and-settlement rails, and Canton is
   doing regulated onchain markets — any of them could decide FX is
@@ -312,8 +331,11 @@ pages:
   competitor's private ledger. A bank that competes with Circle won't
   build on Arc, and a multi-signature banking product isn't going to run
   on Canton. Dropset is open, neutral and composable: anyone can quote,
-  anyone can trade, any app can integrate. And that's why we started on
-  Solana, the most money-like onchain environment there is."
+  anyone can trade, any app can integrate. Public liquidity is what
+  blockchains were built for — moving money is the problem they were
+  supposed to solve, and this is that. And that's why we started on Solana:
+  the most money-like onchain environment there is, where ease of
+  transmission and public composability are both maximized."
 - **Note:** The v1 fail / won't-fail **pair collapsed into this one
   page**, and the asterisk device is retired — it cost a page and the
   payoff didn't carry. The framing is now the *pain point* rather than
