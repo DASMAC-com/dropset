@@ -89,7 +89,7 @@ pub struct QuoteState {
 impl QuoteState {
     /// How long ago the bot last stamped a live reference on this market, or
     /// `None` when that can't be established. Every unreadable state — no file,
-    /// unparseable JSON, a stamp in the future (the clock moved backwards, so
+    /// malformed JSON, a stamp in the future (the clock moved backwards, so
     /// the record can't be trusted as an *upper* bound on age) — reads as
     /// `None`, which the caller treats as stale.
     pub fn age(&self, now: SystemTime) -> Option<Duration> {
