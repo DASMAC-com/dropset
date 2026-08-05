@@ -41,13 +41,14 @@ pub fn flush_level_price(reference: Price, offset_ppm: u32, is_ask: bool) -> Pri
 /// A level's materialized size in atoms: `size_bps` of the matching
 /// inventory leg (`base_atoms` for asks, `quote_atoms` for bids).
 ///
-/// Returns `None` when `size_bps > BPS`. `set_liquidity_profile` bounds
-/// the per-side Σ `size_bps` to `BPS`, and each `size_bps` is a
-/// non-negative `u16`, so every *individual* level is `<= BPS` for any
-/// profile written through that path — the `None` case only fires on
-/// account bytes the program never wrote (corruption, or a future
-/// profile-writing path that skips the sum check). With the invariant held
-/// the product is at most `leg_atoms * BPS`, which divided by `BPS` is
+/// Returns `None` when `size_bps > BPS`. Nothing bounds that at *write*
+/// time: `set_liquidity_profile` stores the ladder raw (and its ASM fast
+/// path validates nothing at all), and `size_bps` is a `u16`, so a level
+/// above `BPS` — and hence this `None` — is reachable from an ordinary,
+/// correctly-signed profile write, not just from corrupt account bytes.
+/// The per-side `Σ size_bps ≤ BPS` invariant is enforced *solely* at match
+/// time, as the next paragraph describes. Where it holds the product is at
+/// most `leg_atoms * BPS`, which divided by `BPS` is
 /// `<= leg_atoms <= u64::MAX`, so the cast is lossless.
 ///
 /// Both callers guard this at the *side* granularity before calling: a side
