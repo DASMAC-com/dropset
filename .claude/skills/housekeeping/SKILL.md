@@ -396,8 +396,11 @@ Dedup and refile so a 30-minute loop never duplicates work:
   bullets, plus a `replace` on its `**Touches**:` line),
   not a re-sent `description`, per
   `docs/conventions/linear-automation.md` → "Partial edits —
-  the `patch` argument". The append can't clobber an existing
-  bullet, so there's no live body to diff against. If
+  the `patch` argument". The `append` can't clobber an
+  existing bullet, so no diffing against the live body is
+  needed for the new findings — but copy the `**Touches**:`
+  line the `replace` targets **verbatim** from the issue you
+  just read, since that op has to match it exactly once. If
   more than one such issue somehow exists (e.g. a legacy
   per-finding issue alongside an aggregated one), append to
   the **lowest-ENG** one and note the others in the report so

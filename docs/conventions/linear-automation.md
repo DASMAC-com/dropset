@@ -243,6 +243,13 @@ aborts the whole save), up to 50 per call. `patch` is **update-only**
 and mutually exclusive with the full-content field — pass one or the
 other, never both.
 
+Each op carries `op` plus its own fields: `append` / `prepend` take
+just `text`; `insert_before` / `insert_after` take `anchor` + `text`;
+`replace` takes `old_string` + `new_string` (and an optional
+`replace_all`); `replace_range` takes `from` + `to` + `new_string`.
+Every one of those strings takes **literal newlines**, never the
+escape sequence `\n`.
+
 What `patch` buys:
 
 - **The write payload scales with the edit, not the body.** A wholesale
@@ -275,8 +282,10 @@ into an issue-mention node**, so text saved as `ENG-123` reads back as
 an `<issue id="…" href="…">ENG-123</issue>` element and an anchor
 carrying a Linear tag **will not match**. Anchor on tag-free text — a
 date, a session id, a heading — or use `append`, which needs no anchor
-at all. (A second reason the "Keep Linear tags out of PR bodies and
-comments" habit above pays off.)
+at all. (This is **not** the "Keep Linear tags out of PR bodies and
+comments" rule above — that one governs GitHub surfaces, and a tag in a
+Linear body is perfectly fine. The corollary here is narrower: prefer
+tag-free text for anything you expect to *anchor* on later.)
 
 Related: **`updatedAt` in a `save_document` response is not a reliable
 concurrency signal** — it has been observed unchanged across

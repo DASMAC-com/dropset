@@ -205,17 +205,28 @@ PR-authoring **writes** (`create_pull_request`,
      **exactly once**, which is also what keeps this from
      clobbering a box the author already ticked or an edit
      made since — a line that moved or changed fails the save
-     loudly instead. Three cautions: a box whose text is not
-     unique needs more of its surrounding line to
-     disambiguate; a box whose text contains an `ENG-###`
-     **won't match at all** (Linear stores that as a mention
-     node), so fall back to a full `description` write for
-     that one case; and because the save is **atomic**, one
-     stale anchor aborts the **whole** call — the In-Progress
-     move included. So if it fails, don't move on as though
-     the state landed: re-issue once with the state plus only
-     the ops that still match, and note the box you couldn't
-     tick.
+     loudly instead. Three cautions:
+
+     - A box whose text is not unique needs more of its
+       surrounding line to disambiguate.
+     - A box whose text contains an `ENG-###` **won't match at
+       all** (Linear stores that as a mention node). `patch`
+       and `description` are mutually exclusive in one call,
+       so this isn't a per-box fallback: if **any** box you
+       need to tick is tag-bearing, express the **whole** call
+       as a full-body `description` + `state` write instead.
+       The fetched body is already in context, so that costs
+       nothing extra.
+     - Because the save is **atomic**, one stale anchor aborts
+       the **whole** call — the In-Progress move included —
+       and the error names only the *first* failing op, so
+       which of the rest would have matched is unknowable
+       without re-reading. Don't go re-read, and don't move on
+       as though the state landed: re-issue **once** as a
+       single full-body `description` + `state` write built
+       from the body you already fetched, ticking the boxes
+       that body shows as open. That is the one licensed
+       second write.
 
      If there are **no** boxes to tick (no checklist, or
      none newly delivered), **and** the `get_issue` above

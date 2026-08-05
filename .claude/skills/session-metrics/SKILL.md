@@ -143,14 +143,21 @@ Keep it tight; this is a recommendation, not a patch.
 **5. Append a dated entry to the inbox** — with a **`patch`
 append**, which needs neither a read nor a rewrite. Call
 `mcp__claude_ai_Linear__save_document` with the resolved id
-and a single `append` op (literal newlines in the text):
+and a single `append` op:
 
 ```txt
 mcp__claude_ai_Linear__save_document(
   id: "<the resolved doc id>",
-  patch: [{ op: "append", text: "\n<the entry>" }]
+  patch: [{ op: "append", text: "<blank line><the entry>" }]
 )
 ```
+
+Put a **real blank line** at the front of `text` so the entry
+starts its own list item — type actual newline characters,
+never the two-character escape `\n`. (The Linear MCP is
+explicit about this: string values take literal newlines, not
+escape sequences.) Nothing downstream will catch a mangled
+separator, because this step no longer reads the document.
 
 Per `docs/conventions/linear-automation.md` → "Partial edits
 — the `patch` argument", the server applies the append

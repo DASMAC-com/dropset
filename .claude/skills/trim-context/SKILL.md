@@ -65,7 +65,8 @@ its entry (per `docs/conventions/linear-automation.md` → "Partial edits
 — the `patch` argument"), so it appends happily forever. **Mining** is
 what gets more expensive — step 1 reads the whole body every pass, and
 a long inbox is harder to synthesize honestly and stales the older
-entries. Carry both numbers into step 4.
+entries. Carry the **count** into step 4 — that's the number the clear
+question and the step-6 report both name.
 
 **2. Synthesize across sessions, don't transcribe.** Look for the trim
 levers that **recur** across the unprocessed entries — a verbose build
@@ -178,34 +179,50 @@ your step-1 read, per `docs/conventions/linear-automation.md` →
 "Partial edits — the `patch` argument". Per the decision:
 
 - **Clear = yes:** one `replace` op per consumed entry, `new_string`
-  empty, deleting its lines. When none remain, a further `replace` op
-  swaps the residue for the empty-inbox template.
+  empty, deleting its lines. Delete only the entries this pass actually
+  consumed — do **not** also try to collapse the doc to an
+  empty-inbox placeholder. Whether any entry remains is a *count* taken
+  from your step-1 read, and a concurrent `session-metrics` append can
+  make that count wrong; exactly-once anchors stop you clobbering that
+  entry, but they can't stop a stale count from stamping "inbox empty"
+  over it.
 - **Clear = no:** leave every entry in place but tick each consumed one
-  (`- [ ]` → `- [x]`) and add a nested disposition note — a
-  `✓ filed: ENG-### (<lever>)` for one that drove a task, or a
-  `⚠ noted: <reason>` for a one-off that implied no change. One
-  `replace` op per consumed entry; **skip the annotation work
-  entirely** on a "yes, clear" (this is the whole reason the clear is
-  decided first).
+  and add a nested disposition note — a `✓ filed: ENG-### (<lever>)`
+  for one that drove a task, or a `⚠ noted: <reason>` for a one-off
+  that implied no change. Two ops per consumed entry: a `replace`
+  flipping its box (`- [ ]` → `- [x]`, with enough of the entry's own
+  header line after the box to match **once**), and an `insert_after`
+  keyed on that entry's `session <short-uuid>` fragment carrying the
+  note. **Skip the annotation work entirely** on a "yes, clear" (this
+  is the whole reason the clear is decided first).
 
-**No re-fetch, and no `updatedAt` check.** The ops are applied
-atomically against the live body, and each anchor must match **exactly
-once** — so a concurrent `session-metrics` append can't be clobbered
-(it isn't one of your anchors) and an entry that shifted underneath you
-fails the save loudly instead of being overwritten. On such a failure,
-re-read the doc and rebuild the ops; don't retry blindly.
+**Build every anchor by copying the stored text, not by composing it.**
+A `replace` rewrites *its own anchor*, so its `old_string` has to span
+exactly the text being changed — the box-flip spans the entry's header
+line, and a delete spans the entry's whole block including its
+`Measured:` / `Recommends:` sub-bullets. There is no way to express
+either op as a short tag-free fragment, so don't try: take the span
+**verbatim from your step-1 read**. `insert_after` is the one op that
+needs no span, which is why the disposition note keys off the
+`session <short-uuid>` fragment above.
 
-**Anchor on tag-free text.** An `ENG-###` in the document is stored as
-an issue-mention node, not the literal characters, so an anchor
-containing one **will not match** (same convention section). Anchor each
-op on the entry's **`session <short-uuid>`** fragment, which is unique
-per entry and can't carry a tag — *not* on the whole
-`<date> · <branch or PR> · session <short-uuid>` prefix, since the
-branch field is itself an `eng-###` and may be rewritten. What the op
-*writes* is unconstrained: a disposition note may contain an `ENG-###`
-freely, since only the anchor side has to match. If a needed anchor is
-unavoidably tag-bearing, fall back to a full `content` rebuild for that
-write and say so in the report.
+The one thing that can defeat a copied span is an **`ENG-###` inside
+it** — Linear stores that as an issue-mention node rather than the
+literal characters, so a span quoting one may not match (same
+convention section). What an op *writes* is unconstrained: a
+disposition note may contain an `ENG-###` freely. If a needed span is
+tag-bearing and won't match, fall back to a full `content` rebuild for
+that write and say so in the report.
+
+**No `updatedAt` check.** The ops are applied atomically against the
+live body and each anchor must match **exactly once**, so a concurrent
+`session-metrics` append can't be clobbered (it isn't one of your
+anchors) and an entry that shifted underneath you fails the save loudly
+instead of being silently overwritten — a better guarantee than
+comparing a timestamp that isn't reliable anyway. On that failure,
+re-read the doc, rebuild the ops, and write once more; don't retry
+blindly. That second write is the **only** licensed exception to the
+one-write rule above.
 
 When this runs right before a `session-metrics` producer step (e.g.
 under `housekeeping`), evaluate the clear against the inbox state
