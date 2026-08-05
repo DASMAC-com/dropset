@@ -146,6 +146,15 @@ pub fn simulate_swap(
                 return Quote::default();
             }
             let fill_q = fill_q.min(unfilled) as u64;
+            // The reverse conversion truncates toward zero, so a
+            // one-atom base leg at any price below 1 costs zero quote.
+            // The engine skips that leg (swap.rs `compute_fill`
+            // WARNING 1e) rather than hand out free base, so skip it
+            // here too — quoting it would promise output the chain
+            // won't deliver.
+            if fill_q == 0 {
+                continue;
+            }
             (fill_b, fill_q)
         } else {
             let taker_implied_quote = lvl
@@ -168,6 +177,11 @@ pub fn simulate_swap(
                 return Quote::default();
             }
             let fill_b = fill_b.min(unfilled) as u64;
+            // Symmetric to the Buy guard: a one-atom quote leg at any
+            // price above 1 costs zero base, and the engine skips it.
+            if fill_b == 0 {
+                continue;
+            }
             (fill_b, fill_q)
         };
 
@@ -522,6 +536,34 @@ mod tests {
 
         let q = simulate_swap(&view, SwapSide::Buy, 10_000_000, Price::INFINITY, 1);
         assert_eq!(q.out_amount + q.fee_amount, total_base);
+    }
+
+    /// A dust take whose input leg would truncate to zero quotes nothing
+    /// rather than free output, matching the engine's WARNING 1e guard.
+    ///
+    /// One base atom into the 1.0796 bid converts to a single quote atom,
+    /// but that atom reverse-converts back to **zero** base — the vault
+    /// would pay out against an input of nothing. Both bid levels price
+    /// above 1, so the whole walk drains and the dust stays unfilled.
+    #[test]
+    fn dust_take_with_a_zero_input_leg_quotes_nothing() {
+        let data = market_data();
+        let view = MarketView::load(&data).unwrap();
+        let best_bid = Price::encode(10_796_000, 0).unwrap();
+        assert_eq!(best_bid.quote_for_base(1), 1);
+        assert_eq!(best_bid.base_for_quote(1), 0);
+
+        let q = simulate_swap(&view, SwapSide::Sell, 1, Price::ZERO, 1);
+        assert_eq!(
+            q,
+            Quote::default(),
+            "a one-atom Sell must quote nothing, not free quote atoms"
+        );
+
+        // The guard is dust-only — a normally-sized take still fills, and
+        // consumes input for the output it promises.
+        let q = simulate_swap(&view, SwapSide::Sell, 1_000_000, Price::ZERO, 1);
+        assert!(q.in_amount > 0 && q.out_amount > 0 && q.legs > 0);
     }
 
     /// Levels expired at `current_slot` are dropped — past every level's

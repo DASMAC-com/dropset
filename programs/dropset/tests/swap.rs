@@ -1,3 +1,4 @@
+// cspell:word unfillable
 //! Swap integration tests — the multi-vault heap matcher and `min_out`
 //! soft-revert, end-to-end against the deployed `.so`. All built on the
 //! shared [`Fixture`]: `Fixture::seeded` for the single-vault cases and
@@ -8,6 +9,7 @@ mod common;
 use anchor_v2_testing::Signer;
 use common::fixture::{simple_profile, Fixture};
 use dropset::{Price, FLUSH_BIT};
+use solana_pubkey::Pubkey;
 
 /// Default seed used across the swap tests.
 const SEED_BASE: u64 = 1_000_000;
@@ -116,6 +118,95 @@ fn sell_side_fills_against_bids() {
         "vault base grew on the buy-from-taker"
     );
     assert!(v.quote_atoms.get() < SEED_QUOTE, "vault quote shrank");
+}
+
+/// A dust Sell whose input leg truncates to zero must not fill at all.
+///
+/// The live localnet case: at any bid above 1, one base atom converts to
+/// a single quote atom, and that atom reverse-converts back to **zero**
+/// base. Before the WARNING 1e guard the vault paid out the quote atom
+/// against an input of nothing — a real transfer, confirmed at the token
+/// level, not just a mis-reported `FillEvent`.
+#[test]
+fn dust_sell_never_pays_out_against_a_zero_input_leg() {
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+    // Exactly one base atom — the remainder a sweep leaves behind.
+    let taker = f.funded_depositor(1, 0);
+    let base_ata = f.base_ata(&taker.pubkey());
+    let quote_ata = f.quote_ata(&taker.pubkey());
+    let v_before = f.vault(0);
+
+    // `min_out = 0`, so a zero fill is the matcher's own decision rather
+    // than the `min_out` soft-revert rolling a bad leg back for us.
+    f.swap(&taker, 1, 1, Price::ZERO.as_u32(), 0)
+        .expect("dust sell should succeed as a no-op");
+
+    assert_eq!(
+        f.token_balance(&quote_ata),
+        0,
+        "vault must not pay quote against zero base"
+    );
+    assert_eq!(
+        f.token_balance(&base_ata),
+        1,
+        "the taker's unfillable dust atom stays unspent"
+    );
+    let v_after = f.vault(0);
+    assert_eq!(v_before.base_atoms.get(), v_after.base_atoms.get());
+    assert_eq!(v_before.quote_atoms.get(), v_after.quote_atoms.get());
+    // Treasury invariant still ties out.
+    assert_eq!(
+        f.token_balance(&f.quote_treasury),
+        v_after.quote_atoms.get()
+    );
+}
+
+/// The mirror-image half, latent until a market quotes **below** 1: there
+/// the free leg is *base*, and the round-trip magnifies it — one quote
+/// atom converts to ~16.5k base atoms whose reverse conversion floors
+/// back to zero quote. The multi-market FX demo's IDR- and MXN-scale
+/// markets are the ones that reach this arm.
+#[test]
+fn dust_buy_below_price_one_never_hands_out_free_base() {
+    let mut f = Fixture::bootstrap();
+    let auth = f.authority.insecure_clone();
+    f.create_vault(0, f.authority.pubkey(), false, Pubkey::default())
+        .expect("create_vault");
+    // 0.00006 quote per base — an IDR-scale rate, well below 1.
+    let ref_price = Price::encode(60_000_000, -5).unwrap();
+    assert_eq!(ref_price.base_for_quote(1), 16_666);
+    assert_eq!(ref_price.quote_for_base(16_666), 0);
+    f.set_reference_price(&auth, 0, ref_price.as_u32(), 0)
+        .expect("set_reference_price");
+    f.set_liquidity_profile(&auth, 0, simple_profile(5_000, 10_000, u32::MAX))
+        .expect("set_liquidity_profile");
+    f.deposit_leader(0, 1_000_000_000, 60_000, 1_000_000_000, 60_000)
+        .expect("seed deposit_leader");
+
+    // One quote atom — enough to price a base leg, not enough to pay for
+    // it once the reverse conversion truncates.
+    let taker = f.funded_depositor(0, 1);
+    let base_ata = f.base_ata(&taker.pubkey());
+    let quote_ata = f.quote_ata(&taker.pubkey());
+    let v_before = f.vault(0);
+
+    f.swap(&taker, 0, 1, Price::INFINITY.as_u32(), 0)
+        .expect("dust buy should succeed as a no-op");
+
+    assert_eq!(
+        f.token_balance(&base_ata),
+        0,
+        "vault must not pay base against zero quote"
+    );
+    assert_eq!(
+        f.token_balance(&quote_ata),
+        1,
+        "the taker's unfillable dust atom stays unspent"
+    );
+    let v_after = f.vault(0);
+    assert_eq!(v_before.base_atoms.get(), v_after.base_atoms.get());
+    assert_eq!(v_before.quote_atoms.get(), v_after.quote_atoms.get());
+    assert_eq!(f.token_balance(&f.base_treasury), v_after.base_atoms.get());
 }
 
 #[test]
