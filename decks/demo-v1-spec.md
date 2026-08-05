@@ -89,8 +89,7 @@ pages:
 #### Page 1 — Title · ~5s
 
 - **On-slide:** Where currency trades onchain. Beneath it: Built by
-  DASMAC. Both **without terminal periods** — see the note on punctuation
-  in the global rules.
+  DASMAC.
 - **Visual:** The Dropset wordmark, then the **DASMAC company banner**
   (`brand-assets/dasmac-banner-wide.png` — the mountains, with the
   "distributed atomic state machine algorithms corporation" tag) across
@@ -108,8 +107,7 @@ pages:
 
 #### Page 2 — The gap · ~15s
 
-- **On-slide:** Foreign exchange is the biggest market on earth (no
-  terminal period — see the global rules). Then
+- **On-slide:** Foreign exchange is the biggest market on earth. Then
   three chevron-marked facts: daily volumes exceed \$9 trillion; banks and
   OTC desks fragment liquidity; less than 10% of the world's currencies are
   available on Solana. Each is a **clause with a subject and a verb** —
@@ -151,8 +149,7 @@ pages:
 
 #### Page 3 — Live today · ~12s
 
-- **On-slide:** Dropset already processes Solana mainnet FX trades (no
-  terminal period).
+- **On-slide:** Dropset already processes Solana mainnet FX trades.
 - **Visual:** The swap flow **left to right, one step per column**, the
   steps being "open the picker", "select your currency" and "swap
   atomically" — kept terse so each holds one line at a size readable from
@@ -527,13 +524,13 @@ disagree:
    the deck allows (page 2's three facts). No fragments — not as headlines,
    not as list items. A reviewer reading the deck without the talk should
    get the argument.
-1. **No terminal period on a display line.** The opening pages carry the
-   deck's largest type — the title and its credit, the gap headline, the
-   live-today headline — and at that size a full stop is a visible mark
-   that earns nothing: there is no following sentence for it to separate.
-   Sentence *structure* still applies (rule 1); only the period goes. Body
-   copy, captions and roadmap bodies keep their punctuation, because those
-   run to more than one sentence.
+1. **No terminal period on a page's headline — on any page.** At display
+   size a full stop is a visible mark that earns nothing: there is no
+   following sentence for it to separate. Sentence *structure* still applies
+   (rule 1); only the period goes. This covers all ten headlines and the
+   title's "Built by DASMAC" credit. Multi-sentence copy — the venue
+   captions, the roadmap bodies, the team bios — keeps its punctuation,
+   because there the period is doing its actual job.
 1. **16:9 aspect ratio**, set explicitly on the deck rather than
    inherited.
 1. **Static images only.** No embedded video, no gifs, no player. A

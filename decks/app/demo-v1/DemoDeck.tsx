@@ -136,6 +136,13 @@ const Eyebrow = ({ children }: { children: React.ReactNode }) => (
  * The sentence a page is built around. Sized down from the theme's `h1` and
  * width-capped so a whole sentence lands in one or two lines at a readable
  * measure rather than spanning the slide.
+ *
+ * **No terminal period, on any page.** Sentence structure still applies — these
+ * are clauses with a subject and a verb, not fragment headlines — but at display
+ * size a full stop is a visible mark that earns nothing, because there is no
+ * following sentence for it to separate. Multi-sentence copy (venue captions,
+ * roadmap bodies, team bios) keeps its punctuation, since there the period is
+ * doing its actual job.
  */
 const Statement = ({
   children,
@@ -979,7 +986,7 @@ export default function DemoDeck() {
         <SlideBody>
           <Eyebrow>Currency curation</Eyebrow>
           <Statement fontSize="56px" nowrap>
-            Dropset curates market data for all Solana-based currencies.
+            Dropset curates market data for all Solana-based currencies
           </Statement>
           {/* One capture, as large as the page allows. An earlier version put
               three tables on this page and none of them could be read. 1100 is
@@ -1006,7 +1013,7 @@ export default function DemoDeck() {
         <SlideBody>
           <Eyebrow>The long tail</Eyebrow>
           <Statement fontSize="64px" nowrap>
-            Many currencies have no liquidity whatsoever.
+            Many currencies have no liquidity whatsoever
           </Statement>
           <Screenshot
             src="/screens/currencies-illiquid.png"
@@ -1040,7 +1047,7 @@ export default function DemoDeck() {
               top — three review rounds running. Short copy plus `nowrap` ends
               that: the browser now enforces what the budget assumes. */}
           <Statement fontSize="56px" nowrap>
-            Dropset ships propAMM efficiency and CLOB transparency.
+            Dropset ships propAMM efficiency and CLOB transparency
           </Statement>
           {/* Three captures side by side rather than two stacked in a column:
               that is what gives this page its headroom, and it still reads
@@ -1098,7 +1105,7 @@ export default function DemoDeck() {
         <SlideBody>
           <Eyebrow>How we grow</Eyebrow>
           <Statement fontSize="68px">
-            FX vaults bootstrap a public liquidity flywheel.
+            FX vaults bootstrap a public liquidity flywheel
           </Statement>
           <Flywheel />
         </SlideBody>
@@ -1121,7 +1128,7 @@ export default function DemoDeck() {
         <SlideBody>
           <Eyebrow>Growth roadmap</Eyebrow>
           <Statement fontSize="68px">
-            Our path to expansion is deliberate and methodical.
+            Our path to expansion is deliberate and methodical
           </Statement>
           <Roadmap />
         </SlideBody>
@@ -1142,7 +1149,7 @@ export default function DemoDeck() {
         <SlideBody>
           <Eyebrow>Why the open venue wins</Eyebrow>
           <Statement fontSize="64px">
-            Permissioned onchain liquidity has an adoption ceiling.
+            Permissioned onchain liquidity has an adoption ceiling
           </Statement>
           {/* `alignItems` must stay explicit. Spectacle's `FlexBox` defaults to
               `center`, which vertically centred each panel *including its
@@ -1200,7 +1207,7 @@ export default function DemoDeck() {
         <SlideBody>
           <Eyebrow>The team</Eyebrow>
           <Statement fontSize="64px">
-            Dropset is built by people who have built exchanges.
+            Dropset is built by people who have built exchanges
           </Statement>
           <FlexBox
             margin="46px 0 0 0"
