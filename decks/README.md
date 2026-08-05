@@ -55,15 +55,29 @@ deps, and theme don't fight the product build.
     symlink escaping the deck's Vercel Root Directory. The script copies
     the directory rather than a list, so a new asset is a drop-in file,
     and the whole folder goes to every app rather than a per-app subset.
+
   - `public/remote/` is **mirrored** from the URLs in
     `remote-assets.json` by `scripts/fetch-remote-assets.mjs`, on the
-    same two hooks — images we don't hold a copy of. Today that is only
-    the two team headshots the marketing site serves: the competitor and
-    partner logos this once mirrored are gone, since no deck shows
-    another company's mark any more.
+    same two hooks — images we don't hold a copy of: the two team
+    headshots the marketing site serves, and the four partner logos on
+    the growth page. The competitor marks this once mirrored are gone,
+    since no slide names a competitor any more.
+
   - `public/screens/` holds our own screen captures, which are
     **committed**: nothing external hosts them, so there's nothing to
     mirror.
+
+    Two things to do to a capture before committing it. **Scale it to
+    about twice the width its slide renders it at** — the print path
+    renders at the 1920×1080 slide box, so anything beyond that is
+    weight the deck can never show. Then **quantize it to a 256-color
+    palette**: these are dark product-UI captures (a few greys, two
+    accent hues, small flag icons), so they sit well inside 256 colors,
+    and it is a ~90% saving that also keeps every file under the repo's
+    500KB-per-file commit limit. The raw captures behind the current set
+    were 4.4MB; committed, they are 437KB, with text and flags still
+    crisp. `sips` (built in) resizes; Pillow does the crop and the
+    quantize.
 
   The first two are generated, so `public/`'s entries are gitignored with
   a carve-out for the committed `public/screens/` — see `.gitignore`.
@@ -175,10 +189,9 @@ Four rules from that spec bind any deck here, not just `demo-v1`:
 - **No competitor names or logos on a slide.** Naming one hands it the
   frame; make the argument in type and keep the names in the spec's
   appendix, for conversation.
-- **Art that doesn't exist yet ships as a labeled placeholder**, sized to
-  the shape the real capture has to be. `demo-v1`'s `Placeholder` is
-  loudly dashed on purpose — an empty box that looks designed is one that
-  reaches a projector.
+- **Partner logos are fine; competitor logos are not.** A page about
+  companies we work with shows their marks, each captioned with what they
+  are to us. A page about companies we compete with names nobody.
 
 ## Deploy
 

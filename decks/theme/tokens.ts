@@ -20,6 +20,18 @@ export const colors = {
   brand: "#0044ff",
   /** The deck backdrop — see the `deckTheme` note on why it isn't `background`. */
   backdrop: "#000000",
+  /**
+   * The unfilled half of a meter track. A meter is a **sequential** pair, not two
+   * categorical hues, so the check that governs it is lightness monotonicity:
+   * this step sits at OKL 0.479 against `accent`'s 0.714, so the fill always
+   * reads as the lighter, "filled" end of one blue ramp.
+   *
+   * It is this light on purpose. The obvious dark-navy choice (#1e3a5f) scores
+   * only 1.8:1 against the deck's black backdrop, so the empty part of the track
+   * vanished and the meter stopped reading as a proportion at all — the empty
+   * space *is* the message on a "less than 10%" statistic. This step clears 3:1.
+   */
+  meterTrack: "#2f5f96",
 } as const;
 
 /**

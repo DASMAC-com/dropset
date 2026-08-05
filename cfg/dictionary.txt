@@ -81,6 +81,7 @@ killswitch
 kripto
 laggy
 lamports
+letterspaced
 libc
 litesvm
 localnet
@@ -167,6 +168,7 @@ transfero
 tryb
 tsup
 txns
+uncaptioned
 unfillable
 unfirmable
 unmirrored
