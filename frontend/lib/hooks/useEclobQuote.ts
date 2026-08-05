@@ -4,7 +4,8 @@ import { initSimulator, simulateSwap } from "@dropset/sdk";
 import { useSolanaClient } from "@solana/react-hooks";
 import { useEffect, useState } from "react";
 import { QUOTE_DEBOUNCE_MS, QUOTE_REFRESH_MS } from "../data/timings";
-import { resolveEclobRoute } from "../eclob/route";
+import { platformFeeBpsFor, resolveEclobRoute } from "../eclob/route";
+import { PLATFORM_FEE } from "../env";
 import { parseAmountToBase } from "../format/balance";
 import { getErrorMessage } from "../guards";
 import type { DflowQuote } from "./useDflowQuote";
@@ -104,12 +105,19 @@ export const useEclobQuote = (
         await initSimulator();
         if (cancelled || gen !== generation) return;
 
+        // Quote with the platform fee the executor will actually declare
+        // (lib/eclob/eclobSwap.ts) — same configured rate, same clamp to this
+        // market's ceiling — so the displayed output is what lands in the
+        // user's account rather than a pre-fee figure they never receive. The
+        // simulator composes both fees exactly as the engine does, so this is
+        // also what keeps the quote and the fill in agreement to the atom.
         const q = simulateSwap(
           route.marketData,
           route.side,
           atomic,
           route.limitPriceBits,
           Number(slot),
+          PLATFORM_FEE ? platformFeeBpsFor(route, PLATFORM_FEE.bps) : 0,
         );
         if (cancelled || gen !== generation) return;
         if (q.outAmount === 0n) {

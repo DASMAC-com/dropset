@@ -30,8 +30,9 @@ import {
   DflowSwapError,
   type DflowSwapResult,
 } from "../dflow/dflowSwap";
+import { PLATFORM_FEE } from "../env";
 import { getErrorMessage } from "../guards";
-import { resolveEclobRoute } from "./route";
+import { platformFeeBpsFor, resolveEclobRoute } from "./route";
 
 type Rpc = SolanaClientRuntime["rpc"];
 
@@ -102,13 +103,44 @@ export async function executeEclobSwap(
 
   const slot = await rpc.getSlot({ commitment: "confirmed" }).send();
 
+  // Declare the same platform fee the DFlow route charges, so pricing is
+  // route-neutral: toggling the route must not change what the user pays. The
+  // beneficiary is the same fee wallet DFlow's `feeAccount` names, so revenue
+  // from both routes lands in one place.
+  //
+  // Two differences from the DFlow path, both because the fee is settled by
+  // our own program here rather than by a third party:
+  //   * No existence check on the destination. DFlow's /order rejects a
+  //     missing `feeAccount` (the reason lib/dflow/feeVault.ts caches that
+  //     answer); our `swap` creates it via an ATA-program `create_idempotent`
+  //     CPI instead, with the taker funding the rent.
+  //   * Derived against the route's *on-chain* output mint and token program,
+  //     not the display mint. On localnet those differ (mock demo mints), and
+  //     a display-mint derivation would produce an address the program's own
+  //     ATA derivation rejects.
+  const platformFeeBps = PLATFORM_FEE
+    ? platformFeeBpsFor(route, PLATFORM_FEE.bps)
+    : 0;
+  const [feeAta] = PLATFORM_FEE
+    ? await findAssociatedTokenPda({
+        owner: PLATFORM_FEE.wallet,
+        mint: route.outputMint,
+        tokenProgram: route.outputTokenProgram,
+      })
+    : [undefined];
+
   await initSimulator();
+  // Quote *with* the fee so `minOut` is a floor on what actually lands in the
+  // taker's account. Passing 0 here and netting the fee off afterwards would
+  // round differently from the engine (both fees truncate, in a fixed order)
+  // and leave minOut a few atoms adrift from the real fill.
   const quote = simulateSwap(
     route.marketData,
     route.side,
     atomicAmount,
     route.limitPriceBits,
     Number(slot),
+    platformFeeBps,
   );
   if (quote.outAmount === 0n) {
     throw new DflowSwapError("No liquidity for this size", "api");
@@ -167,10 +199,17 @@ export async function executeEclobSwap(
     marketBaseTreasury,
     marketQuoteTreasury,
     program: DROPSET_PROGRAM_ADDRESS,
+    // Omitted (undefined) when no fee is declared, which the generated client
+    // encodes as the program-id sentinel Anchor reads back as `None`. The
+    // program rejects a non-zero rate with either slot absent, so both are
+    // gated on the same condition.
+    platformFeeAuthority: platformFeeBps > 0 ? PLATFORM_FEE?.wallet : undefined,
+    platformFeeAta: platformFeeBps > 0 ? feeAta : undefined,
     side: route.side === "buy" ? 0 : 1,
     amountIn: atomicAmount,
     limitPriceBits: route.limitPriceBits,
     minOut,
+    platformFeeBps,
   });
 
   const { value: latestBlockhash } = await rpc

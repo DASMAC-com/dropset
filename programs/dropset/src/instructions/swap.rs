@@ -1,4 +1,5 @@
 // cspell:word cooldown
+// cspell:word unvalidated
 //! `swap` (spec's `Take`) — multi-vault taker fill on the ephemeral
 //! book.
 //!

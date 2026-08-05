@@ -49,6 +49,13 @@ export class Quote {
         const ret = wasm.quote_out_amount(this.__wbg_ptr);
         return BigInt.asUintN(64, ret);
     }
+    /**
+     * @returns {bigint}
+     */
+    get platform_fee_amount() {
+        const ret = wasm.quote_platform_fee_amount(this.__wbg_ptr);
+        return BigInt.asUintN(64, ret);
+    }
 }
 if (Symbol.dispose) Quote.prototype[Symbol.dispose] = Quote.prototype.free;
 
@@ -109,17 +116,22 @@ export function price_quote_for_base(bits, base) {
  * Simulate a take against a market account's raw data (including the
  * 8-byte discriminator). `side`: 0 = buy, 1 = sell. `limit_price_bits`:
  * raw `Price` bits (use the per-side no-bound sentinel to disable).
+ * `platform_fee_bps`: the integrator fee the caller will declare on the
+ * `swap` instruction — `0` for an unrouted quote. A rate above the
+ * market's ceiling yields an all-zero `Quote`, matching the engine's
+ * refusal.
  * @param {Uint8Array} market_data
  * @param {number} side
  * @param {bigint} amount_in
  * @param {number} limit_price_bits
  * @param {number} current_slot
+ * @param {number} platform_fee_bps
  * @returns {Quote}
  */
-export function simulate_swap(market_data, side, amount_in, limit_price_bits, current_slot) {
+export function simulate_swap(market_data, side, amount_in, limit_price_bits, current_slot, platform_fee_bps) {
     const ptr0 = passArray8ToWasm0(market_data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.simulate_swap(ptr0, len0, side, amount_in, limit_price_bits, current_slot);
+    const ret = wasm.simulate_swap(ptr0, len0, side, amount_in, limit_price_bits, current_slot, platform_fee_bps);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }

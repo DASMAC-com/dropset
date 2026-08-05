@@ -1398,6 +1398,14 @@ impl Fixture {
         send_ixn_meta(&mut self.svm, depositor, ix)
     }
 
+    /// Send a hand-built instruction signed by `signer`. The escape hatch
+    /// for tests that need to perturb a meta or an arg the typed senders
+    /// don't expose — e.g. aiming a platform fee at a non-canonical
+    /// destination to prove the ATA program rejects it.
+    pub fn send_ix(&mut self, signer: &Keypair, ix: Instruction) -> Result<(), String> {
+        send_ixn(&mut self.svm, signer, ix)
+    }
+
     /// The token account a platform fee on `side` would be paid into: the
     /// integrator's ATA for the swap's **output** mint (base on a Buy,
     /// quote on a Sell). Mirrors the leg the engine selects, so a test that
@@ -1771,6 +1779,22 @@ impl Fixture {
     pub fn token_balance(&self, ata: &Pubkey) -> u64 {
         let acct = self.svm.get_account(ata).expect("token account exists");
         u64::from_le_bytes(acct.data[64..72].try_into().unwrap())
+    }
+
+    /// `Some(balance)` when the token account is initialized, `None` when it
+    /// does not exist yet. Unlike [`Self::token_balance`] this never panics,
+    /// which is the point: a platform-fee destination legitimately does not
+    /// exist before the first fee-bearing swap creates it, so a test needs to
+    /// distinguish "absent" from "present and zero".
+    pub fn maybe_token_balance(&self, ata: &Pubkey) -> Option<u64> {
+        let acct = self.svm.get_account(ata)?;
+        // A `get_account` on a never-created address can come back as an
+        // empty system-owned stub rather than `None`, so treat anything too
+        // short to hold the SPL amount field as absent.
+        if acct.data.len() < 72 {
+            return None;
+        }
+        Some(u64::from_le_bytes(acct.data[64..72].try_into().unwrap()))
     }
 
     /// `registry.market_count` — the live-market witness `close_registry`

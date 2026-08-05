@@ -404,7 +404,25 @@ mod tests {
             .unwrap();
         assert_eq!(ix.program_id, DROPSET_ID);
         assert_eq!(ix.data[0], 9, "swap discriminator");
-        assert_eq!(ix.accounts.len(), 13);
+        // The optional platform-fee group still occupies its two slots on this
+        // no-fee path — Anchor encodes an absent optional account as the
+        // program id rather than by shortening the list — so the count is the
+        // same constant a router reads from `accounts_len`.
+        assert_eq!(ix.accounts.len(), SWAP_ACCOUNTS_LEN);
+        assert_eq!(
+            ix.accounts[11].pubkey, DROPSET_ID,
+            "absent platform_fee_authority is the program-id sentinel"
+        );
+        assert_eq!(
+            ix.accounts[12].pubkey, DROPSET_ID,
+            "absent platform_fee_ata is the program-id sentinel"
+        );
+        assert_eq!(ix.accounts[13].pubkey, ASSOCIATED_TOKEN_PROGRAM_ID);
+        assert_eq!(ix.accounts[14].pubkey, SYSTEM_PROGRAM_ID);
+        // The router path never declares a fee: `platform_fee_bps` is the
+        // trailing `u16` of the arg struct.
+        let bps = u16::from_le_bytes([ix.data[ix.data.len() - 2], ix.data[ix.data.len() - 1]]);
+        assert_eq!(bps, 0, "the router path declares no platform fee");
     }
 
     #[test]
@@ -417,7 +435,7 @@ mod tests {
         let amm = DropsetAmm::from_account(Pubkey::from([7u8; 32]), &live).unwrap();
         assert!(amm.is_active());
         assert_eq!(amm.label(), "Dropset");
-        assert_eq!(amm.accounts_len(), 13);
+        assert_eq!(amm.accounts_len(), SWAP_ACCOUNTS_LEN);
         assert!(!amm.supports_exact_out());
 
         // No vaults -> inactive.

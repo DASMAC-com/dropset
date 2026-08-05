@@ -903,3 +903,519 @@ fn nonce_overflow_on_second_leg_hard_reverts_the_committed_first_leg() {
         assert_eq!(f.token_balance(&f.quote_treasury), v.quote_atoms.get());
     }
 }
+
+// ── Caller-declared platform fee ─────────────────────────────────────
+//
+// The integrator fee: permissionless, bounded by the market's
+// `max_platform_fee`, skimmed off the output leg *after* the taker fee and
+// paid straight through to the integrator's token account.
+//
+// The invariant these tests are really guarding is that the fee splits the
+// taker's payout rather than adding to what leaves the treasury. Every
+// case that fills therefore re-asserts `treasury == Σ vault` afterwards —
+// the fee moves no vault state, so a change that made it draw extra atoms
+// out of the treasury would surface right there rather than as a slow
+// depositor shortfall.
+
+/// 100 bps — the registry-seeded ceiling every fixture market starts at, so
+/// a test declaring exactly this exercises the boundary of what is allowed.
+const CEILING_BPS: u16 = 100;
+
+#[test]
+fn platform_fee_pays_the_integrator_and_creates_their_ata() {
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+    let taker = f.funded_depositor(0, 200_000);
+    // The integrator is just a pubkey — no onboarding, no signature. It
+    // never signs this transaction, which is the permissionless property.
+    let integrator = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
+    let fee_ata = f.platform_fee_ata(&integrator.pubkey(), 0);
+
+    // The destination does not exist yet: the engine's `create_idempotent`
+    // CPI is what brings it into being, funded by the taker.
+    assert_eq!(
+        f.maybe_token_balance(&fee_ata),
+        None,
+        "the integrator has no base ATA before the first fee-bearing swap"
+    );
+
+    let meta = f
+        .swap_with_fee_meta(
+            &taker,
+            0,
+            100_000,
+            Price::INFINITY.as_u32(),
+            1,
+            &integrator.pubkey(),
+            CEILING_BPS,
+        )
+        .expect("swap with a declared platform fee");
+
+    let fee_paid = f
+        .maybe_token_balance(&fee_ata)
+        .expect("the fee ATA was created by the swap");
+    assert!(fee_paid > 0, "the integrator was actually paid");
+
+    // The event is the integrator's only on-chain receipt — the fee accrues
+    // no state, so this is what revenue gets reconciled against.
+    let ev = common::events::platform_fee(&meta);
+    assert_eq!(ev.market, f.market.to_bytes());
+    assert_eq!(ev.taker, taker.pubkey().to_bytes());
+    assert_eq!(ev.fee_authority, integrator.pubkey().to_bytes());
+    assert_eq!(
+        ev.mint,
+        f.base_mint.to_bytes(),
+        "a Buy pays the fee in the base (output) mint"
+    );
+    assert_eq!(ev.atoms, fee_paid, "the event's atoms match the transfer");
+    assert_eq!(ev.platform_fee_bps, CEILING_BPS);
+
+    // The fee split the payout; it did not conjure atoms. Everything that
+    // left the treasury went to either the taker or the integrator.
+    let v = f.vault(0);
+    assert_eq!(
+        f.token_balance(&f.base_treasury),
+        v.base_atoms.get(),
+        "treasury == Σ vault still holds — the fee moved no vault state"
+    );
+}
+
+#[test]
+fn platform_fee_splits_the_payout_without_touching_the_vault() {
+    // The same swap with and without a declared fee. The vault trades
+    // identically in both — same input booked, same output debited — and the
+    // fee comes entirely out of what the taker would otherwise have
+    // received. This is the property that keeps the fee off the LPs' backs.
+    let run = |bps: u16| {
+        let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+        let admin = f.authority.insecure_clone();
+        // A live taker fee too, so the composition order is under test and
+        // not just the platform fee in isolation.
+        f.set_taker_fee(&admin, 1_000).expect("set taker fee");
+        let taker = f.funded_depositor(0, 200_000);
+        let integrator = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
+        let fee_ata = f.platform_fee_ata(&integrator.pubkey(), 0);
+        let quote_before = f.token_balance(&f.quote_ata(&taker.pubkey()));
+
+        f.swap_with_fee_meta(
+            &taker,
+            0,
+            100_000,
+            Price::INFINITY.as_u32(),
+            1,
+            &integrator.pubkey(),
+            bps,
+        )
+        .expect("swap");
+
+        let v = f.vault(0);
+        // Treasury invariant, per arm.
+        assert_eq!(f.token_balance(&f.base_treasury), v.base_atoms.get());
+        assert_eq!(f.token_balance(&f.quote_treasury), v.quote_atoms.get());
+        (
+            f.token_balance(&f.base_ata(&taker.pubkey())),
+            f.maybe_token_balance(&fee_ata).unwrap_or(0),
+            quote_before - f.token_balance(&f.quote_ata(&taker.pubkey())),
+            v.base_atoms.get(),
+            v.quote_atoms.get(),
+        )
+    };
+
+    let (free_recv, free_fee, free_spent, free_vb, free_vq) = run(0);
+    let (paid_recv, paid_fee, paid_spent, paid_vb, paid_vq) = run(CEILING_BPS);
+
+    assert_eq!(free_fee, 0, "a zero rate pays the integrator nothing");
+    assert!(paid_fee > 0, "the fixture is large enough to show a fee");
+
+    // The vault is indifferent to the platform fee: identical inventory
+    // after, and the taker paid in exactly the same amount.
+    assert_eq!(paid_spent, free_spent, "the taker's input leg is unchanged");
+    assert_eq!(paid_vb, free_vb, "vault base inventory is unchanged");
+    assert_eq!(paid_vq, free_vq, "vault quote inventory is unchanged");
+
+    // What the taker gives up is exactly what the integrator gains.
+    assert_eq!(
+        paid_recv + paid_fee,
+        free_recv,
+        "taker payout + integrator fee == the no-fee payout"
+    );
+    // 100 bps of the taker-fee-net output, rounded down — the same
+    // composition `platform_fee_atoms` pins and the SDK simulator mirrors.
+    assert_eq!(paid_fee, free_recv * u64::from(CEILING_BPS) / 10_000);
+}
+
+#[test]
+fn platform_fee_on_a_sell_pays_in_the_quote_mint() {
+    // Mirror of the Buy case: a Sell's output leg is quote, so the fee lands
+    // in the integrator's *quote* ATA. A leg mix-up in the engine would pay
+    // the wrong mint here (and be rejected by the ATA program), so this is
+    // the case the Buy test structurally cannot catch.
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+    let taker = f.funded_depositor(200_000, 0);
+    let integrator = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
+    let quote_fee_ata = f.platform_fee_ata(&integrator.pubkey(), 1);
+    let base_fee_ata = f.platform_fee_ata(&integrator.pubkey(), 0);
+
+    let meta = f
+        .swap_with_fee_meta(
+            &taker,
+            1,
+            100_000,
+            Price::ZERO.as_u32(),
+            1,
+            &integrator.pubkey(),
+            CEILING_BPS,
+        )
+        .expect("swap Sell with a declared platform fee");
+
+    let fee_paid = f
+        .maybe_token_balance(&quote_fee_ata)
+        .expect("the quote-leg fee ATA was created");
+    assert!(fee_paid > 0, "the integrator was paid in quote");
+    assert_eq!(
+        f.maybe_token_balance(&base_fee_ata),
+        None,
+        "the base-leg ATA is untouched on a Sell"
+    );
+
+    let ev = common::events::platform_fee(&meta);
+    assert_eq!(
+        ev.mint,
+        f.quote_mint.to_bytes(),
+        "a Sell pays the fee in the quote (output) mint"
+    );
+    assert_eq!(ev.atoms, fee_paid);
+
+    let v = f.vault(0);
+    assert_eq!(f.token_balance(&f.quote_treasury), v.quote_atoms.get());
+    assert_eq!(f.token_balance(&f.base_treasury), v.base_atoms.get());
+}
+
+#[test]
+fn platform_fee_above_the_market_ceiling_rejects() {
+    // One bps over the seeded ceiling. A hard error, not a clamp: filling at
+    // a rate the caller did not ask for would hand the integrator a quote
+    // they never agreed to and give the taker no signal at all.
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+    let taker = f.funded_depositor(0, 200_000);
+    let integrator = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
+    let quote_before = f.token_balance(&f.quote_ata(&taker.pubkey()));
+
+    let err = f
+        .swap_with_fee_meta(
+            &taker,
+            0,
+            100_000,
+            Price::INFINITY.as_u32(),
+            1,
+            &integrator.pubkey(),
+            CEILING_BPS + 1,
+        )
+        .expect_err("an over-ceiling platform fee must reject the swap");
+    common::assert_program_error(&err, dropset::DropsetError::PlatformFeeTooHigh);
+
+    // Rejected before any matching work — the taker is untouched.
+    assert_eq!(
+        f.token_balance(&f.quote_ata(&taker.pubkey())),
+        quote_before,
+        "no input spent"
+    );
+    assert_eq!(f.vault(0).base_atoms.get(), SEED_BASE, "vault untouched");
+}
+
+#[test]
+fn platform_fee_ceiling_of_zero_turns_integrator_fees_off() {
+    // An admin can decline platform fees on a market outright. With the
+    // ceiling at zero every non-zero declaration is rejected, while a
+    // zero-rate swap still fills normally.
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+    let admin = f.authority.insecure_clone();
+    f.set_max_platform_fee(&admin, 0).expect("ceiling to zero");
+    let integrator = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
+
+    let taker = f.funded_depositor(0, 200_000);
+    let err = f
+        .swap_with_fee_meta(
+            &taker,
+            0,
+            100_000,
+            Price::INFINITY.as_u32(),
+            1,
+            &integrator.pubkey(),
+            1,
+        )
+        .expect_err("1 bps against a 0 bps ceiling must reject");
+    common::assert_program_error(&err, dropset::DropsetError::PlatformFeeTooHigh);
+
+    // The ordinary no-integrator swap is unaffected.
+    f.swap(&taker, 0, 100_000, Price::INFINITY.as_u32(), 1)
+        .expect("a zero-rate swap still fills with the ceiling at zero");
+    assert!(f.token_balance(&f.base_ata(&taker.pubkey())) > 0);
+}
+
+#[test]
+fn platform_fee_without_its_accounts_rejects() {
+    // A non-zero rate with the optional group absent has nowhere to send the
+    // fee. Rejecting is the honest outcome: silently skipping the transfer
+    // would quote a fee and then pocket it for the taker.
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+    let taker = f.funded_depositor(0, 200_000);
+    // `None` for the fee group — exactly what the direct paths send — but
+    // paired with a non-zero rate.
+    let ix = f.swap_ix_with_fee(
+        &taker.pubkey(),
+        0,
+        100_000,
+        Price::INFINITY.as_u32(),
+        1,
+        None,
+        CEILING_BPS,
+    );
+    let err = f
+        .send_ix(&taker, ix)
+        .expect_err("a declared fee with no destination must reject");
+    common::assert_program_error(&err, dropset::DropsetError::MissingPlatformFeeAccounts);
+    assert_eq!(f.vault(0).base_atoms.get(), SEED_BASE, "vault untouched");
+}
+
+#[test]
+fn platform_fee_rounding_to_zero_pays_nothing_and_emits_nothing() {
+    // Below one atom of fee the integrator earns nothing and the taker keeps
+    // the dust, matching the taker fee's rule. No transfer means no
+    // `PlatformFeeEvent` either — an indexer must not see a zero-atom fee
+    // record, and the destination ATA is not even created.
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+    let taker = f.funded_depositor(0, 200_000);
+    let integrator = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
+    let fee_ata = f.platform_fee_ata(&integrator.pubkey(), 0);
+
+    // 1 bps on a ~900-atom output rounds to 0.09 → 0.
+    let meta = f
+        .swap_with_fee_meta(
+            &taker,
+            0,
+            1_000,
+            Price::INFINITY.as_u32(),
+            1,
+            &integrator.pubkey(),
+            1,
+        )
+        .expect("the swap itself still fills");
+
+    assert!(
+        f.token_balance(&f.base_ata(&taker.pubkey())) > 0,
+        "the taker still received their fill"
+    );
+    assert_eq!(
+        f.maybe_token_balance(&fee_ata),
+        None,
+        "a fee that rounds to zero doesn't even create the destination ATA"
+    );
+    assert_eq!(
+        common::events::count::<dropset::PlatformFeeEvent>(&meta),
+        0,
+        "no PlatformFeeEvent for a zero-atom fee"
+    );
+}
+
+#[test]
+fn platform_fee_tightens_the_min_out_floor() {
+    // `min_out` is checked against the output net of *both* fees — what
+    // actually lands in the taker's ATA. Pin it at the boundary: a floor set
+    // to the fee-inclusive payout commits, and one atom above it
+    // soft-reverts. If the engine compared against the taker-fee-net figure
+    // instead, the second arm would commit too, and a route could declare
+    // the market's maximum fee while still clearing a floor the taker sized
+    // against a quote that never contemplated it.
+    let probe = {
+        let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+        let taker = f.funded_depositor(0, 200_000);
+        let integrator = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
+        f.swap_with_fee_meta(
+            &taker,
+            0,
+            100_000,
+            Price::INFINITY.as_u32(),
+            1,
+            &integrator.pubkey(),
+            CEILING_BPS,
+        )
+        .expect("probe swap");
+        f.token_balance(&f.base_ata(&taker.pubkey()))
+    };
+    assert!(probe > 0, "probe produced a fill to anchor the boundary");
+
+    let run = |min_out: u64| {
+        let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+        let taker = f.funded_depositor(0, 200_000);
+        let integrator = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
+        let fee_ata = f.platform_fee_ata(&integrator.pubkey(), 0);
+        f.swap_with_fee_meta(
+            &taker,
+            0,
+            100_000,
+            Price::INFINITY.as_u32(),
+            min_out,
+            &integrator.pubkey(),
+            CEILING_BPS,
+        )
+        .expect("min_out is a soft revert, never an error");
+        (
+            f.token_balance(&f.base_ata(&taker.pubkey())),
+            f.maybe_token_balance(&fee_ata).unwrap_or(0),
+            f.vault(0).base_atoms.get(),
+        )
+    };
+
+    // Exactly the fee-inclusive payout: commits.
+    let (recv, fee, _) = run(probe);
+    assert_eq!(recv, probe, "a floor at the net payout commits");
+    assert!(fee > 0, "and the integrator is paid");
+
+    // One atom above it: soft-reverts, so nobody is paid and the book is
+    // untouched.
+    let (recv, fee, vault_base) = run(probe + 1);
+    assert_eq!(recv, 0, "one atom above the net payout soft-reverts");
+    assert_eq!(fee, 0, "a soft-reverted swap pays the integrator nothing");
+    assert_eq!(vault_base, SEED_BASE, "vault inventory restored");
+}
+
+#[test]
+fn platform_fee_reuses_an_existing_integrator_ata() {
+    // Second fee-bearing swap to the same integrator: the ATA already
+    // exists, so `create_idempotent` is a no-op and the fee accumulates
+    // rather than failing on an already-initialized account.
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+    let integrator = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
+    let fee_ata = f.platform_fee_ata(&integrator.pubkey(), 0);
+
+    let taker = f.funded_depositor(0, 400_000);
+    // Distinct amounts so the two transactions aren't byte-identical (litesvm
+    // dedups a replayed one as `AlreadyProcessed`), which also makes the
+    // accumulation assertion below a real sum of two different fees.
+    let swap_once = |f: &mut Fixture, amount_in: u64| {
+        f.swap_with_fee_meta(
+            &taker,
+            0,
+            amount_in,
+            Price::INFINITY.as_u32(),
+            1,
+            &integrator.pubkey(),
+            CEILING_BPS,
+        )
+        .expect("fee-bearing swap");
+    };
+
+    swap_once(&mut f, 100_000);
+    let after_first = f.token_balance(&fee_ata);
+    assert!(after_first > 0);
+
+    swap_once(&mut f, 90_000);
+    assert!(
+        f.token_balance(&fee_ata) > after_first,
+        "the second fee accumulated into the existing ATA"
+    );
+
+    let v = f.vault(0);
+    assert_eq!(f.token_balance(&f.base_treasury), v.base_atoms.get());
+    assert_eq!(f.token_balance(&f.quote_treasury), v.quote_atoms.get());
+}
+
+#[test]
+fn platform_fee_multi_leg_fill_stays_inside_the_cu_budget() {
+    // The fee adds two CPIs (an ATA `create_idempotent` and a second
+    // `transfer_checked`) on top of the per-leg fill loop, plus four accounts
+    // and one event. The worst case for both is a multi-leg fill that also
+    // creates the destination ATA, so measure exactly that and pin it under
+    // the default per-instruction budget.
+    //
+    // The 200k figure is the Solana default a caller gets without a
+    // `SetComputeUnitLimit`, so staying under it is what lets a plain
+    // frontend swap work with no budget instruction at all — the property
+    // worth a regression test rather than the precise CU count, which moves
+    // with every matcher change.
+    const DEFAULT_CU_BUDGET: u64 = 200_000;
+
+    let free_cu = {
+        let mut f = Fixture::seeded_two_ask_levels();
+        let taker = f.funded_depositor(0, 5_000_000);
+        f.swap_meta(&taker, 0, 2_000_000, Price::INFINITY.as_u32(), 1)
+            .expect("no-fee multi-leg swap")
+            .compute_units_consumed
+    };
+
+    let mut f = Fixture::seeded_two_ask_levels();
+    let taker = f.funded_depositor(0, 5_000_000);
+    let integrator = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
+    let fee_ata = f.platform_fee_ata(&integrator.pubkey(), 0);
+    let meta = f
+        .swap_with_fee_meta(
+            &taker,
+            0,
+            2_000_000,
+            Price::INFINITY.as_u32(),
+            1,
+            &integrator.pubkey(),
+            CEILING_BPS,
+        )
+        .expect("fee-bearing multi-leg swap");
+    let paid_cu = meta.compute_units_consumed;
+
+    // Both legs really filled and the ATA really got created in this run —
+    // otherwise the measurement isn't the worst case it claims to be.
+    assert_eq!(
+        common::events::fills(&meta).len(),
+        2,
+        "the measured swap must actually be a two-leg fill"
+    );
+    assert!(
+        f.maybe_token_balance(&fee_ata).is_some_and(|b| b > 0),
+        "the measured swap must actually have created and funded the fee ATA"
+    );
+
+    println!(
+        "multi-leg swap CU: no fee {free_cu}, with platform fee {paid_cu} \
+         (+{} for the ATA create + fee transfer + event)",
+        paid_cu.saturating_sub(free_cu)
+    );
+    assert!(
+        paid_cu < DEFAULT_CU_BUDGET,
+        "a fee-bearing multi-leg swap must fit the default {DEFAULT_CU_BUDGET} CU \
+         budget without a SetComputeUnitLimit, used {paid_cu}"
+    );
+}
+
+#[test]
+fn platform_fee_rejects_a_non_canonical_destination() {
+    // The fee ATA carries no Anchor constraints — `create_idempotent`'s own
+    // derivation is what pins the destination. Prove that guard is live by
+    // aiming the fee at the market's base treasury, which is a real,
+    // initialized token account on the right mint but is *not* the
+    // integrator's ATA. This is the case `unsafe(dup)` on that field would
+    // otherwise have left unguarded.
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+    let taker = f.funded_depositor(0, 200_000);
+    let integrator = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
+
+    let mut ix = f.swap_ix_with_fee(
+        &taker.pubkey(),
+        0,
+        100_000,
+        Price::INFINITY.as_u32(),
+        1,
+        Some(&integrator.pubkey()),
+        CEILING_BPS,
+    );
+    // Swap the derived fee ATA (meta index 12) for the base treasury.
+    let treasury = f.base_treasury;
+    ix.accounts[12].pubkey = treasury;
+
+    let treasury_before = f.token_balance(&treasury);
+    f.send_ix(&taker, ix)
+        .expect_err("the ATA program must reject a non-canonical fee account");
+    assert_eq!(
+        f.token_balance(&treasury),
+        treasury_before,
+        "the rejected swap moved nothing"
+    );
+    assert_eq!(f.vault(0).base_atoms.get(), SEED_BASE, "vault untouched");
+}

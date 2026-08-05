@@ -204,11 +204,26 @@ export function SwapPanel() {
   const canSwap = label === "Swap" && !disabled && !dimmed;
 
   // Whether the platform-fee vault (the fee wallet's ATA) for the to-mint
-  // exists on-chain — the fee is only charged, and so only reported, when it
-  // does. Gated on `canSwap && routeFound` so we never hit the RPC for a swap
-  // that can't happen (no wallet, insufficient input, no route). See
-  // lib/dflow/feeVault.ts.
-  const feeVaultExists = useFeeVaultExists(toMint, canSwap && routeFound);
+  // exists on-chain. This is a *DFlow-route* precondition only: its /order
+  // endpoint rejects a request whose `feeAccount` is missing, so on that route
+  // the fee can only be charged — and so only reported — once the ATA exists.
+  // The eCLOB route has no such precondition; its `swap` instruction creates
+  // the fee account itself, so the fee is always charged there.
+  //
+  // Hence the `useBestRoute` gate: without it this fires a pointless
+  // getAccountInfo on a route that never consults the answer, and — worse —
+  // the fee row below would hide a fee the eCLOB route really does charge
+  // whenever that ATA happens not to exist yet.
+  const feeVaultExists = useFeeVaultExists(
+    toMint,
+    useBestRoute && canSwap && routeFound,
+  );
+  // Is a platform fee actually charged on the swap the user is about to make?
+  // Both routes declare `PLATFORM_FEE.bps` when one is configured; only DFlow
+  // additionally requires the destination ATA to pre-exist.
+  const feeCharged = Boolean(
+    PLATFORM_FEE && canSwap && (useBestRoute ? feeVaultExists : true),
+  );
 
   return (
     <>
@@ -239,11 +254,7 @@ export function SwapPanel() {
         </button>
         {routeFound && quote.inAmount !== null && quote.outAmount !== null ? (
           <PlatformFee
-            bps={
-              canSwap && PLATFORM_FEE && feeVaultExists
-                ? PLATFORM_FEE.bps
-                : null
-            }
+            bps={feeCharged && PLATFORM_FEE ? PLATFORM_FEE.bps : null}
             inAmount={quote.inAmount}
             outAmount={quote.outAmount}
             fromSymbol={fromStablecoin}
