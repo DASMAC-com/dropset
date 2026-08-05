@@ -200,7 +200,10 @@ pub fn read_vault(
                 base_atoms: vault.base_atoms.get(),
                 quote_atoms: vault.quote_atoms.get(),
                 reference_price,
-                reference_valid: reference_is_matchable(reference),
+                // The program's own matching gate, shared rather than
+                // re-derived — the kill stamp's whole effect is writing a price
+                // that fails it, so this must not drift from the matcher.
+                reference_valid: reference.is_matchable(),
                 frozen: vault.frozen != 0,
             });
         }
@@ -208,16 +211,6 @@ pub fn read_vault(
     Err(anyhow!(
         "no vault with quote authority {authority}; active sectors: {active:?}"
     ))
-}
-
-/// Whether `reference` would let the matching engine visit this vault — the
-/// off-chain mirror of the program's per-vault gate
-/// (`Vault::has_valid_reference_price`: constructed, non-zero, finite). Kept as
-/// its own predicate because both halves of stale-quote invalidation read it:
-/// the kill stamp deliberately writes a price that fails it, and the decision to
-/// send that stamp at all is conditioned on the book still passing it.
-fn reference_is_matchable(reference: Price) -> bool {
-    reference.is_valid() && !reference.is_zero() && !reference.is_infinity()
 }
 
 /// Stamp a new reference price (`set_reference_price`, hot path). `slot` is the
@@ -320,20 +313,19 @@ mod tests {
     }
 
     /// The kill stamp's whole effect rests on `Price::ZERO` failing the same
-    /// gate the matching engine applies, while an ordinary encoded price passes
-    /// it — so pin both directions here rather than trusting the sentinel.
+    /// gate the matching engine applies, while every price on the demo roster
+    /// passes it — so pin both directions against the roster's actual span
+    /// (EURC ~$1.14 down to IDRX ~$0.000056) rather than trusting the sentinel.
     #[test]
-    fn the_kill_price_is_unmatchable_and_a_real_price_is_not() {
-        assert!(!reference_is_matchable(Price::ZERO));
+    fn the_kill_price_is_unmatchable_and_roster_prices_are_not() {
+        assert!(!Price::ZERO.is_matchable());
         for human in [1.14, 1.235, 0.000056] {
             let price = Price::from_value(human).expect("encodable");
-            assert!(reference_is_matchable(price), "{human} should match");
+            assert!(price.is_matchable(), "{human} should match");
         }
         // `from_value(0.0)` is the sentinel too, so the ordinary encoder can't
         // accidentally produce a live-looking zero.
-        assert!(!reference_is_matchable(
-            Price::from_value(0.0).expect("zero encodes")
-        ));
+        assert!(!Price::from_value(0.0).expect("zero encodes").is_matchable());
     }
 
     #[test]

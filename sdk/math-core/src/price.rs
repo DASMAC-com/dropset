@@ -253,6 +253,32 @@ impl Price {
         sig >= SIGNIFICAND_MIN && sig <= SIGNIFICAND_MAX
     }
 
+    /// Whether this price can anchor a matchable book — a real price
+    /// rather than a sentinel or a garbage bit pattern: constructed
+    /// ([`is_valid`](Self::is_valid)) and neither
+    /// [`ZERO`](Self::ZERO) nor [`INFINITY`](Self::INFINITY).
+    ///
+    /// This is the **matching gate** the engine applies per vault
+    /// (spec § Order matching → Book construction): a vault whose
+    /// reference price fails it is skipped entirely rather than
+    /// aborting the swap, so the two sentinels double as a way to take
+    /// a book dark without touching its `LiquidityProfile` — which is
+    /// how the maker bot invalidates stale quotes, and why every
+    /// off-chain reader that decides "is this vault quoting?" has to
+    /// agree with the program bit for bit.
+    ///
+    /// It lives here, on `Price`, because it was independently
+    /// open-coded in four places (the program's
+    /// `Vault::has_valid_reference_price`, the SDK's AMM adapter, and
+    /// both bots) and the copies have to stay in lockstep with the
+    /// matcher — a predicate that drifts from the engine's is worse
+    /// than no predicate, since it silently mis-reports a live book as
+    /// dark or a dark one as live.
+    #[inline(always)]
+    pub const fn is_matchable(self) -> bool {
+        self.is_valid() && !self.is_zero() && !self.is_infinity()
+    }
+
     /// The lower 27 bits. Meaningful only for regular prices.
     #[inline(always)]
     pub const fn significand(self) -> u32 {
@@ -508,6 +534,37 @@ mod tests {
         assert!(Price::from_value(-1.0).is_none());
         assert!(Price::from_value(f64::NAN).is_none());
         assert!(Price::from_value(f64::INFINITY).is_none());
+    }
+
+    // ── is_matchable ─────────────────────────────────────────────
+
+    /// Both sentinels are *valid* encodings but neither can price a
+    /// book, which is exactly the distinction `is_matchable` draws —
+    /// and the one a caller reaching for `is_valid` alone would miss.
+    #[test]
+    fn is_matchable_rejects_both_sentinels() {
+        assert!(Price::ZERO.is_valid() && !Price::ZERO.is_matchable());
+        assert!(Price::INFINITY.is_valid() && !Price::INFINITY.is_matchable());
+    }
+
+    #[test]
+    fn is_matchable_accepts_the_representable_range() {
+        for &sig in &[SIGNIFICAND_MIN, 12_345_678, SIGNIFICAND_MAX] {
+            for biased_exp in 0..=MAX_BIASED_EXPONENT {
+                let p = Price::new(sig, biased_exp).unwrap();
+                assert!(p.is_matchable(), "{sig}e{biased_exp} should match");
+            }
+        }
+    }
+
+    /// A garbage bit pattern (significand below the canonical range,
+    /// not a sentinel) is neither valid nor matchable — the case the
+    /// `is_valid` clause carries.
+    #[test]
+    fn is_matchable_rejects_garbage() {
+        let garbage = Price::from_bits(1);
+        assert!(!garbage.is_valid());
+        assert!(!garbage.is_matchable());
     }
 
     // ── Round-trip ───────────────────────────────────────────────

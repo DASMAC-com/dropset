@@ -199,14 +199,19 @@ impl Vault {
     }
 
     /// True when the stamped reference price is usable for matching —
-    /// constructed, finite, and non-zero. Single source of truth for
-    /// the book-construction validity gate (spec § Order matching →
-    /// Book construction), shared by the matching loop and any
-    /// cold-path reader that needs the same notion of a live price.
+    /// constructed, finite, and non-zero. The named form of the
+    /// book-construction validity gate (spec § Order matching → Book
+    /// construction), read by the matching loop and any cold-path
+    /// reader that needs the same notion of a live price.
+    ///
+    /// The predicate itself is [`Price::is_matchable`], so the
+    /// off-chain readers that ask the same question — the SDK's AMM
+    /// adapter, the maker bot's kill stamp, the taker bot's
+    /// is-anyone-quoting check — share one definition with the matcher
+    /// rather than each re-deriving the three clauses.
     #[inline(always)]
     pub fn has_valid_reference_price(&self) -> bool {
-        let p = self.reference_price.price;
-        p.is_valid() && !p.is_zero() && !p.is_infinity()
+        self.reference_price.price.is_matchable()
     }
 }
 

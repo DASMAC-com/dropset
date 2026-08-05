@@ -302,8 +302,12 @@ pub struct SizedSwap {
 /// from the first active, validly-priced vault. `None` if no vault is quoting.
 fn market_reference_price(view: &MarketView<'_>) -> Option<f64> {
     view.active_vaults().find_map(|(_, v)| {
+        // The matcher's own gate, shared rather than re-derived: a maker that
+        // has killed its book (the stale-quote invalidation stamps the zero
+        // sentinel) must read here as "not quoting", so the taker skips the
+        // order instead of sizing against a book it can't fill.
         let p = v.reference_price.price();
-        (p.is_valid() && !p.is_zero() && !p.is_infinity()).then(|| p.to_f64())
+        p.is_matchable().then(|| p.to_f64())
     })
 }
 
