@@ -142,11 +142,11 @@ impl SwapSide {
     }
 
     /// Compute the `(fill_base, fill_quote)` for one matched leg, or
-    /// `Ok(None)` when it fills zero (the caller `continue`s). The Buy
-    /// and Sell arms are mirror images: size the **output** leg the
-    /// taker receives as `min(taker input converted to output, level
-    /// cap, vault output inventory)`, reverse-convert to the **input**
-    /// leg, then apply two guards.
+    /// `Ok(None)` when **either** leg fills zero (the caller
+    /// `continue`s). The Buy and Sell arms are mirror images: size the
+    /// **output** leg the taker receives as `min(taker input converted
+    /// to output, level cap, vault output inventory)`, reverse-convert
+    /// to the **input** leg, then apply three guards.
     ///
     /// * **1d (overflow):** guard the reverse-converted input leg
     ///   against `u64::MAX` and reject explicitly rather than silently
@@ -165,6 +165,20 @@ impl SwapSide {
     ///   `taker_unfilled_in` keeps the per-leg vault credit equal to
     ///   what the taker actually pays and stops `taker_unfilled_in` from
     ///   saturating to 0 and billing the full budget for a partial fill.
+    /// * **1f (zero input leg):** the same toward-zero truncation can
+    ///   floor the reverse-converted input leg to `0` while the output
+    ///   leg is legitimate — `base_for_quote(1) == 0` at any price
+    ///   above 1, `quote_for_base(1) == 0` at any price below 1. That
+    ///   leg would move value in one direction only: the vault pays out
+    ///   and the taker pays nothing. Guarding it here keeps the
+    ///   both-directions invariant, and skipping is the correct
+    ///   outcome — a sub-atom of the input asset is not tradeable, so
+    ///   the leg simply goes unfilled and the walk moves on. Note the
+    ///   output leg need not be dust for this to fire: the trigger is
+    ///   whichever cap binds, so a large taker budget against a 1-atom
+    ///   level or vault cap reaches it too, and on the below-1 arm the
+    ///   round trip magnifies it — one quote atom buys ~16.5k base at
+    ///   0.00006, all of it free without this guard.
     #[inline]
     fn compute_fill(
         self,
@@ -191,6 +205,9 @@ impl SwapSide {
                 let fill_q = price.quote_for_base(fill_b_u64);
                 require!(fill_q <= u64::MAX as u128, DropsetError::MathOverflow);
                 let fill_q = fill_q.min(taker_unfilled_in);
+                if fill_q == 0 {
+                    return Ok(None);
+                }
                 Ok(Some((fill_b_u64, fill_q as u64)))
             }
             SwapSide::Sell => {
@@ -208,6 +225,9 @@ impl SwapSide {
                 let fill_b = price.base_for_quote(fill_q_u64);
                 require!(fill_b <= u64::MAX as u128, DropsetError::MathOverflow);
                 let fill_b = fill_b.min(taker_unfilled_in);
+                if fill_b == 0 {
+                    return Ok(None);
+                }
                 Ok(Some((fill_b as u64, fill_q_u64)))
             }
         }
@@ -869,6 +889,16 @@ mod tests {
                                     "input leg {input} exceeded taker budget {taker_in}: \
                                      side={side:?} price={price:?}"
                                 );
+                                // A matched leg moves value in *both*
+                                // directions (WARNING 1f). Either leg at
+                                // zero is a one-directional transfer and
+                                // must have early-returned `Ok(None)`.
+                                assert!(
+                                    fill_base > 0 && fill_quote > 0,
+                                    "one-directional leg base={fill_base} quote={fill_quote}: \
+                                     side={side:?} price={price:?} taker_in={taker_in} \
+                                     level_size={level_size} inv={inv}"
+                                );
                             }
                         }
                     }
@@ -894,6 +924,62 @@ mod tests {
         assert!(
             matches!(got, Ok(Some(_))),
             "tiny-price max-base Sell must fill and clear the guard, got {got:?}"
+        );
+    }
+
+    /// The dust remainder that used to hand out a free atom (WARNING
+    /// 1f), pinned on both arms at the prices that actually reach them.
+    ///
+    /// Which arm trips depends purely on whether the level price sits
+    /// above or below 1, so a demo book quoting only above-1 markets
+    /// exercises half the bug. Both are covered here.
+    #[test]
+    fn compute_fill_rejects_a_leg_whose_input_truncates_to_zero() {
+        // Sell arm, price > 1 — the live EURC/USDC bid. One base atom
+        // of remainder buys 1 quote atom, and `base_for_quote(1)` at
+        // 1.129108 floors to 0: the vault would pay a quote atom for
+        // nothing.
+        let above_one = Price::encode(11_291_080, 0).unwrap();
+        assert_eq!(above_one.quote_for_base(1), 1);
+        assert_eq!(above_one.base_for_quote(1), 0);
+        let got = SwapSide::Sell.compute_fill(above_one, 1, u64::MAX, u64::MAX, u64::MAX);
+        assert!(
+            matches!(got, Ok(None)),
+            "one-base-atom Sell remainder above price 1 must not fill, got {got:?}"
+        );
+
+        // Buy arm, price < 1 — an IDR-scale quote. Here the free leg is
+        // *base*, and the cap makes it large: one quote atom converts to
+        // 16666 base, whose reverse conversion floors back to 0 quote.
+        let below_one = Price::encode(60_000_000, -5).unwrap();
+        assert_eq!(below_one.base_for_quote(1), 16_666);
+        assert_eq!(below_one.quote_for_base(16_666), 0);
+        let got = SwapSide::Buy.compute_fill(below_one, 1, u64::MAX, u64::MAX, u64::MAX);
+        assert!(
+            matches!(got, Ok(None)),
+            "one-quote-atom Buy remainder below price 1 must not fill, got {got:?}"
+        );
+
+        // Same arm, same price, with the level and vault capping the
+        // base leg at a single atom — the mirror image of the Sell case
+        // above rather than the blown-up one.
+        let got = SwapSide::Buy.compute_fill(below_one, 1, 1, 1, 1);
+        assert!(
+            matches!(got, Ok(None)),
+            "one-base-atom Buy leg below price 1 must not fill, got {got:?}"
+        );
+
+        // The guard is dust-only: a remainder large enough to price
+        // both legs still fills on either arm.
+        let got = SwapSide::Sell.compute_fill(above_one, 1_000, u64::MAX, u64::MAX, u64::MAX);
+        assert!(
+            matches!(got, Ok(Some((b, q))) if b > 0 && q > 0),
+            "a well-sized Sell must still fill both legs, got {got:?}"
+        );
+        let got = SwapSide::Buy.compute_fill(below_one, 1_000, u64::MAX, u64::MAX, u64::MAX);
+        assert!(
+            matches!(got, Ok(Some((b, q))) if b > 0 && q > 0),
+            "a well-sized Buy must still fill both legs, got {got:?}"
         );
     }
 }
