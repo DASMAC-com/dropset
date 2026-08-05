@@ -22,8 +22,29 @@ export const colors = {
   backdrop: "#000000",
 } as const;
 
-const sansStack = "var(--font-geist-sans), system-ui, sans-serif";
-const monoStack = "var(--font-geist-mono), ui-monospace, monospace";
+/**
+ * The DASMAC brand faces (Kargil Studios design system): Inter as the primary
+ * family, Space Mono as the mono/tag face — matching the product website, which
+ * types in Space Mono. The variables are declared by `next/font/google` in
+ * `app/layout.tsx`; the fallbacks matter for the print path, where a font that
+ * hasn't loaded yet would otherwise reflow the slide it's measuring.
+ */
+const sansStack = "var(--font-inter), system-ui, sans-serif";
+const monoStack = "var(--font-space-mono), ui-monospace, monospace";
+
+/**
+ * Exactly 16:9 — a firm requirement, since slides are printed and dropped into
+ * a 16:9 Google Slides canvas for the accelerator's combined meta-deck, and any
+ * other ratio letterboxes or crops there.
+ *
+ * Spectacle's own default is 1366×768, which is 1.7786 rather than 1.7778 — off
+ * by a fraction of a percent, invisible on screen but enough to leave a hairline
+ * band after the print-and-import round trip. Stating 1920×1080 makes the ratio
+ * exact and the design space a familiar one. Spectacle scales this box to
+ * whatever it's displayed on, so the numbers are a coordinate system, not a
+ * resolution cap.
+ */
+export const DECK_SIZE = { width: 1920, height: 1080 } as const;
 
 /**
  * Spectacle consumes a theme via the `<Deck theme={...}>` prop. The color
@@ -50,6 +71,14 @@ const monoStack = "var(--font-geist-mono), ui-monospace, monospace";
  * double-offset the already-transformed slide.
  */
 export const deckTheme = {
+  /**
+   * Spectacle takes the native slide box from the **theme**, not a `<Deck>`
+   * prop, and one `size` here drives all three render paths — the on-screen
+   * aspect-ratio fitter, the slide overview, and print. That last one is why
+   * this is stated rather than left to default: print is how slides reach the
+   * accelerator's Google Slides meta-deck.
+   */
+  size: DECK_SIZE,
   colors: {
     primary: colors.foreground,
     secondary: colors.accent,
@@ -70,12 +99,18 @@ export const deckTheme = {
     text: sansStack,
     monospace: monoStack,
   },
+  /**
+   * Sized for the 1920×1080 design space in `DECK_SIZE`, ~1.4× the values that
+   * suited Spectacle's default 1366-wide box. Every explicit size in a deck is
+   * in these same slide units, so the two have to be read together — a value
+   * copied from an older 1366-era slide reads a third too small.
+   */
   fontSizes: {
-    h1: "68px",
-    h2: "48px",
-    h3: "34px",
-    text: "26px",
-    monospace: "20px",
+    h1: "96px",
+    h2: "68px",
+    h3: "48px",
+    text: "36px",
+    monospace: "28px",
   },
   space: [16, 24, 32],
 };

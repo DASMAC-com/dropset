@@ -60,6 +60,7 @@ forex
 frankfurter
 frontmatter
 getpid
+gifs
 globbable
 gyen
 générale
@@ -72,6 +73,7 @@ impls
 iterm
 kalman
 kapsule
+kargil
 keybinds
 keypair
 keypairs
@@ -87,6 +89,7 @@ macropod
 memcpy
 metas
 meteora
+moneyness
 mpsc
 multisigs
 mxne

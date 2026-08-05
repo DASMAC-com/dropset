@@ -1,5 +1,7 @@
 <!-- cspell:word kbar -->
 
+<!-- cspell:word letterboxed -->
+
 # decks
 
 Presentation decks for Dropset, deployed to **decks.dropset.io**. A
@@ -22,18 +24,24 @@ deps, and theme don't fight the product build.
   Spectacle `<Deck>` (`page.tsx` dynamic-imports it with `ssr: false`).
 
 - `theme/tokens.ts` — Dropset design tokens, mirrored from
-  `frontend/app/globals.css` and reshaped into a Spectacle theme.
+  `frontend/app/globals.css` and reshaped into a Spectacle theme. It also
+  fixes the **slide box** (`DECK_SIZE`, 1920×1080): Spectacle takes the
+  native size from the theme rather than a `<Deck>` prop, and its own
+  default (1366×768) is *not* exactly 16:9. Every explicit size in a deck
+  is in those slide units, so a value lifted from a 1366-era deck reads a
+  third too small.
 
-- `components/` — pieces shared across decks. `DemoVideo.tsx` is the demo
-  badge: click it and the recording plays over the whole window, through a
-  portal to `document.body` (a Spectacle slide sits under a CSS transform,
-  which would otherwise trap a `position: fixed` overlay inside the slide
-  box). It swallows arrow keys while open so the deck doesn't advance
-  behind the video, and closes on `esc` or a click outside. Each demo
-  passes the **source recording's pixel dimensions**, and the overlay is
-  sized from them to fill the viewport at that exact shape — YouTube
-  chooses playback quality from the rendered player box, so a mis-shaped
-  or capped player is what makes a 4K upload play at 720p.
+- Typography is **Inter** (primary) and **Space Mono** (mono/tag), the
+  DASMAC brand faces, loaded in `app/layout.tsx` through
+  `next/font/google` — self-hosted at build time, so no font files are
+  committed. Space Mono is what the product website types in, which is
+  why it beats the JetBrains Mono named on the DASMAC brand page.
+
+- `components/` — pieces shared across *decks*, added when a second deck
+  needs one. There are none today: a deck's own building blocks live
+  beside it (`app/demo-v1/DemoDeck.tsx`), and the demo-video badge that
+  used to live here is gone, since decks are now **static-image-only**
+  (see "Write a deck").
 
 - `scripts/fetch-remote-assets.mjs` — the remote-image mirror, run on the
   `predev` / `prebuild` hooks; see `remote-assets.json` below.
@@ -49,8 +57,10 @@ deps, and theme don't fight the product build.
     and the whole folder goes to every app rather than a per-app subset.
   - `public/remote/` is **mirrored** from the URLs in
     `remote-assets.json` by `scripts/fetch-remote-assets.mjs`, on the
-    same two hooks — images we don't hold a copy of, like the team
-    headshots the marketing site serves.
+    same two hooks — images we don't hold a copy of. Today that is only
+    the two team headshots the marketing site serves: the competitor and
+    partner logos this once mirrored are gone, since no deck shows
+    another company's mark any more.
   - `public/screens/` holds our own screen captures, which are
     **committed**: nothing external hosts them, so there's nothing to
     mirror.
@@ -104,6 +114,24 @@ gives that machine its own independent copy of the deck. Nothing about
 deploying changes this, and nothing about running locally fixes it; for
 remote control you'd need a shared backend the package doesn't have.
 
+Nothing in a deck depends on a live network or a live cluster — decks are
+static-image-only — so a room with no connection presents fine once the
+page is loaded.
+
+## Export to Google Slides
+
+The accelerator combines every team's slides into one meta-deck, which is
+a Google Slides file. The path is Spectacle's own print mode (**`⌘⇧R`**),
+then the browser's print-to-PDF, then dropping the pages into Slides as
+images. There is deliberately **no export tooling** in this package.
+
+What that pipeline asks of a deck is just the two rules the theme already
+enforces: the slide box is exactly 16:9 (`DECK_SIZE`), so nothing gets
+letterboxed on import, and no slide carries interactive chrome, so what
+prints is what the audience saw. After changing a deck's layout, open
+print mode once and check every page — a page that overflows its box on
+screen is clipped in print, silently.
+
 ## Add a deck
 
 1. Create `app/<public-route>/page.tsx` + `<Deck>.tsx` (copy `demo-v1`).
@@ -136,6 +164,21 @@ ten-page cap, one big sentence and one big visual per page, with the
 nuance kept off the slides and in that doc's appendices. Edit the spec
 first, then the deck. Spoken script belongs in each slide's `<Notes>`
 (presenter mode, `⌘⇧P`), never on the slide.
+
+Four rules from that spec bind any deck here, not just `demo-v1`:
+
+- **Static images only.** No embedded video, no gifs, no player. A
+  product beat is an interface screenshot with a full-sentence claim over
+  it. This is what keeps a deck presentable offline and printable.
+- **Full sentences on-slide**, never fragment headlines — the deck gets
+  read without the talk more often than it gets presented.
+- **No competitor names or logos on a slide.** Naming one hands it the
+  frame; make the argument in type and keep the names in the spec's
+  appendix, for conversation.
+- **Art that doesn't exist yet ships as a labeled placeholder**, sized to
+  the shape the real capture has to be. `demo-v1`'s `Placeholder` is
+  loudly dashed on purpose — an empty box that looks designed is one that
+  reaches a projector.
 
 ## Deploy
 
