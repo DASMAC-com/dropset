@@ -131,6 +131,19 @@ cargo run -p dropset-maker-bot
   ~50 min life. Clearing the state directory is safe; it just makes the
   next startup invalidate.
 
+  On a halt the kill stamp goes **first**, ahead of zeroing the profile —
+  only the stamp stops a taker, and a halt is when a stale price is most
+  worth picking off.
+
+  **Verification split.** The on-chain half is covered end-to-end by a
+  program test (a zero reference takes the vault out of matching, leaves
+  the ladder bytes untouched, and a plain re-quote refills it), and the
+  staleness decision, the persistence, and the gate's early-outs are unit
+  tested. The **startup ordering** — that the kill stamp is the run's
+  first quoting transaction — has no automated coverage: this crate is
+  localnet-only and has no validator harness, so that claim is verified by
+  running `make demo` against a bootstrapped localnet.
+
 - **Fill detection** subscribes to the program's `emit_cpi!`
   `FillEvent`s (production-fidelity path): a dedicated thread runs a
   `logsSubscribe` and reads the events out of each transaction's inner

@@ -423,16 +423,33 @@ mod tests {
     /// its own fresh book) and stay far under the deepest ladder tier's
     /// wall-clock life (or a resting level could outlive the bound and expire on
     /// its own, which is the exposure this closes).
+    ///
+    /// The upper bound is pinned at **twice the heartbeat**, not at some fraction
+    /// of the deepest tier: the tier is ~48 min, so a "far under" test against it
+    /// would wave through several minutes — while the documented promise is that
+    /// no level rests unattended for more than about a minute. Keying both ends
+    /// to the heartbeat is what actually holds that promise.
     #[test]
-    fn stale_bound_brackets_the_heartbeat_and_the_deepest_expiry() {
+    fn stale_bound_brackets_the_heartbeat() {
         let cfg = BotConfig::default();
-        assert!(cfg.invalidate.stale_after > cfg.strategy.ref_heartbeat);
-        // Mainnet slots run ~0.4 s (§3 expiry table).
+        let heartbeat = cfg.strategy.ref_heartbeat;
+        assert!(
+            cfg.invalidate.stale_after > heartbeat,
+            "a bound under the heartbeat would kill a healthy bot's own fresh book"
+        );
+        assert!(
+            cfg.invalidate.stale_after <= heartbeat * 2,
+            "a bound over 2x the heartbeat stops matching the documented \
+             ~1-minute unattended window"
+        );
+        // And it must still leave the deepest tier's ~48 min life far away, so a
+        // level can never outlive the bound and expire on its own instead.
         let deepest = DEFAULT_LADDER
             .iter()
             .map(|l| l.expiry_offset)
             .max()
             .expect("ladder is non-empty");
+        // Mainnet slots run ~0.4 s (§3 expiry table).
         let deepest_wall = Duration::from_millis(deepest as u64 * 400);
         assert!(cfg.invalidate.stale_after * 10 < deepest_wall);
     }

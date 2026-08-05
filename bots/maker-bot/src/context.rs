@@ -20,7 +20,7 @@ use dropset_fair_value::{FairValueConfig, FairValueEngine};
 use solana_client::rpc_client::RpcClient;
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 /// The discovered market and its token metadata — everything the bot needs to
 /// address the vault and value its inventory.
@@ -100,8 +100,12 @@ pub struct Context {
     pub last_set_price: Option<f64>,
     /// Inventory skew (bps) applied at the last stamp.
     pub last_skew_bps: f64,
-    /// When the hot / cold paths last fired.
+    /// When the hot path last fired. Seeded at construction from the persisted
+    /// record (see [`Context::new`]) rather than from process start, so the
+    /// staleness check that ages off it measures the resting book's real age
+    /// across a restart.
     pub last_set_at: Instant,
+    /// When the cold path last fired.
     pub last_profile_at: Instant,
     /// This market's persisted last-live-stamp record — the one piece of state
     /// that survives a restart, because it is the one the chain cannot supply
@@ -138,6 +142,26 @@ impl Context {
         quote_state: QuoteState,
     ) -> Self {
         let now = Instant::now();
+        // Start the hot-path clock from the persisted record, not from process
+        // start. The running-path staleness check ages off `last_set_at`, so a
+        // placeholder here would re-credit a restarted bot a full staleness
+        // bound the resting book hasn't earned: a record already 55 s old (still
+        // inside the bound, so the startup pass rightly declines to kill) would
+        // then not be killed until 60 s *after startup* — ~115 s of unattended
+        // matchable book, twice the bound this is supposed to hold. Seeding also
+        // covers the case where the startup pass's vault read fails and never
+        // gets to consult the record at all.
+        //
+        // Reading the record here rather than reusing the startup pass's read
+        // keeps the two questions separate: that pass needs the `Option` (an
+        // *unknown* age is what it treats as stale), while this only needs a
+        // clock origin, so an unknown age correctly falls back to `now`.
+        // `checked_sub` guards a freshly-booted host whose monotonic clock is
+        // younger than the record's age.
+        let last_set_at = quote_state
+            .age(SystemTime::now())
+            .and_then(|age| now.checked_sub(age))
+            .unwrap_or(now);
         Self {
             quote_state,
             reference_invalidated: false,
@@ -152,7 +176,7 @@ impl Context {
             fills_active: false,
             last_set_price: None,
             last_skew_bps: 0.0,
-            last_set_at: now,
+            last_set_at,
             last_profile_at: now,
             profile_kind: ProfileKind::Unknown,
             last_inventory: None,

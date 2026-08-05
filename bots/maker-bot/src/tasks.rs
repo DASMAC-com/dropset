@@ -27,7 +27,7 @@ use crate::fills::Fill;
 use crate::model::fair_mid::{build_legs, FairValue};
 use crate::model::invalidate::{self, InvalidateReason};
 use crate::model::inventory::Inventory;
-use crate::model::killswitch::{self, Action, HaltReason};
+use crate::model::killswitch::{self, Action};
 use crate::model::ladder::{self, Side};
 use crate::model::skew;
 use crate::model::triggers::{self, RefTrigger};
@@ -250,6 +250,14 @@ fn invalidate_stale_quotes(markets: &mut [Context], cfg: &BotConfig) {
             }
         };
         ctx.vault_idx = vault.sector_idx;
+        // A frozen vault is already skipped by the matcher, so its resting book
+        // can't be hit and the stamp would be a wasted priority-fee transaction.
+        // (`reference_valid` deliberately tracks only the price half of the
+        // program's gate, so the frozen half is checked here — the same order
+        // `quote_market` uses.)
+        if vault.frozen {
+            continue;
+        }
         let age = ctx.quote_state.age(now);
         if let Err(e) = invalidate_resting_book(ctx, cfg, &vault, age, InvalidateReason::Startup) {
             eprintln!("[{}][invalidate] kill stamp failed: {e}", ctx.cfg.symbol);
@@ -257,10 +265,13 @@ fn invalidate_stale_quotes(markets: &mut [Context], cfg: &BotConfig) {
     }
 }
 
-/// Kill this market's resting book and note it, shared by the startup pass and
-/// the running-path check. `age` is only for the log line — the decision is the
-/// caller's.
-fn kill_resting_book(
+/// Send the kill stamp **unconditionally** and note it. The gated entry point is
+/// [`invalidate_resting_book`] — go through that unless you have already
+/// established that the stamp is warranted, or you will bypass both the
+/// staleness rule and the once-per-episode guard.
+///
+/// `age` is only for the log line; the decision is the caller's.
+fn send_kill_stamp(
     ctx: &mut Context,
     cfg: &BotConfig,
     reason: InvalidateReason,
@@ -276,6 +287,13 @@ fn kill_resting_book(
         cfg.invalidate.priority_micro_lamports,
     )?;
     ctx.reference_invalidated = true;
+    // The stamped price is gone, so the cadence state describing it is stale
+    // too. Clearing it puts this market back in its first-cycle shape, where
+    // `should_set_reference` fires unconditionally — otherwise the drift and
+    // heartbeat arms would both decline (the last stamp is recent, and drift
+    // against it is small) and the vault would sit dark with a live ladder until
+    // the next heartbeat, up to `ref_heartbeat` after the cause had cleared.
+    ctx.last_set_price = None;
     let evidence = age.map_or_else(
         || "no fresh-quote evidence".to_string(),
         |age| format!("last live quote {}s old", age.as_secs()),
@@ -298,24 +316,26 @@ fn kill_resting_book(
 /// in-run gap since the last stamp on the pause path, and `None` on a halt,
 /// where the bot has decided to stop standing behind the price and so has no
 /// freshness to claim.
+/// Returns whether it spent this cycle's instruction on the kill stamp, so a
+/// caller with a second instruction to send can order the two.
 fn invalidate_resting_book(
     ctx: &mut Context,
     cfg: &BotConfig,
     vault: &VaultSnapshot,
     age: Option<Duration>,
     reason: InvalidateReason,
-) -> Result<()> {
-    // Already killed this episode. `reference_valid` would catch it too once the
-    // stamp lands, but the flag holds from the moment it is sent — so a
-    // confirmed-commitment read that hasn't caught up yet can't trigger a
-    // duplicate.
+) -> Result<bool> {
+    // Already killed this episode. The send confirms before returning, so
+    // `reference_valid` on the next cycle's read would catch it too; this flag
+    // just saves re-deciding it every cycle for as long as the episode lasts.
     if ctx.reference_invalidated {
-        return Ok(());
+        return Ok(false);
     }
     if !invalidate::should_invalidate(vault.reference_valid, age, cfg.invalidate.stale_after) {
-        return Ok(());
+        return Ok(false);
     }
-    kill_resting_book(ctx, cfg, reason, age)
+    send_kill_stamp(ctx, cfg, reason, age)?;
+    Ok(true)
 }
 
 /// Drain every attributed fill delivered since the last cycle and route it to
@@ -484,15 +504,25 @@ fn quote_market(
     // Cold path first — at most one ix per cycle.
     match action {
         Action::Halt(reason) => {
-            // The halt zeroes the profile, which stops *new* levels from being
-            // materialized but leaves the ones already resting matchable. When
-            // the zeroing itself is already done, spend this cycle's one
-            // instruction on killing those (at-most-one-ix-per-market holds
-            // across both), so the book goes dark one cycle after the halt
-            // rather than waiting out the staleness bound — a halt means the bot
-            // has stopped standing behind the price it stamped, however recent.
-            if !halt(ctx, cfg, reason)? {
-                invalidate_resting_book(ctx, cfg, &vault, None, InvalidateReason::Halted)?;
+            eprintln!(
+                "[{}][ALERT] kill switch: {reason:?} — halting quotes for review",
+                ctx.cfg.symbol
+            );
+            // Standing down fully takes two instructions and the cycle budget is
+            // one, so send them in order of what actually protects the vault.
+            // The kill stamp takes the resting book out of the matching set;
+            // zeroing the profile only stops the *next* flush from materializing
+            // more levels, which does nothing about what is already resting. So
+            // the stamp goes first — a halt fires exactly when a stale price is
+            // most worth picking off, and deferring the stamp a whole cycle
+            // leaves the book live through it.
+            //
+            // Ordering it this way also keeps the profile send from starving it:
+            // that send propagates its error and only records `Halted` on
+            // success, so a persistently failing cold path would otherwise retry
+            // forever and the book would never go dark at all.
+            if !invalidate_resting_book(ctx, cfg, &vault, None, InvalidateReason::Halted)? {
+                zero_both_sides(ctx, cfg)?;
             }
             return Ok(());
         }
@@ -704,16 +734,15 @@ fn freeze_side(ctx: &mut Context, cfg: &BotConfig, side: Side) -> Result<()> {
     Ok(())
 }
 
-/// Stop quoting and alert. The bot zeroes both sides (leader-authorized) and
-/// leaves the irreversible, admin-only `FreezeVault` to a human.
+/// Zero both sides of the ladder so no future flush materializes a level — the
+/// leader-authorized half of a halt, leaving the irreversible, admin-only
+/// `FreezeVault` to a human.
 ///
-/// Returns whether it spent this cycle's instruction on the zeroing profile, so
-/// the caller can use a quiet cycle for the stale-quote kill stamp instead.
-fn halt(ctx: &mut Context, cfg: &BotConfig, reason: HaltReason) -> Result<bool> {
-    eprintln!(
-        "[{}][ALERT] kill switch: {reason:?} — halting quotes for review",
-        ctx.cfg.symbol
-    );
+/// This is the *second* of the two instructions a halt sends; the caller sends
+/// the kill stamp first (see the `Action::Halt` arm), because zeroing the profile
+/// does nothing about the levels already resting. A no-op once the shape is
+/// already `Halted`, so repeat cycles cost nothing.
+fn zero_both_sides(ctx: &mut Context, cfg: &BotConfig) -> Result<()> {
     if ctx.profile_kind != ProfileKind::Halted {
         let mut profile = ladder::build_profile(&cfg.strategy.ladder);
         ladder::zero_side(&mut profile, Side::Bid);
@@ -728,18 +757,158 @@ fn halt(ctx: &mut Context, cfg: &BotConfig, reason: HaltReason) -> Result<bool> 
         ctx.profile_kind = ProfileKind::Halted;
         ctx.last_profile_at = Instant::now();
         println!(
-            "[{}][halt] zeroed both sides; levels already resting are killed \
-             once the staleness bound passes",
+            "[{}][halt] zeroed both sides; the resting book was already killed",
             ctx.cfg.symbol
         );
-        return Ok(true);
     }
-    Ok(false)
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::MARKETS;
+    use crate::context::MarketAddrs;
+    use crate::quote_state::QuoteStateStore;
+    use dropset_fair_value::FairValueConfig;
+    use solana_keypair::Keypair;
+
+    /// A `Context` that never talks to a validator. `RpcClient::new` doesn't
+    /// connect, so this is only unsound if the code under test actually sends —
+    /// which is exactly what the guard tests below assert it does *not* do.
+    fn offline_ctx(dir: &std::path::Path) -> Context {
+        let market = MarketAddrs {
+            market: Pubkey::new_unique(),
+            base_mint: Pubkey::new_unique(),
+            quote_mint: Pubkey::new_unique(),
+            base_treasury: Pubkey::new_unique(),
+            quote_treasury: Pubkey::new_unique(),
+            base_decimals: 6,
+            quote_decimals: 6,
+        };
+        let quote_state = QuoteStateStore::new(dir).for_market(market.market, MARKETS[0].symbol);
+        Context::new(
+            chain::rpc("http://127.0.0.1:1"),
+            Keypair::new(),
+            0,
+            market,
+            MARKETS[0],
+            FairValueConfig::default(),
+            quote_state,
+        )
+    }
+
+    fn snapshot(reference_valid: bool) -> VaultSnapshot {
+        VaultSnapshot {
+            sector_idx: 0,
+            base_atoms: 1_000_000,
+            quote_atoms: 1_000_000,
+            reference_price: 1.14,
+            reference_valid,
+            frozen: false,
+        }
+    }
+
+    /// The gated entry point must decline — without sending, hence without
+    /// touching the network — in each of the three cases that don't warrant a
+    /// stamp. `send_kill_stamp` is what would hit the RPC, so an offline client
+    /// is enough to prove the guards return first: a regression here fails by
+    /// erroring on the bogus endpoint rather than by asserting false.
+    #[test]
+    fn the_gate_declines_without_sending() {
+        let dir = std::env::temp_dir().join("dropset-invalidate-gate");
+        let _ = std::fs::remove_dir_all(&dir);
+        let cfg = BotConfig::default();
+
+        // 1. Already killed this episode.
+        let mut ctx = offline_ctx(&dir);
+        ctx.reference_invalidated = true;
+        assert!(!invalidate_resting_book(
+            &mut ctx,
+            &cfg,
+            &snapshot(true),
+            None,
+            InvalidateReason::Halted
+        )
+        .expect("the dedup guard returns before any send"));
+
+        // 2. The book is already dark, so there is nothing to kill.
+        let mut ctx = offline_ctx(&dir);
+        assert!(!invalidate_resting_book(
+            &mut ctx,
+            &cfg,
+            &snapshot(false),
+            None,
+            InvalidateReason::Startup
+        )
+        .expect("an invalid reference returns before any send"));
+
+        // 3. The quote is still fresh.
+        let mut ctx = offline_ctx(&dir);
+        assert!(!invalidate_resting_book(
+            &mut ctx,
+            &cfg,
+            &snapshot(true),
+            Some(Duration::from_secs(1)),
+            InvalidateReason::QuotesStale
+        )
+        .expect("a fresh quote returns before any send"));
+        assert!(!ctx.reference_invalidated, "no episode was opened");
+    }
+
+    /// A context with no persisted record starts its hot-path clock at "now" —
+    /// the fallback arm of the seeding in `Context::new`.
+    #[test]
+    fn an_unknown_record_starts_the_clock_at_now() {
+        let dir = std::env::temp_dir().join("dropset-invalidate-clock-unknown");
+        let _ = std::fs::remove_dir_all(&dir);
+        let ctx = offline_ctx(&dir);
+        assert!(Instant::now().duration_since(ctx.last_set_at) < Duration::from_secs(1));
+    }
+
+    /// With a persisted record, the clock is seeded *back* by the record's age,
+    /// so the running-path staleness check measures the resting book's real age
+    /// across a restart instead of re-crediting it a full bound.
+    #[test]
+    fn a_persisted_record_seeds_the_clock_backwards() {
+        let dir = std::env::temp_dir().join("dropset-invalidate-clock-seeded");
+        let _ = std::fs::remove_dir_all(&dir);
+        let market = Pubkey::new_unique();
+        let store = QuoteStateStore::new(&dir);
+        // A stamp 55 s ago: inside the 60 s bound, so the startup pass would
+        // decline — which is precisely the case that used to reset the clock.
+        store
+            .for_market(market, "EURC")
+            .record(SystemTime::now() - Duration::from_secs(55))
+            .expect("record the stamp");
+        let addrs = MarketAddrs {
+            market,
+            base_mint: Pubkey::new_unique(),
+            quote_mint: Pubkey::new_unique(),
+            base_treasury: Pubkey::new_unique(),
+            quote_treasury: Pubkey::new_unique(),
+            base_decimals: 6,
+            quote_decimals: 6,
+        };
+        let ctx = Context::new(
+            chain::rpc("http://127.0.0.1:1"),
+            Keypair::new(),
+            0,
+            addrs,
+            MARKETS[0],
+            FairValueConfig::default(),
+            store.for_market(market, "EURC"),
+        );
+        let age = Instant::now().duration_since(ctx.last_set_at);
+        assert!(
+            age >= Duration::from_secs(54) && age < Duration::from_secs(60),
+            "clock should start ~55 s in the past, got {age:?}"
+        );
+        // So the very next pause-path check is already within a tick of the
+        // bound, instead of a fresh 60 s away from it.
+        let cfg = BotConfig::default();
+        assert!(age + cfg.tick > cfg.invalidate.stale_after);
+    }
 
     #[test]
     fn first_read_seeds_the_position() {

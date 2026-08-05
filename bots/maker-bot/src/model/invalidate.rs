@@ -38,7 +38,9 @@ pub enum InvalidateReason {
     /// A kill-switch halt (§4). Zeroing the profile stops *new* levels from
     /// being materialized but leaves the resting ones matchable, and a halt is a
     /// decision that the bot no longer stands behind the price it stamped — so
-    /// this one doesn't wait out the threshold.
+    /// this one doesn't wait out the threshold. The exemption isn't encoded here:
+    /// the caller expresses it by passing `age: None`, which
+    /// [`should_invalidate`] already treats as stale.
     Halted,
 }
 

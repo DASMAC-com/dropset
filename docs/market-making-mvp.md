@@ -441,13 +441,21 @@ path — takes the whole vault's book dark while leaving the
 `LiquidityProfile` intact. The next live reference re-arms the same shape;
 nothing has to be rebuilt.
 
-| Situation                                         | Kill the resting book                                        |
-| ------------------------------------------------- | ------------------------------------------------------------ |
-| Startup, last live quote older than the bound     | Yes, **before** the first quote of the run                   |
-| Startup, last live quote's age unknown            | Yes — no freshness evidence reads as stale                   |
-| Startup, last live quote inside the bound         | No; go straight to quoting                                   |
-| Running, no usable feed for longer than the bound | Yes, instead of holding the reference indefinitely           |
-| Running, kill-switch halt                         | Yes, on the next cycle — a halt forfeits any freshness claim |
+| Situation                                         | Kill the resting book                              |
+| ------------------------------------------------- | -------------------------------------------------- |
+| Startup, last live quote older than the bound     | Yes, **before** the first quote of the run         |
+| Startup, last live quote's age unknown            | Yes — no freshness evidence reads as stale         |
+| Startup, last live quote inside the bound         | No; go straight to quoting                         |
+| Running, no usable feed for longer than the bound | Yes, instead of holding the reference indefinitely |
+| Running, kill-switch halt                         | Yes, **first** — ahead of zeroing the profile      |
+
+On a halt the kill stamp goes **first**, ahead of zeroing the profile.
+Standing down takes two instructions and the bot's cycle budget is one,
+and only the stamp stops a taker: zeroing the profile prevents the next
+flush from materializing more levels but does nothing about the ones
+already resting. Ordering it this way also keeps a persistently failing
+profile send from starving the stamp, since a halt is exactly the moment
+a stale resting price is most worth picking off.
 
 The staleness bound is **60 s**: twice the `SetReferencePrice` heartbeat,
 so a healthy bot's own last stamp is always well inside it and an

@@ -19,9 +19,14 @@
 //! observes a half-written record and a crash mid-write leaves the previous one.
 //!
 //! A missing, unreadable, or nonsensical record reads as `None` — "unknown" —
-//! which `model::invalidate::should_invalidate` treats as stale. Every failure
-//! mode here therefore lands on the safe side; nothing in this module returns an
-//! error that should stop a tick.
+//! which `model::invalidate::should_invalidate` treats as stale. Every *parse*
+//! or clock failure therefore lands on the safe side, and nothing in this module
+//! returns an error that should stop a tick. What is **not** covered is a
+//! well-formed record that is simply wrong: a restored backup, a state directory
+//! copied between hosts, or a hand-edit can claim a recent stamp and so talk the
+//! bot out of an invalidation it needed. Nothing here authenticates that claim —
+//! acceptable while this is localnet tooling writing under its own directory, and
+//! a real trust boundary to close on a mainnet promotion.
 
 use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
@@ -68,12 +73,6 @@ impl QuoteStateStore {
             market,
             symbol: symbol.to_string(),
         }
-    }
-}
-
-impl Default for QuoteStateStore {
-    fn default() -> Self {
-        Self::new(DEFAULT_STATE_DIR)
     }
 }
 
@@ -143,9 +142,10 @@ fn write_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
 mod tests {
     use super::*;
 
-    /// A scratch directory under the target dir, named per test so the cases
-    /// don't collide. Removed and recreated on entry rather than on exit, so a
-    /// failing test leaves its files behind to inspect.
+    /// A scratch directory under the OS temp dir, named per test so the cases
+    /// don't collide. Removed on entry (not on exit), so a failing test leaves
+    /// its files behind to inspect. Only removed — creation is left to the first
+    /// `record`, which is why a test writing a file by hand creates it itself.
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("dropset-quote-state-{name}"));
         let _ = std::fs::remove_dir_all(&dir);
