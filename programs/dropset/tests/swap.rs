@@ -74,8 +74,8 @@ fn min_out_soft_reverts_when_unattainable() {
     // Treasury invariant holds — `treasury == Σ vault + accrued`, with
     // nothing accrued on a swap that never committed.
     let h = f.market_header();
-    assert_eq!(h.accrued_base_fee.get(), 0);
-    assert_eq!(h.accrued_quote_fee.get(), 0);
+    assert_eq!(h.accrued_base_fee_atoms.get(), 0);
+    assert_eq!(h.accrued_quote_fee_atoms.get(), 0);
     assert_eq!(
         f.token_balance(&f.base_treasury),
         vault_after.base_atoms.get()
@@ -95,18 +95,32 @@ fn soft_revert_unwinds_the_accrued_fee() {
     // would read the gap as a bug and a future harvest would have a
     // ceiling above the real revenue. The default taker fee is zero, so
     // this is the case the other revert tests can't reach.
+    //
+    // Every assertion here is `== 0`, which an implementation that never
+    // accrued at all would also satisfy — `taker_fee_accrues_to_the_market_not_the_vault`
+    // below is the positive control: same fixture, same swap args but a
+    // committing `min_out`, asserting the accrual is non-zero. The pair is
+    // the witness; neither half proves the unwind alone.
     let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
     let admin = f.authority.insecure_clone();
     f.set_taker_fee(&admin, 10_000).expect("1% taker fee");
     let taker = f.funded_depositor(0, 200_000);
-    assert_eq!(f.market_header().accrued_base_fee.get(), 0, "clean slate");
+    assert_eq!(
+        f.market_header().accrued_base_fee_atoms.get(),
+        0,
+        "clean slate"
+    );
 
     f.swap(&taker, 0, 100_000, Price::INFINITY.as_u32(), u64::MAX)
         .expect("soft-revert swap should still succeed");
 
     let h = f.market_header();
-    assert_eq!(h.accrued_base_fee.get(), 0, "base accrual unwound");
-    assert_eq!(h.accrued_quote_fee.get(), 0, "quote accrual untouched");
+    assert_eq!(h.accrued_base_fee_atoms.get(), 0, "base accrual unwound");
+    assert_eq!(
+        h.accrued_quote_fee_atoms.get(),
+        0,
+        "quote accrual untouched"
+    );
     let v = f.vault(0);
     assert_eq!(v.base_atoms.get(), SEED_BASE, "vault base restored");
     assert_eq!(f.token_balance(&f.base_treasury), v.base_atoms.get());
@@ -371,8 +385,8 @@ fn nonce_overflow_hard_reverts_and_errors() {
     // Treasury invariant intact across the failed swap — and no fee
     // accrued, since the hard revert unwinds the accumulators too.
     let h = f.market_header();
-    assert_eq!(h.accrued_base_fee.get(), 0);
-    assert_eq!(h.accrued_quote_fee.get(), 0);
+    assert_eq!(h.accrued_base_fee_atoms.get(), 0);
+    assert_eq!(h.accrued_quote_fee_atoms.get(), 0);
     assert_eq!(f.token_balance(&f.base_treasury), v.base_atoms.get());
     assert_eq!(f.token_balance(&f.quote_treasury), v.quote_atoms.get());
 }
@@ -397,7 +411,7 @@ fn taker_fee_accrues_to_the_market_not_the_vault() {
         (
             f.token_balance(&f.base_ata(&taker.pubkey())),
             v.base_atoms.get(),
-            h.accrued_base_fee.get(),
+            h.accrued_base_fee_atoms.get(),
             f.token_balance(&f.base_treasury),
         )
     };
@@ -422,6 +436,83 @@ fn taker_fee_accrues_to_the_market_not_the_vault() {
     // treasury, claimed by the accumulator rather than by the vault.
     assert_eq!(no_fee_treasury, no_fee_vault_base + no_fee_accrued);
     assert_eq!(treasury, fee_vault_base + accrued);
+}
+
+#[test]
+fn sell_side_accrues_the_quote_leg() {
+    // The accrual's leg-select is a hand-duplicated `if is_ask_side`, so
+    // the Sell branch needs its own witness: every other fee'd swap in the
+    // suite is a Buy, which would leave a base/quote mix-up in the `else`
+    // arm completely uncovered.
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+    let admin = f.authority.insecure_clone();
+    f.set_taker_fee(&admin, 10_000).expect("1% taker fee");
+    let taker = f.funded_depositor(100_000, 0);
+
+    f.swap(&taker, 1, 100_000, Price::ZERO.as_u32(), 1)
+        .expect("fee'd sell");
+
+    let h = f.market_header();
+    let v = f.vault(0);
+    assert!(
+        h.accrued_quote_fee_atoms.get() > 0,
+        "a Sell pays out quote, so the fee accrues on the quote leg"
+    );
+    assert_eq!(
+        h.accrued_base_fee_atoms.get(),
+        0,
+        "the base leg accrues nothing on a Sell"
+    );
+    // Custody invariant on both legs: the quote treasury carries the
+    // accrued term, the base treasury (credited the taker's input) does not.
+    assert_eq!(
+        f.token_balance(&f.quote_treasury),
+        v.quote_atoms.get() + h.accrued_quote_fee_atoms.get()
+    );
+    assert_eq!(f.token_balance(&f.base_treasury), v.base_atoms.get());
+}
+
+#[test]
+fn multi_leg_accrual_sums_every_leg() {
+    // Accrual is per-leg while the taker is paid once, netted — so the
+    // invariant needs `Σ per-leg fee == total_fee`. A single-vault fill
+    // can't tell an accrual placed once per *swap* from one placed per
+    // *leg*, so drive a spill across both vaults and reconcile the
+    // counter against the per-leg `FillEvent`s.
+    let hi = Price::encode(10_900_000, 0).unwrap().as_u32();
+    let lo = Price::encode(10_800_000, 0).unwrap().as_u32();
+    let mut f = Fixture::seeded_two_vaults(hi, lo);
+    let admin = f.authority.insecure_clone();
+    f.set_taker_fee(&admin, 10_000).expect("1% taker fee");
+
+    // 1_500_000 quote drains the cheaper vault's ask and spills into the
+    // pricier one — the same sizing as `multi_vault_spills_cheaper_then_pricier`.
+    let taker = f.funded_depositor(0, 1_500_000);
+    let meta = f
+        .swap_meta(&taker, 0, 1_500_000, Price::INFINITY.as_u32(), 1)
+        .expect("large fee'd buy spills across both vaults");
+
+    let fills = common::events::fills(&meta);
+    assert!(
+        fills.len() >= 2,
+        "expected a multi-leg fill, got {}",
+        fills.len()
+    );
+    let leg_fees: u64 = fills.iter().map(|e| e.taker_fee_atoms).sum();
+    assert!(leg_fees > 0, "a 1% fee on a spill is a non-zero atom count");
+
+    let h = f.market_header();
+    assert_eq!(
+        h.accrued_base_fee_atoms.get(),
+        leg_fees,
+        "the counter is the sum of every leg's fee, not one leg's"
+    );
+    // Custody invariant across the whole slab, not just one vault.
+    let vault_base = f.vault(0).base_atoms.get() + f.vault(1).base_atoms.get();
+    assert_eq!(
+        f.token_balance(&f.base_treasury),
+        vault_base + h.accrued_base_fee_atoms.get()
+    );
 }
 
 // ── Multi-vault price-time priority + flush / expiry ─────────────────

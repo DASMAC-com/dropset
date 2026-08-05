@@ -3,7 +3,7 @@
 //! depositors nor the protocol's accrued taker fee.
 //!
 //! ```txt
-//! residual = treasury.amount − Σ vault.<leg>_atoms − accrued_<leg>_fee
+//! residual = treasury.amount − Σ vault.<leg>_atoms − accrued_<leg>_fee_atoms
 //! ```
 //!
 //! In normal operation that value is exactly **zero** — the treasury
@@ -52,9 +52,9 @@ pub struct SweepResidual {
     /// the CPI signature fails if a non-matching market is passed.
     #[account()]
     pub market: Market,
-    /// The leg being swept — one of the market's two mints. The handler
-    /// rejects any other mint, which also selects which inventory field
-    /// and which accrued counter the residual is computed against.
+    /// The leg being swept. Must be one of the market's two mints; the
+    /// handler rejects any other. It also selects the leg: which vault
+    /// inventory field is summed, and which accrued counter is subtracted.
     pub mint: InterfaceAccount<Mint>,
     /// Token program owning `mint`.
     pub token_program: Interface<'static, TokenInterface>,
@@ -109,9 +109,9 @@ impl SweepResidual {
             vault_sum = vault_sum.saturating_add(leg as u128);
         }
         let accrued = if is_base {
-            self.market.accrued_base_fee.get()
+            self.market.accrued_base_fee_atoms.get()
         } else {
-            self.market.accrued_quote_fee.get()
+            self.market.accrued_quote_fee_atoms.get()
         };
         let treasury_amount = self.treasury.amount();
         // Saturating on purpose: a Token-2022 mint with a transfer-fee
@@ -123,6 +123,13 @@ impl SweepResidual {
         // can see the shortfall.
         let claimed = vault_sum.saturating_add(accrued as u128);
         let residual = (treasury_amount as u128).saturating_sub(claimed);
+        // Both `u128 → u64` conversions below clamp rather than wrap. This
+        // one can't actually bind (`residual <= treasury_amount`, itself a
+        // `u64`); the `vault_sum` one in the event payload can, if the slab
+        // claims more atoms than a `u64` holds — a state that is already
+        // corrupt, and where a literal `u64::MAX` in the read-out is itself
+        // the alarm. Kept in the same shape so neither reads as the
+        // considered case and the other as an oversight.
         let swept = residual.min(u64::MAX as u128) as u64;
 
         // A zero residual is the healthy case, and `transfer_out_leg`
@@ -147,6 +154,7 @@ impl SweepResidual {
         Ok(SweepResidualEvent {
             market: *self.market.address(),
             mint: mint_addr,
+            destination: *self.destination.address(),
             treasury_amount,
             vault_sum: vault_sum.min(u64::MAX as u128) as u64,
             accrued_fee: accrued,

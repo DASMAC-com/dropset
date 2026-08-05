@@ -508,8 +508,8 @@ impl Swap {
         // makes, so restoring both counters to these values in the shared
         // revert block is the whole accrual unwind: a soft-reverted or
         // nonce-overflowed swap can't leave phantom accrued fees behind.
-        let accrued_base_at_start = self.market.accrued_base_fee.get();
-        let accrued_quote_at_start = self.market.accrued_quote_fee.get();
+        let accrued_base_at_start = self.market.accrued_base_fee_atoms.get();
+        let accrued_quote_at_start = self.market.accrued_quote_fee_atoms.get();
         // Set if a per-leg `market.nonce` bump would overflow `u64`.
         // Practically unreachable (the spec sizes `nonce` to never wrap
         // over a market's lifetime), but we reject it as a hard error —
@@ -569,9 +569,7 @@ impl Swap {
             };
 
             // Apply taker fee on the *output* leg (base on a Buy, quote
-            // on a Sell). It stays in the treasury and is accrued to the
-            // market as protocol revenue — not retained by the matched
-            // vault (see the inventory write below).
+            // on a Sell). Where it lands is the inventory write below.
             let fee = taker_fee_atoms(
                 side.output_atoms(fill_base, fill_quote),
                 taker_fee_ppm as u128,
@@ -612,7 +610,7 @@ impl Swap {
             // and, through `L = isqrt(base · quote)`, read as leader edge
             // the next `Realize` pays a performance fee on. That makes
             // the treasury-vs-vault invariant `treasury.amount == Σ
-            // vault.<leg>_atoms + accrued_<leg>_fee` per leg: the
+            // vault.<leg>_atoms + accrued_<leg>_fee_atoms` per leg: the
             // treasury sends the taker `output - fee` while the vault
             // gives up `output`. The level's remaining size shrinks by
             // the gross output fill, since the fee slice was still
@@ -652,11 +650,11 @@ impl Swap {
             // unreachable-by-construction: the counter is bounded by the
             // treasury balance, itself a `u64` token amount.
             if is_ask_side {
-                let accrued = self.market.accrued_base_fee.get();
-                self.market.accrued_base_fee = accrued.saturating_add(fee_u64).into();
+                let accrued = self.market.accrued_base_fee_atoms.get();
+                self.market.accrued_base_fee_atoms = accrued.saturating_add(fee_u64).into();
             } else {
-                let accrued = self.market.accrued_quote_fee.get();
-                self.market.accrued_quote_fee = accrued.saturating_add(fee_u64).into();
+                let accrued = self.market.accrued_quote_fee_atoms.get();
+                self.market.accrued_quote_fee_atoms = accrued.saturating_add(fee_u64).into();
             }
 
             // Bump market.nonce per leg (header borrow after the tail
@@ -743,8 +741,8 @@ impl Swap {
             // treasury atoms that were never charged, and the residual
             // sweep would read the gap as a bug (or, worse, an admin
             // harvest would have a ceiling above the real revenue).
-            self.market.accrued_base_fee = accrued_base_at_start.into();
-            self.market.accrued_quote_fee = accrued_quote_at_start.into();
+            self.market.accrued_base_fee_atoms = accrued_base_at_start.into();
+            self.market.accrued_quote_fee_atoms = accrued_quote_at_start.into();
             // A nonce overflow is a hard error, not a soft revert: the
             // state is fully restored above, but the swap could not be
             // applied, so surface it like the quote paths do rather
@@ -802,8 +800,7 @@ impl Swap {
             }
         }
         // Output leg: treasury → taker, signed by market PDA. Net
-        // amount = total_out − fee, the fee staying in the treasury as
-        // accrued protocol revenue.
+        // amount = total_out − fee.
         let net_out = taker_out_atoms.saturating_sub(total_fee as u64);
         if net_out > 0 {
             match side {

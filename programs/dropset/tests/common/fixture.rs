@@ -880,7 +880,7 @@ impl Fixture {
     }
 
     /// `sweep_residual` — admin sweeps one leg's treasury residual
-    /// (`treasury.amount − Σ vault.<leg>_atoms − accrued_<leg>_fee`) into
+    /// (`treasury.amount − Σ vault.<leg>_atoms − accrued_<leg>_fee_atoms`) into
     /// `destination`. `mint` selects the leg; `treasury` is that leg's
     /// treasury ATA.
     pub fn sweep_residual(

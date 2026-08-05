@@ -51,9 +51,9 @@ registry?: Address<TAccountRegistry>;
  */
 market: Address<TAccountMarket>;
 /**
- * The leg being swept — one of the market's two mints. The handler
- * rejects any other mint, which also selects which inventory field
- * and which accrued counter the residual is computed against.
+ * The leg being swept. Must be one of the market's two mints; the
+ * handler rejects any other. It also selects the leg: which vault
+ * inventory field is summed, and which accrued counter is subtracted.
  */
 mint: Address<TAccountMint>;
 /** Token program owning `mint`. */
@@ -120,9 +120,9 @@ registry: Address<TAccountRegistry>;
  */
 market: Address<TAccountMarket>;
 /**
- * The leg being swept — one of the market's two mints. The handler
- * rejects any other mint, which also selects which inventory field
- * and which accrued counter the residual is computed against.
+ * The leg being swept. Must be one of the market's two mints; the
+ * handler rejects any other. It also selects the leg: which vault
+ * inventory field is summed, and which accrued counter is subtracted.
  */
 mint: Address<TAccountMint>;
 /** Token program owning `mint`. */
@@ -184,9 +184,9 @@ registry: TAccountMetas[1];
  */
 market: TAccountMetas[2];
 /**
- * The leg being swept — one of the market's two mints. The handler
- * rejects any other mint, which also selects which inventory field
- * and which accrued counter the residual is computed against.
+ * The leg being swept. Must be one of the market's two mints; the
+ * handler rejects any other. It also selects the leg: which vault
+ * inventory field is summed, and which accrued counter is subtracted.
  */
 mint: TAccountMetas[3];
 /** Token program owning `mint`. */

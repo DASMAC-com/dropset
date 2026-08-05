@@ -77,13 +77,13 @@ pub struct MarketHeader {
     /// These atoms sit physically in the treasury but belong to the
     /// protocol, not to the vaults' depositors — the treasury custody
     /// invariant is
-    /// `base_treasury.amount == Σ vault.base_atoms + accrued_base_fee`.
+    /// `base_treasury.amount == Σ vault.base_atoms + accrued_base_fee_atoms`.
     /// Authoritative: nothing infers protocol revenue from a residual, so
     /// a treasury balance above the sum of the two is a bug alarm rather
     /// than income (see `sweep_residual`).
-    pub accrued_base_fee: u64,
-    /// Same as `accrued_base_fee`, for the quote leg (a taker `Sell`).
-    pub accrued_quote_fee: u64,
+    pub accrued_base_fee_atoms: u64,
+    /// Same as `accrued_base_fee_atoms`, for the quote leg (a taker `Sell`).
+    pub accrued_quote_fee_atoms: u64,
     /// Market PDA bump.
     pub bump: u8,
 }

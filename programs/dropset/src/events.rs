@@ -107,11 +107,16 @@ pub struct SweepResidualEvent {
     pub market: Address,
     /// Leg swept — one of the market's two mints.
     pub mint: Address,
+    /// Token account the residual was paid to. Recorded because it is the
+    /// one account the caller chooses freely — every other account on the
+    /// instruction is pinned by a constraint — so it is the one term of
+    /// the read-out an account diff can't attribute on its own.
+    pub destination: Address,
     /// `treasury.amount` read before the transfer.
     pub treasury_amount: u64,
     /// `Σ vault.<leg>_atoms` over every sector in the slab.
     pub vault_sum: u64,
-    /// The leg's `accrued_<leg>_fee` counter — subtracted, never touched.
+    /// The leg's accrued counter — subtracted, never touched.
     pub accrued_fee: u64,
     /// Atoms transferred out: `treasury_amount − vault_sum − accrued_fee`,
     /// saturating at zero.

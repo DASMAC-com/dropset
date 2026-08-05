@@ -11,11 +11,18 @@ import { combineCodec, getAddressDecoder, getAddressEncoder, getStructDecoder, g
 export type SweepResidualEvent = { market: Address; 
 /** Leg swept — one of the market's two mints. */
 mint: Address; 
+/**
+ * Token account the residual was paid to. Recorded because it is the
+ * one account the caller chooses freely — every other account on the
+ * instruction is pinned by a constraint — so it is the one term of
+ * the read-out an account diff can't attribute on its own.
+ */
+destination: Address; 
 /** `treasury.amount` read before the transfer. */
 treasuryAmount: bigint; 
 /** `Σ vault.<leg>_atoms` over every sector in the slab. */
 vaultSum: bigint; 
-/** The leg's `accrued_<leg>_fee` counter — subtracted, never touched. */
+/** The leg's accrued counter — subtracted, never touched. */
 accruedFee: bigint; 
 /**
  * Atoms transferred out: `treasury_amount − vault_sum − accrued_fee`,
@@ -26,11 +33,18 @@ swept: bigint;  };
 export type SweepResidualEventArgs = { market: Address; 
 /** Leg swept — one of the market's two mints. */
 mint: Address; 
+/**
+ * Token account the residual was paid to. Recorded because it is the
+ * one account the caller chooses freely — every other account on the
+ * instruction is pinned by a constraint — so it is the one term of
+ * the read-out an account diff can't attribute on its own.
+ */
+destination: Address; 
 /** `treasury.amount` read before the transfer. */
 treasuryAmount: number | bigint; 
 /** `Σ vault.<leg>_atoms` over every sector in the slab. */
 vaultSum: number | bigint; 
-/** The leg's `accrued_<leg>_fee` counter — subtracted, never touched. */
+/** The leg's accrued counter — subtracted, never touched. */
 accruedFee: number | bigint; 
 /**
  * Atoms transferred out: `treasury_amount − vault_sum − accrued_fee`,
@@ -39,11 +53,11 @@ accruedFee: number | bigint;
 swept: number | bigint;  };
 
 export function getSweepResidualEventEncoder(): FixedSizeEncoder<SweepResidualEventArgs> {
-    return getStructEncoder([['market', getAddressEncoder()], ['mint', getAddressEncoder()], ['treasuryAmount', getU64Encoder()], ['vaultSum', getU64Encoder()], ['accruedFee', getU64Encoder()], ['swept', getU64Encoder()]]);
+    return getStructEncoder([['market', getAddressEncoder()], ['mint', getAddressEncoder()], ['destination', getAddressEncoder()], ['treasuryAmount', getU64Encoder()], ['vaultSum', getU64Encoder()], ['accruedFee', getU64Encoder()], ['swept', getU64Encoder()]]);
 }
 
 export function getSweepResidualEventDecoder(): FixedSizeDecoder<SweepResidualEvent> {
-    return getStructDecoder([['market', getAddressDecoder()], ['mint', getAddressDecoder()], ['treasuryAmount', getU64Decoder()], ['vaultSum', getU64Decoder()], ['accruedFee', getU64Decoder()], ['swept', getU64Decoder()]]);
+    return getStructDecoder([['market', getAddressDecoder()], ['mint', getAddressDecoder()], ['destination', getAddressDecoder()], ['treasuryAmount', getU64Decoder()], ['vaultSum', getU64Decoder()], ['accruedFee', getU64Decoder()], ['swept', getU64Decoder()]]);
 }
 
 export function getSweepResidualEventCodec(): FixedSizeCodec<SweepResidualEventArgs, SweepResidualEvent> {

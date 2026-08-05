@@ -187,8 +187,9 @@ mints, and the two treasury accounts with their PDA bumps. The
 load-bearing invariants and rationale:
 
 - **Treasury custody invariant.**
-  `base_treasury.amount == Σ vault.base_atoms + accrued_base_fee` and
-  `quote_treasury.amount == Σ vault.quote_atoms + accrued_quote_fee`,
+  `base_treasury.amount == Σ vault.base_atoms + accrued_base_fee_atoms`
+  and
+  `quote_treasury.amount == Σ vault.quote_atoms + accrued_quote_fee_atoms`,
   summed across **every** vault on the market — active **and**
   tombstoned. Each `Deposit`, `Withdraw`, and fill moves atoms between a
   treasury and the caller's ATA while adjusting the matching vault's
@@ -219,11 +220,24 @@ load-bearing invariants and rationale:
   `default_min_leader_share` is stamped into each `Vault.min_leader_share`
   at `CreateVault`; mutating it affects only vaults opened afterward (see
   **Vault → Skin-in-the-game floor**).
-- **Accrued protocol revenue.** `accrued_base_fee` / `accrued_quote_fee`
-  are the running totals of taker fee charged on each leg. They are
+- **Accrued protocol revenue.** `accrued_base_fee_atoms` /
+  `accrued_quote_fee_atoms` are the running totals of taker fee charged on
+  each leg — the summed `FillEvent.taker_fee_atoms`, hence the unit
+  suffix (`taker_fee`, by contrast, is a **rate**). They are
   **authoritative**, not derived: nothing infers revenue from the gap
-  between the treasury and the vault sum, which is what keeps that gap an
+  between the treasury and the vault sum, which is what keeps that gap a
   checkable invariant instead of a tautology (see **Fee model**).
+- **Layout changes need the markets recreated.** These two counters grew
+  the header by 16 bytes, shifting every sector offset — and the header
+  size is hardcoded by the quote-write kernels, the sBPF entrypoint, and
+  the SDK mirrors. An account written by an earlier build still carries the
+  same (per-type) `#[account]` discriminator, so it would pass every check
+  and then be **decoded wrongly, silently**. There is no version byte to
+  branch on, so any
+  future header-size change means recreating each market rather than
+  migrating it; that is free today because no live market exists (the first
+  mainnet deploy and fill are both still pending), which is why the
+  counters were added now rather than later.
 
 Every quote a vault produces is identified by `MarketHeader.nonce`
 at the moment of stamping — a global counter incremented on every
@@ -261,7 +275,7 @@ already physically in the treasury and never move on a fill. What the
 accrued counters record is **who has a claim on them**:
 
 ```txt
-treasury.amount == Σ vault.<leg>_atoms + accrued_<leg>_fee
+treasury.amount == Σ vault.<leg>_atoms + accrued_<leg>_fee_atoms
         ^^^^^^^          ^^^^^^^^^^^^^^^^   ^^^^^^^^^^^^^^^^
         custody          depositor claim     protocol claim
 ```
@@ -294,7 +308,7 @@ exists).
 `SweepResidual` (admin-only) pays out the **residual**:
 
 ```txt
-residual = treasury.amount − Σ vault.<leg>_atoms − accrued_<leg>_fee
+residual = treasury.amount − Σ vault.<leg>_atoms − accrued_<leg>_fee_atoms
 ```
 
 In normal operation that is exactly **zero**, which makes the
@@ -1654,7 +1668,7 @@ Admin-only, always on (**not** teardown-gated: an unsolicited transfer can
 strand atoms on a live market). Takes no arguments; the accounts are the
 admin, the registry, the market, one leg's `mint` + owning token program,
 that leg's treasury ATA, and a destination token account. It transfers out
-`treasury.amount − Σ vault.<leg>_atoms − accrued_<leg>_fee`, saturating at
+`treasury.amount − Σ vault.<leg>_atoms − accrued_<leg>_fee_atoms`, saturating at
 zero, and emits `SweepResidualEvent` with all three terms even when it
 sweeps nothing.
 
@@ -1933,7 +1947,7 @@ On every taker instruction:
    a zero fill; the loop moves on.) Decrement the taker's unfilled
    amount, decrement the level's `Vault.remaining.<side>[i].size` by
    the fill, and add the taker fee (from `market.taker_fee`) to the
-   output leg's `accrued_<leg>_fee` on the header — see **MarketHeader →
+   output leg's `accrued_<leg>_fee_atoms` on the header — see **MarketHeader →
    Fee model**. Because the `Vec`
    is sorted best-price-first, the first entry whose price crosses the
    taker's limit lets the walk `break` immediately — every later entry
@@ -1942,7 +1956,7 @@ On every taker instruction:
 
 1. **Tear down.** The `Vec` buffer is freed with the transaction;
    debited inventory, `Vault.remaining.size` decrements, the cleared
-   `FLUSH_BIT` on any flushed vault, the `accrued_<leg>_fee` increments,
+   `FLUSH_BIT` on any flushed vault, the `accrued_<leg>_fee_atoms` increments,
    and `market.nonce` persist to
    chain. Takers bump `market.nonce` per fill but never touch
    `reference_price.stamp` beyond clearing `FLUSH_BIT`, and never
@@ -2002,7 +2016,7 @@ leader-vs-leader pre-pass.
 The take instruction accepts a `min_out: u64` for SDK
 composability. The matcher snapshots every touched sector's
 inventory + per-level `remaining.size` + `market.nonce` + both
-`accrued_<leg>_fee` counters before
+`accrued_<leg>_fee_atoms` counters before
 mutating, runs the full fill loop, then checks whether the
 achievable net output (after taker fee) meets `min_out`. On
 failure the snapshots are walked in reverse to restore exact
@@ -2313,13 +2327,13 @@ Per market, in order:
    sector reclaims to the free DLL — but that is just an in-slab
    pointer move, not a separate rent refund. After this step the
    treasury invariants in **MarketHeader** guarantee
-   `base_treasury.amount == accrued_base_fee` and
-   `quote_treasury.amount == accrued_quote_fee` — zero on a market that
+   `base_treasury.amount == accrued_base_fee_atoms` and
+   `quote_treasury.amount == accrued_quote_fee_atoms` — zero on a market that
    never charged a taker fee.
 1. **Close both treasuries.** `close_market_treasury` for the
    base leg, again for the quote leg. **Known limitation:** each
    requires its treasury drained to zero, so a market with a non-zero
-   `accrued_<leg>_fee` cannot be closed until the accrued revenue can
+   `accrued_<leg>_fee_atoms` cannot be closed until the accrued revenue can
    leave the treasury — and the harvest instruction is deliberately
    deferred (see **MarketHeader → Fee model**). `SweepResidual` does
    *not* unblock this: it subtracts the accrued counter rather than

@@ -39,7 +39,9 @@ pub struct Quote {
     /// Net output atoms delivered to the taker after the taker fee (base
     /// for Buy, quote for Sell).
     pub out_amount: u64,
-    /// Taker fee retained in the matched vaults (output-leg atoms).
+    /// Taker fee charged on this take (output-leg atoms). Accrued to the
+    /// market as protocol revenue — **not** retained by the matched
+    /// vaults, whose inventory is debited the gross output.
     pub fee_amount: u64,
     /// Number of `(vault, level)` legs that filled.
     pub legs: u32,
@@ -194,7 +196,7 @@ pub fn simulate_swap(
         // Decrement simulated vault inventory + this level's allowance,
         // mirroring the on-chain per-leg mutation: the vault gives up the
         // **gross** output leg (the fee slice is booked to the market's
-        // `accrued_<leg>_fee`, not retained by the vault), so a
+        // `accrued_<leg>_fee_atoms`, not retained by the vault), so a
         // multi-level fill against one vault runs out of inventory at
         // exactly the point the engine does.
         let entry = inv.get_mut(&lvl.sector).unwrap();

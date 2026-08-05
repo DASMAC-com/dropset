@@ -244,6 +244,7 @@ pub fn set_taker_fee(meta: &TransactionMetadata) -> SetTakerFee {
 pub struct SweepResidual {
     pub market: [u8; 32],
     pub mint: [u8; 32],
+    pub destination: [u8; 32],
     pub treasury_amount: u64,
     pub vault_sum: u64,
     pub accrued_fee: u64,
@@ -256,6 +257,7 @@ pub fn sweep_residual(meta: &TransactionMetadata) -> SweepResidual {
     let d = SweepResidual {
         market: c.pubkey(),
         mint: c.pubkey(),
+        destination: c.pubkey(),
         treasury_amount: c.u64(),
         vault_sum: c.u64(),
         accrued_fee: c.u64(),

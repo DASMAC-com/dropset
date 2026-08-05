@@ -1,9 +1,10 @@
+// cspell:word sweepable
 //! `sweep_residual` integration tests — the admin recovery path for a
 //! treasury balance that neither the vaults' depositors nor the accrued
 //! protocol fee has a claim on.
 //!
 //! The invariant under test throughout is
-//! `treasury.amount == Σ vault.<leg>_atoms + accrued_<leg>_fee`, so the
+//! `treasury.amount == Σ vault.<leg>_atoms + accrued_<leg>_fee_atoms`, so the
 //! residual the instruction pays out is zero on every honest path. The two
 //! interesting cases are therefore an **unsolicited transfer** straight to
 //! the treasury ATA (recovered) and a **fee'd swap** (accrued revenue,
@@ -42,6 +43,7 @@ fn zero_residual_sweeps_nothing_and_reads_out_the_invariant() {
     let ev = common::events::sweep_residual(&meta);
     assert_eq!(ev.market, f.market.to_bytes());
     assert_eq!(ev.mint, base_mint.to_bytes());
+    assert_eq!(ev.destination, dest.to_bytes());
     assert_eq!(ev.treasury_amount, SEED_BASE);
     assert_eq!(ev.vault_sum, SEED_BASE);
     assert_eq!(ev.accrued_fee, 0);
@@ -99,7 +101,7 @@ fn accrued_taker_fee_is_not_swept() {
     f.swap(&taker, 0, 100_000, Price::INFINITY.as_u32(), 1)
         .expect("fee'd buy");
 
-    let accrued = f.market_header().accrued_base_fee.get();
+    let accrued = f.market_header().accrued_base_fee_atoms.get();
     assert!(accrued > 0, "the buy accrued a base-leg protocol fee");
 
     // The fee is real revenue sitting in the treasury — the sweep must
@@ -122,10 +124,84 @@ fn accrued_taker_fee_is_not_swept() {
     assert_eq!(ev.swept, 0, "accrued revenue is not a residual");
     assert_eq!(f.token_balance(&dest), taker_base, "nothing paid out");
     assert_eq!(
-        f.market_header().accrued_base_fee.get(),
+        f.market_header().accrued_base_fee_atoms.get(),
         accrued,
         "the counter is subtracted, never touched"
     );
+}
+
+/// The handler's leg select (`is_base`) is a second hand-duplicated
+/// `if/else` over the same pair of fields the matcher's accrual selects, so
+/// the quote arm needs its own witness — every other test here sweeps the
+/// base leg, which would leave a base/quote mix-up in the `else` branch
+/// entirely uncovered.
+#[test]
+fn quote_leg_sweeps_its_own_treasury() {
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+    let admin = f.authority.insecure_clone();
+    let recipient = f.funded_depositor(0, 0);
+    let dest = f.quote_ata(&recipient.pubkey());
+
+    let quote_mint = f.quote_mint;
+    let quote_treasury = f.quote_treasury;
+    f.donate(&quote_mint, &quote_treasury, 4_242);
+
+    let meta = f
+        .sweep_residual_meta(&admin, &quote_mint, &quote_treasury, &dest)
+        .expect("sweep recovers the quote-leg donation");
+
+    let ev = common::events::sweep_residual(&meta);
+    assert_eq!(ev.mint, quote_mint.to_bytes());
+    assert_eq!(ev.destination, dest.to_bytes());
+    // Measured against the *quote* inventory, not the base leg.
+    assert_eq!(ev.vault_sum, SEED_QUOTE);
+    assert_eq!(ev.treasury_amount, SEED_QUOTE + 4_242);
+    assert_eq!(ev.swept, 4_242);
+    assert_eq!(f.token_balance(&dest), 4_242);
+    assert_eq!(f.token_balance(&quote_treasury), SEED_QUOTE);
+    // The base leg is untouched by a quote-leg sweep.
+    assert_eq!(f.token_balance(&f.base_treasury), SEED_BASE);
+}
+
+/// A tombstoned vault still holds depositor claims, which is why the sum
+/// runs over the whole slab rather than the active DLL. Pin it: if that walk
+/// were ever "optimized" to the active list, a tombstoned vault's inventory
+/// would drop out of `vault_sum` and the sweep would pay depositor principal
+/// out to the admin's destination — value loss, not a wrong read-out.
+#[test]
+fn tombstoned_vault_inventory_is_not_sweepable() {
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+    let admin = f.authority.insecure_clone();
+    let leader = f.authority.insecure_clone();
+    let recipient = f.funded_depositor(0, 0);
+    let dest = f.base_ata(&recipient.pubkey());
+
+    // Leader tombstones the vault; its inventory stays put (depositor flows
+    // remain open until it drains), so it leaves the active DLL while still
+    // holding every atom in the treasury.
+    f.close_vault(&leader, 0)
+        .expect("leader tombstones the vault");
+    assert_eq!(f.vault(0).base_atoms.get(), SEED_BASE, "inventory retained");
+    assert_eq!(
+        f.market_header().active_count.get(),
+        0,
+        "off the active DLL"
+    );
+
+    let base_mint = f.base_mint;
+    let base_treasury = f.base_treasury;
+    let meta = f
+        .sweep_residual_meta(&admin, &base_mint, &base_treasury, &dest)
+        .expect("sweep against a tombstoned-only slab");
+
+    let ev = common::events::sweep_residual(&meta);
+    assert_eq!(
+        ev.vault_sum, SEED_BASE,
+        "the tombstoned sector's inventory is still counted as claimed"
+    );
+    assert_eq!(ev.swept, 0, "nothing is sweepable");
+    assert_eq!(f.token_balance(&dest), 0, "no depositor principal paid out");
+    assert_eq!(f.token_balance(&base_treasury), SEED_BASE);
 }
 
 #[test]

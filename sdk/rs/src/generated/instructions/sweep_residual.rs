@@ -26,9 +26,9 @@ pub struct SweepResidual {
     /// constraint on `treasury` already binds the ATA to this market, and
     /// the CPI signature fails if a non-matching market is passed.
     pub market: solana_pubkey::Pubkey,
-    /// The leg being swept — one of the market's two mints. The handler
-    /// rejects any other mint, which also selects which inventory field
-    /// and which accrued counter the residual is computed against.
+    /// The leg being swept. Must be one of the market's two mints; the
+    /// handler rejects any other. It also selects the leg: which vault
+    /// inventory field is summed, and which accrued counter is subtracted.
     pub mint: solana_pubkey::Pubkey,
     /// Token program owning `mint`.
     pub token_program: solana_pubkey::Pubkey,
@@ -182,9 +182,9 @@ impl SweepResidualBuilder {
         self.market = Some(market);
         self
     }
-    /// The leg being swept — one of the market's two mints. The handler
-    /// rejects any other mint, which also selects which inventory field
-    /// and which accrued counter the residual is computed against.
+    /// The leg being swept. Must be one of the market's two mints; the
+    /// handler rejects any other. It also selects the leg: which vault
+    /// inventory field is summed, and which accrued counter is subtracted.
     #[inline(always)]
     pub fn mint(&mut self, mint: solana_pubkey::Pubkey) -> &mut Self {
         self.mint = Some(mint);
@@ -278,9 +278,9 @@ pub struct SweepResidualCpiAccounts<'a, 'b> {
     /// constraint on `treasury` already binds the ATA to this market, and
     /// the CPI signature fails if a non-matching market is passed.
     pub market: &'b solana_account_info::AccountInfo<'a>,
-    /// The leg being swept — one of the market's two mints. The handler
-    /// rejects any other mint, which also selects which inventory field
-    /// and which accrued counter the residual is computed against.
+    /// The leg being swept. Must be one of the market's two mints; the
+    /// handler rejects any other. It also selects the leg: which vault
+    /// inventory field is summed, and which accrued counter is subtracted.
     pub mint: &'b solana_account_info::AccountInfo<'a>,
     /// Token program owning `mint`.
     pub token_program: &'b solana_account_info::AccountInfo<'a>,
@@ -318,9 +318,9 @@ pub struct SweepResidualCpi<'a, 'b> {
     /// constraint on `treasury` already binds the ATA to this market, and
     /// the CPI signature fails if a non-matching market is passed.
     pub market: &'b solana_account_info::AccountInfo<'a>,
-    /// The leg being swept — one of the market's two mints. The handler
-    /// rejects any other mint, which also selects which inventory field
-    /// and which accrued counter the residual is computed against.
+    /// The leg being swept. Must be one of the market's two mints; the
+    /// handler rejects any other. It also selects the leg: which vault
+    /// inventory field is summed, and which accrued counter is subtracted.
     pub mint: &'b solana_account_info::AccountInfo<'a>,
     /// Token program owning `mint`.
     pub token_program: &'b solana_account_info::AccountInfo<'a>,
@@ -516,9 +516,9 @@ impl<'a, 'b> SweepResidualCpiBuilder<'a, 'b> {
         self.instruction.market = Some(market);
         self
     }
-    /// The leg being swept — one of the market's two mints. The handler
-    /// rejects any other mint, which also selects which inventory field
-    /// and which accrued counter the residual is computed against.
+    /// The leg being swept. Must be one of the market's two mints; the
+    /// handler rejects any other. It also selects the leg: which vault
+    /// inventory field is summed, and which accrued counter is subtracted.
     #[inline(always)]
     pub fn mint(&mut self, mint: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
         self.instruction.mint = Some(mint);
