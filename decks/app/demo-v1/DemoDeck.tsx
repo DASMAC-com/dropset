@@ -141,12 +141,25 @@ const Statement = ({
   children,
   fontSize = "76px",
   maxWidth = "1540px",
+  nowrap = false,
 }: {
   children: React.ReactNode;
   fontSize?: string;
   maxWidth?: string;
+  nowrap?: boolean;
 }) => (
-  <Heading fontSize={fontSize} margin="0" maxWidth={maxWidth}>
+  <Heading
+    fontSize={fontSize}
+    margin="0"
+    maxWidth={maxWidth}
+    // `nowrap` is the guarantee, where `maxWidth` is only an estimate. Text
+    // metrics are what kept breaking these pages: a heading judged to fit one
+    // line took two, the page grew by its own line-height, and the overflow
+    // clipped the eyebrow off the top. On a page with no height to spare, say
+    // "this cannot wrap" and let it be checked at render rather than guessed at
+    // authoring time.
+    style={nowrap ? { whiteSpace: "nowrap" } : undefined}
+  >
     {children}
   </Heading>
 );
@@ -276,7 +289,12 @@ const Screenshot = ({
       padding="14px 18px"
       backgroundColor={colors.muted}
     >
-      <Image src={src} width={width} alt={alt} />
+      {/* `display: block` matters: Spectacle's `Image` is a bare styled `img`,
+          so it is inline by default and sits on a text baseline — which leaves
+          a few units of descender space under every capture and makes each
+          frame slightly taller than the image inside it. On pages fighting for
+          height that error compounds across three captures. */}
+      <Image src={src} width={width} alt={alt} style={{ display: "block" }} />
     </Box>
     {source ? (
       <Link href={`https://${source}`} fontSize="24px" margin="10px 0 0 0">
@@ -332,7 +350,8 @@ const Step = ({
   width,
   alt,
 }: {
-  step: number;
+  /** Omit to label a stage that isn't a numbered user action — see page 6. */
+  step?: number;
   label: string;
   src: string;
   width: number;
@@ -352,7 +371,7 @@ const Step = ({
         marginBottom: "16px",
       }}
     >
-      <span style={{ color: colors.accent }}>{step}. </span>
+      {step ? <span style={{ color: colors.accent }}>{step}. </span> : null}
       {label}
     </div>
     <Box
@@ -361,7 +380,12 @@ const Step = ({
       padding="12px 14px"
       backgroundColor={colors.muted}
     >
-      <Image src={src} width={width - 28} alt={alt} />
+      <Image
+        src={src}
+        width={width - 28}
+        alt={alt}
+        style={{ display: "block" }}
+      />
     </Box>
   </Box>
 );
@@ -854,10 +878,10 @@ export default function DemoDeck() {
       <Slide>
         <SlideBody>
           <Eyebrow>Live today</Eyebrow>
-          {/* Widened measure so this stays on **one** line. It is the cheapest
-              72 units on the page, and the captures need every one of them —
-              see `STEP_WIDTH`. */}
-          <Statement fontSize="60px" maxWidth="1700px">
+          {/* One line, enforced rather than estimated. It is the cheapest 72
+              units on the page and the captures need every one — see
+              `STEP_WIDTH`. */}
+          <Statement fontSize="60px" nowrap>
             Dropset already processes Solana mainnet FX trades.
           </Statement>
           {/* The swap flow left to right, one step per column — the beat that
@@ -921,14 +945,16 @@ export default function DemoDeck() {
       <Slide>
         <SlideBody>
           <Eyebrow>Currency curation</Eyebrow>
-          <Statement fontSize="56px" maxWidth="1700px">
+          <Statement fontSize="56px" nowrap>
             Dropset curates market data for all Solana-based currencies.
           </Statement>
           {/* One capture, as large as the page allows. An earlier version put
-              three tables on this page and none of them could be read. */}
+              three tables on this page and none of them could be read. 1100 is
+              the cap, not a preference: at 1150 this page sat ~36 units off
+              overflowing, which is inside the error bar on text metrics. */}
           <Screenshot
             src="/screens/currencies-by-liquidity.png"
-            width={1150}
+            width={1100}
             alt="Every currency on Solana sorted by on-chain liquidity, deepest first, with price, 24h volume, market cap and holders"
             margin="30px 0 0 0"
           />
@@ -946,7 +972,7 @@ export default function DemoDeck() {
       <Slide>
         <SlideBody>
           <Eyebrow>The long tail</Eyebrow>
-          <Statement fontSize="64px">
+          <Statement fontSize="64px" nowrap>
             Many currencies have no liquidity whatsoever.
           </Statement>
           <Screenshot
@@ -975,49 +1001,47 @@ export default function DemoDeck() {
               landing twice on the one page that introduces it. The compute-unit
               numbers live on the capture that shows them rather than being
               restated here. */}
-          {/* Widened measure and a smaller size so this holds to one line. At
-              64px on the default measure it wrapped to two — and possibly three,
-              which tipped the page past the ~910 units a slide has and clipped
-              the eyebrow off the top, exactly as happened on page 3. This page
-              carries the deck's tallest right-hand capture, so it has the least
-              room to spare for a wrapped heading. */}
-          <Statement fontSize="56px" maxWidth="1760px">
-            The eCLOB provides propAMM efficiency and order-book transparency.
+          {/* Pinned to one line by `nowrap`, not by a width estimate. Every
+              earlier attempt at this heading wrapped further than intended, and
+              the page's own overflow then clipped this slide's eyebrow off the
+              top — three review rounds running. Short copy plus `nowrap` ends
+              that: the browser now enforces what the budget assumes. */}
+          <Statement fontSize="56px" nowrap>
+            Dropset ships propAMM efficiency and order-book transparency.
           </Statement>
-          {/* Left column stacks the two proof captures (the maker's own control
-              panel, and what a quote update costs); the right column is the
-              payoff — the same market rendered on the frontend, book and trades
-              tape and a filled order together. */}
+          {/* Left to right as a pipeline, not a stack: what a quote costs, then
+              the maker paying that cost to quote a live market, then the same
+              liquidity arriving on the frontend. It reads low-level → system →
+              product, which is the actual story, and three columns of one
+              capture each are far shorter than two stacked in a column — the
+              headroom that finally puts this page comfortably inside its slide.
+              Captions sit above on a shared baseline, as on page 3, because the
+              three captures are very different heights. */}
           <FlexBox
-            margin="30px 0 0 0"
+            margin="36px 0 0 0"
             justifyContent="center"
             alignItems="flex-start"
           >
-            <Box margin="0 22px 0 0">
-              <Screenshot
-                src="/screens/maker-tui.png"
-                width={380}
-                alt="The maker control panel: seven FX markets and a live book"
-                caption="Demo maker quoting locally"
-                margin="0"
-              />
-              <Screenshot
-                src="/screens/compute-units.png"
-                width={380}
-                alt="Compute units per instruction: a reprice costs 47, a reshape 59"
-                caption="Reprice: 47 CU · reshape: 59 CU"
-                margin="20px 0 0 0"
-              />
-            </Box>
-            <Box margin="0 0 0 22px">
-              <Screenshot
-                src="/screens/eclob-frontend.png"
-                width={500}
-                alt="The eCLOB on the frontend: a EURC/USDC order book, a live trades tape, and a settled order"
-                caption="Liquidity routes to the frontend"
-                margin="0"
-              />
-            </Box>
+            <Step
+              label="Quoting costs 47 CU"
+              src="/screens/compute-units.png"
+              width={500}
+              alt="Compute units per instruction: a reprice costs 47, a reshape 59"
+            />
+            <SequenceArrow />
+            <Step
+              label="Demo maker quoting locally"
+              src="/screens/maker-tui.png"
+              width={500}
+              alt="The maker control panel: seven FX markets and a live book"
+            />
+            <SequenceArrow />
+            <Step
+              label="Liquidity routes to the frontend"
+              src="/screens/eclob-frontend.png"
+              width={500}
+              alt="The eCLOB on the frontend: a EURC/USDC order book, a live trades tape, and a settled order"
+            />
           </FlexBox>
         </SlideBody>
         <Notes>

@@ -65,8 +65,8 @@ pages:
 > data for every Solana-based currency — and when you sort
 > by liquidity, the bottom of that list is currencies with no market
 > whatsoever: the Australian dollar, the Canadian dollar, the yen, the
-> naira, the lira. So we're building the exchange those markets need. The
-> eCLOB provides propAMM efficiency and order-book transparency, where
+> naira, the lira. So we're building the exchange those markets need.
+> Dropset ships propAMM efficiency and order-book transparency, where
 > repricing the whole book costs forty-seven compute units and
 > reshaping the ladder fifty-nine. FX vaults bootstrap a public liquidity
 > flywheel, and it's a two-sided market we're already doing the customer
@@ -218,14 +218,13 @@ pages:
 
 #### Page 6 — The eCLOB · ~18s
 
-- **On-slide:** Eyebrow "The eCLOB", then one sentence: the eCLOB provides
+- **On-slide:** Eyebrow "The eCLOB", then one sentence: Dropset ships
   propAMM efficiency and order-book transparency.
-- **Visual:** Left column stacks the two proof captures — captioned "Demo
-  maker quoting locally", and the compute-unit pane captioned "Reprice: 47
-  CU · reshape: 59 CU". Right column is the payoff: that same liquidity
-  routed through to the frontend, captioned "Liquidity routes to the
-  frontend", showing the order book, the live trades tape and a filled
-  order.
+- **Visual:** Three captures **left to right as a pipeline**, captions
+  above on a shared baseline: "Quoting costs 47 CU" (the compute-unit
+  pane), "Demo maker quoting locally" (the maker's control panel), then
+  "Liquidity routes to the frontend" (the order book, live trades tape and
+  a priced swap on the product itself).
 - **Spoken:** "So we're building the exchange those markets need. Making
   a market onchain used to be prohibitively expensive — gas made
   continuous quoting impossible, so everything before this was a
@@ -234,25 +233,27 @@ pages:
   book with quote updates as cheap as a propAMM. Repricing the whole
   book costs
   forty-seven compute units and reshaping the ladder fifty-nine, on a
-  chain that gives you two hundred thousand per instruction. On the left
-  is our own maker quoting a market locally; on the right that same
-  liquidity routed through to the frontend, with the book, the live
-  trades tape, and a filled order. We're building this out so anyone can
-  quote onchain with a vault-style approach."
-- **Note:** **One sentence, not a statement plus a supporting line.** An
-  intermediate draft led with "we are building an exchange to solve this"
-  and put the design's properties underneath; the segue now lives in the
-  spoken track instead. The sentence **names the eCLOB even though the
-  eyebrow above already does** — the kicker is a small tag and the
-  sentence is the claim, and the name is worth landing twice on the one
-  page that introduces it. The
+  chain that gives you two hundred thousand per instruction. Left to right:
+  that's what a quote costs, that's our own maker paying it to quote a live
+  market, and that's the same liquidity arriving on the frontend with the
+  book, the trades tape and a priced swap. We're building this out so
+  anyone can quote onchain with a vault-style approach."
+- **Note:** **One short sentence, and it must not wrap.** This heading is
+  the page's whole height budget: it went through four drafts, each of
+  which wrapped one line further than intended, and each time the overflow
+  clipped this slide's own eyebrow off the top. The current copy is short
+  enough *and* pinned with `nowrap`, so the browser enforces what the
+  budget assumes rather than the author estimating text metrics. The
   compute-unit numbers live on the capture that shows them rather than
-  being restated on the slide. The pairing of captures is the other point
-  of the page: the demo maker quoting locally on the left, that same liquidity
-  arriving on the frontend on the right. This replaced a strip of four
-  small keyframe thumbnails — one screenshot of the whole thing working
-  says more than four stills of it starting up, and needs no localnet
-  capture session to produce.
+  being restated in the heading.
+- **Note on the pipeline:** left to right is **low-level → system →
+  product**: the cost of a quote, the maker paying that cost, the
+  liquidity showing up on the frontend. Three columns of one capture each
+  is also far shorter than two stacked in a column, which is the change
+  that finally gave this page real headroom. It replaced a strip of four
+  small keyframe thumbnails — one screenshot of the thing working says
+  more than four stills of it starting up, and needs no localnet capture
+  session to produce.
 
 #### Page 7 — How we grow · ~15s
 
@@ -557,6 +558,16 @@ static page** — nothing clipped, no interactive chrome in the output.
 Content that overflows a slide is merely scaled on screen but **silently
 clipped in print**, so a layout change means one pass through print mode
 before it's done.
+
+**If a page's eyebrow looks cut off at the top, the page is overflowing.**
+Slide content is flex-centred in the ~910 units a slide has, so an
+overflow splits between top and bottom and takes the kicker with it —
+which reads as a missing title rather than as too much content. In
+descending order of cheapness, the levers are: pin the heading to one line
+(`nowrap` on `Statement`, worth ~70 units and the usual culprit), shorten
+the heading, lay stacked captures out side by side instead, then shrink the
+captures. Estimating text metrics by eye is what caused every instance of
+this; prefer the constraint the browser enforces.
 
 ### Guidelines — the principles this deck is designed to
 
