@@ -151,6 +151,12 @@ screen is clipped in print, silently.
 1. Create `app/<public-route>/page.tsx` + `<Deck>.tsx` (copy `demo-v1`).
 1. Add an entry to `lib/decks.ts`.
 
+That entry's date is `presented` — **the date the deck is given**, not the
+date it was last edited. It used to be the latter, which meant the landing
+page showed whenever someone last remembered to bump it; an event date is
+fixed, so it needs no upkeep and answers the question a reader actually
+has.
+
 ## Check
 
 ```sh

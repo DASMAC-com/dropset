@@ -55,7 +55,7 @@ export default function Home() {
                   {deck.title}
                 </h2>
                 <time className="shrink-0 font-mono text-xs text-muted-fg">
-                  {deck.updated}
+                  {deck.presented}
                 </time>
               </div>
               <p className="mt-2 text-muted-fg">{deck.subtitle}</p>

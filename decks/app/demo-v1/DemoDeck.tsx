@@ -840,12 +840,12 @@ export default function DemoDeck() {
           <Box margin="0 0 40px 0">
             <Wordmark width={860} />
           </Box>
-          <Statement fontSize="88px">Where currency trades onchain.</Statement>
+          <Statement fontSize="88px">Where currency trades onchain</Statement>
           {/* "Built by DASMAC" is on-slide as well as in the footer: the title
               is where the company/protocol distinction has to land first, and
               the footer credit is too small to carry it alone. */}
           <Text color="quaternary" fontSize="40px" margin="22px 0 0 0">
-            Built by DASMAC.
+            Built by DASMAC
           </Text>
           {/* The company banner, uncaptioned. It's brand art, not a figure —
               a caption explaining what a banner is would undercut it. */}
@@ -868,7 +868,7 @@ export default function DemoDeck() {
         <SlideBody>
           <Eyebrow>The gap</Eyebrow>
           <Statement fontSize="72px">
-            Foreign exchange is the biggest market on earth.
+            Foreign exchange is the biggest market on earth
           </Statement>
           <FlexBox
             margin="44px 0 0 0"
@@ -915,7 +915,7 @@ export default function DemoDeck() {
               units on the page and the captures need every one — see
               `STEP_WIDTH`. */}
           <Statement fontSize="60px" nowrap>
-            Dropset already processes Solana mainnet FX trades.
+            Dropset already processes Solana mainnet FX trades
           </Statement>
           {/* The swap flow left to right, one step per column — the beat that
               used to be the mainnet recording. The three captures are very
