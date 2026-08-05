@@ -2,10 +2,10 @@
 //!
 //! Every tick: keep the taker funded, then advance the stochastic flow one
 //! step and submit the orders it produced. Each order is sized against the
-//! live book — and capped to a fraction of its depth
-//! ([`chain::size_order`]) — and sent as its own `swap`
-//! ([`chain::send_swap`]); a failed or unfillable order is logged and skipped,
-//! and the loop continues — one bad take never stalls the flow.
+//! live book and capped to a fraction of its depth ([`chain::size_order`]),
+//! then sent as its own `swap` ([`chain::send_swap`]); a failed or unfillable
+//! order is logged and skipped, and the loop continues — one bad take never
+//! stalls the flow.
 
 use crate::chain;
 use crate::config::BotConfig;

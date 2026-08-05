@@ -175,11 +175,15 @@ fn dry_run(cfg: &BotConfig, ticks: u32) -> Result<()> {
         // The sizes above are the flow's own draws. A live run additionally
         // clamps each take to a share of the book resting at the time it is
         // sent (`BotConfig::max_depth_fraction`), which no dry run can know —
-        // so say so rather than let the preview read as the final sizes.
-        println!(
-            "  (live takes are additionally capped at {:.0}% of book depth)",
-            100.0 * cfg.max_depth_fraction,
-        );
+        // so say so rather than let the preview read as the final sizes. Stay
+        // quiet when the cap is disabled, where the draws *are* the final
+        // sizes and a "capped at 0%" line would say the opposite.
+        if cfg.max_depth_fraction > 0.0 {
+            println!(
+                "  (live takes are additionally capped at {:.0}% of book depth)",
+                100.0 * cfg.max_depth_fraction,
+            );
+        }
     }
     Ok(())
 }

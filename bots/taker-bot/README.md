@@ -61,15 +61,19 @@ price.
 Depth is measured by running the same `simulate_swap` fill path with an
 unbounded input and reading back what it consumed, so every constraint the
 engine applies is already accounted for: level sizes, the per-side `size_bps`
-cap, level expiry, and each vault's own inventory. (Summing the resting levels
-instead would ignore the inventory cap and over-report depth the engine would
-not fill.)
+gate, level expiry, and — the one that makes this worth a fill rather than a
+book read — each vault's own inventory. `resting_levels` shares the level
+collector, so it sees the first three; it runs no fill, so summing it
+over-reports a drained vault and would size the take against base the vault
+cannot pay out.
 
 Because the cap is relative, a take stays proportional whether the maker is
 quoting $100 or $1M, and shrinks automatically as its inventory drains
 mid-run — no per-market retuning. The cap applies only when converting an
 order into a swap, so it never touches the RNG: a seed still replays the same
-flow, and `--dry-run` remains a faithful preview.
+flow, and `--dry-run` remains a faithful preview **of the order flow**. The
+sizes it prints are the flow's raw draws — a live take may be clamped below
+them, which no dry run can know, so the dry-run summary says so.
 
 ## Self-funding
 

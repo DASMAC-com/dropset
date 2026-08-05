@@ -313,9 +313,11 @@ fn market_reference_price(view: &MarketView<'_>) -> Option<f64> {
 /// Measured by running the *same* fill path the swap will take with an
 /// unbounded input and reporting what it consumed, so every constraint the
 /// engine applies is already folded in: level sizes, the per-side `size_bps`
-/// cap, level expiry, and each vault's own inventory. Summing the resting
-/// levels instead would ignore the inventory cap and over-report depth the
-/// engine won't actually fill.
+/// gate, level expiry, and — the one that makes this worth a fill rather than
+/// a book read — each vault's own inventory. `resting_levels` shares the
+/// level collector, so it sees the first three; it runs no fill, so a sum over
+/// it over-reports a drained vault, sizing the take against base the vault
+/// cannot pay out.
 fn takeable_depth_atoms(
     view: &MarketView<'_>,
     side: SwapSide,
@@ -331,9 +333,10 @@ fn takeable_depth_atoms(
 /// A non-finite or non-positive `fraction` disables the cap, so a mis-set knob
 /// widens takes rather than silently zeroing every one of them; a `fraction`
 /// at or above `1.0` is effectively a no-op, since the fill is depth-bounded
-/// anyway. Whenever there is depth the ceiling stays at least one atom —
-/// flooring it to `0` would turn a very thin book into a stream of skipped
-/// orders instead of dust takes.
+/// anyway. Whenever there is depth the ceiling stays at least one atom, so the
+/// cap itself never zeroes a take on a very thin book; whether that one atom
+/// actually fills is then the fill check's call, not an artifact of rounding
+/// the ceiling down.
 fn depth_cap_atoms(depth_atoms: u64, fraction: f64) -> u64 {
     if !fraction.is_finite() || fraction <= 0.0 {
         return u64::MAX;
@@ -517,9 +520,19 @@ mod tests {
     /// The slot every sizing test prices at — before the fixture's level
     /// expiry, so its levels are live.
     const SLOT: u32 = 10;
-    /// Ample per-leg vault inventory, so the fixture's depth is set by its
-    /// level sizes rather than by the inventory cap.
+    /// Per-leg vault inventory ample enough that a fixture's depth is set by
+    /// its level sizes — unless a test deliberately starves it, which is what
+    /// distinguishes the depth probe from a sum over the resting levels.
     const INVENTORY_ATOMS: u64 = 10_000_000;
+
+    /// The encoded price `1.0 + offset_ppm / 1e6`. `px(0)` is exactly 1.0 —
+    /// the reference every fixture quotes at, so with both legs at the same
+    /// decimals a base atom and a quote atom are interchangeable and the
+    /// arithmetic below reads directly.
+    fn px(offset_ppm: u32) -> Price {
+        // The significand is the price scaled by 10^7, so 1 ppm is 10 units.
+        Price::encode(10_000_000 + 10 * offset_ppm, 0).expect("encodable price")
+    }
 
     /// `MarketAddrs` for the synthetic market — only the decimals matter to
     /// [`size_against_book`]; the addresses are never dereferenced.
@@ -535,14 +548,13 @@ mod tests {
         }
     }
 
-    /// A one-vault market account buffer quoting a single level per side at
-    /// price 1.0: `ask_base` base atoms offered and `bid_quote` quote atoms
-    /// bid. Mirrors the on-chain slab layout (8-byte discriminator, header,
-    /// slab length, then `VAULT_ALIGN`-aligned sectors) the way the SDK's own
-    /// adapter tests do. A zero size leaves that side empty.
-    fn market_bytes(ask_base: u64, bid_quote: u64) -> Vec<u8> {
-        let one = Price::encode(10_000_000, 0).unwrap();
-
+    /// A one-vault market account buffer whose reference price is 1.0, quoting
+    /// the given `asks` and `bids` as `(price, size)` pairs — an ask's size is
+    /// base atoms, a bid's is quote atoms — and holding `inventory_atoms` of
+    /// each leg. Mirrors the on-chain slab layout (8-byte discriminator,
+    /// header, slab length, then `VAULT_ALIGN`-aligned sectors) the way the
+    /// SDK's own adapter tests do. An empty slice leaves that side empty.
+    fn market_bytes(asks: &[(Price, u64)], bids: &[(Price, u64)], inventory_atoms: u64) -> Vec<u8> {
         let mut header = MarketHeader::zeroed();
         header.head = 0u32.into();
         header.active_count = 1u32.into();
@@ -553,16 +565,20 @@ mod tests {
         v.next = NULL_SECTOR.into();
         v.prev = NULL_SECTOR.into();
         v.leader = [9u8; 32]; // non-zero ⇒ active, not on the free list
-        v.reference_price.price = one.as_u32().into();
+        v.reference_price.price = px(0).as_u32().into();
         v.reference_price.stamp = 1u64.into(); // nonce 1, FLUSH_BIT clear ⇒ read `remaining`
-        v.base_atoms = INVENTORY_ATOMS.into();
-        v.quote_atoms = INVENTORY_ATOMS.into();
-        v.remaining.asks[0].price = one.as_u32().into();
-        v.remaining.asks[0].size = ask_base.into();
-        v.remaining.asks[0].expires_at = 1_000u32.into();
-        v.remaining.bids[0].price = one.as_u32().into();
-        v.remaining.bids[0].size = bid_quote.into();
-        v.remaining.bids[0].expires_at = 1_000u32.into();
+        v.base_atoms = inventory_atoms.into();
+        v.quote_atoms = inventory_atoms.into();
+        for (i, &(price, size)) in asks.iter().enumerate() {
+            v.remaining.asks[i].price = price.as_u32().into();
+            v.remaining.asks[i].size = size.into();
+            v.remaining.asks[i].expires_at = 1_000u32.into();
+        }
+        for (i, &(price, size)) in bids.iter().enumerate() {
+            v.remaining.bids[i].price = price.as_u32().into();
+            v.remaining.bids[i].size = size.into();
+            v.remaining.bids[i].expires_at = 1_000u32.into();
+        }
 
         let mut buf = vec![0u8; 8]; // discriminator (unchecked by `load`)
         buf.extend_from_slice(bytemuck::bytes_of(&header));
@@ -574,8 +590,25 @@ mod tests {
         buf
     }
 
-    /// Size `notional` on `side` against a book with `ask_base` / `bid_quote`
-    /// resting, at the default 1% slippage and `fraction` depth cap.
+    /// Size `notional` on `side` against `asks` / `bids` with
+    /// `inventory_atoms` per leg, at the default 1% slippage and `fraction`
+    /// depth cap.
+    fn size_book(
+        side: SwapSide,
+        notional: f64,
+        asks: &[(Price, u64)],
+        bids: &[(Price, u64)],
+        inventory_atoms: u64,
+        fraction: f64,
+    ) -> Option<SizedSwap> {
+        let data = market_bytes(asks, bids, inventory_atoms);
+        let view = MarketView::load(&data).expect("synthetic market decodes");
+        let order = Order { side, notional };
+        size_against_book(&view, &addrs(), &order, 0.01, fraction, SLOT)
+    }
+
+    /// The common case: one level per side at the reference price, with ample
+    /// inventory — `ask_base` base atoms offered, `bid_quote` quote atoms bid.
     fn size(
         side: SwapSide,
         notional: f64,
@@ -583,10 +616,17 @@ mod tests {
         bid_quote: u64,
         fraction: f64,
     ) -> Option<SizedSwap> {
-        let data = market_bytes(ask_base, bid_quote);
-        let view = MarketView::load(&data).expect("synthetic market decodes");
-        let order = Order { side, notional };
-        size_against_book(&view, &addrs(), &order, 0.01, fraction, SLOT)
+        let asks: &[(Price, u64)] = if ask_base == 0 {
+            &[]
+        } else {
+            &[(px(0), ask_base)]
+        };
+        let bids: &[(Price, u64)] = if bid_quote == 0 {
+            &[]
+        } else {
+            &[(px(0), bid_quote)]
+        };
+        size_book(side, notional, asks, bids, INVENTORY_ATOMS, fraction)
     }
 
     /// The cap is a plain fraction of depth, floors at one atom while depth
@@ -624,6 +664,54 @@ mod tests {
         let swap = size(SwapSide::Buy, 0.1, 1_000_000, 0, 0.25).expect("fills");
         assert_eq!(swap.amount_in, 100_000, "the sampled $0.10, unclamped");
         assert!(!swap.depth_capped);
+    }
+
+    /// Depth tracks the vault's **inventory** when that is what binds, not the
+    /// level size the book advertises. This is the case that distinguishes
+    /// measuring depth by an unbounded fill from summing the resting levels:
+    /// the level offers a full $1.00, but the vault holds only $0.40 of base to
+    /// pay out, so a resting-levels sum would over-report by 2.5× and size the
+    /// take against liquidity the engine would refuse.
+    #[test]
+    fn depth_follows_inventory_when_it_binds() {
+        let asks = [(px(0), 1_000_000)];
+        let starved = size_book(SwapSide::Buy, 100.0, &asks, &[], 400_000, 0.25).expect("fills");
+        assert_eq!(
+            starved.amount_in, 100_000,
+            "a quarter of the $0.40 the vault can actually pay out",
+        );
+
+        // Same book, ample inventory: now the level size binds and the cap is
+        // 2.5× larger — so the assertion above really is inventory-driven.
+        let ample =
+            size_book(SwapSide::Buy, 100.0, &asks, &[], INVENTORY_ATOMS, 0.25).expect("fills");
+        assert_eq!(ample.amount_in, 250_000);
+    }
+
+    /// Depth spans every level inside the limit price and stops at the first
+    /// one outside it. Both halves matter: a tail take is meant to be able to
+    /// reach past the top rung (the issue's "clear several levels" case), while
+    /// a rung beyond the slippage bound is not depth the take can have.
+    #[test]
+    fn depth_spans_levels_inside_the_limit_only() {
+        // Reference 1.0 at 1% slippage ⇒ limit 1.01. The 1.005 rung is inside;
+        // the 1.02 rung is not.
+        let asks = [
+            (px(0), 300_000),
+            (px(5_000), 300_000),
+            (px(20_000), 300_000),
+        ];
+        let swap =
+            size_book(SwapSide::Buy, 100.0, &asks, &[], INVENTORY_ATOMS, 0.25).expect("fills");
+        // Inside-the-limit depth in quote atoms: 300_000 @1.0 + 300_000 @1.005.
+        let depth = 300_000 + 301_500;
+        assert_eq!(swap.amount_in, depth / 4);
+        assert!(swap.depth_capped);
+
+        // Counting the 1.02 rung too would inflate depth by ~half again, so
+        // this pins the limit-price filter, not just the summing.
+        let unbounded = 300_000 + 301_500 + 306_000;
+        assert_ne!(swap.amount_in, unbounded / 4);
     }
 
     /// The whole point: the same sampled notional scales with the book. A 10×
