@@ -56,8 +56,8 @@ pages:
 
 > Dropset is where currency trades onchain, built by DASMAC. Foreign
 > exchange is the biggest market on earth — over nine trillion dollars a
-> day — but it trades only 24/5, its liquidity is fragmented across
-> over-the-counter desks and banks, and less than ten percent of the
+> day — but it trades only 24/5, banks and over-the-counter desks fragment
+> its liquidity, and less than ten percent of the
 > world's currencies are even available on Solana today. This already
 > works: Dropset already processes Solana mainnet FX trades — you open the
 > picker, select your currency, and the swap settles atomically, at
@@ -108,9 +108,11 @@ pages:
 #### Page 2 — The gap · ~15s
 
 - **On-slide:** Foreign exchange is the biggest market on earth. Then
-  three chevron-marked facts: over \$9 trillion daily volume; liquidity
-  is fragmented across OTC and banks; less than 10% of the world's
-  currencies are available on Solana.
+  three chevron-marked facts: daily volumes exceed \$9 trillion; banks and
+  OTC desks fragment liquidity; less than 10% of the world's currencies are
+  available on Solana. Each is a **clause with a subject and a verb** —
+  they were fragments ("over \$9 trillion daily volume"), which read as a
+  spec sheet rather than as three things being said.
 - **Visual:** A **progress bar** — 8.6% of currencies available on Solana
   — over the currencies count from our own site, captioned
   `dropset.io/currencies`.
@@ -129,9 +131,11 @@ pages:
   its attribution because it's ours and it's checkable. **Do not invent a
   Solana volume-share percentage.**
 - **Note on the three facts:** they're the deck's one deliberate
-  exception to "no bullet lists" and to full sentences — three numbers
-  that are peers, which the audience should take at a glance and which
-  prose would bury. The marker is a **chevron**, not a disc (a row of
+  exception to "no bullet lists" — three facts that are peers, which the
+  audience should take at a glance and which prose would bury. They are
+  **not** an exception to full sentences: each carries a subject and a
+  verb, so the list reads as three statements rather than as a spec sheet.
+  The marker is a **chevron**, not a disc (a row of
   discs is what makes a slide read as a corporate template) and
   deliberately not a literal `≥`: that glyph makes a numeric claim, and
   next to the third fact — a *less-than* — it would read as a
@@ -516,10 +520,10 @@ ______________________________________________________________________
 These are firm, and they override the older guidance where the two
 disagree:
 
-1. **Full sentences on-slide**, with one exception: the three facts on
-   page 2, which are peers the audience takes at a glance. No fragment
-   *headlines* anywhere. A reviewer reading the deck without the talk
-   should get the argument.
+1. **Full sentences on-slide**, everywhere, including inside the one list
+   the deck allows (page 2's three facts). No fragments — not as headlines,
+   not as list items. A reviewer reading the deck without the talk should
+   get the argument.
 1. **16:9 aspect ratio**, set explicitly on the deck rather than
    inherited.
 1. **Static images only.** No embedded video, no gifs, no player. A
@@ -539,7 +543,7 @@ disagree:
    has to be legible on the slides: "Built by DASMAC" on the title
    carries it, and the roadmap attributes the bootstrap beat to DASMAC
    explicitly.
-1. **No bullet lists**, bar the page-2 exception in rule 1. Everywhere
+1. **No bullet lists**, bar page 2's three facts. Everywhere
    else, prose.
 
 ### Brand

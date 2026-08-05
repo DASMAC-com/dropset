@@ -876,8 +876,8 @@ export default function DemoDeck() {
             justifyContent="flex-start"
           >
             <Box width="800px" margin="0 60px 0 0">
-              <Fact>Over $9 trillion daily volume</Fact>
-              <Fact>Liquidity is fragmented across OTC and banks</Fact>
+              <Fact>Daily volumes exceed $9 trillion</Fact>
+              <Fact>Banks and OTC desks fragment liquidity</Fact>
               <Fact>
                 Less than 10% of the world’s currencies are available on Solana
               </Fact>
@@ -896,8 +896,8 @@ export default function DemoDeck() {
         </SlideBody>
         <Notes>
           Foreign exchange is the biggest market on earth — over nine trillion
-          dollars a day. But it only trades 24/5, its liquidity is fragmented
-          across over-the-counter desks and banks, and less than ten percent of
+          dollars a day. But it only trades 24/5, banks and over-the-counter
+          desks fragment its liquidity, and less than ten percent of
           the world’s currencies are even available on Solana today: fourteen out
           of a hundred and sixty-two, and that count is live on our own site,
           which is where this is from. Every currency should be connectable to
