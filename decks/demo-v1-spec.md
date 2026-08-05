@@ -60,26 +60,26 @@ pages:
 > over-the-counter desks and banks, and less than ten percent of the
 > world's currencies are even available on Solana today. This already
 > works: Dropset already processes Solana mainnet FX trades — you open the
-> picker, type the currency you want, and the swap settles atomically, at
-> dropset.io/swap right now. Alongside that we
-> curate the market data for every currency on Solana — and when you sort
+> picker, select your currency, and the swap settles atomically, at
+> dropset.io/swap right now. Alongside that, Dropset curates the market
+> data for every Solana-based currency — and when you sort
 > by liquidity, the bottom of that list is currencies with no market
 > whatsoever: the Australian dollar, the Canadian dollar, the yen, the
 > naira, the lira. So we're building the exchange those markets need. The
 > eCLOB provides propAMM efficiency and order-book transparency, where
 > repricing the whole book costs forty-seven compute units and
-> reshaping the ladder fifty-nine. Our vaults bootstrap a public liquidity
+> reshaping the ladder fifty-nine. FX vaults bootstrap a public liquidity
 > flywheel, and it's a two-sided market we're already doing the customer
 > development on — upstream the issuers who need their currency to trade,
 > downstream the payments companies who need to buy FX to settle. The path
 > from here is deliberate: DASMAC bootstraps nascent FX pairs by leading
 > Hyperliquid-style vaults now, protocol fees accrue value as markets
 > mature, and derivatives provide an expansion opportunity once spot is
-> fully mature. Permissioned onchain liquidity creates major pain points:
+> fully mature. Permissioned onchain liquidity has an adoption ceiling:
 > permissioned solutions block composability, and no fintech is going to
 > settle on a competitor's private ledger — Dropset is open and composable
 > on Solana, the most money-like onchain environment, where ease of
-> transmission and public composability are maximized. Public liquidity is
+> transmission and composability are maximized. Public liquidity is
 > what blockchains were built for.
 > Dropset is built by people who have built exchanges. Dropset — where
 > currency trades onchain.
@@ -147,17 +147,18 @@ pages:
 
 - **On-slide:** Dropset already processes Solana mainnet FX trades.
 - **Visual:** The swap flow **left to right, one step per column**, the
-  steps being "open the currency picker", "type the currency you want"
-  and "swap atomically". Each caption sits **above** its own capture, and
+  steps being "open the picker", "select your currency" and "swap
+  atomically" — kept terse so each holds one line at a size readable from
+  the back of a room. Each caption sits **above** its own capture, and
   the columns (and the chevrons between them) are **vertically centred**.
   The three captures get progressively taller, so centring makes the
   labels climb like steps — which is the effect worth keeping. Captions
   underneath, by contrast, landed on three different baselines and read as
   ragged. The URL — `dropset.io/swap` — sits **under the middle step**, in
   the space that shorter column leaves.
-- **Spoken:** "This already works. Dropset is live on mainnet today,
-  clearing real trades: you open the picker, type the currency you want,
-  and the swap settles atomically. The ramps are near instant and the
+- **Spoken:** "This already works. Dropset already processes Solana
+  mainnet FX trades: you open the picker, select your currency, and the
+  swap settles atomically. The ramps are near instant and the
   venue never closes. And it's on dropset.io/swap right now, so you can go
   and do this yourself. Solana is the start, not the end — it's the most
   moneyness-conducive environment onchain."
@@ -183,12 +184,13 @@ pages:
 
 #### Page 4 — Currency curation · ~10s
 
-- **On-slide:** We curate market data for all currencies on Solana.
+- **On-slide:** Dropset curates market data for all Solana-based
+  currencies.
 - **Visual:** **One** capture, as large as the page allows — every
   currency sorted by onchain liquidity, deepest first, with price, 24h
   change and volume, market cap, liquidity and holders.
-- **Spoken:** "And alongside the swap itself we curate the market data
-  for every currency on Solana: price, twenty-four-hour change and
+- **Spoken:** "And alongside the swap itself, Dropset curates the market
+  data for every Solana-based currency: price, twenty-four-hour change and
   volume, market cap, liquidity, holders — grouped by country, or sorted
   however you want. This is sorted by liquidity, deepest first."
 - **Note:** A continuation of page 3, not a new topic — same product,
@@ -246,7 +248,7 @@ pages:
   page that introduces it. The
   compute-unit numbers live on the capture that shows them rather than
   being restated on the slide. The pairing of captures is the other point
-  of the page: our maker quoting locally on the left, that same liquidity
+  of the page: the demo maker quoting locally on the left, that same liquidity
   arriving on the frontend on the right. This replaced a strip of four
   small keyframe thumbnails — one screenshot of the whole thing working
   says more than four stills of it starting up, and needs no localnet
@@ -254,7 +256,7 @@ pages:
 
 #### Page 7 — How we grow · ~15s
 
-- **On-slide:** Our vaults bootstrap a public FX liquidity flywheel.
+- **On-slide:** FX vaults bootstrap a public liquidity flywheel.
 - **Visual:** A curve of depth growing, over the flywheel's two ends —
   **Upstream** (AUDD Digital; Loon, who issues CADC) and **Downstream**
   (Altitude, CargoBill), each group alphabetical, **with their logos**.
@@ -287,13 +289,10 @@ pages:
 
 - **On-slide:** A deliberate and methodical path to expansion. Then three
   beats in time order, spanning the page:
-  1. **Now** — DASMAC bootstraps liquidity. We bootstrap nascent FX pairs
-     by leading Hyperliquid-style vaults, using the Dropset protocol
-     underneath. (The body says "we" rather than "DASMAC" only because the
-     headline directly above it already names DASMAC.)
-  1. **Next** — protocol fees accrue value. As markets mature, volumes
-     and fees compound as we help all currency pairs achieve deep
-     liquidity.
+  1. **Now** — DASMAC bootstraps liquidity. DASMAC bootstraps nascent FX
+     pairs by leading Hyperliquid-style vaults using the Dropset protocol.
+  1. **Next** — protocol fees accrue value. As markets mature, volume and
+     fees compound, and currency pairs achieve deep liquidity.
   1. **Later** — derivatives provide an expansion opportunity. Once spot
      is fully mature, hedging instruments and additional derivatives
      enable more efficient market making and more mature markets.
@@ -311,17 +310,17 @@ pages:
 
 #### Page 9 — Why the open venue wins · ~12s
 
-- **On-slide:** Permissioned onchain liquidity creates major pain points.
+- **On-slide:** Permissioned onchain liquidity has an adoption ceiling.
   Two panels: the permissioned rails (Arc, Canton, Tempo, red-outlined),
   captioned "Permissioned solutions are blocking composability.
   Competitive dynamics prevent fintech companies from adopting a
   competitor's private ledger."; and the Dropset wordmark, green-outlined,
   captioned "Dropset is open and composable on Solana, the most money-like
-  onchain environment, where ease of transmission and public composability
+  onchain environment, where ease of transmission and composability
   are maximized. Public liquidity is what blockchains were built for."
   Both badges are **top-aligned** so they sit on one line — see the note
   below.
-- **Spoken:** "Permissioned onchain liquidity creates real pain points.
+- **Spoken:** "Permissioned onchain liquidity has an adoption ceiling.
   Arc and Tempo are building payment-and-settlement rails, and Canton is
   doing regulated onchain markets — any of them could decide FX is
   theirs, and each arrives with the customers already on it. But their
@@ -335,12 +334,14 @@ pages:
   blockchains were built for — moving money is the problem they were
   supposed to solve, and this is that. And that's why we started on Solana:
   the most money-like onchain environment there is, where ease of
-  transmission and public composability are both maximized."
+  transmission and composability are both maximized."
 - **Note:** The v1 fail / won't-fail **pair collapsed into this one
   page**, and the asterisk device is retired — it cost a page and the
-  payoff didn't carry. The framing is now the *pain point* rather than
-  "what FX's consumers need", which was a claim about other people's
-  requirements; a pain point is something the audience can check. The
+  payoff didn't carry. The framing is now an **adoption ceiling** rather
+  than "what FX's consumers need", which was a claim about other people's
+  requirements. A ceiling is the sharper version of the same point: it
+  isn't that permissioning is unpleasant, it's that it caps how far the
+  thing can ever get. The
   second clause on the permissioned caption is the sharper half of the
   argument, and it's a **commercial** point rather than a technical one: a
   fintech will not settle on a competitor's private ledger. A bank that

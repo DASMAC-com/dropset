@@ -140,11 +140,13 @@ const Eyebrow = ({ children }: { children: React.ReactNode }) => (
 const Statement = ({
   children,
   fontSize = "76px",
+  maxWidth = "1540px",
 }: {
   children: React.ReactNode;
   fontSize?: string;
+  maxWidth?: string;
 }) => (
-  <Heading fontSize={fontSize} margin="0" maxWidth="1540px">
+  <Heading fontSize={fontSize} margin="0" maxWidth={maxWidth}>
     {children}
   </Heading>
 );
@@ -302,11 +304,17 @@ const SequenceArrow = () => (
  * This is the number that keeps page 3 inside its slide, so it is a named
  * constant rather than repeated at three call sites. The third capture is very
  * tall (820×1371), so it sets the row's height, and the row's height is most of
- * the page: at 410 the page stacked to ~1008 units against the ~910 a slide
- * has, and flex centring pushed the eyebrow off the top edge — cropped on
- * screen, and silently clipped in print.
+ * the page: at 410 — with a two-line statement and the URL below the row — the
+ * page stacked to ~1008 units against the ~910 a slide has, and flex centring
+ * pushed the eyebrow off the top edge (cropped on screen, silently clipped in
+ * print).
+ *
+ * Widening it back to 420 is only safe because two other things now hold: the
+ * statement is pinned to one line by its own `maxWidth`, and the URL moved into
+ * the middle column. Those are load-bearing — undo either and this has to come
+ * back down.
  */
-const STEP_WIDTH = 380;
+const STEP_WIDTH = 420;
 
 /**
  * A numbered step in the swap flow, caption **above** its capture.
@@ -331,13 +339,17 @@ const Step = ({
   alt: string;
 }) => (
   <Box width={`${width}px`}>
+    {/* Kept short enough to stay on one line at this size — the labels are
+        deliberately terse ("Open the picker", not "Open the currency picker")
+        so they can be read from the back of a room without wrapping and
+        costing the row height the captures need. */}
     <div
       style={{
         color: colors.mutedFg,
         fontFamily: deckTheme.fonts.monospace,
-        fontSize: "23px",
+        fontSize: "28px",
         lineHeight: 1.3,
-        marginBottom: "14px",
+        marginBottom: "16px",
       }}
     >
       <span style={{ color: colors.accent }}>{step}. </span>
@@ -591,14 +603,12 @@ const BEATS: Beat[] = [
   {
     when: "Now",
     headline: "DASMAC bootstraps liquidity.",
-    // "We", not "DASMAC", only because the headline directly above already
-    // says DASMAC — repeating it opened the body with the same subject twice.
-    body: "We bootstrap nascent FX pairs by leading Hyperliquid-style vaults, using the Dropset protocol underneath.",
+    body: "DASMAC bootstraps nascent FX pairs by leading Hyperliquid-style vaults using the Dropset protocol.",
   },
   {
     when: "Next",
     headline: "Protocol fees accrue value.",
-    body: "As markets mature, volumes and fees compound as we help all currency pairs achieve deep liquidity.",
+    body: "As markets mature, volume and fees compound, and currency pairs achieve deep liquidity.",
   },
   {
     when: "Later",
@@ -844,7 +854,10 @@ export default function DemoDeck() {
       <Slide>
         <SlideBody>
           <Eyebrow>Live today</Eyebrow>
-          <Statement fontSize="60px">
+          {/* Widened measure so this stays on **one** line. It is the cheapest
+              72 units on the page, and the captures need every one of them —
+              see `STEP_WIDTH`. */}
+          <Statement fontSize="60px" maxWidth="1700px">
             Dropset already processes Solana mainnet FX trades.
           </Statement>
           {/* The swap flow left to right, one step per column — the beat that
@@ -857,7 +870,7 @@ export default function DemoDeck() {
           <FlexBox margin="36px 0 0 0" justifyContent="center" alignItems="center">
             <Step
               step={1}
-              label="Open the currency picker"
+              label="Open the picker"
               src="/screens/swap-picker.png"
               width={STEP_WIDTH}
               alt="The swap panel's To field, choosing the currency to receive"
@@ -871,7 +884,7 @@ export default function DemoDeck() {
             <Box>
               <Step
                 step={2}
-                label="Type the currency you want"
+                label="Select your currency"
                 src="/screens/swap-search.png"
                 width={STEP_WIDTH}
                 alt="Searching for a currency and its available stablecoins"
@@ -893,9 +906,9 @@ export default function DemoDeck() {
           </FlexBox>
         </SlideBody>
         <Notes>
-          This already works. Dropset is live on mainnet today, clearing real
-          trades: you open the picker, type the currency you want, and the swap
-          settles atomically. The ramps are near instant and the venue never
+          This already works. Dropset already processes Solana mainnet FX
+          trades: you open the picker, select your currency, and the swap settles
+          atomically. The ramps are near instant and the venue never
           closes. Solana is the start, not the end — it’s the most
           moneyness-conducive environment onchain. And it’s on dropset.io/swap
           right now, so you can go and do this yourself. [Today we clear by
@@ -908,8 +921,8 @@ export default function DemoDeck() {
       <Slide>
         <SlideBody>
           <Eyebrow>Currency curation</Eyebrow>
-          <Statement fontSize="56px">
-            We curate market data for all currencies on Solana.
+          <Statement fontSize="56px" maxWidth="1700px">
+            Dropset curates market data for all Solana-based currencies.
           </Statement>
           {/* One capture, as large as the page allows. An earlier version put
               three tables on this page and none of them could be read. */}
@@ -921,8 +934,9 @@ export default function DemoDeck() {
           />
         </SlideBody>
         <Notes>
-          And alongside the swap itself we curate the market data for every
-          currency on Solana: price, twenty-four-hour change and volume, market
+          And alongside the swap itself, Dropset curates the market data for
+          every Solana-based currency: price, twenty-four-hour change and volume,
+          market
           cap, liquidity, holders — grouped by country, or sorted however you
           want. This is sorted by liquidity, deepest first.
         </Notes>
@@ -961,7 +975,13 @@ export default function DemoDeck() {
               landing twice on the one page that introduces it. The compute-unit
               numbers live on the capture that shows them rather than being
               restated here. */}
-          <Statement fontSize="64px">
+          {/* Widened measure and a smaller size so this holds to one line. At
+              64px on the default measure it wrapped to two — and possibly three,
+              which tipped the page past the ~910 units a slide has and clipped
+              the eyebrow off the top, exactly as happened on page 3. This page
+              carries the deck's tallest right-hand capture, so it has the least
+              room to spare for a wrapped heading. */}
+          <Statement fontSize="56px" maxWidth="1760px">
             The eCLOB provides propAMM efficiency and order-book transparency.
           </Statement>
           {/* Left column stacks the two proof captures (the maker's own control
@@ -992,7 +1012,7 @@ export default function DemoDeck() {
             <Box margin="0 0 0 22px">
               <Screenshot
                 src="/screens/eclob-frontend.png"
-                width={530}
+                width={500}
                 alt="The eCLOB on the frontend: a EURC/USDC order book, a live trades tape, and a settled order"
                 caption="Liquidity routes to the frontend"
                 margin="0"
@@ -1021,7 +1041,7 @@ export default function DemoDeck() {
         <SlideBody>
           <Eyebrow>How we grow</Eyebrow>
           <Statement fontSize="68px">
-            Our vaults bootstrap a public FX liquidity flywheel.
+            FX vaults bootstrap a public liquidity flywheel.
           </Statement>
           <Flywheel />
         </SlideBody>
@@ -1050,10 +1070,10 @@ export default function DemoDeck() {
         </SlideBody>
         <Notes>
           Now, DASMAC bootstraps the liquidity: we lead Hyperliquid-style vaults
-          on nascent FX pairs, using the Dropset protocol underneath — DASMAC the
-          company, Dropset the protocol. Next, protocol fees accrue value: as
-          markets mature, volumes and fees compound as we help all the currency
-          pairs achieve deep liquidity. Later, derivatives provide an expansion
+          on nascent FX pairs, using the Dropset protocol — DASMAC the company,
+          Dropset the protocol. Next, protocol fees accrue value: as markets
+          mature, volume and fees compound, and the currency pairs achieve deep
+          liquidity. Later, derivatives provide an expansion
           opportunity: once spot is fully mature, hedging instruments and
           additional derivatives enable more efficient market making and more
           mature markets.
@@ -1065,7 +1085,7 @@ export default function DemoDeck() {
         <SlideBody>
           <Eyebrow>Why the open venue wins</Eyebrow>
           <Statement fontSize="64px">
-            Permissioned onchain liquidity creates major pain points.
+            Permissioned onchain liquidity has an adoption ceiling.
           </Statement>
           {/* `alignItems` must stay explicit. Spectacle's `FlexBox` defaults to
               `center`, which vertically centred each panel *including its
@@ -1092,14 +1112,14 @@ export default function DemoDeck() {
             </VenuePanel>
             <VenuePanel
               tint={colors.buy}
-              caption="Dropset is open and composable on Solana, the most money-like onchain environment, where ease of transmission and public composability are maximized. Public liquidity is what blockchains were built for."
+              caption="Dropset is open and composable on Solana, the most money-like onchain environment, where ease of transmission and composability are maximized. Public liquidity is what blockchains were built for."
             >
               <Wordmark width={420} />
             </VenuePanel>
           </FlexBox>
         </SlideBody>
         <Notes>
-          Permissioned onchain liquidity creates real pain points. Arc and Tempo
+          Permissioned onchain liquidity has an adoption ceiling. Arc and Tempo
           are building payment-and-settlement rails, and Canton is doing
           regulated onchain markets — any of them could decide FX is theirs, and
           each arrives with the customers already on it. But their liquidity
@@ -1113,8 +1133,8 @@ export default function DemoDeck() {
           blockchains were built for — moving money is the problem they were
           supposed to solve, and this is that.
           And that’s why we started on Solana: the most money-like onchain
-          environment there is, where ease of transmission and public
-          composability are both maximized.
+          environment there is, where ease of transmission and composability are
+          both maximized.
         </Notes>
       </Slide>
 
