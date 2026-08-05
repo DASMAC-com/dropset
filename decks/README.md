@@ -59,9 +59,9 @@ deps, and theme don't fight the product build.
   - `public/remote/` is **mirrored** from the URLs in
     `remote-assets.json` by `scripts/fetch-remote-assets.mjs`, on the
     same two hooks — images we don't hold a copy of: the two team
-    headshots the marketing site serves, and the four partner logos on
-    the growth page. The competitor marks this once mirrored are gone,
-    since no slide names a competitor any more.
+    headshots the marketing site serves, the four partner logos on the
+    growth page, and the three permissioned-rail marks on the
+    open-venue page.
 
   - `public/screens/` holds our own screen captures, which are
     **committed**: nothing external hosts them, so there's nothing to
@@ -189,9 +189,11 @@ Four rules from that spec bind any deck here, not just `demo-v1`:
 - **No competitor names or logos on a slide.** Naming one hands it the
   frame; make the argument in type and keep the names in the spec's
   appendix, for conversation.
-- **Partner logos are fine; competitor logos are not.** A page about
-  companies we work with shows their marks, each captioned with what they
-  are to us. A page about companies we compete with names nobody.
+- **Logos are argued, never listed.** A partner mark is captioned with
+  what that company is to us. A competitor mark appears only where it is
+  visibly the case being argued *against* (`demo-v1` red-outlines three
+  on one page, with the Dropset wordmark opposite as the answer) — a
+  neutral row of competitor logos hands them the frame instead.
 
 ## Deploy
 

@@ -29,25 +29,21 @@ Sections are ordered for Google Docs toggles: **1. Slide contents**
 Q&A material) next, and **3. Formatting / structure rules** (how to
 read this, the design principles, the reference structure) last.
 
-This is **outline v2** — the first deck went out for review, and this
-revision reworks it against the round-1 feedback. What changed:
+This is **outline v2**, revised twice against review. What changed from
+the deck that first went out:
 
-- Full sentences on every slide, in place of fragment headlines.
+- Full sentences on slides, in place of fragment headlines.
 - **Static images only.** The two recorded demos and the click-to-play
   badge are gone; product beats are interface screenshots.
-- **Nine pages, not eight.** The swap flow and the market data we curate
-  are now separate beats, because the second one is what sets up the
-  eCLOB: sort every currency by liquidity and the long tail is empty.
-- The eCLOB page leads with what the design *gives you*, and its payoff
-  visual is the book rendered on the frontend rather than a strip of
-  thumbnails.
+- **Ten pages, not eight.** The middle five are now one argument in
+  sequence: the swap works today → we curate the data for every currency
+  → most of them have no liquidity at all → the eCLOB is what we're
+  building to fix that. Splitting those beats is what makes the eCLOB
+  land as an answer to a problem the audience has just been shown.
 - A **growth roadmap** page (three beats in time order), answering the
   revenue question the first deck left implied.
 - The "why this will fail" / "why it won't" pair **collapsed into one
   page**, and the asterisk device is retired.
-- **No competitor names or logos anywhere.** Partner logos stay — those
-  are companies we're doing customer development with, and the marks are
-  the point.
 
 ______________________________________________________________________
 
@@ -61,29 +57,27 @@ pages:
 > Dropset is where currency trades onchain, built by DASMAC. Foreign
 > exchange is the biggest market on earth — over nine trillion dollars a
 > day — but it trades only 24/5, its liquidity is fragmented across
-> obfuscated over-the-counter desks, and less than ten percent of the
+> over-the-counter desks and banks, and less than ten percent of the
 > world's currencies are even available on Solana today. This already
 > works: Dropset is live on mainnet, and you open the picker, type the
-> currency you want, and swap. Settlement is atomic, the ramps are near
-> instant, and the venue never closes; Solana is the start, not the end,
-> because it's the most moneyness-conducive environment onchain.
-> Alongside that we curate the market data for every currency onchain —
-> and when you sort by liquidity the story tells itself, because a
-> handful of pairs are deep and the whole long tail is dry. Those are the
-> currencies we're here to make liquid, and that needs a venue. Making a
-> market onchain used to be prohibitively expensive, so we built one that
-> fits: the eCLOB gives order-book transparency with propAMM efficiency,
-> where repricing the whole book costs forty-seven compute units and
-> reshaping the ladder fifty-nine. Our vaults bootstrap a public
-> liquidity flywheel, and it's a two-sided market we're already doing the
-> customer development on — upstream the issuers who need their currency
-> to trade, downstream the payments companies who need to buy FX to
-> settle. Each stage of the roadmap funds the next: DASMAC leads the
-> liquidity now, protocol fees accrue value as the market matures, and
-> derivatives are the expansion once spot is nailed. FX's end consumers
-> need an open system, and permissioned liquidity isn't public — Dropset
-> is open, neutral, and composable. Dropset is built by people who have
-> built exchanges. Dropset — where currency trades onchain.
+> currency you want, and the swap settles atomically. Alongside that we
+> curate the market data for every currency on Solana — and when you sort
+> by liquidity, the bottom of that list is currencies with no market
+> whatsoever: the Australian dollar, the Canadian dollar, the yen, the
+> naira, the lira. So we're building the exchange those markets need. The
+> eCLOB gives order-book transparency with propAMM efficiency, where
+> repricing the whole book costs forty-seven compute units and reshaping
+> the ladder fifty-nine. Our vaults bootstrap a public liquidity
+> flywheel, and it's a two-sided market we're already doing the customer
+> development on — upstream the issuers who need their currency to trade,
+> downstream the payments companies who need to buy FX to settle. The path
+> from here is deliberate: DASMAC bootstraps liquidity now, protocol fees
+> accrue value as markets mature, and derivatives are the expansion
+> opportunity once spot is fully mature. Permissioned onchain liquidity
+> creates major pain points, because permissioned solutions block
+> composability — Dropset is open on Solana, the most money-like
+> environment onchain. Dropset is built by people who have built
+> exchanges. Dropset — where currency trades onchain.
 
 ### Page-by-page
 
@@ -109,14 +103,15 @@ pages:
 #### Page 2 — The gap · ~15s
 
 - **On-slide:** Foreign exchange is the biggest market on earth. Then
-  three supporting facts: it trades over \$9 trillion a day; its
-  liquidity is fragmented across obfuscated over-the-counter desks; less
-  than 10% of the world's currencies are available on Solana today.
-- **Visual:** A **meter** — 14 filled of 162 — over the currencies count
-  from our own site, captioned `dropset.io/currencies`.
+  three chevron-marked facts: over \$9 trillion daily volume; liquidity
+  is fragmented across OTC and banks; less than 10% of the world's
+  currencies are available on Solana.
+- **Visual:** A **progress bar** — 8.6% of currencies available on Solana
+  — over the currencies count from our own site, captioned
+  `dropset.io/currencies`.
 - **Spoken:** "Foreign exchange is the biggest market on earth — over
   nine trillion dollars a day. But it only trades 24/5, its liquidity is
-  fragmented across obfuscated over-the-counter desks, and less than ten
+  fragmented across over-the-counter desks and banks, and less than ten
   percent of the world's currencies are even available on Solana today:
   fourteen out of a hundred and sixty-two, and that count is live on our
   own site. Every currency should be connectable to every other one, and
@@ -128,83 +123,106 @@ pages:
   (it isn't disputed at pitch-deck level), but the currency count keeps
   its attribution because it's ours and it's checkable. **Do not invent a
   Solana volume-share percentage.**
-- **Note on the two visuals:** they do different jobs and both are
-  needed. A single ratio against a limit is a **meter**, not a pie of two
-  slices — the empty part of the track *is* the message. The screenshot
-  under it is the **citation**: our own page, showing the same number,
-  with the URL, so it's verifiable rather than asserted.
+- **Note on the three facts:** they're the deck's one deliberate
+  exception to "no bullet lists" and to full sentences — three numbers
+  that are peers, which the audience should take at a glance and which
+  prose would bury. The marker is a **chevron**, not a disc (a row of
+  discs is what makes a slide read as a corporate template) and
+  deliberately not a literal `≥`: that glyph makes a numeric claim, and
+  next to the third fact — a *less-than* — it would read as a
+  contradiction.
+- **Note on the bar:** a single ratio against a limit is a **meter**, not
+  a pie of two slices — the empty part of the track *is* the message. It
+  carries the **percentage only**; the raw 14-of-162 count belongs to the
+  screenshot beneath it, which is the **citation**: our own page, showing
+  the number, with the URL. Labelling both restated the same figure
+  twice.
 
 #### Page 3 — Live today · ~12s
 
 - **On-slide:** Dropset settles real currency trades on mainnet today.
-- **Visual:** The swap flow as three numbered stills — open the currency
-  picker, type the currency you want, swap and it settles. The first two
-  stack in one column (both short, both sequential); the settled trade
-  gets its own column, since that capture is tall and is the payoff.
+- **Visual:** The swap flow **left to right, one step per column**, the
+  steps being "open the currency picker", "type the currency you want"
+  and "swap atomically". Captions sit **above** each capture on a shared
+  baseline, because the three are very different heights and captions
+  underneath landed on three different ones.
 - **Spoken:** "This already works. Dropset is live on mainnet today,
   clearing real trades: you open the picker, type the currency you want,
-  and swap. Settlement is atomic, the ramps are near instant, and the
+  and the swap settles atomically. The ramps are near instant and the
   venue never closes. Solana is the start, not the end — it's the most
   moneyness-conducive environment onchain."
 - **Note:** The *why onchain matters* beat lives here, spoken. Keep the
   claim exact: today we clear by routing through aggregators and sourcing
   existing liquidity. Don't assert "most liquid". The globe is **not**
-  the way in any more — an earlier draft framed the flow as picking a
-  country off the globe, which isn't how anyone actually uses it; the
-  globe appears in the third capture as the route being drawn, which is
-  what it's for.
+  the way in — an earlier draft framed the flow as picking a country off
+  the globe, which isn't how anyone uses it; the globe appears in the
+  third capture as the route being drawn, which is what it's for.
 
-#### Page 4 — Every currency, in one place · ~15s
+#### Page 4 — Currency curation · ~10s
 
-- **On-slide:** We curate the market data for every currency onchain —
-  and the long tail has no liquidity at all.
-- **Visual:** Three captures of the same table. Left column: grouped by
-  country. Right column: sorted by liquidity, with the tail of that same
-  sort underneath it, captioned "sorted by liquidity — and the tail is
-  empty".
-- **Spoken:** "Dropset already settles trades on mainnet by sourcing
-  existing liquidity from the other venues — and alongside that we curate
-  the market data for every currency onchain: price, volume, market cap,
-  liquidity, holders, grouped by country or sorted however you want. Sort
-  by liquidity and the story tells itself. A handful of pairs are deep,
-  and then the long tail is completely dry — the Australian dollar, the
-  Canadian dollar, the yen, the naira, the lira, all sitting there with
-  no market at all. Those are the currencies we're here to make liquid,
-  and that needs a venue."
-- **Note:** This page is the **segue**, and that's its whole reason to
-  exist: it earns the eCLOB by showing the problem in our own data rather
-  than asserting it. It also lands the market-data-curation claim, which
-  is real work the deck otherwise never mentions. The empty tail is the
-  hinge — don't cut the third capture to save space, it is the argument.
+- **On-slide:** We curate market data for all currencies on Solana.
+- **Visual:** **One** capture, as large as the page allows — every
+  currency sorted by onchain liquidity, deepest first, with price, 24h
+  change and volume, market cap, liquidity and holders.
+- **Spoken:** "And alongside the swap itself we curate the market data
+  for every currency on Solana: price, twenty-four-hour change and
+  volume, market cap, liquidity, holders — grouped by country, or sorted
+  however you want. This is sorted by liquidity, deepest first."
+- **Note:** A continuation of page 3, not a new topic — same product,
+  second capability. **One table, blown up.** An earlier version put
+  three tables on this page (grouped by country, sorted by liquidity, and
+  the tail) and none of them could be read at that size; a group-by-country
+  capture was dropped for the same reason.
 
-#### Page 5 — The eCLOB · ~18s
+#### Page 5 — The long tail · ~10s
 
-- **On-slide:** Our design gives order-book transparency with propAMM
-  efficiency.
-- **Visual:** Left column stacks the two proof captures — the maker's own
-  control panel, and the compute-unit pane captioned "Reprice: 47 CU ·
-  reshape: 59 CU". Right column is the payoff: that same market rendered
-  on the frontend, with the order book, the live trades tape, and a
-  filled order together.
-- **Spoken:** "Making a market onchain used to be prohibitively expensive
-  — gas made continuous quoting impossible, so everything before this was
-  a band-aid. We've built order books before, so we built one that fits:
+- **On-slide:** Many currencies have no liquidity whatsoever.
+- **Visual:** The tail of that same table, full width — the Australian
+  and Canadian dollars, the yen, the naira, the lira and more, every
+  column showing a dash.
+- **Spoken:** "Scroll to the bottom of that same list and the story tells
+  itself. The Australian dollar, the Canadian dollar, the yen, the naira,
+  the lira — all sitting there with no price, no volume, and no liquidity
+  at all. These are real currencies with real economies behind them, and
+  onchain they have no market whatsoever."
+- **Note:** This page is the **hinge**, and it's why the curation beat
+  got split off page 4: the eCLOB has to arrive as the answer to a
+  problem the audience has just been shown in our own data, rather than
+  as a design we assert is needed. Don't fold it back into page 4 to save
+  a page — the pause on this slide is the setup.
+
+#### Page 6 — The eCLOB · ~18s
+
+- **On-slide:** We are building an exchange to solve this. Beneath it: the
+  eCLOB gives order-book transparency with propAMM efficiency — repricing
+  the whole book costs 47 compute units, reshaping the ladder 59.
+- **Visual:** Left column stacks the two proof captures — our maker
+  quoting locally, and the compute-unit pane. Right column is the payoff:
+  that same liquidity routed through to the frontend, captioned
+  "Liquidity is routed to the frontend", showing the order book, the live
+  trades tape and a filled order.
+- **Spoken:** "So we're building the exchange those markets need. Making
+  a market onchain used to be prohibitively expensive — gas made
+  continuous quoting impossible, so everything before this was a
+  band-aid. We've built order books before, so we built one that fits:
   the eCLOB gives you the transparency of a central limit order book with
   quote updates as cheap as a propAMM. Repricing the whole book costs
   forty-seven compute units and reshaping the ladder fifty-nine, on a
   chain that gives you two hundred thousand per instruction. On the left
-  is our own maker running seven markets; on the right is that market on
-  the frontend, with the book, the live trades tape, and a filled order.
-  We're building this out so anyone can quote onchain with a vault-style
-  approach."
-- **Note:** The on-slide line states what the design *gives you* rather
-  than narrating the history — the "used to be prohibitively expensive"
-  framing is strong spoken and too long to read. The right-hand capture
-  replaced a strip of four small keyframe thumbnails: one screenshot of
-  the whole thing working says more than four stills of it starting up,
-  and needs no localnet capture session to produce.
+  is our own maker quoting a market locally; on the right that same
+  liquidity routed through to the frontend, with the book, the live
+  trades tape, and a filled order. We're building this out so anyone can
+  quote onchain with a vault-style approach."
+- **Note:** The on-slide line is the **answer to page 5**, which is why
+  it leads with what we're building rather than with the design's
+  properties; the transparency-and-efficiency claim is the supporting
+  line under it. The two captures are the point of the pairing: local
+  maker on the left, that liquidity showing up on the frontend on the
+  right. This replaced a strip of four small keyframe thumbnails — one
+  screenshot of the whole thing working says more than four stills of it
+  starting up, and needs no localnet capture session to produce.
 
-#### Page 6 — How we grow · ~15s
+#### Page 7 — How we grow · ~15s
 
 - **On-slide:** Our vaults bootstrap a public FX liquidity flywheel.
 - **Visual:** A curve of depth growing, over the flywheel's two ends —
@@ -235,69 +253,81 @@ pages:
   be wide — a narrow one above a vertical divider read as a chart mounted
   on a stick, which is why there's no divider.
 
-#### Page 7 — Growth roadmap · ~15s
+#### Page 8 — Growth roadmap · ~15s
 
-- **On-slide:** Each stage of the roadmap funds the next one. Then three
+- **On-slide:** A deliberate and methodical path to expansion. Then three
   beats in time order, spanning the page:
-  1. **Now** — DASMAC leads the liquidity. We bootstrap the vaults the
-     way Hyperliquid did, and we help issuers get their currency onchain.
-     Dropset is the protocol underneath.
-  1. **Next** — protocol fees accrue value. As we build a mature market,
-     the venue earns on the flow it clears, and the work is getting every
-     pair liquid rather than only the largest.
-  1. **Later** — derivatives are the expansion. Hedging is an extra
-     vertical once spot is nailed, and it's what real market-making
-     operations and mature foreign-exchange markets both run on.
+  1. **Now** — DASMAC bootstraps liquidity. We bootstrap illiquid
+     stablecoin pairs the way Hyperliquid did, and help issuers get their
+     currency onchain. Dropset is the protocol underneath.
+  1. **Next** — protocol fees accrue value. As markets mature, volumes
+     and fees compound as all currency pairs become liquid.
+  1. **Later** — derivatives are an expansion opportunity. Hedging is an
+     extra opportunity once spot is fully mature, and it makes market
+     making more efficient and the markets themselves more mature.
 - **Visual:** The three beats as a rollout along a rule spanning the full
   page width, not a static list.
-- **Note:** Called a **roadmap**, not "commercial viability" — the growth
-  story is the frame, and "viability" invites the question of whether it
-  is viable. The rollout shape matters: a static list reads as
-  speculation, three beats in time order read as a plan. This is also
-  where the **DASMAC / Dropset** distinction is made explicit. Name the
-  streams in abstracted language, not jargon — no "fee switch".
+- **Note:** Called a **roadmap** rather than "commercial viability" — the
+  growth story is the frame, and "viability" invites the question of
+  whether it is viable. The headline is a *path*, not a funding
+  mechanic: an earlier draft read "each stage funds the next", which made
+  the page about cashflow rather than about direction. The rollout shape
+  matters — a static list reads as speculation, three beats in time order
+  read as a plan. This is also where the **DASMAC / Dropset** distinction
+  is made explicit. Name the streams in abstracted language, not jargon —
+  no "fee switch".
 
-#### Page 8 — Why the open venue wins · ~12s
+#### Page 9 — Why the open venue wins · ~12s
 
-- **On-slide:** The people who actually need foreign exchange need an
-  open system, and permissioned liquidity is not public.
-- **Visual:** No logos and **no competitor names**. A gated panel beside
-  an open one — participants either side of a wall, versus every
-  participant connected to one book — each captioned with a full
-  sentence. The page carries its argument in type and structure.
-- **Spoken:** "FX's end consumers need an open system. The honest risk is
-  that whoever owns distribution permissions onchain settlement — and
-  some of them will try. But permissioned liquidity isn't public: you
-  can't make a market unless they let you. Dropset is open, neutral, and
-  composable — anyone can quote, anyone can trade, any app can integrate.
-  And the venues that *are* public are built for a different customer.
-  That's also why we started on Solana: it's the most
-  moneyness-conducive environment onchain."
+- **On-slide:** Permissioned onchain liquidity creates major pain points.
+  Two panels: the permissioned rails (Arc, Canton, Tempo, red-outlined),
+  captioned "Permissioned solutions are blocking composability"; and the
+  Dropset wordmark, green-outlined, captioned "Dropset is open and
+  composable on Solana — the most money-like environment onchain, with
+  the highest ease of transmission."
+- **Spoken:** "Permissioned onchain liquidity creates real pain points.
+  Arc and Tempo are building payment-and-settlement rails, and Canton is
+  doing regulated onchain markets — any of them could decide FX is
+  theirs, and each arrives with the customers already on it. But their
+  liquidity isn't public: you can't make a market unless they let you,
+  and that blocks composability for everyone downstream. Dropset is open,
+  neutral and composable — anyone can quote, anyone can trade, any app
+  can integrate. And that's why we started on Solana: it's the most
+  money-like place value can sit onchain, with the highest ease of
+  transmission."
 - **Note:** The v1 fail / won't-fail **pair collapsed into this one
   page**, and the asterisk device is retired — it cost a page and the
-  payoff didn't carry. Naming competitors on-slide hands them the frame;
-  the argument survives without the names, and the fuller counters live
-  in the appendix. The characterization of the existing venues' customer
-  as day traders is **spoken-only, never on-slide**. This page also
-  carries the why-Solana-first beat.
+  payoff didn't carry. The framing is now the *pain point* rather than
+  "what FX's consumers need", which was a claim about other people's
+  requirements; a pain point is something the audience can check.
+- **Note on the logos:** this page is the **one exception** to keeping
+  competitor marks off the deck, and it is deliberate. The red outline is
+  what makes it work — the marks are labeled as the unfavorable case
+  rather than presented neutrally, so the row argues instead of just
+  listing, and the Dropset wordmark opposite it is the answer. An
+  intermediate draft made this page abstract (a gated panel versus a hub
+  diagram, nobody named); it was less legible than the real marks, which
+  an audience recognizes instantly. The **Solana DEXes stay off-slide** —
+  that argument is an innovator's-dilemma point that needs a sentence,
+  not a logo row.
 
-#### Page 9 — Team & close · ~8s
+#### Page 10 — Team & close · ~8s
 
-- **On-slide:** Eyebrow "The team", then the sentence "Dropset is built
-  by people who have built exchanges" — matching every other page's
-  kicker-plus-sentence shape rather than being the one page with a
-  different structure. Then one line each: Alex Kahn, Founder — authored
-  two exchanges on Aptos, including the Econia order book, which settled
-  around \$500M, and wrote the Solana Opcode Guide. Judy Sosa, Operations
-  — owns the whole operational stack, working with the banks, stablecoin
-  providers, onramps and service providers we build on.
+- **On-slide:** Eyebrow "The team", then "Dropset is built by people who
+  have built exchanges" — matching every other page's kicker-plus-sentence
+  shape. Then one line each: Alex Kahn, Founder — authored two exchanges
+  on Aptos, including the Econia order book, which settled around \$500M;
+  authored the Solana Opcode Guide, the definitive resource for optimizing
+  Solana program efficiency. Judy Sosa, Operations — owns the whole
+  operational stack, working with the banks, stablecoin providers, onramps
+  and service providers we build on.
 - **Visual:** Both headshots, square and unframed, pulled from the
   marketing site at build time (`remote-assets.json`).
 - **Spoken:** "Dropset is built by people who have built exchanges. I
   authored two on Aptos, including the Econia order book, which settled
-  around five hundred million in volume, and I wrote the Solana Opcode
-  Guide — the playbook for squeezing performance out of Solana programs,
-  which is what makes quoting on the eCLOB cost double-digit compute
+  around five hundred million in volume, and I authored the Solana Opcode
+  Guide, the definitive resource for optimizing Solana program efficiency
+  — which is what makes quoting on the eCLOB cost double-digit compute
   units. Judy owns the whole operational stack, and works directly with
   the banks, the stablecoin providers, the onramps and the service
   providers we build on. Dropset — where currency trades onchain."
@@ -305,12 +335,12 @@ pages:
   role matters.** An intermediate draft justified the operations split
   ("this is the work that gets an FX venue integrated with the rails…",
   "a dedicated owner rather than a founder's side task") — that reads as
-  defending the team, and it framed Judy's work relative to the founder's
-  rather than on its own terms. One sentence each, both in the same
-  voice. The credential reads "Dragonfly Capital", not "…Partners", with
-  the EA role stated plainly. The final spoken line mirrors the title.
-  Because this page lingers on screen after the talk, it's the one place
-  slightly longer copy is correct — but only slightly.
+  defending the team, and it framed one person's work relative to the
+  other's rather than on its own terms. One sentence each, both in the
+  same voice. The credential reads "Dragonfly Capital", not "…Partners",
+  with the EA role stated plainly. The final spoken line mirrors the
+  title. Because this page lingers on screen after the talk, it's the one
+  place slightly longer copy is correct — but only slightly.
 
 ______________________________________________________________________
 
@@ -337,24 +367,28 @@ grills.
   stablecoin rails. A deliberate split: product and operations each have
   a dedicated owner.
 
-### The competitors, by name — off-slide only
+### The competitors — the fuller answers
 
-Page 8 names nobody, deliberately. The names belong in conversation,
-where they can be answered rather than displayed:
+Page 9 names and shows the permissioned rails. These are the answers
+behind that page, plus the one competitor set that stays off-slide
+entirely:
 
 - **The settlement chains (Arc, Tempo) and regulated onchain markets
-  (Canton).** Each is chasing onchain settlement and each arrives with
-  customers already on it. The answer: they're private or heavily
-  permissioned rails. The moment FX needs a *neutral* venue where anyone
-  can make a market and anyone can trade, a closed garden can't serve
-  it.
+  (Canton).** On-slide, red-outlined. Each is chasing onchain settlement
+  and each arrives with customers already on it. The answer: they're
+  private or heavily permissioned rails. The moment FX needs a *neutral*
+  venue where anyone can make a market and anyone can trade, a closed
+  garden can't serve it — and in the meantime the permissioning is what
+  blocks composability for everyone building downstream.
 - **The existing Solana DEXes (Jupiter, Meteora, Orca, pump.fun,
-  Raydium).** They aren't focused on FX, and we're beating them to it.
-  It's an innovator's dilemma: the volume today is too small to move a
-  giant and big enough for a focused team, and we'll be here for the
-  next 10x as payments come onchain. Their customer is a different
-  customer — the retail speculator, not the business that needs to
-  settle an invoice in another currency.
+  Raydium) — off-slide.** They aren't focused on FX, and we're beating
+  them to it. It's an innovator's dilemma: the volume today is too small
+  to move a giant and big enough for a focused team, and we'll be here
+  for the next 10x as payments come onchain. Their customer is a
+  different customer — the retail speculator, not the business that needs
+  to settle an invoice in another currency. This one stays off the deck
+  because it needs that sentence to land; a logo row would just look like
+  a list of people beating us.
 - **"Why not just be Hyperliquid?"** We borrow Hyperliquid's
   *bootstrapping* playbook (seed the liquidity ourselves), but not its
   verticalized, single-app design. Solana is general-purpose, so
@@ -378,10 +412,10 @@ the deck:
   this is our domain.
 - "Why now?" → Non-US-dollar stablecoins are only just arriving onchain
   (~14 currencies today, euro leading), and payments are following.
-- "How do you make money?" → Page 7 is the answer, and the appendix
-  detail is that each stage funds the next: liquidity operations now,
-  protocol fees as the books thicken, derivatives once there's enough
-  depth to hedge against.
+- "How do you make money?" → Page 8 is the answer, and the appendix
+  detail is that each stage compounds into the next: liquidity
+  operations now, protocol fees as the books thicken and volumes
+  compound, derivatives once there's enough depth to hedge against.
 
 ______________________________________________________________________
 
@@ -389,12 +423,12 @@ ______________________________________________________________________
 
 ### How to read this
 
-- **One page = one slide.** Nine pages, against a ten-page cap (see
-  "Format rules").
+- **One page = one slide.** Ten pages, at a ten-page cap (see "Format
+  rules").
 - Each page gives: the **on-slide line** (what the audience reads), the
   **visual** (the one big image), the **spoken copy** (what the
   presenter says — this is the real script), and a **time** budget.
-- Total spoken time targets **~115 seconds**. With the demo videos gone,
+- Total spoken time targets **~120 seconds**. With the demo videos gone,
   the budget is spread across the pages rather than concentrated in two
   of them.
 - Every page carries the same footer: the Dropset wordmark at the left,
@@ -402,9 +436,9 @@ ______________________________________________________________________
   right. It isn't page content — don't budget words or space for it; the
   slide body already reserves room above it.
 - Presenter mode is **`⌘⇧P`** (`Ctrl⇧P` off macOS), not a bare `p`.
-- Anything nuanced — the competitor rebuttals, the investor grilling,
-  the numbers behind a claim — is **not on a slide**. It lives in the
-  appendices (section 2) and only comes out if a conversation goes
+- Anything nuanced — the fuller competitor answers, the investor
+  grilling, the numbers behind a claim — is **not on a slide**. It lives
+  in the appendices (section 2) and only comes out if a conversation goes
   there.
 
 ### Global rules — v2
@@ -412,27 +446,31 @@ ______________________________________________________________________
 These are firm, and they override the older guidance where the two
 disagree:
 
-1. **Full sentences everywhere on-slide.** No fragment headlines. A
-   reviewer reading the deck without the talk should get the argument.
+1. **Full sentences on-slide**, with one exception: the three facts on
+   page 2, which are peers the audience takes at a glance. No fragment
+   *headlines* anywhere. A reviewer reading the deck without the talk
+   should get the argument.
 1. **16:9 aspect ratio**, set explicitly on the deck rather than
    inherited.
 1. **Static images only.** No embedded video, no gifs, no player. A
    product beat is an interface screenshot with a claim over it. This
    retires the click-to-play badge and the two recorded demos.
-1. **No competitor names or logos on any slide.** Partner logos on the
-   growth page stay — that page is customer development on a two-sided
-   market, and the marks are the point — but each is captioned with what
-   the company is to us.
+1. **Logos are argued, never listed.** Partner marks (page 7) are
+   captioned with what the company is to us. Competitor marks appear on
+   exactly one page (page 9), red-outlined as the unfavorable case, with
+   the Dropset wordmark opposite as the answer — a neutral row of
+   competitor logos hands them the frame, but a row that is visibly the
+   thing being argued against does the opposite. The Solana DEXes stay
+   off-slide entirely, because that argument needs a sentence.
 1. **Solana is never framed as a ceiling.** It's the deliberate start —
-   "the most moneyness-conducive environment onchain" — never the
-   boundary.
+   the most money-like environment onchain, with the highest ease of
+   transmission — never the boundary.
 1. **DASMAC is the company, Dropset is the protocol.** The distinction
    has to be legible on the slides: "Built by DASMAC" on the title
    carries it, and the roadmap attributes the bootstrap beat to DASMAC
    explicitly.
-1. **No bullet lists** — with exactly one exception, the three facts on
-   page 2, which are peers the audience should take at a glance and which
-   are still written as full sentences. Everywhere else, prose.
+1. **No bullet lists**, bar the page-2 exception in rule 1. Everywhere
+   else, prose.
 
 ### Brand
 
@@ -495,7 +533,7 @@ Source: <https://x.com/mert/status/1843591496181702766>
 > you get a call.
 
 Note where v2 **departs** from this: "one big sentence per page" still
-holds, but full sentences replaced fragments everywhere, and page 9
+holds, but full sentences replaced fragments everywhere, and page 10
 carries a line per person because it lingers on screen after the talk. A
 reviewer reading only the deck is now a first-class case.
 
@@ -507,22 +545,25 @@ reply to the counters rather than hoping they don't come up. An investor
 respects that the risk was named and met with an answer.
 
 In v1 this was a two-page setup-and-payoff pair with an asterisk gag.
-In v2 it is **one page** (page 8): the risk and the answer in the same
-breath, with no competitor named on-slide. The steelman versions and the
-replies live in the appendix.
+In v2 it is **one page** (page 9): the pain point and the answer in the
+same breath. The steelman versions and the replies live in the appendix.
 
 ### Format rules (distilled from the above)
 
-1. **Max 10 pages.** This deck is 9 — the cap is a ceiling, not a
-   target.
+1. **Max 10 pages.** This deck is 10 — at the cap. Anything added from
+   here has to displace something.
 1. **One big sentence per page.** No bullet lists, bar the one page-2
-   exception noted in the global rules.
+   exception.
 1. **One big image per page.** Name the image in the "visual" field. A
    page may show several captures of *the same thing* (the swap flow, the
-   currencies table) — that is still one image in the sense that matters,
-   because it's one idea.
-1. **The sentences tell a story as you flip through.** Read the nine
-   on-slide lines top to bottom and they should read as one arc.
+   maker and the frontend it feeds) — that is still one image in the
+   sense that matters, because it's one idea. It does **not** permit
+   put three unrelated tables on a page; that was tried and none of them
+   could be read.
+1. **The sentences tell a story as you flip through.** Read the ten
+   on-slide lines top to bottom and they should read as one arc. Pages
+   3–6 are the load-bearing stretch: works today → we curate the data →
+   the tail is empty → here's the exchange that fixes it.
 1. **Super simple words.**
 1. **Lead with the strongest selling point, not a template.** It already
    works, on mainnet, and there's a screenshot — so "live today" is page
@@ -540,29 +581,29 @@ our pages in brackets.
 
 1. **One-liner.** DASMAC is building Dropset, an onchain Forex platform
    that harnesses Solana for open, efficient exchange of multinational
-   currencies at scale. [Pages 1, 9]
+   currencies at scale. [Pages 1, 10]
 1. **Problem / unique insight.** ~14 currencies now live on Solana via
    stablecoins; Solana settlement can support the massive FX market
    *composably* — DevEx convenience for payments providers, merchants,
    manufacturers, and retail — because Solana is general-purpose, not
-   verticalized like Hyperliquid. [Pages 2, 4, 8; appendix]
+   verticalized like Hyperliquid. [Pages 2, 5, 9; appendix]
 1. **Solution / product.** Dropset routes existing onchain liquidity
    through aggregators and adds a novel eCLOB to bootstrap new markets
    with inexpensive quote updates that accelerate market-maker
-   onboarding. [Pages 3, 5]
+   onboarding. [Pages 3, 6]
 1. **Traction.** Dropset.io is live and clearing trades on mainnet
    (today via aggregators), and curates the market data for every
-   currency onchain. [Pages 3, 4]
+   currency on Solana. [Pages 3, 4]
 1. **Why the market is massive.** FX is >\$9T/day and 24/5; Solana as
    intermediary gives atomic settlement and faster on/off-ramps. \[Page
    2\]
 1. **Why now.** The non-US stablecoin market has only just started to
    expand — EUR stablecoins drive most volume, more currencies going
    live (14 on Solana). [Pages 2, 4]
-1. **Business model.** Liquidity operations now, protocol fees with an
-   illiquid-pair premium next, derivatives after that. [Page 7]
+1. **Business model.** Liquidity operations now, protocol fees as
+   volumes compound next, derivatives after that. [Page 8]
 1. **Founders' bio.** Exchange-design background — authored the Econia
    order book (~\$500M on Aptos) and the Solana Opcode Guide — with a
    dedicated operations owner on banking and accounting. Full detail on
-   Page 9 and in the appendix (kept there to stay DRY). \[Page 9;
+   Page 10 and in the appendix (kept there to stay DRY). \[Page 10;
    appendix\]
