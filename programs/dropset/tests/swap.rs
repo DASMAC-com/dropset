@@ -6,6 +6,7 @@
 
 mod common;
 
+use anchor_lang_v2::bytemuck;
 use anchor_v2_testing::Signer;
 use common::fixture::{simple_profile, Fixture};
 use dropset::{Price, FLUSH_BIT};
@@ -301,6 +302,61 @@ fn frozen_vault_skipped_from_matching() {
         v.quote_atoms.get(),
         SEED_QUOTE,
         "frozen vault inventory untouched"
+    );
+}
+
+/// Stamping the zero sentinel over a live reference price takes the whole
+/// vault out of the matching set without touching its `LiquidityProfile`, and
+/// the next real price puts the same book straight back.
+///
+/// This is what makes the maker bot's stale-quote invalidation possible
+/// (`bots/maker-bot` → `model::invalidate`): `FreezeVault` is admin-only, so a
+/// bot that comes back to find its own quotes resting at a stale price kills
+/// them by stamping zero through the ordinary quote-authority hot path. Both
+/// halves matter — the kill has to be total, and it has to be reversible by a
+/// plain re-quote rather than needing the ladder re-armed.
+#[test]
+fn zero_reference_price_skips_the_vault_and_a_fresh_price_re_arms_it() {
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+    let authority = f.authority.insecure_clone();
+    let profile_before = bytemuck::bytes_of(&f.vault(0).profile).to_vec();
+
+    // Kill the book: stamp the zero sentinel in place of the 1.0850 anchor.
+    f.set_reference_price(&authority, 0, Price::ZERO.as_u32(), 0)
+        .expect("quote authority stamps the kill price");
+
+    let taker = f.funded_depositor(0, 200_000);
+    let quote_ata = f.quote_ata(&taker.pubkey());
+    let q_before = f.token_balance(&quote_ata);
+    f.swap(&taker, 0, 100_000, Price::INFINITY.as_u32(), 0)
+        .expect("ok, no fill against an invalid reference price");
+    assert_eq!(f.token_balance(&quote_ata), q_before, "no quote spent");
+    assert_eq!(
+        f.token_balance(&f.base_ata(&taker.pubkey())),
+        0,
+        "no base received"
+    );
+    let v = f.vault(0);
+    assert_eq!(v.base_atoms.get(), SEED_BASE, "inventory untouched");
+    assert_eq!(v.quote_atoms.get(), SEED_QUOTE, "inventory untouched");
+    assert_eq!(
+        bytemuck::bytes_of(&v.profile),
+        profile_before.as_slice(),
+        "the kill stamp leaves the ladder shape alone"
+    );
+
+    // Re-quote at (a hair off) the original anchor: the untouched profile
+    // re-materializes and the same taker now fills. The price differs from the
+    // fixture's opening stamp only so the transaction isn't a byte-for-byte
+    // replay of it.
+    let ref_price = Price::encode(10_850_001, 0).unwrap();
+    f.set_reference_price(&authority, 0, ref_price.as_u32(), 0)
+        .expect("quote authority re-arms the book");
+    f.swap(&taker, 0, 100_000, Price::INFINITY.as_u32(), 1)
+        .expect("swap fills once the reference is live again");
+    assert!(
+        f.token_balance(&f.base_ata(&taker.pubkey())) > 0,
+        "taker received base after the re-quote"
     );
 }
 

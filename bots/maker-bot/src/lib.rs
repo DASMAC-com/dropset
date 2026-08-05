@@ -16,11 +16,15 @@
 //!   triggers, kill switches), deterministic and unit tested.
 //!
 //! The [`context`], [`chain`], and [`tasks`] modules layer the runtime state,
-//! on-chain I/O, and the 5-second tick loop on top of this core.
+//! on-chain I/O, and the 5-second tick loop on top of this core, and
+//! [`quote_state`] persists the one fact that has to outlive the process — when
+//! each market's book was last correctly priced, which is what makes stale-quote
+//! invalidation ([`model::invalidate`]) possible across a restart.
 
 pub mod chain;
 pub mod config;
 pub mod context;
 pub mod fills;
 pub mod model;
+pub mod quote_state;
 pub mod tasks;

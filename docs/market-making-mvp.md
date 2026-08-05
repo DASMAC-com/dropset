@@ -368,6 +368,12 @@ want to churn `SetReferencePrice` just to keep them alive. Per-level
 expiry stratification is an explicit feature of the protocol (see
 **architecture.md → LiquidityProfile → Flush**).
 
+Expiry alone is not the answer to a dead bot, though: these offsets are
+in *slots*, and slots stop ticking while the chain is halted, so the
+wall-clock life of a resting level has no bound. The bot kills its own
+book instead of waiting for expiry — see **§4 → Stale-quote
+invalidation**.
+
 **Invariant:** Level 1 expiry must exceed the `SetReferencePrice`
 heartbeat (30 s here, 90 slots ≈ 36 s gives ~6 s safety margin),
 otherwise top-of-book goes dark in the gap between expiry and the
@@ -411,10 +417,56 @@ ______________________________________________________________________
 | Vault TVL drops below 80% of launch TVL      | `FreezeVault`, post-mortem                                                     |
 
 `FreezeVault` is admin-only and irreversible, so the bot maps these hard
-triggers to a leader-authorized halt (zero the profile, let levels
-expire, alert) rather than calling `FreezeVault` autonomously; a real
+triggers to a leader-authorized halt (zero the profile, kill the resting
+book, alert) rather than calling `FreezeVault` autonomously; a real
 freeze stays a human decision. Per-market TVL-floor and skew calibration
 is coordinated separately.
+
+### Stale-quote invalidation
+
+Zeroing the profile stops the *next* flush from materializing levels; it
+does not touch the levels already resting, which stay matchable until
+their `expiry_offset` passes — up to ~50 min of live chain on the deepest
+tier. Slot expiry is not a mitigation for an outage, either: **slots stop
+ticking while the chain is halted**, so a resting level's wall-clock life
+is unbounded. Any gap in which nobody refreshes the reference — a bot
+restart, a chain halt, feeds gone dark — is a window in which takers can
+fill against a price the bot no longer stands behind.
+
+The bot closes that window without needing `FreezeVault`. Matching skips
+any vault failing `has_valid_reference_price()` (**architecture.md →
+Order matching → Book construction**), and the zero sentinel fails it, so
+one `SetReferencePrice` at `price = 0` — the ordinary quote-authority hot
+path — takes the whole vault's book dark while leaving the
+`LiquidityProfile` intact. The next live reference re-arms the same shape;
+nothing has to be rebuilt.
+
+| Situation                                         | Kill the resting book                                        |
+| ------------------------------------------------- | ------------------------------------------------------------ |
+| Startup, last live quote older than the bound     | Yes, **before** the first quote of the run                   |
+| Startup, last live quote's age unknown            | Yes — no freshness evidence reads as stale                   |
+| Startup, last live quote inside the bound         | No; go straight to quoting                                   |
+| Running, no usable feed for longer than the bound | Yes, instead of holding the reference indefinitely           |
+| Running, kill-switch halt                         | Yes, on the next cycle — a halt forfeits any freshness claim |
+
+The staleness bound is **60 s**: twice the `SetReferencePrice` heartbeat,
+so a healthy bot's own last stamp is always well inside it and an
+ordinary restart doesn't churn the book, yet only ~2% of the deepest
+tier's wall-clock life, so no level rests unattended for more than about
+a minute. The kill stamp carries a **priority fee** because it races
+takers in the first blocks after the bot returns; losing that race by one
+block is the residual exposure this accepts.
+
+Age is measured against the bot's **own persisted wall-clock record** of
+its last live stamp, one file per market. The vault stores `quote_slot`,
+not a timestamp, and slot arithmetic is exactly what a halt invalidates —
+so the timestamp cannot be derived from a chain read. A missing,
+unreadable, or future-dated record reads as unknown, which counts as
+stale: every failure mode lands on the safe side.
+
+This is the unconditional half of the halt / pick-off mitigation — it
+holds regardless of the runtime's `Clock` behavior, so it stays required
+even alongside a program-side wall-clock quote expiry.
 
 ______________________________________________________________________
 

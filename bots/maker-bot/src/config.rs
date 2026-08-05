@@ -256,6 +256,39 @@ pub struct KillSwitchConfig {
     pub tvl_floor_frac: f64,
 }
 
+/// Stale-quote invalidation (the bot half of the halt / pick-off mitigation).
+///
+/// A resting quote stays matchable until its level's `expiry_offset` passes —
+/// up to ~50 min of live chain on the deepest tier — and slots don't tick at all
+/// while the chain is halted, so that life has no wall-clock bound. When the bot
+/// stops refreshing the reference (a restart, a chain halt, feeds gone dark),
+/// these knobs govern the kill stamp that takes the book dark instead of leaving
+/// it to expire. See [`crate::model::invalidate`].
+#[derive(Clone, Debug)]
+pub struct InvalidateConfig {
+    /// A resting quote older than this is killed rather than left matchable.
+    ///
+    /// Twice the `SetReferencePrice` heartbeat (30 s), so a healthy bot's own
+    /// last stamp is always comfortably inside the bound and an ordinary restart
+    /// doesn't churn the book — while still being ~2% of the deepest ladder
+    /// tier's ~50 min wall-clock life, so no level ever rests unattended for
+    /// more than about a minute.
+    pub stale_after: Duration,
+    /// Priority fee for the kill stamp, in micro-lamports per compute unit.
+    ///
+    /// The invalidation races takers in the first blocks after the bot comes
+    /// back, so it does not queue behind them at the base fee; losing that race
+    /// by a block is the residual exposure this mitigation accepts. Only the
+    /// unit *price* is set, not a unit limit — a limit guessed under the
+    /// handler's actual cost would fail the stamp outright, which is the one
+    /// outcome worse than paying for a few unused units. The value is a
+    /// localnet placeholder; a mainnet promotion wants it fee-market-aware.
+    pub priority_micro_lamports: u64,
+    /// Directory holding the per-market last-live-stamp records
+    /// ([`crate::quote_state`]).
+    pub state_dir: String,
+}
+
 /// The full bot configuration.
 #[derive(Clone, Debug)]
 pub struct BotConfig {
@@ -272,6 +305,7 @@ pub struct BotConfig {
     pub feeds: FeedConfig,
     pub strategy: StrategyConfig,
     pub kill: KillSwitchConfig,
+    pub invalidate: InvalidateConfig,
     /// The fair-value engine's calibration (`fair = fx × basis`, §1). Almost
     /// every value is a survey-set placeholder — see [`FairValueConfig`].
     pub fair_value: FairValueConfig,
@@ -326,6 +360,16 @@ impl Default for KillSwitchConfig {
     }
 }
 
+impl Default for InvalidateConfig {
+    fn default() -> Self {
+        Self {
+            stale_after: Duration::from_secs(60),
+            priority_micro_lamports: 100_000,
+            state_dir: crate::quote_state::DEFAULT_STATE_DIR.to_string(),
+        }
+    }
+}
+
 impl Default for BotConfig {
     fn default() -> Self {
         Self {
@@ -336,6 +380,7 @@ impl Default for BotConfig {
             feeds: FeedConfig::default(),
             strategy: StrategyConfig::default(),
             kill: KillSwitchConfig::default(),
+            invalidate: InvalidateConfig::default(),
             fair_value: FairValueConfig {
                 // The bot's FX anchor is currently the daily Frankfurter feed,
                 // polled every `fx_poll` (300 s); a staleness bound comfortably
@@ -371,6 +416,25 @@ mod tests {
             assert!(w[1].size_bps < w[0].size_bps);
             assert!(w[1].expiry_offset > w[0].expiry_offset);
         }
+    }
+
+    /// The staleness bound sits between the two cadences it has to respect: it
+    /// must exceed the reference heartbeat (or a healthy bot would keep killing
+    /// its own fresh book) and stay far under the deepest ladder tier's
+    /// wall-clock life (or a resting level could outlive the bound and expire on
+    /// its own, which is the exposure this closes).
+    #[test]
+    fn stale_bound_brackets_the_heartbeat_and_the_deepest_expiry() {
+        let cfg = BotConfig::default();
+        assert!(cfg.invalidate.stale_after > cfg.strategy.ref_heartbeat);
+        // Mainnet slots run ~0.4 s (§3 expiry table).
+        let deepest = DEFAULT_LADDER
+            .iter()
+            .map(|l| l.expiry_offset)
+            .max()
+            .expect("ladder is non-empty");
+        let deepest_wall = Duration::from_millis(deepest as u64 * 400);
+        assert!(cfg.invalidate.stale_after * 10 < deepest_wall);
     }
 
     /// Every demo market names a base mint, a CoinGecko id, a tracked

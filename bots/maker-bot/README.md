@@ -38,10 +38,13 @@ against the FX rate.
 - `model` — the pure, unit-tested quoting logic: tiered feed parsing
   (`feeds`), per-market reference composition (`fair_mid`), the ladder
   builder, inventory valuation and skew, the update-cadence triggers,
-  and the kill-switch policy.
+  the kill-switch policy, and the stale-quote decision (`invalidate`).
 - `context` / `chain` / `tasks` — per-market runtime state, on-chain I/O
   (market discovery, vault reads, the two quoting-path sends, the
-  human↔atoms-ratio price conversion), and the supervisor tick loop.
+  stale-quote kill stamp, the human↔atoms-ratio price conversion), and
+  the supervisor tick loop.
+- `quote_state` — the one fact that outlives the process: when each
+  market's book was last correctly priced, persisted one file per market.
 
 ## Running
 
@@ -94,15 +97,40 @@ cargo run -p dropset-maker-bot
   sends. The check is keyed on the genesis hash, not the RPC host, so a
   localnet on any address still passes while a port-forward to a public
   cluster is caught.
+
 - **One supervisor, one leader.** This localnet plumbing runs all
   markets from one process under one quote-authority. The delegated
   per-market `quote_authority` model (one hot key per market) is the
   devnet/mainnet promotion's concern.
+
 - **`FreezeVault` is admin-only.** The bot signs only as the leader, so
   the hard kill-switch triggers (peg breach, TVL floor, critical
-  imbalance) **halt quoting** (zero the profile, let levels expire) and
-  alert for human review rather than calling the irreversible,
+  imbalance) **halt quoting** (zero the profile, kill the resting book)
+  and alert for human review rather than calling the irreversible,
   admin-gated `FreezeVault` autonomously.
+
+- **Stale quotes are killed, not left to expire.** Zeroing the profile
+  stops the next flush; it doesn't touch levels already resting, which
+  stay matchable until their `expiry_offset` passes — and those offsets
+  are in *slots*, which stop ticking during a chain halt, so their
+  wall-clock life is unbounded. Whenever nobody is refreshing the
+  reference — a restart, a halted chain, dead feeds, a kill-switch halt —
+  the bot stamps `price = 0` through the ordinary hot path. Matching
+  skips a vault whose reference fails `has_valid_reference_price()`, so
+  that one cheap instruction takes the whole book dark while leaving the
+  ladder intact; the next live quote re-arms the same shape. On startup
+  this runs **before** the first quote of the run, since takers can hit
+  the old levels from the first block the bot is back.
+
+  Age comes from the bot's own persisted timestamp
+  (`.maker-bot/quote-state/<market>.json`, git-ignored), not from the
+  chain: the vault records `quote_slot`, and slot arithmetic is precisely
+  what a halt invalidates. A missing or unreadable record reads as stale.
+  The default bound is 60 s — twice the reference heartbeat, so an
+  ordinary restart doesn't churn the book, and ~2% of the deepest tier's
+  ~50 min life. Clearing the state directory is safe; it just makes the
+  next startup invalidate.
+
 - **Fill detection** subscribes to the program's `emit_cpi!`
   `FillEvent`s (production-fidelity path): a dedicated thread runs a
   `logsSubscribe` and reads the events out of each transaction's inner

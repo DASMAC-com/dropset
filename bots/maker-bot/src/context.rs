@@ -6,9 +6,16 @@
 //! and the bot only remembers what it can't recover from a single read — the
 //! last reference it stamped, the skew it applied, when it last fired each
 //! path, and which profile shape it believes is armed.
+//!
+//! One fact outlives the process: the wall-clock time of the last live reference
+//! stamp, which the chain cannot supply (it records the `quote_slot`, and slots
+//! stop ticking during a halt). That one is persisted per market — see
+//! [`crate::quote_state`] — so a restart can tell a fresh resting book from one
+//! that needs killing.
 
 use crate::config::MarketConfig;
 use crate::model::ladder::Side;
+use crate::quote_state::QuoteState;
 use dropset_fair_value::{FairValueConfig, FairValueEngine};
 use solana_client::rpc_client::RpcClient;
 use solana_keypair::Keypair;
@@ -37,6 +44,11 @@ pub struct VaultSnapshot {
     pub quote_atoms: u64,
     /// The reference price currently stamped on-chain, as a float.
     pub reference_price: f64,
+    /// Whether that reference price still lets the matching engine visit this
+    /// vault (the program's own `has_valid_reference_price` gate). `false` means
+    /// the book is already dark — never stamped, or killed by the stale-quote
+    /// invalidation — so there is nothing for `model::invalidate` to kill.
+    pub reference_valid: bool,
     pub frozen: bool,
 }
 
@@ -91,6 +103,15 @@ pub struct Context {
     /// When the hot / cold paths last fired.
     pub last_set_at: Instant,
     pub last_profile_at: Instant,
+    /// This market's persisted last-live-stamp record — the one piece of state
+    /// that survives a restart, because it is the one the chain cannot supply
+    /// (see [`crate::quote_state`]).
+    pub quote_state: QuoteState,
+    /// Whether the bot has already killed this market's book for staleness in
+    /// this run and not yet re-armed it. Keeps the running-path invalidation to
+    /// one instruction per stale episode instead of one per cycle; cleared by the
+    /// next live reference stamp.
+    pub reference_invalidated: bool,
     /// The profile shape the bot believes is armed.
     pub profile_kind: ProfileKind,
     /// Inventory `(base_atoms, quote_atoms)` at the previous tick — used by
@@ -114,9 +135,12 @@ impl Context {
         market: MarketAddrs,
         cfg: MarketConfig,
         fair_value: FairValueConfig,
+        quote_state: QuoteState,
     ) -> Self {
         let now = Instant::now();
         Self {
+            quote_state,
+            reference_invalidated: false,
             client,
             leader,
             vault_idx,
