@@ -261,6 +261,18 @@ pub struct MarketHeader {
     pub base_treasury: Address,
     /// Same as `base_treasury`, for the quote leg.
     pub quote_treasury: Address,
+    /// Protocol revenue accrued in `base_treasury`: the running sum of
+    /// every taker fee charged on a base output leg (a taker `Buy`).
+    /// These atoms sit physically in the treasury but belong to the
+    /// protocol, not to the vaults' depositors — the treasury custody
+    /// invariant is
+    /// `base_treasury.amount == Σ vault.base_atoms + accrued_base_fee`.
+    /// Authoritative: nothing infers protocol revenue from a residual, so
+    /// a treasury balance above the sum of the two is a bug alarm rather
+    /// than income (see `sweep_residual`).
+    pub accrued_base_fee: PodU64,
+    /// Same as `accrued_base_fee`, for the quote leg (a taker `Sell`).
+    pub accrued_quote_fee: PodU64,
     /// Market PDA bump.
     pub bump: u8,
 }
@@ -290,7 +302,7 @@ impl MarketHeader {
 // deliberate update here, paired with the matching account-data
 // migration story.
 const _: () = assert!(core::mem::size_of::<Vault>() == 560);
-const _: () = assert!(core::mem::size_of::<MarketHeader>() == 235);
+const _: () = assert!(core::mem::size_of::<MarketHeader>() == 251);
 const _: () = assert!(core::mem::size_of::<LiquidityProfile>() == 2 * N_LEVELS * 10);
 const _: () = assert!(core::mem::size_of::<Remaining>() == 2 * N_LEVELS * 16);
 

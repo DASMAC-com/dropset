@@ -71,7 +71,11 @@ fn min_out_soft_reverts_when_unattainable() {
     );
     assert_eq!(nonce_before, f.market_header().nonce.get());
 
-    // Treasury invariant holds.
+    // Treasury invariant holds — `treasury == Σ vault + accrued`, with
+    // nothing accrued on a swap that never committed.
+    let h = f.market_header();
+    assert_eq!(h.accrued_base_fee.get(), 0);
+    assert_eq!(h.accrued_quote_fee.get(), 0);
     assert_eq!(
         f.token_balance(&f.base_treasury),
         vault_after.base_atoms.get()
@@ -80,6 +84,33 @@ fn min_out_soft_reverts_when_unattainable() {
         f.token_balance(&f.quote_treasury),
         vault_after.quote_atoms.get()
     );
+}
+
+#[test]
+fn soft_revert_unwinds_the_accrued_fee() {
+    // With a live taker fee, a soft-reverted swap must leave the market's
+    // protocol-fee accumulators exactly where it found them. Otherwise a
+    // failed-`min_out` taker mints phantom revenue: the counters would
+    // claim treasury atoms that were never charged, so the residual sweep
+    // would read the gap as a bug and a future harvest would have a
+    // ceiling above the real revenue. The default taker fee is zero, so
+    // this is the case the other revert tests can't reach.
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+    let admin = f.authority.insecure_clone();
+    f.set_taker_fee(&admin, 10_000).expect("1% taker fee");
+    let taker = f.funded_depositor(0, 200_000);
+    assert_eq!(f.market_header().accrued_base_fee.get(), 0, "clean slate");
+
+    f.swap(&taker, 0, 100_000, Price::INFINITY.as_u32(), u64::MAX)
+        .expect("soft-revert swap should still succeed");
+
+    let h = f.market_header();
+    assert_eq!(h.accrued_base_fee.get(), 0, "base accrual unwound");
+    assert_eq!(h.accrued_quote_fee.get(), 0, "quote accrual untouched");
+    let v = f.vault(0);
+    assert_eq!(v.base_atoms.get(), SEED_BASE, "vault base restored");
+    assert_eq!(f.token_balance(&f.base_treasury), v.base_atoms.get());
+    assert_eq!(f.token_balance(&f.quote_treasury), v.quote_atoms.get());
 }
 
 #[test]
@@ -337,15 +368,23 @@ fn nonce_overflow_hard_reverts_and_errors() {
         "FLUSH_BIT re-armed after the hard revert"
     );
 
-    // Treasury invariant intact across the failed swap.
+    // Treasury invariant intact across the failed swap — and no fee
+    // accrued, since the hard revert unwinds the accumulators too.
+    let h = f.market_header();
+    assert_eq!(h.accrued_base_fee.get(), 0);
+    assert_eq!(h.accrued_quote_fee.get(), 0);
     assert_eq!(f.token_balance(&f.base_treasury), v.base_atoms.get());
     assert_eq!(f.token_balance(&f.quote_treasury), v.quote_atoms.get());
 }
 
 #[test]
-fn taker_fee_retained_in_vault() {
-    // Same swap with and without a taker fee — the fee'd taker receives
-    // strictly less base, and the difference stays in the vault.
+fn taker_fee_accrues_to_the_market_not_the_vault() {
+    // Same swap with and without a taker fee. The fee'd taker receives
+    // strictly less base, and the difference lands in the market's
+    // protocol-fee accumulator — *not* in the vault, whose inventory is
+    // debited the gross output either way (it trades at the price it
+    // quoted). Leaving it in the vault would raise depositor NAV and,
+    // through `L = isqrt(base·quote)`, read as leader edge at realize time.
     let run = |fee_ppm: u16| {
         let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
         let admin = f.authority.insecure_clone();
@@ -353,24 +392,36 @@ fn taker_fee_retained_in_vault() {
         let taker = f.funded_depositor(0, 200_000);
         f.swap(&taker, 0, 100_000, Price::INFINITY.as_u32(), 1)
             .expect("swap");
+        let v = f.vault(0);
+        let h = f.market_header();
         (
             f.token_balance(&f.base_ata(&taker.pubkey())),
-            f.vault(0).base_atoms.get(),
+            v.base_atoms.get(),
+            h.accrued_base_fee.get(),
+            f.token_balance(&f.base_treasury),
         )
     };
-    let (no_fee_recv, _) = run(0);
-    let (fee_recv, fee_vault_base) = run(10_000); // 1%
+    let (no_fee_recv, no_fee_vault_base, no_fee_accrued, no_fee_treasury) = run(0);
+    let (fee_recv, fee_vault_base, accrued, treasury) = run(10_000); // 1%
 
     assert!(
         fee_recv < no_fee_recv,
         "a positive taker fee leaves the taker with less base ({fee_recv} vs {no_fee_recv})"
     );
-    // Without a fee the vault sent out `no_fee_recv` base; with the fee
-    // it retains the fee slice, so its remaining base is higher.
-    assert!(
-        fee_vault_base > SEED_BASE - no_fee_recv,
-        "vault retained the taker fee"
+    assert_eq!(no_fee_accrued, 0, "a zero fee rate accrues nothing");
+    assert_eq!(accrued, no_fee_recv - fee_recv, "the fee slice is accrued");
+    assert!(accrued > 0, "1% of the fill is a non-zero atom count");
+    // The vault gave up the same gross output in both runs — the fee comes
+    // out of the taker's proceeds, not out of the vault's quote.
+    assert_eq!(
+        fee_vault_base, no_fee_vault_base,
+        "vault inventory is debited the gross output regardless of the fee"
     );
+    assert_eq!(fee_vault_base, SEED_BASE - no_fee_recv);
+    // Treasury custody invariant in both runs: the fee atoms stay in the
+    // treasury, claimed by the accumulator rather than by the vault.
+    assert_eq!(no_fee_treasury, no_fee_vault_base + no_fee_accrued);
+    assert_eq!(treasury, fee_vault_base + accrued);
 }
 
 // ── Multi-vault price-time priority + flush / expiry ─────────────────

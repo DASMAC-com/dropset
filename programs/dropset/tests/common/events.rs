@@ -24,7 +24,7 @@ use anchor_lang_v2::{bytemuck, event::EVENT_IX_TAG_LE, Discriminator};
 use dropset::{
     CloseVaultEvent, CreateVaultEvent, DepositEvent, FillEvent, FreezeVaultEvent, RealizeEvent,
     SetDefaultFeeConfigEvent, SetMarketFeeConfigEvent, SetMinLeaderShareEvent,
-    SetRegistryDefaultsEvent, SetTakerFeeEvent, WithdrawEvent,
+    SetRegistryDefaultsEvent, SetTakerFeeEvent, SweepResidualEvent, WithdrawEvent,
 };
 use litesvm::types::TransactionMetadata;
 
@@ -235,6 +235,31 @@ pub fn set_taker_fee(meta: &TransactionMetadata) -> SetTakerFee {
     let d = SetTakerFee {
         market: c.pubkey(),
         taker_fee: c.u16(),
+    };
+    c.finish();
+    d
+}
+
+#[derive(Debug)]
+pub struct SweepResidual {
+    pub market: [u8; 32],
+    pub mint: [u8; 32],
+    pub treasury_amount: u64,
+    pub vault_sum: u64,
+    pub accrued_fee: u64,
+    pub swept: u64,
+}
+
+pub fn sweep_residual(meta: &TransactionMetadata) -> SweepResidual {
+    let body = one_body::<SweepResidualEvent>(meta);
+    let mut c = Cursor::new(&body);
+    let d = SweepResidual {
+        market: c.pubkey(),
+        mint: c.pubkey(),
+        treasury_amount: c.u64(),
+        vault_sum: c.u64(),
+        accrued_fee: c.u64(),
+        swept: c.u64(),
     };
     c.finish();
     d

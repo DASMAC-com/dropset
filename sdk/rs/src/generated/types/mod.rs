@@ -18,6 +18,7 @@ pub(crate) mod r#set_market_fee_config_event;
 pub(crate) mod r#set_min_leader_share_event;
 pub(crate) mod r#set_registry_defaults_event;
 pub(crate) mod r#set_taker_fee_event;
+pub(crate) mod r#sweep_residual_event;
 pub(crate) mod r#withdraw_event;
 
 pub use self::r#close_vault_event::*;
@@ -33,4 +34,5 @@ pub use self::r#set_market_fee_config_event::*;
 pub use self::r#set_min_leader_share_event::*;
 pub use self::r#set_registry_defaults_event::*;
 pub use self::r#set_taker_fee_event::*;
+pub use self::r#sweep_residual_event::*;
 pub use self::r#withdraw_event::*;

@@ -13,6 +13,7 @@ pub mod set_outside_deposits;
 pub mod set_quote_authority;
 pub mod set_reference_price;
 pub mod swap;
+pub mod sweep_residual;
 pub mod withdraw;
 pub mod withdraw_leader;
 // Teardown surface. The handlers always compile and are always wired
@@ -167,5 +168,6 @@ pub use set_outside_deposits::*;
 pub use set_quote_authority::*;
 pub use set_reference_price::*;
 pub use swap::*;
+pub use sweep_residual::*;
 pub use withdraw::*;
 pub use withdraw_leader::*;

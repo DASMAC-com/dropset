@@ -192,19 +192,21 @@ pub fn simulate_swap(
         let fee = taker_fee_atoms(if is_buy { fill_base } else { fill_quote }, taker_fee_ppm);
 
         // Decrement simulated vault inventory + this level's allowance,
-        // mirroring the on-chain per-leg mutation.
+        // mirroring the on-chain per-leg mutation: the vault gives up the
+        // **gross** output leg (the fee slice is booked to the market's
+        // `accrued_<leg>_fee`, not retained by the vault), so a
+        // multi-level fill against one vault runs out of inventory at
+        // exactly the point the engine does.
         let entry = inv.get_mut(&lvl.sector).unwrap();
         if is_buy {
-            let net_base_out = fill_base.saturating_sub(fee as u64);
-            entry.0 = entry.0.saturating_sub(net_base_out);
+            entry.0 = entry.0.saturating_sub(fill_base);
             entry.1 = entry.1.saturating_add(fill_quote);
             lvl.size = lvl.size.saturating_sub(fill_base);
             unfilled = unfilled.saturating_sub(fill_quote as u128);
             total_out += fill_base as u128;
         } else {
-            let net_quote_out = fill_quote.saturating_sub(fee as u64);
             entry.0 = entry.0.saturating_add(fill_base);
-            entry.1 = entry.1.saturating_sub(net_quote_out);
+            entry.1 = entry.1.saturating_sub(fill_quote);
             lvl.size = lvl.size.saturating_sub(fill_quote);
             unfilled = unfilled.saturating_sub(fill_base as u128);
             total_out += fill_quote as u128;

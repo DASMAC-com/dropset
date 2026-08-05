@@ -32,5 +32,6 @@ export * from './setReferencePrice';
 export * from './setRegistryDefaults';
 export * from './setTakerFee';
 export * from './swap';
+export * from './sweepResidual';
 export * from './withdraw';
 export * from './withdrawLeader';

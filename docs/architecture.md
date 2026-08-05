@@ -186,16 +186,19 @@ registry at creation and tunable downstream by admins, the base/quote
 mints, and the two treasury accounts with their PDA bumps. The
 load-bearing invariants and rationale:
 
-- **Treasury custody invariant.** `base_treasury.amount == Σ vault.base_atoms`
-  and `quote_treasury.amount == Σ vault.quote_atoms` across **every** vault on
-  the market — active **and** tombstoned. Each
-  `Deposit`, `Withdraw`, and fill moves atoms between a treasury and the
-  caller's ATA while adjusting the matching vault's `base_atoms` /
-  `quote_atoms` by the same delta — the two must stay aligned per
-  instruction. The treasury is the SPL **custody account**; its
-  `.amount` is the market's *reserves* quantity. Because it sums active
-  and tombstoned vaults, it is total inventory in custody, **not**
-  matchable liquidity.
+- **Treasury custody invariant.**
+  `base_treasury.amount == Σ vault.base_atoms + accrued_base_fee` and
+  `quote_treasury.amount == Σ vault.quote_atoms + accrued_quote_fee`,
+  summed across **every** vault on the market — active **and**
+  tombstoned. Each `Deposit`, `Withdraw`, and fill moves atoms between a
+  treasury and the caller's ATA while adjusting the matching vault's
+  `base_atoms` / `quote_atoms` by the same delta — the two must stay
+  aligned per instruction; a fill additionally books its taker fee to the
+  accrued counter for the output leg (see **Fee model**). The treasury is
+  the SPL **custody account**; its `.amount` is the market's *reserves*
+  quantity. Because it sums active and tombstoned vaults, it is total
+  inventory in custody, **not** matchable liquidity — and because it
+  includes the accrued fee, it is not all depositor-owned either.
 - **Depositor-count witness.** `outstanding_vault_depositors` counts
   live `VaultDepositor` PDAs across every vault (active and tombstoned):
   incremented when an outside `Deposit` opens a fresh one, decremented
@@ -216,6 +219,11 @@ load-bearing invariants and rationale:
   `default_min_leader_share` is stamped into each `Vault.min_leader_share`
   at `CreateVault`; mutating it affects only vaults opened afterward (see
   **Vault → Skin-in-the-game floor**).
+- **Accrued protocol revenue.** `accrued_base_fee` / `accrued_quote_fee`
+  are the running totals of taker fee charged on each leg. They are
+  **authoritative**, not derived: nothing infers revenue from the gap
+  between the treasury and the vault sum, which is what keeps that gap an
+  checkable invariant instead of a tautology (see **Fee model**).
 
 Every quote a vault produces is identified by `MarketHeader.nonce`
 at the moment of stamping — a global counter incremented on every
@@ -224,6 +232,112 @@ levels at the same price are ranked by nonce: lower nonce = earlier
 arrival = wins. This is the canonical CLOB **price-time priority**
 rule, with the nonce standing in for "time" — slot timestamps would
 be too coarse, since multiple events can land in the same slot.
+
+### Fee model
+
+Two distinct fees exist in the model, and they are not
+interchangeable:
+
+- **Taker fee** — **protocol revenue**. Per market, admin-set
+  (`MarketHeader.taker_fee`, `SetTakerFee`), charged on every fill,
+  accrued in the treasury, harvested later.
+- **Platform fee** — **integrator revenue**. Caller-declared per swap and
+  program-capped, paid out immediately to the integrator that routed the
+  order. Not implemented yet; it is a separate future instruction-level
+  change and touches none of the accounting below.
+
+The rest of this section is the taker fee.
+
+**Who bears it.** The taker, out of the **output** leg (base on a `Buy`,
+quote on a `Sell`). The matched vault is debited its **full quoted
+output** and therefore trades at exactly the price it quoted; the
+treasury sends the taker `output − fee` and keeps the difference. LPs
+earn from the leader's edge only, never from the protocol's fee.
+
+**Where it lives.** Nowhere new. `market_base_treasury` /
+`market_quote_treasury` are ATAs authorized by the market PDA holding
+pooled inventory for every vault on the market — the fee atoms are
+already physically in the treasury and never move on a fill. What the
+accrued counters record is **who has a claim on them**:
+
+```txt
+treasury.amount == Σ vault.<leg>_atoms + accrued_<leg>_fee
+        ^^^^^^^          ^^^^^^^^^^^^^^^^   ^^^^^^^^^^^^^^^^
+        custody          depositor claim     protocol claim
+```
+
+Booking the fee to the counter rather than leaving it inside the vault
+is load-bearing twice over. Left in the vault it would (1) raise
+depositor NAV pro-rata, making a protocol fee an LP fee in substance,
+and (2) inflate `L = isqrt(base · quote)`, so `Realize` would read a
+slice of protocol revenue as leader edge and mint the leader a
+performance fee on it (see **Vault → High-water mark and performance
+fee**).
+
+**Rounding.** Down — the taker keeps the dust, matching the kernel's
+existing `taker_fee_atoms` behavior.
+
+**Rollback.** The `min_out` soft-revert and the nonce-overflow hard
+error restore both accumulators to their pre-swap values along with
+vault inventory and level sizes (see **Minimum-output guard**). A swap
+that does not commit accrues nothing.
+
+**Harvest — deferred.** There is no instruction that moves accrued fee
+out of the treasury yet. Fees accrue safely and stay fully recoverable,
+so nothing is lost by waiting on the destination decision (an
+admin-supplied token account versus a fixed protocol PDA; the latter is
+only worth the machinery once a token or a defined treasury policy
+exists).
+
+#### Residual sweep
+
+`SweepResidual` (admin-only) pays out the **residual**:
+
+```txt
+residual = treasury.amount − Σ vault.<leg>_atoms − accrued_<leg>_fee
+```
+
+In normal operation that is exactly **zero**, which makes the
+instruction primarily a **bug alarm** rather than an income stream: a
+non-zero residual means a rounding error, a share-math slip, or a
+botched rollback stranded or leaked atoms. Because a call emits its
+event even when it sweeps nothing, it doubles as an on-chain read-out of
+the invariant's three terms.
+
+*Considered and rejected:* defining the protocol fee **as** the residual
+and dropping the counters. That is genuinely the more elegant design —
+no counters, nothing to unwind on the soft-revert path, and donations and
+dust swept for free — but it converts the checkable invariant into a
+tautology: any drift *is* fee by definition. A leak of depositor
+principal would be indistinguishable from revenue, harvested away, with
+no test able to fail and no on-chain way to notice. The counters keep the
+invariant a real check; this sweep preserves the recovery property the
+residual idea was after.
+
+That recovery property is the one legitimately non-zero case: anyone can
+transfer tokens **directly** to a treasury ATA, and such atoms are
+otherwise stranded forever, since no vault has a claim a `Withdraw`
+could pay out.
+
+Mechanics and bounds:
+
+- Admin-gated (`signer ∈ registry.admins`), one leg per call. The mint
+  must be one of the market's two legs (`NotAMarketTreasury` otherwise) —
+  a non-leg market-owned ATA has no inventory field and no counter to
+  subtract, so its whole balance would read as residual.
+- The vault sum runs over the **whole slab**, not just the active DLL: a
+  tombstoned vault still holds depositor claims, and a reclaimed sector
+  could carry rounding dust. Over-counting only ever *understates* the
+  residual, erring toward leaving atoms in custody. At most 255 sectors
+  (`max_vaults_per_market` is a `u8`, default 10) on a cold admin path.
+- The accrued counters are **subtracted, never touched**. This is not a
+  harvest.
+- The subtraction **saturates at zero**. A Token-2022 mint with a
+  transfer-fee extension delivers less than was sent, which can push the
+  treasury *below* the claimed sum; then there is simply nothing to
+  sweep, and the emitted event carries all three terms so an operator can
+  see the shortfall. That extension already threatens the custody
+  invariant and is not introduced by fee accrual.
 
 ### Market closure
 
@@ -1091,8 +1205,8 @@ that is not a permissionless instruction falls under one of them.
    - Steady-state: `add_admin`, `remove_admin`, `create_market`
      (see **Registry → Admin gating of market creation**),
      `FreezeVault`, `SetOutsideDepositsApproved`,
-     `SetMinLeaderShare`, `SetMarketFeeConfig`, and a waived
-     `CreateVault` fee path.
+     `SetMinLeaderShare`, `SetMarketFeeConfig`, `SweepResidual`, and a
+     waived `CreateVault` fee path.
    - Feature-gated under `admin-teardown` (see **Account
      lifecycle and rent reclamation**): `force_withdraw_depositor`,
      `force_withdraw_leader`, `close_market_treasury`,
@@ -1137,7 +1251,7 @@ authoritative.
 | Swap `amount_in == 0`                                       | `InvalidAmountIn`              |
 | Swap `side` neither Buy nor Sell                            | `InvalidSwapSide`              |
 | Swap `limit_price` sentinel wrong for the side              | `InvalidLimitPrice`            |
-| Close-mint is not one of the market's base/quote legs       | `NotAMarketTreasury`           |
+| Close / sweep mint is not a market base/quote leg           | `NotAMarketTreasury`           |
 | Teardown ix invoked with the `admin-teardown` feature off   | `TeardownDisabled`             |
 
 ## Leader operations
@@ -1534,6 +1648,20 @@ never the `fee_config` of markets already created (retune those via
 Token-2022 transfer-fee extension, for the reason given under
 `SetMarketFeeConfig`.
 
+### SweepResidual
+
+Admin-only, always on (**not** teardown-gated: an unsolicited transfer can
+strand atoms on a live market). Takes no arguments; the accounts are the
+admin, the registry, the market, one leg's `mint` + owning token program,
+that leg's treasury ATA, and a destination token account. It transfers out
+`treasury.amount − Σ vault.<leg>_atoms − accrued_<leg>_fee`, saturating at
+zero, and emits `SweepResidualEvent` with all three terms even when it
+sweeps nothing.
+
+Semantics, bounds, and why the residual is a bug alarm rather than income:
+**MarketHeader → Fee model → Residual sweep**. It is deliberately **not** a
+fee harvest — the accrued counters are subtracted, never touched.
+
 ## Depositor operations
 
 `Deposit` and `Withdraw` use the same pointer validation as leader
@@ -1800,10 +1928,13 @@ On every taker instruction:
      `base_atoms += fill_quote / level.price`.
 
    In both cases the trade never debits more inventory than the
-   vault holds. (An entry with `vault_leg == 0` yields a zero fill;
-   the loop moves on.) Decrement the taker's unfilled amount,
-   decrement the level's `Vault.remaining.<side>[i].size` by the fill,
-   and accrue the taker fee from `market.taker_fee`. Because the `Vec`
+   vault holds, and the debit is the **gross** output leg — the taker
+   fee is not left in the vault. (An entry with `vault_leg == 0` yields
+   a zero fill; the loop moves on.) Decrement the taker's unfilled
+   amount, decrement the level's `Vault.remaining.<side>[i].size` by
+   the fill, and add the taker fee (from `market.taker_fee`) to the
+   output leg's `accrued_<leg>_fee` on the header — see **MarketHeader →
+   Fee model**. Because the `Vec`
    is sorted best-price-first, the first entry whose price crosses the
    taker's limit lets the walk `break` immediately — every later entry
    crosses too. Continue until the taker is filled, a level crosses
@@ -1811,7 +1942,8 @@ On every taker instruction:
 
 1. **Tear down.** The `Vec` buffer is freed with the transaction;
    debited inventory, `Vault.remaining.size` decrements, the cleared
-   `FLUSH_BIT` on any flushed vault, and `market.nonce` persist to
+   `FLUSH_BIT` on any flushed vault, the `accrued_<leg>_fee` increments,
+   and `market.nonce` persist to
    chain. Takers bump `market.nonce` per fill but never touch
    `reference_price.stamp` beyond clearing `FLUSH_BIT`, and never
    touch `Vault.remaining.price` or `Vault.remaining.expires_at`.
@@ -1869,11 +2001,15 @@ leader-vs-leader pre-pass.
 
 The take instruction accepts a `min_out: u64` for SDK
 composability. The matcher snapshots every touched sector's
-inventory + per-level `remaining.size` + `market.nonce` before
+inventory + per-level `remaining.size` + `market.nonce` + both
+`accrued_<leg>_fee` counters before
 mutating, runs the full fill loop, then checks whether the
 achievable net output (after taker fee) meets `min_out`. On
 failure the snapshots are walked in reverse to restore exact
-pre-swap state, `FLUSH_BIT` is re-armed on every vault the
+pre-swap state, the accumulators are rolled back to their pre-swap
+values (a swap that does not commit must not leave phantom accrued
+fee — see **MarketHeader → Fee model**), `FLUSH_BIT` is re-armed on
+every vault the
 matcher flushed during the walk, and the instruction returns
 without emitting events or firing CPI transfers. No error — the
 surrounding transaction survives so a bundle of instructions that
@@ -1938,9 +2074,13 @@ withdraw family — leader and force-withdraw variants included, each
 paired with a `Realize` when it crystallizes fees; the force-withdraw
 pair only on `admin-teardown` builds, inert on the immutable deploy),
 the per-leg `FillEvent` that is the take's only event, the
-vault-lifecycle changes (`CloseVault`, `FreezeVault`), and the admin
+vault-lifecycle changes (`CloseVault`, `FreezeVault`), the admin
 retuning levers (`SetMinLeaderShare`, `SetMarketFeeConfig`,
-`SetTakerFee`, `SetRegistryDefaults`). Everything whose entire effect is already
+`SetTakerFee`, `SetRegistryDefaults`), and `SweepResidual` — which emits
+on **every** call, including the zero-sweep case, because the three terms
+it reports are a diagnosis an account diff cannot supply (see
+**MarketHeader → Fee model → Residual sweep**). Everything whose entire
+effect is already
 recoverable from a single account diff emits **nothing**: the leader
 quote-refresh pair (`SetReferencePrice`, `SetLiquidityProfile`) on the
 hot path, the vault-config setters (`SetQuoteAuthority`,
@@ -2173,9 +2313,19 @@ Per market, in order:
    sector reclaims to the free DLL — but that is just an in-slab
    pointer move, not a separate rent refund. After this step the
    treasury invariants in **MarketHeader** guarantee
-   `base_treasury.amount == 0` and `quote_treasury.amount == 0`.
+   `base_treasury.amount == accrued_base_fee` and
+   `quote_treasury.amount == accrued_quote_fee` — zero on a market that
+   never charged a taker fee.
 1. **Close both treasuries.** `close_market_treasury` for the
-   base leg, again for the quote leg.
+   base leg, again for the quote leg. **Known limitation:** each
+   requires its treasury drained to zero, so a market with a non-zero
+   `accrued_<leg>_fee` cannot be closed until the accrued revenue can
+   leave the treasury — and the harvest instruction is deliberately
+   deferred (see **MarketHeader → Fee model**). `SweepResidual` does
+   *not* unblock this: it subtracts the accrued counter rather than
+   paying it out. Teardown of a fee-charging market therefore waits on
+   the harvest; markets whose `taker_fee` stayed zero (every
+   localnet / testnet market today) tear down unchanged.
 1. **Close the market.** `close_market` reclaims the entire
    `MarketHeader` + vault slab rent in one shot, and decrements
    `registry.market_count` by one.
