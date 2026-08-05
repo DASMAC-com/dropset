@@ -71,13 +71,13 @@ pages:
 > flywheel, and it's a two-sided market we're already doing the customer
 > development on — upstream the issuers who need their currency to trade,
 > downstream the payments companies who need to buy FX to settle. The path
-> from here is deliberate: DASMAC bootstraps nascent FX pairs with
+> from here is deliberate: DASMAC bootstraps nascent FX pairs by leading
 > Hyperliquid-style vaults now, protocol fees accrue value as markets
-> mature, and derivatives are the expansion opportunity once spot is fully
-> mature. Permissioned onchain liquidity creates major pain points,
-> because permissioned solutions block composability and their competitive
-> dynamics keep a private ledger from ever being money-like — Dropset is
-> open and composable on Solana, the most money-like onchain environment.
+> mature, and derivatives provide an expansion opportunity once spot is
+> fully mature. Permissioned onchain liquidity creates major pain points:
+> permissioned solutions block composability, and no fintech is going to
+> settle on a competitor's private ledger — Dropset is open and composable
+> on Solana, the most money-like onchain environment.
 > Dropset is built by people who have built exchanges. Dropset — where
 > currency trades onchain.
 
@@ -150,15 +150,19 @@ pages:
   The three captures get progressively taller, so centring makes the
   labels climb like steps — which is the effect worth keeping. Captions
   underneath, by contrast, landed on three different baselines and read as
-  ragged.
+  ragged. Beneath the row, the URL: `dropset.io/swap`.
 - **Spoken:** "This already works. Dropset is live on mainnet today,
   clearing real trades: you open the picker, type the currency you want,
   and the swap settles atomically. The ramps are near instant and the
-  venue never closes. Solana is the start, not the end — it's the most
+  venue never closes. And it's on dropset.io/swap right now, so you can go
+  and do this yourself. Solana is the start, not the end — it's the most
   moneyness-conducive environment onchain."
 - **Note:** The *why onchain matters* beat lives here, spoken. Keep the
   claim exact: today we clear by routing through aggregators and sourcing
-  existing liquidity. Don't assert "most liquid". The globe is **not**
+  existing liquidity. Don't assert "most liquid". The **URL is doing real
+  work** — the captures prove the flow exists, and the link says the
+  audience can go do it themselves, which is the same job
+  `dropset.io/currencies` does on the gap page. The globe is **not**
   the way in — an earlier draft framed the flow as picking a country off
   the globe, which isn't how anyone uses it; the globe appears in the
   third capture as the route being drawn, which is what it's for.
@@ -267,14 +271,15 @@ pages:
 - **On-slide:** A deliberate and methodical path to expansion. Then three
   beats in time order, spanning the page:
   1. **Now** — DASMAC bootstraps liquidity. We bootstrap nascent FX pairs
-     with Hyperliquid-style vaults, and Dropset is the protocol
-     underneath.
+     by leading Hyperliquid-style vaults, using the Dropset protocol
+     underneath. (The body says "we" rather than "DASMAC" only because the
+     headline directly above it already names DASMAC.)
   1. **Next** — protocol fees accrue value. As markets mature, volumes
      and fees compound as we help all currency pairs achieve deep
      liquidity.
-  1. **Later** — derivatives are an expansion opportunity. Once spot is
-     fully mature, hedging instruments and additional derivatives enable
-     more efficient market making and more mature markets.
+  1. **Later** — derivatives provide an expansion opportunity. Once spot
+     is fully mature, hedging instruments and additional derivatives
+     enable more efficient market making and more mature markets.
 - **Visual:** The three beats as a rollout along a rule spanning the full
   page width, not a static list.
 - **Note:** Called a **roadmap** rather than "commercial viability" — the
@@ -292,30 +297,42 @@ pages:
 - **On-slide:** Permissioned onchain liquidity creates major pain points.
   Two panels: the permissioned rails (Arc, Canton, Tempo, red-outlined),
   captioned "Permissioned solutions are blocking composability.
-  Competitive dynamics keep a private ledger from ever being a money-like
-  environment."; and the Dropset wordmark, green-outlined, captioned
-  "Dropset is open and composable on Solana, the most money-like onchain
-  environment."
+  Competitive dynamics prevent fintech companies from adopting a
+  competitor's private ledger."; and the Dropset wordmark, green-outlined,
+  captioned "Dropset is open and composable on Solana, the most money-like
+  onchain environment." Both badges are **top-aligned** so they sit on one
+  line — see the note below.
 - **Spoken:** "Permissioned onchain liquidity creates real pain points.
   Arc and Tempo are building payment-and-settlement rails, and Canton is
   doing regulated onchain markets — any of them could decide FX is
   theirs, and each arrives with the customers already on it. But their
   liquidity isn't public: you can't make a market unless they let you,
-  and that blocks composability for everyone downstream. Their
-  competitive dynamics keep them from ever being a money-like environment
-  — at that point it's really just a private ledger. Dropset is open,
-  neutral and composable: anyone can quote, anyone can trade, any app can
-  integrate. And that's why we started on Solana, the most money-like
-  onchain environment there is."
+  and that blocks composability for everyone downstream. And competitive
+  dynamics stop it before it starts: a fintech isn't going to settle on a
+  competitor's private ledger. A bank that competes with Circle won't
+  build on Arc, and a multi-signature banking product isn't going to run
+  on Canton. Dropset is open, neutral and composable: anyone can quote,
+  anyone can trade, any app can integrate. And that's why we started on
+  Solana, the most money-like onchain environment there is."
 - **Note:** The v1 fail / won't-fail **pair collapsed into this one
   page**, and the asterisk device is retired — it cost a page and the
   payoff didn't carry. The framing is now the *pain point* rather than
   "what FX's consumers need", which was a claim about other people's
   requirements; a pain point is something the audience can check. The
   second clause on the permissioned caption is the sharper half of the
-  argument: a permissioned venue's own competitive dynamics stop it from
-  being money-like at all, because what it really is at that point is a
-  private ledger.
+  argument, and it's a **commercial** point rather than a technical one: a
+  fintech will not settle on a competitor's private ledger. A bank that
+  competes with Circle won't build on Arc; a multi-signature banking
+  product won't run on Canton. The permissioning doesn't just restrict
+  access, it disqualifies the people who most need the rail — and those
+  examples belong in the spoken track, not on the slide.
+- **Note on alignment:** the two badges are **top-aligned**, and that has
+  to stay explicit. Spectacle's `FlexBox` defaults to `alignItems: center`,
+  which vertically centred each panel *including its caption* — so the
+  panel with the longer caption became the taller column and its badge rode
+  up relative to the other. Aligning to the top puts both badges on one
+  line, which is what makes the pair read as a comparison rather than as
+  two unrelated boxes.
 - **Note on the logos:** this page is the **one exception** to keeping
   competitor marks off the deck, and it is deliberate. The red outline is
   what makes it work — the marks are labeled as the unfavorable case
@@ -336,7 +353,7 @@ pages:
   authored the Solana Opcode Guide, the definitive resource for optimizing
   Solana program efficiency. Judy Sosa, Operations — owns the whole
   operational stack, working with banks, stablecoin providers, onramps and
-  service provider relationships.
+  service providers.
 - **Visual:** Both headshots, square and unframed, pulled from the
   marketing site at build time (`remote-assets.json`).
 - **Spoken:** "Dropset is built by people who have built exchanges. I
@@ -345,8 +362,8 @@ pages:
   Guide, the definitive resource for optimizing Solana program efficiency
   — which is what makes quoting on the eCLOB cost double-digit compute
   units. Judy owns the whole operational stack, and works directly with
-  banks, stablecoin providers, onramps and our service provider
-  relationships. Dropset — where currency trades onchain."
+  banks, stablecoin providers, onramps and service providers. Dropset —
+  where currency trades onchain."
 - **Note:** **State what each person has done; don't argue for why the
   role matters.** An intermediate draft justified the operations split
   ("this is the work that gets an FX venue integrated with the rails…",

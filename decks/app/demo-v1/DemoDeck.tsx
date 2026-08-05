@@ -579,7 +579,9 @@ const BEATS: Beat[] = [
   {
     when: "Now",
     headline: "DASMAC bootstraps liquidity.",
-    body: "We bootstrap nascent FX pairs with Hyperliquid-style vaults, and Dropset is the protocol underneath.",
+    // "We", not "DASMAC", only because the headline directly above already
+    // says DASMAC — repeating it opened the body with the same subject twice.
+    body: "We bootstrap nascent FX pairs by leading Hyperliquid-style vaults, using the Dropset protocol underneath.",
   },
   {
     when: "Next",
@@ -588,7 +590,7 @@ const BEATS: Beat[] = [
   },
   {
     when: "Later",
-    headline: "Derivatives are an expansion opportunity.",
+    headline: "Derivatives provide an expansion opportunity.",
     body: "Once spot is fully mature, hedging instruments and additional derivatives enable more efficient market making and more mature markets.",
   },
 ];
@@ -865,15 +867,22 @@ export default function DemoDeck() {
               alt="A priced USDC to EURC swap, with the route drawn on the globe"
             />
           </FlexBox>
+          {/* The URL is the point of putting it here: the captures prove the
+              flow exists, and the link says the audience can go do it
+              themselves. Same job the currencies URL does on the gap page. */}
+          <Link href="https://dropset.io/swap" fontSize="28px" margin="30px 0 0 0">
+            dropset.io/swap
+          </Link>
         </SlideBody>
         <Notes>
           This already works. Dropset is live on mainnet today, clearing real
           trades: you open the picker, type the currency you want, and the swap
           settles atomically. The ramps are near instant and the venue never
           closes. Solana is the start, not the end — it’s the most
-          moneyness-conducive environment onchain. [Today we clear by routing
-          through aggregators and sourcing existing liquidity; don’t claim “most
-          liquid”.]
+          moneyness-conducive environment onchain. And it’s on dropset.io/swap
+          right now, so you can go and do this yourself. [Today we clear by
+          routing through aggregators and sourcing existing liquidity; don’t
+          claim “most liquid”.]
         </Notes>
       </Slide>
 
@@ -1021,14 +1030,14 @@ export default function DemoDeck() {
           <Roadmap />
         </SlideBody>
         <Notes>
-          Now, DASMAC bootstraps the liquidity: we seed nascent FX pairs with
-          Hyperliquid-style vaults, so we’re the liquidity leader and Dropset is
-          the protocol underneath — DASMAC the company, Dropset the protocol.
-          Next, protocol fees accrue value: as markets mature, volumes and fees
-          compound as we help all the currency pairs achieve deep liquidity.
-          Later, derivatives are an expansion opportunity: once spot is fully
-          mature, hedging instruments and additional derivatives enable more
-          efficient market making and more mature markets.
+          Now, DASMAC bootstraps the liquidity: we lead Hyperliquid-style vaults
+          on nascent FX pairs, using the Dropset protocol underneath — DASMAC the
+          company, Dropset the protocol. Next, protocol fees accrue value: as
+          markets mature, volumes and fees compound as we help all the currency
+          pairs achieve deep liquidity. Later, derivatives provide an expansion
+          opportunity: once spot is fully mature, hedging instruments and
+          additional derivatives enable more efficient market making and more
+          mature markets.
         </Notes>
       </Slide>
 
@@ -1039,10 +1048,20 @@ export default function DemoDeck() {
           <Statement fontSize="64px">
             Permissioned onchain liquidity creates major pain points.
           </Statement>
-          <FlexBox margin="46px 0 0 0" justifyContent="center">
+          {/* `alignItems` must stay explicit. Spectacle's `FlexBox` defaults to
+              `center`, which vertically centred each panel *including its
+              caption* — so the panel with the longer caption was the taller
+              column, and its badge rode up relative to the other one. Aligning
+              to the top puts both badges on the same line, which is what makes
+              the pair read as a comparison. */}
+          <FlexBox
+            margin="46px 0 0 0"
+            justifyContent="center"
+            alignItems="flex-start"
+          >
             <VenuePanel
               tint={colors.sell}
-              caption="Permissioned solutions are blocking composability. Competitive dynamics keep a private ledger from ever being a money-like environment."
+              caption="Permissioned solutions are blocking composability. Competitive dynamics prevent fintech companies from adopting a competitor’s private ledger."
             >
               <LogoRow
                 logos={PERMISSIONED}
@@ -1066,10 +1085,12 @@ export default function DemoDeck() {
           regulated onchain markets — any of them could decide FX is theirs, and
           each arrives with the customers already on it. But their liquidity
           isn’t public: you can’t make a market unless they let you, and that
-          blocks composability for everyone downstream. Their competitive
-          dynamics keep them from ever being a money-like environment — at that
-          point it’s really just a private ledger. Dropset is open, neutral and
-          composable: anyone can quote, anyone can trade, any app can integrate.
+          blocks composability for everyone downstream. And competitive dynamics
+          stop it before it starts: a fintech isn’t going to settle on a
+          competitor’s private ledger. A bank that competes with Circle won’t
+          build on Arc, and a multi-signature banking product isn’t going to run
+          on Canton. Dropset is open, neutral and composable: anyone can quote,
+          anyone can trade, any app can integrate.
           And that’s why we started on Solana, the most money-like onchain
           environment there is.
         </Notes>
@@ -1099,7 +1120,7 @@ export default function DemoDeck() {
               name="Judy Sosa"
               role="Operations, DASMAC"
               prior="prev. EA, Dragonfly Capital"
-              bio="Owns the whole operational stack, working with banks, stablecoin providers, onramps and service provider relationships."
+              bio="Owns the whole operational stack, working with banks, stablecoin providers, onramps and service providers."
             />
           </FlexBox>
         </SlideBody>
@@ -1110,8 +1131,8 @@ export default function DemoDeck() {
           resource for optimizing Solana program efficiency — which is what makes
           quoting on the eCLOB cost double-digit compute units. Judy owns the
           whole operational stack, and works directly with banks, stablecoin
-          providers, onramps and our service provider relationships. Dropset —
-          where currency trades onchain. [Leave this page up.]
+          providers, onramps and service providers. Dropset — where currency
+          trades onchain. [Leave this page up.]
         </Notes>
       </Slide>
     </Deck>

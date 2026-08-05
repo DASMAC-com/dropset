@@ -55,6 +55,7 @@ eurc
 eurcv
 eurozone
 fieldless
+fintech
 firmable
 forex
 frankfurter
