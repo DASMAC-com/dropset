@@ -4,7 +4,9 @@
 //! market, fund the taker, and drive the tick loop, submitting the stochastic
 //! flow's orders as `swap`s. `--dry-run` instead samples the flow for a fixed
 //! number of ticks and prints the orders it *would* submit — the wiring check
-//! for the flow parameters, with no validator and no writes.
+//! for the flow parameters, with no validator and no writes. Those are the
+//! flow's raw draws: a live take is also capped against the book depth resting
+//! when it is sent, which needs a chain to know.
 //!
 //! Flags:
 //!   --rpc <url>              RPC endpoint (default http://127.0.0.1:8899)
@@ -170,6 +172,14 @@ fn dry_run(cfg: &BotConfig, ticks: u32) -> Result<()> {
             100.0 * buys as f64 / orders as f64
         );
         println!("  mean size:   {:.2} quote", notional_sum / orders as f64);
+        // The sizes above are the flow's own draws. A live run additionally
+        // clamps each take to a share of the book resting at the time it is
+        // sent (`BotConfig::max_depth_fraction`), which no dry run can know —
+        // so say so rather than let the preview read as the final sizes.
+        println!(
+            "  (live takes are additionally capped at {:.0}% of book depth)",
+            100.0 * cfg.max_depth_fraction,
+        );
     }
     Ok(())
 }

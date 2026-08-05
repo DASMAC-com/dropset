@@ -2,11 +2,10 @@
 //!
 //! Every tick: keep the taker funded, then advance the stochastic flow one
 //! step and submit the orders it produced. Each order is sized against the
-//! live book ([`chain::size_order`]) and sent as its own `swap`
+//! live book — and capped to a fraction of its depth
+//! ([`chain::size_order`]) — and sent as its own `swap`
 //! ([`chain::send_swap`]); a failed or unfillable order is logged and skipped,
 //! and the loop continues — one bad take never stalls the flow.
-
-// cspell:word unfillable
 
 use crate::chain;
 use crate::config::BotConfig;
@@ -64,16 +63,27 @@ fn tick(ctx: &mut Context, cfg: &BotConfig) -> Result<()> {
 
 /// Size one order against the live book and send it, logging the fill.
 fn submit(ctx: &Context, cfg: &BotConfig, order: &Order) -> Result<()> {
-    let Some(swap) = chain::size_order(&ctx.client, &ctx.market, order, cfg.slippage_tolerance)?
+    let Some(swap) = chain::size_order(
+        &ctx.client,
+        &ctx.market,
+        order,
+        cfg.slippage_tolerance,
+        cfg.max_depth_fraction,
+    )?
     else {
         println!("[order] {} unfillable — skipped", describe(order));
         return Ok(());
     };
     let sig = chain::send_swap(&ctx.client, &ctx.taker, &ctx.market, &swap)?;
     println!(
-        "[order] {} in {} → out ≥ {} (exp {}): {sig}",
+        "[order] {} in {}{} → out ≥ {} (exp {}): {sig}",
         describe(order),
         swap.amount_in,
+        if swap.depth_capped {
+            " (capped to book depth)"
+        } else {
+            ""
+        },
         swap.min_out,
         swap.expected_out,
     );

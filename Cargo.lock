@@ -1877,6 +1877,7 @@ name = "dropset-taker-bot"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytemuck",
  "dropset-localnet-support",
  "dropset-sdk",
  "rand 0.8.6",

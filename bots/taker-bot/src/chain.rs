@@ -8,8 +8,10 @@
 //! SOL, create its two ATAs, and mint it starting inventory under the mock
 //! mints' authority. Each order is **sized off-chain** before it is sent:
 //! [`dropset_sdk::matching::simulate_swap`] turns a sampled notional into the
-//! achievable `amount_in` / `min_out` at the live book, and the swap itself is
-//! built with the generated [`SwapBuilder`] and signed by the taker.
+//! achievable `amount_in` / `min_out` at the live book — and caps it at a
+//! fraction of the depth resting there, so a take scales with the book instead
+//! of clearing it — and the swap itself is built with the generated
+//! [`SwapBuilder`] and signed by the taker.
 
 use anyhow::{anyhow, Context as _, Result};
 use dropset_localnet_support::{
@@ -290,6 +292,10 @@ pub struct SizedSwap {
     pub min_out: u64,
     /// The simulator's expected net output at the limit (atoms) — for logging.
     pub expected_out: u64,
+    /// Whether the depth cap shortened this take below its sampled notional —
+    /// for logging, so a run that is constantly clamping is visible rather than
+    /// looking like a flow of identically-sized orders.
+    pub depth_capped: bool,
 }
 
 /// The market's current reference price (quote-per-base) as a float, taken
@@ -301,37 +307,79 @@ fn market_reference_price(view: &MarketView<'_>) -> Option<f64> {
     })
 }
 
-/// Size one sampled [`Order`] against the live book: convert its quote
-/// notional into an `amount_in` for the chosen leg, derive the
-/// `limit_price_bits` from the reference price and slippage tolerance, and
-/// floor `min_out` below what the simulator says fills within that bound.
+/// The taker input atoms this book can absorb on `side` without crossing
+/// `limit_price` — the live depth a take is measured against.
 ///
-/// Returns `None` when the order can't be priced or wouldn't fill — no quoting
-/// vault, a zero-atom size, an out-of-range limit price, or no liquidity
-/// inside the bound — so the tick simply skips it.
-pub fn size_order(
-    client: &RpcClient,
+/// Measured by running the *same* fill path the swap will take with an
+/// unbounded input and reporting what it consumed, so every constraint the
+/// engine applies is already folded in: level sizes, the per-side `size_bps`
+/// cap, level expiry, and each vault's own inventory. Summing the resting
+/// levels instead would ignore the inventory cap and over-report depth the
+/// engine won't actually fill.
+fn takeable_depth_atoms(
+    view: &MarketView<'_>,
+    side: SwapSide,
+    limit_price: Price,
+    slot: u32,
+) -> u64 {
+    simulate_swap(view, side, u64::MAX, limit_price, slot).in_amount
+}
+
+/// The input-atom ceiling for one take: `fraction` of the book's
+/// `depth_atoms`.
+///
+/// A non-finite or non-positive `fraction` disables the cap, so a mis-set knob
+/// widens takes rather than silently zeroing every one of them; a `fraction`
+/// at or above `1.0` is effectively a no-op, since the fill is depth-bounded
+/// anyway. Whenever there is depth the ceiling stays at least one atom —
+/// flooring it to `0` would turn a very thin book into a stream of skipped
+/// orders instead of dust takes.
+fn depth_cap_atoms(depth_atoms: u64, fraction: f64) -> u64 {
+    if !fraction.is_finite() || fraction <= 0.0 {
+        return u64::MAX;
+    }
+    if depth_atoms == 0 {
+        return 0;
+    }
+    ((depth_atoms as f64 * fraction) as u64).max(1)
+}
+
+/// Size one sampled [`Order`] against `view`: convert its quote notional into
+/// an `amount_in` for the chosen leg, derive the `limit_price_bits` from the
+/// reference price and slippage tolerance, cap the take at
+/// `max_depth_fraction` of the depth resting inside that bound, and floor
+/// `min_out` below what the simulator says fills.
+///
+/// The depth cap is what keeps the flow proportional to the book. A sampled
+/// notional is an absolute quote size, so against a thin book its tail can
+/// clear several levels at once and visibly empty the side; against a deep one
+/// the same size is invisible. Sizing off the depth actually resting inside the
+/// limit price makes a take nibble the top of the book whether the maker is
+/// quoting $100 or $1M, and shrinks takes automatically as its inventory
+/// drains mid-run.
+///
+/// Pure: the book snapshot, slot, and market metadata are all passed in, so the
+/// whole sizing decision is testable without a validator. Returns `None` when
+/// the order can't be priced or wouldn't fill — no quoting vault, a zero-atom
+/// size, an out-of-range limit price, or no liquidity inside the bound — so the
+/// tick simply skips it.
+pub fn size_against_book(
+    view: &MarketView<'_>,
     market: &MarketAddrs,
     order: &Order,
     slippage: f64,
-) -> Result<Option<SizedSwap>> {
-    let account = client
-        .get_account(&market.market)
-        .context("get market account")?;
-    let view = MarketView::load(&account.data).map_err(|e| anyhow!("decode market: {e:?}"))?;
-    let slot = client.get_slot().context("get_slot")? as u32;
-
-    let Some(price) = market_reference_price(&view) else {
-        return Ok(None);
-    };
+    max_depth_fraction: f64,
+    slot: u32,
+) -> Option<SizedSwap> {
+    let price = market_reference_price(view)?;
 
     // Convert the quote notional into the input leg's atoms.
-    let amount_in = match order.side {
+    let requested_in = match order.side {
         SwapSide::Buy => to_atoms(order.notional, market.quote_decimals),
         SwapSide::Sell => to_atoms(order.notional / price, market.base_decimals),
     };
-    if amount_in == 0 {
-        return Ok(None);
+    if requested_in == 0 {
+        return None;
     }
 
     // Worst acceptable price: above the reference for a Buy, below for a Sell.
@@ -339,13 +387,18 @@ pub fn size_order(
         SwapSide::Buy => price * (1.0 + slippage),
         SwapSide::Sell => price * (1.0 - slippage),
     };
-    let Some(limit_price) = Price::from_value(limit_value) else {
-        return Ok(None);
-    };
+    let limit_price = Price::from_value(limit_value)?;
 
-    let quote = simulate_swap(&view, order.side, amount_in, limit_price, slot);
+    // Clamp to a fraction of the depth inside that limit — see above.
+    let depth = takeable_depth_atoms(view, order.side, limit_price, slot);
+    let amount_in = requested_in.min(depth_cap_atoms(depth, max_depth_fraction));
+    if amount_in == 0 {
+        return None;
+    }
+
+    let quote = simulate_swap(view, order.side, amount_in, limit_price, slot);
     if quote.out_amount == 0 {
-        return Ok(None);
+        return None;
     }
     // Floor `min_out` below the simulated output so a benign book move between
     // sizing and execution doesn't trip the on-chain slippage check — but keep
@@ -353,13 +406,38 @@ pub fn size_order(
     // entirely (swap.rs), which would drop slippage protection on a dust order.
     let min_out = ((quote.out_amount as f64 * (1.0 - slippage)) as u64).max(1);
 
-    Ok(Some(SizedSwap {
+    Some(SizedSwap {
         side: order.side,
         amount_in,
         limit_price_bits: limit_price.as_u32(),
         min_out,
         expected_out: quote.out_amount,
-    }))
+        depth_capped: amount_in < requested_in,
+    })
+}
+
+/// Read the live book and slot, then size `order` against them with
+/// [`size_against_book`]. The IO half of the sizing step.
+pub fn size_order(
+    client: &RpcClient,
+    market: &MarketAddrs,
+    order: &Order,
+    slippage: f64,
+    max_depth_fraction: f64,
+) -> Result<Option<SizedSwap>> {
+    let account = client
+        .get_account(&market.market)
+        .context("get market account")?;
+    let view = MarketView::load(&account.data).map_err(|e| anyhow!("decode market: {e:?}"))?;
+    let slot = client.get_slot().context("get_slot")? as u32;
+    Ok(size_against_book(
+        &view,
+        market,
+        order,
+        slippage,
+        max_depth_fraction,
+        slot,
+    ))
 }
 
 /// Build and send a `swap`, signed and paid by the taker. Returns the
@@ -429,6 +507,160 @@ fn send(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytemuck::Zeroable;
+    use dropset_sdk::layout::{MarketHeader, Vault, NULL_SECTOR, VAULT_ALIGN};
+
+    /// Both legs of the synthetic market use USDC-style decimals, so a human
+    /// price of 1.0 is also an atoms-ratio of 1.0 and the arithmetic below
+    /// reads directly.
+    const DECIMALS: u8 = 6;
+    /// The slot every sizing test prices at — before the fixture's level
+    /// expiry, so its levels are live.
+    const SLOT: u32 = 10;
+    /// Ample per-leg vault inventory, so the fixture's depth is set by its
+    /// level sizes rather than by the inventory cap.
+    const INVENTORY_ATOMS: u64 = 10_000_000;
+
+    /// `MarketAddrs` for the synthetic market — only the decimals matter to
+    /// [`size_against_book`]; the addresses are never dereferenced.
+    fn addrs() -> MarketAddrs {
+        MarketAddrs {
+            market: Pubkey::new_unique(),
+            base_mint: Pubkey::from([1u8; 32]),
+            quote_mint: Pubkey::from([2u8; 32]),
+            base_treasury: Pubkey::new_unique(),
+            quote_treasury: Pubkey::new_unique(),
+            base_decimals: DECIMALS,
+            quote_decimals: DECIMALS,
+        }
+    }
+
+    /// A one-vault market account buffer quoting a single level per side at
+    /// price 1.0: `ask_base` base atoms offered and `bid_quote` quote atoms
+    /// bid. Mirrors the on-chain slab layout (8-byte discriminator, header,
+    /// slab length, then `VAULT_ALIGN`-aligned sectors) the way the SDK's own
+    /// adapter tests do. A zero size leaves that side empty.
+    fn market_bytes(ask_base: u64, bid_quote: u64) -> Vec<u8> {
+        let one = Price::encode(10_000_000, 0).unwrap();
+
+        let mut header = MarketHeader::zeroed();
+        header.head = 0u32.into();
+        header.active_count = 1u32.into();
+        header.base_mint = [1u8; 32];
+        header.quote_mint = [2u8; 32];
+
+        let mut v = Vault::zeroed();
+        v.next = NULL_SECTOR.into();
+        v.prev = NULL_SECTOR.into();
+        v.leader = [9u8; 32]; // non-zero ⇒ active, not on the free list
+        v.reference_price.price = one.as_u32().into();
+        v.reference_price.stamp = 1u64.into(); // nonce 1, FLUSH_BIT clear ⇒ read `remaining`
+        v.base_atoms = INVENTORY_ATOMS.into();
+        v.quote_atoms = INVENTORY_ATOMS.into();
+        v.remaining.asks[0].price = one.as_u32().into();
+        v.remaining.asks[0].size = ask_base.into();
+        v.remaining.asks[0].expires_at = 1_000u32.into();
+        v.remaining.bids[0].price = one.as_u32().into();
+        v.remaining.bids[0].size = bid_quote.into();
+        v.remaining.bids[0].expires_at = 1_000u32.into();
+
+        let mut buf = vec![0u8; 8]; // discriminator (unchecked by `load`)
+        buf.extend_from_slice(bytemuck::bytes_of(&header));
+        buf.extend_from_slice(&1u32.to_le_bytes()); // slab length: one sector
+        while !buf.len().is_multiple_of(VAULT_ALIGN) {
+            buf.push(0);
+        }
+        buf.extend_from_slice(bytemuck::bytes_of(&v));
+        buf
+    }
+
+    /// Size `notional` on `side` against a book with `ask_base` / `bid_quote`
+    /// resting, at the default 1% slippage and `fraction` depth cap.
+    fn size(
+        side: SwapSide,
+        notional: f64,
+        ask_base: u64,
+        bid_quote: u64,
+        fraction: f64,
+    ) -> Option<SizedSwap> {
+        let data = market_bytes(ask_base, bid_quote);
+        let view = MarketView::load(&data).expect("synthetic market decodes");
+        let order = Order { side, notional };
+        size_against_book(&view, &addrs(), &order, 0.01, fraction, SLOT)
+    }
+
+    /// The cap is a plain fraction of depth, floors at one atom while depth
+    /// remains, and is disabled by a non-positive or non-finite fraction — a
+    /// mis-set knob must widen takes, never zero them all.
+    #[test]
+    fn depth_cap_is_a_fraction_of_depth() {
+        assert_eq!(depth_cap_atoms(1_000_000, 0.25), 250_000);
+        assert_eq!(depth_cap_atoms(1_000_000, 1.0), 1_000_000);
+        // Rounds down, but never below a single atom while there is depth.
+        assert_eq!(depth_cap_atoms(3, 0.25), 1);
+        assert_eq!(depth_cap_atoms(0, 0.25), 0, "no depth ⇒ nothing takeable");
+        assert_eq!(depth_cap_atoms(1_000_000, 0.0), u64::MAX, "cap disabled");
+        assert_eq!(depth_cap_atoms(1_000_000, -1.0), u64::MAX, "cap disabled");
+        assert_eq!(depth_cap_atoms(1_000_000, f64::NAN), u64::MAX);
+    }
+
+    /// A tail-sized take against a shallow book is clamped to the configured
+    /// fraction of its depth rather than clearing the level — the bug this
+    /// cap exists to prevent — and says so via `depth_capped`.
+    #[test]
+    fn oversized_take_is_clamped_to_a_fraction_of_depth() {
+        // $1.00 of asks resting; a $100 notional would eat all of it.
+        let swap = size(SwapSide::Buy, 100.0, 1_000_000, 0, 0.25).expect("fills");
+        assert_eq!(swap.amount_in, 250_000, "a quarter of the $1.00 resting");
+        assert!(swap.depth_capped);
+        // The level survives the take: what filled is well under what rested.
+        assert!(swap.expected_out < 1_000_000);
+    }
+
+    /// A take that already fits inside its share of the book passes through at
+    /// its sampled size — the cap is a ceiling, not a target.
+    #[test]
+    fn take_within_depth_is_untouched() {
+        let swap = size(SwapSide::Buy, 0.1, 1_000_000, 0, 0.25).expect("fills");
+        assert_eq!(swap.amount_in, 100_000, "the sampled $0.10, unclamped");
+        assert!(!swap.depth_capped);
+    }
+
+    /// The whole point: the same sampled notional scales with the book. A 10×
+    /// deeper book absorbs a 10× larger take, so the cap needs no retuning per
+    /// market or as the maker's inventory grows.
+    #[test]
+    fn cap_scales_with_book_depth() {
+        let thin = size(SwapSide::Buy, 100.0, 1_000_000, 0, 0.25).expect("fills");
+        let deep = size(SwapSide::Buy, 100.0, 10_000_000, 0, 0.25).expect("fills");
+        assert_eq!(deep.amount_in, thin.amount_in * 10);
+    }
+
+    /// The Sell leg is capped symmetrically, against the bids' depth converted
+    /// to the base atoms a Sell actually pays in.
+    #[test]
+    fn sell_is_clamped_against_bid_depth() {
+        let swap = size(SwapSide::Sell, 100.0, 0, 1_000_000, 0.25).expect("fills");
+        assert_eq!(swap.amount_in, 250_000);
+        assert!(swap.depth_capped);
+    }
+
+    /// Nothing resting on the taken side means no depth and so no take — the
+    /// tick skips the order instead of sending a swap that cannot fill.
+    #[test]
+    fn empty_side_is_unfillable() {
+        assert!(size(SwapSide::Sell, 10.0, 1_000_000, 0, 0.25).is_none());
+        assert!(size(SwapSide::Buy, 10.0, 0, 1_000_000, 0.25).is_none());
+    }
+
+    /// With the cap disabled the take reverts to its sampled size, so the knob
+    /// is a true opt-out (and the pre-cap behavior stays reachable).
+    #[test]
+    fn disabled_cap_restores_the_sampled_size() {
+        let swap = size(SwapSide::Buy, 100.0, 1_000_000, 0, 0.0).expect("fills");
+        assert_eq!(swap.amount_in, 100_000_000, "the full sampled $100");
+        assert!(!swap.depth_capped);
+    }
 
     /// Atom conversion respects decimals and truncates toward zero.
     #[test]
