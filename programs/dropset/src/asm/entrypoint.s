@@ -105,9 +105,11 @@
 # settled decision, not an outstanding gap — these paths trust the market
 # maker to call them correctly, and the audit below is why that is safe.
 #
-# SURPLUS ix data is a non-event: each branch reads a fixed width from a
-# fixed offset (160 bytes from ix_data + 5 on disc 6, two u32s on disc 5)
-# and never looks past it, so trailing bytes are simply not read.
+# SURPLUS ix data is a non-event: every read is a fixed width at a fixed
+# offset, so nothing scans and no read is length-derived. The shared
+# preamble takes vault_idx at +1; disc 5 then reads two more u32s (max
+# extent ix_data + 13) and disc 6 the 160-byte blob at +5 (max extent
+# ix_data + 165). Bytes past that are simply never read.
 #
 # A TRUNCATED payload only ever harms its own caller. The reference build
 # rejects one at anchor deserialization; here a short disc-6 call makes the
@@ -117,14 +119,15 @@
 # trailing program-id bytes — public data — into the caller's own ladder
 # and succeeds silently. Every SDK builder emits the full 165 bytes.
 #
-# Neither case can be turned into an injection, because nothing
-# attacker-controlled reaches the copy's destination OR its length: the
-# length is the PROFILE_SIZE constant, and the destination is the fixed
-# (vault + VAULT_PROFILE_OFF, PROFILE_SIZE) window inside a sector that is
-# bounds-checked twice (idx < slab len, then vault end <= data_len) and
-# whose quote_authority the caller has already been compared against over
-# all 32 bytes. So malformed ix data cannot reach another vault, the header
-# beyond the nonce, or any accounting field.
+# Neither case can be turned into an injection. The copy length is the
+# PROFILE_SIZE constant, never payload-derived. The destination is the
+# fixed (vault + VAULT_PROFILE_OFF, PROFILE_SIZE) window, and the one
+# attacker-controlled input to it — vault_idx — cannot select a sector the
+# caller does not already own: it is bounds-checked twice (idx < slab len,
+# then vault end <= data_len), and the resulting sector's quote_authority
+# has been compared against the signer over all 32 bytes. So malformed ix
+# data cannot reach another vault, the header beyond the nonce, or any
+# accounting field.
 #
 # Nor can a garbled ladder brick the market for anyone else. Level is
 # all-Pod, so arbitrary bytes are a *valid* LiquidityProfile (no invalid
@@ -132,8 +135,10 @@
 # function: materialize_remaining zeroes an over-cap side out of the book
 # rather than aborting the take (it is the sole enforcement of
 # Σ size_bps <= BPS), level_fill_atoms falls back to 0, flush_level_price
-# saturates and returns Price::ZERO on failure, and side_size_sums
-# saturates. No panic and no Err, so no taker is ever blocked.
+# cannot fail (saturating subtraction plus Price::ZERO fallbacks — an
+# extreme price_offset yields a bogus-but-valid price, never a trap), and
+# side_size_sums saturates. No panic and no Err, so no taker is ever
+# blocked.
 #
 # The blast radius is therefore exactly one leader garbling their own
 # quotes, self-healing the moment they resubmit a valid ladder — worth less

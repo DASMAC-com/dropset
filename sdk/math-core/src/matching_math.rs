@@ -43,11 +43,12 @@ pub fn flush_level_price(reference: Price, offset_ppm: u32, is_ask: bool) -> Pri
 ///
 /// Returns `None` when `size_bps > BPS`. Nothing bounds that at *write*
 /// time: `set_liquidity_profile` stores the ladder raw (and its ASM fast
-/// path validates nothing at all), and `size_bps` is a `u16`, so a level
-/// above `BPS` — and hence this `None` — is reachable from an ordinary,
+/// path validates nothing at all), and `size_bps` is a `u16`, so a
+/// *stored* level above `BPS` is reachable from an ordinary,
 /// correctly-signed profile write, not just from corrupt account bytes.
 /// The per-side `Σ size_bps ≤ BPS` invariant is enforced *solely* at match
-/// time, as the next paragraph describes. Where it holds the product is at
+/// time — which is also what keeps this `None` arm itself unreachable, as
+/// the next paragraph describes. Where it holds the product is at
 /// most `leg_atoms * BPS`, which divided by `BPS` is
 /// `<= leg_atoms <= u64::MAX`, so the cast is lossless.
 ///

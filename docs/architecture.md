@@ -1291,29 +1291,33 @@ moves *nothing* outside `market.nonce`, the target sector's
 The fast path does **not** bound the instruction-data length before the
 copy — a settled decision, not an outstanding gap, since these paths
 trust the market maker to call them correctly. Surplus bytes are a
-non-event: the branch reads a fixed 160 bytes from a fixed offset and
-never looks past them. A truncated call does diverge from the reference
+non-event: every read is a fixed width at a fixed offset — `vault_idx` at
+`+1`, then the 160-byte blob at `+5`, a maximum extent of
+`ix_data + 165` — so nothing scans and bytes past that are never read. A
+truncated call does diverge from the reference
 build (which rejects it at deserialization), but only ever harms its own
 caller: under 133 bytes it faults and the caller's own transaction fails;
 at 133–164 it copies the trailing program-id bytes — public data — into
 the caller's own ladder and succeeds silently. Every SDK builder emits
 the full 165 bytes.
 
-Neither case can be turned into an injection, because nothing
-attacker-controlled reaches the copy's destination *or* its length. The
-length is a constant, and the destination is the fixed
-`(vault + 144, 160)` window inside a sector bounds-checked twice (the
-index against the slab length, then the vault's end against `data_len`)
-whose `quote_authority` the signer has already been compared against
-over all 32 bytes — so malformed data cannot touch another vault, the
-header beyond the nonce, or any accounting field.
+Neither case can be turned into an injection. The copy length is a
+constant, never payload-derived, and the destination is the fixed
+`(vault + 144, 160)` window. The one attacker-controlled input to that
+destination — `vault_idx` — cannot select a sector the caller does not
+already own: it is bounds-checked twice (the index against the slab
+length, then the vault's end against `data_len`), and the resulting
+sector's `quote_authority` has been compared against the signer over all
+32 bytes. So malformed data cannot touch another vault, the header beyond
+the nonce, or any accounting field.
 
 Nor can a garbled ladder brick the market for anyone else. `Level` is
 all-`Pod`, so arbitrary bytes are a *valid* `LiquidityProfile` — no
 invalid bit patterns, no UB — and every match-time consumer of one is a
 total function: `materialize_remaining` zeroes an over-cap side out of
 the book rather than aborting the take, `level_fill_atoms` falls back to
-`0`, and `flush_level_price` saturates. No panic and no `Err`, so no
+`0`, and `flush_level_price` cannot fail (saturating subtraction plus
+`Price::ZERO` fallbacks). No panic and no `Err`, so no
 taker is ever blocked. The blast radius is exactly one leader garbling
 their own quotes, self-healing on their next valid submit — worth less
 than the hot-path CU a length check would cost. Like the other
