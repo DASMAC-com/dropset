@@ -1289,19 +1289,39 @@ moves *nothing* outside `market.nonce`, the target sector's
 `reference_price.stamp`, and its `profile`.
 
 The fast path does **not** bound the instruction-data length before the
-copy, so a truncated call diverges from the reference build (which rejects
-it at deserialization): under 133 bytes it faults and the caller's own
-transaction fails; at 133–164 it copies the trailing program-id bytes into
-the caller's own ladder and succeeds silently. That is deliberate, and it
-is safe because nothing attacker-controlled reaches the *destination* — it
-is a fixed `(vault + 144, 160)` window inside the bounds-checked sector the
-signer is already `quote_authority` of, so malformed data cannot touch
-another vault, the header beyond the nonce, or any accounting field, and
-the matcher re-validates every level it later reads. The blast radius is a
-leader garbling their own quotes, which the hot-path CU is worth more than
-guarding against; every SDK builder emits the full 165 bytes. Like the
-other structural asymmetries, it is mapped by the parity tests, not
-equated.
+copy — a settled decision, not an outstanding gap, since these paths
+trust the market maker to call them correctly. Surplus bytes are a
+non-event: every read is a fixed width at a fixed offset — `vault_idx` at
+`+1`, then the 160-byte blob at `+5`, a maximum extent of
+`ix_data + 165` — so nothing scans and bytes past that are never read. A
+truncated call does diverge from the reference
+build (which rejects it at deserialization), but only ever harms its own
+caller: under 133 bytes it faults and the caller's own transaction fails;
+at 133–164 it copies the trailing program-id bytes — public data — into
+the caller's own ladder and succeeds silently. Every SDK builder emits
+the full 165 bytes.
+
+Neither case can be turned into an injection. The copy length is a
+constant, never payload-derived, and the destination is the fixed
+`(vault + 144, 160)` window. The one attacker-controlled input to that
+destination — `vault_idx` — cannot select a sector the caller does not
+already own: it is bounds-checked twice (the index against the slab
+length, then the vault's end against `data_len`), and the resulting
+sector's `quote_authority` has been compared against the signer over all
+32 bytes. So malformed data cannot touch another vault, the header beyond
+the nonce, or any accounting field.
+
+Nor can a garbled ladder brick the market for anyone else. `Level` is
+all-`Pod`, so arbitrary bytes are a *valid* `LiquidityProfile` — no
+invalid bit patterns, no UB — and every match-time consumer of one is a
+total function: `materialize_remaining` zeroes an over-cap side out of
+the book rather than aborting the take, `level_fill_atoms` falls back to
+`0`, and `flush_level_price` cannot fail (saturating subtraction plus
+`Price::ZERO` fallbacks). No panic and no `Err`, so no
+taker is ever blocked. The blast radius is exactly one leader garbling
+their own quotes, self-healing on their next valid submit — worth less
+than the hot-path CU a length check would cost. Like the other
+structural asymmetries, it is mapped by the parity tests, not equated.
 
 ### SetReferencePrice
 
