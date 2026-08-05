@@ -66,10 +66,20 @@ glue lives **with what it serves**, not in a tooling tree:
 - `brand-assets/copy-brand-assets.mjs` — a shared JS/Node build script
   run from the apps' `predev` / `prebuild` hooks. It copies the
   repo-root `brand-assets/` into each app's `public/` (skipping its own
-  file), and both `frontend` and `decks` invoke it as
-  `../brand-assets/…`. It lives among the assets it copies rather than
-  in a separate scripts tree. A build script that only one app uses
-  stays in that app's own `scripts/` (e.g. `frontend/scripts/`).
+  file, recursing into subdirectories), and both `frontend` and `decks`
+  invoke it as `../brand-assets/…`. It lives among the assets it copies
+  rather than in a separate scripts tree. A build script that only one
+  app uses stays in that app's own `scripts/` (e.g.
+  `frontend/scripts/`).
+
+  `brand-assets/` holds **every** brand asset, not just the ones more
+  than one app renders — an asset's home shouldn't depend on its current
+  consumer count, or gaining a second consumer means noticing a split
+  and moving a file. The whole folder is copied to every app; the set is
+  tens of KB, so a per-app subset would buy nothing. Consequently each
+  app's `public/` is **generated output and gitignored** — the frontend's
+  wholesale, the deck's by entry glob with a carve-out for its committed
+  `public/screens/` captures.
 
 - **The linter/formatter configs stay in `cfg/`, not `.claude/`.**
   `cfg/` holds `pre-commit-lint.yml` (the pre-commit config) and the

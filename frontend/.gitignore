@@ -10,17 +10,19 @@
 
 /build
 
-/public/flag-icons
-/public/token-icons
-/public/wallet-icons
 /lib/data/icon-manifest.gen.json
 /lib/data/wallet-manifest.gen.json
 
-# Brand assets copied from the repo-root brand-assets/ at dev/build time
-# (see ../brand-assets/copy-brand-assets.mjs); sourced, not committed.
-/public/dasmac-wordmark.png
-/public/dropset-wordmark.png
-/public/favicon-with-stroke.svg
+# public/ is generated in full by the predev / prebuild hooks — nothing under
+# it is committed. Brand assets are copied from the repo-root brand-assets/
+# (../brand-assets/copy-brand-assets.mjs), the flags are mirrored out of
+# node_modules (scripts/copy-flags.mjs), and the token / wallet icons are
+# fetched (scripts/fetch-token-icons.mjs, scripts/fetch-wallet-icons.mjs).
+# Ignoring the directory keeps that invariant self-maintaining: a new brand
+# asset needs no edit here, and a file committed into public/ by hand is
+# caught. A brand asset belongs in brand-assets/ whether one app renders it
+# or both; anything else under public/ comes from a generator script here.
+/public/
 
 .DS_Store
 *.pem
