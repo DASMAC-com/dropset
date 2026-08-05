@@ -230,6 +230,78 @@ refresh) keep `ENG-###` in the title scope and omit it from
 body/comments; `init-pr` seeds only the bare-`ENG-###` title + an empty
 body, so it already complies.
 
+## Partial edits — the `patch` argument
+
+`save_issue` and `save_document` both accept a **`patch`** array as an
+alternative to the full `description` / `content` field, so a caller can
+add to or amend part of a body without re-sending it. Passing
+`description` / `content` **does** replace the body wholesale — that
+much is true — but it is not the only option. The ops are `append`,
+`prepend`, `insert_before`, `insert_after`, `replace` and
+`replace_range`; they apply in order and **atomically** (one failing op
+aborts the whole save), up to 50 per call. `patch` is **update-only**
+and mutually exclusive with the full-content field — pass one or the
+other, never both.
+
+Each op carries `op` plus its own fields: `append` / `prepend` take
+just `text`; `insert_before` / `insert_after` take `anchor` + `text`;
+`replace` takes `old_string` + `new_string` (and an optional
+`replace_all`); `replace_range` takes `from` + `to` + `new_string`.
+Every one of those strings takes **literal newlines**, never the
+escape sequence `\n`.
+
+**Insertions include no separator of their own.** `append`, `prepend`,
+`insert_before` and `insert_after` splice the text in *immediately*
+adjacent to the anchor (or the end / start of the body), so the `text`
+has to carry whatever blank line or indent the surrounding markdown
+needs. An anchor that sits mid-line — the tail of a list item, say —
+will otherwise leave the inserted text glued onto that line instead of
+starting its own.
+
+What `patch` buys:
+
+- **The write payload scales with the edit, not the body.** A wholesale
+  save of a 60KB document spends 60KB of input tokens to add one entry;
+  the equivalent `append` spends the length of that entry.
+- **No transcription risk.** The server applies the edit, so a
+  hand-rebuilt body can't garble the parts it wasn't meant to touch.
+- **A pure `append` needs no prior read.** There is nothing to anchor
+  against, so the fetch a full-body rebuild depends on can be skipped
+  outright.
+- **Failure is cheap and safe.** A non-matching anchor aborts the whole
+  save and returns a short error, so a stale anchor costs one small
+  error rather than a mangled body.
+
+What `patch` does **not** buy is **a smaller response echo**. Both calls
+echo the saved object back regardless of how the write was expressed:
+`save_issue` returns the **full** `description` whether it was sent
+wholesale, sent as a `patch`, or not sent at all — a state-only
+transition echoes the whole body too — and `save_document` returns a
+**truncated** `content` in every one of those cases. The echo is a fixed
+cost per call, so the lever on it is **fewer calls**, not `patch`.
+
+### Anchors must match the *stored* text
+
+Every anchor (`old_string`, `anchor`, `from` / `to`) must match the
+current content **exactly once** — `replace` also takes `replace_all`
+when a unique match isn't wanted. The trap is that stored text can
+differ from what was written: **Linear rewrites an `ENG-###` in content
+into an issue-mention node**, so text saved as `ENG-123` reads back as
+an `<issue id="…" href="…">ENG-123</issue>` element and an anchor
+carrying a Linear tag **will not match**. Anchor on tag-free text — a
+date, a session id, a heading — or use `append`, which needs no anchor
+at all. (This is **not** the "Keep Linear tags out of PR bodies and
+comments" rule above — that one governs GitHub surfaces, and a tag in a
+Linear body is perfectly fine. The corollary here is narrower: prefer
+tag-free text for anything you expect to *anchor* on later.)
+
+Related: **`updatedAt` in a `save_document` response is not a reliable
+concurrency signal** — it has been observed unchanged across
+successive successful writes. Don't gate a write on comparing it against
+an earlier fetch. `patch`'s atomicity and exactly-once anchors are the
+real protection: they fail loudly instead of clobbering a concurrent
+edit.
+
 ## Blocking relations
 
 When one issue genuinely depends on another, record it as a **native

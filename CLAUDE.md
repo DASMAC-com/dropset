@@ -74,6 +74,20 @@ mentioned. Refer to other work by title or a plain GitHub link. The
 two carve-outs (the `type(ENG-###):` title scope, and terminal / TUI
 output) and the rationale: `docs/conventions/linear-automation.md`.
 
+### Partial edits — use `patch`, don't re-send the body
+
+`save_issue` / `save_document` take a **`patch`** array (`append`,
+`prepend`, `insert_before`, `insert_after`, `replace`, `replace_range`)
+applied in order and atomically — so adding or amending part of a body
+**never** requires re-sending it, and a pure `append` needs no prior
+read at all. Passing `description` / `content` does replace wholesale;
+`patch` is the **update-only** alternative, never passed alongside it
+(and capped at 50 ops). It does **not** shrink the response echo
+(that's a fixed cost per call — fewer calls is the only lever there).
+Anchors must match the **stored** text exactly once, and Linear rewrites
+an `ENG-###` into a mention node, so never anchor on one. Detail:
+`docs/conventions/linear-automation.md`.
+
 ### Blocking relations
 
 Record a real dependency as a native Linear `blockedBy` / `blocks`

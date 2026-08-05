@@ -140,37 +140,64 @@ sub-agent, harden into a tool), and where you can, name the
 **concrete** skill step or convention-doc rule to edit.
 Keep it tight; this is a recommendation, not a patch.
 
-**5. Append a dated entry to the inbox** — never clobber
-existing content. Read the doc **live** with
-`mcp__claude_ai_Linear__get_document` (id = the resolved
-value); never reuse a stale snapshot. Build the new body
-from the body you just fetched, **adding** one entry and
-changing nothing else, then save with
-`mcp__claude_ai_Linear__save_document` (id = the resolved
-value, literal newlines). If the doc `updatedAt` is newer
-than when you fetched it, re-fetch and rebuild rather than
-overwriting a concurrent edit.
+**5. Append a dated entry to the inbox** — with a **`patch`
+append**, which needs neither a read nor a rewrite. Call
+`mcp__claude_ai_Linear__save_document` with the resolved id
+and a single `append` op:
 
-**Gate on the doc's own size before rewriting it.** Linear
-has **no append API** — `save_document` replaces the body
-wholesale — so every append re-emits the *entire* document.
-At ~60KB that is a large write on top of a large read, and it
-puts every prior entry at risk of transcription corruption
-for the sake of adding one. So the first thing to do with the
-fetched body is measure it (its length, and how many `- [ ]`
-unchecked entries it holds). Above roughly **40KB or ~4
-unchecked entries**, do **not** attempt the full-body
-rewrite. Instead print this session's summary, say the inbox
-is past its drain threshold, and recommend running
-`trim-context` to mine and clear it — then stop. The entry is
-not lost: the summary is in the report, and the next run
-appends it once the inbox is drained.
+```txt
+mcp__claude_ai_Linear__save_document(
+  id: "<the resolved doc id>",
+  patch: [{ op: "append", text: "<blank line><the entry>" }]
+)
+```
 
-There is no cheaper pre-fetch check (the document has no size
-field to query, and the fetch is the same call that gives you
-the body to append to), so the fetch is paid once regardless
-— **don't re-fetch it**. What the gate saves is the
-same-size *write* and the corruption risk that rides with it.
+Put a **real blank line** at the front of `text` so the entry
+starts its own list item — type actual newline characters,
+never the two-character escape `\n`. (The Linear MCP is
+explicit about this: string values take literal newlines, not
+escape sequences.) Nothing downstream will catch a mangled
+separator, because this step no longer reads the document.
+
+Per `docs/conventions/linear-automation.md` → "Partial edits
+— the `patch` argument", the server applies the append
+atomically, so this **cannot** clobber existing content and
+**cannot** garble a prior entry — the two hazards a
+fetch-and-rebuild had to be careful about. An `append` needs
+no anchor, so there is **nothing to read first**: do **not**
+`get_document` here. Skipping that fetch is the point — the
+whole step now costs the length of the one entry being added,
+whatever the document already holds.
+
+Nor is a concurrency check needed. A concurrent
+`session-metrics` run or hand edit can't be overwritten by an
+append, and the `updatedAt` in the response is not a reliable
+signal anyway (see the same convention section), so don't
+compare it against anything.
+
+**One entry per session, though — a blind append can't
+notice a duplicate.** The entry is keyed by its session id, and
+a second run for the *same* session (a rework pass through
+`review-pr`, or a hand invocation) would append a
+byte-identical header. That breaks `trim-context`
+permanently: its write-back anchors have to match **exactly
+once**, and a duplicated header matches twice, so every
+write-back touching that entry aborts and no re-read can fix
+it. So if you are re-running for a session already recorded,
+either skip the append or disambiguate the header (add a time
+suffix) — and say which in the report.
+
+**There is no size gate.** An earlier version of this step
+refused to append above roughly 40KB or ~4 unchecked entries,
+on the reasoning that every append re-emitted the entire
+document. That reasoning is obsolete — the append no longer
+re-emits anything — and the rule was harmful on its own
+terms: metrics feed the improvement loop, so a producer that
+stops recording once the inbox gets full is worse than the
+write it was avoiding. Append unconditionally. A crowded
+inbox is still worth draining, but that's `trim-context`'s
+call to make (it counts the entries as part of mining them),
+not a reason for this step to withhold an entry.
 
 The entry is **unchecked** (`- [ ]`) so `housekeeping` sees
 it as unprocessed work; housekeeping ticks it once consumed.
@@ -192,9 +219,7 @@ put the prose in `Recommends:`.
 
 **6. Report** in one line — the session, the top sink, and
 that the entry was appended (or that the skill no-op'd
-because the doc id was unset, or that it stopped at the
-size gate in step 5 and the inbox needs a `trim-context`
-drain).
+because the doc id was unset).
 
 ## Notes
 
