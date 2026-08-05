@@ -175,6 +175,18 @@ append, and the `updatedAt` in the response is not a reliable
 signal anyway (see the same convention section), so don't
 compare it against anything.
 
+**One entry per session, though — a blind append can't
+notice a duplicate.** The entry is keyed by its session id, and
+a second run for the *same* session (a rework pass through
+`review-pr`, or a hand invocation) would append a
+byte-identical header. That breaks `trim-context`
+permanently: its write-back anchors have to match **exactly
+once**, and a duplicated header matches twice, so every
+write-back touching that entry aborts and no re-read can fix
+it. So if you are re-running for a session already recorded,
+either skip the append or disambiguate the header (add a time
+suffix) — and say which in the report.
+
 **There is no size gate.** An earlier version of this step
 refused to append above roughly 40KB or ~4 unchecked entries,
 on the reasoning that every append re-emitted the entire

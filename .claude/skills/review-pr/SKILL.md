@@ -219,14 +219,18 @@ PR-authoring **writes** (`create_pull_request`,
        nothing extra.
      - Because the save is **atomic**, one stale anchor aborts
        the **whole** call — the In-Progress move included —
-       and the error names only the *first* failing op, so
-       which of the rest would have matched is unknowable
-       without re-reading. Don't go re-read, and don't move on
-       as though the state landed: re-issue **once** as a
-       single full-body `description` + `state` write built
-       from the body you already fetched, ticking the boxes
-       that body shows as open. That is the one licensed
-       second write.
+       and the error names only the *first* failing op. Don't
+       move on as though the state landed. But do **not**
+       recover by rebuilding the body from the snapshot you
+       fetched: the abort means the live body has **diverged**
+       from that snapshot, so a full-body write from it would
+       silently overwrite whatever changed — turning a loud,
+       safe failure into data loss. Instead re-`get_issue`
+       **once** (the one licensed exception to "fetch the issue
+       once"), rebuild the ops against the body it returns, and
+       write once more. If that write aborts too, report the
+       discrepancy and leave the issue alone rather than
+       writing a third time.
 
      If there are **no** boxes to tick (no checklist, or
      none newly delivered), **and** the `get_issue` above
@@ -247,7 +251,8 @@ PR-authoring **writes** (`create_pull_request`,
      state-only write that sends no body at all, and a
      `patch` does **not** shrink it — so the only lever on it
      is **fewer calls**. So fetch the issue **once** (the
-     `get_issue` above), don't re-`get_issue` it, and collapse
+     `get_issue` above), don't re-`get_issue` it — bar the
+     single aborted-patch recovery licensed above — and collapse
      the In-Progress move and **all** the box-ticks into the
      **one** `save_issue` above — never a separate state
      write, and never one write per box. (`patch` is the lever

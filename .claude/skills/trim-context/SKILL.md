@@ -179,9 +179,11 @@ your step-1 read, per `docs/conventions/linear-automation.md` →
 "Partial edits — the `patch` argument". Per the decision:
 
 - **Clear = yes:** one `replace` op per consumed entry, `new_string`
-  empty, deleting its lines. Delete only the entries this pass actually
-  consumed — do **not** also try to collapse the doc to an
-  empty-inbox placeholder. Whether any entry remains is a *count* taken
+  empty, deleting its lines — take the span through the entry's
+  **trailing blank line** so a deleted entry doesn't leave a stray
+  separator behind for the next pass to accumulate. Delete only the
+  entries this pass actually consumed — do **not** also try to collapse
+  the doc to an empty-inbox placeholder. Whether any remains is a *count*
   from your step-1 read, and a concurrent `session-metrics` append can
   make that count wrong; exactly-once anchors stop you clobbering that
   entry, but they can't stop a stale count from stamping "inbox empty"
@@ -193,8 +195,12 @@ your step-1 read, per `docs/conventions/linear-automation.md` →
   flipping its box (`- [ ]` → `- [x]`, with enough of the entry's own
   header line after the box to match **once**), and an `insert_after`
   keyed on that entry's `session <short-uuid>` fragment carrying the
-  note. **Skip the annotation work entirely** on a "yes, clear" (this
-  is the whole reason the clear is decided first).
+  note. `insert_after` splices in **immediately** after its anchor, and
+  that anchor sits mid-line, so the note's `text` must **open with a
+  real newline plus the nesting indent** — otherwise the note lands
+  glued to the end of the header rather than on its own nested line.
+  **Skip the annotation work entirely** on a "yes, clear" (this is the
+  whole reason the clear is decided first).
 
 **Build every anchor by copying the stored text, not by composing it.**
 A `replace` rewrites *its own anchor*, so its `old_string` has to span
@@ -212,7 +218,11 @@ literal characters, so a span quoting one may not match (same
 convention section). What an op *writes* is unconstrained: a
 disposition note may contain an `ENG-###` freely. If a needed span is
 tag-bearing and won't match, fall back to a full `content` rebuild for
-that write and say so in the report.
+that write and say so in the report — but **re-fetch the doc first**
+and rebuild from *that* body. The no-re-fetch rule below is earned
+by `patch`'s exactly-once anchors; a wholesale rebuild has no such
+protection, so writing one from the step-1 snapshot would silently
+erase any entry appended since.
 
 **No `updatedAt` check.** The ops are applied atomically against the
 live body and each anchor must match **exactly once**, so a concurrent

@@ -250,6 +250,14 @@ just `text`; `insert_before` / `insert_after` take `anchor` + `text`;
 Every one of those strings takes **literal newlines**, never the
 escape sequence `\n`.
 
+**Insertions include no separator of their own.** `append`, `prepend`,
+`insert_before` and `insert_after` splice the text in *immediately*
+adjacent to the anchor (or the end / start of the body), so the `text`
+has to carry whatever blank line or indent the surrounding markdown
+needs. An anchor that sits mid-line — the tail of a list item, say —
+will otherwise leave the inserted text glued onto that line instead of
+starting its own.
+
 What `patch` buys:
 
 - **The write payload scales with the edit, not the body.** A wholesale
