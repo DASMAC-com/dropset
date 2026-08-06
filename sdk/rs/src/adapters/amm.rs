@@ -44,13 +44,19 @@ pub const SYSTEM_PROGRAM_ID: Pubkey = solana_pubkey::pubkey!("111111111111111111
 pub const LABEL: &str = "Dropset";
 
 /// Account count of the `swap` instruction — the routers' `get_accounts_len`.
-/// Constant: the whole book is one market account, so a take never grows
-/// its account list (interface.md § 4, "not account-hungry").
 ///
-/// Still constant with the optional platform-fee group in the list: Anchor
-/// encodes an absent optional account as the program id in its slot rather
-/// than by shortening the list, so a no-fee swap and a fee-bearing one both
-/// pass exactly this many metas.
+/// Constant **per fill**: the whole book is one market account, so a take
+/// never grows its account list with the number of levels or vaults it
+/// crosses (interface.md § 4, "not account-hungry"). That is the property
+/// routers depend on. It is *not* a promise the number never changes across
+/// program versions — it went 13 → 17 when the platform fee added its
+/// optional group and the two programs that create the fee account, so a
+/// router pinning a literal rather than reading this constant would break.
+///
+/// The optional group doesn't make it vary at runtime either: Anchor encodes
+/// an absent optional account as the program id in its slot rather than by
+/// shortening the list, so a no-fee swap and a fee-bearing one both pass
+/// exactly this many metas.
 pub const SWAP_ACCOUNTS_LEN: usize = 17;
 
 /// A Dropset market presented through a router's quoting + swap surface.

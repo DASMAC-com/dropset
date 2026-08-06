@@ -254,7 +254,7 @@ fn taker_fee_rejects_non_admin() {
 // ── set_registry_defaults (admin-only) ───────────────────────────────
 
 #[test]
-fn registry_defaults_admin_sets_both_fields() {
+fn registry_defaults_admin_sets_every_field() {
     let mut f = Fixture::bootstrap();
     // Seeded at `init`: taker fee 0, platform-fee ceiling 100 bps,
     // min-leader-share 5%.

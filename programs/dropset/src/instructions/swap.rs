@@ -291,15 +291,25 @@ pub struct Swap {
     pub clock: Sysvar<Clock>,
     /// Integrator earning the caller-declared platform fee — the owner of
     /// `platform_fee_ata`, not a signer. Permissionless: any caller may
-    /// route flow here and name any authority, bounded only by the market's
-    /// `max_platform_fee`. There is deliberately no admin onboarding and so
-    /// nothing to constrain this against.
+    /// route flow here and name any authority. There is deliberately no admin
+    /// onboarding and so nothing to constrain this against.
+    ///
+    /// `max_platform_fee` bounds the fee itself, but note what it does *not*
+    /// bound: because this authority is caller-chosen and never signs, a
+    /// caller can name a fresh one on every swap, and each new
+    /// `(authority, mint)` pair costs the taker another rent-exempt balance
+    /// below. Those lamports are recoverable by whoever closes the account,
+    /// so a hostile transaction builder can extract SOL from its own takers
+    /// outside both the ceiling and `min_out` (which are denominated in
+    /// output-leg atoms). The taker signs the transaction, so this is
+    /// consent-bounded rather than an escalation — but "the ceiling is the
+    /// only bound" would be the wrong reading.
     ///
     /// Optional, together with `platform_fee_ata`: a swap with no
     /// integrator passes `None` for both and `platform_fee_bps = 0`, so the
-    /// direct paths (maker bot, TUI, tests, taker bot) carry no fee
-    /// plumbing at all. Anchor signals `None` by passing the program id in
-    /// the slot.
+    /// direct paths (the TUI, the taker bot, the `sdk/rs` router adapter, and
+    /// the tests) carry no fee plumbing at all. Anchor signals `None` by
+    /// passing the program id in the slot.
     pub platform_fee_authority: Option<UncheckedAccount>,
     /// The integrator's token account for the swap's **output** mint (base
     /// on a Buy, quote on a Sell), which the fee is transferred into.
@@ -928,12 +938,30 @@ impl Swap {
         //
         // Both arms MUST stay mirror images, on the same reasoning as the
         // input leg above — Buy pays base out, Sell pays quote out.
-        let fee_authority_addr = self
-            .platform_fee_authority
-            .as_ref()
-            .map(|a| *a.address())
-            .unwrap_or_default();
+        // `Some` exactly when a fee is charged: the up-front gate rejected a
+        // non-zero rate without the accounts, so this is `None` only on the
+        // no-integrator path. Carried as an `Option` rather than defaulted to
+        // a zero address so the event below can only be built where a real
+        // beneficiary exists — a defaulted address would put a zero
+        // beneficiary on the integrator's only on-chain receipt if this
+        // gating ever drifted.
+        let fee_authority_addr = self.platform_fee_authority.as_ref().map(|a| *a.address());
         let charge_platform_fee = platform_fee > 0 && fee_accounts_present;
+
+        // Defense-in-depth, in the same spirit as `compute_fill`'s overflow
+        // guards: unreachable today, kept so a weakened bound is a hard abort
+        // rather than a silent over-draw. `platform_fee <= net_after_taker_fee`
+        // holds because every write path range-checks `max_platform_fee <= BPS`
+        // (`set_max_platform_fee`, `set_registry_defaults`, and the registry
+        // default `create_market` copies). Were a header ever to carry a
+        // ceiling above `BPS`, the fee would exceed what the matching loop
+        // debited and the transfer would reach past this swap's own output
+        // into the *shared* treasury — other vaults' inventory. Assert the
+        // bound where it is consumed, not only where it is written.
+        require!(
+            platform_fee <= net_after_taker_fee,
+            DropsetError::MathOverflow
+        );
         if achievable_net_out > 0 || charge_platform_fee {
             match side {
                 SwapSide::Buy => {
@@ -979,17 +1007,22 @@ impl Swap {
 
         // One event per fee-bearing swap, and none at all when the rate is
         // zero or rounds the fee to zero atoms — see `PlatformFeeEvent`.
-        let platform_fee_event = charge_platform_fee.then(|| PlatformFeeEvent {
-            market: market_addr,
-            taker: *self.taker.address(),
-            fee_authority: fee_authority_addr,
-            mint: match side {
-                SwapSide::Buy => *self.base_mint.address(),
-                SwapSide::Sell => *self.quote_mint.address(),
-            },
-            atoms: platform_fee,
-            platform_fee_bps,
-        });
+        // Built from the beneficiary `Option` itself, so an event can only
+        // exist where a real one was named.
+        let platform_fee_event =
+            fee_authority_addr
+                .filter(|_| charge_platform_fee)
+                .map(|fee_authority| PlatformFeeEvent {
+                    market: market_addr,
+                    taker: *self.taker.address(),
+                    fee_authority,
+                    mint: match side {
+                        SwapSide::Buy => *self.base_mint.address(),
+                        SwapSide::Sell => *self.quote_mint.address(),
+                    },
+                    atoms: platform_fee,
+                    platform_fee_bps,
+                });
         Ok((fill_events, platform_fee_event))
     }
 

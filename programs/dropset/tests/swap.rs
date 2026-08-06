@@ -1382,6 +1382,21 @@ fn platform_fee_multi_leg_fill_stays_inside_the_cu_budget() {
         "a fee-bearing multi-leg swap must fit the default {DEFAULT_CU_BUDGET} CU \
          budget without a SetComputeUnitLimit, used {paid_cu}"
     );
+    // Bound what the fee itself adds, so the no-fee arm is a real control
+    // rather than decoration for the `println!`. This is the figure that
+    // regresses if a future change makes the fee path materially heavier —
+    // the total above could stay under budget while the delta doubled. The
+    // ceiling is loose on purpose: the dominant term is the one-time ATA
+    // creation (~20k), and pinning it tightly would fail on any upstream
+    // SPL/ATA cost change without indicating a problem here.
+    const MAX_FEE_OVERHEAD_CU: u64 = 45_000;
+    let overhead = paid_cu.saturating_sub(free_cu);
+    assert!(
+        overhead < MAX_FEE_OVERHEAD_CU,
+        "the platform fee added {overhead} CU over the identical no-fee swap, \
+         above the {MAX_FEE_OVERHEAD_CU} ceiling — the ATA create, the second \
+         transfer, and the event should not cost this much"
+    );
 }
 
 #[test]

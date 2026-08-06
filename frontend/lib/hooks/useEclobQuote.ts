@@ -18,6 +18,7 @@ const INITIAL: DflowQuote = {
   outputMint: null,
   priceImpactPct: null,
   slippageBps: null,
+  platformFeeBps: null,
   hasQuote: false,
   error: null,
 };
@@ -111,13 +112,16 @@ export const useEclobQuote = (
         // user's account rather than a pre-fee figure they never receive. The
         // simulator composes both fees exactly as the engine does, so this is
         // also what keeps the quote and the fill in agreement to the atom.
+        const platformFeeBps = PLATFORM_FEE
+          ? platformFeeBpsFor(route, PLATFORM_FEE.bps)
+          : 0;
         const q = simulateSwap(
           route.marketData,
           route.side,
           atomic,
           route.limitPriceBits,
           Number(slot),
-          PLATFORM_FEE ? platformFeeBpsFor(route, PLATFORM_FEE.bps) : 0,
+          platformFeeBps,
         );
         if (cancelled || gen !== generation) return;
         if (q.outAmount === 0n) {
@@ -140,6 +144,11 @@ export const useEclobQuote = (
           outputMint,
           priceImpactPct: null,
           slippageBps: null,
+          // Publish the *clamped* rate this quote was computed with, so the
+          // panel reports what the swap will charge rather than what the env
+          // asks for. Zero (a market whose ceiling turns fees off) surfaces
+          // as `null` — no fee applies, so there is no rate to show.
+          platformFeeBps: platformFeeBps > 0 ? platformFeeBps : null,
           hasQuote: true,
           error: null,
         });

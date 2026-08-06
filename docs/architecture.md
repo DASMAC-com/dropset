@@ -2088,7 +2088,17 @@ route to our own book — including for our own frontend.
 
 **Permissionless.** Any caller may declare a fee and name any
 beneficiary; the program-enforced ceiling, not an onboarding step, is
-what bounds it. There is no per-integrator state and no allowlist.
+what bounds the *fee*. There is no per-integrator state and no
+allowlist.
+
+One thing the ceiling does **not** bound: the beneficiary is
+caller-chosen and never signs, so naming a fresh one each swap costs
+the taker another rent-exempt balance for the new fee account, and
+those lamports are recoverable by whoever closes it. A hostile
+transaction builder can therefore extract SOL from its own takers
+outside both the ceiling and `min_out`, which are denominated in
+output-leg atoms. The taker signs, so this is consent-bounded rather
+than an escalation — but the ceiling is not the whole story.
 
 **Zero new state.** The fee is transferred in the same transaction as
 the fill, to the beneficiary's token account for the swap's *output*
@@ -2100,8 +2110,9 @@ and its own invariant.)
 
 **The fee account is created on demand.** The optional account group
 is `(platform_fee_authority, platform_fee_ata)`; a swap with no
-integrator passes neither and declares `0`, so the direct paths (maker
-bot, TUI, taker bot, tests) carry no fee plumbing. When a fee *is*
+integrator passes neither and declares `0`, so the direct paths (the
+TUI, the taker bot, the `sdk/rs` router adapter, and the tests) carry
+no fee plumbing. When a fee *is*
 declared, the handler CPIs the ATA program's `create_idempotent` with
 the runtime-selected output mint — which both derives the canonical
 address (rejecting any other account) and creates it when missing,

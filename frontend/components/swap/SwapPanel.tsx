@@ -6,7 +6,6 @@ import { RateLimitMessage } from "@/components/chrome/RateLimitMessage";
 import { stablecoinDecimals, stablecoinMint } from "@/lib/data/currencies";
 import { findVaultMarket } from "@/lib/data/vaults";
 import { useFeeVaultExists } from "@/lib/dflow/feeVault";
-import { PLATFORM_FEE } from "@/lib/env";
 import { emit, useAppEvent } from "@/lib/events";
 import { parseAmountToBase } from "@/lib/format/balance";
 import { useAllBalances } from "@/lib/hooks/useAllBalances";
@@ -218,12 +217,22 @@ export function SwapPanel() {
     toMint,
     useBestRoute && canSwap && routeFound,
   );
-  // Is a platform fee actually charged on the swap the user is about to make?
-  // Both routes declare `PLATFORM_FEE.bps` when one is configured; only DFlow
-  // additionally requires the destination ATA to pre-exist.
-  const feeCharged = Boolean(
-    PLATFORM_FEE && canSwap && (useBestRoute ? feeVaultExists : true),
-  );
+  // The platform-fee rate to advertise, or null when none is charged.
+  //
+  // Taken from the *quote* rather than from `PLATFORM_FEE.bps`, because the
+  // two can differ: the eCLOB route clamps the configured rate to the market's
+  // on-chain `max_platform_fee`, so a market with a lower — or zero — ceiling
+  // is quoted and charged less than the env asks for. Reading the config here
+  // would advertise a fee the user isn't paying, and on a fees-off market
+  // would invent one outright. `quote.platformFeeBps` is by construction the
+  // rate the displayed output was computed with.
+  //
+  // DFlow keeps its extra precondition on top: its /order rejects a missing
+  // fee account, so the fee is only charged once that ATA exists.
+  const feeBps =
+    canSwap && (useBestRoute ? feeVaultExists : true)
+      ? quote.platformFeeBps
+      : null;
 
   return (
     <>
@@ -254,7 +263,7 @@ export function SwapPanel() {
         </button>
         {routeFound && quote.inAmount !== null && quote.outAmount !== null ? (
           <PlatformFee
-            bps={feeCharged && PLATFORM_FEE ? PLATFORM_FEE.bps : null}
+            bps={feeBps}
             inAmount={quote.inAmount}
             outAmount={quote.outAmount}
             fromSymbol={fromStablecoin}

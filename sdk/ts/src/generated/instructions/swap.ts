@@ -51,15 +51,25 @@ clock?: Address<TAccountClock>;
 /**
  * Integrator earning the caller-declared platform fee — the owner of
  * `platform_fee_ata`, not a signer. Permissionless: any caller may
- * route flow here and name any authority, bounded only by the market's
- * `max_platform_fee`. There is deliberately no admin onboarding and so
- * nothing to constrain this against.
+ * route flow here and name any authority. There is deliberately no admin
+ * onboarding and so nothing to constrain this against.
+ *
+ * `max_platform_fee` bounds the fee itself, but note what it does *not*
+ * bound: because this authority is caller-chosen and never signs, a
+ * caller can name a fresh one on every swap, and each new
+ * `(authority, mint)` pair costs the taker another rent-exempt balance
+ * below. Those lamports are recoverable by whoever closes the account,
+ * so a hostile transaction builder can extract SOL from its own takers
+ * outside both the ceiling and `min_out` (which are denominated in
+ * output-leg atoms). The taker signs the transaction, so this is
+ * consent-bounded rather than an escalation — but "the ceiling is the
+ * only bound" would be the wrong reading.
  *
  * Optional, together with `platform_fee_ata`: a swap with no
  * integrator passes `None` for both and `platform_fee_bps = 0`, so the
- * direct paths (maker bot, TUI, tests, taker bot) carry no fee
- * plumbing at all. Anchor signals `None` by passing the program id in
- * the slot.
+ * direct paths (the TUI, the taker bot, the `sdk/rs` router adapter, and
+ * the tests) carry no fee plumbing at all. Anchor signals `None` by
+ * passing the program id in the slot.
  */
 platformFeeAuthority?: Address<TAccountPlatformFeeAuthority>;
 /**
@@ -176,15 +186,25 @@ clock?: Address<TAccountClock>;
 /**
  * Integrator earning the caller-declared platform fee — the owner of
  * `platform_fee_ata`, not a signer. Permissionless: any caller may
- * route flow here and name any authority, bounded only by the market's
- * `max_platform_fee`. There is deliberately no admin onboarding and so
- * nothing to constrain this against.
+ * route flow here and name any authority. There is deliberately no admin
+ * onboarding and so nothing to constrain this against.
+ *
+ * `max_platform_fee` bounds the fee itself, but note what it does *not*
+ * bound: because this authority is caller-chosen and never signs, a
+ * caller can name a fresh one on every swap, and each new
+ * `(authority, mint)` pair costs the taker another rent-exempt balance
+ * below. Those lamports are recoverable by whoever closes the account,
+ * so a hostile transaction builder can extract SOL from its own takers
+ * outside both the ceiling and `min_out` (which are denominated in
+ * output-leg atoms). The taker signs the transaction, so this is
+ * consent-bounded rather than an escalation — but "the ceiling is the
+ * only bound" would be the wrong reading.
  *
  * Optional, together with `platform_fee_ata`: a swap with no
  * integrator passes `None` for both and `platform_fee_bps = 0`, so the
- * direct paths (maker bot, TUI, tests, taker bot) carry no fee
- * plumbing at all. Anchor signals `None` by passing the program id in
- * the slot.
+ * direct paths (the TUI, the taker bot, the `sdk/rs` router adapter, and
+ * the tests) carry no fee plumbing at all. Anchor signals `None` by
+ * passing the program id in the slot.
  */
 platformFeeAuthority?: Address<TAccountPlatformFeeAuthority>;
 /**
@@ -299,15 +319,25 @@ clock: TAccountMetas[10];
 /**
  * Integrator earning the caller-declared platform fee — the owner of
  * `platform_fee_ata`, not a signer. Permissionless: any caller may
- * route flow here and name any authority, bounded only by the market's
- * `max_platform_fee`. There is deliberately no admin onboarding and so
- * nothing to constrain this against.
+ * route flow here and name any authority. There is deliberately no admin
+ * onboarding and so nothing to constrain this against.
+ *
+ * `max_platform_fee` bounds the fee itself, but note what it does *not*
+ * bound: because this authority is caller-chosen and never signs, a
+ * caller can name a fresh one on every swap, and each new
+ * `(authority, mint)` pair costs the taker another rent-exempt balance
+ * below. Those lamports are recoverable by whoever closes the account,
+ * so a hostile transaction builder can extract SOL from its own takers
+ * outside both the ceiling and `min_out` (which are denominated in
+ * output-leg atoms). The taker signs the transaction, so this is
+ * consent-bounded rather than an escalation — but "the ceiling is the
+ * only bound" would be the wrong reading.
  *
  * Optional, together with `platform_fee_ata`: a swap with no
  * integrator passes `None` for both and `platform_fee_bps = 0`, so the
- * direct paths (maker bot, TUI, tests, taker bot) carry no fee
- * plumbing at all. Anchor signals `None` by passing the program id in
- * the slot.
+ * direct paths (the TUI, the taker bot, the `sdk/rs` router adapter, and
+ * the tests) carry no fee plumbing at all. Anchor signals `None` by
+ * passing the program id in the slot.
  */
 platformFeeAuthority?: TAccountMetas[11] | undefined;
 /**

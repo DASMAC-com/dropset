@@ -103,10 +103,16 @@ export async function executeEclobSwap(
 
   const slot = await rpc.getSlot({ commitment: "confirmed" }).send();
 
-  // Declare the same platform fee the DFlow route charges, so pricing is
-  // route-neutral: toggling the route must not change what the user pays. The
-  // beneficiary is the same fee wallet DFlow's `feeAccount` names, so revenue
-  // from both routes lands in one place.
+  // Declare the same configured rate the DFlow route declares, paid to the
+  // same wallet DFlow's `feeAccount` names, so revenue from both routes lands
+  // in one place and neither route is the cheap one to route around.
+  //
+  // "Same rate", not "same fee in every case" — the two still diverge where
+  // their preconditions differ: DFlow drops the fee entirely for an output
+  // mint whose fee ATA doesn't exist, and the eCLOB route clamps to the
+  // market's on-chain ceiling (below). On such a pair, toggling the route does
+  // change what the user pays; the fee row reports whichever rate actually
+  // applied, so the panel never overstates it.
   //
   // Two differences from the DFlow path, both because the fee is settled by
   // our own program here rather than by a third party:
