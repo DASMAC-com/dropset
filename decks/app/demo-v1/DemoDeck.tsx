@@ -62,27 +62,6 @@ const Wordmark = ({ width }: { width: number }) => (
 );
 
 /**
- * Optical correction on the footer credit, in slide units, applied leftward.
- *
- * Geometric centring is not enough here and the numbers say why. Measured off a
- * screenshot, against the slide's own midline (a page eyebrow is a block-centred
- * element, so its ink centre marks it): the credit's bounding box lands within a
- * few units of centre, but the **DASMAC mark** — the bright element an eye
- * actually tracks — sits ~63 units right of it, because the grey "Built by"
- * label pads the whole lockup's left side and contributes almost none of its
- * ink. So the box is centred and the credit still reads right of centre.
- *
- * This shifts the lockup left by about a third of that, which cancels the offset
- * a reader reported seeing. Centring the mark outright (the full ~63, by taking
- * the label out of flow) is the tempting magic-number-free version and it
- * over-corrects: the label is not weightless either, so the lockup then reads
- * left-shifted. There is no way to land between those two without a number, and
- * optical centring is a hand-tuned operation by nature — so it is one number,
- * named, with the measurement that produced it. Re-tune this and nothing else.
- */
-const CREDIT_OPTICAL_SHIFT = 22;
-
-/**
  * Persistent footer: wordmark on the left, the DASMAC credit in the middle,
  * progress dots on the right. The DASMAC mark is a transparent PNG, so unlike
  * the Dropset one it needs no blend to sit on the dark backdrop.
@@ -104,28 +83,53 @@ const template = () => (
     <Box padding="0 1.25em">
       <Wordmark width={210} />
     </Box>
-    {/* Centred against the **slide**, not by the flex row. `space-between`
-        divides the leftover space between three items, so the middle one lands
-        centred only when the flanks match — and these don't quite: the 210-unit
-        wordmark on the left against ~197 units of progress dots on the right.
-        That was only ~6 units of drift, so it was never the whole story; see
-        `CREDIT_OPTICAL_SHIFT` for the part that actually shows. Pinning the
-        lockup to 50% is what makes the geometry exact, and the shift is what
-        makes it look it. */}
+    {/* What gets centred here is the **mark**, not the lockup — and the mark
+        alone is in flow, so 50% plus a -50% translate centres it exactly, with
+        no correction constant to keep tuned.
+
+        Two wrong versions came first, both measured off screenshots against the
+        slide's own midline (a page eyebrow is block-centred, so its ink centre
+        marks it). `space-between` on the flex row was the original, and it was
+        never the real problem: the 210-unit wordmark against ~197 units of
+        progress dots is only ~6 units of drift. Centring the *lockup's box* was
+        the second, and it is geometrically exact — yet the credit still read
+        right of centre, because "Built by" is small grey text that pads the
+        lockup's left while contributing almost none of its ink. Boxed centred,
+        the mark sat ~63 units right of the midline; a partial nudge left still
+        left it at ~40, and a reader still saw it. The eye tracks the bright
+        mark, so the bright mark is what has to sit on the line.
+
+        The label therefore hangs off the mark's left edge, out of flow
+        (`right: 100%`), where its width cannot push the mark anywhere. */}
     <div
       style={{
-        alignItems: "center",
-        display: "flex",
         left: "50%",
         position: "absolute",
         top: "50%",
-        transform: `translate(calc(-50% - ${CREDIT_OPTICAL_SHIFT}px), -50%)`,
+        transform: "translate(-50%, -50%)",
       }}
     >
-      <Text color="quaternary" fontSize="22px" margin="0 14px 0 0">
+      <Text
+        color="quaternary"
+        fontSize="22px"
+        margin="0"
+        style={{
+          marginRight: "14px",
+          position: "absolute",
+          right: "100%",
+          top: "50%",
+          transform: "translateY(-50%)",
+          whiteSpace: "nowrap",
+        }}
+      >
         Built by
       </Text>
-      <img src="/dasmac-wordmark.png" alt="DASMAC" width={110} />
+      <img
+        src="/dasmac-wordmark.png"
+        alt="DASMAC"
+        width={110}
+        style={{ display: "block" }}
+      />
     </div>
     <Box padding="0 1.25em">
       <Progress color={colors.accent} size={11} />

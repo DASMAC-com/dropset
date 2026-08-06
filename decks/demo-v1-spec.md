@@ -630,14 +630,14 @@ ______________________________________________________________________
 - Every page carries the same footer: the Dropset wordmark at the left,
   the "Built by DASMAC" credit in the middle, and progress dots at the
   right. It isn't page content — don't budget words or space for it; the
-  slide body already reserves room above it. The credit is centered
-  **against the slide**, not by the flex row, and then nudged left by a small
-  **optical correction**. Both halves matter: splitting the leftover space
-  between unequal flanks is only ~6 units of drift, but the credit is a grey
-  "Built by" label followed by the bright DASMAC mark, so centering that
-  lockup's *box* leaves the mark — the thing an eye tracks — some 60 units
-  right of the midline. Measured, not estimated; the number and the
-  measurement live on `CREDIT_OPTICAL_SHIFT` in the deck.
+  slide body already reserves room above it. What is centered against the
+  slide is the **DASMAC mark**, not the credit lockup: "Built by" is small
+  grey text that pads the lockup's left and contributes almost none of its
+  ink, so centering the lockup's box leaves the mark — the thing an eye
+  tracks — some 60 units right of the midline, and the footer reads
+  off-center. The label hangs off the mark's left edge, out of flow. All of
+  this was measured off screenshots rather than judged by eye; the deck
+  comment records the numbers.
 - Presenter mode is **`⌘⇧P`** (`Ctrl⇧P` off macOS), not a bare `p`.
 - Anything nuanced — the fuller competitor answers, the investor
   grilling, the numbers behind a claim — is **not on a slide**. It lives
