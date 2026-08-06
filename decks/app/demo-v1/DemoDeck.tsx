@@ -62,6 +62,27 @@ const Wordmark = ({ width }: { width: number }) => (
 );
 
 /**
+ * Optical correction on the footer credit, in slide units, applied leftward.
+ *
+ * Geometric centring is not enough here and the numbers say why. Measured off a
+ * screenshot, against the slide's own midline (a page eyebrow is a block-centred
+ * element, so its ink centre marks it): the credit's bounding box lands within a
+ * few units of centre, but the **DASMAC mark** — the bright element an eye
+ * actually tracks — sits ~63 units right of it, because the grey "Built by"
+ * label pads the whole lockup's left side and contributes almost none of its
+ * ink. So the box is centred and the credit still reads right of centre.
+ *
+ * This shifts the lockup left by about a third of that, which cancels the offset
+ * a reader reported seeing. Centring the mark outright (the full ~63, by taking
+ * the label out of flow) is the tempting magic-number-free version and it
+ * over-corrects: the label is not weightless either, so the lockup then reads
+ * left-shifted. There is no way to land between those two without a number, and
+ * optical centring is a hand-tuned operation by nature — so it is one number,
+ * named, with the measurement that produced it. Re-tune this and nothing else.
+ */
+const CREDIT_OPTICAL_SHIFT = 22;
+
+/**
  * Persistent footer: wordmark on the left, the DASMAC credit in the middle,
  * progress dots on the right. The DASMAC mark is a transparent PNG, so unlike
  * the Dropset one it needs no blend to sit on the dark backdrop.
@@ -85,11 +106,12 @@ const template = () => (
     </Box>
     {/* Centred against the **slide**, not by the flex row. `space-between`
         divides the leftover space between three items, so the middle one lands
-        centred only when the flanks match — and these don't: a 210-unit
-        wordmark on the left against a row of small dots on the right pushed the
-        credit visibly right of centre. Taking it out of flow and pinning it to
-        50% makes the credit agree with the wordmark above it on every page,
-        which is the alignment the eye actually checks. */}
+        centred only when the flanks match — and these don't quite: the 210-unit
+        wordmark on the left against ~197 units of progress dots on the right.
+        That was only ~6 units of drift, so it was never the whole story; see
+        `CREDIT_OPTICAL_SHIFT` for the part that actually shows. Pinning the
+        lockup to 50% is what makes the geometry exact, and the shift is what
+        makes it look it. */}
     <div
       style={{
         alignItems: "center",
@@ -97,7 +119,7 @@ const template = () => (
         left: "50%",
         position: "absolute",
         top: "50%",
-        transform: "translate(-50%, -50%)",
+        transform: `translate(calc(-50% - ${CREDIT_OPTICAL_SHIFT}px), -50%)`,
       }}
     >
       <Text color="quaternary" fontSize="22px" margin="0 14px 0 0">
@@ -737,7 +759,7 @@ const BEATS: Beat[] = [
   {
     when: "Now",
     headline: "We onboard emerging stablecoin issuers",
-    body: "We lead the vaults that give an emerging issuer day-one liquidity, and we develop the downstream pipeline of companies that consume those currency trades.",
+    body: "We lead the vaults that give an emerging issuer day-one liquidity, and we develop the downstream pipeline of companies and users who need liquid currency swaps.",
   },
   // Other market makers entering is the load-bearing half, and it is what says
   // this **isn't a prop AMM**: anyone can quote here, so quotes compete tighter
@@ -749,7 +771,7 @@ const BEATS: Beat[] = [
   {
     when: "Next",
     headline: "Protocol fees accrue value",
-    body: "Additional market makers enter and quotes compete tighter, with protocol fees accruing value as volume and liquidity compound.",
+    body: "As additional market makers enter, quotes get tighter, and protocol fees accrue value as volume and liquidity compound.",
   },
   // The headline stays broad on purpose — "beyond spot" lets a reader fill in
   // their own derivatives thesis, where naming one hands them ours to argue
@@ -1319,11 +1341,11 @@ export default function DemoDeck() {
           This is the path to 24/7/365 FX, and beyond it. Now, we onboard
           emerging stablecoin issuers: we lead the vaults that give them day-one
           liquidity, and at the same time we develop the downstream pipeline of
-          the companies that consume those currency trades — those are the two
-          sides of the market. Next, protocol fees accrue value: this isn’t a
-          prop AMM, so other market makers come in and compete the quotes
-          tighter, volume follows the tighter spreads, liquidity compounds, and
-          value accrues to the protocol through fees. Later, the product expands
+          the companies and users who need liquid currency swaps — those are the
+          two sides of the market. Next, protocol fees accrue value: this isn’t a
+          prop AMM, so as additional market makers come in, quotes get tighter,
+          volume follows the tighter spreads, liquidity compounds, and protocol
+          fees accrue value off it. Later, the product expands
           beyond spot — derivatives make the markets themselves more efficient,
           and they open up business use cases too: treasury management, hedging
           B2B payment flows. Hedging isn’t just for market makers.
@@ -1397,19 +1419,19 @@ export default function DemoDeck() {
                 compounding is what makes every currency reachable — one market
                 at a time, which is the honest version of "every currency".
 
-                The last claim ends on **we have already begun**, not on the size
-                of the ambition. "Every currency onchain" as a standalone goal is
-                something anyone can assert; the same goal with a first step
-                already taken is a flywheel rather than a wish. Which issuers,
-                and how far along each conversation is, stays in the spoken
-                track — the slide claims only that the first turn has
-                happened. */}
+                The last claim says every pair **has a path**, which is the
+                honest form of "every currency onchain": a route that exists and
+                is walked one market at a time, rather than a state we assert.
+                That we have already started walking it belongs in the spoken
+                track, with the issuers named — a slide that says "we've begun"
+                invites "begun with whom?", which is a question to answer out
+                loud, not in six words under a logo. */}
             <VenuePanel
               tint={colors.buy}
               claims={[
                 "Dropset is open and composable on Solana, the most money-like onchain environment",
                 "Ease of transmission and open access compound liquidity into a flywheel",
-                "Every currency and every FX pair comes onchain one market at a time, and we’ve already begun",
+                "Every currency and FX pair has a path to onchain liquidity, one market at a time",
               ]}
             >
               <Wordmark width={420} />
@@ -1432,10 +1454,10 @@ export default function DemoDeck() {
           transmission and composability let liquidity compound into a flywheel
           instead of sitting still. That’s the public money infrastructure we’re
           building — a flywheel around public currency liquidity that exists
-          nowhere else, and it grows one market at a time — which is why we’ve
-          already begun rather than waiting for all of it. We’re in detailed
-          conversations with AUDD, and we’ve spoken with the CADC issuer.
-          Public liquidity is what
+          nowhere else. Every currency and FX pair has a path to onchain
+          liquidity here, one market at a time — and we’ve already started
+          walking it: we’re in detailed conversations with AUDD, and we’ve spoken
+          with the CADC issuer. Public liquidity is what
           blockchains were built for — moving money is the problem they were
           supposed to solve, and this is that.
         </Notes>
@@ -1471,7 +1493,7 @@ export default function DemoDeck() {
               name="Judy Sosa"
               role="Operations"
               prior="prev. EA, Dragonfly Capital"
-              bio="Owns the whole operational stack, working with banks, stablecoin providers, onramps and service providers. Extensive background in event coordination and partner relationship management."
+              bio="Owns the whole operational stack, working with banks, stablecoin providers, onramps and service providers. Extensive background in logistical coordination and partner relationship management."
             />
           </FlexBox>
         </SlideBody>
@@ -1484,8 +1506,8 @@ export default function DemoDeck() {
           quoting on the eCLOB cost double-digit compute units. Judy owns the
           whole operational stack, and works directly with banks, stablecoin
           providers, onramps and service providers, on an extensive background in
-          event coordination and partner relationship management. Dropset — where
-          currency
+          logistical coordination and partner relationship management. Dropset —
+          where currency
           trades onchain. [Leave this page up.]
         </Notes>
       </Slide>

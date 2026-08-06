@@ -89,18 +89,20 @@ pages:
 > downstream the payments companies who need to buy FX to settle. This is
 > the path to 24/7/365 FX and beyond: we onboard emerging stablecoin issuers
 > with vaults that give them day-one liquidity while we develop the
-> downstream pipeline that consumes those trades, more market makers enter and
-> compete the quotes tighter so volume and liquidity compound and value
-> accrues to the protocol through fees, and the product expands beyond spot
+> downstream pipeline of companies and users who need liquid currency swaps,
+> then as additional market makers enter, quotes get tighter and protocol fees
+> accrue value as volume and liquidity compound, and the product expands
+> beyond spot
 > into derivatives once the markets
 > are deep. The long-term question is whether onchain liquidity is public
-> or private. A private ledger gives an issuer distribution, but competing
+> or private. A private ledger gives an issuer distribution, but multiple
 > private ledgers introduce competitive friction, the liquidity on them is
-> gated, and an early-stage team needs a business account before it can even
-> experiment. Dropset is open and composable on Solana, the most money-like
-> onchain environment, where ease of transmission and open access compound
-> liquidity into a flywheel that exists nowhere else, one market at a time
-> until every currency and every FX pair is onchain. Public liquidity is what
+> gated, and market making on them isn't permissionless — early-stage teams
+> face hurdles just to experiment. Dropset is open and composable on Solana,
+> the most money-like onchain environment, where ease of transmission and open
+> access compound liquidity into a flywheel that exists nowhere else, and
+> every currency and FX pair has a path to onchain liquidity, one market at a
+> time. Public liquidity is what
 > blockchains were built for.
 > Dropset is built by people who have built exchanges. Dropset — where
 > currency trades onchain.
@@ -345,10 +347,11 @@ pages:
   beats in time order, spanning the page:
   1. **Now** — we onboard emerging stablecoin issuers. We lead the vaults
      that give an emerging issuer day-one liquidity, and we develop the
-     downstream pipeline of companies that consume those currency trades.
-  1. **Next** — protocol fees accrue value. Additional market makers enter
-     and quotes compete tighter, with protocol fees accruing value as volume
-     and liquidity compound.
+     downstream pipeline of companies and users who need liquid currency
+     swaps.
+  1. **Next** — protocol fees accrue value. As additional market makers
+     enter, quotes get tighter, and protocol fees accrue value as volume and
+     liquidity compound.
   1. **Later** — product expansion beyond spot. Derivatives enable more
      efficient markets and business use cases, including treasury
      management and hedging B2B payment flows.
@@ -365,11 +368,11 @@ pages:
 - **Spoken:** "This is the path to 24/7/365 FX, and beyond it. Now, we
   onboard emerging stablecoin issuers: we lead the vaults that give them
   day-one liquidity, and at the same time we develop the downstream pipeline
-  of the companies that consume those currency trades — those are the two
-  sides of the market. Next, protocol fees accrue value: this isn't a prop
-  AMM, so other market makers come in and compete the quotes tighter, volume
-  follows the tighter spreads, liquidity compounds, and value accrues to the
-  protocol through fees. Later, the product expands beyond spot — derivatives
+  of the companies and users who need liquid currency swaps — those are the
+  two sides of the market. Next, protocol fees accrue value: this isn't a prop
+  AMM, so as additional market makers come in, quotes get tighter, volume
+  follows the tighter spreads, liquidity compounds, and protocol fees accrue
+  value off it. Later, the product expands beyond spot — derivatives
   make the markets themselves more efficient, and they open up business use
   cases too: treasury management, hedging B2B payment flows. Hedging isn't
   just for market makers."
@@ -411,8 +414,8 @@ pages:
   Then the Dropset wordmark, green-outlined,
   bulleted: "Dropset is open and composable on Solana, the most money-like
   onchain environment"; "Ease of transmission and open access compound
-  liquidity into a flywheel"; "Every currency and every FX pair comes
-  onchain one market at a time, and we've already begun". Both
+  liquidity into a flywheel"; "Every currency and FX pair has a path to
+  onchain liquidity, one market at a time". Both
   badges are **top-aligned** so they sit on one line — see the note below.
 - **Spoken:** "The long-term question is whether onchain liquidity is
   public or private, and this is the one to make up your mind about. Arc
@@ -428,10 +431,11 @@ pages:
   environment there is, where ease of transmission and composability let
   liquidity compound into a flywheel instead of sitting still. That's the
   public money infrastructure we're building — a flywheel around public
-  currency liquidity that exists nowhere else, and it grows one market at a
-  time — which is why we've already begun rather than waiting for all of it.
-  We're in detailed conversations with AUDD, and we've spoken with the CADC
-  issuer. Public liquidity is what blockchains were built for —
+  currency liquidity that exists nowhere else. Every currency and FX pair has
+  a path to onchain liquidity here, one market at a time — and we've already
+  started walking it: we're in detailed conversations with AUDD, and we've
+  spoken with the CADC issuer. Public liquidity is what blockchains were built
+  for —
   moving money is the problem they were supposed to solve, and this is that."
 - **Note:** The v1 fail / won't-fail **pair collapsed into this one
   page**, and the asterisk device is retired — it cost a page and the
@@ -452,12 +456,14 @@ pages:
   be, market making on it isn't permissionless, and an early-stage team hits
   those hurdles before it can even experiment. Say "**multiple** private
   ledgers", not "competing" ones: the doubled word reads as a stumble, and
-  the plurality is the actual condition. The green panel's last claim ends on
-  **we have already begun**, because "every currency onchain" on its own is
-  something anyone can assert, and the same goal with a first step already
-  taken is a flywheel rather than a wish. *Which* issuers, and how far along
-  each conversation is (AUDD in detail, the CADC issuer spoken with), stays in
-  the spoken track — the slide claims only that the first turn has happened.
+  the plurality is the actual condition. The green panel's last claim says
+  every pair **has a path** to onchain liquidity, which is the honest form of
+  "every currency onchain" — a route that exists and gets walked one market at
+  a time, rather than a state we assert. That we have already started walking
+  it stays in the **spoken** track, with the issuers named (AUDD in detail,
+  the CADC issuer spoken with): a slide saying "we've begun" invites "begun
+  with whom?", which is a question to answer out loud rather than in six words
+  under a logo.
   The named examples (a bank that competes with Circle, a
   multi-signature banking product) belong in the spoken track, not on the
   slide. Deliberately **not** on this page yet: the TapTapSend / 0x /
@@ -500,7 +506,7 @@ pages:
   Guide, a key resource for optimizing Solana program efficiency.
   Judy Sosa, Operations — owns the whole operational stack, working with
   banks, stablecoin providers, onramps and service providers, on an extensive
-  background in event coordination and partner relationship management.
+  background in logistical coordination and partner relationship management.
   Roles carry **no company**: "Founder", not "Founder, DASMAC" — the deck
   names the company once, in the footer. The Opcode Guide is "**a key**
   resource", not "the definitive" one — the superlative is a claim a reader
@@ -514,7 +520,7 @@ pages:
   for optimizing Solana program efficiency, which is what makes quoting on
   the eCLOB cost double-digit compute units. Judy owns the whole
   operational stack, and works directly with banks, stablecoin providers,
-  onramps and service providers, on an extensive background in event
+  onramps and service providers, on an extensive background in logistical
   coordination and partner relationship management. Dropset — where currency
   trades onchain."
 - **Note:** **State what each person has done; don't argue for why the
@@ -625,9 +631,13 @@ ______________________________________________________________________
   the "Built by DASMAC" credit in the middle, and progress dots at the
   right. It isn't page content — don't budget words or space for it; the
   slide body already reserves room above it. The credit is centered
-  **against the slide**, not by the flex row: the left and right flanks are
-  very different widths, so splitting the leftover space put the credit
-  visibly off-center to the right.
+  **against the slide**, not by the flex row, and then nudged left by a small
+  **optical correction**. Both halves matter: splitting the leftover space
+  between unequal flanks is only ~6 units of drift, but the credit is a grey
+  "Built by" label followed by the bright DASMAC mark, so centering that
+  lockup's *box* leaves the mark — the thing an eye tracks — some 60 units
+  right of the midline. Measured, not estimated; the number and the
+  measurement live on `CREDIT_OPTICAL_SHIFT` in the deck.
 - Presenter mode is **`⌘⇧P`** (`Ctrl⇧P` off macOS), not a bare `p`.
 - Anything nuanced — the fuller competitor answers, the investor
   grilling, the numbers behind a claim — is **not on a slide**. It lives
