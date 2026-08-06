@@ -121,15 +121,19 @@ the invariants and rationale, not the field-by-field types:
   inventory, not protocol fees.
 - **`Registry`** holds the protocol-wide defaults stamped onto new
   markets — `default_fee_config`, `default_taker_fee`,
-  `default_min_leader_share` (default `50_000` = 5%; see **Vault →
+  `default_max_platform_fee` (default `100` bps = 1%; see **Order
+  matching → Platform fee**), `default_min_leader_share` (default
+  `50_000` = 5%; see **Vault →
   Skin-in-the-game floor**), and `max_vaults_per_market` (hard cap up
   to 255, enforced at `CreateVault`) — plus a live `market_count` and
   the admin allowlist (`Set<Pubkey>`). Each default only **seeds** the
   corresponding per-market value at `create_market`; admins tune
   markets and vaults downstream (`SetMarketFeeConfig`, `SetTakerFee`,
+  `SetMaxPlatformFee`,
   `SetMinLeaderShare`, `FreezeVault`, `SetOutsideDepositsApproved`) and
   retune the defaults themselves — for future markets — via
-  `SetRegistryDefaults` (the scalar `default_taker_fee` /
+  `SetRegistryDefaults` (the scalars `default_taker_fee` /
+  `default_max_platform_fee` /
   `default_min_leader_share`) and `SetDefaultFeeConfig` (the ATA-bearing
   `default_fee_config`). Admins may also open vaults without paying the
   per-market create-vault fee.
@@ -181,7 +185,8 @@ The byte-exact layout is owned by
 carries the market-wide `nonce`, the three DLL heads + `active_count`
 that thread the vault sectors (see **Storage layout**), the
 `outstanding_vault_depositors` counter, the per-market knobs
-(`taker_fee`, `default_min_leader_share`, `fee_config`) seeded from the
+(`taker_fee`, `max_platform_fee`, `default_min_leader_share`,
+`fee_config`) seeded from the
 registry at creation and tunable downstream by admins, the base/quote
 mints, and the two treasury accounts with their PDA bumps. The
 load-bearing invariants and rationale:
@@ -217,6 +222,11 @@ load-bearing invariants and rationale:
   admins sweep both.
 - **Fee cap / floor seeding.** `taker_fee` is capped at ~6.55%
   (`Ppm16` max) and admin-mutable per market via `SetTakerFee`.
+  `max_platform_fee` bounds the caller-declared platform fee (bps,
+  `Bps16`, range-checked `<= BPS` on every write since the type is no
+  bound) and is admin-mutable via `SetMaxPlatformFee` — see **Order
+  matching → Platform fee**. Note the two fee knobs use different
+  denominators: the taker fee is ppm, the platform-fee ceiling is bps.
   `default_min_leader_share` is stamped into each `Vault.min_leader_share`
   at `CreateVault`; mutating it affects only vaults opened afterward (see
   **Vault → Skin-in-the-game floor**).
@@ -1623,18 +1633,39 @@ is a market-wide knob — not per-vault — so it takes no `vault_idx`.
 value can exceed it and the instruction performs no range check. Takes
 effect on the next swap; in-flight quotes are unaffected.
 
+### SetMaxPlatformFee
+
+Admin-only. Writes `MarketHeader.max_platform_fee = value` (bps,
+`Bps16`), overriding the ceiling stamped from
+`Registry.default_max_platform_fee` at `create_market`. This is the
+ceiling on the caller-declared `platform_fee_bps` (see **Order matching
+→ Platform fee**), read on the swap hot path, and — since the fee is
+permissionless — the only thing bounding how much of a taker's output
+any router may skim. Market-wide, so no `vault_idx`.
+
+Unlike `SetTakerFee` this **does** range-check: `Bps16` is a `u16`,
+which reaches 65_535 — over 6× `BPS` — so the type is no bound at all.
+`value <= 10_000` is enforced, with exactly `BPS` allowed (an admin
+declining to place any ceiling below 100%) and `0` allowed (platform
+fees turned off on this market, every non-zero declaration rejected).
+Takes effect on the next swap.
+
 ### SetRegistryDefaults
 
-Admin-only. Retunes the registry-wide defaults stamped onto **future**
-markets — `default_taker_fee` (`Ppm16`) and `default_min_leader_share`
+Admin-only. Retunes the registry-wide scalar defaults stamped onto
+**future** markets — `default_taker_fee` (`Ppm16`),
+`default_max_platform_fee` (`Bps16`), and `default_min_leader_share`
 (`Ppm32`) — each passed as an `Option`, so an admin can move one default
-without restating the other (`None` leaves a field untouched). Like
+without restating the others (`None` leaves a field untouched). Like
 `SetMarketFeeConfig`, the write is **non-retroactive**: it changes only
 what the next `create_market` stamps, never the values live markets were
 created with. Retune those per market via `SetTakerFee` /
-`SetMinLeaderShare`. `default_min_leader_share` is range-checked
-(`<= 1_000_000` ppm, exactly `PPM` allowed for a leader-only book),
-mirroring `SetMinLeaderShare`; `default_taker_fee` needs no check for
+`SetMaxPlatformFee` / `SetMinLeaderShare`. `default_min_leader_share` is
+range-checked (`<= 1_000_000` ppm, exactly `PPM` allowed for a
+leader-only book), mirroring `SetMinLeaderShare`;
+`default_max_platform_fee` is range-checked (`<= 10_000` bps) for the
+`Bps16` reason above, so an over-range ceiling can't be stamped onto
+every market created afterwards; `default_taker_fee` needs no check for
 the `Ppm16` reason above.
 
 The registry's third default, `default_fee_config`, is **not** covered
@@ -2018,7 +2049,9 @@ composability. The matcher snapshots every touched sector's
 inventory + per-level `remaining.size` + `market.nonce` + both
 `accrued_<leg>_fee_atoms` counters before
 mutating, runs the full fill loop, then checks whether the
-achievable net output (after taker fee) meets `min_out`. On
+achievable net output — after **both** the taker fee and the
+caller-declared platform fee, i.e. what actually reaches the
+taker's token account — meets `min_out`. On
 failure the snapshots are walked in reverse to restore exact
 pre-swap state, the accumulators are rolled back to their pre-swap
 values (a swap that does not commit must not leave phantom accrued
@@ -2036,6 +2069,85 @@ a partial fill with `total_out > 0` always commits. Frozen vaults
 are skipped from the matching set entirely so a leader-initiated
 freeze takes effect from the next taker instruction rather than
 waiting for per-level expiry.
+
+### Platform fee (caller-declared)
+
+Two distinct fees come off the output leg, in a fixed order:
+`fill → taker fee → platform fee`.
+
+- **Taker fee** — protocol revenue. Per market, admin-set
+  (`MarketHeader.taker_fee`, ppm), read on the hot path.
+- **Platform fee** — integrator revenue. Declared per swap by the
+  caller as `platform_fee_bps` (bps, not ppm), bounded by
+  `MarketHeader.max_platform_fee`, and paid out immediately.
+
+The platform fee exists so a frontend or router earns a kickback for
+routing flow to Dropset. Without it the eCLOB route is the one path
+that earns an integrator nothing, which inverts the incentive to
+route to our own book — including for our own frontend.
+
+**Permissionless.** Any caller may declare a fee and name any
+beneficiary; the program-enforced ceiling, not an onboarding step, is
+what bounds the *fee*. There is no per-integrator state and no
+allowlist.
+
+One thing the ceiling does **not** bound: the beneficiary is
+caller-chosen and never signs, so naming a fresh one each swap costs
+the taker another rent-exempt balance for the new fee account, and
+those lamports are recoverable by whoever closes it. A hostile
+transaction builder can therefore extract SOL from its own takers
+outside both the ceiling and `min_out`, which are denominated in
+output-leg atoms. The taker signs, so this is consent-bounded rather
+than an escalation — but the ceiling is not the whole story.
+
+**Zero new state.** The fee is transferred in the same transaction as
+the fill, to the beneficiary's token account for the swap's *output*
+mint (base on a Buy, quote on a Sell). Nothing accrues, so there is no
+claim instruction and nothing to reconcile. (Rejected: on-chain
+accrual with a later claim — it would spare integrators a pre-created
+ATA per output mint, at the cost of new state, a claim instruction,
+and its own invariant.)
+
+**The fee account is created on demand.** The optional account group
+is `(platform_fee_authority, platform_fee_ata)`; a swap with no
+integrator passes neither and declares `0`, so the direct paths (the
+TUI, the taker bot, the `sdk/rs` router adapter, and the tests) carry
+no fee plumbing. When a fee *is*
+declared, the handler CPIs the ATA program's `create_idempotent` with
+the runtime-selected output mint — which both derives the canonical
+address (rejecting any other account) and creates it when missing,
+with the taker funding the ~0.002 SOL rent once per
+`(beneficiary, mint)` pair. This is deliberately *unlike* DFlow, whose
+`/order` rejects a request when the fee account doesn't exist.
+
+Because the output leg is side-dependent and Anchor's account
+constraints are static, there is no mint to bind the fee ATA to at
+macro-expansion time — so it carries no `associated_token::*`
+constraints and no `init_if_needed`. Deferring to the CPI is both the
+only form that can key off the leg chosen at runtime and the stronger
+check, since the ATA program is the authority on its own derivation.
+
+**Rounding** is down, so the taker keeps the dust — matching the taker
+fee. A rate whose fee rounds to zero atoms transfers nothing, creates
+no account, and emits no event.
+
+**The treasury invariant is untouched.** The two payouts — taker and
+beneficiary — sum to the output leg net of the taker fee, which is
+exactly what a single taker transfer paid out before the split. Note
+that this is *less* than the matching loop debited from vault
+inventory: the loop debits the **gross** output and books the taker fee
+into `accrued_<leg>_fee_atoms`, so paying out `gross − accrued` is
+precisely what keeps
+`treasury.amount == Σ vault.<leg>_atoms + accrued_<leg>_fee_atoms`
+holding. The platform fee only *splits* that same outbound transfer
+between two destinations; it moves no vault state and accrues none of
+its own, which is why it needs no `min_out` rollback entry — it is
+computed after that gate, from no vault state.
+
+Worth stating plainly: this fee is charged to the taker, not to the
+LPs. The vault trades at exactly the price it quoted and books the
+same inventory either way; what the taker gives up is what the
+integrator gains.
 
 ## Events and emission
 

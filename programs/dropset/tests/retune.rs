@@ -254,47 +254,61 @@ fn taker_fee_rejects_non_admin() {
 // ── set_registry_defaults (admin-only) ───────────────────────────────
 
 #[test]
-fn registry_defaults_admin_sets_both_fields() {
+fn registry_defaults_admin_sets_every_field() {
     let mut f = Fixture::bootstrap();
-    // Seeded at `init`: taker fee 0, min-leader-share 5%.
+    // Seeded at `init`: taker fee 0, platform-fee ceiling 100 bps,
+    // min-leader-share 5%.
     assert_eq!(f.registry_header().default_taker_fee.get(), 0);
+    assert_eq!(f.registry_header().default_max_platform_fee.get(), 100);
     assert_eq!(f.registry_header().default_min_leader_share.get(), 50_000);
 
     let admin = f.authority.insecure_clone();
     let meta = f
-        .set_registry_defaults_meta(&admin, Some(2_500), Some(100_000))
-        .expect("admin may retune both registry defaults");
+        .set_registry_defaults_meta(&admin, Some(2_500), Some(250), Some(100_000))
+        .expect("admin may retune every registry default");
 
     let h = f.registry_header();
     assert_eq!(h.default_taker_fee.get(), 2_500);
+    assert_eq!(h.default_max_platform_fee.get(), 250);
     assert_eq!(h.default_min_leader_share.get(), 100_000);
 
     // The event carries the full post-update default set.
     let ev = common::events::set_registry_defaults(&meta);
     assert_eq!(ev.default_taker_fee, 2_500);
+    assert_eq!(ev.default_max_platform_fee, 250);
     assert_eq!(ev.default_min_leader_share, 100_000);
 }
 
 #[test]
 fn registry_defaults_partial_update_leaves_other_field() {
     // A `None` field is untouched, so an admin can move one default
-    // without restating the other.
+    // without restating the others.
     let mut f = Fixture::bootstrap();
     let admin = f.authority.insecure_clone();
 
     // Move only the taker fee.
-    f.set_registry_defaults(&admin, Some(7_777), None)
+    f.set_registry_defaults(&admin, Some(7_777), None, None)
         .expect("taker-fee-only update");
     let h = f.registry_header();
     assert_eq!(h.default_taker_fee.get(), 7_777);
+    assert_eq!(h.default_max_platform_fee.get(), 100, "ceiling untouched");
     assert_eq!(h.default_min_leader_share.get(), 50_000, "floor untouched");
 
     // Move only the floor.
-    f.set_registry_defaults(&admin, None, Some(250_000))
+    f.set_registry_defaults(&admin, None, None, Some(250_000))
         .expect("floor-only update");
     let h = f.registry_header();
     assert_eq!(h.default_taker_fee.get(), 7_777, "taker fee untouched");
+    assert_eq!(h.default_max_platform_fee.get(), 100, "ceiling untouched");
     assert_eq!(h.default_min_leader_share.get(), 250_000);
+
+    // Move only the platform-fee ceiling.
+    f.set_registry_defaults(&admin, None, Some(42), None)
+        .expect("ceiling-only update");
+    let h = f.registry_header();
+    assert_eq!(h.default_taker_fee.get(), 7_777, "taker fee untouched");
+    assert_eq!(h.default_max_platform_fee.get(), 42);
+    assert_eq!(h.default_min_leader_share.get(), 250_000, "floor untouched");
 }
 
 #[test]
@@ -303,17 +317,24 @@ fn registry_defaults_is_non_retroactive() {
     // — it only seeds *future* markets, mirroring `SetMarketFeeConfig`.
     let mut f = Fixture::bootstrap();
     assert_eq!(f.market_header().taker_fee.get(), 0);
+    assert_eq!(f.market_header().max_platform_fee.get(), 100);
 
     let admin = f.authority.insecure_clone();
-    f.set_registry_defaults(&admin, Some(5_000), Some(123_456))
+    f.set_registry_defaults(&admin, Some(5_000), Some(9_000), Some(123_456))
         .expect("retune registry defaults");
 
     // Registry default moved; the live market's stamped values did not.
     assert_eq!(f.registry_header().default_taker_fee.get(), 5_000);
+    assert_eq!(f.registry_header().default_max_platform_fee.get(), 9_000);
     assert_eq!(
         f.market_header().taker_fee.get(),
         0,
         "the existing market keeps its create-time taker fee"
+    );
+    assert_eq!(
+        f.market_header().max_platform_fee.get(),
+        100,
+        "the existing market keeps its create-time platform-fee ceiling"
     );
     assert_eq!(
         f.market_header().default_min_leader_share.get(),
@@ -328,7 +349,7 @@ fn registry_defaults_allows_full_floor() {
     // `set_min_leader_share`.
     let mut f = Fixture::bootstrap();
     let admin = f.authority.insecure_clone();
-    f.set_registry_defaults(&admin, None, Some(1_000_000))
+    f.set_registry_defaults(&admin, None, None, Some(1_000_000))
         .expect("a 100% default floor is allowed");
     assert_eq!(
         f.registry_header().default_min_leader_share.get(),
@@ -337,11 +358,40 @@ fn registry_defaults_allows_full_floor() {
 }
 
 #[test]
+fn registry_defaults_allows_full_platform_fee_ceiling() {
+    // Exactly `BPS` is allowed: an admin may decline to place any ceiling
+    // below 100% of the taker's output. Aggressive, but still a real bound
+    // — the gate is strict (`> BPS`), matching the floor's.
+    let mut f = Fixture::bootstrap();
+    let admin = f.authority.insecure_clone();
+    f.set_registry_defaults(&admin, None, Some(10_000), None)
+        .expect("a 100% default platform-fee ceiling is allowed");
+    assert_eq!(f.registry_header().default_max_platform_fee.get(), 10_000);
+}
+
+#[test]
+fn registry_defaults_rejects_platform_fee_ceiling_above_bps() {
+    // A `u16` reaches to 65_535, over 6x `BPS`, so the type is no bound
+    // here — this is the check that keeps an over-range ceiling from being
+    // stamped onto every market created afterwards.
+    let mut f = Fixture::bootstrap();
+    let admin = f.authority.insecure_clone();
+    let err = f
+        .set_registry_defaults(&admin, None, Some(10_001), None)
+        .expect_err("a default platform-fee ceiling above 100% is rejected");
+    common::assert_program_error(&err, dropset::DropsetError::InvalidMaxPlatformFee);
+    // Nothing was written.
+    let h = f.registry_header();
+    assert_eq!(h.default_max_platform_fee.get(), 100);
+    assert_eq!(h.default_taker_fee.get(), 0);
+}
+
+#[test]
 fn registry_defaults_rejects_floor_above_ppm() {
     let mut f = Fixture::bootstrap();
     let admin = f.authority.insecure_clone();
     let err = f
-        .set_registry_defaults(&admin, None, Some(1_000_001))
+        .set_registry_defaults(&admin, None, None, Some(1_000_001))
         .expect_err("a default floor above 100% is unsatisfiable");
     common::assert_program_error(&err, dropset::DropsetError::InvalidMinLeaderShare);
     // Nothing was written — the rejected floor leaves both defaults intact.
@@ -352,20 +402,26 @@ fn registry_defaults_rejects_floor_above_ppm() {
 
 #[test]
 fn registry_defaults_rejects_floor_above_ppm_before_any_write() {
-    // The taker-fee field is applied before the floor is validated, so a
-    // call that pairs a valid taker fee with an out-of-range floor must
-    // reject *atomically*: the whole instruction errors and the taker-fee
-    // write is rolled back by the runtime, not left half-applied.
+    // The taker-fee and ceiling fields are applied before the floor is
+    // validated, so a call that pairs valid values with an out-of-range
+    // floor must reject *atomically*: the whole instruction errors and the
+    // earlier writes are rolled back by the runtime, not left half-applied.
     let mut f = Fixture::bootstrap();
     let admin = f.authority.insecure_clone();
     let err = f
-        .set_registry_defaults(&admin, Some(9_999), Some(1_000_001))
+        .set_registry_defaults(&admin, Some(9_999), Some(500), Some(1_000_001))
         .expect_err("an out-of-range floor must reject the whole call");
     common::assert_program_error(&err, dropset::DropsetError::InvalidMinLeaderShare);
+    let h = f.registry_header();
     assert_eq!(
-        f.registry_header().default_taker_fee.get(),
+        h.default_taker_fee.get(),
         0,
         "the taker-fee write must roll back with the rejected floor"
+    );
+    assert_eq!(
+        h.default_max_platform_fee.get(),
+        100,
+        "the ceiling write must roll back with the rejected floor"
     );
 }
 
@@ -374,30 +430,93 @@ fn registry_defaults_rejects_non_admin() {
     let mut f = Fixture::bootstrap();
     let stranger = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
     let err = f
-        .set_registry_defaults(&stranger, Some(1_000), Some(100_000))
+        .set_registry_defaults(&stranger, Some(1_000), Some(200), Some(100_000))
         .expect_err("non-admin must not retune registry defaults");
     common::assert_program_error(&err, dropset::DropsetError::Unauthorized);
     let h = f.registry_header();
     assert_eq!(h.default_taker_fee.get(), 0);
+    assert_eq!(h.default_max_platform_fee.get(), 100);
     assert_eq!(h.default_min_leader_share.get(), 50_000);
 }
 
 #[test]
 fn registry_defaults_all_none_is_noop() {
-    // Both fields `None` is a no-op write that still succeeds and emits
+    // Every field `None` is a no-op write that still succeeds and emits
     // the current defaults — the event always carries the full set.
     let mut f = Fixture::bootstrap();
     let admin = f.authority.insecure_clone();
     let meta = f
-        .set_registry_defaults_meta(&admin, None, None)
+        .set_registry_defaults_meta(&admin, None, None, None)
         .expect("an all-None call is a valid no-op");
     let h = f.registry_header();
     assert_eq!(h.default_taker_fee.get(), 0);
+    assert_eq!(h.default_max_platform_fee.get(), 100);
     assert_eq!(h.default_min_leader_share.get(), 50_000);
 
     let ev = common::events::set_registry_defaults(&meta);
     assert_eq!(ev.default_taker_fee, 0);
+    assert_eq!(ev.default_max_platform_fee, 100);
     assert_eq!(ev.default_min_leader_share, 50_000);
+}
+
+// ── set_max_platform_fee (admin-only) ────────────────────────────────
+
+#[test]
+fn max_platform_fee_admin_retunes_the_market_ceiling() {
+    let mut f = Fixture::bootstrap();
+    // Seeded from the registry default at `create_market`.
+    assert_eq!(f.market_header().max_platform_fee.get(), 100);
+
+    let admin = f.authority.insecure_clone();
+    let meta = f
+        .set_max_platform_fee_meta(&admin, 25)
+        .expect("admin may retune the market's platform-fee ceiling");
+    assert_eq!(f.market_header().max_platform_fee.get(), 25);
+
+    let ev = common::events::set_max_platform_fee(&meta);
+    assert_eq!(ev.market, f.market.to_bytes());
+    assert_eq!(ev.max_platform_fee, 25);
+}
+
+#[test]
+fn max_platform_fee_allows_zero_and_full_bps() {
+    // Zero disables integrator fees on the market outright (every non-zero
+    // declaration is then rejected); exactly `BPS` places no ceiling below
+    // 100%. Both are legitimate admin choices, so the gate is strict.
+    let mut f = Fixture::bootstrap();
+    let admin = f.authority.insecure_clone();
+    f.set_max_platform_fee(&admin, 0)
+        .expect("a zero ceiling is allowed — it turns platform fees off");
+    assert_eq!(f.market_header().max_platform_fee.get(), 0);
+    f.set_max_platform_fee(&admin, 10_000)
+        .expect("a 100% ceiling is allowed");
+    assert_eq!(f.market_header().max_platform_fee.get(), 10_000);
+}
+
+#[test]
+fn max_platform_fee_rejects_above_bps() {
+    let mut f = Fixture::bootstrap();
+    let admin = f.authority.insecure_clone();
+    let err = f
+        .set_max_platform_fee(&admin, 10_001)
+        .expect_err("a ceiling above 100% of the output leg is rejected");
+    common::assert_program_error(&err, dropset::DropsetError::InvalidMaxPlatformFee);
+    assert_eq!(
+        f.market_header().max_platform_fee.get(),
+        100,
+        "the rejected write leaves the seeded ceiling intact"
+    );
+}
+
+#[test]
+fn max_platform_fee_rejects_non_admin() {
+    let mut f = Fixture::bootstrap();
+    let stranger = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
+    let err = f
+        .set_max_platform_fee(&stranger, 50)
+        .expect_err("non-admin must not retune the platform-fee ceiling");
+    common::assert_program_error(&err, dropset::DropsetError::Unauthorized);
+    assert_eq!(f.market_header().max_platform_fee.get(), 100);
 }
 
 // ── set_default_fee_config (admin-only) ──────────────────────────────

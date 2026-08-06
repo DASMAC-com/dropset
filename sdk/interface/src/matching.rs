@@ -17,7 +17,9 @@
 //! shared conformance vectors (see `sdk/conformance`).
 
 use crate::layout::{MarketView, Vault, BPS, N_LEVELS};
-use crate::matching_math::{flush_level_price, level_fill_atoms, sort_key, taker_fee_atoms};
+use crate::matching_math::{
+    flush_level_price, level_fill_atoms, platform_fee_atoms, sort_key, taker_fee_atoms,
+};
 use crate::price::Price;
 
 /// Taker side. `Buy` consumes asks (pays quote, receives base); `Sell`
@@ -36,13 +38,23 @@ pub struct Quote {
     /// Input atoms actually consumed (`<= amount_in`; quote for Buy, base
     /// for Sell). DFlow requires `in_amount <= requested`.
     pub in_amount: u64,
-    /// Net output atoms delivered to the taker after the taker fee (base
-    /// for Buy, quote for Sell).
+    /// Net output atoms delivered to the taker after **both** fees (base
+    /// for Buy, quote for Sell) — what actually lands in their token
+    /// account, and so what a caller should size `min_out` against.
     pub out_amount: u64,
     /// Taker fee charged on this take (output-leg atoms). Accrued to the
     /// market as protocol revenue — **not** retained by the matched
     /// vaults, whose inventory is debited the gross output.
     pub fee_amount: u64,
+    /// Caller-declared platform fee paid through to the integrator
+    /// (output-leg atoms), charged on the output net of `fee_amount`.
+    /// Zero unless the caller passed a non-zero `platform_fee_bps`.
+    ///
+    /// Reported separately from `fee_amount` rather than summed into it
+    /// because the two are owed to different parties and only one of them
+    /// is the integrator's own revenue — a frontend showing "our fee"
+    /// must not display the protocol's cut alongside it.
+    pub platform_fee_amount: u64,
     /// Number of `(vault, level)` legs that filled.
     pub legs: u32,
 }
@@ -77,14 +89,31 @@ pub struct BookLevel {
 /// `taker_fee_ppm` is read from the market header; `limit_price` is the
 /// worst acceptable fill (use [`Price::INFINITY`] for a Buy / [`Price::ZERO`]
 /// for a Sell to disable the bound).
+///
+/// `platform_fee_bps` is the integrator fee the caller intends to declare on
+/// the `swap` instruction — pass `0` for an unrouted quote. It is modelled
+/// here, rather than subtracted by the caller afterwards, because the engine
+/// composes the two fees in a fixed order (fill → taker fee → platform fee)
+/// with a truncating division at each step: netting it off outside would
+/// round differently and drift the quote from execution by a few atoms.
+///
+/// A rate above the market's `max_platform_fee` returns an empty [`Quote`]
+/// rather than a clamped one — the engine hard-rejects that swap
+/// (`PlatformFeeTooHigh`), so quoting a fill it would refuse is the one
+/// answer guaranteed to be wrong. Same "refuse to quote" convention the
+/// corrupt-DLL and overflow paths already use.
 pub fn simulate_swap(
     market: &MarketView<'_>,
     side: SwapSide,
     amount_in: u64,
     limit_price: Price,
     current_slot: u32,
+    platform_fee_bps: u16,
 ) -> Quote {
     let taker_fee_ppm = market.header.taker_fee.get() as u128;
+    if platform_fee_bps > market.header.max_platform_fee.get() {
+        return Quote::default();
+    }
     let is_buy = side == SwapSide::Buy;
 
     // Reconstruct the chosen side's book in cross-vault price-time priority.
@@ -217,11 +246,18 @@ pub fn simulate_swap(
         legs += 1;
     }
 
-    let out_net = total_out.saturating_sub(total_fee).min(u64::MAX as u128) as u64;
+    // Compose the two fees exactly as the engine does — see `swap.rs`'s
+    // settlement block. The platform fee is charged on the output already
+    // net of the taker fee, and both truncate, so the order and the
+    // intermediate rounding are load-bearing for quote/execution parity.
+    let net_after_taker_fee = total_out.saturating_sub(total_fee).min(u64::MAX as u128) as u64;
+    let platform_fee =
+        platform_fee_atoms(net_after_taker_fee, platform_fee_bps).min(u64::MAX as u128) as u64;
     Quote {
         in_amount: (amount_in as u128 - unfilled).min(u64::MAX as u128) as u64,
-        out_amount: out_net,
+        out_amount: net_after_taker_fee.saturating_sub(platform_fee),
         fee_amount: total_fee.min(u64::MAX as u128) as u64,
+        platform_fee_amount: platform_fee,
         legs,
     }
 }
@@ -552,7 +588,7 @@ mod tests {
         let total_base: u64 = asks.iter().map(|l| l.size).sum();
         assert_eq!(total_base, 1_800_000);
 
-        let q = simulate_swap(&view, SwapSide::Buy, 10_000_000, Price::INFINITY, 1);
+        let q = simulate_swap(&view, SwapSide::Buy, 10_000_000, Price::INFINITY, 1, 0);
         assert_eq!(q.out_amount + q.fee_amount, total_base);
     }
 
@@ -612,7 +648,7 @@ mod tests {
         assert_eq!(ask.base_for_quote(1), 16_583);
         assert_eq!(ask.quote_for_base(16_583), 0);
 
-        let q = simulate_swap(&view, SwapSide::Buy, 1, Price::INFINITY, 1);
+        let q = simulate_swap(&view, SwapSide::Buy, 1, Price::INFINITY, 1, 0);
         assert_eq!(
             q,
             Quote::default(),
@@ -620,7 +656,7 @@ mod tests {
         );
 
         // Dust-only, as on the Sell arm: a normally-sized Buy still fills.
-        let q = simulate_swap(&view, SwapSide::Buy, 1_000_000, Price::INFINITY, 1);
+        let q = simulate_swap(&view, SwapSide::Buy, 1_000_000, Price::INFINITY, 1, 0);
         assert!(q.in_amount > 0 && q.out_amount > 0 && q.legs > 0);
     }
 
@@ -639,7 +675,7 @@ mod tests {
         assert_eq!(best_bid.quote_for_base(1), 1);
         assert_eq!(best_bid.base_for_quote(1), 0);
 
-        let q = simulate_swap(&view, SwapSide::Sell, 1, Price::ZERO, 1);
+        let q = simulate_swap(&view, SwapSide::Sell, 1, Price::ZERO, 1, 0);
         assert_eq!(
             q,
             Quote::default(),
@@ -648,7 +684,7 @@ mod tests {
 
         // The guard is dust-only — a normally-sized take still fills, and
         // consumes input for the output it promises.
-        let q = simulate_swap(&view, SwapSide::Sell, 1_000_000, Price::ZERO, 1);
+        let q = simulate_swap(&view, SwapSide::Sell, 1_000_000, Price::ZERO, 1, 0);
         assert!(q.in_amount > 0 && q.out_amount > 0 && q.legs > 0);
     }
 
@@ -727,12 +763,12 @@ mod tests {
             "healthy bid side still reconstructs"
         );
         assert_eq!(
-            simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1),
+            simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1, 0),
             Quote::default(),
             "a Buy against the oversized ask side no-fills, it does not abort"
         );
         assert!(
-            simulate_swap(&view, SwapSide::Sell, 500_000, Price::ZERO, 1).out_amount > 0,
+            simulate_swap(&view, SwapSide::Sell, 500_000, Price::ZERO, 1, 0).out_amount > 0,
             "the healthy bid side still fills a Sell"
         );
     }
@@ -744,6 +780,61 @@ mod tests {
         let data = market_data_flush(10_000, 10_000);
         let view = MarketView::load(&data).unwrap();
         assert!(!resting_levels(&view, SwapSide::Buy, 1).is_empty());
-        assert!(simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1).out_amount > 0);
+        assert!(simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1, 0).out_amount > 0);
+    }
+
+    /// A market whose `max_platform_fee` is zero (every fixture here, since
+    /// they build the header from `zeroed()`) refuses any non-zero declared
+    /// rate outright rather than clamping it — the engine hard-errors
+    /// `PlatformFeeTooHigh` on that swap, so a clamped quote would promise a
+    /// fill that cannot happen.
+    #[test]
+    fn platform_fee_above_market_ceiling_refuses_to_quote() {
+        let data = market_data();
+        let view = MarketView::load(&data).unwrap();
+        assert!(simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1, 0).out_amount > 0);
+        assert_eq!(
+            simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1, 1),
+            Quote::default(),
+            "1 bps declared against a 0 bps ceiling must refuse, not clamp to 0"
+        );
+    }
+
+    /// With a ceiling in place, the platform fee comes off the output
+    /// *after* the taker fee, is reported separately, and leaves the gross
+    /// fill untouched — the integrator's cut is carved out of the taker's
+    /// proceeds, not conjured from the vault.
+    #[test]
+    fn platform_fee_splits_the_output_after_the_taker_fee() {
+        let mut data = market_data();
+        // Seat a 100 bps ceiling and a 1000 ppm (0.1%) taker fee so both
+        // fees are live and distinguishable.
+        let mut header = *MarketView::load(&data).unwrap().header;
+        header.taker_fee = 1_000u16.into();
+        header.max_platform_fee = 100u16.into();
+        data[ACCOUNT_DISCRIMINATOR_LEN
+            ..ACCOUNT_DISCRIMINATOR_LEN + core::mem::size_of::<MarketHeader>()]
+            .copy_from_slice(bytes_of(&header));
+        let view = MarketView::load(&data).unwrap();
+
+        let free = simulate_swap(&view, SwapSide::Buy, 1_000_000, Price::INFINITY, 1, 0);
+        let paid = simulate_swap(&view, SwapSide::Buy, 1_000_000, Price::INFINITY, 1, 100);
+        assert_eq!(free.platform_fee_amount, 0);
+
+        // Same book, same input, same gross fill and same taker fee — the
+        // platform fee changes only how the taker's share is divided.
+        assert_eq!(paid.in_amount, free.in_amount);
+        assert_eq!(paid.fee_amount, free.fee_amount);
+        assert_eq!(
+            paid.out_amount + paid.platform_fee_amount,
+            free.out_amount,
+            "the two payouts must sum to the taker-fee-net output"
+        );
+        // 100 bps of the taker-fee-net leg, rounded down.
+        assert_eq!(paid.platform_fee_amount, free.out_amount * 100 / 10_000);
+        assert!(
+            paid.platform_fee_amount > 0,
+            "fixture too small to see a fee"
+        );
     }
 }

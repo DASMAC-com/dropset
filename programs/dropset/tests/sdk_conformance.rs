@@ -26,6 +26,7 @@ use common::fixture::{ladder_profile, Fixture};
 use dropset_sdk::layout::MarketView;
 use dropset_sdk::matching::{simulate_swap, Quote, SwapSide};
 use dropset_sdk::price::Price;
+use solana_pubkey::Pubkey;
 
 /// SDK-decoded snapshot of the live market account.
 fn market_bytes(f: &Fixture) -> Vec<u8> {
@@ -48,10 +49,49 @@ fn predict_and_execute(
     limit_price: Price,
     current_slot: u32,
 ) -> Quote {
+    predict_and_execute_with_fee(
+        f,
+        taker,
+        side,
+        amount_in,
+        limit_price,
+        current_slot,
+        None,
+        0,
+    )
+}
+
+/// [`predict_and_execute`] with a caller-declared platform fee, so the
+/// engine-vs-simulator comparison also covers fee composition.
+///
+/// This is the **only** harness that pins the two implementations against each
+/// other; the conformance vectors pin native Rust against WASM, which is the
+/// same `simulate_swap` on both sides and so cannot catch a divergence from
+/// the engine. Running it exclusively at `platform_fee_bps = 0` would leave
+/// the composition order (`fill → taker fee → platform fee`, each truncating)
+/// asserted only within each implementation separately.
+#[allow(clippy::too_many_arguments)]
+fn predict_and_execute_with_fee(
+    f: &mut Fixture,
+    taker: &Keypair,
+    side: SwapSide,
+    amount_in: u64,
+    limit_price: Price,
+    current_slot: u32,
+    fee_authority: Option<&Pubkey>,
+    platform_fee_bps: u16,
+) -> Quote {
     let predicted = {
         let data = market_bytes(f);
         let view = MarketView::load(&data).expect("SDK decodes the market account");
-        simulate_swap(&view, side, amount_in, limit_price, current_slot)
+        simulate_swap(
+            &view,
+            side,
+            amount_in,
+            limit_price,
+            current_slot,
+            platform_fee_bps,
+        )
     };
 
     let base_ata = f.base_ata(&taker.pubkey());
@@ -59,8 +99,16 @@ fn predict_and_execute(
     let base_before = f.token_balance(&base_ata);
     let quote_before = f.token_balance(&quote_ata);
 
-    f.swap(taker, side as u8, amount_in, limit_price.as_u32(), 0)
-        .expect("on-chain swap");
+    let ix = f.swap_ix_with_fee(
+        &taker.pubkey(),
+        side as u8,
+        amount_in,
+        limit_price.as_u32(),
+        0,
+        fee_authority,
+        platform_fee_bps,
+    );
+    f.send_ix(taker, ix).expect("on-chain swap");
 
     // Buy spends quote for base; Sell spends base for quote.
     let (realized_out, realized_in) = match side {
@@ -143,6 +191,46 @@ fn sdk_simulate_swap_matches_onchain_sell() {
 
     let q = predict_and_execute(&mut f, &taker, SwapSide::Sell, amount_in, Price::ZERO, 1);
     assert!(q.out_amount > 0, "expected a fill");
+}
+
+#[test]
+fn sdk_simulate_swap_matches_onchain_with_a_platform_fee() {
+    // Close the engine-vs-simulator loop at a *non-zero* fee. Both fees are
+    // live here — a taker fee in ppm and a platform fee in bps — so this pins
+    // the composition order and the truncation at each step across the two
+    // implementations, not just within each.
+    let mut f = Fixture::seeded(10_000_000, 10_000_000);
+    let admin = f.authority.insecure_clone();
+    f.set_taker_fee(&admin, 1_000).expect("set taker fee");
+    let amount_in: u64 = 1_000_000;
+    let taker = f.funded_depositor(0, 2 * amount_in);
+    let integrator = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
+    let fee_ata = f.platform_fee_ata(&integrator.pubkey(), SwapSide::Buy as u8);
+
+    // `predict_and_execute_with_fee` asserts the SDK's predicted in/out equal
+    // the taker's realized deltas — with the fee declared, `out_amount` is net
+    // of both fees, so a mismatch in either fee's rounding fails here.
+    let q = predict_and_execute_with_fee(
+        &mut f,
+        &taker,
+        SwapSide::Buy,
+        amount_in,
+        Price::INFINITY,
+        1,
+        Some(&integrator.pubkey()),
+        100,
+    );
+    assert!(q.out_amount > 0, "expected a fill");
+    assert!(q.fee_amount > 0, "the taker fee must be live in this case");
+
+    // The simulator's predicted platform fee must equal the atoms the engine
+    // actually transferred to the integrator — the half of the composition
+    // that the taker's own deltas can't witness.
+    assert_eq!(
+        q.platform_fee_amount,
+        f.token_balance(&fee_ata),
+        "SDK platform fee != on-chain platform fee"
+    );
 }
 
 #[test]
@@ -231,7 +319,7 @@ fn sdk_simulate_swap_skips_oversize_ask_side_not_the_whole_take() {
     // crucially not an abort. The SDK predicts the same empty quote.
     let data = market_bytes(&f);
     let view = MarketView::load(&data).expect("SDK decodes the market account");
-    let q = simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1);
+    let q = simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1, 0);
     assert_eq!(
         q,
         Quote::default(),
@@ -295,7 +383,7 @@ fn sdk_simulate_swap_rejects_cyclic_vault_list() {
 
     let data = market_bytes(&f);
     let view = MarketView::load(&data).expect("SDK decodes the market account");
-    let q = simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1);
+    let q = simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1, 0);
     assert_eq!(
         q,
         Quote::default(),
@@ -333,7 +421,7 @@ fn sdk_simulate_swap_rejects_out_of_range_vault_next() {
 
     let data = market_bytes(&f);
     let view = MarketView::load(&data).expect("SDK decodes the market account");
-    let q = simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1);
+    let q = simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1, 0);
     assert_eq!(
         q,
         Quote::default(),

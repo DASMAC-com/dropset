@@ -271,9 +271,16 @@ slippage protection; the engine **deterministically reverts** when the book
 cannot fill within it. **Partial fills commit** (emit their legs + a partial
 take envelope); only a zero-fill-below-minimum reverts. The book lives in a
 **single market account** (vaults are inside it), so the take is **not
-account-hungry** — the per-hop budget item that matters for a multi-hop route is
-the **+2 `event-cpi` accounts** the fill appends (see **architecture.md →
-Events and emission**); if that ever binds, use the **bare-self-CPI (+1)**
+account-hungry** — its list doesn't grow with the levels or vaults a fill
+crosses. What a multi-hop route does budget for is the fixed tail: the **+2
+`event-cpi` accounts** the fill appends (see **architecture.md → Events and
+emission**), and the **+4** the platform fee adds (the optional
+`(fee_authority, fee_ata)` group, plus the ATA and System programs that create
+the fee account — see **architecture.md → Platform fee**). Those four are
+present even on a no-fee take, since Anchor encodes an absent optional account
+as the program id rather than by dropping the slot; `SWAP_ACCOUNTS_LEN` in the
+SDK adapter is the number to read rather than pin. If the budget ever binds,
+use the **bare-self-CPI (+1)**
 escape hatch. The dominant cost is **CU** (the in-memory book reconstruction),
 not account loading — consider a bounded top-of-book fast path if a full
 reconstruction is too heavy, and validate each router's actual swap-CPI contract

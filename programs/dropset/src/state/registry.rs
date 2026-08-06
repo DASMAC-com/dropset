@@ -14,6 +14,15 @@ pub type Ppm16 = u16;
 /// Parts-per-million rate (1_000_000 = 100%). Logical 32-bit form — the
 /// skin-in-the-game floor. Stored as an alignment-1 `PodU32`.
 pub type Ppm32 = u32;
+/// Basis-point rate (10_000 = 100%) — the platform-fee ceiling. A `u16`
+/// spans past `BPS`, so unlike [`Ppm16`] the type is *not* the bound: every
+/// write path range-checks against `BPS` explicitly. Stored as an
+/// alignment-1 `PodU16`.
+///
+/// Bps rather than ppm because the platform fee is the integrator-facing
+/// knob and every surface that carries it already speaks bps — see
+/// `dropset_math_core::matching_math::platform_fee_atoms`.
+pub type Bps16 = u16;
 
 /// Initial per-market vault cap stamped onto new markets.
 pub const DEFAULT_MAX_VAULTS_PER_MARKET: u8 = 10;
@@ -22,6 +31,15 @@ pub const DEFAULT_MAX_VAULTS_PER_MARKET: u8 = 10;
 pub const DEFAULT_TAKER_FEE: Ppm16 = 0;
 /// Initial skin-in-the-game floor (ppm): 5%, per the architecture spec.
 pub const DEFAULT_MIN_LEADER_SHARE: Ppm32 = 50_000;
+/// Initial platform-fee ceiling (bps) stamped onto new markets: 100 bps
+/// (1%). The platform fee is caller-declared and permissionless — any
+/// router may skim it off a taker's output — so this ceiling, not an
+/// onboarding step, is the only thing standing between an integrator and
+/// the taker's whole fill. 1% sits above what aggregators charge in
+/// practice (DFlow-style integrator fees land in the single-digit bps) with
+/// room for a fee-sharing venue, and well under a rate a taker would
+/// consider theft. Admin-retunable per market via `SetMaxPlatformFee`.
+pub const DEFAULT_MAX_PLATFORM_FEE: Bps16 = 100;
 
 /// A flat fee charged in `mint`, paid to the registry fee ATA. Mirrors
 /// the `FeeConfig` in the architecture spec; reused per-market by the
@@ -63,6 +81,11 @@ pub struct RegistryHeader {
     pub default_min_leader_share: PodU32,
     /// Default taker fee (ppm, [`Ppm16`]) stamped into markets.
     pub default_taker_fee: PodU16,
+    /// Default platform-fee ceiling (bps, [`Bps16`]) stamped into
+    /// `MarketHeader.max_platform_fee` at creation. Bounds the
+    /// caller-declared `platform_fee_bps` a `swap` may skim off the taker's
+    /// output; retunable per market afterwards via `SetMaxPlatformFee`.
+    pub default_max_platform_fee: PodU16,
     /// Default cap on vaults per market.
     pub max_vaults_per_market: u8,
     /// Registry PDA bump.

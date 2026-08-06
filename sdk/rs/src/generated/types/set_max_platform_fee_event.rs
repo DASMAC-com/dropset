@@ -7,11 +7,15 @@
 
 use borsh::BorshDeserialize;
 use borsh::BorshSerialize;
+use solana_pubkey::Pubkey;
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct SetRegistryDefaultsEvent {
-    pub default_taker_fee: u16,
-    pub default_max_platform_fee: u16,
-    pub default_min_leader_share: u32,
+pub struct SetMaxPlatformFeeEvent {
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
+    )]
+    pub market: Pubkey,
+    pub max_platform_fee: u16,
 }

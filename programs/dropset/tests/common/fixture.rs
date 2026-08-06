@@ -38,7 +38,8 @@ use dropset::{
         ForceWithdrawLeader as ForceWithdrawLeaderIx, FreezeVault as FreezeVaultIx, Init as InitIx,
         SetAllowOutsideDepositors as SetAllowOutsideDepositorsIx,
         SetDefaultFeeConfig as SetDefaultFeeConfigIx, SetLiquidityProfile as SetLiquidityProfileIx,
-        SetMarketFeeConfig as SetMarketFeeConfigIx, SetMinLeaderShare as SetMinLeaderShareIx,
+        SetMarketFeeConfig as SetMarketFeeConfigIx, SetMaxPlatformFee as SetMaxPlatformFeeIx,
+        SetMinLeaderShare as SetMinLeaderShareIx,
         SetOutsideDepositsApproved as SetOutsideDepositsApprovedIx,
         SetQuoteAuthority as SetQuoteAuthorityIx, SetReferencePrice as SetReferencePriceIx,
         SetRegistryDefaults as SetRegistryDefaultsIx, SetTakerFee as SetTakerFeeIx, Swap as SwapIx,
@@ -922,6 +923,40 @@ impl Fixture {
         send_ixn_meta(&mut self.svm, admin, ix)
     }
 
+    /// `set_max_platform_fee` — admin retunes the market's ceiling (bps,
+    /// `Bps16`) on the caller-declared platform fee. Markets start at the
+    /// registry default, so a test wanting a fee-bearing swap raises the
+    /// ceiling through this lever rather than poking the header.
+    pub fn set_max_platform_fee(
+        &mut self,
+        admin: &Keypair,
+        max_platform_fee: u16,
+    ) -> Result<(), String> {
+        self.set_max_platform_fee_meta(admin, max_platform_fee)
+            .map(|_| ())
+    }
+
+    /// Like [`Self::set_max_platform_fee`] but yields the transaction
+    /// metadata so a test can decode the emitted `SetMaxPlatformFeeEvent`.
+    pub fn set_max_platform_fee_meta(
+        &mut self,
+        admin: &Keypair,
+        max_platform_fee: u16,
+    ) -> Result<TransactionMetadata, String> {
+        let ix = Instruction::new_with_bytes(
+            PROGRAM_ID,
+            &SetMaxPlatformFeeIx { max_platform_fee }.data(),
+            vec![
+                AccountMeta::new_readonly(admin.pubkey(), true),
+                AccountMeta::new_readonly(self.registry, false),
+                AccountMeta::new(self.market, false),
+                AccountMeta::new_readonly(event_authority(), false),
+                AccountMeta::new_readonly(PROGRAM_ID, false),
+            ],
+        );
+        send_ixn_meta(&mut self.svm, admin, ix)
+    }
+
     /// Mint `amount` of `mint` straight into `ata`, bypassing every
     /// instruction. Against a treasury ATA this is the unsolicited transfer
     /// nothing on chain accounts for — the residual `sweep_residual`
@@ -937,9 +972,10 @@ impl Fixture {
         &mut self,
         admin: &Keypair,
         taker_fee: Option<u16>,
+        max_platform_fee: Option<u16>,
         min_leader_share: Option<u32>,
     ) -> Result<(), String> {
-        self.set_registry_defaults_meta(admin, taker_fee, min_leader_share)
+        self.set_registry_defaults_meta(admin, taker_fee, max_platform_fee, min_leader_share)
             .map(|_| ())
     }
 
@@ -949,12 +985,14 @@ impl Fixture {
         &mut self,
         admin: &Keypair,
         taker_fee: Option<u16>,
+        max_platform_fee: Option<u16>,
         min_leader_share: Option<u32>,
     ) -> Result<TransactionMetadata, String> {
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
             &SetRegistryDefaultsIx {
                 taker_fee,
+                max_platform_fee,
                 min_leader_share,
             }
             .data(),
@@ -1360,8 +1398,30 @@ impl Fixture {
         send_ixn_meta(&mut self.svm, depositor, ix)
     }
 
+    /// Send a hand-built instruction signed by `signer`. The escape hatch
+    /// for tests that need to perturb a meta or an arg the typed senders
+    /// don't expose — e.g. aiming a platform fee at a non-canonical
+    /// destination to prove the ATA program rejects it.
+    pub fn send_ix(&mut self, signer: &Keypair, ix: Instruction) -> Result<(), String> {
+        send_ixn(&mut self.svm, signer, ix)
+    }
+
+    /// The token account a platform fee on `side` would be paid into: the
+    /// integrator's ATA for the swap's **output** mint (base on a Buy,
+    /// quote on a Sell). Mirrors the leg the engine selects, so a test that
+    /// derives the destination the wrong way round gets the ATA-program
+    /// rejection a real caller would.
+    pub fn platform_fee_ata(&self, fee_authority: &Pubkey, side: u8) -> Pubkey {
+        if side == 0 {
+            self.base_ata(fee_authority)
+        } else {
+            self.quote_ata(fee_authority)
+        }
+    }
+
     /// Build a `swap` instruction (not sent) — lets a test bundle it or
-    /// assert on the raw error. `taker` must own the funded ATAs.
+    /// assert on the raw error. `taker` must own the funded ATAs. No
+    /// integrator: see [`Self::swap_ix_with_fee`] for the fee-bearing form.
     pub fn swap_ix(
         &self,
         taker: &Pubkey,
@@ -1370,6 +1430,42 @@ impl Fixture {
         limit_price_bits: u32,
         min_out: u64,
     ) -> Instruction {
+        self.swap_ix_with_fee(taker, side, amount_in, limit_price_bits, min_out, None, 0)
+    }
+
+    /// [`Self::swap_ix`] with a caller-declared platform fee.
+    ///
+    /// `fee_authority` is the integrator being paid; `None` omits the whole
+    /// optional group, which Anchor encodes as the **program id** in each
+    /// slot rather than by shortening the account list — so both forms pass
+    /// the same number of metas and the no-fee path stays byte-identical to
+    /// what it was before the fee existed.
+    ///
+    /// The fee ATA is derived, not created: the engine's own
+    /// `create_idempotent` CPI creates it on first use, which is exactly the
+    /// behavior a test wants to exercise.
+    #[allow(clippy::too_many_arguments)]
+    pub fn swap_ix_with_fee(
+        &self,
+        taker: &Pubkey,
+        side: u8,
+        amount_in: u64,
+        limit_price_bits: u32,
+        min_out: u64,
+        fee_authority: Option<&Pubkey>,
+        platform_fee_bps: u16,
+    ) -> Instruction {
+        // Anchor's `None` sentinel for an optional account.
+        let (fee_authority_meta, fee_ata_meta) = match fee_authority {
+            Some(auth) => (
+                AccountMeta::new_readonly(*auth, false),
+                AccountMeta::new(self.platform_fee_ata(auth, side), false),
+            ),
+            None => (
+                AccountMeta::new_readonly(PROGRAM_ID, false),
+                AccountMeta::new_readonly(PROGRAM_ID, false),
+            ),
+        };
         Instruction::new_with_bytes(
             PROGRAM_ID,
             &SwapIx {
@@ -1377,6 +1473,7 @@ impl Fixture {
                 amount_in,
                 limit_price_bits,
                 min_out,
+                platform_fee_bps,
             }
             .data(),
             vec![
@@ -1391,6 +1488,10 @@ impl Fixture {
                 AccountMeta::new(self.base_treasury, false),
                 AccountMeta::new(self.quote_treasury, false),
                 AccountMeta::new_readonly(SYSVAR_CLOCK_ID, false),
+                fee_authority_meta,
+                fee_ata_meta,
+                AccountMeta::new_readonly(ATA_PROGRAM_ID, false),
+                AccountMeta::new_readonly(System::id(), false),
                 AccountMeta::new_readonly(event_authority(), false),
                 AccountMeta::new_readonly(PROGRAM_ID, false),
             ],
@@ -1420,6 +1521,31 @@ impl Fixture {
         min_out: u64,
     ) -> Result<TransactionMetadata, String> {
         let ix = self.swap_ix(&taker.pubkey(), side, amount_in, limit_price_bits, min_out);
+        send_ixn_meta(&mut self.svm, taker, ix)
+    }
+
+    /// [`Self::swap_meta`] with a caller-declared platform fee paid to
+    /// `fee_authority`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn swap_with_fee_meta(
+        &mut self,
+        taker: &Keypair,
+        side: u8,
+        amount_in: u64,
+        limit_price_bits: u32,
+        min_out: u64,
+        fee_authority: &Pubkey,
+        platform_fee_bps: u16,
+    ) -> Result<TransactionMetadata, String> {
+        let ix = self.swap_ix_with_fee(
+            &taker.pubkey(),
+            side,
+            amount_in,
+            limit_price_bits,
+            min_out,
+            Some(fee_authority),
+            platform_fee_bps,
+        );
         send_ixn_meta(&mut self.svm, taker, ix)
     }
 
@@ -1653,6 +1779,60 @@ impl Fixture {
     pub fn token_balance(&self, ata: &Pubkey) -> u64 {
         let acct = self.svm.get_account(ata).expect("token account exists");
         u64::from_le_bytes(acct.data[64..72].try_into().unwrap())
+    }
+
+    /// `Some(balance)` when the token account is initialized, `None` when it
+    /// does not exist yet. Unlike [`Self::token_balance`] this never panics,
+    /// which is the point: a platform-fee destination legitimately does not
+    /// exist before the first fee-bearing swap creates it, so a test needs to
+    /// distinguish "absent" from "present and zero".
+    pub fn maybe_token_balance(&self, ata: &Pubkey) -> Option<u64> {
+        let acct = self.svm.get_account(ata)?;
+        // A `get_account` on a never-created address can come back as an
+        // empty system-owned stub rather than `None`, so treat anything too
+        // short to hold the SPL amount field as absent.
+        if acct.data.len() < 72 {
+            return None;
+        }
+        Some(u64::from_le_bytes(acct.data[64..72].try_into().unwrap()))
+    }
+
+    /// Assert the treasury custody invariant on **both** legs:
+    /// `treasury.amount == Σ vault.<leg>_atoms + accrued_<leg>_fee_atoms`.
+    ///
+    /// The accrued term is what makes this worth a helper rather than two
+    /// inline `assert_eq!`s. A test that checks only
+    /// `treasury == Σ vault` passes on a market with no taker fee and fails
+    /// the moment one is set — the difference being exactly the protocol
+    /// revenue sitting in the treasury — which reads as a bug in whatever
+    /// the test was actually exercising.
+    ///
+    /// Sums every sector in the slab, active and tombstoned alike, since
+    /// custody spans both.
+    pub fn assert_treasury_invariant(&self) {
+        let acct = self.svm.get_account(&self.market).expect("market");
+        let header = bytemuck::pod_read_unaligned::<MarketHeader>(
+            &acct.data[8..8 + core::mem::size_of::<MarketHeader>()],
+        );
+        // The slab's `u32` length sits immediately after the header.
+        let len_at = 8 + core::mem::size_of::<MarketHeader>();
+        let sectors = u32::from_le_bytes(acct.data[len_at..len_at + 4].try_into().unwrap());
+        let (mut base_sum, mut quote_sum) = (0u64, 0u64);
+        for i in 0..sectors {
+            let v = self.vault(i);
+            base_sum += v.base_atoms.get();
+            quote_sum += v.quote_atoms.get();
+        }
+        assert_eq!(
+            self.token_balance(&self.base_treasury),
+            base_sum + header.accrued_base_fee_atoms.get(),
+            "base treasury != Σ vault.base_atoms + accrued_base_fee_atoms"
+        );
+        assert_eq!(
+            self.token_balance(&self.quote_treasury),
+            quote_sum + header.accrued_quote_fee_atoms.get(),
+            "quote treasury != Σ vault.quote_atoms + accrued_quote_fee_atoms"
+        );
     }
 
     /// `registry.market_count` — the live-market witness `close_registry`

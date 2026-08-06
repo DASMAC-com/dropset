@@ -12,6 +12,7 @@ export class Quote {
     readonly in_amount: bigint;
     readonly legs: number;
     readonly out_amount: bigint;
+    readonly platform_fee_amount: bigint;
 }
 
 /**
@@ -44,8 +45,12 @@ export function price_quote_for_base(bits: number, base: bigint): bigint;
  * Simulate a take against a market account's raw data (including the
  * 8-byte discriminator). `side`: 0 = buy, 1 = sell. `limit_price_bits`:
  * raw `Price` bits (use the per-side no-bound sentinel to disable).
+ * `platform_fee_bps`: the integrator fee the caller will declare on the
+ * `swap` instruction — `0` for an unrouted quote. A rate above the
+ * market's ceiling yields an all-zero `Quote`, matching the engine's
+ * refusal.
  */
-export function simulate_swap(market_data: Uint8Array, side: number, amount_in: bigint, limit_price_bits: number, current_slot: number): Quote;
+export function simulate_swap(market_data: Uint8Array, side: number, amount_in: bigint, limit_price_bits: number, current_slot: number, platform_fee_bps: number): Quote;
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
@@ -56,7 +61,8 @@ export interface InitOutput {
     readonly quote_in_amount: (a: number) => bigint;
     readonly quote_legs: (a: number) => number;
     readonly quote_out_amount: (a: number) => bigint;
-    readonly simulate_swap: (a: number, b: number, c: number, d: bigint, e: number, f: number) => [number, number, number];
+    readonly quote_platform_fee_amount: (a: number) => bigint;
+    readonly simulate_swap: (a: number, b: number, c: number, d: bigint, e: number, f: number, g: number) => [number, number, number];
     readonly price_base_for_quote: (a: number, b: bigint) => bigint;
     readonly price_decode: (a: number) => number;
     readonly price_encode: (a: number) => number;

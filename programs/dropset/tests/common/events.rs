@@ -22,9 +22,10 @@
 
 use anchor_lang_v2::{bytemuck, event::EVENT_IX_TAG_LE, Discriminator};
 use dropset::{
-    CloseVaultEvent, CreateVaultEvent, DepositEvent, FillEvent, FreezeVaultEvent, RealizeEvent,
-    SetDefaultFeeConfigEvent, SetMarketFeeConfigEvent, SetMinLeaderShareEvent,
-    SetRegistryDefaultsEvent, SetTakerFeeEvent, SweepResidualEvent, WithdrawEvent,
+    CloseVaultEvent, CreateVaultEvent, DepositEvent, FillEvent, FreezeVaultEvent, PlatformFeeEvent,
+    RealizeEvent, SetDefaultFeeConfigEvent, SetMarketFeeConfigEvent, SetMaxPlatformFeeEvent,
+    SetMinLeaderShareEvent, SetRegistryDefaultsEvent, SetTakerFeeEvent, SweepResidualEvent,
+    WithdrawEvent,
 };
 use litesvm::types::TransactionMetadata;
 
@@ -287,8 +288,26 @@ pub fn set_default_fee_config(meta: &TransactionMetadata) -> SetDefaultFeeConfig
 }
 
 #[derive(Debug)]
+pub struct SetMaxPlatformFee {
+    pub market: [u8; 32],
+    pub max_platform_fee: u16,
+}
+
+pub fn set_max_platform_fee(meta: &TransactionMetadata) -> SetMaxPlatformFee {
+    let body = one_body::<SetMaxPlatformFeeEvent>(meta);
+    let mut c = Cursor::new(&body);
+    let d = SetMaxPlatformFee {
+        market: c.pubkey(),
+        max_platform_fee: c.u16(),
+    };
+    c.finish();
+    d
+}
+
+#[derive(Debug)]
 pub struct SetRegistryDefaults {
     pub default_taker_fee: u16,
+    pub default_max_platform_fee: u16,
     pub default_min_leader_share: u32,
 }
 
@@ -297,7 +316,36 @@ pub fn set_registry_defaults(meta: &TransactionMetadata) -> SetRegistryDefaults 
     let mut c = Cursor::new(&body);
     let d = SetRegistryDefaults {
         default_taker_fee: c.u16(),
+        default_max_platform_fee: c.u16(),
         default_min_leader_share: c.u32(),
+    };
+    c.finish();
+    d
+}
+
+#[derive(Debug)]
+pub struct PlatformFee {
+    pub market: [u8; 32],
+    pub taker: [u8; 32],
+    pub fee_authority: [u8; 32],
+    pub mint: [u8; 32],
+    pub atoms: u64,
+    pub platform_fee_bps: u16,
+}
+
+/// Decode the single `PlatformFeeEvent` a fee-bearing swap emits. Panics if
+/// there isn't exactly one, which is the assertion a caller wants: the
+/// no-fee, soft-reverted, and rounds-to-zero paths must emit none at all.
+pub fn platform_fee(meta: &TransactionMetadata) -> PlatformFee {
+    let body = one_body::<PlatformFeeEvent>(meta);
+    let mut c = Cursor::new(&body);
+    let d = PlatformFee {
+        market: c.pubkey(),
+        taker: c.pubkey(),
+        fee_authority: c.pubkey(),
+        mint: c.pubkey(),
+        atoms: c.u64(),
+        platform_fee_bps: c.u16(),
     };
     c.finish();
     d

@@ -52,8 +52,9 @@ fn wasm_simulate_swap_matches_vectors() {
         let amount_in = c["amount_in"].as_u64().unwrap();
         let limit_bits = c["limit_price_bits"].as_u64().unwrap() as u32;
         let slot = c["current_slot"].as_u64().unwrap() as u32;
+        let platform_fee_bps = c["platform_fee_bps"].as_u64().unwrap() as u16;
 
-        let q = simulate_swap(&data, side, amount_in, limit_bits, slot)
+        let q = simulate_swap(&data, side, amount_in, limit_bits, slot, platform_fee_bps)
             .unwrap_or_else(|_| panic!("{name}: binding returned an error"));
         let e = &c["expected"];
         assert_eq!(
@@ -72,6 +73,11 @@ fn wasm_simulate_swap_matches_vectors() {
             "{name}: fee_amount"
         );
         assert_eq!(
+            q.platform_fee_amount(),
+            e["platform_fee_amount"].as_u64().unwrap(),
+            "{name}: platform_fee_amount"
+        );
+        assert_eq!(
             u64::from(q.legs()),
             e["legs"].as_u64().unwrap(),
             "{name}: legs"
@@ -86,7 +92,7 @@ fn wasm_simulate_swap_matches_vectors() {
 fn wasm_simulate_swap_rejects_invalid_side() {
     let data = market_data(&vectors());
     assert!(
-        simulate_swap(&data, 2, 1_000_000, u32::MAX, 1).is_err(),
+        simulate_swap(&data, 2, 1_000_000, u32::MAX, 1, 0).is_err(),
         "side=2 must be rejected"
     );
 }
@@ -97,7 +103,7 @@ fn wasm_simulate_swap_rejects_invalid_side() {
 #[wasm_bindgen_test]
 fn wasm_simulate_swap_rejects_undersized_buffer() {
     assert!(
-        simulate_swap(&[0u8; 4], 0, 1_000_000, u32::MAX, 1).is_err(),
+        simulate_swap(&[0u8; 4], 0, 1_000_000, u32::MAX, 1, 0).is_err(),
         "undersized market data must be rejected"
     );
 }

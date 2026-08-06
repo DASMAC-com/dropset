@@ -14,7 +14,7 @@ import {
   projectedRemaining,
   recordResponse,
 } from "../dflow/rateLimitBudget";
-import { DFLOW_QUOTE_URL } from "../env";
+import { DFLOW_QUOTE_URL, PLATFORM_FEE } from "../env";
 import { stripThousands } from "../format/input";
 import {
   type ParsedDflowQuote,
@@ -59,6 +59,19 @@ export type DflowQuote = {
   outputMint: string | null;
   priceImpactPct: string | null;
   slippageBps: number | null;
+  // The platform fee, in bps, this quote was actually computed with — the
+  // number to *display*, which is not always the configured
+  // `PLATFORM_FEE.bps`. The eCLOB route clamps the configured rate to the
+  // market's on-chain `max_platform_fee`, so a market with a lower (or zero)
+  // ceiling is quoted, and charged, at less than the config asks for.
+  // Reporting the config value instead would show a fee the user isn't paying
+  // — or invent one on a market where fees are turned off entirely.
+  //
+  // `null` means "no platform fee applies to this quote". The DFlow route
+  // leaves this at the configured rate, since its fee is settled by DFlow
+  // against no on-chain ceiling; its separate precondition (the fee wallet's
+  // ATA must already exist) is resolved at swap time and gated by the caller.
+  platformFeeBps: number | null;
   hasQuote: boolean;
   error: string | null;
 };
@@ -71,6 +84,7 @@ const INITIAL: DflowQuote = {
   outputMint: null,
   priceImpactPct: null,
   slippageBps: null,
+  platformFeeBps: null,
   hasQuote: false,
   error: null,
 };
@@ -227,6 +241,9 @@ export const useDflowQuote = (
           outputMint,
           priceImpactPct: parsed.priceImpactPct,
           slippageBps: parsed.slippageBps,
+          // No on-chain ceiling on this route, so the configured rate is the
+          // rate — see the field's doc for why the eCLOB route differs.
+          platformFeeBps: PLATFORM_FEE ? PLATFORM_FEE.bps : null,
           hasQuote: true,
           error: null,
         });

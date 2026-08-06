@@ -1,7 +1,7 @@
 use crate::errors::DropsetError;
 use crate::{
-    AdminSet, FeeConfig, Registry, DEFAULT_MAX_VAULTS_PER_MARKET, DEFAULT_MIN_LEADER_SHARE,
-    DEFAULT_TAKER_FEE,
+    AdminSet, FeeConfig, Registry, DEFAULT_MAX_PLATFORM_FEE, DEFAULT_MAX_VAULTS_PER_MARKET,
+    DEFAULT_MIN_LEADER_SHARE, DEFAULT_TAKER_FEE,
 };
 use anchor_lang_v2::{
     address_eq,
@@ -118,6 +118,7 @@ impl Init {
         registry.bump = bump;
         registry.max_vaults_per_market = DEFAULT_MAX_VAULTS_PER_MARKET;
         registry.default_taker_fee = DEFAULT_TAKER_FEE.into();
+        registry.default_max_platform_fee = DEFAULT_MAX_PLATFORM_FEE.into();
         registry.default_min_leader_share = DEFAULT_MIN_LEADER_SHARE.into();
         // No markets exist at init; `create_market` will increment, and
         // `close_registry` (under the `admin-teardown` feature) checks

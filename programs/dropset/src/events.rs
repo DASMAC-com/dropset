@@ -123,6 +123,18 @@ pub struct SweepResidualEvent {
     pub swept: u64,
 }
 
+/// Emitted by `set_max_platform_fee` when an admin retunes a market's
+/// ceiling (bps, [`crate::Bps16`]) on the caller-declared platform fee.
+/// Read on the swap hot path to reject an over-cap declaration. The
+/// ceiling is what bounds a permissionless integrator's cut of a taker's
+/// output, so a move here is the one governance action that changes how
+/// much any router may skim — worth an indexable record of its own.
+#[event]
+pub struct SetMaxPlatformFeeEvent {
+    pub market: Address,
+    pub max_platform_fee: u16,
+}
+
 /// Emitted by `set_registry_defaults` when an admin retunes the
 /// registry-wide defaults stamped onto *future* markets. Carries the
 /// resulting values of every default the instruction can touch — not
@@ -132,6 +144,7 @@ pub struct SweepResidualEvent {
 #[event]
 pub struct SetRegistryDefaultsEvent {
     pub default_taker_fee: u16,
+    pub default_max_platform_fee: u16,
     pub default_min_leader_share: u32,
 }
 
@@ -240,4 +253,36 @@ pub struct FillEvent {
     pub quote_atoms_after: u64,
     pub nonce_after: u64,
     pub taker_fee_atoms: u64,
+}
+
+/// Emitted once per `swap` that skimmed a caller-declared platform fee —
+/// never on the no-integrator path, and never when the declared rate
+/// rounds the fee down to zero atoms.
+///
+/// Deliberately **not** folded into [`FillEvent`]: the platform fee is
+/// computed once on the aggregate output after the taker fee, not per
+/// `(vault, level)` leg, so putting it on a per-leg record would either
+/// duplicate one number across every leg or arbitrarily attribute it to
+/// one of them. A multi-leg swap emits N `FillEvent`s and at most one of
+/// these.
+///
+/// This is the integrator's only on-chain receipt. The fee is paid out
+/// immediately and accrues no state (per the design: zero new state, no
+/// claim instruction), so without this event there is nothing for an
+/// integrator to reconcile revenue against short of re-deriving the
+/// transfer from raw inner instructions.
+#[event]
+pub struct PlatformFeeEvent {
+    pub market: Address,
+    pub taker: Address,
+    /// Owner of the destination token account — the integrator being paid.
+    pub fee_authority: Address,
+    /// Mint the fee was paid in: the swap's **output** leg (base on a Buy,
+    /// quote on a Sell), so a consumer needn't re-derive it from `side`.
+    pub mint: Address,
+    /// Atoms transferred, after the taker fee and rounded down.
+    pub atoms: u64,
+    /// The rate the caller declared, in bps — recorded alongside `atoms`
+    /// so the rounding is auditable from the event alone.
+    pub platform_fee_bps: u16,
 }

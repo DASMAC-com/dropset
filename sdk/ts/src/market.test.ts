@@ -14,12 +14,12 @@ import { decodeMarketSlab, marketViewFromSlab } from './market';
 import { baseForQuote, priceFromParts } from './price';
 
 // Slab layout constants (mirror `layout.rs`): discriminator + on-chain
-// MarketHeader (251) = the offset of the u32 slab length; the first sector
+// MarketHeader (253) = the offset of the u32 slab length; the first sector
 // starts at the next 4-byte boundary after it.
 const DISCRIMINATOR = 8;
-const HEADER = 251;
-const LEN_AT = DISCRIMINATOR + HEADER; // 259
-const ITEMS_START = (LEN_AT + 4 + 3) & ~3; // 264
+const HEADER = 253;
+const LEN_AT = DISCRIMINATOR + HEADER; // 261
+const ITEMS_START = (LEN_AT + 4 + 3) & ~3; // 268
 const VAULT = 560;
 
 // MarketHeader field offsets, relative to the start of the header (i.e.

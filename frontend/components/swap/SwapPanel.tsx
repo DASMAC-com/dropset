@@ -6,7 +6,6 @@ import { RateLimitMessage } from "@/components/chrome/RateLimitMessage";
 import { stablecoinDecimals, stablecoinMint } from "@/lib/data/currencies";
 import { findVaultMarket } from "@/lib/data/vaults";
 import { useFeeVaultExists } from "@/lib/dflow/feeVault";
-import { PLATFORM_FEE } from "@/lib/env";
 import { emit, useAppEvent } from "@/lib/events";
 import { parseAmountToBase } from "@/lib/format/balance";
 import { useAllBalances } from "@/lib/hooks/useAllBalances";
@@ -204,11 +203,36 @@ export function SwapPanel() {
   const canSwap = label === "Swap" && !disabled && !dimmed;
 
   // Whether the platform-fee vault (the fee wallet's ATA) for the to-mint
-  // exists on-chain — the fee is only charged, and so only reported, when it
-  // does. Gated on `canSwap && routeFound` so we never hit the RPC for a swap
-  // that can't happen (no wallet, insufficient input, no route). See
-  // lib/dflow/feeVault.ts.
-  const feeVaultExists = useFeeVaultExists(toMint, canSwap && routeFound);
+  // exists on-chain. This is a *DFlow-route* precondition only: its /order
+  // endpoint rejects a request whose `feeAccount` is missing, so on that route
+  // the fee can only be charged — and so only reported — once the ATA exists.
+  // The eCLOB route has no such precondition; its `swap` instruction creates
+  // the fee account itself, so the fee is always charged there.
+  //
+  // Hence the `useBestRoute` gate: without it this fires a pointless
+  // getAccountInfo on a route that never consults the answer, and — worse —
+  // the fee row below would hide a fee the eCLOB route really does charge
+  // whenever that ATA happens not to exist yet.
+  const feeVaultExists = useFeeVaultExists(
+    toMint,
+    useBestRoute && canSwap && routeFound,
+  );
+  // The platform-fee rate to advertise, or null when none is charged.
+  //
+  // Taken from the *quote* rather than from `PLATFORM_FEE.bps`, because the
+  // two can differ: the eCLOB route clamps the configured rate to the market's
+  // on-chain `max_platform_fee`, so a market with a lower — or zero — ceiling
+  // is quoted and charged less than the env asks for. Reading the config here
+  // would advertise a fee the user isn't paying, and on a fees-off market
+  // would invent one outright. `quote.platformFeeBps` is by construction the
+  // rate the displayed output was computed with.
+  //
+  // DFlow keeps its extra precondition on top: its /order rejects a missing
+  // fee account, so the fee is only charged once that ATA exists.
+  const feeBps =
+    canSwap && (useBestRoute ? feeVaultExists : true)
+      ? quote.platformFeeBps
+      : null;
 
   return (
     <>
@@ -239,11 +263,7 @@ export function SwapPanel() {
         </button>
         {routeFound && quote.inAmount !== null && quote.outAmount !== null ? (
           <PlatformFee
-            bps={
-              canSwap && PLATFORM_FEE && feeVaultExists
-                ? PLATFORM_FEE.bps
-                : null
-            }
+            bps={feeBps}
             inAmount={quote.inAmount}
             outAmount={quote.outAmount}
             fromSymbol={fromStablecoin}

@@ -32,6 +32,13 @@ marketCount: number;
 defaultMinLeaderShare: number; 
 /** Default taker fee (ppm, [`Ppm16`]) stamped into markets. */
 defaultTakerFee: number; 
+/**
+ * Default platform-fee ceiling (bps, [`Bps16`]) stamped into
+ * `MarketHeader.max_platform_fee` at creation. Bounds the
+ * caller-declared `platform_fee_bps` a `swap` may skim off the taker's
+ * output; retunable per market afterwards via `SetMaxPlatformFee`.
+ */
+defaultMaxPlatformFee: number; 
 /** Default cap on vaults per market. */
 maxVaultsPerMarket: number; 
 /** Registry PDA bump. */
@@ -56,6 +63,13 @@ marketCount: number;
 defaultMinLeaderShare: number; 
 /** Default taker fee (ppm, [`Ppm16`]) stamped into markets. */
 defaultTakerFee: number; 
+/**
+ * Default platform-fee ceiling (bps, [`Bps16`]) stamped into
+ * `MarketHeader.max_platform_fee` at creation. Bounds the
+ * caller-declared `platform_fee_bps` a `swap` may skim off the taker's
+ * output; retunable per market afterwards via `SetMaxPlatformFee`.
+ */
+defaultMaxPlatformFee: number; 
 /** Default cap on vaults per market. */
 maxVaultsPerMarket: number; 
 /** Registry PDA bump. */
@@ -63,12 +77,12 @@ bump: number;  };
 
 /** Gets the encoder for {@link RegistryHeaderArgs} account data. */
 export function getRegistryHeaderEncoder(): FixedSizeEncoder<RegistryHeaderArgs> {
-    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['defaultFeeConfig', getFeeConfigEncoder()], ['marketCount', getU32Encoder()], ['defaultMinLeaderShare', getU32Encoder()], ['defaultTakerFee', getU16Encoder()], ['maxVaultsPerMarket', getU8Encoder()], ['bump', getU8Encoder()]]), (value) => ({ ...value, discriminator: REGISTRY_HEADER_DISCRIMINATOR }));
+    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['defaultFeeConfig', getFeeConfigEncoder()], ['marketCount', getU32Encoder()], ['defaultMinLeaderShare', getU32Encoder()], ['defaultTakerFee', getU16Encoder()], ['defaultMaxPlatformFee', getU16Encoder()], ['maxVaultsPerMarket', getU8Encoder()], ['bump', getU8Encoder()]]), (value) => ({ ...value, discriminator: REGISTRY_HEADER_DISCRIMINATOR }));
 }
 
 /** Gets the decoder for {@link RegistryHeader} account data. */
 export function getRegistryHeaderDecoder(): FixedSizeDecoder<RegistryHeader> {
-    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['defaultFeeConfig', getFeeConfigDecoder()], ['marketCount', getU32Decoder()], ['defaultMinLeaderShare', getU32Decoder()], ['defaultTakerFee', getU16Decoder()], ['maxVaultsPerMarket', getU8Decoder()], ['bump', getU8Decoder()]]);
+    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['defaultFeeConfig', getFeeConfigDecoder()], ['marketCount', getU32Decoder()], ['defaultMinLeaderShare', getU32Decoder()], ['defaultTakerFee', getU16Decoder()], ['defaultMaxPlatformFee', getU16Decoder()], ['maxVaultsPerMarket', getU8Decoder()], ['bump', getU8Decoder()]]);
 }
 
 /** Gets the codec for {@link RegistryHeader} account data. */
@@ -121,5 +135,5 @@ export async function fetchAllMaybeRegistryHeader(
 }
 
 export function getRegistryHeaderSize(): number {
-  return 92;
+  return 94;
 }

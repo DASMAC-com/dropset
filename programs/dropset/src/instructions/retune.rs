@@ -2,7 +2,7 @@
 //!
 //! `create_vault` / `create_market` stamp a vault's `min_leader_share`
 //! and a market's `fee_config` once, from the cascading defaults
-//! (`Registry` → `MarketHeader` → `Vault`). These two admin-only
+//! (`Registry` → `MarketHeader` → `Vault`). These admin-only
 //! instructions retune those values afterward without re-creating the
 //! account (architecture spec § SetMinLeaderShare, § SetMarketFeeConfig):
 //!
@@ -20,8 +20,12 @@
 //!   takes no `vault_idx`. `Ppm16` is a `u16`, so the spec's "~6.55%"
 //!   cap is the type bound — no value can exceed it and no range check
 //!   is needed.
+//! * `set_max_platform_fee` — rewrite a market's ceiling (bps, [`Bps16`])
+//!   on the caller-declared platform fee, also read on the swap hot path.
+//!   Unlike `set_taker_fee` this one *does* range-check: a `u16` reaches
+//!   past `BPS`, so the type is not the bound.
 //!
-//! Both authorize through the registry admin set — the same gate as
+//! All of them authorize through the registry admin set — the same gate as
 //! `set_outside_deposits_approved` / `freeze_vault` — and emit a
 //! cold-path event so indexers can track the change. The
 //! `SetMarketFeeConfig` event is load-bearing: the teardown fee sweep
@@ -41,9 +45,11 @@ use anchor_spl_v2::{
 
 use crate::{
     errors::DropsetError,
-    events::{SetMarketFeeConfigEvent, SetMinLeaderShareEvent, SetTakerFeeEvent},
+    events::{
+        SetMarketFeeConfigEvent, SetMaxPlatformFeeEvent, SetMinLeaderShareEvent, SetTakerFeeEvent,
+    },
     state::{Market, VaultAccess},
-    FeeConfig, Registry, PPM,
+    FeeConfig, Registry, BPS, PPM,
 };
 
 #[event_cpi]
@@ -204,6 +210,54 @@ impl SetTakerFee {
         Ok(SetTakerFeeEvent {
             market: market_addr,
             taker_fee,
+        })
+    }
+}
+
+#[event_cpi]
+#[derive(Accounts)]
+pub struct SetMaxPlatformFee {
+    /// Registry admin — the only signer this lever accepts.
+    pub admin: Signer,
+    /// Singleton registry, read for the admin-membership check.
+    #[account(seeds = [b"registry"], bump = registry.bump)]
+    pub registry: Registry,
+    /// Market whose `max_platform_fee` is being retuned. `mut` for the
+    /// write.
+    #[account(mut)]
+    pub market: Market,
+}
+
+impl SetMaxPlatformFee {
+    /// Returns the [`SetMaxPlatformFeeEvent`] payload for `lib.rs` to
+    /// dispatch through `emit_cpi!`.
+    #[inline(always)]
+    pub fn set_max_platform_fee(
+        &mut self,
+        max_platform_fee: u16,
+    ) -> Result<SetMaxPlatformFeeEvent> {
+        // Admin-only — gated at the dispatcher via `#[access_control]`
+        // (`lib.rs`), so the caller is already a known admin here.
+        //
+        // Range-checked, unlike the sibling `set_taker_fee`: this rate is
+        // bps, and a `u16` runs to 65_535 — over 6x `BPS` — so the type is
+        // no bound at all. An unchecked write could seat a ceiling that
+        // lets a caller declare a fee larger than the taker's whole output
+        // leg, which the swap's own subtraction would then saturate to
+        // "integrator takes everything, taker receives nothing". Reject it
+        // at the write instead. Exactly `BPS` is allowed and means the
+        // admin has chosen to place no ceiling below 100% — legitimate, if
+        // aggressive, and still a real bound.
+        require!(
+            (max_platform_fee as u64) <= BPS,
+            DropsetError::InvalidMaxPlatformFee
+        );
+        let market_addr = *self.market.address();
+        self.market.max_platform_fee = max_platform_fee.into();
+
+        Ok(SetMaxPlatformFeeEvent {
+            market: market_addr,
+            max_platform_fee,
         })
     }
 }

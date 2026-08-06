@@ -6,7 +6,7 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { combineCodec, fixDecoderSize, fixEncoderSize, getBytesDecoder, getBytesEncoder, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, getU64Decoder, getU64Encoder, getU8Decoder, getU8Encoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount, type WritableSignerAccount } from '@solana/kit';
+import { combineCodec, fixDecoderSize, fixEncoderSize, getBytesDecoder, getBytesEncoder, getStructDecoder, getStructEncoder, getU16Decoder, getU16Encoder, getU32Decoder, getU32Encoder, getU64Decoder, getU64Encoder, getU8Decoder, getU8Encoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount, type WritableSignerAccount } from '@solana/kit';
 import { findEventAuthorityPda } from '../pdas';
 import { DROPSET_PROGRAM_ADDRESS } from '../programs';
 import { getAccountMetaFactory, type ResolvedAccount } from '../shared';
@@ -15,26 +15,26 @@ export const SWAP_DISCRIMINATOR = new Uint8Array([9]);
 
 export function getSwapDiscriminatorBytes() { return fixEncoderSize(getBytesEncoder(), 1).encode(SWAP_DISCRIMINATOR); }
 
-export type SwapInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountTaker extends string | AccountMeta<string> = string, TAccountMarket extends string | AccountMeta<string> = string, TAccountBaseMint extends string | AccountMeta<string> = string, TAccountQuoteMint extends string | AccountMeta<string> = string, TAccountBaseTokenProgram extends string | AccountMeta<string> = string, TAccountQuoteTokenProgram extends string | AccountMeta<string> = string, TAccountTakerBaseAta extends string | AccountMeta<string> = string, TAccountTakerQuoteAta extends string | AccountMeta<string> = string, TAccountMarketBaseTreasury extends string | AccountMeta<string> = string, TAccountMarketQuoteTreasury extends string | AccountMeta<string> = string, TAccountClock extends string | AccountMeta<string> = "SysvarC1ock11111111111111111111111111111111", TAccountEventAuthority extends string | AccountMeta<string> = string, TAccountProgram extends string | AccountMeta<string> = string, TRemainingAccounts extends readonly AccountMeta<string>[] = []> =
-Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array> & InstructionWithAccounts<[TAccountTaker extends string ? WritableSignerAccount<TAccountTaker> & AccountSignerMeta<TAccountTaker> : TAccountTaker, TAccountMarket extends string ? WritableAccount<TAccountMarket> : TAccountMarket, TAccountBaseMint extends string ? ReadonlyAccount<TAccountBaseMint> : TAccountBaseMint, TAccountQuoteMint extends string ? ReadonlyAccount<TAccountQuoteMint> : TAccountQuoteMint, TAccountBaseTokenProgram extends string ? ReadonlyAccount<TAccountBaseTokenProgram> : TAccountBaseTokenProgram, TAccountQuoteTokenProgram extends string ? ReadonlyAccount<TAccountQuoteTokenProgram> : TAccountQuoteTokenProgram, TAccountTakerBaseAta extends string ? WritableAccount<TAccountTakerBaseAta> : TAccountTakerBaseAta, TAccountTakerQuoteAta extends string ? WritableAccount<TAccountTakerQuoteAta> : TAccountTakerQuoteAta, TAccountMarketBaseTreasury extends string ? WritableAccount<TAccountMarketBaseTreasury> : TAccountMarketBaseTreasury, TAccountMarketQuoteTreasury extends string ? WritableAccount<TAccountMarketQuoteTreasury> : TAccountMarketQuoteTreasury, TAccountClock extends string ? ReadonlyAccount<TAccountClock> : TAccountClock, TAccountEventAuthority extends string ? ReadonlyAccount<TAccountEventAuthority> : TAccountEventAuthority, TAccountProgram extends string ? ReadonlyAccount<TAccountProgram> : TAccountProgram, ...TRemainingAccounts]>;
+export type SwapInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountTaker extends string | AccountMeta<string> = string, TAccountMarket extends string | AccountMeta<string> = string, TAccountBaseMint extends string | AccountMeta<string> = string, TAccountQuoteMint extends string | AccountMeta<string> = string, TAccountBaseTokenProgram extends string | AccountMeta<string> = string, TAccountQuoteTokenProgram extends string | AccountMeta<string> = string, TAccountTakerBaseAta extends string | AccountMeta<string> = string, TAccountTakerQuoteAta extends string | AccountMeta<string> = string, TAccountMarketBaseTreasury extends string | AccountMeta<string> = string, TAccountMarketQuoteTreasury extends string | AccountMeta<string> = string, TAccountClock extends string | AccountMeta<string> = "SysvarC1ock11111111111111111111111111111111", TAccountPlatformFeeAuthority extends string | AccountMeta<string> = string, TAccountPlatformFeeAta extends string | AccountMeta<string> = string, TAccountAssociatedTokenProgram extends string | AccountMeta<string> = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL", TAccountSystemProgram extends string | AccountMeta<string> = "11111111111111111111111111111111", TAccountEventAuthority extends string | AccountMeta<string> = string, TAccountProgram extends string | AccountMeta<string> = string, TRemainingAccounts extends readonly AccountMeta<string>[] = []> =
+Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array> & InstructionWithAccounts<[TAccountTaker extends string ? WritableSignerAccount<TAccountTaker> & AccountSignerMeta<TAccountTaker> : TAccountTaker, TAccountMarket extends string ? WritableAccount<TAccountMarket> : TAccountMarket, TAccountBaseMint extends string ? ReadonlyAccount<TAccountBaseMint> : TAccountBaseMint, TAccountQuoteMint extends string ? ReadonlyAccount<TAccountQuoteMint> : TAccountQuoteMint, TAccountBaseTokenProgram extends string ? ReadonlyAccount<TAccountBaseTokenProgram> : TAccountBaseTokenProgram, TAccountQuoteTokenProgram extends string ? ReadonlyAccount<TAccountQuoteTokenProgram> : TAccountQuoteTokenProgram, TAccountTakerBaseAta extends string ? WritableAccount<TAccountTakerBaseAta> : TAccountTakerBaseAta, TAccountTakerQuoteAta extends string ? WritableAccount<TAccountTakerQuoteAta> : TAccountTakerQuoteAta, TAccountMarketBaseTreasury extends string ? WritableAccount<TAccountMarketBaseTreasury> : TAccountMarketBaseTreasury, TAccountMarketQuoteTreasury extends string ? WritableAccount<TAccountMarketQuoteTreasury> : TAccountMarketQuoteTreasury, TAccountClock extends string ? ReadonlyAccount<TAccountClock> : TAccountClock, TAccountPlatformFeeAuthority extends string ? ReadonlyAccount<TAccountPlatformFeeAuthority> : TAccountPlatformFeeAuthority, TAccountPlatformFeeAta extends string ? WritableAccount<TAccountPlatformFeeAta> : TAccountPlatformFeeAta, TAccountAssociatedTokenProgram extends string ? ReadonlyAccount<TAccountAssociatedTokenProgram> : TAccountAssociatedTokenProgram, TAccountSystemProgram extends string ? ReadonlyAccount<TAccountSystemProgram> : TAccountSystemProgram, TAccountEventAuthority extends string ? ReadonlyAccount<TAccountEventAuthority> : TAccountEventAuthority, TAccountProgram extends string ? ReadonlyAccount<TAccountProgram> : TAccountProgram, ...TRemainingAccounts]>;
 
-export type SwapInstructionData = { discriminator: ReadonlyUint8Array; side: number; amountIn: bigint; limitPriceBits: number; minOut: bigint;  };
+export type SwapInstructionData = { discriminator: ReadonlyUint8Array; side: number; amountIn: bigint; limitPriceBits: number; minOut: bigint; platformFeeBps: number;  };
 
-export type SwapInstructionDataArgs = { side: number; amountIn: number | bigint; limitPriceBits: number; minOut: number | bigint;  };
+export type SwapInstructionDataArgs = { side: number; amountIn: number | bigint; limitPriceBits: number; minOut: number | bigint; platformFeeBps: number;  };
 
 export function getSwapInstructionDataEncoder(): FixedSizeEncoder<SwapInstructionDataArgs> {
-    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 1)], ['side', getU8Encoder()], ['amountIn', getU64Encoder()], ['limitPriceBits', getU32Encoder()], ['minOut', getU64Encoder()]]), (value) => ({ ...value, discriminator: SWAP_DISCRIMINATOR }));
+    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 1)], ['side', getU8Encoder()], ['amountIn', getU64Encoder()], ['limitPriceBits', getU32Encoder()], ['minOut', getU64Encoder()], ['platformFeeBps', getU16Encoder()]]), (value) => ({ ...value, discriminator: SWAP_DISCRIMINATOR }));
 }
 
 export function getSwapInstructionDataDecoder(): FixedSizeDecoder<SwapInstructionData> {
-    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 1)], ['side', getU8Decoder()], ['amountIn', getU64Decoder()], ['limitPriceBits', getU32Decoder()], ['minOut', getU64Decoder()]]);
+    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 1)], ['side', getU8Decoder()], ['amountIn', getU64Decoder()], ['limitPriceBits', getU32Decoder()], ['minOut', getU64Decoder()], ['platformFeeBps', getU16Decoder()]]);
 }
 
 export function getSwapInstructionDataCodec(): FixedSizeCodec<SwapInstructionDataArgs, SwapInstructionData> {
     return combineCodec(getSwapInstructionDataEncoder(), getSwapInstructionDataDecoder());
 }
 
-export type SwapAsyncInput<TAccountTaker extends string = string, TAccountMarket extends string = string, TAccountBaseMint extends string = string, TAccountQuoteMint extends string = string, TAccountBaseTokenProgram extends string = string, TAccountQuoteTokenProgram extends string = string, TAccountTakerBaseAta extends string = string, TAccountTakerQuoteAta extends string = string, TAccountMarketBaseTreasury extends string = string, TAccountMarketQuoteTreasury extends string = string, TAccountClock extends string = string, TAccountEventAuthority extends string = string, TAccountProgram extends string = string> =  {
+export type SwapAsyncInput<TAccountTaker extends string = string, TAccountMarket extends string = string, TAccountBaseMint extends string = string, TAccountQuoteMint extends string = string, TAccountBaseTokenProgram extends string = string, TAccountQuoteTokenProgram extends string = string, TAccountTakerBaseAta extends string = string, TAccountTakerQuoteAta extends string = string, TAccountMarketBaseTreasury extends string = string, TAccountMarketQuoteTreasury extends string = string, TAccountClock extends string = string, TAccountPlatformFeeAuthority extends string = string, TAccountPlatformFeeAta extends string = string, TAccountAssociatedTokenProgram extends string = string, TAccountSystemProgram extends string = string, TAccountEventAuthority extends string = string, TAccountProgram extends string = string> =  {
   /** Taker. */
 taker: TransactionSigner<TAccountTaker>;
 /** Market the target vault lives on. */
@@ -48,6 +48,85 @@ takerQuoteAta: Address<TAccountTakerQuoteAta>;
 marketBaseTreasury: Address<TAccountMarketBaseTreasury>;
 marketQuoteTreasury: Address<TAccountMarketQuoteTreasury>;
 clock?: Address<TAccountClock>;
+/**
+ * Integrator earning the caller-declared platform fee — the owner of
+ * `platform_fee_ata`, not a signer. Permissionless: any caller may
+ * route flow here and name any authority. There is deliberately no admin
+ * onboarding and so nothing to constrain this against.
+ *
+ * `max_platform_fee` bounds the fee itself, but note what it does *not*
+ * bound: because this authority is caller-chosen and never signs, a
+ * caller can name a fresh one on every swap, and each new
+ * `(authority, mint)` pair costs the taker another rent-exempt balance
+ * below. Those lamports are recoverable by whoever closes the account,
+ * so a hostile transaction builder can extract SOL from its own takers
+ * outside both the ceiling and `min_out` (which are denominated in
+ * output-leg atoms). The taker signs the transaction, so this is
+ * consent-bounded rather than an escalation — but "the ceiling is the
+ * only bound" would be the wrong reading.
+ *
+ * Optional, together with `platform_fee_ata`: a swap with no
+ * integrator passes `None` for both and `platform_fee_bps = 0`, so the
+ * direct paths (the TUI, the taker bot, the `sdk/rs` router adapter, and
+ * the tests) carry no fee plumbing at all. Anchor signals `None` by
+ * passing the program id in the slot.
+ */
+platformFeeAuthority?: Address<TAccountPlatformFeeAuthority>;
+/**
+ * The integrator's token account for the swap's **output** mint (base
+ * on a Buy, quote on a Sell), which the fee is transferred into.
+ *
+ * `UncheckedAccount` with no `associated_token::*` constraints
+ * because the output leg is side-dependent and Anchor's account
+ * constraints are static — there is no mint to bind it to at
+ * macro-expansion time. Both properties an
+ * `init_if_needed`-with-constraints field would buy are instead
+ * obtained from the ATA program itself, which the handler CPIs
+ * `create_idempotent` against with the runtime-selected mint: it
+ * derives the canonical ATA and rejects any account that isn't it,
+ * *and* creates it when missing. Deferring to that CPI is both
+ * stronger than a static constraint (the ATA program is the authority
+ * on its own derivation) and the only form that can key off the leg
+ * chosen at runtime. The subsequent `transfer_checked` out of the
+ * output-leg treasury then rejects a fee account on the wrong mint on
+ * the token program's own terms.
+ *
+ * `unsafe(dup)` (which implies `mut`) is **required**, not a shortcut.
+ * Anchor's duplicate-mutable-account guard on an optional `mut` field
+ * fires on the `None` slot too, and `None` *is* the program id — which
+ * `#[event_cpi]` also passes in its trailer and which the sibling
+ * `platform_fee_authority` slot carries when absent. A plain
+ * `#[account(mut)]` therefore rejects **every** no-integrator swap with
+ * `ConstraintDuplicateMutableAccount`, the overwhelmingly common path.
+ *
+ * Waiving the guard is sound here because the two things it protects
+ * against are both already covered:
+ *
+ * * **Aliased `&mut` account data.** Impossible — this is an
+ *   `UncheckedAccount`. The handler never takes a typed borrow of its
+ *   data, only hands the raw view to two CPIs.
+ * * **A caller aiming the fee at an account it shouldn't reach** (a
+ *   treasury, the taker's own ATA, another swap account). Rejected by
+ *   `create_idempotent`, which derives the canonical ATA for
+ *   `(platform_fee_authority, output mint, output token program)` and
+ *   refuses anything else. The one case that does derive — a taker
+ *   naming themselves the integrator — pays the fee to the taker, i.e.
+ *   is a zero-fee swap with extra steps.
+ */
+platformFeeAta?: Address<TAccountPlatformFeeAta>;
+/**
+ * Creates `platform_fee_ata` when the integrator has none yet. Not
+ * optional even though the fee group is: it is one constant address
+ * the direct paths already have on hand, and folding it into the
+ * optional group would trade that for a second `None` slot to reason
+ * about on every non-fee swap.
+ */
+associatedTokenProgram?: Address<TAccountAssociatedTokenProgram>;
+/**
+ * Funds the `platform_fee_ata` rent-exempt balance on first use. See
+ * `associated_token_program` on why this isn't optional either.
+ */
+systemProgram?: Address<TAccountSystemProgram>;
 /** CHECK: Only the event authority can invoke self-CPI */
 eventAuthority?: Address<TAccountEventAuthority>;
 /** CHECK: Kept for v1-compatible account ordering and IDL shape */
@@ -56,14 +135,15 @@ side: SwapInstructionDataArgs["side"];
 amountIn: SwapInstructionDataArgs["amountIn"];
 limitPriceBits: SwapInstructionDataArgs["limitPriceBits"];
 minOut: SwapInstructionDataArgs["minOut"];
+platformFeeBps: SwapInstructionDataArgs["platformFeeBps"];
 }
 
-export async function getSwapInstructionAsync<TAccountTaker extends string, TAccountMarket extends string, TAccountBaseMint extends string, TAccountQuoteMint extends string, TAccountBaseTokenProgram extends string, TAccountQuoteTokenProgram extends string, TAccountTakerBaseAta extends string, TAccountTakerQuoteAta extends string, TAccountMarketBaseTreasury extends string, TAccountMarketQuoteTreasury extends string, TAccountClock extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SwapAsyncInput<TAccountTaker, TAccountMarket, TAccountBaseMint, TAccountQuoteMint, TAccountBaseTokenProgram, TAccountQuoteTokenProgram, TAccountTakerBaseAta, TAccountTakerQuoteAta, TAccountMarketBaseTreasury, TAccountMarketQuoteTreasury, TAccountClock, TAccountEventAuthority, TAccountProgram>, config?: { programAddress?: TProgramAddress } ): Promise<SwapInstruction<TProgramAddress, TAccountTaker, TAccountMarket, TAccountBaseMint, TAccountQuoteMint, TAccountBaseTokenProgram, TAccountQuoteTokenProgram, TAccountTakerBaseAta, TAccountTakerQuoteAta, TAccountMarketBaseTreasury, TAccountMarketQuoteTreasury, TAccountClock, TAccountEventAuthority, TAccountProgram>> {
+export async function getSwapInstructionAsync<TAccountTaker extends string, TAccountMarket extends string, TAccountBaseMint extends string, TAccountQuoteMint extends string, TAccountBaseTokenProgram extends string, TAccountQuoteTokenProgram extends string, TAccountTakerBaseAta extends string, TAccountTakerQuoteAta extends string, TAccountMarketBaseTreasury extends string, TAccountMarketQuoteTreasury extends string, TAccountClock extends string, TAccountPlatformFeeAuthority extends string, TAccountPlatformFeeAta extends string, TAccountAssociatedTokenProgram extends string, TAccountSystemProgram extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SwapAsyncInput<TAccountTaker, TAccountMarket, TAccountBaseMint, TAccountQuoteMint, TAccountBaseTokenProgram, TAccountQuoteTokenProgram, TAccountTakerBaseAta, TAccountTakerQuoteAta, TAccountMarketBaseTreasury, TAccountMarketQuoteTreasury, TAccountClock, TAccountPlatformFeeAuthority, TAccountPlatformFeeAta, TAccountAssociatedTokenProgram, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram>, config?: { programAddress?: TProgramAddress } ): Promise<SwapInstruction<TProgramAddress, TAccountTaker, TAccountMarket, TAccountBaseMint, TAccountQuoteMint, TAccountBaseTokenProgram, TAccountQuoteTokenProgram, TAccountTakerBaseAta, TAccountTakerQuoteAta, TAccountMarketBaseTreasury, TAccountMarketQuoteTreasury, TAccountClock, TAccountPlatformFeeAuthority, TAccountPlatformFeeAta, TAccountAssociatedTokenProgram, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram>> {
   // Program address.
 const programAddress = config?.programAddress ?? DROPSET_PROGRAM_ADDRESS;
 
  // Original accounts.
-const originalAccounts = { taker: { value: input.taker ?? null, isWritable: true }, market: { value: input.market ?? null, isWritable: true }, baseMint: { value: input.baseMint ?? null, isWritable: false }, quoteMint: { value: input.quoteMint ?? null, isWritable: false }, baseTokenProgram: { value: input.baseTokenProgram ?? null, isWritable: false }, quoteTokenProgram: { value: input.quoteTokenProgram ?? null, isWritable: false }, takerBaseAta: { value: input.takerBaseAta ?? null, isWritable: true }, takerQuoteAta: { value: input.takerQuoteAta ?? null, isWritable: true }, marketBaseTreasury: { value: input.marketBaseTreasury ?? null, isWritable: true }, marketQuoteTreasury: { value: input.marketQuoteTreasury ?? null, isWritable: true }, clock: { value: input.clock ?? null, isWritable: false }, eventAuthority: { value: input.eventAuthority ?? null, isWritable: false }, program: { value: input.program ?? null, isWritable: false } }
+const originalAccounts = { taker: { value: input.taker ?? null, isWritable: true }, market: { value: input.market ?? null, isWritable: true }, baseMint: { value: input.baseMint ?? null, isWritable: false }, quoteMint: { value: input.quoteMint ?? null, isWritable: false }, baseTokenProgram: { value: input.baseTokenProgram ?? null, isWritable: false }, quoteTokenProgram: { value: input.quoteTokenProgram ?? null, isWritable: false }, takerBaseAta: { value: input.takerBaseAta ?? null, isWritable: true }, takerQuoteAta: { value: input.takerQuoteAta ?? null, isWritable: true }, marketBaseTreasury: { value: input.marketBaseTreasury ?? null, isWritable: true }, marketQuoteTreasury: { value: input.marketQuoteTreasury ?? null, isWritable: true }, clock: { value: input.clock ?? null, isWritable: false }, platformFeeAuthority: { value: input.platformFeeAuthority ?? null, isWritable: false }, platformFeeAta: { value: input.platformFeeAta ?? null, isWritable: true }, associatedTokenProgram: { value: input.associatedTokenProgram ?? null, isWritable: false }, systemProgram: { value: input.systemProgram ?? null, isWritable: false }, eventAuthority: { value: input.eventAuthority ?? null, isWritable: false }, program: { value: input.program ?? null, isWritable: false } }
 const accounts = originalAccounts as Record<keyof typeof originalAccounts, ResolvedAccount>;
 
 
@@ -75,15 +155,21 @@ const args = { ...input,  };
 if (!accounts.clock.value) {
 accounts.clock.value = 'SysvarC1ock11111111111111111111111111111111' as Address<'SysvarC1ock11111111111111111111111111111111'>;
 }
+if (!accounts.associatedTokenProgram.value) {
+accounts.associatedTokenProgram.value = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL' as Address<'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL'>;
+}
+if (!accounts.systemProgram.value) {
+accounts.systemProgram.value = '11111111111111111111111111111111' as Address<'11111111111111111111111111111111'>;
+}
 if (!accounts.eventAuthority.value) {
 accounts.eventAuthority.value = await findEventAuthorityPda();
 }
 
 const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
-return Object.freeze({ accounts: [getAccountMeta(accounts.taker), getAccountMeta(accounts.market), getAccountMeta(accounts.baseMint), getAccountMeta(accounts.quoteMint), getAccountMeta(accounts.baseTokenProgram), getAccountMeta(accounts.quoteTokenProgram), getAccountMeta(accounts.takerBaseAta), getAccountMeta(accounts.takerQuoteAta), getAccountMeta(accounts.marketBaseTreasury), getAccountMeta(accounts.marketQuoteTreasury), getAccountMeta(accounts.clock), getAccountMeta(accounts.eventAuthority), getAccountMeta(accounts.program)], data: getSwapInstructionDataEncoder().encode(args as SwapInstructionDataArgs), programAddress } as SwapInstruction<TProgramAddress, TAccountTaker, TAccountMarket, TAccountBaseMint, TAccountQuoteMint, TAccountBaseTokenProgram, TAccountQuoteTokenProgram, TAccountTakerBaseAta, TAccountTakerQuoteAta, TAccountMarketBaseTreasury, TAccountMarketQuoteTreasury, TAccountClock, TAccountEventAuthority, TAccountProgram>);
+return Object.freeze({ accounts: [getAccountMeta(accounts.taker), getAccountMeta(accounts.market), getAccountMeta(accounts.baseMint), getAccountMeta(accounts.quoteMint), getAccountMeta(accounts.baseTokenProgram), getAccountMeta(accounts.quoteTokenProgram), getAccountMeta(accounts.takerBaseAta), getAccountMeta(accounts.takerQuoteAta), getAccountMeta(accounts.marketBaseTreasury), getAccountMeta(accounts.marketQuoteTreasury), getAccountMeta(accounts.clock), getAccountMeta(accounts.platformFeeAuthority), getAccountMeta(accounts.platformFeeAta), getAccountMeta(accounts.associatedTokenProgram), getAccountMeta(accounts.systemProgram), getAccountMeta(accounts.eventAuthority), getAccountMeta(accounts.program)], data: getSwapInstructionDataEncoder().encode(args as SwapInstructionDataArgs), programAddress } as SwapInstruction<TProgramAddress, TAccountTaker, TAccountMarket, TAccountBaseMint, TAccountQuoteMint, TAccountBaseTokenProgram, TAccountQuoteTokenProgram, TAccountTakerBaseAta, TAccountTakerQuoteAta, TAccountMarketBaseTreasury, TAccountMarketQuoteTreasury, TAccountClock, TAccountPlatformFeeAuthority, TAccountPlatformFeeAta, TAccountAssociatedTokenProgram, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram>);
 }
 
-export type SwapInput<TAccountTaker extends string = string, TAccountMarket extends string = string, TAccountBaseMint extends string = string, TAccountQuoteMint extends string = string, TAccountBaseTokenProgram extends string = string, TAccountQuoteTokenProgram extends string = string, TAccountTakerBaseAta extends string = string, TAccountTakerQuoteAta extends string = string, TAccountMarketBaseTreasury extends string = string, TAccountMarketQuoteTreasury extends string = string, TAccountClock extends string = string, TAccountEventAuthority extends string = string, TAccountProgram extends string = string> =  {
+export type SwapInput<TAccountTaker extends string = string, TAccountMarket extends string = string, TAccountBaseMint extends string = string, TAccountQuoteMint extends string = string, TAccountBaseTokenProgram extends string = string, TAccountQuoteTokenProgram extends string = string, TAccountTakerBaseAta extends string = string, TAccountTakerQuoteAta extends string = string, TAccountMarketBaseTreasury extends string = string, TAccountMarketQuoteTreasury extends string = string, TAccountClock extends string = string, TAccountPlatformFeeAuthority extends string = string, TAccountPlatformFeeAta extends string = string, TAccountAssociatedTokenProgram extends string = string, TAccountSystemProgram extends string = string, TAccountEventAuthority extends string = string, TAccountProgram extends string = string> =  {
   /** Taker. */
 taker: TransactionSigner<TAccountTaker>;
 /** Market the target vault lives on. */
@@ -97,6 +183,85 @@ takerQuoteAta: Address<TAccountTakerQuoteAta>;
 marketBaseTreasury: Address<TAccountMarketBaseTreasury>;
 marketQuoteTreasury: Address<TAccountMarketQuoteTreasury>;
 clock?: Address<TAccountClock>;
+/**
+ * Integrator earning the caller-declared platform fee — the owner of
+ * `platform_fee_ata`, not a signer. Permissionless: any caller may
+ * route flow here and name any authority. There is deliberately no admin
+ * onboarding and so nothing to constrain this against.
+ *
+ * `max_platform_fee` bounds the fee itself, but note what it does *not*
+ * bound: because this authority is caller-chosen and never signs, a
+ * caller can name a fresh one on every swap, and each new
+ * `(authority, mint)` pair costs the taker another rent-exempt balance
+ * below. Those lamports are recoverable by whoever closes the account,
+ * so a hostile transaction builder can extract SOL from its own takers
+ * outside both the ceiling and `min_out` (which are denominated in
+ * output-leg atoms). The taker signs the transaction, so this is
+ * consent-bounded rather than an escalation — but "the ceiling is the
+ * only bound" would be the wrong reading.
+ *
+ * Optional, together with `platform_fee_ata`: a swap with no
+ * integrator passes `None` for both and `platform_fee_bps = 0`, so the
+ * direct paths (the TUI, the taker bot, the `sdk/rs` router adapter, and
+ * the tests) carry no fee plumbing at all. Anchor signals `None` by
+ * passing the program id in the slot.
+ */
+platformFeeAuthority?: Address<TAccountPlatformFeeAuthority>;
+/**
+ * The integrator's token account for the swap's **output** mint (base
+ * on a Buy, quote on a Sell), which the fee is transferred into.
+ *
+ * `UncheckedAccount` with no `associated_token::*` constraints
+ * because the output leg is side-dependent and Anchor's account
+ * constraints are static — there is no mint to bind it to at
+ * macro-expansion time. Both properties an
+ * `init_if_needed`-with-constraints field would buy are instead
+ * obtained from the ATA program itself, which the handler CPIs
+ * `create_idempotent` against with the runtime-selected mint: it
+ * derives the canonical ATA and rejects any account that isn't it,
+ * *and* creates it when missing. Deferring to that CPI is both
+ * stronger than a static constraint (the ATA program is the authority
+ * on its own derivation) and the only form that can key off the leg
+ * chosen at runtime. The subsequent `transfer_checked` out of the
+ * output-leg treasury then rejects a fee account on the wrong mint on
+ * the token program's own terms.
+ *
+ * `unsafe(dup)` (which implies `mut`) is **required**, not a shortcut.
+ * Anchor's duplicate-mutable-account guard on an optional `mut` field
+ * fires on the `None` slot too, and `None` *is* the program id — which
+ * `#[event_cpi]` also passes in its trailer and which the sibling
+ * `platform_fee_authority` slot carries when absent. A plain
+ * `#[account(mut)]` therefore rejects **every** no-integrator swap with
+ * `ConstraintDuplicateMutableAccount`, the overwhelmingly common path.
+ *
+ * Waiving the guard is sound here because the two things it protects
+ * against are both already covered:
+ *
+ * * **Aliased `&mut` account data.** Impossible — this is an
+ *   `UncheckedAccount`. The handler never takes a typed borrow of its
+ *   data, only hands the raw view to two CPIs.
+ * * **A caller aiming the fee at an account it shouldn't reach** (a
+ *   treasury, the taker's own ATA, another swap account). Rejected by
+ *   `create_idempotent`, which derives the canonical ATA for
+ *   `(platform_fee_authority, output mint, output token program)` and
+ *   refuses anything else. The one case that does derive — a taker
+ *   naming themselves the integrator — pays the fee to the taker, i.e.
+ *   is a zero-fee swap with extra steps.
+ */
+platformFeeAta?: Address<TAccountPlatformFeeAta>;
+/**
+ * Creates `platform_fee_ata` when the integrator has none yet. Not
+ * optional even though the fee group is: it is one constant address
+ * the direct paths already have on hand, and folding it into the
+ * optional group would trade that for a second `None` slot to reason
+ * about on every non-fee swap.
+ */
+associatedTokenProgram?: Address<TAccountAssociatedTokenProgram>;
+/**
+ * Funds the `platform_fee_ata` rent-exempt balance on first use. See
+ * `associated_token_program` on why this isn't optional either.
+ */
+systemProgram?: Address<TAccountSystemProgram>;
 /** CHECK: Only the event authority can invoke self-CPI */
 eventAuthority: Address<TAccountEventAuthority>;
 /** CHECK: Kept for v1-compatible account ordering and IDL shape */
@@ -105,14 +270,15 @@ side: SwapInstructionDataArgs["side"];
 amountIn: SwapInstructionDataArgs["amountIn"];
 limitPriceBits: SwapInstructionDataArgs["limitPriceBits"];
 minOut: SwapInstructionDataArgs["minOut"];
+platformFeeBps: SwapInstructionDataArgs["platformFeeBps"];
 }
 
-export function getSwapInstruction<TAccountTaker extends string, TAccountMarket extends string, TAccountBaseMint extends string, TAccountQuoteMint extends string, TAccountBaseTokenProgram extends string, TAccountQuoteTokenProgram extends string, TAccountTakerBaseAta extends string, TAccountTakerQuoteAta extends string, TAccountMarketBaseTreasury extends string, TAccountMarketQuoteTreasury extends string, TAccountClock extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SwapInput<TAccountTaker, TAccountMarket, TAccountBaseMint, TAccountQuoteMint, TAccountBaseTokenProgram, TAccountQuoteTokenProgram, TAccountTakerBaseAta, TAccountTakerQuoteAta, TAccountMarketBaseTreasury, TAccountMarketQuoteTreasury, TAccountClock, TAccountEventAuthority, TAccountProgram>, config?: { programAddress?: TProgramAddress } ): SwapInstruction<TProgramAddress, TAccountTaker, TAccountMarket, TAccountBaseMint, TAccountQuoteMint, TAccountBaseTokenProgram, TAccountQuoteTokenProgram, TAccountTakerBaseAta, TAccountTakerQuoteAta, TAccountMarketBaseTreasury, TAccountMarketQuoteTreasury, TAccountClock, TAccountEventAuthority, TAccountProgram> {
+export function getSwapInstruction<TAccountTaker extends string, TAccountMarket extends string, TAccountBaseMint extends string, TAccountQuoteMint extends string, TAccountBaseTokenProgram extends string, TAccountQuoteTokenProgram extends string, TAccountTakerBaseAta extends string, TAccountTakerQuoteAta extends string, TAccountMarketBaseTreasury extends string, TAccountMarketQuoteTreasury extends string, TAccountClock extends string, TAccountPlatformFeeAuthority extends string, TAccountPlatformFeeAta extends string, TAccountAssociatedTokenProgram extends string, TAccountSystemProgram extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SwapInput<TAccountTaker, TAccountMarket, TAccountBaseMint, TAccountQuoteMint, TAccountBaseTokenProgram, TAccountQuoteTokenProgram, TAccountTakerBaseAta, TAccountTakerQuoteAta, TAccountMarketBaseTreasury, TAccountMarketQuoteTreasury, TAccountClock, TAccountPlatformFeeAuthority, TAccountPlatformFeeAta, TAccountAssociatedTokenProgram, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram>, config?: { programAddress?: TProgramAddress } ): SwapInstruction<TProgramAddress, TAccountTaker, TAccountMarket, TAccountBaseMint, TAccountQuoteMint, TAccountBaseTokenProgram, TAccountQuoteTokenProgram, TAccountTakerBaseAta, TAccountTakerQuoteAta, TAccountMarketBaseTreasury, TAccountMarketQuoteTreasury, TAccountClock, TAccountPlatformFeeAuthority, TAccountPlatformFeeAta, TAccountAssociatedTokenProgram, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram> {
   // Program address.
 const programAddress = config?.programAddress ?? DROPSET_PROGRAM_ADDRESS;
 
  // Original accounts.
-const originalAccounts = { taker: { value: input.taker ?? null, isWritable: true }, market: { value: input.market ?? null, isWritable: true }, baseMint: { value: input.baseMint ?? null, isWritable: false }, quoteMint: { value: input.quoteMint ?? null, isWritable: false }, baseTokenProgram: { value: input.baseTokenProgram ?? null, isWritable: false }, quoteTokenProgram: { value: input.quoteTokenProgram ?? null, isWritable: false }, takerBaseAta: { value: input.takerBaseAta ?? null, isWritable: true }, takerQuoteAta: { value: input.takerQuoteAta ?? null, isWritable: true }, marketBaseTreasury: { value: input.marketBaseTreasury ?? null, isWritable: true }, marketQuoteTreasury: { value: input.marketQuoteTreasury ?? null, isWritable: true }, clock: { value: input.clock ?? null, isWritable: false }, eventAuthority: { value: input.eventAuthority ?? null, isWritable: false }, program: { value: input.program ?? null, isWritable: false } }
+const originalAccounts = { taker: { value: input.taker ?? null, isWritable: true }, market: { value: input.market ?? null, isWritable: true }, baseMint: { value: input.baseMint ?? null, isWritable: false }, quoteMint: { value: input.quoteMint ?? null, isWritable: false }, baseTokenProgram: { value: input.baseTokenProgram ?? null, isWritable: false }, quoteTokenProgram: { value: input.quoteTokenProgram ?? null, isWritable: false }, takerBaseAta: { value: input.takerBaseAta ?? null, isWritable: true }, takerQuoteAta: { value: input.takerQuoteAta ?? null, isWritable: true }, marketBaseTreasury: { value: input.marketBaseTreasury ?? null, isWritable: true }, marketQuoteTreasury: { value: input.marketQuoteTreasury ?? null, isWritable: true }, clock: { value: input.clock ?? null, isWritable: false }, platformFeeAuthority: { value: input.platformFeeAuthority ?? null, isWritable: false }, platformFeeAta: { value: input.platformFeeAta ?? null, isWritable: true }, associatedTokenProgram: { value: input.associatedTokenProgram ?? null, isWritable: false }, systemProgram: { value: input.systemProgram ?? null, isWritable: false }, eventAuthority: { value: input.eventAuthority ?? null, isWritable: false }, program: { value: input.program ?? null, isWritable: false } }
 const accounts = originalAccounts as Record<keyof typeof originalAccounts, ResolvedAccount>;
 
 
@@ -124,9 +290,15 @@ const args = { ...input,  };
 if (!accounts.clock.value) {
 accounts.clock.value = 'SysvarC1ock11111111111111111111111111111111' as Address<'SysvarC1ock11111111111111111111111111111111'>;
 }
+if (!accounts.associatedTokenProgram.value) {
+accounts.associatedTokenProgram.value = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL' as Address<'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL'>;
+}
+if (!accounts.systemProgram.value) {
+accounts.systemProgram.value = '11111111111111111111111111111111' as Address<'11111111111111111111111111111111'>;
+}
 
 const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
-return Object.freeze({ accounts: [getAccountMeta(accounts.taker), getAccountMeta(accounts.market), getAccountMeta(accounts.baseMint), getAccountMeta(accounts.quoteMint), getAccountMeta(accounts.baseTokenProgram), getAccountMeta(accounts.quoteTokenProgram), getAccountMeta(accounts.takerBaseAta), getAccountMeta(accounts.takerQuoteAta), getAccountMeta(accounts.marketBaseTreasury), getAccountMeta(accounts.marketQuoteTreasury), getAccountMeta(accounts.clock), getAccountMeta(accounts.eventAuthority), getAccountMeta(accounts.program)], data: getSwapInstructionDataEncoder().encode(args as SwapInstructionDataArgs), programAddress } as SwapInstruction<TProgramAddress, TAccountTaker, TAccountMarket, TAccountBaseMint, TAccountQuoteMint, TAccountBaseTokenProgram, TAccountQuoteTokenProgram, TAccountTakerBaseAta, TAccountTakerQuoteAta, TAccountMarketBaseTreasury, TAccountMarketQuoteTreasury, TAccountClock, TAccountEventAuthority, TAccountProgram>);
+return Object.freeze({ accounts: [getAccountMeta(accounts.taker), getAccountMeta(accounts.market), getAccountMeta(accounts.baseMint), getAccountMeta(accounts.quoteMint), getAccountMeta(accounts.baseTokenProgram), getAccountMeta(accounts.quoteTokenProgram), getAccountMeta(accounts.takerBaseAta), getAccountMeta(accounts.takerQuoteAta), getAccountMeta(accounts.marketBaseTreasury), getAccountMeta(accounts.marketQuoteTreasury), getAccountMeta(accounts.clock), getAccountMeta(accounts.platformFeeAuthority), getAccountMeta(accounts.platformFeeAta), getAccountMeta(accounts.associatedTokenProgram), getAccountMeta(accounts.systemProgram), getAccountMeta(accounts.eventAuthority), getAccountMeta(accounts.program)], data: getSwapInstructionDataEncoder().encode(args as SwapInstructionDataArgs), programAddress } as SwapInstruction<TProgramAddress, TAccountTaker, TAccountMarket, TAccountBaseMint, TAccountQuoteMint, TAccountBaseTokenProgram, TAccountQuoteTokenProgram, TAccountTakerBaseAta, TAccountTakerQuoteAta, TAccountMarketBaseTreasury, TAccountMarketQuoteTreasury, TAccountClock, TAccountPlatformFeeAuthority, TAccountPlatformFeeAta, TAccountAssociatedTokenProgram, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram>);
 }
 
 export type ParsedSwapInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountMetas extends readonly AccountMeta[] = readonly AccountMeta[]> = { programAddress: Address<TProgram>;
@@ -144,15 +316,94 @@ takerQuoteAta: TAccountMetas[7];
 marketBaseTreasury: TAccountMetas[8];
 marketQuoteTreasury: TAccountMetas[9];
 clock: TAccountMetas[10];
+/**
+ * Integrator earning the caller-declared platform fee — the owner of
+ * `platform_fee_ata`, not a signer. Permissionless: any caller may
+ * route flow here and name any authority. There is deliberately no admin
+ * onboarding and so nothing to constrain this against.
+ *
+ * `max_platform_fee` bounds the fee itself, but note what it does *not*
+ * bound: because this authority is caller-chosen and never signs, a
+ * caller can name a fresh one on every swap, and each new
+ * `(authority, mint)` pair costs the taker another rent-exempt balance
+ * below. Those lamports are recoverable by whoever closes the account,
+ * so a hostile transaction builder can extract SOL from its own takers
+ * outside both the ceiling and `min_out` (which are denominated in
+ * output-leg atoms). The taker signs the transaction, so this is
+ * consent-bounded rather than an escalation — but "the ceiling is the
+ * only bound" would be the wrong reading.
+ *
+ * Optional, together with `platform_fee_ata`: a swap with no
+ * integrator passes `None` for both and `platform_fee_bps = 0`, so the
+ * direct paths (the TUI, the taker bot, the `sdk/rs` router adapter, and
+ * the tests) carry no fee plumbing at all. Anchor signals `None` by
+ * passing the program id in the slot.
+ */
+platformFeeAuthority?: TAccountMetas[11] | undefined;
+/**
+ * The integrator's token account for the swap's **output** mint (base
+ * on a Buy, quote on a Sell), which the fee is transferred into.
+ *
+ * `UncheckedAccount` with no `associated_token::*` constraints
+ * because the output leg is side-dependent and Anchor's account
+ * constraints are static — there is no mint to bind it to at
+ * macro-expansion time. Both properties an
+ * `init_if_needed`-with-constraints field would buy are instead
+ * obtained from the ATA program itself, which the handler CPIs
+ * `create_idempotent` against with the runtime-selected mint: it
+ * derives the canonical ATA and rejects any account that isn't it,
+ * *and* creates it when missing. Deferring to that CPI is both
+ * stronger than a static constraint (the ATA program is the authority
+ * on its own derivation) and the only form that can key off the leg
+ * chosen at runtime. The subsequent `transfer_checked` out of the
+ * output-leg treasury then rejects a fee account on the wrong mint on
+ * the token program's own terms.
+ *
+ * `unsafe(dup)` (which implies `mut`) is **required**, not a shortcut.
+ * Anchor's duplicate-mutable-account guard on an optional `mut` field
+ * fires on the `None` slot too, and `None` *is* the program id — which
+ * `#[event_cpi]` also passes in its trailer and which the sibling
+ * `platform_fee_authority` slot carries when absent. A plain
+ * `#[account(mut)]` therefore rejects **every** no-integrator swap with
+ * `ConstraintDuplicateMutableAccount`, the overwhelmingly common path.
+ *
+ * Waiving the guard is sound here because the two things it protects
+ * against are both already covered:
+ *
+ * * **Aliased `&mut` account data.** Impossible — this is an
+ *   `UncheckedAccount`. The handler never takes a typed borrow of its
+ *   data, only hands the raw view to two CPIs.
+ * * **A caller aiming the fee at an account it shouldn't reach** (a
+ *   treasury, the taker's own ATA, another swap account). Rejected by
+ *   `create_idempotent`, which derives the canonical ATA for
+ *   `(platform_fee_authority, output mint, output token program)` and
+ *   refuses anything else. The one case that does derive — a taker
+ *   naming themselves the integrator — pays the fee to the taker, i.e.
+ *   is a zero-fee swap with extra steps.
+ */
+platformFeeAta?: TAccountMetas[12] | undefined;
+/**
+ * Creates `platform_fee_ata` when the integrator has none yet. Not
+ * optional even though the fee group is: it is one constant address
+ * the direct paths already have on hand, and folding it into the
+ * optional group would trade that for a second `None` slot to reason
+ * about on every non-fee swap.
+ */
+associatedTokenProgram: TAccountMetas[13];
+/**
+ * Funds the `platform_fee_ata` rent-exempt balance on first use. See
+ * `associated_token_program` on why this isn't optional either.
+ */
+systemProgram: TAccountMetas[14];
 /** CHECK: Only the event authority can invoke self-CPI */
-eventAuthority: TAccountMetas[11];
+eventAuthority: TAccountMetas[15];
 /** CHECK: Kept for v1-compatible account ordering and IDL shape */
-program: TAccountMetas[12];
+program: TAccountMetas[16];
 };
 data: SwapInstructionData; };
 
 export function parseSwapInstruction<TProgram extends string, TAccountMetas extends readonly AccountMeta[]>(instruction: Instruction<TProgram> & InstructionWithAccounts<TAccountMetas> & InstructionWithData<ReadonlyUint8Array>): ParsedSwapInstruction<TProgram, TAccountMetas> {
-  if (instruction.accounts.length < 13) {
+  if (instruction.accounts.length < 17) {
   // TODO: Coded error.
   throw new Error('Not enough accounts');
 }
@@ -162,5 +413,9 @@ const getNextAccount = () => {
   accountIndex += 1;
   return accountMeta;
 }
-  return { programAddress: instruction.programAddress, accounts: { taker: getNextAccount(), market: getNextAccount(), baseMint: getNextAccount(), quoteMint: getNextAccount(), baseTokenProgram: getNextAccount(), quoteTokenProgram: getNextAccount(), takerBaseAta: getNextAccount(), takerQuoteAta: getNextAccount(), marketBaseTreasury: getNextAccount(), marketQuoteTreasury: getNextAccount(), clock: getNextAccount(), eventAuthority: getNextAccount(), program: getNextAccount() }, data: getSwapInstructionDataDecoder().decode(instruction.data) };
+const getNextOptionalAccount = () => {
+  const accountMeta = getNextAccount();
+  return accountMeta.address === DROPSET_PROGRAM_ADDRESS ? undefined : accountMeta;
+};
+  return { programAddress: instruction.programAddress, accounts: { taker: getNextAccount(), market: getNextAccount(), baseMint: getNextAccount(), quoteMint: getNextAccount(), baseTokenProgram: getNextAccount(), quoteTokenProgram: getNextAccount(), takerBaseAta: getNextAccount(), takerQuoteAta: getNextAccount(), marketBaseTreasury: getNextAccount(), marketQuoteTreasury: getNextAccount(), clock: getNextAccount(), platformFeeAuthority: getNextOptionalAccount(), platformFeeAta: getNextOptionalAccount(), associatedTokenProgram: getNextAccount(), systemProgram: getNextAccount(), eventAuthority: getNextAccount(), program: getNextAccount() }, data: getSwapInstructionDataDecoder().decode(instruction.data) };
 }

@@ -8,26 +8,28 @@
 use borsh::BorshDeserialize;
 use borsh::BorshSerialize;
 
-pub const SET_REGISTRY_DEFAULTS_DISCRIMINATOR: [u8; 1] = [25];
+pub const SET_MAX_PLATFORM_FEE_DISCRIMINATOR: [u8; 1] = [29];
 
 /// Accounts.
 #[derive(Debug)]
-pub struct SetRegistryDefaults {
+pub struct SetMaxPlatformFee {
     /// Registry admin — the only signer this lever accepts.
     pub admin: solana_pubkey::Pubkey,
-    /// Singleton registry. `mut` for the default writes; also read for
-    /// the admin-membership check.
+    /// Singleton registry, read for the admin-membership check.
     pub registry: solana_pubkey::Pubkey,
+    /// Market whose `max_platform_fee` is being retuned. `mut` for the
+    /// write.
+    pub market: solana_pubkey::Pubkey,
     /// CHECK: Only the event authority can invoke self-CPI
     pub event_authority: solana_pubkey::Pubkey,
     /// CHECK: Kept for v1-compatible account ordering and IDL shape
     pub program: solana_pubkey::Pubkey,
 }
 
-impl SetRegistryDefaults {
+impl SetMaxPlatformFee {
     pub fn instruction(
         &self,
-        args: SetRegistryDefaultsInstructionArgs,
+        args: SetMaxPlatformFeeInstructionArgs,
     ) -> solana_instruction::Instruction {
         self.instruction_with_remaining_accounts(args, &[])
     }
@@ -35,14 +37,18 @@ impl SetRegistryDefaults {
     #[allow(clippy::vec_init_then_push)]
     pub fn instruction_with_remaining_accounts(
         &self,
-        args: SetRegistryDefaultsInstructionArgs,
+        args: SetMaxPlatformFeeInstructionArgs,
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
-        let mut accounts = Vec::with_capacity(4 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(5 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.admin, true,
         ));
-        accounts.push(solana_instruction::AccountMeta::new(self.registry, false));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.registry,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(self.market, false));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.event_authority,
             false,
@@ -52,7 +58,7 @@ impl SetRegistryDefaults {
             false,
         ));
         accounts.extend_from_slice(remaining_accounts);
-        let mut data = SetRegistryDefaultsInstructionData::new()
+        let mut data = SetMaxPlatformFeeInstructionData::new()
             .try_to_vec()
             .unwrap();
         let mut args = args.try_to_vec().unwrap();
@@ -68,14 +74,14 @@ impl SetRegistryDefaults {
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct SetRegistryDefaultsInstructionData {
+pub struct SetMaxPlatformFeeInstructionData {
     discriminator: [u8; 1],
 }
 
-impl SetRegistryDefaultsInstructionData {
+impl SetMaxPlatformFeeInstructionData {
     pub fn new() -> Self {
         Self {
-            discriminator: [25],
+            discriminator: [29],
         }
     }
 
@@ -84,7 +90,7 @@ impl SetRegistryDefaultsInstructionData {
     }
 }
 
-impl Default for SetRegistryDefaultsInstructionData {
+impl Default for SetMaxPlatformFeeInstructionData {
     fn default() -> Self {
         Self::new()
     }
@@ -92,39 +98,37 @@ impl Default for SetRegistryDefaultsInstructionData {
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct SetRegistryDefaultsInstructionArgs {
-    pub taker_fee: Option<u16>,
-    pub max_platform_fee: Option<u16>,
-    pub min_leader_share: Option<u32>,
+pub struct SetMaxPlatformFeeInstructionArgs {
+    pub max_platform_fee: u16,
 }
 
-impl SetRegistryDefaultsInstructionArgs {
+impl SetMaxPlatformFeeInstructionArgs {
     pub(crate) fn try_to_vec(&self) -> Result<Vec<u8>, std::io::Error> {
         borsh::to_vec(self)
     }
 }
 
-/// Instruction builder for `SetRegistryDefaults`.
+/// Instruction builder for `SetMaxPlatformFee`.
 ///
 /// ### Accounts:
 ///
 ///   0. `[signer]` admin
-///   1. `[writable]` registry
-///   2. `[]` event_authority
-///   3. `[]` program
+///   1. `[]` registry
+///   2. `[writable]` market
+///   3. `[]` event_authority
+///   4. `[]` program
 #[derive(Clone, Debug, Default)]
-pub struct SetRegistryDefaultsBuilder {
+pub struct SetMaxPlatformFeeBuilder {
     admin: Option<solana_pubkey::Pubkey>,
     registry: Option<solana_pubkey::Pubkey>,
+    market: Option<solana_pubkey::Pubkey>,
     event_authority: Option<solana_pubkey::Pubkey>,
     program: Option<solana_pubkey::Pubkey>,
-    taker_fee: Option<u16>,
     max_platform_fee: Option<u16>,
-    min_leader_share: Option<u32>,
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
 
-impl SetRegistryDefaultsBuilder {
+impl SetMaxPlatformFeeBuilder {
     pub fn new() -> Self {
         Self::default()
     }
@@ -134,11 +138,17 @@ impl SetRegistryDefaultsBuilder {
         self.admin = Some(admin);
         self
     }
-    /// Singleton registry. `mut` for the default writes; also read for
-    /// the admin-membership check.
+    /// Singleton registry, read for the admin-membership check.
     #[inline(always)]
     pub fn registry(&mut self, registry: solana_pubkey::Pubkey) -> &mut Self {
         self.registry = Some(registry);
+        self
+    }
+    /// Market whose `max_platform_fee` is being retuned. `mut` for the
+    /// write.
+    #[inline(always)]
+    pub fn market(&mut self, market: solana_pubkey::Pubkey) -> &mut Self {
+        self.market = Some(market);
         self
     }
     /// CHECK: Only the event authority can invoke self-CPI
@@ -153,22 +163,9 @@ impl SetRegistryDefaultsBuilder {
         self.program = Some(program);
         self
     }
-    /// `[optional argument]`
-    #[inline(always)]
-    pub fn taker_fee(&mut self, taker_fee: u16) -> &mut Self {
-        self.taker_fee = Some(taker_fee);
-        self
-    }
-    /// `[optional argument]`
     #[inline(always)]
     pub fn max_platform_fee(&mut self, max_platform_fee: u16) -> &mut Self {
         self.max_platform_fee = Some(max_platform_fee);
-        self
-    }
-    /// `[optional argument]`
-    #[inline(always)]
-    pub fn min_leader_share(&mut self, min_leader_share: u32) -> &mut Self {
-        self.min_leader_share = Some(min_leader_share);
         self
     }
     /// Add an additional account to the instruction.
@@ -188,62 +185,69 @@ impl SetRegistryDefaultsBuilder {
     }
     #[allow(clippy::clone_on_copy)]
     pub fn instruction(&self) -> solana_instruction::Instruction {
-        let accounts = SetRegistryDefaults {
+        let accounts = SetMaxPlatformFee {
             admin: self.admin.expect("admin is not set"),
             registry: self.registry.expect("registry is not set"),
+            market: self.market.expect("market is not set"),
             event_authority: self.event_authority.expect("event_authority is not set"),
             program: self.program.expect("program is not set"),
         };
-        let args = SetRegistryDefaultsInstructionArgs {
-            taker_fee: self.taker_fee.clone(),
-            max_platform_fee: self.max_platform_fee.clone(),
-            min_leader_share: self.min_leader_share.clone(),
+        let args = SetMaxPlatformFeeInstructionArgs {
+            max_platform_fee: self
+                .max_platform_fee
+                .clone()
+                .expect("max_platform_fee is not set"),
         };
 
         accounts.instruction_with_remaining_accounts(args, &self.__remaining_accounts)
     }
 }
 
-/// `set_registry_defaults` CPI accounts.
-pub struct SetRegistryDefaultsCpiAccounts<'a, 'b> {
+/// `set_max_platform_fee` CPI accounts.
+pub struct SetMaxPlatformFeeCpiAccounts<'a, 'b> {
     /// Registry admin — the only signer this lever accepts.
     pub admin: &'b solana_account_info::AccountInfo<'a>,
-    /// Singleton registry. `mut` for the default writes; also read for
-    /// the admin-membership check.
+    /// Singleton registry, read for the admin-membership check.
     pub registry: &'b solana_account_info::AccountInfo<'a>,
+    /// Market whose `max_platform_fee` is being retuned. `mut` for the
+    /// write.
+    pub market: &'b solana_account_info::AccountInfo<'a>,
     /// CHECK: Only the event authority can invoke self-CPI
     pub event_authority: &'b solana_account_info::AccountInfo<'a>,
     /// CHECK: Kept for v1-compatible account ordering and IDL shape
     pub program: &'b solana_account_info::AccountInfo<'a>,
 }
 
-/// `set_registry_defaults` CPI instruction.
-pub struct SetRegistryDefaultsCpi<'a, 'b> {
+/// `set_max_platform_fee` CPI instruction.
+pub struct SetMaxPlatformFeeCpi<'a, 'b> {
     /// The program to invoke.
     pub __program: &'b solana_account_info::AccountInfo<'a>,
     /// Registry admin — the only signer this lever accepts.
     pub admin: &'b solana_account_info::AccountInfo<'a>,
-    /// Singleton registry. `mut` for the default writes; also read for
-    /// the admin-membership check.
+    /// Singleton registry, read for the admin-membership check.
     pub registry: &'b solana_account_info::AccountInfo<'a>,
+    /// Market whose `max_platform_fee` is being retuned. `mut` for the
+    /// write.
+    pub market: &'b solana_account_info::AccountInfo<'a>,
     /// CHECK: Only the event authority can invoke self-CPI
     pub event_authority: &'b solana_account_info::AccountInfo<'a>,
     /// CHECK: Kept for v1-compatible account ordering and IDL shape
     pub program: &'b solana_account_info::AccountInfo<'a>,
     /// The arguments for the instruction.
-    pub __args: SetRegistryDefaultsInstructionArgs,
+    pub __args: SetMaxPlatformFeeInstructionArgs,
 }
 
-impl<'a, 'b> SetRegistryDefaultsCpi<'a, 'b> {
+impl<'a, 'b> SetMaxPlatformFeeCpi<'a, 'b> {
     pub fn new(
         program: &'b solana_account_info::AccountInfo<'a>,
-        accounts: SetRegistryDefaultsCpiAccounts<'a, 'b>,
-        args: SetRegistryDefaultsInstructionArgs,
+        accounts: SetMaxPlatformFeeCpiAccounts<'a, 'b>,
+        args: SetMaxPlatformFeeInstructionArgs,
     ) -> Self {
         Self {
             __program: program,
             admin: accounts.admin,
             registry: accounts.registry,
+            market: accounts.market,
             event_authority: accounts.event_authority,
             program: accounts.program,
             __args: args,
@@ -272,13 +276,17 @@ impl<'a, 'b> SetRegistryDefaultsCpi<'a, 'b> {
         signers_seeds: &[&[&[u8]]],
         remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
     ) -> solana_program_error::ProgramResult {
-        let mut accounts = Vec::with_capacity(4 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(5 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.admin.key,
             true,
         ));
-        accounts.push(solana_instruction::AccountMeta::new(
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.registry.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            *self.market.key,
             false,
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
@@ -296,7 +304,7 @@ impl<'a, 'b> SetRegistryDefaultsCpi<'a, 'b> {
                 is_writable: remaining_account.2,
             })
         });
-        let mut data = SetRegistryDefaultsInstructionData::new()
+        let mut data = SetMaxPlatformFeeInstructionData::new()
             .try_to_vec()
             .unwrap();
         let mut args = self.__args.try_to_vec().unwrap();
@@ -307,10 +315,11 @@ impl<'a, 'b> SetRegistryDefaultsCpi<'a, 'b> {
             accounts,
             data,
         };
-        let mut account_infos = Vec::with_capacity(5 + remaining_accounts.len());
+        let mut account_infos = Vec::with_capacity(6 + remaining_accounts.len());
         account_infos.push(self.__program.clone());
         account_infos.push(self.admin.clone());
         account_infos.push(self.registry.clone());
+        account_infos.push(self.market.clone());
         account_infos.push(self.event_authority.clone());
         account_infos.push(self.program.clone());
         remaining_accounts
@@ -325,30 +334,30 @@ impl<'a, 'b> SetRegistryDefaultsCpi<'a, 'b> {
     }
 }
 
-/// Instruction builder for `SetRegistryDefaults` via CPI.
+/// Instruction builder for `SetMaxPlatformFee` via CPI.
 ///
 /// ### Accounts:
 ///
 ///   0. `[signer]` admin
-///   1. `[writable]` registry
-///   2. `[]` event_authority
-///   3. `[]` program
+///   1. `[]` registry
+///   2. `[writable]` market
+///   3. `[]` event_authority
+///   4. `[]` program
 #[derive(Clone, Debug)]
-pub struct SetRegistryDefaultsCpiBuilder<'a, 'b> {
-    instruction: Box<SetRegistryDefaultsCpiBuilderInstruction<'a, 'b>>,
+pub struct SetMaxPlatformFeeCpiBuilder<'a, 'b> {
+    instruction: Box<SetMaxPlatformFeeCpiBuilderInstruction<'a, 'b>>,
 }
 
-impl<'a, 'b> SetRegistryDefaultsCpiBuilder<'a, 'b> {
+impl<'a, 'b> SetMaxPlatformFeeCpiBuilder<'a, 'b> {
     pub fn new(program: &'b solana_account_info::AccountInfo<'a>) -> Self {
-        let instruction = Box::new(SetRegistryDefaultsCpiBuilderInstruction {
+        let instruction = Box::new(SetMaxPlatformFeeCpiBuilderInstruction {
             __program: program,
             admin: None,
             registry: None,
+            market: None,
             event_authority: None,
             program: None,
-            taker_fee: None,
             max_platform_fee: None,
-            min_leader_share: None,
             __remaining_accounts: Vec::new(),
         });
         Self { instruction }
@@ -359,11 +368,17 @@ impl<'a, 'b> SetRegistryDefaultsCpiBuilder<'a, 'b> {
         self.instruction.admin = Some(admin);
         self
     }
-    /// Singleton registry. `mut` for the default writes; also read for
-    /// the admin-membership check.
+    /// Singleton registry, read for the admin-membership check.
     #[inline(always)]
     pub fn registry(&mut self, registry: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
         self.instruction.registry = Some(registry);
+        self
+    }
+    /// Market whose `max_platform_fee` is being retuned. `mut` for the
+    /// write.
+    #[inline(always)]
+    pub fn market(&mut self, market: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
+        self.instruction.market = Some(market);
         self
     }
     /// CHECK: Only the event authority can invoke self-CPI
@@ -381,22 +396,9 @@ impl<'a, 'b> SetRegistryDefaultsCpiBuilder<'a, 'b> {
         self.instruction.program = Some(program);
         self
     }
-    /// `[optional argument]`
-    #[inline(always)]
-    pub fn taker_fee(&mut self, taker_fee: u16) -> &mut Self {
-        self.instruction.taker_fee = Some(taker_fee);
-        self
-    }
-    /// `[optional argument]`
     #[inline(always)]
     pub fn max_platform_fee(&mut self, max_platform_fee: u16) -> &mut Self {
         self.instruction.max_platform_fee = Some(max_platform_fee);
-        self
-    }
-    /// `[optional argument]`
-    #[inline(always)]
-    pub fn min_leader_share(&mut self, min_leader_share: u32) -> &mut Self {
-        self.instruction.min_leader_share = Some(min_leader_share);
         self
     }
     /// Add an additional account to the instruction.
@@ -433,17 +435,21 @@ impl<'a, 'b> SetRegistryDefaultsCpiBuilder<'a, 'b> {
     #[allow(clippy::clone_on_copy)]
     #[allow(clippy::vec_init_then_push)]
     pub fn invoke_signed(&self, signers_seeds: &[&[&[u8]]]) -> solana_program_error::ProgramResult {
-        let args = SetRegistryDefaultsInstructionArgs {
-            taker_fee: self.instruction.taker_fee.clone(),
-            max_platform_fee: self.instruction.max_platform_fee.clone(),
-            min_leader_share: self.instruction.min_leader_share.clone(),
+        let args = SetMaxPlatformFeeInstructionArgs {
+            max_platform_fee: self
+                .instruction
+                .max_platform_fee
+                .clone()
+                .expect("max_platform_fee is not set"),
         };
-        let instruction = SetRegistryDefaultsCpi {
+        let instruction = SetMaxPlatformFeeCpi {
             __program: self.instruction.__program,
 
             admin: self.instruction.admin.expect("admin is not set"),
 
             registry: self.instruction.registry.expect("registry is not set"),
+
+            market: self.instruction.market.expect("market is not set"),
 
             event_authority: self
                 .instruction
@@ -461,15 +467,14 @@ impl<'a, 'b> SetRegistryDefaultsCpiBuilder<'a, 'b> {
 }
 
 #[derive(Clone, Debug)]
-struct SetRegistryDefaultsCpiBuilderInstruction<'a, 'b> {
+struct SetMaxPlatformFeeCpiBuilderInstruction<'a, 'b> {
     __program: &'b solana_account_info::AccountInfo<'a>,
     admin: Option<&'b solana_account_info::AccountInfo<'a>>,
     registry: Option<&'b solana_account_info::AccountInfo<'a>>,
+    market: Option<&'b solana_account_info::AccountInfo<'a>>,
     event_authority: Option<&'b solana_account_info::AccountInfo<'a>>,
     program: Option<&'b solana_account_info::AccountInfo<'a>>,
-    taker_fee: Option<u16>,
     max_platform_fee: Option<u16>,
-    min_leader_share: Option<u32>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
     __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,
 }

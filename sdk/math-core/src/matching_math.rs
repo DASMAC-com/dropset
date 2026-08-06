@@ -93,6 +93,32 @@ pub fn taker_fee_atoms(output_leg_atoms: u64, taker_fee_ppm: u128) -> u128 {
     (output_leg_atoms as u128 * taker_fee_ppm) / PPM as u128
 }
 
+/// Caller-declared platform (integrator) fee on the taker's output:
+/// `net_output_atoms × platform_fee_bps / BPS` (u128, truncating — the
+/// taker keeps the dust, matching [`taker_fee_atoms`]).
+///
+/// `net_output_atoms` is the output leg **after** the taker fee, because
+/// the two fees compose in program order: fill → taker fee → platform
+/// fee. Feeding it the gross leg would over-charge the integrator by
+/// `taker_fee × platform_fee`, and — since the engine skims the platform
+/// fee from what is left in the treasury after the taker's own transfer —
+/// could over-draw the output leg outright.
+///
+/// Denominated in **bps**, not ppm like the taker fee: the platform fee is
+/// the integrator-facing knob, and every surface that carries it across the
+/// boundary — the `swap` instruction's `platform_fee_bps` argument, the
+/// frontend's `NEXT_PUBLIC_PLATFORM_FEE_BPS`, DFlow's `platformFeeBps` on
+/// the route the eCLOB path has to price against — already speaks bps.
+/// Converting at each edge would be three chances to drop a factor of 100.
+///
+/// The caller clamps to `u64` (the engine once per swap, the simulator
+/// after summing every leg), so the truncation lives here while each side
+/// keeps its own accumulation — same split as [`taker_fee_atoms`].
+#[inline]
+pub fn platform_fee_atoms(net_output_atoms: u64, platform_fee_bps: u16) -> u128 {
+    (net_output_atoms as u128 * platform_fee_bps as u128) / BPS as u128
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -150,5 +176,27 @@ mod tests {
         assert_eq!(taker_fee_atoms(0, 30), 0);
         // No u64 overflow in the product (u128 intermediate).
         assert_eq!(taker_fee_atoms(u64::MAX, PPM as u128), u64::MAX as u128);
+    }
+
+    #[test]
+    fn platform_fee_truncates() {
+        // 30 bps on 1_000_000 atoms = 3_000 — the bps denominator, not ppm.
+        // Pinning this against the taker-fee case above is the point: the
+        // same numeric rate means a 100x larger fee here, so a denominator
+        // mix-up shows up as a failing assert rather than a silent
+        // 100x-under-charge on the integrator's cut.
+        assert_eq!(platform_fee_atoms(1_000_000, 30), 3_000);
+        assert_eq!(taker_fee_atoms(1_000_000, 30), 30);
+        // Truncates toward zero (the taker keeps the dust): 1 bps on 19_999
+        // = 1.9999 -> 1.
+        assert_eq!(platform_fee_atoms(19_999, 1), 1);
+        // Below one atom of fee the integrator earns nothing at all.
+        assert_eq!(platform_fee_atoms(9_999, 1), 0);
+        // Zero rate and zero leg both yield zero — the no-integrator path.
+        assert_eq!(platform_fee_atoms(1_000_000, 0), 0);
+        assert_eq!(platform_fee_atoms(0, 30), 0);
+        // A full-BPS rate takes the whole net leg and no more, with the
+        // u128 intermediate absorbing the widest product.
+        assert_eq!(platform_fee_atoms(u64::MAX, BPS as u16), u64::MAX as u128);
     }
 }

@@ -27,6 +27,11 @@ pub struct RegistryHeader {
     pub default_min_leader_share: u32,
     /// Default taker fee (ppm, [`Ppm16`]) stamped into markets.
     pub default_taker_fee: u16,
+    /// Default platform-fee ceiling (bps, [`Bps16`]) stamped into
+    /// `MarketHeader.max_platform_fee` at creation. Bounds the
+    /// caller-declared `platform_fee_bps` a `swap` may skim off the taker's
+    /// output; retunable per market afterwards via `SetMaxPlatformFee`.
+    pub default_max_platform_fee: u16,
     /// Default cap on vaults per market.
     pub max_vaults_per_market: u8,
     /// Registry PDA bump.
@@ -36,7 +41,7 @@ pub struct RegistryHeader {
 pub const REGISTRY_HEADER_DISCRIMINATOR: [u8; 8] = [74, 214, 198, 41, 138, 211, 36, 245];
 
 impl RegistryHeader {
-    pub const LEN: usize = 92;
+    pub const LEN: usize = 94;
 
     #[inline(always)]
     pub fn from_bytes(data: &[u8]) -> Result<Self, std::io::Error> {

@@ -42,6 +42,11 @@ use serde_json::{json, Value};
 /// Taker fee in ppm retained on the output leg (0.1%), so a Buy exercises
 /// the `fee_amount` path rather than leaving it at zero.
 const TAKER_FEE_PPM: u16 = 1_000;
+/// Platform-fee ceiling in bps stamped onto the fixture market (1%), so the
+/// cases below can declare a real integrator fee and exercise fee
+/// composition — and so a case declaring more than this exercises the
+/// refuse-to-quote path.
+const MAX_PLATFORM_FEE_BPS: u16 = 100;
 /// Ample per-vault inventory — large enough that book depth, not vault
 /// balance, bounds every fill in the cases below.
 const INVENTORY: u64 = 10_000_000;
@@ -70,6 +75,7 @@ fn market_data() -> Vec<u8> {
     header.free_head = NULL_SECTOR.into();
     header.active_count = 1u32.into();
     header.taker_fee = TAKER_FEE_PPM.into();
+    header.max_platform_fee = MAX_PLATFORM_FEE_BPS.into();
     header.base_mint = [2u8; 32];
     header.quote_mint = [3u8; 32];
 
@@ -112,20 +118,32 @@ struct Case {
     amount_in: u64,
     limit: Price,
     current_slot: u32,
+    /// Integrator fee the case declares, in bps. `0` for the unrouted
+    /// cases; above `MAX_PLATFORM_FEE_BPS` to pin the refusal path.
+    platform_fee_bps: u16,
 }
 
 fn case_json(view: &MarketView<'_>, c: &Case) -> Value {
-    let q = simulate_swap(view, c.side, c.amount_in, c.limit, c.current_slot);
+    let q = simulate_swap(
+        view,
+        c.side,
+        c.amount_in,
+        c.limit,
+        c.current_slot,
+        c.platform_fee_bps,
+    );
     json!({
         "name": c.name,
         "side": c.side as u8,
         "amount_in": c.amount_in,
         "limit_price_bits": c.limit.as_u32(),
         "current_slot": c.current_slot,
+        "platform_fee_bps": c.platform_fee_bps,
         "expected": {
             "in_amount": q.in_amount,
             "out_amount": q.out_amount,
             "fee_amount": q.fee_amount,
+            "platform_fee_amount": q.platform_fee_amount,
             "legs": q.legs,
         },
     })
@@ -144,6 +162,7 @@ fn main() {
             amount_in: 3_000_000, // quote atoms; dwarfs the ~2.0M-quote ask depth
             limit: Price::INFINITY,
             current_slot: 1,
+            platform_fee_bps: 0,
         },
         // Buy with a 1.10 limit: ask[0] (1.0904) fills, ask[1] (1.1393)
         // crosses — exactly one leg.
@@ -153,6 +172,7 @@ fn main() {
             amount_in: 3_000_000,
             limit: Price::encode(11_000_000, 0).unwrap(), // 1.10
             current_slot: 1,
+            platform_fee_bps: 0,
         },
         // Small buy fully absorbed by ask[0] — single leg, input not capped.
         Case {
@@ -161,6 +181,7 @@ fn main() {
             amount_in: 500_000,
             limit: Price::INFINITY,
             current_slot: 1,
+            platform_fee_bps: 0,
         },
         // Sell that clears both bid levels — the symmetric cross-level path.
         Case {
@@ -169,11 +190,59 @@ fn main() {
             amount_in: 5_000_000, // base atoms; dwarfs the bid depth
             limit: Price::ZERO,
             current_slot: 1,
+            platform_fee_bps: 0,
+        },
+        // The same multi-level Buy at the market's full 100 bps ceiling —
+        // pins fee *composition* across the language boundary: the taker fee
+        // comes off the gross leg, then the platform fee off what remains,
+        // each truncating. Paired with `buy_multi_level` above (identical but
+        // for the rate) so a cross-language diff shows exactly which fee
+        // moved.
+        Case {
+            name: "buy_multi_level_platform_fee",
+            side: SwapSide::Buy,
+            amount_in: 3_000_000,
+            limit: Price::INFINITY,
+            current_slot: 1,
+            platform_fee_bps: MAX_PLATFORM_FEE_BPS,
+        },
+        // Symmetric Sell at the ceiling — the platform fee is charged on the
+        // quote leg here, so this catches a leg mix-up the Buy case can't.
+        Case {
+            name: "sell_multi_level_platform_fee",
+            side: SwapSide::Sell,
+            amount_in: 5_000_000,
+            limit: Price::ZERO,
+            current_slot: 1,
+            platform_fee_bps: MAX_PLATFORM_FEE_BPS,
+        },
+        // A small Buy at 1 bps whose fee rounds down to zero atoms: the
+        // integrator earns nothing and the taker keeps the dust. The engine
+        // emits no `PlatformFeeEvent` in this case, so the quote must agree
+        // that there is no fee rather than round up to one atom.
+        Case {
+            name: "buy_platform_fee_rounds_to_zero",
+            side: SwapSide::Buy,
+            amount_in: 5_000, // ~4.5k base out; 1 bps of that is 0.45 atoms
+            limit: Price::INFINITY,
+            current_slot: 1,
+            platform_fee_bps: 1,
+        },
+        // One bps over the market's ceiling: the engine hard-rejects
+        // (`PlatformFeeTooHigh`), so every field of the expected quote is
+        // zero. Pins that both languages *refuse* rather than clamp.
+        Case {
+            name: "buy_platform_fee_over_ceiling",
+            side: SwapSide::Buy,
+            amount_in: 3_000_000,
+            limit: Price::INFINITY,
+            current_slot: 1,
+            platform_fee_bps: MAX_PLATFORM_FEE_BPS + 1,
         },
     ];
     let cases: Vec<Value> = cases.iter().map(|c| case_json(&view, c)).collect();
     let doc = json!({
-        "_comment": "Generated by `cargo run -p dropset-interface --example gen_simulate_swap`. Do not edit by hand. `market_data` is a representative market account's raw bytes (incl. the 8-byte discriminator); each case lists a swap input (side 0=buy/1=sell, amount_in, limit_price_bits, current_slot) and the Quote the native matcher returns. Verified against the WASM binding in sdk/interface/tests/wasm_conformance.rs (wasm::simulate_swap == native matcher); the native matcher is pinned to the on-chain engine by programs/dropset/tests/sdk_conformance.rs.",
+        "_comment": "Generated by `cargo run -p dropset-interface --example gen_simulate_swap`. Do not edit by hand. `market_data` is a representative market account's raw bytes (incl. the 8-byte discriminator); each case lists a swap input (side 0=buy/1=sell, amount_in, limit_price_bits, current_slot, platform_fee_bps) and the Quote the native matcher returns. A case whose platform_fee_bps exceeds the market's max_platform_fee expects an all-zero Quote: the engine rejects that swap, so the simulator refuses to quote it rather than clamping the rate. Verified against the WASM binding in sdk/interface/tests/wasm_conformance.rs (wasm::simulate_swap == native matcher); the native matcher is pinned to the on-chain engine by programs/dropset/tests/sdk_conformance.rs.",
         "market_data": data,
         "cases": cases,
     });
