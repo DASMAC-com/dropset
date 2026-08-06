@@ -635,9 +635,12 @@ ______________________________________________________________________
   grey text that pads the lockup's left and contributes almost none of its
   ink, so centering the lockup's box leaves the mark — the thing an eye
   tracks — some 60 units right of the midline, and the footer reads
-  off-center. The label hangs off the mark's left edge, out of flow. All of
-  this was measured off screenshots rather than judged by eye; the deck
-  comment records the numbers.
+  off-center. The label is rendered twice, the second copy hidden on the
+  mark's right, which makes the row symmetric about the mark so ordinary
+  centering lands it on the line. All of this was measured off screenshots
+  rather than judged by eye; the deck comment records the numbers and the two
+  traps (a theme-scale margin, and losing flex centering by positioning the
+  label instead).
 - Presenter mode is **`⌘⇧P`** (`Ctrl⇧P` off macOS), not a bare `p`.
 - Anything nuanced — the fuller competitor answers, the investor
   grilling, the numbers behind a claim — is **not on a slide**. It lives

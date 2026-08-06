@@ -61,6 +61,42 @@ const Wordmark = ({ width }: { width: number }) => (
   />
 );
 
+/** Space between the footer credit's label and the mark, in slide units. */
+const CREDIT_GAP = 14;
+
+/**
+ * "Built by" — the label half of the footer credit.
+ *
+ * Rendered **twice**: visibly to the mark's left, and again `mirrored` — same
+ * text, same metrics, `visibility: hidden` — to its right. That hidden copy is
+ * the whole trick: it makes the row symmetric about the mark, so centring the
+ * row centres the mark exactly, with no correction constant to keep tuned and
+ * nothing to re-measure if this text ever changes. `visibility: hidden` keeps
+ * the space while staying out of the accessibility tree, so the credit is still
+ * read once.
+ *
+ * The margins carry **explicit `px`**, and that is not incidental. Spectacle's
+ * `Text` resolves its margin through styled-system, which looks a *unitless*
+ * value up in the theme's `space` scale — so `margin="0"` silently becomes
+ * `space[0]`, which is 16 units here rather than zero. A multi-value string like
+ * this one fails that lookup and passes through literally, which is the only
+ * reason the original worked; writing the units makes it deliberate instead of
+ * lucky. The 16-unit phantom margin is what once dropped this label below the
+ * mark's baseline.
+ */
+const CreditLabel = ({ mirrored = false }: { mirrored?: boolean }) => (
+  <Text
+    color="quaternary"
+    fontSize="22px"
+    margin={
+      mirrored ? `0px 0px 0px ${CREDIT_GAP}px` : `0px ${CREDIT_GAP}px 0px 0px`
+    }
+    style={mirrored ? { visibility: "hidden" } : undefined}
+  >
+    Built by
+  </Text>
+);
+
 /**
  * Persistent footer: wordmark on the left, the DASMAC credit in the middle,
  * progress dots on the right. The DASMAC mark is a transparent PNG, so unlike
@@ -83,53 +119,45 @@ const template = () => (
     <Box padding="0 1.25em">
       <Wordmark width={210} />
     </Box>
-    {/* What gets centred here is the **mark**, not the lockup — and the mark
-        alone is in flow, so 50% plus a -50% translate centres it exactly, with
-        no correction constant to keep tuned.
+    {/* What gets centred is the **mark**, not the credit lockup, and the row is
+        made symmetric about it (see `CreditLabel`) so that falls out of plain
+        centring rather than a nudge.
 
-        Two wrong versions came first, both measured off screenshots against the
-        slide's own midline (a page eyebrow is block-centred, so its ink centre
-        marks it). `space-between` on the flex row was the original, and it was
-        never the real problem: the 210-unit wordmark against ~197 units of
-        progress dots is only ~6 units of drift. Centring the *lockup's box* was
-        the second, and it is geometrically exact — yet the credit still read
-        right of centre, because "Built by" is small grey text that pads the
-        lockup's left while contributing almost none of its ink. Boxed centred,
-        the mark sat ~63 units right of the midline; a partial nudge left still
-        left it at ~40, and a reader still saw it. The eye tracks the bright
-        mark, so the bright mark is what has to sit on the line.
+        Three earlier versions, each measured off a screenshot against the
+        slide's own midline — a page eyebrow is block-centred, so its ink centre
+        marks it, and reconstructing its box from Space Mono's metrics agrees
+        with the measurement to well under a unit. `space-between` on this flex
+        row was the original, and it was never the real problem: the 210-unit
+        wordmark against ~197 units of progress dots is ~6 units of drift.
+        Centring the *lockup's box* was next, and it is geometrically exact — yet
+        the credit still read right of centre, because "Built by" is small grey
+        text that pads the lockup's left while contributing almost none of its
+        ink, leaving the mark ~63 units right of the line. A hand-tuned nudge
+        left got that to ~40 and a reader could still see it. The eye tracks the
+        bright mark, so the bright mark is what sits on the line.
 
-        The label therefore hangs off the mark's left edge, out of flow
-        (`right: 100%`), where its width cannot push the mark anywhere. */}
+        Taking the label out of flow to achieve that was the fourth mistake: it
+        centred the mark to +0.6 units but lost the flex row's vertical centring,
+        and the theme-scale margin trap `CreditLabel` describes then dropped the
+        label below the mark's baseline. Everything stays in flow here. */}
     <div
       style={{
+        alignItems: "center",
+        display: "flex",
         left: "50%",
         position: "absolute",
         top: "50%",
         transform: "translate(-50%, -50%)",
       }}
     >
-      <Text
-        color="quaternary"
-        fontSize="22px"
-        margin="0"
-        style={{
-          marginRight: "14px",
-          position: "absolute",
-          right: "100%",
-          top: "50%",
-          transform: "translateY(-50%)",
-          whiteSpace: "nowrap",
-        }}
-      >
-        Built by
-      </Text>
+      <CreditLabel />
       <img
         src="/dasmac-wordmark.png"
         alt="DASMAC"
         width={110}
         style={{ display: "block" }}
       />
+      <CreditLabel mirrored />
     </div>
     <Box padding="0 1.25em">
       <Progress color={colors.accent} size={11} />
