@@ -911,11 +911,14 @@ fn nonce_overflow_on_second_leg_hard_reverts_the_committed_first_leg() {
 // paid straight through to the integrator's token account.
 //
 // The invariant these tests are really guarding is that the fee splits the
-// taker's payout rather than adding to what leaves the treasury. Every
-// case that fills therefore re-asserts `treasury == Σ vault` afterwards —
-// the fee moves no vault state, so a change that made it draw extra atoms
-// out of the treasury would surface right there rather than as a slow
-// depositor shortfall.
+// taker's payout rather than adding to what leaves the treasury. Every case
+// that fills therefore re-asserts the custody invariant afterwards via
+// `assert_treasury_invariant` — the three-term
+// `treasury == Σ vault + accrued_<leg>_fee_atoms`, since the taker fee is
+// accrued to the market rather than left in the vault. The fee moves no
+// vault state and accrues none of its own, so a change that made it draw
+// extra atoms out of the treasury would surface right there rather than as
+// a slow depositor shortfall.
 
 /// 100 bps — the registry-seeded ceiling every fixture market starts at, so
 /// a test declaring exactly this exercises the boundary of what is allowed.

@@ -2132,11 +2132,17 @@ fee. A rate whose fee rounds to zero atoms transfers nothing, creates
 no account, and emits no event.
 
 **The treasury invariant is untouched.** The two payouts — taker and
-beneficiary — sum to exactly the output the matching loop debited from
-vault inventory, so the platform fee only *splits* the outbound
-transfer. It moves no vault state of its own, which is why it needs no
-`min_out` rollback entry: it is computed after that gate, from no
-vault state.
+beneficiary — sum to the output leg net of the taker fee, which is
+exactly what a single taker transfer paid out before the split. Note
+that this is *less* than the matching loop debited from vault
+inventory: the loop debits the **gross** output and books the taker fee
+into `accrued_<leg>_fee_atoms`, so paying out `gross − accrued` is
+precisely what keeps
+`treasury.amount == Σ vault.<leg>_atoms + accrued_<leg>_fee_atoms`
+holding. The platform fee only *splits* that same outbound transfer
+between two destinations; it moves no vault state and accrues none of
+its own, which is why it needs no `min_out` rollback entry — it is
+computed after that gate, from no vault state.
 
 Worth stating plainly: this fee is charged to the taker, not to the
 LPs. The vault trades at exactly the price it quoted and books the

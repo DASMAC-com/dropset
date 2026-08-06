@@ -924,12 +924,23 @@ impl Swap {
         }
         // Output leg: treasury → taker, then treasury → integrator, both
         // signed by the market PDA and both drawn from the same output-leg
-        // treasury. Their sum is `net_after_taker_fee` — exactly the total
-        // the matching loop debited from vault inventory across every leg —
-        // so splitting the payout between two destinations leaves the
-        // treasury-vs-vault invariant untouched. The platform fee moves no
-        // vault state of its own; that is why it needs no `LegSnapshot`
-        // entry and no rollback in the soft-revert block above.
+        // treasury. Their sum is `net_after_taker_fee`.
+        //
+        // That is **not** the whole amount the matching loop debited from
+        // vault inventory — the loop debits the *gross* output and books the
+        // taker fee into `accrued_<leg>_fee_atoms`, so the debit exceeds this
+        // payout by exactly the accrued fee. Which is the point: the custody
+        // invariant is `treasury == Σ vault + accrued_<leg>_fee_atoms`, and
+        // paying out `gross − accrued` is what keeps it. Do not "correct"
+        // this to `total_out` — that would pay the accrued protocol revenue
+        // straight back out, over-drawing a treasury shared by every vault on
+        // the market.
+        //
+        // What the split adds is nothing: the two destinations sum to the
+        // same figure a single taker transfer paid before, so the platform
+        // fee moves no vault state and accrues none of its own — which is why
+        // it needs no `LegSnapshot` entry and no rollback in the soft-revert
+        // block above.
         //
         // Ordering matters only in one direction: the fee is skimmed from
         // what remains *after* the taker's transfer, so the taker's leg
