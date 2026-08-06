@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import { X } from "@/components/icons";
-import type { DflowQuote } from "@/lib/hooks/useDflowQuote";
 import { useLiquidityLookup } from "@/lib/hooks/useUsdQuote";
+import type { QuoteState } from "@/lib/quote";
 
 // Inline, dismissible message shown under the swap panel when a quote fails —
 // either route (DFlow's `route_not_found`, or an eCLOB error like "No Dropset
@@ -28,7 +28,7 @@ export function QuoteError({
   fromMint,
   toMint,
 }: {
-  quote: DflowQuote;
+  quote: QuoteState;
   fromMint: string;
   toMint: string;
 }) {

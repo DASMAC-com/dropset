@@ -167,6 +167,9 @@ importers:
 
   sdk/ts:
     dependencies:
+      '@solana-program/token':
+        specifier: ^0.13.0
+        version: 0.13.0(@solana/kit@6.9.0(typescript@5.9.3))
       '@solana/kit':
         specifier: ^6.9.0
         version: 6.9.0(typescript@5.9.3)
