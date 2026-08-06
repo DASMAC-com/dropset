@@ -27,6 +27,16 @@ import type { SwapSide } from './simulate';
 export type AccountRpc = Parameters<typeof fetchEncodedAccount>[0];
 
 /**
+ * Minimal `getSlot` shape — the current slot scopes flush-level expiry. Kept
+ * argument-less for structural compatibility with any kit RPC; a caller that
+ * needs a commitment other than the client's default should read the slot
+ * itself and pass it in.
+ */
+export type SlotRpc = {
+  getSlot: (...args: never[]) => { send: () => Promise<bigint> };
+};
+
+/**
  * A resolved route against a market that actually exists on the current
  * cluster: the market PDA and its raw bytes, the take side, the no-bound limit
  * price, and the base/quote mints + token programs the swap instruction needs.
@@ -57,8 +67,13 @@ export type EclobRouteInput = {
   outputTokenProgram?: Address;
 };
 
-/** One candidate orientation: the pair mapped onto a market plus the implied side. */
-type Candidate = {
+/**
+ * One candidate orientation: the pair mapped onto a market plus the implied
+ * side. Named for the orientation rather than "candidate" so it doesn't read as
+ * the router's `Candidate<Q>`, which is a different thing entirely (a priced
+ * leg and its verdict).
+ */
+type Orientation = {
   baseMint: Address;
   quoteMint: Address;
   baseTokenProgram: Address;
@@ -108,7 +123,7 @@ export async function resolveEclobRoute(
     input.outputTokenProgram ?? fetchTokenProgram(rpc, outputMint, config),
   ]);
 
-  const candidates: Candidate[] = [
+  const orientations: Orientation[] = [
     {
       baseMint: inputMint,
       quoteMint: outputMint,
@@ -125,7 +140,7 @@ export async function resolveEclobRoute(
     },
   ];
 
-  for (const c of candidates) {
+  for (const c of orientations) {
     const [market] = await findMarketPda({
       baseMint: c.baseMint,
       quoteMint: c.quoteMint,

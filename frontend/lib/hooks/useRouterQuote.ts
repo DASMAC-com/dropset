@@ -20,6 +20,7 @@ import {
   QUOTE_REFRESH_MS,
   RECOVERY_TOKEN_TARGET,
 } from "../data/timings";
+import { resolveFeeAccount } from "../dflow/feeVault";
 import {
   DFLOW_QUOTE,
   markExhausted,
@@ -37,7 +38,7 @@ import { INITIAL_QUOTE, type QuoteState } from "../quote";
 // direct call to DFlow's /quote — routing, the platform-fee guard, and the
 // comparison all live in `@dropset/sdk` now, so this hook is only the React
 // lifecycle around it.
-//
+
 // Slippage flag sent to the aggregator. "auto" lets DFlow size it from current
 // liquidity; we render the returned `slippageBps` for transparency.
 const SLIPPAGE = "auto";
@@ -138,8 +139,8 @@ export const useRouterQuote = (
             : null;
 
         // Only our own book needs a slot (it scopes flush-level expiry), so an
-        // aggregator-only tick — the common case on mainnet today — makes no
-        // RPC call at all.
+        // aggregator-only tick doesn't read one — which on mainnet today, where
+        // we have no market yet, is every tick.
         let currentSlot: number | undefined;
         if (eclobLeg) {
           const slot = await rpc.getSlot({ commitment: "confirmed" }).send();
@@ -147,7 +148,19 @@ export const useRouterQuote = (
           currentSlot = Number(slot);
         }
 
-        const { best } = await quoteBestRoute(rpc, {
+        // Resolve the platform fee through the app's own per-mint cache rather
+        // than letting the router re-derive it: handing the router the raw
+        // config would cost a mint read plus an ATA read on *every* tick, and
+        // a transient failure on either would fail the whole aggregator leg.
+        // Cached here, it is one read the first time a to-mint is seen and
+        // none after. `resolveFeeAccount` returns null when the vault is
+        // missing or the check failed, which is exactly "declare no fee".
+        const feeAccount = PLATFORM_FEE
+          ? await resolveFeeAccount(rpc, outputMint)
+          : null;
+        if (cancelled || gen !== generation) return;
+
+        const { best, aggregator } = await quoteBestRoute(rpc, {
           amount: atomic,
           currentSlot,
           signal: controller.signal,
@@ -157,16 +170,24 @@ export const useRouterQuote = (
             inputMint,
             outputMint,
             slippageBps: SLIPPAGE,
-            // The guard: the SDK checks the fee ATA exists before declaring
-            // anything, so a mint without a pre-created vault skips the fee
-            // rather than breaking the route.
-            platformFee: PLATFORM_FEE
-              ? { ...PLATFORM_FEE, mint: address(onchainMint(outputMint)) }
-              : null,
+            // Already resolved against the fee ATA above, so a mint without a
+            // pre-created vault declares no fee rather than breaking the route.
+            platformFee:
+              PLATFORM_FEE && feeAccount
+                ? { bps: PLATFORM_FEE.bps, feeAccount }
+                : null,
             onResponse: (res) => recordResponse(DFLOW_QUOTE, res),
           },
         });
         if (cancelled || gen !== generation) return;
+
+        // Our own book can win while the aggregator is rate-limited, in which
+        // case the router folds the 429 into a losing candidate and nothing
+        // throws. Record it anyway, so the shared budget still reflects that
+        // DFlow pushed back — the banner and the pre-fetch guard read it.
+        if (kindOf(aggregator.cause) === "rateLimited") {
+          markExhausted(DFLOW_QUOTE, Date.now() + RECOVERY_TOKEN_TARGET * 1000);
+        }
 
         setQuote({
           status: "ok",
@@ -199,7 +220,7 @@ export const useRouterQuote = (
         setQuote({
           ...INITIAL_QUOTE,
           status: "error",
-          error: describe(e),
+          error: describeQuoteError(e),
         });
         // Stop the chain on a terminal rejection — an un-routable pair or an
         // amount the aggregator won't fill stays that way, and re-asking every
@@ -239,20 +260,28 @@ export const useRouterQuote = (
   return quote;
 };
 
+// The DFlow error kind behind a candidate's failure, when that's what it was.
+// The kind is what decides how the polling chain should react.
+const kindOf = (cause: unknown): DflowErrorKind | null =>
+  cause instanceof DflowError ? cause.kind : null;
+
 // A NoRouteError carries each leg's cause, so the aggregator's own error kind
 // decides how the polling chain should react.
-const aggregatorErrorKind = (e: unknown): DflowErrorKind | null => {
-  if (!(e instanceof NoRouteError)) return null;
-  const cause = e.aggregator.cause;
-  return cause instanceof DflowError ? cause.kind : null;
-};
+const aggregatorErrorKind = (e: unknown): DflowErrorKind | null =>
+  e instanceof NoRouteError ? kindOf(e.aggregator.cause) : null;
 
 const isRateLimited = (e: unknown): boolean =>
   aggregatorErrorKind(e) === "rateLimited";
 
 // An `api` rejection is DFlow answering "no" — a pair it can't route, or a
-// size it won't fill. Re-asking on the refresh cadence won't change the
-// answer, so treat it as terminal unless our own book might still recover.
+// size it won't fill. Re-asking won't change that, so the chain stops once our
+// own book is *definitively* out too (`unavailable` = no market for the pair).
+//
+// A `partial` or `failed` eCLOB leg deliberately keeps polling: a book too thin
+// to fill the amount is transient — the maker bot re-quotes it — and that
+// self-heal is the whole reason the eCLOB path polls at all. That does keep
+// asking a rejecting aggregator, but at QUOTE_REFRESH_MS the cadence sits below
+// the bucket's refill rate, so it can't deepen a rate limit.
 const isTerminal = (e: unknown): boolean =>
   aggregatorErrorKind(e) === "api" &&
   e instanceof NoRouteError &&
@@ -261,7 +290,7 @@ const isTerminal = (e: unknown): boolean =>
 // Surface the aggregator's own wording when both legs failed — the panel maps
 // DFlow's "Route not found" onto a friendlier message, so keep it intact
 // rather than burying it in the router's combined message.
-const describe = (e: unknown): string => {
+const describeQuoteError = (e: unknown): string => {
   if (e instanceof NoRouteError) {
     const agg = e.aggregator.reason;
     if (agg && e.eclob.status === "unavailable") return agg;

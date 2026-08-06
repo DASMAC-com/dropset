@@ -49,12 +49,13 @@ program <-> frontend: the on-chain account/instruction contract in
   docs/interface.md, which the frontend builds transactions against
   through the generated clients.
 sdk-math <-> frontend: the frontend's eCLOB route (frontend/lib/eclob/,
-  frontend/lib/hooks/useEclobQuote.ts + useEclobSwap.ts) quotes and builds
-  swaps via @dropset/sdk's simulateSwap — the WASM binding compiled from
-  sdk/interface — so its off-chain fill math must compute identically to
-  the on-chain engine; the conformance vectors (sdk/conformance) pin that
-  parity. Both quoting paths now go through the SDK router
-  (sdk/ts/src/router.ts), so the frontend hooks are lifecycle-only and must
+  frontend/lib/hooks/useEclobQuote.ts + useRouterQuote.ts + useEclobSwap.ts)
+  quotes and builds swaps through the SDK router's quoteEclob /
+  quoteBestRoute (sdk/ts/src/router.ts), which wrap @dropset/sdk's
+  simulateSwap — the WASM binding compiled from sdk/interface — so its
+  off-chain fill math must compute identically to the on-chain engine; the
+  conformance vectors (sdk/conformance) pin that parity. Both quoting paths
+  go through the router, so the frontend hooks are lifecycle-only and must
   not re-derive routing decisions the router already owns. A separate drift
   to watch: the display-only float PnL re-implementation
   (frontend/lib/data/pnl.ts) that no conformance vector pins.

@@ -10,6 +10,8 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { address } from '@solana/kit';
+import { findAssociatedTokenPda } from '@solana-program/token';
 import {
   DflowError,
   extractDflowApiError,
@@ -23,13 +25,15 @@ import {
   classifyEclobQuote,
   type EclobQuote,
   NoRouteError,
+  quoteBestRoute,
   selectBestRoute,
 } from './router';
 
 // A stand-in market address; nothing in these tests decodes it.
-const MARKET = 'B1TFa9U1Rc4hVX1jkPmT4WoxAKN9nEZbrpKPjt6QRQGV';
-const FEE_WALLET = 'FeeWa11etAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
-const MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+const MARKET = address('B1TFa9U1Rc4hVX1jkPmT4WoxAKN9nEZbrpKPjt6QRQGV');
+const FEE_WALLET = address('9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM');
+const MINT = address('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+const TOKEN_PROGRAM = address('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 
 const eclobQuote = (inAmount: bigint, outAmount: bigint): EclobQuote => ({
   venue: 'dropset',
@@ -232,7 +236,7 @@ test('a resolved platform fee is declared, pinned to the output mint', async () 
         outputMint: 'B',
         amount: 1000n,
         slippageBps: 'auto',
-        platformFee: { bps: 50, feeAccount: MINT as never },
+        platformFee: { bps: 50, feeAccount: MINT },
       }),
   );
   const params = new URL(seen).searchParams;
@@ -321,7 +325,13 @@ const rpcWith = (existing: Set<string>) =>
     getAccountInfo: (addr: string) => ({
       send: async () => ({
         value: existing.has(addr)
-          ? { data: ['', 'base64'], executable: false, lamports: 1n, owner: MINT, space: 0n }
+          ? {
+              data: ['', 'base64'],
+              executable: false,
+              lamports: 1n,
+              owner: TOKEN_PROGRAM,
+              space: 0n,
+            }
           : null,
       }),
     }),
@@ -329,19 +339,53 @@ const rpcWith = (existing: Set<string>) =>
 
 test('no fee is declared when the fee ATA does not exist', async () => {
   const resolved = await resolvePlatformFee(rpcWith(new Set()), {
-    fee: { bps: 50, wallet: FEE_WALLET as never },
-    mint: MINT as never,
-    tokenProgram: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' as never,
+    fee: { bps: 50, wallet: FEE_WALLET },
+    mint: MINT,
+    tokenProgram: TOKEN_PROGRAM,
   });
   // Skipping the fee keeps the route working; declaring one whose vault is
   // missing would break /order and waste slippage budget on /quote.
   assert.equal(resolved, null);
 });
 
+test('an existing fee ATA yields the fee, keyed to the fee wallet and mint', async () => {
+  // The positive half of the guard, and the security-relevant one: the fee is
+  // only chargeable when the vault is there, and `feeAccount` must be *that*
+  // wallet's ATA for *that* mint — a wrong derivation would silently send the
+  // fee somewhere else (or break /order).
+  const [expected] = await findAssociatedTokenPda({
+    owner: FEE_WALLET,
+    mint: MINT,
+    tokenProgram: TOKEN_PROGRAM,
+  });
+  const resolved = await resolvePlatformFee(rpcWith(new Set([expected])), {
+    fee: { bps: 50, wallet: FEE_WALLET },
+    mint: MINT,
+    tokenProgram: TOKEN_PROGRAM,
+  });
+  assert.equal(resolved?.bps, 50);
+  assert.equal(resolved?.feeAccount, expected);
+});
+
+test('the token program is read from the mint when not supplied', async () => {
+  // The branch a caller takes when it doesn't already know the program: the
+  // mint account's owner is used to derive the ATA.
+  const [expected] = await findAssociatedTokenPda({
+    owner: FEE_WALLET,
+    mint: MINT,
+    tokenProgram: TOKEN_PROGRAM,
+  });
+  const resolved = await resolvePlatformFee(
+    rpcWith(new Set([MINT, expected])),
+    { fee: { bps: 50, wallet: FEE_WALLET }, mint: MINT },
+  );
+  assert.equal(resolved?.feeAccount, expected);
+});
+
 test('a zero-bps fee is never declared', async () => {
   const resolved = await resolvePlatformFee(rpcWith(new Set()), {
-    fee: { bps: 0, wallet: FEE_WALLET as never },
-    mint: MINT as never,
+    fee: { bps: 0, wallet: FEE_WALLET },
+    mint: MINT,
   });
   assert.equal(resolved, null);
 });
@@ -349,7 +393,92 @@ test('a zero-bps fee is never declared', async () => {
 test('a null fee config resolves to no fee', async () => {
   const resolved = await resolvePlatformFee(rpcWith(new Set()), {
     fee: null,
-    mint: MINT as never,
+    mint: MINT,
   });
   assert.equal(resolved, null);
+});
+
+// --- quoteBestRoute orchestration ------------------------------------------
+//
+// Driven aggregator-only (`eclob: null`) so these run without the WASM
+// simulator: with no eCLOB leg and a pre-resolved fee, the RPC is never
+// touched, and the aggregator half is the stubbed `fetch` above.
+
+const noRpc = {} as never;
+
+const bestRouteAggregatorOnly = (amount: bigint) =>
+  quoteBestRoute(noRpc, {
+    amount,
+    eclob: null,
+    aggregator: {
+      quoteUrl: 'https://example.test/quote',
+      inputMint: 'A',
+      outputMint: 'B',
+      slippageBps: 'auto',
+      platformFee: null,
+    },
+  });
+
+test('an aggregator-only route returns the aggregator as the winner', async () => {
+  const { best, eclob } = await withFetch(
+    async () => okQuote(),
+    () => bestRouteAggregatorOnly(1000n),
+  );
+  assert.equal(best.venue, 'dflow');
+  assert.equal(best.outAmount, 990n);
+  // A leg that wasn't requested is reported as such, not as a failure.
+  assert.equal(eclob.status, 'unavailable');
+  assert.equal(eclob.reason, 'not requested');
+});
+
+test('a rate limit reaches the caller as a NoRouteError carrying the kind', async () => {
+  // This is the contract the frontend's back-off reads: it inspects
+  // `aggregator.cause` to decide whether to pause the poll chain.
+  await withFetch(
+    async () => new Response('slow down', { status: 429 }),
+    async () => {
+      await assert.rejects(bestRouteAggregatorOnly(1000n), (e: unknown) => {
+        assert.ok(e instanceof NoRouteError);
+        assert.equal(e.aggregator.status, 'failed');
+        assert.ok(e.aggregator.cause instanceof DflowError);
+        assert.equal(e.aggregator.cause.kind, 'rateLimited');
+        return true;
+      });
+    },
+  );
+});
+
+test('a zero-output aggregator quote is a failure, not a winner', async () => {
+  await withFetch(
+    async () =>
+      new Response(JSON.stringify({ inAmount: '1000', outAmount: '0' }), {
+        status: 200,
+      }),
+    async () => {
+      await assert.rejects(bestRouteAggregatorOnly(1000n), (e: unknown) => {
+        assert.ok(e instanceof NoRouteError);
+        assert.match(e.aggregator.reason ?? '', /no output/);
+        return true;
+      });
+    },
+  );
+});
+
+test('an aggregator quote that underspends the input does not compete', async () => {
+  // Symmetric with the eCLOB full-fill rule — an underspending quote is a
+  // different trade, so it is reported but never wins.
+  await withFetch(
+    async () =>
+      new Response(JSON.stringify({ inAmount: '400', outAmount: '402' }), {
+        status: 200,
+      }),
+    async () => {
+      await assert.rejects(bestRouteAggregatorOnly(1000n), (e: unknown) => {
+        assert.ok(e instanceof NoRouteError);
+        assert.equal(e.aggregator.status, 'partial');
+        assert.equal(e.aggregator.quote?.outAmount, 402n);
+        return true;
+      });
+    },
+  );
 });

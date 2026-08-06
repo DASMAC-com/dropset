@@ -43,6 +43,9 @@ export class DflowError extends Error {
   }
 }
 
+/** How much of a non-JSON error body to surface. */
+const MAX_RAW_BODY_PREVIEW = 200;
+
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null;
 const isString = (v: unknown): v is string => typeof v === 'string';
@@ -50,9 +53,11 @@ const isNumber = (v: unknown): v is number =>
   typeof v === 'number' && Number.isFinite(v);
 
 /**
- * Coerce a decimal-string amount into a bigint. `BigInt()` throws on any
- * non-integer input (scientific notation, decimal points, stray characters),
- * which we surface as one typed reason. Amounts are unsigned atomic figures,
+ * Coerce a decimal-string amount into a bigint. `BigInt()` rejects decimal
+ * points, scientific notation, and stray characters, which we surface as one
+ * typed reason — though it does accept a `0x` / `0o` / `0b` prefix and empty
+ * string, so the result is only guaranteed to be *some* non-negative integer,
+ * not the decimal spelling we asked for. Amounts are unsigned atomic figures,
  * so a negative is rejected at the boundary rather than left for each consumer
  * to re-check. The message names the field but never echoes the raw value — a
  * malformed upstream body could carry data we don't want surfaced.
@@ -73,8 +78,6 @@ function parseAmount(value: unknown, field: string): bigint {
   return parsed;
 }
 
-const MAX_RAW_BODY_PREVIEW = 200;
-
 /** A DFlow error body — both `/quote` and `/order` wrap failures this way. */
 type DflowErrorBody = { code?: string; msg?: string };
 
@@ -84,6 +87,11 @@ export type DflowApiErrorInfo = { message: string; code: string | null };
  * Extract a human-readable message from a non-2xx DFlow response. Falls back
  * to the status plus a truncated raw body, so a transient HTML 502 page
  * surfaces as `HTTP 502: <!DOCTYPE…` rather than a bare `HTTP 502`.
+ *
+ * Note this deliberately *does* echo an error body, unlike the amount parsing
+ * below which never echoes a value: a non-2xx body is the only diagnostic for
+ * an upstream outage, and callers render it as text. The bound is
+ * {@link MAX_RAW_BODY_PREVIEW}.
  */
 export async function extractDflowApiError(
   res: Response,
