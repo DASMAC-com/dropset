@@ -648,7 +648,7 @@ mod tests {
         assert_eq!(ask.base_for_quote(1), 16_583);
         assert_eq!(ask.quote_for_base(16_583), 0);
 
-        let q = simulate_swap(&view, SwapSide::Buy, 1, Price::INFINITY, 1);
+        let q = simulate_swap(&view, SwapSide::Buy, 1, Price::INFINITY, 1, 0);
         assert_eq!(
             q,
             Quote::default(),
@@ -656,7 +656,7 @@ mod tests {
         );
 
         // Dust-only, as on the Sell arm: a normally-sized Buy still fills.
-        let q = simulate_swap(&view, SwapSide::Buy, 1_000_000, Price::INFINITY, 1);
+        let q = simulate_swap(&view, SwapSide::Buy, 1_000_000, Price::INFINITY, 1, 0);
         assert!(q.in_amount > 0 && q.out_amount > 0 && q.legs > 0);
     }
 
@@ -675,7 +675,7 @@ mod tests {
         assert_eq!(best_bid.quote_for_base(1), 1);
         assert_eq!(best_bid.base_for_quote(1), 0);
 
-        let q = simulate_swap(&view, SwapSide::Sell, 1, Price::ZERO, 1);
+        let q = simulate_swap(&view, SwapSide::Sell, 1, Price::ZERO, 1, 0);
         assert_eq!(
             q,
             Quote::default(),
@@ -684,7 +684,7 @@ mod tests {
 
         // The guard is dust-only — a normally-sized take still fills, and
         // consumes input for the output it promises.
-        let q = simulate_swap(&view, SwapSide::Sell, 1_000_000, Price::ZERO, 1);
+        let q = simulate_swap(&view, SwapSide::Sell, 1_000_000, Price::ZERO, 1, 0);
         assert!(q.in_amount > 0 && q.out_amount > 0 && q.legs > 0);
     }
 
