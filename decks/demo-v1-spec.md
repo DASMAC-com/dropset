@@ -528,13 +528,15 @@ disagree:
    the deck allows (page 2's three facts). No fragments — not as headlines,
    not as list items. A reviewer reading the deck without the talk should
    get the argument.
-1. **No terminal period on a page's headline — on any page.** At display
-   size a full stop is a visible mark that earns nothing: there is no
-   following sentence for it to separate. Sentence *structure* still applies
-   (rule 1); only the period goes. This covers all ten headlines and the
-   title's "Built by DASMAC" credit. Multi-sentence copy — the venue
-   captions, the roadmap bodies, the team bios — keeps its punctuation,
-   because there the period is doing its actual job.
+1. **No terminal period on a headline — on any page, at any level.** At
+   display size a full stop is a visible mark that earns nothing: there is
+   no following sentence for it to separate. Sentence *structure* still
+   applies (rule 1); only the period goes. This covers all ten page
+   headlines, the title's "Built by DASMAC" credit, **and the roadmap's
+   three beat headlines** — anything that reads as a title rather than as
+   prose. Multi-sentence copy — the venue captions, the roadmap bodies, the
+   team bios — keeps its punctuation, because there the period is doing its
+   actual job.
 1. **16:9 aspect ratio**, set explicitly on the deck rather than
    inherited.
 1. **Static images only.** No embedded video, no gifs, no player. A

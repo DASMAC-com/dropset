@@ -685,17 +685,17 @@ type Beat = { when: string; headline: string; body: string };
 const BEATS: Beat[] = [
   {
     when: "Now",
-    headline: "DASMAC bootstraps liquidity.",
+    headline: "DASMAC bootstraps liquidity",
     body: "DASMAC bootstraps nascent FX pairs by leading Hyperliquid-style vaults using the Dropset protocol.",
   },
   {
     when: "Next",
-    headline: "Protocol fees accrue value.",
+    headline: "Protocol fees accrue value",
     body: "As markets mature, volume and fees compound, and currency pairs achieve deep liquidity.",
   },
   {
     when: "Later",
-    headline: "Derivatives provide an expansion opportunity.",
+    headline: "Derivatives provide an expansion opportunity",
     body: "Once spot is fully mature, hedging instruments and additional derivatives enable more efficient market making and more mature markets.",
   },
 ];
