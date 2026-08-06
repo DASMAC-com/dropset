@@ -1,5 +1,7 @@
 <!-- cspell:word kbar -->
 
+<!-- cspell:word letterboxed -->
+
 # decks
 
 Presentation decks for Dropset, deployed to **decks.dropset.io**. A
@@ -22,18 +24,24 @@ deps, and theme don't fight the product build.
   Spectacle `<Deck>` (`page.tsx` dynamic-imports it with `ssr: false`).
 
 - `theme/tokens.ts` — Dropset design tokens, mirrored from
-  `frontend/app/globals.css` and reshaped into a Spectacle theme.
+  `frontend/app/globals.css` and reshaped into a Spectacle theme. It also
+  fixes the **slide box** (`DECK_SIZE`, 1920×1080): Spectacle takes the
+  native size from the theme rather than a `<Deck>` prop, and its own
+  default (1366×768) is *not* exactly 16:9. Every explicit size in a deck
+  is in those slide units, so a value lifted from a 1366-era deck reads a
+  third too small.
 
-- `components/` — pieces shared across decks. `DemoVideo.tsx` is the demo
-  badge: click it and the recording plays over the whole window, through a
-  portal to `document.body` (a Spectacle slide sits under a CSS transform,
-  which would otherwise trap a `position: fixed` overlay inside the slide
-  box). It swallows arrow keys while open so the deck doesn't advance
-  behind the video, and closes on `esc` or a click outside. Each demo
-  passes the **source recording's pixel dimensions**, and the overlay is
-  sized from them to fill the viewport at that exact shape — YouTube
-  chooses playback quality from the rendered player box, so a mis-shaped
-  or capped player is what makes a 4K upload play at 720p.
+- Typography is **Inter** (primary) and **Space Mono** (mono/tag), the
+  DASMAC brand faces, loaded in `app/layout.tsx` through
+  `next/font/google` — self-hosted at build time, so no font files are
+  committed. Space Mono is what the product website types in, which is
+  why it beats the JetBrains Mono named on the DASMAC brand page.
+
+- `components/` — pieces shared across *decks*, added when a second deck
+  needs one. There are none today: a deck's own building blocks live
+  beside it (`app/demo-v1/DemoDeck.tsx`), and the demo-video badge that
+  used to live here is gone, since decks are now **static-image-only**
+  (see "Write a deck").
 
 - `scripts/fetch-remote-assets.mjs` — the remote-image mirror, run on the
   `predev` / `prebuild` hooks; see `remote-assets.json` below.
@@ -47,13 +55,29 @@ deps, and theme don't fight the product build.
     symlink escaping the deck's Vercel Root Directory. The script copies
     the directory rather than a list, so a new asset is a drop-in file,
     and the whole folder goes to every app rather than a per-app subset.
+
   - `public/remote/` is **mirrored** from the URLs in
     `remote-assets.json` by `scripts/fetch-remote-assets.mjs`, on the
-    same two hooks — images we don't hold a copy of, like the team
-    headshots the marketing site serves.
+    same two hooks — images we don't hold a copy of: the two team
+    headshots the marketing site serves, the four partner logos on the
+    growth page, and the three permissioned-rail marks on the
+    open-venue page.
+
   - `public/screens/` holds our own screen captures, which are
     **committed**: nothing external hosts them, so there's nothing to
     mirror.
+
+    Two things to do to a capture before committing it. **Scale it to
+    about twice the width its slide renders it at** — the print path
+    renders at the 1920×1080 slide box, so anything beyond that is
+    weight the deck can never show. Then **quantize it to a 256-color
+    palette**: these are dark product-UI captures (a few greys, two
+    accent hues, small flag icons), so they sit well inside 256 colors,
+    and it is a ~90% saving that also keeps every file under the repo's
+    500KB-per-file commit limit. The raw captures behind the current set
+    were 4.4MB; committed, they are 437KB, with text and flags still
+    crisp. `sips` (built in) resizes; Pillow does the crop and the
+    quantize.
 
   The first two are generated, so `public/`'s entries are gitignored with
   a carve-out for the committed `public/screens/` — see `.gitignore`.
@@ -104,10 +128,34 @@ gives that machine its own independent copy of the deck. Nothing about
 deploying changes this, and nothing about running locally fixes it; for
 remote control you'd need a shared backend the package doesn't have.
 
+Nothing in a deck depends on a live network or a live cluster — decks are
+static-image-only — so a room with no connection presents fine once the
+page is loaded.
+
+## Export to Google Slides
+
+The accelerator combines every team's slides into one meta-deck, which is
+a Google Slides file. The path is Spectacle's own print mode (**`⌘⇧R`**),
+then the browser's print-to-PDF, then dropping the pages into Slides as
+images. There is deliberately **no export tooling** in this package.
+
+What that pipeline asks of a deck is just the two rules the theme already
+enforces: the slide box is exactly 16:9 (`DECK_SIZE`), so nothing gets
+letterboxed on import, and no slide carries interactive chrome, so what
+prints is what the audience saw. After changing a deck's layout, open
+print mode once and check every page — a page that overflows its box on
+screen is clipped in print, silently.
+
 ## Add a deck
 
 1. Create `app/<public-route>/page.tsx` + `<Deck>.tsx` (copy `demo-v1`).
 1. Add an entry to `lib/decks.ts`.
+
+That entry's date is `presented` — **the date the deck is given**, not the
+date it was last edited. It used to be the latter, which meant the landing
+page showed whenever someone last remembered to bump it; an event date is
+fixed, so it needs no upkeep and answers the question a reader actually
+has.
 
 ## Check
 
@@ -136,6 +184,22 @@ ten-page cap, one big sentence and one big visual per page, with the
 nuance kept off the slides and in that doc's appendices. Edit the spec
 first, then the deck. Spoken script belongs in each slide's `<Notes>`
 (presenter mode, `⌘⇧P`), never on the slide.
+
+Four rules from that spec bind any deck here, not just `demo-v1`:
+
+- **Static images only.** No embedded video, no gifs, no player. A
+  product beat is an interface screenshot with a full-sentence claim over
+  it. This is what keeps a deck presentable offline and printable.
+- **Full sentences on-slide**, never fragment headlines — the deck gets
+  read without the talk more often than it gets presented.
+- **No competitor names or logos on a slide.** Naming one hands it the
+  frame; make the argument in type and keep the names in the spec's
+  appendix, for conversation.
+- **Logos are argued, never listed.** A partner mark is captioned with
+  what that company is to us. A competitor mark appears only where it is
+  visibly the case being argued *against* (`demo-v1` red-outlines three
+  on one page, with the Dropset wordmark opposite as the answer) — a
+  neutral row of competitor logos hands them the frame instead.
 
 ## Deploy
 

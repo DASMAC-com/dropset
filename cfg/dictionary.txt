@@ -55,11 +55,13 @@ eurc
 eurcv
 eurozone
 fieldless
+fintech
 firmable
 forex
 frankfurter
 frontmatter
 getpid
+gifs
 globbable
 gyen
 générale
@@ -72,6 +74,7 @@ impls
 iterm
 kalman
 kapsule
+kargil
 keybinds
 keypair
 keypairs
@@ -79,6 +82,7 @@ killswitch
 kripto
 laggy
 lamports
+letterspaced
 libc
 litesvm
 localnet
@@ -87,6 +91,7 @@ macropod
 memcpy
 metas
 meteora
+moneyness
 mpsc
 multisigs
 mxne
@@ -164,6 +169,7 @@ transfero
 tryb
 tsup
 txns
+uncaptioned
 unfillable
 unfirmable
 unmirrored

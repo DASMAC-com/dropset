@@ -12,25 +12,32 @@ import {
   Slide,
   Text,
 } from "spectacle";
-import { DemoVideo } from "@/components/DemoVideo";
 import { colors, deckTheme } from "@/theme/tokens";
 
 /**
- * The demo-day pitch deck — a ~2-minute accelerator pitch built around two
- * recorded product demos. Slides are minimal backdrops the presenter talks
- * over; the full spoken script lives in each slide's `<Notes>` (presenter
- * mode, `⌘⇧P` — a bare `p` does nothing), never on the slide itself. Route
- * name is public-facing (`/demo-v1`); internal ticket ids never appear here
- * or in the URL.
+ * The demo-day pitch deck — a ~2-minute accelerator pitch. Slides are backdrops
+ * the presenter talks over; the full spoken script lives in each slide's
+ * `<Notes>` (presenter mode, `⌘⇧P` — a bare `p` does nothing), never on the
+ * slide itself. The route name is public-facing (`/demo-v1`); internal ticket
+ * ids never appear here or in the URL.
  *
  * The copy follows `../../demo-v1-spec.md`, which is the source of truth for
- * it: one big sentence and one big visual per page, with the nuance kept off
- * the slides and in that doc's appendices. Edit the spec first, then the deck.
+ * it. Edit the spec first, then the deck.
  *
- * Eight pages: the gap, then the mainnet demo (it already works), then the
- * eCLOB (we're just getting started), then the honest threat and its answer,
- * how we grow, and the team. The two demo beats are **recorded videos**, cued
- * by the badge on those pages, so nothing depends on a live network.
+ * Rules from that spec that shape everything below:
+ *
+ * - **Static images only.** No video and no player: a product beat is an
+ *   interface screenshot carrying a claim. Nothing on stage depends on a
+ *   network, and every slide prints as a flat page for the accelerator's
+ *   combined Google Slides meta-deck.
+ * - **Solana is the start, never the ceiling**, and **DASMAC is the company
+ *   while Dropset is the protocol**.
+ *
+ * Ten pages, and pages 3–6 are one argument in sequence: the swap flow
+ * works today, we curate the data for every currency, most of them have no
+ * liquidity at all, and the eCLOB is what we're building to fix that. Then how
+ * we grow, the roadmap, why an open venue wins, and the team — which is last
+ * and stays up after the talk.
  */
 
 /**
@@ -53,10 +60,13 @@ const Wordmark = ({ width }: { width: number }) => (
 );
 
 /**
- * Persistent footer: wordmark on the left, the DASMAC credit in the middle
- * (mirroring the frontend's own footer), progress dots on the right. The
- * DASMAC mark is a transparent PNG, so unlike the Dropset one it needs no
- * blend to sit on the dark backdrop.
+ * Persistent footer: wordmark on the left, the DASMAC credit in the middle,
+ * progress dots on the right. The DASMAC mark is a transparent PNG, so unlike
+ * the Dropset one it needs no blend to sit on the dark backdrop.
+ *
+ * The credit reads **"Built by DASMAC"**, not "Courtesy of" — authorship, not a
+ * loan. It's also the smallest place the deck makes its company/protocol
+ * distinction, which pages 1 and 8 then make explicitly.
  */
 const template = () => (
   <FlexBox
@@ -68,16 +78,16 @@ const template = () => (
     zIndex={1}
   >
     <Box padding="0 1.25em">
-      <Wordmark width={150} />
+      <Wordmark width={210} />
     </Box>
     <FlexBox alignItems="center">
-      <Text color="quaternary" fontSize="16px" margin="0 10px 0 0">
-        Courtesy of
+      <Text color="quaternary" fontSize="22px" margin="0 14px 0 0">
+        Built by
       </Text>
-      <img src="/dasmac-wordmark.png" alt="DASMAC" width={78} />
+      <img src="/dasmac-wordmark.png" alt="DASMAC" width={110} />
     </FlexBox>
     <Box padding="0 1.25em">
-      <Progress color={colors.accent} size={8} />
+      <Progress color={colors.accent} size={11} />
     </Box>
   </FlexBox>
 );
@@ -86,80 +96,191 @@ const template = () => (
  * Every slide's content column. The bottom padding is the point: slide content
  * is centred in the full slide, and the footer sits on top of that same space,
  * so without it the lowest element on a busy page crowds the DASMAC credit.
+ *
+ * Between this and Spectacle's own 32px slide padding, a page has ~910 of the
+ * 1080 slide units to work in. Worth doing the arithmetic when adding to a
+ * page: content that overflows is merely scaled down on screen but **silently
+ * clipped in print**, which is the path to the meta-deck.
  */
 const SlideBody = ({ children }: { children: React.ReactNode }) => (
   <FlexBox
     height="100%"
     flexDirection="column"
     justifyContent="center"
-    padding="0 0 76px 0"
+    padding="0 0 106px 0"
   >
     {children}
   </FlexBox>
 );
 
-// Small monospace kicker that labels each content slide.
+/**
+ * Small monospace kicker that labels each content slide. Uppercase, letterspaced
+ * Space Mono — which is the exact treatment the DASMAC company banner uses for
+ * its own tag ("DISTRIBUTED ATOMIC STATE MACHINE ALGORITHMS CORPORATION"), so
+ * the deck's kickers and the brand art are visibly the same system. Sentence
+ * case stays with Inter, where it belongs.
+ */
 const Eyebrow = ({ children }: { children: React.ReactNode }) => (
   <Text
     color="secondary"
     fontFamily="monospace"
-    fontSize="22px"
-    margin="0 0 8px 0"
+    fontSize="26px"
+    margin="0 0 14px 0"
+    style={{ letterSpacing: "0.14em", textTransform: "uppercase" }}
   >
     {children}
   </Text>
 );
 
 /**
- * The one big sentence a page is built around — the only prose on a slide.
- * Sized down from the theme's `h1` so a full sentence still fits on one or two
- * lines, and width-capped so it wraps at a readable measure instead of
- * spanning the whole slide.
+ * The sentence a page is built around. Sized down from the theme's `h1` and
+ * width-capped so a whole sentence lands in one or two lines at a readable
+ * measure rather than spanning the slide.
+ *
+ * **No terminal period, on any page.** Sentence structure still applies — these
+ * are clauses with a subject and a verb, not fragment headlines — but at display
+ * size a full stop is a visible mark that earns nothing, because there is no
+ * following sentence for it to separate. Multi-sentence copy (venue captions,
+ * roadmap bodies, team bios) keeps its punctuation, since there the period is
+ * doing its actual job.
  */
 const Statement = ({
   children,
-  fontSize = "56px",
+  fontSize = "76px",
+  maxWidth = "1540px",
+  nowrap = false,
 }: {
   children: React.ReactNode;
   fontSize?: string;
+  maxWidth?: string;
+  nowrap?: boolean;
 }) => (
-  <Heading fontSize={fontSize} margin="0" maxWidth="1100px">
+  <Heading
+    fontSize={fontSize}
+    margin="0"
+    maxWidth={maxWidth}
+    // `nowrap` is the guarantee, where `maxWidth` is only an estimate. Text
+    // metrics are what kept breaking these pages: a heading judged to fit one
+    // line took two, the page grew by its own line-height, and the overflow
+    // clipped the eyebrow off the top. On a page with no height to spare, say
+    // "this cannot wrap" and let it be checked at render rather than guessed at
+    // authoring time.
+    style={nowrap ? { whiteSpace: "nowrap" } : undefined}
+  >
     {children}
   </Heading>
 );
 
 /**
- * The recordings behind the two demo beats, each with the pixel dimensions of
- * the upload it plays — both are near-square screen captures rather than either
- * standard shape, and the player is sized from these (see `DemoVideo`). Both
- * are 2160 across, so they should read 2160p in the quality menu on a screen
- * with the pixels to show it — a lower reading means either the player box
- * came out smaller than the source or the connection made YouTube step down.
+ * The three supporting facts on the gap page.
  *
- * Naming the network on the badge is deliberate — the mainnet demo is the real
- * venue, the localnet one is a market bootstrapped from empty, and conflating
- * the two would overstate what is live.
+ * `justifyContent` is the load-bearing prop here, and it must stay explicit:
+ * Spectacle's `FlexBox` **defaults to `center`**, which centred each row
+ * independently — so the short one-line fact sat visibly inset from the wrapped
+ * two-line ones, reading as a stray indent rather than a list.
+ *
+ * The marker is a chevron rather than a disc: a row of discs is what makes a
+ * slide read as a corporate template. It's the angular "greater-than" shape the
+ * review asked for, but deliberately *not* a literal `≥` — that glyph makes a
+ * numeric claim, and it would flatly contradict the third fact, which is a
+ * *less-than*.
  */
-const DEMOS = {
-  mainnet: { videoId: "RLpIncX5DkE", width: 2160, height: 2430 },
-  localnet: { videoId: "5FHACigAu_E", width: 2160, height: 2380 },
-} as const;
-
-// The badge is small on purpose: it labels the page, it isn't the page. Clicking
-// it plays the recording over the whole window (see `DemoVideo`). `margin` is a
-// prop because the badge sits under its visual on one page and beside it on
-// another, where a stacked top offset would be from the wrong layout.
-const DemoBadge = ({
-  network,
-  margin = "26px 0 0 0",
-}: {
-  network: keyof typeof DEMOS;
-  margin?: string;
-}) => (
-  <FlexBox margin={margin}>
-    <DemoVideo network={network} {...DEMOS[network]} />
+const Fact = ({ children }: { children: React.ReactNode }) => (
+  <FlexBox
+    alignItems="flex-start"
+    justifyContent="flex-start"
+    margin="0 0 26px 0"
+  >
+    <div
+      style={{
+        color: colors.accent,
+        flex: "0 0 auto",
+        fontFamily: deckTheme.fonts.monospace,
+        fontSize: "34px",
+        lineHeight: 1.25,
+        marginRight: "20px",
+      }}
+    >
+      ›
+    </div>
+    <div style={{ color: colors.foreground, fontSize: "34px", lineHeight: 1.25 }}>
+      {children}
+    </div>
   </FlexBox>
 );
+
+/**
+ * How much of the world's money actually trades on Solana, as a progress bar.
+ *
+ * A **meter**, not a pie of two slices: the data is a single ratio against a
+ * limit, and the empty part of the track is the whole message. The track is a
+ * darker step of the fill's own blue ramp (see `colors.meterTrack`) so the bar
+ * reads as one scale rather than two categories.
+ *
+ * It is labeled with the **percentage only**. An earlier version printed
+ * "14 on Solana / 162 in the world" at either end of the track, which simply
+ * restated the screenshot mounted directly beneath it — and that screenshot is
+ * the better place for the raw count, because it's our own page carrying the
+ * number, with the URL, so the figure is checkable rather than asserted.
+ */
+const LISTED_CURRENCIES = 14;
+const TOTAL_CURRENCIES = 162;
+const METER_WIDTH = 760;
+const LISTED_SHARE = (LISTED_CURRENCIES / TOTAL_CURRENCIES) * 100;
+
+const CurrencyMeter = () => (
+  // Inset to match the screenshot mounted under it: that capture sits inside a
+  // bordered, padded frame, so its image starts `SCREENSHOT_INSET` in from the
+  // frame's outer edge. Without the same inset the bar and the figure it cites
+  // are a padding-width out of true with each other.
+  <Box width={`${METER_WIDTH}px`} margin={`0 ${SCREENSHOT_INSET}px`}>
+    <FlexBox justifyContent="space-between" alignItems="flex-end">
+      <div style={{ color: colors.mutedFg, fontSize: "26px" }}>
+        Currencies available on Solana
+      </div>
+      <div
+        style={{
+          color: colors.accent,
+          fontFamily: deckTheme.fonts.monospace,
+          fontSize: "30px",
+        }}
+      >
+        {LISTED_SHARE.toFixed(1)}%
+      </div>
+    </FlexBox>
+    <div
+      style={{
+        backgroundColor: colors.meterTrack,
+        borderRadius: "16px",
+        height: "32px",
+        marginTop: "14px",
+        overflow: "hidden",
+        width: "100%",
+      }}
+    >
+      <div
+        style={{
+          backgroundColor: colors.accent,
+          // Rounded only on the free end: the filled end is anchored to the
+          // track's own start, and rounding both ends detaches it from the
+          // baseline it's measured from.
+          borderRadius: "0 16px 16px 0",
+          height: "100%",
+          width: `${LISTED_SHARE}%`,
+        }}
+      />
+    </div>
+  </Box>
+);
+
+/**
+ * A screenshot frame's chrome, named because anything stacked above or below a
+ * capture has to inset by the same amount to line up with the image rather than
+ * with the frame's outer edge — see `SCREENSHOT_INSET` and the gap page's meter.
+ */
+const SCREENSHOT_BORDER = 1;
+const SCREENSHOT_PAD_X = 18;
+const SCREENSHOT_INSET = SCREENSHOT_PAD_X + SCREENSHOT_BORDER;
 
 /**
  * Frames a screen capture so it reads as a window rather than floating art,
@@ -172,48 +293,162 @@ const Screenshot = ({
   alt,
   source,
   caption,
+  margin = "34px 0 0 0",
 }: {
   src: string;
   width: number;
   alt: string;
   source?: string;
   caption?: string;
+  margin?: string;
 }) => (
-  <Box margin="30px 0 0 0">
+  <Box margin={margin}>
     <Box
-      border={`1px solid ${colors.border}`}
-      borderRadius="10px"
-      padding="14px 18px"
+      border={`${SCREENSHOT_BORDER}px solid ${colors.border}`}
+      borderRadius="12px"
+      padding={`14px ${SCREENSHOT_PAD_X}px`}
       backgroundColor={colors.muted}
     >
-      <Image src={src} width={width} alt={alt} />
+      {/* `display: block` matters: Spectacle's `Image` is a bare styled `img`,
+          so it is inline by default and sits on a text baseline — which leaves
+          a few units of descender space under every capture and makes each
+          frame slightly taller than the image inside it. On pages fighting for
+          height that error compounds across three captures. */}
+      <Image src={src} width={width} alt={alt} style={{ display: "block" }} />
     </Box>
     {source ? (
-      <Link href={`https://${source}`} fontSize="20px" margin="8px 0 0 0">
+      <Link href={`https://${source}`} fontSize="24px" margin="10px 0 0 0">
         {source}
       </Link>
     ) : null}
+    {/* Space Mono at the same size the swap-flow labels use, so a capture's
+        label reads identically wherever it appears — the only difference is
+        that these sit under their image and the swap flow's sit above (that
+        page's captures climb in height, so above is what keeps its labels on a
+        shared baseline). */}
     {caption ? (
-      <Text color="quaternary" fontSize="20px" margin="8px 0 0 0">
+      <div
+        style={{
+          color: colors.mutedFg,
+          fontFamily: deckTheme.fonts.monospace,
+          fontSize: "28px",
+          lineHeight: 1.3,
+          marginTop: "12px",
+        }}
+      >
         {caption}
-      </Text>
+      </div>
     ) : null}
   </Box>
 );
 
+// The chevron between steps of the swap flow. Space Mono, matching the same
+// glyph used as the `Fact` marker — one mark, one face.
+const SequenceArrow = () => (
+  <Box margin="0 16px">
+    <div
+      style={{
+        color: colors.accent,
+        fontFamily: deckTheme.fonts.monospace,
+        fontSize: "44px",
+        lineHeight: 1,
+      }}
+    >
+      ›
+    </div>
+  </Box>
+);
+
 /**
- * A row of captioned logos — the one visual on the three pages that are about
- * other companies (the threats, the incumbents, the demand).
+ * Column width for a swap-flow step.
+ *
+ * This is the number that keeps page 3 inside its slide, so it is a named
+ * constant rather than repeated at three call sites. The third capture is very
+ * tall (820×1371), so it sets the row's height, and the row's height is most of
+ * the page: at 410 — with a two-line statement and the URL below the row — the
+ * page stacked to ~1008 units against the ~910 a slide has, and flex centring
+ * pushed the eyebrow off the top edge (cropped on screen, silently clipped in
+ * print).
+ *
+ * Widening it back to 420 is only safe because two other things now hold: the
+ * statement is pinned to one line by `nowrap` (the guarantee — `maxWidth` is
+ * only an estimate), and the URL moved into the middle column. Those are
+ * load-bearing — undo either and this has to come back down.
+ */
+const STEP_WIDTH = 420;
+
+/**
+ * Horizontal padding inside a step's frame. Named because the image width is
+ * `width - 2 * this` — with the number inlined at both sites, changing the
+ * padding overflowed the image out of its own frame with nothing to catch it.
+ */
+const STEP_FRAME_PAD = 14;
+
+/**
+ * A numbered step in the swap flow, caption **above** its capture.
+ *
+ * Above, not below, because the three captures are wildly different heights —
+ * a short picker crop, a taller search panel, and a very tall settled trade.
+ * Captions underneath landed on three different baselines and read as ragged;
+ * above, they align on one line and the images hang from it, which reads as
+ * deliberate.
+ */
+const Step = ({
+  step,
+  label,
+  src,
+  width,
+  alt,
+}: {
+  step: number;
+  label: string;
+  src: string;
+  width: number;
+  alt: string;
+}) => (
+  <Box width={`${width}px`}>
+    {/* Kept short enough to stay on one line at this size — the labels are
+        deliberately terse ("Open the picker", not "Open the currency picker")
+        so they can be read from the back of a room without wrapping and
+        costing the row height the captures need. */}
+    <div
+      style={{
+        color: colors.mutedFg,
+        fontFamily: deckTheme.fonts.monospace,
+        fontSize: "28px",
+        lineHeight: 1.3,
+        marginBottom: "16px",
+      }}
+    >
+      <span style={{ color: colors.accent }}>{step}. </span>
+      {label}
+    </div>
+    <Box
+      border={`1px solid ${colors.border}`}
+      borderRadius="12px"
+      padding={`12px ${STEP_FRAME_PAD}px`}
+      backgroundColor={colors.muted}
+    >
+      <Image
+        src={src}
+        width={width - 2 * STEP_FRAME_PAD}
+        alt={alt}
+        style={{ display: "block" }}
+      />
+    </Box>
+  </Box>
+);
+
+/**
+ * A row of captioned logos — the visual on the pages that are about other
+ * companies.
  *
  * The marks are each company's own, so they come in two shapes: square icons
- * and logotypes four times as wide as they are tall. Tiles are therefore
+ * and logotypes several times as wide as they are tall. Tiles are therefore
  * **height-matched with the width left free** — forcing every mark into one
  * square is what squashed the wide ones flat. Every source here is either
  * transparent or already dark-backed, so tiles carry no fill of their own and
  * the marks sit straight on the deck's black.
- *
- * Captions carry the name the presenter says, which isn't always what the mark
- * says — Arc is Circle's, so Circle's logo is what an audience recognizes.
  */
 type Logo = { name: string; src: string; note?: string };
 
@@ -225,8 +460,8 @@ type Logo = { name: string; src: string; note?: string };
  * editing the caption room here would silently stop the rule there from
  * matching its own pair of tiles.
  */
-const LOGO_CAPTION_ROOM = 56;
-const LOGO_GUTTER = 10;
+const LOGO_CAPTION_ROOM = 78;
+const LOGO_GUTTER = 14;
 
 const LogoRow = ({
   logos,
@@ -249,15 +484,11 @@ const LogoRow = ({
       <Box
         key={name}
         margin={`0 ${LOGO_GUTTER}px`}
-        width={`${width + LOGO_CAPTION_ROOM}px`}
+        width={`${width + (note ? LOGO_CAPTION_ROOM : 0)}px`}
       >
-        {/* Every tile in a row is the same box; the mark is contained inside
-            it rather than sized to it, so a wide logotype and a square icon
-            share a footprint without either being stretched.
-            Tile, caption and note all sit flush to the column's left edge —
-            centring the tile inside a column wider than itself, while the text
-            below started at the column edge, left the two visibly out of
-            line. */}
+        {/* Every tile in a row is the same box; the mark is contained inside it
+            rather than sized to it, so a wide logotype and a square icon share a
+            footprint without either being stretched. */}
         <div
           style={{
             alignItems: "center",
@@ -282,17 +513,23 @@ const LogoRow = ({
             }}
           />
         </div>
-        {/* Captions are plain elements, not `Text`: Spectacle's carries a
-            theme margin of its own that opens a gap between a name and its
-            note far larger than either margin asks for, and on the flywheel
-            that pushed the last line into the footer. */}
+        {/* Captions are plain elements, not `Text`: Spectacle's carries a theme
+            margin of its own that opens a gap between a name and its note far
+            larger than either margin asks for, and on the flywheel that pushed
+            the last line into the footer.
+
+            The **name always renders**; only the `note` is conditional. A mark
+            is not always legible as the company the presenter names — Arc's is
+            Circle's — so a logo with no name under it gets read as whoever the
+            mark belongs to, which on the open-venue page is the wrong company
+            entirely. Only the second line is optional. */}
         <div
           style={{
-            color: tint ?? colors.mutedFg,
+            color: colors.foreground,
             fontFamily: deckTheme.fonts.monospace,
-            fontSize: "20px",
+            fontSize: "22px",
             lineHeight: 1.2,
-            marginTop: "12px",
+            marginTop: "14px",
           }}
         >
           {name}
@@ -301,9 +538,9 @@ const LogoRow = ({
           <div
             style={{
               color: colors.mutedFg,
-              fontSize: "17px",
-              lineHeight: 1.2,
-              marginTop: "5px",
+              fontSize: "19px",
+              lineHeight: 1.25,
+              marginTop: "6px",
             }}
           >
             {note}
@@ -314,32 +551,13 @@ const LogoRow = ({
   </FlexBox>
 );
 
-// Page 5 — the chains that could decide FX is theirs, alphabetically, so the
-// row implies no ranking among them.
-const THREATS: Logo[] = [
-  { name: "Arc", src: "/remote/logo-circle.svg" },
-  { name: "Canton", src: "/remote/logo-canton.svg" },
-  { name: "Tempo", src: "/remote/logo-tempo.svg" },
-];
-
-// Page 6 — the existing Solana venues, whose attention is elsewhere.
-// Alphabetical, like the threats row, so neither implies a ranking. Sourced
-// from each project's own asset (Jupiter, Meteora, pump.fun) or the Solana
-// token list, so every mark is transparent and reads on black rather than in a
-// white box.
-const INCUMBENTS: Logo[] = [
-  { name: "Jupiter", src: "/remote/logo-jupiter.svg" },
-  { name: "Meteora", src: "/remote/logo-meteora.svg" },
-  { name: "Orca", src: "/remote/logo-orca.png" },
-  { name: "pump.fun", src: "/remote/logo-pump-fun.svg" },
-  { name: "Raydium", src: "/remote/logo-raydium.png" },
-];
-
 /**
- * Page 7 — the two ends of the flywheel. Issuers sit **upstream**: they mint
- * the currency and need it to trade. Payments companies sit **downstream**:
- * they consume the liquidity to settle real invoices. Naming both directions
- * is the point of the page — a venue needs each end to bootstrap.
+ * The two ends of the flywheel. Issuers sit **upstream**: they mint the
+ * currency and need it to trade. Payments companies sit **downstream**: they
+ * consume the liquidity to settle real invoices. Naming both directions is the
+ * point of the page — a venue needs each end to bootstrap, and these are all
+ * companies we've actually spoken with about sourcing liquidity, which is what
+ * makes the page customer development rather than a wish list.
  */
 const UPSTREAM: Logo[] = [
   { name: "AUDD Digital", src: "/remote/logo-audd.png", note: "AUDD issuer" },
@@ -352,19 +570,33 @@ const DOWNSTREAM: Logo[] = [
 ];
 
 /**
- * The flywheel, as its two ends (page 7): the issuers whose currency needs a
- * market, and the payments companies that need to buy FX. The curve behind
- * them is depth growing once both ends are connected — an inline SVG, so it
- * stays crisp at projector size with no asset pipeline.
+ * The permissioned rails, on the open-venue page. Alphabetical, so the row
+ * implies no ranking among them, and tinted with the sell color — these are
+ * the unfavorable case the page argues against.
+ *
+ * Captions carry the name the presenter says, which isn't always what the mark
+ * says: Arc is Circle's, so Circle's logo is what an audience recognizes.
  */
-// Square: every mark on this page is a pure icon, so `TILE` matches the tile's
-// own height (`LOGO_TILE_PADDING` + the 58px image cap passed below).
+const PERMISSIONED: Logo[] = [
+  { name: "Arc", src: "/remote/logo-circle.svg" },
+  { name: "Canton", src: "/remote/logo-canton.svg" },
+  { name: "Tempo", src: "/remote/logo-tempo.svg" },
+];
+
+// Square: every mark on the flywheel is a pure icon, so `TILE` matches the
+// tile's own height (its padding plus the image cap passed below).
 const FLYWHEEL_TILE = 104;
 // A group is two tile columns, so its heading rule spans exactly its own pair.
 // Derived from `LogoRow`'s constants rather than repeating their values.
+//
+// This adds `LOGO_CAPTION_ROOM` unconditionally, where `LogoRow` adds it only
+// to a column that carries a `note`. The two agree because every flywheel logo
+// has one — give an upstream or downstream entry no note and the heading rule
+// silently stops spanning its own pair, which is the misalignment that room
+// exists to prevent.
 const FLYWHEEL_GROUP =
   2 * (FLYWHEEL_TILE + LOGO_CAPTION_ROOM + 2 * LOGO_GUTTER);
-const FLYWHEEL_WIDTH = 2 * FLYWHEEL_GROUP + 60;
+const FLYWHEEL_WIDTH = 2 * FLYWHEEL_GROUP + 80;
 
 /**
  * One end of the flywheel: a heading with a rule under it, spanning both of
@@ -378,9 +610,11 @@ const FlywheelEnd = ({ label, logos }: { label: string; logos: Logo[] }) => (
       style={{
         color: colors.accent,
         fontFamily: deckTheme.fonts.monospace,
-        fontSize: "21px",
+        fontSize: "24px",
+        letterSpacing: "0.12em",
         lineHeight: 1.2,
         marginBottom: "10px",
+        textTransform: "uppercase",
       }}
     >
       {label}
@@ -392,41 +626,45 @@ const FlywheelEnd = ({ label, logos }: { label: string; logos: Logo[] }) => (
       logos={logos}
       width={FLYWHEEL_TILE}
       height={58}
-      margin="18px 0 0 0"
+      margin="20px 0 0 0"
     />
   </Box>
 );
 
+/**
+ * The flywheel, as its two ends. The curve behind them is depth growing once
+ * both ends are connected — an inline SVG, so it stays crisp at projector size
+ * with no asset pipeline.
+ *
+ * Getting this page to read took several tries, so don't undo it: four evenly
+ * spaced tiles look like one row of four, and a hairline between them doesn't
+ * change that. Heading-plus-rule is what brackets a pair without the weight of
+ * a filled panel. The curve has to be wide, too — a narrow one above a vertical
+ * divider read as a chart mounted on a stick, which is why there's no divider.
+ */
 const Flywheel = () => (
-  <Box margin="18px 0 0 0" width={`${FLYWHEEL_WIDTH}px`}>
-    {/* The curve is centred over both ends of the flywheel — it's the depth
-        that appears once the two are connected. Wide enough to carry the page
-        on its own: when it was narrow and a divider ran down from under it,
-        the pair read as a chart mounted on a stick. */}
-    <FlexBox justifyContent="center" margin="0 0 22px 0">
+  <Box margin="22px 0 0 0" width={`${FLYWHEEL_WIDTH}px`}>
+    <FlexBox justifyContent="center" margin="0 0 24px 0">
       <svg
-        width="660"
-        height="150"
-        viewBox="0 0 660 150"
+        width="860"
+        height="170"
+        viewBox="0 0 860 170"
         role="img"
         aria-label="Order-book depth growing over time"
       >
         <path
-          d="M0 143 C 210 139, 360 120, 470 77 C 560 41, 610 19, 660 5 L 660 150 L 0 150 Z"
+          d="M0 162 C 274 158, 469 136, 613 87 C 730 47, 795 21, 860 5 L 860 170 L 0 170 Z"
           fill={colors.accent}
           opacity="0.18"
         />
         <path
-          d="M0 143 C 210 139, 360 120, 470 77 C 560 41, 610 19, 660 5"
+          d="M0 162 C 274 158, 469 136, 613 87 C 730 47, 795 21, 860 5"
           fill="none"
           stroke={colors.accent}
-          strokeWidth="5"
+          strokeWidth="6"
         />
       </svg>
     </FlexBox>
-    {/* No divider between the ends: each heading's rule already brackets its
-        own pair, and the vertical line only survived as the stick the curve
-        appeared to stand on. */}
     <FlexBox justifyContent="space-between" alignItems="flex-start">
       <FlywheelEnd label="Upstream" logos={UPSTREAM} />
       <FlywheelEnd label="Downstream" logos={DOWNSTREAM} />
@@ -435,41 +673,213 @@ const Flywheel = () => (
 );
 
 /**
+ * The growth roadmap: three beats in time order along a rule, spanning the page.
+ *
+ * A **roadmap, not a list** — the distinction is the page. Three bullets read as
+ * three guesses about revenue; three beats on a timeline read as a deliberate
+ * path. The dot sits on the rule so the eye takes the order before it reads any
+ * of the copy.
+ */
+type Beat = { when: string; headline: string; body: string };
+
+const BEATS: Beat[] = [
+  {
+    when: "Now",
+    headline: "DASMAC bootstraps liquidity",
+    body: "DASMAC bootstraps nascent FX pairs by leading Hyperliquid-style vaults using the Dropset protocol.",
+  },
+  {
+    when: "Next",
+    headline: "Protocol fees accrue value",
+    body: "As markets mature, volume and fees compound, and currency pairs achieve deep liquidity.",
+  },
+  {
+    when: "Later",
+    headline: "Derivatives provide an expansion opportunity",
+    body: "Once spot is fully mature, hedging instruments and additional derivatives enable more efficient market making and more mature markets.",
+  },
+];
+
+/**
+ * Timeline geometry. The full content measure, so the roadmap spans the page
+ * rather than sitting as a narrow band in the middle of it.
+ *
+ * **Pitch is derived, and that is the point.** The dots used to be a flex row of
+ * three equal-width segments while the text below was `space-between` on a fixed
+ * column width — two different geometries, so they only agreed on the first
+ * column. The second dot sat 27 units left of its heading and the third 53,
+ * which read as sloppy rather than as a mistake. Both rows now come from the
+ * same pitch, so a dot cannot drift from the word beneath it: change
+ * `ROADMAP_COLUMN` and they move together.
+ *
+ * The derivation assumes **`BEATS.length * ROADMAP_COLUMN <= ROADMAP_WIDTH`**
+ * with at least two beats. A fourth beat at the current column width makes the
+ * gap negative — flex would shrink the columns to fit while the absolutely
+ * placed dots would not, silently reintroducing the very drift this replaced —
+ * so widen `ROADMAP_WIDTH` or narrow `ROADMAP_COLUMN` before adding one.
+ */
+const ROADMAP_WIDTH = 1780;
+const ROADMAP_COLUMN = 540;
+const ROADMAP_DOT = 18;
+const ROADMAP_GAP =
+  (ROADMAP_WIDTH - BEATS.length * ROADMAP_COLUMN) / (BEATS.length - 1);
+const ROADMAP_PITCH = ROADMAP_COLUMN + ROADMAP_GAP;
+
+const Roadmap = () => (
+  <Box margin="46px 0 0 0" width={`${ROADMAP_WIDTH}px`}>
+    {/* One unbroken rule with the dots absolutely placed on it, rather than a
+        rule segment per column: a per-column border restarts at every gap, and
+        the continuous line is what makes the three beats read as one sequence.
+        Absolute placement is also what pins each dot to its own column's left
+        edge. */}
+    <div style={{ height: `${ROADMAP_DOT}px`, position: "relative" }}>
+      {/* Runs centre-of-first-dot to centre-of-last, so it never overshoots
+          into empty space at either end. */}
+      <div
+        style={{
+          backgroundColor: colors.border,
+          height: "2px",
+          left: `${ROADMAP_DOT / 2}px`,
+          position: "absolute",
+          top: `${ROADMAP_DOT / 2 - 1}px`,
+          width: `${(BEATS.length - 1) * ROADMAP_PITCH}px`,
+        }}
+      />
+      {BEATS.map(({ when }, index) => (
+        <div
+          key={when}
+          style={{
+            backgroundColor: colors.accent,
+            borderRadius: "50%",
+            height: `${ROADMAP_DOT}px`,
+            left: `${index * ROADMAP_PITCH}px`,
+            position: "absolute",
+            top: 0,
+            width: `${ROADMAP_DOT}px`,
+          }}
+        />
+      ))}
+    </div>
+    <FlexBox justifyContent="space-between" alignItems="flex-start">
+      {BEATS.map(({ when, headline, body }) => (
+        <Box key={when} width={`${ROADMAP_COLUMN}px`} margin="26px 0 0 0">
+          <div
+            style={{
+              color: colors.accent,
+              fontFamily: deckTheme.fonts.monospace,
+              fontSize: "24px",
+              letterSpacing: "0.12em",
+              lineHeight: 1.2,
+              textTransform: "uppercase",
+            }}
+          >
+            {when}
+          </div>
+          <div
+            style={{
+              color: colors.foreground,
+              fontSize: "34px",
+              lineHeight: 1.25,
+              marginTop: "14px",
+            }}
+          >
+            {headline}
+          </div>
+          <div
+            style={{
+              color: colors.mutedFg,
+              fontSize: "24px",
+              lineHeight: 1.4,
+              marginTop: "14px",
+            }}
+          >
+            {body}
+          </div>
+        </Box>
+      ))}
+    </FlexBox>
+  </Box>
+);
+
+/**
+ * One side of the open-venue comparison: a bordered panel with a caption under
+ * it. The border color is the whole argument — the permissioned side is tinted
+ * with the sell red, the Dropset side with the buy green — so the page reads
+ * before any of its copy does.
+ */
+const VenuePanel = ({
+  tint,
+  caption,
+  children,
+}: {
+  tint: string;
+  caption: React.ReactNode;
+  children: React.ReactNode;
+}) => (
+  <Box width="700px" margin="0 26px">
+    <FlexBox
+      alignItems="center"
+      justifyContent="center"
+      border={`2px solid ${tint}`}
+      borderRadius="16px"
+      height="210px"
+    >
+      {children}
+    </FlexBox>
+    <div
+      style={{
+        color: colors.foreground,
+        fontSize: "27px",
+        lineHeight: 1.35,
+        marginTop: "20px",
+      }}
+    >
+      {caption}
+    </div>
+  </Box>
+);
+
+/**
  * Team headshots, mirrored from the marketing site at build time, captioned.
  * Left square and unframed — the sources are already square, and both photos
  * are shot on a dark background that reads as part of the slide.
+ *
+ * The last page stays on screen after the talk ends, so it can carry more than
+ * a line each — but the bios state **what each person has done** and stop there.
+ * An earlier draft argued why each role mattered, which read as defending the
+ * team rather than describing it.
  */
 const Portrait = ({
   src,
   name,
   role,
-  focus,
   prior,
+  bio,
 }: {
   src: string;
   name: string;
   role: string;
-  focus: string;
   prior: string;
+  bio: string;
 }) => (
-  <Box margin="0 32px">
-    <Image src={src} width={140} height={140} alt={name} />
-    <Text fontSize="26px" margin="14px 0 0 0">
+  <Box margin="0 40px" width="620px">
+    <Image src={src} width={180} height={180} alt={name} />
+    <Text fontSize="38px" margin="18px 0 0 0">
       {name}
     </Text>
-    <Text fontSize="21px" margin="4px 0 0 0">
+    <Text fontSize="28px" margin="6px 0 0 0">
       {role}
-    </Text>
-    <Text color="quaternary" fontSize="19px" margin="2px 0 0 0">
-      {focus}
     </Text>
     <Text
       color="secondary"
       fontFamily="monospace"
-      fontSize="18px"
-      margin="6px 0 0 0"
+      fontSize="23px"
+      margin="8px 0 0 0"
     >
       {prior}
+    </Text>
+    <Text color="quaternary" fontSize="26px" margin="16px 0 0 0">
+      {bio}
     </Text>
   </Box>
 );
@@ -480,14 +890,29 @@ export default function DemoDeck() {
       {/* 1 — Title */}
       <Slide>
         <SlideBody>
-          <Box margin="0 0 44px 0">
-            <Wordmark width={700} />
+          <Box margin="0 0 40px 0">
+            <Wordmark width={860} />
           </Box>
-          <Statement fontSize="72px">Forex on Solana.</Statement>
+          <Statement fontSize="88px">Where currency trades onchain</Statement>
+          {/* "Built by DASMAC" is on-slide as well as in the footer: the title
+              is where the company/protocol distinction has to land first, and
+              the footer credit is too small to carry it alone. */}
+          <Text color="quaternary" fontSize="40px" margin="22px 0 0 0">
+            Built by DASMAC
+          </Text>
+          {/* The company banner, uncaptioned. It's brand art, not a figure —
+              a caption explaining what a banner is would undercut it. */}
+          <Box margin="52px 0 0 0">
+            <img
+              src="/dasmac-banner-wide.png"
+              alt="DASMAC — Distributed Atomic State Machine Algorithms Corporation"
+              width={980}
+              style={{ borderRadius: "10px", display: "block" }}
+            />
+          </Box>
         </SlideBody>
         <Notes>
-          Dropset is onchain Forex on Solana — providing open and efficient
-          exchange of the world’s currencies at scale.
+          Dropset is where currency trades onchain, built by DASMAC.
         </Notes>
       </Slide>
 
@@ -495,138 +920,228 @@ export default function DemoDeck() {
       <Slide>
         <SlideBody>
           <Eyebrow>The gap</Eyebrow>
-          <Statement>
-            The biggest market on earth barely exists onchain.
+          <Statement fontSize="72px">
+            Foreign exchange is the biggest market on earth
           </Statement>
+          <FlexBox
+            margin="44px 0 0 0"
+            alignItems="flex-start"
+            justifyContent="flex-start"
+          >
+            <Box width="800px" margin="0 60px 0 0">
+              <Fact>Daily volumes exceed $9 trillion</Fact>
+              <Fact>Banks and OTC desks fragment liquidity</Fact>
+              <Fact>
+                Less than 10% of the world’s currencies are available on Solana
+              </Fact>
+            </Box>
+            <Box>
+              <CurrencyMeter />
+              <Screenshot
+                src="/screens/currencies-listed.png"
+                width={METER_WIDTH}
+                alt="14 of 162 currencies represented on Solana; 148 not yet listed"
+                source="dropset.io/currencies"
+                margin="30px 0 0 0"
+              />
+            </Box>
+          </FlexBox>
+        </SlideBody>
+        <Notes>
+          Foreign exchange is the biggest market on earth — over nine trillion
+          dollars a day. But it only trades 24/5, banks and over-the-counter
+          desks fragment its liquidity, and less than ten percent of
+          the world’s currencies are even available on Solana today: fourteen out
+          of a hundred and sixty-two, and that count is live on our own site,
+          which is where this is from. Every currency should be connectable to
+          every other one, and that’s what we’re building. To be precise: we
+          don’t issue currencies — issuers create them, and Dropset is where they
+          trade.
+        </Notes>
+      </Slide>
+
+      {/* 3 — Live today */}
+      <Slide>
+        <SlideBody>
+          <Eyebrow>Live today</Eyebrow>
+          {/* One line, enforced rather than estimated. It is the cheapest 72
+              units on the page and the captures need every one — see
+              `STEP_WIDTH`. */}
+          <Statement fontSize="60px" nowrap>
+            Dropset already processes Solana mainnet FX trades
+          </Statement>
+          {/* The swap flow left to right, one step per column — the beat that
+              used to be the mainnet recording. The three captures are very
+              different heights, and centring them vertically is what makes that
+              read: each caption sits directly above its own capture, so the
+              labels climb like steps as the captures grow taller. The chevrons
+              inherit the same centring, landing on the row's axis rather than
+              pinned to the top of the tallest column. */}
+          <FlexBox margin="36px 0 0 0" justifyContent="center" alignItems="center">
+            <Step
+              step={1}
+              label="Open the picker"
+              src="/screens/swap-picker.png"
+              width={STEP_WIDTH}
+              alt="The swap panel's To field, choosing the currency to receive"
+            />
+            <SequenceArrow />
+            {/* The URL rides under the middle step rather than under the whole
+                row. The third capture is by far the tallest, so a link below the
+                row sat almost on the footer — and it cost the page 64 units of
+                height it did not have. In the space the shorter middle column
+                leaves, it costs nothing and lands under the flow's centre. */}
+            <Box>
+              <Step
+                step={2}
+                label="Select your currency"
+                src="/screens/swap-search.png"
+                width={STEP_WIDTH}
+                alt="Searching for a currency and its available stablecoins"
+              />
+              <FlexBox margin="30px 0 0 0">
+                <Link href="https://dropset.io/swap" fontSize="28px">
+                  dropset.io/swap
+                </Link>
+              </FlexBox>
+            </Box>
+            <SequenceArrow />
+            <Step
+              step={3}
+              label="Swap atomically"
+              src="/screens/swap-settled.png"
+              width={STEP_WIDTH}
+              alt="A priced USDC to EURC swap, with the route drawn on the globe"
+            />
+          </FlexBox>
+        </SlideBody>
+        <Notes>
+          This already works. Dropset already processes Solana mainnet FX
+          trades: you open the picker, select your currency, and the swap settles
+          atomically. The ramps are near instant and the venue never
+          closes. Solana is the start, not the end — it’s the most
+          moneyness-conducive environment onchain. And it’s on dropset.io/swap
+          right now, so you can go and do this yourself. [Today we clear by
+          routing through aggregators and sourcing existing liquidity; don’t
+          claim “most liquid”.]
+        </Notes>
+      </Slide>
+
+      {/* 4 — Currency curation. A continuation of "live today". */}
+      <Slide>
+        <SlideBody>
+          <Eyebrow>Currency curation</Eyebrow>
+          <Statement fontSize="56px" nowrap>
+            Dropset curates market data for all Solana-based currencies
+          </Statement>
+          {/* One capture, as large as the page allows. An earlier version put
+              three tables on this page and none of them could be read. 1100 is
+              the cap, not a preference: at 1150 this page sat ~36 units off
+              overflowing, which is inside the error bar on text metrics. */}
           <Screenshot
-            src="/screens/currencies-listed.png"
-            width={720}
-            alt="14 of 162 currencies represented on Solana; 148 not yet listed"
-            source="dropset.io/currencies"
+            src="/screens/currencies-by-liquidity.png"
+            width={1100}
+            alt="Every currency on Solana sorted by on-chain liquidity, deepest first, with price, 24h volume, market cap and holders"
+            margin="30px 0 0 0"
           />
         </SlideBody>
         <Notes>
-          Foreign exchange is over nine trillion dollars a day, and it trades
-          24/5 — but onchain it has no liquid home. Only about fourteen of the
-          world’s currencies are represented on Solana today, with the euro
-          driving most of the volume — that count is live on
-          dropset.io/currencies, where this is from. Settle FX through Solana
-          and you get atomic settlement and near-instant on- and off-ramps.
+          And alongside the swap itself, Dropset curates the market data for
+          every Solana-based currency: price, twenty-four-hour change and volume,
+          market
+          cap, liquidity, holders — grouped by country, or sorted however you
+          want. This is sorted by liquidity, deepest first.
         </Notes>
       </Slide>
 
-      {/* 3 — The mainnet demo */}
+      {/* 5 — The illiquid tail. The problem the eCLOB answers. */}
       <Slide>
         <SlideBody>
-          <Eyebrow>Live on mainnet</Eyebrow>
-          <Statement>But Dropset is changing this.</Statement>
-          {/* Badge beside the capture rather than under it: this page's visual
-              is tall, so a badge below it lands on the footer. */}
-          <FlexBox alignItems="center" justifyContent="center">
-            <Screenshot
-              src="/screens/mainnet-globe.png"
-              width={400}
-              alt="The Dropset globe, currencies pinned to the countries that issue them"
-            />
-            <Box margin="0 0 0 44px">
-              <DemoBadge network="mainnet" margin="0" />
-            </Box>
-          </FlexBox>
+          <Eyebrow>The long tail</Eyebrow>
+          <Statement fontSize="64px" nowrap>
+            Many currencies have no liquidity whatsoever
+          </Statement>
+          <Screenshot
+            src="/screens/currencies-illiquid.png"
+            width={1400}
+            alt="The tail of the same table: the Australian and Canadian dollars, the yen, the naira, the lira and more, all with no price, volume or liquidity at all"
+            margin="34px 0 0 0"
+          />
         </SlideBody>
         <Notes>
-          But Dropset is changing that, and it already works: it’s live on
-          mainnet today, clearing real trades by routing FX through aggregators
-          — pick the currency you want on the globe and the swap settles. [Play
-          the mainnet demo video.]
+          Scroll to the bottom of that same list and the story tells itself. The
+          Australian dollar, the Canadian dollar, the yen, the naira, the lira —
+          all sitting there with no price, no volume, and no liquidity at all.
+          These are real currencies with real economies behind them, and onchain
+          they have no market whatsoever.
         </Notes>
       </Slide>
 
-      {/* 4 — The eCLOB */}
+      {/* 6 — The eCLOB */}
       <Slide>
         <SlideBody>
-          <Eyebrow>The eCLOB · quotes in double-digit CU</Eyebrow>
-          <Statement fontSize="44px">
-            Institutional-grade atomic settlement: order book transparency,
-            propAMM efficiency.
+          <Eyebrow>The eCLOB</Eyebrow>
+          {/* One sentence, not a statement plus a supporting line: the eyebrow
+              above already names the eCLOB, so the sentence goes straight to
+              what it ships. "CLOB", not "order-book" — the acronym, since the
+              page has already named the thing. The compute-unit numbers live on
+              the capture that shows them rather than being restated here. */}
+          {/* Pinned to one line by `nowrap`, not by a width estimate. Every
+              earlier attempt at this heading wrapped further than intended, and
+              the page's own overflow then clipped this slide's eyebrow off the
+              top — three review rounds running. Short copy plus `nowrap` ends
+              that: the browser now enforces what the budget assumes. */}
+          <Statement fontSize="56px" nowrap>
+            Dropset ships propAMM efficiency and CLOB transparency
           </Statement>
-          {/* Top-aligned, not centre-aligned: the two captures are very
-              different heights, and centring them left the short one floating
-              beside the middle of the tall one with both captions adrift. The
-              badge sits at the foot of the right column, which is the free
-              space that column's shorter capture leaves. */}
-          <FlexBox alignItems="flex-start" justifyContent="center">
-            <Box margin="0 20px 0 0">
-              <Screenshot
-                src="/screens/maker-tui.png"
-                width={330}
-                alt="The maker control panel: seven FX markets and a live EURC book"
-                caption="Market maker TUI"
-              />
-            </Box>
-            <Box margin="0 0 0 20px">
+          {/* Three captures side by side rather than two stacked in a column:
+              that is what gives this page its headroom, and it still reads
+              left to right as cost → maker → product without needing chevrons
+              to say so. Vertically centred, so the captures share a midline
+              despite being very different heights. */}
+          <FlexBox margin="36px 0 0 0" justifyContent="center" alignItems="center">
+            <Box margin="0 20px">
               <Screenshot
                 src="/screens/compute-units.png"
-                width={330}
+                width={500}
                 alt="Compute units per instruction: a reprice costs 47, a reshape 59"
                 caption="Reprice: 47 CU · reshape: 59 CU"
+                margin="0"
               />
-              <DemoBadge network="localnet" />
+            </Box>
+            <Box margin="0 20px">
+              <Screenshot
+                src="/screens/maker-tui.png"
+                width={500}
+                alt="The maker control panel: seven FX markets and a live book"
+                caption="Demo maker quoting locally"
+                margin="0"
+              />
+            </Box>
+            <Box margin="0 20px">
+              <Screenshot
+                src="/screens/eclob-frontend.png"
+                width={500}
+                alt="The eCLOB on the frontend: a EURC/USDC order book, a live trades tape, and a priced swap"
+                caption="Liquidity routes to the frontend"
+                margin="0"
+              />
             </Box>
           </FlexBox>
         </SlideBody>
         <Notes>
-          The routing works today, but the markets that don’t exist yet need a
-          venue — so we built one. The eCLOB gives you the liquidity guarantees
-          of a central limit order book with quote updates as cheap as a
-          propAMM: a maker repricing the whole book costs forty-seven compute
-          units, and reshaping the ladder fifty-nine — both double digits, on a
-          chain that gives you two hundred thousand per instruction. That’s what
-          lets us bootstrap a brand-new market and onboard makers fast. [Play the
-          localnet demo video: the book starts empty, the maker bots come on,
-          and real depth fills in within seconds — then a trade fills against
-          it.]
-        </Notes>
-      </Slide>
-
-      {/* 5 — Why this will fail */}
-      <Slide>
-        <SlideBody>
-          <Eyebrow>Permissioned distribution</Eyebrow>
-          {/* The asterisk is the joke: it promises a footnote the audience
-              doesn't get until the next page's title answers it. */}
-          <Statement>Why Dropset will fail*</Statement>
-          <LogoRow logos={THREATS} width={210} height={46} tint={colors.sell} />
-        </SlideBody>
-        <Notes>
-          The honest risk: everyone wants onchain settlement, and the ones with
-          distribution are permissioning it. Arc and Tempo are building
-          payment-and-settlement rails, and Canton is doing regulated onchain
-          markets. Any of them could decide FX is theirs, and each arrives with
-          the customers already on it.
-        </Notes>
-      </Slide>
-
-      {/* 6 — Why it will work */}
-      <Slide>
-        <SlideBody>
-          <Eyebrow>*Why Dropset won’t actually fail</Eyebrow>
-          <Statement fontSize="48px">
-            Dropset liquidity is public, and existing Solana DEXes face
-            an innovator’s dilemma (SOL, memes).
-          </Statement>
-          {/* Square tiles: these are all pure icons. The threats row above
-              keeps wide ones, since those marks are logotypes. */}
-          <LogoRow logos={INCUMBENTS} width={110} height={64} />
-        </SlideBody>
-        <Notes>
-          Their liquidity isn’t public: it sits inside private or permissioned
-          rails, where you can’t make a market unless they let you. Dropset’s
-          is. And the existing Solana DEXes — Jupiter, Meteora, Orca, pump.fun,
-          Raydium — are chasing SOL and memes, because that’s where the volume
-          is today. It’s a classic innovator’s dilemma: FX is too small to move
-          them and big enough for us. Dropset is the open, neutral, composable
-          venue — anyone can quote, anyone can trade, any app can integrate —
-          and we’re beating everyone to it.
+          So we’re building the exchange those markets need. Making a market
+          onchain used to be prohibitively expensive — gas made continuous
+          quoting impossible, so everything before this was a band-aid. We’ve
+          built order books before, so we built one that fits: the eCLOB gives
+          you the transparency of a central limit order book with quote updates
+          as cheap as a propAMM. Repricing the whole book costs forty-seven
+          compute units and reshaping the ladder fifty-nine, on a chain that
+          gives you two hundred thousand per instruction. Left to right: that’s
+          what a quote costs, that’s our own maker paying it to quote a live
+          market, and that’s the same liquidity arriving on the frontend with the
+          book, the trades tape and a priced swap. We’re building this out so
+          anyone can quote onchain with a vault-style approach.
         </Notes>
       </Slide>
 
@@ -634,53 +1149,141 @@ export default function DemoDeck() {
       <Slide>
         <SlideBody>
           <Eyebrow>How we grow</Eyebrow>
-          <Statement fontSize="52px">
-            Vaults bootstrap a public FX liquidity flywheel.
+          <Statement fontSize="68px">
+            FX vaults bootstrap a public liquidity flywheel
           </Statement>
           <Flywheel />
         </SlideBody>
         <Notes>
           We seed the markets ourselves the way Hyperliquid did — our vaults
-          bootstrap each book, and anyone can top them off with inventory, so
-          the flywheel is public rather than ours alone. It has two ends, and
-          we’re talking to partners at both. Upstream, issuers like AUDD
-          Digital, and Loon, who issues CADC: they mint a currency and need it
-          to actually trade. Downstream, the demand — Colosseum partners like
-          Altitude in banking and CargoBill in supply chain, who need to buy FX
-          onchain to settle. Connect the two ends and the depth compounds.
+          bootstrap each book, and anyone can top them off, so the flywheel is
+          public rather than ours alone. The wedge is that long tail of
+          currencies: spreads are wide there, and an issuer arriving with no
+          depth of their own needs a day-one liquidity partner. And it’s a
+          two-sided market we’re already doing the customer development on.
+          Upstream are the stablecoin issuers — AUDD Digital, and Loon, who
+          issues CADC — who mint a currency and need it to trade. Downstream is
+          the demand: Altitude in banking, CargoBill in supply chain, who need to
+          buy FX to settle. Connect the two ends and the depth compounds.
         </Notes>
       </Slide>
 
-      {/* 8 — Team & close */}
+      {/* 8 — Growth roadmap */}
       <Slide>
         <SlideBody>
-          <Eyebrow>Team</Eyebrow>
-          <Statement>Built by people who’ve built exchanges.</Statement>
-          <FlexBox margin="40px 0 0 0" justifyContent="center">
+          <Eyebrow>Growth roadmap</Eyebrow>
+          <Statement fontSize="68px">
+            Our path to expansion is deliberate and methodical
+          </Statement>
+          <Roadmap />
+        </SlideBody>
+        <Notes>
+          Now, DASMAC bootstraps the liquidity: we lead Hyperliquid-style vaults
+          on nascent FX pairs, using the Dropset protocol — DASMAC the company,
+          Dropset the protocol. Next, protocol fees accrue value: as markets
+          mature, volume and fees compound, and the currency pairs achieve deep
+          liquidity. Later, derivatives provide an expansion
+          opportunity: once spot is fully mature, hedging instruments and
+          additional derivatives enable more efficient market making and more
+          mature markets.
+        </Notes>
+      </Slide>
+
+      {/* 9 — Why the open venue wins */}
+      <Slide>
+        <SlideBody>
+          <Eyebrow>Why the open venue wins</Eyebrow>
+          <Statement fontSize="64px">
+            Permissioned onchain liquidity has an adoption ceiling
+          </Statement>
+          {/* `alignItems` must stay explicit. Spectacle's `FlexBox` defaults to
+              `center`, which vertically centred each panel *including its
+              caption* — so the panel with the longer caption was the taller
+              column, and its badge rode up relative to the other one. Aligning
+              to the top puts both badges on the same line, which is what makes
+              the pair read as a comparison. */}
+          <FlexBox
+            margin="46px 0 0 0"
+            justifyContent="center"
+            alignItems="flex-start"
+          >
+            <VenuePanel
+              tint={colors.sell}
+              caption="Permissioned solutions are blocking composability. Competitive dynamics prevent fintech companies from adopting a competitor’s private ledger."
+            >
+              <LogoRow
+                logos={PERMISSIONED}
+                width={180}
+                height={40}
+                tint={colors.sell}
+                margin="0"
+              />
+            </VenuePanel>
+            <VenuePanel
+              tint={colors.buy}
+              caption="Dropset is open and composable on Solana, the most money-like onchain environment, where ease of transmission and composability are maximized. Public liquidity is what blockchains were built for."
+            >
+              <Wordmark width={420} />
+            </VenuePanel>
+          </FlexBox>
+        </SlideBody>
+        <Notes>
+          Permissioned onchain liquidity has an adoption ceiling. Arc and Tempo
+          are building payment-and-settlement rails, and Canton is doing
+          regulated onchain markets — any of them could decide FX is theirs, and
+          each arrives with the customers already on it. But their liquidity
+          isn’t public: you can’t make a market unless they let you, and that
+          blocks composability for everyone downstream. And competitive dynamics
+          stop it before it starts: a fintech isn’t going to settle on a
+          competitor’s private ledger. A bank that competes with Circle won’t
+          build on Arc, and a multi-signature banking product isn’t going to run
+          on Canton. Dropset is open, neutral and composable: anyone can quote,
+          anyone can trade, any app can integrate. Public liquidity is what
+          blockchains were built for — moving money is the problem they were
+          supposed to solve, and this is that.
+          And that’s why we started on Solana: the most money-like onchain
+          environment there is, where ease of transmission and composability are
+          both maximized.
+        </Notes>
+      </Slide>
+
+      {/* 10 — Team & close. The last page, and it stays up. */}
+      <Slide>
+        <SlideBody>
+          <Eyebrow>The team</Eyebrow>
+          <Statement fontSize="64px">
+            Dropset is built by people who have built exchanges
+          </Statement>
+          <FlexBox
+            margin="46px 0 0 0"
+            justifyContent="center"
+            alignItems="flex-start"
+          >
             <Portrait
               src="/remote/team-alex.png"
               name="Alex Kahn"
               role="Founder, DASMAC"
-              focus="Product · exchange design"
               prior="prev. Cofounder, Econia Labs"
+              bio="Authored two exchanges on Aptos, including the Econia order book ($500M lifetime volume). Authored the Solana Opcode Guide, the definitive resource for optimizing Solana program efficiency."
             />
             <Portrait
               src="/remote/team-judy.png"
               name="Judy Sosa"
               role="Operations, DASMAC"
-              focus="Stablecoin rails · onramps · accounting"
-              prior="prev. Dragonfly Capital Partners"
+              prior="prev. EA, Dragonfly Capital"
+              bio="Owns the whole operational stack, working with banks, stablecoin providers, onramps and service providers."
             />
           </FlexBox>
         </SlideBody>
         <Notes>
-          I’ve built two onchain exchanges already, including an order book — I
-          authored Econia on Aptos, which cleared around five hundred million in
-          volume, and wrote the Solana Opcode Guide, the playbook for squeezing
-          performance out of Solana programs. Judy came with me from Econia
-          Labs, and was at Dragonfly before that; she owns operations end-to-end
-          — banking, the stablecoin providers, onramps, and accounting. Dropset
-          — Forex on Solana.
+          Dropset is built by people who have built exchanges. I authored two on
+          Aptos, including the Econia order book, five hundred million dollars of
+          lifetime volume, and I authored the Solana Opcode Guide, the definitive
+          resource for optimizing Solana program efficiency — which is what makes
+          quoting on the eCLOB cost double-digit compute units. Judy owns the
+          whole operational stack, and works directly with banks, stablecoin
+          providers, onramps and service providers. Dropset — where currency
+          trades onchain. [Leave this page up.]
         </Notes>
       </Slide>
     </Deck>
