@@ -355,9 +355,10 @@ fn sdk_simulate_swap_rejects_out_of_range_vault_next() {
 
 #[test]
 fn sdk_simulate_swap_with_taker_fee() {
-    // A non-zero taker fee is retained on the output leg. The SDK reads it
-    // from the market header and must net it out exactly as the engine does
-    // (the realized base delta is already net of the retained fee).
+    // A non-zero taker fee is charged on the output leg. The SDK reads the
+    // rate from the market header and must net it out exactly as the engine
+    // does — the taker's realized base delta is already net of the fee
+    // (which accrues to the market, not to the matched vault).
     let mut f = Fixture::seeded(10_000_000, 10_000_000);
     let admin = f.authority.insecure_clone();
     f.set_taker_fee(&admin, 1_000).expect("set taker fee"); // 0.1%

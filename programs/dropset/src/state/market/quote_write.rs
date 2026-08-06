@@ -80,8 +80,8 @@ pub(super) const RP_STAMP_OFF: usize = offset_of!(ReferencePrice, stamp);
 // mis-stamping. Kept as concrete literals (not just the derivations
 // above) so a change to either side is caught.
 const _: () = assert!(NONCE_OFF == 8);
-const _: () = assert!(LEN_OFF == 243);
-const _: () = assert!(ITEMS_OFF == 248);
+const _: () = assert!(LEN_OFF == 259);
+const _: () = assert!(ITEMS_OFF == 264);
 // Authoritative pin: `Slab::space_for(0)` *is* the slab's `ITEMS_OFFSET`,
 // so this guarantees the kernels' sector base can never drift from the
 // real on-chain layout (a header-size or `Vault`-alignment change breaks

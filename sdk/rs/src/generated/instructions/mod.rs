@@ -31,6 +31,7 @@ pub(crate) mod r#set_reference_price;
 pub(crate) mod r#set_registry_defaults;
 pub(crate) mod r#set_taker_fee;
 pub(crate) mod r#swap;
+pub(crate) mod r#sweep_residual;
 pub(crate) mod r#withdraw;
 pub(crate) mod r#withdraw_leader;
 
@@ -60,5 +61,6 @@ pub use self::r#set_reference_price::*;
 pub use self::r#set_registry_defaults::*;
 pub use self::r#set_taker_fee::*;
 pub use self::r#swap::*;
+pub use self::r#sweep_residual::*;
 pub use self::r#withdraw::*;
 pub use self::r#withdraw_leader::*;

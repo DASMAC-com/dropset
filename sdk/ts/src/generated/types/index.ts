@@ -19,4 +19,5 @@ export * from './setMarketFeeConfigEvent';
 export * from './setMinLeaderShareEvent';
 export * from './setRegistryDefaultsEvent';
 export * from './setTakerFeeEvent';
+export * from './sweepResidualEvent';
 export * from './withdrawEvent';

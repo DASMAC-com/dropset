@@ -72,6 +72,18 @@ pub struct MarketHeader {
         serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
     )]
     pub quote_treasury: Pubkey,
+    /// Protocol revenue accrued in `base_treasury`: the running sum of
+    /// every taker fee charged on a base output leg (a taker `Buy`).
+    /// These atoms sit physically in the treasury but belong to the
+    /// protocol, not to the vaults' depositors — the treasury custody
+    /// invariant is
+    /// `base_treasury.amount == Σ vault.base_atoms + accrued_base_fee_atoms`.
+    /// Authoritative: nothing infers protocol revenue from a residual, so
+    /// a treasury balance above the sum of the two is a bug alarm rather
+    /// than income (see `sweep_residual`).
+    pub accrued_base_fee_atoms: u64,
+    /// Same as `accrued_base_fee_atoms`, for the quote leg (a taker `Sell`).
+    pub accrued_quote_fee_atoms: u64,
     /// Market PDA bump.
     pub bump: u8,
 }
@@ -79,7 +91,7 @@ pub struct MarketHeader {
 pub const MARKET_HEADER_DISCRIMINATOR: [u8; 8] = [56, 105, 191, 242, 226, 243, 198, 164];
 
 impl MarketHeader {
-    pub const LEN: usize = 243;
+    pub const LEN: usize = 259;
 
     #[inline(always)]
     pub fn from_bytes(data: &[u8]) -> Result<Self, std::io::Error> {

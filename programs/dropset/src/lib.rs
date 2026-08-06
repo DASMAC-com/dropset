@@ -441,6 +441,21 @@ pub mod dropset {
     ) -> Result<()> {
         ctx.accounts.set_quote_authority(vault_idx, new_authority)
     }
+
+    // ── Treasury residual sweep ──────────────────────────────────────
+    // Admin-only, always on (not teardown-gated: an unsolicited transfer
+    // into a treasury can strand atoms on a live market, and the sweep is
+    // also the on-chain read-out of the custody invariant). Appended after
+    // the leader levers so discriminants 0–27 keep their numbers. See the
+    // architecture spec, § Fee model → Residual sweep.
+
+    #[discrim = 28]
+    #[access_control(require_registry_admin(&ctx.accounts.registry, &ctx.accounts.admin))]
+    pub fn sweep_residual(ctx: &mut Context<SweepResidual>) -> Result<()> {
+        let event = ctx.accounts.sweep_residual()?;
+        emit_cpi!(event);
+        Ok(())
+    }
 }
 
 // Under `asm-entrypoint` the crate's `no-entrypoint` feature stops the

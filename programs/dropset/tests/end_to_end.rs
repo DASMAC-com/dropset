@@ -2,8 +2,12 @@
 //! shared [`Fixture`]. After each mutating step we assert the spec's
 //! two key invariants:
 //!
-//! 1. Treasury matches the sum of vault inventory:
-//!    `base_treasury.amount == Σ vault.base_atoms` (and quote).
+//! 1. Treasury custody:
+//!    `base_treasury.amount == Σ vault.base_atoms + accrued_base_fee_atoms`
+//!    (and quote). Neither pipeline here takes a fill, so the accrued
+//!    protocol-fee term is zero throughout and the assertions below read
+//!    as the plain `treasury == Σ vault` form — `swap.rs` covers the
+//!    accruing case.
 //! 2. Share invariant I6:
 //!    `total_shares == leader_shares + Σ VaultDepositor.shares`.
 //!

@@ -60,7 +60,7 @@ gaps are bytemuck alignment padding and carry no data):
 | `fill_price`                             | the level's absolute `Price` this leg filled at                                                                 |
 | `base_atoms_after` / `quote_atoms_after` | the vault's inventory after this leg                                                                            |
 | `nonce_after`                            | `market.nonce` after this leg's per-leg bump (price-time priority / dedupe ordering)                            |
-| `taker_fee_atoms`                        | protocol taker fee charged on this leg, retained in the output asset                                            |
+| `taker_fee_atoms`                        | protocol taker fee charged on this leg, in the output asset — accrued to the market, not to the vault           |
 
 ### Take-level aggregation — derived, not emitted
 
@@ -156,9 +156,10 @@ Dropset is an **order-book venue**, not a constant-product pool:
   displayed price.
 - **`reserve_in_usd` = the sum of matchable level sizes**, **not**
   `base_treasury.amount` / `quote_treasury.amount` (those custody pooled
-  inventory across active **and tombstoned** vaults — total custody, not
-  matchable liquidity; see **architecture.md → MarketHeader**). Its USD figure
-  depends on the conditional price feed (§5, price feed).
+  inventory across active **and tombstoned** vaults, **plus** the market's
+  accrued protocol fee — total custody, not matchable liquidity and not
+  even all depositor-owned; see **architecture.md → MarketHeader**). Its USD
+  figure depends on the conditional price feed (§5, price feed).
 - **Fee taxonomy:** only `taker_fee_rate` maps to a vendor "swap fee" field;
   the one-time `vault_open_fee` and the leader `perf_fee` are protocol-revenue /
   leader-economics, **not** per-trade fees.

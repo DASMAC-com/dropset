@@ -70,6 +70,20 @@ quoteMint: Address;
 baseTreasury: Address; 
 /** Same as `base_treasury`, for the quote leg. */
 quoteTreasury: Address; 
+/**
+ * Protocol revenue accrued in `base_treasury`: the running sum of
+ * every taker fee charged on a base output leg (a taker `Buy`).
+ * These atoms sit physically in the treasury but belong to the
+ * protocol, not to the vaults' depositors — the treasury custody
+ * invariant is
+ * `base_treasury.amount == Σ vault.base_atoms + accrued_base_fee_atoms`.
+ * Authoritative: nothing infers protocol revenue from a residual, so
+ * a treasury balance above the sum of the two is a bug alarm rather
+ * than income (see `sweep_residual`).
+ */
+accruedBaseFeeAtoms: bigint; 
+/** Same as `accrued_base_fee_atoms`, for the quote leg (a taker `Sell`). */
+accruedQuoteFeeAtoms: bigint; 
 /** Market PDA bump. */
 bump: number;  };
 
@@ -130,17 +144,31 @@ quoteMint: Address;
 baseTreasury: Address; 
 /** Same as `base_treasury`, for the quote leg. */
 quoteTreasury: Address; 
+/**
+ * Protocol revenue accrued in `base_treasury`: the running sum of
+ * every taker fee charged on a base output leg (a taker `Buy`).
+ * These atoms sit physically in the treasury but belong to the
+ * protocol, not to the vaults' depositors — the treasury custody
+ * invariant is
+ * `base_treasury.amount == Σ vault.base_atoms + accrued_base_fee_atoms`.
+ * Authoritative: nothing infers protocol revenue from a residual, so
+ * a treasury balance above the sum of the two is a bug alarm rather
+ * than income (see `sweep_residual`).
+ */
+accruedBaseFeeAtoms: number | bigint; 
+/** Same as `accrued_base_fee_atoms`, for the quote leg (a taker `Sell`). */
+accruedQuoteFeeAtoms: number | bigint; 
 /** Market PDA bump. */
 bump: number;  };
 
 /** Gets the encoder for {@link MarketHeaderArgs} account data. */
 export function getMarketHeaderEncoder(): FixedSizeEncoder<MarketHeaderArgs> {
-    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['nonce', getU64Encoder()], ['head', getU32Encoder()], ['tombstoneHead', getU32Encoder()], ['freeHead', getU32Encoder()], ['activeCount', getU32Encoder()], ['outstandingVaultDepositors', getU32Encoder()], ['feeConfig', getFeeConfigEncoder()], ['takerFee', getU16Encoder()], ['defaultMinLeaderShare', getU32Encoder()], ['baseMint', getAddressEncoder()], ['quoteMint', getAddressEncoder()], ['baseTreasury', getAddressEncoder()], ['quoteTreasury', getAddressEncoder()], ['bump', getU8Encoder()]]), (value) => ({ ...value, discriminator: MARKET_HEADER_DISCRIMINATOR }));
+    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['nonce', getU64Encoder()], ['head', getU32Encoder()], ['tombstoneHead', getU32Encoder()], ['freeHead', getU32Encoder()], ['activeCount', getU32Encoder()], ['outstandingVaultDepositors', getU32Encoder()], ['feeConfig', getFeeConfigEncoder()], ['takerFee', getU16Encoder()], ['defaultMinLeaderShare', getU32Encoder()], ['baseMint', getAddressEncoder()], ['quoteMint', getAddressEncoder()], ['baseTreasury', getAddressEncoder()], ['quoteTreasury', getAddressEncoder()], ['accruedBaseFeeAtoms', getU64Encoder()], ['accruedQuoteFeeAtoms', getU64Encoder()], ['bump', getU8Encoder()]]), (value) => ({ ...value, discriminator: MARKET_HEADER_DISCRIMINATOR }));
 }
 
 /** Gets the decoder for {@link MarketHeader} account data. */
 export function getMarketHeaderDecoder(): FixedSizeDecoder<MarketHeader> {
-    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['nonce', getU64Decoder()], ['head', getU32Decoder()], ['tombstoneHead', getU32Decoder()], ['freeHead', getU32Decoder()], ['activeCount', getU32Decoder()], ['outstandingVaultDepositors', getU32Decoder()], ['feeConfig', getFeeConfigDecoder()], ['takerFee', getU16Decoder()], ['defaultMinLeaderShare', getU32Decoder()], ['baseMint', getAddressDecoder()], ['quoteMint', getAddressDecoder()], ['baseTreasury', getAddressDecoder()], ['quoteTreasury', getAddressDecoder()], ['bump', getU8Decoder()]]);
+    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['nonce', getU64Decoder()], ['head', getU32Decoder()], ['tombstoneHead', getU32Decoder()], ['freeHead', getU32Decoder()], ['activeCount', getU32Decoder()], ['outstandingVaultDepositors', getU32Decoder()], ['feeConfig', getFeeConfigDecoder()], ['takerFee', getU16Decoder()], ['defaultMinLeaderShare', getU32Decoder()], ['baseMint', getAddressDecoder()], ['quoteMint', getAddressDecoder()], ['baseTreasury', getAddressDecoder()], ['quoteTreasury', getAddressDecoder()], ['accruedBaseFeeAtoms', getU64Decoder()], ['accruedQuoteFeeAtoms', getU64Decoder()], ['bump', getU8Decoder()]]);
 }
 
 /** Gets the codec for {@link MarketHeader} account data. */
@@ -193,5 +221,5 @@ export async function fetchAllMaybeMarketHeader(
 }
 
 export function getMarketHeaderSize(): number {
-  return 243;
+  return 259;
 }

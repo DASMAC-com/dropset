@@ -94,6 +94,35 @@ pub struct SetTakerFeeEvent {
     pub taker_fee: u16,
 }
 
+/// Emitted by `sweep_residual` on every call — including the healthy
+/// `swept == 0` case, so the instruction doubles as an on-chain read-out
+/// of the treasury custody invariant's three terms. A non-zero `swept` is
+/// either a recovered unsolicited transfer or the alarm that
+/// `treasury.amount == vault_sum + accrued_fee` has drifted; a
+/// `treasury_amount` *below* `vault_sum + accrued_fee` is the
+/// transfer-fee-mint shortfall (nothing is swept). See the spec's
+/// **Fee model → Residual sweep**.
+#[event]
+pub struct SweepResidualEvent {
+    pub market: Address,
+    /// Leg swept — one of the market's two mints.
+    pub mint: Address,
+    /// Token account the residual was paid to. Recorded because it is the
+    /// one account the caller chooses freely — every other account on the
+    /// instruction is pinned by a constraint — so it is the one term of
+    /// the read-out an account diff can't attribute on its own.
+    pub destination: Address,
+    /// `treasury.amount` read before the transfer.
+    pub treasury_amount: u64,
+    /// `Σ vault.<leg>_atoms` over every sector in the slab.
+    pub vault_sum: u64,
+    /// The leg's accrued counter — subtracted, never touched.
+    pub accrued_fee: u64,
+    /// Atoms transferred out: `treasury_amount − vault_sum − accrued_fee`,
+    /// saturating at zero.
+    pub swept: u64,
+}
+
 /// Emitted by `set_registry_defaults` when an admin retunes the
 /// registry-wide defaults stamped onto *future* markets. Carries the
 /// resulting values of every default the instruction can touch — not

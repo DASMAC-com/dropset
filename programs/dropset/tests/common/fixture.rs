@@ -42,7 +42,8 @@ use dropset::{
         SetOutsideDepositsApproved as SetOutsideDepositsApprovedIx,
         SetQuoteAuthority as SetQuoteAuthorityIx, SetReferencePrice as SetReferencePriceIx,
         SetRegistryDefaults as SetRegistryDefaultsIx, SetTakerFee as SetTakerFeeIx, Swap as SwapIx,
-        Withdraw as WithdrawIx, WithdrawLeader as WithdrawLeaderIx,
+        SweepResidual as SweepResidualIx, Withdraw as WithdrawIx,
+        WithdrawLeader as WithdrawLeaderIx,
     },
     Level, LiquidityProfile, MarketHeader, Price, RegistryHeader, Vault, VaultDepositorHeader,
     N_LEVELS,
@@ -876,6 +877,58 @@ impl Fixture {
             ],
         );
         send_ixn_meta(&mut self.svm, admin, ix)
+    }
+
+    /// `sweep_residual` — admin sweeps one leg's treasury residual
+    /// (`treasury.amount − Σ vault.<leg>_atoms − accrued_<leg>_fee_atoms`) into
+    /// `destination`. `mint` selects the leg; `treasury` is that leg's
+    /// treasury ATA.
+    pub fn sweep_residual(
+        &mut self,
+        admin: &Keypair,
+        mint: &Pubkey,
+        treasury: &Pubkey,
+        destination: &Pubkey,
+    ) -> Result<(), String> {
+        self.sweep_residual_meta(admin, mint, treasury, destination)
+            .map(|_| ())
+    }
+
+    /// Like [`Self::sweep_residual`] but yields the transaction metadata so
+    /// a test can decode the emitted `SweepResidualEvent` — the read-out of
+    /// the custody invariant's three terms.
+    pub fn sweep_residual_meta(
+        &mut self,
+        admin: &Keypair,
+        mint: &Pubkey,
+        treasury: &Pubkey,
+        destination: &Pubkey,
+    ) -> Result<TransactionMetadata, String> {
+        let ix = Instruction::new_with_bytes(
+            PROGRAM_ID,
+            &SweepResidualIx {}.data(),
+            vec![
+                AccountMeta::new_readonly(admin.pubkey(), true),
+                AccountMeta::new_readonly(self.registry, false),
+                AccountMeta::new_readonly(self.market, false),
+                AccountMeta::new_readonly(*mint, false),
+                AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
+                AccountMeta::new(*treasury, false),
+                AccountMeta::new(*destination, false),
+                AccountMeta::new_readonly(event_authority(), false),
+                AccountMeta::new_readonly(PROGRAM_ID, false),
+            ],
+        );
+        send_ixn_meta(&mut self.svm, admin, ix)
+    }
+
+    /// Mint `amount` of `mint` straight into `ata`, bypassing every
+    /// instruction. Against a treasury ATA this is the unsolicited transfer
+    /// nothing on chain accounts for — the residual `sweep_residual`
+    /// recovers.
+    pub fn donate(&mut self, mint: &Pubkey, ata: &Pubkey, amount: u64) {
+        let authority = self.authority.insecure_clone();
+        mint_to(&mut self.svm, &authority, mint, ata, amount);
     }
 
     /// `set_registry_defaults` — admin retunes the registry-wide scalar

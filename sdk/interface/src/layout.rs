@@ -164,6 +164,13 @@ pub struct MarketHeader {
     pub quote_mint: [u8; 32],
     pub base_treasury: [u8; 32],
     pub quote_treasury: [u8; 32],
+    /// Taker fee accrued in `base_treasury` as protocol revenue. Part of
+    /// the treasury custody invariant
+    /// `base_treasury.amount == Σ vault.base_atoms + accrued_base_fee_atoms`, so
+    /// it is *not* depositor inventory.
+    pub accrued_base_fee_atoms: LeU64,
+    /// Same as `accrued_base_fee_atoms`, for the quote leg.
+    pub accrued_quote_fee_atoms: LeU64,
     pub bump: u8,
 }
 
@@ -195,7 +202,7 @@ pub struct Vault {
 // the program layout (without regenerating against a fresh IDL + updating
 // this mirror) breaks the SDK build here rather than silently
 // misdecoding the slab.
-const _: () = assert!(core::mem::size_of::<MarketHeader>() == 235);
+const _: () = assert!(core::mem::size_of::<MarketHeader>() == 251);
 const _: () = assert!(core::mem::size_of::<Vault>() == 560);
 // Sectors stay aligned across the slab: stride must be a multiple of the
 // on-chain Vault alignment (see VAULT_ALIGN / MarketView::load).
