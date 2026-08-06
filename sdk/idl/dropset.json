@@ -1947,7 +1947,7 @@
     {
       "name": "set_max_platform_fee",
       "discriminator": [
-        28
+        29
       ],
       "accounts": [
         {

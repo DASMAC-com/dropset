@@ -1797,6 +1797,44 @@ impl Fixture {
         Some(u64::from_le_bytes(acct.data[64..72].try_into().unwrap()))
     }
 
+    /// Assert the treasury custody invariant on **both** legs:
+    /// `treasury.amount == Σ vault.<leg>_atoms + accrued_<leg>_fee_atoms`.
+    ///
+    /// The accrued term is what makes this worth a helper rather than two
+    /// inline `assert_eq!`s. A test that checks only
+    /// `treasury == Σ vault` passes on a market with no taker fee and fails
+    /// the moment one is set — the difference being exactly the protocol
+    /// revenue sitting in the treasury — which reads as a bug in whatever
+    /// the test was actually exercising.
+    ///
+    /// Sums every sector in the slab, active and tombstoned alike, since
+    /// custody spans both.
+    pub fn assert_treasury_invariant(&self) {
+        let acct = self.svm.get_account(&self.market).expect("market");
+        let header = bytemuck::pod_read_unaligned::<MarketHeader>(
+            &acct.data[8..8 + core::mem::size_of::<MarketHeader>()],
+        );
+        // The slab's `u32` length sits immediately after the header.
+        let len_at = 8 + core::mem::size_of::<MarketHeader>();
+        let sectors = u32::from_le_bytes(acct.data[len_at..len_at + 4].try_into().unwrap());
+        let (mut base_sum, mut quote_sum) = (0u64, 0u64);
+        for i in 0..sectors {
+            let v = self.vault(i);
+            base_sum += v.base_atoms.get();
+            quote_sum += v.quote_atoms.get();
+        }
+        assert_eq!(
+            self.token_balance(&self.base_treasury),
+            base_sum + header.accrued_base_fee_atoms.get(),
+            "base treasury != Σ vault.base_atoms + accrued_base_fee_atoms"
+        );
+        assert_eq!(
+            self.token_balance(&self.quote_treasury),
+            quote_sum + header.accrued_quote_fee_atoms.get(),
+            "quote treasury != Σ vault.quote_atoms + accrued_quote_fee_atoms"
+        );
+    }
+
     /// `registry.market_count` — the live-market witness `close_registry`
     /// gates on.
     pub fn registry_market_count(&self) -> u32 {

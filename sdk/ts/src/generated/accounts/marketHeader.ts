@@ -55,6 +55,17 @@ feeConfig: FeeConfig;
 /** Taker fee rate, capped at ~6.55% (`Ppm16` max). */
 takerFee: number; 
 /**
+ * Ceiling on the caller-declared platform fee, in **bps** (`Bps16`) —
+ * note the different denominator from `taker_fee` above. Seeded from
+ * `Registry.default_max_platform_fee` at creation, then admin-retunable
+ * via `SetMaxPlatformFee`.
+ *
+ * A `u16` reaches past `BPS`, so unlike `taker_fee` the type is not the
+ * bound: every write path range-checks `<= BPS` so a market can never
+ * hold a ceiling above 100% of the taker's output.
+ */
+maxPlatformFee: number; 
+/**
  * Default min-leader-share for vaults opened on this market.
  * Stamped from `Registry.default_min_leader_share` at creation.
  */
@@ -129,6 +140,17 @@ feeConfig: FeeConfigArgs;
 /** Taker fee rate, capped at ~6.55% (`Ppm16` max). */
 takerFee: number; 
 /**
+ * Ceiling on the caller-declared platform fee, in **bps** (`Bps16`) —
+ * note the different denominator from `taker_fee` above. Seeded from
+ * `Registry.default_max_platform_fee` at creation, then admin-retunable
+ * via `SetMaxPlatformFee`.
+ *
+ * A `u16` reaches past `BPS`, so unlike `taker_fee` the type is not the
+ * bound: every write path range-checks `<= BPS` so a market can never
+ * hold a ceiling above 100% of the taker's output.
+ */
+maxPlatformFee: number; 
+/**
  * Default min-leader-share for vaults opened on this market.
  * Stamped from `Registry.default_min_leader_share` at creation.
  */
@@ -163,12 +185,12 @@ bump: number;  };
 
 /** Gets the encoder for {@link MarketHeaderArgs} account data. */
 export function getMarketHeaderEncoder(): FixedSizeEncoder<MarketHeaderArgs> {
-    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['nonce', getU64Encoder()], ['head', getU32Encoder()], ['tombstoneHead', getU32Encoder()], ['freeHead', getU32Encoder()], ['activeCount', getU32Encoder()], ['outstandingVaultDepositors', getU32Encoder()], ['feeConfig', getFeeConfigEncoder()], ['takerFee', getU16Encoder()], ['defaultMinLeaderShare', getU32Encoder()], ['baseMint', getAddressEncoder()], ['quoteMint', getAddressEncoder()], ['baseTreasury', getAddressEncoder()], ['quoteTreasury', getAddressEncoder()], ['accruedBaseFeeAtoms', getU64Encoder()], ['accruedQuoteFeeAtoms', getU64Encoder()], ['bump', getU8Encoder()]]), (value) => ({ ...value, discriminator: MARKET_HEADER_DISCRIMINATOR }));
+    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['nonce', getU64Encoder()], ['head', getU32Encoder()], ['tombstoneHead', getU32Encoder()], ['freeHead', getU32Encoder()], ['activeCount', getU32Encoder()], ['outstandingVaultDepositors', getU32Encoder()], ['feeConfig', getFeeConfigEncoder()], ['takerFee', getU16Encoder()], ['maxPlatformFee', getU16Encoder()], ['defaultMinLeaderShare', getU32Encoder()], ['baseMint', getAddressEncoder()], ['quoteMint', getAddressEncoder()], ['baseTreasury', getAddressEncoder()], ['quoteTreasury', getAddressEncoder()], ['accruedBaseFeeAtoms', getU64Encoder()], ['accruedQuoteFeeAtoms', getU64Encoder()], ['bump', getU8Encoder()]]), (value) => ({ ...value, discriminator: MARKET_HEADER_DISCRIMINATOR }));
 }
 
 /** Gets the decoder for {@link MarketHeader} account data. */
 export function getMarketHeaderDecoder(): FixedSizeDecoder<MarketHeader> {
-    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['nonce', getU64Decoder()], ['head', getU32Decoder()], ['tombstoneHead', getU32Decoder()], ['freeHead', getU32Decoder()], ['activeCount', getU32Decoder()], ['outstandingVaultDepositors', getU32Decoder()], ['feeConfig', getFeeConfigDecoder()], ['takerFee', getU16Decoder()], ['defaultMinLeaderShare', getU32Decoder()], ['baseMint', getAddressDecoder()], ['quoteMint', getAddressDecoder()], ['baseTreasury', getAddressDecoder()], ['quoteTreasury', getAddressDecoder()], ['accruedBaseFeeAtoms', getU64Decoder()], ['accruedQuoteFeeAtoms', getU64Decoder()], ['bump', getU8Decoder()]]);
+    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['nonce', getU64Decoder()], ['head', getU32Decoder()], ['tombstoneHead', getU32Decoder()], ['freeHead', getU32Decoder()], ['activeCount', getU32Decoder()], ['outstandingVaultDepositors', getU32Decoder()], ['feeConfig', getFeeConfigDecoder()], ['takerFee', getU16Decoder()], ['maxPlatformFee', getU16Decoder()], ['defaultMinLeaderShare', getU32Decoder()], ['baseMint', getAddressDecoder()], ['quoteMint', getAddressDecoder()], ['baseTreasury', getAddressDecoder()], ['quoteTreasury', getAddressDecoder()], ['accruedBaseFeeAtoms', getU64Decoder()], ['accruedQuoteFeeAtoms', getU64Decoder()], ['bump', getU8Decoder()]]);
 }
 
 /** Gets the codec for {@link MarketHeader} account data. */
@@ -221,5 +243,5 @@ export async function fetchAllMaybeMarketHeader(
 }
 
 export function getMarketHeaderSize(): number {
-  return 259;
+  return 261;
 }

@@ -328,7 +328,11 @@ fn takeable_depth_atoms(
     limit_price: Price,
     slot: u32,
 ) -> u64 {
-    simulate_swap(view, side, u64::MAX, limit_price, slot).in_amount
+    // No platform fee, matching the take this depth measurement sizes. The
+    // fee comes off the *output* leg and never changes `in_amount`, so it
+    // could not move this number either way — passing 0 keeps the probe and
+    // the swap it sizes on identical terms rather than relying on that.
+    simulate_swap(view, side, u64::MAX, limit_price, slot, 0).in_amount
 }
 
 /// The input-atom ceiling for one take: `fraction` of the book's

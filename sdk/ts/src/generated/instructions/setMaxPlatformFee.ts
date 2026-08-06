@@ -11,7 +11,7 @@ import { findEventAuthorityPda, findRegistryPda } from '../pdas';
 import { DROPSET_PROGRAM_ADDRESS } from '../programs';
 import { getAccountMetaFactory, type ResolvedAccount } from '../shared';
 
-export const SET_MAX_PLATFORM_FEE_DISCRIMINATOR = new Uint8Array([28]);
+export const SET_MAX_PLATFORM_FEE_DISCRIMINATOR = new Uint8Array([29]);
 
 export function getSetMaxPlatformFeeDiscriminatorBytes() { return fixEncoderSize(getBytesEncoder(), 1).encode(SET_MAX_PLATFORM_FEE_DISCRIMINATOR); }
 

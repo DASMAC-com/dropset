@@ -8,7 +8,7 @@
 use borsh::BorshDeserialize;
 use borsh::BorshSerialize;
 
-pub const SET_MAX_PLATFORM_FEE_DISCRIMINATOR: [u8; 1] = [28];
+pub const SET_MAX_PLATFORM_FEE_DISCRIMINATOR: [u8; 1] = [29];
 
 /// Accounts.
 #[derive(Debug)]
@@ -81,7 +81,7 @@ pub struct SetMaxPlatformFeeInstructionData {
 impl SetMaxPlatformFeeInstructionData {
     pub fn new() -> Self {
         Self {
-            discriminator: [28],
+            discriminator: [29],
         }
     }
 

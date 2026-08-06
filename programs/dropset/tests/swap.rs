@@ -970,13 +970,10 @@ fn platform_fee_pays_the_integrator_and_creates_their_ata() {
     assert_eq!(ev.platform_fee_bps, CEILING_BPS);
 
     // The fee split the payout; it did not conjure atoms. Everything that
-    // left the treasury went to either the taker or the integrator.
-    let v = f.vault(0);
-    assert_eq!(
-        f.token_balance(&f.base_treasury),
-        v.base_atoms.get(),
-        "treasury == Σ vault still holds — the fee moved no vault state"
-    );
+    // left the treasury went to either the taker or the integrator, so the
+    // custody invariant still ties out — the fee moved no vault state and
+    // accrued nothing of its own.
+    f.assert_treasury_invariant();
 }
 
 #[test]
@@ -1008,9 +1005,9 @@ fn platform_fee_splits_the_payout_without_touching_the_vault() {
         .expect("swap");
 
         let v = f.vault(0);
-        // Treasury invariant, per arm.
-        assert_eq!(f.token_balance(&f.base_treasury), v.base_atoms.get());
-        assert_eq!(f.token_balance(&f.quote_treasury), v.quote_atoms.get());
+        // Custody invariant, per arm. This arm carries a live taker fee, so
+        // the accrued term is non-zero and the two-term form would fail here.
+        f.assert_treasury_invariant();
         (
             f.token_balance(&f.base_ata(&taker.pubkey())),
             f.maybe_token_balance(&fee_ata).unwrap_or(0),
@@ -1085,9 +1082,7 @@ fn platform_fee_on_a_sell_pays_in_the_quote_mint() {
     );
     assert_eq!(ev.atoms, fee_paid);
 
-    let v = f.vault(0);
-    assert_eq!(f.token_balance(&f.quote_treasury), v.quote_atoms.get());
-    assert_eq!(f.token_balance(&f.base_treasury), v.base_atoms.get());
+    f.assert_treasury_invariant();
 }
 
 #[test]
@@ -1315,9 +1310,7 @@ fn platform_fee_reuses_an_existing_integrator_ata() {
         "the second fee accumulated into the existing ATA"
     );
 
-    let v = f.vault(0);
-    assert_eq!(f.token_balance(&f.base_treasury), v.base_atoms.get());
-    assert_eq!(f.token_balance(&f.quote_treasury), v.quote_atoms.get());
+    f.assert_treasury_invariant();
 }
 
 #[test]
