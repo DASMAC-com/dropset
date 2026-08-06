@@ -1,9 +1,9 @@
 // Tiny hand-rolled validators for the external response shapes we trust the
 // least: DFlow /order, Jupiter /tokens/v2/search, and Solana RPC's jsonParsed
-// token-account payload. These boundaries
-// previously cast directly to a hand-typed shape and then BigInt-coerced
-// fields without checking — a malformed body would surface to the UI as a
-// generic "Network error" with no diagnostic.
+// token-account payload. These boundaries previously cast directly to a
+// hand-typed shape and then BigInt-coerced fields without checking — a
+// malformed body would surface to the UI as a generic "Network error" with no
+// diagnostic.
 
 export const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null;

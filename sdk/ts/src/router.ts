@@ -51,6 +51,7 @@ import {
   type EclobRouteInput,
   platformFeeBpsFor,
   resolveEclobRoute,
+  type SlotRpc,
 } from './route';
 import { initSimulator, simulateSwap } from './simulate';
 
@@ -144,14 +145,6 @@ export class NoRouteError extends Error {
 }
 
 /**
- * Minimal `getSlot` shape — the current slot scopes flush-level expiry. Kept
- * argument-less for structural compatibility with any kit RPC; a caller that
- * needs a specific commitment should read the slot itself and pass
- * `currentSlot`.
- */
-type SlotRpc = { getSlot: (...args: never[]) => { send: () => Promise<bigint> } };
-
-/**
  * The eCLOB leg: either a route already resolved by the caller (skipping
  * discovery — worth doing when quoting on a timer) or the mint pair to
  * resolve one from.
@@ -178,8 +171,17 @@ export type AggregatorLeg = Omit<
   platformFee?: ResolvedPlatformFee | UnresolvedPlatformFee | null;
 };
 
-/** A fee config plus the on-chain mint whose fee ATA must be checked. */
-export type UnresolvedPlatformFee = PlatformFeeConfig & { mint: Address };
+/**
+ * A fee config plus the on-chain mint whose fee ATA must be checked. Supply
+ * `tokenProgram` when the caller already knows it — otherwise the router reads
+ * the mint account to find it, which on a quote timer is a wasted round-trip
+ * per tick. Better still, resolve the fee once and pass a
+ * {@link ResolvedPlatformFee}.
+ */
+export type UnresolvedPlatformFee = PlatformFeeConfig & {
+  mint: Address;
+  tokenProgram?: Address;
+};
 
 const isResolvedFee = (
   fee: ResolvedPlatformFee | UnresolvedPlatformFee,
@@ -335,6 +337,7 @@ async function aggregatorCandidate(
           : await resolvePlatformFee(rpc, {
               fee: configured,
               mint: configured.mint,
+              tokenProgram: configured.tokenProgram,
             });
 
     const q = await fetchDflowQuote({ ...leg, amount, platformFee, signal });
@@ -345,18 +348,27 @@ async function aggregatorCandidate(
         reason: 'aggregator returned no output',
       };
     }
-    return {
-      status: 'quoted',
-      quote: {
-        venue: 'dflow',
-        inAmount: q.inAmount,
-        outAmount: q.outAmount,
-        priceImpactPct: q.priceImpactPct,
-        slippageBps: q.slippageBps,
-        platformFee: q.platformFee,
-      },
-      reason: null,
+    const quote: AggregatorQuote = {
+      venue: 'dflow',
+      inAmount: q.inAmount,
+      outAmount: q.outAmount,
+      priceImpactPct: q.priceImpactPct,
+      slippageBps: q.slippageBps,
+      platformFee: q.platformFee,
     };
+    if (q.inAmount !== amount) {
+      // The same rule the eCLOB leg is held to: a quote that doesn't spend the
+      // whole input is a different trade, so its output isn't comparable. DFlow
+      // documents `inAmount` as the *maximum* input, and echoes the requested
+      // amount in practice — so this is a guard on the contract, not a case we
+      // expect. Reported, but it does not compete.
+      return {
+        status: 'partial',
+        quote,
+        reason: 'aggregator would not spend the whole amount',
+      };
+    }
+    return { status: 'quoted', quote, reason: null };
   } catch (e) {
     if (e instanceof DOMException && e.name === 'AbortError') throw e;
     return { status: 'failed', quote: null, reason: errorMessage(e), cause: e };
