@@ -182,9 +182,13 @@ pages:
   units against the ~910 a slide has — and because slide content is
   flex-centred, the overflow split top and bottom and **cropped the
   eyebrow off the top edge**. Three things brought it back: a shorter
-  statement that fits one line, a 380-unit step width, and moving the URL
-  into the middle column so it stops adding to the page's height. If this
-  page grows again, that is the order to give ground in.
+  statement that fits one line, a narrower step width, and moving the URL
+  into the middle column so it stops adding to the page's height. Those
+  first two later relaxed once the heading was pinned with `nowrap` rather
+  than estimated — the step width sits at 420 today — but if this page
+  grows again, that is the order to give ground in. The live numbers are in
+  `DemoDeck.tsx`'s `STEP_WIDTH`; don't restate them here, where they go
+  stale.
 
 #### Page 4 — Currency curation · ~10s
 
@@ -648,9 +652,9 @@ same breath. The steelman versions and the replies live in the appendix.
 1. **One big image per page.** Name the image in the "visual" field. A
    page may show several captures of *the same thing* (the swap flow, the
    maker and the frontend it feeds) — that is still one image in the
-   sense that matters, because it's one idea. It does **not** permit
-   put three unrelated tables on a page; that was tried and none of them
-   could be read.
+   sense that matters, because it's one idea. It does **not** permit three
+   unrelated tables on a page; that was tried and none of them could be
+   read.
 1. **The sentences tell a story as you flip through.** Read the ten
    on-slide lines top to bottom and they should read as one arc. Pages
    3–6 are the load-bearing stretch: works today → we curate the data →

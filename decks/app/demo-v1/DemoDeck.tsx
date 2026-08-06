@@ -329,10 +329,20 @@ const Screenshot = ({
   </Box>
 );
 
-// The chevron between steps of the swap flow.
+// The chevron between steps of the swap flow. Space Mono, matching the same
+// glyph used as the `Fact` marker — one mark, one face.
 const SequenceArrow = () => (
   <Box margin="0 16px">
-    <div style={{ color: colors.accent, fontSize: "44px", lineHeight: 1 }}>›</div>
+    <div
+      style={{
+        color: colors.accent,
+        fontFamily: deckTheme.fonts.monospace,
+        fontSize: "44px",
+        lineHeight: 1,
+      }}
+    >
+      ›
+    </div>
   </Box>
 );
 
@@ -348,11 +358,18 @@ const SequenceArrow = () => (
  * print).
  *
  * Widening it back to 420 is only safe because two other things now hold: the
- * statement is pinned to one line by its own `maxWidth`, and the URL moved into
- * the middle column. Those are load-bearing — undo either and this has to come
- * back down.
+ * statement is pinned to one line by `nowrap` (the guarantee — `maxWidth` is
+ * only an estimate), and the URL moved into the middle column. Those are
+ * load-bearing — undo either and this has to come back down.
  */
 const STEP_WIDTH = 420;
+
+/**
+ * Horizontal padding inside a step's frame. Named because the image width is
+ * `width - 2 * this` — with the number inlined at both sites, changing the
+ * padding overflowed the image out of its own frame with nothing to catch it.
+ */
+const STEP_FRAME_PAD = 14;
 
 /**
  * A numbered step in the swap flow, caption **above** its capture.
@@ -396,12 +413,12 @@ const Step = ({
     <Box
       border={`1px solid ${colors.border}`}
       borderRadius="12px"
-      padding="12px 14px"
+      padding={`12px ${STEP_FRAME_PAD}px`}
       backgroundColor={colors.muted}
     >
       <Image
         src={src}
-        width={width - 28}
+        width={width - 2 * STEP_FRAME_PAD}
         alt={alt}
         style={{ display: "block" }}
       />
@@ -486,31 +503,35 @@ const LogoRow = ({
         {/* Captions are plain elements, not `Text`: Spectacle's carries a theme
             margin of its own that opens a gap between a name and its note far
             larger than either margin asks for, and on the flywheel that pushed
-            the last line into the footer. */}
+            the last line into the footer.
+
+            The **name always renders**; only the `note` is conditional. A mark
+            is not always legible as the company the presenter names — Arc's is
+            Circle's — so a logo with no name under it gets read as whoever the
+            mark belongs to, which on the open-venue page is the wrong company
+            entirely. Only the second line is optional. */}
+        <div
+          style={{
+            color: colors.foreground,
+            fontFamily: deckTheme.fonts.monospace,
+            fontSize: "22px",
+            lineHeight: 1.2,
+            marginTop: "14px",
+          }}
+        >
+          {name}
+        </div>
         {note ? (
-          <>
-            <div
-              style={{
-                color: colors.foreground,
-                fontFamily: deckTheme.fonts.monospace,
-                fontSize: "22px",
-                lineHeight: 1.2,
-                marginTop: "14px",
-              }}
-            >
-              {name}
-            </div>
-            <div
-              style={{
-                color: colors.mutedFg,
-                fontSize: "19px",
-                lineHeight: 1.25,
-                marginTop: "6px",
-              }}
-            >
-              {note}
-            </div>
-          </>
+          <div
+            style={{
+              color: colors.mutedFg,
+              fontSize: "19px",
+              lineHeight: 1.25,
+              marginTop: "6px",
+            }}
+          >
+            {note}
+          </div>
         ) : null}
       </Box>
     ))}
@@ -671,6 +692,12 @@ const BEATS: Beat[] = [
  * which read as sloppy rather than as a mistake. Both rows now come from the
  * same pitch, so a dot cannot drift from the word beneath it: change
  * `ROADMAP_COLUMN` and they move together.
+ *
+ * The derivation assumes **`BEATS.length * ROADMAP_COLUMN <= ROADMAP_WIDTH`**
+ * with at least two beats. A fourth beat at the current column width makes the
+ * gap negative — flex would shrink the columns to fit while the absolutely
+ * placed dots would not, silently reintroducing the very drift this replaced —
+ * so widen `ROADMAP_WIDTH` or narrow `ROADMAP_COLUMN` before adding one.
  */
 const ROADMAP_WIDTH = 1780;
 const ROADMAP_COLUMN = 540;
@@ -1035,12 +1062,11 @@ export default function DemoDeck() {
       <Slide>
         <SlideBody>
           <Eyebrow>The eCLOB</Eyebrow>
-          {/* One sentence, not a statement plus a supporting line. It names the
-              eCLOB even though the eyebrow above already does — the kicker is a
-              small tag and the sentence is the claim, and the name is worth
-              landing twice on the one page that introduces it. The compute-unit
-              numbers live on the capture that shows them rather than being
-              restated here. */}
+          {/* One sentence, not a statement plus a supporting line: the eyebrow
+              above already names the eCLOB, so the sentence goes straight to
+              what it ships. "CLOB", not "order-book" — the acronym, since the
+              page has already named the thing. The compute-unit numbers live on
+              the capture that shows them rather than being restated here. */}
           {/* Pinned to one line by `nowrap`, not by a width estimate. Every
               earlier attempt at this heading wrapped further than intended, and
               the page's own overflow then clipped this slide's eyebrow off the
@@ -1088,15 +1114,15 @@ export default function DemoDeck() {
           So we’re building the exchange those markets need. Making a market
           onchain used to be prohibitively expensive — gas made continuous
           quoting impossible, so everything before this was a band-aid. We’ve
-          built order books before, so we built one that fits: our exchange model
-          gives you the transparency of a central limit order book with quote
-          updates as cheap as a propAMM. Repricing the whole book costs forty-seven
+          built order books before, so we built one that fits: the eCLOB gives
+          you the transparency of a central limit order book with quote updates
+          as cheap as a propAMM. Repricing the whole book costs forty-seven
           compute units and reshaping the ladder fifty-nine, on a chain that
-          gives you two hundred thousand per instruction. On the left is our own
-          maker quoting a market locally; on the right that same liquidity routed
-          through to the frontend, with the book, the live trades tape, and a
-          filled order. We’re building this out so anyone can quote onchain with
-          a vault-style approach.
+          gives you two hundred thousand per instruction. Left to right: that’s
+          what a quote costs, that’s our own maker paying it to quote a live
+          market, and that’s the same liquidity arriving on the frontend with the
+          book, the trades tape and a priced swap. We’re building this out so
+          anyone can quote onchain with a vault-style approach.
         </Notes>
       </Slide>
 
