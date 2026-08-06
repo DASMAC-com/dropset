@@ -64,6 +64,28 @@ pub struct Swap {
     /// chosen at runtime. The subsequent `transfer_checked` out of the
     /// output-leg treasury then rejects a fee account on the wrong mint on
     /// the token program's own terms.
+    ///
+    /// `unsafe(dup)` (which implies `mut`) is **required**, not a shortcut.
+    /// Anchor's duplicate-mutable-account guard on an optional `mut` field
+    /// fires on the `None` slot too, and `None` *is* the program id — which
+    /// `#[event_cpi]` also passes in its trailer and which the sibling
+    /// `platform_fee_authority` slot carries when absent. A plain
+    /// `#[account(mut)]` therefore rejects **every** no-integrator swap with
+    /// `ConstraintDuplicateMutableAccount`, the overwhelmingly common path.
+    ///
+    /// Waiving the guard is sound here because the two things it protects
+    /// against are both already covered:
+    ///
+    /// * **Aliased `&mut` account data.** Impossible — this is an
+    ///   `UncheckedAccount`. The handler never takes a typed borrow of its
+    ///   data, only hands the raw view to two CPIs.
+    /// * **A caller aiming the fee at an account it shouldn't reach** (a
+    ///   treasury, the taker's own ATA, another swap account). Rejected by
+    ///   `create_idempotent`, which derives the canonical ATA for
+    ///   `(platform_fee_authority, output mint, output token program)` and
+    ///   refuses anything else. The one case that does derive — a taker
+    ///   naming themselves the integrator — pays the fee to the taker, i.e.
+    ///   is a zero-fee swap with extra steps.
     pub platform_fee_ata: Option<solana_pubkey::Pubkey>,
     /// Creates `platform_fee_ata` when the integrator has none yet. Not
     /// optional even though the fee group is: it is one constant address
@@ -372,6 +394,28 @@ impl SwapBuilder {
     /// chosen at runtime. The subsequent `transfer_checked` out of the
     /// output-leg treasury then rejects a fee account on the wrong mint on
     /// the token program's own terms.
+    ///
+    /// `unsafe(dup)` (which implies `mut`) is **required**, not a shortcut.
+    /// Anchor's duplicate-mutable-account guard on an optional `mut` field
+    /// fires on the `None` slot too, and `None` *is* the program id — which
+    /// `#[event_cpi]` also passes in its trailer and which the sibling
+    /// `platform_fee_authority` slot carries when absent. A plain
+    /// `#[account(mut)]` therefore rejects **every** no-integrator swap with
+    /// `ConstraintDuplicateMutableAccount`, the overwhelmingly common path.
+    ///
+    /// Waiving the guard is sound here because the two things it protects
+    /// against are both already covered:
+    ///
+    /// * **Aliased `&mut` account data.** Impossible — this is an
+    ///   `UncheckedAccount`. The handler never takes a typed borrow of its
+    ///   data, only hands the raw view to two CPIs.
+    /// * **A caller aiming the fee at an account it shouldn't reach** (a
+    ///   treasury, the taker's own ATA, another swap account). Rejected by
+    ///   `create_idempotent`, which derives the canonical ATA for
+    ///   `(platform_fee_authority, output mint, output token program)` and
+    ///   refuses anything else. The one case that does derive — a taker
+    ///   naming themselves the integrator — pays the fee to the taker, i.e.
+    ///   is a zero-fee swap with extra steps.
     #[inline(always)]
     pub fn platform_fee_ata(
         &mut self,
@@ -560,6 +604,28 @@ pub struct SwapCpiAccounts<'a, 'b> {
     /// chosen at runtime. The subsequent `transfer_checked` out of the
     /// output-leg treasury then rejects a fee account on the wrong mint on
     /// the token program's own terms.
+    ///
+    /// `unsafe(dup)` (which implies `mut`) is **required**, not a shortcut.
+    /// Anchor's duplicate-mutable-account guard on an optional `mut` field
+    /// fires on the `None` slot too, and `None` *is* the program id — which
+    /// `#[event_cpi]` also passes in its trailer and which the sibling
+    /// `platform_fee_authority` slot carries when absent. A plain
+    /// `#[account(mut)]` therefore rejects **every** no-integrator swap with
+    /// `ConstraintDuplicateMutableAccount`, the overwhelmingly common path.
+    ///
+    /// Waiving the guard is sound here because the two things it protects
+    /// against are both already covered:
+    ///
+    /// * **Aliased `&mut` account data.** Impossible — this is an
+    ///   `UncheckedAccount`. The handler never takes a typed borrow of its
+    ///   data, only hands the raw view to two CPIs.
+    /// * **A caller aiming the fee at an account it shouldn't reach** (a
+    ///   treasury, the taker's own ATA, another swap account). Rejected by
+    ///   `create_idempotent`, which derives the canonical ATA for
+    ///   `(platform_fee_authority, output mint, output token program)` and
+    ///   refuses anything else. The one case that does derive — a taker
+    ///   naming themselves the integrator — pays the fee to the taker, i.e.
+    ///   is a zero-fee swap with extra steps.
     pub platform_fee_ata: Option<&'b solana_account_info::AccountInfo<'a>>,
     /// Creates `platform_fee_ata` when the integrator has none yet. Not
     /// optional even though the fee group is: it is one constant address
@@ -631,6 +697,28 @@ pub struct SwapCpi<'a, 'b> {
     /// chosen at runtime. The subsequent `transfer_checked` out of the
     /// output-leg treasury then rejects a fee account on the wrong mint on
     /// the token program's own terms.
+    ///
+    /// `unsafe(dup)` (which implies `mut`) is **required**, not a shortcut.
+    /// Anchor's duplicate-mutable-account guard on an optional `mut` field
+    /// fires on the `None` slot too, and `None` *is* the program id — which
+    /// `#[event_cpi]` also passes in its trailer and which the sibling
+    /// `platform_fee_authority` slot carries when absent. A plain
+    /// `#[account(mut)]` therefore rejects **every** no-integrator swap with
+    /// `ConstraintDuplicateMutableAccount`, the overwhelmingly common path.
+    ///
+    /// Waiving the guard is sound here because the two things it protects
+    /// against are both already covered:
+    ///
+    /// * **Aliased `&mut` account data.** Impossible — this is an
+    ///   `UncheckedAccount`. The handler never takes a typed borrow of its
+    ///   data, only hands the raw view to two CPIs.
+    /// * **A caller aiming the fee at an account it shouldn't reach** (a
+    ///   treasury, the taker's own ATA, another swap account). Rejected by
+    ///   `create_idempotent`, which derives the canonical ATA for
+    ///   `(platform_fee_authority, output mint, output token program)` and
+    ///   refuses anything else. The one case that does derive — a taker
+    ///   naming themselves the integrator — pays the fee to the taker, i.e.
+    ///   is a zero-fee swap with extra steps.
     pub platform_fee_ata: Option<&'b solana_account_info::AccountInfo<'a>>,
     /// Creates `platform_fee_ata` when the integrator has none yet. Not
     /// optional even though the fee group is: it is one constant address
@@ -1003,6 +1091,28 @@ impl<'a, 'b> SwapCpiBuilder<'a, 'b> {
     /// chosen at runtime. The subsequent `transfer_checked` out of the
     /// output-leg treasury then rejects a fee account on the wrong mint on
     /// the token program's own terms.
+    ///
+    /// `unsafe(dup)` (which implies `mut`) is **required**, not a shortcut.
+    /// Anchor's duplicate-mutable-account guard on an optional `mut` field
+    /// fires on the `None` slot too, and `None` *is* the program id — which
+    /// `#[event_cpi]` also passes in its trailer and which the sibling
+    /// `platform_fee_authority` slot carries when absent. A plain
+    /// `#[account(mut)]` therefore rejects **every** no-integrator swap with
+    /// `ConstraintDuplicateMutableAccount`, the overwhelmingly common path.
+    ///
+    /// Waiving the guard is sound here because the two things it protects
+    /// against are both already covered:
+    ///
+    /// * **Aliased `&mut` account data.** Impossible — this is an
+    ///   `UncheckedAccount`. The handler never takes a typed borrow of its
+    ///   data, only hands the raw view to two CPIs.
+    /// * **A caller aiming the fee at an account it shouldn't reach** (a
+    ///   treasury, the taker's own ATA, another swap account). Rejected by
+    ///   `create_idempotent`, which derives the canonical ATA for
+    ///   `(platform_fee_authority, output mint, output token program)` and
+    ///   refuses anything else. The one case that does derive — a taker
+    ///   naming themselves the integrator — pays the fee to the taker, i.e.
+    ///   is a zero-fee swap with extra steps.
     #[inline(always)]
     pub fn platform_fee_ata(
         &mut self,
