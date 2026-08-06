@@ -30,8 +30,10 @@ import { colors, deckTheme } from "@/theme/tokens";
  *   interface screenshot carrying a claim. Nothing on stage depends on a
  *   network, and every slide prints as a flat page for the accelerator's
  *   combined Google Slides meta-deck.
- * - **Solana is the start, never the ceiling**, and **DASMAC is the company
- *   while Dropset is the protocol**.
+ * - **Solana is the start, never the ceiling.**
+ * - **Dropset is the brand; DASMAC recedes.** The company is the boring DevCo
+ *   in the background, and the deck names it exactly once — the footer credit.
+ *   Not on the title slide, not in the roadmap's beats, not in a team role.
  *
  * Ten pages, and pages 3–6 are one argument in sequence: the swap flow
  * works today, we curate the data for every currency, most of them have no
@@ -65,8 +67,9 @@ const Wordmark = ({ width }: { width: number }) => (
  * the Dropset one it needs no blend to sit on the dark backdrop.
  *
  * The credit reads **"Built by DASMAC"**, not "Courtesy of" — authorship, not a
- * loan. It's also the smallest place the deck makes its company/protocol
- * distinction, which pages 1 and 8 then make explicitly.
+ * loan. It is also the **only** place the deck names the company: DASMAC is the
+ * boring DevCo in the background, so the title slide, the roadmap and the team
+ * roles all stay clear of it and this one small mark carries it alone.
  */
 const template = () => (
   <FlexBox
@@ -80,12 +83,28 @@ const template = () => (
     <Box padding="0 1.25em">
       <Wordmark width={210} />
     </Box>
-    <FlexBox alignItems="center">
+    {/* Centred against the **slide**, not by the flex row. `space-between`
+        divides the leftover space between three items, so the middle one lands
+        centred only when the flanks match — and these don't: a 210-unit
+        wordmark on the left against a row of small dots on the right pushed the
+        credit visibly right of centre. Taking it out of flow and pinning it to
+        50% makes the credit agree with the wordmark above it on every page,
+        which is the alignment the eye actually checks. */}
+    <div
+      style={{
+        alignItems: "center",
+        display: "flex",
+        left: "50%",
+        position: "absolute",
+        top: "50%",
+        transform: "translate(-50%, -50%)",
+      }}
+    >
       <Text color="quaternary" fontSize="22px" margin="0 14px 0 0">
         Built by
       </Text>
       <img src="/dasmac-wordmark.png" alt="DASMAC" width={110} />
-    </FlexBox>
+    </div>
     <Box padding="0 1.25em">
       <Progress color={colors.accent} size={11} />
     </Box>
@@ -115,10 +134,11 @@ const SlideBody = ({ children }: { children: React.ReactNode }) => (
 
 /**
  * Small monospace kicker that labels each content slide. Uppercase, letterspaced
- * Space Mono — which is the exact treatment the DASMAC company banner uses for
- * its own tag ("DISTRIBUTED ATOMIC STATE MACHINE ALGORITHMS CORPORATION"), so
- * the deck's kickers and the brand art are visibly the same system. Sentence
- * case stays with Inter, where it belongs.
+ * Space Mono — the exact treatment the company's own tag carries ("DISTRIBUTED
+ * ATOMIC STATE MACHINE ALGORITHMS CORPORATION"), so the deck's kickers and the
+ * brand's typography are visibly the same system even now that the company
+ * banner itself is off the deck. Sentence case stays with Inter, where it
+ * belongs.
  */
 const Eyebrow = ({ children }: { children: React.ReactNode }) => (
   <Text
@@ -172,7 +192,7 @@ const Statement = ({
 );
 
 /**
- * The three supporting facts on the gap page.
+ * The six supporting facts on the gap page.
  *
  * `justifyContent` is the load-bearing prop here, and it must stay explicit:
  * Spectacle's `FlexBox` **defaults to `center`**, which centred each row
@@ -182,14 +202,32 @@ const Statement = ({
  * The marker is a chevron rather than a disc: a row of discs is what makes a
  * slide read as a corporate template. It's the angular "greater-than" shape the
  * review asked for, but deliberately *not* a literal `≥` — that glyph makes a
- * numeric claim, and it would flatly contradict the third fact, which is a
+ * numeric claim, and it would flatly contradict the last fact, which is a
  * *less-than*.
+ *
+ * The row spacing is the page's give. This started as three facts at 26 units
+ * apart; at six, that spacing made the list overrun the meter column beside it
+ * for no gain in legibility, so it came down. If the page ever overflows again,
+ * this number is the first place to take it from.
+ *
+ * `accent` is for the **last** fact, the ambition. It is the one row that isn't
+ * a fact about the world as it is, and in one flat color it read as a trailing
+ * qualifier on the statistic above it rather than as the thing the deck is
+ * actually going after. The accent lifts it out with no size change and no
+ * layout of its own, and it's the color the meter's fill and every chevron on
+ * the page already carry — so it reads as emphasis, not as a new kind of thing.
  */
-const Fact = ({ children }: { children: React.ReactNode }) => (
+const Fact = ({
+  accent = false,
+  children,
+}: {
+  accent?: boolean;
+  children: React.ReactNode;
+}) => (
   <FlexBox
     alignItems="flex-start"
     justifyContent="flex-start"
-    margin="0 0 26px 0"
+    margin="0 0 20px 0"
   >
     <div
       style={{
@@ -203,7 +241,13 @@ const Fact = ({ children }: { children: React.ReactNode }) => (
     >
       ›
     </div>
-    <div style={{ color: colors.foreground, fontSize: "34px", lineHeight: 1.25 }}>
+    <div
+      style={{
+        color: accent ? colors.accent : colors.foreground,
+        fontSize: "34px",
+        lineHeight: 1.25,
+      }}
+    >
       {children}
     </div>
   </FlexBox>
@@ -683,20 +727,40 @@ const Flywheel = () => (
 type Beat = { when: string; headline: string; body: string };
 
 const BEATS: Beat[] = [
+  // Plain-spoken customer development, and it **names no company**: an earlier
+  // draft read "DASMAC bootstraps liquidity", which put the DevCo back on a
+  // slide it has receded from and made the first beat about us rather than
+  // about the issuers. Both sides of the two-sided market belong here — the
+  // issuers upstream and the pipeline of companies that consume the liquidity
+  // downstream (the page-7 names) — because seeding one side is a liquidity
+  // operation, and seeding both is a market.
   {
     when: "Now",
-    headline: "DASMAC bootstraps liquidity",
-    body: "DASMAC bootstraps nascent FX pairs by leading Hyperliquid-style vaults using the Dropset protocol.",
+    headline: "We onboard emerging stablecoin issuers",
+    body: "We lead the vaults that give an emerging issuer day-one liquidity, and we develop the downstream pipeline of companies that consume those currency trades.",
   },
+  // Other market makers entering is the load-bearing half, and it is what says
+  // this **isn't a prop AMM**: anyone can quote here, so quotes compete tighter
+  // rather than being set by whoever owns the venue. That competition is the
+  // mechanism the compounding runs on — spreads tighten, volume follows,
+  // liquidity deepens — and only then do fees mean anything. The fee clause
+  // stays in abstracted language; naming the switch turns a growth beat into a
+  // token-design question.
   {
     when: "Next",
     headline: "Protocol fees accrue value",
-    body: "As markets mature, volume and fees compound, and currency pairs achieve deep liquidity.",
+    body: "Additional market makers enter and quotes compete tighter, with protocol fees accruing value as volume and liquidity compound.",
   },
+  // The headline stays broad on purpose — "beyond spot" lets a reader fill in
+  // their own derivatives thesis, where naming one hands them ours to argue
+  // with. Hedging is the through-line, and deliberately not only a market
+  // maker's tool: the two named business cases are what says so, and they are
+  // examples rather than a list — the beat is that derivatives buy both a
+  // better market structure and downstream uses of it.
   {
     when: "Later",
-    headline: "Derivatives provide an expansion opportunity",
-    body: "Once spot is fully mature, hedging instruments and additional derivatives enable more efficient market making and more mature markets.",
+    headline: "Product expansion beyond spot",
+    body: "Derivatives enable more efficient markets and business use cases, including treasury management and hedging B2B payment flows.",
   },
 ];
 
@@ -802,18 +866,71 @@ const Roadmap = () => (
 );
 
 /**
- * One side of the open-venue comparison: a bordered panel with a caption under
- * it. The border color is the whole argument — the permissioned side is tinted
- * with the sell red, the Dropset side with the buy green — so the page reads
- * before any of its copy does.
+ * One claim under an open-venue panel.
+ *
+ * The panel captions are **bullets, not prose blocks** — the page's second
+ * sanctioned break from "no bullet lists", after the gap page's facts. Two
+ * paragraphs of small text under two badges read as fine print nobody finishes;
+ * two short columns of peer claims read as an argument against an argument,
+ * which is what this page is.
+ *
+ * The chevron takes its **panel's own tint** rather than the deck accent, so a
+ * claim belongs visibly to its side of the comparison — the two columns are read
+ * across as often as down, and the marker is what keeps a red claim from being
+ * skimmed as one of ours.
  */
-const VenuePanel = ({
+const VenueBullet = ({
   tint,
-  caption,
   children,
 }: {
   tint: string;
-  caption: React.ReactNode;
+  children: React.ReactNode;
+}) => (
+  <FlexBox
+    alignItems="flex-start"
+    justifyContent="flex-start"
+    margin="0 0 14px 0"
+  >
+    <div
+      style={{
+        color: tint,
+        flex: "0 0 auto",
+        fontFamily: deckTheme.fonts.monospace,
+        fontSize: "27px",
+        lineHeight: 1.35,
+        marginRight: "14px",
+      }}
+    >
+      ›
+    </div>
+    <div style={{ color: colors.foreground, fontSize: "27px", lineHeight: 1.35 }}>
+      {children}
+    </div>
+  </FlexBox>
+);
+
+/**
+ * One side of the open-venue comparison: a bordered panel with its claims under
+ * it. The border color is the whole argument — the permissioned side is tinted
+ * with the sell red, the Dropset side with the buy green — so the page reads
+ * before any of its copy does.
+ *
+ * Claims come in as **strings, not markup**, so the panel applies its own tint
+ * to every one of its bullets. Passing rendered bullets instead would mean
+ * repeating the tint at each call site, where one stale value would put a green
+ * chevron in the red column and quietly reverse which side the reader thinks a
+ * claim belongs to.
+ *
+ * Three is the cap: a fourth claim on either side makes that column the taller
+ * one by a whole two-line bullet, and the page has no room for it.
+ */
+const VenuePanel = ({
+  tint,
+  claims,
+  children,
+}: {
+  tint: string;
+  claims: string[];
   children: React.ReactNode;
 }) => (
   <Box width="700px" margin="0 26px">
@@ -826,16 +943,13 @@ const VenuePanel = ({
     >
       {children}
     </FlexBox>
-    <div
-      style={{
-        color: colors.foreground,
-        fontSize: "27px",
-        lineHeight: 1.35,
-        marginTop: "20px",
-      }}
-    >
-      {caption}
-    </div>
+    <Box margin="20px 0 0 0">
+      {claims.map((claim) => (
+        <VenueBullet key={claim} tint={tint}>
+          {claim}
+        </VenueBullet>
+      ))}
+    </Box>
   </Box>
 );
 
@@ -893,27 +1007,15 @@ export default function DemoDeck() {
           <Box margin="0 0 40px 0">
             <Wordmark width={860} />
           </Box>
+          {/* The wordmark and one sentence, and nothing else. This page used to
+              carry a "Built by DASMAC" line and the wide company banner beneath
+              it; both are gone. DASMAC is the boring DevCo in the background —
+              someone finds it when they sign a document — so a title slide that
+              argues for it argues for the wrong thing. The footer credit is the
+              deck's one mention, and it is enough. */}
           <Statement fontSize="88px">Where currency trades onchain</Statement>
-          {/* "Built by DASMAC" is on-slide as well as in the footer: the title
-              is where the company/protocol distinction has to land first, and
-              the footer credit is too small to carry it alone. */}
-          <Text color="quaternary" fontSize="40px" margin="22px 0 0 0">
-            Built by DASMAC
-          </Text>
-          {/* The company banner, uncaptioned. It's brand art, not a figure —
-              a caption explaining what a banner is would undercut it. */}
-          <Box margin="52px 0 0 0">
-            <img
-              src="/dasmac-banner-wide.png"
-              alt="DASMAC — Distributed Atomic State Machine Algorithms Corporation"
-              width={980}
-              style={{ borderRadius: "10px", display: "block" }}
-            />
-          </Box>
         </SlideBody>
-        <Notes>
-          Dropset is where currency trades onchain, built by DASMAC.
-        </Notes>
+        <Notes>Dropset is where currency trades onchain.</Notes>
       </Slide>
 
       {/* 2 — The gap */}
@@ -928,12 +1030,32 @@ export default function DemoDeck() {
             alignItems="flex-start"
             justifyContent="flex-start"
           >
+            {/* Six facts, and the order is the page's argument: a huge market,
+                two structural problems with it, the environment that fixes
+                exactly those, the gap that's still left, and what we're going
+                after. Fact 3 says the closing hours plainly and does not absorb
+                the OTC desks — fragmentation is fact 2's job, and folding them
+                together loses one of the two problems. Fact 4 is the thesis the
+                rest of the deck answers to, and it names public blockchains
+                rather than Solana, because the claim is about the class of
+                environment; "especially Solana" is a spoken line.
+
+                The gap and the goal are **two rows, not one**. Joined by a dash
+                they read as one sentence whose second half qualifies the first,
+                which is exactly backwards: the goal is the bigger claim, and it
+                has to be able to be read on its own. */}
             <Box width="800px" margin="0 60px 0 0">
               <Fact>Daily volumes exceed $9 trillion</Fact>
               <Fact>Banks and OTC desks fragment liquidity</Fact>
+              <Fact>FX markets only trade 24/5</Fact>
+              <Fact>
+                Public blockchains are the most money-like digital environment
+                available today
+              </Fact>
               <Fact>
                 Less than 10% of the world’s currencies are available on Solana
               </Fact>
+              <Fact accent>Our goal is 24/7/365 coverage of every FX spot pair</Fact>
             </Box>
             <Box>
               <CurrencyMeter />
@@ -949,14 +1071,16 @@ export default function DemoDeck() {
         </SlideBody>
         <Notes>
           Foreign exchange is the biggest market on earth — over nine trillion
-          dollars a day. But it only trades 24/5, banks and over-the-counter
-          desks fragment its liquidity, and less than ten percent of
-          the world’s currencies are even available on Solana today: fourteen out
-          of a hundred and sixty-two, and that count is live on our own site,
-          which is where this is from. Every currency should be connectable to
-          every other one, and that’s what we’re building. To be precise: we
-          don’t issue currencies — issuers create them, and Dropset is where they
-          trade.
+          dollars a day. But banks and over-the-counter desks fragment its
+          liquidity, and it only trades 24/5 — it closes on Friday. Public
+          blockchains are the most money-like digital environment we have, and
+          Solana most of all. And yet less than ten percent of the world’s
+          currencies are available there: fourteen out of a hundred and sixty-two,
+          and that count is live on our own site, which is where this is from. Our
+          goal is 24/7/365 coverage of every FX spot pair — every currency
+          connectable to every other one, and that’s what we’re building. To be
+          precise: we don’t issue currencies — issuers create them, and Dropset is
+          where they trade.
         </Notes>
       </Slide>
 
@@ -1172,20 +1296,37 @@ export default function DemoDeck() {
       <Slide>
         <SlideBody>
           <Eyebrow>Growth roadmap</Eyebrow>
-          <Statement fontSize="68px">
-            Our path to expansion is deliberate and methodical
-          </Statement>
+          {/* The statement names the path's **destination**, which is what makes
+              this the deck's opportunity page: the beats below start at seeding
+              a handful of pairs, and without the endpoint stated an audience has
+              no reason to think that adds up to anything. It replaced "our path
+              to expansion is deliberate and methodical", which described the
+              manner of the plan and not where it goes. "And beyond" is carrying
+              the Later beat — the destination is every currency trading around
+              the clock, and the product doesn't stop once it gets there.
+              Naming the near end too ("from bootstrapping liquidity to…") was
+              tried and cost a second line to restate what the first beat says
+              two inches below.
+
+              This is the deck's **one fragment headline**, and it is deliberate.
+              A path is a noun, the page is a timeline, and the sentence forms
+              ("our path runs to…") all read as a hedge about the destination
+              rather than as the destination. */}
+          <Statement fontSize="68px">The path to 24/7/365 FX and beyond</Statement>
           <Roadmap />
         </SlideBody>
         <Notes>
-          Now, DASMAC bootstraps the liquidity: we lead Hyperliquid-style vaults
-          on nascent FX pairs, using the Dropset protocol — DASMAC the company,
-          Dropset the protocol. Next, protocol fees accrue value: as markets
-          mature, volume and fees compound, and the currency pairs achieve deep
-          liquidity. Later, derivatives provide an expansion
-          opportunity: once spot is fully mature, hedging instruments and
-          additional derivatives enable more efficient market making and more
-          mature markets.
+          This is the path to 24/7/365 FX, and beyond it. Now, we onboard
+          emerging stablecoin issuers: we lead the vaults that give them day-one
+          liquidity, and at the same time we develop the downstream pipeline of
+          the companies that consume those currency trades — those are the two
+          sides of the market. Next, protocol fees accrue value: this isn’t a
+          prop AMM, so other market makers come in and compete the quotes
+          tighter, volume follows the tighter spreads, liquidity compounds, and
+          value accrues to the protocol through fees. Later, the product expands
+          beyond spot — derivatives make the markets themselves more efficient,
+          and they open up business use cases too: treasury management, hedging
+          B2B payment flows. Hedging isn’t just for market makers.
         </Notes>
       </Slide>
 
@@ -1193,8 +1334,15 @@ export default function DemoDeck() {
       <Slide>
         <SlideBody>
           <Eyebrow>Why the open venue wins</Eyebrow>
-          <Statement fontSize="64px">
-            Permissioned onchain liquidity has an adoption ceiling
+          {/* The page is **the long-term question** — public or private onchain
+              liquidity — and this states our side of it rather than the other
+              side's problem. It replaced "permissioned onchain liquidity has an
+              adoption ceiling", which made the page about them; the rails are
+              context for the question now, not targets. Pinned to one line:
+              at 60 it fits the measure, and the panels below leave nothing to
+              spend on a second. */}
+          <Statement fontSize="60px" nowrap>
+            Public liquidity is what blockchains were built for
           </Statement>
           {/* `alignItems` must stay explicit. Spectacle's `FlexBox` defaults to
               `center`, which vertically centred each panel *including its
@@ -1207,9 +1355,27 @@ export default function DemoDeck() {
             justifyContent="center"
             alignItems="flex-start"
           >
+            {/* What these claims do **not** say is the point of the sharpening:
+                not that an issuer would never go to a private rail — it gets
+                real distribution there — and not that no fintech will ever
+                settle on a competitor's ledger, which overstates a real effect
+                into something an investor can simply counterexample. The claim
+                is **friction**, on two axes: a ledger owned by a competitor is
+                an awkward place to settle, and market making on it isn't
+                permissionless, so the team most likely to try something new
+                meets an account-opening process before it meets any liquidity.
+
+                "Multiple" private ledgers, not "competing" ones — "competing
+                private ledgers introduce competitive friction" says the same
+                word twice in one breath, and it's the *plurality* that is the
+                condition being described. */}
             <VenuePanel
               tint={colors.sell}
-              caption="Permissioned solutions are blocking composability. Competitive dynamics prevent fintech companies from adopting a competitor’s private ledger."
+              claims={[
+                "Multiple private ledgers introduce competitive friction",
+                "Liquidity is gated, and market making isn’t permissionless",
+                "Early-stage teams face hurdles just to experiment",
+              ]}
             >
               <LogoRow
                 logos={PERMISSIONED}
@@ -1219,31 +1385,59 @@ export default function DemoDeck() {
                 margin="0"
               />
             </VenuePanel>
+            {/* Our side names the **ambition**, not just the contrast: public
+                money infrastructure, a flywheel that exists nowhere else, and
+                every currency onchain. That is the thing an investor is being
+                asked to buy into, and it has to be said here rather than left
+                as the implication of the other panel being wrong.
+
+                The three read as a mechanism rather than three virtues: the
+                environment makes transmission and composition cheap, that is
+                what lets liquidity compound instead of sitting still, and the
+                compounding is what makes every currency reachable — one market
+                at a time, which is the honest version of "every currency".
+
+                The last claim ends on **we have already begun**, not on the size
+                of the ambition. "Every currency onchain" as a standalone goal is
+                something anyone can assert; the same goal with a first step
+                already taken is a flywheel rather than a wish. Which issuers,
+                and how far along each conversation is, stays in the spoken
+                track — the slide claims only that the first turn has
+                happened. */}
             <VenuePanel
               tint={colors.buy}
-              caption="Dropset is open and composable on Solana, the most money-like onchain environment, where ease of transmission and composability are maximized. Public liquidity is what blockchains were built for."
+              claims={[
+                "Dropset is open and composable on Solana, the most money-like onchain environment",
+                "Ease of transmission and open access compound liquidity into a flywheel",
+                "Every currency and every FX pair comes onchain one market at a time, and we’ve already begun",
+              ]}
             >
               <Wordmark width={420} />
             </VenuePanel>
           </FlexBox>
         </SlideBody>
         <Notes>
-          Permissioned onchain liquidity has an adoption ceiling. Arc and Tempo
+          The long-term question is whether onchain liquidity is public or
+          private, and this is the one to make up your mind about. Arc and Tempo
           are building payment-and-settlement rails, and Canton is doing
-          regulated onchain markets — any of them could decide FX is theirs, and
-          each arrives with the customers already on it. But their liquidity
-          isn’t public: you can’t make a market unless they let you, and that
-          blocks composability for everyone downstream. And competitive dynamics
-          stop it before it starts: a fintech isn’t going to settle on a
-          competitor’s private ledger. A bank that competes with Circle won’t
-          build on Arc, and a multi-signature banking product isn’t going to run
-          on Canton. Dropset is open, neutral and composable: anyone can quote,
-          anyone can trade, any app can integrate. Public liquidity is what
+          regulated onchain markets — and an issuer that goes there gets real
+          distribution, so the argument isn’t that Circle would never use one.
+          It’s friction. Once there are several of these ledgers, settling on one
+          your competitor owns is an awkward place to be — a bank that competes
+          with Circle is not enthusiastic about building on Arc — and market
+          making on them isn’t permissionless: the liquidity is gated, so you
+          quote only if they let you. An early-stage team hits those hurdles
+          before it can even experiment. Dropset is open and composable on
+          Solana, the most money-like onchain environment there is, where ease of
+          transmission and composability let liquidity compound into a flywheel
+          instead of sitting still. That’s the public money infrastructure we’re
+          building — a flywheel around public currency liquidity that exists
+          nowhere else, and it grows one market at a time — which is why we’ve
+          already begun rather than waiting for all of it. We’re in detailed
+          conversations with AUDD, and we’ve spoken with the CADC issuer.
+          Public liquidity is what
           blockchains were built for — moving money is the problem they were
           supposed to solve, and this is that.
-          And that’s why we started on Solana: the most money-like onchain
-          environment there is, where ease of transmission and composability are
-          both maximized.
         </Notes>
       </Slide>
 
@@ -1259,30 +1453,39 @@ export default function DemoDeck() {
             justifyContent="center"
             alignItems="flex-start"
           >
+            {/* Roles carry **no company**. "Founder, DASMAC" named the DevCo a
+                third time on a page that is about people, and the deck now names
+                it once, in the footer. The bio leads with the full-stack claim —
+                the whole stack, on more than one chain — because that is the
+                thing the two named credentials are evidence *of*, and stating it
+                first stops them reading as two unrelated projects. */}
             <Portrait
               src="/remote/team-alex.png"
               name="Alex Kahn"
-              role="Founder, DASMAC"
+              role="Founder"
               prior="prev. Cofounder, Econia Labs"
-              bio="Authored two exchanges on Aptos, including the Econia order book ($500M lifetime volume). Authored the Solana Opcode Guide, the definitive resource for optimizing Solana program efficiency."
+              bio="Authored exchange technology across the entire stack on multiple blockchains, including the Econia order book on Aptos ($500M lifetime volume) and the Solana Opcode Guide, a key resource for optimizing Solana program efficiency."
             />
             <Portrait
               src="/remote/team-judy.png"
               name="Judy Sosa"
-              role="Operations, DASMAC"
+              role="Operations"
               prior="prev. EA, Dragonfly Capital"
-              bio="Owns the whole operational stack, working with banks, stablecoin providers, onramps and service providers."
+              bio="Owns the whole operational stack, working with banks, stablecoin providers, onramps and service providers. Extensive background in event coordination and partner relationship management."
             />
           </FlexBox>
         </SlideBody>
         <Notes>
-          Dropset is built by people who have built exchanges. I authored two on
-          Aptos, including the Econia order book, five hundred million dollars of
-          lifetime volume, and I authored the Solana Opcode Guide, the definitive
-          resource for optimizing Solana program efficiency — which is what makes
+          Dropset is built by people who have built exchanges. I’ve authored
+          exchange technology across the entire stack, on more than one
+          blockchain — the Econia order book on Aptos, five hundred million
+          dollars of lifetime volume, and the Solana Opcode Guide, a key resource
+          for optimizing Solana program efficiency, which is what makes
           quoting on the eCLOB cost double-digit compute units. Judy owns the
           whole operational stack, and works directly with banks, stablecoin
-          providers, onramps and service providers. Dropset — where currency
+          providers, onramps and service providers, on an extensive background in
+          event coordination and partner relationship management. Dropset — where
+          currency
           trades onchain. [Leave this page up.]
         </Notes>
       </Slide>
