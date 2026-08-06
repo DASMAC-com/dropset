@@ -1,5 +1,5 @@
-//! On-chain I/O — market discovery, the live vault read, and the two
-//! quoting-path sends.
+//! On-chain I/O — market discovery, the live vault read, the two quoting-path
+//! sends, and the stale-quote kill stamp.
 //!
 //! Discovery mirrors the TUI (`tui/src/accounts.rs`): scan the program's
 //! accounts for the `MarketHeader` discriminator, decode the single localnet
@@ -16,6 +16,7 @@ use dropset_sdk::quoting::{set_liquidity_profile_ix, set_reference_price_ix};
 use dropset_sdk::DROPSET_ID;
 use solana_client::rpc_client::RpcClient;
 use solana_commitment_config::CommitmentConfig;
+use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_instruction::Instruction;
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
@@ -199,6 +200,10 @@ pub fn read_vault(
                 base_atoms: vault.base_atoms.get(),
                 quote_atoms: vault.quote_atoms.get(),
                 reference_price,
+                // The program's own matching gate, shared rather than
+                // re-derived — the kill stamp's whole effect is writing a price
+                // that fails it, so this must not drift from the matcher.
+                reference_valid: reference.is_matchable(),
                 frozen: vault.frozen != 0,
             });
         }
@@ -228,6 +233,31 @@ pub fn set_reference_price(
         .ok_or_else(|| anyhow!("price {price} (ratio {ratio}) out of range"))?;
     let ix = set_reference_price_ix(leader.pubkey(), *market, vault_idx, reference, slot);
     send(client, leader, &[ix])
+}
+
+/// Kill this vault's resting book by stamping the zero sentinel through the
+/// ordinary hot path — the leader-authorized stand-in for the admin-only
+/// `FreezeVault` (`model::invalidate`). Matching skips a vault whose reference
+/// price fails `has_valid_reference_price()`, and zero fails it, so one cheap
+/// instruction takes every level dark at once while leaving the
+/// `LiquidityProfile` untouched; the next live [`set_reference_price`] re-arms
+/// the same shape.
+///
+/// Sent with a priority fee (`micro_lamports` per compute unit) because this
+/// races takers in the first blocks after the bot returns. `slot` is stamped as
+/// usual for consistency, but nothing reads it while the price is invalid — the
+/// per-vault gate rejects the vault before any expiry comparison.
+pub fn invalidate_reference_price(
+    client: &RpcClient,
+    leader: &Keypair,
+    market: &Pubkey,
+    vault_idx: u32,
+    slot: u64,
+    micro_lamports: u64,
+) -> Result<String> {
+    let ix = set_reference_price_ix(leader.pubkey(), *market, vault_idx, Price::ZERO, slot);
+    let fee = ComputeBudgetInstruction::set_compute_unit_price(micro_lamports);
+    send(client, leader, &[fee, ix])
 }
 
 /// Rewrite the quote ladder (`set_liquidity_profile`, cold path).
@@ -280,6 +310,22 @@ mod tests {
         assert_eq!(public_cluster(DEVNET_GENESIS), Some("devnet"));
         assert_eq!(public_cluster(TESTNET_GENESIS), Some("testnet"));
         assert_eq!(public_cluster("11111111111111111111111111111111"), None);
+    }
+
+    /// The kill stamp's whole effect rests on `Price::ZERO` failing the same
+    /// gate the matching engine applies, while every price on the demo roster
+    /// passes it — so pin both directions against the roster's actual span
+    /// (EURC ~$1.14 down to IDRX ~$0.000056) rather than trusting the sentinel.
+    #[test]
+    fn the_kill_price_is_unmatchable_and_roster_prices_are_not() {
+        assert!(!Price::ZERO.is_matchable());
+        for human in [1.14, 1.235, 0.000056] {
+            let price = Price::from_value(human).expect("encodable");
+            assert!(price.is_matchable(), "{human} should match");
+        }
+        // `from_value(0.0)` is the sentinel too, so the ordinary encoder can't
+        // accidentally produce a live-looking zero.
+        assert!(!Price::from_value(0.0).expect("zero encodes").is_matchable());
     }
 
     #[test]

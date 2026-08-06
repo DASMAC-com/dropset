@@ -27,6 +27,7 @@ use dropset_maker_bot::config::{
 use dropset_maker_bot::context::Context as BotContext;
 use dropset_maker_bot::model::fair_mid::build_legs;
 use dropset_maker_bot::model::feeds::{cmc_api_key, CmcSource, CoinGeckoSource, FrankfurterSource};
+use dropset_maker_bot::quote_state::QuoteStateStore;
 use dropset_maker_bot::tasks::FeedReceivers;
 use dropset_maker_bot::{chain, fills, tasks};
 use solana_pubkey::Pubkey;
@@ -179,6 +180,9 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
     let discovered = chain::discover_markets(&client)?;
     let quote_mint = mint_pubkey(QUOTE_KEYPAIR_FILE)?;
     let roster = args.selected();
+    // The persisted last-live-stamp records, one file per market — the evidence
+    // the supervisor's startup pass ages a resting book against.
+    let quote_state = QuoteStateStore::new(&cfg.invalidate.state_dir);
     let mut contexts = Vec::new();
     for &market in &roster {
         let base_mint = match mint_pubkey(market.base_keypair_file) {
@@ -209,6 +213,7 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
             addrs.clone(),
             *market,
             cfg.fair_value,
+            quote_state.for_market(addrs.market, market.symbol),
         ));
     }
     if contexts.is_empty() {

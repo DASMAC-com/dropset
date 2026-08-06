@@ -6,14 +6,21 @@
 //! and the bot only remembers what it can't recover from a single read — the
 //! last reference it stamped, the skew it applied, when it last fired each
 //! path, and which profile shape it believes is armed.
+//!
+//! One fact outlives the process: the wall-clock time of the last live reference
+//! stamp, which the chain cannot supply (it records the `quote_slot`, and slots
+//! stop ticking during a halt). That one is persisted per market — see
+//! [`crate::quote_state`] — so a restart can tell a fresh resting book from one
+//! that needs killing.
 
 use crate::config::MarketConfig;
 use crate::model::ladder::Side;
+use crate::quote_state::QuoteState;
 use dropset_fair_value::{FairValueConfig, FairValueEngine};
 use solana_client::rpc_client::RpcClient;
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 /// The discovered market and its token metadata — everything the bot needs to
 /// address the vault and value its inventory.
@@ -37,6 +44,11 @@ pub struct VaultSnapshot {
     pub quote_atoms: u64,
     /// The reference price currently stamped on-chain, as a float.
     pub reference_price: f64,
+    /// Whether that reference price still lets the matching engine visit this
+    /// vault (the program's own `has_valid_reference_price` gate). `false` means
+    /// the book is already dark — never stamped, or killed by the stale-quote
+    /// invalidation — so there is nothing for `model::invalidate` to kill.
+    pub reference_valid: bool,
     pub frozen: bool,
 }
 
@@ -88,9 +100,22 @@ pub struct Context {
     pub last_set_price: Option<f64>,
     /// Inventory skew (bps) applied at the last stamp.
     pub last_skew_bps: f64,
-    /// When the hot / cold paths last fired.
+    /// When the hot path last fired. Seeded at construction from the persisted
+    /// record (see [`Context::new`]) rather than from process start, so the
+    /// staleness check that ages off it measures the resting book's real age
+    /// across a restart.
     pub last_set_at: Instant,
+    /// When the cold path last fired.
     pub last_profile_at: Instant,
+    /// This market's persisted last-live-stamp record — the one piece of state
+    /// that survives a restart, because it is the one the chain cannot supply
+    /// (see [`crate::quote_state`]).
+    pub quote_state: QuoteState,
+    /// Whether the bot has already killed this market's book for staleness in
+    /// this run and not yet re-armed it. Keeps the running-path invalidation to
+    /// one instruction per stale episode instead of one per cycle; cleared by the
+    /// next live reference stamp.
+    pub reference_invalidated: bool,
     /// The profile shape the bot believes is armed.
     pub profile_kind: ProfileKind,
     /// Inventory `(base_atoms, quote_atoms)` at the previous tick — used by
@@ -114,9 +139,32 @@ impl Context {
         market: MarketAddrs,
         cfg: MarketConfig,
         fair_value: FairValueConfig,
+        quote_state: QuoteState,
     ) -> Self {
         let now = Instant::now();
+        // Start the hot-path clock from the persisted record, not from process
+        // start. The running-path staleness check ages off `last_set_at`, so a
+        // placeholder here would re-credit a restarted bot a full staleness
+        // bound the resting book hasn't earned: a record already 55 s old (still
+        // inside the bound, so the startup pass rightly declines to kill) would
+        // then not be killed until 60 s *after startup* — ~115 s of unattended
+        // matchable book, twice the bound this is supposed to hold. Seeding also
+        // covers the case where the startup pass's vault read fails and never
+        // gets to consult the record at all.
+        //
+        // Reading the record here rather than reusing the startup pass's read
+        // keeps the two questions separate: that pass needs the `Option` (an
+        // *unknown* age is what it treats as stale), while this only needs a
+        // clock origin, so an unknown age correctly falls back to `now`.
+        // `checked_sub` guards a freshly-booted host whose monotonic clock is
+        // younger than the record's age.
+        let last_set_at = quote_state
+            .age(SystemTime::now())
+            .and_then(|age| now.checked_sub(age))
+            .unwrap_or(now);
         Self {
+            quote_state,
+            reference_invalidated: false,
             client,
             leader,
             vault_idx,
@@ -128,7 +176,7 @@ impl Context {
             fills_active: false,
             last_set_price: None,
             last_skew_bps: 0.0,
-            last_set_at: now,
+            last_set_at,
             last_profile_at: now,
             profile_kind: ProfileKind::Unknown,
             last_inventory: None,

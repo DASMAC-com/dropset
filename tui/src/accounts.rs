@@ -398,8 +398,12 @@ fn read_markets(client: &RpcClient, current_slot: u32, target: Option<Pubkey>) -
         for (idx, v) in view.active_vaults() {
             if live_vaults.is_empty() {
                 leader_quote_slot = Some(v.reference_price.quote_slot.get());
+                // The matcher's own gate, shared rather than re-derived, so the
+                // pane reads "no reference" exactly when the engine would skip
+                // the vault — including when the maker has killed its own book
+                // by stamping the zero sentinel.
                 let p = v.reference_price.price();
-                if p.is_valid() && !p.is_zero() && !p.is_infinity() {
+                if p.is_matchable() {
                     leader_reference = Some(p);
                 }
             }

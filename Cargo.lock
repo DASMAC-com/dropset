@@ -1828,6 +1828,7 @@ dependencies = [
  "sha2 0.10.9",
  "solana-client",
  "solana-commitment-config",
+ "solana-compute-budget-interface",
  "solana-instruction",
  "solana-keypair",
  "solana-pubkey 3.0.0",

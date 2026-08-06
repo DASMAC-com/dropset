@@ -78,10 +78,23 @@ impl Default for FlowConfig {
         Self {
             seed: None,
             // Frequent flow so the book visibly moves and the fills tape stays
-            // busy: a quiet tick now averages ~0.8 orders and a burst ~4, with
-            // bursts entered more readily.
-            lambda_quiet: 0.8,
-            lambda_burst: 4.0,
+            // busy: a quiet tick averages ~1.4 orders and a burst ~6, with
+            // bursts entered readily. With `burst_entry_prob` /
+            // `burst_exit_prob` below the chain sits in a burst ~25% of the
+            // time, so the blended rate is ~2.6 orders per 2 s tick — about
+            // 1.3 takes/s, up from ~0.8. Raising the intensities rather than
+            // shortening the tick keeps the regime's clustering intact: the
+            // demo should still visibly alternate quiet and busy stretches.
+            //
+            // The rate is safe to raise only because `max_depth_fraction` now
+            // sizes each take against *live* depth, so a faster tape nibbles
+            // more often instead of clearing levels. What to watch is the
+            // refill interplay: takes deplete continuously while the maker
+            // re-materializes only when it re-stamps (10 bps drift, else the
+            // 30 s heartbeat), so if the book reads thin between re-quotes the
+            // lever is the maker's heartbeat, not this.
+            lambda_quiet: 1.4,
+            lambda_burst: 6.0,
             burst_entry_prob: 0.1,
             burst_exit_prob: 0.3,
             // ~$4 median take — small relative to the ~$100 seeded book
@@ -175,6 +188,25 @@ mod tests {
     fn burst_is_more_active_than_quiet() {
         let f = FlowConfig::default();
         assert!(f.lambda_burst > f.lambda_quiet);
+    }
+
+    /// The take frequency the demo actually shows is a function of four knobs
+    /// at once — both intensities, the two regime-switch probabilities, and the
+    /// tick — so pin the blended rate rather than leaving the arithmetic in
+    /// `FlowConfig`'s comment to rot the next time one of them is tuned.
+    #[test]
+    fn blended_arrival_rate_matches_the_documented_cadence() {
+        let c = BotConfig::default();
+        let f = &c.flow;
+        // Stationary probability of sitting in a burst, for the two-state chain.
+        let p_burst = f.burst_entry_prob / (f.burst_entry_prob + f.burst_exit_prob);
+        let per_tick = (1.0 - p_burst) * f.lambda_quiet + p_burst * f.lambda_burst;
+        let per_sec = per_tick / c.tick.as_secs_f64();
+        assert!(
+            (1.2..=1.5).contains(&per_sec),
+            "blended flow is {per_sec:.2} takes/s, outside the documented ~1.3 \
+             — retune or update the FlowConfig comment"
+        );
     }
 
     /// The buy-bias clamp brackets the neutral 0.5 start, so the default flow

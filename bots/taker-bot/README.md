@@ -19,7 +19,10 @@ dropset-alpha's `services/taker-bot/src/taker.rs`):
    transitions with the configured entry / exit probabilities, and the
    current state selects the arrival intensity `λ`.
 1. **Arrivals** — the number of orders this tick is `Poisson(λ)`, so bursts
-   cluster naturally and quiet ticks often produce nothing.
+   cluster naturally and a quiet tick still sometimes produces nothing. The
+   defaults blend to ~1.3 takes/s across the two regimes; the flow is sized
+   against live book depth (below), so the tape's frequency and each take's
+   size are tuned independently.
 1. **Per-order** — each order's size is `LogNormal` (many small takes, an
    occasional large one), and its side is a coin weighted by a `buy_bias`
    that mean-reverts toward 0.5 with a Gaussian shock each order — giving

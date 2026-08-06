@@ -201,10 +201,8 @@ impl DropsetAmm {
         let Ok(view) = MarketView::load(&self.data) else {
             return false;
         };
-        view.active_vaults().any(|(_, v)| {
-            let p = v.reference_price.price();
-            v.frozen == 0 && p.is_valid() && !p.is_zero() && !p.is_infinity()
-        })
+        view.active_vaults()
+            .any(|(_, v)| v.frozen == 0 && v.reference_price.price().is_matchable())
     }
 
     /// Refresh the cached market account data (`update`).
