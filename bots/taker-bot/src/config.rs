@@ -6,6 +6,15 @@
 //! order sizes, and a roughly balanced buy/sell split. The optional
 //! passive / retail / aggressive presets from dropset-alpha are deliberately
 //! *not* a deliverable — re-parameterize [`FlowConfig`] to taste.
+//!
+//! Sizing has two independent limits, and they are deliberately layered. The
+//! LogNormal parameters ([`FlowConfig::median_notional`] /
+//! [`FlowConfig::size_log_sigma`]) shape the *absolute* take size, tuned so
+//! even the tail sits inside the seeded book; [`BotConfig::max_depth_fraction`]
+//! then caps each take against the book that is actually resting when it is
+//! sent. The first keeps the flow realistic, the second keeps it in bounds when
+//! the book is thinner than the parameters assumed — a drained vault, a wider
+//! spread, a market seeded at a different scale.
 
 use std::time::Duration;
 
@@ -77,10 +86,14 @@ impl Default for FlowConfig {
             burst_exit_prob: 0.3,
             // ~$4 median take — small relative to the ~$100 seeded book
             // (SEED_USD_PER_SIDE), so each take nibbles a level or two rather
-            // than overrunning the book: many small fills, not a few skips. The
-            // tighter σ keeps even the tail well within book depth.
+            // than overrunning the book: many small fills, not a few skips. σ
+            // is tight enough that the tail itself stays inside book depth
+            // (~$19 at the 99.9th percentile against the ~$90 resting inside
+            // the taker's slippage limit), which leaves
+            // `BotConfig::max_depth_fraction` as the backstop for a depleted
+            // book rather than the thing sizing most takes.
             median_notional: 4.0,
-            size_log_sigma: 0.7,
+            size_log_sigma: 0.5,
             // Balanced, gently autocorrelated flow.
             buy_bias_init: 0.5,
             buy_bias_reversion: 0.1,
@@ -108,6 +121,14 @@ pub struct BotConfig {
     /// between sizing and execution doesn't abort the take.
     pub slippage_tolerance: f64,
 
+    /// The most of the live book one take may consume, as a fraction of the
+    /// depth resting inside its limit price (e.g. `0.25` = a quarter). The
+    /// sampled notional is an absolute quote size, so on a thin book its tail
+    /// can clear several levels at once; capping against *live* depth keeps a
+    /// take proportional to whatever the maker is actually quoting, at $100 or
+    /// at $1M. A non-positive value disables the cap.
+    pub max_depth_fraction: f64,
+
     /// SOL airdropped to the taker on startup (and topped up when low), in
     /// lamports.
     pub airdrop_lamports: u64,
@@ -131,6 +152,11 @@ impl Default for BotConfig {
             tick: Duration::from_secs(2),
             flow: FlowConfig::default(),
             slippage_tolerance: 0.01,
+            // A quarter of the depth inside the limit price. Against the
+            // opening ladder that is ~half its top rung — a visible nibble
+            // that still leaves the level standing, which is the flow the demo
+            // wants to show.
+            max_depth_fraction: 0.25,
             airdrop_lamports: 2 * LAMPORTS_PER_SOL,
             min_taker_lamports: LAMPORTS_PER_SOL / 2,
             inventory_target_tokens: 1_000_000.0,
@@ -170,5 +196,27 @@ mod tests {
         assert!(c.slippage_tolerance > 0.0 && c.slippage_tolerance < 1.0);
         assert!(c.inventory_min_tokens < c.inventory_target_tokens);
         assert!(c.min_taker_lamports < c.airdrop_lamports);
+    }
+
+    /// The depth cap is a real fraction of the book — enabled (positive) and
+    /// under 1.0, so a take always leaves depth behind it.
+    #[test]
+    fn depth_fraction_leaves_the_book_standing() {
+        let c = BotConfig::default();
+        assert!(c.max_depth_fraction > 0.0 && c.max_depth_fraction < 1.0);
+    }
+
+    /// The sampled tail stays inside the depth the cap allows, so the cap is a
+    /// backstop rather than the primary sizer: at the 99.9th percentile of
+    /// `LogNormal(ln median, σ)` — `median · e^(3.09σ)` — a take is still a
+    /// modest slice of the ~$100-per-side seeded book (`SEED_USD_PER_SIDE`).
+    #[test]
+    fn size_tail_stays_within_the_seeded_book() {
+        let f = FlowConfig::default();
+        let p999 = f.median_notional * (3.09 * f.size_log_sigma).exp();
+        assert!(
+            p999 < 25.0,
+            "99.9th-percentile take {p999} is too large a share of the seeded book",
+        );
     }
 }

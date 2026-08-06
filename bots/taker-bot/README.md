@@ -41,11 +41,39 @@ against the live book before it is sent:
 - `limit_price_bits` is the reference price moved by the slippage tolerance
   (up for a Buy, down for a Sell) — the limit+slippage analog of a market
   order.
+- The take is then **capped at a fraction of the live book depth** on the
+  side being taken (`max_depth_fraction`, a quarter by default). See below.
 - `dropset_sdk::matching::simulate_swap` is run at that limit to find the
   achievable output, and `min_out` is floored just below it so a benign book
   move between sizing and execution doesn't trip the on-chain slippage check.
 
 The swap is built with the SDK's `SwapBuilder` and signed by the taker.
+
+### Sizing against live depth
+
+A sampled notional is an absolute quote size, so on its own it does not know
+how much book it is about to hit: the LogNormal's tail can clear several
+levels of a thin book at once — visibly emptying the side instead of nibbling
+it — while the same size is invisible against a deep one. So each take is
+capped at `max_depth_fraction` of the depth actually resting inside its limit
+price.
+
+Depth is measured by running the same `simulate_swap` fill path with an
+unbounded input and reading back what it consumed, so every constraint the
+engine applies is already accounted for: level sizes, the per-side `size_bps`
+gate, level expiry, and — the one that makes this worth a fill rather than a
+book read — each vault's own inventory. `resting_levels` shares the level
+collector, so it sees the first three; it runs no fill, so summing it
+over-reports a drained vault and would size the take against base the vault
+cannot pay out.
+
+Because the cap is relative, a take stays proportional whether the maker is
+quoting $100 or $1M, and shrinks automatically as its inventory drains
+mid-run — no per-market retuning. The cap applies only when converting an
+order into a swap, so it never touches the RNG: a seed still replays the same
+flow, and `--dry-run` remains a faithful preview **of the order flow**. The
+sizes it prints are the flow's raw draws — a live take may be clamped below
+them, which no dry run can know, so the dry-run summary says so.
 
 ## Self-funding
 
@@ -96,7 +124,15 @@ Flags:
 
 Every knob — tick interval, the quiet / burst intensities and transition
 probabilities, the median order size and spread, the buy-bias dynamics, the
-slippage tolerance, and the funding thresholds — lives in
+slippage tolerance, the depth cap, and the funding thresholds — lives in
 `config::BotConfig` with MVP defaults. The passive / retail / aggressive
 presets from dropset-alpha are optional re-parameterizations, not a required
 deliverable.
+
+Order size is bounded in two layers, deliberately. `median_notional` /
+`size_log_sigma` shape the *absolute* take size, tuned so even the tail sits
+inside the seeded book; `max_depth_fraction` then caps each take against the
+book that is actually resting when it is sent. The first keeps the flow
+realistic, the second keeps it in bounds when the book is thinner than those
+parameters assumed — a drained vault, a wider spread, or a market seeded at a
+different scale.

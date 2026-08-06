@@ -39,6 +39,12 @@ solana-pubkey = "3"
 solana-signer = "3"
 solana-transaction = "3"
 
+[dev-dependencies]
+# Test-only: assemble a market account buffer from the SDK's layout structs
+# (`Zeroable` + `bytes_of`) so the order-sizing path can be exercised against a
+# synthetic book without a validator.
+bytemuck = "1"
+
 [package]
 description = "Localnet stochastic taker bot for the Dropset FX-stablecoin demo."
 name = "dropset-taker-bot"
