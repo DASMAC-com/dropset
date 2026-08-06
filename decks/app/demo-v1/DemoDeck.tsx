@@ -33,7 +33,7 @@ import { colors, deckTheme } from "@/theme/tokens";
  * - **Solana is the start, never the ceiling**, and **DASMAC is the company
  *   while Dropset is the protocol**.
  *
- * Ten pages, and the middle five are one argument in sequence: the swap flow
+ * Ten pages, and pages 3–6 are one argument in sequence: the swap flow
  * works today, we curate the data for every currency, most of them have no
  * liquidity at all, and the eCLOB is what we're building to fix that. Then how
  * we grow, the roadmap, why an open venue wins, and the team — which is last
@@ -229,7 +229,11 @@ const METER_WIDTH = 760;
 const LISTED_SHARE = (LISTED_CURRENCIES / TOTAL_CURRENCIES) * 100;
 
 const CurrencyMeter = () => (
-  <Box width={`${METER_WIDTH}px`}>
+  // Inset to match the screenshot mounted under it: that capture sits inside a
+  // bordered, padded frame, so its image starts `SCREENSHOT_INSET` in from the
+  // frame's outer edge. Without the same inset the bar and the figure it cites
+  // are a padding-width out of true with each other.
+  <Box width={`${METER_WIDTH}px`} margin={`0 ${SCREENSHOT_INSET}px`}>
     <FlexBox justifyContent="space-between" alignItems="flex-end">
       <div style={{ color: colors.mutedFg, fontSize: "26px" }}>
         Currencies available on Solana
@@ -270,6 +274,15 @@ const CurrencyMeter = () => (
 );
 
 /**
+ * A screenshot frame's chrome, named because anything stacked above or below a
+ * capture has to inset by the same amount to line up with the image rather than
+ * with the frame's outer edge — see `SCREENSHOT_INSET` and the gap page's meter.
+ */
+const SCREENSHOT_BORDER = 1;
+const SCREENSHOT_PAD_X = 18;
+const SCREENSHOT_INSET = SCREENSHOT_PAD_X + SCREENSHOT_BORDER;
+
+/**
  * Frames a screen capture so it reads as a window rather than floating art,
  * with an optional caption underneath — `source` for a capture the audience
  * can go look at themselves, `caption` for what to notice in it.
@@ -291,9 +304,9 @@ const Screenshot = ({
 }) => (
   <Box margin={margin}>
     <Box
-      border={`1px solid ${colors.border}`}
+      border={`${SCREENSHOT_BORDER}px solid ${colors.border}`}
       borderRadius="12px"
-      padding="14px 18px"
+      padding={`14px ${SCREENSHOT_PAD_X}px`}
       backgroundColor={colors.muted}
     >
       {/* `display: block` matters: Spectacle's `Image` is a bare styled `img`,
@@ -575,6 +588,12 @@ const PERMISSIONED: Logo[] = [
 const FLYWHEEL_TILE = 104;
 // A group is two tile columns, so its heading rule spans exactly its own pair.
 // Derived from `LogoRow`'s constants rather than repeating their values.
+//
+// This adds `LOGO_CAPTION_ROOM` unconditionally, where `LogoRow` adds it only
+// to a column that carries a `note`. The two agree because every flywheel logo
+// has one — give an upstream or downstream entry no note and the heading rule
+// silently stops spanning its own pair, which is the misalignment that room
+// exists to prevent.
 const FLYWHEEL_GROUP =
   2 * (FLYWHEEL_TILE + LOGO_CAPTION_ROOM + 2 * LOGO_GUTTER);
 const FLYWHEEL_WIDTH = 2 * FLYWHEEL_GROUP + 80;

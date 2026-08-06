@@ -35,7 +35,7 @@ the deck that first went out:
 - Full sentences on slides, in place of fragment headlines.
 - **Static images only.** The two recorded demos and the click-to-play
   badge are gone; product beats are interface screenshots.
-- **Ten pages, not eight.** The middle five are now one argument in
+- **Ten pages, not eight.** Pages 3–6 are now one argument in
   sequence: the swap works today → we curate the data for every currency
   → most of them have no liquidity at all → the eCLOB is what we're
   building to fix that. Splitting those beats is what makes the eCLOB
@@ -117,12 +117,13 @@ pages:
   — over the currencies count from our own site, captioned
   `dropset.io/currencies`.
 - **Spoken:** "Foreign exchange is the biggest market on earth — over
-  nine trillion dollars a day. But it only trades 24/5, its liquidity is
-  fragmented across over-the-counter desks and banks, and less than ten
-  percent of the world's currencies are even available on Solana today:
-  fourteen out of a hundred and sixty-two, and that count is live on our
-  own site. Every currency should be connectable to every other one, and
-  that's what we're building."
+  nine trillion dollars a day. But it only trades 24/5, banks and
+  over-the-counter desks fragment its liquidity, and less than ten percent
+  of the world's currencies are even available on Solana today: fourteen
+  out of a hundred and sixty-two, and that count is live on our own site,
+  which is where this is from. Every currency should be connectable to
+  every other one, and that's what we're building. To be precise: we don't
+  issue currencies — issuers create them, and Dropset is where they trade."
 - **Note:** Frame it as **gap plus upside**, never a market-size slide.
   The every-currency vision beat starts here, worded as **connection,
   not issuance** — Dropset does not issue currencies; issuers create them
@@ -162,10 +163,10 @@ pages:
   the space that shorter column leaves.
 - **Spoken:** "This already works. Dropset already processes Solana
   mainnet FX trades: you open the picker, select your currency, and the
-  swap settles atomically. The ramps are near instant and the
-  venue never closes. And it's on dropset.io/swap right now, so you can go
-  and do this yourself. Solana is the start, not the end — it's the most
-  moneyness-conducive environment onchain."
+  swap settles atomically. The ramps are near instant and the venue never
+  closes. Solana is the start, not the end — it's the most
+  moneyness-conducive environment onchain. And it's on dropset.io/swap
+  right now, so you can go and do this yourself."
 - **Note:** The *why onchain matters* beat lives here, spoken. Keep the
   claim exact: today we clear by routing through aggregators and sourcing
   existing liquidity. Don't assert "most liquid". The **URL is doing real
@@ -183,12 +184,11 @@ pages:
   flex-centred, the overflow split top and bottom and **cropped the
   eyebrow off the top edge**. Three things brought it back: a shorter
   statement that fits one line, a narrower step width, and moving the URL
-  into the middle column so it stops adding to the page's height. Those
-  first two later relaxed once the heading was pinned with `nowrap` rather
-  than estimated — the step width sits at 420 today — but if this page
-  grows again, that is the order to give ground in. The live numbers are in
-  `DemoDeck.tsx`'s `STEP_WIDTH`; don't restate them here, where they go
-  stale.
+  into the middle column so it stops adding to the page's height. The first
+  two later relaxed once the heading was pinned with `nowrap` rather than
+  estimated, but if this page grows again, that is the order to give ground
+  in. The live figure is `DemoDeck.tsx`'s `STEP_WIDTH`; don't restate it
+  here, where it goes stale.
 
 #### Page 4 — Currency curation · ~10s
 
