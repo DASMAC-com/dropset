@@ -798,15 +798,43 @@ The Kargil Studios design system from the DASMAC Figma:
 ### Export
 
 The deck runs on Spectacle, and it stays there — there is no migration
-and no export tooling to build. To produce the accelerator's combined
-meta-deck, print the slides through Spectacle's print path (**`⌘⇧R`**)
-and drop the resulting images into Google Slides. The only requirement
-this puts on the deck is that **every slide prints as a clean 16:9
-static page** — nothing clipped, no interactive chrome in the output.
+and no export tooling to build. The only requirement this puts on the deck
+is that **every slide prints as a clean 16:9 static page** — nothing
+clipped, no interactive chrome in the output.
+
+**Use export mode (`⌘⇧E`), not print mode (`⌘⇧R`).** They render the same
+thing — every slide stacked as a static page — with one difference that
+matters enormously here: print mode merges Spectacle's own **print theme**,
+which forces the backdrop to white, headings to black and body text to
+`#777`. On a deck designed on black that inverts the whole thing, and it
+**erases the Dropset wordmark**, because that asset is an opaque PNG shown
+with `mix-blend-mode: screen` and screening over white returns white. Export
+mode skips the theme swap and keeps the deck's real colors. (An earlier
+version of this section said `⌘⇧R`; it was wrong.) Both modes are also
+reachable by query string — `?exportMode=true`, `?printMode=true` — which is
+the more reliable way in, since `⌘⇧R` is "hard reload" in a browser.
+
+Then, in the print dialog:
+
+- Destination **Save as PDF**.
+- **Background graphics ON.** Without it the black backdrop and the panel
+  tints don't print, and the deck comes out on white anyway.
+- Margins **None**, scale **100%**, headers and footers **off**.
+- Leave the paper size alone. Spectacle emits
+  `@page { size: <deck width>px <deck height>px }` from the theme's own
+  `size`, so pages come out exactly 16:9 — check the preview for
+  edge-to-edge black with no white bands.
+
+**Google Slides can't import a PDF** (File ▸ Import slides takes `.pptx` /
+`.ppt` / Slides only), so the meta-deck path is: PDF → one image per page →
+insert into a 16:9 Slides deck, each image filling the canvas. Rasterizing
+needs a tool the repo doesn't carry — `pdftoppm` from poppler, or PyMuPDF.
+Ask the accelerator whether a PDF is acceptable first; it usually is, and it
+skips this step entirely.
 
 Content that overflows a slide is merely scaled on screen but **silently
-clipped in print**, so a layout change means one pass through print mode
-before it's done.
+clipped in the exported page**, so a layout change means one pass through
+export mode before it's done.
 
 **Two traps make a page taller than its margins say.** Both were found while
 chasing exactly that symptom, and both cost tens of units per page:

@@ -110,8 +110,10 @@ script; see the port-allocation table in the repo `Makefile`), and opens
 a browser once it's up. Arrow keys drive a deck. The mode shortcuts all
 take a modifier — **`⌘⇧P`** (`Ctrl⇧P` off macOS) for presenter mode
 (speaker notes + next-slide preview), `⌘⇧O` for the slide overview,
-`⌘⇧R` for print. A bare `p` does nothing, which reads as presenter mode
-being broken when it isn't.
+`⌘⇧E` for export and `⌘⇧R` for print. A bare `p` does nothing, which reads
+as presenter mode being broken when it isn't. Every mode also has a query
+string (`?exportMode=true`, `?presenterMode=true`, …), which is worth
+knowing because `⌘⇧R` collides with the browser's own hard-reload.
 
 ## Presenting
 
@@ -135,16 +137,33 @@ page is loaded.
 ## Export to Google Slides
 
 The accelerator combines every team's slides into one meta-deck, which is
-a Google Slides file. The path is Spectacle's own print mode (**`⌘⇧R`**),
-then the browser's print-to-PDF, then dropping the pages into Slides as
-images. There is deliberately **no export tooling** in this package.
+a Google Slides file. The path is Spectacle's **export** mode (**`⌘⇧E`**),
+then the browser's print-to-PDF with **background graphics on**, then
+dropping the pages into Slides as images. There is deliberately **no export
+tooling** in this package.
 
-What that pipeline asks of a deck is just the two rules the theme already
+**Export mode, not print mode**, and the difference is not cosmetic:
+`⌘⇧R` merges Spectacle's print theme, which forces the backdrop white,
+headings black and body text grey. Any deck designed on a dark backdrop
+comes out inverted, and the Dropset wordmark disappears entirely — it is an
+opaque PNG shown with `mix-blend-mode: screen`, and screening over white
+returns white. `⌘⇧E` renders the same static pages with the deck's own
+colors. Background graphics matter for the same reason: with them off, the
+backdrop doesn't paint and you get the inverted result anyway.
+
+What the pipeline asks of a deck is just the two rules the theme already
 enforces: the slide box is exactly 16:9 (`DECK_SIZE`), so nothing gets
 letterboxed on import, and no slide carries interactive chrome, so what
-prints is what the audience saw. After changing a deck's layout, open
-print mode once and check every page — a page that overflows its box on
-screen is clipped in print, silently.
+prints is what the audience saw. Spectacle emits `@page { size }` from that
+same `DECK_SIZE`, so leave the print dialog's paper size alone and the pages
+come out 16:9. After changing a deck's layout, open export mode once and
+check every page — a page that overflows its box on screen is clipped in the
+output, silently.
+
+Slides itself **cannot import a PDF** (its Import slides accepts `.pptx` /
+`.ppt` / Slides), so the last hop is one image per page. Rasterizing a PDF
+needs a tool this repo doesn't carry — `pdftoppm` (poppler) or PyMuPDF. Ask
+whether a plain PDF is acceptable before bothering; it usually is.
 
 ## Add a deck
 
