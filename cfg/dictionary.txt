@@ -65,6 +65,7 @@ gifs
 globbable
 gyen
 générale
+headshot
 headshots
 heredocs
 hyperliquid
@@ -103,11 +104,13 @@ oneline
 onramps
 paytrie
 pdas
+pdftoppm
 permissioned
 permissioning
 permissionless
 pgrep
 pkill
+poppler
 prebuild
 predev
 prefs
@@ -117,6 +120,7 @@ programdata
 pubkeys
 pullable
 pytest
+rasterizing
 ratatui
 raydium
 readback
@@ -172,6 +176,7 @@ txns
 uncaptioned
 unfillable
 unfirmable
+unitless
 unmirrored
 unpullable
 unrouted

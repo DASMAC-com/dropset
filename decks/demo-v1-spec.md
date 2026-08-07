@@ -29,8 +29,21 @@ Sections are ordered for Google Docs toggles: **1. Slide contents**
 Q&A material) next, and **3. Formatting / structure rules** (how to
 read this, the design principles, the reference structure) last.
 
-This is **outline v2**, revised twice against review. What changed from
-the deck that first went out:
+This is **outline v2**, revised against review three times. What the most
+recent round changed:
+
+- **DASMAC recedes.** The company is the boring DevCo in the background,
+  discoverable when someone signs a document. It is named exactly once, in
+  the footer credit — off the title slide, off the roadmap, out of the team
+  roles. Dropset is the brand.
+- **Money-ness is the through-line.** The gap page (2) states the problem
+  in money-ness terms and names the ambition — 24/7/365 coverage of every
+  spot pair — and the open-venue page (9) answers in the same terms.
+- **The open-venue page is a long-term question, not a hit list.** Public
+  versus private onchain liquidity is the thing to align an investor on;
+  the permissioned rails are context for it.
+
+What changed from the deck that first went out:
 
 - Full sentences on slides, in place of fragment headlines.
 - **Static images only.** The two recorded demos and the click-to-play
@@ -54,11 +67,14 @@ ______________________________________________________________________
 The through-line, so the story reads as one piece before it's cut into
 pages:
 
-> Dropset is where currency trades onchain, built by DASMAC. Foreign
-> exchange is the biggest market on earth — over nine trillion dollars a
-> day — but it trades only 24/5, banks and over-the-counter desks fragment
-> its liquidity, and less than ten percent of the
-> world's currencies are even available on Solana today. This already
+> Dropset is where currency trades onchain. Foreign exchange is the
+> biggest market on earth — over nine trillion dollars a day — but it
+> trades only 24/5, and banks and over-the-counter desks fragment its
+> liquidity. Public blockchains are the most money-like digital
+> environment available today, and yet less than ten percent of the
+> world's currencies are on Solana, the fastest and cheapest chain.
+> Our goal is 24/7/365
+> coverage of every FX spot pair. This already
 > works: Dropset already processes Solana mainnet FX trades — you open the
 > picker, select your currency, and the swap settles atomically, at
 > dropset.io/swap right now. Alongside that, Dropset curates the market
@@ -71,16 +87,29 @@ pages:
 > reshaping the ladder fifty-nine. FX vaults bootstrap a public liquidity
 > flywheel, and it's a two-sided market we're already doing the customer
 > development on — upstream the issuers who need their currency to trade,
-> downstream the payments companies who need to buy FX to settle. The path
-> from here is deliberate: DASMAC bootstraps nascent FX pairs by leading
-> Hyperliquid-style vaults now, protocol fees accrue value as markets
-> mature, and derivatives provide an expansion opportunity once spot is
-> fully mature. Permissioned onchain liquidity has an adoption ceiling:
-> permissioned solutions block composability, and no fintech is going to
-> settle on a competitor's private ledger — Dropset is open and composable
-> on Solana, the most money-like onchain environment, where ease of
-> transmission and composability are maximized. Public liquidity is
-> what blockchains were built for.
+> downstream the payments companies who need to buy FX to settle. This is
+> the path to 24/7/365 FX and beyond: we onboard emerging stablecoin issuers
+> with vaults that give them day-one liquidity while we develop the
+> downstream pipeline of companies and users who need liquid currency swaps,
+> then as additional market makers enter, quotes get tighter and protocol fees
+> accrue value as volume and liquidity compound, and the product expands
+> beyond spot
+> into derivatives once the markets
+> are deep. The long-term question is whether onchain liquidity is public
+> or private. A private ledger gives an issuer distribution, but multiple
+> private ledgers introduce competitive friction, the liquidity on them is
+> gated, and market making on them isn't permissionless — early-stage teams
+> face hurdles just to experiment. Dropset is open and composable on Solana,
+> the most money-like onchain environment today — today, because nothing here
+> is bound to one chain — where ease of transmission and open
+> access compound liquidity into a flywheel that exists nowhere else, and
+> every currency and FX pair has a path to onchain liquidity, one market at a
+> time. And it absorbs their liquidity: a market maker who already holds an
+> account on one of those rails can quote here and hedge there, so that depth
+> lands in a public book anyone can trade against — and it never runs the other
+> way, which makes public liquidity a superset of private liquidity. Public
+> liquidity is what
+> blockchains were built for.
 > Dropset is built by people who have built exchanges. Dropset — where
 > currency trades onchain.
 
@@ -88,42 +117,61 @@ pages:
 
 #### Page 1 — Title · ~5s
 
-- **On-slide:** Where currency trades onchain. Beneath it: Built by
-  DASMAC.
-- **Visual:** The Dropset wordmark, then the **DASMAC company banner**
-  (`brand-assets/dasmac-banner-wide.png` — the mountains, with the
-  "distributed atomic state machine algorithms corporation" tag) across
-  the bottom. Uncaptioned: it's brand art, not a figure, and a caption
-  explaining what a banner is would undercut it. There is deliberately
-  **no Dropset protocol counterpart** — one banner reads as a signature,
-  two read as a comparison.
-- **Spoken:** "Dropset is where currency trades onchain, built by
-  DASMAC."
-- **Note:** "Built by DASMAC", not "courtesy of" — the credit is
-  authorship, and it carries the company/protocol distinction from the
-  first frame. Solana is **not** mentioned here; the old "Forex on
-  Solana" line implied a boundary the deck no longer wants. There is
-  **no separate closing slide** — the deck ends on the team page.
+- **On-slide:** Where currency trades onchain. Nothing else.
+- **Visual:** The Dropset wordmark, alone.
+- **Spoken:** "Dropset is where currency trades onchain."
+- **Note:** **Dropset is the brand; DASMAC recedes.** The company is the
+  boring DevCo in the background — discoverable when someone signs a
+  document, not something a title slide argues for. So this page carries
+  no "Built by DASMAC" line and no company banner: the footer credit is
+  the deck's one mention of DASMAC, and it is enough. This supersedes v2's
+  earlier title-slide credit and the review note that asked for company
+  brand art here, both of which are won't-do. Solana is **not** mentioned
+  here either; the old "Forex on Solana" line implied a boundary the deck
+  no longer wants. There is **no separate closing slide** — the deck ends
+  on the team page.
 
 #### Page 2 — The gap · ~15s
 
 - **On-slide:** Foreign exchange is the biggest market on earth. Then
-  three chevron-marked facts: daily volumes exceed \$9 trillion; banks and
-  OTC desks fragment liquidity; less than 10% of the world's currencies are
-  available on Solana. Each is a **clause with a subject and a verb** —
-  they were fragments ("over \$9 trillion daily volume"), which read as a
-  spec sheet rather than as three things being said.
+  six chevron-marked facts, in this order: daily volumes exceed \$9
+  trillion; banks and OTC desks fragment liquidity; FX markets only trade
+  24/5; public blockchains are the most money-like digital environment
+  available today; less than 10% of the world's currencies are on Solana, the
+  fastest and cheapest chain; our goal is 24/7/365 coverage of
+  every FX spot pair. Each is
+  a **clause with a subject and a verb** — they were fragments ("over \$9
+  trillion daily volume"), which read as a spec sheet rather than as things
+  being said.
+- **Note on the arc:** the six facts are the page's argument in order —
+  huge market, structural problems, blockchains solve exactly those,
+  coverage still has to be ramped, and here is what we're going after. Fact
+  3 (24/5) says the closing hours plainly and does **not** fold in the OTC
+  desks; fragmentation is fact 2's job, and merging them loses one of the
+  two problems. Fact 4 is the **thesis fact** — the money-ness claim the
+  rest of the deck answers to — and it names public blockchains rather than
+  Solana, because the argument is about the class of environment;
+  "especially Solana" is a spoken line. The gap and the goal are **two rows,
+  not one**: joined by a dash they read as one sentence whose second half
+  qualifies the first, which is backwards — the goal is the bigger claim and
+  has to stand on its own. The goal row is set in the **accent color**, the
+  one row on the page that is an intention rather than a fact about the
+  world as it is.
 - **Visual:** A **progress bar** — 8.6% of currencies available on Solana
   — over the currencies count from our own site, captioned
   `dropset.io/currencies`.
 - **Spoken:** "Foreign exchange is the biggest market on earth — over
-  nine trillion dollars a day. But it only trades 24/5, banks and
-  over-the-counter desks fragment its liquidity, and less than ten percent
-  of the world's currencies are even available on Solana today: fourteen
-  out of a hundred and sixty-two, and that count is live on our own site,
-  which is where this is from. Every currency should be connectable to
-  every other one, and that's what we're building. To be precise: we don't
-  issue currencies — issuers create them, and Dropset is where they trade."
+  nine trillion dollars a day. But banks and over-the-counter desks
+  fragment its liquidity, and it only trades 24/5 — it closes on Friday.
+  Public blockchains are the most money-like digital environment we have,
+  and Solana most of all — it is the fastest and the cheapest. And yet less
+  than ten percent of the world's
+  currencies are available there: fourteen out of a hundred and sixty-two,
+  and that count is live on our own site, which is where this is from. Our
+  goal is 24/7/365 coverage of every FX spot pair — every currency
+  connectable to every other one, and that's what we're building. To be
+  precise: we don't issue currencies — issuers create them, and Dropset is
+  where they trade."
 - **Note:** Frame it as **gap plus upside**, never a market-size slide.
   The every-currency vision beat starts here, worded as **connection,
   not issuance** — Dropset does not issue currencies; issuers create them
@@ -131,16 +179,24 @@ pages:
   (it isn't disputed at pitch-deck level), but the currency count keeps
   its attribution because it's ours and it's checkable. **Do not invent a
   Solana volume-share percentage.**
-- **Note on the three facts:** they're the deck's one deliberate
-  exception to "no bullet lists" — three facts that are peers, which the
-  audience should take at a glance and which prose would bury. They are
-  **not** an exception to full sentences: each carries a subject and a
-  verb, so the list reads as three statements rather than as a spec sheet.
-  The marker is a **chevron**, not a disc (a row of
+- **Note on the facts:** they're one of the deck's two deliberate
+  exceptions to "no bullet lists" (page 9's panels are the other) — facts
+  that are peers, which the audience should take at a glance and which
+  prose would bury. They are **not** an exception to full sentences: each
+  carries a subject and a verb, so the list reads as statements rather than
+  as a spec sheet. The marker is a **chevron**, not a disc (a row of
   discs is what makes a slide read as a corporate template) and
   deliberately not a literal `≥`: that glyph makes a numeric claim, and
-  next to the third fact — a *less-than* — it would read as a
-  contradiction.
+  next to the coverage fact — the fifth of the six, and a *less-than* — it
+  would read as a contradiction. Six rows is more than this page was designed
+  around, so
+  the row spacing is the give: `Fact`'s bottom margin came down when the
+  list grew, and it is the first place to take more if the page ever
+  overflows. **Keep every fact to two lines at most.** A three-line row reads
+  as a paragraph sitting among statements, which is why the coverage fact says
+  "are on Solana" rather than "are available on", and why the column was
+  widened to 880 — the meter beside it leaves the room, so a wider measure is
+  free and keeps rows off a third line.
 - **Note on the bar:** a single ratio against a limit is a **meter**, not
   a pie of two slices — the empty part of the track *is* the message. It
   carries the **percentage only**; the raw 14-of-162 count belongs to the
@@ -188,7 +244,13 @@ pages:
   two later relaxed once the heading was pinned with `nowrap` rather than
   estimated, but if this page grows again, that is the order to give ground
   in. The live figure is `DemoDeck.tsx`'s `STEP_WIDTH`; don't restate it
-  here, where it goes stale.
+  here, where it goes stale. The gap **below** the statement is the tightest in
+  the deck, deliberately: the space between the sentence and the captures is
+  the cheapest thing on this page to give up. It is not made symmetric with the
+  kicker's gap above — a kicker belongs to the sentence under it, so it sits
+  closer than the sentence sits to the content. Note only the lower gap is
+  page-specific; the one above comes from the shared `Eyebrow` and is identical
+  on all ten pages, so don't go looking for a page-3 override of it.
 
 #### Page 4 — Currency curation · ~10s
 
@@ -300,16 +362,18 @@ pages:
 
 #### Page 8 — Growth roadmap · ~15s
 
-- **On-slide:** Our path to expansion is deliberate and methodical. Then
-  three
+- **On-slide:** The path to 24/7/365 FX and beyond. Then three
   beats in time order, spanning the page:
-  1. **Now** — DASMAC bootstraps liquidity. DASMAC bootstraps nascent FX
-     pairs by leading Hyperliquid-style vaults using the Dropset protocol.
-  1. **Next** — protocol fees accrue value. As markets mature, volume and
-     fees compound, and currency pairs achieve deep liquidity.
-  1. **Later** — derivatives provide an expansion opportunity. Once spot
-     is fully mature, hedging instruments and additional derivatives
-     enable more efficient market making and more mature markets.
+  1. **Now** — we onboard emerging stablecoin issuers. We lead the vaults
+     that give an emerging issuer day-one liquidity, and we develop the
+     downstream pipeline of companies and users who need liquid currency
+     swaps.
+  1. **Next** — protocol fees accrue value. As additional market makers
+     enter, quotes get tighter, and protocol fees accrue value as volume and
+     liquidity compound.
+  1. **Later** — product expansion beyond spot. Derivatives enable more
+     efficient markets and business use cases, including treasury
+     management and hedging B2B payment flows.
 - **Visual:** The three beats as a rollout along one unbroken rule spanning
   the full page width, not a static list. Each dot sits **directly above
   its own beat's heading**.
@@ -320,57 +384,153 @@ pages:
   the second dot sat 27 units left of its heading and the third 53. Both
   rows now come from one pitch, so changing the column width moves the dots
   with it.
+- **Spoken:** "This is the path to 24/7/365 FX, and beyond it. Now, we
+  onboard emerging stablecoin issuers: we lead the vaults that give them
+  day-one liquidity, and at the same time we develop the downstream pipeline
+  of the companies and users who need liquid currency swaps — those are the
+  two sides of the market. Next, protocol fees accrue value: this isn't a prop
+  AMM, so as additional market makers come in, quotes get tighter, volume
+  follows the tighter spreads, liquidity compounds, and protocol fees accrue
+  value off it. Later, the product expands beyond spot — derivatives
+  make the markets themselves more efficient, and they open up business use
+  cases too: treasury management, hedging B2B payment flows. Hedging isn't
+  just for market makers."
 - **Note:** Called a **roadmap** rather than "commercial viability" — the
   growth story is the frame, and "viability" invites the question of
   whether it is viable. The headline is a *path*, not a funding
   mechanic: an earlier draft read "each stage funds the next", which made
   the page about cashflow rather than about direction. The rollout shape
   matters — a static list reads as speculation, three beats in time order
-  read as a plan. This is also where the **DASMAC / Dropset** distinction
-  is made explicit. Name the streams in abstracted language, not jargon —
-  no "fee switch".
+  read as a plan. This page carries the **massive-opportunity endpoint**:
+  the statement names where the path *goes*, so the audience sees what
+  bootstrapping a handful of pairs is supposed to add up to — and "and
+  beyond" is what carries the Later beat, so the destination isn't the end
+  of the company. It is also the deck's **one fragment headline**, and
+  deliberately so (see the exception on global rule 1): a path is a noun,
+  the page is a timeline, and every sentence form of this line
+  ("our path runs to…") read as a hedge about the destination rather than as
+  the destination. The **Now** beat
+  is deliberately plain-spoken customer development and **names no
+  company** — an earlier draft attributed the bootstrap to DASMAC, which
+  put the DevCo back on a slide it has receded from. The **Next** beat has to
+  say that **other market makers enter**, because that is what says this is
+  not a prop AMM: anyone can quote on Dropset, so quotes compete tighter
+  instead of being set by whoever owns the venue, and that competition is the
+  mechanism the compounding runs on. Fees only mean something after it. The
+  **Later** headline
+  is left broad on purpose ("beyond spot") so a reader fills in their own
+  derivatives thesis instead of being handed one. Name the streams in
+  abstracted language, not jargon — no "fee switch".
 
 #### Page 9 — Why the open venue wins · ~12s
 
-- **On-slide:** Permissioned onchain liquidity has an adoption ceiling.
-  Two panels: the permissioned rails (Arc, Canton, Tempo, red-outlined),
-  captioned "Permissioned solutions are blocking composability.
-  Competitive dynamics prevent fintech companies from adopting a
-  competitor's private ledger."; and the Dropset wordmark, green-outlined,
-  captioned "Dropset is open and composable on Solana, the most money-like
-  onchain environment, where ease of transmission and composability
-  are maximized. Public liquidity is what blockchains were built for."
-  Both badges are **top-aligned** so they sit on one line — see the note
-  below.
-- **Spoken:** "Permissioned onchain liquidity has an adoption ceiling.
-  Arc and Tempo are building payment-and-settlement rails, and Canton is
-  doing regulated onchain markets — any of them could decide FX is
-  theirs, and each arrives with the customers already on it. But their
-  liquidity isn't public: you can't make a market unless they let you,
-  and that blocks composability for everyone downstream. And competitive
-  dynamics stop it before it starts: a fintech isn't going to settle on a
-  competitor's private ledger. A bank that competes with Circle won't
-  build on Arc, and a multi-signature banking product isn't going to run
-  on Canton. Dropset is open, neutral and composable: anyone can quote,
-  anyone can trade, any app can integrate. Public liquidity is what
-  blockchains were built for — moving money is the problem they were
-  supposed to solve, and this is that. And that's why we started on Solana:
-  the most money-like onchain environment there is, where ease of
-  transmission and composability are both maximized."
+- **On-slide:** Public liquidity is what blockchains were built for. Two
+  panels, each captioned with **three or four bullets** rather than a block
+  of text. The permissioned rails (Arc, Canton, Tempo, red-outlined and
+  **uncaptioned** — each mark is a wordmark that already says the company, so
+  a name under it is the word twice; note this means the row reads Circle for
+  Arc, since Arc is Circle's chain),
+  bulleted: "Multiple private ledgers introduce competitive friction";
+  "Liquidity is gated, and market making isn't permissionless"; "Early-stage
+  teams face hurdles just to experiment".
+  Then the Dropset wordmark, green-outlined,
+  bulleted: "Dropset is open and composable on Solana, the most money-like
+  onchain environment today"; "Ease of transmission and open access compound
+  liquidity into a flywheel"; "Every currency and FX pair has a path to
+  onchain liquidity, one market at a time"; "Public liquidity absorbs private
+  liquidity through market makers who already have gated access". Both
+  badges are **top-aligned** so they sit on one line — see the note below.
+- **Spoken:** "The long-term question is whether onchain liquidity is
+  public or private, and this is the one to make up your mind about. Arc
+  and Tempo are building payment-and-settlement rails, and Canton is doing
+  regulated onchain markets — and an issuer that goes there gets real
+  distribution, so the argument isn't that Circle would never use one. It's
+  friction. Once there are several of these ledgers, settling on one your
+  competitor owns is an awkward place to be — a bank that competes with Circle
+  is not enthusiastic about building on Arc — and market making on them isn't
+  permissionless: the liquidity is gated, so you quote only if they let you.
+  An early-stage team hits those hurdles before it can even experiment.
+  Dropset is open and composable on Solana, the most money-like onchain
+  environment today — and I say today deliberately: Solana is where this
+  belongs right now because it's the fastest and the cheapest, not a commitment
+  we're locked into if something better shows up. What we're building is public
+  liquidity, and that's portable. Ease of transmission and composability let
+  liquidity compound into a flywheel instead of sitting still. That's the
+  public money infrastructure we're building — a flywheel around public
+  currency liquidity that exists nowhere else. Every currency and FX pair has
+  a path to onchain liquidity here, one market at a time — and we've already
+  started walking it: we're in detailed conversations with AUDD, and we've
+  spoken with the CADC issuer. And here's the part that matters most: this
+  absorbs their liquidity. A market maker who already has an account on one of
+  those rails can quote here and hedge there, so their depth shows up in a
+  public book that anyone can trade against — and it doesn't run the other way,
+  because a permissioned venue can't take in a public book's liquidity. Public
+  liquidity is a superset of private liquidity, and the makers who already hold
+  that gated access are the pipe. \[Optional, if the room is technical: it's a
+  vampire attack on private liquidity, and it only works in this direction.\]
+  Public liquidity is what blockchains were built
+  for —
+  moving money is the problem they were supposed to solve, and this is that."
 - **Note:** The v1 fail / won't-fail **pair collapsed into this one
   page**, and the asterisk device is retired — it cost a page and the
-  payoff didn't carry. The framing is now an **adoption ceiling** rather
-  than "what FX's consumers need", which was a claim about other people's
-  requirements. A ceiling is the sharper version of the same point: it
-  isn't that permissioning is unpleasant, it's that it caps how far the
-  thing can ever get. The
-  second clause on the permissioned caption is the sharper half of the
-  argument, and it's a **commercial** point rather than a technical one: a
-  fintech will not settle on a competitor's private ledger. A bank that
-  competes with Circle won't build on Arc; a multi-signature banking
-  product won't run on Canton. The permissioning doesn't just restrict
-  access, it disqualifies the people who most need the rail — and those
-  examples belong in the spoken track, not on the slide.
+  payoff didn't carry. The page is now framed as **the long-term
+  question**: public versus private onchain liquidity is the religion an
+  investor has to be aligned on, so the page names **our ambition** —
+  public money infrastructure, a flywheel around public currency liquidity
+  that exists nowhere else, every currency onchain — and the permissioned
+  rails appear as *context* for that question rather than as targets. This
+  supersedes the earlier "adoption ceiling" framing, which made the page
+  about them. Keep the argument at its sharpest version, which is also its
+  most **defensible**. Two overstatements to stay away from: "Circle would
+  never use Tempo or Canton" (an issuer just needs distribution, and a
+  private rail can supply it) and "no fintech will settle on a competitor's
+  ledger" (a real effect, but stated as a law it invites the one
+  counterexample that sinks it). The word that survives both is
+  **friction** — settling on a competitor's ledger is an awkward place to
+  be, market making on it isn't permissionless, and an early-stage team hits
+  those hurdles before it can even experiment. Say "**multiple** private
+  ledgers", not "competing" ones: the doubled word reads as a stumble, and
+  the plurality is the actual condition. The green panel's last claim says
+  every pair **has a path** to onchain liquidity, which is the honest form of
+  "every currency onchain" — a route that exists and gets walked one market at
+  a time, rather than a state we assert. That we have already started walking
+  it stays in the **spoken** track, with the issuers named (AUDD in detail,
+  the CADC issuer spoken with): a slide saying "we've begun" invites "begun
+  with whom?", which is a question to answer out loud rather than in six words
+  under a logo.
+  The named examples (a bank that competes with Circle, a
+  multi-signature banking product) belong in the spoken track, not on the
+  slide. Deliberately **not** on this page yet: the TapTapSend / 0x /
+  entry-points color, deferred to a later pass.
+- **Note on absorption:** the strongest claim on the page, and the one that
+  makes this a comparison about **dominance** rather than about taste. A market
+  maker who already holds an account on a gated venue can quote here and hedge
+  there, so that depth shows up in a public book anyone can trade against —
+  and it does **not** run the other way, because a permissioned venue can't
+  take in a public book's liquidity. Public liquidity is therefore a
+  **superset** of private liquidity, not an alternative to it. It also repairs
+  a soft spot elsewhere in the deck: page 7 otherwise leaves our own vaults as
+  the only answer to where depth for a thin pair comes from. Say it as a
+  **capability**, not as something running today — it depends on how a given
+  maker is integrated, which is the same discipline the path claim gets. The
+  aggressive version — that this is a vampire attack on private liquidity, and
+  that it only runs in one direction — is **spoken and optional**, never
+  printed: the page argues about private ledgers as a class rather than
+  attacking anyone, and the term properly describes poaching an incumbent's
+  liquidity providers with incentives, which is a different mechanic.
+- **Note on the bullets:** the captions are **bullets, not prose blocks**,
+  which makes this page the deck's second sanctioned exception to "no
+  bullet lists" (page 2's facts are the first). Two blocks of small text
+  under two badges read as fine print nobody finishes; two short columns of
+  peer claims read as an argument against an argument, which is what the
+  page is. Each bullet takes the panel's own tint for its chevron — red
+  against red, green against green — so a bullet belongs visibly to its
+  side even when the two columns are read across rather than down. **Four is
+  the ceiling**, and only since the footer reserve was split and the headline's
+  phantom margin removed — those gave this page back about what a fourth
+  two-line bullet costs. The binding limit now isn't height, it's that the two
+  columns are visibly uneven at 4-against-3; the panels read as a comparison
+  only while both sides look like sides.
 - **Note on alignment:** the two badges are **top-aligned**, and that has
   to stay explicit. Spectacle's `FlexBox` defaults to `alignItems: center`,
   which vertically centred each panel *including its caption* — so the
@@ -387,28 +547,38 @@ pages:
   diagram, nobody named); it was less legible than the real marks, which
   an audience recognizes instantly. The **Solana DEXes stay off-slide** —
   that argument is an innovator's-dilemma point that needs a sentence,
-  not a logo row.
+  not a logo row. These three carry **no name under them**, unlike the
+  flywheel's: each is a wordmark that already reads as the company, and a
+  caption under a logotype is the word printed twice. The rule is the mark's
+  shape, not the page — name an icon, don't name a wordmark.
 
 #### Page 10 — Team & close · ~8s
 
 - **On-slide:** Eyebrow "The team", then "Dropset is built by people who
   have built exchanges" — matching every other page's kicker-plus-sentence
-  shape. Then one line each: Alex Kahn, Founder — authored two exchanges
-  on Aptos, including the Econia order book (\$500M lifetime volume);
-  authored the Solana Opcode Guide, the definitive resource for optimizing
-  Solana program efficiency. Judy Sosa, Operations — owns the whole
-  operational stack, working with banks, stablecoin providers, onramps and
-  service providers.
+  shape. Then one line each: Alex Kahn, Founder — authored exchange
+  technology across the entire stack on multiple blockchains, including the
+  Econia order book on Aptos (\$500M lifetime volume) and the Solana Opcode
+  Guide, a key resource for optimizing Solana program efficiency.
+  Judy Sosa, Operations — owns the whole operational stack, working with
+  banks, stablecoin providers, onramps and service providers, on an extensive
+  background in logistical coordination and partner relationship management.
+  Roles carry **no company**: "Founder", not "Founder, DASMAC" — the deck
+  names the company once, in the footer. The Opcode Guide is "**a key**
+  resource", not "the definitive" one — the superlative is a claim a reader
+  can dispute, and the page reads stronger without one to argue with.
 - **Visual:** Both headshots, square and unframed, pulled from the
   marketing site at build time (`remote-assets.json`).
-- **Spoken:** "Dropset is built by people who have built exchanges. I
-  authored two on Aptos, including the Econia order book, five hundred
-  million dollars of lifetime volume, and I authored the Solana Opcode
-  Guide, the definitive resource for optimizing Solana program efficiency
-  — which is what makes quoting on the eCLOB cost double-digit compute
-  units. Judy owns the whole operational stack, and works directly with
-  banks, stablecoin providers, onramps and service providers. Dropset —
-  where currency trades onchain."
+- **Spoken:** "Dropset is built by people who have built exchanges. I've
+  authored exchange technology across the entire stack, on more than one
+  blockchain — the Econia order book on Aptos, five hundred million dollars
+  of lifetime volume, and the Solana Opcode Guide, a key resource
+  for optimizing Solana program efficiency, which is what makes quoting on
+  the eCLOB cost double-digit compute units. Judy owns the whole
+  operational stack, and works directly with banks, stablecoin providers,
+  onramps and service providers, on an extensive background in logistical
+  coordination and partner relationship management. Dropset — where currency
+  trades onchain."
 - **Note:** **State what each person has done; don't argue for why the
   role matters.** An intermediate draft justified the operations split
   ("this is the work that gets an FX venue integrated with the rails…",
@@ -419,6 +589,12 @@ pages:
   with the EA role stated plainly. The final spoken line mirrors the
   title. Because this page lingers on screen after the talk, it's the one
   place slightly longer copy is correct — but only slightly.
+- **Note on the block:** set name, role and prior as **one tight unit** — no
+  margins between them at all, their leading is the only separation — so the
+  only gaps that read as gaps are headshot-to-name and the white space before
+  the bio. This is the deck's second densest page after page 3, thanks to two
+  five-line bios under two headshots, so the gap above the portraits is
+  tightened as well.
 
 ______________________________________________________________________
 
@@ -453,11 +629,23 @@ entirely:
 
 - **The settlement chains (Arc, Tempo) and regulated onchain markets
   (Canton).** On-slide, red-outlined. Each is chasing onchain settlement
-  and each arrives with customers already on it. The answer: they're
-  private or heavily permissioned rails. The moment FX needs a *neutral*
-  venue where anyone can make a market and anyone can trade, a closed
-  garden can't serve it — and in the meantime the permissioning is what
-  blocks composability for everyone building downstream.
+  and each arrives with customers already on it. The answer is **not** that
+  an issuer would never go there — an issuer needs distribution, and a
+  private rail can supply it. It's that the rail's own business dynamics
+  cap what can ever be built on it: settling on a competitor's ledger
+  carries competitive friction, so the venue can never be genuinely neutral,
+  and a new entrant meets a business account and gated access before it
+  meets any liquidity.
+  The moment FX needs a *neutral* venue where anyone can make a market and
+  anyone can trade, a closed garden can't serve it. And the relationship is
+  **asymmetric in our favor**: a maker who already holds an account on one of
+  those rails — or on an offshore venue like Binance, which is where a lot of
+  FX hedging actually happens — can quote here and hedge there, so their depth
+  reaches a public book, while nothing moves the other way. Whoever holds the
+  gated access is the pipe, and the private venue cannot be the pipe in
+  reverse. That is why public liquidity ends up the superset. The blunt way to
+  say it in a technical room is that it's a vampire attack that only runs one
+  direction; keep that out of print.
 - **The existing Solana DEXes (Jupiter, Meteora, Orca, pump.fun,
   Raydium) — off-slide.** They aren't focused on FX, and we're beating
   them to it. It's an innovator's dilemma: the volume today is too small
@@ -512,7 +700,26 @@ ______________________________________________________________________
 - Every page carries the same footer: the Dropset wordmark at the left,
   the "Built by DASMAC" credit in the middle, and progress dots at the
   right. It isn't page content — don't budget words or space for it; the
-  slide body already reserves room above it.
+  slide body already reserves room for it. That reserve is **split across the
+  top and bottom of the body**, not taken off the bottom alone: content is
+  centered in what's left, so reserving at one end only puts the whole page's
+  content ~53 units above the slide's own center, which reads as an eyebrow
+  crowding the top edge with an empty band under the content. Splitting it
+  costs no page any height. The credit's own centering is **two mechanisms,
+  not one**, and nothing ends up sitting exactly on the midline: "Built by" is
+  small grey text that pads the lockup's left while contributing almost none
+  of its ink, so **neither** part has a geometric centre that also looks
+  centered — put the lockup's box on the midline and the mark reads ~60 units
+  right of it; put the mark on the midline and the lockup reads ~50 units
+  left. The perceived centre is between them, nearer the box-centered end. So
+  the label is rendered twice — the second copy hidden on the mark's right,
+  making the row symmetric about the mark, which is an exact reference point —
+  and then one named constant walks the pair off that point to where it looks
+  right. Structure holds the geometry, one number holds the judgement. Both
+  extremes were measured off screenshots rather than judged by eye; the deck
+  comment records those numbers, the constant's usable range, and the two
+  traps met along the way (a theme-scale margin, and losing flex centering by
+  positioning the label out of flow).
 - Presenter mode is **`⌘⇧P`** (`Ctrl⇧P` off macOS), not a bare `p`.
 - Anything nuanced — the fuller competitor answers, the investor
   grilling, the numbers behind a claim — is **not on a slide**. It lives
@@ -524,19 +731,22 @@ ______________________________________________________________________
 These are firm, and they override the older guidance where the two
 disagree:
 
-1. **Full sentences on-slide**, everywhere, including inside the one list
-   the deck allows (page 2's three facts). No fragments — not as headlines,
-   not as list items. A reviewer reading the deck without the talk should
-   get the argument.
+1. **Full sentences on-slide**, everywhere, including inside the two lists
+   the deck allows (page 2's facts, page 9's panel bullets). No fragments —
+   not as headlines, not as list items. A reviewer reading the deck without
+   the talk should get the argument. **One exception**, page 8's "The path
+   to 24/7/365 FX and beyond": the page is a timeline and its headline
+   names a destination, which every sentence form of turned into a hedge
+   about reaching it.
 1. **No terminal period on a headline — on any page, at any level.** At
    display size a full stop is a visible mark that earns nothing: there is
    no following sentence for it to separate. Sentence *structure* still
    applies (rule 1); only the period goes. This covers all ten page
-   headlines, the title's "Built by DASMAC" credit, **and the roadmap's
-   three beat headlines** — anything that reads as a title rather than as
-   prose. Multi-sentence copy — the venue captions, the roadmap bodies, the
-   team bios — keeps its punctuation, because there the period is doing its
-   actual job.
+   headlines, the footer's "Built by DASMAC" credit, **the roadmap's three
+   beat headlines**, and **page 9's panel bullets** — anything that reads
+   as a title or a list item rather than as prose. Multi-sentence copy —
+   the roadmap bodies, the team bios — keeps its punctuation, because there
+   the period is doing its actual job.
 1. **16:9 aspect ratio**, set explicitly on the deck rather than
    inherited.
 1. **Static images only.** No embedded video, no gifs, no player. A
@@ -551,13 +761,23 @@ disagree:
    off-slide entirely, because that argument needs a sentence.
 1. **Solana is never framed as a ceiling.** It's the deliberate start —
    the most money-like environment onchain, with the highest ease of
-   transmission — never the boundary.
-1. **DASMAC is the company, Dropset is the protocol.** The distinction
-   has to be legible on the slides: "Built by DASMAC" on the title
-   carries it, and the roadmap attributes the bootstrap beat to DASMAC
-   explicitly.
-1. **No bullet lists**, bar page 2's three facts. Everywhere
-   else, prose.
+   transmission — never the boundary. Two words carry this on-slide, so keep
+   them: the gap page names what Solana is best *at* ("the fastest and cheapest
+   chain") rather than treating the choice as given, and the open-venue page
+   says "the most money-like onchain environment **today**". "Today" is the
+   answer to *what if a better settlement layer arrives* — nothing here is
+   bound to this one, because what's being built is public liquidity and that
+   is portable.
+1. **Dropset is the brand; DASMAC recedes.** The company is the boring
+   DevCo in the background — someone finds it when they sign a document.
+   The deck names it exactly **once**, in the footer credit: not on the
+   title slide, not in the roadmap's beats, not in the team's roles. This
+   reverses the earlier rule that asked for the company/protocol
+   distinction to be legible on the slides; carrying it cost attention the
+   product needed, and a title slide arguing for a DevCo argues for the
+   wrong thing.
+1. **No bullet lists**, bar page 2's facts and page 9's panel bullets.
+   Everywhere else, prose.
 
 ### Brand
 
@@ -567,27 +787,81 @@ The Kargil Studios design system from the DASMAC Figma:
   everything in **sentence case** — which is the reason it's primary
   rather than the mono face. **Space Mono** is the mono/tag face, set
   **uppercase and letterspaced**, which is exactly the treatment the
-  company banner uses for its own tag. So the deck's kickers and the
-  brand art are visibly one system. This supersedes an earlier note
-  naming JetBrains Mono. Both are Google fonts loaded through
+  company banner used for its own tag. So the deck's kickers and the
+  company's own typography are visibly one system. This supersedes an
+  earlier note naming JetBrains Mono. Both are Google fonts loaded through
   `next/font`, so there are no font files to commit.
 - **Assets.** `brand-assets/` at the repo root holds the DASMAC and
-  Dropset wordmarks, the favicon, and the **DASMAC company banner**
-  (`dasmac-banner-wide.png`), all copied into `public/` on the `predev` /
-  `prebuild` hooks.
+  Dropset wordmarks and the favicon, all copied into `public/` on the
+  `predev` / `prebuild` hooks. The wide DASMAC company banner used to live
+  there for the title slide; with the title slide down to the Dropset
+  wordmark alone, the banner has no consumer and was deleted rather than
+  left as an orphan for the copy step to keep shipping.
 
 ### Export
 
 The deck runs on Spectacle, and it stays there — there is no migration
-and no export tooling to build. To produce the accelerator's combined
-meta-deck, print the slides through Spectacle's print path (**`⌘⇧R`**)
-and drop the resulting images into Google Slides. The only requirement
-this puts on the deck is that **every slide prints as a clean 16:9
-static page** — nothing clipped, no interactive chrome in the output.
+and no export tooling to build. The only requirement this puts on the deck
+is that **every slide prints as a clean 16:9 static page** — nothing
+clipped, no interactive chrome in the output.
+
+**Use export mode (`⌘⇧E`), not print mode (`⌘⇧R`).** They render the same
+thing — every slide stacked as a static page — with one difference that
+matters enormously here: print mode merges Spectacle's own **print theme**,
+which forces the backdrop to white, headings to black and body text to
+`#777`. On a deck designed on black that inverts the whole thing, and it
+**erases the Dropset wordmark**, because that asset is an opaque PNG shown
+with `mix-blend-mode: screen` and screening over white returns white. Export
+mode skips the theme swap and keeps the deck's real colors. (An earlier
+version of this section said `⌘⇧R`; it was wrong.) Both modes are also
+reachable by query string — `?exportMode=true`, `?printMode=true` — which is
+the more reliable way in, since `⌘⇧R` is "hard reload" in a browser.
+
+Then, in the print dialog:
+
+- Destination **Save as PDF**.
+- **Background graphics ON.** Without it the black backdrop and the panel
+  tints don't print, and the deck comes out on white anyway.
+- Margins **None**, scale **100%**, headers and footers **off**.
+- Leave the paper size alone. Spectacle emits
+  `@page { size: <deck width>px <deck height>px }` from the theme's own
+  `size`, so pages come out exactly 16:9 — check the preview for
+  edge-to-edge black with no white bands.
+
+**Google Slides can't import a PDF** (File ▸ Import slides takes `.pptx` /
+`.ppt` / Slides only), so the meta-deck path is: PDF → one image per page →
+insert into a 16:9 Slides deck, each image filling the canvas. Rasterizing
+needs a tool the repo doesn't carry — `pdftoppm` from poppler, or PyMuPDF.
+Ask the accelerator whether a PDF is acceptable first; it usually is, and it
+skips this step entirely.
 
 Content that overflows a slide is merely scaled on screen but **silently
-clipped in print**, so a layout change means one pass through print mode
-before it's done.
+clipped in the exported page**, so a layout change means one pass through
+export mode before it's done.
+
+**Two traps make a page taller than its margins say.** Both were found while
+chasing exactly that symptom, and both cost tens of units per page:
+
+- **A unitless `0` margin is not zero.** Spectacle's components resolve
+  `margin` through styled-system, which looks a *unitless* value up in the
+  theme's `space` scale — so `margin="0"` means `space[0]`, which is **16
+  units**. The page headline carried that on all four sides for a long time,
+  which is ~32 units of vertical space per page that no margin in the file
+  appeared to control. Always write the unit: `margin="0px"`.
+- **Nothing sets a line-height.** `Text` and `Heading` inherit the browser's
+  `normal`, ~1.21 for Inter, so a 38px line hangs ~19 units of leading around
+  a ~27-unit cap height. Stack three of those (the team page's name / role /
+  prior) and the leading, not the margins, is most of the spacing — trimming
+  margins there barely moves anything. Set `lineHeight` explicitly on
+  single-line display type; leave multi-line prose alone, where 1.21 is
+  already tight.
+
+An eyebrow sitting *close* to the top edge is a different symptom from one
+that is **cut off**, and it has a different cause: the page is dense enough
+that centering leaves it little room, which is only comfortable because the
+footer reserve is split across both ends of the slide body (see the footer
+note in "How to read this"). Take height out of the page if it still crowds;
+don't re-balance the reserve, which would cost every page height.
 
 **If a page's eyebrow looks cut off at the top, the page is overflowing.**
 Slide content is flex-centred in the ~910 units a slide has, so an
@@ -649,8 +923,8 @@ same breath. The steelman versions and the replies live in the appendix.
 
 1. **Max 10 pages.** This deck is 10 — at the cap. Anything added from
    here has to displace something.
-1. **One big sentence per page.** No bullet lists, bar the one page-2
-   exception.
+1. **One big sentence per page.** No bullet lists, bar the page-2 facts
+   and the page-9 panel bullets.
 1. **One big image per page.** Name the image in the "visual" field. A
    page may show several captures of *the same thing* (the swap flow, the
    maker and the frontend it feeds) — that is still one image in the

@@ -18,12 +18,14 @@ export default function Home() {
           Presentation decks
         </h1>
         <p className="mt-4 max-w-xl text-lg text-muted-fg">
-          Talks and demos for Dropset — Forex on Solana. Pick a deck; arrow
-          keys drive it,{" "}
+          Talks and demos for Dropset — where currency trades onchain. Pick a
+          deck; arrow keys drive it,{" "}
           <span className="font-mono text-foreground">⌘⇧P</span> opens
-          presenter mode with the speaker notes, and{" "}
+          presenter mode with the speaker notes,{" "}
           <span className="font-mono text-foreground">⌘⇧O</span> the slide
-          overview.
+          overview, and{" "}
+          <span className="font-mono text-foreground">⌘⇧E</span> export mode —
+          every slide as a static page, ready to print.
         </p>
         <p className="mt-3 max-w-xl text-muted-fg text-sm">
           Every deck is a{" "}
@@ -35,11 +37,25 @@ export default function Home() {
           >
             Spectacle
           </a>{" "}
-          presentation, so those shortcuts are the library&apos;s own. Presenter
-          mode syncs to the audience window over the browser&apos;s{" "}
+          presentation, so those shortcuts are the library&apos;s own. Each has
+          a query string too —{" "}
+          <span className="font-mono">?exportMode=true</span> and friends —
+          which is the reliable way in, since the browser claims some of the
+          key combinations for itself.
+        </p>
+        <p className="mt-3 max-w-xl text-muted-fg text-sm">
+          Presenter mode syncs to the audience window over the browser&apos;s{" "}
           <span className="font-mono">BroadcastChannel</span> — same machine,
           same browser, two windows. It does not drive a deck on someone
           else&apos;s screen.
+        </p>
+        <p className="mt-3 max-w-xl text-muted-fg text-sm">
+          To export, use{" "}
+          <span className="font-mono text-foreground">⌘⇧E</span> and print to
+          PDF with <em>background graphics</em> on. Not{" "}
+          <span className="font-mono">⌘⇧R</span>: Spectacle&apos;s print mode
+          swaps in a light theme, which inverts a deck built on a dark backdrop
+          and drops any artwork that relies on blend modes.
         </p>
       </header>
 
