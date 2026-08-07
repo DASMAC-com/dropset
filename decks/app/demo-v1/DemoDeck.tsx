@@ -1061,8 +1061,12 @@ const VenueBullet = ({
  * chevron in the red column and quietly reverse which side the reader thinks a
  * claim belongs to.
  *
- * Three is the cap: a fourth claim on either side makes that column the taller
- * one by a whole two-line bullet, and the page has no room for it.
+ * Four fits, but only just, and only since the footer reserve was split and the
+ * headline's phantom margin removed — together those gave this page back ~85
+ * units, where a fourth two-line bullet costs ~85. At four green and three red
+ * the page lands near 735 of its ~910. A fifth needs height found elsewhere
+ * first, and the columns are already visibly uneven, which is the real limit:
+ * the panels read as a comparison only while both sides look like sides.
  */
 const VenuePanel = ({
   tint,
@@ -1586,25 +1590,43 @@ export default function DemoDeck() {
                 nothing here is bound to this one. Same reason the gap page names
                 what Solana is best *at* rather than treating it as given.
 
-                The three read as a mechanism rather than three virtues: the
-                environment makes transmission and composition cheap, that is
-                what lets liquidity compound instead of sitting still, and the
-                compounding is what makes every currency reachable — one market
-                at a time, which is the honest version of "every currency".
+                These read as a mechanism rather than as virtues: the environment
+                makes transmission and composition cheap, that is what lets
+                liquidity compound instead of sitting still, and the compounding
+                is what makes every currency reachable — one market at a time,
+                which is the honest form of "every currency onchain". A route
+                that exists and gets walked, rather than a state we assert. That
+                we have already started walking it belongs in the spoken track,
+                with the issuers named — a slide saying "we've begun" invites
+                "begun with whom?", a question to answer out loud rather than in
+                six words under a logo.
 
-                The last claim says every pair **has a path**, which is the
-                honest form of "every currency onchain": a route that exists and
-                is walked one market at a time, rather than a state we assert.
-                That we have already started walking it belongs in the spoken
-                track, with the issuers named — a slide that says "we've begun"
-                invites "begun with whom?", which is a question to answer out
-                loud, not in six words under a logo. */}
+                The **absorption** claim is the strongest thing on the page, and
+                it is what turns the comparison from a matter of taste into one of
+                dominance. A maker who already holds an account on a gated venue
+                can quote here and hedge there, so this book can carry that depth
+                — and nothing carries it the other way, because no permissioned
+                venue can take in a public book's liquidity. Public liquidity is
+                therefore a *superset* of private liquidity rather than an
+                alternative to it. It also repairs a soft spot elsewhere: page 7
+                otherwise leaves our own vaults as the only answer to where depth
+                for a thin pair comes from.
+
+                Like the path claim, it is a **capability** and not something
+                running today — it depends on how a given maker is integrated.
+                The aggressive version (that this is a vampire attack on private
+                liquidity, and that it only runs in one direction) is spoken, not
+                printed: the page argues about private ledgers as a class rather
+                than attacking anyone, and the term properly describes poaching an
+                incumbent's liquidity providers with incentives, which is a
+                different mechanic. */}
             <VenuePanel
               tint={colors.buy}
               claims={[
                 "Dropset is open and composable on Solana, the most money-like onchain environment today",
                 "Ease of transmission and open access compound liquidity into a flywheel",
                 "Every currency and FX pair has a path to onchain liquidity, one market at a time",
+                "Public liquidity absorbs private liquidity through market makers who already have gated access",
               ]}
             >
               <Wordmark width={420} />
@@ -1633,7 +1655,16 @@ export default function DemoDeck() {
           nowhere else. Every currency and FX pair has a path to onchain
           liquidity here, one market at a time — and we’ve already started
           walking it: we’re in detailed conversations with AUDD, and we’ve spoken
-          with the CADC issuer. Public liquidity is what
+          with the CADC issuer. And here’s the part that matters most: this
+          absorbs their liquidity. A market maker who already has an account on
+          one of those rails can quote here and hedge there, so their depth shows
+          up in a public book that anyone can trade against — and it doesn’t run
+          the other way, because a permissioned venue can’t take in a public
+          book’s liquidity. Public liquidity is a superset of private liquidity,
+          and the makers who already hold that gated access are the pipe.
+          [Optional, if the room is technical: it’s a vampire attack on private
+          liquidity, and it only works in this direction.] Public liquidity is
+          what
           blockchains were built for — moving money is the problem they were
           supposed to solve, and this is that.
         </Notes>

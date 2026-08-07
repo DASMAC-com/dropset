@@ -104,7 +104,11 @@ pages:
 > is bound to one chain — where ease of transmission and open
 > access compound liquidity into a flywheel that exists nowhere else, and
 > every currency and FX pair has a path to onchain liquidity, one market at a
-> time. Public liquidity is what
+> time. And it absorbs their liquidity: a market maker who already holds an
+> account on one of those rails can quote here and hedge there, so that depth
+> lands in a public book anyone can trade against — and it never runs the other
+> way, which makes public liquidity a superset of private liquidity. Public
+> liquidity is what
 > blockchains were built for.
 > Dropset is built by people who have built exchanges. Dropset — where
 > currency trades onchain.
@@ -431,7 +435,8 @@ pages:
   bulleted: "Dropset is open and composable on Solana, the most money-like
   onchain environment today"; "Ease of transmission and open access compound
   liquidity into a flywheel"; "Every currency and FX pair has a path to
-  onchain liquidity, one market at a time". Both
+  onchain liquidity, one market at a time"; "Public liquidity absorbs private
+  liquidity through market makers who already have gated access". Both
   badges are **top-aligned** so they sit on one line — see the note below.
 - **Spoken:** "The long-term question is whether onchain liquidity is
   public or private, and this is the one to make up your mind about. Arc
@@ -453,7 +458,15 @@ pages:
   currency liquidity that exists nowhere else. Every currency and FX pair has
   a path to onchain liquidity here, one market at a time — and we've already
   started walking it: we're in detailed conversations with AUDD, and we've
-  spoken with the CADC issuer. Public liquidity is what blockchains were built
+  spoken with the CADC issuer. And here's the part that matters most: this
+  absorbs their liquidity. A market maker who already has an account on one of
+  those rails can quote here and hedge there, so their depth shows up in a
+  public book that anyone can trade against — and it doesn't run the other way,
+  because a permissioned venue can't take in a public book's liquidity. Public
+  liquidity is a superset of private liquidity, and the makers who already hold
+  that gated access are the pipe. \[Optional, if the room is technical: it's a
+  vampire attack on private liquidity, and it only works in this direction.\]
+  Public liquidity is what blockchains were built
   for —
   moving money is the problem they were supposed to solve, and this is that."
 - **Note:** The v1 fail / won't-fail **pair collapsed into this one
@@ -487,6 +500,22 @@ pages:
   multi-signature banking product) belong in the spoken track, not on the
   slide. Deliberately **not** on this page yet: the TapTapSend / 0x /
   entry-points color, deferred to a later pass.
+- **Note on absorption:** the strongest claim on the page, and the one that
+  makes this a comparison about **dominance** rather than about taste. A market
+  maker who already holds an account on a gated venue can quote here and hedge
+  there, so that depth shows up in a public book anyone can trade against —
+  and it does **not** run the other way, because a permissioned venue can't
+  take in a public book's liquidity. Public liquidity is therefore a
+  **superset** of private liquidity, not an alternative to it. It also repairs
+  a soft spot elsewhere in the deck: page 7 otherwise leaves our own vaults as
+  the only answer to where depth for a thin pair comes from. Say it as a
+  **capability**, not as something running today — it depends on how a given
+  maker is integrated, which is the same discipline the path claim gets. The
+  aggressive version — that this is a vampire attack on private liquidity, and
+  that it only runs in one direction — is **spoken and optional**, never
+  printed: the page argues about private ledgers as a class rather than
+  attacking anyone, and the term properly describes poaching an incumbent's
+  liquidity providers with incentives, which is a different mechanic.
 - **Note on the bullets:** the captions are **bullets, not prose blocks**,
   which makes this page the deck's second sanctioned exception to "no
   bullet lists" (page 2's facts are the first). Two blocks of small text
@@ -494,9 +523,12 @@ pages:
   peer claims read as an argument against an argument, which is what the
   page is. Each bullet takes the panel's own tint for its chevron — red
   against red, green against green — so a bullet belongs visibly to its
-  side even when the two columns are read across rather than down. Cap it
-  at three: a fourth on either side pushes the taller column into the
-  footer.
+  side even when the two columns are read across rather than down. **Four is
+  the ceiling**, and only since the footer reserve was split and the headline's
+  phantom margin removed — those gave this page back about what a fourth
+  two-line bullet costs. The binding limit now isn't height, it's that the two
+  columns are visibly uneven at 4-against-3; the panels read as a comparison
+  only while both sides look like sides.
 - **Note on alignment:** the two badges are **top-aligned**, and that has
   to stay explicit. Spectacle's `FlexBox` defaults to `alignItems: center`,
   which vertically centred each panel *including its caption* — so the
@@ -603,7 +635,15 @@ entirely:
   and a new entrant meets a business account and gated access before it
   meets any liquidity.
   The moment FX needs a *neutral* venue where anyone can make a market and
-  anyone can trade, a closed garden can't serve it.
+  anyone can trade, a closed garden can't serve it. And the relationship is
+  **asymmetric in our favor**: a maker who already holds an account on one of
+  those rails — or on an offshore venue like Binance, which is where a lot of
+  FX hedging actually happens — can quote here and hedge there, so their depth
+  reaches a public book, while nothing moves the other way. Whoever holds the
+  gated access is the pipe, and the private venue cannot be the pipe in
+  reverse. That is why public liquidity ends up the superset. The blunt way to
+  say it in a technical room is that it's a vampire attack that only runs one
+  direction; keep that out of print.
 - **The existing Solana DEXes (Jupiter, Meteora, Orca, pump.fun,
   Raydium) — off-slide.** They aren't focused on FX, and we're beating
   them to it. It's an innovator's dilemma: the volume today is too small
