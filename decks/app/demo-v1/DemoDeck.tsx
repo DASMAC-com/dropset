@@ -164,10 +164,18 @@ const template = () => (
         Two dead ends worth not repeating. `space-between` on this flex row was
         the original, and it was never the real problem — the 210-unit wordmark
         against ~197 units of progress dots is ~6 units of drift. And centring
-        the mark by taking the label *out of flow* works horizontally but loses
+        the mark by taking the *label* out of flow works horizontally but loses
         this row's vertical centring, at which point the theme-scale margin trap
-        `CreditLabel` describes drops the label below the mark's baseline.
-        Everything stays in flow here. */}
+        `CreditLabel` describes drops the label below the mark's baseline. So
+        the lockup below is positioned, but **its two children both stay in
+        flow**, which is what keeps them on one baseline.
+
+        That positioning depends on something one prop away: the lockup's `top`
+        and `left` resolve against **this** `FlexBox`, and only because it
+        carries `position="absolute"` above. Drop that and the containing block
+        becomes Spectacle's `TemplateWrapper`, which is inset to the whole slide
+        — `top: 50%` would then centre the credit vertically **on the slide**
+        rather than in the footer. */}
     <div
       style={{
         alignItems: "center",
@@ -325,8 +333,8 @@ const Statement = ({
  * The marker is a chevron rather than a disc: a row of discs is what makes a
  * slide read as a corporate template. It's the angular "greater-than" shape the
  * review asked for, but deliberately *not* a literal `≥` — that glyph makes a
- * numeric claim, and it would flatly contradict the last fact, which is a
- * *less-than*.
+ * numeric claim, and it would flatly contradict the coverage fact — the fifth
+ * of the six — which is a *less-than*.
  *
  * The row spacing is the page's give. This started as three facts at 26 units
  * apart; at six, that spacing made the list overrun the meter column beside it
@@ -693,6 +701,15 @@ const LogoRow = ({
             mark is an icon rather than a wordmark (the flywheel's are), since
             those say nothing on their own. The `name` still does real work when
             hidden: it is the `alt` text and the row's key.
+
+            It pairs with a **`note`-less** row, and the two options aren't
+            independent: the column reserves `LOGO_CAPTION_ROOM` for a `note`,
+            and the note's own top margin is sized to sit as the *second* line
+            under a name. Hide the names on a row that has notes and each note
+            lands tight under its tile with caption room it no longer needs. No
+            caller does that today — `PERMISSIONED` is the only `showNames={false}`
+            row and carries no notes — but give the note the name's spacing
+            before adding one that does.
 
             The one thing this loses: `PERMISSIONED`'s first mark is **Circle's**,
             because Arc is Circle's chain, so that chip now reads as Circle while
@@ -1277,10 +1294,13 @@ export default function DemoDeck() {
               inherit the same centring, landing on the row's axis rather than
               pinned to the top of the tallest column.
 
-              The margin above the row is tighter than the deck's usual 36: this
-              is the densest page, so the space between the sentence and the
-              captures is the cheapest thing on it to give up, and buying height
-              here is what keeps the eyebrow off the top edge.
+              The margin above the row is 16, down from this page's own 36 and
+              the tightest such gap in the deck: this is the densest page, so
+              the space between the sentence and the captures is the cheapest
+              thing on it to give up, and buying height here is what keeps the
+              eyebrow off the top edge. (These gaps are per-page — they run 16
+              to 46 across the deck — so there is no single value to be
+              consistent with.)
 
               Deliberately *not* symmetric with the 10 above the sentence, even
               though these are the two gaps that bracket it. A kicker belongs to
@@ -1677,10 +1697,10 @@ export default function DemoDeck() {
           <Statement fontSize="64px">
             Dropset is built by people who have built exchanges
           </Statement>
-          {/* Tighter than the deck's usual 46 for the same reason page 3 is: with
-              two five-line bios under two headshots, this is the second densest
-              page, and the gap above the portraits is what was pushing the
-              eyebrow into the top edge. */}
+          {/* 32, down from this page's own 46, for the same reason page 3 came
+              down to 16: with two five-line bios under two headshots, this is
+              the second densest page, and the gap above the portraits is what
+              was pushing the eyebrow into the top edge. */}
           <FlexBox
             margin="32px 0 0 0"
             justifyContent="center"

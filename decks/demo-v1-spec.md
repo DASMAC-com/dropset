@@ -187,8 +187,9 @@ pages:
   as a spec sheet. The marker is a **chevron**, not a disc (a row of
   discs is what makes a slide read as a corporate template) and
   deliberately not a literal `≥`: that glyph makes a numeric claim, and
-  next to the last fact — a *less-than* — it would read as a
-  contradiction. Six rows is more than this page was designed around, so
+  next to the coverage fact — the fifth of the six, and a *less-than* — it
+  would read as a contradiction. Six rows is more than this page was designed
+  around, so
   the row spacing is the give: `Fact`'s bottom margin came down when the
   list grew, and it is the first place to take more if the page ever
   overflows. **Keep every fact to two lines at most.** A three-line row reads
@@ -243,12 +244,13 @@ pages:
   two later relaxed once the heading was pinned with `nowrap` rather than
   estimated, but if this page grows again, that is the order to give ground
   in. The live figure is `DemoDeck.tsx`'s `STEP_WIDTH`; don't restate it
-  here, where it goes stale. The **gaps bracketing the statement are tighter
-  here than elsewhere in the deck**, deliberately: the space between the
-  sentence and the captures is the cheapest thing on this page to give up, and
-  it is not made symmetric with the kicker's gap above — a kicker belongs to
-  the sentence under it, so it sits closer than the sentence sits to the
-  content.
+  here, where it goes stale. The gap **below** the statement is the tightest in
+  the deck, deliberately: the space between the sentence and the captures is
+  the cheapest thing on this page to give up. It is not made symmetric with the
+  kicker's gap above — a kicker belongs to the sentence under it, so it sits
+  closer than the sentence sits to the content. Note only the lower gap is
+  page-specific; the one above comes from the shared `Eyebrow` and is identical
+  on all ten pages, so don't go looking for a page-3 override of it.
 
 #### Page 4 — Currency curation · ~10s
 
@@ -423,7 +425,7 @@ pages:
 #### Page 9 — Why the open venue wins · ~12s
 
 - **On-slide:** Public liquidity is what blockchains were built for. Two
-  panels, each captioned with **two or three bullets** rather than a block
+  panels, each captioned with **three or four bullets** rather than a block
   of text. The permissioned rails (Arc, Canton, Tempo, red-outlined and
   **uncaptioned** — each mark is a wordmark that already says the company, so
   a name under it is the word twice; note this means the row reads Circle for
@@ -703,20 +705,21 @@ ______________________________________________________________________
   centered in what's left, so reserving at one end only puts the whole page's
   content ~53 units above the slide's own center, which reads as an eyebrow
   crowding the top edge with an empty band under the content. Splitting it
-  costs no page any height. What is centered against the
-  slide is the **DASMAC mark**, not the credit lockup: "Built by" is small
-  grey text that pads the lockup's left and contributes almost none of its
-  ink, so **neither** part has a geometric centre that also looks centered:
-  put the lockup's box on the midline and the mark reads ~60 units right of
-  it; put the mark on the midline and the lockup reads ~50 units left. The
-  perceived centre is between them, nearer the box-centered end. So the label
-  is rendered twice — the second copy hidden on the mark's right, making the
-  row symmetric about the mark, which gives an exact reference point — and one
-  named constant walks the pair back from there. Structure holds the geometry,
-  one number holds the judgement. Both extremes were measured off screenshots
-  rather than judged by eye; the deck comment records those numbers, the
-  constant's usable range, and the two traps met along the way (a theme-scale
-  margin, and losing flex centering by positioning the label out of flow).
+  costs no page any height. The credit's own centering is **two mechanisms,
+  not one**, and nothing ends up sitting exactly on the midline: "Built by" is
+  small grey text that pads the lockup's left while contributing almost none
+  of its ink, so **neither** part has a geometric centre that also looks
+  centered — put the lockup's box on the midline and the mark reads ~60 units
+  right of it; put the mark on the midline and the lockup reads ~50 units
+  left. The perceived centre is between them, nearer the box-centered end. So
+  the label is rendered twice — the second copy hidden on the mark's right,
+  making the row symmetric about the mark, which is an exact reference point —
+  and then one named constant walks the pair off that point to where it looks
+  right. Structure holds the geometry, one number holds the judgement. Both
+  extremes were measured off screenshots rather than judged by eye; the deck
+  comment records those numbers, the constant's usable range, and the two
+  traps met along the way (a theme-scale margin, and losing flex centering by
+  positioning the label out of flow).
 - Presenter mode is **`⌘⇧P`** (`Ctrl⇧P` off macOS), not a bare `p`.
 - Anything nuanced — the fuller competitor answers, the investor
   grilling, the numbers behind a claim — is **not on a slide**. It lives
