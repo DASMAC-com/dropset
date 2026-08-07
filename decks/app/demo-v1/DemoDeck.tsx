@@ -636,12 +636,14 @@ const LogoRow = ({
   height = 54,
   tint,
   margin = "34px 0 0 0",
+  showNames = true,
 }: {
   logos: Logo[];
   width?: number;
   height?: number;
   tint?: string;
   margin?: string;
+  showNames?: boolean;
 }) => (
   <FlexBox margin={margin} justifyContent="center" alignItems="flex-start">
     {logos.map(({ name, src, note }) => (
@@ -685,22 +687,31 @@ const LogoRow = ({
             larger than either margin asks for, and on the flywheel that pushed
             the last line into the footer.
 
-            The **name always renders**; only the `note` is conditional. A mark
-            is not always legible as the company the presenter names — Arc's is
-            Circle's — so a logo with no name under it gets read as whoever the
-            mark belongs to, which on the open-venue page is the wrong company
-            entirely. Only the second line is optional. */}
-        <div
-          style={{
-            color: colors.foreground,
-            fontFamily: deckTheme.fonts.monospace,
-            fontSize: "22px",
-            lineHeight: 1.2,
-            marginTop: "14px",
-          }}
-        >
-          {name}
-        </div>
+            `showNames` is off only where **every mark in the row is its own
+            wordmark**, as on the open-venue page — a name under a logotype that
+            already says the name is just the word twice. Keep it on wherever a
+            mark is an icon rather than a wordmark (the flywheel's are), since
+            those say nothing on their own. The `name` still does real work when
+            hidden: it is the `alt` text and the row's key.
+
+            The one thing this loses: `PERMISSIONED`'s first mark is **Circle's**,
+            because Arc is Circle's chain, so that chip now reads as Circle while
+            the spoken track says Arc. Accepted deliberately — Circle is the
+            entity an audience recognizes, and the page's argument is about
+            private ledgers generally rather than about Arc in particular. */}
+        {showNames ? (
+          <div
+            style={{
+              color: colors.foreground,
+              fontFamily: deckTheme.fonts.monospace,
+              fontSize: "22px",
+              lineHeight: 1.2,
+              marginTop: "14px",
+            }}
+          >
+            {name}
+          </div>
+        ) : null}
         {note ? (
           <div
             style={{
@@ -741,8 +752,14 @@ const DOWNSTREAM: Logo[] = [
  * implies no ranking among them, and tinted with the sell color — these are
  * the unfavorable case the page argues against.
  *
- * Captions carry the name the presenter says, which isn't always what the mark
- * says: Arc is Circle's, so Circle's logo is what an audience recognizes.
+ * These render **uncaptioned** (`showNames={false}`), because each mark is a
+ * wordmark that already says the company. The `name` here is still the `alt`
+ * text and the key, and it is the name the *presenter* says — which isn't always
+ * what the mark says, since Arc is Circle's chain and Circle's logo is the one
+ * an audience recognizes. So this row reads Circle / Canton / Tempo on-slide
+ * against "Arc and Tempo" spoken, which is fine: the argument is about private
+ * ledgers as a class, not about Arc specifically. Restore the captions if the
+ * page ever needs to name one in particular.
  */
 const PERMISSIONED: Logo[] = [
   { name: "Arc", src: "/remote/logo-circle.svg" },
@@ -1186,7 +1203,12 @@ export default function DemoDeck() {
                 they read as one sentence whose second half qualifies the first,
                 which is exactly backwards: the goal is the bigger claim, and it
                 has to be able to be read on its own. */}
-            <Box width="800px" margin="0 60px 0 0">
+            {/* 880, up from 800. The row is centred as a block and the meter
+                column beside it is ~798 wide, so at a 60-unit gutter this still
+                totals ~1738 of the ~1856 a slide has — the widening is free, and
+                a wider measure is what keeps six facts from each taking a line
+                more than they need. */}
+            <Box width="880px" margin="0 60px 0 0">
               <Fact>Daily volumes exceed $9 trillion</Fact>
               <Fact>Banks and OTC desks fragment liquidity</Fact>
               <Fact>FX markets only trade 24/5</Fact>
@@ -1194,8 +1216,14 @@ export default function DemoDeck() {
                 Public blockchains are the most money-like digital environment
                 available today
               </Fact>
+              {/* "are on", not "are available on": this row has to land in two
+                  lines. It is the longest fact on the page now that it names
+                  what Solana is best at, and at three lines it reads as a
+                  paragraph among statements. Trim this clause first if it ever
+                  grows again — the Solana qualifier is the part doing new work. */}
               <Fact>
-                Less than 10% of the world’s currencies are available on Solana
+                Less than 10% of the world’s currencies are on Solana, the
+                fastest and cheapest chain
               </Fact>
               <Fact accent>Our goal is 24/7/365 coverage of every FX spot pair</Fact>
             </Box>
@@ -1216,8 +1244,9 @@ export default function DemoDeck() {
           dollars a day. But banks and over-the-counter desks fragment its
           liquidity, and it only trades 24/5 — it closes on Friday. Public
           blockchains are the most money-like digital environment we have, and
-          Solana most of all. And yet less than ten percent of the world’s
-          currencies are available there: fourteen out of a hundred and sixty-two,
+          Solana most of all — it is the fastest and the cheapest. And yet less
+          than ten percent of the world’s currencies are available there: fourteen
+          out of a hundred and sixty-two,
           and that count is live on our own site, which is where this is from. Our
           goal is 24/7/365 coverage of every FX spot pair — every currency
           connectable to every other one, and that’s what we’re building. To be
@@ -1531,12 +1560,17 @@ export default function DemoDeck() {
                 "Early-stage teams face hurdles just to experiment",
               ]}
             >
+              {/* No names under these three: each mark is a wordmark that
+                  already says the company, so a caption repeats the word
+                  directly under itself. Compare the flywheel, whose marks are
+                  icons and do need naming. */}
               <LogoRow
                 logos={PERMISSIONED}
                 width={180}
                 height={40}
                 tint={colors.sell}
                 margin="0px"
+                showNames={false}
               />
             </VenuePanel>
             {/* Our side names the **ambition**, not just the contrast: public
@@ -1544,6 +1578,13 @@ export default function DemoDeck() {
                 every currency onchain. That is the thing an investor is being
                 asked to buy into, and it has to be said here rather than left
                 as the implication of the other panel being wrong.
+
+                "…environment **today**" is load-bearing, not filler. It marks
+                Solana as the current best choice rather than a permanent
+                commitment, which is the answer to the reasonable investor
+                question of what happens if a better settlement layer arrives:
+                nothing here is bound to this one. Same reason the gap page names
+                what Solana is best *at* rather than treating it as given.
 
                 The three read as a mechanism rather than three virtues: the
                 environment makes transmission and composition cheap, that is
@@ -1561,7 +1602,7 @@ export default function DemoDeck() {
             <VenuePanel
               tint={colors.buy}
               claims={[
-                "Dropset is open and composable on Solana, the most money-like onchain environment",
+                "Dropset is open and composable on Solana, the most money-like onchain environment today",
                 "Ease of transmission and open access compound liquidity into a flywheel",
                 "Every currency and FX pair has a path to onchain liquidity, one market at a time",
               ]}
@@ -1582,9 +1623,12 @@ export default function DemoDeck() {
           making on them isn’t permissionless: the liquidity is gated, so you
           quote only if they let you. An early-stage team hits those hurdles
           before it can even experiment. Dropset is open and composable on
-          Solana, the most money-like onchain environment there is, where ease of
-          transmission and composability let liquidity compound into a flywheel
-          instead of sitting still. That’s the public money infrastructure we’re
+          Solana, the most money-like onchain environment today — and I say today
+          deliberately: Solana is where this belongs right now because it’s the
+          fastest and the cheapest, not a commitment we’re locked into if
+          something better shows up. What we’re building is public liquidity, and
+          that’s portable. Ease of transmission and composability let liquidity
+          compound into a flywheel instead of sitting still. That’s the public money infrastructure we’re
           building — a flywheel around public currency liquidity that exists
           nowhere else. Every currency and FX pair has a path to onchain
           liquidity here, one market at a time — and we’ve already started

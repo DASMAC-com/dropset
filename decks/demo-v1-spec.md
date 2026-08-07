@@ -72,7 +72,8 @@ pages:
 > trades only 24/5, and banks and over-the-counter desks fragment its
 > liquidity. Public blockchains are the most money-like digital
 > environment available today, and yet less than ten percent of the
-> world's currencies are available on Solana. Our goal is 24/7/365
+> world's currencies are on Solana, the fastest and cheapest chain.
+> Our goal is 24/7/365
 > coverage of every FX spot pair. This already
 > works: Dropset already processes Solana mainnet FX trades — you open the
 > picker, select your currency, and the swap settles atomically, at
@@ -99,7 +100,8 @@ pages:
 > private ledgers introduce competitive friction, the liquidity on them is
 > gated, and market making on them isn't permissionless — early-stage teams
 > face hurdles just to experiment. Dropset is open and composable on Solana,
-> the most money-like onchain environment, where ease of transmission and open
+> the most money-like onchain environment today — today, because nothing here
+> is bound to one chain — where ease of transmission and open
 > access compound liquidity into a flywheel that exists nowhere else, and
 > every currency and FX pair has a path to onchain liquidity, one market at a
 > time. Public liquidity is what
@@ -131,8 +133,9 @@ pages:
   six chevron-marked facts, in this order: daily volumes exceed \$9
   trillion; banks and OTC desks fragment liquidity; FX markets only trade
   24/5; public blockchains are the most money-like digital environment
-  available today; less than 10% of the world's currencies are available on
-  Solana; our goal is 24/7/365 coverage of every FX spot pair. Each is
+  available today; less than 10% of the world's currencies are on Solana, the
+  fastest and cheapest chain; our goal is 24/7/365 coverage of
+  every FX spot pair. Each is
   a **clause with a subject and a verb** — they were fragments ("over \$9
   trillion daily volume"), which read as a spec sheet rather than as things
   being said.
@@ -157,9 +160,10 @@ pages:
   nine trillion dollars a day. But banks and over-the-counter desks
   fragment its liquidity, and it only trades 24/5 — it closes on Friday.
   Public blockchains are the most money-like digital environment we have,
-  and Solana most of all. And yet less than ten percent of the world's
+  and Solana most of all — it is the fastest and the cheapest. And yet less
+  than ten percent of the world's
   currencies are available there: fourteen out of a hundred and sixty-two,
-  and that count is live on our own site, which is where this is from. The
+  and that count is live on our own site, which is where this is from. Our
   goal is 24/7/365 coverage of every FX spot pair — every currency
   connectable to every other one, and that's what we're building. To be
   precise: we don't issue currencies — issuers create them, and Dropset is
@@ -180,10 +184,14 @@ pages:
   discs is what makes a slide read as a corporate template) and
   deliberately not a literal `≥`: that glyph makes a numeric claim, and
   next to the last fact — a *less-than* — it would read as a
-  contradiction. Five rows is more than this page was designed around, so
+  contradiction. Six rows is more than this page was designed around, so
   the row spacing is the give: `Fact`'s bottom margin came down when the
   list grew, and it is the first place to take more if the page ever
-  overflows.
+  overflows. **Keep every fact to two lines at most.** A three-line row reads
+  as a paragraph sitting among statements, which is why the coverage fact says
+  "are on Solana" rather than "are available on", and why the column was
+  widened to 880 — the meter beside it leaves the room, so a wider measure is
+  free and keeps rows off a third line.
 - **Note on the bar:** a single ratio against a limit is a **meter**, not
   a pie of two slices — the empty part of the track *is* the message. It
   carries the **percentage only**; the raw 14-of-162 count belongs to the
@@ -412,13 +420,16 @@ pages:
 
 - **On-slide:** Public liquidity is what blockchains were built for. Two
   panels, each captioned with **two or three bullets** rather than a block
-  of text. The permissioned rails (Arc, Canton, Tempo, red-outlined),
+  of text. The permissioned rails (Arc, Canton, Tempo, red-outlined and
+  **uncaptioned** — each mark is a wordmark that already says the company, so
+  a name under it is the word twice; note this means the row reads Circle for
+  Arc, since Arc is Circle's chain),
   bulleted: "Multiple private ledgers introduce competitive friction";
   "Liquidity is gated, and market making isn't permissionless"; "Early-stage
   teams face hurdles just to experiment".
   Then the Dropset wordmark, green-outlined,
   bulleted: "Dropset is open and composable on Solana, the most money-like
-  onchain environment"; "Ease of transmission and open access compound
+  onchain environment today"; "Ease of transmission and open access compound
   liquidity into a flywheel"; "Every currency and FX pair has a path to
   onchain liquidity, one market at a time". Both
   badges are **top-aligned** so they sit on one line — see the note below.
@@ -433,7 +444,10 @@ pages:
   permissionless: the liquidity is gated, so you quote only if they let you.
   An early-stage team hits those hurdles before it can even experiment.
   Dropset is open and composable on Solana, the most money-like onchain
-  environment there is, where ease of transmission and composability let
+  environment today — and I say today deliberately: Solana is where this
+  belongs right now because it's the fastest and the cheapest, not a commitment
+  we're locked into if something better shows up. What we're building is public
+  liquidity, and that's portable. Ease of transmission and composability let
   liquidity compound into a flywheel instead of sitting still. That's the
   public money infrastructure we're building — a flywheel around public
   currency liquidity that exists nowhere else. Every currency and FX pair has
@@ -499,7 +513,10 @@ pages:
   diagram, nobody named); it was less legible than the real marks, which
   an audience recognizes instantly. The **Solana DEXes stay off-slide** —
   that argument is an innovator's-dilemma point that needs a sentence,
-  not a logo row.
+  not a logo row. These three carry **no name under them**, unlike the
+  flywheel's: each is a wordmark that already reads as the company, and a
+  caption under a logotype is the word printed twice. The rule is the mark's
+  shape, not the page — name an icon, don't name a wordmark.
 
 #### Page 10 — Team & close · ~8s
 
@@ -701,7 +718,13 @@ disagree:
    off-slide entirely, because that argument needs a sentence.
 1. **Solana is never framed as a ceiling.** It's the deliberate start —
    the most money-like environment onchain, with the highest ease of
-   transmission — never the boundary.
+   transmission — never the boundary. Two words carry this on-slide, so keep
+   them: the gap page names what Solana is best *at* ("the fastest and cheapest
+   chain") rather than treating the choice as given, and the open-venue page
+   says "the most money-like onchain environment **today**". "Today" is the
+   answer to *what if a better settlement layer arrives* — nothing here is
+   bound to this one, because what's being built is public liquidity and that
+   is portable.
 1. **Dropset is the brand; DASMAC recedes.** The company is the boring
    DevCo in the background — someone finds it when they sign a document.
    The deck names it exactly **once**, in the footer credit: not on the
