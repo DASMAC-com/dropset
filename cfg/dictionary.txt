@@ -65,6 +65,7 @@ gifs
 globbable
 gyen
 générale
+headshot
 headshots
 heredocs
 hyperliquid
@@ -172,6 +173,7 @@ txns
 uncaptioned
 unfillable
 unfirmable
+unitless
 unmirrored
 unpullable
 unrouted

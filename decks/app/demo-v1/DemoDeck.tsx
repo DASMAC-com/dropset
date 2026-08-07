@@ -242,14 +242,25 @@ const SlideBody = ({ children }: { children: React.ReactNode }) => (
  * brand's typography are visibly the same system even now that the company
  * banner itself is off the deck. Sentence case stays with Inter, where it
  * belongs.
+ *
+ * It sits **close** to the sentence it labels — tight bottom margin, and an
+ * explicit `lineHeight`, because `Text` sets none and would otherwise inherit
+ * the browser's `normal` (~1.21) and hang leading under a single line of 26px
+ * type, widening a gap the margin only appears to control. A kicker should read
+ * as a label on the sentence rather than as a line of its own, and on the
+ * densest pages every unit between the two is height the captures want.
  */
 const Eyebrow = ({ children }: { children: React.ReactNode }) => (
   <Text
     color="secondary"
     fontFamily="monospace"
     fontSize="26px"
-    margin="0 0 14px 0"
-    style={{ letterSpacing: "0.14em", textTransform: "uppercase" }}
+    margin="0 0 10px 0"
+    style={{
+      letterSpacing: "0.14em",
+      lineHeight: 1.1,
+      textTransform: "uppercase",
+    }}
   >
     {children}
   </Text>
@@ -280,7 +291,16 @@ const Statement = ({
 }) => (
   <Heading
     fontSize={fontSize}
-    margin="0"
+    // `0px`, not `0`. Spectacle's `Heading` takes its margin through
+    // styled-system, which resolves a **unitless** value against the theme's
+    // `space` scale — so this read `margin="0"` for a long time and quietly
+    // meant `space[0]`, or 16 units, on every side of every page's headline.
+    // That is ~32 units of vertical space per page that no page asked for and
+    // no margin in this file appeared to control, and it is the single largest
+    // reason the dense pages crowded their top edge. Writing the unit skips the
+    // lookup. Same trap as `CreditLabel` and `Portrait` — worth checking any
+    // bare `0` handed to a Spectacle component in this file.
+    margin="0px"
     maxWidth={maxWidth}
     // `nowrap` is the guarantee, where `maxWidth` is only an estimate. Text
     // metrics are what kept breaking these pages: a heading judged to fit one
@@ -1081,21 +1101,40 @@ const Portrait = ({
 }) => (
   <Box margin="0 40px" width="620px">
     <Image src={src} width={180} height={180} alt={name} />
-    <Text fontSize="38px" margin="18px 0 0 0">
+    {/* Name, role and prior run with **no margin between them at all** — their
+        `lineHeight` is the only separation, which is why each carries one
+        explicitly. Spectacle's `Text` sets no line-height, so it inherits the
+        browser's `normal` (~1.21 for Inter), and at 38px that hangs ~19 units of
+        leading around a ~27-unit cap height. Stacked three deep, the leading was
+        most of the spacing, so trimming margins alone barely moved it and going
+        below zero was not an option. Tightening the leading is what actually
+        closed these up; the margins that remain (headshot to name, and the rule
+        of white space before the bio) are the only two gaps meant to read as
+        gaps.
+
+        Note the `0px`, not `0`: a unitless margin gets resolved against the
+        theme's `space` scale, so `margin="0"` would silently mean 16 units — the
+        same trap `CreditLabel` documents, and here it would add the exact space
+        this is removing.
+
+        The bio deliberately keeps the inherited leading: it is the one
+        multi-line block, and 1.21 is already tight for five lines of prose. */}
+    <Text fontSize="38px" margin="12px 0 0 0" style={{ lineHeight: 1.05 }}>
       {name}
     </Text>
-    <Text fontSize="28px" margin="6px 0 0 0">
+    <Text fontSize="28px" margin="0px" style={{ lineHeight: 1.1 }}>
       {role}
     </Text>
     <Text
       color="secondary"
       fontFamily="monospace"
       fontSize="23px"
-      margin="8px 0 0 0"
+      margin="0px"
+      style={{ lineHeight: 1.2 }}
     >
       {prior}
     </Text>
-    <Text color="quaternary" fontSize="26px" margin="16px 0 0 0">
+    <Text color="quaternary" fontSize="26px" margin="12px 0 0 0">
       {bio}
     </Text>
   </Box>
@@ -1203,8 +1242,20 @@ export default function DemoDeck() {
               read: each caption sits directly above its own capture, so the
               labels climb like steps as the captures grow taller. The chevrons
               inherit the same centring, landing on the row's axis rather than
-              pinned to the top of the tallest column. */}
-          <FlexBox margin="36px 0 0 0" justifyContent="center" alignItems="center">
+              pinned to the top of the tallest column.
+
+              The margin above the row is tighter than the deck's usual 36: this
+              is the densest page, so the space between the sentence and the
+              captures is the cheapest thing on it to give up, and buying height
+              here is what keeps the eyebrow off the top edge.
+
+              Deliberately *not* symmetric with the 10 above the sentence, even
+              though these are the two gaps that bracket it. A kicker belongs to
+              the sentence under it, so it should sit closer to that sentence
+              than the sentence sits to the page's content — matching the two
+              would read as three unrelated bands. Make them equal here if that
+              ever looks wrong; the totals are what the budget cares about. */}
+          <FlexBox margin="16px 0 0 0" justifyContent="center" alignItems="center">
             <Step
               step={1}
               label="Open the picker"
@@ -1333,7 +1384,7 @@ export default function DemoDeck() {
                 width={500}
                 alt="Compute units per instruction: a reprice costs 47, a reshape 59"
                 caption="Reprice: 47 CU · reshape: 59 CU"
-                margin="0"
+                margin="0px"
               />
             </Box>
             <Box margin="0 20px">
@@ -1342,7 +1393,7 @@ export default function DemoDeck() {
                 width={500}
                 alt="The maker control panel: seven FX markets and a live book"
                 caption="Demo maker quoting locally"
-                margin="0"
+                margin="0px"
               />
             </Box>
             <Box margin="0 20px">
@@ -1351,7 +1402,7 @@ export default function DemoDeck() {
                 width={500}
                 alt="The eCLOB on the frontend: a EURC/USDC order book, a live trades tape, and a priced swap"
                 caption="Liquidity routes to the frontend"
-                margin="0"
+                margin="0px"
               />
             </Box>
           </FlexBox>
@@ -1485,7 +1536,7 @@ export default function DemoDeck() {
                 width={180}
                 height={40}
                 tint={colors.sell}
-                margin="0"
+                margin="0px"
               />
             </VenuePanel>
             {/* Our side names the **ambition**, not just the contrast: public
@@ -1551,8 +1602,12 @@ export default function DemoDeck() {
           <Statement fontSize="64px">
             Dropset is built by people who have built exchanges
           </Statement>
+          {/* Tighter than the deck's usual 46 for the same reason page 3 is: with
+              two five-line bios under two headshots, this is the second densest
+              page, and the gap above the portraits is what was pushing the
+              eyebrow into the top edge. */}
           <FlexBox
-            margin="46px 0 0 0"
+            margin="32px 0 0 0"
             justifyContent="center"
             alignItems="flex-start"
           >

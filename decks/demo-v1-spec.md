@@ -231,7 +231,12 @@ pages:
   two later relaxed once the heading was pinned with `nowrap` rather than
   estimated, but if this page grows again, that is the order to give ground
   in. The live figure is `DemoDeck.tsx`'s `STEP_WIDTH`; don't restate it
-  here, where it goes stale.
+  here, where it goes stale. The **gaps bracketing the statement are tighter
+  here than elsewhere in the deck**, deliberately: the space between the
+  sentence and the captures is the cheapest thing on this page to give up, and
+  it is not made symmetric with the kicker's gap above — a kicker belongs to
+  the sentence under it, so it sits closer than the sentence sits to the
+  content.
 
 #### Page 4 — Currency curation · ~10s
 
@@ -533,6 +538,12 @@ pages:
   with the EA role stated plainly. The final spoken line mirrors the
   title. Because this page lingers on screen after the talk, it's the one
   place slightly longer copy is correct — but only slightly.
+- **Note on the block:** set name, role and prior as **one tight unit** — no
+  margins between them at all, their leading is the only separation — so the
+  only gaps that read as gaps are headshot-to-name and the white space before
+  the bio. This is the deck's second densest page after page 3, thanks to two
+  five-line bios under two headshots, so the gap above the portraits is
+  tightened as well.
 
 ______________________________________________________________________
 
@@ -733,6 +744,23 @@ static page** — nothing clipped, no interactive chrome in the output.
 Content that overflows a slide is merely scaled on screen but **silently
 clipped in print**, so a layout change means one pass through print mode
 before it's done.
+
+**Two traps make a page taller than its margins say.** Both were found while
+chasing exactly that symptom, and both cost tens of units per page:
+
+- **A unitless `0` margin is not zero.** Spectacle's components resolve
+  `margin` through styled-system, which looks a *unitless* value up in the
+  theme's `space` scale — so `margin="0"` means `space[0]`, which is **16
+  units**. The page headline carried that on all four sides for a long time,
+  which is ~32 units of vertical space per page that no margin in the file
+  appeared to control. Always write the unit: `margin="0px"`.
+- **Nothing sets a line-height.** `Text` and `Heading` inherit the browser's
+  `normal`, ~1.21 for Inter, so a 38px line hangs ~19 units of leading around
+  a ~27-unit cap height. Stack three of those (the team page's name / role /
+  prior) and the leading, not the margins, is most of the spacing — trimming
+  margins there barely moves anything. Set `lineHeight` explicitly on
+  single-line display type; leave multi-line prose alone, where 1.21 is
+  already tight.
 
 An eyebrow sitting *close* to the top edge is a different symptom from one
 that is **cut off**, and it has a different cause: the page is dense enough
