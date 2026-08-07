@@ -61,8 +61,16 @@ const Wordmark = ({ width }: { width: number }) => (
   />
 );
 
-/** Space between the footer credit's label and the mark, in slide units. */
-const CREDIT_GAP = 14;
+/**
+ * Margin between the footer credit's label and the mark, in slide units.
+ *
+ * Zero, and there is still a visible gap: "Built by" carries appreciably more
+ * advance width than ink — measured off a screenshot, the label's box ran ~16
+ * units past the "y" — so the space between the words and the mark comes out of
+ * the text metrics rather than out of this margin. Raise it only if the label
+ * ever changes to something with tighter metrics.
+ */
+const CREDIT_GAP = 0;
 
 /**
  * Optical centring of the footer credit: slide units to shift it **right** from
@@ -70,35 +78,37 @@ const CREDIT_GAP = 14;
  *
  * This is the one hand-tuned number in the deck, and it exists because the
  * credit is a lockup of two very unequal parts — small grey "Built by" text
- * against a bright mark — so there is no geometric centre that also looks
- * centred. The two candidates were both built and both measured off screenshots,
+ * against a bright mark — so there is no single geometric centre that also
+ * *looks* centred. Both candidates were built and measured off screenshots,
  * against the slide's midline taken from a page eyebrow (block-centred, so its
  * ink centre marks it; the reconstruction from Space Mono's metrics agrees with
  * the measurement to well under a unit):
  *
- * - **0** — the mark sits on the midline (measured +0.5), the lockup at −52.
- *   Read as too far left.
- * - **52** — the lockup's box sits on the midline (measured +10), the mark at
- *   +63. Read as too far right, which is where this started.
+ * - **0** — the mark lands on the midline exactly (measured +0.5), which puts
+ *   the lockup as a whole well left of it. Read as too far left.
+ * - **`(label width + CREDIT_GAP) / 2`** — the lockup's own box lands on the
+ *   midline instead, which pushes the mark right of it by the same amount. At
+ *   the 14-unit gap this started with, that was ~52, and the mark then measured
+ *   +63; read as too far right.
  *
- * So the perceived centre is between them, and nearer the box-centred end: −13
- * for the lockup read as only slightly off, −52 clearly off. Hence 30, putting
- * the lockup near −22 and the mark near +30. **This is the only value to
- * change** if it still reads off, and the bracket above is its range: larger
- * moves the credit right, smaller moves it left.
+ * Note that the two ends move with `CREDIT_GAP`: a wider gap gives the label a
+ * longer lever, so box-centring lands further right and reads worse. Which is
+ * why the pair settled here — gap at 0 and the shift near box-centring — tuned
+ * by eye against the rendered footer. **This is the only value to change** if it
+ * ever reads off: larger moves the credit right, smaller moves it left.
  */
-const CREDIT_OPTICAL_SHIFT = 30;
+const CREDIT_OPTICAL_SHIFT = 45;
 
 /**
  * "Built by" — the label half of the footer credit.
  *
  * Rendered **twice**: visibly to the mark's left, and again `mirrored` — same
  * text, same metrics, `visibility: hidden` — to its right. That hidden copy is
- * the whole trick: it makes the row symmetric about the mark, so centring the
- * row centres the mark exactly, with no correction constant to keep tuned and
- * nothing to re-measure if this text ever changes. `visibility: hidden` keeps
- * the space while staying out of the accessibility tree, so the credit is still
- * read once.
+ * what makes the row symmetric about the mark, so plain centring puts the mark
+ * on the slide's midline exactly, and nothing has to be re-measured if this text
+ * ever changes. `CREDIT_OPTICAL_SHIFT` then walks the pair off that reference
+ * point to where the lockup looks centred. `visibility: hidden` keeps the space
+ * while staying out of the accessibility tree, so the credit is still read once.
  *
  * The margins carry **explicit `px`**, and that is not incidental. Spectacle's
  * `Text` resolves its margin through styled-system, which looks a *unitless*
