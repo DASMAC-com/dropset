@@ -65,6 +65,31 @@ const Wordmark = ({ width }: { width: number }) => (
 const CREDIT_GAP = 14;
 
 /**
+ * Optical centring of the footer credit: slide units to shift it **right** from
+ * the mark-centred position the markup produces on its own.
+ *
+ * This is the one hand-tuned number in the deck, and it exists because the
+ * credit is a lockup of two very unequal parts — small grey "Built by" text
+ * against a bright mark — so there is no geometric centre that also looks
+ * centred. The two candidates were both built and both measured off screenshots,
+ * against the slide's midline taken from a page eyebrow (block-centred, so its
+ * ink centre marks it; the reconstruction from Space Mono's metrics agrees with
+ * the measurement to well under a unit):
+ *
+ * - **0** — the mark sits on the midline (measured +0.5), the lockup at −52.
+ *   Read as too far left.
+ * - **52** — the lockup's box sits on the midline (measured +10), the mark at
+ *   +63. Read as too far right, which is where this started.
+ *
+ * So the perceived centre is between them, and nearer the box-centred end: −13
+ * for the lockup read as only slightly off, −52 clearly off. Hence 30, putting
+ * the lockup near −22 and the mark near +30. **This is the only value to
+ * change** if it still reads off, and the bracket above is its range: larger
+ * moves the credit right, smaller moves it left.
+ */
+const CREDIT_OPTICAL_SHIFT = 30;
+
+/**
  * "Built by" — the label half of the footer credit.
  *
  * Rendered **twice**: visibly to the mark's left, and again `mirrored` — same
@@ -119,27 +144,20 @@ const template = () => (
     <Box padding="0 1.25em">
       <Wordmark width={210} />
     </Box>
-    {/* What gets centred is the **mark**, not the credit lockup, and the row is
-        made symmetric about it (see `CreditLabel`) so that falls out of plain
-        centring rather than a nudge.
+    {/* The mirrored label (see `CreditLabel`) makes this row symmetric about the
+        mark, so plain centring puts the **mark** on the slide's midline exactly;
+        `CREDIT_OPTICAL_SHIFT` then walks the pair back toward where the lockup
+        looks centred. Splitting it that way is the point: the structure carries
+        an exact reference point, and one named number carries the judgement, so
+        tuning the look can never quietly break the geometry.
 
-        Three earlier versions, each measured off a screenshot against the
-        slide's own midline — a page eyebrow is block-centred, so its ink centre
-        marks it, and reconstructing its box from Space Mono's metrics agrees
-        with the measurement to well under a unit. `space-between` on this flex
-        row was the original, and it was never the real problem: the 210-unit
-        wordmark against ~197 units of progress dots is ~6 units of drift.
-        Centring the *lockup's box* was next, and it is geometrically exact — yet
-        the credit still read right of centre, because "Built by" is small grey
-        text that pads the lockup's left while contributing almost none of its
-        ink, leaving the mark ~63 units right of the line. A hand-tuned nudge
-        left got that to ~40 and a reader could still see it. The eye tracks the
-        bright mark, so the bright mark is what sits on the line.
-
-        Taking the label out of flow to achieve that was the fourth mistake: it
-        centred the mark to +0.6 units but lost the flex row's vertical centring,
-        and the theme-scale margin trap `CreditLabel` describes then dropped the
-        label below the mark's baseline. Everything stays in flow here. */}
+        Two dead ends worth not repeating. `space-between` on this flex row was
+        the original, and it was never the real problem — the 210-unit wordmark
+        against ~197 units of progress dots is ~6 units of drift. And centring
+        the mark by taking the label *out of flow* works horizontally but loses
+        this row's vertical centring, at which point the theme-scale margin trap
+        `CreditLabel` describes drops the label below the mark's baseline.
+        Everything stays in flow here. */}
     <div
       style={{
         alignItems: "center",
@@ -147,7 +165,7 @@ const template = () => (
         left: "50%",
         position: "absolute",
         top: "50%",
-        transform: "translate(-50%, -50%)",
+        transform: `translate(calc(-50% + ${CREDIT_OPTICAL_SHIFT}px), -50%)`,
       }}
     >
       <CreditLabel />
