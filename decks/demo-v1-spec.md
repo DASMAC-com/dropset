@@ -630,7 +630,12 @@ ______________________________________________________________________
 - Every page carries the same footer: the Dropset wordmark at the left,
   the "Built by DASMAC" credit in the middle, and progress dots at the
   right. It isn't page content — don't budget words or space for it; the
-  slide body already reserves room above it. What is centered against the
+  slide body already reserves room for it. That reserve is **split across the
+  top and bottom of the body**, not taken off the bottom alone: content is
+  centered in what's left, so reserving at one end only puts the whole page's
+  content ~53 units above the slide's own center, which reads as an eyebrow
+  crowding the top edge with an empty band under the content. Splitting it
+  costs no page any height. What is centered against the
   slide is the **DASMAC mark**, not the credit lockup: "Built by" is small
   grey text that pads the lockup's left and contributes almost none of its
   ink, so **neither** part has a geometric centre that also looks centered:
@@ -728,6 +733,13 @@ static page** — nothing clipped, no interactive chrome in the output.
 Content that overflows a slide is merely scaled on screen but **silently
 clipped in print**, so a layout change means one pass through print mode
 before it's done.
+
+An eyebrow sitting *close* to the top edge is a different symptom from one
+that is **cut off**, and it has a different cause: the page is dense enough
+that centering leaves it little room, which is only comfortable because the
+footer reserve is split across both ends of the slide body (see the footer
+note in "How to read this"). Take height out of the page if it still crowds;
+don't re-balance the reserve, which would cost every page height.
 
 **If a page's eyebrow looks cut off at the top, the page is overflowing.**
 Slide content is flex-centred in the ~910 units a slide has, so an

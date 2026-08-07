@@ -194,9 +194,30 @@ const template = () => (
 );
 
 /**
- * Every slide's content column. The bottom padding is the point: slide content
- * is centred in the full slide, and the footer sits on top of that same space,
- * so without it the lowest element on a busy page crowds the DASMAC credit.
+ * How much vertical room the footer is kept clear of, in slide units.
+ *
+ * The footer is absolutely positioned over the bottom of the slide, so the body
+ * has to reserve space for it or the lowest element on a busy page crowds the
+ * DASMAC credit. What matters is that the reserve is **split across both ends**
+ * rather than all taken off the bottom, which is how it started and is subtly
+ * wrong: content is centred inside whatever is left, so a bottom-only reserve
+ * put the box's centre ~53 units above the slide's own centre and every page
+ * rode high. It showed worst on the two densest pages — 3 and 10 — where there
+ * is almost no slack left to centre, so the eyebrow crowded the top edge while
+ * a wide empty band sat under the content.
+ *
+ * Splitting it costs no page a single unit, which is the reason to prefer it
+ * over trimming margins page by page: the available height is still
+ * `1016 - FOOTER_RESERVE` either way, so every height budget below still holds
+ * and no page can newly overflow — the box simply sits where the slide's centre
+ * is. Half the reserve still clears the footer comfortably; the footer is ~42
+ * units tall (its 210-wide wordmark sets that), and on the tightest page content
+ * now ends ~55 units above it.
+ */
+const FOOTER_RESERVE = 106;
+
+/**
+ * Every slide's content column.
  *
  * Between this and Spectacle's own 32px slide padding, a page has ~910 of the
  * 1080 slide units to work in. Worth doing the arithmetic when adding to a
@@ -208,7 +229,7 @@ const SlideBody = ({ children }: { children: React.ReactNode }) => (
     height="100%"
     flexDirection="column"
     justifyContent="center"
-    padding="0 0 106px 0"
+    padding={`${FOOTER_RESERVE / 2}px 0`}
   >
     {children}
   </FlexBox>
