@@ -1,0 +1,60 @@
+---
+# cspell:word prerenders
+# cspell:word Vercel
+env:
+  # env.ts validates these at module scope, so `next build` throws without
+  # them. Placeholders are enough: every route prerenders as static content
+  # and nothing fetches at build time, so the values are compiled into the
+  # bundle but never dialed. A real endpoint would add a network dependency
+  # to the gate for no signal.
+  NEXT_PUBLIC_GET_MULTIPLE_ACCOUNTS_BATCH_SIZE: '10'
+  NEXT_PUBLIC_RPC_URL: 'https://api.mainnet-beta.solana.com'
+  NEXT_PUBLIC_WS_URL: 'wss://api.mainnet-beta.solana.com'
+  NODE_VERSION: '25'
+jobs:
+  frontend:
+    name: 'Frontend'
+    runs-on: 'ubuntu-latest'
+    steps:
+    - uses: 'actions/checkout@v6'
+    - uses: 'pnpm/action-setup@v6'
+      with:
+        package_json_file: 'frontend/package.json'
+    - uses: 'actions/setup-node@v6'
+      with:
+        cache: 'pnpm'
+        cache-dependency-path: 'pnpm-lock.yaml'
+        node-version: '${{ env.NODE_VERSION }}'
+    - run: 'pnpm install --frozen-lockfile'
+    # Every icon URL must resolve, on every run — not just on PRs that touch
+    # the icon inputs. The point is that a reference which has gone stale
+    # blocks merges until someone updates it, so the committed URLs always
+    # describe where the issuer actually serves the asset today. A check
+    # scoped to icon-touching PRs would never fire for the case that
+    # matters most: an issuer moving an asset long after the URL was added.
+    #
+    # This runs before the build so the cheap network check fails fast, and
+    # is deliberately not cached — a cache hit would defeat it. The retry and
+    # timeout inside the script are what keep it from tripping on a blip;
+    # only a URL that fails every attempt fails the job.
+    #
+    # Tradeoff, accepted knowingly: because this also gates merge_group, a
+    # sustained outage at a third-party CDN can block unrelated merges until
+    # it recovers or the URL is pointed somewhere else.
+    - name: 'Token icon URLs are live'
+      run: 'node frontend/scripts/fetch-token-icons.mjs --strict'
+    # Nothing else in CI runs `next build`: lint.yml stops at biome + tsc and
+    # test.yml excludes frontend/** entirely, so a build break only surfaced
+    # on Vercel. This also runs the `prebuild` asset chain, which is the only
+    # thing that exercises copy-brand-assets and copy-flags at all — they are
+    # prebuild-only, so before this job they ran in CI zero times.
+    - name: 'Frontend builds'
+      run: 'pnpm --filter dropset-frontend build'
+name: 'Frontend'
+'on':
+  merge_group: null
+  pull_request: null
+  push:
+    branches:
+    - 'main'
+...
