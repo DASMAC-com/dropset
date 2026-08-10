@@ -4,7 +4,7 @@ export function Footer() {
   return (
     <footer className="sticky bottom-0 z-40 border-border border-t bg-background">
       <div className="mx-auto flex h-12 max-w-6xl items-center justify-center px-6 text-muted-foreground text-sm">
-        Courtesy of
+        Built by
         <a
           href="https://x.com/_DASMAC_"
           target="_blank"
