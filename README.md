@@ -2,7 +2,7 @@
 
 <!-- markdownlint-disable MD036 -->
 
-*Courtesy of Distributed Atomic State Machine Algorithms Corporation ([DASMAC])*
+*Built by Distributed Atomic State Machine Algorithms Corporation ([DASMAC])*
 
 <!-- markdownlint-enable MD036 -->
 
