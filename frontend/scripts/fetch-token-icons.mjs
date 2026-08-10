@@ -34,8 +34,16 @@ const results = await Promise.allSettled(
   tokens.map(async (s) => {
     const res = await fetch(s.icon, { redirect: "follow" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    // Only mirror content-types we recognize as images. Deriving the
+    // extension from an arbitrary content-type instead let an HTTP 200
+    // carrying an HTML error page or CDN interstitial through `res.ok`
+    // above, write `SYMBOL.html`, and manifest it as a *success* — a
+    // broken icon indistinguishable from a working one. Rejecting here
+    // drops the symbol from the manifest, so currencies.ts leaves its
+    // canonical remote URL in place.
     const ct = res.headers.get("content-type")?.split(";")[0]?.trim() ?? "";
-    const ext = EXT_BY_CT[ct] ?? ct.split("/")[1] ?? "bin";
+    const ext = EXT_BY_CT[ct];
+    if (!ext) throw new Error(`unexpected content-type ${ct || "(none)"}`);
     const filename = `${s.symbol}.${ext}`;
     const buf = Buffer.from(await res.arrayBuffer());
     writeFileSync(resolve(dst, filename), buf);
