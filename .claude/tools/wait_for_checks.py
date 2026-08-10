@@ -101,11 +101,12 @@ class WaitForChecksError(Exception):
 def log_path_for(pr: int) -> Path:
     """Where the watch's captured output goes.
 
-    Mirrors ``run_quiet.py``: a per-user temp directory at ``0o700``, so a shared
-    ``/tmp`` on a multi-user box doesn't expose one session's CI output to
-    another.
+    Same shape as ``run_quiet.py``'s log dir — ``gettempdir()`` plus a fixed
+    name, created ``0o700`` — so a shared ``/tmp`` on a multi-user box can't
+    expose one session's CI output to another. (On macOS ``gettempdir()`` is
+    already per-user, so the mode is the load-bearing half.)
     """
-    base = Path(tempfile.gettempdir()) / f"claude-wait-checks-{os.getuid()}"
+    base = Path(tempfile.gettempdir()) / "claude-wait-checks"
     base.mkdir(mode=0o700, parents=True, exist_ok=True)
     return base / f"wait-for-checks-{pr}.log"
 

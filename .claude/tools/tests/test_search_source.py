@@ -78,7 +78,7 @@ class SearchTests(unittest.TestCase):
         out = ss.search("needle", self.root)
         self.assertEqual([m["path"] for m in out["matches"]], ["tui/src/ui.rs"])
 
-    def test_skips_the_lockfiles(self):
+    def test_skips_the_lock_files(self):
         self.write("Cargo.lock", 'name = "needle"\n')
         self.write("Cargo.toml", 'name = "needle"\n')
         out = ss.search("needle", self.root)

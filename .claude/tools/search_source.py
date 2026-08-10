@@ -88,7 +88,7 @@ class SearchSourceError(Exception):
 
 
 def excluded_dir_names() -> set[str]:
-    """Directory **basenames** never descended into.
+    """Directory **base names** never descended into.
 
     Both lists contribute. From ``DIFF_EXCLUDES`` the directory-shaped entries
     reduce to their last segment, so excluding ``sdk/ts/src/generated`` also
@@ -104,7 +104,7 @@ def excluded_dir_names() -> set[str]:
 
 
 def excluded_file_names() -> set[str]:
-    """File basenames never searched — the file-shaped generated families."""
+    """File base names never searched — the file-shaped generated families."""
     names = set()
     for entry in DIFF_EXCLUDES:
         basename = entry.rsplit("/", 1)[-1]
