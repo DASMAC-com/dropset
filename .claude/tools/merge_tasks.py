@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 
@@ -155,7 +156,7 @@ def strip_claude_prefix(title: str) -> str:
 # Any Linear tag in an anchor is fatal: Linear rewrites `ENG-123` into an
 # issue-mention node, so the stored text is an element, not the literal string,
 # and the anchor can never match. See `docs/conventions/linear-automation.md`
-# → "Partial edits".
+# → "Partial edits — the `patch` argument".
 _ENG_TAG_RE = re.compile(r"ENG-\d+")
 
 
@@ -206,8 +207,13 @@ def build_patch_ops(
                 "Linear stores as a mention node, so no anchor can match it"
             )
         # Swallow the preceding newline too, so deleting the line doesn't leave a
-        # stray blank where it sat.
+        # stray blank where it sat. When the line is the body's *first*, there is
+        # no preceding newline to swallow, so anchor on the bare line — otherwise
+        # a Touches-first body could never anchor and would be misreported as
+        # "not unique".
         anchor = "\n" + line
+        if survivor_body.startswith(line):
+            anchor = line
         if survivor_body.count(anchor) != 1:
             return None, (
                 "survivor's **Touches**: line does not occur exactly once in the "
@@ -239,6 +245,13 @@ def build_patch_ops(
     # rejected by the API mid-merge.
     if len(ops) > 50:
         return None, f"the fold needs {len(ops)} ops, over Linear's 50-op cap"
+
+    if not ops:
+        # Reachable when the survivor has no Touches line, nothing folds in, and
+        # the union is empty. `patch` requires at least one op, so an empty array
+        # would be rejected — and a caller testing `if patch_ops:` would fall
+        # through to wholesale with an *empty* reason, which reads as a bug.
+        return None, "the fold produced no operations, so there is nothing to patch"
 
     return ops, ""
 
@@ -330,6 +343,18 @@ def assemble(data: dict) -> dict:
 # --------------------------------------------------------------------------
 
 
+def _write_private(path: str, text: str) -> None:
+    """Write a handoff payload owner-only (``0o600``).
+
+    Both handoffs here carry **full Linear issue bodies** into a shared temp
+    directory, so they get the same treatment as ``review_diff.py``'s diff and
+    ``run_quiet.py``'s captured logs rather than the umask default.
+    """
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(text)
+
+
 def run(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="merge_tasks.py")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -363,8 +388,7 @@ def run(argv: list[str]) -> int:
             # File-handoff: the merged body is the large payload, so write it
             # out and replace it with its path — the skill passes the path to
             # save_issue, never echoing the body through context.
-            with open(args.out, "w", encoding="utf-8") as fh:
-                fh.write(result["description"])
+            _write_private(args.out, result["description"])
             del result["description"]
             result["description_path"] = args.out
         if args.ops_out is not None:
@@ -377,8 +401,7 @@ def run(argv: list[str]) -> int:
                 result["patch_ops_path"] = None
                 result["patch_ops_count"] = 0
             else:
-                with open(args.ops_out, "w", encoding="utf-8") as fh:
-                    json.dump(ops, fh, indent=2)
+                _write_private(args.ops_out, json.dumps(ops, indent=2))
                 result["patch_ops_path"] = args.ops_out
                 result["patch_ops_count"] = len(ops)
 

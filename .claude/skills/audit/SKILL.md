@@ -395,8 +395,8 @@ only — never alongside `description`):
    union.
 
 Two anchor rules apply to the `replace` (full detail:
-`docs/conventions/linear-automation.md` → "Partial edits — use `patch`,
-don't re-send the body"). The anchor must match the **stored** text
+`docs/conventions/linear-automation.md` → "Partial edits — the `patch`
+argument"). The anchor must match the **stored** text
 exactly once — `**Touches**:` is safe because there is exactly one such
 line per issue, and you know its current content from the fold you last
 made. And the anchor must carry **no `ENG-###`**, since Linear stores a

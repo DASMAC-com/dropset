@@ -83,10 +83,12 @@ DEFAULT_INTERVAL = 30
 # session open indefinitely. An hour is well past this repo's slowest suite.
 DEFAULT_TIMEOUT = 3600
 
-# The fields `gh pr checks --json` exposes that a review actually needs. `bucket`
-# is the normalized outcome (pass / fail / pending / skipping / cancel); `state`
-# is the rawer per-provider status.
-JSON_FIELDS = "name,state,bucket,link,workflow,description,completedAt"
+# The fields `gh pr checks --json` exposes that a review actually needs — and
+# nothing more, since the point of this read is to be the one compact payload.
+# `bucket` is the normalized outcome (pass / fail / pending / skipping / cancel)
+# and is what `summarize` keys on; the rest only decorate a failure. (`state` and
+# `completedAt` were requested here at first and read by nothing — dropped.)
+JSON_FIELDS = "name,bucket,link,workflow,description"
 
 # A GitHub Actions check's link ends in /runs/<run_id>/job/<job_id> or
 # /actions/runs/<run_id>. The run id is what `get_job_logs` needs, so pull it out
@@ -102,9 +104,18 @@ def log_path_for(pr: int) -> Path:
     """Where the watch's captured output goes.
 
     Same shape as ``run_quiet.py``'s log dir — ``gettempdir()`` plus a fixed
-    name, created ``0o700`` — so a shared ``/tmp`` on a multi-user box can't
-    expose one session's CI output to another. (On macOS ``gettempdir()`` is
-    already per-user, so the mode is the load-bearing half.)
+    name, created ``0o700``. On macOS ``gettempdir()`` is already per-user, which
+    is what actually separates two users here: ``exist_ok=True`` does **not**
+    re-apply the mode to a directory that already exists, so the mode protects
+    the create, not an inherited directory.
+
+    **Deliberate divergence from the sibling:** ``run_quiet.py`` disambiguates
+    concurrent runs with ``os.getpid()``; this keys on the **PR number** instead.
+    A stable, guessable path is worth more here (a human or a later turn can find
+    the log for PR 285 without hunting a pid), and the cost is bounded — two
+    concurrent watches of the *same* PR would interleave into one file. The
+    verdict is unaffected either way, since it comes from the separate JSON read,
+    not from this log.
     """
     base = Path(tempfile.gettempdir()) / "claude-wait-checks"
     base.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -181,9 +192,15 @@ def read_checks(pr: int, repo: str) -> list[dict]:
     )
     text = out.strip()
     if not text:
-        # No checks reported. gh exits 8 for "no checks"; anything else with an
-        # empty payload is a real failure (bad PR number, no auth, no network).
-        if code in (0, 8):
+        # An empty payload is either "this PR genuinely has no checks" or a real
+        # failure (bad PR number, no auth, no network) — and the two must not be
+        # conflated, because a caller is told to treat "no checks" as green.
+        #
+        # gh's exit codes are documented as 0 (all passed), 1 (a check failed),
+        # and 8 (pending), with "no checks reported" surfaced as an error whose
+        # code has varied across versions. So don't key the distinction on the
+        # code: key it on gh's own message, and fail **loud** for anything else.
+        if code == 0 or "no checks" in err.lower():
             return []
         detail = err.strip() or f"exit {code}"
         raise WaitForChecksError(f"gh pr checks --json failed: {detail}")
@@ -211,10 +228,17 @@ def summarize(checks: list[dict]) -> dict:
 
     The conclusion is derived in a fixed precedence — ``fail`` beats ``pending``
     beats ``pass`` — so a run with one red check and one still-queued check reads
-    as failing rather than as "not done yet". ``skipping`` and ``cancel`` are
-    counted but never make a build red: a path-filtered no-op job is the normal
-    case on this repo (``.github/workflows/test.yml`` filters on
-    ``pull_request``), not a problem.
+    as failing rather than as "not done yet".
+
+    **Only ``pass`` and ``skipping`` count as green.** ``skipping`` is exempt on
+    purpose: a path-filtered no-op job is the normal case on this repo
+    (``.github/workflows/test.yml`` filters on ``pull_request``), not a problem.
+    Nothing else gets that exemption — in particular a **cancelled** check
+    (which still blocks the merge queue) and an **unrecognized** bucket are
+    treated as not-green, because the promise this module makes is that a caller
+    checking only the exit status cannot mistake a red build for green. An
+    unknown bucket is a gh schema change, and defaulting it to green would break
+    that promise silently.
     """
     counts: dict[str, int] = {}
     failing: list[dict] = []
@@ -234,16 +258,31 @@ def summarize(checks: list[dict]) -> dict:
             )
     failing.sort(key=lambda f: (f["workflow"], f["name"]))
 
+    # Anything that is not `pass` or `skipping` — a cancelled check, or a bucket
+    # gh grew since this was written — blocks the build, so it must not fall
+    # through to `pass`. Reported under its own conclusion so the caller can tell
+    # "red" from "I don't recognize this".
+    unresolved = sorted(
+        name for name in counts if name not in ("pass", "skipping", "fail", "pending")
+    )
+
     if not checks:
         conclusion = "none"
     elif counts.get("fail"):
         conclusion = "fail"
     elif counts.get("pending"):
         conclusion = "pending"
+    elif unresolved:
+        conclusion = "blocked"
     else:
         conclusion = "pass"
 
-    return {"conclusion": conclusion, "counts": counts, "failing": failing}
+    return {
+        "conclusion": conclusion,
+        "counts": counts,
+        "failing": failing,
+        "unresolved_buckets": unresolved,
+    }
 
 
 def wait(
@@ -262,9 +301,13 @@ def wait(
     elapsed = int(time.monotonic() - started)
 
     summary = summarize(read_checks(pr, repo))
-    # A timed-out watch reports the state it reached, but must never claim `pass`
-    # off a snapshot it stopped waiting on.
-    conclusion = summary["conclusion"] if settled else "timeout"
+    conclusion = summary["conclusion"]
+    if not settled and conclusion != "fail":
+        # A timed-out watch must never claim `pass` off a snapshot it stopped
+        # waiting on. But a `fail` it *did* observe is definite and strictly more
+        # informative than `timeout`, so that one survives — otherwise a caller
+        # branching on `conclusion` can't tell a wedged run from a red one.
+        conclusion = "timeout"
 
     return {
         "pr": pr,
@@ -274,6 +317,7 @@ def wait(
         "elapsed_seconds": elapsed,
         "counts": summary["counts"],
         "failing": summary["failing"],
+        "unresolved_buckets": summary["unresolved_buckets"],
         "log_path": str(log),
     }
 

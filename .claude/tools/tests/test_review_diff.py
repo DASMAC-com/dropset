@@ -109,6 +109,13 @@ class DiffHeaderPathTests(unittest.TestCase):
             rd._diff_header_path("diff --git a/old/x.rs b/new/x.rs\n"), "new/x.rs"
         )
 
+    def test_a_deletion_keeps_a_real_path_on_both_sides(self):
+        """git puts /dev/null on the ---/+++ lines, never in this header, so there
+        is no /dev/null case to handle."""
+        self.assertEqual(
+            rd._diff_header_path("diff --git a/gone.rs b/gone.rs\n"), "gone.rs"
+        )
+
     def test_path_with_spaces(self):
         self.assertEqual(
             rd._diff_header_path("diff --git a/my dir/x.md b/my dir/x.md\n"),
@@ -526,6 +533,15 @@ class GateTests(unittest.TestCase):
         self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
         v = rd.gate("main", self.out, fetch=False)
         self.assertNotIn("slices", v)
+
+    def test_an_out_colliding_with_a_slice_name_is_refused(self):
+        """The slice handles open O_TRUNC before the diff is read, so a colliding
+        --out would truncate its own input and every slice would come out empty
+        with no error."""
+        self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
+        colliding = self.out.parent / "review-diff-source.txt"
+        with self.assertRaises(rd.ReviewDiffError):
+            rd.gate("main", colliding, fetch=False, split=True)
 
     def test_split_rewrites_slices_each_run(self):
         """Same rationale as the full diff: a stale slice is the hazard."""

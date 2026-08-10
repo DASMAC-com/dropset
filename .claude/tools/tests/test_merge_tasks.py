@@ -307,6 +307,51 @@ class PatchOpCapTests(unittest.TestCase):
         self.assertEqual(reason, "")
         self.assertEqual(len(ops), 49)
 
+    def test_an_empty_op_list_falls_back_with_a_reason(self):
+        """`patch` requires at least one op, and a caller testing `if patch_ops:`
+        would otherwise fall through to wholesale with an empty reason."""
+        ops, reason = build_patch_ops("Survivor with no touches.\n", [], [])
+        self.assertIsNone(ops)
+        self.assertIn("no operations", reason)
+
+
+class PatchOpNewlineTests(unittest.TestCase):
+    """The lead-newline arithmetic, across every trailing-newline count."""
+
+    def _merged(self, stored, sections, globs):
+        ops, reason = build_patch_ops(stored, sections, globs)
+        self.assertEqual(reason, "")
+        return apply_ops(stored, ops)
+
+    def test_no_trailing_newline(self):
+        got = self._merged("Survivor.", ["---\n\n# Part 1 — t\n\nbody"], ["a/"])
+        self.assertIn("Survivor.\n\n---", got)
+
+    def test_one_trailing_newline(self):
+        got = self._merged("Survivor.\n", ["---\n\n# Part 1 — t\n\nbody"], ["a/"])
+        self.assertIn("Survivor.\n\n---", got)
+
+    def test_two_trailing_newlines(self):
+        got = self._merged("Survivor.\n\n", ["---\n\n# Part 1 — t\n\nbody"], ["a/"])
+        self.assertIn("Survivor.\n\n---", got)
+
+    def test_three_or_more_trailing_newlines_is_a_known_divergence(self):
+        """The `max(0, 2 - trailing)` clamp cannot remove newlines already there,
+        so ops keep them where the wholesale path would rstrip. Documented
+        compromise — pinned here so it can't drift into a surprise."""
+        got = self._merged("Survivor.\n\n\n\n", ["---\n\n# Part 1 — t\n\nbody"], ["a/"])
+        self.assertIn("Survivor.\n\n\n\n---", got)
+
+    def test_a_first_line_touches_can_still_anchor(self):
+        """Prefixing the anchor with a newline would leave a Touches-first body
+        with no anchor at all, and misreport it as ambiguous."""
+        stored = "**Touches**: a/\n\nSurvivor prose.\n"
+        ops, reason = build_patch_ops(stored, ["---\n\n# Part 1 — t\n\nbody"], ["a/"])
+        self.assertEqual(reason, "")
+        merged = apply_ops(stored, ops)
+        self.assertEqual(merged.count("**Touches**:"), 1)
+        self.assertIn("Survivor prose.", merged)
+
 
 class AssembleCliTests(unittest.TestCase):
     """The ``--out`` file-handoff lives in ``run()``, not ``assemble()``."""

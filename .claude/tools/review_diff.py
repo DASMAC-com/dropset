@@ -85,6 +85,12 @@ from pathlib import Path
 # Generated families excluded from the review diff: machine-authored, reviewed
 # by their regeneration gate (step 9) rather than by eye, and large enough to
 # swamp the diff the lenses actually read.
+# NOTE for editors: `grep_excludes()` and `search_source.excluded_dir_names()`
+# classify each entry as file-vs-directory by whether its last segment contains a
+# dot. Every entry below obeys that (`generated` is the only directory, and it
+# carries no dot), but a *dotted directory* added here would be read as a file
+# and emitted as `--exclude=<name>` instead of being pruned as a tree. Put a
+# dotted directory in SEARCH_EXCLUDE_DIRS below, which is taken verbatim.
 DIFF_EXCLUDES = (
     "pnpm-lock.yaml",
     "Cargo.lock",
@@ -362,22 +368,26 @@ def _diff_header_path(line: str) -> str | None:
     """The destination path from a ``diff --git a/X b/Y`` header, or ``None``.
 
     Takes the ``b/`` side because that is what the change produced — for a rename
-    the ``a/`` side no longer exists. Falls back to the ``a/`` side for a deletion,
-    where ``b/`` is ``/dev/null``.
+    the ``a/`` side no longer exists.
+
+    Note git keeps a **real path on both sides even for a deletion** (``/dev/null``
+    appears on the following ``---``/``+++`` lines, which this never inspects), so
+    there is no ``/dev/null`` case to handle here.
+
+    Paths may contain spaces, so the pair is split on the ``" b/"`` separator
+    rather than on whitespace. That takes the **first** occurrence, so a path that
+    itself contains the literal sequence ``" b/"`` mis-splits and the hunk lands in
+    the default ``source`` slice. Accepted: the consequence is that one hunk goes
+    to the wrong slice on a pathological filename, and ``source`` is the safe side
+    to land on.
     """
     if not line.startswith("diff --git "):
         return None
     rest = line[len("diff --git ") :].rstrip("\n")
-    # Paths may contain spaces, so split on the " b/" that separates the pair
-    # rather than on whitespace.
     marker = rest.find(" b/")
     if marker == -1:
         return None
-    a_path = rest[:marker]
-    b_path = rest[marker + 3 :]
-    if b_path and b_path != "/dev/null":
-        return b_path
-    return a_path[2:] if a_path.startswith("a/") else a_path
+    return rest[marker + 3 :] or None
 
 
 def split_diff(diff_path: Path, out_dir: Path) -> dict:
@@ -397,6 +407,14 @@ def split_diff(diff_path: Path, out_dir: Path) -> dict:
     """
     out_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     paths = {name: out_dir / f"review-diff-{name}.txt" for name in SLICE_NAMES}
+    # The slice handles are opened O_TRUNC *before* the diff is read, so a `--out`
+    # that collides with a slice name would have its own input truncated first and
+    # every slice would come out empty with no error. Refuse instead.
+    if diff_path.resolve() in {p.resolve() for p in paths.values()}:
+        raise ReviewDiffError(
+            f"--out {diff_path} collides with a --split slice name; choose another "
+            f"name (the slices are review-diff-source/tests/docs.txt in that dir)"
+        )
     handles = {}
     counts = dict.fromkeys(SLICE_NAMES, 0)
     try:

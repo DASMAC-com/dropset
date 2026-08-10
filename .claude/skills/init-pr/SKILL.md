@@ -286,14 +286,23 @@ fresh worktree inherits.
    one `.git`), which is what step 5 rebases onto.
 
    **Don't reach for `git -C <base_repo> pull --ff-only`.**
-   Earlier versions of this step did, and it is now refused
-   outright: the **worktree edit-path guard** blocks a
-   git invocation that redirects out of the worktree with
-   `-C`, because a worktree-isolated session's git operations
-   must target its own worktree (see `CLAUDE.md` → "Local
-   integrations and guard hooks"). The guard is right — and
-   the fetch above achieves the same thing for this skill's
-   purposes without leaving the worktree.
+   Earlier versions of this step did, and in a
+   worktree-isolated session it is refused: a worktree
+   session's git operations have to target its own worktree,
+   so redirecting out of it with `-C` doesn't run. The fetch
+   above achieves what this step actually needs without
+   leaving the worktree.
+
+   To be precise about the mechanism, since it is easy to
+   mis-attribute: the refusal comes from the **harness's own
+   worktree isolation**, not from any hook this repo commits.
+   The repo's **worktree edit-path guard** is a different
+   thing — it covers **file-mutating tools** (`Edit`, `Write`,
+   `MultiEdit`, `NotebookEdit`) that target a base-repo
+   absolute path, and never inspects `Bash` at all (see
+   `docs/conventions/local-integrations.md` → "The worktree
+   edit-path guard hook"). Both point the same way; only one
+   of them is what stops this command.
 
    The one thing the fetch does *not* do is fast-forward the
    base repo's checked-out `main` working tree. That matters

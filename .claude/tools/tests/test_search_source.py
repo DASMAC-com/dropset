@@ -113,6 +113,47 @@ class SearchTests(unittest.TestCase):
         with self.assertRaises(ss.SearchSourceError):
             ss.search("x", self.root, dirs=["nope"])
 
+    def test_an_absolute_dir_outside_the_root_is_refused(self):
+        """`Path("/repo") / "/etc"` is `/etc`, so without containment an absolute
+        --dir searches outside the tree and prints its matching lines — behind a
+        single blanket allow-rule."""
+        with self.assertRaises(ss.SearchSourceError):
+            ss.search("x", self.root, dirs=["/etc"])
+
+    def test_a_dot_dot_dir_outside_the_root_is_refused(self):
+        with self.assertRaises(ss.SearchSourceError):
+            ss.search("x", self.root, dirs=["../.."])
+
+    def test_a_bad_root_errors_rather_than_reporting_zero(self):
+        """A wrong --root would otherwise be silent: iter_files swallows the
+        iterdir error and the run prints "0 match(es)" — a "searched everything,
+        found nothing" in the one tool whose thesis is not doing that."""
+        with self.assertRaises(ss.SearchSourceError):
+            ss.search("x", self.root / "does-not-exist")
+
+    def test_nested_dirs_do_not_double_count(self):
+        self.write("programs/src/a.rs", "needle\n")
+        out = ss.search("needle", self.root, dirs=["programs", "programs/src"])
+        self.assertEqual(out["total"], 1)
+        self.assertEqual(out["files"], ["programs/src/a.rs"])
+
+    def test_repeated_dirs_do_not_double_count(self):
+        self.write("programs/a.rs", "needle\n")
+        out = ss.search("needle", self.root, dirs=["programs", "programs"])
+        self.assertEqual(out["total"], 1)
+
+    def test_an_oversized_skip_is_reported_not_silent(self):
+        """The size cap is the tool's other cap, and the same rule applies."""
+        big = self.write("big.rs", "")
+        big.write_text("needle\n" * 400_000, encoding="utf-8")
+        out = ss.search("needle", self.root)
+        self.assertEqual(out["total"], 0)
+        self.assertEqual(out["skipped_oversized"], ["big.rs"])
+
+    def test_nothing_skipped_reports_an_empty_list(self):
+        self.write("a.rs", "needle\n")
+        self.assertEqual(ss.search("needle", self.root)["skipped_oversized"], [])
+
     def test_regex_by_default(self):
         self.write("a.rs", "fn compute_fill() {}\n")
         out = ss.search(r"fn compute_\w+", self.root)
@@ -223,6 +264,35 @@ class CliTests(unittest.TestCase):
             ["search_source.py", "needle", "--root", str(self.root), "--max", "2"]
         )
         self.assertIn("NOT shown", err)
+
+    def test_context_renumbers_and_separates(self):
+        """The documented headline usage. Exercises print_result's context branch,
+        not just the data search() returns."""
+        (self.root / "ctx.rs").write_text(
+            "one\ntwo\nneedle\nfour\nfive\n", encoding="utf-8"
+        )
+        _, out, _ = self._capture(
+            [
+                "search_source.py",
+                "needle",
+                "--root",
+                str(self.root),
+                "--context",
+                "1",
+            ]
+        )
+        self.assertIn("ctx.rs:2:two", out)
+        self.assertIn("ctx.rs:3:needle", out)
+        self.assertIn("ctx.rs:4:four", out)
+        self.assertIn("--", out)
+
+    def test_oversized_skip_is_announced_on_stderr(self):
+        big = self.root / "big.rs"
+        big.write_text("needle\n" * 400_000, encoding="utf-8")
+        _, _, err = self._capture(
+            ["search_source.py", "needle", "--root", str(self.root)]
+        )
+        self.assertIn("skipped as oversized", err)
 
     def test_ext_and_all_text_are_alternatives(self):
         with self.assertRaises(ss.SearchSourceError):

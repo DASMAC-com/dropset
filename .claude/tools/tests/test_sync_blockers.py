@@ -457,6 +457,138 @@ class DemoteCandidateTests(unittest.TestCase):
         self.assertEqual(got, [("ENG-10", "ENG-40"), ("ENG-30", "ENG-40")])
 
 
+class RunDemoteTests(unittest.TestCase):
+    """The only destructive path in the tool: it deletes board state a human may
+    have placed, so every gate on it is asserted here."""
+
+    def setUp(self):
+        self.deleted = []
+        self.created = []
+        real_delete = sync_blockers.issue_relation_delete
+        real_create = sync_blockers.issue_relation_create
+        sync_blockers.issue_relation_delete = lambda key, rid: self.deleted.append(rid)
+        sync_blockers.issue_relation_create = lambda key, a, b, t="related": (
+            self.created.append((a, b, t))
+        )
+        self.addCleanup(setattr, sync_blockers, "issue_relation_delete", real_delete)
+        self.addCleanup(setattr, sync_blockers, "issue_relation_create", real_create)
+
+    def _issues(self, shared=True):
+        """A single overlap-derived candidate: ENG-10 blocks ENG-20."""
+        touches = ["a/**"] if shared else ["a/x.rs"]
+        other = ["a/y.rs"] if shared else ["b/z.rs"]
+        return [
+            with_(
+                "ENG-10",
+                touches=touches,
+                blocks=["ENG-20"],
+                block_edges=[BlockEdge("rel-1", "ENG-10", "ENG-20")],
+            ),
+            with_("ENG-20", touches=other, blocked_by=["ENG-10"]),
+        ]
+
+    def test_proposal_only_writes_nothing(self):
+        rc = sync_blockers._run_demote(self._issues(), "key", Options(demote=True))
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.deleted, [])
+        self.assertEqual(self.created, [])
+
+    def test_apply_deletes_the_block_then_creates_the_related(self):
+        """Order matters: a failure between the two must leave the pair unlinked,
+        not carrying both claims."""
+        rc = sync_blockers._run_demote(
+            self._issues(), "key", Options(demote=True, apply=True)
+        )
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.deleted, ["rel-1"])
+        self.assertEqual(self.created, [("uuid-ENG-10", "uuid-ENG-20", "related")])
+
+    def test_apply_skips_the_related_when_one_already_exists(self):
+        issues = self._issues()
+        issues[0].related_to = ["ENG-20"]
+        sync_blockers._run_demote(issues, "key", Options(demote=True, apply=True))
+        self.assertEqual(self.deleted, ["rel-1"])
+        self.assertEqual(self.created, [])
+
+    def test_a_reciprocal_pair_is_not_double_linked(self):
+        """A blocks B *and* B blocks A yields two candidates over one pair; a
+        snapshot-only check would create the related link twice."""
+        issues = [
+            with_(
+                "ENG-10",
+                touches=["a/**"],
+                block_edges=[BlockEdge("rel-1", "ENG-10", "ENG-20")],
+            ),
+            with_(
+                "ENG-20",
+                touches=["a/**"],
+                block_edges=[BlockEdge("rel-2", "ENG-20", "ENG-10")],
+            ),
+        ]
+        sync_blockers._run_demote(issues, "key", Options(demote=True, apply=True))
+        self.assertEqual(sorted(self.deleted), ["rel-1", "rel-2"])
+        self.assertEqual(len(self.created), 1)
+
+    def test_hand_placed_candidates_are_held_back_by_default(self):
+        """No current collision means the automation could not have derived the
+        edge, and the demote is unrecoverable for it — so it needs an opt-in."""
+        sync_blockers._run_demote(
+            self._issues(shared=False), "key", Options(demote=True, apply=True)
+        )
+        self.assertEqual(self.deleted, [])
+        self.assertEqual(self.created, [])
+
+    def test_include_hand_placed_converts_them(self):
+        sync_blockers._run_demote(
+            self._issues(shared=False),
+            "key",
+            Options(demote=True, apply=True, include_hand_placed=True),
+        )
+        self.assertEqual(self.deleted, ["rel-1"])
+
+    def test_only_restricts_to_the_named_pair(self):
+        issues = [
+            with_(
+                "ENG-10",
+                touches=["a/**"],
+                block_edges=[
+                    BlockEdge("rel-1", "ENG-10", "ENG-20"),
+                    BlockEdge("rel-2", "ENG-10", "ENG-30"),
+                ],
+            ),
+            with_("ENG-20", touches=["a/**"]),
+            with_("ENG-30", touches=["a/**"]),
+        ]
+        sync_blockers._run_demote(
+            issues,
+            "key",
+            Options(demote=True, apply=True, only={frozenset(("ENG-10", "ENG-20"))}),
+        )
+        self.assertEqual(self.deleted, ["rel-1"])
+
+    def test_only_naming_a_non_candidate_deletes_nothing(self):
+        sync_blockers._run_demote(
+            self._issues(),
+            "key",
+            Options(demote=True, apply=True, only={frozenset(("ENG-99", "ENG-98"))}),
+        )
+        self.assertEqual(self.deleted, [])
+
+    def test_an_edge_with_no_relation_id_is_skipped_not_sent(self):
+        """Sending "" to issueRelationDelete would abort the migration mid-loop."""
+        issues = [
+            with_(
+                "ENG-10",
+                touches=["a/**"],
+                block_edges=[BlockEdge("", "ENG-10", "ENG-20")],
+            ),
+            with_("ENG-20", touches=["a/**"]),
+        ]
+        rc = sync_blockers._run_demote(issues, "key", Options(demote=True, apply=True))
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.deleted, [])
+
+
 class PairFilterTests(unittest.TestCase):
     """``--only`` selects a confirmed subset of demotion candidates."""
 
@@ -756,6 +888,29 @@ class ParseArgsTests(unittest.TestCase):
     def test_only_requires_an_argument(self):
         with self.assertRaises(SyncBlockersError):
             _parse_args(["--demote", "--only"])
+
+    def test_demote_refuses_dry_run(self):
+        """`--demote --apply --dry-run` would delete relations while --dry-run
+        promises "write nothing" — the combination must be refused, not resolved."""
+        with self.assertRaises(SyncBlockersError):
+            _parse_args(["--demote", "--dry-run"])
+        with self.assertRaises(SyncBlockersError):
+            _parse_args(["--demote", "--apply", "--dry-run"])
+
+    def test_dry_run_is_still_fine_on_the_sweep(self):
+        self.assertEqual(_parse_args(["--dry-run"]), Options(dry_run=True))
+        self.assertEqual(
+            _parse_args(["--for", "eng-9", "--dry-run"]),
+            Options(dry_run=True, focus_id="ENG-9"),
+        )
+
+    def test_include_hand_placed_without_demote_is_refused(self):
+        with self.assertRaises(SyncBlockersError):
+            _parse_args(["--include-hand-placed"])
+
+    def test_include_hand_placed_parses_under_demote(self):
+        opts = _parse_args(["--demote", "--apply", "--include-hand-placed"])
+        self.assertTrue(opts.include_hand_placed)
 
 
 if __name__ == "__main__":

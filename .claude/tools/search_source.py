@@ -113,12 +113,20 @@ def excluded_file_names() -> set[str]:
     return names
 
 
-def iter_files(roots: list[Path], extensions: tuple[str, ...] | None):
+def iter_files(
+    roots: list[Path],
+    extensions: tuple[str, ...] | None,
+    oversized: list[Path] | None = None,
+):
     """Yield searchable files under ``roots``, pruning excluded trees.
 
     ``extensions`` of ``None`` means every extension (``--all-text``); a symlink
     is skipped rather than followed, so a link into ``target/`` cannot smuggle a
     pruned tree back in.
+
+    Files over :data:`MAX_FILE_BYTES` are skipped and appended to ``oversized``
+    when a list is given, so the caller can *say* it skipped them rather than
+    silently under-reporting.
     """
     skip_dirs = excluded_dir_names()
     skip_files = excluded_file_names()
@@ -146,6 +154,8 @@ def iter_files(roots: list[Path], extensions: tuple[str, ...] | None):
                 continue
             try:
                 if entry.stat().st_size > MAX_FILE_BYTES:
+                    if oversized is not None:
+                        oversized.append(entry)
                     continue
             except OSError:
                 continue
@@ -182,20 +192,52 @@ def search(
     """
     matcher = build_matcher(pattern, fixed, ignore_case)
 
+    base = root.resolve()
+    if not base.is_dir():
+        # A wrong --root would otherwise be silent: `iter_files` swallows the
+        # `iterdir` OSError, so the run prints "0 match(es)" and exits 1 — a
+        # "searched everything, found nothing" of exactly the kind this tool's
+        # truncation reporting exists to prevent.
+        raise SearchSourceError(f"--root is not a directory: {root}")
+
     if dirs:
         roots = []
         for name in dirs:
             candidate = (root / name).resolve()
             if not candidate.exists():
                 raise SearchSourceError(f"no such directory: {name}")
+            # Containment. `Path("/repo") / "/etc"` is `/etc`, so without this an
+            # absolute (or `../..`) --dir searches outside the tree and prints
+            # matching *lines* from it. This tool reduces to one blanket
+            # allow-rule, so a --dir that escaped the tree would turn that rule
+            # into an unbounded host-filesystem read behind a single approval.
+            if not candidate.is_relative_to(base):
+                raise SearchSourceError(
+                    f"--dir must stay under --root ({base}): {name} resolves to "
+                    f"{candidate}"
+                )
             roots.append(candidate)
+        # Drop a root nested inside another, and any duplicate, so an overlapping
+        # --dir can't walk the same tree twice and double-count every match.
+        roots = [
+            c
+            for c in dict.fromkeys(roots)
+            if not any(c != other and c.is_relative_to(other) for other in roots)
+        ]
     else:
-        roots = [root.resolve()]
+        roots = [base]
+
+    def relative(path: Path) -> str:
+        try:
+            return str(path.relative_to(base))
+        except ValueError:
+            return str(path)
 
     matches: list[dict] = []
     files: list[str] = []
     total = 0
-    for path in iter_files(roots, extensions):
+    oversized: list[Path] = []
+    for path in iter_files(roots, extensions, oversized):
         try:
             lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
@@ -207,11 +249,7 @@ def search(
             total += 1
             hit_in_file = True
             if len(matches) < limit:
-                try:
-                    rel = str(path.relative_to(root.resolve()))
-                except ValueError:
-                    rel = str(path)
-                entry = {"path": rel, "line": index + 1, "text": line}
+                entry = {"path": relative(path), "line": index + 1, "text": line}
                 if context:
                     lo = max(0, index - context)
                     hi = min(len(lines), index + context + 1)
@@ -219,10 +257,7 @@ def search(
                     entry["context_start"] = lo + 1
                 matches.append(entry)
         if hit_in_file:
-            try:
-                files.append(str(path.relative_to(root.resolve())))
-            except ValueError:
-                files.append(str(path))
+            files.append(relative(path))
 
     files.sort()
     matches.sort(key=lambda m: (m["path"], m["line"]))
@@ -231,6 +266,9 @@ def search(
         "files": files,
         "total": total,
         "truncated": max(0, total - len(matches)),
+        # The size cap is the tool's *other* cap, and the same rule applies: a cap
+        # nobody is told about reads as "searched everything".
+        "skipped_oversized": sorted(relative(p) for p in oversized),
     }
 
 
@@ -256,6 +294,12 @@ def print_result(result: dict, files_only: bool, context: int) -> None:
         # Say it out loud: a silent cap reads as "searched everything".
         summary += (
             f" | {result['truncated']} match(es) NOT shown (raise --max to see them)"
+        )
+    skipped = result.get("skipped_oversized") or []
+    if skipped:
+        # The size cap is the other silent-cap risk, so it is announced too.
+        summary += (
+            f" | {len(skipped)} file(s) skipped as oversized: {', '.join(skipped)}"
         )
     print(summary, file=sys.stderr)
 

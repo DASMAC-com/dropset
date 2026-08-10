@@ -53,7 +53,12 @@ Modes:
   lists every existing ``blocks`` edge between two open Backlog issues (the set
   the automation *could* have authored — a hand-placed edge is
   indistinguishable, which is exactly why the confirm gate exists) and, only
-  under ``--apply``, converts them to ``related``.
+  under ``--apply``, converts them to ``related``. A candidate with **no
+  current** ``**Touches**`` collision could not have been derived by the
+  automation, so it is held back unless ``--include-hand-placed`` is passed.
+  ``--dry-run`` is **refused** with ``--demote``: bare ``--demote`` already
+  writes nothing, so combining them would read as a safe preview of a deletion
+  that is not one.
 
 Configuration comes entirely from the environment (no hard-coded ids, never a
 committed token):
@@ -743,12 +748,21 @@ Usage:
       One-time migration: list every blocks edge between two open Backlog
       issues as a demotion candidate. Writes nothing without --apply, which
       converts the listed edges to `related`. Restrict with --only.
+      Candidates with no current Touches collision are held back unless
+      --include-hand-placed is passed.
 
 This tool never files a blocking edge. Blocking is human-curated: an agent may
 suggest an edge with its evidence, and a human approves or places it.
 
-  --dry-run  Print the links that would be filed; write nothing.
-  --apply    With --demote only: actually perform the confirmed conversion."""
+  --dry-run  Print the links that would be filed; write nothing. Applies to
+             the sweep modes only — it is refused with --demote, because bare
+             --demote already writes nothing and --demote --apply is the
+             deliberate write.
+  --apply    With --demote only: actually perform the confirmed conversion.
+  --include-hand-placed
+             With --demote only: also convert candidates that carry no current
+             Touches collision (more likely hand-placed, and not recoverable
+             if the conversion half-fails)."""
 
 
 def env_var(name: str) -> str:
@@ -772,6 +786,10 @@ class Options:
     apply: bool = False
     # None means "every candidate"; a set restricts --demote to those pairs.
     only: set[frozenset[str]] | None = None
+    # Convert candidates with no current Touches collision too. Off by default:
+    # the automation could not have derived those, so they are more likely
+    # hand-placed, and for them the demote is not recoverable (see `_run_demote`).
+    include_hand_placed: bool = False
 
 
 def _parse_args(args: list[str]) -> Options:
@@ -788,6 +806,7 @@ def _parse_args(args: list[str]) -> Options:
     report_todo = False
     demote = False
     apply = False
+    include_hand_placed = False
     only: set[frozenset[str]] | None = None
     i = 0
     while i < len(args):
@@ -800,6 +819,8 @@ def _parse_args(args: list[str]) -> Options:
             demote = True
         elif arg == "--apply":
             apply = True
+        elif arg == "--include-hand-placed":
+            include_hand_placed = True
         elif arg == "--only":
             i += 1
             if i >= len(args):
@@ -823,6 +844,21 @@ def _parse_args(args: list[str]) -> Options:
         raise SyncBlockersError("--apply is only meaningful with --demote")
     if only is not None and not demote:
         raise SyncBlockersError("--only is only meaningful with --demote")
+    if include_hand_placed and not demote:
+        raise SyncBlockersError(
+            "--include-hand-placed is only meaningful with --demote"
+        )
+    if demote and dry_run:
+        # `--dry-run` and `--demote` both mean "write nothing", but they are not
+        # the same lever, and combining them reads as a safe preview of a
+        # deletion when it is not one: `_run_demote` branches on `--apply`
+        # alone, so `--demote --apply --dry-run` would delete relations while
+        # the help text promises "write nothing". Refuse the combination rather
+        # than pick a winner — bare `--demote` *is* the dry run.
+        raise SyncBlockersError(
+            "--dry-run cannot combine with --demote; bare --demote already "
+            "writes nothing, and --demote --apply is the deliberate write"
+        )
     return Options(
         dry_run=dry_run,
         focus_id=focus_id,
@@ -830,6 +866,7 @@ def _parse_args(args: list[str]) -> Options:
         demote=demote,
         apply=apply,
         only=only,
+        include_hand_placed=include_hand_placed,
     )
 
 
@@ -885,11 +922,44 @@ def _run_demote(issues: list[Issue], api_key: str, opts: Options) -> int:
 
     Two writes per confirmed edge — delete the ``blocks`` relation, then create a
     ``related`` one — in that order, so a failure between them leaves the pair
-    *unlinked* rather than carrying both claims at once. A re-run then simply
-    re-relates it: the pair no longer appears as a demote candidate, and the next
-    ordinary sweep sees an unlinked collision.
+    *unlinked* rather than carrying both claims at once.
+
+    **That recovery argument only holds for an overlap-derived edge.** For one, a
+    re-run re-relates it: the pair no longer appears as a demote candidate, and
+    the next ordinary sweep sees an unlinked collision. But
+    ``materialize_overlap_relations`` only links pairs that **currently** collide,
+    so for a candidate with no current collision — the ones this tool itself
+    labels "more likely hand-placed" — a failure between the two writes leaves
+    the pair with **nothing**, and no later sweep restores it. Those are exactly
+    the human-curated edges the whole change exists to protect, so they are
+    **excluded by default** and require ``--include-hand-placed``.
     """
     candidates = demote_candidates(issues)
+
+    # An edge whose relation id didn't come back can't be deleted; sending "" to
+    # `issueRelationDelete` aborts the migration mid-loop on an API error. Drop it
+    # at candidate-build time with a warning instead.
+    unusable = [c for c in candidates if not c[0].relation_id]
+    for edge, _shared in unusable:
+        print(
+            f"warning: {edge.blocker} blocks {edge.blocked} carries no relation "
+            f"id, so it cannot be deleted — skipping it (re-run the sweep; if it "
+            f"persists, remove that edge by hand)",
+            file=sys.stderr,
+        )
+    candidates = [c for c in candidates if c[0].relation_id]
+
+    hand_placed = [c for c in candidates if not c[1]]
+    if hand_placed and not opts.include_hand_placed:
+        candidates = [c for c in candidates if c[1]]
+        print(
+            f"note: holding back {len(hand_placed)} candidate(s) with no current "
+            f"Touches collision — the automation could not have derived those, so "
+            f"they are more likely hand-placed and are authoritative. Pass "
+            f"--include-hand-placed to convert them too.",
+            file=sys.stderr,
+        )
+
     if opts.only is not None:
         wanted = opts.only
         candidates = [
@@ -924,17 +994,22 @@ def _run_demote(issues: list[Issue], api_key: str, opts: Options) -> int:
         return 0
 
     converted = 0
+    # Pairs already carrying a `related` link — seeded from the fetched snapshot,
+    # then grown as this loop creates them. Growing it matters: a reciprocal pair
+    # (A blocks B *and* B blocks A) yields two candidates over one pair, and a
+    # snapshot-only check would create the link twice.
+    linked = {frozenset((i.id, other)) for i in issues for other in i.related_to}
     for edge, _shared in candidates:
         issue_relation_delete(api_key, edge.relation_id)
-        # Skip the related link only when one already exists, so the pair is
-        # never double-linked; the collision is still recorded either way.
-        if edge.blocked not in by_id[edge.blocker].related_to:
+        pair = frozenset((edge.blocker, edge.blocked))
+        if pair not in linked:
             issue_relation_create(
                 api_key,
                 by_id[edge.blocker].uuid,
                 by_id[edge.blocked].uuid,
                 "related",
             )
+            linked.add(pair)
         converted += 1
         print(
             f"demoted: {edge.blocker} blocks {edge.blocked} -> related",

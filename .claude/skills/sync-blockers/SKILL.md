@@ -112,8 +112,9 @@ line on an *older* issue, or as an occasional catch-up:
 python3 .claude/tools/sync_blockers.py
 ```
 
-Add `--dry-run` (either write mode) to print the links it
-*would* file and write nothing:
+Add `--dry-run` (either **sweep** mode — it is refused with
+`--demote`, see below) to print the links it *would* file and
+write nothing:
 
 ```sh
 python3 .claude/tools/sync_blockers.py --dry-run
@@ -155,20 +156,37 @@ hand-placed, or its globs have since changed.
 The candidate set is deliberately **every** edge the
 automation could have authored, not just the overlap-derived
 ones — Linear records no author on a relation, so a
-hand-placed edge is not reliably distinguishable. The
-confirm gate is what protects the human-curated edges, which
-is exactly why the tool proposes and never bulk-applies.
-Convert only after a human has approved, optionally
-restricting to the approved subset:
+hand-placed edge is not reliably distinguishable. Convert
+only after a human has approved, optionally restricting to
+the approved subset:
 
 ```sh
+python3 .claude/tools/sync_blockers.py --demote --apply
 python3 .claude/tools/sync_blockers.py --demote --apply --only ENG-1:ENG-2
 ```
 
-`--apply` and `--only` are refused outside `--demote`
-rather than ignored: a silently-dropped `--apply` would
-read as a completed migration, and a silently-dropped
-`--only` would widen a confirmed subset to every candidate.
+**A candidate with no current collision is held back.** The
+automation could not have derived such an edge, so it is more
+likely hand-placed — and for it the conversion is **not
+recoverable**: the ordinary sweep only links pairs that
+currently collide, so if the delete lands and the re-link
+fails, nothing restores it. Those edges need an explicit
+`--include-hand-placed`. The tool says how many it held back.
+
+Three flag rules, each a refusal rather than a silent
+default, because every one of them would otherwise misreport
+what happened:
+
+- **`--apply` and `--only` are refused outside `--demote`.**
+  A silently-dropped `--apply` would read as a completed
+  migration; a silently-dropped `--only` would widen a
+  confirmed subset to every candidate.
+- **`--dry-run` is refused *with* `--demote`.** They both
+  mean "write nothing", but they are not the same lever:
+  `--demote --apply` branches on `--apply` alone, so the
+  combination would have deleted relations while `--dry-run`
+  promised otherwise. Bare `--demote` **is** the dry run.
+- **`--include-hand-placed` is refused outside `--demote`.**
 
 ### Sequence the migration last
 

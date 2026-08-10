@@ -10,8 +10,11 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import tempfile
 import unittest
 from contextlib import redirect_stdout
+from pathlib import Path
 
 import wait_for_checks as wfc
 
@@ -54,10 +57,28 @@ class SummarizeTests(unittest.TestCase):
         self.assertEqual(out["conclusion"], "pass")
         self.assertEqual(out["counts"], {"pass": 1, "skipping": 1})
 
-    def test_cancel_is_counted_but_not_red(self):
+    def test_a_cancelled_check_is_not_green(self):
+        """A cancelled required check still blocks the merge queue, so it must not
+        fall through to `pass` — the module's whole promise is that a caller
+        checking only the exit status cannot mistake a red build for green."""
         out = wfc.summarize([check("a", "pass"), check("b", "cancel")])
-        self.assertEqual(out["conclusion"], "pass")
+        self.assertEqual(out["conclusion"], "blocked")
         self.assertEqual(out["counts"]["cancel"], 1)
+        self.assertEqual(out["unresolved_buckets"], ["cancel"])
+
+    def test_an_unrecognized_bucket_is_not_green(self):
+        """A gh schema change must fail loud, not silently read as passing."""
+        out = wfc.summarize([check("a", "pass"), check("b", "some_new_bucket")])
+        self.assertEqual(out["conclusion"], "blocked")
+        self.assertEqual(out["unresolved_buckets"], ["some_new_bucket"])
+
+    def test_a_failure_still_outranks_an_unresolved_bucket(self):
+        out = wfc.summarize([check("a", "fail"), check("b", "cancel")])
+        self.assertEqual(out["conclusion"], "fail")
+
+    def test_all_pass_has_no_unresolved_buckets(self):
+        out = wfc.summarize([check("a", "pass"), check("b", "skipping")])
+        self.assertEqual(out["unresolved_buckets"], [])
 
     def test_no_checks_is_none_not_pass(self):
         out = wfc.summarize([])
@@ -67,6 +88,7 @@ class SummarizeTests(unittest.TestCase):
     def test_unknown_bucket_is_counted_not_dropped(self):
         out = wfc.summarize([{"name": "x"}])
         self.assertEqual(out["counts"], {"unknown": 1})
+        self.assertEqual(out["conclusion"], "blocked")
 
     def test_failing_checks_carry_workflow_and_run_id(self):
         link = "https://github.com/DASMAC-com/dropset/actions/runs/12345/job/999"
@@ -121,13 +143,26 @@ class ReadChecksTests(unittest.TestCase):
         self.assertEqual(len(got), 1)
         self.assertEqual(got[0]["name"], "a")
 
-    def test_exit_eight_with_no_payload_means_no_checks(self):
-        self._stub(8, "")
+    def test_ghs_no_checks_message_means_no_checks(self):
+        """Keyed on gh's message, not its exit code — the code for "no checks" has
+        varied across gh versions, and 8 is documented as *pending*."""
+        self._stub(1, "", "no checks reported on the 'eng-798' branch")
+        self.assertEqual(wfc.read_checks(285, "o/r"), [])
+
+    def test_empty_payload_on_exit_zero_means_no_checks(self):
+        self._stub(0, "")
         self.assertEqual(wfc.read_checks(285, "o/r"), [])
 
     def test_other_nonzero_with_no_payload_is_an_error(self):
-        """A bad PR number or missing auth must not read as "no checks"."""
+        """A bad PR number or missing auth must NOT read as "no checks" — the
+        caller is told to treat "none" as green, so conflating them ships a red
+        build. This must fail loud."""
         self._stub(1, "", "could not find pull request")
+        with self.assertRaises(wfc.WaitForChecksError):
+            wfc.read_checks(285, "o/r")
+
+    def test_an_auth_failure_is_an_error_not_no_checks(self):
+        self._stub(4, "", "gh: authentication required")
         with self.assertRaises(wfc.WaitForChecksError):
             wfc.read_checks(285, "o/r")
 
@@ -183,6 +218,14 @@ class WaitTests(unittest.TestCase):
         self.assertFalse(v["settled"])
         # the counts it did observe are still reported
         self.assertEqual(v["counts"], {"pass": 1})
+
+    def test_a_timed_out_watch_still_reports_a_definite_failure(self):
+        """A `fail` it did observe is definite and more informative than
+        `timeout` — a caller must be able to tell a wedged run from a red one."""
+        self._stub([check("a", "fail")], settled=False)
+        v = wfc.wait(285, repo="o/r")
+        self.assertEqual(v["conclusion"], "fail")
+        self.assertFalse(v["settled"])
 
     def test_no_watch_skips_the_wait(self):
         called = []
@@ -250,6 +293,50 @@ class LogPathTests(unittest.TestCase):
 
     def test_path_is_per_pr(self):
         self.assertNotEqual(wfc.log_path_for(1), wfc.log_path_for(2))
+
+
+class WatchChecksTests(unittest.TestCase):
+    """`watch_checks` runs a real subprocess, so it gets a `gh` shim on PATH
+    rather than being stubbed out — otherwise the log's mode and the timeout kill
+    are never exercised."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.bin = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+        self._path = os.environ.get("PATH", "")
+        os.environ["PATH"] = f"{self.bin}{os.pathsep}{self._path}"
+        self.addCleanup(os.environ.__setitem__, "PATH", self._path)
+        self.log = self.bin / "watch.log"
+
+    def _shim(self, body):
+        gh = self.bin / "gh"
+        gh.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+        gh.chmod(0o755)
+
+    def test_settles_and_captures_output_to_the_log(self):
+        self._shim("echo 'Tests  pass  1m0s'")
+        settled = wfc.watch_checks(285, "o/r", 1, 30, self.log)
+        self.assertTrue(settled)
+        self.assertIn("pass", self.log.read_text(encoding="utf-8"))
+
+    def test_the_log_is_owner_only(self):
+        """A CI log can carry build output worth keeping off a shared /tmp — the
+        same reason review_diff.py's slices are 0o600."""
+        self._shim("echo hi")
+        wfc.watch_checks(285, "o/r", 1, 30, self.log)
+        self.assertEqual(self.log.stat().st_mode & 0o777, 0o600)
+
+    def test_a_hung_watch_times_out_and_is_killed(self):
+        self._shim("sleep 30")
+        settled = wfc.watch_checks(285, "o/r", 1, 1, self.log)
+        self.assertFalse(settled)
+
+    def test_a_nonzero_watch_still_settles(self):
+        """gh exits non-zero when a check failed; that is an outcome, not a
+        failure to settle — the verdict comes from the separate JSON read."""
+        self._shim("echo 'Tests  fail  1m0s'\nexit 1")
+        self.assertTrue(wfc.watch_checks(285, "o/r", 1, 30, self.log))
 
 
 if __name__ == "__main__":
