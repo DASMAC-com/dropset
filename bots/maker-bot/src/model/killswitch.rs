@@ -316,4 +316,25 @@ mod tests {
             Action::Halt(HaltReason::TvlFloor)
         );
     }
+
+    #[test]
+    fn degraded_scale_is_read_from_config() {
+        // The tightening factor is a knob, not the hardcoded half it replaced,
+        // so pin it at a non-default value: 0.25 pulls the reshape bound to
+        // 7.5%, which a 10% imbalance trips where the default 15% bound leaves
+        // it quoting. Without this the whole config field could be a literal
+        // 0.5 again and every other test would still pass.
+        let tight = KillSwitchConfig {
+            degraded_scale: 0.25,
+            ..KillSwitchConfig::default()
+        };
+        assert_eq!(
+            evaluate(&degraded_fair(), &inv(55.0, 45.0), &kill(), LAUNCH),
+            Action::Quote
+        );
+        assert_eq!(
+            evaluate(&degraded_fair(), &inv(55.0, 45.0), &tight, LAUNCH),
+            Action::Reshape(Side::Bid)
+        );
+    }
 }
