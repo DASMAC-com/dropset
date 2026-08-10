@@ -56,9 +56,13 @@ sdk-math <-> frontend: the frontend's eCLOB route (frontend/lib/eclob/,
   off-chain fill math must compute identically to the on-chain engine; the
   conformance vectors (sdk/conformance) pin that parity. Both quoting paths
   go through the router, so the frontend hooks are lifecycle-only and must
-  not re-derive routing decisions the router already owns. A separate drift
-  to watch: the display-only float PnL re-implementation
-  (frontend/lib/data/pnl.ts) that no conformance vector pins.
+  not re-derive routing decisions the router already owns. The declared
+  platform fee is part of this seam: the quote (router quoteEclob) and the
+  executor (frontend/lib/eclob/eclobSwap.ts) must clamp the configured rate to
+  the market's max_platform_fee identically, or the displayed output stops
+  equalling the fill. A separate drift to watch: the display-only float PnL
+  re-implementation (frontend/lib/data/pnl.ts) that no conformance vector
+  pins.
 sdk-clients <-> DFlow: the router's aggregator leg (sdk/ts/src/dflow.ts)
   against DFlow's /quote, and the swap path (frontend/lib/dflow/) against
   /order. Two contracts to keep aligned — the platform-fee guard (declare a
