@@ -4,6 +4,11 @@
 // which currencies.ts overlays onto the canonical remote URLs in
 // currencies.json. Manifest is always written (even if empty / all
 // fetches failed) so the static TS import in currencies.ts never breaks.
+//
+// Pass --strict (CI does, for the icon-liveness job) to also exit non-zero
+// when any symbol is missing from the manifest. Without it this script
+// cannot fail, so a dead issuer URL is invisible: the icons and the
+// manifest are both gitignored, leaving no committed baseline to diff.
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,26 +31,71 @@ const EXT_BY_CT = {
 rmSync(dst, { recursive: true, force: true });
 mkdirSync(dst, { recursive: true });
 
+const STRICT = process.argv.includes("--strict");
+
 const manifest = {};
 const failures = [];
+
+// Smallest plausible icon. Guards against a CDN answering 200 with an
+// empty or near-empty body, which would otherwise mirror as a file that
+// looks valid on disk but that no browser can render.
+const MIN_BYTES = 64;
+const ATTEMPTS = 3;
+const TIMEOUT_MS = 10_000;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const fetchOnce = async (url) => {
+  const res = await fetch(url, {
+    redirect: "follow",
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  // Only mirror content-types we recognize as images. Deriving the
+  // extension from an arbitrary content-type instead let an HTTP 200
+  // carrying an HTML error page or CDN interstitial through `res.ok`
+  // above, write `SYMBOL.html`, and manifest it as a *success* — a
+  // broken icon indistinguishable from a working one. Rejecting here
+  // drops the symbol from the manifest, so currencies.ts leaves its
+  // canonical remote URL in place.
+  const ct = res.headers.get("content-type")?.split(";")[0]?.trim() ?? "";
+  const ext = EXT_BY_CT[ct];
+  if (!ext) throw new Error(`unexpected content-type ${ct || "(none)"}`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (buf.length < MIN_BYTES) throw new Error(`body is ${buf.length}B`);
+  // The header can also be right while the body is not — sniff SVG rather
+  // than trusting `image/svg+xml` alone, since that is the one type an
+  // HTML interstitial can plausibly be served as.
+  if (
+    ext === "svg" &&
+    !buf.subarray(0, 1024).toString("utf8").includes("<svg")
+  ) {
+    throw new Error("content-type is SVG but body has no <svg> tag");
+  }
+  return { ext, buf };
+};
+
+// Retry before declaring a URL dead: under --strict a single transient
+// blip would otherwise fail the build and read as link rot. Only a URL
+// that fails every attempt is treated as broken.
+const fetchWithRetry = async (url) => {
+  let last;
+  for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+    if (attempt > 0) await sleep(500 * 2 ** (attempt - 1));
+    try {
+      return await fetchOnce(url);
+    } catch (err) {
+      last = err;
+    }
+  }
+  throw last;
+};
 
 const tokens = Object.values(data).flatMap((entry) => entry.stablecoins);
 const results = await Promise.allSettled(
   tokens.map(async (s) => {
-    const res = await fetch(s.icon, { redirect: "follow" });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    // Only mirror content-types we recognize as images. Deriving the
-    // extension from an arbitrary content-type instead let an HTTP 200
-    // carrying an HTML error page or CDN interstitial through `res.ok`
-    // above, write `SYMBOL.html`, and manifest it as a *success* — a
-    // broken icon indistinguishable from a working one. Rejecting here
-    // drops the symbol from the manifest, so currencies.ts leaves its
-    // canonical remote URL in place.
-    const ct = res.headers.get("content-type")?.split(";")[0]?.trim() ?? "";
-    const ext = EXT_BY_CT[ct];
-    if (!ext) throw new Error(`unexpected content-type ${ct || "(none)"}`);
+    const { ext, buf } = await fetchWithRetry(s.icon);
     const filename = `${s.symbol}.${ext}`;
-    const buf = Buffer.from(await res.arrayBuffer());
     writeFileSync(resolve(dst, filename), buf);
     return { symbol: s.symbol, filename };
   }),
@@ -69,4 +119,15 @@ console.log(
 if (failures.length) {
   console.warn(`  ${failures.length} failed (will fall back to remote URLs):`);
   for (const f of failures) console.warn(`  - ${f}`);
+}
+
+// The manifest is written either way, so a strict failure still leaves a
+// buildable tree; the non-zero exit is what makes a dead issuer URL
+// visible. Off by default because a normal `pnpm dev` should degrade to
+// the remote URLs rather than refuse to start.
+if (STRICT && failures.length) {
+  console.error(
+    `\n--strict: ${failures.length}/${tokens.length} token icon(s) unreachable after ${ATTEMPTS} attempts.`,
+  );
+  process.exit(1);
 }
