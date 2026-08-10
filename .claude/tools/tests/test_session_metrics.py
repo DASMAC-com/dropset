@@ -263,8 +263,6 @@ class BashSignatures(unittest.TestCase):
         self.assertIn("make lint", by_signature)
         self.assertFalse(by_signature["make lint"].deterministic)
         self.assertNotIn("git status", by_signature)  # only ran once
-        # Deterministic candidates rank ahead of non-deterministic ones.
-        self.assertTrue(report["hardening_candidates"][0].deterministic)
 
     def test_bash_signature_deduped_by_tool_use_id(self):
         # A split assistant message re-walks the same tool_use block across its
@@ -283,6 +281,117 @@ class BashSignatures(unittest.TestCase):
         by_signature = {c.signature: c for c in report["hardening_candidates"]}
         # Counted once → below the recurrence threshold → not surfaced.
         self.assertNotIn("git worktree list", by_signature)
+
+
+class HardeningRanking(unittest.TestCase):
+    """The table is ranked by result size and labels which cost each shape is.
+
+    Ranking by call count misled five consecutive sessions: `grep` topped it every
+    time while being negligible by size, and hoisting a shape converts many small
+    calls into a few large ones — so a count-ranked table flags the fix as the new
+    problem.
+    """
+
+    def _run(self, calls):
+        """Ingest ``[(command, result_text)]`` as real call/result pairs."""
+        agg = sm.SessionAggregator()
+        for i, (cmd, result) in enumerate(calls):
+            agg.ingest_main_line(
+                assistant(
+                    '{"output_tokens":1}',
+                    tool_use(f"b{i}", "Bash", json.dumps({"command": cmd})),
+                )
+            )
+            agg.ingest_main_line(tool_result(f"b{i}", json.dumps(result)))
+        return agg.finish()
+
+    def test_ranked_by_result_bytes_not_count(self):
+        """Many tiny greps must not outrank one big diff."""
+        grep_cmd = "grep -rn needle src"
+        diff_cmd = "git diff main"
+        calls = [(grep_cmd, "hit\n")] * 20
+        calls += [(diff_cmd, "x" * 5000)] * 2
+        report = self._run(calls)
+        signatures = [c.signature for c in report["hardening_candidates"]]
+
+        grep_sig = sm.bash_signature(grep_cmd)
+        diff_sig = sm.bash_signature(diff_cmd)
+        # The grep ran 10x as often; the diff returned far more, and wins.
+        self.assertEqual(signatures[0], diff_sig)
+        self.assertLess(
+            signatures.index(diff_sig), signatures.index(grep_sig), signatures
+        )
+        by_sig = {c.signature: c for c in report["hardening_candidates"]}
+        self.assertEqual(by_sig[grep_sig].count, 20)
+        self.assertEqual(by_sig[diff_sig].count, 2)
+
+    def test_result_bytes_are_attributed_to_the_shape(self):
+        report = self._run([("git diff main", "x" * 100)] * 3)
+        candidate = report["hardening_candidates"][0]
+        self.assertEqual(candidate.count, 3)
+        # json.dumps adds the surrounding quotes, hence >= rather than ==.
+        self.assertGreaterEqual(candidate.result_bytes, 300)
+        self.assertGreaterEqual(candidate.avg_bytes(), 100)
+
+    def test_a_big_result_is_a_context_cost(self):
+        report = self._run([("git diff main", "x" * 5000)] * 2)
+        self.assertEqual(report["hardening_candidates"][0].cost_kind(), "context")
+
+    def test_a_quiet_runner_command_is_a_wall_clock_cost(self):
+        """`make lint` through run_quiet returns one summary line — the cost is
+        time, not tokens, and three sessions had to say so by hand."""
+        cmd = "python3 .claude/tools/run_quiet.py -- make lint"
+        report = self._run([(cmd, "OK make lint (exit 0, 1392 lines)")] * 6)
+        candidate = report["hardening_candidates"][0]
+        self.assertTrue(candidate.via_run_quiet)
+        self.assertEqual(candidate.cost_kind(), "wall-clock")
+
+    def test_a_quiet_runner_command_with_a_big_tail_is_still_context(self):
+        """A failing run_quiet call prints a real tail; bytes win over the label."""
+        cmd = "python3 .claude/tools/run_quiet.py -- make test"
+        report = self._run([(cmd, "x" * 4000)] * 2)
+        candidate = report["hardening_candidates"][0]
+        self.assertTrue(candidate.via_run_quiet)
+        self.assertEqual(candidate.cost_kind(), "context")
+
+    def test_a_cheap_fast_repeat_is_prompt_churn(self):
+        """`printenv` costs neither tokens nor time — it is worth a tool because
+        each variant re-prompts, so mislabeling it wall-clock would be wrong."""
+        report = self._run([("printenv LINEAR_TEAM_ID", "abc\n")] * 4)
+        candidate = report["hardening_candidates"][0]
+        self.assertFalse(candidate.via_run_quiet)
+        self.assertEqual(candidate.cost_kind(), "prompt-churn")
+
+    def test_run_quiet_flag_is_sticky_across_a_shape(self):
+        """One unwrapped call among wrapped ones is a slip, not a
+        re-classification — the bytes check still catches a real payload."""
+        quiet = "python3 .claude/tools/run_quiet.py -- make lint"
+        report = self._run([(quiet, "OK\n"), ("python3 make lint", "OK\n")])
+        candidate = report["hardening_candidates"][0]
+        self.assertEqual(candidate.signature, "python3 make lint")
+        self.assertTrue(candidate.via_run_quiet)
+
+    def test_determinism_is_still_reported(self):
+        """It says how *portable* a shape is — a separate question from cost."""
+        report = self._run([("git worktree list --porcelain", "ok\n")] * 2)
+        self.assertTrue(report["hardening_candidates"][0].deterministic)
+
+    def test_a_shape_with_no_result_still_counts(self):
+        """A call whose result never arrived (an interrupted turn) must not vanish
+        from the table — it just contributes no bytes."""
+        agg = sm.SessionAggregator()
+        for i in range(2):
+            agg.ingest_main_line(
+                assistant(
+                    '{"output_tokens":1}',
+                    tool_use(f"b{i}", "Bash", json.dumps({"command": "make lint"})),
+                )
+            )
+        report = agg.finish()
+        candidate = report["hardening_candidates"][0]
+        self.assertEqual(candidate.count, 2)
+        self.assertEqual(candidate.result_bytes, 0)
+        self.assertEqual(candidate.avg_bytes(), 0)
 
 
 class Rendering(unittest.TestCase):
@@ -305,6 +414,39 @@ class Rendering(unittest.TestCase):
         parsed = json.loads(sm.to_json(agg.finish()))
         self.assertEqual(parsed["totals"]["output"], 7)
         self.assertIn("hardening_candidates", parsed)
+
+    def test_markdown_renders_the_cost_column_and_its_legend(self):
+        agg = sm.SessionAggregator()
+        cmd = "python3 .claude/tools/run_quiet.py -- make lint"
+        for i in range(2):
+            agg.ingest_main_line(
+                assistant(
+                    '{"output_tokens":1}',
+                    tool_use(f"b{i}", "Bash", json.dumps({"command": cmd})),
+                )
+            )
+            agg.ingest_main_line(tool_result(f"b{i}", '"OK"'))
+        md = sm.to_markdown(agg.finish(), "abcd1234")
+        self.assertIn("by result size", md)
+        self.assertIn("wall-clock", md)
+        # the legend explains the three kinds, so a reader needn't guess
+        self.assertIn("hardening it buys latency, not tokens", md)
+
+    def test_json_carries_the_cost_fields(self):
+        agg = sm.SessionAggregator()
+        for i in range(2):
+            agg.ingest_main_line(
+                assistant(
+                    '{"output_tokens":1}',
+                    tool_use(f"b{i}", "Bash", json.dumps({"command": "git diff main"})),
+                )
+            )
+            agg.ingest_main_line(tool_result(f"b{i}", json.dumps("x" * 5000)))
+        parsed = json.loads(sm.to_json(agg.finish()))
+        candidate = parsed["hardening_candidates"][0]
+        self.assertEqual(candidate["cost_kind"], "context")
+        self.assertGreater(candidate["result_bytes"], 5000)
+        self.assertFalse(candidate["via_run_quiet"])
 
 
 if __name__ == "__main__":

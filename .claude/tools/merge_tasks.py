@@ -11,19 +11,31 @@ Two subcommands, each reading stdin/argv and printing JSON to stdout:
   resolve the survivor (the lowest-numbered by default, or ``--survivor N``).
   Prints ``{"survivor": "ENG-###", "ids": [...]}`` (ids sorted by number) so the
   skill knows what to ``get_issue`` before assembling.
-* ``assemble ISSUES_JSON [--out PATH]`` — given a JSON file
+* ``assemble ISSUES_JSON [--out PATH] [--ops-out PATH]`` — given a JSON file
   ``{"survivor": "ENG-###", "issues": [{id, number, title, description}, ...]}``,
   build the merged issue: the survivor body followed by each non-survivor body
   as a labeled ``# Part N — <title>`` section (every ``**Fingerprint**:`` line
   preserved verbatim), one consolidated ``**Touches**:`` line holding the union
   of all the globs, the title (``Claude:`` prefix applied when every folded
   issue is meta-work), and a cross-area flag when the set mixes meta and product
-  surfaces. With ``--out PATH`` (the way the skill drives it) the large merged
-  ``description`` is **written to PATH** and kept **out of stdout** — prints
-  ``{title, touches, all_meta, cross_area, description_path}`` so the skill hands
-  the path to ``save_issue`` without the whole body transiting the model's
-  context (see ``CLAUDE.md`` → "Context economy"). Without ``--out`` it prints
-  the full ``{title, description, touches, all_meta, cross_area}`` inline.
+  surfaces.
+
+  It emits the fold **two ways**, and the skill prefers the first:
+
+  1. ``patch_ops`` — the fold as Linear ``patch`` operations: one ``append``
+     per ``# Part`` section plus one ``replace`` swapping the survivor's
+     ``**Touches**:`` line for the union. These carry only the *folded* bodies,
+     so the survivor's existing text — 28KB is unremarkable — never has to be
+     re-sent to ``save_issue`` at all. ``None`` when no safe anchor exists, with
+     ``patch_fallback_reason`` saying which rule it tripped.
+  2. ``description`` — the whole merged body, the wholesale fallback for exactly
+     that case.
+
+  Both are large, so both have a file handoff that keeps them out of stdout (see
+  ``CLAUDE.md`` → "Context economy"): ``--out PATH`` writes the description and
+  reports ``description_path``; ``--ops-out PATH`` writes the ops and reports
+  ``patch_ops_path`` + ``patch_ops_count``. With neither flag, both payloads
+  print inline.
 
 Stdlib only. This is a Python skill-tool under ``.claude/tools/`` — deliberately
 **not** a Cargo workspace member (see ``CLAUDE.md`` → "Skill tooling").
@@ -106,6 +118,18 @@ def _is_touches_line(line: str) -> bool:
     return s.startswith("**Touches**:")
 
 
+def raw_touches_lines(body: str) -> list[str]:
+    """The ``**Touches**:`` line(s) exactly as **stored**, unparsed.
+
+    :func:`extract_touches` returns the *globs*, trimmed and stripped of their
+    surrounding backticks — useful for the union, useless as a ``patch`` anchor,
+    which has to match the stored text byte for byte (a stored line may carry
+    backticks, an odd list marker, or trailing whitespace). This returns the raw
+    lines so the anchor is built from what Linear actually holds.
+    """
+    return [line for line in body.splitlines() if _is_touches_line(line)]
+
+
 def extract_touches(body: str) -> tuple[str, list[str]]:
     """Split a body into (body with its ``**Touches**:`` line(s) removed, the
     globs those lines carried). ``**Fingerprint**:`` and every other line stay.
@@ -126,6 +150,97 @@ def extract_touches(body: str) -> tuple[str, list[str]]:
 
 def strip_claude_prefix(title: str) -> str:
     return title[len(CLAUDE_PREFIX) :] if title.startswith(CLAUDE_PREFIX) else title
+
+
+# Any Linear tag in an anchor is fatal: Linear rewrites `ENG-123` into an
+# issue-mention node, so the stored text is an element, not the literal string,
+# and the anchor can never match. See `docs/conventions/linear-automation.md`
+# → "Partial edits".
+_ENG_TAG_RE = re.compile(r"ENG-\d+")
+
+
+def build_patch_ops(
+    survivor_body: str,
+    part_sections: list[str],
+    union_globs: list[str],
+) -> tuple[list[dict] | None, str]:
+    """Express the fold as ``patch`` ops instead of a whole-body rewrite.
+
+    Returns ``(ops, fallback_reason)``. ``ops`` is ``None`` when the fold cannot
+    be expressed safely, and ``fallback_reason`` then says why — the caller keeps
+    the wholesale ``description`` for exactly that case. On success
+    ``fallback_reason`` is the empty string.
+
+    The point is that the survivor's **existing** body never has to be re-sent:
+    each folded ``# Part`` is an ``append`` (which needs no anchor at all), and
+    the one thing that must change *in place* — the survivor's ``**Touches**:``
+    line, which becomes the union — is a single ``replace``. Ops apply in order,
+    so the line is deleted where it sat and the union re-appended at the end,
+    reproducing the wholesale layout rather than leaving the union stranded
+    above the folded parts.
+
+    Two anchor rules, both from the convention, both enforced by falling back
+    rather than emitting an op that would fail at save time:
+
+    * The anchor must match the stored body **exactly once**. More than one
+      ``**Touches**:`` line, or a line whose text recurs, is ambiguous.
+    * The anchor must carry **no** ``ENG-###``. A ``# Part N — <title>`` heading
+      is derived from an issue title and may well contain a tag, which is why no
+      anchor is ever built from a title — headings only ever ride in appended
+      text.
+    """
+    raw = raw_touches_lines(survivor_body)
+    if len(raw) > 1:
+        return None, (
+            f"survivor carries {len(raw)} **Touches**: lines, so the replace "
+            f"anchor is ambiguous"
+        )
+
+    ops: list[dict] = []
+    remaining = survivor_body
+    if raw:
+        line = raw[0]
+        if _ENG_TAG_RE.search(line):
+            return None, (
+                "survivor's **Touches**: line carries an ENG-### tag, which "
+                "Linear stores as a mention node, so no anchor can match it"
+            )
+        # Swallow the preceding newline too, so deleting the line doesn't leave a
+        # stray blank where it sat.
+        anchor = "\n" + line
+        if survivor_body.count(anchor) != 1:
+            return None, (
+                "survivor's **Touches**: line does not occur exactly once in the "
+                "stored body, so the replace anchor is not unique"
+            )
+        ops.append({"op": "replace", "old_string": anchor, "new_string": ""})
+        remaining = survivor_body.replace(anchor, "", 1)
+
+    # An `append` can't strip what's already there, so the first one has to
+    # supply exactly the newlines missing from the body's own tail — otherwise a
+    # stored body ending in "\n" grows a stray blank line the wholesale path
+    # (which `rstrip()`s before joining) never produces. Beyond two the tail is
+    # already over-separated and appending nothing is the closest we can get.
+    trailing = len(remaining) - len(remaining.rstrip("\n"))
+    lead = "\n" * max(0, 2 - trailing)
+
+    for section in part_sections:
+        ops.append({"op": "append", "text": f"{lead}{section}"})
+        # Every section ends with body text, so subsequent appends always need
+        # the full separator.
+        lead = "\n\n"
+
+    if union_globs:
+        ops.append(
+            {"op": "append", "text": f"{lead}**Touches**: {', '.join(union_globs)}"}
+        )
+
+    # `patch` is capped at 50 ops; a fold this wide is better done wholesale than
+    # rejected by the API mid-merge.
+    if len(ops) > 50:
+        return None, f"the fold needs {len(ops)} ops, over Linear's 50-op cap"
+
+    return ops, ""
 
 
 def assemble(data: dict) -> dict:
@@ -164,7 +279,7 @@ def assemble(data: dict) -> dict:
     elif survivor_globs:
         non_meta_count += 1
 
-    sections = [survivor_body.rstrip()]
+    part_sections: list[str] = []
     for n, other in enumerate(others, start=1):
         body, globs = extract_touches(other.get("description") or "")
         absorb(globs)
@@ -175,11 +290,17 @@ def assemble(data: dict) -> dict:
         heading = (
             f"# Part {n} — {strip_claude_prefix(other.get('title') or other['id'])}"
         )
-        sections.append(f"---\n\n{heading}\n\n{body.rstrip()}")
+        part_sections.append(f"---\n\n{heading}\n\n{body.rstrip()}")
 
-    description = "\n\n".join(sections)
+    description = "\n\n".join([survivor_body.rstrip(), *part_sections])
     if union_globs:
         description += f"\n\n**Touches**: {', '.join(union_globs)}"
+
+    # The ops are built from the survivor's *stored* body (Touches line intact),
+    # not the stripped `survivor_body` the wholesale path assembles from.
+    patch_ops, patch_fallback_reason = build_patch_ops(
+        survivor.get("description") or "", part_sections, union_globs
+    )
 
     # The prefix applies only when **every** folded issue is provably
     # meta-work (all its globs meta) — so a no-touch issue, which can't be
@@ -196,6 +317,8 @@ def assemble(data: dict) -> dict:
     return {
         "title": title,
         "description": description,
+        "patch_ops": patch_ops,
+        "patch_fallback_reason": patch_fallback_reason,
         "touches": union_globs,
         "all_meta": all_meta,
         "cross_area": cross_area,
@@ -222,6 +345,11 @@ def run(argv: list[str]) -> int:
         default=None,
         help="write the merged description here and keep it out of stdout",
     )
+    p_asm.add_argument(
+        "--ops-out",
+        default=None,
+        help="write the patch ops JSON here and keep it out of stdout",
+    )
 
     args = parser.parse_args(argv[1:])
 
@@ -239,6 +367,20 @@ def run(argv: list[str]) -> int:
                 fh.write(result["description"])
             del result["description"]
             result["description_path"] = args.out
+        if args.ops_out is not None:
+            # Same handoff for the ops. The ops carry only the *folded* bodies —
+            # the survivor's existing text is never in them — so reading this
+            # file costs strictly less than reading the merged description.
+            ops = result["patch_ops"]
+            del result["patch_ops"]
+            if ops is None:
+                result["patch_ops_path"] = None
+                result["patch_ops_count"] = 0
+            else:
+                with open(args.ops_out, "w", encoding="utf-8") as fh:
+                    json.dump(ops, fh, indent=2)
+                result["patch_ops_path"] = args.ops_out
+                result["patch_ops_count"] = len(ops)
 
     json.dump(result, sys.stdout, indent=2)
     sys.stdout.write("\n")

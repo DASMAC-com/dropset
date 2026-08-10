@@ -37,12 +37,14 @@ MCP": the merge-queue **enqueue** (a `gh pr merge --auto`
 write) and **dequeue probe** (a `gh api graphql` read) at
 the handoff, because the MCP exposes no merge-queue tool and
 its `pull_request_read` omits `mergeQueueEntry`; plus the
-**polled / one-shot reads** this skill makes with the
-compact `gh pr checks` (the CI-wait poll) and field-selected
-`gh pr view --json` (the PR lookup in step 1 and the
-merge-clean check) — chosen because those reads repeat, and
-a full-object MCP payload would be replayed into context on
-every later turn (`CLAUDE.md` → "Context economy"). The
+**one-shot and watched reads** this skill makes with the
+compact `gh pr checks` (the CI wait — step 17 runs it under
+`--watch`, so gh blocks until the checks settle rather than
+this skill polling) and field-selected `gh pr view --json`
+(the PR lookup in step 1 and the merge-clean check) — chosen
+because those reads repeat, and a full-object MCP payload
+would be replayed into context on every later turn
+(`CLAUDE.md` → "Context economy"). The
 PR-authoring **writes** (`create_pull_request`,
 `update_pull_request`) stay on the MCP. This repo is
 `DASMAC-com/dropset`, so every MCP call takes
@@ -75,6 +77,38 @@ PR-authoring **writes** (`create_pull_request`,
    stop, telling the user to run `/init-pr` first. (This is a
    read; the routine PR-authoring **writes** in later steps
    stay on the MCP.)
+
+   **If `baseRefName` is not `main`, check whether that base
+   has already merged — before anything expensive.** One
+   field-selected read answers it:
+
+   ```sh
+   gh pr view <baseRefName> --json number,state,mergedAt
+   ```
+
+   A `state` of `MERGED` means the stacked base landed on
+   `main`, almost certainly **squashed** — so the base branch
+   and `main` no longer share the commits this branch was
+   rebased onto, and every base-relative step below would run
+   against a branch that is no longer the merge target. When
+   that is the case, retarget **now**:
+
+   - `mcp__github__update_pull_request` with `base: "main"`,
+   - `git rebase --onto origin/main <old-base>` to move this
+     branch's own commits across,
+   - and use `main` as `<base>` for every step below.
+
+   This costs one cheap read and is deliberately placed
+   before step 4, because the failure it prevents is
+   expensive and silent: a review once ran end-to-end against
+   a merged base, went green on CI, and only turned
+   `CONFLICTING` at the step-15 merge-clean check — after
+   which recovery cost a `git rebase --onto` **plus** a full
+   re-run of `make lint`, `make test`, and
+   `make test-no-teardown` (~25 minutes). Neither the step-2
+   rebase nor step 5's `base_fresh` gate catches it: both
+   compare against `origin/<base>`, which is perfectly fresh
+   — it is the *base itself* that is stale.
 
 1. **Clean tree, then rebase onto the PR's base.** First run
    `git status` — if there are uncommitted changes,
@@ -332,17 +366,30 @@ PR-authoring **writes** (`create_pull_request`,
      git commit -S -m "Fix lint violations"
      ```
 
-   - **Re-run only the failing hook, scoped to the diff's
-     changed files** — not the whole `make lint` /
-     `--all-files` cascade. The full run re-checks every file
-     in the repo (the cspell hook's ~450-line cascade is the
-     worst of it); the fix only touched the diff's files, so
-     confirm it against just those, with the failing hook id
-     from the run above:
+   - **Re-run one hook, scoped to the diff's changed files** —
+     not the whole `make lint` / `--all-files` cascade. This
+     applies to **both** the failure case (confirming a fix)
+     **and** the ordinary post-edit confirmation later in the
+     review: one run made six full `--all-files` sweeps after
+     edits confined to a single crate, because only the
+     failure case read as in-scope here. The full run
+     re-checks every file in the repo (the cspell hook's
+     ~450-line cascade is the worst of it); your edit touched
+     the diff's files, so confirm against just those:
 
      ```sh
-     pre-commit run <hook-id> --files <changed files...>
+     pre-commit run <hook-id> --config cfg/pre-commit-lint.yml \
+       --files <changed files...>
      ```
+
+     **`--config` is mandatory, not decorative.** This repo
+     keeps its hook config at `cfg/pre-commit-lint.yml`, not
+     the default `.pre-commit-config.yaml`, so omitting the
+     flag fails outright with
+     `InvalidConfigError: .pre-commit-config.yaml is not a file`.
+     One run hit exactly that, read it as "the scoped path
+     doesn't work here", and fell back to **seven** full
+     `make lint` runs.
 
      Take `<changed files...>` from
      `git diff --name-only origin/<base>..HEAD`. Only fall back to a
@@ -417,7 +464,7 @@ PR-authoring **writes** (`create_pull_request`,
    results:
 
    ```sh
-   python3 .claude/tools/review_diff.py --base <base> \
+   python3 .claude/tools/review_diff.py --base <base> --split \
      --out <scratchpad>/review-diff.txt
    ```
 
@@ -435,9 +482,38 @@ PR-authoring **writes** (`create_pull_request`,
      "runs_rust_suites": false,   // any path outside CI's code filter?
      "runs_artifact_gates": false,// any generation input touched?
      "ready": true,               // exactly `not blockers`
-     "blockers": []               // why ready is false, if it is
+     "blockers": [],              // why ready is false, if it is
+     "slices": {                  // only with --split
+       "source": {"path": "…/review-diff-source.txt", "lines": 900},
+       "tests":  {"path": "…/review-diff-tests.txt",  "lines": 300},
+       "docs":   {"path": "…/review-diff-docs.txt",   "lines": 34}
+     }
    }
    ```
+
+   **Pass `--split`, and hand each lens its slice, not the
+   whole diff.** Prompt tightening has visibly *saturated*:
+   one fan-out cost ≈2.68M across five lenses on a ~1.5k-line
+   diff even though every brief already inlined excerpts,
+   named its comparison files, stated a turn cap, and handed
+   the diff by path. The residual is **structural** — all five
+   agents `Read` the *same whole* file, and that one carried
+   212 lines of `docs/architecture.md` plus large comment
+   reflows only one lens needed. So route by slice:
+
+   - **source** — correctness, security, style, completeness.
+   - **tests** — completeness (and correctness, when the diff
+     changes behavior tests pin).
+   - **docs** — the doc-freshness lens.
+
+   A lens that genuinely needs two categories gets two paths;
+   the full `diff_path` stays available for the cross-check,
+   which is the one pass that should see everything. Two
+   caveats to state in the brief so a lens isn't misled: the
+   split is **by file**, so Rust's inline `#[cfg(test)]` unit
+   tests ride in the **source** slice, and an empty slice is
+   still written (an absent file would be ambiguous between
+   "nothing here" and "the split didn't run").
 
    **`ready` is the gate: do not fan out unless it is `true`.**
    It is defined as `not blockers`, so the two can never
@@ -552,13 +628,16 @@ PR-authoring **writes** (`create_pull_request`,
    check one rule (per `CLAUDE.md` → "Context economy") —
    a whole-file Read of each is a top token sink otherwise.
 
-   **Hand each agent the diff by path, not inline.** Tell
-   every reviewer (and the step-6 cross-check agent) to
-   **Read `<scratchpad>/review-diff.txt`** for the full diff, and
-   pass the small commit log inline. This holds **one**
-   resident copy of the diff (read into each agent's own
-   context) instead of N copies inlined across the prompts;
-   no agent re-fetches the diff by shelling out.
+   **Hand each agent its diff by path, not inline.** Tell every
+   reviewer to **Read its own slice** from the `slices` map —
+   `review-diff-source.txt`, `-tests.txt`, or `-docs.txt` per
+   the routing above — and pass the small commit log inline.
+   The step-6 cross-check gets the **full**
+   `<scratchpad>/review-diff.txt` instead, since it is the pass
+   that should see everything. This holds **one** resident copy
+   per agent (read into its own context) instead of N copies
+   inlined across the prompts, and now a *smaller* copy for
+   most of them; no agent re-fetches the diff by shelling out.
 
    **Tell each reviewer to read every file it needs once,
    up front, and reason from that copy.** A lens that
@@ -572,18 +651,42 @@ PR-authoring **writes** (`create_pull_request`,
    handoff above, an agent should rarely need to shell out
    again.
 
-   **Give each lens an explicit read/turn budget, and one
-   hard negative.** In the brief, tell the lens to adjudicate
-   from the diff plus a **single** up-front read of each file
-   it needs, and to finish in a handful of turns — not by
-   re-deriving a file from scratch across many. The hard
-   negative, stated verbatim: **do NOT re-open a file a
-   finding already cites** unless you are resolving a
-   specific, named dispute about that exact file. Re-reading
-   a file the diff already handed the lens (`swap.rs`,
-   `matching.rs`) to "double-check" has run a single lens to
-   700k+ input for facts it already had. The same budget and
-   negative apply to the step-6 cross-check below.
+   **Give each lens an explicit read/turn budget as a HARD
+   STOP, and one hard negative.** In the brief, tell the lens
+   to adjudicate from the diff plus a **single** up-front read
+   of each file it needs, and give it a numeric turn cap
+   described in those two words — **hard stop**: at the cap it
+   reports what it has, flagging anything unresolved, rather
+   than continuing. The hard negative, stated verbatim: **do
+   NOT re-open a file a finding already cites** unless you are
+   resolving a specific, named dispute about that exact file.
+   Re-reading a file the diff already handed the lens
+   (`swap.rs`, `matching.rs`) to "double-check" has run a
+   single lens to 700k+ input for facts it already had. The
+   same budget and negative apply to the step-6 cross-check
+   below.
+
+   **The hard stop goes in EVERY lens brief, not just the
+   freshness one.** A soft "≈6 turns" is read as a suggestion
+   and overrun, and the comparison is controlled — it has
+   happened *within single sessions*, same diff, same model:
+
+   - One run gave exactly one lens (freshness) an explicit hard
+     stop plus its material inline. That lens was the
+     **cheapest at 241.8k / 6 turns** and produced the **two
+     best findings** of the review; the lens given a soft
+     "≈6 turns" ran **850.2k / 15 turns** — 2.5× its cap and
+     3.5× the cost.
+   - Another: security 323.2k and completeness 349.9k, each
+     **7** turns against a soft "~6".
+   - And the confirming case: a full five-lens tier where
+     **every** lens came in under cap (314.3k/5, 249.4k/4,
+     227.4k/4, 382.6k/6, 448.6k/7) — the one thing that
+     changed being that every lens got the treatment
+     previously reserved for freshness.
+
+   So it is not a freshness-lens quirk. Same three words, same
+   excerpts-not-filenames discipline, in every brief.
 
    **Hand every lens the context you already hold — not just
    correctness.** This is the single highest-value lever in
@@ -609,6 +712,7 @@ PR-authoring **writes** (`create_pull_request`,
      must reason about the surrounding code. When no such map
      exists, don't manufacture one — the lens reads what it
      needs once, per the budget above.
+
    - **The rule covers reference / prior-art files too, not
      only the diff's own files.** This is the reading that
      gets missed — the rule above sounds like it is about the
@@ -626,18 +730,55 @@ PR-authoring **writes** (`create_pull_request`,
      in the same session. So: **if the main loop has read it,
      the excerpt goes inline in the brief.** A lens brief never
      names a file path the main loop could have quoted.
+
    - **State the scope line verbatim:** *"adjudicate from the
      provided diff + excerpts; cold-read only a file no
      excerpt covers."* This is what turns a survey back into
      an adjudication.
+
    - **With the map in hand, hold the budget tighter** —
      state an explicit low turn cap (≈6 turns), since the
      lens should be adjudicating, not surveying.
-   - **Name the efficient exemplar.** The correctness /
-     move-fidelity lens has returned a clean verdict on
-     202.3k — roughly **a quarter** of what the completeness
-     lens spent on the same PR. Tell each lens that is the
-     shape to match: read once, adjudicate, report.
+
+   - **Name the efficient exemplar — with the number.** A run
+     needs a target to beat, or it re-litigates after the fact
+     whether an expensive lens was worth it. The measured
+     bests, all attributable to inlining the actual call sites,
+     conversion contracts, and pre-change function bodies
+     rather than naming files:
+
+     - **~145k / 3 turns** — two lenses on one review, the
+       cheapest clean verdicts recorded.
+     - **180.5k / 4 turns** — a correctness lens, *below* the
+       202.3k exemplar this skill used to name.
+     - **202.3k** — correctness / move-fidelity, roughly a
+       quarter of what the completeness lens spent on the same
+       PR.
+
+     Tell each lens that is the shape to match: read once,
+     adjudicate, report.
+
+   - **Give the lens a sanctioned "checks to run" section.**
+     Brief every lens to end its report with an explicit
+     *checks to run* list: concerns it could not adjudicate
+     inside its own scope, phrased as the specific check that
+     would settle each one. Without a sanctioned place to put
+     those, a lens has only two options — speculate (and get
+     refuted downstream, see the convention-claim rule below)
+     or stay silent — and silence is the expensive one.
+
+     The evidence is a security lens whose most valuable output
+     was **not a finding**: it flagged that it could not verify
+     whether a reader in another language independently
+     re-derived the same gate. One main-loop grep resolved it
+     clean (the TS reader already handles the sentinel, so the
+     demo UI won't render a ladder for a dark vault). A lens
+     that had to choose between guessing and dropping it would
+     have produced either a wrong finding or nothing.
+
+     Run those checks in the main loop before step 7, and fold
+     each result into the catalogue — a resolved check is worth
+     one line, not silence.
 
    This is distinct from scaling the lens *count* down for an
    extraction/move diff (above) — here the lens runs at full
@@ -739,6 +880,23 @@ PR-authoring **writes** (`create_pull_request`,
      single **test-validity** lens (do the tests assert the
      right thing?) is the whole review.
 
+   **A reduced tier is sufficient BECAUSE of the excerpt rule,
+   not instead of it.** Every "spend less" paragraph here can
+   be misread as "and skip the inlined excerpts too" — which
+   inverts the result, because the excerpts are what let a
+   smaller lens set reach the same verdict. Two measured cases
+   where a reduced tier caught something real, both with the
+   excerpt discipline fully applied:
+
+   - Two lenses at **≈569.4k combined** (against ≈1.6M–2.8M
+     for a full tier) still caught a real warning.
+   - The **one-lens** trivial short-circuit, where that single
+     lens caught a **blocking** self-contradiction.
+
+   So when you scale the tier down, hold the per-lens
+   discipline *tighter*, not looser: excerpts inline, hard-stop
+   cap, comparison files named.
+
    **Small single-crate tier — correctness + completeness, no
    cross-check.** One step up from the single-lens cases: a
    diff that is small and confined to **one crate**,
@@ -783,6 +941,22 @@ PR-authoring **writes** (`create_pull_request`,
    deserialization, an auth path, or external I/O; **skip it**
    on a diff confined to host / localnet tooling, and note the
    skip in the summary.
+
+   **An off-tier security lens is justified, not a trim
+   target.** When a tier's rule says skip it but the trust
+   surface above is present anyway, add it back — and don't
+   treat the resulting spend as waste to be trimmed next time.
+   Two precedents:
+
+   - A **meta-work** diff (whose tier skips security) carried a
+     **permission-allowlist writer** — real logic that mutates
+     what commands are allowed to run. Added back per the
+     Python-logic carve-out, it returned the **sharpest finding
+     of the review**.
+   - A security lens that returned **no findings** independently
+     validated an economic invariant — that refusing a leg can
+     never flip to favor the vault. A no-findings verdict on a
+     trust boundary is a *result*, not a wasted lens.
 
    **Meta-work tier — skip security AND style.** A diff
    confined to `.claude/**`, `CLAUDE.md`, `docs/**` (plus at
@@ -840,6 +1014,7 @@ PR-authoring **writes** (`create_pull_request`,
      repo sweep (648.3k / 9 turns, 826.9k / 15 turns, and a
      2.0M / 19-turn run on the same failure mode) while the
      lenses handed excerpts came in 3–4× cheaper.
+
    - **Hoist every repo-wide grep into the main loop — run it
      once, here, and hand the lens the hit-list.** This is
      **unconditional for any "verify X across the repo" ask**,
@@ -851,14 +1026,73 @@ PR-authoring **writes** (`create_pull_request`,
      the instruction to sweep; cap its shell budget to
      "adjudicate from the diff + the provided grep — don't
      re-derive".
+
    - **Confirm a rule's presence or absence by `Read`ing the
      current file, never by inferring from the diff's `-`/`+`
      lines.** On a *removal* diff the freshness lens has read
      `-` lines as still-present and returned false-positive
      "stale doc" findings the cross-check then had to refute.
+
+     **This binds to ANY "violates / leaks a convention" claim
+     from ANY lens, not just doc-freshness.** Cite the
+     convention's definition site — the file and section that
+     states the rule — or drop the finding. A cross-check once
+     asserted a convention violation it had not verified: it
+     flagged a `WARNING` comment prefix as a leaked review-pass
+     artifact to strip, reasoning by analogy from the repo's
+     real ban on `ENG-###` / TODO refs in comments. One grep
+     refuted it — `WARNING 1a`/`1d`/`1e` are established,
+     pre-existing, and untouched by the diff. Reasoning by
+     analogy from a rule that exists to one that doesn't is the
+     failure mode; a definition-site citation is what makes it
+     impossible.
+
    - When the diff adds **no new top-level tree / build
      manifest**, fold or skip the CI-skip-list and
      audit-registry checks (nothing new for them to learn).
+
+   **Run a uniqueness / straggler sweep before the fan-out
+   whenever the diff introduces OR consolidates a named
+   identifier.** Each lens sees only the diff, so it is
+   structurally not positioned to ask a repo-scope question —
+   which is why two real bugs were each found by **one**
+   main-loop grep and by no lens at all:
+
+   - The diff added a numbered guard label (`WARNING 1e`) that
+     **already existed** in another file for an unrelated
+     invariant. All five lenses missed it; one
+     `grep -rn "WARNING 1"` found it, and only incidentally.
+   - The inverse shape: the diff hoisted a predicate that had
+     been open-coded in four places into one helper, and one
+     grep found a **fifth** call site the refactor missed, in a
+     crate the diff didn't otherwise touch. That would have
+     shipped a silently-diverging copy of a consensus-critical
+     matching gate.
+
+   The trigger list is: the diff **introduces or
+   consolidates** a named label, error code, feature flag,
+   discriminator, predicate, constant, or helper. The sweep is
+   **unconditional for the consolidation case** — a
+   consolidation's whole claim is "there is now exactly one of
+   these", and that claim is repo-scope by construction, so it
+   cannot be checked from the diff.
+
+   Use the source-search tool, which scopes out the generated
+   families and the never-search trees for you — an *unscoped*
+   hoisted grep once returned the whole regenerated SDK surface
+   (a 658-line generated instruction file) that no lens needed:
+
+   ```sh
+   python3 .claude/tools/search_source.py '<identifier>' --context 2
+   ```
+
+   It reduces to one stable allow-rule
+   (`Bash(python3 .claude/tools/search_source.py:*)`) however
+   the pattern and filters vary, and it takes its exclusions
+   from the same `review_diff.py` lists this step already
+   relies on (`--print-grep-excludes` prints them as `grep`
+   flags if you need the bare-`grep` fallback). Hand the result
+   set to the lenses, per the hoisting rule above.
 
    **The lint gate already owns the compile-time facts — say
    so in the completeness and cross-check briefs.** Step 4
@@ -1031,8 +1265,9 @@ PR-authoring **writes** (`create_pull_request`,
    sub-agent that receives the collected findings
    and the diff (prepend the same `CLAUDE.md`
    sub-agent brief to its prompt too, and hand it the
-   diff **by path** — `<scratchpad>/review-diff.txt` — as the
-   review agents got it, not inlined), and is told to
+   diff **by path** — `<scratchpad>/review-diff.txt`, the
+   **full** diff rather than a per-lens slice, since this is
+   the one pass that should see everything), and is told to
    act adversarially:
 
    - Challenge weak or speculative findings.
@@ -1043,6 +1278,18 @@ PR-authoring **writes** (`create_pull_request`,
      too: quote the exact `+`/`-` diff line, or drop it —
      and drop any inherited finding that cites no concrete
      changed line.
+
+   **Keep the cross-check unconditional wherever the diff is
+   cross-cutting.** The reduced tiers above drop it for a
+   trivial or small-single-crate diff, and that stands — but on
+   a diff spanning crates or languages it is the pass that
+   earns its keep most reliably. One cross-check produced the
+   **single best finding** of its review — an ordering bug all
+   four primary lenses missed — while also **refuting two**
+   disproportionate findings and **downgrading four**. Both
+   halves are the value: it finds what per-lens scope cannot
+   see, and it is the thing that stops a plausible-but-wrong
+   finding from reaching the catalogue.
 
    **Challenge from what it was given, not by re-deriving
    the codebase.** The cross-check's inputs are the
@@ -1143,12 +1390,36 @@ PR-authoring **writes** (`create_pull_request`,
    This is a rule, not a per-run judgment call — a four-file
    diff confined to `decks/` cannot stale an IDL, and forcing
    the gates there buys three multi-minute builds to confirm a
-   tautology. (CI agrees structurally: `test.yml` path-filters
-   such a diff out entirely, so its Tests jobs return pass in
-   seconds as no-ops.) The flag is deliberately generous about
+   tautology. The flag is deliberately generous about
    the marginal case — it keys on the inputs, so a Rust crate
    the generators depend on transitively still trips it; the
    carve-out only fires on a clearly-unrelated diff.
+
+   **The CI-agrees-structurally argument is per-WORKFLOW, not
+   per-diff.** It is tempting to reason "the diff has no
+   program source, so CI skips everything" — and that is false
+   here. The question is whether **the gate's own workflow** is
+   path-filtered:
+
+   - `make idl`'s gate sits **inside** `test.yml`'s filtered
+     job, so on a diff confined to the excluded trees
+     (`brand-assets/**`, `decks/**`, `docs/**`, `frontend/**`,
+     `**/*.md`) under `predicate-quantifier: every`, the three
+     Tests jobs pass as no-ops in 5–10s and that gate is
+     genuinely unreachable.
+   - `make sdk`, `make check-conformance-vectors`, and the
+     `sdk/ts` suite live in **`sdk.yml`, which has no path
+     filter at all** — so they run on every PR, and their gates
+     genuinely apply regardless of what the diff touched.
+
+   One run had to re-derive this from scratch, at the cost of a
+   slice-read of `test.yml`, a read of `sdk.yml`, and three
+   greps. So check the gate's workflow, not the diff's shape.
+   And note the standing merge-queue caveat that composes with
+   it: `test.yml`'s filter is **`pull_request`-only**, so a
+   `merge_group` run executes the full suite regardless — a
+   green path-filtered PR check proves nothing about leaving
+   the queue.
 
    Otherwise, when the diff *does* touch an input: **run all
    three regeneration gates — even when the author says they
@@ -1287,6 +1558,42 @@ PR-authoring **writes** (`create_pull_request`,
    `make test-no-teardown`; run both locally so the
    green checks GitHub needs for auto-merge are
    already verified here.
+
+   **Re-check base freshness first — these are the expensive
+   gates.** Step 5's verdict carries `base_fresh`, but that
+   reading is now several steps old, and the base can advance
+   mid-review (worktrees share one `.git`, and a sibling
+   session merging its PR moves `origin/<base>` underneath
+   this one). Re-run the step-5 tool and read `base_fresh`
+   again **before** starting the suites:
+
+   ```sh
+   python3 .claude/tools/review_diff.py --base <base> --split \
+     --out <scratchpad>/review-diff.txt
+   ```
+
+   If it is `false`, rebase onto `origin/<base>` and *then*
+   run the suites. The ordering is the whole point: one session
+   let the base advance twice and paid `make test` **4×**,
+   `test-parity` **3×**, `test-no-teardown` **3×**, and `lint`
+   **6×** — every re-run legitimately required by a rebase, but
+   the ordering is what guaranteed there would be re-runs. A
+   cheap read here means the expensive parity / no-teardown
+   builds run once, against the tree that will actually merge.
+
+   **Run `make test` AFTER `make test-no-teardown`, or rebuild
+   in between.** `make test-no-teardown` rebuilds the program
+   with `--no-default-features`, so any subsequent bare
+   `cargo test -p dropset` hits the dispatcher's **runtime**
+   feature guard and fails **15 unrelated** admin-teardown
+   tests with `Custom(6043)`. Mid-review that reads exactly
+   like a regression from the session's own edits — it cost one
+   run a confused diagnosis plus a full `make program` rebuild
+   to clear. The root cause is the anchor-v2 limitation the repo
+   already documents: individual instructions cannot be
+   compiled out, so the guard is a runtime one. Either keep the
+   order below (`make test` first, then `test-no-teardown`), or
+   re-run `make program` before any scoped `cargo test`.
 
    **Mirror CI's path filter, including when it skips.**
    `test.yml` gates its Tests jobs on a `code` filter that
@@ -1487,75 +1794,93 @@ PR-authoring **writes** (`create_pull_request`,
    locally (tests / IDL reported unverifiable), CI is
    the *only* signal. This repo runs CI on the PR even
    while it was a draft (that's how `init-pr` warms the
-   caches), so the checks are already in flight. There's no
-   streaming `--watch`, so **poll** — but poll with the
-   **compact** `gh pr checks`, one line per check, rather
-   than the MCP `get_check_runs`, which returns the full
-   check-run array on **every** poll and replays it into
-   context each later turn (per `CLAUDE.md` → "Context
-   economy" / "GitHub via MCP"). Re-issue this until every
-   check is no longer pending:
+   caches), so the checks are already in flight.
+
+   **Wait with the tool — don't poll.** One call blocks until
+   the checks settle and prints one compact verdict:
 
    ```sh
-   gh pr checks <number>
+   python3 .claude/tools/wait_for_checks.py --pr <number>
    ```
 
-   Each line names a check and its status — `pass`, `fail`,
-   `pending`, or `skipping` — with its elapsed time and URL; the exit
-   is `0` (all passed), `8` (some still pending), or `1` (one or more
-   failed). That one-line-per-check snapshot — not a full object — is
-   the signal.
+   ```json
+   {
+     "conclusion": "pass",    // pass | fail | pending | none | timeout
+     "settled": true,
+     "elapsed_seconds": 127,
+     "counts": {"pass": 12, "fail": 0, "skipping": 3},
+     "failing": [{"name": "…", "workflow": "…", "link": "…", "run_id": "…"}],
+     "log_path": "…/wait-for-checks-<number>.log"
+   }
+   ```
 
-   This is a **model-driven** poll, not a shell watcher.
-   Re-issue the single `gh pr checks` call above as a fresh
-   tool call across successive turns — **never** a shell
-   `while … sleep … done` loop, a `--watch`, or a `jq`
-   filter (a compound that can't reduce to an allow-rule,
-   and foreground `sleep` is blocked anyway). To pace the
-   re-calls across turns rather than busy-looping, schedule
-   a wakeup (e.g. `ScheduleWakeup`) — one probe per wake.
-   **Schedule that wakeup on the very first `pending`
-   snapshot** — do not re-issue `gh pr checks` several times
-   in-turn first. The first poll after the push almost always
-   comes back with checks still `pending`; re-polling it
-   two or three times in the same turn just returns identical
-   still-pending snapshots (observed 4× on one run). The
-   moment a poll shows any check `pending`, pace the next one
-   with a wakeup instead of an immediate re-poll.
-   Tell the human **once**, up front, that CI is in flight
-   and you're standing by, then stay silent: don't narrate
-   each poll. Ping again only on a **terminal** outcome (no
-   check still `pending` — the branch below). Two
+   Internally it is two `gh` calls and **no loop**:
+   `gh pr checks --watch --interval 30` (gh does the pacing and
+   exits when the checks settle; its live-updating table goes to
+   `log_path`, never into context) followed by one
+   `gh pr checks --json` read that *is* the verdict. That JSON
+   read, not gh's exit code, is the authority — `gh` overloads
+   non-zero across "a check failed", "checks still pending", and
+   "there are no checks at all", and a review has to tell those
+   apart. `failing` already carries each failed check's
+   `run_id`, so the failure branch below needs no URL parsing.
+   The tool exits 0 only on `pass`.
+
+   **Correction to an earlier version of this step, which
+   asserted "there's no streaming `--watch`, so poll".** That
+   was false: `gh pr checks <n> --watch --interval 30` exists,
+   works, and is a *single bare command* that reduces to the
+   existing `Bash(gh pr checks:*)` allow-rule. Believing
+   otherwise cost real churn — one run covered a 2m7s wait in
+   three calls and another a ~10.5-minute wait in two, and two
+   further runs recorded byte-identical all-pending snapshots,
+   which is exactly the replay-on-every-turn waste the
+   context-economy rule exists to prevent.
+
+   What remains true is the prohibition on a shell
+   `while … sleep … done` loop and on `jq` filtering: those are
+   compounds that can't reduce to an allow-rule, and foreground
+   `sleep` is blocked anyway. It was only the `--watch` half of
+   that rule that was wrong.
+
+   Tell the human **once**, up front, that CI is in flight and
+   you're standing by, then stay silent until the verdict. Three
    operational notes:
 
-   - Polling is naturally resumable: each call returns the
-     current snapshot, so if a wait is interrupted, just
-     call again until nothing is `pending`.
-   - If `gh pr checks` reports **no checks** on the head
-     commit (it says so and exits non-zero), there is
-     nothing to wait on — note that in the report and treat
-     it as green rather than polling forever.
+   - **Fallback for a resumed session.** If the session was
+     interrupted and the background wait is gone, run the tool
+     with `--no-watch` for a single current-state read, then
+     re-run it plain to resume waiting. A model-driven re-call
+     on the next turn is fine as a fallback; it is just not the
+     prescription.
+   - **`conclusion: "none"`** means the head commit has no
+     checks at all — nothing to wait on. Note it in the report
+     and treat it as green rather than waiting forever.
+   - **`conclusion: "timeout"`** means the watch hit its bound
+     (default one hour) without settling. It reports the counts
+     it observed but deliberately never claims `pass` off a
+     snapshot it stopped waiting on — treat it as unverified,
+     not green.
 
-   Then branch on the outcome — a check line reading `pass`
-   / `skipping` is passing, `fail` is failing:
+   Then branch on `conclusion` — it is exhaustive, so there is
+   no unhandled case: `pass` and `fail` below, plus `none` and
+   `timeout` per the notes above, and `pending`, which can only
+   arise under `--no-watch` (re-run the tool plain to wait it
+   out).
 
-   - **All checks green** (no `fail`, none `pending`) → the
-     PR is now ready **and** CI-green. Leave the Linear
-     issue **In Progress** (it moves to In Review at the
-     merge-queue handoff, not here) and proceed to print the
+   - **`pass`** → the PR is now ready **and** CI-green. Leave
+     the Linear issue **In Progress** (it moves to In Review at
+     the merge-queue handoff, not here) and proceed to print the
      review summary — the human reviews that summary, then
      approves enqueueing.
 
-   - **Any check failed** → the PR is not actually clean,
-     so don't leave it reading as merge-ready. Catalogue
-     each failing check as **blocking**, naming it and its
-     URL (the last column of the `gh pr checks` line). To
-     pull the actual failing-job output in one call, take
-     the workflow run id from that URL — it is
-     `…/actions/runs/<run_id>/job/<job_id>` — and fetch
-     every failed job's log together over the MCP (this
-     failure path stays on the MCP — `get_job_logs` already
-     caps its output with `tail_lines`):
+   - **`fail`** → the PR is not actually clean, so don't leave
+     it reading as merge-ready. Catalogue each entry of the
+     verdict's `failing` array as **blocking**, naming the check
+     and its `link`. Each entry already carries the `run_id`, so
+     fetch every failed job's log together over the MCP without
+     parsing a URL (this failure path stays on the MCP —
+     `get_job_logs` already caps its output with `tail_lines`):
 
      ```txt
      mcp__github__get_job_logs(
@@ -1906,23 +2231,40 @@ PR-authoring **writes** (`create_pull_request`,
    governs only what's reported/acted on *after* enqueue,
    while the merge resolves.
 
-   Watch whether the PR lands or gets kicked back out with
-   the **same model-driven poll** as the CI wait, but with a
-   **single** probe per poll: the `gh api graphql` dequeue
+   Watch whether the PR lands or gets kicked back out with a
+   **single** probe per check: the `gh api graphql` dequeue
    probe below already selects `state` and `merged` **and**
    the merge-queue fields, so it answers "landed?", "still
    queued?", and "dequeued?" in one read — the old
    `pull_request_read` `get` poll that used to run first was
    redundant (it carried the full PR object every poll just
    to read `state`/`merged`) and is dropped (per `CLAUDE.md`
-   → "Context economy"). Re-issue the one probe as a fresh
-   tool call across successive turns, paced with a scheduled
-   wakeup (e.g. `ScheduleWakeup`) — **never** a shell
+   → "Context economy").
+
+   **Prefer blocking on the queue's own run over re-probing.**
+   Once `mergeQueueEntry` names the `gh-readonly-queue/…`
+   branch's check run, one bare command waits it out:
+
+   ```sh
+   gh run watch <run-id> --exit-status
+   ```
+
+   That is the single-command equivalent of the CI wait's
+   `gh pr checks --watch` — gh paces it and exits when the run
+   settles, so nothing is polled. Then issue the graphql probe
+   **once** to read the terminal state. The
+   `--exit-status` makes a failed queue run a non-zero exit, so
+   a dequeue can't read as a merge.
+
+   Fall back to re-issuing the graphql probe as a fresh tool
+   call across turns when there is no run id to watch — the
+   registration window below, or a queue entry that never
+   produced a run. Either way: **never** a shell
    `while … sleep … done` loop or a `jq` filter. Say once,
    up front, that the PR is queued and you're standing by;
    then stay silent until a **terminal** outcome (merged,
    or taken out of the queue), pinging the human only then.
-   Each poll is resumable — a fresh call returns the current
+   Every probe is resumable — a fresh call returns the current
    snapshot.
 
    **Give the queue entry a settle window: the first probe
@@ -1942,11 +2284,11 @@ PR-authoring **writes** (`create_pull_request`,
 
    — all-null on a PR that isn't registered **yet**; a
    re-probe seconds later returns
-   `mergeQueueEntry: {"state": "QUEUED"}`. So let the *first*
-   probe wait out the same scheduled-wakeup pacing as every
-   later one, rather than firing immediately. Exit 0 from
-   `gh pr merge --auto` confirms only that auto-merge was
-   **enabled**, not that the queue entry exists.
+   `mergeQueueEntry: {"state": "QUEUED"}`. So don't fire the
+   *first* probe immediately — there is no run id to watch yet,
+   so this is the fallback case: let a turn pass before probing.
+   Exit 0 from `gh pr merge --auto` confirms only that
+   auto-merge was **enabled**, not that the queue entry exists.
 
    This is the **timing twin** of the `autoMergeRequest`
    false positive described next. That one was fixed by

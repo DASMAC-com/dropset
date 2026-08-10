@@ -1,6 +1,6 @@
 ---
 name: housekeeping
-description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, upgrade the Claude Code CLI (best-effort brew cask), prune the worktrees of already-merged PRs and dismiss their stale GitHub notifications, mine the Session Metrics inbox via trim-context (one aggregated propose-only task), reconcile Backlog blocking edges via a sync-blockers sweep and propose merge groups for coupled issues to minimize open PRs, then — only when given the `audit` flag (`/housekeeping audit`) — run one finite `/audit` rotation inline and exit; with no flag the audit is skipped. The cspell dictionary check is opt-in (pass `cspell`) and off by default. By default it runs one-shot — start to finish with no prompts, flagging deferred items in its report (pass `interactive` to restore the AskUserQuestion gates). Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
+description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, upgrade the Claude Code CLI (best-effort brew cask), prune the worktrees of already-merged PRs and dismiss their stale GitHub notifications, mine the Session Metrics inbox via trim-context (one aggregated propose-only task), reconcile Backlog file-collision links via a sync-blockers sweep (which files no blocking edge — blocking is human-curated) and propose merge groups from its collision clusters to minimize open PRs, then — only when given the `audit` flag (`/housekeeping audit`) — run one finite `/audit` rotation inline and exit; with no flag the audit is skipped. The cspell dictionary check is opt-in (pass `cspell`) and off by default. By default it runs one-shot — start to finish with no prompts, flagging deferred items in its report (pass `interactive` to restore the AskUserQuestion gates). Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -30,12 +30,12 @@ committed skills and upgrades the Claude Code CLI
    points at a `CLAUDE.md` section or `docs/conventions/`
    doc that no longer exists, filing the drift
    **propose-only**.
-1. **Reconcile blocking edges and propose merge groups** —
-   run an optional full `sync-blockers` sweep to catch any
-   file-overlap edge the file-time `--for` calls didn't
-   already file, then propose `merge-tasks` groups for
-   coherent coupled Backlog issues (propose-only) to keep
-   open PR count minimal.
+1. **Reconcile file-collision links and propose merge
+   groups** — run an optional full `sync-blockers` sweep to
+   catch any collision the file-time `--for` calls didn't
+   already link, then propose `merge-tasks` groups from its
+   collision clusters (propose-only) to keep open PR count
+   minimal. It files no blocking edge.
 1. **Run one audit rotation** — **only when the `audit`
    flag was passed**, invoke `/audit` once (a single
    finite rotation) inline, then **exit**. With no flag,
@@ -487,19 +487,21 @@ freshness lens does on the PR path — here, periodically.
   lands later through a normal PR. If everything resolves,
   file nothing and note "in sync" in the report.
 
-**6. Reconcile blocking edges and propose merge groups.**
-Invoke the `sync-blockers` skill (via the Skill tool) to run
-a **full sweep** over the open Backlog, filing any
-file-overlap `blocks` edge that isn't already declared.
-The deterministic Python tool does all the work in its own
-process; this skill just triggers it and reports the
-one-line tally. This sweep is a **catch-up**, not the
-primary mechanism: the filing skills (`linear-task`,
-`audit`, `audit-scope`, `merge-tasks`) already file each
-new issue's overlap edges at file time via
-`sync_blockers.py --for`, so the sweep only picks up edges
-a `**Touches**:` line backfilled onto an *older* issue
-would newly imply. It needs `LINEAR_API_KEY` /
+**6. Reconcile file-collision links and propose merge
+groups.** Invoke the `sync-blockers` skill (via the Skill
+tool) to run a **full sweep** over the open Backlog,
+`related`-linking any `**Touches**:` collision that isn't
+already linked. It files **no blocking edge** — blocking is
+human-curated (`CLAUDE.md` → "Blocking relations") — so
+nothing in this step reorders the board. The deterministic
+Python tool does all the work in its own process; this skill
+just triggers it and reports the tally. This sweep is a
+**catch-up**, not the primary mechanism: the filing skills
+(`linear-task`, `audit`, `audit-scope`, `merge-tasks`)
+already record each new issue's collisions at file time via
+`sync_blockers.py --for`, so the sweep only picks up what a
+`**Touches**:` line backfilled onto an *older* issue would
+newly imply. It needs `LINEAR_API_KEY` /
 `LINEAR_PROJECT_ID`; if either is unset, skip it and say so.
 
 **Then aggressively propose merge groups — minimize open
@@ -507,12 +509,14 @@ PRs.** The filing default is the **fewest coherent PRs**
 (`docs/conventions/linear-automation.md` → "Fold coupled
 findings into one issue"), but issues still land separately
 over time. So after the sweep, scan the open Backlog for
-clusters that would sensibly land as **one PR** — issues
-sharing a subsystem, crate, or language-domain (the
-file-overlap pairs the sweep just materialized are the
-strongest signal, but a cluster needn't overlap files:
-several doc-/comment-freshness issues, or several low-risk
-refactors in one crate, also fold). For each cluster,
+clusters that would sensibly land as **one PR**. The sweep's
+**collision clusters** section is the direct input here —
+it already groups the Backlog by shared paths, so read it
+rather than re-deriving the grouping. A cluster needn't
+overlap files, though: issues sharing a subsystem, crate, or
+language-domain also fold (several doc-/comment-freshness
+issues, or several low-risk refactors in one crate). For
+each cluster,
 **propose a `merge-tasks` group** rather than leaving it
 fragmented — propose-only: in an attended pass surface the
 groups via `AskUserQuestion` and run `/merge-tasks <ids>` on
@@ -552,15 +556,15 @@ It prints two keys:
   sits in the pull queue, so the Backlog item can't actually
   be started. Resolve by moving the blocker into Backlog,
   dropping a non-dependency edge, or re-prioritizing.
-- **A non-Urgent issue blocking an `Urgent` one.** The sweep
-  above now refuses to *create* this (its priority floor), but
-  edges filed before the floor existed — or added by hand —
-  survive, and suppression can't retract them. An Urgent
-  Backlog issue is meant to be pullable now; a `Medium`
-  feature gating it makes it unpullable until that feature
-  ships. Resolve by dropping the edge, or by **reversing** it
-  so the Urgent fix lands first (which is then declared, so no
-  later sweep re-files the inversion).
+- **A non-Urgent issue blocking an `Urgent` one.** Nothing
+  automated creates this any more — no automated writer files
+  a blocking edge at all — but edges filed before that rule,
+  or placed by hand, survive. An Urgent Backlog issue is
+  meant to be pullable now; a `Medium` feature gating it makes
+  it unpullable until that feature ships. Resolve by dropping
+  the edge, or by **reversing** it so the Urgent fix lands
+  first. Both are the human's call: **report the pair, never
+  rewrite it** — a human-placed edge is authoritative.
 
 **Always list** every pair from both lists in the report
 (blocker `ENG-###` + its state/priority → the blocked
@@ -712,8 +716,8 @@ because the flag carries the intent).
 - **The `audit` flag was passed** (`housekeeping audit`) →
   invoke the `audit` skill (via the Skill tool) **once**.
   `/audit` is finite — a single seven-unit rotation that
-  files its findings (syncing each one's overlap edges via
-  `sync-blockers --for` as it goes), fires a high-severity
+  files its findings (recording each one's file collisions
+  via `sync-blockers --for` as it goes), fires a high-severity
   `PushNotification` only when something warrants
   interrupting you, and stops on its own with a `DONE`
   line. It runs **inline** (it's bounded, so there's no
@@ -727,7 +731,7 @@ because the flag carries the intent).
 single bounded rotation, not a continuous campaign — it
 files what its seven units surface and stops. To audit
 again, run `housekeeping audit` (or `/audit`) again. The
-rotation syncs each finding's overlap edges as it files
+rotation records each finding's file collisions as it files
 them; the next pass's step 6 is the full reconciliation
 sweep.
 
@@ -764,9 +768,10 @@ sweep.
 - Convention references: in sync, or the dangling
   `CLAUDE.md` / `docs/conventions/` references filed
   (with the ENG-### of the aggregated task).
-- Blocking edges: the `sync-blockers` reconciliation
-  sweep's one-line tally (backlog issue count + overlap
-  edges filed), or why it was skipped (e.g. a missing env
+- File collisions: the `sync-blockers` reconciliation
+  sweep's one-line tally (backlog issue count + collision
+  links filed) **plus its collision clusters**, or why it
+  was skipped (e.g. a missing env
   var); and any **Todo-blocks-Backlog** pairs flagged
   (blocker `ENG-###`/state → blocked `ENG-###`), plus which
   were resolved in an interactive pass — or that there were

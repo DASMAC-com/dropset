@@ -48,10 +48,13 @@ value.
 Every issue is filed **into the Backlog with no
 parent** (`state: "Backlog"`, no `parentId`). There is
 no umbrella issue. What gates what is recorded as
-native Linear blocking edges; the `sync-blockers` skill
-keeps those edges honest against file overlap (this
-skill calls it after filing — see the final step). So
-just file the to-do; don't attach it to a parent.
+native Linear blocking edges, which a **human curates** —
+this skill may propose one but never files one unasked
+(per `CLAUDE.md` → "Blocking relations"). The
+`sync-blockers` skill records file overlap separately, as
+a `related` link (this skill calls it after filing — see
+the final step). So just file the to-do; don't attach it
+to a parent.
 
 ## Input
 
@@ -109,13 +112,21 @@ what to file.
      Take the matching PR's `html_url`; skip the link if
      no PR exists for the branch.
 
-   - **Dependencies** — if this to-do depends on or
-     gates another issue, set the relation per the
-     **Blocking relations** brief in `CLAUDE.md`
-     (→ "Linear automation"): the `ENG-###`(s) that
-     **block** it and/or that it **blocks**. You're
-     judging by hand here, so use what you know of the
-     work; omit when unsure.
+   - **Dependencies** — a blocking edge is
+     **human-curated** (per `CLAUDE.md` → "Blocking
+     relations"), so there are exactly two ways one
+     gets set here. Either **the user stated it** — they
+     named the `ENG-###` that must land first, or that
+     this one gates — in which case pass it. Or you
+     believe one exists from what you saw: then
+     **propose** it via `AskUserQuestion`, naming the
+     candidate blocker and the concrete evidence, and
+     pass it only on an explicit yes. Never infer one
+     silently, and when nobody can answer, file **no
+     edge** and write the suspicion into the description
+     as prose instead — the reasoning is kept either way,
+     and a spurious edge drops an issue out of the board's
+     available set.
 
    - **Priority** — default to 3 (Medium). Bump to
      2 (High) only if the user calls it urgent.
@@ -133,16 +144,16 @@ what to file.
      description: "<markdown body>",
      priority: 3,  // 2 if the user calls it urgent
      links: [{ url: "<pr-url>", title: "<pr-title>" }],  // omit if no PR
-     blockedBy: ["<ENG-###>"],  // omit if none — must land first
-     blocks: ["<ENG-###>"]      // omit if none — this one gates them
+     blockedBy: ["<ENG-###>"],  // ONLY if the user stated it or approved it
+     blocks: ["<ENG-###>"]      // ONLY if the user stated it or approved it
    )
    ```
 
-1. **Sync blocking edges for the new issue.** Right
-   after `save_issue` returns the identifier, file its
-   file-overlap `blocks` edges against the open Backlog
-   with the incremental sweep — one bare command that
-   reduces to the
+1. **Record the new issue's file collisions.** Right
+   after `save_issue` returns the identifier, run the
+   incremental sweep to `related`-link its `**Touches**:`
+   collisions against the open Backlog — one bare command
+   that reduces to the
    `Bash(python3 .claude/tools/sync_blockers.py:*)`
    allow-rule (the overlap scan happens in the tool's own
    process, so nothing enters context):
@@ -154,16 +165,21 @@ what to file.
    Best-effort: it needs `LINEAR_API_KEY` /
    `LINEAR_PROJECT_ID`; if either is unset the tool says
    so — note it and continue, the full sweep will catch
-   the edge later.
+   the collision later.
 
-   The tool holds the **priority floor** — it never files an
-   edge that would gate an `Urgent` issue behind a
-   non-Urgent one, and prints a `warning:` for each pair it
-   suppressed (see `sync-blockers`). **Relay any such
-   warning** when reporting the new issue: the file overlap
-   is real even though the edge wasn't filed, so the human
-   may want the reverse edge (the Urgent issue blocking this
-   one) instead.
+   This files **no blocking edge** — a collision means the
+   two issues touch the same files, which costs at most a
+   rebase. Each one prints the paths it collides on:
+
+   ```txt
+   related-linked: ENG-806 ~ ENG-798 (overlaps on .claude/tools)
+   ```
+
+   **Relay those lines** when reporting the new issue. If
+   one of them looks like a real dependency rather than
+   incidental co-location, that is the moment to
+   `AskUserQuestion` about a blocking edge — never to file
+   one.
 
 1. Print the new issue's identifier (e.g. ENG-123)
    and URL so the user can jump to it.

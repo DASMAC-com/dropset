@@ -90,12 +90,16 @@ an `ENG-###` into a mention node, so never anchor on one. Detail:
 
 ### Blocking relations
 
-Record a real dependency as a native Linear `blockedBy` / `blocks`
-edge (append-only), not just prose — autonomous auditors assert one
-only on concrete evidence. File-overlap edges are a heuristic on top of
-that, and they hold a **priority floor**: never gate an **Urgent** issue
-behind a non-Urgent one (the pair is reported instead, and the honest
-fix is usually the reverse edge). Detail:
+**No automated writer files a blocking edge — ever**, semantic ones
+included. The board's available-vs-blocked view is a scheduling
+instrument the human drives, so a spurious edge (which drops an issue
+out of the available set) costs more than a missing one (which costs a
+rebase). A filer that believes a real dependency exists **proposes** it
+via `AskUserQuestion` with the concrete evidence and writes it only on
+an explicit yes; the default in any autonomous run is **no edge**, with
+the suspicion recorded as prose. Human-placed edges are authoritative
+and never rewritten. File overlap is **not** a dependency: it is
+`related`-linked and reported as a collision cluster. Detail:
 `docs/conventions/linear-automation.md`.
 
 ## GitHub via MCP

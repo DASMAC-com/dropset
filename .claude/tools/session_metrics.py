@@ -8,8 +8,18 @@ itself, reads it (and its sub-agent transcripts) in its **own** process — so t
 multi-megabyte file never enters the model's context — and prints a compact,
 ranked summary: session-wide token totals, a cache-hit rate, the tools whose
 results cost the most, the single largest results, a per-sub-agent rollup, and
-the repeated, deterministic command shapes that are candidates to harden into a
-tool. Pass ``--json`` for the same data as JSON.
+the repeated command shapes that are candidates to harden into a tool. Pass
+``--json`` for the same data as JSON.
+
+The hardening table is ranked by **result size, not call count**, and labels each
+candidate with which cost it actually represents — ``context``, ``wall-clock``,
+or ``prompt-churn``. Both were reporting defects that recurred across many
+sessions: count-ranking put ``grep`` on top five times running while it was
+negligible by size (and hoisting a shape *converts many small calls into a few
+large ones*, so count-ranking flags the fix as the problem), and a command routed
+through ``run_quiet.py`` costs wall-clock rather than tokens — which three
+sessions had to disclaim by hand so the candidate wasn't mis-filed as a context
+sink. See :class:`HardeningCandidate`.
 
 Nothing about the host is hard-coded. The Claude home is read from
 ``CLAUDE_CONFIG_DIR`` (falling back to ``~/.claude``), and the per-project
@@ -49,6 +59,20 @@ HARDENING_MIN_COUNT = 2
 
 # How many hardening candidates the summary lists, longest tail dropped.
 HARDENING_TOP_N = 8
+
+# Average result bytes per call, above which a shape's cost is genuinely
+# **context** (a payload replayed on every later turn) rather than wall-clock or
+# permission churn. A `run_quiet.py` success line is ~100-200 bytes and a
+# `printenv` answer is a few dozen, so a few hundred separates "this result is
+# information" from "this result is an acknowledgement".
+CONTEXT_MIN_AVG_BYTES = 400
+
+# The wrapper that routes a verbose command's output to a log instead of into
+# context. A shape that goes through it has already had its context cost removed,
+# so whatever remains is wall-clock — and saying so is the point: three sessions
+# had to hand-annotate this, because a count-ranked table listed `make lint` ×10
+# as if it were a token sink when it cost ~20 tokens.
+RUN_QUIET_MARKER = "run_quiet.py"
 
 
 # --------------------------------------------------------------------------- #
@@ -113,11 +137,50 @@ class SubAgentLine:
 
 @dataclass
 class HardeningCandidate:
-    """A repeated, deterministic Bash command shape worth porting to a tool."""
+    """A repeated Bash command shape worth porting to a tool.
+
+    Carries ``result_bytes`` because **that**, not ``count``, is what the table is
+    ranked on. Ranking by count was actively misleading: ``grep`` topped the
+    table by count in five consecutive sessions (×26 / 29 / 63 / 54 / 50) while
+    being negligible by size — one session's largest grep result was ~516 bytes —
+    and, worse, hoisting a shape *converts many small calls into a few larger
+    ones*, so a count-ranked table flags the fix as the new problem.
+    """
 
     signature: str
     count: int
     deterministic: bool
+    result_bytes: int = 0
+    # True when the shape routed through `run_quiet.py`, i.e. its output was
+    # deliberately kept out of context.
+    via_run_quiet: bool = False
+
+    def avg_bytes(self) -> int:
+        return 0 if self.count == 0 else self.result_bytes // self.count
+
+    def cost_kind(self) -> str:
+        """Which cost this candidate actually represents.
+
+        Three distinct answers, because conflating them is what made the old table
+        unreadable:
+
+        * ``context`` — the result is large, so it is a genuine token sink,
+          replayed as input on every later turn.
+        * ``wall-clock`` — routed through the quiet runner, so its output never
+          entered context; what it costs is *time*, and hardening it further buys
+          latency, not tokens.
+        * ``prompt-churn`` — cheap and fast, but repeated in slightly different
+          shapes, so each variant is a fresh permission prompt. A `printenv` is
+          the type case: worth a tool, but not because of tokens.
+
+        Checked in that order, so a quiet-runner command that *did* return a big
+        failure tail is still reported as a context cost.
+        """
+        if self.avg_bytes() >= CONTEXT_MIN_AVG_BYTES:
+            return "context"
+        if self.via_run_quiet:
+            return "wall-clock"
+        return "prompt-churn"
 
 
 @dataclass
@@ -126,6 +189,15 @@ class _ToolCall:
 
     name: str
     label: str
+
+
+@dataclass
+class _BashShape:
+    """Per-signature accumulator: how often, how many bytes, and how it was run."""
+
+    count: int = 0
+    result_bytes: int = 0
+    via_run_quiet: bool = False
 
 
 @dataclass
@@ -153,12 +225,16 @@ class SessionAggregator:
         # once per logical message. Shared across the main and sub-agent
         # transcripts — `msg_…` ids are globally unique.
         self._counted_messages: set[str] = set()
-        self._bash_signatures: dict[str, int] = {}
+        self._bash_shapes: dict[str, _BashShape] = {}
         # tool_use ids whose Bash signature was already counted. The content
         # array is re-walked on every content-block record of a split message
         # (tool_use items can repeat), so count the signature once per id —
         # otherwise a split message inflates a command's hardening count.
         self._counted_bash_ids: set[str] = set()
+        # tool_use id -> signature, so a Bash result's size can be attributed back
+        # to the shape that produced it. Result bytes only become known at
+        # tool_result time, one or more records after the tool_use.
+        self._bash_sig_by_id: dict[str, str] = {}
         self.parse_errors = 0
 
     # -- ingestion -------------------------------------------------------- #
@@ -245,7 +321,7 @@ class SessionAggregator:
             self._pending[tid] = _ToolCall(name=name, label=label)
             if name == "Bash" and tid not in self._counted_bash_ids:
                 self._counted_bash_ids.add(tid)
-                self._record_bash_signature(item.get("input"))
+                self._record_bash_signature(tid, item.get("input"))
         elif kind == "tool_result":
             tid = item.get("tool_use_id")
             if not isinstance(tid, str):
@@ -264,16 +340,30 @@ class SessionAggregator:
             entry.calls += 1
             entry.result_bytes += byte_len
             self._sinks.append(SinkLine(name=name, label=label, bytes=byte_len))
+            # Attribute a Bash result's size back to its command shape, so the
+            # hardening table can rank by bytes rather than by call count.
+            sig = self._bash_sig_by_id.pop(tid, None)
+            if sig is not None:
+                self._bash_shapes[sig].result_bytes += byte_len
 
-    def _record_bash_signature(self, input_obj) -> None:
+    def _record_bash_signature(self, tool_use_id: str, input_obj) -> None:
         if not isinstance(input_obj, dict):
             return
         command = input_obj.get("command")
         if not isinstance(command, str):
             return
         sig = bash_signature(command)
-        if sig:
-            self._bash_signatures[sig] = self._bash_signatures.get(sig, 0) + 1
+        if not sig:
+            return
+        shape = self._bash_shapes.setdefault(sig, _BashShape())
+        shape.count += 1
+        # Sticky: once any invocation of a shape went through the quiet runner,
+        # the shape is a wall-clock candidate. A single unwrapped call among ten
+        # wrapped ones is a slip, not a re-classification — and the large result
+        # it produced still shows up through the bytes-based `cost_kind` check.
+        if RUN_QUIET_MARKER in command:
+            shape.via_run_quiet = True
+        self._bash_sig_by_id[tool_use_id] = sig
 
     # -- finishing -------------------------------------------------------- #
 
@@ -311,14 +401,19 @@ class SessionAggregator:
         candidates = [
             HardeningCandidate(
                 signature=sig,
-                count=count,
+                count=shape.count,
                 deterministic=is_deterministic_shape(sig),
+                result_bytes=shape.result_bytes,
+                via_run_quiet=shape.via_run_quiet,
             )
-            for sig, count in self._bash_signatures.items()
-            if count >= HARDENING_MIN_COUNT
+            for sig, shape in self._bash_shapes.items()
+            if shape.count >= HARDENING_MIN_COUNT
         ]
-        # Deterministic shapes first (the real port candidates), then by count.
-        candidates.sort(key=lambda c: (not c.deterministic, -c.count, c.signature))
+        # **By result bytes, not call count.** See `HardeningCandidate` for why
+        # count-ranking misled five consecutive sessions. `deterministic` stays a
+        # reported column — it says how *portable* a shape is, which is a separate
+        # question from how much it cost.
+        candidates.sort(key=lambda c: (-c.result_bytes, -c.count, c.signature))
         candidates_omitted = max(0, len(candidates) - HARDENING_TOP_N)
         candidates = candidates[:HARDENING_TOP_N]
 
@@ -569,13 +664,26 @@ def to_markdown(report: dict, session_label: str) -> str:
 
     candidates: list[HardeningCandidate] = report["hardening_candidates"]
     if candidates:
-        out.append("\n### Hardening candidates (repeated command shapes)\n\n")
-        out.append("| command shape | count | deterministic |\n|---|--:|:--:|\n")
+        out.append(
+            "\n### Hardening candidates (repeated command shapes, by result size)\n\n"
+        )
+        out.append(
+            "| command shape | ≈tokens | calls | cost | deterministic |\n"
+            "|---|--:|--:|---|:--:|\n"
+        )
         for c in candidates:
             mark = "yes" if c.deterministic else "no"
-            out.append(f"| `{c.signature}` | {c.count} | {mark} |\n")
+            out.append(
+                f"| `{c.signature}` | {human(c.result_bytes // BYTES_PER_TOKEN)} | "
+                f"{c.count} | {c.cost_kind()} | {mark} |\n"
+            )
         if report["candidates_omitted"] > 0:
             out.append(f"\n_+{report['candidates_omitted']} more shape(s) omitted._\n")
+        out.append(
+            "\n_`cost`: **context** = a real token sink; **wall-clock** = routed "
+            "through `run_quiet.py`, so hardening it buys latency, not tokens; "
+            "**prompt-churn** = cheap and fast, but each variant re-prompts._\n"
+        )
 
     return "".join(out)
 
@@ -614,6 +722,10 @@ def to_json(report: dict) -> str:
                 "signature": obj.signature,
                 "count": obj.count,
                 "deterministic": obj.deterministic,
+                "result_bytes": obj.result_bytes,
+                "avg_bytes": obj.avg_bytes(),
+                "via_run_quiet": obj.via_run_quiet,
+                "cost_kind": obj.cost_kind(),
             }
         raise TypeError(f"not serializable: {type(obj)!r}")
 

@@ -1,6 +1,6 @@
 ---
 name: audit
-description: One bounded platform-audit rotation, run once to completion — a fixed 7-unit pass that interleaves four randomly-chosen non-generated files (each audited via the `audit-scope` engine) with one randomly-chosen subsystem (internal-architecture lens), one randomly-chosen inter-subsystem interface (seam / contract-drift lens), and one repo-layout + spec-health pass, each adversarially cross-checked. Dedups against open or resolved Linear issues, files confirmed findings as the fewest coherent Backlog issues (folding coupled findings that share a PR), syncs each new issue's file-overlap blocking edges via sync-blockers `--for`, announces, and stops. No loop, no finding cap, no re-invocation — run it again for another rotation.
+description: One bounded platform-audit rotation, run once to completion — a fixed 7-unit pass that interleaves four randomly-chosen non-generated files (each audited via the `audit-scope` engine) with one randomly-chosen subsystem (internal-architecture lens), one randomly-chosen inter-subsystem interface (seam / contract-drift lens), and one repo-layout + spec-health pass, each adversarially cross-checked. Dedups against open or resolved Linear issues, files confirmed findings as the fewest coherent Backlog issues (folding coupled findings that share a PR), records each new issue's file collisions via sync-blockers `--for` (never a blocking edge — blocking is human-curated), announces, and stops. No loop, no finding cap, no re-invocation — run it again for another rotation.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -16,13 +16,15 @@ adversarial cross-checking, folding coupled findings and filing the
 fewest self-contained **Backlog** issues (no parent — the same
 no-parent Backlog `linear-task` files into) so the work can be picked
 up in parallel without blocking the repo. What gates what is recorded
-as native Linear blocking edges; keeping those edges honest against
-file overlap is a separate job, owned by `sync-blockers` (this skill
-calls it per filed issue — see the File and Done steps).
+as native Linear blocking edges, which a **human curates** — an
+autonomous rotation files none (per `CLAUDE.md` → "Blocking
+relations"). Recording file overlap is a separate job, owned by
+`sync-blockers`, which `related`-links it (this skill calls it per
+filed issue — see the File and Done steps).
 
 Invoke it directly — `/audit` — when you want a fresh batch of findings.
 It is **finite**: it runs the seven units once, files what they surface
-(syncing each new issue's overlap edges as it goes), and **stops** with
+(recording each new issue's file collisions as it goes), and **stops** with
 a single `DONE` line. There is **no `/loop`, no finding cap, and no
 re-invocation** — the rotation *is* the bound. To audit more, run
 `/audit` again; each run is one independent rotation. `housekeeping`
@@ -73,7 +75,7 @@ going through `audit-scope`.
 
 This skill **never authors source edits and never writes to the
 worktree**. Its only writes are the Linear issues it files and the
-file-overlap `blocks` relations `sync-blockers` materializes for each
+file-collision `related` relations `sync-blockers` materializes for each
 (via its `--for` incremental mode). It produces no source diff of its
 own, so it must never commit or push. The one repo operation it does
 perform is fast-forwarding the throwaway worktree to upstream `main` at
@@ -305,7 +307,7 @@ File exactly as the
 `linear-task` skill does: a **plain Backlog issue with no parent**,
 assigned to the configured assignee, into the shared destination.
 There is **no umbrella issue** — the project Backlog is the queue, and
-`sync-blockers` keeps its blocking edges honest against file overlap.
+`sync-blockers` records file collisions between its issues.
 Resolve the destination
 IDs from the environment exactly as `linear-task` does — never
 hard-code them — with a bare `printenv` per variable (each reduces to
@@ -331,8 +333,7 @@ mcp__claude_ai_Linear__save_issue(
   state: "Backlog",
   title: "<file>: <imperative fix, no trailing period>",
   description: "<markdown body, literal newlines>",
-  priority: 3,  // 2 for high-severity security
-  blockedBy: ["<ENG-###>"]  // omit unless a real dependency (see below)
+  priority: 3  // 2 for high-severity security
 )
 ```
 
@@ -345,14 +346,21 @@ fingerprint prefix above (a fingerprint-slug convention, not a title
 one). A finding touching product / on-chain / SDK / frontend code gets
 no prefix.
 
-**Dependencies.** Set a `blockedBy` / `blocks` edge per the **Blocking
-relations** brief in `docs/conventions/linear-automation.md` —
-autonomous, so only on concrete evidence, never speculatively, and
-coupling that belongs in **one PR** is the combined-issue case below,
-not a relation. One audit-specific detail: a finding that carries a
-`blockedBy` is **not** "safe to fix in isolation", so drop that body
-line and replace it with `**Depends on**: <ENG-###> — <one line why>`
-so the description doesn't contradict the relation.
+**Dependencies — file none.** Blocking edges are **human-curated** (per
+`docs/conventions/linear-automation.md` → "Blocking relations"), and a
+rotation is autonomous: there is nobody to answer an `AskUserQuestion`,
+and the default with no answer is **no edge**. So pass no `blockedBy` /
+`blocks`. A rotation that filed them would be the worst case for the
+rule — it files many issues unattended, and a spurious edge drops an
+issue out of the board's available set.
+
+When a finding genuinely looks ordered behind another issue, keep the
+reasoning in the body instead. Drop the "safe to fix in isolation" line
+(it would contradict the claim) and add a `**Suspected dependency**:`
+line naming the issue it likely needs first and, in one line, why. A
+human can then place the edge from exactly the evidence you had.
+Coupling that belongs in **one PR** is the combined-issue case below,
+and is unaffected by this.
 
 **Fold coupled findings into the fewest coherent issues.** A rotation
 should file the **fewest coherent PRs**, not one issue per finding.
@@ -368,18 +376,39 @@ low-risk refactors in one crate → one issue. This holds **across units
 within the rotation**, not only within one unit. Because units file as
 they go, keep a running note of the issues you've filed *this rotation*
 and each one's coherence group; when a later unit's finding joins a
-group you've already filed, **append it to that issue** — `save_issue`
-by `id` to add its sub-heading and its `**Fingerprint**:` line and fold
-its globs into the union `**Touches**:` — rather than filing a fresh
-one. Nothing **merges or closes issues** for you, so coupled findings
-only become one issue if you file — or fold — them that way.
+group you've already filed, **append it to that issue** rather than
+filing a fresh one. Nothing **merges or closes issues** for you, so
+coupled findings only become one issue if you file — or fold — them
+that way.
+
+**Grow an issue with `patch`, never a full-body rewrite.** This is the
+highest-volume append in the repo — a seven-unit rotation can fold into
+the same issue repeatedly, and a wholesale `description` would re-send
+everything already there on *every* fold. Use the same two-op shape
+`trim-context` and `housekeeping` use (`save_issue` by `id`, `patch`
+only — never alongside `description`):
+
+1. an **`append`** carrying the new sub-heading and the finding's own
+   `**Fingerprint**:` line, which needs no anchor and so needs no prior
+   read of the issue at all; and
+1. a **`replace`** on the `**Touches**:` line, swapping it for the grown
+   union.
+
+Two anchor rules apply to the `replace` (full detail:
+`docs/conventions/linear-automation.md` → "Partial edits — use `patch`,
+don't re-send the body"). The anchor must match the **stored** text
+exactly once — `**Touches**:` is safe because there is exactly one such
+line per issue, and you know its current content from the fold you last
+made. And the anchor must carry **no `ENG-###`**, since Linear stores a
+tag as a mention node no anchor can match — so never anchor on a
+finding's own prose, which may cite one.
 
 **The coherence floor.** Never fold across separate apps, languages, or
 deploy units — a TUI Rust rendering fix, a frontend TS hook fix, and an
 on-chain program refactor are **three** issues even in one rotation.
 Findings that don't share a coherent PR boundary stay separate;
-`sync-blockers` then materializes any file-overlap between them into a
-`blocks` edge (Linear's blocking icon). Full rule:
+`sync-blockers` then `related`-links any file-overlap between them and
+reports it as a collision cluster. Full rule:
 `docs/conventions/linear-automation.md` → "Fold coupled findings into
 one issue".
 
@@ -411,10 +440,10 @@ The description must let a cold agent act on it in its own worktree
   `docs/conventions/linear-automation.md` → "Structured filing fields".
 - `**Discovered by**: audit <unit> @ <commit SHA>`
 
-**Sync overlap edges for each issue as you file or grow it.** Right
+**Record file collisions for each issue as you file or grow it.** Right
 after `save_issue` returns a new identifier — **and also after an
 append-fold** that grows an existing issue's `**Touches**:` union (per
-the folding rule above) — file that issue's file-overlap `blocks` edges
+the folding rule above) — `related`-link that issue's file collisions
 against the open Backlog with the incremental sweep, keyed by that
 issue's `ENG-###`. It reduces to one bare command matching the
 `Bash(python3 .claude/tools/sync_blockers.py:*)` allow-rule (the
@@ -424,18 +453,18 @@ scan runs in the tool's own process, so nothing enters context):
 python3 .claude/tools/sync_blockers.py --for <ENG-###>
 ```
 
-Re-run it on an append because the grown union can imply new overlaps
+Re-run it on an append because the grown union can imply new collisions
 the original `--for` didn't cover. Filing in `ENG-###` order means the
 later filer always sees the earlier sibling, so an intra-rotation
-overlap pair is filed by the second of the two — no end-of-rotation full
-sweep is needed. Best-effort: it needs `LINEAR_API_KEY`; if unset the
-tool says so — note it and continue.
+collision pair is linked by the second of the two — no end-of-rotation
+full sweep is needed. Best-effort: it needs `LINEAR_API_KEY`; if unset
+the tool says so — note it and continue.
 
-The tool holds the **priority floor**: it never files an edge that would
-gate an `Urgent` issue behind a non-Urgent one, printing a `warning:` per
-suppressed pair instead (see `sync-blockers`). **Relay any such warning
-in the rotation announcement** — the overlap is real even though the edge
-wasn't filed, and the human may want the reverse edge.
+This files **no blocking edge** — the rotation is autonomous, and
+blocking is human-curated. Each collision prints the paths the pair
+collides on. **Relay those lines in the rotation announcement**: a
+collision between two issues the coherence floor kept separate is a
+candidate for landing them as one PR, which is the human's call.
 
 **Structural findings** (SUBSYSTEM / INTERFACE / LAYOUT) are filed the
 same way (plain Backlog issue, same IDs, no parent) but as **one
@@ -472,14 +501,14 @@ inline run interrupts you only when it matters. If nothing was filed,
 send no notification.
 
 **Done.** After all seven units have been processed (each cross-checked
-where applicable, deduped, filed, and its overlap edges synced via
-`sync-blockers --for`), the rotation is complete. The blocking edges are
+where applicable, deduped, filed, and its file collisions recorded via
+`sync-blockers --for`), the rotation is complete. The collision links are
 already current — the per-issue `--for` calls filed them at file time,
 so there is no end-of-rotation sweep. Print a single final line and
 **stop** — there is no re-invocation:
 
 ```txt
-DONE audit | filed <t> (h/m/l) | deduped <d> | edges synced
+DONE audit | filed <t> (h/m/l) | deduped <d> | collisions linked
 ```
 
 To run another rotation later, just invoke `/audit` again — it samples

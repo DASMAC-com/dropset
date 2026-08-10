@@ -19,13 +19,21 @@ the skill, re-typed by hand each run, are now **data with one owner** —
   ``code`` path filter, which decides whether CI runs the Rust suites at all.
 * ``GENERATION_INPUTS`` — the sources a committed generated artifact is built
   from, which decides whether an artifact can even be stale.
+* ``SEARCH_EXCLUDE_DIRS`` — the never-search trees a recursive ``grep`` must skip
+  (it does not honor gitignore), exposed with the generated families through
+  ``--print-grep-excludes``.
 
 Usage::
 
-    python3 .claude/tools/review_diff.py --base main --out /tmp/review-diff.txt
+    python3 .claude/tools/review_diff.py --base main --out /tmp/review-diff.txt --split
+    python3 .claude/tools/review_diff.py --print-grep-excludes
 
-Options: ``--base`` (default ``main``), ``--out`` (required — where the diff is
-written), ``--no-fetch`` (skip the network fetch and read the local ref).
+Options: ``--base`` (default ``main``), ``--out`` (where the diff is written —
+required except with ``--print-grep-excludes``), ``--no-fetch`` (skip the network
+fetch and read the local ref), ``--split`` (also write per-lens
+``source`` / ``tests`` / ``docs`` slices beside the diff, reported under
+``slices``), ``--print-grep-excludes`` (print the exclude flags a hoisted
+repo-wide grep should reuse, and exit).
 
 Prints JSON::
 
@@ -85,6 +93,56 @@ DIFF_EXCLUDES = (
     "sdk/idl/dropset.json",
 )
 
+# Directories a recursive source search must never descend into. These are
+# *not* in DIFF_EXCLUDES because `git diff` never shows them — they're
+# gitignored or VCS internals — but `grep -r` walks them happily and does not
+# honor gitignore, so a hoisted grep that omits them is unusable in this repo
+# (`target/` alone is multi-GB). `--print-grep-excludes` emits these together
+# with the generated families, since a search needs both lists.
+SEARCH_EXCLUDE_DIRS = (
+    ".git",
+    "node_modules",
+    "target",
+    ".next",
+    "dist",
+    "__pycache__",
+    # Tool caches. These store content-addressed blobs of the very source being
+    # searched, so a symbol sweep hits each match twice — once in the file and
+    # once in the cache — which is how `.ruff_cache` turned up in a real sweep
+    # for `sync_blockers.py` callers.
+    ".ruff_cache",
+    ".pytest_cache",
+    ".mypy_cache",
+)
+
+# Which per-lens slice a changed path belongs to, for ``--split``. Ordered
+# most-specific-first: a path is classified by the first list it matches, so
+# `docs/x.md` is docs and `sdk/rs/tests/y.rs` is tests even though both would
+# also match a broader rule below them.
+DOCS_PATTERNS = (
+    "**/*.md",
+    "docs/**",
+    "decks/**",
+    "**/*.mdx",
+)
+
+# File-level test patterns only. Rust's convention puts unit tests *inline* in
+# the source file under `#[cfg(test)]`, so those hunks necessarily land in the
+# source slice — the split is by file, not by region. The tests slice therefore
+# means "files that exist only to test", which is what a completeness lens wants
+# to read end-to-end.
+TESTS_PATTERNS = (
+    "**/tests/**",
+    "**/test_*.py",
+    "**/*_test.rs",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.spec.ts",
+    "sdk/conformance/**",
+)
+
+SLICE_NAMES = ("source", "tests", "docs")
+
 # A mirror of the ``code`` filter in .github/workflows/test.yml, which runs with
 # ``predicate-quantifier: every`` — so a diff whose every path matches one of
 # these makes all three Tests jobs pass in seconds as path-filtered no-ops, and
@@ -131,15 +189,39 @@ class ReviewDiffError(Exception):
 def matches(path: str, pattern: str) -> bool:
     """Whether ``path`` matches one path-filter pattern.
 
-    Supports the three shapes the lists above use: a ``dir/**`` subtree, a
-    ``**/*.ext`` suffix match at any depth, and a literal path.
+    Supports the four shapes the lists above use:
+
+    * ``**/seg/**`` — that directory segment at any depth (``**/tests/**``).
+      Checked **first**, because it also ends in ``/**`` and would otherwise be
+      read as the literal subtree ``**/tests``.
+    * ``dir/**`` — a subtree rooted at ``dir``.
+    * ``**/*.ext`` — a suffix match at any depth.
+    * anything else — a literal path.
     """
+    if pattern.startswith("**/") and pattern.endswith("/**"):
+        middle = pattern[3:-3]
+        return f"/{middle}/" in f"/{path}/"
     if pattern.endswith("/**"):
         prefix = pattern[:-3]
         return path == prefix or path.startswith(prefix + "/")
     if pattern.startswith("**/"):
         return fnmatch.fnmatch(path, pattern[3:]) or fnmatch.fnmatch(path, pattern)
     return path == pattern
+
+
+def slice_for(path: str) -> str:
+    """Which ``--split`` slice a changed path belongs to.
+
+    Docs is checked before tests so a markdown file under a ``tests/`` tree reads
+    as docs, and everything unmatched is source — the default a reviewer wants,
+    since a misfiled source file is a missed review while a misfiled doc is only
+    noise.
+    """
+    if matches_any(path, DOCS_PATTERNS):
+        return "docs"
+    if matches_any(path, TESTS_PATTERNS):
+        return "tests"
+    return "source"
 
 
 def matches_any(path: str, patterns) -> bool:
@@ -276,7 +358,111 @@ def count_lines(path: Path) -> int:
     return total
 
 
-def gate(base: str, out: Path, fetch: bool = True) -> dict:
+def _diff_header_path(line: str) -> str | None:
+    """The destination path from a ``diff --git a/X b/Y`` header, or ``None``.
+
+    Takes the ``b/`` side because that is what the change produced — for a rename
+    the ``a/`` side no longer exists. Falls back to the ``a/`` side for a deletion,
+    where ``b/`` is ``/dev/null``.
+    """
+    if not line.startswith("diff --git "):
+        return None
+    rest = line[len("diff --git ") :].rstrip("\n")
+    # Paths may contain spaces, so split on the " b/" that separates the pair
+    # rather than on whitespace.
+    marker = rest.find(" b/")
+    if marker == -1:
+        return None
+    a_path = rest[:marker]
+    b_path = rest[marker + 3 :]
+    if b_path and b_path != "/dev/null":
+        return b_path
+    return a_path[2:] if a_path.startswith("a/") else a_path
+
+
+def split_diff(diff_path: Path, out_dir: Path) -> dict:
+    """Partition a review diff into per-lens slices; return ``{name: {path, lines}}``.
+
+    Five lenses each ``Read`` the *same whole* diff today, which is the structural
+    residual after prompt tightening has saturated: a diff carrying a couple of
+    hundred lines of reflowed prose makes every lens pay for it, when only the
+    freshness lens needs the docs hunks and only completeness needs the tests.
+    Slicing by file lets step 5 hand each lens the part it reads.
+
+    Streamed line by line and written straight through, so a large diff never
+    enters this process's memory (nor, being a file handoff, the model's context).
+    Slices are ``0o600`` for the same reason the full diff is. A slice with no
+    hunks is still **written, empty** — a missing file would be ambiguous between
+    "nothing in this category" and "the split didn't run".
+    """
+    out_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    paths = {name: out_dir / f"review-diff-{name}.txt" for name in SLICE_NAMES}
+    handles = {}
+    counts = dict.fromkeys(SLICE_NAMES, 0)
+    try:
+        for name, path in paths.items():
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            handles[name] = os.fdopen(fd, "w", encoding="utf-8", errors="replace")
+
+        # Anything before the first `diff --git` header (there is normally
+        # nothing) goes to source, the default slice.
+        current = "source"
+        with open(diff_path, "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                header_path = _diff_header_path(line)
+                if header_path is not None:
+                    current = slice_for(header_path)
+                handles[current].write(line)
+                counts[current] += 1
+    except OSError as exc:
+        raise ReviewDiffError(f"cannot write diff slices: {exc}") from exc
+    finally:
+        for handle in handles.values():
+            handle.close()
+
+    return {
+        name: {"path": str(paths[name]), "lines": counts[name]} for name in SLICE_NAMES
+    }
+
+
+def grep_excludes() -> dict:
+    """The exclude list a hoisted repo-wide grep should reuse, in grep's own flags.
+
+    Step 5 asks for repo-scope greps (a uniqueness sweep, a straggler search), and
+    an **unscoped** one returns the whole regenerated SDK surface no lens needs —
+    a 658-line generated instruction file was the single largest main-loop result
+    of one measured session. This tool already owns ``DIFF_EXCLUDES``, so exposing
+    it here means one list with one owner rather than a set re-derived per run.
+
+    ``grep --exclude-dir`` matches a directory's **basename**, not its path, so a
+    directory-shaped exclude is reduced to its last segment: excluding
+    ``sdk/ts/src/generated`` becomes ``--exclude-dir=generated``, which also
+    catches its Rust sibling. That is wider than the diff exclude, and correct —
+    a search wants no generated tree.
+    """
+    dirs: list[str] = []
+    globs: list[str] = []
+    for entry in DIFF_EXCLUDES:
+        basename = entry.rsplit("/", 1)[-1]
+        # A dotted last segment is a file; anything else is a directory.
+        if "." in basename and not entry.endswith("/"):
+            if basename not in globs:
+                globs.append(basename)
+        elif basename not in dirs:
+            dirs.append(basename)
+    for entry in SEARCH_EXCLUDE_DIRS:
+        if entry not in dirs:
+            dirs.append(entry)
+
+    args = [f"--exclude-dir={d}" for d in dirs] + [f"--exclude={g}" for g in globs]
+    return {
+        "exclude_dirs": dirs,
+        "exclude_globs": globs,
+        "grep_args": " ".join(args),
+    }
+
+
+def gate(base: str, out: Path, fetch: bool = True, split: bool = False) -> dict:
     """Run the whole preamble and return the verdict dict (see module docs).
 
     ``ready`` is derived from ``blockers`` — never computed alongside it — so the
@@ -343,7 +529,7 @@ def gate(base: str, out: Path, fetch: bool = True) -> dict:
             f"regeneration and suite gates still apply"
         )
 
-    return {
+    verdict = {
         "base": base,
         "base_ref": base_ref,
         "fetched": fetched,
@@ -360,20 +546,45 @@ def gate(base: str, out: Path, fetch: bool = True) -> dict:
         "ready": not blockers,
         "blockers": blockers,
     }
+    if split:
+        # Slices live beside the full diff, so one --out choice places everything.
+        verdict["slices"] = split_diff(out, out.parent)
+    return verdict
 
 
 def run(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="review_diff.py")
     parser.add_argument("--base", default="main", help="base branch (default main)")
-    parser.add_argument("--out", required=True, help="where to write the review diff")
+    parser.add_argument(
+        "--out", default=None, help="where to write the review diff (required)"
+    )
     parser.add_argument(
         "--no-fetch",
         action="store_true",
         help="skip the network fetch and read the local ref",
     )
+    parser.add_argument(
+        "--split",
+        action="store_true",
+        help="also write per-lens source/tests/docs slices beside the diff",
+    )
+    parser.add_argument(
+        "--print-grep-excludes",
+        action="store_true",
+        help="print the exclude flags a hoisted repo-wide grep should reuse, and exit",
+    )
     args = parser.parse_args(argv[1:])
 
-    verdict = gate(args.base, Path(args.out), fetch=not args.no_fetch)
+    # A pure query about the exclude lists: no repo state, no --out, no git.
+    if args.print_grep_excludes:
+        json.dump(grep_excludes(), sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        return 0
+
+    if args.out is None:
+        raise ReviewDiffError("--out is required (except with --print-grep-excludes)")
+
+    verdict = gate(args.base, Path(args.out), fetch=not args.no_fetch, split=args.split)
     json.dump(verdict, sys.stdout, indent=2)
     sys.stdout.write("\n")
     # Exit non-zero when the gate says don't fan out, so a caller that only
