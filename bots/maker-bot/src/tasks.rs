@@ -496,8 +496,7 @@ fn quote_market(
         }
     };
 
-    let degraded = fair.degraded();
-    let action = killswitch::evaluate(&fair, &inv, &cfg.kill, degraded, launch_tvl);
+    let action = killswitch::evaluate(&fair, &inv, &cfg.kill, launch_tvl);
     let skew_bps = skew::ref_skew_bps(&inv, &cfg.strategy);
     let reference = skew::apply_skew(mid, skew_bps);
 

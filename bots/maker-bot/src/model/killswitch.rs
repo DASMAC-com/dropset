@@ -21,9 +21,10 @@
 //! When the composition is degraded — no live FX anchor outside the weekend
 //! regime, or only the last basis / static peg left (see
 //! [`dropset_fair_value::Regime`]) — the vault runs *degraded* (§4): the whole
-//! switch set tightens by 50% so the bot pulls back sooner on thinner
-//! information — the imbalance bounds halve here and the TVL floor halves its
-//! permitted drawdown from launch here.
+//! switch set tightens by the `degraded_scale` config knob (the spec's 50%) so
+//! the bot pulls back sooner on thinner information — the imbalance bounds
+//! scale down here and the TVL floor scales down its permitted drawdown from
+//! launch here.
 //!
 //! The TVL floor is expressed as a *fraction of launch TVL* (the
 //! `tvl_floor_frac` config knob) against the launch TVL the caller reads from
@@ -71,20 +72,26 @@ pub enum Action {
 
 /// Evaluate the kill switches for this tick. `launch_tvl` is the vault's TVL at
 /// startup (the caller reads it from the first snapshot), against which the
-/// drawdown floor is measured. `degraded` (from [`FairValue::degraded`] — no
-/// live FX anchor outside the weekend regime, or a peg-rate fallback tier)
-/// tightens the whole switch set by 50% (§4): the imbalance thresholds halve,
-/// and the TVL floor halves its permitted drawdown from launch. The basis and
-/// common-mode bands are not scaled here — they are absolute peg events the
-/// engine already evaluated against its (survey-set) bands.
+/// drawdown floor is measured. A degraded composition — no live FX anchor
+/// outside the weekend regime, or a peg-rate fallback tier — tightens the whole
+/// switch set by [`KillSwitchConfig::degraded_scale`] (§4): the imbalance
+/// thresholds scale down, and the TVL floor scales down its permitted drawdown
+/// from launch. That state is read straight off the composed reference
+/// ([`FairValue::degraded`]) rather than passed in, so it cannot disagree with
+/// the reference the same call is evaluating. The basis and common-mode bands
+/// are not scaled here — they are absolute peg events the engine already
+/// evaluated against its (survey-set) bands.
 pub fn evaluate(
     fair: &FairValue,
     inv: &Inventory,
     kill: &KillSwitchConfig,
-    degraded: bool,
     launch_tvl: f64,
 ) -> Action {
-    let scale = if degraded { 0.5 } else { 1.0 };
+    let scale = if fair.degraded() {
+        kill.degraded_scale
+    } else {
+        1.0
+    };
 
     // Hard halts first — these want a human, not a self-healing reshape. The
     // portfolio-wide common-mode guard precedes the per-market basis event: a
@@ -95,9 +102,10 @@ pub fn evaluate(
     if fair.basis_breach {
         return Action::Halt(HaltReason::BasisBreach);
     }
-    // The floor is launch TVL less the permitted drawdown. Degraded halves the
-    // permitted drawdown, so the floor rises toward launch TVL (e.g. a 0.8
-    // floor — 20% drawdown — tightens to a 10% drawdown, 0.9 of launch).
+    // The floor is launch TVL less the permitted drawdown. Degraded scales the
+    // permitted drawdown down, so the floor rises toward launch TVL (e.g. at the
+    // default 0.5: a 0.8 floor — 20% drawdown — tightens to a 10% drawdown, 0.9
+    // of launch).
     let permitted_drawdown = (1.0 - kill.tvl_floor_frac) * scale;
     let tvl_floor = launch_tvl * (1.0 - permitted_drawdown);
     if inv.total_usd() <= tvl_floor {
@@ -128,7 +136,7 @@ pub fn evaluate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dropset_fair_value::{Anchor, Health, Regime};
+    use dropset_fair_value::{Anchor, Degrade, Health, Regime};
 
     fn ok_fair() -> FairValue {
         FairValue {
@@ -140,6 +148,20 @@ mod tests {
             uncertain: false,
             basis_breach: false,
             usdc_breach: false,
+        }
+    }
+
+    /// The canonical degraded composition the tightened bounds are written for:
+    /// the FX anchor went stale outside the weekend regime (§4), so the crypto
+    /// reference carries the mid. Built as a whole reference rather than an
+    /// `ok_fair()` with a flag flipped, so the regime, anchor, and health agree
+    /// the way the engine would emit them.
+    fn degraded_fair() -> FairValue {
+        FairValue {
+            anchor: Anchor::CryptoReference,
+            regime: Regime::Degraded(Degrade::FxStale),
+            health: Health::Degraded,
+            ..ok_fair()
         }
     }
 
@@ -161,7 +183,7 @@ mod tests {
     #[test]
     fn balanced_vault_quotes() {
         assert_eq!(
-            evaluate(&ok_fair(), &inv(50.0, 50.0), &kill(), false, LAUNCH),
+            evaluate(&ok_fair(), &inv(50.0, 50.0), &kill(), LAUNCH),
             Action::Quote
         );
     }
@@ -171,7 +193,7 @@ mod tests {
         // 65/35 → 30% (not > 30), 66/34 → 32% → reshape. Base-heavy, so the
         // accumulating (bid) side is the one shrunk.
         assert_eq!(
-            evaluate(&ok_fair(), &inv(66.0, 34.0), &kill(), false, LAUNCH),
+            evaluate(&ok_fair(), &inv(66.0, 34.0), &kill(), LAUNCH),
             Action::Reshape(Side::Bid)
         );
     }
@@ -181,7 +203,7 @@ mod tests {
         // 34/66 → 32% imbalance, quote-heavy → the accumulating (ask) side is
         // the one shrunk, mirroring the base-heavy bid case.
         assert_eq!(
-            evaluate(&ok_fair(), &inv(34.0, 66.0), &kill(), false, LAUNCH),
+            evaluate(&ok_fair(), &inv(34.0, 66.0), &kill(), LAUNCH),
             Action::Reshape(Side::Ask)
         );
     }
@@ -190,7 +212,7 @@ mod tests {
     fn heavy_imbalance_freezes_the_accumulating_side() {
         // 78/22 → 56% imbalance, base-heavy → freeze the bid side.
         assert_eq!(
-            evaluate(&ok_fair(), &inv(78.0, 22.0), &kill(), false, LAUNCH),
+            evaluate(&ok_fair(), &inv(78.0, 22.0), &kill(), LAUNCH),
             Action::FreezeSide(Side::Bid)
         );
     }
@@ -199,7 +221,7 @@ mod tests {
     fn critical_imbalance_halts() {
         // 95/5 → 90% imbalance → halt for review.
         assert_eq!(
-            evaluate(&ok_fair(), &inv(95.0, 5.0), &kill(), false, LAUNCH),
+            evaluate(&ok_fair(), &inv(95.0, 5.0), &kill(), LAUNCH),
             Action::Halt(HaltReason::ImbalanceCritical)
         );
     }
@@ -210,7 +232,7 @@ mod tests {
         fair.basis_breach = true;
         // Even a balanced vault halts on a basis-band breach.
         assert_eq!(
-            evaluate(&fair, &inv(50.0, 50.0), &kill(), false, LAUNCH),
+            evaluate(&fair, &inv(50.0, 50.0), &kill(), LAUNCH),
             Action::Halt(HaltReason::BasisBreach)
         );
     }
@@ -223,7 +245,7 @@ mod tests {
         fair.usdc_breach = true;
         fair.basis_breach = true;
         assert_eq!(
-            evaluate(&fair, &inv(50.0, 50.0), &kill(), false, LAUNCH),
+            evaluate(&fair, &inv(50.0, 50.0), &kill(), LAUNCH),
             Action::Halt(HaltReason::UsdcCommonMode)
         );
     }
@@ -232,7 +254,7 @@ mod tests {
     fn tvl_floor_halts() {
         // $79 against a $100 launch is below the 0.8 (20% drawdown) floor.
         assert_eq!(
-            evaluate(&ok_fair(), &inv(40.0, 39.0), &kill(), false, LAUNCH),
+            evaluate(&ok_fair(), &inv(40.0, 39.0), &kill(), LAUNCH),
             Action::Halt(HaltReason::TvlFloor)
         );
     }
@@ -245,11 +267,11 @@ mod tests {
         let above = inv(405_000.0, 405_000.0); // $810k
         let below = inv(399_000.0, 399_000.0); // $798k
         assert_eq!(
-            evaluate(&ok_fair(), &above, &kill(), false, 1_000_000.0),
+            evaluate(&ok_fair(), &above, &kill(), 1_000_000.0),
             Action::Quote
         );
         assert_eq!(
-            evaluate(&ok_fair(), &below, &kill(), false, 1_000_000.0),
+            evaluate(&ok_fair(), &below, &kill(), 1_000_000.0),
             Action::Halt(HaltReason::TvlFloor)
         );
     }
@@ -261,7 +283,7 @@ mod tests {
         // critically imbalanced halts on TvlFloor, not ImbalanceCritical.
         let drained = inv(70.0, 5.0); // $75 (≤ $80 floor), ~87% imbalance
         assert_eq!(
-            evaluate(&ok_fair(), &drained, &kill(), false, LAUNCH),
+            evaluate(&ok_fair(), &drained, &kill(), LAUNCH),
             Action::Halt(HaltReason::TvlFloor)
         );
     }
@@ -271,11 +293,11 @@ mod tests {
         // 60/40 → 20% imbalance: Quote when healthy, Reshape when degraded
         // (reshape bound tightens 30% → 15%). Base-heavy → shrink the bid side.
         assert_eq!(
-            evaluate(&ok_fair(), &inv(60.0, 40.0), &kill(), false, LAUNCH),
+            evaluate(&ok_fair(), &inv(60.0, 40.0), &kill(), LAUNCH),
             Action::Quote
         );
         assert_eq!(
-            evaluate(&ok_fair(), &inv(60.0, 40.0), &kill(), true, LAUNCH),
+            evaluate(&degraded_fair(), &inv(60.0, 40.0), &kill(), LAUNCH),
             Action::Reshape(Side::Bid)
         );
     }
@@ -286,12 +308,33 @@ mod tests {
         // permitted drawdown halves to 10%). A vault at $85 is above the
         // healthy floor but halts once degraded.
         assert_eq!(
-            evaluate(&ok_fair(), &inv(43.0, 42.0), &kill(), false, LAUNCH),
+            evaluate(&ok_fair(), &inv(43.0, 42.0), &kill(), LAUNCH),
             Action::Quote
         );
         assert_eq!(
-            evaluate(&ok_fair(), &inv(43.0, 42.0), &kill(), true, LAUNCH),
+            evaluate(&degraded_fair(), &inv(43.0, 42.0), &kill(), LAUNCH),
             Action::Halt(HaltReason::TvlFloor)
+        );
+    }
+
+    #[test]
+    fn degraded_scale_is_read_from_config() {
+        // The tightening factor is a knob, not the hardcoded half it replaced,
+        // so pin it at a non-default value: 0.25 pulls the reshape bound to
+        // 7.5%, which a 10% imbalance trips where the default 15% bound leaves
+        // it quoting. Without this the whole config field could be a literal
+        // 0.5 again and every other test would still pass.
+        let tight = KillSwitchConfig {
+            degraded_scale: 0.25,
+            ..KillSwitchConfig::default()
+        };
+        assert_eq!(
+            evaluate(&degraded_fair(), &inv(55.0, 45.0), &kill(), LAUNCH),
+            Action::Quote
+        );
+        assert_eq!(
+            evaluate(&degraded_fair(), &inv(55.0, 45.0), &tight, LAUNCH),
+            Action::Reshape(Side::Bid)
         );
     }
 }
