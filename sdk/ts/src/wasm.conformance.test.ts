@@ -98,13 +98,22 @@ test('committed wasm simulate_swap matches the conformance vectors', () => {
 // current market rather than by refusing one, which the vectors above
 // catch; this pins the other end — a buffer too short to hold the header
 // must surface as a thrown error, not a panic across the wasm boundary.
+// The matcher matters: a bare `assert.throws` passes on ANY throw, including
+// the argument-marshalling errors a stale binary produces — so it would stay
+// green while proving nothing.
 test('committed wasm simulate_swap rejects an undersized buffer', () => {
-  assert.throws(() => simulate_swap(new Uint8Array(4), 0, 1_000_000n, 0xffffffff, 1, 0));
+  assert.throws(
+    () => simulate_swap(new Uint8Array(4), 0, 1_000_000n, 0xffffffff, 1, 0),
+    /TooSmall/,
+  );
 });
 
 // `side` has no native analogue (the matcher takes an enum), so the binding
 // maps 0/1 itself and must reject anything else rather than silently
 // picking a side.
 test('committed wasm simulate_swap rejects an invalid side', () => {
-  assert.throws(() => simulate_swap(marketData, 2, 1_000_000n, 0xffffffff, 1, 0));
+  assert.throws(
+    () => simulate_swap(marketData, 2, 1_000_000n, 0xffffffff, 1, 0),
+    /side/i,
+  );
 });

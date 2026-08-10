@@ -1,3 +1,4 @@
+// cspell:word ftypavif
 // Mirror stablecoin icons into public/token-icons at build time, so the
 // browser hits our origin once instead of ~13 third-party CDNs per page load.
 // Writes lib/data/icon-manifest.gen.json (symbol → /token-icons/<file>)
@@ -26,6 +27,44 @@ const EXT_BY_CT = {
   "image/webp": "webp",
   "image/jpeg": "jpg",
   "image/gif": "gif",
+  "image/avif": "avif",
+  "image/x-icon": "ico",
+  "image/vnd.microsoft.icon": "ico",
+};
+
+// Content-types that carry no format information. A live asset served with
+// one of these is NOT link rot — `application/octet-stream` is a common S3
+// and R2 default and every browser still renders the image — so sniff the
+// bytes rather than failing. Without this the strict gate would block the
+// merge queue over an issuer's storage config.
+const GENERIC_CTS = new Set([
+  "",
+  "application/octet-stream",
+  "binary/octet-stream",
+]);
+
+const startsWith = (buf, bytes) =>
+  buf.length >= bytes.length &&
+  buf.subarray(0, bytes.length).equals(Buffer.from(bytes));
+
+// Identify a format from its magic bytes. Returns undefined for anything
+// unrecognized, which keeps an HTML interstitial rejected even when it
+// arrives under a generic content-type.
+const sniffExt = (buf) => {
+  if (startsWith(buf, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+    return "png";
+  if (startsWith(buf, [0xff, 0xd8, 0xff])) return "jpg";
+  if (startsWith(buf, [0x47, 0x49, 0x46, 0x38])) return "gif";
+  if (startsWith(buf, [0x00, 0x00, 0x01, 0x00])) return "ico";
+  if (
+    startsWith(buf, [0x52, 0x49, 0x46, 0x46]) &&
+    buf.subarray(8, 12).toString() === "WEBP"
+  ) {
+    return "webp";
+  }
+  if (buf.subarray(4, 12).toString() === "ftypavif") return "avif";
+  if (buf.includes("<svg")) return "svg";
+  return undefined;
 };
 
 rmSync(dst, { recursive: true, force: true });
@@ -52,28 +91,32 @@ const fetchOnce = async (url) => {
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  // Only mirror content-types we recognize as images. Deriving the
-  // extension from an arbitrary content-type instead let an HTTP 200
-  // carrying an HTML error page or CDN interstitial through `res.ok`
-  // above, write `SYMBOL.html`, and manifest it as a *success* — a
-  // broken icon indistinguishable from a working one. Rejecting here
-  // drops the symbol from the manifest, so currencies.ts leaves its
-  // canonical remote URL in place.
   const ct = res.headers.get("content-type")?.split(";")[0]?.trim() ?? "";
-  const ext = EXT_BY_CT[ct];
-  if (!ext) throw new Error(`unexpected content-type ${ct || "(none)"}`);
   const buf = Buffer.from(await res.arrayBuffer());
   if (buf.length < MIN_BYTES) throw new Error(`body is ${buf.length}B`);
-  // The header can also be right while the body is not — sniff SVG rather
-  // than trusting `image/svg+xml` alone, since that is the one type an
-  // HTML interstitial can plausibly be served as. Scan the whole body, not
-  // a fixed prefix: an issuer logo can carry a long XML declaration,
-  // DOCTYPE, and license banner ahead of the root element, and a false
-  // reject here now blocks merges.
-  if (ext === "svg" && !buf.toString("utf8").includes("<svg")) {
-    throw new Error("content-type is SVG but body has no <svg> tag");
+  // Only mirror formats we actually recognize. Deriving the extension from
+  // an arbitrary content-type instead let an HTTP 200 carrying an HTML
+  // error page or CDN interstitial through the `res.ok` check above, write
+  // `SYMBOL.html`, and manifest it as a *success* — a broken icon
+  // indistinguishable from a working one. A rejected symbol is dropped from
+  // the manifest, so currencies.ts leaves its canonical remote URL in place.
+  //
+  // A declared image type still gets its bytes checked, because the header
+  // can be right while the body is not; a generic type is decided by the
+  // bytes alone.
+  const declared = EXT_BY_CT[ct];
+  const sniffed = sniffExt(buf);
+  if (!declared && !GENERIC_CTS.has(ct)) {
+    throw new Error(`unexpected content-type ${ct || "(none)"}`);
   }
-  return { ext, buf };
+  if (!sniffed) {
+    throw new Error(
+      `body is not a recognized image (content-type ${ct || "(none)"})`,
+    );
+  }
+  // Trust the sniffed format over a mislabeled header, so a PNG served as
+  // `image/jpeg` is still mirrored under the right extension.
+  return { ext: sniffed, buf };
 };
 
 // Retry before declaring a URL dead: under --strict a single transient
