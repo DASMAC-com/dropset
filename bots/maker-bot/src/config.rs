@@ -254,6 +254,12 @@ pub struct KillSwitchConfig {
     /// read from the vault at startup (not a config constant), so the floor
     /// self-scales per market — see the module header.
     pub tvl_floor_frac: f64,
+    /// What the bounds above are scaled by while the composition runs degraded
+    /// — the spec's "tighten kill switches by 50%" (§4), so `0.5`. The
+    /// imbalance thresholds scale directly; the TVL floor scales its *permitted
+    /// drawdown*, which raises the floor toward launch TVL. See
+    /// [`crate::model::killswitch`].
+    pub degraded_scale: f64,
 }
 
 /// Stale-quote invalidation (the bot half of the halt / pick-off mitigation).
@@ -356,6 +362,7 @@ impl Default for KillSwitchConfig {
             imbalance_freeze_side_pct: 50.0,
             imbalance_halt_pct: 80.0,
             tvl_floor_frac: 0.8,
+            degraded_scale: 0.5,
         }
     }
 }
