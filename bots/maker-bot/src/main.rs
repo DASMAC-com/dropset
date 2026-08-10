@@ -19,7 +19,6 @@
 use anyhow::{anyhow, Context, Result};
 use dropset_fair_value::{FairValueEngine, Reading};
 use dropset_feeds::{forward_channel, run_until, RunConfig, Sink, Source};
-use dropset_localnet_support::ws_url_from_rpc;
 use dropset_maker_bot::config::{
     BotConfig, FeedConfig, MarketConfig, DEFAULT_LEADER_KEY, MARKETS, QUOTE_KEYPAIR_FILE,
     USDC_COINGECKO_ID,
@@ -30,6 +29,7 @@ use dropset_maker_bot::model::feeds::{cmc_api_key, CmcSource, CoinGeckoSource, F
 use dropset_maker_bot::quote_state::QuoteStateStore;
 use dropset_maker_bot::tasks::FeedReceivers;
 use dropset_maker_bot::{chain, fills, tasks};
+use dropset_util::rpc::ws_url_from_rpc;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 use std::time::Duration;

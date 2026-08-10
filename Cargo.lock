@@ -1803,14 +1803,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dropset-localnet-support"
-version = "0.1.0"
-dependencies = [
- "solana-instruction",
- "solana-pubkey 3.0.0",
-]
-
-[[package]]
 name = "dropset-maker-bot"
 version = "0.1.0"
 dependencies = [
@@ -1821,8 +1813,8 @@ dependencies = [
  "bytemuck",
  "dropset-fair-value",
  "dropset-feeds",
- "dropset-localnet-support",
  "dropset-sdk",
+ "dropset-util",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -1879,8 +1871,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytemuck",
- "dropset-localnet-support",
  "dropset-sdk",
+ "dropset-util",
  "rand 0.8.6",
  "rand_distr",
  "solana-client",
@@ -1901,8 +1893,8 @@ dependencies = [
  "bs58",
  "bytemuck",
  "crossterm",
- "dropset-localnet-support",
  "dropset-sdk",
+ "dropset-util",
  "libc",
  "open",
  "ratatui",
@@ -1918,6 +1910,14 @@ dependencies = [
  "solana-transaction",
  "solana-transaction-status-client-types",
  "tempfile",
+]
+
+[[package]]
+name = "dropset-util"
+version = "0.1.0"
+dependencies = [
+ "solana-instruction",
+ "solana-pubkey 3.0.0",
 ]
 
 [[package]]

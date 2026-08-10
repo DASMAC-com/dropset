@@ -302,7 +302,7 @@ pub struct BotConfig {
     pub rpc_url: String,
     /// PubSub websocket endpoint for the fill-event subscription. `None`
     /// derives it from `rpc_url` via
-    /// [`dropset_localnet_support::ws_url_from_rpc`].
+    /// [`dropset_util::rpc::ws_url_from_rpc`].
     pub ws_url: Option<String>,
     /// Vault sector the bot quotes.
     pub vault_idx: u32,

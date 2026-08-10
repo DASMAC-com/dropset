@@ -36,10 +36,10 @@ dropset-fair-value = { path = "../../fair-value" }
 # seam (`ChannelSource`), and both fan into an in-process forward (live) sink
 # the tick loop reads (docs/data-feeds.md §6).
 dropset-feeds = { path = "../../feeds", features = ["http", "stream"] }
-# Shared localnet-host plumbing: the Agave `http`→`ws` PubSub-URL derivation
+# Shared chain plumbing: `rpc`'s Agave `http`→`ws` PubSub-URL derivation
 # (the fill subscription's endpoint). The `emit_cpi!` fill decode is the SDK's
 # shared `events` codec, not a hand-rolled discriminator.
-dropset-localnet-support = { path = "../localnet-support" }
+dropset-util = { path = "../../util" }
 # The off-chain client: Codama instruction builders + the `quoting` helpers
 # (set_reference_price_ix / set_liquidity_profile_ix / NativeBook), the typed
 # `fetch_*` account decoders, the `layout` slab mirror (active-vault walk for
