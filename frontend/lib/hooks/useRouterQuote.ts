@@ -165,6 +165,11 @@ export const useRouterQuote = (
           currentSlot,
           signal: controller.signal,
           eclob: eclobLeg,
+          // Our own leg declares the fee on the `swap` instruction, clamped by
+          // the router to the market's on-chain ceiling. Unlike DFlow's it has
+          // no ATA precondition — the instruction creates the fee account — so
+          // the configured rate goes in unconditionally.
+          platformFeeBps: PLATFORM_FEE ? PLATFORM_FEE.bps : 0,
           aggregator: {
             quoteUrl: DFLOW_QUOTE_URL,
             inputMint,
@@ -189,6 +194,19 @@ export const useRouterQuote = (
           markExhausted(DFLOW_QUOTE, Date.now() + RECOVERY_TOKEN_TARGET * 1000);
         }
 
+        // Report the fee the *winning* venue will actually charge. Ours is the
+        // clamped rate the quote was computed with; DFlow's is the configured
+        // rate, and only when the fee was really declared (a resolved ATA) —
+        // otherwise no fee is charged on that route and there is none to show.
+        const platformFeeBps =
+          best.venue === "dropset"
+            ? best.platformFeeBps > 0
+              ? best.platformFeeBps
+              : null
+            : PLATFORM_FEE && feeAccount
+              ? PLATFORM_FEE.bps
+              : null;
+
         setQuote({
           status: "ok",
           outAmount: best.outAmount,
@@ -197,6 +215,7 @@ export const useRouterQuote = (
           outputMint,
           priceImpactPct: best.venue === "dflow" ? best.priceImpactPct : null,
           slippageBps: best.venue === "dflow" ? best.slippageBps : null,
+          platformFeeBps,
           venue: best.venue,
           hasQuote: true,
           error: null,

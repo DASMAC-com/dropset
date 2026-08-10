@@ -40,6 +40,8 @@ const eclobQuote = (inAmount: bigint, outAmount: bigint): EclobQuote => ({
   inAmount,
   outAmount,
   feeAmount: 0n,
+  platformFeeAmount: 0n,
+  platformFeeBps: 0,
   legs: 1,
   // The route is opaque to the routing rules under test.
   route: { market: MARKET } as unknown as EclobQuote['route'],
