@@ -133,23 +133,6 @@ const CreditLabel = ({ mirrored = false }: { mirrored?: boolean }) => (
 );
 
 /**
- * True when the deck is opened with `?export=1`, which is how
- * `scripts/export-deck.mjs` loads each page to screenshot it.
- *
- * The only thing this hides is the progress dots. They read the deck's own
- * position, and the exported pages are destined for the accelerator's combined
- * meta-deck — where "page 4 of 10" counts a deck the audience is no longer
- * watching. The wordmark and the credit stay: those are brand, and every page
- * should carry them wherever it ends up.
- *
- * Read at render rather than from a prop because the deck is client-only
- * (`ssr: false` in `page.tsx`), so `window` is always there.
- */
-const isExportView = () =>
-  typeof window !== "undefined" &&
-  new URLSearchParams(window.location.search).has("export");
-
-/**
  * Persistent footer: wordmark on the left, the DASMAC credit in the middle,
  * progress dots on the right. The DASMAC mark is a transparent PNG, so unlike
  * the Dropset one it needs no blend to sit on the dark backdrop.
@@ -212,11 +195,8 @@ const template = () => (
       />
       <CreditLabel mirrored />
     </div>
-    {/* The Box stays even when the dots don't: it is the right-hand child this
-        row's `space-between` balances the wordmark against, so dropping it
-        outright would let the flex row re-solve around a single child. */}
     <Box padding="0 1.25em">
-      {!isExportView() && <Progress color={colors.accent} size={11} />}
+      <Progress color={colors.accent} size={11} />
     </Box>
   </FlexBox>
 );
@@ -250,7 +230,7 @@ const FOOTER_RESERVE = 106;
  * Between this and Spectacle's own 32px slide padding, a page has ~910 of the
  * 1080 slide units to work in. Worth doing the arithmetic when adding to a
  * page: content that overflows is merely scaled down on screen but **silently
- * clipped in print**, which is the path to the meta-deck.
+ * clipped in the export**, which is the path to the meta-deck.
  */
 const SlideBody = ({ children }: { children: React.ReactNode }) => (
   <FlexBox

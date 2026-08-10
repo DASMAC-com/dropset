@@ -159,11 +159,18 @@ destination that matters, and it needs the `.pptx` anyway.
 
 ### How it works, and why not print-to-PDF
 
-The exporter loads each page in a headless Chromium at 1920×1080 —
-`?export=1&slideIndex=N`, one page per shot — and packs the screenshots into
-a `.pptx` as one full-bleed picture per slide (`scripts/capture.mjs` and
-`scripts/pptx.mjs`). It finds Brave, Chrome, Chromium or Edge automatically;
+The exporter loads each page in a headless Chromium — `?slideIndex=N`, one
+page per shot — and packs the screenshots into a `.pptx` as one full-bleed
+picture per slide (`scripts/capture.mjs` and `scripts/pptx.mjs`). It finds
+Brave, Chrome, Chromium or Edge automatically;
 `DECK_BROWSER=/path/to/browser` overrides that.
+
+Pages lay out in the deck's own 1920×1080 space but are captured at a device
+pixel ratio of 2, so the images are **3840×2160**. Raising the pixel ratio
+rather than the viewport is deliberate: a bigger viewport would give
+Spectacle a bigger box and change the layout, while a higher ratio renders
+the same layout with more samples. At 1× the result looked grainy once
+Google Slides had rescaled it.
 
 Screenshots, rather than Spectacle's own export mode plus print-to-PDF,
 because that route is broken here and dead-ends anyway. `⌘⇧R` print mode
@@ -177,10 +184,16 @@ not carry. Capturing the live page skips both problems: the pixels come from
 the same renderer the deck is reviewed in, and they are already images.
 
 What the pipeline asks of a deck is what the theme already enforces: the
-slide box is exactly 16:9 (`DECK_SIZE`), so nothing letterboxes on import,
-and no slide carries interactive chrome. The one piece it does strip is the
-progress dots, hidden by `?export=1` — inside a combined meta-deck, a
-position indicator counting *our* ten pages is simply wrong.
+slide box is exactly 16:9 (`DECK_SIZE`), so nothing letterboxes on import.
+Nothing is stripped for export — a captured page is the page, progress dots
+and all.
+
+A captured page is measurably the page: content sits ~5% in from the left
+edge and the footer ~9% up from the bottom, in both the export and the
+browser — slightly *tighter* in the export, since a browser window that
+isn't exactly 16:9 letterboxes on top of that. If those margins look wrong,
+they are the deck's own layout (`SlideBody`, the footer's padding) and the
+place to change them is the deck, not the exporter.
 
 Two things to know when a deck changes:
 

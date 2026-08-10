@@ -32,6 +32,19 @@ const execFileAsync = promisify(execFile);
 export const CAPTURE_SIZE = { width: 1920, height: 1080 };
 
 /**
+ * Device pixel ratio for the capture, so the PNGs come out at
+ * 3840×2160 while the page still lays out in its 1920×1080 design space.
+ *
+ * Both halves of that matter. Raising the *viewport* instead would give
+ * Spectacle a bigger box to fit and change the layout; raising the pixel ratio
+ * renders the same layout with more samples, which is what makes text and the
+ * screenshot artwork crisp rather than resampled. Projectors and Google Slides
+ * both scale the image down from here, and downscaling is what keeps edges
+ * clean — 1× looked visibly grainy once Slides had rescaled it.
+ */
+const CAPTURE_SCALE = 2;
+
+/**
  * Chromium builds that ship a compatible headless mode, most-preferred first.
  * Any Chromium works; this is only about finding one already installed.
  * `DECK_BROWSER` overrides the search for anything not on the list.
@@ -86,7 +99,7 @@ const VIRTUAL_TIME_MS = 10000;
  */
 async function capturePage(browser, baseUrl, route, index, dir) {
   const out = join(dir, `page${index + 1}.png`);
-  const url = `${baseUrl}${route}?export=1&slideIndex=${index}&stepIndex=0`;
+  const url = `${baseUrl}${route}?slideIndex=${index}&stepIndex=0`;
 
   await execFileAsync(browser, [
     "--headless",
@@ -94,8 +107,9 @@ async function capturePage(browser, baseUrl, route, index, dir) {
     // Without this a scrollbar can steal a strip of the right edge, which on a
     // full-bleed page is a visible seam in the exported slide.
     "--hide-scrollbars",
-    // Pin the ratio so a HiDPI display doesn't silently capture at 2×.
-    "--force-device-scale-factor=1",
+    // Pin the ratio rather than inheriting the display's, so the output size
+    // is the same on any machine.
+    `--force-device-scale-factor=${CAPTURE_SCALE}`,
     `--window-size=${CAPTURE_SIZE.width},${CAPTURE_SIZE.height}`,
     `--virtual-time-budget=${VIRTUAL_TIME_MS}`,
     `--screenshot=${out}`,
