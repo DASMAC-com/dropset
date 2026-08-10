@@ -41,6 +41,7 @@ const failures = [];
 // looks valid on disk but that no browser can render.
 const MIN_BYTES = 64;
 const ATTEMPTS = 3;
+const BACKOFF_MS = 500;
 const TIMEOUT_MS = 10_000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -65,11 +66,11 @@ const fetchOnce = async (url) => {
   if (buf.length < MIN_BYTES) throw new Error(`body is ${buf.length}B`);
   // The header can also be right while the body is not — sniff SVG rather
   // than trusting `image/svg+xml` alone, since that is the one type an
-  // HTML interstitial can plausibly be served as.
-  if (
-    ext === "svg" &&
-    !buf.subarray(0, 1024).toString("utf8").includes("<svg")
-  ) {
+  // HTML interstitial can plausibly be served as. Scan the whole body, not
+  // a fixed prefix: an issuer logo can carry a long XML declaration,
+  // DOCTYPE, and license banner ahead of the root element, and a false
+  // reject here now blocks merges.
+  if (ext === "svg" && !buf.toString("utf8").includes("<svg")) {
     throw new Error("content-type is SVG but body has no <svg> tag");
   }
   return { ext, buf };
@@ -79,16 +80,16 @@ const fetchOnce = async (url) => {
 // blip would otherwise fail the build and read as link rot. Only a URL
 // that fails every attempt is treated as broken.
 const fetchWithRetry = async (url) => {
-  let last;
+  let lastError;
   for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
-    if (attempt > 0) await sleep(500 * 2 ** (attempt - 1));
+    if (attempt > 0) await sleep(BACKOFF_MS * 2 ** (attempt - 1));
     try {
       return await fetchOnce(url);
     } catch (err) {
-      last = err;
+      lastError = err;
     }
   }
-  throw last;
+  throw lastError;
 };
 
 const tokens = Object.values(data).flatMap((entry) => entry.stablecoins);
@@ -127,7 +128,11 @@ if (failures.length) {
 // the remote URLs rather than refuse to start.
 if (STRICT && failures.length) {
   console.error(
-    `\n--strict: ${failures.length}/${tokens.length} token icon(s) unreachable after ${ATTEMPTS} attempts.`,
+    `\n--strict: ${failures.length}/${tokens.length} token icon(s) failed after ${ATTEMPTS} attempts (see reasons above).`,
   );
-  process.exit(1);
+  // Set the code rather than calling process.exit(): under CI both streams
+  // are pipes, and an explicit exit can truncate the reasons printed above
+  // before they flush. Nothing is pending after this, so the process ends
+  // here either way.
+  process.exitCode = 1;
 }

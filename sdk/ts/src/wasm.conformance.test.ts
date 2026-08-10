@@ -41,26 +41,26 @@ import { test } from 'node:test';
 
 import { initSync, simulate_swap } from './wasm/dropset_interface.js';
 
-type Expected = {
+type ExpectedQuote = {
   in_amount: number;
   out_amount: number;
   fee_amount: number;
   platform_fee_amount: number;
   legs: number;
 };
-type Case = {
+type SwapCase = {
   name: string;
   side: number;
   amount_in: number;
   limit_price_bits: number;
   current_slot: number;
   platform_fee_bps: number;
-  expected: Expected;
+  expected: ExpectedQuote;
 };
 
 const vectors = JSON.parse(
   readFileSync(new URL('../../conformance/simulate_swap_vectors.json', import.meta.url), 'utf8'),
-) as { market_data: number[]; cases: Case[] };
+) as { market_data: number[]; cases: SwapCase[] };
 
 // The glue is built `--target web`, whose default init fetches the binary
 // relative to `import.meta.url`. Under Node we hand it the committed bytes
@@ -94,21 +94,17 @@ test('committed wasm simulate_swap matches the conformance vectors', () => {
   }
 });
 
-/**
- * The decode boundary. A stale binary most often fails by *misreading* a
- * current market rather than by refusing one, which the vectors above
- * catch; this pins the other end — a buffer too short to hold the header
- * must surface as a thrown error, not a panic across the wasm boundary.
- */
+// The decode boundary. A stale binary most often fails by *misreading* a
+// current market rather than by refusing one, which the vectors above
+// catch; this pins the other end — a buffer too short to hold the header
+// must surface as a thrown error, not a panic across the wasm boundary.
 test('committed wasm simulate_swap rejects an undersized buffer', () => {
   assert.throws(() => simulate_swap(new Uint8Array(4), 0, 1_000_000n, 0xffffffff, 1, 0));
 });
 
-/**
- * `side` has no native analogue (the matcher takes an enum), so the binding
- * maps 0/1 itself and must reject anything else rather than silently
- * picking a side.
- */
+// `side` has no native analogue (the matcher takes an enum), so the binding
+// maps 0/1 itself and must reject anything else rather than silently
+// picking a side.
 test('committed wasm simulate_swap rejects an invalid side', () => {
   assert.throws(() => simulate_swap(marketData, 2, 1_000_000n, 0xffffffff, 1, 0));
 });
