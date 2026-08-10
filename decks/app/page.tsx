@@ -25,7 +25,7 @@ export default function Home() {
           <span className="font-mono text-foreground">⌘⇧O</span> the slide
           overview, and{" "}
           <span className="font-mono text-foreground">⌘⇧E</span> export mode —
-          every slide as a static page, ready to print.
+          every slide as a static page.
         </p>
         <p className="mt-3 max-w-xl text-muted-fg text-sm">
           Every deck is a{" "}
@@ -50,9 +50,13 @@ export default function Home() {
           else&apos;s screen.
         </p>
         <p className="mt-3 max-w-xl text-muted-fg text-sm">
-          To export, use{" "}
-          <span className="font-mono text-foreground">⌘⇧E</span> and print to
-          PDF with <em>background graphics</em> on. Not{" "}
+          To hand a deck to someone else, use <strong>Export .pptx</strong>{" "}
+          below. It screenshots every page at 1920×1080 and packs them into a
+          PowerPoint file, which is what Google Slides&apos;{" "}
+          <span className="font-mono">File ▸ Import slides</span> accepts —
+          Slides cannot import a PDF at all. For a PDF, import to Slides and use{" "}
+          <span className="font-mono">File ▸ Download</span>. Do not print
+          from&nbsp;
           <span className="font-mono">⌘⇧R</span>: Spectacle&apos;s print mode
           swaps in a light theme, which inverts a deck built on a dark backdrop
           and drops any artwork that relies on blend modes.
@@ -61,10 +65,13 @@ export default function Home() {
 
       <ul className="flex flex-col gap-4">
         {decks.map((deck) => (
-          <li key={deck.route}>
+          <li
+            key={deck.route}
+            className="rounded-xl border border-border bg-muted/40 transition-colors hover:border-accent"
+          >
             <Link
               href={deck.route}
-              className="group block rounded-xl border border-border bg-muted/40 p-6 transition-colors hover:border-accent hover:bg-muted"
+              className="group block p-6 pb-4 transition-colors hover:bg-muted/60"
             >
               <div className="flex items-baseline justify-between gap-4">
                 <h2 className="text-xl font-medium text-foreground transition-colors group-hover:text-accent">
@@ -76,6 +83,20 @@ export default function Home() {
               </div>
               <p className="mt-2 text-muted-fg">{deck.subtitle}</p>
             </Link>
+            {/* A sibling of the card link, not a child: an anchor nested inside
+                another anchor is invalid, and the browser would resolve a click
+                to whichever it liked. */}
+            <div className="flex items-center gap-3 px-6 pb-5 text-sm">
+              <a
+                href={`/api/export?deck=${encodeURIComponent(deck.route)}`}
+                className="rounded-md border border-border px-3 py-1.5 font-mono text-xs text-muted-fg transition-colors hover:border-accent hover:text-accent"
+              >
+                Export .pptx
+              </a>
+              <span className="text-xs text-muted-fg">
+                {deck.pages} pages · takes a few seconds
+              </span>
+            </div>
           </li>
         ))}
       </ul>
