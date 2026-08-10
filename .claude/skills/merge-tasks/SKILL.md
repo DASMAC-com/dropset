@@ -1,6 +1,6 @@
 ---
 name: merge-tasks
-description: Consolidate several Linear issues into one, given their numbers. Folds each non-survivor's body into the lowest-numbered survivor as a labeled # Part section (preserving every Fingerprint), unions the Touches globs, carries blockedBy/blocks/relatedTo relations append-only, applies the Claude: prefix when every issue is meta-work, cancels the folded issues as duplicateOf the survivor, and syncs the survivor's file-overlap blocking edges via sync-blockers `--for`. Confirms the plan via AskUserQuestion before any write. The deterministic parsing/assembly lives in the merge_tasks.py tool.
+description: Consolidate several Linear issues into one, given their numbers. Folds each non-survivor's body into the lowest-numbered survivor as a labeled # Part section (preserving every Fingerprint), unions the Touches globs, carries relatedTo append-only while surfacing every inherited blockedBy/blocks as a proposal for the user to approve (blocking is human-curated), applies the Claude: prefix when every issue is meta-work, cancels the folded issues as duplicateOf the survivor, and records the survivor's file collisions via sync-blockers `--for`. Confirms the plan via AskUserQuestion before any write. The deterministic parsing/assembly lives in the merge_tasks.py tool.
 user-invocable: true
 ---
 
@@ -27,9 +27,14 @@ to override, the user names one explicitly (e.g. "merge
 
 ## What it does — and does not
 
-- **Append-only on relations.** It unions
-  `blockedBy` / `blocks` / `relatedTo` onto the survivor;
-  it never clears an existing edge.
+- **Append-only on relations, and it never carries a
+  blocking edge unasked.** It unions `relatedTo` onto the
+  survivor freely and never clears an existing edge. An
+  inherited `blockedBy` / `blocks` is a **proposal** shown in
+  the step-4 plan — carrying it would be the automation
+  redirecting a human-placed edge onto an issue the human
+  never judged it against (per `CLAUDE.md` → "Blocking
+  relations").
 
 - **Never drops a `**Fingerprint**:` line** — each folded
   body is preserved verbatim under its `# Part` heading, so
@@ -101,36 +106,66 @@ no heredoc) — shape:
 }
 ```
 
-Then run the tool over it, passing **`--out`** so the large
-merged body is written to a file and kept out of context
+Then run the tool over it, passing **both** `--out` and
+`--ops-out` so neither large payload is echoed to stdout
 (per `CLAUDE.md` → "Context economy"):
 
 ```sh
-python3 .claude/tools/merge_tasks.py assemble \
-  /tmp/merge-tasks.json --out /tmp/merge-tasks-body.md
+python3 .claude/tools/merge_tasks.py assemble /tmp/merge-tasks.json \
+  --out /tmp/merge-body.md --ops-out /tmp/merge-ops.json
 ```
 
-With `--out` it returns the keys `title`, `touches`,
-`all_meta`, `cross_area`, and **`description_path`** — the
-metadata inline, and the merged body **written to
-`description_path`** rather than echoed to stdout. The body
-is the survivor body + each non-survivor folded as a
-`# Part N — <title>` section (every fingerprint preserved,
-one consolidated `**Touches**:` line); the `title` carries
-the **`Claude:`** prefix when `all_meta` is true (per
+It returns the metadata inline — `title`, `touches`,
+`all_meta`, `cross_area` — plus a path to each of the two
+ways it expressed the fold:
+
+- **`patch_ops_path`** (+ `patch_ops_count`) — the fold as
+  Linear `patch` operations: one `append` per `# Part`
+  section, and one `replace` swapping the survivor's
+  `**Touches**:` line for the union. **Prefer this.** The
+  ops carry only the *folded* bodies, so the survivor's own
+  text — 28KB is unremarkable — is never re-sent at all.
+  `null` when no safe anchor exists, with
+  `patch_fallback_reason` naming the rule it tripped (two
+  `**Touches**:` lines, an `ENG-###` in the anchor, or over
+  Linear's 50-op cap).
+- **`description_path`** — the whole merged body, the
+  wholesale fallback for exactly that case.
+
+The merged body is the survivor body + each non-survivor
+folded as a `# Part N — <title>` section (every fingerprint
+preserved, one consolidated `**Touches**:` line); the `title`
+carries the **`Claude:`** prefix when `all_meta` is true (per
 `CLAUDE.md` → "Claude: meta-work prefix"), and `cross_area`
-is set when the merge mixes meta-work with product code. In
-step 5, **`Read` `description_path` and pass its contents to
-`save_issue`** — the merged body never transits context as a
-tool result.
+is set when the merge mixes meta-work with product code.
+Neither payload ever transits context as a tool result — in
+step 5 you `Read` whichever file you're going to use.
 
 Union the relations yourself (a plain set union the tool
 doesn't need the network for): collect every
 `blockedBy` / `blocks` / `relatedTo` id across all the
 fetched issues, and **drop any that point at one of the
 issues being merged** (a folded issue must not end up
-blocking the survivor). The remainder is what the survivor
-gets, append-only.
+blocking the survivor).
+
+Then split what remains, because the two kinds are not
+carried the same way:
+
+- **`relatedTo`** transits freely — it gates nothing, so
+  carrying it forward costs nothing.
+- **`blockedBy` / `blocks` do not transit silently.**
+  Blocking is **human-curated** (`CLAUDE.md` → "Blocking
+  relations"), and carrying an inherited edge onto the
+  survivor is the automation **redirecting a human-placed
+  edge** onto an issue the human never placed it on — with a
+  wider `**Touches**:` union than the edge was ever judged
+  against. So treat every inherited blocking edge as a
+  **proposal**: list it in the step-4 plan, naming which
+  folded issue it came from, and pass it only for the ones
+  the user approves. Unapproved edges are recorded as prose
+  in the survivor's body (`**Suspected dependency**: …`), so
+  the ordering claim survives the merge even when the edge
+  doesn't.
 
 **4. Confirm the plan — via `AskUserQuestion`.** Before any
 write, show the plan and wait for the go-ahead (the same
@@ -139,7 +174,11 @@ TUI-selector pattern the other skill handoffs use):
 - the chosen **survivor** and the issues folding into it,
 - the union of the `**Touches**:` globs,
 - the resulting title (note when the `Claude:` prefix is
-  applied), and
+  applied),
+- every **inherited blocking edge** (per step 3), each
+  naming the folded issue it came from, so the user can say
+  which carry over to the survivor — the default for any
+  edge not explicitly approved is **not carried**, and
 - a **cross-area warning** when `cross_area` is true — the
   issues span unrelated surfaces (meta-work mixed with
   product / on-chain code), so the merge may not be
@@ -159,27 +198,36 @@ Offer "yes, merge" (**first**, the recommended default) and
 approval:
 
 - Update the survivor with `mcp__claude_ai_Linear__save_issue`
-  (id = survivor) — the new `title` and `description`, plus
-  the union of `blockedBy` / `blocks` / `relatedTo` (these
-  args are append-only, so passing the union is safe).
+  (id = survivor) — the new `title`, the body, the
+  `relatedTo` union, and **only the blocking edges the user
+  approved** in step 4 (these args are append-only, so
+  passing them is safe).
 
-  This one write stays **wholesale** on purpose: the merged
-  body is assembled end-to-end by `merge_tasks.py`, which
-  emits a single file, so there are no per-`# Part` fragments
-  to hand a `patch`. Expressing the fold as `append` ops
-  instead — which would skip re-sending the survivor's
-  existing body entirely — is a change to that tool's output
-  contract, not to this skill.
+  **Prefer the `patch` path.** When step 3 reported a
+  `patch_ops_path`, `Read` that file and pass its array as
+  **`patch`** — the survivor's existing body is then never
+  re-sent, only the folded parts and one short anchor. Never
+  pass `patch` alongside `description`; they are alternatives
+  (per `docs/conventions/linear-automation.md` → "Partial
+  edits"). Note the `title` still goes as an ordinary
+  argument — `patch` governs the body only.
+
+  **Fall back to wholesale** when `patch_ops_path` is `null`:
+  `Read` `description_path` and pass its contents as
+  `description`. `patch_fallback_reason` says why the anchor
+  couldn't be made safe; relay it in the step-7 report so a
+  recurring cause (e.g. survivors accumulating a second
+  `**Touches**:` line) is visible rather than silent.
 
 - For **each** non-survivor, `save_issue` (id = that issue)
   with `state: "Canceled"` and `duplicateOf: "<survivor>"`,
   so the board shows it folded into the survivor.
 
-**6. Sync the survivor's blocking edges.** The survivor's
+**6. Record the survivor's file collisions.** The survivor's
 `**Touches**:` is now the union of every folded issue's, so
-run the incremental sweep on it to file any new file-overlap
-`blocks` edges against the open Backlog — one bare command
-that reduces to the
+run the incremental sweep on it to `related`-link any new
+collision against the open Backlog — one bare command that
+reduces to the
 `Bash(python3 .claude/tools/sync_blockers.py:*)`
 allow-rule:
 
@@ -190,20 +238,19 @@ python3 .claude/tools/sync_blockers.py --for <survivor>
 Best-effort: it needs `LINEAR_API_KEY` / `LINEAR_PROJECT_ID`;
 if either is unset, note it and continue. The canceled
 non-survivors drop out of the open Backlog on their own, so
-their stale overlap edges no longer gate anything.
+their stale links no longer matter.
 
-The tool holds the **priority floor** — no edge that would
-gate an `Urgent` issue behind a non-Urgent one — printing a
-`warning:` per suppressed pair instead (see `sync-blockers`).
-This matters more after a merge than at first filing, since
-the survivor's `**Touches**:` union is wider than any one
-folded issue's and so collides with more of the Backlog.
-**Relay any such warning** in the report below.
+This files **no blocking edge**; each collision prints the
+paths the pair collides on. Expect **more** of them after a
+merge than at first filing, since the survivor's
+`**Touches**:` union is wider than any one folded issue's.
+**Relay those lines** in the report below — they name the
+next candidates for consolidation.
 
 **7. Report.** One line: the survivor (with its final
-title), the issues folded in and canceled, and that its
-blocking edges were synced (naming any pair the priority
-floor suppressed).
+title), the issues folded in and canceled, which inherited
+blocking edges were carried (and which were left as prose),
+and the collisions recorded.
 
 ## Notes
 

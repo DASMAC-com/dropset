@@ -98,6 +98,20 @@ Concrete rules:
     answer was *zero hits*, as the scoped re-run confirmed. Name the
     source directories (or the specific files), or exclude the build
     output explicitly with `--exclude-dir`.
+
+    **Better: don't hand-roll the exclude list.** There is a committed
+    tool for this shape, which prunes the generated families and the
+    never-search trees and reduces to one stable allow-rule however the
+    pattern and filters vary:
+
+    ```sh
+    python3 .claude/tools/search_source.py 'PATTERN' --context 2
+    ```
+
+    When a bare `grep` really is unavoidable, take the flags from
+    `python3 .claude/tools/review_diff.py --print-grep-excludes` rather
+    than re-deriving them — that is the same list, with one owner.
+
   - **`grep -o -m N` bounds matched *lines*, not matches.** Two field
     extractions over a fetched page passed `-m 6` expecting six values
     and got ~150 lines back, because each matched line carried many

@@ -1,6 +1,6 @@
 ---
 name: session-metrics
-description: Capture where a session spent its tokens and recommend concrete trims. The deterministic core — resolve the session's on-disk transcript, read it (and its sub-agent transcripts) in its own process so the huge file never enters context, and rank the costliest tools / largest single results / per-sub-agent rollup plus the repeated command shapes worth hardening into a tool — runs as the committed `session_metrics.py` tool under `.claude/tools/` (`make session-metrics SESSION=<uuid>`). The skill drives that tool, then writes narrative trim recommendations — grounded in the ranked sinks and hardening candidates plus the observations the model kept during the session — into the Linear "Session Metrics" inbox document, which `trim-context` (driven by `housekeeping`) later mines into propose-only skill-improvement tasks. Runs at the end of a `review-pr` session (its handoff offers it) or standalone for any session id.
+description: Capture where a session spent its tokens and recommend concrete trims. The deterministic core — resolve the session's on-disk transcript, read it (and its sub-agent transcripts) in its own process so the huge file never enters context, and rank the costliest tools / largest single results / per-sub-agent rollup plus the repeated command shapes worth hardening into a tool (ranked by result size, not call count, each labeled context / wall-clock / prompt-churn) — runs as the committed `session_metrics.py` tool under `.claude/tools/` (`make session-metrics SESSION=<uuid>`). The skill drives that tool, then writes narrative trim recommendations — grounded in the ranked sinks and hardening candidates plus the observations the model kept during the session — into the Linear "Session Metrics" inbox document, which `trim-context` (driven by `housekeeping`) later mines into propose-only skill-improvement tasks. Runs at the end of a `review-pr` session (its handoff offers it) or standalone for any session id.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -59,23 +59,51 @@ and prints, as compact Markdown (or `--json`):
 
 - **Totals** — input / output / cache-write / cache-read
   tokens and turn count, summed across every assistant turn.
+
 - **Cache-hit rate** — cache-read ÷ all input.
+
 - **Costliest tools** — by total result size, with an
   approximate token count (bytes ÷ 4; per-result token
   counts aren't on disk, and ranking is what matters).
+
 - **Largest single results** — the individual results that
   cost the most, each with a short label (the file for a
   Read, the command for a Bash, the method for an MCP call).
+
 - **Sub-agents** — a per-agent token rollup, which is what
   catches an inlined-diff fan-out (the cost lands in each
   sub-agent's input, not the main tool table).
+
 - **Hardening candidates** — the repeated `Bash` command
-  shapes (grouped by normalized prefix), flagged
-  `deterministic` when they're string/path/env logic worth
-  porting into a tool (per `CLAUDE.md` → "Skill tooling").
-  This is what nominates a settled, repeated workflow —
-  the `git worktree list` / branch-validation kind of
-  sequence — for extraction.
+  shapes (grouped by normalized prefix), **ranked by result
+  size, not call count**, and flagged `deterministic` when
+  they're string/path/env logic worth porting into a tool
+  (per `CLAUDE.md` → "Skill tooling"). This is what
+  nominates a settled, repeated workflow — the
+  `git worktree list` / branch-validation kind of sequence —
+  for extraction.
+
+  Each candidate carries a **`cost`** label, because "worth
+  hardening" has three different reasons and conflating them
+  produced wrong recommendations:
+
+  - **`context`** — the results are large, so it is a real
+    token sink. Hardening it saves tokens.
+  - **`wall-clock`** — it routed through `run_quiet.py`, so
+    its output never entered context. Hardening it buys
+    *latency*, not tokens. Three sessions had to add this
+    disclaimer by hand for `make lint` ×10, which cost ~20
+    tokens.
+  - **`prompt-churn`** — cheap and fast, but each slightly
+    different variant is a fresh permission prompt. A
+    `printenv` is the type case.
+
+  **Don't read count as cost.** `grep` topped the old
+  count-ranked table in five consecutive sessions while being
+  negligible by size (one session's largest grep result was
+  ≈516 bytes), and hoisting a shape deliberately *converts
+  many small calls into a few larger ones* — so a
+  count-ranked table flags the fix as the new problem.
 
 Nothing about the host is hard-coded: paths resolve
 dynamically and the summary refers to locations generically.
@@ -126,7 +154,11 @@ recommendation in **three** sources:
   runs and is string/path/env logic is a candidate to port
   into a Python tool (per `CLAUDE.md` → "Skill tooling");
   recommend the extraction, naming the shape and the skill
-  step that emits it.
+  step that emits it. **State the candidate's `cost` label**
+  in the recommendation — a `wall-clock` or `prompt-churn`
+  candidate is still worth porting, but recommending it as a
+  *context* saving is simply false, and `trim-context` will
+  mine it as one if you don't say otherwise.
 - **The observations you kept during the session** — per
   `CLAUDE.md`'s "track consumption ideas as you go" habit,
   the running notes on what felt wasteful. The sinks say

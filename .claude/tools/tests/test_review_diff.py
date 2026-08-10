@@ -56,6 +56,116 @@ class MatchesTests(unittest.TestCase):
         # sdk/rs is a *consumer* of the generators, not an input to them.
         self.assertFalse(rd.matches_any("sdk/rs/src/events.rs", rd.GENERATION_INPUTS))
 
+    def test_segment_anywhere_pattern(self):
+        """``**/tests/**`` also ends in ``/**``, so it must be recognized as a
+        segment-anywhere rule before the subtree rule swallows it."""
+        self.assertTrue(rd.matches("sdk/rs/tests/parity.rs", "**/tests/**"))
+        self.assertTrue(rd.matches("tests/x.rs", "**/tests/**"))
+        self.assertFalse(rd.matches("sdk/rs/src/tests.rs", "**/tests/**"))
+        # a segment that merely starts with the name must not match
+        self.assertFalse(rd.matches("sdk/testsuite/x.rs", "**/tests/**"))
+
+
+class SliceForTests(unittest.TestCase):
+    """Which per-lens slice a changed path lands in."""
+
+    def test_docs(self):
+        self.assertEqual(rd.slice_for("docs/architecture.md"), "docs")
+        self.assertEqual(rd.slice_for("README.md"), "docs")
+        self.assertEqual(rd.slice_for("decks/demo-v1-spec.md"), "docs")
+
+    def test_tests(self):
+        self.assertEqual(rd.slice_for("sdk/rs/tests/parity.rs"), "tests")
+        self.assertEqual(rd.slice_for(".claude/tools/tests/test_x.py"), "tests")
+        self.assertEqual(rd.slice_for("frontend/app/x.test.tsx"), "tests")
+        self.assertEqual(rd.slice_for("sdk/conformance/vectors.json"), "tests")
+
+    def test_source_is_the_default(self):
+        self.assertEqual(rd.slice_for("programs/dropset/src/swap.rs"), "source")
+        self.assertEqual(rd.slice_for("tui/src/ui.rs"), "source")
+        self.assertEqual(rd.slice_for("Cargo.toml"), "source")
+
+    def test_markdown_under_a_tests_tree_reads_as_docs(self):
+        """Docs is checked first, so a note beside the fixtures isn't handed to
+        the completeness lens as if it were a test."""
+        self.assertEqual(rd.slice_for("sdk/rs/tests/README.md"), "docs")
+
+    def test_inline_rust_unit_tests_stay_in_source(self):
+        """The split is by file, and Rust puts `#[cfg(test)]` in the source file —
+        a documented limitation, asserted so it can't drift silently."""
+        self.assertEqual(rd.slice_for("programs/dropset/src/swap.rs"), "source")
+
+
+class DiffHeaderPathTests(unittest.TestCase):
+    """Slicing keys on the destination path in each ``diff --git`` header."""
+
+    def test_plain_header(self):
+        self.assertEqual(
+            rd._diff_header_path("diff --git a/src/x.rs b/src/x.rs\n"), "src/x.rs"
+        )
+
+    def test_rename_takes_the_destination(self):
+        self.assertEqual(
+            rd._diff_header_path("diff --git a/old/x.rs b/new/x.rs\n"), "new/x.rs"
+        )
+
+    def test_a_deletion_keeps_a_real_path_on_both_sides(self):
+        """git puts /dev/null on the ---/+++ lines, never in this header, so there
+        is no /dev/null case to handle."""
+        self.assertEqual(
+            rd._diff_header_path("diff --git a/gone.rs b/gone.rs\n"), "gone.rs"
+        )
+
+    def test_path_with_spaces(self):
+        self.assertEqual(
+            rd._diff_header_path("diff --git a/my dir/x.md b/my dir/x.md\n"),
+            "my dir/x.md",
+        )
+
+    def test_non_header_is_none(self):
+        self.assertIsNone(rd._diff_header_path("+added line\n"))
+        self.assertIsNone(rd._diff_header_path("@@ -1,2 +1,3 @@\n"))
+
+
+class GrepExcludesTests(unittest.TestCase):
+    """The hoisted-grep exclude list, shared with the source-search wrapper."""
+
+    def test_generated_dirs_reduce_to_their_basename(self):
+        """grep --exclude-dir matches a basename, not a path — and one
+        `generated` covers both the TS and Rust generated trees."""
+        out = rd.grep_excludes()
+        self.assertIn("generated", out["exclude_dirs"])
+
+    def test_file_shaped_excludes_become_globs(self):
+        out = rd.grep_excludes()
+        self.assertIn("pnpm-lock.yaml", out["exclude_globs"])
+        self.assertIn("Cargo.lock", out["exclude_globs"])
+        self.assertIn("dropset.json", out["exclude_globs"])
+
+    def test_never_search_dirs_are_included(self):
+        """A grep exclude list that omits target/ is unusable here — it is
+        multi-GB and gitignored, so `git diff` never needed to exclude it."""
+        out = rd.grep_excludes()
+        for name in ("target", "node_modules", ".git"):
+            self.assertIn(name, out["exclude_dirs"])
+
+    def test_tool_caches_are_excluded(self):
+        """A cache stores content-addressed copies of the source, so a sweep hits
+        every match twice without these."""
+        out = rd.grep_excludes()
+        for name in (".ruff_cache", ".pytest_cache", ".mypy_cache"):
+            self.assertIn(name, out["exclude_dirs"])
+
+    def test_grep_args_is_a_flag_string(self):
+        out = rd.grep_excludes()
+        self.assertIn("--exclude-dir=target", out["grep_args"])
+        self.assertIn("--exclude=Cargo.lock", out["grep_args"])
+
+    def test_no_duplicates(self):
+        out = rd.grep_excludes()
+        self.assertEqual(len(out["exclude_dirs"]), len(set(out["exclude_dirs"])))
+        self.assertEqual(len(out["exclude_globs"]), len(set(out["exclude_globs"])))
+
 
 def z(*records: str) -> str:
     """Join NUL-terminated ``--numstat -z`` fields into one payload.
@@ -372,6 +482,114 @@ class GateTests(unittest.TestCase):
     def test_missing_base_ref_errors(self):
         with self.assertRaises(rd.ReviewDiffError):
             rd.gate("no-such-base", self.out, fetch=False)
+
+    def test_split_partitions_the_diff_by_category(self):
+        self.commit("programs/dropset/src/swap.rs", "fn swap() {}\n", "Src")
+        self.commit("sdk/rs/tests/parity.rs", "fn parity() {}\n", "Tests")
+        self.commit("docs/architecture.md", "# Arch\n", "Docs")
+        v = rd.gate("main", self.out, fetch=False, split=True)
+
+        slices = v["slices"]
+        self.assertEqual(sorted(slices), ["docs", "source", "tests"])
+        for name in ("source", "tests", "docs"):
+            self.assertTrue(Path(slices[name]["path"]).exists())
+            self.assertGreater(slices[name]["lines"], 0)
+
+        source = Path(slices["source"]["path"]).read_text(encoding="utf-8")
+        tests = Path(slices["tests"]["path"]).read_text(encoding="utf-8")
+        docs = Path(slices["docs"]["path"]).read_text(encoding="utf-8")
+        self.assertIn("swap.rs", source)
+        self.assertNotIn("swap.rs", docs)
+        self.assertNotIn("architecture.md", source)
+        self.assertIn("parity.rs", tests)
+        self.assertIn("architecture.md", docs)
+
+    def test_split_line_counts_sum_to_the_whole_diff(self):
+        """Every line lands in exactly one slice — a lens reading its slice can't
+        be missing a hunk that the full diff had."""
+        self.commit("programs/dropset/src/swap.rs", "fn swap() {}\n", "Src")
+        self.commit("docs/architecture.md", "# Arch\n", "Docs")
+        v = rd.gate("main", self.out, fetch=False, split=True)
+        total = sum(s["lines"] for s in v["slices"].values())
+        self.assertEqual(total, v["diff_lines"])
+
+    def test_an_empty_category_is_still_written(self):
+        """A missing file would be ambiguous between "no docs changed" and "the
+        split didn't run"."""
+        self.commit("programs/dropset/src/swap.rs", "fn swap() {}\n", "Src")
+        v = rd.gate("main", self.out, fetch=False, split=True)
+        docs = Path(v["slices"]["docs"]["path"])
+        self.assertTrue(docs.exists())
+        self.assertEqual(docs.read_text(encoding="utf-8"), "")
+        self.assertEqual(v["slices"]["docs"]["lines"], 0)
+
+    def test_slices_are_owner_only(self):
+        self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
+        v = rd.gate("main", self.out, fetch=False, split=True)
+        for s in v["slices"].values():
+            self.assertEqual(Path(s["path"]).stat().st_mode & 0o777, 0o600)
+
+    def test_no_slices_key_without_split(self):
+        self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
+        v = rd.gate("main", self.out, fetch=False)
+        self.assertNotIn("slices", v)
+
+    def test_an_out_colliding_with_a_slice_name_is_refused(self):
+        """The slice handles open O_TRUNC before the diff is read, so a colliding
+        --out would truncate its own input and every slice would come out empty
+        with no error."""
+        self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
+        colliding = self.out.parent / "review-diff-source.txt"
+        with self.assertRaises(rd.ReviewDiffError):
+            rd.gate("main", colliding, fetch=False, split=True)
+
+    def test_split_rewrites_slices_each_run(self):
+        """Same rationale as the full diff: a stale slice is the hazard."""
+        self.commit("docs/a.md", "# a\n", "Docs")
+        v1 = rd.gate("main", self.out, fetch=False, split=True)
+        docs_path = Path(v1["slices"]["docs"]["path"])
+        self.assertIn("a.md", docs_path.read_text(encoding="utf-8"))
+
+        git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        self.commit("docs/b.md", "# b\n", "Docs 2")
+        rd.gate("main", self.out, fetch=False, split=True)
+        after = docs_path.read_text(encoding="utf-8")
+        self.assertIn("b.md", after)
+        self.assertNotIn("a.md", after)
+
+    def test_cli_print_grep_excludes_needs_no_out(self):
+        """It is a pure query about the exclude lists — no repo state, no git."""
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = rd.run(["review_diff.py", "--print-grep-excludes"])
+        self.assertEqual(code, 0)
+        parsed = json.loads(buf.getvalue())
+        self.assertIn("generated", parsed["exclude_dirs"])
+        self.assertIn("--exclude-dir=target", parsed["grep_args"])
+
+    def test_cli_requires_out_otherwise(self):
+        with self.assertRaises(rd.ReviewDiffError):
+            rd.run(["review_diff.py", "--base", "main", "--no-fetch"])
+
+    def test_cli_split_reports_slice_paths(self):
+        self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = rd.run(
+                [
+                    "review_diff.py",
+                    "--base",
+                    "main",
+                    "--out",
+                    str(self.out),
+                    "--no-fetch",
+                    "--split",
+                ]
+            )
+        self.assertEqual(code, 0)
+        parsed = json.loads(buf.getvalue())
+        self.assertIn("slices", parsed)
+        self.assertTrue(Path(parsed["slices"]["source"]["path"]).exists())
 
 
 if __name__ == "__main__":

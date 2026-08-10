@@ -5,7 +5,7 @@ Skills that **file** Linear issues (`linear-task`, `audit`,
 destination — team, project, assignee — from **environment
 variables**, never hard-coded UUIDs. (Skills that only **update**
 an existing issue by id — `init-pr`, `review-pr` — need no
-destination; `sync-blockers` only files `blocks` relations between
+destination; `sync-blockers` only files `related` relations between
 Backlog issues, reading `LINEAR_PROJECT_ID` as a query filter — see its
 own paragraph below.) Set them once in your
 shell profile (`~/.zshrc`):
@@ -66,26 +66,32 @@ The **sync-blockers Python tool** (the deterministic core of the
 single, dependency-free `python3` script at
 `.claude/tools/sync_blockers.py`, run directly (the
 `Bash(python3 .claude/tools/sync_blockers.py:*)` allow-rule —
-there is no `make` target). Its one job is **edge maintenance**: it
-reads the open Backlog's `**Touches**:` globs and declared `blockedBy`
-/ `blocks` edges, and files a real `blocks` relation (lower number
-blocks higher — see "Structured filing fields") for each undeclared
-`**Touches**:` collision, so Linear's native blocking icons carry the
-constraint. That relation write is its **only** Linear write — it
-renders no document, ranks nothing, and never folds or closes an issue
-(consolidation is `merge-tasks`' job). It runs in **two modes**:
-`--for ENG-###` compares just the named, just-filed issue against the
-backlog (the bounded file-time path the filing skills call after
-`save_issue`), and a bare invocation is the full pairwise sweep for
-occasional reconciliation. It uses the standard library only
-(`urllib` + `json`) for its GraphQL calls, so it adds no dependency to
-the Rust build and inherits the repo's `ruff` hooks; its unit tests run
-under `make tools-tests`. It reads `LINEAR_PROJECT_ID` plus its own
-`LINEAR_API_KEY` (a personal Linear API key, because a script can't
-ride the OAuth-based `claude.ai` Linear MCP); `--dry-run` prints the
-overlap edges it *would* file and writes nothing. It resolves all of
-these via `os.environ`, never a hard-coded id, and the key is never
-committed.
+there is no `make` target). Its one job is **relation maintenance**: it
+reads the open Backlog's `**Touches**:` globs and existing relations,
+and files a real `related` relation for each `**Touches**:` collision
+that has no relation yet, naming the paths the pair collides on. It
+files **no blocking edge** — see "Blocking relations" below. That
+relation write is its **only** Linear write — it renders no document,
+ranks nothing, and never folds or closes an issue (consolidation is
+`merge-tasks`' job). It runs in **four modes**: `--for ENG-###`
+compares just the named, just-filed issue against the backlog (the
+bounded file-time path the filing skills call after `save_issue`); a
+bare invocation is the full pairwise sweep for occasional
+reconciliation, reporting **collision clusters** (the input to
+`housekeeping`'s merge-group proposal), the surviving human-declared
+**semantic blocks**, and the two scheduling **smells**;
+`--report-todo-blocks` prints those smells alone as JSON; and
+`--demote` is the one-time, propose-then-confirm migration that
+converts pre-existing auto-filed `blocks` edges to `related` (writing
+only under `--apply`, optionally scoped by `--only`). It uses the
+standard library only (`urllib` + `json`) for its GraphQL calls, so it
+adds no dependency to the Rust build and inherits the repo's `ruff`
+hooks; its unit tests run under `make tools-tests`. It reads
+`LINEAR_PROJECT_ID` plus its own `LINEAR_API_KEY` (a personal Linear
+API key, because a script can't ride the OAuth-based `claude.ai` Linear
+MCP); `--dry-run` prints the links it *would* file and writes nothing.
+It resolves all of these via `os.environ`, never a hard-coded id, and
+the key is never committed.
 
 ## Structured filing fields
 
@@ -102,39 +108,34 @@ filing skills emit them and `sync-blockers` parses them:
   (`programs/dropset/src/swap.rs`); list every glob for a multi-file
   finding. The `sync-blockers` tool reads this to detect file
   collisions **deterministically** — a directory glob collides with
-  any path under it, and two issues that collide can't run in
-  parallel. When such a pair has no declared edge either direction,
-  the tool **materializes** the constraint into a real `blocks`
-  relation (the lower-numbered issue blocks the higher), so Linear
-  carries the edge durably as a blocking icon. This runs at **filing
-  time**: each filing skill calls `sync_blockers.py --for <new-id>`
-  right after `save_issue`, so a new issue's overlap edges are filed
-  the moment it lands. An issue that predates the `**Touches**:`
-  convention has no globs to check; backfill one and re-run the sweep.
+  any path under it, and two issues that collide are coupled. Such a
+  pair is **related-linked**, and the tool reports the paths they
+  collide on. This runs at **filing time**: each filing skill calls
+  `sync_blockers.py --for <new-id>` right after `save_issue`, so a new
+  issue's collisions are recorded the moment it lands. A collision is
+  explicitly **not** a blocking edge — see "Blocking relations". An
+  issue that predates the `**Touches**:` convention has no globs to
+  check; backfill one and re-run the sweep.
 
-### The priority floor
+### Collision clusters, not serial chains
 
-An overlap edge is a **scheduling heuristic**, not a declared
-dependency, and the lower-blocks-higher orientation is arbitrary. So the
-tool refuses one case outright: it never files an edge whose *blocked*
-side is `Urgent` while the blocker is not. Pointed at an Urgent issue,
-the number ordering inverts the only ordering that matters — the fix
-that is Urgent precisely because it should ship now becomes unpullable
-behind work nobody has started.
+File overlap is reported as a **cluster** — the issues that collide on
+one shared path — rather than as an ordering. A cluster is the candidate
+set for "these would land as one PR", which is what `housekeeping`'s
+merge-group proposal step consumes. Grouping is **per path**, not by
+connected component: coupling chains through shared files, so the
+transitive reading collapsed 25 of 27 open issues into one cluster,
+which proposes nothing. Clusters therefore overlap — an issue appears
+under every path it touches.
 
-This is not hypothetical: a reconciliation sweep once filed two
-`Medium` features as blockers of an `Urgent` one-atom fix that had a
-live reproduction, purely on touch overlap, and the fix went
-unpullable until the edges were removed by hand.
-
-Such a pair is **suppressed and reported** rather than filed, so the
-coupling stays visible without the inversion. When the two really are
-coupled, the honest edge is the **reverse** one — the Urgent issue
-blocks the feature, so the fix lands first — which is self-suppressing
-on later sweeps because it is then a declared edge. `housekeeping`'s
-reconciliation step also reports inversions **already** on the board
-(alongside the Todo-blocks-Backlog smell), since a file-time refusal
-can't retract an edge that predates the floor.
+The previous design turned each collision into a `blocks` edge instead,
+and paid for it: because `**Touches**` globs are coarse (crate-level),
+the orientation was arbitrary (lower number blocks higher), and block
+semantics are binary, the board grew giant serial chains — a day-1
+mainnet param-channel issue sat behind **eight** overlap blockers, and
+a docs-only pair was block-linked because both touched
+`docs/market-making-mvp.md` in unrelated sections. A cluster carries the
+same information without asserting an order nobody decided.
 
 ### Fold coupled findings into one issue
 
@@ -304,25 +305,53 @@ edit.
 
 ## Blocking relations
 
-When one issue genuinely depends on another, record it as a **native
-Linear relation**, not just prose. `save_issue` takes `blockedBy`
-(the `ENG-###`s that must land first) and `blocks` (the `ENG-###`s
-this one gates), both by identifier; they are **append-only** — they
-add edges and never clear existing ones, so use `removeBlockedBy` /
-`removeBlocks` to drop one. Recording a real edge keeps the blocker
-visible and prioritized so dependent work doesn't rot waiting on an
-upstream nobody remembers, and `sync-blockers` reads these edges to
-avoid duplicating one — a declared edge suppresses the overlap edge it
-would otherwise materialize for that pair. Assert only a dependency you
-actually know to be real; omit it when unsure.
+**No automated writer files a blocking edge — ever.** Not
+`sync_blockers.py`, not a filing skill (`linear-task`, `audit`,
+`audit-scope`, `trim-context`, `housekeeping`, `merge-tasks`), not an
+autonomous audit rotation. This holds for edges an agent believes are
+genuinely semantic, not just for file-overlap ones.
 
-`linear-task` sets these from a person's call. The **autonomous**
-auditors (`audit-scope`, `audit`) work under a tighter rule:
-they may assert a relation **only on concrete evidence** that one
-finding's fix cannot land until another issue resolves (e.g. a nit
-that depends on an `arch:` proposal filed the same run), never a
-speculative "these feel related" edge. Mere coupling — work that
-belongs in *one PR* — is handled by combining into a single issue
-(see "Fold coupled findings into one issue" above), not a relation.
-When the blocker is filed in the same run, file it
-first so its `ENG-###` exists, then reference it.
+The reason is that the board's **available-vs-blocked view is a
+scheduling instrument the human drives**: a hand-built blocking queue
+expressing intended order of attack, from which the *available* set is
+then sorted by priority. An auto-filed edge silently makes that view
+untrustworthy, and a wrongly-blocked issue drops out of the available
+set altogether — so a spurious edge is strictly worse than a missing
+one. A missing edge costs at most a rebase; a spurious one costs
+scheduling.
+
+**Propose, don't file.** Where a filer believes a real dependency
+exists, it proposes at filing time via `AskUserQuestion` — naming the
+candidate blocker and the **concrete evidence** ("this consumes the
+output of X — should it be blocked by it?") — and writes the edge only
+on an explicit yes. The default, **including in any non-interactive or
+autonomous run where nobody can answer, is no edge**; the suspected
+dependency is recorded as prose in the issue body instead, so the
+reasoning is never lost.
+
+**Human-placed edges are authoritative.** The automation never
+rewrites, redirects, or removes one. The sole exception is
+`sync-blockers`' one-time `--demote` migration, which lists candidates
+and converts only what a human explicitly confirms (see that skill).
+
+The mechanics, for when a human does ask for an edge: `save_issue`
+takes `blockedBy` (the `ENG-###`s that must land first) and `blocks`
+(the `ENG-###`s this one gates), both by identifier; they are
+**append-only** — they add edges and never clear existing ones, so use
+`removeBlockedBy` / `removeBlocks` to drop one. When the blocker is
+filed in the same run, file it first so its `ENG-###` exists, then
+reference it.
+
+Two things that are **not** blocking edges:
+
+- **File overlap.** A `**Touches**:` collision is related-linked and
+  reported as a cluster (see "Collision clusters, not serial chains").
+- **Coupling that belongs in one PR.** That is handled by combining
+  into a single issue (see "Fold coupled findings into one issue"),
+  not a relation.
+
+`sync-blockers` reads whatever edges exist to avoid double-linking a
+pair — a declared edge suppresses the related link it would otherwise
+file — and reports them back under the sweep's *semantic blocks*
+section, which, with nothing automated writing one, *is* the intended
+scheduling order.

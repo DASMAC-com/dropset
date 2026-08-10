@@ -1,18 +1,97 @@
 ---
 name: init-pr
-description: Bootstrap a worktree — pull main, set up the branch, push a draft PR, and warm CI caches.
+description: Bootstrap a worktree — pre-check the session's model tier and the gh credential first, then fetch main, set up the branch, push a draft PR, and warm CI caches.
 disable-model-invocation: true
 user-invocable: true
 ---
 
 # `init-pr`
 
-Bootstrap the current worktree: pull main in the
-base repo, set up the branch, push a draft PR so
-CI caches start warming while work continues.
+Bootstrap the current worktree: fetch main, set up the
+branch, push a draft PR so CI caches start warming while
+work continues.
 
 This is the first skill an agent should run after
 `claude --worktree <tag>` starts.
+
+Two cheap pre-checks come **first**, before anything that
+mutates the worktree — the model tier this session is running
+as, and the `gh` credential. Both exist because the failure
+they catch is otherwise discovered late and expensively.
+
+## Step 0: check which model this session is running as
+
+**Before any other work — before the helper call, before the
+rebase — check the model this session is running as.** The
+system prompt states it.
+
+The working split is: **planning** sessions run on a
+Fable/Mythos-tier model, **implementation** sessions
+(`init-pr` → run-to-completion → `review-pr`) run on the
+saved default. The failure mode is forgetting to switch back
+and burning Fable-tier credits on a 40-minute deterministic
+implementation run — which is exactly what this skill starts.
+
+So if this session is a **Fable/Mythos-tier** model, **stop
+and ask** via `AskUserQuestion` before doing anything else,
+with the recommended option first:
+
+1. *"Restart this session on the default model and re-run
+   /init-pr"* — recommended.
+1. *"Continue on this model anyway"*.
+
+On the first, stop; the user restarts. On the second, proceed
+normally and don't ask again this session.
+
+Two things to get right:
+
+- **Gate on the Fable/Mythos tier specifically, not on "is
+  not Opus".** A Haiku or Sonnet session is a deliberate
+  cheap-run experiment and must not trip the guard. Keeping
+  the check to a named tier list also means that if the
+  pricing picture changes later, this is a one-line edit.
+- **Detect-and-stop is the whole mechanism.** A skill cannot
+  switch the session's model, so there is no hook and no tool
+  here — just the check and the question.
+
+`review-pr` deliberately gets **no** such guard: it runs
+inside the same implementation session, which is already on
+the right model by the time it is invoked.
+
+## Step 0b: pre-check the GitHub credential
+
+Still before anything that mutates the worktree, confirm the
+`gh` credential works:
+
+```sh
+gh auth status
+```
+
+One call, free on the happy path, and it prevents a
+half-finished bootstrap. One run reached **step 7 of 12** —
+branch renamed, rebased, signed empty commit made — before
+`git push` died with "could not read Username", because the
+token had expired. Diagnosing it then took five extra calls
+— `git remote -v`, `gh auth status`, the credential helper
+config, `git ls-remote`, a retry — plus two `printenv` token
+probes, and the first evidence was actively misleading:
+**anonymous reads succeed on this repo**, so `git ls-remote`
+came back clean while pushes were dead.
+
+Read the **scope set** from the same output while you are
+there. The step-9 notification-unsubscribe needs the
+`notifications` scope, and a re-auth silently drops it — that
+step is best-effort so it won't block, but naming the missing
+scope here beats discovering it at the end. The one-time
+operator fix:
+
+```sh
+gh auth refresh -h github.com -s notifications
+```
+
+If `gh auth status` reports no valid credential, **stop** and
+tell the user to re-authenticate — don't rename, rebase, or
+commit first.
 
 ## Input
 
@@ -94,20 +173,54 @@ since a sub-agent survey of it just gets re-Read afterward.
 
 The same context economy `review-pr` enforces applies during
 the **implement** phase this skill hands off into — it slips
-here precisely because no skill is driving. Two habits, per
-`CLAUDE.md` → "Context economy":
+here precisely because no skill is driving. These habits, per
+`CLAUDE.md` → "Context economy", apply to the **main loop**,
+not only to the sub-agents you brief:
 
 - **Slice-read large files.** To find an append point,
   confirm an import, or edit one function in a big source
   (a 600–1000-line module whose `#[cfg(test)]` block is half
   the file), **Grep to the region** then `Read` with
   `offset`/`limit` — don't pull the whole file.
+- **Map the structure before any Read over ~300 lines.** One
+  Grep for `^fn |^impl |^pub` (or the language's equivalent)
+  gives you the section map, and the map tells you which
+  slice you actually want. A dispatcher whole-file Read
+  (≈4.4k) to find **one** append point is the recurring shape
+  this prevents.
+- **A planned multi-region read is ONE bounded read, not
+  several.** When you already know you need three parts of a
+  file, don't slice-read it three times — one run read
+  `swap.rs` across four separate slices, together **more** than
+  a single whole-file read would have cost. Slicing is only
+  cheaper when you are reading less.
+- **Reading 3+ files just to orient is the trigger, not an
+  exception.** Whole-file Reads at *survey* time were the
+  single largest sink of one session (top five, ≈15k) — the
+  crate was small, so no per-file budget felt warranted, yet
+  `model.rs` is ~40% `#[cfg(test)]` and only two signatures
+  were needed. Grep to the symbol, then `Read` the slice.
+- **Read whole only when you will BOTH edit the file and
+  brief agents on it.** This is the one case where the whole
+  file is the cheaper choice overall, and the plain "never
+  read whole" reading gets it wrong. One session's top five
+  main-loop results were whole-file Reads (≈23k) of the crate
+  it was about to modify — and those same excerpts were then
+  pasted into all five lens briefs, which is what kept every
+  lens under its turn cap. Paid once, amortized five times.
+  Absent that second use, slice.
 - **Route `cargo` / `make` through the quiet runner.** Run
   `cargo test` / `cargo check` / `make …` through
   `python3 .claude/tools/run_quiet.py -- <cmd>` **during
   implementation**, not only during `review-pr` — an
   unwrapped `cargo test` lands its whole `Compiling …`
   cascade in context for a result that is one line.
+- **Search source with the tool, not a bare recursive grep.**
+  `python3 .claude/tools/search_source.py '<pattern>'` already
+  prunes the generated families and the never-search trees
+  (`target/` alone is multi-GB and `grep -r` does not honor
+  gitignore), and it reduces to one stable allow-rule however
+  the pattern and filters vary.
 
 ## The branch/worktree helper tool
 
@@ -161,17 +274,43 @@ fresh worktree inherits.
    valid `eng-###` tag. Otherwise use the lowercased
    `tag` from here on.
 
-1. **Pull main in the base repository** (not this
-   worktree). Take `base_repo` from the helper's output —
-   it is the worktree whose branch is `refs/heads/main`.
-   If `base_repo` is `null`, no worktree has `main`
-   checked out: skip the pull and warn the user.
-   Otherwise pull, passing the path inline so the call
-   reduces to a stable allow-rule (no `$(…)`):
+1. **Fetch the latest `main`.** The point is to start the
+   rebase below from current upstream, not from whatever this
+   worktree last saw. Do it from **inside this worktree**:
 
    ```sh
-   git -C <base_repo> pull --ff-only
+   git fetch origin main
    ```
+
+   That updates the shared `origin/main` ref (worktrees share
+   one `.git`), which is what step 5 rebases onto.
+
+   **Don't reach for `git -C <base_repo> pull --ff-only`.**
+   Earlier versions of this step did, and in a
+   worktree-isolated session it is refused: a worktree
+   session's git operations have to target its own worktree,
+   so redirecting out of it with `-C` doesn't run. The fetch
+   above achieves what this step actually needs without
+   leaving the worktree.
+
+   To be precise about the mechanism, since it is easy to
+   mis-attribute: the refusal comes from the **harness's own
+   worktree isolation**, not from any hook this repo commits.
+   The repo's **worktree edit-path guard** is a different
+   thing — it covers **file-mutating tools** (`Edit`, `Write`,
+   `MultiEdit`, `NotebookEdit`) that target a base-repo
+   absolute path, and never inspects `Bash` at all (see
+   `docs/conventions/local-integrations.md` → "The worktree
+   edit-path guard hook"). Both point the same way; only one
+   of them is what stops this command.
+
+   The one thing the fetch does *not* do is fast-forward the
+   base repo's checked-out `main` working tree. That matters
+   only to whoever is working in the base repo directly, not
+   to this bootstrap, so leave it to them. `base_repo` from
+   the helper's output is still worth keeping — the env
+   symlink used it, and a `null` value is the same condition
+   that reports `env_link: "no-base"`.
 
 1. **Confirm the `frontend/.env.local` symlink.** The
    `--link-env` flag on the helper call above **already did
@@ -224,12 +363,17 @@ fresh worktree inherits.
      is a **no-op** — leave it alone. Only the
      `worktree-`-prefixed default is rewritten.
 
-1. Rebase onto the freshly-pulled main so the
+1. Rebase onto the freshly-fetched upstream main so the
    worktree starts from the latest code:
 
    ```sh
-   git rebase main
+   git rebase origin/main
    ```
+
+   **`origin/main`, not the local `main`.** The step-2 fetch
+   updates the remote-tracking ref; the local `main` branch is
+   only fast-forwarded by whoever has it checked out, so
+   rebasing onto it can silently start from stale code.
 
    If the rebase produces conflicts, abort it
    (`git rebase --abort`) and tell the user.
@@ -318,7 +462,10 @@ fresh worktree inherits.
    needs the `gh` token's **`notifications`** OAuth scope; if
    it's missing the call fails with `INSUFFICIENT_SCOPES` (a
    one-time operator grant:
-   `gh auth refresh -h github.com -s notifications`).
+   `gh auth refresh -h github.com -s notifications`). Step 0b's
+   pre-check already read the scope set, so if it flagged
+   `notifications` as absent, expect this to fail and say so
+   rather than re-diagnosing it here.
 
    Make it **best-effort**: if either call errors, note it and
    continue — a notification ping must never block

@@ -45,6 +45,31 @@ into the transcript**:
     builders, a specific `fn`) and slice-read those, rather than
     paginating the whole fixture.
 
+  Three refinements, because the flat rule "never read whole" mis-scores
+  two real situations and misses a third:
+
+  - **Read whole only when you will BOTH edit the file and brief agents
+    on it.** That is the one case where the whole file is cheaper
+    *overall*, and the flat rule calls it a violation. One session's top
+    five main-loop results were whole-file `Read`s (≈23k) of the crate it
+    was about to modify — and those same excerpts then went inline into
+    all five review-lens briefs, which is what held every lens under its
+    turn cap. Paid once, amortized five times. Absent that second use,
+    slice.
+  - **A planned multi-region read is ONE bounded read, not several.**
+    Slicing is only cheaper when you are reading *less*. One run read
+    `swap.rs` across four separate slices totalling **more** than a
+    single whole-file read; another spent a whole-file `Read` (≈4.4k) on
+    a dispatcher to find one append point. Decide the regions first: if
+    they add up to most of the file, read it once.
+  - **"Reading 3+ files to orient" is the trigger, not an exception.**
+    Survey-time whole-file reads were the single largest sink of one
+    session (top five, ≈15k). The crate was small, so no per-file budget
+    felt warranted — yet `model.rs` is ~40% `#[cfg(test)]` and only two
+    signatures were needed. Before any `Read` over ~300 lines, Grep for
+    the structure (`^fn |^impl |^pub`, or the language's equivalent);
+    the map tells you which slice you actually want.
+
 - **Reach for the Grep tool first, and hoist a repeated sweep into one
   call.** `grep` has been the single most-repeated Bash shape in four
   consecutive sessions (×26, ×29, ×63, ×54) — almost all of them
@@ -59,6 +84,26 @@ into the transcript**:
   carry rather than the instruction to sweep. The bare-`grep` fallback,
   for when the Grep tool isn't present, and the scope it must be held
   to are in `docs/conventions/shell-commands.md`.
+
+  **Scope a hoisted sweep to non-generated paths.** Hoisting is correct
+  and *unscoped* hoisting is expensive: one session's largest single
+  main-loop result was exactly the right sweep, returning the whole
+  regenerated SDK surface (a 658-line generated instruction file) no
+  reader needed. Use the committed wrapper, which prunes the generated
+  families and the never-search trees (`grep -r` does not honor
+  gitignore, and `target/` alone is multi-GB) and reduces to one stable
+  allow-rule however the pattern varies:
+
+  ```sh
+  python3 .claude/tools/search_source.py '<pattern>' --context 2
+  ```
+
+  It shares its exclude lists with `review_diff.py`, so there is one
+  owner rather than a set re-derived per run;
+  `review_diff.py --print-grep-excludes` prints them as `grep` flags for
+  the bare-`grep` fallback. The wrapper also **states its truncation**
+  when a cap trims the output — a silent cap reads as "searched
+  everything", which is worse than no search.
 
 - **Route verbose build logs away from context.** Prefer `-q` /
   `--quiet` so a `cargo` / `make` "Compiling …" cascade doesn't land

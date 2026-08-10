@@ -86,7 +86,7 @@ drift as a single aggregated Backlog issue … each finding is a bullet
 carrying its own `**Fingerprint**:` line"). The trade-off is
 intended: aggregating means the levers can't run as independent
 parallel PRs (separate issues would otherwise carry their own
-file-overlap edges), and that's the accepted choice — one task / one
+file-collision links), and that's the accepted choice — one task / one
 PR for these skill tweaks over parallelism. Per-lever fingerprints
 preserve independent dedup regardless.
 

@@ -20,8 +20,8 @@ passes.
 
 This replaces the old `audit-codebase`, which wrote a
 gitignored checklist. Findings now live in the Backlog,
-so they're picked up as normal PRs (their blocking edges
-kept honest by `sync-blockers`) instead of a scratch
+so they're picked up as normal PRs (their file collisions
+recorded by `sync-blockers`) instead of a scratch
 file.
 
 ## Two ways it runs
@@ -221,8 +221,7 @@ Optional (ask on a direct run if not provided):
        state: "Backlog",
        title: "<file>: <imperative fix, no trailing period>",
        description: "<markdown body, literal newlines>",
-       priority: 3,  // 2 for high-severity security
-       blockedBy: ["<ENG-###>"]  // omit unless a real dependency (see below)
+       priority: 3  // 2 for high-severity security
      )
      ```
 
@@ -234,13 +233,22 @@ Optional (ask on a direct run if not provided):
      "Claude: meta-work prefix". A finding touching product
      / on-chain / SDK / frontend code gets no prefix.
 
-     **Dependencies.** Set a `blockedBy` / `blocks`
-     edge per the **Blocking relations** brief in
-     `CLAUDE.md` (→ "Linear automation") — as an
-     autonomous filer, only on concrete evidence of a
-     real ordering dependency, never speculatively.
+     **Dependencies — file none.** A blocking edge is
+     **human-curated** (`CLAUDE.md` → "Blocking
+     relations"), and this skill is an **autonomous
+     filer**: there is nobody to answer an
+     `AskUserQuestion` mid-rotation, and the default with
+     no answer is **no edge**. So pass no `blockedBy` /
+     `blocks` at all. When a finding really does look
+     ordered behind another issue, write that into the
+     body as prose instead: a `**Suspected dependency**:`
+     line naming the issue it likely needs first and the
+     evidence for it. A human can then place the edge from
+     the same information you had.
+     A spurious edge drops an issue out of the board's
+     available set; a missing one costs a rebase.
      (Coupling that means *one PR* is the merged-issue
-     case in Notes, not a relation.)
+     case in Notes, and is unaffected by this.)
 
      The body must let a cold agent act on it in its own
      worktree (literal newlines, not `\n`):
@@ -267,10 +275,11 @@ Optional (ask on a direct run if not provided):
        multi-file finding list every glob. Mandatory — see
        `CLAUDE.md` → "Structured filing fields".
 
-   **Sync overlap edges (direct run only).** Right after each
-   `save_issue` returns a new identifier, file that issue's
-   file-overlap `blocks` edges against the open Backlog with
-   the incremental sweep — one bare command reducing to the
+   **Record file collisions (direct run only).** Right after
+   each `save_issue` returns a new identifier, run the
+   incremental sweep to `related`-link that issue's
+   `**Touches**:` collisions against the open Backlog — one
+   bare command reducing to the
    `Bash(python3 .claude/tools/sync_blockers.py:*)`
    allow-rule (the scan runs in the tool's own process, so
    nothing enters context):
@@ -285,11 +294,10 @@ Optional (ask on a direct run if not provided):
    here), so `audit` files them and runs the `--for` call —
    skip it here.
 
-   The tool holds the **priority floor** — no edge that would
-   gate an `Urgent` issue behind a non-Urgent one — printing a
-   `warning:` per suppressed pair instead (see
-   `sync-blockers`). **Relay any such warning in the report**;
-   the overlap is real even though the edge wasn't filed.
+   This files **no blocking edge**; each collision prints the
+   paths the pair collides on. **Relay those lines in the
+   report** — a collision is a candidate for landing the two
+   issues as one PR, which is a call the human makes.
 
 1. **Report.** Print a short tally — findings by
    dimension and severity, deduped count, and (direct run)

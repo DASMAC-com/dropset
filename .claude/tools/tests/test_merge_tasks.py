@@ -14,13 +14,40 @@ from contextlib import redirect_stdout
 from merge_tasks import (
     MergeTasksError,
     assemble,
+    build_patch_ops,
     extract_touches,
     is_meta_glob,
     parse_token,
     plan,
+    raw_touches_lines,
     run,
     strip_claude_prefix,
 )
+
+
+def apply_ops(body: str, ops: list[dict]) -> str:
+    """Apply Linear ``patch`` ops the way the API does — in order, each anchor
+    matching exactly once — so a test can assert the ops and the wholesale
+    description converge on the same text.
+
+    Only the two ops this tool emits (``replace``, ``append``) are handled; an
+    unexpected op is an error rather than a silent no-op.
+    """
+    out = body
+    for op in ops:
+        kind = op["op"]
+        if kind == "append":
+            out += op["text"]
+        elif kind == "replace":
+            old = op["old_string"]
+            if out.count(old) != 1:
+                raise AssertionError(
+                    f"anchor matched {out.count(old)} times, not once: {old!r}"
+                )
+            out = out.replace(old, op["new_string"])
+        else:
+            raise AssertionError(f"unexpected op kind: {kind}")
+    return out
 
 
 class ParseTests(unittest.TestCase):
@@ -168,6 +195,163 @@ class AssembleTests(unittest.TestCase):
         with self.assertRaises(MergeTasksError):
             assemble(data)
 
+    def test_emits_patch_ops_alongside_the_wholesale_body(self):
+        out = assemble(self._issues())
+        self.assertEqual(out["patch_fallback_reason"], "")
+        kinds = [op["op"] for op in out["patch_ops"]]
+        # delete the survivor's Touches line, append the part, re-append the union
+        self.assertEqual(kinds, ["replace", "append", "append"])
+
+    def test_no_op_carries_the_survivors_existing_body(self):
+        """The whole point: the survivor's text is never re-sent. Only its short
+        Touches line may appear, as the replace anchor."""
+        out = assemble(self._issues())
+        for op in out["patch_ops"]:
+            payload = op.get("text", "") + op.get("old_string", "")
+            self.assertNotIn("Survivor intro.", payload)
+            self.assertNotIn("**Fingerprint**: audit:dedup", payload)
+
+    def test_ops_reproduce_the_wholesale_description(self):
+        data = self._issues()
+        out = assemble(data)
+        stored = data["issues"][0]["description"]
+        self.assertEqual(
+            apply_ops(stored, out["patch_ops"]).strip(),
+            out["description"].strip(),
+        )
+
+    def test_ops_still_work_when_the_survivor_has_no_touches_line(self):
+        """No anchor needed at all — a pure-append fold."""
+        data = self._issues()
+        data["issues"][0]["description"] = "Survivor with no touches.\n"
+        out = assemble(data)
+        self.assertEqual(out["patch_fallback_reason"], "")
+        self.assertEqual([op["op"] for op in out["patch_ops"]], ["append", "append"])
+        self.assertEqual(
+            apply_ops(data["issues"][0]["description"], out["patch_ops"]).strip(),
+            out["description"].strip(),
+        )
+
+    def test_falls_back_when_the_survivor_has_two_touches_lines(self):
+        data = self._issues()
+        data["issues"][0]["description"] = (
+            "Survivor.\n\n**Touches**: a/\n\n**Touches**: b/\n"
+        )
+        out = assemble(data)
+        self.assertIsNone(out["patch_ops"])
+        self.assertIn("ambiguous", out["patch_fallback_reason"])
+        # the wholesale body is still there to fall back on
+        self.assertIn("# Part 1 —", out["description"])
+
+    def test_falls_back_when_the_touches_anchor_carries_an_eng_tag(self):
+        """Linear stores ENG-### as a mention node, so such an anchor can never
+        match the stored text."""
+        data = self._issues()
+        data["issues"][0]["description"] = (
+            "Survivor.\n\n**Touches**: docs/ENG-615-notes.md\n"
+        )
+        out = assemble(data)
+        self.assertIsNone(out["patch_ops"])
+        self.assertIn("mention node", out["patch_fallback_reason"])
+
+    def test_a_part_heading_with_a_tag_is_appended_not_anchored(self):
+        """A folded title may carry an ENG tag; that only matters for anchors,
+        and no anchor is ever built from a title."""
+        data = self._issues()
+        data["issues"][1]["title"] = "Follow up on ENG-700 feeds"
+        out = assemble(data)
+        self.assertEqual(out["patch_fallback_reason"], "")
+        appends = [op for op in out["patch_ops"] if op["op"] == "append"]
+        self.assertTrue(any("ENG-700" in op["text"] for op in appends))
+        replaces = [op for op in out["patch_ops"] if op["op"] == "replace"]
+        for op in replaces:
+            self.assertNotIn("ENG-700", op["old_string"])
+
+    def test_anchor_uses_the_stored_line_verbatim_including_backticks(self):
+        data = self._issues()
+        data["issues"][0]["description"] = "Survivor.\n\n**Touches**: `tui/`\n"
+        out = assemble(data)
+        replaces = [op for op in out["patch_ops"] if op["op"] == "replace"]
+        self.assertEqual(replaces[0]["old_string"], "\n**Touches**: `tui/`")
+
+
+class RawTouchesLineTests(unittest.TestCase):
+    """The anchor is built from the stored line, not the parsed globs."""
+
+    def test_returns_the_line_verbatim(self):
+        body = "x\n**Touches**: `tui/`, sdk/rs/**\ny\n"
+        self.assertEqual(raw_touches_lines(body), ["**Touches**: `tui/`, sdk/rs/**"])
+
+    def test_collects_a_list_marker_line(self):
+        self.assertEqual(
+            raw_touches_lines("- **Touches**: a/\n"), ["- **Touches**: a/"]
+        )
+
+    def test_none_when_absent(self):
+        self.assertEqual(raw_touches_lines("no fields here\n"), [])
+
+
+class PatchOpCapTests(unittest.TestCase):
+    """Linear caps `patch` at 50 ops; a wider fold goes wholesale rather than
+    being rejected mid-merge."""
+
+    def test_falls_back_over_the_fifty_op_cap(self):
+        sections = [f"---\n\n# Part {n} — t\n\nbody" for n in range(60)]
+        ops, reason = build_patch_ops("Survivor.\n", sections, ["a/"])
+        self.assertIsNone(ops)
+        self.assertIn("50-op cap", reason)
+
+    def test_just_under_the_cap_is_fine(self):
+        sections = [f"---\n\n# Part {n} — t\n\nbody" for n in range(48)]
+        ops, reason = build_patch_ops("Survivor.\n", sections, ["a/"])
+        self.assertEqual(reason, "")
+        self.assertEqual(len(ops), 49)
+
+    def test_an_empty_op_list_falls_back_with_a_reason(self):
+        """`patch` requires at least one op, and a caller testing `if patch_ops:`
+        would otherwise fall through to wholesale with an empty reason."""
+        ops, reason = build_patch_ops("Survivor with no touches.\n", [], [])
+        self.assertIsNone(ops)
+        self.assertIn("no operations", reason)
+
+
+class PatchOpNewlineTests(unittest.TestCase):
+    """The lead-newline arithmetic, across every trailing-newline count."""
+
+    def _merged(self, stored, sections, globs):
+        ops, reason = build_patch_ops(stored, sections, globs)
+        self.assertEqual(reason, "")
+        return apply_ops(stored, ops)
+
+    def test_no_trailing_newline(self):
+        got = self._merged("Survivor.", ["---\n\n# Part 1 — t\n\nbody"], ["a/"])
+        self.assertIn("Survivor.\n\n---", got)
+
+    def test_one_trailing_newline(self):
+        got = self._merged("Survivor.\n", ["---\n\n# Part 1 — t\n\nbody"], ["a/"])
+        self.assertIn("Survivor.\n\n---", got)
+
+    def test_two_trailing_newlines(self):
+        got = self._merged("Survivor.\n\n", ["---\n\n# Part 1 — t\n\nbody"], ["a/"])
+        self.assertIn("Survivor.\n\n---", got)
+
+    def test_three_or_more_trailing_newlines_is_a_known_divergence(self):
+        """The `max(0, 2 - trailing)` clamp cannot remove newlines already there,
+        so ops keep them where the wholesale path would rstrip. Documented
+        compromise — pinned here so it can't drift into a surprise."""
+        got = self._merged("Survivor.\n\n\n\n", ["---\n\n# Part 1 — t\n\nbody"], ["a/"])
+        self.assertIn("Survivor.\n\n\n\n---", got)
+
+    def test_a_first_line_touches_can_still_anchor(self):
+        """Prefixing the anchor with a newline would leave a Touches-first body
+        with no anchor at all, and misreport it as ambiguous."""
+        stored = "**Touches**: a/\n\nSurvivor prose.\n"
+        ops, reason = build_patch_ops(stored, ["---\n\n# Part 1 — t\n\nbody"], ["a/"])
+        self.assertEqual(reason, "")
+        merged = apply_ops(stored, ops)
+        self.assertEqual(merged.count("**Touches**:"), 1)
+        self.assertIn("Survivor prose.", merged)
+
 
 class AssembleCliTests(unittest.TestCase):
     """The ``--out`` file-handoff lives in ``run()``, not ``assemble()``."""
@@ -231,6 +415,52 @@ class AssembleCliTests(unittest.TestCase):
                 written = fh.read()
             self.assertIn("# Part 1 — Tweak sync-blockers", written)
             self.assertTrue(written.rstrip().endswith(".claude/tools/**"))
+
+    def test_ops_out_writes_ops_and_omits_them_from_stdout(self):
+        with tempfile.TemporaryDirectory() as d:
+            issues = os.path.join(d, "issues.json")
+            body = os.path.join(d, "body.md")
+            ops_path = os.path.join(d, "ops.json")
+            with open(issues, "w", encoding="utf-8") as fh:
+                json.dump(self._issues(), fh)
+            rc, out = self._run_capture(
+                [
+                    "merge_tasks.py",
+                    "assemble",
+                    issues,
+                    "--out",
+                    body,
+                    "--ops-out",
+                    ops_path,
+                ]
+            )
+            self.assertEqual(rc, 0)
+            self.assertNotIn("patch_ops", out)
+            self.assertEqual(out["patch_ops_path"], ops_path)
+            self.assertEqual(out["patch_ops_count"], 3)
+            with open(ops_path, encoding="utf-8") as fh:
+                ops = json.load(fh)
+            self.assertEqual([op["op"] for op in ops], ["replace", "append", "append"])
+
+    def test_ops_out_reports_no_path_when_the_fold_must_go_wholesale(self):
+        data = self._issues()
+        data["issues"][0]["description"] = (
+            "Survivor.\n\n**Touches**: a/\n\n**Touches**: b/\n"
+        )
+        with tempfile.TemporaryDirectory() as d:
+            issues = os.path.join(d, "issues.json")
+            ops_path = os.path.join(d, "ops.json")
+            with open(issues, "w", encoding="utf-8") as fh:
+                json.dump(data, fh)
+            rc, out = self._run_capture(
+                ["merge_tasks.py", "assemble", issues, "--ops-out", ops_path]
+            )
+            self.assertEqual(rc, 0)
+            self.assertIsNone(out["patch_ops_path"])
+            self.assertEqual(out["patch_ops_count"], 0)
+            self.assertIn("ambiguous", out["patch_fallback_reason"])
+            # nothing was written, so the skill can't mistake a stale file for ops
+            self.assertFalse(os.path.exists(ops_path))
 
 
 if __name__ == "__main__":
