@@ -306,13 +306,24 @@ const isTerminal = (e: unknown): boolean =>
   e instanceof NoRouteError &&
   e.eclob.status === "unavailable";
 
-// Surface the aggregator's own wording when both legs failed — the panel maps
-// DFlow's "Route not found" onto a friendlier message, so keep it intact
-// rather than burying it in the router's combined message.
+// Pick one leg's wording for the panel — never the router's combined message,
+// which names both venues. The aggregator's own text is preferred because the
+// panel maps its "Route not found" onto a friendlier explanation, so keeping it
+// intact is what makes that mapping fire; our own book's reason is the
+// fallback. Naming a third-party venue in our UI isn't something a user needs,
+// and the combined string reads as diagnostics rather than an explanation.
 const describeQuoteError = (e: unknown): string => {
   if (e instanceof NoRouteError) {
-    const agg = e.aggregator.reason;
-    if (agg && e.eclob.status === "unavailable") return agg;
+    // Only a leg that actually errored has a diagnosis worth showing — an
+    // `unavailable` leg was either never attempted or has no market, neither of
+    // which explains anything to a user whose swap just didn't route.
+    const failedReason = (c: { status: string; reason: string | null }) =>
+      c.status === "failed" ? c.reason : null;
+    return (
+      failedReason(e.aggregator) ??
+      failedReason(e.eclob) ??
+      "No route available for this pair"
+    );
   }
   return getErrorMessage(e);
 };

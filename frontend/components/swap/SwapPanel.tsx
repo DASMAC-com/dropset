@@ -279,7 +279,6 @@ export function SwapPanel() {
         {routeFound && quote.inAmount !== null && quote.outAmount !== null ? (
           <PlatformFee
             bps={feeBps}
-            venue={quoteFresh ? quote.venue : null}
             inAmount={quote.inAmount}
             outAmount={quote.outAmount}
             fromSymbol={fromStablecoin}
