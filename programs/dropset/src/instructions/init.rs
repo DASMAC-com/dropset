@@ -67,8 +67,16 @@ pub struct Init {
     /// of rent and brick bootstrap for this fee mint forever. Adoption is
     /// safe — the ATA address commits to `(mint, authority, token_program)`,
     /// so an account here either is the canonical registry-owned ATA or
-    /// fails the derivation check. A squatter-funded balance lands as
-    /// unclaimed residual and is recoverable via `sweep_residual`.
+    /// fails the derivation check.
+    ///
+    /// A squatter-funded balance simply rides along with the fees this
+    /// vault goes on to collect. Note the recovery path differs from a
+    /// market treasury's: `sweep_residual` is market-scoped (it pins
+    /// `associated_token::authority = market` and rejects any mint that
+    /// isn't a market leg), so it cannot reach here. The registry fee
+    /// vault drains only via `close_registry_fee_vault`, on the
+    /// `admin-teardown` surface — which also means those atoms are
+    /// counted in the `collected` total that close reports.
     #[account(
         init_if_needed,
         payer = payer,

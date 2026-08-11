@@ -43,8 +43,16 @@ pub struct Init {
     /// of rent and brick bootstrap for this fee mint forever. Adoption is
     /// safe — the ATA address commits to `(mint, authority, token_program)`,
     /// so an account here either is the canonical registry-owned ATA or
-    /// fails the derivation check. A squatter-funded balance lands as
-    /// unclaimed residual and is recoverable via `sweep_residual`.
+    /// fails the derivation check.
+    ///
+    /// A squatter-funded balance simply rides along with the fees this
+    /// vault goes on to collect. Note the recovery path differs from a
+    /// market treasury's: `sweep_residual` is market-scoped (it pins
+    /// `associated_token::authority = market` and rejects any mint that
+    /// isn't a market leg), so it cannot reach here. The registry fee
+    /// vault drains only via `close_registry_fee_vault`, on the
+    /// `admin-teardown` surface — which also means those atoms are
+    /// counted in the `collected` total that close reports.
     pub fee_vault: solana_pubkey::Pubkey,
     /// Token program owning `fee_mint` — SPL Token or Token-2022.
     /// `Interface<TokenInterface>` rejects any other address up front
@@ -216,8 +224,16 @@ impl InitBuilder {
     /// of rent and brick bootstrap for this fee mint forever. Adoption is
     /// safe — the ATA address commits to `(mint, authority, token_program)`,
     /// so an account here either is the canonical registry-owned ATA or
-    /// fails the derivation check. A squatter-funded balance lands as
-    /// unclaimed residual and is recoverable via `sweep_residual`.
+    /// fails the derivation check.
+    ///
+    /// A squatter-funded balance simply rides along with the fees this
+    /// vault goes on to collect. Note the recovery path differs from a
+    /// market treasury's: `sweep_residual` is market-scoped (it pins
+    /// `associated_token::authority = market` and rejects any mint that
+    /// isn't a market leg), so it cannot reach here. The registry fee
+    /// vault drains only via `close_registry_fee_vault`, on the
+    /// `admin-teardown` surface — which also means those atoms are
+    /// counted in the `collected` total that close reports.
     #[inline(always)]
     pub fn fee_vault(&mut self, fee_vault: solana_pubkey::Pubkey) -> &mut Self {
         self.fee_vault = Some(fee_vault);
@@ -335,8 +351,16 @@ pub struct InitCpiAccounts<'a, 'b> {
     /// of rent and brick bootstrap for this fee mint forever. Adoption is
     /// safe — the ATA address commits to `(mint, authority, token_program)`,
     /// so an account here either is the canonical registry-owned ATA or
-    /// fails the derivation check. A squatter-funded balance lands as
-    /// unclaimed residual and is recoverable via `sweep_residual`.
+    /// fails the derivation check.
+    ///
+    /// A squatter-funded balance simply rides along with the fees this
+    /// vault goes on to collect. Note the recovery path differs from a
+    /// market treasury's: `sweep_residual` is market-scoped (it pins
+    /// `associated_token::authority = market` and rejects any mint that
+    /// isn't a market leg), so it cannot reach here. The registry fee
+    /// vault drains only via `close_registry_fee_vault`, on the
+    /// `admin-teardown` surface — which also means those atoms are
+    /// counted in the `collected` total that close reports.
     pub fee_vault: &'b solana_account_info::AccountInfo<'a>,
     /// Token program owning `fee_mint` — SPL Token or Token-2022.
     /// `Interface<TokenInterface>` rejects any other address up front
@@ -384,8 +408,16 @@ pub struct InitCpi<'a, 'b> {
     /// of rent and brick bootstrap for this fee mint forever. Adoption is
     /// safe — the ATA address commits to `(mint, authority, token_program)`,
     /// so an account here either is the canonical registry-owned ATA or
-    /// fails the derivation check. A squatter-funded balance lands as
-    /// unclaimed residual and is recoverable via `sweep_residual`.
+    /// fails the derivation check.
+    ///
+    /// A squatter-funded balance simply rides along with the fees this
+    /// vault goes on to collect. Note the recovery path differs from a
+    /// market treasury's: `sweep_residual` is market-scoped (it pins
+    /// `associated_token::authority = market` and rejects any mint that
+    /// isn't a market leg), so it cannot reach here. The registry fee
+    /// vault drains only via `close_registry_fee_vault`, on the
+    /// `admin-teardown` surface — which also means those atoms are
+    /// counted in the `collected` total that close reports.
     pub fee_vault: &'b solana_account_info::AccountInfo<'a>,
     /// Token program owning `fee_mint` — SPL Token or Token-2022.
     /// `Interface<TokenInterface>` rejects any other address up front
@@ -593,8 +625,16 @@ impl<'a, 'b> InitCpiBuilder<'a, 'b> {
     /// of rent and brick bootstrap for this fee mint forever. Adoption is
     /// safe — the ATA address commits to `(mint, authority, token_program)`,
     /// so an account here either is the canonical registry-owned ATA or
-    /// fails the derivation check. A squatter-funded balance lands as
-    /// unclaimed residual and is recoverable via `sweep_residual`.
+    /// fails the derivation check.
+    ///
+    /// A squatter-funded balance simply rides along with the fees this
+    /// vault goes on to collect. Note the recovery path differs from a
+    /// market treasury's: `sweep_residual` is market-scoped (it pins
+    /// `associated_token::authority = market` and rejects any mint that
+    /// isn't a market leg), so it cannot reach here. The registry fee
+    /// vault drains only via `close_registry_fee_vault`, on the
+    /// `admin-teardown` surface — which also means those atoms are
+    /// counted in the `collected` total that close reports.
     #[inline(always)]
     pub fn fee_vault(&mut self, fee_vault: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
         self.instruction.fee_vault = Some(fee_vault);

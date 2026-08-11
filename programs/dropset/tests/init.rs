@@ -338,6 +338,60 @@ fn init_rejects_second_init() {
     .expect_err("registry can only be initialized once");
 }
 
+/// The adopt-branch twin of `init_rejects_non_canonical_fee_vault`.
+/// That test passes a **non-existent** address, so it exercises the
+/// create path only; with `init_if_needed` the else branch is reachable
+/// and its address check is what stops a caller substituting an account
+/// they control. Pass a real, live token account at the wrong address.
+#[test]
+fn init_rejects_an_existing_non_canonical_fee_vault() {
+    let authority = Keypair::new();
+    let mut svm = deploy_with_authority(&authority);
+    let mint = create_spl_mint(&mut svm, &authority);
+
+    // A live token account for the right mint, owned by a stranger.
+    let attacker = Keypair::new();
+    svm.airdrop(&attacker.pubkey(), SIGNER_FUNDING_LAMPORTS)
+        .unwrap();
+    let attacker_ata = create_associated_token_account(
+        &mut svm,
+        &attacker,
+        &attacker.pubkey(),
+        &mint,
+        &SPL_TOKEN_PROGRAM_ID,
+    );
+    assert_ne!(
+        attacker_ata,
+        associated_token_address(&registry_pda(), &mint, &SPL_TOKEN_PROGRAM_ID),
+        "the substitute must not be the canonical fee vault"
+    );
+
+    let ixn = Instruction::new_with_bytes(
+        PROGRAM_ID,
+        &InitInstruction {
+            genesis_admin: Pubkey::new_unique(),
+            fee_atoms: TEST_FEE_ATOMS,
+        }
+        .data(),
+        vec![
+            AccountMeta::new(authority.pubkey(), true),
+            AccountMeta::new(registry_pda(), false),
+            AccountMeta::new_readonly(get_program_data_address(&PROGRAM_ID), false),
+            AccountMeta::new_readonly(mint, false),
+            AccountMeta::new(attacker_ata, false),
+            AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
+            AccountMeta::new_readonly(ATA_PROGRAM_ID, false),
+            AccountMeta::new_readonly(System::id(), false),
+        ],
+    );
+    send_ixn(&mut svm, &authority, ixn)
+        .expect_err("a live account at a non-canonical address must be rejected");
+    assert!(
+        svm.get_account(&registry_pda()).is_none(),
+        "no registry should exist after the rejection"
+    );
+}
+
 /// The registry PDA is the fixed `[b"registry"]`, so its fee ATA for any
 /// given mint is computable before the program is ever initialized — and
 /// ATAs are permissionlessly creatable. Under plain `init` a stranger
@@ -391,9 +445,11 @@ fn init_adopts_squatted_fee_vault() {
 }
 
 /// The pre-funded variant: a squatter can seed the vault with atoms
-/// before `init`. They survive adoption as unclaimed residual — the
-/// registry's fee accounting starts from zero regardless, so nothing
-/// mistakes them for collected fees.
+/// before `init`. They survive adoption untouched, and `init` seeds no
+/// market, so nothing on-chain has yet claimed them. Unlike a market
+/// treasury they are *not* `sweep_residual`-able — that instruction is
+/// market-scoped — so they ride along with the fees this vault goes on
+/// to collect and leave with `close_registry_fee_vault` at teardown.
 #[test]
 fn init_adopts_prefunded_squatted_fee_vault() {
     let authority = Keypair::new();
@@ -436,8 +492,8 @@ fn init_adopts_prefunded_squatted_fee_vault() {
     let vault = svm.get_account(&squatted_vault).expect("fee vault exists");
     let balance = u64::from_le_bytes(vault.data[64..72].try_into().unwrap());
     assert_eq!(balance, SQUATTED_ATOMS);
-    // And `init` seeded no market, so no fee has been collected: the
-    // whole balance is residual the admin can recover.
+    // And `init` seeded no market, so no fee has been collected yet —
+    // the whole balance is the squatter's, claimed by nothing.
     let account = svm.get_account(&registry_pda()).expect("registry created");
     let (header, _) = decode_slab::<RegistryHeader, [u8; 32]>(&account.data);
     assert_eq!(header.market_count.get(), 0);

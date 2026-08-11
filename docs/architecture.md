@@ -2558,9 +2558,19 @@ rejected.
 
 The one behavioral difference is that an adopted ATA may arrive
 holding a balance, since a squatter can pre-fund it. Those atoms are
-unclaimed residual — credited to no vault and to no fee accrual —
-and are recovered by `sweep_residual` and, at teardown, by
-`close_market_treasury`.
+credited to no vault and to no fee accrual, and the recovery path
+differs by leg:
+
+- a **market treasury**'s balance is unclaimed residual, recovered by
+  `sweep_residual` while the market is live and by
+  `close_market_treasury`'s drain at teardown;
+- the **registry fee vault**'s balance is *not* reachable by
+  `sweep_residual`, which is market-scoped — it pins
+  `associated_token::authority = market` and rejects any mint that is
+  not one of that market's legs. It rides along with the collected
+  create-vault fees and leaves via `close_registry_fee_vault`, on the
+  `admin-teardown` surface, which counts it in the `collected` total
+  that close reports.
 
 ### Feature gating
 
