@@ -18,6 +18,16 @@ export type Deck = {
    * needs no maintenance and answers the question the reader actually has.
    */
   presented: string;
+  /**
+   * How many pages the deck has.
+   *
+   * The export pipeline screenshots pages by index, and a headless browser
+   * given an out-of-range `slideIndex` renders the last page again rather than
+   * failing — so a count that is too high yields silent duplicates and one too
+   * low silently truncates the deck. Neither is visible until someone opens
+   * the `.pptx`. Declaring it here keeps it next to the route it describes.
+   */
+  pages: number;
 };
 
 export const decks: Deck[] = [
@@ -26,5 +36,6 @@ export const decks: Deck[] = [
     title: "Colosseum Cohort 5 Demo Day",
     subtitle: "The ~2-minute pitch: the gap, what's live today, and the eCLOB.",
     presented: "2026-08-26",
+    pages: 10,
   },
 ];

@@ -100,9 +100,11 @@ mxne
 nohup
 numstat
 oanda
+officedocument
 ohlcv
 oneline
 onramps
+openxmlformats
 paytrie
 pdas
 pdftoppm
@@ -117,6 +119,7 @@ predev
 prefs
 prefund
 prefunded
+presentationml
 programdata
 pubkeys
 pullable
@@ -150,6 +153,7 @@ solana
 solflare
 solscan
 soulbound
+sparticuz
 sqlfluff
 sqlx
 stablecoins
