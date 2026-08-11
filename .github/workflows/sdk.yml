@@ -71,7 +71,11 @@ jobs:
     # `dropset-interface` API change not followed by `make wasm` can't ship a
     # stale client surface. The optimized `.wasm` binary is skipped —
     # wasm-opt isn't byte-reproducible across the committer's platform and
-    # CI's — so the `wasm-pack test` below pins the binary's math instead.
+    # CI's. The binary is covered instead by sdk/ts/src/wasm.conformance.test.ts
+    # (run by the `pnpm --filter @dropset/sdk test` step above, which lands
+    # before this one precisely so it sees the committed artifact rather than
+    # the one `make wasm` regenerates here). Note that the `wasm-pack test`
+    # below does NOT cover it: that compiles the binding fresh from source.
     - name: 'Committed WASM glue matches a fresh build'
       run: |
         make wasm
