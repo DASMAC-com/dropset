@@ -132,7 +132,7 @@ Optional (ask on a direct run if not provided):
        an escape marker broader than its stated rationale,
        or a pattern that misses an equivalent spelling of
        the thing it blocks; a helper tool interpolating
-       unsanitized input into a shell command; credentials,
+       unvalidated input into a shell command; credentials,
        tokens, or account identifiers committed into a
        skill or settings file; and a skill step that tells
        an agent to weaken or route around a guard rather
