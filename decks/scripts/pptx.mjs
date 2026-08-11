@@ -1,3 +1,12 @@
+// cspell:word OOXML
+// cspell:word rels
+// cspell:word hlink
+// cspell:word xfrm
+// cspell:word prst
+// cspell:word sptree
+// cspell:word nodebuffer
+// cspell:word letterboxing
+
 import JSZip from "jszip";
 
 /**
@@ -111,7 +120,7 @@ ${range(count)
 </Relationships>`;
 
 /**
- * The identity colour map every part needs; the deck carries no theme colours
+ * The identity color map every part needs; the deck carries no theme colors
  * of its own because each slide is a single opaque picture.
  */
 const CLR_MAP =
@@ -188,7 +197,7 @@ const slideRels = (index) =>
 /**
  * A theme is mandatory — the master's relationships point at one and readers
  * fault without it — but nothing here consumes it, so this is the smallest
- * schema-valid theme rather than a design. The colour scheme's twelve slots,
+ * schema-valid theme rather than a design. The color scheme's twelve slots,
  * and three entries in each of the four format lists, are the format's floor.
  */
 const theme = `${XML_DECL}

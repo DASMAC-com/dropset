@@ -1,3 +1,6 @@
+// cspell:word screenshotting
+// cspell:word networkidle
+
 import { existsSync } from "node:fs";
 import puppeteer from "puppeteer-core";
 
