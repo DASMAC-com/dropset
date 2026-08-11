@@ -169,16 +169,18 @@
         {
           "name": "market",
           "docs": [
-            "Market owning the treasury. Read-only — closing a treasury does",
-            "not mutate market state (the market is closed separately, after",
-            "both treasuries are gone). The market PDA still signs the",
-            "`CloseAccount` CPI via its `(base_mint, quote_mint)` seeds,",
-            "recovered from `market.bump`. Taken bare (no `seeds` constraint),",
-            "matching every other handler: the `associated_token::authority =",
-            "market` constraint on `treasury` already binds the ATA to this",
-            "market, and the CPI signature fails if a non-matching market is",
-            "passed."
-          ]
+            "Market owning the treasury. `mut` so the leg's accrued-fee counter",
+            "can be zeroed as its atoms leave — the counter and the balance it",
+            "claims must move together, or the custody invariant reads as",
+            "violated for the moment between (the market account is closed",
+            "separately, after both treasuries are gone). The market PDA also",
+            "signs both CPIs via its `(base_mint, quote_mint)` seeds, recovered",
+            "from `market.bump`. Taken bare (no `seeds` constraint), matching",
+            "every other handler: the `associated_token::authority = market`",
+            "constraint on `treasury` already binds the ATA to this market, and",
+            "the CPI signature fails if a non-matching market is passed."
+          ],
+          "writable": true
         },
         {
           "name": "mint",
@@ -199,7 +201,23 @@
           "docs": [
             "The treasury ATA to close. The ATA constraint pins it to",
             "`ata(market, mint, token_program)`, so a non-canonical account is",
-            "rejected before the handler runs. Must be drained to zero."
+            "rejected before the handler runs. Drained to `token_recipient`",
+            "below, then closed."
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_recipient",
+          "docs": [
+            "Receives the treasury's remaining **tokens** — the accrued taker",
+            "fee plus any unsolicited transfer — immediately before the close.",
+            "Any admin-chosen token account for `mint`; left unconstrained",
+            "beyond \"is a token account\" because `transfer_checked` enforces",
+            "the mint match itself, matching `sweep_residual`'s destination.",
+            "",
+            "Distinct from `rent_recipient` below, which receives the account's",
+            "**lamports**: this one is a token account and takes the balance,",
+            "that one is any address and takes the rent."
           ],
           "writable": true
         },
@@ -321,8 +339,24 @@
           "name": "fee_vault",
           "docs": [
             "The fee ATA to close — pinned to `ata(registry, fee_mint,",
-            "token_program)` by the constraint. Must be drained to zero (via",
-            "the existing admin fee sweep) first."
+            "token_program)` by the constraint. Drained to `token_recipient`",
+            "below, then closed."
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_recipient",
+          "docs": [
+            "Receives the fee vault's collected **tokens** immediately before",
+            "the close — the market-creation fees this vault accumulated, plus",
+            "anything transferred to it unsolicited. Any admin-chosen token",
+            "account for `fee_mint`; left unconstrained beyond \"is a token",
+            "account\" because `transfer_checked` enforces the mint match",
+            "itself, matching `close_market_treasury` and `sweep_residual`.",
+            "",
+            "Distinct from `rent_recipient` below, which receives the account's",
+            "**lamports**: this one is a token account and takes the balance,",
+            "that one is any address and takes the rent."
           ],
           "writable": true
         },
@@ -3504,8 +3538,8 @@
     },
     {
       "code": 6037,
-      "name": "TokenAccountNotEmpty",
-      "msg": "token account must be drained to zero before it can be closed"
+      "name": "MarketVaultsNotDrained",
+      "msg": "market vaults still hold inventory for this leg"
     },
     {
       "code": 6038,
@@ -3556,6 +3590,11 @@
       "code": 6047,
       "name": "MissingPlatformFeeAccounts",
       "msg": "a non-zero platform_fee_bps requires both the fee authority and its fee token account"
+    },
+    {
+      "code": 6048,
+      "name": "MarketHasActiveVaults",
+      "msg": "market still has vaults on the active list"
     }
   ],
   "types": [

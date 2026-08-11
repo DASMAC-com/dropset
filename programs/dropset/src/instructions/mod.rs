@@ -89,23 +89,24 @@ pub fn transfer_in_leg<'a>(
     transfer_checked(cpi, amount, decimals)
 }
 
-/// Outbound single-leg payout transfer: move `amount` of one mint from
-/// the market treasury to `dest` via `transfer_checked`, signed by the
-/// market PDA (`CpiContext::new_with_signer` with `signer_seeds`).
+/// Outbound single-leg payout transfer: move `amount` of one mint out of
+/// a program-owned token account to `dest` via `transfer_checked`, signed
+/// by that account's owning PDA (`CpiContext::new_with_signer` with
+/// `signer_seeds`).
 ///
 /// The **outbound** sibling of [`transfer_in_leg`] — shared by every
-/// treasury→holder payout (both `withdraw` legs, both `withdraw_leader`
-/// legs, and all four `force_withdraw` legs) so the zero-skip and CPI
-/// shape stay identical; only the destination ATA differs per call.
+/// payout out of program custody, with the owning PDA as the signing
+/// authority, so the zero-skip and CPI shape stay identical; only the
+/// source, destination and signing PDA differ per call.
 /// `transfer_checked` rejects zero amounts on classic SPL Token, so a
 /// zero leg is skipped here rather than at each call site.
 #[allow(clippy::too_many_arguments)]
 pub fn transfer_out_leg<'a>(
     token_program: &'a Address,
-    treasury: CpiHandleMut<'a>,
+    source: CpiHandleMut<'a>,
     mint: CpiHandle<'a>,
     dest: CpiHandleMut<'a>,
-    market_authority: CpiHandle<'a>,
+    authority: CpiHandle<'a>,
     amount: u64,
     decimals: u8,
     signer_seeds: &[&[&[u8]]],
@@ -116,10 +117,10 @@ pub fn transfer_out_leg<'a>(
     let cpi = CpiContext::new_with_signer(
         token_program,
         TransferChecked {
-            from: treasury,
+            from: source,
             mint,
             to: dest,
-            authority: market_authority,
+            authority,
         },
         signer_seeds,
     );

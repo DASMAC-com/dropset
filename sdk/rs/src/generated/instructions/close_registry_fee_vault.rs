@@ -26,9 +26,20 @@ pub struct CloseRegistryFeeVault {
     /// Token program owning `fee_mint`.
     pub token_program: solana_pubkey::Pubkey,
     /// The fee ATA to close — pinned to `ata(registry, fee_mint,
-    /// token_program)` by the constraint. Must be drained to zero (via
-    /// the existing admin fee sweep) first.
+    /// token_program)` by the constraint. Drained to `token_recipient`
+    /// below, then closed.
     pub fee_vault: solana_pubkey::Pubkey,
+    /// Receives the fee vault's collected **tokens** immediately before
+    /// the close — the market-creation fees this vault accumulated, plus
+    /// anything transferred to it unsolicited. Any admin-chosen token
+    /// account for `fee_mint`; left unconstrained beyond "is a token
+    /// account" because `transfer_checked` enforces the mint match
+    /// itself, matching `close_market_treasury` and `sweep_residual`.
+    ///
+    /// Distinct from `rent_recipient` below, which receives the account's
+    /// **lamports**: this one is a token account and takes the balance,
+    /// that one is any address and takes the rent.
+    pub token_recipient: solana_pubkey::Pubkey,
     /// Receives the fee vault's rent lamports on close.
     /// CHECK: rent destination only.
     pub rent_recipient: solana_pubkey::Pubkey,
@@ -44,7 +55,7 @@ impl CloseRegistryFeeVault {
         &self,
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
-        let mut accounts = Vec::with_capacity(6 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(7 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.admin, true,
         ));
@@ -61,6 +72,10 @@ impl CloseRegistryFeeVault {
             false,
         ));
         accounts.push(solana_instruction::AccountMeta::new(self.fee_vault, false));
+        accounts.push(solana_instruction::AccountMeta::new(
+            self.token_recipient,
+            false,
+        ));
         accounts.push(solana_instruction::AccountMeta::new(
             self.rent_recipient,
             false,
@@ -111,7 +126,8 @@ impl Default for CloseRegistryFeeVaultInstructionData {
 ///   2. `[]` fee_mint
 ///   3. `[optional]` token_program (default to `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`)
 ///   4. `[writable]` fee_vault
-///   5. `[writable]` rent_recipient
+///   5. `[writable]` token_recipient
+///   6. `[writable]` rent_recipient
 #[derive(Clone, Debug, Default)]
 pub struct CloseRegistryFeeVaultBuilder {
     admin: Option<solana_pubkey::Pubkey>,
@@ -119,6 +135,7 @@ pub struct CloseRegistryFeeVaultBuilder {
     fee_mint: Option<solana_pubkey::Pubkey>,
     token_program: Option<solana_pubkey::Pubkey>,
     fee_vault: Option<solana_pubkey::Pubkey>,
+    token_recipient: Option<solana_pubkey::Pubkey>,
     rent_recipient: Option<solana_pubkey::Pubkey>,
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
@@ -157,11 +174,26 @@ impl CloseRegistryFeeVaultBuilder {
         self
     }
     /// The fee ATA to close — pinned to `ata(registry, fee_mint,
-    /// token_program)` by the constraint. Must be drained to zero (via
-    /// the existing admin fee sweep) first.
+    /// token_program)` by the constraint. Drained to `token_recipient`
+    /// below, then closed.
     #[inline(always)]
     pub fn fee_vault(&mut self, fee_vault: solana_pubkey::Pubkey) -> &mut Self {
         self.fee_vault = Some(fee_vault);
+        self
+    }
+    /// Receives the fee vault's collected **tokens** immediately before
+    /// the close — the market-creation fees this vault accumulated, plus
+    /// anything transferred to it unsolicited. Any admin-chosen token
+    /// account for `fee_mint`; left unconstrained beyond "is a token
+    /// account" because `transfer_checked` enforces the mint match
+    /// itself, matching `close_market_treasury` and `sweep_residual`.
+    ///
+    /// Distinct from `rent_recipient` below, which receives the account's
+    /// **lamports**: this one is a token account and takes the balance,
+    /// that one is any address and takes the rent.
+    #[inline(always)]
+    pub fn token_recipient(&mut self, token_recipient: solana_pubkey::Pubkey) -> &mut Self {
+        self.token_recipient = Some(token_recipient);
         self
     }
     /// Receives the fee vault's rent lamports on close.
@@ -196,6 +228,7 @@ impl CloseRegistryFeeVaultBuilder {
                 "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
             )),
             fee_vault: self.fee_vault.expect("fee_vault is not set"),
+            token_recipient: self.token_recipient.expect("token_recipient is not set"),
             rent_recipient: self.rent_recipient.expect("rent_recipient is not set"),
         };
 
@@ -218,9 +251,20 @@ pub struct CloseRegistryFeeVaultCpiAccounts<'a, 'b> {
     /// Token program owning `fee_mint`.
     pub token_program: &'b solana_account_info::AccountInfo<'a>,
     /// The fee ATA to close — pinned to `ata(registry, fee_mint,
-    /// token_program)` by the constraint. Must be drained to zero (via
-    /// the existing admin fee sweep) first.
+    /// token_program)` by the constraint. Drained to `token_recipient`
+    /// below, then closed.
     pub fee_vault: &'b solana_account_info::AccountInfo<'a>,
+    /// Receives the fee vault's collected **tokens** immediately before
+    /// the close — the market-creation fees this vault accumulated, plus
+    /// anything transferred to it unsolicited. Any admin-chosen token
+    /// account for `fee_mint`; left unconstrained beyond "is a token
+    /// account" because `transfer_checked` enforces the mint match
+    /// itself, matching `close_market_treasury` and `sweep_residual`.
+    ///
+    /// Distinct from `rent_recipient` below, which receives the account's
+    /// **lamports**: this one is a token account and takes the balance,
+    /// that one is any address and takes the rent.
+    pub token_recipient: &'b solana_account_info::AccountInfo<'a>,
     /// Receives the fee vault's rent lamports on close.
     /// CHECK: rent destination only.
     pub rent_recipient: &'b solana_account_info::AccountInfo<'a>,
@@ -243,9 +287,20 @@ pub struct CloseRegistryFeeVaultCpi<'a, 'b> {
     /// Token program owning `fee_mint`.
     pub token_program: &'b solana_account_info::AccountInfo<'a>,
     /// The fee ATA to close — pinned to `ata(registry, fee_mint,
-    /// token_program)` by the constraint. Must be drained to zero (via
-    /// the existing admin fee sweep) first.
+    /// token_program)` by the constraint. Drained to `token_recipient`
+    /// below, then closed.
     pub fee_vault: &'b solana_account_info::AccountInfo<'a>,
+    /// Receives the fee vault's collected **tokens** immediately before
+    /// the close — the market-creation fees this vault accumulated, plus
+    /// anything transferred to it unsolicited. Any admin-chosen token
+    /// account for `fee_mint`; left unconstrained beyond "is a token
+    /// account" because `transfer_checked` enforces the mint match
+    /// itself, matching `close_market_treasury` and `sweep_residual`.
+    ///
+    /// Distinct from `rent_recipient` below, which receives the account's
+    /// **lamports**: this one is a token account and takes the balance,
+    /// that one is any address and takes the rent.
+    pub token_recipient: &'b solana_account_info::AccountInfo<'a>,
     /// Receives the fee vault's rent lamports on close.
     /// CHECK: rent destination only.
     pub rent_recipient: &'b solana_account_info::AccountInfo<'a>,
@@ -263,6 +318,7 @@ impl<'a, 'b> CloseRegistryFeeVaultCpi<'a, 'b> {
             fee_mint: accounts.fee_mint,
             token_program: accounts.token_program,
             fee_vault: accounts.fee_vault,
+            token_recipient: accounts.token_recipient,
             rent_recipient: accounts.rent_recipient,
         }
     }
@@ -289,7 +345,7 @@ impl<'a, 'b> CloseRegistryFeeVaultCpi<'a, 'b> {
         signers_seeds: &[&[&[u8]]],
         remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
     ) -> solana_program_error::ProgramResult {
-        let mut accounts = Vec::with_capacity(6 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(7 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.admin.key,
             true,
@@ -308,6 +364,10 @@ impl<'a, 'b> CloseRegistryFeeVaultCpi<'a, 'b> {
         ));
         accounts.push(solana_instruction::AccountMeta::new(
             *self.fee_vault.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            *self.token_recipient.key,
             false,
         ));
         accounts.push(solana_instruction::AccountMeta::new(
@@ -330,13 +390,14 @@ impl<'a, 'b> CloseRegistryFeeVaultCpi<'a, 'b> {
             accounts,
             data,
         };
-        let mut account_infos = Vec::with_capacity(7 + remaining_accounts.len());
+        let mut account_infos = Vec::with_capacity(8 + remaining_accounts.len());
         account_infos.push(self.__program.clone());
         account_infos.push(self.admin.clone());
         account_infos.push(self.registry.clone());
         account_infos.push(self.fee_mint.clone());
         account_infos.push(self.token_program.clone());
         account_infos.push(self.fee_vault.clone());
+        account_infos.push(self.token_recipient.clone());
         account_infos.push(self.rent_recipient.clone());
         remaining_accounts
             .iter()
@@ -359,7 +420,8 @@ impl<'a, 'b> CloseRegistryFeeVaultCpi<'a, 'b> {
 ///   2. `[]` fee_mint
 ///   3. `[]` token_program
 ///   4. `[writable]` fee_vault
-///   5. `[writable]` rent_recipient
+///   5. `[writable]` token_recipient
+///   6. `[writable]` rent_recipient
 #[derive(Clone, Debug)]
 pub struct CloseRegistryFeeVaultCpiBuilder<'a, 'b> {
     instruction: Box<CloseRegistryFeeVaultCpiBuilderInstruction<'a, 'b>>,
@@ -374,6 +436,7 @@ impl<'a, 'b> CloseRegistryFeeVaultCpiBuilder<'a, 'b> {
             fee_mint: None,
             token_program: None,
             fee_vault: None,
+            token_recipient: None,
             rent_recipient: None,
             __remaining_accounts: Vec::new(),
         });
@@ -411,11 +474,29 @@ impl<'a, 'b> CloseRegistryFeeVaultCpiBuilder<'a, 'b> {
         self
     }
     /// The fee ATA to close — pinned to `ata(registry, fee_mint,
-    /// token_program)` by the constraint. Must be drained to zero (via
-    /// the existing admin fee sweep) first.
+    /// token_program)` by the constraint. Drained to `token_recipient`
+    /// below, then closed.
     #[inline(always)]
     pub fn fee_vault(&mut self, fee_vault: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
         self.instruction.fee_vault = Some(fee_vault);
+        self
+    }
+    /// Receives the fee vault's collected **tokens** immediately before
+    /// the close — the market-creation fees this vault accumulated, plus
+    /// anything transferred to it unsolicited. Any admin-chosen token
+    /// account for `fee_mint`; left unconstrained beyond "is a token
+    /// account" because `transfer_checked` enforces the mint match
+    /// itself, matching `close_market_treasury` and `sweep_residual`.
+    ///
+    /// Distinct from `rent_recipient` below, which receives the account's
+    /// **lamports**: this one is a token account and takes the balance,
+    /// that one is any address and takes the rent.
+    #[inline(always)]
+    pub fn token_recipient(
+        &mut self,
+        token_recipient: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.token_recipient = Some(token_recipient);
         self
     }
     /// Receives the fee vault's rent lamports on close.
@@ -478,6 +559,11 @@ impl<'a, 'b> CloseRegistryFeeVaultCpiBuilder<'a, 'b> {
 
             fee_vault: self.instruction.fee_vault.expect("fee_vault is not set"),
 
+            token_recipient: self
+                .instruction
+                .token_recipient
+                .expect("token_recipient is not set"),
+
             rent_recipient: self
                 .instruction
                 .rent_recipient
@@ -498,6 +584,7 @@ struct CloseRegistryFeeVaultCpiBuilderInstruction<'a, 'b> {
     fee_mint: Option<&'b solana_account_info::AccountInfo<'a>>,
     token_program: Option<&'b solana_account_info::AccountInfo<'a>>,
     fee_vault: Option<&'b solana_account_info::AccountInfo<'a>>,
+    token_recipient: Option<&'b solana_account_info::AccountInfo<'a>>,
     rent_recipient: Option<&'b solana_account_info::AccountInfo<'a>>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
     __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,

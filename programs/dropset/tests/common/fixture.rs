@@ -241,65 +241,105 @@ impl Fixture {
 
     fn bootstrap_on(mut svm: LiteSVM, authority: Keypair) -> Self {
         let fee_mint = create_mock_usdc_mint(&mut svm, &authority);
-        let registry = registry_pda();
-        let registry_fee_treasury =
-            associated_token_address(&registry, &fee_mint, &SPL_TOKEN_PROGRAM_ID);
-
-        // init.
-        let init_ix = canonical_init_ixn(
-            authority.pubkey(),
-            authority.pubkey(),
-            fee_mint,
-            CREATE_MARKET_FEE_ATOMS,
-            SPL_TOKEN_PROGRAM_ID,
-        );
-        send_ixn(&mut svm, &authority, init_ix).expect("init");
-
-        // create_market.
         let base_mint = create_spl_mint(&mut svm, &authority);
         let quote_mint = create_spl_mint(&mut svm, &authority);
+        let registry = registry_pda();
         let market = market_pda(&base_mint, &quote_mint);
-        let base_treasury = associated_token_address(&market, &base_mint, &SPL_TOKEN_PROGRAM_ID);
-        let quote_treasury = associated_token_address(&market, &quote_mint, &SPL_TOKEN_PROGRAM_ID);
         let dummy = Keypair::new();
         svm.airdrop(&dummy.pubkey(), SIGNER_FUNDING_LAMPORTS)
             .unwrap();
+
+        // Every address here is a pure function of its seeds, so they are
+        // known before the accounts exist — which is what lets
+        // `init_and_create_market` be re-run later against the same
+        // addresses.
+        let mut f = Fixture {
+            svm,
+            authority,
+            registry,
+            fee_mint,
+            registry_fee_treasury: associated_token_address(
+                &registry,
+                &fee_mint,
+                &SPL_TOKEN_PROGRAM_ID,
+            ),
+            dummy,
+            base_mint,
+            quote_mint,
+            market,
+            base_treasury: associated_token_address(&market, &base_mint, &SPL_TOKEN_PROGRAM_ID),
+            quote_treasury: associated_token_address(&market, &quote_mint, &SPL_TOKEN_PROGRAM_ID),
+        };
+        f.init_and_create_market();
+        f
+    }
+
+    /// Send `init` then `create_market` for this fixture's already-created
+    /// mints, bringing the registry, its fee vault, the market and both
+    /// treasuries into existence at their canonical addresses.
+    ///
+    /// Split out of [`Self::bootstrap_on`] so the teardown suite can run it
+    /// a **second** time on the same deployed program after a full
+    /// teardown — the redeploy-at-the-same-program-id rehearsal. Since
+    /// every address is derived from seeds the program already knows, the
+    /// rebuilt accounts land exactly where the closed ones were.
+    ///
+    /// The blockhash bump makes the re-run's transactions distinct from the
+    /// first run's, which are otherwise byte-identical (same signer, same
+    /// mints, same arguments) and would be rejected as `AlreadyProcessed`
+    /// before the program ran.
+    pub fn init_and_create_market(&mut self) {
+        self.svm.expire_blockhash();
+        let authority = self.authority.insecure_clone();
+
+        let init_ix = canonical_init_ixn(
+            authority.pubkey(),
+            authority.pubkey(),
+            self.fee_mint,
+            CREATE_MARKET_FEE_ATOMS,
+            SPL_TOKEN_PROGRAM_ID,
+        );
+        send_ixn(&mut self.svm, &authority, init_ix).expect("init");
+        self.send_create_market().expect("create_market");
+    }
+
+    /// Send just `create_market` for this fixture's mints, returning the
+    /// program's rejection instead of panicking on it. Split out of
+    /// [`Self::init_and_create_market`], which expects success, so a test
+    /// whose subject *is* a `create_market` rejection can assert on the
+    /// error rather than unwinding on it.
+    pub fn send_create_market(&mut self) -> Result<(), String> {
+        let authority = self.authority.insecure_clone();
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
             &CreateMarketIx {}.data(),
             vec![
                 AccountMeta::new(authority.pubkey(), true),
-                AccountMeta::new(registry, false),
-                AccountMeta::new_readonly(base_mint, false),
-                AccountMeta::new_readonly(quote_mint, false),
+                AccountMeta::new(self.registry, false),
+                AccountMeta::new_readonly(self.base_mint, false),
+                AccountMeta::new_readonly(self.quote_mint, false),
                 AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
                 AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
-                AccountMeta::new(market, false),
-                AccountMeta::new(base_treasury, false),
-                AccountMeta::new(quote_treasury, false),
-                AccountMeta::new_readonly(fee_mint, false),
+                AccountMeta::new(self.market, false),
+                AccountMeta::new(self.base_treasury, false),
+                AccountMeta::new(self.quote_treasury, false),
+                AccountMeta::new_readonly(self.fee_mint, false),
                 AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
-                AccountMeta::new(dummy.pubkey(), false),
-                AccountMeta::new(registry_fee_treasury, false),
+                AccountMeta::new(self.dummy.pubkey(), false),
+                AccountMeta::new(self.registry_fee_treasury, false),
                 AccountMeta::new_readonly(System::id(), false),
                 AccountMeta::new_readonly(ATA_PROGRAM_ID, false),
             ],
         );
-        send_ixn(&mut svm, &authority, ix).expect("create_market");
+        send_ixn(&mut self.svm, &authority, ix)
+    }
 
-        Fixture {
-            svm,
-            authority,
-            registry,
-            fee_mint,
-            registry_fee_treasury,
-            dummy,
-            base_mint,
-            quote_mint,
-            market,
-            base_treasury,
-            quote_treasury,
-        }
+    /// The `owner` field of an SPL token account (bytes 32..64) — for
+    /// asserting a re-created treasury ATA is still owned by the PDA it
+    /// belongs to, not merely present at the right address.
+    pub fn token_account_owner(&self, ata: &Pubkey) -> Pubkey {
+        let acct = self.svm.get_account(ata).expect("token account exists");
+        Pubkey::new_from_array(acct.data[32..64].try_into().unwrap())
     }
 
     /// Bootstrap + open one admin vault (sector 0) + set a 1.0850
@@ -476,6 +516,26 @@ impl Fixture {
     }
     pub fn quote_ata(&self, owner: &Pubkey) -> Pubkey {
         associated_token_address(owner, &self.quote_mint, &SPL_TOKEN_PROGRAM_ID)
+    }
+
+    /// Create (idempotently) `owner`'s ATA for an arbitrary `mint`, paid
+    /// by `authority`, and return its address. The any-mint sibling of
+    /// [`Self::create_atas`], which is fixed to the market's two legs —
+    /// used where a destination token account is needed for a mint the
+    /// fixture doesn't track, such as a teardown drain recipient.
+    pub fn create_ata_for(&mut self, owner: &Pubkey, mint: &Pubkey) -> Pubkey {
+        let auth = self.authority.insecure_clone();
+        let ata = associated_token_address(owner, mint, &SPL_TOKEN_PROGRAM_ID);
+        if self.svm.get_account(&ata).is_none() {
+            create_associated_token_account(
+                &mut self.svm,
+                &auth,
+                owner,
+                mint,
+                &SPL_TOKEN_PROGRAM_ID,
+            );
+        }
+        ata
     }
 
     // ── instruction senders ──────────────────────────────────────────
@@ -1673,14 +1733,36 @@ impl Fixture {
         send_ixn(&mut self.svm, admin, ix)
     }
 
-    /// `close_market_treasury` — close one market treasury ATA, sending
-    /// its rent to `rent_recipient`. `mint` selects the leg; `treasury`
-    /// is that leg's treasury ATA.
+    /// `close_market_treasury` — close one market treasury ATA, draining
+    /// any remaining tokens to the **admin's own ATA** for `mint` (created
+    /// on demand) and sending the rent to `rent_recipient`. `mint` selects
+    /// the leg; `treasury` is that leg's treasury ATA.
+    ///
+    /// The implicit destination keeps the zero-balance teardown cases —
+    /// the majority — free of a recipient they don't care about. Use
+    /// [`Self::close_market_treasury_to`] where the drain itself is what's
+    /// under test.
     pub fn close_market_treasury(
         &mut self,
         admin: &Keypair,
         mint: &Pubkey,
         treasury: &Pubkey,
+        rent_recipient: &Pubkey,
+    ) -> Result<(), String> {
+        let token_recipient = self.create_ata_for(&admin.pubkey(), mint);
+        self.close_market_treasury_to(admin, mint, treasury, &token_recipient, rent_recipient)
+    }
+
+    /// Like [`Self::close_market_treasury`] but with an explicit
+    /// `token_recipient` — the token account the treasury's remaining
+    /// balance (accrued taker fee, unsolicited transfers) is drained to
+    /// immediately before the close.
+    pub fn close_market_treasury_to(
+        &mut self,
+        admin: &Keypair,
+        mint: &Pubkey,
+        treasury: &Pubkey,
+        token_recipient: &Pubkey,
         rent_recipient: &Pubkey,
     ) -> Result<(), String> {
         let ix = Instruction::new_with_bytes(
@@ -1689,10 +1771,11 @@ impl Fixture {
             vec![
                 AccountMeta::new_readonly(admin.pubkey(), true),
                 AccountMeta::new_readonly(self.registry, false),
-                AccountMeta::new_readonly(self.market, false),
+                AccountMeta::new(self.market, false),
                 AccountMeta::new_readonly(*mint, false),
                 AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
                 AccountMeta::new(*treasury, false),
+                AccountMeta::new(*token_recipient, false),
                 AccountMeta::new(*rent_recipient, false),
             ],
         );
@@ -1739,6 +1822,27 @@ impl Fixture {
         fee_token_program: &Pubkey,
         rent_recipient: &Pubkey,
     ) -> Result<(), String> {
+        let token_recipient = self.create_ata_for(&admin.pubkey(), fee_mint);
+        self.close_registry_fee_vault_to(
+            admin,
+            fee_mint,
+            fee_token_program,
+            &token_recipient,
+            rent_recipient,
+        )
+    }
+
+    /// Like [`Self::close_registry_fee_vault_for`] but with an explicit
+    /// `token_recipient` — the token account the vault's collected
+    /// market-creation fees are drained to immediately before the close.
+    pub fn close_registry_fee_vault_to(
+        &mut self,
+        admin: &Keypair,
+        fee_mint: &Pubkey,
+        fee_token_program: &Pubkey,
+        token_recipient: &Pubkey,
+        rent_recipient: &Pubkey,
+    ) -> Result<(), String> {
         let fee_vault = associated_token_address(&self.registry, fee_mint, fee_token_program);
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
@@ -1749,6 +1853,7 @@ impl Fixture {
                 AccountMeta::new_readonly(*fee_mint, false),
                 AccountMeta::new_readonly(*fee_token_program, false),
                 AccountMeta::new(fee_vault, false),
+                AccountMeta::new(*token_recipient, false),
                 AccountMeta::new(*rent_recipient, false),
             ],
         );

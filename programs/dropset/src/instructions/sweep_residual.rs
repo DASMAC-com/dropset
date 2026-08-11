@@ -33,6 +33,7 @@ use anchor_spl_v2::token_interface::{Mint, TokenAccount, TokenInterface};
 use crate::{errors::DropsetError, events::SweepResidualEvent, state::Market, Registry};
 
 use super::transfer_out_leg;
+use crate::VaultAccess;
 
 #[event_cpi]
 #[derive(Accounts)]
@@ -92,22 +93,11 @@ impl SweepResidual {
             DropsetError::NotAMarketTreasury
         );
 
-        // Sum the leg's inventory across the **whole slab**, not just the
-        // active DLL: a tombstoned vault still holds depositor claims, and
-        // a reclaimed (free-list) sector could in principle carry rounding
-        // dust. Counting every sector can only *understate* the residual,
-        // which errs toward leaving atoms in custody. Cheap enough for a
-        // cold admin path — `max_vaults_per_market` is a `u8`, so this is
-        // at most 255 iterations (default 10).
-        let mut vault_sum: u128 = 0;
-        for v in self.market.as_slice() {
-            let leg = if is_base {
-                v.base_atoms.get()
-            } else {
-                v.quote_atoms.get()
-            };
-            vault_sum = vault_sum.saturating_add(leg as u128);
-        }
+        // The depositors' and leaders' claim on this leg, summed across the
+        // whole slab — see `leg_vault_sum` for why every sector counts.
+        // Counting them all can only *understate* the residual here, which
+        // errs toward leaving atoms in custody.
+        let vault_sum = self.market.leg_vault_sum(is_base);
         let accrued = if is_base {
             self.market.accrued_base_fee_atoms.get()
         } else {
