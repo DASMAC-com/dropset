@@ -22,6 +22,7 @@ function readInitialExpanded(): boolean {
 
 export function PlatformFee({
   bps,
+  showRouteToggle,
   inAmount,
   outAmount,
   fromSymbol,
@@ -32,6 +33,11 @@ export function PlatformFee({
   // chevron or platform-fee row is shown. Callers should pass null when
   // the swap button isn't actionable (or when no fee is configured).
   bps: number | null;
+  // Whether a Dropset market exists for this pair, i.e. whether the route
+  // switch will render anything. Passed in rather than re-derived because the
+  // chevron's visibility depends on it, and only the caller knows before the
+  // switch mounts.
+  showRouteToggle: boolean;
   inAmount: bigint;
   outAmount: bigint;
   fromSymbol: string;
@@ -71,6 +77,12 @@ export function PlatformFee({
     : { base: fromSymbol, quote: toSymbol, rate: outDecimal / inDecimal };
 
   const showFeeDropdown = bps !== null;
+  // The route switch lives inside the disclosure rather than the always-visible
+  // rate row: it's a setting, not a readout, and the collapsed row should stay
+  // just the rate. So the chevron has to appear whenever *either* row would —
+  // gating it on the fee alone would leave the switch unreachable on a market
+  // whose ceiling turns fees off.
+  const showDisclosure = showFeeDropdown || showRouteToggle;
   const Chevron = expanded ? ChevronUp : ChevronDown;
 
   return (
@@ -106,13 +118,12 @@ export function PlatformFee({
           </button>
         </span>
         <span className="flex shrink-0 items-center gap-2">
-          <RouteModeToggle />
-          {showFeeDropdown ? (
+          {showDisclosure ? (
             <button
               type="button"
               onClick={toggleExpanded}
               aria-expanded={expanded}
-              aria-label={expanded ? "Hide fees" : "Show fees"}
+              aria-label={expanded ? "Hide swap details" : "Show swap details"}
               className="shrink-0 rounded p-0.5 text-muted-fg transition-colors hover:text-foreground"
             >
               <Chevron size={14} aria-hidden />
@@ -120,6 +131,11 @@ export function PlatformFee({
           ) : null}
         </span>
       </div>
+      {showRouteToggle && expanded ? (
+        <div className="px-1 pb-1 text-xs">
+          <RouteModeToggle />
+        </div>
+      ) : null}
       {showFeeDropdown && expanded ? (
         <div className="flex items-center justify-between px-1 pb-1 text-xs">
           <span className="text-muted-fg">Platform fee</span>

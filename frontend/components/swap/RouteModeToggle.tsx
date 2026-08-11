@@ -6,7 +6,9 @@ import { IS_LOCALNET } from "@/lib/env";
 import { useEclobAvailable } from "@/lib/hooks/useEclobAvailable";
 import { useSwapStore } from "@/lib/store";
 
-// Compact "Dropset route only" switch for the swap details row. Off routes via
+// "Dropset route only" switch, shown inside the swap panel's expanded details
+// (beside the platform fee) rather than on the collapsed rate row — it is a
+// setting, not a readout. Off routes via
 // the DFlow aggregator (best route); on routes directly through our own
 // market. It renders only when an eCLOB market actually exists for the current
 // pair on this cluster — so it never offers a route that isn't there. On
@@ -50,7 +52,7 @@ export function RouteModeToggle() {
           ? "Localnet routes through Dropset only"
           : "Route directly through the Dropset order book (no aggregator)"
       }
-      className="flex shrink-0 items-center gap-1.5 text-muted-fg transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:text-muted-fg"
+      className="flex w-full items-center justify-between text-muted-fg transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:text-muted-fg"
     >
       <span>Dropset route only</span>
       <span

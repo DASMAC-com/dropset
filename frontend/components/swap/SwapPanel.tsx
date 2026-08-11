@@ -279,6 +279,7 @@ export function SwapPanel() {
         {routeFound && quote.inAmount !== null && quote.outAmount !== null ? (
           <PlatformFee
             bps={feeBps}
+            showRouteToggle={eclobAvailable}
             inAmount={quote.inAmount}
             outAmount={quote.outAmount}
             fromSymbol={fromStablecoin}
