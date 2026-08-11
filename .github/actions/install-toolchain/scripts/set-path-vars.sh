@@ -1,9 +1,12 @@
 #!/bin/sh
 set -e
 
-# Cache key component.
+# The toolchain cache key, built here rather than inline in the action so the
+# restore and save steps read one definition: an entry saved under a key the
+# next run doesn't look up is a silent, permanent cache miss.
 PLATFORM="${RUNNER_OS}-${RUNNER_ARCH}"
-echo "PLATFORM=${PLATFORM}" >>"$GITHUB_ENV"
+KEY="toolchain-solana-${SOLANA_VERSION}-anchor-${ANCHOR_REVISION}"
+echo "TOOLCHAIN_CACHE_KEY=${KEY}-${PLATFORM}" >>"$GITHUB_ENV"
 
 # Solana release bin (solana, cargo-build-sbf) and the SBF scripts dir
 # (install.sh, dump.sh).

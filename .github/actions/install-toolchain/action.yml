@@ -11,31 +11,67 @@ name: 'Install toolchain'
 runs:
   steps:
   - env:
+      ANCHOR_REVISION: '${{ inputs.anchor-revision }}'
       RUNNER_ARCH: '${{ runner.arch }}'
       RUNNER_OS: '${{ runner.os }}'
+      SOLANA_VERSION: '${{ inputs.solana-version }}'
     name: 'Set path variables'
     run: '${{ github.action_path }}/scripts/set-path-vars.sh'
     shell: 'sh'
+  # A restore/save pair rather than the combined `actions/cache`, which saves
+  # only in a post step — and post steps run in reverse, so Swatinem/rust-cache
+  # (wired after this action in every Tests job) gets there first. Its save
+  # calls cleanBin(), deleting the ~/.cargo/bin binaries that pre-dated it so
+  # it doesn't cache tools it didn't build; anchor is one of them. The entry
+  # archived moments later then holds the Solana dirs and no anchor, which is
+  # how a *successful* full-install run poisons the key for every run after
+  # it. Saving inline, right after the install is verified below, publishes
+  # the entry before any of that can run. The two `path` lists must stay
+  # identical — a save under paths the restore doesn't ask for is a cache that
+  # never fully restores.
   - id: 'cache-toolchain'
-    name: 'Cache toolchain components'
-    uses: 'actions/cache@v5'
+    name: 'Restore toolchain components'
+    uses: 'actions/cache/restore@v5'
     with:
-      key: 'toolchain-solana-${{ inputs.solana-version }}-anchor-${{
-            inputs.anchor-revision }}-${{ env.PLATFORM }}'
+      key: '${{ env.TOOLCHAIN_CACHE_KEY }}'
       path: |
         ~/.cache/solana
         ~/.cargo/bin/anchor
         ~/.local/share/solana
-  - if: 'steps.cache-toolchain.outputs.cache-hit != ''true'''
+  # Assumes the caller has checked out a tree containing the Makefile.
+  - env:
+      CACHE_HIT: '${{ steps.cache-toolchain.outputs.cache-hit }}'
+    id: 'probe'
+    name: 'Probe restored toolchain'
+    run: '${{ github.action_path }}/scripts/probe-toolchain.sh'
+    shell: 'sh'
+  # Gated on what the probe found on disk, not on the cache lookup: a hit is
+  # an optimization, never a promise that the toolchain is there.
+  - if: 'steps.probe.outputs.complete != ''true'''
     name: 'Install tools'
     run: >-
       ${{ github.action_path }}/scripts/install-tools.sh
       "${{ inputs.solana-version }}"
       "${{ inputs.anchor-revision }}"
     shell: 'sh'
-  # Assumes the caller has checked out a tree containing the Makefile.
-  - name: 'Verify toolchain'
+  # Same check the probe just ran, re-run to prove the install fixed what the
+  # probe found — and to fail the job loudly if it didn't. Skipped when the
+  # probe already passed, since that *was* this check.
+  - if: 'steps.probe.outputs.complete != ''true'''
+    name: 'Verify toolchain'
     run: 'make check-toolchain'
     shell: 'sh'
+  # Only reached once the install above has been verified, and only on a
+  # genuine miss — the probe warns about a hit that restored incomplete
+  # rather than re-saving over it, since cache keys are immutable.
+  - if: 'steps.probe.outputs.save == ''true'''
+    name: 'Save toolchain components'
+    uses: 'actions/cache/save@v5'
+    with:
+      key: '${{ env.TOOLCHAIN_CACHE_KEY }}'
+      path: |
+        ~/.cache/solana
+        ~/.cargo/bin/anchor
+        ~/.local/share/solana
   using: 'composite'
 ...
