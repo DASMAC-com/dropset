@@ -2,6 +2,7 @@
 
 import { useSolanaClient } from "@solana/react-hooks";
 import { useEffect, useState } from "react";
+import { ECLOB_AVAILABILITY_RETRY_MS } from "../data/timings";
 import { resolveEclobRoute } from "../eclob/route";
 
 export type EclobAvailability = "unknown" | "available" | "unavailable";
@@ -33,6 +34,7 @@ export function useEclobAvailable(
 
   useEffect(() => {
     let cancelled = false;
+    let retry: number | undefined;
     const cached = cache.get(key);
     if (cached) {
       setState(cached);
@@ -40,29 +42,46 @@ export function useEclobAvailable(
     }
     setState("unknown");
 
-    let pending = inFlight.get(key);
-    if (!pending) {
-      pending = resolveEclobRoute(client.runtime.rpc, fromMint, toMint)
-        .then((route): EclobAvailability => {
-          const result = route ? "available" : "unavailable";
-          // Only a definitive answer is cached. A failed lookup falls through
-          // to the catch below and is left uncached, so re-selecting the pair
-          // retries instead of sticking on a transient RPC error.
-          cache.set(key, result);
-          return result;
-        })
-        .catch((): EclobAvailability => "unavailable")
-        .finally(() => {
-          inFlight.delete(key);
-        });
-      inFlight.set(key, pending);
-    }
-    pending.then((result) => {
-      if (!cancelled) setState(result);
-    });
+    // Self-rescheduling probe. A *failed* probe retries on a timer, because
+    // nothing else would: the effect only re-runs when the pair or client
+    // changes, so a single early failure would latch for the page's lifetime —
+    // exactly the `make demo` case, where the frontend serves before the
+    // validator accepts connections. Consumers hide the route switch while this
+    // is unresolved, so latching silently drops the switch (and the details
+    // chevron that carries it) on a cluster that does have the pair.
+    const probe = () => {
+      let pending = inFlight.get(key);
+      if (!pending) {
+        pending = resolveEclobRoute(client.runtime.rpc, fromMint, toMint)
+          .then((route): EclobAvailability => {
+            const result = route ? "available" : "unavailable";
+            // Only a definitive answer is cached — "no market for this pair" is
+            // as final as "here it is", since deploying one is an admin action,
+            // and a cached answer stops the retry below.
+            cache.set(key, result);
+            return result;
+          })
+          // A probe that *failed* is not an answer, so it stays uncached and
+          // reports "unknown" rather than claiming the market doesn't exist.
+          .catch((): EclobAvailability => "unknown")
+          .finally(() => {
+            inFlight.delete(key);
+          });
+        inFlight.set(key, pending);
+      }
+      pending.then((result) => {
+        if (cancelled) return;
+        setState(result);
+        if (result === "unknown") {
+          retry = window.setTimeout(probe, ECLOB_AVAILABILITY_RETRY_MS);
+        }
+      });
+    };
+    probe();
 
     return () => {
       cancelled = true;
+      if (retry !== undefined) window.clearTimeout(retry);
     };
   }, [client, fromMint, toMint, key]);
 

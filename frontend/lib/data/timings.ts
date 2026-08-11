@@ -71,6 +71,15 @@ export const ORDER_BOOK_REFRESH_MS = 1_000;
 // coming back.
 export const RECENT_FILLS_RESUBSCRIBE_MS = 2_000;
 
+// ───────────── eCLOB availability ─────────────
+
+// Backoff before re-probing whether a market exists for a pair, after a probe
+// failed outright (as opposed to answering "no market"). Same localnet reason
+// as the fills backoff above: `make demo` brings the frontend up before the
+// validator, so the first probe can fail purely because nothing is listening
+// yet — and a definitive answer is cached, so only the failures retry.
+export const ECLOB_AVAILABILITY_RETRY_MS = 2_000;
+
 // ───────────── UI feedback ─────────────
 
 // How long the clipboard-copy "Copied!" feedback stays on screen.
