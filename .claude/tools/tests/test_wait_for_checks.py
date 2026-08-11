@@ -436,20 +436,38 @@ class ModeSelectionTests(unittest.TestCase):
         with self.assertRaises(wfc.WaitForChecksError):
             self._run(["wait_for_checks.py", "--run", "99", "--no-watch"])
 
-    def test_run_mode_reaches_wait_run(self):
+    def _run_mode(self, conclusion):
+        seen = {}
         real = wfc.wait_run
-        wfc.wait_run = lambda rid, repo="r", timeout=0, interval=0: {
-            "conclusion": "pass",
-            "run_id": rid,
-        }
+
+        def stub(rid, repo=None, timeout=None, interval=None):
+            seen.update(rid=rid, repo=repo, timeout=timeout, interval=interval)
+            return {"conclusion": conclusion, "run_id": rid}
+
+        wfc.wait_run = stub
         try:
             buf = io.StringIO()
             with redirect_stdout(buf):
                 code = wfc.run(["wait_for_checks.py", "--run", "99"])
         finally:
             wfc.wait_run = real
+        return code, json.loads(buf.getvalue()), seen
+
+    def test_run_mode_reaches_wait_run_with_the_cli_values(self):
+        code, parsed, seen = self._run_mode("pass")
         self.assertEqual(code, 0)
-        self.assertEqual(json.loads(buf.getvalue())["run_id"], "99")
+        self.assertEqual(parsed["run_id"], "99")
+        self.assertEqual(seen["repo"], wfc.DEFAULT_REPO)
+        self.assertEqual(seen["timeout"], wfc.DEFAULT_TIMEOUT)
+        self.assertEqual(seen["interval"], wfc.DEFAULT_INTERVAL)
+
+    def test_run_mode_exits_non_zero_on_a_dequeue_or_timeout(self):
+        """The stated goal of this mode is that a dequeue can never read as a
+        merge, so the red exit code is the assertion that matters most."""
+        for conclusion in ("fail", "timeout"):
+            with self.subTest(conclusion=conclusion):
+                code, _, _ = self._run_mode(conclusion)
+                self.assertEqual(code, 1)
 
 
 if __name__ == "__main__":

@@ -159,6 +159,16 @@ class CliTests(unittest.TestCase):
         self.assertEqual(out.getvalue().strip().splitlines()[0], "{")
         self.assertIn("rebase-overlap |", err.getvalue())
 
+    def test_the_cli_defaults_reach_analyze(self):
+        """`--from` semantics are this tool's whole hazard, so pin that the two
+        values the caller does NOT pass are the ones it expects."""
+        with mock.patch.object(ro, "analyze") as analyze:
+            analyze.return_value = {"conclusion": "x"}
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                with mock.patch.object(ro, "summarize", return_value="s"):
+                    ro.run(["rebase_overlap.py", "--from", "old"])
+        analyze.assert_called_once_with("old", "origin/main", "HEAD")
+
     def test_from_is_required(self):
         """The pre-fetch base tip cannot be recovered afterwards, so guessing it
         would silently compare the wrong range."""

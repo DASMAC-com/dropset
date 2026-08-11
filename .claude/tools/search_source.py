@@ -483,8 +483,9 @@ def run(argv: list[str]) -> int:
     parser.add_argument(
         "--glob",
         default=None,
-        help="comma-separated path globs a file must match (implies --all-text); "
-        "supports * ? and segment-wise **, but not [classes] or {braces}",
+        help="comma-separated path globs a file must match; searches every "
+        "extension unless --ext/--all-text is given. Supports * ? and "
+        "segment-wise **, but not [classes] or {braces}",
     )
     parser.add_argument(
         "--ext", default=None, help="comma-separated extensions, no dot"

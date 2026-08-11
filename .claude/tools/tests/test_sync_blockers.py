@@ -567,7 +567,7 @@ class RawToIssueTests(unittest.TestCase):
         got = _raw_to_issue(raw)
         self.assertEqual(sorted(got.related_to), ["ENG-20", "ENG-30"])
 
-    def test_a_related_relation_is_not_a_block_edge(self):
+    def test_a_related_relation_is_not_a_block(self):
         raw = raw_issue("ENG-10", outgoing=[("rel-1", "related", "ENG-20")])
         got = _raw_to_issue(raw)
         self.assertEqual(got.blocks, [])
