@@ -205,7 +205,8 @@ The composition maps onto the kill-switch policy (§4):
 | Basis (crypto venues)        | Slow poll — the basis is smoothed, so sub-second freshness buys nothing |
 | Peg-truth / daily references | Slowest — issuer rate and ECB publish on the order of a day             |
 
-Exact intervals, and every staleness / session threshold, are **TBD —
+Exact intervals are **TBD — set by the per-venue budget**
+(`data-feeds.md` §10); every staleness / session threshold is **TBD —
 set by the flow-regime, lead-lag, and observability analyses**
 (`data-feeds.md` §11). `fair` is recomputed every tick;
 `SetReferencePrice` fires only per the §3 cadence rules, not on every

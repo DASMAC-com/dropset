@@ -4,8 +4,6 @@
 
 <!-- cspell:word CoinGecko -->
 
-<!-- cspell:word Fargate -->
-
 <!-- cspell:word stationarity -->
 
 <!-- cspell:word TIMESTAMPTZ -->
@@ -45,7 +43,7 @@ streaming adapters. Both sink paths have their first consumer: the
 Coinbase candle collector on the store sink, and the maker bot's price
 and fill transports on the live sink — the latter carrying the first
 streaming source, an RPC `logsSubscribe` socket bridged through the
-channel seam (§13). The collector crate still sits at its
+stream seam (§4). The collector crate still sits at its
 original path under `analytics/`; its move to `market-data/`, the
 relocation of the venue adapters into `feeds/`, and the indexer's
 migration onto the framework are separate tracked tasks.
@@ -185,9 +183,11 @@ ______________________________________________________________________
 
 Source adapters are the reusable connectors a source composes, each
 **feature-gated** so a consumer compiles only the transport it uses.
-Adapters live in `feeds/` — a venue is written **once** and consumed by
-collectors and bots alike, rather than stranded in whichever app needed
-it first (§9).
+Adapters **belong in `feeds/`**, so a venue is written **once** and
+consumed by collectors and bots alike rather than stranded in whichever
+app needed it first. The maker's price sources already sit there; the
+Coinbase collector's does not yet, and relocating it is a tracked task
+(Status, above).
 
 - **HTTP-REST** (`feature = "http"`, `reqwest` over TLS) — a small JSON
   client: a base URL, a shared client, and `get_json(path, query)`.
@@ -201,7 +201,8 @@ it first (§9).
 - **Streaming / WebSocket** (`feature = "stream"`) — a subscribe source
   for the low-latency bot path (a CEX ticker socket, an RPC
   `logsSubscribe`, or geyser). The first concrete adapter is the maker's
-  fill socket; a CEX price socket follows with the streaming primaries.
+  fill socket; a CEX price socket follows when a basis leg needs
+  lower latency than its poll cadence gives.
 
 Features are **off by default** so an HTTP-only consumer never compiles
 the Solana or streaming trees.
@@ -215,9 +216,9 @@ processes:
 
 - **Store-sink feeds run as their own processes / containers.**
   Separate binaries per feed plus a migrate runner; one versioned Docker
-  image builds all of them, and the entrypoint (compose `command`
-  locally, the task definition in the cloud) selects the process. A
-  run-once migration task precedes one long-lived service per feed
+  image builds all of them, and the compose `command` selects the
+  process — the same mechanism locally and on the deployed host (§12).
+  A run-once migration task precedes one long-lived service per feed
   against the same database. Every feed is idempotent and
   cursor-resumable, so a restarted task just resumes.
 - **Live-sink feeds run in the consumer's process.** A bot links
@@ -275,8 +276,10 @@ What it is for:
   the durable substrate any later modeling work needs.
 
 **Collection never sits in the quoting path.** Quoting depends on live
-feeds and nothing else: the database carries **slow variables only**
-(parameters, volatility estimates, regime tags). A collector outage, or
+feeds and nothing else. The database holds the full price history (§8),
+but what the **quoting path** may read out of it is **slow variables
+only** — parameters, volatility estimates, regime tags — never a price
+it is about to quote against. A collector outage, or
 the database being unreachable, degrades tomorrow's calibration — it
 must never stop today's quotes. This is a hard invariant, not a
 preference, and it is why the maker keeps its own deliberately
@@ -319,6 +322,14 @@ point of sharing an instance.
 
 Adding a table means naming its writer here. A table with two writers is
 a design error, not a configuration choice.
+
+The one carve-out is `feed_cursors`, which the **framework** owns rather
+than any single app: every store-sink process writes its own row, keyed
+by the feed name. Writers partition by key, so the rule holds at the row
+level even though several apps touch the table — and the framework, not
+an app, defines its shape. A table wanting that treatment has to earn it
+the same way: a key that makes the partition structural, not a
+convention two writers agree to keep.
 
 ______________________________________________________________________
 
@@ -369,9 +380,11 @@ Collectors and the maker share one host and one egress IP, and keyless
 tiers rate-limit by IP — so venue quota is a shared resource that has to
 be allocated rather than assumed.
 
-- **Single poller per venue per host.** Collectors own venue ingestion;
-  nothing else duplicates their polls. The maker's quote path keeps its
-  own deliberately independent polls (§7), drawn from the same budget.
+- **One collector poller per venue per host.** Collectors own venue
+  ingestion and never duplicate each other's polls. The maker's quote
+  path is the **one deliberate exception** — it keeps its own
+  independent polls (§7), drawn from the same budget, because quoting
+  must not depend on a collector being up.
 - **The maker's quote path holds first claim** on any venue's budget.
   Collection yields to quoting, never the reverse.
 - **Batched symbol fetch wherever the venue supports it** — one poll
@@ -421,8 +434,9 @@ its own. These are the numbers the maker spec defers to:
   exposed). Every other statistic here is sliced by regime.
 - **Lead-lag** — cross-correlation of FX spot against the CEX token
   print and the issuer rate, to settle which signal leads. This sets the
-  staleness thresholds and the weekend anchor switch that
-  [`market-making-mvp.md`](market-making-mvp.md) §1 leaves TBD.
+  staleness thresholds, and the session boundaries the weekend anchor
+  switch fires on, that [`market-making-mvp.md`](market-making-mvp.md)
+  §1 leaves TBD.
 - **Observability — realized-vs-modeled basis error.** The gap between
   the live basis and the engine's EMA estimate of it is the standing
   signal the deployed maker is monitored on; the collected history is
@@ -467,7 +481,8 @@ ______________________________________________________________________
 - **Streaming adapter phasing.** *Resolved.* The first streaming adapter
   is the RPC `logsSubscribe` fill socket, landed as the maker bot's fill
   feed through the `ChannelSource` stream seam (§4). A CEX socket for
-  the price primaries follows when the streaming primaries land.
+  the basis leg follows when polling it at the §10 cadence proves too
+  slow for quoting — not before.
 - **Backfill windowing.** The indexer's poll takes the newest batch and
   advances, so a backlog larger than one batch skips the middle
   (`indexer.md` §9). The framework should offer a paged-backfill helper
@@ -479,5 +494,11 @@ ______________________________________________________________________
   and history depth.
 - **Econ-calendar source.** Which static feed for the ECB / FOMC / CPI /
   NFP times.
+- **History depth before the estimates are significant.** The §11
+  characterizations need enough repeats of each regime — weekend gaps,
+  macro events — to mean anything. The retired survey guessed a 60–90
+  day backfill for a one-shot gate; a standing collector instead needs a
+  stated depth per estimate, below which the number is reported as
+  provisional rather than used to set a band.
 - **Retention.** How much history stays in Postgres before it rolls to
   the S3 archival tier, and whether the analytics read across the seam.
