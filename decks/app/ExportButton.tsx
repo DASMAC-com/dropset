@@ -6,11 +6,15 @@ import { useState } from "react";
  * Downloads a deck as `.pptx`, showing progress while it is built.
  *
  * A plain link would be simpler, but the export is not a static file: the
- * server renders every page in a headless browser first, which takes several
- * seconds with no visible sign that anything is happening. A bare anchor
- * spends that time looking broken, and an impatient second click starts a
- * second render. So the request is made in JS, the button reports what it is
+ * server renders every page in a headless browser first, which takes upwards
+ * of twenty seconds with no visible sign that anything is happening. A bare
+ * anchor spends that time looking broken, and an impatient second click starts
+ * a second render. So the request is made in JS, the button reports what it is
  * doing, and the result is saved from memory once it arrives.
+ *
+ * The status deliberately doesn't estimate a duration. It ran long enough to
+ * make "a few seconds" read as a stall rather than a reassurance, and an
+ * estimate that undershoots is worse than none.
  */
 
 type Status = "idle" | "working" | "error";
@@ -77,7 +81,7 @@ export function ExportButton({ route, title }: { route: string; title: string })
       )}
       {working && (
         <span role="status" className="text-xs text-muted-fg">
-          Rendering {title} — a few seconds.
+          Rendering {title}…
         </span>
       )}
     </div>

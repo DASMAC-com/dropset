@@ -202,27 +202,24 @@ const template = () => (
 );
 
 /**
- * How much vertical room the footer is kept clear of, in slide units.
+ * Vertical room reserved on each page: a small inset above the content, and
+ * enough below it to clear the footer.
  *
- * The footer is absolutely positioned over the bottom of the slide, so the body
- * has to reserve space for it or the lowest element on a busy page crowds the
- * DASMAC credit. What matters is that the reserve is **split across both ends**
- * rather than all taken off the bottom, which is how it started and is subtly
- * wrong: content is centred inside whatever is left, so a bottom-only reserve
- * put the box's centre ~53 units above the slide's own centre and every page
- * rode high. It showed worst on the two densest pages — 3 and 10 — where there
- * is almost no slack left to centre, so the eyebrow crowded the top edge while
- * a wide empty band sat under the content.
+ * The two numbers sum to the reserve the page has always carried, so every
+ * height budget below still holds and no page can newly overflow. What changed
+ * is the split. It was symmetric, which paired with centring to put each page's
+ * content on the slide's own midline — mathematically tidy, and wrong to look
+ * at: the footer occupies the bottom of the slide, so a centred block leaves a
+ * bare band above it and a visibly larger one below, and every page read as
+ * hovering in the middle of a frame it never filled.
  *
- * Splitting it costs no page a single unit, which is the reason to prefer it
- * over trimming margins page by page: the available height is still
- * `1016 - FOOTER_RESERVE` either way, so every height budget below still holds
- * and no page can newly overflow — the box simply sits where the slide's centre
- * is. Half the reserve still clears the footer comfortably; the footer is ~42
- * units tall (its 210-wide wordmark sets that), and on the tightest page content
- * now ends ~55 units above it.
+ * Anchoring to the top instead spends that asymmetry where it does something.
+ * Each page now starts its eyebrow at the same height near the top edge, and
+ * the slack collects at the bottom, between the content and the footer, where
+ * it reads as breathing room rather than as a gap.
  */
-const FOOTER_RESERVE = 106;
+const CONTENT_INSET_TOP = 28;
+const FOOTER_RESERVE = 78;
 
 /**
  * Every slide's content column.
@@ -232,12 +229,27 @@ const FOOTER_RESERVE = 106;
  * page: content that overflows is merely scaled down on screen but **silently
  * clipped in the export**, which is the path to the meta-deck.
  */
-const SlideBody = ({ children }: { children: React.ReactNode }) => (
+const SlideBody = ({
+  centered = false,
+  children,
+}: {
+  /**
+   * Centre the content instead of anchoring it to the top.
+   *
+   * For the title page only, and the distinction is what the top anchor is
+   * *for*: it exists so that every page's eyebrow lands at the same height, and
+   * a page with no eyebrow gains nothing from it. The title is a wordmark and
+   * one line, so anchoring it high just hangs it off the top edge above a void
+   * that is most of the slide.
+   */
+  centered?: boolean;
+  children: React.ReactNode;
+}) => (
   <FlexBox
     height="100%"
     flexDirection="column"
-    justifyContent="center"
-    padding={`${FOOTER_RESERVE / 2}px 0`}
+    justifyContent={centered ? "center" : "flex-start"}
+    padding={`${CONTENT_INSET_TOP}px 0 ${FOOTER_RESERVE}px 0`}
   >
     {children}
   </FlexBox>
@@ -251,19 +263,19 @@ const SlideBody = ({ children }: { children: React.ReactNode }) => (
  * banner itself is off the deck. Sentence case stays with Inter, where it
  * belongs.
  *
- * It sits **close** to the sentence it labels — tight bottom margin, and an
+ * It sits **close** to the sentence it labels — modest bottom margin, and an
  * explicit `lineHeight`, because `Text` sets none and would otherwise inherit
  * the browser's `normal` (~1.21) and hang leading under a single line of 26px
  * type, widening a gap the margin only appears to control. A kicker should read
- * as a label on the sentence rather than as a line of its own, and on the
- * densest pages every unit between the two is height the captures want.
+ * as a label on the sentence rather than as a line of its own; close, but not
+ * so close that the two collide at display size.
  */
 const Eyebrow = ({ children }: { children: React.ReactNode }) => (
   <Text
     color="secondary"
     fontFamily="monospace"
     fontSize="26px"
-    margin="0 0 10px 0"
+    margin="0 0 18px 0"
     style={{
       letterSpacing: "0.14em",
       lineHeight: 1.1,
@@ -336,10 +348,12 @@ const Statement = ({
  * numeric claim, and it would flatly contradict the coverage fact — the fifth
  * of the six — which is a *less-than*.
  *
- * The row spacing is the page's give. This started as three facts at 26 units
- * apart; at six, that spacing made the list overrun the meter column beside it
- * for no gain in legibility, so it came down. If the page ever overflows again,
- * this number is the first place to take it from.
+ * The row spacing is the page's give, and it moves in both directions. It
+ * started at 26 units for three facts and came down when six of them overran
+ * the meter column beside it; it went back up once the page stopped centring
+ * its content, which freed the slack that had been sitting above the eyebrow
+ * and left the list looking cramped against a half-empty page. If the page ever
+ * overflows, this number is still the first place to take it from.
  *
  * `accent` is for the **last** fact, the ambition. It is the one row that isn't
  * a fact about the world as it is, and in one flat color it read as a trailing
@@ -358,7 +372,7 @@ const Fact = ({
   <FlexBox
     alignItems="flex-start"
     justifyContent="flex-start"
-    margin="0 0 20px 0"
+    margin="0 0 42px 0"
   >
     <div
       style={{
@@ -545,12 +559,18 @@ const SequenceArrow = () => (
  * pushed the eyebrow off the top edge (cropped on screen, silently clipped in
  * print).
  *
- * Widening it back to 420 is only safe because two other things now hold: the
+ * Widening it back to 420 was only safe because two other things now hold: the
  * statement is pinned to one line by `nowrap` (the guarantee — `maxWidth` is
  * only an estimate), and the URL moved into the middle column. Those are
- * load-bearing — undo either and this has to come back down.
+ * load-bearing — undo either and this has to come down further.
+ *
+ * It came back to 392 once the deck stopped centring its content. The captures
+ * are the page's height: the third is by far the tallest, so the row's bottom
+ * edge is set by it alone, and at 420 it ran to within ~18 units of the footer.
+ * Trimming the width is the only lever that buys clearance without touching the
+ * layout — every other number on this page is already at its floor.
  */
-const STEP_WIDTH = 420;
+const STEP_WIDTH = 392;
 
 /**
  * Horizontal padding inside a step's frame. Named because the image width is
@@ -1183,7 +1203,7 @@ export default function DemoDeck() {
     <Deck theme={deckTheme} template={template}>
       {/* 1 — Title */}
       <Slide>
-        <SlideBody>
+        <SlideBody centered>
           <Box margin="0 0 40px 0">
             <Wordmark width={860} />
           </Box>

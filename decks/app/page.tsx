@@ -74,37 +74,39 @@ export default function Home() {
           </span>
         </summary>
 
-        <div className="flex flex-col gap-3 px-5 pt-1 pb-5 text-sm text-muted-fg">
-          <p>
+        <ul className="flex list-disc flex-col gap-2 px-5 pt-1 pb-5 pl-9 text-sm text-muted-fg marker:text-border">
+          <li>
             Arrow keys drive a deck.{" "}
-            <span className="font-mono text-foreground">⌘⇧P</span> opens
-            presenter mode with the speaker notes,{" "}
-            <span className="font-mono text-foreground">⌘⇧O</span> the slide
-            overview, and{" "}
-            <span className="font-mono text-foreground">⌘⇧E</span> export mode —
-            every slide as a static page. Each has a query string too —{" "}
+            <span className="font-mono text-foreground">⌘⇧P</span> presenter
+            mode and notes,{" "}
+            <span className="font-mono text-foreground">⌘⇧O</span> overview,{" "}
+            <span className="font-mono text-foreground">⌘⇧E</span> static pages.
+          </li>
+          <li>
+            Those shortcuts have query strings too —{" "}
             <span className="font-mono">?exportMode=true</span> and friends —
-            which is the reliable way in, since the browser claims some of the
-            key combinations for itself.
-          </p>
-          <p>
-            Presenter mode syncs to the audience window over the browser&apos;s{" "}
-            <span className="font-mono">BroadcastChannel</span> — same machine,
-            same browser, two windows. It does not drive a deck on someone
-            else&apos;s screen.
-          </p>
-          <p>
+            which is the reliable way in, since browsers claim some key
+            combinations.
+          </li>
+          <li>
+            Presenter mode syncs over{" "}
+            <span className="font-mono">BroadcastChannel</span>: same machine,
+            same browser, two windows. It can&apos;t drive someone else&apos;s
+            screen.
+          </li>
+          <li>
             <strong className="text-foreground">Export .pptx</strong> renders
-            every page at 3840×2160 and packs them into a PowerPoint file, which
-            is what Google Slides&apos;{" "}
-            <span className="font-mono">File ▸ Import slides</span> accepts —
-            Slides cannot import a PDF. For a PDF, import to Slides and use{" "}
-            <span className="font-mono">File ▸ Download</span>. The same export
-            runs from the command line as{" "}
+            each page at 3840×2160 into a PowerPoint file — what Google
+            Slides&apos; <span className="font-mono">File ▸ Import slides</span>{" "}
+            accepts. Slides can&apos;t import a PDF; for one, import here first
+            and use <span className="font-mono">File ▸ Download</span>.
+          </li>
+          <li>
+            The same export runs from a checkout as{" "}
             <span className="font-mono text-foreground">pnpm run export</span>.
-          </p>
-          <p>
-            Every deck is a{" "}
+          </li>
+          <li>
+            Decks are{" "}
             <a
               href="https://commerce.nearform.com/open-source/spectacle/"
               target="_blank"
@@ -113,9 +115,9 @@ export default function Home() {
             >
               Spectacle
             </a>{" "}
-            presentation, so those shortcuts are the library&apos;s own.
-          </p>
-        </div>
+            presentations, so the shortcuts are the library&apos;s own.
+          </li>
+        </ul>
       </details>
     </main>
   );
