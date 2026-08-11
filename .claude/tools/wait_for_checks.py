@@ -15,7 +15,7 @@ across eight sessions:
 * **It read the wrong thing on failure.** Diagnosing which check failed took
   repeated per-check reads, when one JSON read answers it completely.
 
-So the wait is **two** ``gh`` invocations, no loop anywhere:
+So the wait is a **bounded** pair of ``gh`` invocations — no model-driven loop:
 
 1. ``gh pr checks --watch`` — gh does the pacing and exits when the checks
    settle. Its live-updating table is captured to a log, never to stdout, for
@@ -26,6 +26,17 @@ So the wait is **two** ``gh`` invocations, no loop anywhere:
 The JSON read, not the watch's exit code, is the authority on the outcome: ``gh``
 overloads its exit status (non-zero covers "a check failed", "checks are still
 pending", and "there are no checks at all"), and a review must distinguish those.
+
+**The pair repeats when the read disagrees with the watch.** ``--watch`` settles
+on gh's *own* census of the check set, which is not the same as the PR being
+done: a workflow that registers late — one whose trigger matches a path only
+some PRs touch — is still pending when gh returns. Believing that single
+post-watch read is how this tool once reported ``settled: true`` alongside
+``conclusion: "pending"``, twice in a row, for ~14 minutes of dead wall-clock on
+a PR where nothing was actually wrong. A pending read therefore re-enters the
+watch instead of being believed, bounded by both :data:`MAX_WATCH_ROUNDS` and
+the caller's original ``--timeout`` so it cannot outlive the budget that was
+set, and ``pending_checks`` names whatever is still outstanding.
 
 A second mode, ``--run <id>``, watches **one workflow run** to its terminal
 state instead of a PR's checks. That is the merge-queue half of the same job:
@@ -57,8 +68,10 @@ Prints JSON::
       "conclusion": "pass",      // pass | fail | pending | none | timeout
       "settled": true,
       "elapsed_seconds": 127,
+      "watch_rounds": 1,         // >1 means a check registered late
       "counts": {"pass": 12, "fail": 0, "pending": 0, "skipping": 3},
       "failing": [{"name": "…", "workflow": "…", "link": "…", "run_id": "…"}],
+      "pending_checks": [],      // names still outstanding, when any are
       "log_path": "/…/wait-for-checks-285.log"
     }
 
@@ -105,6 +118,13 @@ DEFAULT_INTERVAL = 30
 # An outer bound on the watch, so a wedged or cancelled run can't hold the
 # session open indefinitely. An hour is well past this repo's slowest suite.
 DEFAULT_TIMEOUT = 3600
+
+# How many times the watch may be re-entered after it exits with a check still
+# pending. Each re-entry costs one gh invocation, and in practice a late
+# registration is caught by the second round; the cap exists so that a check
+# wedged in `pending` reports a timeout at a predictable point instead of
+# re-watching until the full `--timeout` elapses.
+MAX_WATCH_ROUNDS = 5
 
 # The fields `gh pr checks --json` exposes that a review actually needs — and
 # nothing more, since the point of this read is to be the one compact payload.
@@ -384,6 +404,15 @@ def summarize(checks: list[dict]) -> dict:
             )
     failing.sort(key=lambda f: (f["workflow"], f["name"]))
 
+    # Name what is still outstanding, not just how many. A pending verdict whose
+    # only detail is a count sends the reader back to `gh` to find out which
+    # check it is waiting on — which is the hand-diagnosis this tool replaces.
+    pending_checks = sorted(
+        (check.get("name") or "")
+        for check in checks
+        if (check.get("bucket") or "").lower() == "pending"
+    )
+
     # Anything that is not `pass` or `skipping` — a cancelled check, or a bucket
     # gh grew since this was written — blocks the build, so it must not fall
     # through to `pass`. Reported under its own conclusion so the caller can tell
@@ -407,6 +436,7 @@ def summarize(checks: list[dict]) -> dict:
         "conclusion": conclusion,
         "counts": counts,
         "failing": failing,
+        "pending_checks": pending_checks,
         "unresolved_buckets": unresolved,
     }
 
@@ -418,15 +448,47 @@ def wait(
     timeout: int = DEFAULT_TIMEOUT,
     watch: bool = True,
 ) -> dict:
-    """The whole wait: watch until settled, read once, summarize."""
+    """The whole wait: watch, read, and re-watch while the read says pending.
+
+    ``settled`` means *the checks are done*, never merely *gh returned*. Those
+    two came apart when a late-registering workflow left a pending check behind
+    an exited watch, and reporting the exit as settled produced a verdict that
+    contradicted its own counts. So the watch is re-entered while the read still
+    says pending, bounded by :data:`MAX_WATCH_ROUNDS` and by the caller's
+    ``timeout``; exhausting either reports ``timeout``, which is the honest
+    answer, rather than a settled pending, which is not an answer at all.
+    """
     log = log_path_for(pr)
     started = time.monotonic()
+    deadline = started + timeout
     settled = True
-    if watch:
-        settled = watch_checks(pr, repo, interval, timeout, log)
+    rounds = 0
+    summary: dict | None = None
+
+    while watch:
+        remaining = int(deadline - time.monotonic())
+        if remaining <= 0:
+            settled = False
+            break
+        rounds += 1
+        settled = watch_checks(pr, repo, interval, remaining, log)
+        summary = summarize(read_checks(pr, repo))
+        if not settled or summary["conclusion"] != "pending":
+            break
+        if rounds >= MAX_WATCH_ROUNDS:
+            settled = False
+            break
+        # gh exits immediately when it sees nothing left to wait on, so pace the
+        # re-entry rather than spinning through the cap in a few milliseconds.
+        # Each round re-truncates the log; the last round's is the one that
+        # describes the state actually being reported.
+        time.sleep(max(0.0, min(float(interval), deadline - time.monotonic())))
+
+    # `--no-watch`, or a timeout budget already spent before the first round.
+    if summary is None:
+        summary = summarize(read_checks(pr, repo))
     elapsed = int(time.monotonic() - started)
 
-    summary = summarize(read_checks(pr, repo))
     conclusion = summary["conclusion"]
     if not settled and conclusion != "fail":
         # A timed-out watch must never claim `pass` off a snapshot it stopped
@@ -441,8 +503,10 @@ def wait(
         "conclusion": conclusion,
         "settled": settled,
         "elapsed_seconds": elapsed,
+        "watch_rounds": rounds,
         "counts": summary["counts"],
         "failing": summary["failing"],
+        "pending_checks": summary["pending_checks"],
         "unresolved_buckets": summary["unresolved_buckets"],
         "log_path": str(log),
     }

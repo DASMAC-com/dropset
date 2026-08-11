@@ -110,6 +110,16 @@ class SummarizeTests(unittest.TestCase):
         got = [(f["workflow"], f["name"]) for f in out["failing"]]
         self.assertEqual(got, [("Lint", "a"), ("Lint", "z"), ("Tests", "a")])
 
+    def test_pending_checks_names_what_is_outstanding(self):
+        """A pending verdict whose only detail is a count sends the reader back
+        to gh to find out which check it is waiting on."""
+        out = wfc.summarize([check("a", "pass"), check("Explorer image", "pending")])
+        self.assertEqual(out["conclusion"], "pending")
+        self.assertEqual(out["pending_checks"], ["Explorer image"])
+
+    def test_pending_checks_is_empty_when_nothing_is_outstanding(self):
+        self.assertEqual(wfc.summarize([check("a", "pass")])["pending_checks"], [])
+
 
 class RunIdTests(unittest.TestCase):
     def test_extracts_from_a_job_link(self):
@@ -245,6 +255,86 @@ class WaitTests(unittest.TestCase):
         self.assertEqual(called, [])
         self.assertEqual(v["conclusion"], "pending")
         self.assertTrue(v["settled"])
+
+    def _stub_rounds(self, reads, settled=True):
+        """Stub both gh calls with a *sequence* of reads — one per watch round.
+
+        The final entry repeats, so a test wanting "pending forever" passes a
+        single read. `time.sleep` is neutralized because the pacing between
+        rounds is real seconds in production and would make this suite crawl.
+        Returns the list of timeouts handed to each `watch_checks` call.
+        """
+        queue = list(reads)
+        real_watch = wfc.watch_checks
+        real_read = wfc.read_checks
+        real_sleep = wfc.time.sleep
+        timeouts = []
+
+        def fake_watch(pr, repo, interval, timeout, log):
+            timeouts.append(timeout)
+            return settled
+
+        def fake_read(pr, repo):
+            return queue.pop(0) if len(queue) > 1 else queue[0]
+
+        wfc.watch_checks = fake_watch
+        wfc.read_checks = fake_read
+        wfc.time.sleep = lambda seconds: None
+        self.addCleanup(setattr, wfc, "watch_checks", real_watch)
+        self.addCleanup(setattr, wfc, "read_checks", real_read)
+        self.addCleanup(setattr, wfc.time, "sleep", real_sleep)
+        return timeouts
+
+    def test_a_late_registering_check_re_enters_the_watch(self):
+        """gh's --watch settles on its *own* census of the check set, so a
+        workflow that registers late is still pending when it returns. The
+        verdict must come from a re-entered watch, not from that first read."""
+        self._stub_rounds(
+            [
+                [check("a", "pass"), check("Explorer image", "pending")],
+                [check("a", "pass"), check("Explorer image", "pass")],
+            ]
+        )
+        v = wfc.wait(285, repo="o/r")
+        self.assertEqual(v["conclusion"], "pass")
+        self.assertTrue(v["settled"])
+        self.assertEqual(v["watch_rounds"], 2)
+
+    def test_a_check_pending_forever_times_out_rather_than_settling(self):
+        self._stub_rounds([[check("a", "pass"), check("Explorer image", "pending")]])
+        v = wfc.wait(285, repo="o/r")
+        self.assertEqual(v["conclusion"], "timeout")
+        self.assertFalse(v["settled"])
+        self.assertEqual(v["watch_rounds"], wfc.MAX_WATCH_ROUNDS)
+        self.assertEqual(v["pending_checks"], ["Explorer image"])
+
+    def test_settled_never_coexists_with_a_pending_conclusion(self):
+        """The contradiction the retry exists to prevent: `settled: true` next
+        to `conclusion: "pending"` is not a verdict, it is a bug."""
+        self._stub_rounds([[check("Explorer image", "pending")]])
+        v = wfc.wait(285, repo="o/r")
+        self.assertFalse(v["settled"] and v["conclusion"] == "pending")
+
+    def test_each_round_gets_only_the_remaining_budget(self):
+        """The retry must not outlive the timeout the caller set."""
+        timeouts = self._stub_rounds([[check("a", "pending")]])
+        wfc.wait(285, repo="o/r", timeout=600)
+        self.assertGreater(len(timeouts), 1)
+        self.assertLessEqual(timeouts[1], timeouts[0])
+
+    def test_an_exhausted_budget_never_watches_at_all(self):
+        timeouts = self._stub_rounds([[check("a", "pass")]])
+        v = wfc.wait(285, repo="o/r", timeout=0)
+        self.assertEqual(timeouts, [])
+        self.assertEqual(v["watch_rounds"], 0)
+        self.assertEqual(v["conclusion"], "timeout")
+
+    def test_a_settled_green_build_takes_exactly_one_round(self):
+        """The retry is for the pending case only — it must not add a round to
+        the common path, which would double every wait's gh calls."""
+        self._stub_rounds([[check("a", "pass")]])
+        v = wfc.wait(285, repo="o/r")
+        self.assertEqual(v["watch_rounds"], 1)
 
 
 class CliTests(unittest.TestCase):

@@ -358,8 +358,15 @@ fresh worktree inherits.
    `Command "biome" not found` and have to be re-run:
 
    ```sh
-   pnpm -C frontend install
+   pnpm --dir frontend install
    ```
+
+   **Spell it `--dir`, not `-C`.** The two are synonyms to
+   pnpm but *not* to the permission matcher: `review-pr`'s
+   lint step already prescribes the `--dir` form and it is
+   firmed, so a `-C` here would be a second rule for the same
+   command — and a fresh prompt in every cold worktree, which
+   is exactly the population this step exists to serve.
 
    **This is not only a frontend-task concern.** `make lint`
    runs `pre-commit --all-files`, and those two hooks are

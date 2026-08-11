@@ -2220,16 +2220,30 @@ PR-authoring **writes** (`create_pull_request`,
      checks at all — nothing to wait on. Note it in the report
      and treat it as green rather than waiting forever.
    - **`conclusion: "timeout"`** means the watch hit its bound
-     (default one hour) without settling. It reports the counts
-     it observed but deliberately never claims `pass` off a
+     (default one hour), or exhausted its re-watch rounds, with
+     the checks still unsettled. It reports the counts it
+     observed but deliberately never claims `pass` off a
      snapshot it stopped waiting on — treat it as unverified,
-     not green.
+     not green. Its `pending_checks` names what was still out.
+   - **`watch_rounds` > 1** means a check registered *after* gh
+     had taken its census — routine on a PR touching a path some
+     workflow watches with its own trigger set, and not a
+     problem in itself. It is worth knowing because it used to
+     be the failure this step could not see: gh's `--watch`
+     exits on its own view of the check set, so a single
+     post-watch read once reported `settled: true` alongside
+     `conclusion: "pending"` twice in a row, ~14 minutes of dead
+     wall-clock on a PR where nothing was wrong. The tool now
+     re-enters the watch instead of believing that read.
 
    Then branch on `conclusion` — it is exhaustive, so there is
    no unhandled case: `pass` and `fail` below, plus `none` and
-   `timeout` per the notes above, and `pending`, which can only
-   arise under `--no-watch` (re-run the tool plain to wait it
-   out).
+   `timeout` per the notes above, and `pending`. Under `--watch`
+   the tool will not return `pending`: a read that still says
+   pending re-enters the watch, and exhausting that bound
+   reports `timeout` instead. So a `pending` verdict means the
+   read was taken with `--no-watch` — re-run the tool plain to
+   wait it out.
 
    - **`pass`** → the PR is now ready **and** CI-green. Leave
      the Linear issue **In Progress** (it moves to In Review at
