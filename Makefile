@@ -336,9 +336,9 @@ decks-build: check-pnpm
 # pattern-matching the command line also killed any *unrelated* next dev on
 # the machine (another worktree's frontend, a separate project). `set -m`
 # turns on job control so the background job becomes its own process-group
-# leader, which makes `$!` a killable group id that reaches every descendant
-# and nothing outside this invocation. Job control goes back off (`set +m`)
-# as soon as the group id is captured, so the foreground TUI keeps the
+# leader, which makes `$!` a group id the trap can signal to reach every
+# descendant and nothing outside this invocation. Job control goes back off
+# (`set +m`) once that id is captured, so the foreground TUI keeps the
 # terminal and signal handling it would have had without it.
 #
 # The TUI runs on the alternate screen, so the background frontend's stdout
@@ -353,12 +353,9 @@ decks-build: check-pnpm
 FRONTEND_LOG ?= /tmp/dropset-frontend.log
 demo:
 	@echo "frontend logs → $(FRONTEND_LOG) (kept off the TUI screen)"
-	@set -m; \
-	$(MAKE) --no-print-directory frontend-localnet \
+	@set -m; $(MAKE) --no-print-directory frontend-localnet \
 		>$(FRONTEND_LOG) 2>&1 & \
-	frontend_pgid=$$!; \
-	set +m; \
-	trap 'kill -TERM -$$frontend_pgid 2>/dev/null' INT TERM EXIT; \
+	group=$$!; set +m; trap 'kill -TERM -$$group 2>/dev/null' INT TERM EXIT; \
 	$(MAKE) --no-print-directory tui
 
 # === Localnet Docker stacks ===
