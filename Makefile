@@ -362,7 +362,8 @@ explorer: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		up -d --quiet-pull explorer
 explorer-down: check-docker
-	docker compose -f infra/localnet/docker-compose.yml down
+	docker compose -f infra/localnet/docker-compose.yml \
+		rm -sf explorer
 
 # Nuke the localnet Docker state for a fully cold start: stop and remove every
 # stack container (explorer, migrate, indexer, collectors, bots, postgres —
@@ -374,9 +375,10 @@ explorer-down: check-docker
 # recorded market-data candle. That used to be free — the stack had no named
 # volume, so `-v` was a no-op — and now it is not: a CEX backfill window is
 # finite, so history that has scrolled out of it cannot be re-fetched. This
-# target is the deliberate full reset, and the only thing that stops the shared
-# `postgres`; use `make indexer-down` / `make collectors-down` to stop an app's
-# own services and keep both the database and the data. The
+# target is the deliberate full reset; use `make indexer-down` /
+# `make collectors-down` / `make explorer-down` to stop one app's own services
+# and keep both the shared database and the data — every per-service target is
+# scoped precisely because `postgres` is now shared. The
 # container removal takes each container's logs with it. `--rmi local` removes
 # only untagged local builds, so the tagged explorer image
 # (dasmac/dropset-localnet-explorer, pulled or built) and pulled base images
@@ -404,8 +406,15 @@ clean-docker: check-docker
 # running. Postgres is now shared infrastructure — the collectors use the same
 # container (and `coinbase` is `restart: unless-stopped`, so it would
 # error-loop against a removed database), so no per-app `down` target may take
-# it away. `clean-docker` is what stops the whole data plane, and it is also
-# the only thing that discards the volume.
+# it away. `clean-docker` is what stops the whole data plane, and the only
+# thing that discards the volume; `docker compose ... stop postgres` covers the
+# ad-hoc case.
+#
+# One first-contact snag: `up` builds only when an image is ABSENT, so a
+# worktree holding a pre-consolidation indexer image reuses it, and that image
+# still runs its own migrator against what is now the shared database —
+# failing with a sqlx checksum mismatch rather than the fence's actionable
+# text. Run `make clean-docker` once, or `up --build`, after picking this up.
 indexer-up: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		up -d --quiet-pull postgres migrate indexer indexer-api

@@ -127,24 +127,40 @@ async fn fence_rejects_a_database_behind_this_build() {
 ///
 /// This is the **most reachable** failure state, not a theoretical one: sqlx
 /// creates `_sqlx_migrations` *before* applying the first migration, so a run
-/// that dies partway through `0001` leaves exactly this — table present, no
-/// successful row. The opening migration uses plain `CREATE TABLE`, so a
-/// database still carrying tables from the retired per-app regimes fails in
-/// precisely that way. It is also the only state that covers a
-/// `success = FALSE` row, since the fence's query filters on `success` and so
-/// reads NULL rather than that row's version.
+/// that dies partway through `0001` leaves the table present and **empty**. The
+/// opening migration uses plain `CREATE TABLE`, so a database still carrying
+/// tables from the retired per-app regimes fails in precisely that way.
+///
+/// The two halves are deliberately distinct, because only the first can
+/// actually occur. On Postgres, sqlx's bookkeeping insert hardcodes
+/// `success = TRUE` and the migration shares its transaction, so a failed
+/// migration leaves **no row at all** rather than a false one — the
+/// `success = FALSE` row exists for the backends that cannot run DDL inside a
+/// transaction. So the empty-table case is the real partial-first-run state,
+/// and the false-row case is defensive coverage of the query's `WHERE success`
+/// filter.
 #[tokio::test]
 #[ignore = "requires a Docker daemon (Postgres container)"]
 async fn fence_rejects_a_database_with_no_successful_migration() {
     let (_pg, pool) = start_pg().await;
     migrate(&pool).await.expect("apply migrations");
 
-    // Reduce the history to a single failed attempt: the table remains, but
-    // `max(version) … WHERE success` now yields NULL.
+    // The reachable state: the table exists, but holds no rows, exactly as a
+    // rolled-back first migration leaves it.
     sqlx::query("DELETE FROM _sqlx_migrations")
         .execute(&pool)
         .await
         .expect("clear migration bookkeeping");
+    let err = require_schema(&pool)
+        .await
+        .expect_err("an empty bookkeeping table must not pass the fence");
+    assert!(
+        err.to_string().contains("dropset-migrate"),
+        "the error must name the fix, got: {err}"
+    );
+
+    // The defensive case: a row exists but is not successful, so the filtered
+    // aggregate still reads NULL rather than that row's version.
     sqlx::query(
         "INSERT INTO _sqlx_migrations
              (version, description, installed_on, success, checksum,

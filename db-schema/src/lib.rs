@@ -40,14 +40,21 @@ pub async fn connect(url: &str) -> Result<PgPool> {
 
 /// The highest migration version embedded in this build.
 ///
-/// The `unwrap_or(0)` is unreachable: `migration_versions_ascend` below asserts
-/// the embedded history is non-empty, so an empty `./migrations` fails the test
-/// suite rather than reaching production. That matters because [`require_schema`]
-/// would *reject* a database matching a zero expectation (its `None` arm bails
-/// unconditionally), so the two would disagree about what `0` means — the test,
-/// not this fallback, is what keeps that contradiction out of reach.
+/// The `unwrap_or(0)` must stay unreachable, and the reason is sharper than it
+/// looks: at `expected == 0` the fence's `version >= expected` arm is
+/// *universally* true, so [`require_schema`] would **fail open** and admit any
+/// database with a non-empty history — including one holding somebody else's
+/// schema. An empty `./migrations` would therefore disable the fence rather
+/// than trip it. `migration_versions_ascend` below asserts the embedded history
+/// is non-empty, so that state fails the test suite instead of reaching
+/// production; the `debug_assert!` restates it at the call site.
 pub fn expected_version() -> i64 {
-    MIGRATOR.iter().map(|m| m.version).max().unwrap_or(0)
+    let version = MIGRATOR.iter().map(|m| m.version).max().unwrap_or(0);
+    debug_assert!(
+        version > 0,
+        "no migrations embedded — the fence would fail open"
+    );
+    version
 }
 
 /// Apply every migration the target database has not yet run. Idempotent, so
@@ -76,12 +83,17 @@ pub async fn migrate(pool: &PgPool) -> Result<()> {
 ///
 /// The check is a **high-water mark**, not set coverage: it asks whether the
 /// applied history reaches this build's latest version, not whether each
-/// embedded version is individually present. A database whose history diverged
-/// from this branch could therefore satisfy the fence. That is deliberate
-/// rather than overlooked — [`migrate`] validates every migration's checksum
-/// per version, and the deployment makes that step a hard gate ahead of any
-/// consumer, so divergence fails there with a precise error instead of here
-/// with a vague one.
+/// embedded version is individually present. So a database whose history
+/// diverged from this branch can satisfy the fence — two branches that each add
+/// a `0002` produce the same version number, and a consumer from one would pass
+/// against the other's schema and then fail at query time.
+///
+/// That residual gap is accepted rather than closed, but note precisely what
+/// covers it: [`migrate`] validates each migration's checksum, so divergence
+/// fails there with an exact error — **provided the applied history came from
+/// this build**. Since `migrate` runs in a different process from this fence,
+/// the guarantee holds only because the deployment runs both from one tree and
+/// gates every consumer on that step. It is not a property of the fence itself.
 pub async fn require_schema(pool: &PgPool) -> Result<()> {
     let expected = expected_version();
 

@@ -108,7 +108,8 @@ fx-survey <-> feeds: the survey app is the first consumer of the feeds
   cursor-after-commit ordering must track the framework. Neither side owns
   DDL any more: feed_cursors and cex_prices are both defined in
   db-schema/migrations, so the seam is row types + queries against that
-  migration, guarded by require_schema.
+  migration. require_schema gates only the migration VERSION, so a
+  column-shape mismatch inside a version still surfaces at query time.
 maker-bot <-> feeds: the maker bot is the first consumer of the feeds
   live (forward) sink — it implements Source for the price tiers
   (bots/maker-bot/src/model/feeds.rs) and bridges the logs-subscription
@@ -136,7 +137,10 @@ db-schema <-> feeds: db-schema/migrations defines feed_cursors; the
   without creating it, since feeds no longer runs sqlx::migrate!. The
   column set and the cursor-after-commit idempotent write must track the
   migration — a column the framework expects and the migration lacks
-  fails at query time, not at startup.
+  fails at query time, not at startup. db-schema is a feeds
+  dev-dependency, so feeds/tests/store_postgres.rs provisions the real
+  migration rather than a copy of the table beside it — which is what
+  makes this seam testable.
 db-schema <-> indexer: db-schema/migrations defines the indexer's tables
   and the shared _sqlx_migrations state; indexer/src/store.rs holds the
   row types, reads, and ON CONFLICT writers against them and carries no
