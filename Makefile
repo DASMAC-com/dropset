@@ -1,3 +1,5 @@
+# cspell:word SIGTTIN
+
 .PHONY: all
 .PHONY: bots-down
 .PHONY: bots-up
@@ -327,9 +329,25 @@ decks-build: check-pnpm
 # in the foreground (it spawns the validator and seeds the markets) plus the
 # localnet frontend in the background, pointed at that validator. Quitting the
 # TUI stops the frontend too; the frontend retries until the validator is up,
-# so start order doesn't matter. Cleanup runs a broad `pkill -f "next dev"`,
-# so it also stops any unrelated next dev you have running (dev-only target).
-# The browser auto-opens because `frontend-localnet` opens it by default.
+# so start order doesn't matter. The browser auto-opens because
+# `frontend-localnet` opens it by default.
+#
+# Cleanup kills the background half's whole process group, not a `pkill -f
+# "next dev"` pattern — the sub-make spawns `pnpm dev` which spawns
+# `next dev`, so killing the job alone would orphan the grandchildren, but
+# pattern-matching the command line also killed any *unrelated* next dev on
+# the machine (another worktree's frontend, a separate project). `set -m`
+# turns on job control so the background job becomes its own process-group
+# leader, which makes `$!` a group id the trap can signal to reach every
+# descendant and nothing outside this invocation. Job control goes back off
+# (`set +m`) once that id is captured, so the foreground TUI keeps the
+# terminal and signal handling it would have had without it.
+#
+# Job control is also why the background job's stdin is closed
+# (`</dev/null`): it is no longer in the terminal's foreground process group,
+# so any tty read would raise SIGTTIN and *stop* it — silently, since its
+# output already goes to the log. A background dev server wants no stdin
+# anyway; neither `pnpm` nor `next dev` needs it.
 #
 # The TUI runs on the alternate screen, so the background frontend's stdout
 # would paint over it — `next dev`'s output is redirected to a log file, and
@@ -343,9 +361,9 @@ decks-build: check-pnpm
 FRONTEND_LOG ?= /tmp/dropset-frontend.log
 demo:
 	@echo "frontend logs → $(FRONTEND_LOG) (kept off the TUI screen)"
-	@$(MAKE) --no-print-directory frontend-localnet \
-		>$(FRONTEND_LOG) 2>&1 & \
-	trap 'kill %1 2>/dev/null; pkill -f "next dev"' INT TERM EXIT; \
+	@set -m; $(MAKE) --no-print-directory frontend-localnet \
+		>$(FRONTEND_LOG) 2>&1 </dev/null & \
+	group=$$!; set +m; trap 'kill -TERM -$$group 2>/dev/null' INT TERM EXIT; \
 	$(MAKE) --no-print-directory tui
 
 # === Localnet Docker stacks ===

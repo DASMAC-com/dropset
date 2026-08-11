@@ -6,22 +6,42 @@ import {
   resolveEclobRoute as sdkResolveEclobRoute,
 } from "@dropset/sdk";
 import type { SolanaClientRuntime } from "@solana/client";
-import { type Address, address } from "@solana/kit";
-import { TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
-import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
+import { address } from "@solana/kit";
 import {
   onchainMint,
   onchainTokenProgram,
+  PROGRAM_FOR_KIND,
   stablecoinByMint,
-  type TokenProgramKind,
 } from "../data/currencies";
 
 type Rpc = SolanaClientRuntime["rpc"];
 
-export const PROGRAM_FOR_KIND: Record<TokenProgramKind, Address> = {
-  classic: TOKEN_PROGRAM_ADDRESS,
-  token2022: TOKEN_2022_PROGRAM_ADDRESS,
-};
+// Coalesces concurrent resolutions of the same pair. On a pair change the quote
+// timer, the order-book poll, and the availability probe all resolve the same
+// pair in the same tick; without this they fan out into three identical
+// lookups. Transient by construction — the entry is dropped as soon as the
+// lookup settles, so each tick still reads the market account fresh.
+//
+// Deliberately *not* a persistent cache, though the pair→market mapping looks
+// eminently cacheable. An `EclobRoute` carries `marketData`: the market
+// account's raw bytes — the live order book — captured at resolve time, and
+// both the quote (`quoteEclob` → `simulateSwap`) and the swap builder price
+// off exactly those bytes. Memoizing a route beyond its own tick would freeze
+// the book: `useEclobQuote` would re-simulate identical bytes forever while
+// `currentSlot` advanced out from under them (so levels would expire and the
+// quote would decay to "no liquidity"), and `eclobSwap`'s `minOut` would be
+// sized against page-load-time depth instead of current depth — a slippage
+// floor that silently loosens the longer a tab stays open.
+//
+// Only the route's *identity* (market, orientation, mints, token programs) is
+// durable. Caching just that would still have to fetch the account for fresh
+// bytes and for `maxPlatformFeeBps`, which is header-decoded from them, so it
+// would save at most one `getAccountInfo` on the reverse-orientation pair —
+// not worth holding a second, partial route shape.
+const inFlight = new Map<string, Promise<EclobRoute | null>>();
+
+const dedupKey = (fromMint: string, toMint: string): string =>
+  `${fromMint}→${toMint}`;
 
 // The route shape and the market-ceiling clamp both live in the SDK now — the
 // route because the router owns resolution, and the clamp because it reads a
@@ -42,7 +62,9 @@ export { platformFeeBpsFor };
 // matters on the quote timer.
 //
 // Returns null when either token isn't a supported stablecoin, the pair is
-// degenerate, or no market exists for it on this cluster.
+// degenerate, or no market exists for it on this cluster. Concurrent lookups of
+// one pair are coalesced; nothing is cached across ticks — see `inFlight` above
+// for why a route must not outlive its own resolution.
 export async function resolveEclobRoute(
   rpc: Rpc,
   fromMint: string,
@@ -51,7 +73,11 @@ export async function resolveEclobRoute(
   if (!fromMint || !toMint || fromMint === toMint) return null;
   if (!stablecoinByMint(fromMint) || !stablecoinByMint(toMint)) return null;
 
-  return sdkResolveEclobRoute(
+  const key = dedupKey(fromMint, toMint);
+  const pending = inFlight.get(key);
+  if (pending) return pending;
+
+  const promise = sdkResolveEclobRoute(
     rpc,
     {
       inputMint: address(onchainMint(fromMint)),
@@ -60,5 +86,13 @@ export async function resolveEclobRoute(
       outputTokenProgram: PROGRAM_FOR_KIND[onchainTokenProgram(toMint)],
     },
     { commitment: "confirmed" },
-  );
+  )
+    // A rejection propagates to every caller sharing this lookup — callers that
+    // treat a failure as "not yet" (the availability probe) keep doing so — but
+    // it must not leave a poisoned entry behind, hence the unconditional drop.
+    .finally(() => {
+      if (inFlight.get(key) === promise) inFlight.delete(key);
+    });
+  inFlight.set(key, promise);
+  return promise;
 }

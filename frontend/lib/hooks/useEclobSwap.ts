@@ -3,7 +3,7 @@
 import { useSolanaClient, useWallet } from "@solana/react-hooks";
 import { useCallback, useRef, useState } from "react";
 import { stablecoinDecimals, stablecoinMint } from "../data/currencies";
-import { DflowSwapError, waitForSwapConfirmation } from "../dflow/dflowSwap";
+import { SwapError, waitForSwapConfirmation } from "../dflow/dflowSwap";
 import { executeEclobSwap } from "../eclob/eclobSwap";
 import { emit } from "../events";
 import { parseAmountToBase } from "../format/balance";
@@ -35,7 +35,7 @@ export function useEclobSwap(): UseDflowSwap {
 
   const [status, setStatus] = useState<SwapStatus>("idle");
   const [result, setResult] = useState<CompletedSwap | null>(null);
-  const [error, setError] = useState<DflowSwapError | null>(null);
+  const [error, setError] = useState<SwapError | null>(null);
 
   const inFlight = useRef(false);
 
@@ -48,7 +48,7 @@ export function useEclobSwap(): UseDflowSwap {
   const execute = useCallback(async () => {
     if (inFlight.current) return;
     if (wallet.status !== "connected") {
-      setError(new DflowSwapError("Wallet not connected", "wallet"));
+      setError(new SwapError("Wallet not connected", "wallet"));
       setStatus("error");
       return;
     }
@@ -69,7 +69,7 @@ export function useEclobSwap(): UseDflowSwap {
       // Re-check right before signing — a disconnect could have dispatched
       // during this tick (same guard as the DFlow path).
       if (wallet.status !== "connected") {
-        throw new DflowSwapError("Wallet not connected", "wallet");
+        throw new SwapError("Wallet not connected", "wallet");
       }
       const res = await executeEclobSwap({
         inputMint: fromMint,
@@ -88,9 +88,9 @@ export function useEclobSwap(): UseDflowSwap {
       emit("swapSucceeded");
     } catch (e) {
       const err =
-        e instanceof DflowSwapError
+        e instanceof SwapError
           ? e
-          : new DflowSwapError(getErrorMessage(e), "wallet");
+          : new SwapError(getErrorMessage(e), "wallet");
       setError(err);
       setStatus("error");
     } finally {

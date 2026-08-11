@@ -27,8 +27,8 @@ import {
 } from "@solana-program/token";
 import {
   CANCEL_PATTERN,
-  DflowSwapError,
-  type DflowSwapResult,
+  SwapError,
+  type SwapOutcome,
 } from "../dflow/dflowSwap";
 import { PLATFORM_FEE } from "../env";
 import { getErrorMessage } from "../guards";
@@ -78,7 +78,7 @@ const applySlippage = (out: bigint, bps: number): bigint => {
 //      submit.
 export async function executeEclobSwap(
   input: EclobSwapInput,
-): Promise<DflowSwapResult> {
+): Promise<SwapOutcome> {
   const {
     inputMint,
     outputMint,
@@ -90,7 +90,7 @@ export async function executeEclobSwap(
   } = input;
 
   if (!walletSession.signTransaction && !walletSession.sendTransaction) {
-    throw new DflowSwapError(
+    throw new SwapError(
       "Connected wallet can't sign or send transactions",
       "wallet",
     );
@@ -98,7 +98,7 @@ export async function executeEclobSwap(
 
   const route = await resolveEclobRoute(rpc, inputMint, outputMint);
   if (!route) {
-    throw new DflowSwapError("No Dropset market for this pair", "api");
+    throw new SwapError("No Dropset market for this pair", "api");
   }
 
   const slot = await rpc.getSlot({ commitment: "confirmed" }).send();
@@ -149,7 +149,7 @@ export async function executeEclobSwap(
     platformFeeBps,
   );
   if (quote.outAmount === 0n) {
-    throw new DflowSwapError("No liquidity for this size", "api");
+    throw new SwapError("No liquidity for this size", "api");
   }
   const minOut = applySlippage(quote.outAmount, slippageBps);
 
@@ -263,12 +263,12 @@ export async function executeEclobSwap(
         { commitment: "confirmed" },
       );
     } else {
-      throw new DflowSwapError("Connected wallet can't sign", "wallet");
+      throw new SwapError("Connected wallet can't sign", "wallet");
     }
   } catch (e) {
     const msg = getErrorMessage(e);
     const cancelled = CANCEL_PATTERN.test(msg);
-    throw new DflowSwapError(
+    throw new SwapError(
       cancelled ? "Cancelled in wallet" : msg,
       cancelled ? "rejected" : "wallet",
     );

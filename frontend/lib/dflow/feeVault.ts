@@ -5,10 +5,8 @@ import { resolvePlatformFee } from "@dropset/sdk";
 import type { SolanaClientRuntime } from "@solana/client";
 import { type Address, address } from "@solana/kit";
 import { useSolanaClient } from "@solana/react-hooks";
-import { TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
-import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import { useEffect, useSyncExternalStore } from "react";
-import { stablecoinByMint, type TokenProgramKind } from "../data/currencies";
+import { PROGRAM_FOR_KIND, stablecoinByMint } from "../data/currencies";
 import { PLATFORM_FEE } from "../env";
 import { getErrorMessage } from "../guards";
 
@@ -27,11 +25,6 @@ import { getErrorMessage } from "../guards";
 // deployment, so the cache needs no per-wallet keying.
 
 type Rpc = SolanaClientRuntime["rpc"];
-
-const PROGRAM_FOR_KIND: Record<TokenProgramKind, Address> = {
-  classic: TOKEN_PROGRAM_ADDRESS,
-  token2022: TOKEN_2022_PROGRAM_ADDRESS,
-};
 
 // mint → { ata, exists }. A present entry means the mint has been checked;
 // `exists` reflects whether the ATA was found on-chain, and `ata` is cached so

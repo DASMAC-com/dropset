@@ -4,13 +4,21 @@ import { useSolanaClient } from "@solana/react-hooks";
 import { useEffect, useState } from "react";
 import { ECLOB_AVAILABILITY_RETRY_MS } from "../data/timings";
 import { resolveEclobRoute } from "../eclob/route";
+import { IS_LOCALNET } from "../env";
 
 export type EclobAvailability = "unknown" | "available" | "unavailable";
 
-// pair → resolved availability. Whether a market exists for a pair doesn't
-// change over a page's lifetime (deploying one is an admin action), so the
-// answer is cached and shared: the swap panel and the route toggle both ask
+// pair → resolved availability. On a deployed cluster whether a market exists
+// doesn't change over a page's lifetime (deploying one is an admin action), so
+// the answer is cached and shared: the swap panel and the route toggle both ask
 // about the current pair, and without this they'd each pay the lookup.
+//
+// That premise does NOT hold on localnet, where the markets are created by the
+// TUI bootstrap — routinely *after* the dev server is already serving and the
+// auto-opened browser has probed. A miss there is a not-yet rather than a never,
+// so negatives are left uncached on localnet and re-probed (see `probe` below).
+// Caching one would strand every consumer that keys off "available" for the rest
+// of the page's life, including the swap panel's eCLOB quote.
 const cache = new Map<string, EclobAvailability>();
 // Per-pair dedupe so two mounts in the same tick fan into one lookup.
 const inFlight = new Map<string, Promise<EclobAvailability>>();
@@ -21,7 +29,10 @@ const keyOf = (fromMint: string, toMint: string) => `${fromMint}→${toMint}`;
 // (in either orientation). Resolves via resolveEclobRoute — which checks the
 // market account on-chain — and re-checks whenever the pair changes.
 // "unknown" until the first check lands, so callers can avoid flashing an
-// "unavailable" state while the lookup is in flight.
+// "unavailable" state while the lookup is in flight. Callers may gate real
+// behavior on "available" (the swap panel gates its eCLOB quote on it), so a
+// miss must not be sticky where a market can still show up — hence the
+// localnet carve-out above.
 export function useEclobAvailable(
   fromMint: string,
   toMint: string,
@@ -55,10 +66,13 @@ export function useEclobAvailable(
         pending = resolveEclobRoute(client.runtime.rpc, fromMint, toMint)
           .then((route): EclobAvailability => {
             const result = route ? "available" : "unavailable";
-            // Only a definitive answer is cached — "no market for this pair" is
-            // as final as "here it is", since deploying one is an admin action,
-            // and a cached answer stops the retry below.
-            cache.set(key, result);
+            // A hit is always final. A miss is only final where deploying a
+            // market is an admin action — not on localnet, where the bootstrap
+            // creates them after the page is already up, so leave it uncached
+            // there and let the retry below pick the market up when it lands.
+            if (result === "available" || !IS_LOCALNET) {
+              cache.set(key, result);
+            }
             return result;
           })
           // A probe that *failed* is not an answer, so it stays uncached and
@@ -72,7 +86,11 @@ export function useEclobAvailable(
       pending.then((result) => {
         if (cancelled) return;
         setState(result);
-        if (result === "unknown") {
+        // Retry whatever wasn't cached above: a failed probe anywhere, and a
+        // miss on localnet (where the market may still be about to appear).
+        // A cached answer ends the chain, so this can't spin on a real miss
+        // against a deployed cluster.
+        if (result === "unknown" || (result === "unavailable" && IS_LOCALNET)) {
           retry = window.setTimeout(probe, ECLOB_AVAILABILITY_RETRY_MS);
         }
       });
