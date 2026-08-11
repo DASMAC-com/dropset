@@ -57,6 +57,7 @@ eurozone
 fieldless
 fintech
 firmable
+fomc
 forex
 frankfurter
 frontmatter
