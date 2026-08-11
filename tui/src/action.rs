@@ -533,6 +533,16 @@ fn do_repeg(
     // step, and re-encode — so the nudge is relative to the current peg.
     let current = accounts::read_reference_price(client, &market, vault_idx)
         .context("read current reference price")?;
+    // A dark market has no peg to nudge. That is the ordinary pre-bot state,
+    // not a corrupt one — the bootstrap leaves the reference unstamped (see
+    // `market::seed_vault`) and the maker's startup invalidation re-darkens a
+    // market whose quotes have aged out. Name it here: scaling a zero-or-
+    // sentinel reference otherwise fails further down as an "atoms-ratio 0"
+    // encode error that points at nothing. `is_matchable` is the engine's own
+    // predicate, so this reads dark exactly when the matcher does.
+    if !current.is_matchable() {
+        anyhow::bail!("market is dark — start its maker bot before re-pegging");
+    }
     let ratio = current.quote_for_base(PRICE_SCALE) as f64 / PRICE_SCALE as f64;
     let bumped = ratio * (1.0 + bps / 10_000.0);
     let price =
@@ -791,12 +801,16 @@ fn do_create_market(
 }
 
 /// Create the leader vault on the market via the admin path, then bring it
-/// up live — set `config`'s reference price + quote ladder and seed it with
-/// the leader's opening deposit (see [`market::seed_vault`]). `prefunded_quote`
-/// is forwarded to `seed_vault`: the parallel `BootstrapAll` path pre-funds the
-/// shared leader quote balance up front and passes `true` so the per-market
-/// quote top-up (which would collide across concurrent workers) is skipped; the
-/// sequential `CreateVault` path passes `false` and funds it per market.
+/// up — set `config`'s quote ladder and seed it with the leader's opening
+/// deposit (see [`market::seed_vault`]). The market stays **dark** until a
+/// maker bot quotes it: no reference price is stamped, so nothing matches
+/// yet — `seed_vault` documents why that is the correct opening state.
+///
+/// `prefunded_quote` is forwarded to `seed_vault`: the parallel `BootstrapAll`
+/// path pre-funds the shared leader quote balance up front and passes `true` so
+/// the per-market quote top-up (which would collide across concurrent workers)
+/// is skipped; the sequential `CreateVault` path passes `false` and funds it
+/// per market.
 fn do_create_vault(
     client: &solana_client::rpc_client::RpcClient,
     wallet: &Keypair,
@@ -840,7 +854,7 @@ fn do_create_vault(
     chain::send_logged(client, wallet, &[wallet], &[ix, topup], "create_vault", log)
         .context("send create_vault")?;
     log.accounts_changed();
-    // Bring the vault up quotable + seeded.
+    // Bring the vault up shaped + seeded — dark until a maker bot quotes it.
     market::seed_vault(
         client,
         wallet,
@@ -851,7 +865,7 @@ fn do_create_vault(
         log,
     )?;
     log.accounts_changed();
-    Ok("Vault created, quoting, and seeded".into())
+    Ok("Vault created and seeded — dark until a maker bot quotes it".into())
 }
 
 /// Whole units of the input token a swap probe spends by default — scaled to
@@ -891,6 +905,14 @@ fn do_probe_swap(
     .context("no market — bootstrap first")?;
     if market.active_count == 0 {
         anyhow::bail!("no live vault to swap against — create the vault first");
+    }
+    // A seeded vault is not a matchable one: markets open dark and only quote
+    // once a maker bot stamps a reference. Without this the probe sends, the
+    // matcher skips the unpriced vault, and a zero-fill take reports back as
+    // "filled" — `MarketView::reference_price` is already `None` for an unset
+    // or sentinel reference, so the poll answers it without another read.
+    if market.reference_price.is_none() {
+        anyhow::bail!("market is dark — start its maker bot before probing a swap");
     }
 
     // The taker is FFFF — fund it with SOL so it pays its own fee, and give it
