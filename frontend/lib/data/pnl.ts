@@ -21,7 +21,6 @@ import type { Vault } from "./vaults";
 // `yieldPctSinceOpen` is the oracle-free pure-skill figure VPS_now / entryVps − 1.
 export type PositionPnl = {
   currentValue: number;
-  entranceAmount: number;
   yieldPnl: number;
   fxPnl: number;
   netPnl: number;
@@ -61,7 +60,6 @@ export const positionPnl = (
 
   return {
     currentValue,
-    entranceAmount: position.netDeposits,
     yieldPnl,
     fxPnl,
     netPnl,

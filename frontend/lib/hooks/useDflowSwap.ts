@@ -4,9 +4,9 @@ import { useSolanaClient, useWallet } from "@solana/react-hooks";
 import { useCallback, useRef, useState } from "react";
 import { stablecoinDecimals, stablecoinMint } from "../data/currencies";
 import {
-  DflowSwapError,
-  type DflowSwapResult,
   executeDflowSwap,
+  SwapError,
+  type SwapOutcome,
   waitForSwapConfirmation,
 } from "../dflow/dflowSwap";
 import { emit } from "../events";
@@ -27,7 +27,7 @@ export type SwapStatus =
 // moment of execution. Pinning these here (rather than reading from the
 // live store in the result banner) means flipping sides after a swap
 // can't rewrite history on the success/error chrome.
-export type CompletedSwap = DflowSwapResult & {
+export type CompletedSwap = SwapOutcome & {
   fromStablecoin: string;
   toStablecoin: string;
 };
@@ -42,7 +42,7 @@ export type CompletedSwap = DflowSwapResult & {
 export type UseDflowSwap = {
   status: SwapStatus;
   result: CompletedSwap | null;
-  error: DflowSwapError | null;
+  error: SwapError | null;
   execute: () => Promise<void>;
   reset: () => void;
 };
@@ -61,7 +61,7 @@ export function useDflowSwap(): UseDflowSwap {
 
   const [status, setStatus] = useState<SwapStatus>("idle");
   const [result, setResult] = useState<CompletedSwap | null>(null);
-  const [error, setError] = useState<DflowSwapError | null>(null);
+  const [error, setError] = useState<SwapError | null>(null);
 
   // Track whether a swap is in flight so multiple clicks don't queue.
   const inFlight = useRef(false);
@@ -75,7 +75,7 @@ export function useDflowSwap(): UseDflowSwap {
   const execute = useCallback(async () => {
     if (inFlight.current) return;
     if (wallet.status !== "connected") {
-      setError(new DflowSwapError("Wallet not connected", "wallet"));
+      setError(new SwapError("Wallet not connected", "wallet"));
       setStatus("error");
       return;
     }
@@ -100,7 +100,7 @@ export function useDflowSwap(): UseDflowSwap {
       // here keeps the failure mode "Wallet not connected" instead of a
       // confusing wallet-adapter error during sendTransaction.
       if (wallet.status !== "connected") {
-        throw new DflowSwapError("Wallet not connected", "wallet");
+        throw new SwapError("Wallet not connected", "wallet");
       }
       const res = await executeDflowSwap({
         inputMint: fromMint,
@@ -127,9 +127,9 @@ export function useDflowSwap(): UseDflowSwap {
       emit("swapSucceeded");
     } catch (e) {
       const err =
-        e instanceof DflowSwapError
+        e instanceof SwapError
           ? e
-          : new DflowSwapError(getErrorMessage(e), "wallet");
+          : new SwapError(getErrorMessage(e), "wallet");
       setError(err);
       setStatus("error");
     } finally {

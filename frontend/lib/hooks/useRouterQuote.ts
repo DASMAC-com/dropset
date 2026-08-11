@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 import {
   onchainMint,
   onchainTokenProgram,
+  PROGRAM_FOR_KIND,
   stablecoinByMint,
 } from "../data/currencies";
 import {
@@ -27,7 +28,6 @@ import {
   projectedRemaining,
   recordResponse,
 } from "../dflow/rateLimitBudget";
-import { PROGRAM_FOR_KIND } from "../eclob/route";
 import { DFLOW_QUOTE_URL, PLATFORM_FEE } from "../env";
 import { parseAmountToBase } from "../format/balance";
 import { getErrorMessage } from "../guards";

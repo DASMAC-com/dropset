@@ -3,17 +3,13 @@
 
 import { type Address, address } from "@solana/kit";
 import { useSolanaClient, useWallet } from "@solana/react-hooks";
-import {
-  findAssociatedTokenPda,
-  TOKEN_PROGRAM_ADDRESS,
-} from "@solana-program/token";
-import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
+import { findAssociatedTokenPda } from "@solana-program/token";
 import { useEffect, useSyncExternalStore } from "react";
 import {
   ALL_STABLECOINS,
   onchainMint,
   onchainTokenProgram,
-  type TokenProgramKind,
+  PROGRAM_FOR_KIND,
 } from "../data/currencies";
 import { BALANCE_REFETCH_DELAY_MS } from "../data/timings";
 import { GET_MULTIPLE_ACCOUNTS_BATCH_SIZE } from "../env";
@@ -59,11 +55,6 @@ const subscribe = (cb: () => void): (() => void) => {
   };
 };
 const getVersion = (): number => version;
-
-const PROGRAM_FOR_KIND: Record<TokenProgramKind, Address> = {
-  classic: TOKEN_PROGRAM_ADDRESS,
-  token2022: TOKEN_2022_PROGRAM_ADDRESS,
-};
 
 // Derive every stablecoin's ATA for the given owner. Order matches
 // ALL_STABLECOINS so we can re-index parsed accounts back to mints. The ATA is

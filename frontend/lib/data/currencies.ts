@@ -1,5 +1,8 @@
 // cspell:word segoe
 
+import type { Address } from "@solana/kit";
+import { TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
+import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import countries from "world-countries";
 import { IS_LOCALNET } from "../env";
 import data from "./currencies.json";
@@ -43,6 +46,15 @@ export type Stablecoin = {
 export type CurrencyEntry = {
   anchorCca2?: string;
   stablecoins: Stablecoin[];
+};
+
+// The on-chain program address each `TokenProgramKind` names. Lives next to the
+// kind itself so the mapping has one definition — every caller that derives an
+// ATA or passes a token program to the SDK needs it, and three separate copies
+// had drifted apart only by accident of not having changed yet.
+export const PROGRAM_FOR_KIND: Record<TokenProgramKind, Address> = {
+  classic: TOKEN_PROGRAM_ADDRESS,
+  token2022: TOKEN_2022_PROGRAM_ADDRESS,
 };
 
 export const CURRENCIES = data as Record<IsoCurrencyCode, CurrencyEntry>;

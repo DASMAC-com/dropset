@@ -2,7 +2,7 @@
 
 import { CircleAlert, CircleCheck, ExternalLink, X } from "@/components/icons";
 import { stablecoinDecimals } from "@/lib/data/currencies";
-import type { DflowSwapError } from "@/lib/dflow/dflowSwap";
+import type { SwapError } from "@/lib/dflow/dflowSwap";
 import { explorerTxUrl } from "@/lib/explorer";
 import { formatBaseAmount, groupThousands } from "@/lib/format/balance";
 import type { CompletedSwap, SwapStatus } from "@/lib/hooks/useDflowSwap";
@@ -15,7 +15,7 @@ export function SwapResult({
 }: {
   status: SwapStatus;
   result: CompletedSwap | null;
-  error: DflowSwapError | null;
+  error: SwapError | null;
   onClose: () => void;
 }) {
   if (status === "success" && result) {

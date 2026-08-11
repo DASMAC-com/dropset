@@ -61,30 +61,30 @@ export type DflowSwapInput = {
   rpc: SolanaClientRuntime["rpc"];
 };
 
-export type DflowSwapResult = {
+export type SwapOutcome = {
   signature: Signature;
   inAmount: bigint;
   outAmount: bigint;
 };
 
-export type DflowSwapErrorKind =
+export type SwapErrorKind =
   | "network" // fetch threw — likely offline or DNS failure
   | "api" // /order returned non-2xx
   | "wallet" // wallet adapter failed in a non-user-cancel way
   | "rejected"; // user explicitly cancelled in the wallet UI
 
-export class DflowSwapError extends Error {
-  readonly kind: DflowSwapErrorKind;
+export class SwapError extends Error {
+  readonly kind: SwapErrorKind;
   readonly httpStatus?: number;
   readonly code?: string;
   constructor(
     message: string,
-    kind: DflowSwapErrorKind,
+    kind: SwapErrorKind,
     httpStatus?: number,
     code?: string,
   ) {
     super(message);
-    this.name = "DflowSwapError";
+    this.name = "SwapError";
     this.kind = kind;
     this.httpStatus = httpStatus;
     this.code = code;
@@ -108,7 +108,7 @@ export const CANCEL_PATTERN =
 //      shot, returning the on-chain signature once it reaches `confirmed`.
 export async function executeDflowSwap(
   input: DflowSwapInput,
-): Promise<DflowSwapResult> {
+): Promise<SwapOutcome> {
   const {
     inputMint,
     outputMint,
@@ -147,14 +147,14 @@ export async function executeDflowSwap(
     res = await fetch(url.toString(), { signal: timeout });
   } catch (e) {
     if (e instanceof DOMException && e.name === "TimeoutError") {
-      throw new DflowSwapError("DFlow /order timed out — try again", "network");
+      throw new SwapError("DFlow /order timed out — try again", "network");
     }
-    throw new DflowSwapError("Network error reaching DFlow", "network");
+    throw new SwapError("Network error reaching DFlow", "network");
   }
 
   if (!res.ok) {
     const info = await extractDflowApiError(res);
-    throw new DflowSwapError(
+    throw new SwapError(
       info.message,
       "api",
       res.status,
@@ -168,13 +168,13 @@ export async function executeDflowSwap(
     order = parseDflowOrder(raw);
   } catch (e) {
     if (e instanceof ValidationError) {
-      throw new DflowSwapError(
+      throw new SwapError(
         `DFlow returned an invalid order: ${e.message}`,
         "api",
         res.status,
       );
     }
-    throw new DflowSwapError(
+    throw new SwapError(
       "DFlow order response could not be parsed",
       "api",
       res.status,
@@ -186,7 +186,7 @@ export async function executeDflowSwap(
     const txBytes = getBase64Encoder().encode(order.transaction);
     tx = getTransactionDecoder().decode(txBytes);
   } catch (e) {
-    throw new DflowSwapError(
+    throw new SwapError(
       `DFlow returned an undecodable transaction: ${getErrorMessage(e)}`,
       "api",
       res.status,
@@ -194,7 +194,7 @@ export async function executeDflowSwap(
   }
 
   if (!walletSession.sendTransaction) {
-    throw new DflowSwapError(
+    throw new SwapError(
       "Connected wallet doesn't support sendTransaction",
       "wallet",
     );
@@ -213,7 +213,7 @@ export async function executeDflowSwap(
   } catch (e) {
     const msg = getErrorMessage(e);
     const cancelled = CANCEL_PATTERN.test(msg);
-    throw new DflowSwapError(
+    throw new SwapError(
       cancelled ? "Cancelled in wallet" : msg,
       cancelled ? "rejected" : "wallet",
     );
@@ -246,7 +246,7 @@ export async function waitForSwapConfirmation(
     if (status === null) {
       unknownPolls++;
       if (unknownPolls >= SWAP_CONFIRM_MAX_UNKNOWN_POLLS) {
-        throw new DflowSwapError(
+        throw new SwapError(
           "RPC has no record of the submitted signature — the transaction was likely dropped before reaching a leader.",
           "wallet",
         );
@@ -263,14 +263,11 @@ export async function waitForSwapConfirmation(
       const errStr = JSON.stringify(status.err, (_, v) =>
         typeof v === "bigint" ? v.toString() : v,
       );
-      throw new DflowSwapError(
-        `Transaction reverted on-chain: ${errStr}`,
-        "wallet",
-      );
+      throw new SwapError(`Transaction reverted on-chain: ${errStr}`, "wallet");
     }
     const cs = status?.confirmationStatus;
     if (cs === "confirmed" || cs === "finalized") return;
     await new Promise((r) => setTimeout(r, pollIntervalMs));
   }
-  throw new DflowSwapError("Timed out waiting for swap confirmation", "wallet");
+  throw new SwapError("Timed out waiting for swap confirmation", "wallet");
 }

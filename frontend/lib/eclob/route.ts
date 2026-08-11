@@ -6,22 +6,15 @@ import {
   resolveEclobRoute as sdkResolveEclobRoute,
 } from "@dropset/sdk";
 import type { SolanaClientRuntime } from "@solana/client";
-import { type Address, address } from "@solana/kit";
-import { TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
-import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
+import { address } from "@solana/kit";
 import {
   onchainMint,
   onchainTokenProgram,
+  PROGRAM_FOR_KIND,
   stablecoinByMint,
-  type TokenProgramKind,
 } from "../data/currencies";
 
 type Rpc = SolanaClientRuntime["rpc"];
-
-export const PROGRAM_FOR_KIND: Record<TokenProgramKind, Address> = {
-  classic: TOKEN_PROGRAM_ADDRESS,
-  token2022: TOKEN_2022_PROGRAM_ADDRESS,
-};
 
 // The route shape and the market-ceiling clamp both live in the SDK now — the
 // route because the router owns resolution, and the clamp because it reads a
