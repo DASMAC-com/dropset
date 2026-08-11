@@ -2572,6 +2572,29 @@ PR-authoring **writes** (`create_pull_request`,
      tighten the brief so the pattern stops recurring, rather
      than allow-listing it.
 
+   **A source edit this step produces cannot land on this
+   branch — route it to the batch issue.** `firm-perms` may
+   conclude that a pattern traces to a committed skill,
+   script, or Makefile target and belongs fixed at the source
+   rather than allow-listed. By the time this step runs the
+   branch is pushed and usually enqueued, so such an edit has
+   nowhere to go: committing it means a second PR, and
+   leaving it in the worktree loses it when the worktree is
+   pruned. Not hypothetical — a nine-line fix was stranded
+   exactly this way and survived only because someone ran
+   `git status` before deleting the worktree.
+
+   So **write the edit verbatim into the open `Claude:` batch
+   issue** — the standing accumulator for agent-infra work,
+   found as the open Backlog issue whose title carries the
+   `Claude:` prefix — never into the merged branch, and never
+   left dirty in the worktree. Then **say so out loud in the
+   report**, naming the issue, so the handoff is visible
+   rather than assumed. The step ordering stays as it is:
+   moving the source-edit half before the ready gate would
+   miss exactly the approvals granted during the CI wait,
+   which are most of them.
+
    **The one residual gap.** The `gh api graphql` merge-queue
    probe in the outcome-watch step below runs *after* this
    sweep — unattended, during the queue wait — so its
@@ -2896,6 +2919,24 @@ PR-authoring **writes** (`create_pull_request`,
    - [ ] **`firm-perms`** run — the last interactive step.
    - [ ] **Post-merge tidy**, on a merge: the notification
      dismissed `state: "done"`, and `make clean` run.
+   - [ ] **Working tree clean** — `git status --short` is
+     empty. Anything still modified is work the merge did not
+     carry, and the worktree is about to be pruned. Surface
+     it and decide where it goes; never report the run
+     complete with a dirty tree.
+
+   **That last item is detection, and it goes last on
+   purpose.** The step above names one *cause* of a late edit
+   (a `firm-perms` source edit produced after the push), but
+   a stray change can come from anywhere — a fix made during
+   the session-metrics step, a partially applied edit, a
+   scratch file written into the repo instead of the
+   scratchpad. Nothing else at the end of a review looks at
+   tree state: `git status` is read at step 2 and never
+   again, so the blast radius is total and the evidence is
+   deleted with the worktree. It runs after the post-merge
+   tidy because both `make clean` and `firm-perms` can
+   themselves touch the tree.
 
    **A diversion does not discharge them.** Another skill, a
    message from a peer session, a fresh user request, or a

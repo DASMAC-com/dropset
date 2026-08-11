@@ -83,6 +83,15 @@ Optional (ask on a direct run if not provided):
    - **indexer or backend**
    - **infra** (Docker, CI)
    - **docs** (`docs/**` and other prose)
+   - **agent infra** (`.claude/**`, `CLAUDE.md`,
+     `docs/conventions/**`) — the instructions and helper
+     tools that drive agent sessions. It is half Markdown
+     prose and half stdlib Python, and neither existing kind
+     fits: `docs` / `specs` asks whether prose still matches
+     the *code* it describes, which is the wrong question for
+     a rule whose implementation is a skill step. Per the
+     registry, this kind wins over `docs` on
+     `docs/conventions/**`.
 
    The kind selects the security checklist below; the
    other dimensions apply to every kind.
@@ -119,6 +128,15 @@ Optional (ask on a direct run if not provided):
      - *Infra:* unpinned base images or actions, secrets
        baked into layers or logs, running as root,
        non-reproducible builds, over-broad token scopes.
+     - *Agent infra:* a guard hook that can be bypassed —
+       an escape marker broader than its stated rationale,
+       or a pattern that misses an equivalent spelling of
+       the thing it blocks; a helper tool interpolating
+       unsanitized input into a shell command; credentials,
+       tokens, or account identifiers committed into a
+       skill or settings file; and a skill step that tells
+       an agent to weaken or route around a guard rather
+       than satisfy it.
    - **Comment accuracy** — comments and doc-comments
      that contradict, overstate, or no longer match the
      code they annotate.
@@ -155,6 +173,20 @@ Optional (ask on a direct run if not provided):
      events / endpoints / env vars) against the code and
      flag drift (renamed field, changed size assert,
      dropped event field, stale status line).
+   - **Instruction integrity** — when the scope is agent
+     infra, this is the dimension that matters most, and it
+     replaces the code-facing reading of doc-freshness
+     above. Look for: a rule stated in `CLAUDE.md` or a
+     convention doc that **no skill implements**; a skill
+     step prescribing a command, flag, or output field its
+     tool doesn't actually support (a real instance: the
+     sub-agent brief named `--count` / `--files` on
+     `search_source.py`, which has neither); prose that
+     contradicts a sibling convention; and index↔doc↔skill
+     cross-references left dangling by a rename. Verify a
+     prescribed command against the tool's **argument
+     parser**, never against its prose — a docstring and an
+     `add_argument` call drift independently.
    - **One sub-agent per extra focus area.**
 
    Each sub-agent returns findings with `file`, `line`,
