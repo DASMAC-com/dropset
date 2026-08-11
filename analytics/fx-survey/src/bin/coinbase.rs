@@ -2,15 +2,17 @@
 //! backfill then poll the Coinbase candles endpoint, and persist closed buckets
 //! into `cex_prices` through the framework store sink (docs/data-feeds.md §9).
 //! Long-lived; resumes from its cursor on restart.
+//!
+//! It is thin on purpose — configuration, then source → sink wiring. The
+//! polling, paging, and decoding are the shared `dropset_feeds::venues`
+//! adapter's; all this crate adds is the row mapping.
 
 use dropset_feeds::{
-    connect, run, CursorStore, HttpClient, PgCursorStore, RunConfig, Sink, StoreSink,
+    connect, run,
+    venues::{Candle, CoinbaseCandles},
+    CursorStore, HttpClient, PgCursorStore, RunConfig, Sink, StoreSink,
 };
-use dropset_fx_survey::{
-    coinbase::{Candle, CoinbaseCandles},
-    config::Config,
-    store::CexWriter,
-};
+use dropset_fx_survey::{config::Config, store::CexWriter};
 use std::time::Duration;
 
 #[tokio::main]

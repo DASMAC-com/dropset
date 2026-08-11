@@ -1,25 +1,35 @@
-//! The Coinbase EURC/USDC reference feed (docs/data-feeds.md §9) — the CEX
+//! The Coinbase Exchange candles adapter (docs/data-feeds.md §9) — the CEX
 //! reference price and the first, framework-proving source.
 //!
-//! It polls the Coinbase Exchange public REST candles endpoint (keyless), which
-//! returns `[time, low, high, open, close, volume]` arrays, newest-first, ≤ 300
-//! per request. The source **pages its own backfill**: the framework's
+//! It polls the public REST candles endpoint (keyless), which returns
+//! `[time, low, high, open, close, volume]` arrays, newest-first, ≤ 300 per
+//! request. The source **pages its own backfill**: the framework's
 //! paged-backfill helper is still an open question (docs/data-feeds.md §7), and
 //! the indexer's take-newest-and-advance poll would skip the middle of a
 //! 60–90-day backlog, so this walks `start → now` in ≤ `max_buckets` windows,
 //! reporting `caught_up = false` until the present. Only **closed** buckets are
-//! emitted — the currently-forming candle is excluded — so the store sink's
+//! emitted — the currently-forming candle is excluded — so a store sink's
 //! `ON CONFLICT DO NOTHING` never freezes an incomplete OHLCV row.
+//!
+//! The endpoint is keyed by a single product, so this adapter is deliberately
+//! **not** a [`super::BatchQuotes`] venue: one source covers one product, and a
+//! roster is several sources rather than one batched poll.
 
-use crate::config::now_secs;
+use crate::time::now_secs;
+use crate::{Batch, Cursor, HttpClient, Source};
 use anyhow::Result;
 use async_trait::async_trait;
-use dropset_feeds::{Batch, Cursor, HttpClient, Source};
 use serde::{Deserialize, Serialize};
 
+/// Coinbase's per-request candle cap: a range wider than this many buckets is
+/// rejected, so a backfill pages in windows no larger (docs/data-feeds.md §4).
+/// It is the venue's constraint, so it lives with the venue — a collector
+/// clamps its configured window to it rather than restating the number.
+pub const MAX_CANDLES_PER_REQUEST: usize = 300;
+
 /// A single closed OHLCV candle — the record this source yields. The pair,
-/// exchange, and granularity live on the writer (they are constant per feed),
-/// so a record carries only what varies bucket to bucket.
+/// exchange, and granularity live on the consumer's writer (they are constant
+/// per feed), so a record carries only what varies bucket to bucket.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Candle {
     /// Epoch-second bucket open.
@@ -74,7 +84,7 @@ impl CoinbaseCandles {
             name: name.into(),
             product_id: product_id.into(),
             granularity: granularity.max(1),
-            max_buckets: max_buckets.max(1),
+            max_buckets: max_buckets.clamp(1, MAX_CANDLES_PER_REQUEST),
             next_start,
         })
     }
@@ -214,5 +224,22 @@ mod tests {
         let got = assemble(raw, 120, 10_000);
         let times: Vec<i64> = got.iter().map(|c| c.bucket_start).collect();
         assert_eq!(times, vec![120, 180]);
+    }
+
+    #[test]
+    fn resume_clamps_an_oversized_window_to_the_venue_cap() {
+        // A caller asking for more buckets than Coinbase serves would get a
+        // rejected request on every poll; the venue's own cap wins here.
+        let source = CoinbaseCandles::resume(
+            HttpClient::new("https://example.test").unwrap(),
+            "cex:coinbase:EURC-USDC",
+            "EURC-USDC",
+            60,
+            10_000,
+            None,
+            1_000,
+        )
+        .unwrap();
+        assert_eq!(source.max_buckets, MAX_CANDLES_PER_REQUEST);
     }
 }

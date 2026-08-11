@@ -9,7 +9,10 @@
 //!
 //! ## Legs, and how the bot's feeds map onto them
 //!
-//! | Engine leg    | Meaning              | Bot source (this PR)                    |
+//! The sources are the shared `dropset_feeds::venues` adapters — the bot
+//! selects and tiers them, it does not implement them.
+//!
+//! | Engine leg    | Meaning              | Venue source                            |
 //! | ------------- | -------------------- | --------------------------------------- |
 //! | `fx`          | USD per fiat unit    | ECB/Frankfurter USD/`<ccy>`             |
 //! | `crypto_usdc` | USDC per token       | CoinGecko / CoinMarketCap token-USD     |

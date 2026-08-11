@@ -3,11 +3,7 @@
 //! default tuned for the gate's Coinbase EURC/USDC feed, so the same binary
 //! runs unchanged against localnet Postgres and, post-gate, Fargate + Aurora.
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
-/// Coinbase's per-request candle cap: a range wider than this many buckets is
-/// rejected, so the backfill pages in windows no larger (docs/data-feeds.md §4).
-const COINBASE_MAX_CANDLES: usize = 300;
+use dropset_feeds::{now_secs, venues::coinbase::MAX_CANDLES_PER_REQUEST};
 
 /// Default backfill depth — long enough to span the weekend and macro-event
 /// regimes with enough repeats to matter (docs/data-feeds.md §11).
@@ -22,7 +18,7 @@ pub struct Config {
     /// Epoch second the backfill starts from. Only used the first time a feed
     /// runs; afterwards the saved cursor wins.
     pub backfill_start_secs: i64,
-    /// Buckets per Coinbase request (≤ [`COINBASE_MAX_CANDLES`]).
+    /// Buckets per Coinbase request (≤ [`MAX_CANDLES_PER_REQUEST`]).
     pub max_buckets_per_request: usize,
     /// Sleep between polls once the feed has caught up to the present.
     pub poll_interval_secs: u64,
@@ -30,14 +26,6 @@ pub struct Config {
 
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
-}
-
-/// Current wall-clock epoch second.
-pub fn now_secs() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
 }
 
 impl Config {
@@ -56,10 +44,13 @@ impl Config {
                 .unwrap_or_else(|_| default_start(granularity_secs, backfill_days)),
             Err(_) => default_start(granularity_secs, backfill_days),
         };
-        let max_buckets_per_request = env_or("MAX_BUCKETS_PER_REQUEST", "300")
-            .parse()
-            .unwrap_or(COINBASE_MAX_CANDLES)
-            .min(COINBASE_MAX_CANDLES);
+        let max_buckets_per_request = env_or(
+            "MAX_BUCKETS_PER_REQUEST",
+            &MAX_CANDLES_PER_REQUEST.to_string(),
+        )
+        .parse()
+        .unwrap_or(MAX_CANDLES_PER_REQUEST)
+        .min(MAX_CANDLES_PER_REQUEST);
         Ok(Self {
             database_url,
             coinbase_base_url: env_or("COINBASE_BASE_URL", "https://api.exchange.coinbase.com"),

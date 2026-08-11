@@ -10,9 +10,8 @@
 //! owner there is nothing to dodge, and `cex_prices` is versioned like
 //! everything else.
 
-use crate::coinbase::Candle;
 use async_trait::async_trait;
-use dropset_feeds::StoreWriter;
+use dropset_feeds::{venues::Candle, StoreWriter};
 
 /// Writes [`Candle`] records for one feed into `cex_prices`. The exchange,
 /// pair, and granularity are constant per feed, so they live here and the

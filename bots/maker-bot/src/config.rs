@@ -320,6 +320,18 @@ pub struct BotConfig {
 /// Environment variable holding the CoinMarketCap API key (never committed).
 pub const CMC_KEY_ENV: &str = "CMC_API_KEY";
 
+/// The CoinMarketCap API key for this run, or `None` when that tier is not
+/// wired up (the localnet demo runs without it).
+///
+/// This lives with the bot's configuration, not with the venue adapter it
+/// feeds: `dropset_feeds::venues::CmcSource` takes its key as an argument, so
+/// *where a secret comes from* stays a deployment decision the app owns. That
+/// is what lets the same adapter later be handed a key from a secrets provider
+/// without touching it.
+pub fn cmc_api_key() -> Option<String> {
+    std::env::var(CMC_KEY_ENV).ok().filter(|k| !k.is_empty())
+}
+
 impl Default for FeedConfig {
     fn default() -> Self {
         Self {

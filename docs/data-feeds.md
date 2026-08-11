@@ -43,10 +43,12 @@ streaming adapters. Both sink paths have their first consumer: the
 Coinbase candle collector on the store sink, and the maker bot's price
 and fill transports on the live sink — the latter carrying the first
 streaming source, an RPC `logsSubscribe` socket bridged through the
-stream seam (§4). The collector crate still sits at its
-original path under `analytics/`; its move to `market-data/`, the
-relocation of the venue adapters into `feeds/`, and the indexer's
-migration onto the framework are separate tracked tasks.
+stream seam (§4). The venue adapters have been relocated into
+`feeds/venues/` (§4), so the collector and the maker now share one
+Coinbase, CoinGecko, CoinMarketCap, and ECB/Frankfurter source apiece.
+The collector crate still sits at its original path under `analytics/`;
+its move to `market-data/` and the indexer's migration onto the
+framework are separate tracked tasks.
 
 ______________________________________________________________________
 
@@ -186,13 +188,19 @@ ______________________________________________________________________
 
 ## 4. Adapters
 
-Source adapters are the reusable connectors a source composes, each
-**feature-gated** so a consumer compiles only the transport it uses.
-Adapters **belong in `feeds/`**, so a venue is written **once** and
-consumed by collectors and bots alike rather than stranded in whichever
-app needed it first. The maker's price sources already sit there; the
-Coinbase collector's does not yet, and relocating it is a tracked task
-(Status, above).
+Two layers, and it is worth keeping them apart: **transports** are the
+reusable connectors a source composes, each **feature-gated** so a
+consumer compiles only the one it uses; **venue adapters** are the
+concrete sources built on a transport, one per venue.
+
+Both **belong in `feeds/`**, so a venue is written **once** and consumed
+by collectors and bots alike rather than stranded in whichever app
+needed it first. The venue adapters live under `feeds/src/venues/`,
+one module per venue, and they know nothing about sinks — a collector
+wires one to a store sink and keeps the history, the maker wires the
+same source to a forward sink and quotes off it.
+
+### Transports
 
 - **HTTP-REST** (`feature = "http"`, `reqwest` over TLS) — a small JSON
   client: a base URL, a shared client, and `get_json(path, query)`.
@@ -211,6 +219,27 @@ Coinbase collector's does not yet, and relocating it is a tracked task
 
 Features are **off by default** so an HTTP-only consumer never compiles
 the Solana or streaming trees.
+
+### Venue adapters
+
+The venue's endpoint, not taste, decides an adapter's shape:
+
+- **Batched quote venues** implement a `BatchQuotes` contract — built
+  with a whole symbol set, one request per poll returning a
+  `symbol → USD` map. CoinGecko, CoinMarketCap, and ECB/Frankfurter are
+  the three today. This is the per-venue budget's main lever (§10): one
+  poll for N markets rather than N polls. A symbol the venue does not
+  quote is omitted, never an error — one unlisted token must not dark
+  the rest of the roster.
+- **Per-product history venues** get one source per product, because
+  batching is not on offer. Coinbase's candles endpoint is the case; it
+  pages its own backfill instead and emits only closed buckets.
+
+**Credentials are injected, never read inside an adapter.** A keyed
+adapter takes its key as a constructor argument, so *where the secret
+comes from* stays a deployment decision the consuming app owns — the
+maker reads `CMC_API_KEY` from its own config today, and a secrets
+provider can supply it later without the adapter changing.
 
 ______________________________________________________________________
 

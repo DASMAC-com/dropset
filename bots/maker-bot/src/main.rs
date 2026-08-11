@@ -18,14 +18,14 @@
 
 use anyhow::{anyhow, Context, Result};
 use dropset_fair_value::{FairValueEngine, Reading};
+use dropset_feeds::venues::{BatchQuotes, CmcSource, CoinGeckoSource, FrankfurterSource};
 use dropset_feeds::{forward_channel, run_until, RunConfig, Sink, Source};
 use dropset_maker_bot::config::{
-    BotConfig, FeedConfig, MarketConfig, DEFAULT_LEADER_KEY, MARKETS, QUOTE_KEYPAIR_FILE,
-    USDC_COINGECKO_ID,
+    cmc_api_key, BotConfig, FeedConfig, MarketConfig, DEFAULT_LEADER_KEY, MARKETS,
+    QUOTE_KEYPAIR_FILE, USDC_COINGECKO_ID,
 };
 use dropset_maker_bot::context::Context as BotContext;
 use dropset_maker_bot::model::fair_mid::build_legs;
-use dropset_maker_bot::model::feeds::{cmc_api_key, CmcSource, CoinGeckoSource, FrankfurterSource};
 use dropset_maker_bot::quote_state::QuoteStateStore;
 use dropset_maker_bot::tasks::FeedReceivers;
 use dropset_maker_bot::{chain, fills, tasks};
