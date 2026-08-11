@@ -34,9 +34,7 @@ mod common;
 
 use anchor_v2_testing::{Keypair, LiteSVM, Signer};
 use common::fixture::{simple_profile, Fixture};
-use common::{
-    create_associated_token_account, SIGNER_FUNDING_LAMPORTS, SPL_TOKEN_PROGRAM_ID,
-};
+use common::{create_associated_token_account, SIGNER_FUNDING_LAMPORTS, SPL_TOKEN_PROGRAM_ID};
 use dropset::Price;
 use solana_pubkey::Pubkey;
 
