@@ -305,9 +305,9 @@ impl Fixture {
 
     /// Send just `create_market` for this fixture's mints, returning the
     /// program's rejection instead of panicking on it. Split out of
-    /// [`Self::init_and_create_market`] for the tests that need the error —
-    /// notably the pre-created-treasury-ATA probe, where the whole question
-    /// is *whether* it is rejected.
+    /// [`Self::init_and_create_market`], which expects success, so a test
+    /// whose subject *is* a `create_market` rejection can assert on the
+    /// error rather than unwinding on it.
     pub fn send_create_market(&mut self) -> Result<(), String> {
         let authority = self.authority.insecure_clone();
         let ix = Instruction::new_with_bytes(
