@@ -1,6 +1,6 @@
 ---
 name: housekeeping
-description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, upgrade the Claude Code CLI (best-effort brew cask), prune the worktrees of already-merged PRs and dismiss their stale GitHub notifications, mine the Session Metrics inbox via trim-context (one aggregated propose-only task), reconcile Backlog file-collision links via a sync-blockers sweep (which files no blocking edge — blocking is human-curated) and propose merge groups from its collision clusters to minimize open PRs, then — only when given the `audit` flag (`/housekeeping audit`) — run one finite `/audit` rotation inline and exit; with no flag the audit is skipped. The cspell dictionary check is opt-in (pass `cspell`) and off by default. By default it runs one-shot — start to finish with no prompts, flagging deferred items in its report (pass `interactive` to restore the AskUserQuestion gates). Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
+description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, upgrade the Claude Code CLI (best-effort brew cask), prune the worktrees of already-merged PRs and dismiss their stale GitHub notifications, mine the Session Metrics inbox via trim-context (one aggregated propose-only task), reconcile Backlog file-collision links via a sync-blockers sweep (which files no blocking edge — blocking is human-curated) and propose merge groups from its collision clusters to minimize open PRs, then — only when given the `audit` flag (`/housekeeping audit`) — run one finite `/audit` rotation inline and exit; with no flag the audit is skipped. The cspell dictionary check is opt-in (pass `cspell`) and off by default. By default it runs one-shot — start to finish with no prompts interrupting the upkeep, flagging deferred items in its report (pass `interactive` to restore the per-step AskUserQuestion gates); either way it closes with one batched AskUserQuestion offering to act on everything it deferred, which an unattended run can simply leave unanswered. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -43,11 +43,16 @@ committed skills and upgrades the Claude Code CLI
 
 The morning entry point is a **single one-shot run**:
 upkeep → one `/audit` rotation (only when the `audit` flag
-was passed) → exit. By default that run goes
-**start-to-finish with no `AskUserQuestion` gate** — it
-files or flags its deferred items and reports rather than
-stopping to ask (see "One-shot vs. interactive mode"); pass
-`interactive` to restore the prompts. It does *not* stay on
+was passed) → closing gate → exit. By default the upkeep
+goes **start-to-finish with no `AskUserQuestion`
+interrupting it** — it files or flags its deferred items and
+reports rather than stopping to ask (see "One-shot vs.
+interactive mode"); pass `interactive` to restore the
+per-step prompts. It then closes with **one batched
+question** offering to act on everything it deferred, which
+fires in both modes and which an unattended run can leave
+unanswered without losing any work (see "The closing gate").
+It does *not* stay on
 a timer; the `/loop 30m housekeeping` cadence is there for
 ad-hoc upkeep while you work, but the morning driver is the
 one-shot. Each invocation is one pass and safe to repeat.
@@ -107,12 +112,12 @@ two modes, and the default is the non-interrupting one:
 
 - **One-shot (the default).** A bare `/housekeeping` (with
   or without `audit` / `cspell`) and **every** `/loop`
-  cadence run. It fires **no** `AskUserQuestion`: each
-  interactive step takes its **non-prompting branch** — the
-  same branch the steps below label the *unattended* pass.
-  Concretely: step 4 hands `trim-context` a **leave**
-  decision so it doesn't ask about clearing the inbox;
-  step 6 **lists** its merge-group candidates and its
+  cadence run. It fires **no** *intermediate*
+  `AskUserQuestion`: each interactive step takes its
+  **non-prompting branch** — the same branch the steps below
+  label the *unattended* pass.
+  Concretely: step 6 **lists** its merge-group candidates
+  and its
   Todo-blocks-Backlog pairs and resolves nothing; steps 7
   and 8 **propose / list** the perms cruft and the stale
   memories and delete nothing; and steps 9 and 10 (the
@@ -123,15 +128,68 @@ two modes, and the default is the non-interrupting one:
   a one-shot is a genuine high-severity `/audit` finding on
   the `PushNotification` path (step 11); that stays.
 - **Interactive** (`/housekeeping interactive`). Restores
-  every `AskUserQuestion` gate listed above, so you can act
-  on the candidates in the same pass. Use it for an
-  attended cleanup.
+  every **per-step** `AskUserQuestion` gate listed above, so
+  you can act on the candidates as each step reaches them.
+  Use it for an attended cleanup.
+
+**The closing gate fires in both modes.** It is *not* what
+the `interactive` flag controls. See "The closing gate"
+below: the non-interrupting rule above governs the **middle**
+of a pass, where an unanswered question would stall the
+upkeep. Once the last upkeep step is done there is nothing
+left to interrupt, and the run is holding a pile of proposals
+that otherwise die in the report.
 
 **Mapping.** Below, wherever a step distinguishes an
 **attended** pass from an **unattended** one, read
 *attended* = interactive and *unattended* = one-shot. The
 per-step wording already spells out both branches; this
 gate just fixes which branch the default takes.
+
+## The closing gate
+
+After the last upkeep step, fire **one** `AskUserQuestion`
+batching every decision the pass deferred. One pass surfaced
+four merge groups, a stale blocking edge, two allowlist
+defects and three stale memories — every one of them needing
+a human decision the pass had deliberately declined to ask
+for. Today they are printed and forgotten, and the next pass
+re-derives the identical list from scratch.
+
+Batch these, each **only when non-empty**:
+
+- the **merge-group proposals** from step 6 ("merge these?");
+- the **Todo-blocks-Backlog** and **urgent-inversion** pairs,
+  with the discharged-blocker ones separated out — a blocker
+  whose PR has already merged is a one-click cleanup, not a
+  scheduling decision, and mixing the two makes the whole
+  question harder to answer;
+- the **allowlist cruft** approved for removal in step 7;
+- the **stale memories** approved for purge in step 8;
+- the **inbox size** only when `trim-context` reports the
+  body still growing *despite* draining on file — which
+  should be impossible, so it means something is wrong with
+  the drain rather than that a clear is owed. (Do **not**
+  batch a "clear the inbox?" question: `trim-context` now
+  drains every consumed entry unconditionally, so there is
+  no such decision left for a human to authorize.)
+
+Three constraints on it:
+
+1. **One call, not five.** `AskUserQuestion` takes up to four
+   questions with multi-select, which covers the batch. If a
+   pass somehow accumulates more categories than fit, drop
+   the lowest-value category to a report line rather than
+   firing a second call.
+1. **It stays skippable.** The gate is the *last* thing the
+   pass does, so an unattended run (cron, `/loop`) that never
+   gets an answer has already completed all its work — the
+   questions simply go unanswered and the report stands
+   exactly as it does today. **Nothing may depend on the
+   answer**; anything that would is upkeep, and belongs
+   earlier.
+1. **It fires in both modes.** `interactive` restores the
+   per-step prompts, which is a different thing.
 
 ## Run it from the base repo root
 
@@ -439,21 +497,23 @@ propose-only** skill-improvement Backlog task — one
 bullet per distinct lever, each with its own
 `**Fingerprint**:` line under a combined `**Touches**:`,
 deduped against the open Backlog and **appended** to the
-open aggregated task rather than opening a second — and
-writes each consumed
-entry's disposition back into the doc. `trim-context` has
+open aggregated task rather than opening a second — and then
+**drains** each consumed entry out of the doc, recording its
+disposition in the drain history. `trim-context` has
 **no** attended / propose-only split — filing a task *is*
 the proposal, so it never edits a skill or convention
-doc. `trim-context` then decides whether to clear the
-now-processed inbox entries (its own step 4/5), and this
-step **inherits** that decision through the delegation —
-don't re-implement it here. In a **one-shot** pass, hand
-`trim-context` a **leave** decision up front (per its
-"caller has already fixed the decision" hook) so it doesn't
-stop to ask mid-pass; in an **interactive** pass, let it
-run its own `AskUserQuestion` clear prompt. If
-`LINEAR_SESSION_METRICS_DOC_ID` is unset, `trim-context`
-says so and this step is a no-op.
+doc.
+
+**Pass it nothing about clearing.** There is no clear
+decision to inherit any more: filing the task discharges the
+entry, so `trim-context` drains unconditionally in both
+modes. This step used to hand it a **leave** decision on the
+one-shot path — which, since one-shot is the default and the
+only path the morning driver takes, meant the clear
+effectively never fired and the inbox filled with
+already-filed entries. That hook is retired; don't
+re-introduce it. If `LINEAR_SESSION_METRICS_DOC_ID` is
+unset, `trim-context` says so and this step is a no-op.
 
 **5. Check the convention ↔ skill reference sync.**
 `CLAUDE.md` is the **index**; the full operating
@@ -687,10 +747,11 @@ python3 .claude/tools/memory_scan_gate.py record <memory_dir>
 the recommended default **first**, to run `/session-metrics`
 for the **current** session so this pass also appends a
 fresh measured entry (the producer side of the loop).
-Run it only on an explicit yes. Because a `session-metrics`
-run **appends** a new unprocessed entry, this offer comes
-*after* step 4's mine-and-clear, so the clear in step 4 is
-evaluated against the inbox state before this append. (In
+Run it only on an explicit yes. It comes *after* step 4 so
+the entry it appends is next pass's work rather than this
+one's — but nothing depends on that ordering any more: step
+4 drains exactly the entries it read, and `patch`'s
+exactly-once anchors make a concurrent append safe. (In
 an unattended pass with no one to answer, skip the offer.)
 
 **10. Offer a purge-conversations run.** Local transcripts
@@ -762,9 +823,9 @@ sweep.
   task — whether new levers were filed into a fresh one or
   appended to the open one (with its ENG-###), and how many
   levers — for the recurring trim patterns, how many session
-  entries were consumed, and any levers skipped as
-  already-handled — or why the step was skipped (e.g.
-  a missing env var).
+  entries were consumed **and drained**, any levers skipped
+  as already-handled, and the inbox's remaining size — or
+  why the step was skipped (e.g. a missing env var).
 - Convention references: in sync, or the dangling
   `CLAUDE.md` / `docs/conventions/` references filed
   (with the ENG-### of the aggregated task).
@@ -794,3 +855,15 @@ sweep.
 - Audit: one `/audit` rotation ran inline (with its
   `DONE` tally), or was skipped because the `audit` flag
   wasn't passed.
+
+**13. Fire the closing gate.** With the report printed, batch
+every deferred decision into the single `AskUserQuestion`
+described in "The closing gate" above — the merge groups, the
+scheduling pairs, the allowlist cruft, the stale memories,
+the inbox size — including only the categories that are
+non-empty. This runs in **both** modes.
+
+Act on whatever comes back, and if nothing does (an
+unattended run with nobody watching), that's fine: the pass
+is already complete and the report already stands. Nothing
+here may be load-bearing.

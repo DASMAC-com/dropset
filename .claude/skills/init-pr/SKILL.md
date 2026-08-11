@@ -188,6 +188,17 @@ not only to the sub-agents you brief:
   slice you actually want. A dispatcher whole-file Read
   (≈4.4k) to find **one** append point is the recurring shape
   this prevents.
+- **This covers a sibling `SKILL.md` or convention doc too —
+  those are what a mid-session handoff actually reaches
+  for.** The rule reads as being about large *source* files,
+  which is why it gets skipped for skill docs, and several of
+  those run past 1800 lines. On one two-line copy PR the two
+  largest results of the entire run were `review-pr/SKILL.md`
+  (≈1.6k, sliced) and `pr-title-description/SKILL.md` (≈1.3k,
+  read whole) — together ~93% of its Read cost, when all that
+  was needed from the latter was the title/description format
+  in its steps 3–4. Grep the doc's headings (`^#`), then
+  slice.
 - **A planned multi-region read is ONE bounded read, not
   several.** When you already know you need three parts of a
   file, don't slice-read it three times — one run read
@@ -339,6 +350,29 @@ fresh worktree inherits.
    the bootstrap. The tool never raises here — it reports
    `"failed"` instead, because this one call also carries the
    tag / base-repo / branch answers the next steps read.
+
+   **Note the other cold-worktree prerequisite while you're
+   here: `frontend/node_modules`.** A fresh worktree has
+   none, and the `biome` and `tsc` hooks shell out to
+   `pnpm -C frontend exec …`, so without it they fail with
+   `Command "biome" not found` and have to be re-run:
+
+   ```sh
+   pnpm -C frontend install
+   ```
+
+   **This is not only a frontend-task concern.** `make lint`
+   runs `pre-commit --all-files`, and those two hooks are
+   typed on `ts` / `tsx` / `js` / `css` — which the repo has
+   plenty of regardless of what *this* branch touches. So the
+   first full `make lint` in a cold worktree fails on them
+   whatever the task is. Install when the surfaced task
+   touches `frontend/**`, or before the first full lint;
+   either way it is one command paid once per worktree, and
+   the alternative is a wasted lint round-trip plus a
+   diagnosis of an error that says nothing about the diff.
+   (`review-pr`'s lint step covers the recovery, but
+   recovering is the expensive path.)
 
 1. Normalize the branch name to the bare Linear tag.
    The `aps` shell helper starts worktree sessions with
@@ -492,22 +526,61 @@ fresh worktree inherits.
    and continue — bootstrapping shouldn't be blocked by
    Linear.
 
+   **Keep this response — it carries the whole issue
+   body.** `save_issue` echoes the complete `description`
+   back even on a state-only write that sent no body at
+   all, so the payload the next step needs has already
+   been bought. Re-`get_issue`ing it there pays for the
+   same body twice: two ≈1.1k echoes for one payload in
+   one measured run, and far worse on a consolidated spec.
+   The echo is a fixed cost per call and `patch` does not
+   shrink it, so fewer calls is the only lever (see
+   `docs/conventions/linear-automation.md`).
+
 1. Print the new PR URL and confirm the Linear issue was
    moved to In Progress.
 
 1. **Surface the task when no other context was
    given.** If the session was started with no
    instructions beyond the tag, the linked Linear
-   issue *is* the spec. Fetch it with
-   `mcp__claude_ai_Linear__get_issue` (id = the
-   uppercase tag) and pull
-   `mcp__claude_ai_Linear__list_comments` too —
-   acceptance criteria sometimes live in an anchored
-   comment, not the body. Present its description and
-   any checklist as the plan of work so the session
-   can proceed straight into the task. If the user
-   provided their own instructions, those win; don't
-   override them with the issue.
+   issue *is* the spec.
+
+   **Read the description out of the previous step's
+   response — don't re-fetch it.** The In-Progress write
+   already returned the full body; a `get_issue` here is a
+   second echo of a payload the session is holding. Only
+   reach for `get_issue` if that write failed or was
+   skipped. Do still pull
+   `mcp__claude_ai_Linear__list_comments` — acceptance
+   criteria sometimes live in an anchored comment, not the
+   body, and that is a payload the session does *not*
+   already have.
+
+   Present the description and any checklist as the plan
+   of work so the session can proceed straight into the
+   task. If the user provided their own instructions,
+   those win; don't override them with the issue.
+
+   **Treat the issue's `file:line` citations as a snapshot
+   of its discovery commit.** A filed issue records where
+   something was when it was *found*, which may be months
+   of unrelated PRs ago — so verify each citation against
+   `HEAD` before implementing it. One session's surfaced
+   task named four `(§4 row 5)` citations across two files;
+   **all four** had since been rewritten away by an
+   unrelated PR, one named file had no relevant references
+   at all, and the work item turned out to be moot —
+   established at the cost of four exploratory greps
+   including a ≈1.1k repo-wide sweep. The stable key is the
+   `**Fingerprint**` slug, never the line number: find the
+   thing the fingerprint names, then re-derive its
+   location.
+
+   The same goes for a spec's own claims about what has
+   shipped. A long-lived consolidated issue often carries
+   "this part already landed in PR #N" notes; those are
+   reliable, but a part filed *before* an unrelated change
+   may describe code that no longer exists.
 
 1. **Hand off to `/review-pr` when the work is ready.**
    This is the closing step of the bracketed session.

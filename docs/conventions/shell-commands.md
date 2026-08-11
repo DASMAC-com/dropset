@@ -65,9 +65,20 @@ Concrete rules:
   violation with its line number and reduces to the existing
   `Bash(pre-commit run:*)` rule.
 
-- Searching file *contents* — prefer the **Grep tool**; where it's
-  absent (the Grep / Glob caveat above) a **bare, single** `grep` is
-  the fallback, but **never** `git grep`. This is the same rule the
+- Searching file *contents* — prefer the **Grep tool**
+  **unconditionally**; where it's absent (the Grep / Glob caveat above) a
+  **bare, single** `grep` is the fallback, but **never** `git grep`.
+  "Unconditionally" is load-bearing, and it is a *main-loop* rule, not
+  only a sub-agent one: the Grep tool honors gitignore, which makes the
+  escape-into-build-output failure below **structurally impossible**
+  rather than something an agent has to remember at each call site. The
+  measured record is that remembering does not work — three separate
+  sessions spelled an unscoped recursive shell `grep` from the main loop
+  and got back 79.2KB (a repo-wide conflict-marker sweep that walked
+  `frontend/.next/`), 3.6MB (`decks/.next/`), and 8.6MB. Two of those
+  landed as harness-persisted blobs, so the context hit was small — but
+  only by luck of the transport, not by anything the call did right.
+  This is the same rule the
   sub-agent brief carries
   (see [the sub-agent brief](sub-agent-brief.md)); it holds for the
   main agent too, so the convention is one and the same — the brief
@@ -111,6 +122,13 @@ Concrete rules:
     When a bare `grep` really is unavoidable, take the flags from
     `python3 .claude/tools/review_diff.py --print-grep-excludes` rather
     than re-deriving them — that is the same list, with one owner.
+
+    Don't confuse that list with the **skip-globs** in
+    [the audit registry](audit-registry.md). They overlap, but they do
+    different jobs: the registry's globs decide which files an audit
+    rotation may *pick*, while `review_diff.py` owns which trees a
+    *search* must skip. Reuse the tool's list for searching; leave the
+    registry's to the audit.
 
   - **`grep -o -m N` bounds matched *lines*, not matches.** Two field
     extractions over a fetched page passed `-m 6` expecting six values
@@ -238,8 +256,10 @@ before it runs:
   redirect operator (the `#compound-ok` marker is the escape hatch).
 - **`.claude/hooks/no_git_grep.py`** blocks `git grep` (including
   `git -C <path> grep` and other global-flag variants), nudging to the
-  Grep tool. It has **no** escape hatch — Grep, or a bare `grep`, covers
-  every legitimate content search.
+  Grep tool. It has **no** escape hatch, and that is deliberate — see
+  [why the ban stays absolute](#why-the-git-grep-ban-stays-absolute)
+  below for what the one legitimate use is and why it doesn't earn a
+  carve-out.
 
 Each guard **script** is committed, but its wiring is not — like the
 iTerm color integration, they are user-local configuration the repo
@@ -256,3 +276,57 @@ base repo's copy automatically; `firm-perms`' full sweep is what
 propagates a firmed allowlist from the base repo into a worktree (and
 back), so run it once in a cold worktree if the guard or a familiar
 allow-rule is missing.
+
+## Why the `git grep` ban stays absolute
+
+Adjudicated 2026-08-11. The question put was whether the ban should gain
+a narrow carve-out for **revision-scoped** search, spelled
+`git grep <pattern> <rev>`. That is the one capability the Grep tool
+structurally lacks, since it only ever sees the working tree.
+
+**Verdict: the ban stays absolute, and the carve-out is rejected.** But
+the old justification for it ("there is no legitimate `git grep` worth
+letting through") was **false as written**, and this section replaces it.
+Rev-scoped content search is a real capability with no direct substitute.
+The honest position is that its one legitimate use is rare here, has
+adequate indirect workarounds, and does not justify weakening a guard
+whose entire value is that it is unconditional.
+
+The carve-out is rejected on **mechanism, not taste**:
+
+- **A guard cannot reliably tell a rev from a pathspec.** The forms
+  `git grep foo main`, `git grep foo -- main`, and range syntax are
+  genuinely ambiguous
+  to a pre-execution check. A carve-out that errs one way leaks
+  working-tree searches; erring the other way blocks the legitimate form.
+  A sometimes-wrong guard is worse than either pole.
+- **It would re-bless the unfirmable shape.** The alternation form
+  (`git grep "a\|b" <rev>`) trips the harness's per-subcommand `|` guard
+  and therefore can never be firmed — which is the load-bearing reason
+  this guard exists at all.
+
+**One epistemic caveat, stated deliberately:** that unfirmable-alternation
+behavior is *inherited-empirical* — it was observed when the rule was
+first written and cannot be re-verified now without tripping the guard.
+If the harness's firming logic ever changes, this rationale must be
+**re-derived, not inherited**. The other two reasons — that `git grep`
+looks blessed when it isn't, and the re-prompt friction — favor the Grep
+tool regardless.
+
+**The gap is real but narrow, and floored by workarounds.** Every grep
+pathology in the session-metrics record to date is a *working-tree*
+search. For history:
+
+- `git log -S` / `-G` answers *when and where* a string appeared.
+- `git show <rev>:<path>` answers *what a known file said* at a revision.
+- The rare true case — "which file contained X at rev Y, path unknown" —
+  is answered exactly by a throwaway `git worktree add --detach`
+  checkout plus the Grep tool, with zero permission friction.
+
+**Pre-registered trigger for revisiting.** A committed
+`.claude/tools/` rev-grep wrapper behind one firmable `python3 …:*`
+prefix is the right *shape* — it is simply the wrong *time*: the
+skill-tooling convention hardens workflows that are established and
+repeated, and this need has **zero** measured occurrences. So: if
+rev-scoped content search is hit **twice** in the session-metrics record,
+build that tool then. Never add a hook carve-out, regardless.

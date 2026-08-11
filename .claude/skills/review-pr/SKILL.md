@@ -138,6 +138,22 @@ PR-authoring **writes** (`create_pull_request`,
      a **blocking** issue (step 7), and tell the user
      to rebase and resolve manually, then re-run — this
      skill does not auto-resolve conflicts.
+
+     **Enumerate the conflicted files with git, not a
+     search.** The question is "which files conflict",
+     and git already knows exactly:
+
+     ```sh
+     git diff --name-only --diff-filter=U
+     ```
+
+     Don't reach for a repo-wide `grep '<<<<<<<'`
+     instead. It answers a different question, it is
+     gitignore-blind, and one such sweep over
+     `programs sdk bots frontend docs` walked
+     `frontend/.next/` and returned a **79.2KB** blob
+     for what is a short file list.
+
    - If it **succeeds but integrated new commits from
      the base**, the diff now reflects that integration.
      A clean *textual* rebase can still leave a
@@ -147,6 +163,56 @@ PR-authoring **writes** (`create_pull_request`,
      run (step 10) to catch. The rebase rewrote history,
      so the branch must be force-pushed — step 11 does
      this with `--force-with-lease`.
+
+   **Triage what the base actually gained.** Capture the
+   base this branch is *currently on* — its **merge-base** —
+   **before** the fetch and rebase above, then hand both ends
+   to the committed reporter:
+
+   ```sh
+   git merge-base HEAD origin/<base>
+   ```
+
+   ```sh
+   python3 .claude/tools/rebase_overlap.py --from <mb> --to origin/<base>
+   ```
+
+   **The merge-base, not `git rev-parse origin/<base>`.**
+   That distinction is the whole point and it is easy to get
+   wrong — this step got it wrong on its own first run.
+   `origin/<base>` is a **shared** ref: worktrees have one
+   `.git`, so a sibling session's fetch (or this session's
+   own `init-pr` fetch, hours earlier) can advance it long
+   before this step executes. Reading it "before the fetch"
+   therefore captures a tip the branch may never have been
+   based on, and the tool then reports a **0-commit delta for
+   a base that demonstrably moved** — a false all-clear, in
+   the exact place a false all-clear licenses skipping the
+   gates. The merge-base is what the branch is actually
+   sitting on, and it is correct regardless of who fetched
+   what when.
+
+   It prints the commits the base gained, the files they
+   touched, the files this branch's own commits touch
+   (measured from the merge base, so the base's movement
+   isn't folded in), their **overlap**, and the two
+   predicates that decide whether a gate can be skipped —
+   `runs_artifact_gates` and `runs_rust_suites`, computed
+   over the *base delta* and delegating to
+   `review_diff.py`'s lists so there is one owner.
+
+   The overlap set is the honest input to the semantic-
+   conflict flag above: an empty overlap means the base
+   moved somewhere this branch never touches. The two
+   predicates feed steps 9 and 11, which say what a re-run
+   forced by a rebase may skip.
+
+   This replaces hand-rolling the sequence. One session ran
+   the identical `fetch` → `log` → two `diff --name-only`
+   → intersect-by-eye chain **three times** as `main` moved
+   15 commits (≈10k of deterministic git output), and
+   re-ran the full suite each time — twice provably
+   redundantly.
 
 1. **Check the Linear task, mark it In Progress, and
    tick what's done.** The PR exists to satisfy a
@@ -172,6 +238,18 @@ PR-authoring **writes** (`create_pull_request`,
      `mcp__claude_ai_Linear__list_comments` — checklist
      items and acceptance criteria sometimes live in an
      inline (anchored) comment, not the body.
+
+     **Unless this session already has the body.** When
+     `init-pr` bootstrapped this same session it already
+     read the issue, so re-fetching buys a second full-body
+     echo for nothing. The echo budget is **per issue, per
+     session**, not per skill (see
+     `docs/conventions/linear-automation.md`) — one
+     measured session paid **24.5k across three calls on
+     one issue** for three state transitions, with every
+     skill individually compliant and nothing budgeting the
+     handoff. Work from what the session holds; fetch only
+     when this skill was invoked cold.
 
    - Plan to move the issue to **In Progress** to reflect
      that review work is underway — invoking `review-pr`
@@ -299,6 +377,18 @@ PR-authoring **writes** (`create_pull_request`,
      discrepancy** — do not retry, since each retry re-echoes
      the whole body.
 
+     **And the budget spans skills.** Everything above is
+     within-skill discipline, which one measured session
+     followed exactly and still paid 24.5k on one issue —
+     because `init-pr` had already spent a `get_issue` plus
+     the In-Progress write before this skill ever ran. Count
+     the budget **per issue, per session**
+     (`docs/conventions/linear-automation.md`): don't
+     re-fetch a body the session already holds, and skip a
+     write whose state is already correct. The bigger the
+     consolidated body a `/merge-tasks` produced, the more
+     each avoided call is worth.
+
    - Catalogue every **partial** or **missing**
      requirement as a **blocking** issue (step 7),
      quoting the checklist text and the `file:line`
@@ -317,17 +407,45 @@ PR-authoring **writes** (`create_pull_request`,
    python3 .claude/tools/run_quiet.py -- make lint
    ```
 
-   **When you go into the captured log, Grep it for the
-   failure — never `Read` it whole.** A whole-file read of a
+   **When you go into the captured log, use the Grep *tool*
+   on it — never `Read` it whole.** A whole-file read of a
    captured lint log is how a 500-line per-file cspell dump
    became the single largest result of a run (PR #207). Grep
    the log for the failure markers (`Failed`, `error[`,
    `Error`) to find the offending hook, or read only its
    tail; slice from there.
 
+   **The Grep tool specifically, not a shell `grep`.** The
+   runner's logs live under `/var/folders/…`, outside the
+   workspace — and a shell `grep` at an absolute temp path
+   generalizes only to the bare-verb wildcard `Bash(grep:*)`,
+   which `firm_core.is_bareverb_wildcard` refuses, so it
+   re-prompts on **every** review, forever. The Grep tool
+   reads an out-of-workspace absolute path and prompts zero
+   times. (Where the Grep tool is genuinely absent, a bare
+   `grep` still works — you just pay the prompt.)
+
    If lint fails, first separate **environmental**
-   failures from **real violations** — they're not the
-   same problem:
+   failures and **autofixes** from **real violations** —
+   they are three different problems:
+
+   - **A formatter's "files were modified by this hook" is
+     an autofix, not a finding.** `mdformat`,
+     `markdownlint-fix`, `ruff format`, and `biome` rewrite
+     the file and *then* report failure; the correct
+     response is to stage the reformat and **re-run once**,
+     treating only a **second** failure as a real
+     violation. Don't read it as a violation to diagnose,
+     and don't re-run more than once — if the same hook
+     fails twice, the second failure is the real one (a
+     line the formatter can't fix, e.g. an MD013 overlong
+     line that `mdformat` created by collapsing a wrap
+     inside an inline code span). In one run both the full
+     `make lint` and the scoped re-run each failed once
+     purely because `biome` reformatted, and those
+     immediate identical re-runs were a meaningful share of
+     that session's 3.6k / 10 scoped-lint and 900 / 5
+     `make lint` totals.
 
    - A hook that fails because its binary isn't
      installed is **not** a diff problem. The
@@ -378,9 +496,19 @@ PR-authoring **writes** (`create_pull_request`,
      the diff's files, so confirm against just those:
 
      ```sh
-     pre-commit run <hook-id> --config cfg/pre-commit-lint.yml \
+     python3 .claude/tools/run_quiet.py -- \
+       pre-commit run <hook-id> --config cfg/pre-commit-lint.yml \
        --files <changed files...>
      ```
+
+     **Wrap the scoped run too**, exactly as the full
+     `make lint` above is wrapped. A scoped `pre-commit run`
+     still prints **all 24 hook lines** — about 20 of them
+     "Skipped" / "no files to check" — roughly 675 tokens
+     for a one-bit answer; four such runs in one review is
+     ~2k bought for nothing. The wrapper loses no signal:
+     a failure still prints the failing tail and the log
+     path.
 
      **`--config` is mandatory, not decorative.** This repo
      keeps its hook config at `cfg/pre-commit-lint.yml`, not
@@ -397,6 +525,30 @@ PR-authoring **writes** (`create_pull_request`,
      when a hook is repo-global (it has no per-file scope) or
      when you've changed enough that a scoped re-run wouldn't
      be representative.
+
+   - **Batch verification to checkpoints, and match the
+     check to the edit.** Verify once per logical
+     checkpoint — not once per edit. Two rules fall out,
+     both measured on visual PRs where they were violated
+     while the docs already said otherwise:
+
+     - **A copy-only or comment-only change needs lint,
+       not a build or a typecheck.** A string literal in a
+       `.tsx`, or a reworded comment, cannot change a type
+       or an artifact — so the optimizing build proves
+       nothing the running dev server didn't already show.
+       One run fired `make decks-build` **×11** as an
+       inner-loop check (`decks/README.md` explicitly
+       calls it a *pre-commit* check), most of them after
+       copy-only edits. Another ran `pnpm -C decks check`
+       **×19** across ~15 rounds, including after
+       comment-only changes.
+     - **Per-call cost is small; the repetition is the
+       cost.** After grep, this is the top repeated shape
+       in both of those sessions. Batching it to
+       checkpoints costs nothing in signal, because the
+       checkpoint is where a real regression would be
+       caught anyway.
 
    - If real violations still fail after the fix
      attempt, catalogue the remaining failures as
@@ -588,6 +740,33 @@ PR-authoring **writes** (`create_pull_request`,
    `find` / `sed … | grep` / `cat`
    compounds that re-prompt on every run.
 
+   **Write the invariant preamble to the scratchpad once,
+   and hand each lens its path.** Every lens brief has two
+   halves: a **standing** half that is byte-identical across
+   all of them — the sub-agent brief above, the negative
+   scope, the standing suppressions, the lint carve-out, the
+   pre-emit gate — and a **per-lens** half (its dimension,
+   its excerpts, its cap). The standing half ran ~1.5–2k
+   tokens per lens in one measured review, and a sub-agent's
+   prompt is re-sent on **every one of its turns**, so
+   across six lenses at 6–14 turns each that is a meaningful
+   slice of a 5.4M fan-out — paid to say the same thing
+   forty-odd times.
+
+   Compose it once, `Write` it to the scratchpad, and give
+   each Agent the path plus its own scope:
+
+   ```txt
+   Read <scratchpad>/lens-preamble.md first — it is the
+   standing brief for this review. Then: <per-lens scope>
+   ```
+
+   This is the same file-handoff pattern step 5 already uses
+   for the diff, applied to the other half of the prompt.
+   Keep **only** the per-lens material inline: the standing
+   half is what belongs in the file, and the excerpts, which
+   differ per lens, stay in the prompt.
+
    **Then narrow the scope for these reviewers.** The
    brief deliberately lets an agent explore other repos
    and paths, but a *diff review* doesn't need that —
@@ -740,6 +919,28 @@ PR-authoring **writes** (`create_pull_request`,
      state an explicit low turn cap (≈6 turns), since the
      lens should be adjudicating, not surveying.
 
+     **But check the cap is one the ask can actually
+     satisfy.** A cap is unenforced, so a lens reads as
+     compliant right up until the token bill. When the
+     question is genuinely "do these two large files agree
+     in their **entirety**" — one run put a 714-line
+     component against an ~850-line spec — no amount of
+     diff-plus-excerpt framing shrinks it, and the two
+     lenses ran 8 and 11 turns against a stated "≤ 6".
+     Neither disobeyed; the cap was simply impossible.
+     Two honest fixes, and you must pick one:
+
+     - **Hoist the extraction into the main loop** — emit
+       the two lists yourself and hand the lens the
+       *pairs* to adjudicate. Preferred: it converts a
+       survey into an adjudication, which is the whole
+       point of the cap.
+     - **Or state a cap that matches the ask**, and say
+       why it is higher than the usual six.
+
+     Silently keeping the ≈6 is the one option that is
+     always wrong.
+
    - **Name the efficient exemplar — with the number.** A run
      needs a target to beat, or it re-litigates after the fact
      whether an expensive lens was worth it. The measured
@@ -757,6 +958,20 @@ PR-authoring **writes** (`create_pull_request`,
 
      Tell each lens that is the shape to match: read once,
      adjudicate, report.
+
+     **These figures are summed per-turn input, not the
+     `subagent_tokens` the Agent tool reports.** The two
+     differ by roughly an order of magnitude, because a
+     sub-agent's context is re-sent on every one of its
+     turns: two lenses whose Agent results read ≈102k and
+     ≈104k had per-turn input summing to **911.6k and
+     604.3k**. So judging a fan-out from the Agent result
+     line concludes a lens was cheap when it was the most
+     expensive thing in the session — and comparing that
+     number against the exemplars above compares unlike
+     quantities. Use `session-metrics`' per-sub-agent
+     rollup, which sums per-turn input, whenever you need
+     the real figure.
 
    - **Give the lens a sanctioned "checks to run" section.**
      Brief every lens to end its report with an explicit
@@ -1015,6 +1230,32 @@ PR-authoring **writes** (`create_pull_request`,
      2.0M / 19-turn run on the same failure mode) while the
      lenses handed excerpts came in 3–4× cheaper.
 
+     **Inline the implicated audit-registry block, too.**
+     The rule above says to name the specific implicated
+     doc; go one further and paste the ~20 implicated lines
+     of `docs/conventions/audit-registry.md` into the
+     prompt. A conventions-freshness lens spent **≈578k**
+     adjudicating a verdict that turned on **two lines** of
+     that registry. It earned its keep — it caught a
+     half-stale entry the diff itself introduced, so this
+     is scoping, not skipping — but with the block inlined,
+     a source-only diff means the lens never opens
+     `CLAUDE.md`, `docs/conventions/**`, or `.claude/**` at
+     all.
+
+   - **Assert the known negatives, not just the positives.**
+     The inlining rule above covers what you *have* read;
+     this covers what you already know *isn't there*. A
+     completeness lens spent tool calls establishing that a
+     config struct had no `validate()` or clamp path the
+     new field could have skipped — a fact the main loop
+     knew for certain, from having written the change. So
+     state the absence outright in the brief: "this struct
+     has no validator", "there is no config loader", "no
+     other call site constructs this". A lens cannot tell
+     "nobody told me" from "I must go check", and it will
+     always choose to check.
+
    - **Hoist every repo-wide grep into the main loop — run it
      once, here, and hand the lens the hit-list.** This is
      **unconditional for any "verify X across the repo" ask**,
@@ -1026,6 +1267,34 @@ PR-authoring **writes** (`create_pull_request`,
      the instruction to sweep; cap its shell budget to
      "adjudicate from the diff + the provided grep — don't
      re-derive".
+
+     **Hoist it *and* narrow it.** Hoisting decides *where*
+     the sweep runs; it does nothing about *what the sweep
+     returns*, and a verbose hoisted grep just relocates
+     the sink from a lens into the main loop — where it is
+     replayed on every later turn, which is worse. Followed
+     literally, this rule made the hoisted grep one
+     session's **single largest result** (≈4.2k): the ask
+     was "are each of these 7 moved symbols still
+     referenced?", one bit per symbol, and the call came
+     back with ~130 full match lines, most of them one file
+     repeating one constant 40 times.
+
+     So ask for the narrowest form the question admits:
+
+     - **Existence** ("is it still referenced?", "does this
+       word appear in ≥ 2 files?") → files or counts:
+       `--files-only`, or `grep -l` / `-c`.
+     - **Adjudication** (the lens must read the surrounding
+       code) → full `-n` lines, and only then.
+
+     And narrow the *scope* while you're there: prefer
+     `python3 .claude/tools/search_source.py` over a
+     hand-rolled `grep`, and reach for its `--glob` when
+     the question is about **named files** rather than a
+     subtree — `--dir docs --ext md` once returned ~200
+     headings across 18 files (3.0k) to answer a question
+     about three named docs.
 
    - **Confirm a rule's presence or absence by `Read`ing the
      current file, never by inferring from the diff's `-`/`+`
@@ -1362,16 +1631,24 @@ PR-authoring **writes** (`create_pull_request`,
    scoped per-hook re-run on a failure.
 
 1. **Regenerate committed generated artifacts
-   (mirror the IDL / SDK / vectors CI gates).** Three
-   workflows fail the PR if a committed generated file is
-   stale relative to its source: `test.yml` regenerates
-   the **IDL**, and `sdk.yml` regenerates the **SDK
-   clients** and the **conformance vectors** — each via a
-   `git diff --exit-code` that fails on a dirty tree. The
-   author's diff (or a fix from step 8) may have changed
-   the program without regenerating these, so refresh them
-   here and commit any diff; otherwise the ready PR fails
-   CI on a stale artifact.
+   (mirror the IDL / SDK / vectors / WASM CI gates).** CI
+   fails the PR if a committed generated file is stale
+   relative to its source: `test.yml` regenerates the
+   **IDL**, and `sdk.yml` regenerates the **SDK clients**,
+   the **conformance vectors**, and the **committed WASM
+   glue** — each via a `git diff --exit-code` that fails on
+   a dirty tree. The author's diff (or a fix from step 8)
+   may have changed the source without regenerating these,
+   so refresh them here and commit any diff; otherwise the
+   ready PR fails CI on a stale artifact.
+
+   **Run this step again after any step-7 / step-8 fix that
+   touches a generation input.** The gate is not a one-shot.
+   One run went stale **twice**: once from the original work,
+   and once from a review fix that reworded a field comment
+   *after this step had already run clean* — both would have
+   failed CI. So the ordering is: this step runs after the
+   fixes, or runs again if a fix lands after it.
 
    **First, the path gate: does this diff touch a generation
    *input* at all?** A generated artifact can only go stale if
@@ -1379,13 +1656,22 @@ PR-authoring **writes** (`create_pull_request`,
    `review_diff.py` verdict already answers this —
    **`runs_artifact_gates`** — from the inputs it owns:
 
-   - **IDL** ← the program (`programs/**`).
+   - **IDL** ← the program (`programs/**`). This includes
+     **doc comments**: Anchor captures a `///` on an
+     `#[derive(Accounts)]` field into the IDL, so a
+     prose-only edit to one is a generation input like any
+     code change. `programs/**` reads to a human as "code
+     changes" — it isn't, and that misreading is what let
+     one run ship a stale IDL twice.
    - **SDK clients** ← the committed IDL and the Codama
      config (`sdk/idl/**`, `sdk/codama/**`).
    - **Conformance vectors** ← their generators
      (`sdk/math-core/**`, `sdk/interface/**`).
+   - **Committed WASM glue** ← the interface crate
+     (`sdk/interface/**`), built by `make wasm` into
+     `sdk/ts/src/wasm/`.
 
-   When it is **`false`**, all three artifacts are provably
+   When it is **`false`**, all four artifacts are provably
    unchanged: **skip the gates and say so in the summary.**
    This is a rule, not a per-run judgment call — a four-file
    diff confined to `decks/` cannot stale an IDL, and forcing
@@ -1394,6 +1680,26 @@ PR-authoring **writes** (`create_pull_request`,
    the marginal case — it keys on the inputs, so a Rust crate
    the generators depend on transitively still trips it; the
    carve-out only fires on a clearly-unrelated diff.
+
+   **A re-run forced by a rebase is a different question
+   from the first run.** The default above — run the gates
+   unconditionally over the **author's own diff** — stands.
+   But when `main` moves mid-review and this step is being
+   re-run only because of that, the question is narrower:
+   *can the base delta have staled anything?* Step 2's
+   `rebase_overlap.py` already answered it. When its
+   `runs_artifact_gates` is **`false`** — the base delta
+   touched no Rust, no program, no IDL, no generation input
+   — **assert the gates once and skip the rebuild**, noting
+   the skip in the summary; the merge queue's fail-closed
+   re-run covers the residual risk.
+
+   This is not hypothetical thrift. One review saw `main`
+   move **15 commits across three rebases** and ran the full
+   local suite three times; runs 2 and 3 were provably
+   redundant, each rebase delta being TS-only. The session
+   reasoned that out explicitly and re-ran anyway, because
+   nothing licensed the skip.
 
    **The CI-agrees-structurally argument is per-WORKFLOW, not
    per-diff.** It is tempting to reason "the diff has no
@@ -1407,8 +1713,9 @@ PR-authoring **writes** (`create_pull_request`,
      `**/*.md`) under `predicate-quantifier: every`, the three
      Tests jobs pass as no-ops in 5–10s and that gate is
      genuinely unreachable.
-   - `make sdk`, `make check-conformance-vectors`, and the
-     `sdk/ts` suite live in **`sdk.yml`, which has no path
+   - `make sdk`, `make check-conformance-vectors`, the WASM
+     glue gate, and the `sdk/ts` suite live in **`sdk.yml`,
+     which has no path
      filter at all** — so they run on every PR, and their gates
      genuinely apply regardless of what the diff touched.
 
@@ -1422,7 +1729,7 @@ PR-authoring **writes** (`create_pull_request`,
    the queue.
 
    Otherwise, when the diff *does* touch an input: **run all
-   three regeneration gates — even when the author says they
+   four regeneration gates — even when the author says they
    already regenerated.** A subset spot-check has twice let a stale
    artifact through to a required-CI failure (a `MarketHeader`
    that shrank two bytes left the conformance vectors stale;
@@ -1510,6 +1817,45 @@ PR-authoring **writes** (`create_pull_request`,
      ```sh
      git commit -S -m "Regenerate conformance vectors"
      ```
+
+   - **Committed WASM glue** (needs `wasm-pack`; `make wasm`
+     aborts at `check-wasm` without it):
+
+     ```sh
+     python3 .claude/tools/run_quiet.py -- make wasm
+     ```
+
+     ```sh
+     git add -A -- sdk/ts/src/wasm
+     ```
+
+     ```sh
+     git diff --cached --exit-code -- sdk/ts/src/wasm
+     ```
+
+     If staged changes remain, commit them:
+
+     ```sh
+     git commit -S -m "Rebuild WASM bindings"
+     ```
+
+     **Two gates sit on this artifact, not one.** `sdk.yml`
+     compares the committed *glue*
+     (`dropset_interface.js`, `.d.ts`, `.wasm.d.ts`) against
+     a fresh build — the optimized `.wasm` binary is
+     deliberately excluded, since `wasm-opt` isn't
+     byte-reproducible across the committer's platform and
+     CI's. The binary is covered instead by
+     `sdk/ts/src/wasm.conformance.test.ts`, which runs the
+     **committed** binary against the conformance vectors.
+     So an interface change that skips `make wasm` fails CI
+     in **two** places, and a stale binary is a real
+     behavioral divergence rather than a formatting nit.
+
+     If `wasm-pack` is absent, treat this exactly like an
+     absent Solana toolchain: say so in the report, note
+     that the gate is unverifiable locally, and don't gate
+     the PR on it.
 
    If any artifact commit was made, re-run `make lint`
    through the quiet runner
@@ -1842,6 +2188,23 @@ PR-authoring **writes** (`create_pull_request`,
    compounds that can't reduce to an allow-rule, and foreground
    `sleep` is blocked anyway. It was only the `--watch` half of
    that rule that was wrong.
+
+   **But never call `gh pr checks --watch` yourself.** The
+   flag is correct *inside* the tool, which redirects gh's
+   live-updating table to `log_path`; called directly it
+   re-prints the **entire check table on every refresh
+   interval** into a single tool result, and that result is
+   then replayed on every later turn. Two such direct calls
+   cost **≈4.6k** in one session for what resolves to one
+   bit of signal. The tool's equivalent — the same wait,
+   with the table on disk — has run **≈208 tokens across
+   three calls**, a ~20× reduction. The rule is therefore
+   specific rather than general: `--watch` is not banned,
+   *bare* `--watch` is. Same for any other verbose-by-refresh
+   command — the wrapper rule in
+   `docs/conventions/context-economy.md` is written around
+   build cascades, but a watcher is the same shape by a
+   different mechanism.
 
    Tell the human **once**, up front, that CI is in flight and
    you're standing by, then stay silent until the verdict. Three
@@ -2243,18 +2606,39 @@ PR-authoring **writes** (`create_pull_request`,
 
    **Prefer blocking on the queue's own run over re-probing.**
    Once `mergeQueueEntry` names the `gh-readonly-queue/…`
-   branch's check run, one bare command waits it out:
+   branch's check run, one command waits it out — the same
+   tool as the CI wait, in its run mode:
 
    ```sh
-   gh run watch <run-id> --exit-status
+   python3 .claude/tools/wait_for_checks.py --run <run-id>
    ```
 
-   That is the single-command equivalent of the CI wait's
-   `gh pr checks --watch` — gh paces it and exits when the run
-   settles, so nothing is polled. Then issue the graphql probe
-   **once** to read the terminal state. The
-   `--exit-status` makes a failed queue run a non-zero exit, so
-   a dequeue can't read as a merge.
+   ```json
+   {
+     "run_id": "1234567890",
+     "conclusion": "pass",     // pass | fail | timeout
+     "settled": true,
+     "elapsed_seconds": 214,
+     "exit_code": 0,
+     "log_path": "…/wait-for-run-1234567890.log"
+   }
+   ```
+
+   gh paces it and exits when the run settles, so nothing is
+   polled, and its `--exit-status` makes a failed queue run
+   non-zero — a dequeue can't read as a merge. Then issue the
+   graphql probe **once** to read the terminal state.
+
+   **Don't shell `gh run watch` directly.** Like
+   `gh pr checks --watch`, it is verbose-by-refresh: it
+   re-prints the **whole job tree** on every refresh into one
+   tool result. One bare call emitted **64.6KB**, overflowed
+   the tool-result cap, was persisted to disk, and the
+   terminal state still had to be re-probed by graphql
+   afterwards — that session's largest single result,
+   effectively fetched twice. The tool routes the tree to
+   `log_path` and hands back the verdict; `Read` the log by
+   slice only if the run actually failed.
 
    Fall back to re-issuing the graphql probe as a fresh tool
    call across turns when there is no run id to watch — the
@@ -2350,17 +2734,29 @@ PR-authoring **writes** (`create_pull_request`,
      / `state`.
      Then **mark this PR's own GitHub notification done** so
      it doesn't linger (the immediate companion to
-     `housekeeping`'s merged-PR notification sweep): list the
-     notifications and dismiss the one whose
-     `subject.url` ends in this PR's number — never
-     `mark_all_notifications_read`:
+     `housekeeping`'s merged-PR notification sweep): find the
+     thread whose `subject.url` ends in this PR's number and
+     dismiss it — never `mark_all_notifications_read`.
 
-     ```txt
-     mcp__github__list_notifications(
-       owner: "DASMAC-com",
-       repo: "dropset",
-     )
+     **Read the thread id with a field-selected `gh`, not the
+     full-object MCP call.** This lookup needs exactly one
+     value, and `mcp__github__list_notifications` returned
+     **3.7k tokens in a single call** for it — the 6th-largest
+     result of one session — because it embeds the complete
+     repository object (every `*_url` template) once per
+     notification, repeated for each of three. That is the
+     same reasoning this skill already applies to the
+     field-selected `gh pr view` and `gh pr checks` reads,
+     and the notification lookup
+     was simply missed when that carve-out was written, so it
+     is a **documented `gh` exception** (per
+     `docs/conventions/github-mcp.md`) on the same grounds:
+
+     ```sh
+     gh api /notifications --jq '.[] | {id, url: .subject.url}'
      ```
+
+     Then dismiss over the MCP, which is a small write:
 
      ```txt
      mcp__github__dismiss_notification(
@@ -2368,6 +2764,10 @@ PR-authoring **writes** (`create_pull_request`,
        state: "done",
      )
      ```
+
+     Whichever transport you use, the payload is a
+     **fixed cost, read once**: never re-fetch the list to
+     re-find the id.
 
      `state: "done"`, **not** `"read"` — `"read"` only clears
      the unread marker and the thread stays in the GitHub
@@ -2462,3 +2862,31 @@ PR-authoring **writes** (`create_pull_request`,
 
      Report the removal either way, naming the queue-branch
      job that caused it.
+
+   **Once this step resolves, the run is not over.** Each
+   remaining closing step is already gated on its own
+   `AskUserQuestion` — the prompts are not missing. What is
+   missing is anything ensuring the tail runs **at all** when
+   the flow diverts after the enqueue, which is common: the
+   merge resolves asynchronously, so the wait actively
+   invites other work. One session enqueued, then spent many
+   turns in a three-party negotiation about Linear blocking
+   edges (the user plus a peer planning session) and never
+   came back; the user had to ask for the closing steps
+   explicitly. Every individual step behaved correctly. The
+   sequence just ended early, and silently.
+
+   So restate the remainder as a checklist and work it:
+
+   - [ ] **Session metrics** captured (the step above).
+   - [ ] **`firm-perms`** run — the last interactive step.
+   - [ ] **Post-merge tidy**, on a merge: the notification
+     dismissed `state: "done"`, and `make clean` run.
+
+   **A diversion does not discharge them.** Another skill, a
+   message from a peer session, a fresh user request, or a
+   long queue wait — none of those close the review. Come
+   back and finish the checklist, or say explicitly which
+   item you are skipping and why. An unanswered
+   `AskUserQuestion` is a deferral the user chose; an
+   unasked one is a step that was dropped.

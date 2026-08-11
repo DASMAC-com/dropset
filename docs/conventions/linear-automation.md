@@ -1,8 +1,8 @@
 # Linear automation
 
 Skills that **file** Linear issues (`linear-task`, `audit`,
-`audit-scope`, `trim-context`, `housekeeping`) resolve the filing
-destination — team, project, assignee — from **environment
+`audit-scope`, `trim-context`, `housekeeping`, `plan`) resolve the
+filing destination — team, project, assignee — from **environment
 variables**, never hard-coded UUIDs. (Skills that only **update**
 an existing issue by id — `init-pr`, `review-pr` — need no
 destination; `sync-blockers` only files `related` relations between
@@ -18,6 +18,9 @@ export LINEAR_ASSIGNEE_ID=…
 # the "Session Metrics" inbox document one appends to and the other
 # mines into propose-only skill-improvement tasks:
 export LINEAR_SESSION_METRICS_DOC_ID=…
+# Used by the plan skill — the "Planning" document a planning
+# session bootstraps from and writes its decisions back into:
+export LINEAR_PLANNING_DOC_ID=…
 # Used only by the sync-blockers Python tool (the deterministic
 # core of the sync-blockers skill) — a personal Linear API key. A
 # script can't use the OAuth-based claude.ai Linear MCP, so it
@@ -80,10 +83,9 @@ bare invocation is the full pairwise sweep for occasional
 reconciliation, reporting **collision clusters** (the input to
 `housekeeping`'s merge-group proposal), the surviving human-declared
 **semantic blocks**, and the two scheduling **smells**;
-`--report-todo-blocks` prints those smells alone as JSON; and
-`--demote` is the one-time, propose-then-confirm migration that
-converts pre-existing auto-filed `blocks` edges to `related` (writing
-only under `--apply`, optionally scoped by `--only`). It uses the
+and `--report-todo-blocks` prints those smells alone as JSON. (A
+`--demote` migration mode also existed; it ran once, is spent, and was
+removed — see "Blocking relations" below.) It uses the
 standard library only (`urllib` + `json`) for its GraphQL calls, so it
 adds no dependency to the Rust build and inherits the repo's `ruff`
 hooks; its unit tests run under `make tools-tests`. It reads
@@ -185,9 +187,12 @@ batches together and can be filtered, staged, and reviewed apart from
 product code on the board.
 
 - **Filing skills emit it.** `linear-task`, `audit`, `audit-scope`,
-  and `housekeeping` prepend `Claude:` to a title when the issue's
+  `housekeeping`, and `plan` prepend `Claude:` to a title when the
+  issue's
   `**Touches**:` globs are all on the meta surface above. `/merge-tasks`
-  applies it when every issue it consolidates is meta.
+  applies it when every issue it consolidates is meta. (`plan` matters
+  here in particular: a planning session is where most meta-work issues
+  are actually filed.)
 - **It batches meta-work on the board.** The prefix is the signal a
   human filters and groups by in Linear to see all agent-infra work at
   once, apart from product code. It is applied at **filing time** — the
@@ -281,6 +286,46 @@ transition echoes the whole body too — and `save_document` returns a
 **truncated** `content` in every one of those cases. The echo is a fixed
 cost per call, so the lever on it is **fewer calls**, not `patch`.
 
+### The echo budget is per issue, per **session** — not per skill
+
+"Fewer calls" is easy to satisfy inside one skill and still lose, because
+a single issue is touched by **two** skills across a worktree session:
+`init-pr` reads the body and moves it to In Progress, `review-pr` moves
+it to In Review at the handoff. Each of those echoes the entire body.
+
+One measured session paid **24.5k across three calls on one issue** —
+`get_issue` 8.2k, `save_issue` 8.2k, `save_issue` 8.1k, the top three
+single results of the run — for three state transitions. Every skill
+involved was individually compliant. Nothing budgeted the handoff.
+
+So the budget is **per issue, per session**, with three consequences that
+each skill must honor:
+
+- **`init-pr` has already read the body**, so `review-pr` must **not**
+  re-`get_issue` it. Work from what the session already holds.
+- **A write that changes nothing is skipped.** If the state is already
+  correct, don't re-assert it just because a step says to set it.
+- **Fold a state transition into a write you are already making** rather
+  than issuing it on its own.
+
+Two concrete call sites the rule above catches, both measured:
+
+- **Don't re-fetch a body a write just returned.** A state-only
+  `save_issue` returns the complete issue, so a `get_issue` right after
+  it buys the same payload twice — two ≈1.1k echoes for one body. Read
+  the description out of the write's response.
+- **Batch checklist ticks into one call, at the end.** One run made four
+  `save_issue` calls (≈1.4k, its largest MCP cost), each re-echoing the
+  whole body for a one-field write; two were separate checkbox ticks that
+  belonged in a single `patch` with two ops. Accumulate the ticks and
+  write them once. The **state** transitions are load-bearing and stay
+  where they are — it is the per-item ticking that batches.
+
+**The consolidated-spec case is the expensive one.** The larger the
+survivor body a `/merge-tasks` consolidation produced, the more *every*
+later transition on that issue costs — so a heavily-folded issue is
+exactly where re-reading its body is least affordable.
+
 ### Anchors must match the *stored* text
 
 Every anchor (`old_string`, `anchor`, `from` / `to`) must match the
@@ -307,9 +352,16 @@ edit.
 
 **No automated writer files a blocking edge — ever.** Not
 `sync_blockers.py`, not a filing skill (`linear-task`, `audit`,
-`audit-scope`, `trim-context`, `housekeeping`, `merge-tasks`), not an
-autonomous audit rotation. This holds for edges an agent believes are
+`audit-scope`, `trim-context`, `housekeeping`, `merge-tasks`, `plan`),
+not an autonomous audit rotation. This holds for edges an agent believes are
 genuinely semantic, not just for file-overlap ones.
+
+**Where they *are* placed: a planning session.** A blocking edge
+expresses semantic rollout ordering, which is a scheduling decision, so
+it is made where somebody is actually deciding the order — the `plan`
+skill's session in the base repo, human-directed, one edge at a time.
+That is the whole of the exception: not "a skill that is allowed to",
+but "the place a human does it".
 
 The reason is that the board's **available-vs-blocked view is a
 scheduling instrument the human drives**: a hand-built blocking queue
@@ -330,9 +382,17 @@ dependency is recorded as prose in the issue body instead, so the
 reasoning is never lost.
 
 **Human-placed edges are authoritative.** The automation never
-rewrites, redirects, or removes one. The sole exception is
-`sync-blockers`' one-time `--demote` migration, which lists candidates
-and converts only what a human explicitly confirms (see that skill).
+rewrites, redirects, or removes one — with **no** exception. There was
+one: `sync-blockers` carried a `--demote` mode, a one-time migration that
+converted pre-existing auto-filed `blocks` edges to `related` under
+explicit confirmation. It ran on 2026-08-10 and is **spent**, so it has
+been removed. Every candidate it could still find is a false positive:
+the six legitimate hand-placed blocking edges collide on files, and the
+tool cannot distinguish them from artifacts, so a second run under
+`--apply` would delete the intended blocking graph in one command. It was
+dead code and a live foot-gun, so it is gone rather than guarded.
+Blocking-edge changes now happen only where they always should have: in
+a planning session, human-directed, one at a time.
 
 The mechanics, for when a human does ask for an edge: `save_issue`
 takes `blockedBy` (the `ENG-###`s that must land first) and `blocks`

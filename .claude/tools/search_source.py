@@ -28,14 +28,35 @@ Usage::
     python3 .claude/tools/search_source.py 'WARNING 1' --context 2
     python3 .claude/tools/search_source.py 'fn compute_fill' --ext rs --dir programs,sdk
     python3 .claude/tools/search_source.py 'TODO' --files-only
+    python3 .claude/tools/search_source.py '^#' --glob docs/fx-survey.md
 
 Options: ``--ext`` (comma-separated extensions, no dot; default is the source set
 below), ``--all-text`` (every extension, not just the source set), ``--dir``
-(comma-separated roots to search under; default the repo root), ``--context N``
+(comma-separated roots to search under; default the repo root), ``--glob``
+(comma-separated path globs a file must match — see below), ``--context N``
 (lines of context each side), ``--files-only`` (just the matching paths),
 ``--fixed`` (treat the pattern as a literal, not a regex), ``--ignore-case``,
 ``--max N`` (cap on reported matches, default 200), ``--root`` (repo root,
 default cwd).
+
+``--dir`` and ``--glob`` narrow along different axes, and the gap between them
+was measured: getting the section map of **three named docs** cost 3.0k because
+``--dir docs --ext md`` was the narrowest scope available, so it returned all
+~200 headings across 18 files — ~60 of them from one architecture spec nobody
+wanted. ``--dir`` picks *subtrees*; ``--glob`` picks *files*::
+
+    --glob docs/fx-survey.md,docs/indexer.md    # exactly these two
+    --glob 'programs/**/state.rs'               # by shape, at any depth
+    --glob '*.toml'                             # a bare pattern also
+                                                # matches on basename
+
+A ``--glob`` run searches **every** extension unless ``--ext`` / ``--all-text``
+is passed explicitly. The default source-extension set is a heuristic for "I
+don't know which files"; naming a file already answers that, and silently
+dropping the file the caller named — because ``.md`` isn't in the source set —
+is precisely the under-report this tool's truncation reporting exists to
+prevent. The exclude lists still apply: a glob cannot reach into ``target/`` or
+a generated family.
 
 Prints plain ``path:line:text`` lines — the shape a reader already knows from
 ``grep -n`` — then a one-line summary on stderr. When the cap truncates, the
@@ -55,6 +76,12 @@ import sys
 from pathlib import Path
 
 from review_diff import DIFF_EXCLUDES, SEARCH_EXCLUDE_DIRS
+
+# Sentinel for "the caller expressed no preference", so `search` can apply the
+# same default the CLI does. A plain `SOURCE_EXTENSIONS` default could not tell
+# an explicit pass from an omission, which let the library and the CLI disagree
+# about a `--glob`ed `.md` — the library silently dropped the named file.
+DEFAULT_EXTENSIONS = object()
 
 # The extensions "source" means by default. Deliberately excludes `.md` — a doc
 # search is a different question, and mixing prose into a symbol sweep is what
@@ -117,6 +144,9 @@ def iter_files(
     roots: list[Path],
     extensions: tuple[str, ...] | None,
     oversized: list[Path] | None = None,
+    globs: tuple[str, ...] | None = None,
+    base: Path | None = None,
+    stats: dict | None = None,
 ):
     """Yield searchable files under ``roots``, pruning excluded trees.
 
@@ -127,10 +157,31 @@ def iter_files(
     Files over :data:`MAX_FILE_BYTES` are skipped and appended to ``oversized``
     when a list is given, so the caller can *say* it skipped them rather than
     silently under-reporting.
+
+    **Filter order is load-bearing**, which is why ``globs`` is applied here
+    rather than by the caller. It runs *before* the extension and size checks so
+    that:
+
+    * ``oversized`` only ever names a file the glob actually selected — a
+      ``--glob docs/*.md`` run must not report skipping some huge ``.wasm`` it
+      never intended to read; and
+    * ``stats["glob_hits"]`` counts files the **glob** matched, independently of
+      how many survived ``extensions``. Without that split, "the glob matched
+      nothing" and "``--ext`` filtered out everything the glob matched" are
+      indistinguishable, and the caller blames a path typo for an extension
+      mismatch.
     """
     skip_dirs = excluded_dir_names()
     skip_files = excluded_file_names()
     suffixes = {f".{e.lower().lstrip('.')}" for e in extensions} if extensions else None
+
+    def relative(path: Path) -> str:
+        if base is None:
+            return path.name
+        try:
+            return str(path.relative_to(base))
+        except ValueError:
+            return str(path)
 
     stack = list(roots)
     while stack:
@@ -150,6 +201,10 @@ def iter_files(
                 continue
             if entry.name in skip_files:
                 continue
+            if globs is not None and not path_matches_globs(relative(entry), globs):
+                continue
+            if stats is not None:
+                stats["glob_hits"] = stats.get("glob_hits", 0) + 1
             if suffixes is not None and entry.suffix.lower() not in suffixes:
                 continue
             try:
@@ -160,6 +215,85 @@ def iter_files(
             except OSError:
                 continue
             yield entry
+
+
+def path_matches_globs(rel_path: str, globs: tuple[str, ...]) -> bool:
+    """Whether ``rel_path`` (repo-relative, ``/``-separated) matches any glob.
+
+    Two conveniences, both because a caller reaches for ``--glob`` to *name*
+    files rather than to write a precise pattern:
+
+    * ``**`` is honored across separators — ``programs/**/state.rs`` matches at
+      any depth — which plain :func:`fnmatch.fnmatchcase` does not do, since its
+      ``*`` already spans ``/``. Translating the pattern ourselves keeps a
+      single-star segment from silently behaving like a double-star one.
+    * A pattern with **no** separator is also tried against the basename, so
+      ``--glob '*.toml'`` finds them at any depth instead of only at the root.
+    """
+    for raw in globs:
+        pattern = raw.strip().strip("/")
+        if not pattern:
+            continue
+        if re.fullmatch(_glob_to_regex(pattern), rel_path):
+            return True
+        if "/" not in pattern and re.fullmatch(
+            _glob_to_regex(pattern), rel_path.rsplit("/", 1)[-1]
+        ):
+            return True
+    return False
+
+
+def _glob_to_regex(pattern: str) -> str:
+    """Translate a path glob to a regex where ``*`` stops at a separator.
+
+    ``fnmatch`` maps ``*`` to ``.*``, which crosses ``/`` — so ``docs/*.md``
+    would match ``docs/a/b.md``. Here ``*`` is ``[^/]*``, ``?`` is a single
+    non-separator character, and ``**`` spans separators **only when it is a
+    whole path segment** (``a/**/b``, a leading ``**/``, a trailing ``/**``).
+
+    That last condition matters: a mid-segment ``docs/fx**.md`` is *not* a
+    globstar, and treating it as one would make it match ``docs/fx/a/b.md`` —
+    silently contradicting the "stops at a separator" promise above. Bash's
+    ``globstar``, gitignore, and ``pathlib`` all degrade a non-boundary ``**``
+    to a single ``*``, so this does too.
+
+    Character classes (``[ab]``) and brace expansion (``{ts,tsx}``) are **not**
+    supported — their characters are escaped literally. A pattern using them
+    matches nothing, which the caller surfaces as "matched no files" rather
+    than silently returning an empty result.
+    """
+    out: list[str] = []
+    i = 0
+    while i < len(pattern):
+        char = pattern[i]
+        if char == "*":
+            if pattern[i : i + 2] == "**":
+                at_segment_start = i == 0 or pattern[i - 1] == "/"
+                after = pattern[i + 2 : i + 3]
+                at_segment_end = after in ("", "/")
+                if at_segment_start and at_segment_end:
+                    # `a/**/b` should also match `a/b`, so swallow the trailing
+                    # slash into the optional group rather than requiring an
+                    # empty segment.
+                    if after == "/":
+                        out.append("(?:.*/)?")
+                        i += 3
+                    else:
+                        out.append(".*")
+                        i += 2
+                    continue
+                # Not a whole segment: degrade to a single `*`, consuming both
+                # stars so the second isn't re-read as another wildcard.
+                out.append("[^/]*")
+                i += 2
+                continue
+            out.append("[^/]*")
+        elif char == "?":
+            out.append("[^/]")
+        else:
+            out.append(re.escape(char))
+        i += 1
+    return "".join(out)
 
 
 def build_matcher(pattern: str, fixed: bool, ignore_case: bool):
@@ -178,18 +312,32 @@ def search(
     pattern: str,
     root: Path,
     dirs: list[str] | None = None,
-    extensions: tuple[str, ...] | None = SOURCE_EXTENSIONS,
+    extensions: tuple[str, ...] | None = DEFAULT_EXTENSIONS,
     context: int = 0,
     fixed: bool = False,
     ignore_case: bool = False,
     limit: int = DEFAULT_MAX,
+    globs: tuple[str, ...] | None = None,
 ) -> dict:
     """Search and return ``{matches, files, total, truncated}``.
 
     ``total`` counts every match found, ``matches`` holds at most ``limit`` of
     them, and ``truncated`` is the difference — reported so a capped result is
     never mistaken for a complete one.
+
+    ``globs`` narrows to files whose repo-relative path matches one of them; it
+    composes with ``dirs`` (a file must satisfy both) and is applied *after* the
+    exclude lists, so it can never reach into a pruned tree.
+
+    Left at :data:`DEFAULT_EXTENSIONS`, ``extensions`` resolves to the source set
+    — except under ``globs``, where it resolves to *every* extension: a named
+    glob has already answered "which files?", and applying the source-extension
+    heuristic on top would silently drop a ``.md`` the caller asked for by name.
+    Pass an explicit tuple (or ``None``) to override either way.
     """
+    if extensions is DEFAULT_EXTENSIONS:
+        extensions = None if globs else SOURCE_EXTENSIONS
+
     matcher = build_matcher(pattern, fixed, ignore_case)
 
     base = root.resolve()
@@ -236,8 +384,11 @@ def search(
     matches: list[dict] = []
     files: list[str] = []
     total = 0
+    scanned = 0
     oversized: list[Path] = []
-    for path in iter_files(roots, extensions, oversized):
+    stats: dict = {"glob_hits": 0}
+    for path in iter_files(roots, extensions, oversized, globs, base, stats):
+        scanned += 1
         try:
             lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
@@ -269,6 +420,16 @@ def search(
         # The size cap is the tool's *other* cap, and the same rule applies: a cap
         # nobody is told about reads as "searched everything".
         "skipped_oversized": sorted(relative(p) for p in oversized),
+        # How many files the pattern was actually run against, and how many the
+        # glob alone selected. Both are needed because three different failures
+        # otherwise print an identical `0 match(es)`: the glob named nothing
+        # (usually a typo'd path), the glob matched but `--ext` filtered every
+        # hit out, or the files were searched and genuinely held no match. Only
+        # the third is a real negative, and conflating them is exactly the
+        # under-report this tool exists to avoid.
+        "scanned": scanned,
+        "glob_hits": stats["glob_hits"],
+        "globbed": globs is not None,
     }
 
 
@@ -301,6 +462,16 @@ def print_result(result: dict, files_only: bool, context: int) -> None:
         summary += (
             f" | {len(skipped)} file(s) skipped as oversized: {', '.join(skipped)}"
         )
+    if result.get("globbed") and not result.get("scanned"):
+        # Distinguish the two ways a globbed run can search nothing. Blaming a
+        # path typo for an extension mismatch sends the reader to the wrong fix.
+        if not result.get("glob_hits"):
+            summary += " | WARNING: --glob matched no files, so nothing was searched"
+        else:
+            summary += (
+                f" | WARNING: --glob matched {result['glob_hits']} file(s), but "
+                f"--ext excluded all of them — nothing was searched"
+            )
     print(summary, file=sys.stderr)
 
 
@@ -309,6 +480,13 @@ def run(argv: list[str]) -> int:
     parser.add_argument("pattern", help="regex (or literal with --fixed)")
     parser.add_argument("--root", default=".", help="repo root (default cwd)")
     parser.add_argument("--dir", default=None, help="comma-separated roots to search")
+    parser.add_argument(
+        "--glob",
+        default=None,
+        help="comma-separated path globs a file must match; searches every "
+        "extension unless --ext/--all-text is given. Supports * ? and "
+        "segment-wise **, but not [classes] or {braces}",
+    )
     parser.add_argument(
         "--ext", default=None, help="comma-separated extensions, no dot"
     )
@@ -332,12 +510,24 @@ def run(argv: list[str]) -> int:
     if args.ext and args.all_text:
         raise SearchSourceError("--ext and --all-text are alternatives")
 
+    # Key on `is not None`, NOT on truthiness: `--glob ''` is falsy, so a
+    # truthiness test would skip both this parse and the guard below, silently
+    # dropping the filter and sweeping the whole tree — the broad, noisy result
+    # `--glob` exists to prevent, delivered without a word of warning.
+    globs = None
+    if args.glob is not None:
+        globs = tuple(g.strip() for g in args.glob.split(",") if g.strip())
+        if not globs:
+            raise SearchSourceError("--glob was given no patterns")
+
     if args.all_text:
         extensions = None
     elif args.ext:
         extensions = tuple(e for e in args.ext.split(",") if e.strip())
     else:
-        extensions = SOURCE_EXTENSIONS
+        # Let `search` resolve it, so the CLI and the library agree on what an
+        # unspecified extension set means under `--glob`.
+        extensions = DEFAULT_EXTENSIONS
 
     dirs = [d.strip() for d in args.dir.split(",") if d.strip()] if args.dir else None
 
@@ -350,6 +540,7 @@ def run(argv: list[str]) -> int:
         fixed=args.fixed,
         ignore_case=args.ignore_case,
         limit=args.max,
+        globs=globs,
     )
     print_result(result, args.files_only, args.context)
     # 0 when something matched, 1 when nothing did — grep's convention, so a

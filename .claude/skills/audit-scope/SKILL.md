@@ -254,16 +254,38 @@ Optional (ask on a direct run if not provided):
      worktree (literal newlines, not `\n`):
 
      - `**File**: <path>:<line>` (clickable)
+
      - `**Dimension**: <dimension>` / `**Severity**: <high|med|low>`
+
      - `**What**:` the precise problem.
+
      - `**Evidence**:` the offending snippet (+ the doc or
        comment it contradicts, where relevant).
+
      - `**Fix sketch**:` the concrete suggested change.
+
      - `**Lint**:` *(when applicable)* the rule or config
        that would catch this class going forward.
+
      - `**Fingerprint**: <basename>:<fingerprint_slug>` —
        the dedup key (e.g. `swap.rs:slippage:no-min-out`),
        so `audit` and re-runs recognize it. Mandatory.
+
+       **The fingerprint is the stable key; a `file:line`
+       is not.** Every citation and quoted snippet above is
+       a snapshot of the commit the finding was *discovered*
+       at, and an issue may sit in the Backlog for months
+       while unrelated PRs rewrite around it. One session's
+       surfaced task named four line-anchored citations
+       across two files and **all four** had been rewritten
+       away, with one named file carrying no relevant
+       references at all — the work item was moot, at the
+       cost of four exploratory greps to establish it. So
+       write the fingerprint to name the *thing*, not its
+       coordinates, and say in the body that the citations
+       are as-of-discovery. The implementer re-derives the
+       location; the fingerprint is what survives.
+
      - `**Touches**: <glob>[, <glob>…]` — the
        machine-readable list of path globs this fix will
        edit (e.g. `programs/dropset/src/swap.rs` or

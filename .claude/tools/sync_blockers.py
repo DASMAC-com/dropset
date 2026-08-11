@@ -28,8 +28,17 @@ untrustworthy, and a wrongly-blocked issue drops out of the available set
 altogether. A missing edge costs a rebase; a spurious one costs scheduling. So
 blocking edges are **human-curated end to end**: an agent may *suggest* one with
 its evidence, and a human approves or places it. Edges a human placed are
-authoritative — this tool never rewrites, redirects, or removes one except
-through the explicitly-confirmed ``--demote`` migration below.
+authoritative — this tool never rewrites, redirects, or removes one, with no
+exception.
+
+There used to be one. A ``--demote`` mode performed a one-time,
+propose-then-confirm migration of pre-existing auto-filed ``blocks`` edges to
+``related``. It ran on 2026-08-10 and is **spent**: every candidate it can still
+find is a false positive, because the six legitimate hand-placed edges collide
+on files and are therefore indistinguishable from artifacts. A second
+``--demote --apply`` would delete the intended blocking graph in one command, so
+the mode was removed rather than guarded — dead code that is also a foot-gun.
+Blocking-edge changes now happen only in a human-directed planning session.
 
 Modes:
 
@@ -49,16 +58,6 @@ Modes:
   ``**Touches**:`` line on an *older* issue.
 * **Report-only** (``--report-todo-blocks``) — the two smells as JSON, writing
   nothing.
-* **Migration** (``--demote``) — a one-time, propose-then-confirm pass that
-  lists every existing ``blocks`` edge between two open Backlog issues (the set
-  the automation *could* have authored — a hand-placed edge is
-  indistinguishable, which is exactly why the confirm gate exists) and, only
-  under ``--apply``, converts them to ``related``. A candidate with **no
-  current** ``**Touches**`` collision could not have been derived by the
-  automation, so it is held back unless ``--include-hand-placed`` is passed.
-  ``--dry-run`` is **refused** with ``--demote``: bare ``--demote`` already
-  writes nothing, so combining them would read as a safe preview of a deletion
-  that is not one.
 
 Configuration comes entirely from the environment (no hard-coded ids, never a
 committed token):
@@ -135,20 +134,6 @@ def parse_priority(raw_value) -> int | None:
 # --------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class BlockEdge:
-    """One ``blocks`` relation between two issues, carrying Linear's relation id.
-
-    The id is what makes a relation deletable, and so is what the ``--demote``
-    migration needs. Collected from the **blocker** side's outgoing relations, so
-    an edge between two Backlog issues is seen exactly once.
-    """
-
-    relation_id: str
-    blocker: str  # the ``ENG-###`` that blocks
-    blocked: str  # the ``ENG-###`` that is blocked
-
-
 @dataclass
 class Issue:
     """One open Backlog issue, reduced to what relation maintenance needs."""
@@ -162,9 +147,6 @@ class Issue:
     # Identifiers this issue is already `related` to. A collision that is already
     # related-linked needs no second link, so the sweep is idempotent.
     related_to: list[str] = field(default_factory=list)
-    # Outgoing `blocks` relations with their Linear relation ids — the input to
-    # the `--demote` migration and to the sweep's semantic-blocks section.
-    block_edges: list[BlockEdge] = field(default_factory=list)
     # Linear's priority int (see PRIORITY_NAMES), or None when unreadable. Read
     # for reporting only — see `parse_priority`.
     priority: int | None = 0
@@ -480,58 +462,6 @@ def semantic_blocks(issues: list[Issue]) -> list[tuple[str, str]]:
     return sorted(pairs, key=_pair_sort_key)
 
 
-def demote_candidates(
-    issues: list[Issue],
-) -> list[tuple[BlockEdge, list[str]]]:
-    """Every ``blocks`` edge the automation *could* have authored, for ``--demote``.
-
-    Scoped to edges whose **both** ends are open Backlog issues, because that is
-    the only set the old sweep ever wrote into. Each candidate carries the paths
-    the pair currently collides on — non-empty means the old sweep would re-derive
-    this exact edge from ``**Touches**`` overlap today, which makes it a strong
-    demotion candidate; empty means it is more likely hand-placed or that the
-    globs have since changed.
-
-    A hand-placed edge is **not** reliably distinguishable from an auto-filed one
-    (Linear records no author on a relation), which is the whole reason
-    ``--demote`` proposes rather than applies: the confirm gate is what protects
-    the human-curated edges. Sorted by blocker then blocked.
-    """
-    universe = {i.id for i in issues}
-    by_id = {i.id: i for i in issues}
-    out: list[tuple[BlockEdge, list[str]]] = []
-    for i in issues:
-        for edge in i.block_edges:
-            if edge.blocked not in universe:
-                continue
-            shared = overlapping_paths(by_id[edge.blocker], by_id[edge.blocked])
-            out.append((edge, shared))
-    out.sort(key=lambda t: _pair_sort_key((t[0].blocker, t[0].blocked)))
-    return out
-
-
-def parse_pair_filter(raw: str) -> set[frozenset[str]]:
-    """Parse ``--only ENG-1:ENG-2,ENG-3:ENG-4`` into a set of unordered pairs.
-
-    Order-insensitive, so a human copying a candidate line back in either
-    direction still selects the intended edge.
-    """
-    pairs: set[frozenset[str]] = set()
-    for chunk in raw.split(","):
-        chunk = chunk.strip()
-        if not chunk:
-            continue
-        parts = [p.strip().upper() for p in chunk.split(":")]
-        if len(parts) != 2 or not all(parts):
-            raise SyncBlockersError(
-                f"--only expects ENG-###:ENG-### pairs, got {chunk!r}"
-            )
-        pairs.add(frozenset(parts))
-    if not pairs:
-        raise SyncBlockersError("--only was given no pairs")
-    return pairs
-
-
 # --------------------------------------------------------------------------
 # Linear client — the two GraphQL calls the tool needs.
 # --------------------------------------------------------------------------
@@ -548,7 +478,7 @@ query Backlog($projectId: ID!, $first: Int!) {
       identifier
       description
       priority
-      relations { nodes { id type relatedIssue { identifier } } }
+      relations { nodes { type relatedIssue { identifier } } }
       inverseRelations {
         nodes { id type issue { identifier priority state { name type } } }
       }
@@ -557,9 +487,9 @@ query Backlog($projectId: ID!, $first: Int!) {
 }
 """
 
-# The relation type is a variable rather than inlined, so the one mutation
-# serves both the `related` links the sweep files and the `--demote` migration's
-# rewrite. `IssueRelationType` is Linear's enum (`blocks`, `related`, …).
+# The relation type is a variable rather than inlined so the mutation stays
+# general; every call site passes `related`, the only type this tool writes.
+# `IssueRelationType` is Linear's enum (`blocks`, `related`, …).
 ISSUE_RELATION_CREATE_MUTATION = """
 mutation CreateRelation(
   $issueId: String!
@@ -569,12 +499,6 @@ mutation CreateRelation(
   issueRelationCreate(
     input: { type: $type, issueId: $issueId, relatedIssueId: $relatedIssueId }
   ) { success }
-}
-"""
-
-ISSUE_RELATION_DELETE_MUTATION = """
-mutation DeleteRelation($id: String!) {
-  issueRelationDelete(id: $id) { success }
 }
 """
 
@@ -636,16 +560,6 @@ def _raw_to_issue(raw: dict) -> Issue:
         for r in raw["inverseRelations"]["nodes"]
         if r.get("type") == "related" and r.get("issue")
     ]
-    ident_for_edges = raw["identifier"]
-    block_edges = [
-        BlockEdge(
-            relation_id=r.get("id") or "",
-            blocker=ident_for_edges,
-            blocked=r["relatedIssue"]["identifier"],
-        )
-        for r in raw["relations"]["nodes"]
-        if r.get("type") == "blocks" and r.get("relatedIssue")
-    ]
     todo_blockers = [
         (r["issue"]["identifier"], (r["issue"].get("state") or {}).get("name") or "")
         for r in raw["inverseRelations"]["nodes"]
@@ -669,7 +583,6 @@ def _raw_to_issue(raw: dict) -> Issue:
         blocked_by=blocked_by,
         blocks=blocks,
         related_to=related_to,
-        block_edges=block_edges,
         priority=parse_priority(raw.get("priority")),
         todo_blockers=todo_blockers,
         blocked_by_priority=blocked_by_priority,
@@ -717,17 +630,6 @@ def issue_relation_create(
         raise SyncBlockersError("Linear issueRelationCreate returned success=false")
 
 
-def issue_relation_delete(api_key: str, relation_id: str) -> None:
-    """Delete a relation by its Linear relation id.
-
-    Only the ``--demote`` migration calls this, and only for an edge a human has
-    explicitly confirmed.
-    """
-    data = _post(api_key, ISSUE_RELATION_DELETE_MUTATION, {"id": relation_id})
-    if not data["issueRelationDelete"]["success"]:
-        raise SyncBlockersError("Linear issueRelationDelete returned success=false")
-
-
 # --------------------------------------------------------------------------
 # CLI
 # --------------------------------------------------------------------------
@@ -744,25 +646,12 @@ Usage:
       Report-only: print, as JSON, the two scheduling smells — every Todo-state
       issue that blocks an open Backlog issue, and every non-Urgent issue that
       blocks an Urgent one. Writes nothing; cannot combine with --for.
-  sync_blockers.py --demote [--only ENG-1:ENG-2,...] [--apply]
-      One-time migration: list every blocks edge between two open Backlog
-      issues as a demotion candidate. Writes nothing without --apply, which
-      converts the listed edges to `related`. Restrict with --only.
-      Candidates with no current Touches collision are held back unless
-      --include-hand-placed is passed.
 
-This tool never files a blocking edge. Blocking is human-curated: an agent may
-suggest an edge with its evidence, and a human approves or places it.
+This tool never files, rewrites, or removes a blocking edge. Blocking is
+human-curated: an agent may suggest an edge with its evidence, and a human
+approves or places it.
 
-  --dry-run  Print the links that would be filed; write nothing. Applies to
-             the sweep modes only — it is refused with --demote, because bare
-             --demote already writes nothing and --demote --apply is the
-             deliberate write.
-  --apply    With --demote only: actually perform the confirmed conversion.
-  --include-hand-placed
-             With --demote only: also convert candidates that carry no current
-             Touches collision (more likely hand-placed, and not recoverable
-             if the conversion half-fails)."""
+  --dry-run  Print the links that would be filed; write nothing."""
 
 
 def env_var(name: str) -> str:
@@ -777,37 +666,23 @@ def env_var(name: str) -> str:
 
 @dataclass(frozen=True)
 class Options:
-    """The parsed CLI surface. Four mutually-exclusive modes plus their flags."""
+    """The parsed CLI surface. Three mutually-exclusive modes plus ``--dry-run``."""
 
     dry_run: bool = False
     focus_id: str | None = None
     report_todo: bool = False
-    demote: bool = False
-    apply: bool = False
-    # None means "every candidate"; a set restricts --demote to those pairs.
-    only: set[frozenset[str]] | None = None
-    # Convert candidates with no current Touches collision too. Off by default:
-    # the automation could not have derived those, so they are more likely
-    # hand-placed, and for them the demote is not recoverable (see `_run_demote`).
-    include_hand_placed: bool = False
 
 
 def _parse_args(args: list[str]) -> Options:
     """Parse the CLI args into :class:`Options`, or raise on a bad one.
 
-    The mode flags are mutually exclusive, and ``--apply`` / ``--only`` are
-    meaningful only under ``--demote``. Rejecting the combinations outright
-    matters more here than usual: a silently-ignored ``--apply`` would read as a
-    completed migration, and a silently-ignored ``--only`` would widen a
-    confirmed subset to every candidate.
+    The mode flags are mutually exclusive. Rejecting a bad combination outright,
+    rather than letting one flag silently win, matters here because every mode
+    differs in what it *writes*.
     """
     dry_run = False
     focus_id: str | None = None
     report_todo = False
-    demote = False
-    apply = False
-    include_hand_placed = False
-    only: set[frozenset[str]] | None = None
     i = 0
     while i < len(args):
         arg = args[i]
@@ -815,17 +690,6 @@ def _parse_args(args: list[str]) -> Options:
             dry_run = True
         elif arg == "--report-todo-blocks":
             report_todo = True
-        elif arg == "--demote":
-            demote = True
-        elif arg == "--apply":
-            apply = True
-        elif arg == "--include-hand-placed":
-            include_hand_placed = True
-        elif arg == "--only":
-            i += 1
-            if i >= len(args):
-                raise SyncBlockersError("--only requires ENG-###:ENG-### pairs")
-            only = parse_pair_filter(args[i])
         elif arg == "--for":
             i += 1
             if i >= len(args):
@@ -836,37 +700,10 @@ def _parse_args(args: list[str]) -> Options:
         i += 1
     if report_todo and focus_id is not None:
         raise SyncBlockersError("--report-todo-blocks cannot combine with --for")
-    if demote and focus_id is not None:
-        raise SyncBlockersError("--demote cannot combine with --for")
-    if demote and report_todo:
-        raise SyncBlockersError("--demote cannot combine with --report-todo-blocks")
-    if apply and not demote:
-        raise SyncBlockersError("--apply is only meaningful with --demote")
-    if only is not None and not demote:
-        raise SyncBlockersError("--only is only meaningful with --demote")
-    if include_hand_placed and not demote:
-        raise SyncBlockersError(
-            "--include-hand-placed is only meaningful with --demote"
-        )
-    if demote and dry_run:
-        # `--dry-run` and `--demote` both mean "write nothing", but they are not
-        # the same lever, and combining them reads as a safe preview of a
-        # deletion when it is not one: `_run_demote` branches on `--apply`
-        # alone, so `--demote --apply --dry-run` would delete relations while
-        # the help text promises "write nothing". Refuse the combination rather
-        # than pick a winner — bare `--demote` *is* the dry run.
-        raise SyncBlockersError(
-            "--dry-run cannot combine with --demote; bare --demote already "
-            "writes nothing, and --demote --apply is the deliberate write"
-        )
     return Options(
         dry_run=dry_run,
         focus_id=focus_id,
         report_todo=report_todo,
-        demote=demote,
-        apply=apply,
-        only=only,
-        include_hand_placed=include_hand_placed,
     )
 
 
@@ -917,108 +754,6 @@ def _print_sweep_report(issues: list[Issue]) -> None:
         )
 
 
-def _run_demote(issues: list[Issue], api_key: str, opts: Options) -> int:
-    """The ``--demote`` migration: propose, or with ``--apply`` convert.
-
-    Two writes per confirmed edge — delete the ``blocks`` relation, then create a
-    ``related`` one — in that order, so a failure between them leaves the pair
-    *unlinked* rather than carrying both claims at once.
-
-    **That recovery argument only holds for an overlap-derived edge.** For one, a
-    re-run re-relates it: the pair no longer appears as a demote candidate, and
-    the next ordinary sweep sees an unlinked collision. But
-    ``materialize_overlap_relations`` only links pairs that **currently** collide,
-    so for a candidate with no current collision — the ones this tool itself
-    labels "more likely hand-placed" — a failure between the two writes leaves
-    the pair with **nothing**, and no later sweep restores it. Those are exactly
-    the human-curated edges the whole change exists to protect, so they are
-    **excluded by default** and require ``--include-hand-placed``.
-    """
-    candidates = demote_candidates(issues)
-
-    # An edge whose relation id didn't come back can't be deleted; sending "" to
-    # `issueRelationDelete` aborts the migration mid-loop on an API error. Drop it
-    # at candidate-build time with a warning instead.
-    unusable = [c for c in candidates if not c[0].relation_id]
-    for edge, _shared in unusable:
-        print(
-            f"warning: {edge.blocker} blocks {edge.blocked} carries no relation "
-            f"id, so it cannot be deleted — skipping it (re-run the sweep; if it "
-            f"persists, remove that edge by hand)",
-            file=sys.stderr,
-        )
-    candidates = [c for c in candidates if c[0].relation_id]
-
-    hand_placed = [c for c in candidates if not c[1]]
-    if hand_placed and not opts.include_hand_placed:
-        candidates = [c for c in candidates if c[1]]
-        print(
-            f"note: holding back {len(hand_placed)} candidate(s) with no current "
-            f"Touches collision — the automation could not have derived those, so "
-            f"they are more likely hand-placed and are authoritative. Pass "
-            f"--include-hand-placed to convert them too.",
-            file=sys.stderr,
-        )
-
-    if opts.only is not None:
-        wanted = opts.only
-        candidates = [
-            c for c in candidates if frozenset((c[0].blocker, c[0].blocked)) in wanted
-        ]
-        missing = wanted - {frozenset((c[0].blocker, c[0].blocked)) for c in candidates}
-        for pair in sorted(missing, key=lambda p: sorted(p)):
-            print(
-                f"warning: --only names {':'.join(sorted(pair))}, which is not a "
-                f"demotion candidate (not a blocks edge between two open Backlog "
-                f"issues) — skipping it",
-                file=sys.stderr,
-            )
-
-    if not candidates:
-        print("sync-blockers --demote | 0 candidates | nothing to demote")
-        return 0
-
-    by_id = {i.id: i for i in issues}
-    for edge, shared in candidates:
-        if shared:
-            why = f"currently collides on {', '.join(shared)}"
-        else:
-            why = "no current Touches collision — more likely hand-placed"
-        print(f"  {edge.blocker} blocks {edge.blocked} — {why}", file=sys.stderr)
-
-    if not opts.apply:
-        print(
-            f"sync-blockers --demote | {len(candidates)} candidate(s) | "
-            f"proposal only — re-run with --apply (optionally --only) to convert"
-        )
-        return 0
-
-    converted = 0
-    # Pairs already carrying a `related` link — seeded from the fetched snapshot,
-    # then grown as this loop creates them. Growing it matters: a reciprocal pair
-    # (A blocks B *and* B blocks A) yields two candidates over one pair, and a
-    # snapshot-only check would create the link twice.
-    linked = {frozenset((i.id, other)) for i in issues for other in i.related_to}
-    for edge, _shared in candidates:
-        issue_relation_delete(api_key, edge.relation_id)
-        pair = frozenset((edge.blocker, edge.blocked))
-        if pair not in linked:
-            issue_relation_create(
-                api_key,
-                by_id[edge.blocker].uuid,
-                by_id[edge.blocked].uuid,
-                "related",
-            )
-            linked.add(pair)
-        converted += 1
-        print(
-            f"demoted: {edge.blocker} blocks {edge.blocked} -> related",
-            file=sys.stderr,
-        )
-    print(f"sync-blockers --demote | {converted} edge(s) converted to related")
-    return 0
-
-
 def run(argv: list[str]) -> int:
     args = argv[1:]
     if any(a in ("-h", "--help") for a in args):
@@ -1032,9 +767,6 @@ def run(argv: list[str]) -> int:
     project_id = env_var("LINEAR_PROJECT_ID")
 
     issues = fetch_backlog(api_key, project_id)
-
-    if opts.demote:
-        return _run_demote(issues, api_key, opts)
 
     if report_todo:
         pairs = todo_blocks_backlog(issues)

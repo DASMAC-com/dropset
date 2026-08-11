@@ -339,5 +339,136 @@ class WatchChecksTests(unittest.TestCase):
         self.assertTrue(wfc.watch_checks(285, "o/r", 1, 30, self.log))
 
 
+class WatchRunTests(unittest.TestCase):
+    """The merge-queue mode. Unlike the checks mode there is no second JSON
+    read, so here gh's ``--exit-status`` code *is* the verdict — which is why a
+    timeout must not be allowed to look like a pass."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.bin = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+        self._path = os.environ.get("PATH", "")
+        os.environ["PATH"] = f"{self.bin}{os.pathsep}{self._path}"
+        self.addCleanup(os.environ.__setitem__, "PATH", self._path)
+        self.log = self.bin / "run.log"
+
+    def _shim(self, body):
+        gh = self.bin / "gh"
+        gh.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+        gh.chmod(0o755)
+
+    def test_a_green_run_settles_zero_and_captures_the_tree(self):
+        self._shim("echo 'X  build  1m0s'")
+        settled, code = wfc.watch_run("99", "o/r", 30, self.log)
+        self.assertTrue(settled)
+        self.assertEqual(code, 0)
+        self.assertIn("build", self.log.read_text(encoding="utf-8"))
+
+    def test_a_dequeued_run_is_non_zero(self):
+        """`--exit-status` is what keeps a dequeue from reading as a merge."""
+        self._shim("exit 1")
+        settled, code = wfc.watch_run("99", "o/r", 30, self.log)
+        self.assertTrue(settled)
+        self.assertNotEqual(code, 0)
+
+    def test_a_hung_run_times_out_and_is_killed(self):
+        self._shim("sleep 30")
+        settled, code = wfc.watch_run("99", "o/r", 1, self.log)
+        self.assertFalse(settled)
+        self.assertEqual(code, -1)
+
+    def test_the_log_is_owner_only(self):
+        self._shim("echo hi")
+        wfc.watch_run("99", "o/r", 30, self.log)
+        self.assertEqual(self.log.stat().st_mode & 0o777, 0o600)
+
+    def test_wait_run_maps_exit_codes_to_conclusions(self):
+        cases = {(True, 0): "pass", (True, 1): "fail", (False, -1): "timeout"}
+        for (settled, code), expected in cases.items():
+            with self.subTest(settled=settled, code=code):
+                real = wfc.watch_run
+                wfc.watch_run = lambda *a, **k: (settled, code)
+                try:
+                    verdict = wfc.wait_run("99")
+                finally:
+                    wfc.watch_run = real
+                self.assertEqual(verdict["conclusion"], expected)
+
+    def test_a_timed_out_run_never_reads_as_a_pass(self):
+        """A killed watch has exit code -1, and must not be mapped by sign."""
+        real = wfc.watch_run
+        wfc.watch_run = lambda *a, **k: (False, 0)
+        try:
+            verdict = wfc.wait_run("99")
+        finally:
+            wfc.watch_run = real
+        self.assertEqual(verdict["conclusion"], "timeout")
+
+    def test_run_log_path_is_per_run(self):
+        self.assertNotEqual(wfc.run_log_path_for("1"), wfc.run_log_path_for("2"))
+
+    def test_the_interval_is_passed_through_to_gh(self):
+        """gh run watch defaults to 3s; a caller throttling a long queue wait
+        must not be silently ignored."""
+        self._shim('echo "$@"')
+        wfc.watch_run("99", "o/r", 30, self.log, interval=45)
+        self.assertIn("--interval 45", self.log.read_text(encoding="utf-8"))
+
+
+class ModeSelectionTests(unittest.TestCase):
+    """``--pr`` and ``--run`` are alternatives, and exactly one is required."""
+
+    def _run(self, argv):
+        with redirect_stdout(io.StringIO()):
+            return wfc.run(argv)
+
+    def test_neither_is_refused(self):
+        with self.assertRaises(wfc.WaitForChecksError):
+            self._run(["wait_for_checks.py"])
+
+    def test_both_is_refused(self):
+        """Otherwise the tool watches one thing and reports about the other."""
+        with self.assertRaises(wfc.WaitForChecksError):
+            self._run(["wait_for_checks.py", "--pr", "285", "--run", "99"])
+
+    def test_no_watch_is_refused_with_run(self):
+        with self.assertRaises(wfc.WaitForChecksError):
+            self._run(["wait_for_checks.py", "--run", "99", "--no-watch"])
+
+    def _run_mode(self, conclusion):
+        seen = {}
+        real = wfc.wait_run
+
+        def stub(rid, repo=None, timeout=None, interval=None):
+            seen.update(rid=rid, repo=repo, timeout=timeout, interval=interval)
+            return {"conclusion": conclusion, "run_id": rid}
+
+        wfc.wait_run = stub
+        try:
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = wfc.run(["wait_for_checks.py", "--run", "99"])
+        finally:
+            wfc.wait_run = real
+        return code, json.loads(buf.getvalue()), seen
+
+    def test_run_mode_reaches_wait_run_with_the_cli_values(self):
+        code, parsed, seen = self._run_mode("pass")
+        self.assertEqual(code, 0)
+        self.assertEqual(parsed["run_id"], "99")
+        self.assertEqual(seen["repo"], wfc.DEFAULT_REPO)
+        self.assertEqual(seen["timeout"], wfc.DEFAULT_TIMEOUT)
+        self.assertEqual(seen["interval"], wfc.DEFAULT_INTERVAL)
+
+    def test_run_mode_exits_non_zero_on_a_dequeue_or_timeout(self):
+        """The stated goal of this mode is that a dequeue can never read as a
+        merge, so the red exit code is the assertion that matters most."""
+        for conclusion in ("fail", "timeout"):
+            with self.subTest(conclusion=conclusion):
+                code, _, _ = self._run_mode(conclusion)
+                self.assertEqual(code, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

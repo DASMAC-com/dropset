@@ -105,6 +105,7 @@ ohlcv
 oneline
 onramps
 openxmlformats
+pathspec
 paytrie
 pdas
 pdftoppm
@@ -139,6 +140,7 @@ retune
 retuned
 retunes
 rlib
+rnaps
 rollup
 rollups
 rsplit

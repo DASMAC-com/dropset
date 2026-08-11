@@ -40,7 +40,18 @@ copy, so the wording stays in one place.
 >   everything else you read. In this workspace there is a committed
 >   tool that already does that scoping and reduces to one allow-rule:
 >   `python3 .claude/tools/search_source.py 'PATTERN'` (add `--context N`,
->   `--ext rs,ts`, `--dir programs,sdk` as needed).
+>   `--ext rs,ts`, `--dir programs,sdk`, `--glob <path-or-glob>` as
+>   needed).
+> - **Ask a search for its narrowest form.** Scoping bounds *where* it
+>   looks; narrowness bounds *what it returns*. When the question is
+>   existence — "is this symbol still referenced anywhere?" — ask for
+>   paths, not full match lines: `search_source.py --files-only`, or a
+>   bare `grep -l` / `-c`. (`search_source.py` prints the match and file
+>   counts on its summary line in **every** mode, so `--files-only`
+>   already answers "how many?" too.) One such sweep came back as ~130
+>   lines, most of them one file repeating one constant 40 times, for an
+>   answer that was one bit per symbol. Take full lines only when you
+>   must read the surrounding code.
 > - **Reading large files — Grep to the relevant section, then `Read`
 >   with `offset`/`limit`.** Don't pull a whole `CLAUDE.md`, doc, or
 >   SKILL.md into context to use a fraction of it; a whole-file Read of
