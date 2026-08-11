@@ -33,13 +33,24 @@ recommended default **first**. Full detail:
 ## Linear automation
 
 Filing skills (`linear-task`, `audit`, `audit-scope`,
-`trim-context`, `housekeeping`) resolve team / project /
+`trim-context`, `housekeeping`, `plan`) resolve team / project /
 assignee and the inbox-doc ids from **environment variables**
 (`LINEAR_*`), never hard-coded UUIDs — each via its **own** bare
 `printenv` (a combined `printenv A B C` returns only the first on macOS
 / BSD). A worktree branch and its Linear issue share one `ENG-###`.
 Full detail — every env var and which skill reads it:
 `docs/conventions/linear-automation.md`.
+
+### Planning sessions
+
+Board work — staging issues, keeping the Queue honest, placing
+blocking edges, carrying direction across days — happens in a
+**planning session**, the complement to a worktree implementation
+session. It runs in the base repo (`naps planning-<day>` /
+`rnaps planning-<day>`, never a worktree), bootstraps from the
+"Planning" Linear document (`LINEAR_PLANNING_DOC_ID`), and writes its
+decisions back there. The `plan` skill is its method; the document is
+the state.
 
 ### Structured filing fields
 
@@ -91,7 +102,8 @@ an `ENG-###` into a mention node, so never anchor on one. Detail:
 ### Blocking relations
 
 **No automated writer files a blocking edge — ever**, semantic ones
-included. The board's available-vs-blocked view is a scheduling
+included; they are placed by a human, in a **planning session**. The
+board's available-vs-blocked view is a scheduling
 instrument the human drives, so a spurious edge (which drops an issue
 out of the available set) costs more than a missing one (which costs a
 rebase). A filer that believes a real dependency exists **proposes** it

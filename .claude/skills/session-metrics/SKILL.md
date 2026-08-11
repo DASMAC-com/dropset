@@ -74,6 +74,20 @@ and prints, as compact Markdown (or `--json`):
   catches an inlined-diff fan-out (the cost lands in each
   sub-agent's input, not the main tool table).
 
+  **This rollup sums per-turn input, and that is a different
+  quantity from the Agent tool's `subagent_tokens`.** Say so
+  when reporting it, because the two differ by roughly an
+  order of magnitude and are easy to compare by accident: a
+  sub-agent's context is re-sent on every one of its turns,
+  so two lenses whose Agent results read ≈102k and ≈104k had
+  per-turn input summing to **911.6k and 604.3k**. Anyone
+  judging fan-out efficiency from the Agent result line
+  concludes a lens was cheap when it was the most expensive
+  thing in the session — and `review-pr`'s efficient-exemplar
+  figures (~145k, 180.5k, 202.3k) are measured *this* way, so
+  an Agent-result number benchmarked against them compares
+  unlike quantities.
+
 - **Hardening candidates** — the repeated `Bash` command
   shapes (grouped by normalized prefix), **ranked by result
   size, not call count**, and flagged `deterministic` when

@@ -260,6 +260,17 @@ minutes and a log per edit for a change `make decks` above hot-reloads
 instantly. Iterate on the dev server; build to check (see
 `docs/conventions/context-economy.md`).
 
+**Match the check to the edit.** A **copy-only** change — a string
+literal in a `.tsx` — or a **comment-only** one cannot alter a type or
+an asset, so it needs lint at most, never this build and never
+`pnpm -C decks check`. Two measured runs ignored this while the
+paragraph above already said it: one fired `make decks-build` **×11**
+as an inner-loop check, most of them after copy-only edits; another ran
+`pnpm -C decks check` **×19** across ~15 rounds, including after
+comment-only changes that cannot change a type. Batch verification to
+logical checkpoints — the per-call cost is small, and the repetition is
+the whole expense.
+
 ## Write a deck
 
 `demo-v1` is reconciled to `demo-v1-spec.md` — the reviewable copy for

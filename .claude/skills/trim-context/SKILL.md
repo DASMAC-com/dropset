@@ -1,6 +1,6 @@
 ---
 name: trim-context
-description: Mine the Linear "Session Metrics" inbox into a propose-only skill-improvement Backlog task — the consumer half of the `session-metrics` producer. Reads the inbox document live, synthesizes the trim levers that recur across sessions (a verbose build log, a whole-file Read where a slice would do, a repeated full-PR read, an inlined-diff fan-out), and files them as a single aggregated propose-only task — one bullet per lever, each with its own `**Fingerprint**:` line under a combined `**Touches**:` (so one mining pass yields one issue / one PR, not a batch to consolidate later). Dedups each lever against the open Backlog, appends to the open aggregated task rather than opening a second, writes each consumed entry's disposition back into the doc, and offers (via AskUserQuestion) to clear the processed entries so the inbox doesn't grow unbounded. Never edits a skill or convention doc — filing a task is the proposal. Runs standalone or as `housekeeping`'s Session Metrics step.
+description: Mine the Linear "Session Metrics" inbox into a propose-only skill-improvement Backlog task — the consumer half of the `session-metrics` producer. Reads the inbox document live, synthesizes the trim levers that recur across sessions (a verbose build log, a whole-file Read where a slice would do, a repeated full-PR read, an inlined-diff fan-out), and files them as a single aggregated propose-only task — one bullet per lever, each with its own `**Fingerprint**:` line under a combined `**Touches**:` (so one mining pass yields one issue / one PR, not a batch to consolidate later). Dedups each lever against the open Backlog, appends to the open aggregated task rather than opening a second, then drains every consumed entry out of the doc — filing the task is what discharges it — recording each one's disposition in the drain history, so the inbox cannot grow unbounded. Never edits a skill or convention doc — filing a task is the proposal. Runs standalone or as `housekeeping`'s Session Metrics step.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -57,16 +57,18 @@ filing-destination variables is empty, say so and stop before filing.
 note (a nested line beginning `✓ filed:` or `⚠ noted:`). Skip entries
 that already carry one, so a repeat pass doesn't re-file.
 
-**Count them, and note the body's size.** More than **~3** unprocessed
-entries is a **drain trigger** — act on it rather than waiting to be
-asked. The reason is this skill's own cost, not the producer's:
-`session-metrics` appends with a `patch` op and pays only the length of
-its entry (per `docs/conventions/linear-automation.md` → "Partial edits
-— the `patch` argument"), so it appends happily forever. **Mining** is
-what gets more expensive — step 1 reads the whole body every pass, and
-a long inbox is harder to synthesize honestly and stales the older
-entries. Carry the **count** into step 4 — that's the number the clear
-question and the step-6 report both name.
+Every entry you collect here will be **drained** in step 5 — filing the
+task is what discharges it — so this read is also the list of what to
+delete.
+
+**Count them, and note the body's size**, for the step-6 report. The
+asymmetry worth knowing: `session-metrics` appends with a `patch` op and
+pays only the length of its entry (per
+`docs/conventions/linear-automation.md` → "Partial edits — the `patch`
+argument"), so it appends happily forever, while **mining** reads the
+whole body every pass. That is what made an unbounded inbox this skill's
+problem rather than the producer's — and why draining on file, rather
+than on a threshold, is the fix.
 
 **2. Synthesize across sessions, don't transcribe.** Look for the trim
 levers that **recur** across the unprocessed entries — a verbose build
@@ -144,73 +146,96 @@ mcp__claude_ai_Linear__save_issue(
 )
 ```
 
-**4. Decide the clear first — before writing anything back.** The two
-outcomes want **different** write-back ops (step 5), and on a "yes,
-clear" every tick-and-annotate op is thrown away — the annotations are
-composed, then immediately deleted. Cheaper than it used to be (a
-`patch` write-back doesn't re-author the whole body), but still pure
-waste, and the ordering costs nothing. So resolve the clear decision
-**up front**, via
-**`AskUserQuestion`**, recommended default **first**: "yes, clear the
-processed entries (Recommended)" and "no, leave them". Clear **only on
-an explicit yes**; on "no" (or if nothing was consumed this pass) the
-entries stay. When a caller has already fixed the decision — e.g.
-`housekeeping`'s one-shot pass defaults to *leave* and passes that in —
-take the inherited answer and don't re-ask. Whichever way it resolves,
-step 5 makes exactly **one** `save_document` write.
+**4. Filing the task discharges the entry — so drain it, don't tick
+it.** There is no clear *decision* to make, and no question to ask.
+Once an entry's levers are in a Backlog task, the entry has no further
+job: its disposition belongs in the drain history as one line, not as a
+retained body.
 
-**Past the step-1 drain trigger, say so in the question.** When the
-inbox held more than ~3 unprocessed entries, the clear is no longer a
-neutral tidy-up — it's what keeps the next mining pass tractable, so
-name the count in the question text so the human is choosing with that
-in front of them. And when a caller has fixed the decision to *leave*,
-honor it (don't override an inherited answer) but **flag the backlog in
-the step-6 report**: how many entries the inbox is now carrying and that
-it is past the drain threshold. That way an inbox growing past the point
-where it can be mined honestly is visible rather than silent.
+This replaces an earlier design that ticked entries and asked, via
+`AskUserQuestion`, whether to clear them. That question is **retired**,
+along with `housekeeping`'s inherited-decision hook — because the
+combination failed structurally rather than through any missed
+approval. `housekeeping`'s one-shot path (the default path, and the only
+one the morning driver ever takes) fixed the answer to *leave*, so on
+the path that actually runs the clear **never fired**. Nobody declined
+it; it was never asked. The inbox filled with checked-off entries that
+had already been filed, each re-read in full by every later pass.
 
-**5. Write the doc back once, per the step-4 decision** with
+So the rule now:
+
+- **Delete on file, unconditionally.** The consumed-entry write-back in
+  step 5 is a **deletion**, not a tick-and-annotate.
+- **The `✓ filed:` note moves into the drain history**, which is where
+  a human goes to ask "what happened to session X".
+- **An entry that yielded no lever is still drained** — recorded as
+  `⚠ noted: <reason>` in the drain history rather than filed. Consumed
+  means consumed; "produced no task" is not a reason to retain a body.
+
+**Why this is safe to do unattended.** The worry the clear question
+encoded was losing measurement data, and it does not survive scrutiny:
+the levers are preserved in the filed task with their fingerprints, the
+drain history keeps the per-session disposition, and the underlying
+transcript is still on disk and re-measurable with
+`make session-metrics SESSION=<uuid>`. Deleting a filed entry destroys
+nothing that isn't recoverable or already recorded elsewhere.
+
+Step 5 still makes exactly **one** `save_document` write.
+
+**The step-1 drain trigger measured the wrong thing, too.** It counted
+*unprocessed* entries, so a doc holding twenty consumed-but-retained
+entries read as a healthy inbox while costing the full body on every
+read. With draining-on-file, unbounded growth is impossible by
+construction — so the trigger is now just a **size** observation for the
+step-6 report (how long the body is getting), not a threshold anything
+branches on.
+
+**5. Write the doc back once** with
 `mcp__claude_ai_Linear__save_document` (id = the resolved value,
 literal newlines) — as a **`patch`**, not a full `content` rebuild.
-This skill's write-back is a *targeted* edit (it ticks and annotates
-specific entries, or removes them), so it is exactly the case `patch`
-serves: one call carrying one op per touched entry, keyed off text from
-your step-1 read, per `docs/conventions/linear-automation.md` →
-"Partial edits — the `patch` argument". Per the decision:
+This skill's write-back is a *targeted* edit (it removes specific
+entries and appends to the drain history), so it is exactly the case
+`patch` serves: one call carrying one op per touched entry, keyed off
+text from your step-1 read, per
+`docs/conventions/linear-automation.md` →
+"Partial edits — the `patch` argument". Two kinds of op:
 
-- **Clear = yes:** one `replace` op per consumed entry, `new_string`
-  empty, deleting its lines — take the span through the entry's
-  **trailing blank line** so a deleted entry doesn't leave a stray
-  separator behind for the next pass to accumulate. Delete only the
-  entries this pass actually consumed — do **not** also try to collapse
-  the doc to an empty-inbox placeholder. Whether any remains is a *count*
-  from your step-1 read, and a concurrent `session-metrics` append can
-  make that count wrong; exactly-once anchors stop you clobbering that
-  entry, but they can't stop a stale count from stamping "inbox empty"
-  over it.
-- **Clear = no:** leave every entry in place but tick each consumed one
-  and add a nested disposition note — a `✓ filed: ENG-### (<lever>)`
-  for one that drove a task, or a `⚠ noted: <reason>` for a one-off
-  that implied no change. Two ops per consumed entry: a `replace`
-  flipping its box (`- [ ]` → `- [x]`, with enough of the entry's own
-  header line after the box to match **once**), and an `insert_after`
-  keyed on that entry's `session <short-uuid>` fragment carrying the
-  note. `insert_after` splices in **immediately** after its anchor, and
-  that anchor sits mid-line, so the note's `text` must **open with a
-  real newline plus the nesting indent** — otherwise the note lands
-  glued to the end of the header rather than on its own nested line.
-  **Skip the annotation work entirely** on a "yes, clear" (this is the
-  whole reason the clear is decided first).
+- **One deletion per consumed entry** — a `replace` with an empty
+  `new_string`, or a `replace_range` between two tag-free anchors,
+  spanning the entry's whole block **through its trailing blank line**
+  so no stray separator is left for the next pass to accumulate. Prefer
+  `replace_range` where the block is long: it bounds the deletion
+  explicitly at both ends, rather than resting on one enormous copied
+  span matching exactly once.
+
+  Delete only the entries this pass actually consumed — do **not** also
+  collapse the doc to an empty-inbox placeholder. Whether any remain is
+  a *count* from your step-1 read, and a concurrent `session-metrics`
+  append can make that count wrong; exactly-once anchors stop you
+  clobbering that entry, but they can't stop a stale count from stamping
+  "inbox empty" over it.
+
+- **One append to the drain history** recording each consumed entry's
+  disposition on a line: `✓ filed: ENG-### (<lever>)` for one that drove
+  a task, `⚠ noted: <reason>` for one that implied no change. This is
+  the entry's surviving record, so name the session there.
+
+**The deletion spans must come verbatim from the step-1 read.** This is
+the safety property that made the old tick-path safe, and it carries
+over unchanged: an exactly-once anchor copied from what you actually
+read cannot enclose an entry appended since. That is not hypothetical —
+the 2026-08-11 drain re-fetched before writing and found **two entries
+appended mid-pass** that a snapshot-based wholesale rewrite would have
+destroyed.
 
 **Build every anchor by copying the stored text, not by composing it.**
 A `replace` rewrites *its own anchor*, so its `old_string` has to span
-exactly the text being changed — the box-flip spans the entry's header
-line, and a delete spans the entry's whole block including its
-`Measured:` / `Recommends:` sub-bullets. There is no way to express
-either op as a short tag-free fragment, so don't try: take the span
-**verbatim from your step-1 read**. `insert_after` is the one op that
-needs no span, which is why the disposition note keys off the
-`session <short-uuid>` fragment above.
+exactly the text being changed — a delete spans the entry's whole block
+including its `Measured:` / `Recommends:` sub-bullets. There is no way
+to express that as a short tag-free fragment, so don't try: take the
+span **verbatim from your step-1 read**, or bound it with
+`replace_range` between two tag-free anchors. `append` is the one op
+that needs no span, which is why the drain-history record uses it.
 
 The one thing that can defeat a copied span is an **`ENG-###` inside
 it** — Linear stores that as an issue-mention node rather than the
@@ -235,15 +260,16 @@ blindly. That second write is the **only** licensed exception to the
 one-write rule above.
 
 When this runs right before a `session-metrics` producer step (e.g.
-under `housekeeping`), evaluate the clear against the inbox state
-**before** that step appends a fresh entry.
+under `housekeeping`), the entries you drain are the ones read in step
+1 — an entry that step appends afterwards is simply next pass's work,
+and the exactly-once anchors make that safe without any ordering rule.
 
 **6. Report** in one line: the aggregated skill-improvement task —
 whether new levers were filed into a fresh one or appended to the open
 one (with its ENG-###), and how many levers — for the recurring trim
-levers, how many session entries were consumed, any levers skipped as
-already-handled, whether the processed entries were cleared — or that
-the skill no-op'd because the inbox id was unset.
+levers, how many session entries were consumed **and drained**, any
+levers skipped as already-handled, and the inbox's remaining size — or
+that the skill no-op'd because the inbox id was unset.
 
 ## Notes
 

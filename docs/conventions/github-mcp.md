@@ -42,6 +42,26 @@ read used by `housekeeping`:
   loop or a `jq` filter; the failure path still pulls logs via
   `get_job_logs`.
 
+- **The post-merge notification lookup** (`review-pr`) — reading the
+  one thread id whose `subject.url` ends in a PR's number, so the
+  merged PR's own notification can be dismissed. Same reasoning as the
+  reads above, and it was simply missed when that carve-out was
+  written: `mcp__github__list_notifications` returned **3.7k tokens in
+  a single call** for that one id — the 6th-largest result of one
+  session — because it embeds the complete repository object (every
+  `*_url` template) once per notification, repeated per notification.
+  A field-selected read is the fix:
+
+  ```text
+  gh api /notifications --jq '.[] | {id, url: .subject.url}'
+  ```
+
+  The **dismissal itself stays on the MCP**
+  (`dismiss_notification`) — it is a small write with no payload
+  problem, and only the *read* is the expensive half. Whichever
+  transport is used, the list is a fixed cost to be **read once**:
+  never re-fetch it to re-find the id.
+
 - **Unsubscribing from a new PR's notifications** (`init-pr`) — right
   after the draft PR is created, so its lifecycle (CI, assignment,
   merge) doesn't ping the author in this solo / agent-driven flow. No

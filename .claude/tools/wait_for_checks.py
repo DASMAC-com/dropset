@@ -27,16 +27,26 @@ The JSON read, not the watch's exit code, is the authority on the outcome: ``gh`
 overloads its exit status (non-zero covers "a check failed", "checks are still
 pending", and "there are no checks at all"), and a review must distinguish those.
 
+A second mode, ``--run <id>``, watches **one workflow run** to its terminal
+state instead of a PR's checks. That is the merge-queue half of the same job:
+once ``mergeQueueEntry`` names the queue branch's check run, this blocks on it.
+It exists for the same reason as the checks mode — a bare ``gh run watch``
+re-prints the entire job tree on every refresh, and one such call emitted
+**64.6KB**, overflowed the tool-result cap, was persisted to disk, and still
+needed the terminal state re-probed afterwards.
+
 Usage::
 
     python3 .claude/tools/wait_for_checks.py --pr 285
     python3 .claude/tools/wait_for_checks.py --pr 285 --interval 30 --timeout 1800
+    python3 .claude/tools/wait_for_checks.py --run 1234567890
 
-Options: ``--pr`` (required), ``--repo`` (default ``DASMAC-com/dropset``),
+Options: exactly one of ``--pr`` / ``--run``, ``--repo`` (default
+``DASMAC-com/dropset``),
 ``--interval`` (seconds between gh's own refreshes, default 30), ``--timeout``
 (seconds before giving up on the watch, default 3600), ``--no-watch`` (skip the
 watch and just read the current state once — a resumed session where the
-background task is gone).
+background task is gone; checks mode only).
 
 Prints JSON::
 
@@ -49,6 +59,18 @@ Prints JSON::
       "counts": {"pass": 12, "fail": 0, "pending": 0, "skipping": 3},
       "failing": [{"name": "…", "workflow": "…", "link": "…", "run_id": "…"}],
       "log_path": "/…/wait-for-checks-285.log"
+    }
+
+or, under ``--run``::
+
+    {
+      "run_id": "1234567890",
+      "repo": "DASMAC-com/dropset",
+      "conclusion": "pass",      // pass | fail | timeout
+      "settled": true,
+      "elapsed_seconds": 214,
+      "exit_code": 0,
+      "log_path": "/…/wait-for-run-1234567890.log"
     }
 
 Exit code is 0 when ``conclusion`` is ``pass``, else 1 — so a caller that only
@@ -122,6 +144,17 @@ def log_path_for(pr: int) -> Path:
     return base / f"wait-for-checks-{pr}.log"
 
 
+def run_log_path_for(run_id: str) -> Path:
+    """Where a ``--run`` watch's captured output goes.
+
+    Keyed on the run id for the same reason :func:`log_path_for` keys on the PR
+    number: a stable, guessable path beats a pid nobody can reconstruct.
+    """
+    base = Path(tempfile.gettempdir()) / "claude-wait-checks"
+    base.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return base / f"wait-for-run-{run_id}.log"
+
+
 def _gh(args: list[str]) -> tuple[int, str, str]:
     """Run a ``gh`` command, returning ``(returncode, stdout, stderr)``.
 
@@ -178,6 +211,70 @@ def watch_checks(pr: int, repo: str, interval: int, timeout: int, log: Path) -> 
             proc.wait()
             return False
     return True
+
+
+def watch_run(run_id: str, repo: str, timeout: int, log: Path) -> tuple[bool, int]:
+    """Block until one workflow run settles. Returns ``(settled, exit_code)``.
+
+    The merge-queue sibling of :func:`watch_checks`, and it exists for the same
+    reason: ``gh run watch`` re-prints the **whole job tree** on every refresh,
+    so called bare it lands one enormous result in context. A single such call
+    emitted **64.6KB**, overflowed the tool-result cap, was persisted to disk,
+    and the terminal state had to be re-probed afterwards anyway — the largest
+    single result of that session, fetched twice.
+
+    ``--exit-status`` makes a failed run a non-zero exit, so a dequeue can never
+    read as a merge. On timeout the child is killed and ``settled`` is ``False``;
+    the exit code is then meaningless and reported as ``-1``.
+    """
+    args = ["run", "watch", run_id, "--repo", repo, "--exit-status"]
+    try:
+        fd = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    except OSError as exc:
+        raise WaitForChecksError(f"cannot write {log}: {exc}") from exc
+    with os.fdopen(fd, "w", encoding="utf-8", errors="replace") as fh:
+        try:
+            proc = subprocess.Popen(
+                ["gh", *args], stdout=fh, stderr=subprocess.STDOUT, text=True
+            )
+        except OSError as exc:
+            raise WaitForChecksError(f"cannot run gh: {exc}") from exc
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            return False, -1
+    return True, proc.returncode
+
+
+def wait_run(run_id: str, repo: str = DEFAULT_REPO, timeout: int = DEFAULT_TIMEOUT):
+    """Watch one workflow run and return the same verdict shape as :func:`wait`.
+
+    ``conclusion`` is ``pass`` / ``fail`` / ``timeout`` — there is no ``pending``,
+    because the watch only returns once the run is terminal.
+    """
+    log = run_log_path_for(run_id)
+    started = time.monotonic()
+    settled, code = watch_run(run_id, repo, timeout, log)
+    elapsed = int(time.monotonic() - started)
+
+    if not settled:
+        conclusion = "timeout"
+    elif code == 0:
+        conclusion = "pass"
+    else:
+        conclusion = "fail"
+
+    return {
+        "run_id": run_id,
+        "repo": repo,
+        "conclusion": conclusion,
+        "settled": settled,
+        "elapsed_seconds": elapsed,
+        "exit_code": code,
+        "log_path": str(log),
+    }
 
 
 def read_checks(pr: int, repo: str) -> list[dict]:
@@ -324,7 +421,12 @@ def wait(
 
 def run(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="wait_for_checks.py")
-    parser.add_argument("--pr", type=int, required=True, help="PR number")
+    parser.add_argument("--pr", type=int, help="PR number (checks mode)")
+    parser.add_argument(
+        "--run",
+        dest="run_id",
+        help="workflow run id to watch instead of a PR's checks (queue mode)",
+    )
     parser.add_argument("--repo", default=DEFAULT_REPO, help="owner/repo")
     parser.add_argument(
         "--interval",
@@ -345,13 +447,24 @@ def run(argv: list[str]) -> int:
     )
     args = parser.parse_args(argv[1:])
 
-    verdict = wait(
-        args.pr,
-        repo=args.repo,
-        interval=args.interval,
-        timeout=args.timeout,
-        watch=not args.no_watch,
-    )
+    if (args.pr is None) == (args.run_id is None):
+        # Requiring exactly one keeps the two modes from silently ranking each
+        # other: a caller that passed both would otherwise watch whichever the
+        # code happens to check first and report a verdict about the other thing.
+        raise WaitForChecksError("pass exactly one of --pr or --run")
+
+    if args.run_id is not None:
+        if args.no_watch:
+            raise WaitForChecksError("--no-watch is meaningless with --run")
+        verdict = wait_run(args.run_id, repo=args.repo, timeout=args.timeout)
+    else:
+        verdict = wait(
+            args.pr,
+            repo=args.repo,
+            interval=args.interval,
+            timeout=args.timeout,
+            watch=not args.no_watch,
+        )
     json.dump(verdict, sys.stdout, indent=2)
     sys.stdout.write("\n")
     return 0 if verdict["conclusion"] == "pass" else 1

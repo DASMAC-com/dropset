@@ -1,7 +1,5 @@
 <!-- cspell:word cdds -->
 
-<!-- cspell:word rnaps -->
-
 <!-- cspell:word zshrc -->
 
 <!-- cspell:word reorderer -->

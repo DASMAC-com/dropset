@@ -416,29 +416,50 @@ The description must let a cold agent act on it in its own worktree
 (literal newlines, not `\n`):
 
 - `**File**: <path>:<line>` (clickable)
+
 - `**Dimension**: <dimension>` / `**Severity**: <high|med|low>`
+
 - `**What**:` the precise problem.
+
 - `**Why it's safe to fix in isolation**:` it touches only this
   file/symbol and does not depend on other open findings — so it can
   land independently.
+
 - `**Evidence**:` the offending snippet (+ the doc or comment it
   contradicts, for those dimensions).
+
 - `**Fix sketch**:` the concrete suggested change.
+
 - `**Lint**:` *(when applicable)* the lint rule or config that would
   catch this class going forward, per the linter-coverage screen in the
   FILE unit — so the fix prevents recurrence rather than being a
   one-off.
+
 - `**Fingerprint**: <fingerprint>` — the exact dedup key (e.g.
   `swap.rs:slippage:no-min-out`). This line is **mandatory**: it is
   what makes dedup durable. Step 1 reads it back to rebuild the dedup
   set, so a wiped worktree recovers dedup state from Linear instead of
   refiling everything.
+
 - `**Touches**: <glob>[, <glob>…]` — the machine-readable list of path
   globs the fix will edit, comma-separated (for a single-file nit, just
   that file). `sync-blockers` reads this to detect file collisions
   deterministically. **Mandatory** — see
   `docs/conventions/linear-automation.md` → "Structured filing fields".
+
 - `**Discovered by**: audit <unit> @ <commit SHA>`
+
+  **That SHA is what dates every citation above it.** The
+  `file:line` references and quoted snippets in `**Evidence**:` are a
+  snapshot of the tree at that commit, and an issue may sit in the
+  Backlog for months while unrelated PRs rewrite around it — one
+  surfaced task named four line-anchored citations of which **all
+  four** had been rewritten away, one named file carrying no relevant
+  references at all, making the item moot. So write the
+  `**Fingerprint**:` to name the *thing* rather than its coordinates,
+  and say in the body that the citations are as of this SHA. The
+  implementer re-derives the location; the fingerprint is what
+  survives.
 
 **Record file collisions for each issue as you file or grow it.** Right
 after `save_issue` returns a new identifier — **and also after an

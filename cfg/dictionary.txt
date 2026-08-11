@@ -139,6 +139,7 @@ retune
 retuned
 retunes
 rlib
+rnaps
 rollup
 rollups
 rsplit

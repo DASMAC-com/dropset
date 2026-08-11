@@ -1,8 +1,8 @@
 # Linear automation
 
 Skills that **file** Linear issues (`linear-task`, `audit`,
-`audit-scope`, `trim-context`, `housekeeping`) resolve the filing
-destination — team, project, assignee — from **environment
+`audit-scope`, `trim-context`, `housekeeping`, `plan`) resolve the
+filing destination — team, project, assignee — from **environment
 variables**, never hard-coded UUIDs. (Skills that only **update**
 an existing issue by id — `init-pr`, `review-pr` — need no
 destination; `sync-blockers` only files `related` relations between
@@ -18,6 +18,9 @@ export LINEAR_ASSIGNEE_ID=…
 # the "Session Metrics" inbox document one appends to and the other
 # mines into propose-only skill-improvement tasks:
 export LINEAR_SESSION_METRICS_DOC_ID=…
+# Used by the plan skill — the "Planning" document a planning
+# session bootstraps from and writes its decisions back into:
+export LINEAR_PLANNING_DOC_ID=…
 # Used only by the sync-blockers Python tool (the deterministic
 # core of the sync-blockers skill) — a personal Linear API key. A
 # script can't use the OAuth-based claude.ai Linear MCP, so it
@@ -349,6 +352,13 @@ edit.
 `audit-scope`, `trim-context`, `housekeeping`, `merge-tasks`), not an
 autonomous audit rotation. This holds for edges an agent believes are
 genuinely semantic, not just for file-overlap ones.
+
+**Where they *are* placed: a planning session.** A blocking edge
+expresses semantic rollout ordering, which is a scheduling decision, so
+it is made where somebody is actually deciding the order — the `plan`
+skill's session in the base repo, human-directed, one edge at a time.
+That is the whole of the exception: not "a skill that is allowed to",
+but "the place a human does it".
 
 The reason is that the board's **available-vs-blocked view is a
 scheduling instrument the human drives**: a hand-built blocking queue
