@@ -220,6 +220,15 @@ volumes:
   # history survives a stack restart (see the `postgres` service). `local` is
   # the default driver, stated explicitly because the lint forbids both an
   # empty value and a flow mapping here.
+  #
+  # One consequence of persisting: the `postgres` service's POSTGRES_USER /
+  # POSTGRES_PASSWORD are applied only when the entrypoint initializes an
+  # EMPTY data directory. Before this volume existed the cluster was rebuilt
+  # every restart, so those values were always live; now, editing them here
+  # silently does nothing while the volume survives, and the mismatch surfaces
+  # as an opaque authentication failure. Changing the credentials means
+  # `docker compose down -v` (destroying the recorded history) or altering the
+  # role in-place inside Postgres.
   postgres-data:
     driver: 'local'
 ...

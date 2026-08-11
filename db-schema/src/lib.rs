@@ -1,4 +1,3 @@
-// cspell:word regclass
 //! The single schema owner for the shared `dropset` database
 //! (docs/data-feeds.md §8).
 //!
@@ -40,6 +39,13 @@ pub async fn connect(url: &str) -> Result<PgPool> {
 }
 
 /// The highest migration version embedded in this build.
+///
+/// The `unwrap_or(0)` is unreachable: `migration_versions_ascend` below asserts
+/// the embedded history is non-empty, so an empty `./migrations` fails the test
+/// suite rather than reaching production. That matters because [`require_schema`]
+/// would *reject* a database matching a zero expectation (its `None` arm bails
+/// unconditionally), so the two would disagree about what `0` means — the test,
+/// not this fallback, is what keeps that contradiction out of reach.
 pub fn expected_version() -> i64 {
     MIGRATOR.iter().map(|m| m.version).max().unwrap_or(0)
 }
@@ -67,6 +73,15 @@ pub async fn migrate(pool: &PgPool) -> Result<()> {
 /// soft dependency by design, and a database that is unreachable — or behind
 /// on its migrations — means degraded/fallback operation surfaced in
 /// telemetry, never a refusal to start.
+///
+/// The check is a **high-water mark**, not set coverage: it asks whether the
+/// applied history reaches this build's latest version, not whether each
+/// embedded version is individually present. A database whose history diverged
+/// from this branch could therefore satisfy the fence. That is deliberate
+/// rather than overlooked — [`migrate`] validates every migration's checksum
+/// per version, and the deployment makes that step a hard gate ahead of any
+/// consumer, so divergence fails there with a precise error instead of here
+/// with a vague one.
 pub async fn require_schema(pool: &PgPool) -> Result<()> {
     let expected = expected_version();
 

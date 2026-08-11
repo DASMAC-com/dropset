@@ -11,12 +11,12 @@
 .PHONY: check-wasm
 .PHONY: clean
 .PHONY: clean-docker
+.PHONY: collectors-down
+.PHONY: collectors-up
 .PHONY: conformance-vectors
 .PHONY: debugger
 .PHONY: decks
 .PHONY: decks-build
-.PHONY: collectors-down
-.PHONY: collectors-up
 .PHONY: demo
 .PHONY: explorer
 .PHONY: explorer-down
@@ -374,8 +374,9 @@ explorer-down: check-docker
 # recorded market-data candle. That used to be free — the stack had no named
 # volume, so `-v` was a no-op — and now it is not: a CEX backfill window is
 # finite, so history that has scrolled out of it cannot be re-fetched. This
-# target is the deliberate full reset; use `make indexer-down` /
-# `make collectors-down` to stop services and keep the data. The
+# target is the deliberate full reset, and the only thing that stops the shared
+# `postgres`; use `make indexer-down` / `make collectors-down` to stop an app's
+# own services and keep both the database and the data. The
 # container removal takes each container's logs with it. `--rmi local` removes
 # only untagged local builds, so the tagged explorer image
 # (dasmac/dropset-localnet-explorer, pulled or built) and pulled base images
@@ -397,15 +398,20 @@ clean-docker: check-docker
 #
 # `migrate` is named explicitly even though compose would pull it in as a
 # dependency, so `up` reports its result rather than hiding a failed schema
-# step behind a service that then cannot start. `indexer-down` leaves the
-# Postgres volume in place — recorded market-data history is not disposable;
-# drop it deliberately with `docker compose ... down -v`.
+# step behind a service that then cannot start.
+#
+# `indexer-down` stops only the indexer's own services and leaves `postgres`
+# running. Postgres is now shared infrastructure — the collectors use the same
+# container (and `coinbase` is `restart: unless-stopped`, so it would
+# error-loop against a removed database), so no per-app `down` target may take
+# it away. `clean-docker` is what stops the whole data plane, and it is also
+# the only thing that discards the volume.
 indexer-up: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		up -d --quiet-pull postgres migrate indexer indexer-api
 indexer-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
-		rm -sf postgres indexer indexer-api
+		rm -sf indexer indexer-api
 
 # Market-data collectors: the shared Postgres + the schema migration + the
 # Coinbase reference-price feed (docs/data-feeds.md §5, §8). Independent of

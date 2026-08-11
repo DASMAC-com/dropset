@@ -123,6 +123,90 @@ async fn fence_rejects_a_database_behind_this_build() {
     );
 }
 
+/// The bookkeeping table exists but records no successful migration.
+///
+/// This is the **most reachable** failure state, not a theoretical one: sqlx
+/// creates `_sqlx_migrations` *before* applying the first migration, so a run
+/// that dies partway through `0001` leaves exactly this — table present, no
+/// successful row. The opening migration uses plain `CREATE TABLE`, so a
+/// database still carrying tables from the retired per-app regimes fails in
+/// precisely that way. It is also the only state that covers a
+/// `success = FALSE` row, since the fence's query filters on `success` and so
+/// reads NULL rather than that row's version.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn fence_rejects_a_database_with_no_successful_migration() {
+    let (_pg, pool) = start_pg().await;
+    migrate(&pool).await.expect("apply migrations");
+
+    // Reduce the history to a single failed attempt: the table remains, but
+    // `max(version) … WHERE success` now yields NULL.
+    sqlx::query("DELETE FROM _sqlx_migrations")
+        .execute(&pool)
+        .await
+        .expect("clear migration bookkeeping");
+    sqlx::query(
+        "INSERT INTO _sqlx_migrations
+             (version, description, installed_on, success, checksum,
+              execution_time)
+         VALUES (1, 'a failed attempt', now(), FALSE, ''::bytea, 0)",
+    )
+    .execute(&pool)
+    .await
+    .expect("stamp a failed migration row");
+
+    let err = require_schema(&pool)
+        .await
+        .expect_err("a database with no successful migration must not pass");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("dropset-migrate"),
+        "the error must name the fix, got: {msg}"
+    );
+}
+
+/// Every table the opening migration is supposed to create actually exists.
+///
+/// The fence tests only read `_sqlx_migrations`, and no consumer crate has a
+/// Postgres integration test over its own tables, so nothing else would notice
+/// a table lost from the squashed history — or from a future edit to it. This
+/// asserts the shape mechanically so that fidelity stops depending on review
+/// by eye.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn migrate_creates_every_expected_table() {
+    let (_pg, pool) = start_pg().await;
+    migrate(&pool).await.expect("apply migrations");
+
+    for table in [
+        "feed_cursors",
+        "fill_events",
+        "events",
+        "takes",
+        "market_stats",
+        "indexer_cursor",
+        "cex_prices",
+    ] {
+        let present: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
+            .bind(table)
+            .fetch_one(&pool)
+            .await
+            .expect("probe table");
+        assert!(present, "migration did not create `{table}`");
+    }
+
+    // The singleton watermark is seeded by the migration, not by the indexer,
+    // so its absence would only surface as a missing row at aggregation time.
+    let cursors: i64 = sqlx::query_scalar("SELECT count(*) FROM indexer_cursor")
+        .fetch_one(&pool)
+        .await
+        .expect("count indexer_cursor rows");
+    assert_eq!(
+        cursors, 1,
+        "indexer_cursor must be seeded with exactly one row"
+    );
+}
+
 #[tokio::test]
 #[ignore = "requires a Docker daemon (Postgres container)"]
 async fn migrate_is_idempotent() {
