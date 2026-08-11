@@ -1,51 +1,39 @@
 "use client";
 
-import { initSimulator, simulateSwap } from "@dropset/sdk";
+import { quoteEclob } from "@dropset/sdk";
 import { useSolanaClient } from "@solana/react-hooks";
 import { useEffect, useState } from "react";
 import { QUOTE_DEBOUNCE_MS, QUOTE_REFRESH_MS } from "../data/timings";
-import { platformFeeBpsFor, resolveEclobRoute } from "../eclob/route";
+import { resolveEclobRoute } from "../eclob/route";
 import { PLATFORM_FEE } from "../env";
 import { parseAmountToBase } from "../format/balance";
 import { getErrorMessage } from "../guards";
-import type { DflowQuote } from "./useDflowQuote";
+import { INITIAL_QUOTE, type QuoteState } from "../quote";
 
-const INITIAL: DflowQuote = {
-  status: "idle",
-  outAmount: null,
-  inAmount: null,
-  inputMint: null,
-  outputMint: null,
-  priceImpactPct: null,
-  slippageBps: null,
-  platformFeeBps: null,
-  hasQuote: false,
-  error: null,
-};
-
-// Quote the swap directly against our on-chain market via the SDK's off-chain
-// simulator (WASM `simulate_swap`), bypassing the DFlow aggregator entirely —
-// the eCLOB-only route. Returns the same {@link DflowQuote} shape as
-// useDflowQuote so the swap UI is agnostic to which route produced the quote.
+// Quote the swap directly against our own market — the core-style, eCLOB-only
+// route, bypassing the aggregator entirely. The SDK's `quoteEclob` does the
+// work (simulating with the exact on-chain matching math, including the
+// platform fee the executor will declare); this hook is the React lifecycle
+// around it and the app's mint translation, which `resolveEclobRoute` here
+// applies before handing the route over.
 //
-// Only runs while `enabled` (route mode is eCLOB). The timer mirrors
-// useDflowQuote: debounce on input change, then re-simulate every
-// QUOTE_REFRESH_MS so the quote tracks the maker bot re-quoting the book. The
-// simulation is local (WASM) — the only network hops are reading the market
-// account and the current slot.
+// Only runs while `enabled` (route mode is eCLOB). Debounce on input change,
+// then re-simulate every QUOTE_REFRESH_MS so the quote tracks the maker bot
+// re-quoting the book. The simulation is local (WASM) — the only network hops
+// are reading the market account and the current slot.
 export const useEclobQuote = (
   inputMint: string,
   outputMint: string,
   inputDecimals: number,
   inputAmountDecimal: string,
   enabled: boolean,
-): DflowQuote => {
+): QuoteState => {
   const client = useSolanaClient();
-  const [quote, setQuote] = useState<DflowQuote>(INITIAL);
+  const [quote, setQuote] = useState<QuoteState>(INITIAL_QUOTE);
 
   useEffect(() => {
     if (!enabled) {
-      setQuote({ ...INITIAL, status: "skipped" });
+      setQuote({ ...INITIAL_QUOTE, status: "skipped" });
       return;
     }
     let timer: number | undefined;
@@ -81,7 +69,7 @@ export const useEclobQuote = (
       ) {
         // Nothing to quote for this input; the effect re-runs when the inputs
         // change, so no reschedule.
-        setQuote({ ...INITIAL, status: "skipped" });
+        setQuote({ ...INITIAL_QUOTE, status: "skipped" });
         return;
       }
 
@@ -92,7 +80,7 @@ export const useEclobQuote = (
           // Terminal: no market exists for this pair. Re-simulating won't
           // conjure one, so stop the chain until the inputs change.
           setQuote({
-            ...INITIAL,
+            ...INITIAL_QUOTE,
             status: "error",
             error: "No Dropset market for this pair",
           });
@@ -102,33 +90,25 @@ export const useEclobQuote = (
         const slot = await rpc.getSlot({ commitment: "confirmed" }).send();
         if (cancelled || gen !== generation) return;
 
-        // Idempotent; instantiates the WASM module on the first quote.
-        await initSimulator();
-        if (cancelled || gen !== generation) return;
-
         // Quote with the platform fee the executor will actually declare
         // (lib/eclob/eclobSwap.ts) — same configured rate, same clamp to this
-        // market's ceiling — so the displayed output is what lands in the
-        // user's account rather than a pre-fee figure they never receive. The
-        // simulator composes both fees exactly as the engine does, so this is
-        // also what keeps the quote and the fill in agreement to the atom.
-        const platformFeeBps = PLATFORM_FEE
-          ? platformFeeBpsFor(route, PLATFORM_FEE.bps)
-          : 0;
-        const q = simulateSwap(
-          route.marketData,
-          route.side,
-          atomic,
-          route.limitPriceBits,
-          Number(slot),
-          platformFeeBps,
-        );
+        // market's ceiling, which `quoteEclob` applies — so the displayed
+        // output is what lands in the user's account rather than a pre-fee
+        // figure they never receive. The simulator composes both fees exactly
+        // as the engine does, so this also keeps the quote and the fill in
+        // agreement to the atom.
+        const q = await quoteEclob(rpc, {
+          leg: { route },
+          amount: atomic,
+          currentSlot: Number(slot),
+          platformFeeBps: PLATFORM_FEE ? PLATFORM_FEE.bps : 0,
+        });
         if (cancelled || gen !== generation) return;
-        if (q.outAmount === 0n) {
+        if (!q || q.outAmount === 0n) {
           // A thin book is transient — the maker bot re-quotes it — so keep
           // the loop alive to self-heal, unlike the terminal no-market case.
           setQuote({
-            ...INITIAL,
+            ...INITIAL_QUOTE,
             status: "error",
             error: "No liquidity for this size",
           });
@@ -148,7 +128,8 @@ export const useEclobQuote = (
           // panel reports what the swap will charge rather than what the env
           // asks for. Zero (a market whose ceiling turns fees off) surfaces
           // as `null` — no fee applies, so there is no rate to show.
-          platformFeeBps: platformFeeBps > 0 ? platformFeeBps : null,
+          platformFeeBps: q.platformFeeBps > 0 ? q.platformFeeBps : null,
+          venue: q.venue,
           hasQuote: true,
           error: null,
         });
@@ -157,7 +138,11 @@ export const useEclobQuote = (
         if (cancelled || gen !== generation) return;
         // An RPC hiccup is transient; keep the loop alive so a single failed
         // read doesn't freeze the quote until the user edits an input.
-        setQuote({ ...INITIAL, status: "error", error: getErrorMessage(e) });
+        setQuote({
+          ...INITIAL_QUOTE,
+          status: "error",
+          error: getErrorMessage(e),
+        });
         schedule(QUOTE_REFRESH_MS, gen);
       }
     };

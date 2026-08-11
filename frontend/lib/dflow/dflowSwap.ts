@@ -1,6 +1,7 @@
 // cspell:word jito
 "use client";
 
+import { extractDflowApiError } from "@dropset/sdk";
 import type { SolanaClientRuntime, WalletSession } from "@solana/client";
 import {
   getBase64Encoder,
@@ -90,48 +91,6 @@ export class DflowSwapError extends Error {
   }
 }
 
-type OrderErrorBody = {
-  code?: string;
-  msg?: string;
-};
-
-// Extract a human-readable message from a non-2xx DFlow response. Both
-// /quote (handled directly) and /order (handled here) wrap errors as
-// `{ msg, code }`. Falls back to a status + truncated raw body so a
-// transient HTML 502 page surfaces as "HTTP 502: <!DOCTYPE…" rather
-// than the generic "HTTP 502" the previous open-coded paths produced.
-export type DflowApiErrorInfo = { message: string; code: string | null };
-export async function extractDflowApiError(
-  res: Response,
-): Promise<DflowApiErrorInfo> {
-  let bodyText: string | null = null;
-  try {
-    bodyText = await res.text();
-  } catch {
-    return { message: `HTTP ${res.status}`, code: null };
-  }
-  if (!bodyText) return { message: `HTTP ${res.status}`, code: null };
-  try {
-    const body = JSON.parse(bodyText) as OrderErrorBody;
-    if (typeof body?.msg === "string" && body.msg.length > 0) {
-      return {
-        message: body.msg,
-        code: typeof body.code === "string" ? body.code : null,
-      };
-    }
-    if (typeof body?.code === "string" && body.code.length > 0) {
-      return { message: `${body.code} (HTTP ${res.status})`, code: body.code };
-    }
-    return {
-      message: `HTTP ${res.status}: ${bodyText.slice(0, MAX_RAW_BODY_PREVIEW)}`,
-      code: null,
-    };
-  } catch {
-    return { message: `HTTP ${res.status} with malformed body`, code: null };
-  }
-}
-const MAX_RAW_BODY_PREVIEW = 200;
-
 // Common wallets each surface user-rejection with a slightly different
 // message. Match conservatively — we'd rather classify a true wallet
 // failure as "rejected" (and prompt the user to retry) than classify a
@@ -176,6 +135,10 @@ export async function executeDflowSwap(
   if (fee) {
     url.searchParams.set("platformFeeBps", String(fee.bps));
     url.searchParams.set("feeAccount", fee.feeAccount);
+    // Pinned rather than left to the server default (which is `outputMint`
+    // today) so this can't drift from the quote, which pins it too — the
+    // resolved feeAccount is an ATA of the output mint either way.
+    url.searchParams.set("platformFeeMode", "outputMint");
   }
 
   const timeout = AbortSignal.timeout(DFLOW_ORDER_TIMEOUT_MS);
