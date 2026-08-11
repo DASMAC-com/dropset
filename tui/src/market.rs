@@ -165,9 +165,11 @@ pub fn ladder_at_spread_bps(spread_bps: u32) -> [(u32, u16); 4] {
 /// scales the ratio down, fewer scales it up.
 ///
 /// The bootstrap no longer stamps a reference (markets open dark, see
-/// [`seed_vault`]), so this is the conversion a *quoting* process applies —
-/// the maker bot's, mirrored here so the config's declared price can be range-
-/// checked against the `Price` codec before a market is ever brought up.
+/// [`seed_vault`]), so nothing converts a price at bring-up time any more.
+/// What the conversion still serves is the config range check in this
+/// module's tests: a pair whose declared price can't encode as a `Price`
+/// would be unquotable once a maker did stamp it. That is now caught by
+/// `cargo test`, not by a bootstrap that refuses to bring the market up.
 pub fn reference_atoms_ratio(config: &PairConfig) -> f64 {
     config.reference_price * 10f64.powi(config.quote.decimals as i32 - config.base.decimals as i32)
 }
