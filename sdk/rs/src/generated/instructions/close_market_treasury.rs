@@ -17,15 +17,16 @@ pub struct CloseMarketTreasury {
     pub admin: solana_pubkey::Pubkey,
     /// Singleton registry, read for the admin-membership check.
     pub registry: solana_pubkey::Pubkey,
-    /// Market owning the treasury. Read-only — closing a treasury does
-    /// not mutate market state (the market is closed separately, after
-    /// both treasuries are gone). The market PDA still signs the
-    /// `CloseAccount` CPI via its `(base_mint, quote_mint)` seeds,
-    /// recovered from `market.bump`. Taken bare (no `seeds` constraint),
-    /// matching every other handler: the `associated_token::authority =
-    /// market` constraint on `treasury` already binds the ATA to this
-    /// market, and the CPI signature fails if a non-matching market is
-    /// passed.
+    /// Market owning the treasury. `mut` so the leg's accrued-fee counter
+    /// can be zeroed as its atoms leave — the counter and the balance it
+    /// claims must move together, or the custody invariant reads as
+    /// violated for the moment between (the market account is closed
+    /// separately, after both treasuries are gone). The market PDA also
+    /// signs both CPIs via its `(base_mint, quote_mint)` seeds, recovered
+    /// from `market.bump`. Taken bare (no `seeds` constraint), matching
+    /// every other handler: the `associated_token::authority = market`
+    /// constraint on `treasury` already binds the ATA to this market, and
+    /// the CPI signature fails if a non-matching market is passed.
     pub market: solana_pubkey::Pubkey,
     /// One of the market's two leg mints. The ATA constraint below binds
     /// `treasury` to the canonical `(market, mint)` ATA; the handler
@@ -35,8 +36,19 @@ pub struct CloseMarketTreasury {
     pub token_program: solana_pubkey::Pubkey,
     /// The treasury ATA to close. The ATA constraint pins it to
     /// `ata(market, mint, token_program)`, so a non-canonical account is
-    /// rejected before the handler runs. Must be drained to zero.
+    /// rejected before the handler runs. Drained to `token_recipient`
+    /// below, then closed.
     pub treasury: solana_pubkey::Pubkey,
+    /// Receives the treasury's remaining **tokens** — the accrued taker
+    /// fee plus any unsolicited transfer — immediately before the close.
+    /// Any admin-chosen token account for `mint`; left unconstrained
+    /// beyond "is a token account" because `transfer_checked` enforces
+    /// the mint match itself, matching `sweep_residual`'s destination.
+    ///
+    /// Distinct from `rent_recipient` below, which receives the account's
+    /// **lamports**: this one is a token account and takes the balance,
+    /// that one is any address and takes the rent.
+    pub token_recipient: solana_pubkey::Pubkey,
     /// Receives the treasury's rent lamports on close.
     /// CHECK: rent destination only; no constraints required — the admin
     /// chooses where reclaimed rent lands.
@@ -53,7 +65,7 @@ impl CloseMarketTreasury {
         &self,
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
-        let mut accounts = Vec::with_capacity(7 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(8 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.admin, true,
         ));
@@ -61,10 +73,7 @@ impl CloseMarketTreasury {
             self.registry,
             false,
         ));
-        accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.market,
-            false,
-        ));
+        accounts.push(solana_instruction::AccountMeta::new(self.market, false));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.mint, false,
         ));
@@ -73,6 +82,10 @@ impl CloseMarketTreasury {
             false,
         ));
         accounts.push(solana_instruction::AccountMeta::new(self.treasury, false));
+        accounts.push(solana_instruction::AccountMeta::new(
+            self.token_recipient,
+            false,
+        ));
         accounts.push(solana_instruction::AccountMeta::new(
             self.rent_recipient,
             false,
@@ -120,11 +133,12 @@ impl Default for CloseMarketTreasuryInstructionData {
 ///
 ///   0. `[signer]` admin
 ///   1. `[]` registry
-///   2. `[]` market
+///   2. `[writable]` market
 ///   3. `[]` mint
 ///   4. `[optional]` token_program (default to `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`)
 ///   5. `[writable]` treasury
-///   6. `[writable]` rent_recipient
+///   6. `[writable]` token_recipient
+///   7. `[writable]` rent_recipient
 #[derive(Clone, Debug, Default)]
 pub struct CloseMarketTreasuryBuilder {
     admin: Option<solana_pubkey::Pubkey>,
@@ -133,6 +147,7 @@ pub struct CloseMarketTreasuryBuilder {
     mint: Option<solana_pubkey::Pubkey>,
     token_program: Option<solana_pubkey::Pubkey>,
     treasury: Option<solana_pubkey::Pubkey>,
+    token_recipient: Option<solana_pubkey::Pubkey>,
     rent_recipient: Option<solana_pubkey::Pubkey>,
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
@@ -153,15 +168,16 @@ impl CloseMarketTreasuryBuilder {
         self.registry = Some(registry);
         self
     }
-    /// Market owning the treasury. Read-only — closing a treasury does
-    /// not mutate market state (the market is closed separately, after
-    /// both treasuries are gone). The market PDA still signs the
-    /// `CloseAccount` CPI via its `(base_mint, quote_mint)` seeds,
-    /// recovered from `market.bump`. Taken bare (no `seeds` constraint),
-    /// matching every other handler: the `associated_token::authority =
-    /// market` constraint on `treasury` already binds the ATA to this
-    /// market, and the CPI signature fails if a non-matching market is
-    /// passed.
+    /// Market owning the treasury. `mut` so the leg's accrued-fee counter
+    /// can be zeroed as its atoms leave — the counter and the balance it
+    /// claims must move together, or the custody invariant reads as
+    /// violated for the moment between (the market account is closed
+    /// separately, after both treasuries are gone). The market PDA also
+    /// signs both CPIs via its `(base_mint, quote_mint)` seeds, recovered
+    /// from `market.bump`. Taken bare (no `seeds` constraint), matching
+    /// every other handler: the `associated_token::authority = market`
+    /// constraint on `treasury` already binds the ATA to this market, and
+    /// the CPI signature fails if a non-matching market is passed.
     #[inline(always)]
     pub fn market(&mut self, market: solana_pubkey::Pubkey) -> &mut Self {
         self.market = Some(market);
@@ -184,10 +200,25 @@ impl CloseMarketTreasuryBuilder {
     }
     /// The treasury ATA to close. The ATA constraint pins it to
     /// `ata(market, mint, token_program)`, so a non-canonical account is
-    /// rejected before the handler runs. Must be drained to zero.
+    /// rejected before the handler runs. Drained to `token_recipient`
+    /// below, then closed.
     #[inline(always)]
     pub fn treasury(&mut self, treasury: solana_pubkey::Pubkey) -> &mut Self {
         self.treasury = Some(treasury);
+        self
+    }
+    /// Receives the treasury's remaining **tokens** — the accrued taker
+    /// fee plus any unsolicited transfer — immediately before the close.
+    /// Any admin-chosen token account for `mint`; left unconstrained
+    /// beyond "is a token account" because `transfer_checked` enforces
+    /// the mint match itself, matching `sweep_residual`'s destination.
+    ///
+    /// Distinct from `rent_recipient` below, which receives the account's
+    /// **lamports**: this one is a token account and takes the balance,
+    /// that one is any address and takes the rent.
+    #[inline(always)]
+    pub fn token_recipient(&mut self, token_recipient: solana_pubkey::Pubkey) -> &mut Self {
+        self.token_recipient = Some(token_recipient);
         self
     }
     /// Receives the treasury's rent lamports on close.
@@ -224,6 +255,7 @@ impl CloseMarketTreasuryBuilder {
                 "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
             )),
             treasury: self.treasury.expect("treasury is not set"),
+            token_recipient: self.token_recipient.expect("token_recipient is not set"),
             rent_recipient: self.rent_recipient.expect("rent_recipient is not set"),
         };
 
@@ -237,15 +269,16 @@ pub struct CloseMarketTreasuryCpiAccounts<'a, 'b> {
     pub admin: &'b solana_account_info::AccountInfo<'a>,
     /// Singleton registry, read for the admin-membership check.
     pub registry: &'b solana_account_info::AccountInfo<'a>,
-    /// Market owning the treasury. Read-only — closing a treasury does
-    /// not mutate market state (the market is closed separately, after
-    /// both treasuries are gone). The market PDA still signs the
-    /// `CloseAccount` CPI via its `(base_mint, quote_mint)` seeds,
-    /// recovered from `market.bump`. Taken bare (no `seeds` constraint),
-    /// matching every other handler: the `associated_token::authority =
-    /// market` constraint on `treasury` already binds the ATA to this
-    /// market, and the CPI signature fails if a non-matching market is
-    /// passed.
+    /// Market owning the treasury. `mut` so the leg's accrued-fee counter
+    /// can be zeroed as its atoms leave — the counter and the balance it
+    /// claims must move together, or the custody invariant reads as
+    /// violated for the moment between (the market account is closed
+    /// separately, after both treasuries are gone). The market PDA also
+    /// signs both CPIs via its `(base_mint, quote_mint)` seeds, recovered
+    /// from `market.bump`. Taken bare (no `seeds` constraint), matching
+    /// every other handler: the `associated_token::authority = market`
+    /// constraint on `treasury` already binds the ATA to this market, and
+    /// the CPI signature fails if a non-matching market is passed.
     pub market: &'b solana_account_info::AccountInfo<'a>,
     /// One of the market's two leg mints. The ATA constraint below binds
     /// `treasury` to the canonical `(market, mint)` ATA; the handler
@@ -255,8 +288,19 @@ pub struct CloseMarketTreasuryCpiAccounts<'a, 'b> {
     pub token_program: &'b solana_account_info::AccountInfo<'a>,
     /// The treasury ATA to close. The ATA constraint pins it to
     /// `ata(market, mint, token_program)`, so a non-canonical account is
-    /// rejected before the handler runs. Must be drained to zero.
+    /// rejected before the handler runs. Drained to `token_recipient`
+    /// below, then closed.
     pub treasury: &'b solana_account_info::AccountInfo<'a>,
+    /// Receives the treasury's remaining **tokens** — the accrued taker
+    /// fee plus any unsolicited transfer — immediately before the close.
+    /// Any admin-chosen token account for `mint`; left unconstrained
+    /// beyond "is a token account" because `transfer_checked` enforces
+    /// the mint match itself, matching `sweep_residual`'s destination.
+    ///
+    /// Distinct from `rent_recipient` below, which receives the account's
+    /// **lamports**: this one is a token account and takes the balance,
+    /// that one is any address and takes the rent.
+    pub token_recipient: &'b solana_account_info::AccountInfo<'a>,
     /// Receives the treasury's rent lamports on close.
     /// CHECK: rent destination only; no constraints required — the admin
     /// chooses where reclaimed rent lands.
@@ -271,15 +315,16 @@ pub struct CloseMarketTreasuryCpi<'a, 'b> {
     pub admin: &'b solana_account_info::AccountInfo<'a>,
     /// Singleton registry, read for the admin-membership check.
     pub registry: &'b solana_account_info::AccountInfo<'a>,
-    /// Market owning the treasury. Read-only — closing a treasury does
-    /// not mutate market state (the market is closed separately, after
-    /// both treasuries are gone). The market PDA still signs the
-    /// `CloseAccount` CPI via its `(base_mint, quote_mint)` seeds,
-    /// recovered from `market.bump`. Taken bare (no `seeds` constraint),
-    /// matching every other handler: the `associated_token::authority =
-    /// market` constraint on `treasury` already binds the ATA to this
-    /// market, and the CPI signature fails if a non-matching market is
-    /// passed.
+    /// Market owning the treasury. `mut` so the leg's accrued-fee counter
+    /// can be zeroed as its atoms leave — the counter and the balance it
+    /// claims must move together, or the custody invariant reads as
+    /// violated for the moment between (the market account is closed
+    /// separately, after both treasuries are gone). The market PDA also
+    /// signs both CPIs via its `(base_mint, quote_mint)` seeds, recovered
+    /// from `market.bump`. Taken bare (no `seeds` constraint), matching
+    /// every other handler: the `associated_token::authority = market`
+    /// constraint on `treasury` already binds the ATA to this market, and
+    /// the CPI signature fails if a non-matching market is passed.
     pub market: &'b solana_account_info::AccountInfo<'a>,
     /// One of the market's two leg mints. The ATA constraint below binds
     /// `treasury` to the canonical `(market, mint)` ATA; the handler
@@ -289,8 +334,19 @@ pub struct CloseMarketTreasuryCpi<'a, 'b> {
     pub token_program: &'b solana_account_info::AccountInfo<'a>,
     /// The treasury ATA to close. The ATA constraint pins it to
     /// `ata(market, mint, token_program)`, so a non-canonical account is
-    /// rejected before the handler runs. Must be drained to zero.
+    /// rejected before the handler runs. Drained to `token_recipient`
+    /// below, then closed.
     pub treasury: &'b solana_account_info::AccountInfo<'a>,
+    /// Receives the treasury's remaining **tokens** — the accrued taker
+    /// fee plus any unsolicited transfer — immediately before the close.
+    /// Any admin-chosen token account for `mint`; left unconstrained
+    /// beyond "is a token account" because `transfer_checked` enforces
+    /// the mint match itself, matching `sweep_residual`'s destination.
+    ///
+    /// Distinct from `rent_recipient` below, which receives the account's
+    /// **lamports**: this one is a token account and takes the balance,
+    /// that one is any address and takes the rent.
+    pub token_recipient: &'b solana_account_info::AccountInfo<'a>,
     /// Receives the treasury's rent lamports on close.
     /// CHECK: rent destination only; no constraints required — the admin
     /// chooses where reclaimed rent lands.
@@ -310,6 +366,7 @@ impl<'a, 'b> CloseMarketTreasuryCpi<'a, 'b> {
             mint: accounts.mint,
             token_program: accounts.token_program,
             treasury: accounts.treasury,
+            token_recipient: accounts.token_recipient,
             rent_recipient: accounts.rent_recipient,
         }
     }
@@ -336,7 +393,7 @@ impl<'a, 'b> CloseMarketTreasuryCpi<'a, 'b> {
         signers_seeds: &[&[&[u8]]],
         remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
     ) -> solana_program_error::ProgramResult {
-        let mut accounts = Vec::with_capacity(7 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(8 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.admin.key,
             true,
@@ -345,7 +402,7 @@ impl<'a, 'b> CloseMarketTreasuryCpi<'a, 'b> {
             *self.registry.key,
             false,
         ));
-        accounts.push(solana_instruction::AccountMeta::new_readonly(
+        accounts.push(solana_instruction::AccountMeta::new(
             *self.market.key,
             false,
         ));
@@ -359,6 +416,10 @@ impl<'a, 'b> CloseMarketTreasuryCpi<'a, 'b> {
         ));
         accounts.push(solana_instruction::AccountMeta::new(
             *self.treasury.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            *self.token_recipient.key,
             false,
         ));
         accounts.push(solana_instruction::AccountMeta::new(
@@ -381,7 +442,7 @@ impl<'a, 'b> CloseMarketTreasuryCpi<'a, 'b> {
             accounts,
             data,
         };
-        let mut account_infos = Vec::with_capacity(8 + remaining_accounts.len());
+        let mut account_infos = Vec::with_capacity(9 + remaining_accounts.len());
         account_infos.push(self.__program.clone());
         account_infos.push(self.admin.clone());
         account_infos.push(self.registry.clone());
@@ -389,6 +450,7 @@ impl<'a, 'b> CloseMarketTreasuryCpi<'a, 'b> {
         account_infos.push(self.mint.clone());
         account_infos.push(self.token_program.clone());
         account_infos.push(self.treasury.clone());
+        account_infos.push(self.token_recipient.clone());
         account_infos.push(self.rent_recipient.clone());
         remaining_accounts
             .iter()
@@ -408,11 +470,12 @@ impl<'a, 'b> CloseMarketTreasuryCpi<'a, 'b> {
 ///
 ///   0. `[signer]` admin
 ///   1. `[]` registry
-///   2. `[]` market
+///   2. `[writable]` market
 ///   3. `[]` mint
 ///   4. `[]` token_program
 ///   5. `[writable]` treasury
-///   6. `[writable]` rent_recipient
+///   6. `[writable]` token_recipient
+///   7. `[writable]` rent_recipient
 #[derive(Clone, Debug)]
 pub struct CloseMarketTreasuryCpiBuilder<'a, 'b> {
     instruction: Box<CloseMarketTreasuryCpiBuilderInstruction<'a, 'b>>,
@@ -428,6 +491,7 @@ impl<'a, 'b> CloseMarketTreasuryCpiBuilder<'a, 'b> {
             mint: None,
             token_program: None,
             treasury: None,
+            token_recipient: None,
             rent_recipient: None,
             __remaining_accounts: Vec::new(),
         });
@@ -445,15 +509,16 @@ impl<'a, 'b> CloseMarketTreasuryCpiBuilder<'a, 'b> {
         self.instruction.registry = Some(registry);
         self
     }
-    /// Market owning the treasury. Read-only — closing a treasury does
-    /// not mutate market state (the market is closed separately, after
-    /// both treasuries are gone). The market PDA still signs the
-    /// `CloseAccount` CPI via its `(base_mint, quote_mint)` seeds,
-    /// recovered from `market.bump`. Taken bare (no `seeds` constraint),
-    /// matching every other handler: the `associated_token::authority =
-    /// market` constraint on `treasury` already binds the ATA to this
-    /// market, and the CPI signature fails if a non-matching market is
-    /// passed.
+    /// Market owning the treasury. `mut` so the leg's accrued-fee counter
+    /// can be zeroed as its atoms leave — the counter and the balance it
+    /// claims must move together, or the custody invariant reads as
+    /// violated for the moment between (the market account is closed
+    /// separately, after both treasuries are gone). The market PDA also
+    /// signs both CPIs via its `(base_mint, quote_mint)` seeds, recovered
+    /// from `market.bump`. Taken bare (no `seeds` constraint), matching
+    /// every other handler: the `associated_token::authority = market`
+    /// constraint on `treasury` already binds the ATA to this market, and
+    /// the CPI signature fails if a non-matching market is passed.
     #[inline(always)]
     pub fn market(&mut self, market: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
         self.instruction.market = Some(market);
@@ -478,10 +543,28 @@ impl<'a, 'b> CloseMarketTreasuryCpiBuilder<'a, 'b> {
     }
     /// The treasury ATA to close. The ATA constraint pins it to
     /// `ata(market, mint, token_program)`, so a non-canonical account is
-    /// rejected before the handler runs. Must be drained to zero.
+    /// rejected before the handler runs. Drained to `token_recipient`
+    /// below, then closed.
     #[inline(always)]
     pub fn treasury(&mut self, treasury: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
         self.instruction.treasury = Some(treasury);
+        self
+    }
+    /// Receives the treasury's remaining **tokens** — the accrued taker
+    /// fee plus any unsolicited transfer — immediately before the close.
+    /// Any admin-chosen token account for `mint`; left unconstrained
+    /// beyond "is a token account" because `transfer_checked` enforces
+    /// the mint match itself, matching `sweep_residual`'s destination.
+    ///
+    /// Distinct from `rent_recipient` below, which receives the account's
+    /// **lamports**: this one is a token account and takes the balance,
+    /// that one is any address and takes the rent.
+    #[inline(always)]
+    pub fn token_recipient(
+        &mut self,
+        token_recipient: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.token_recipient = Some(token_recipient);
         self
     }
     /// Receives the treasury's rent lamports on close.
@@ -547,6 +630,11 @@ impl<'a, 'b> CloseMarketTreasuryCpiBuilder<'a, 'b> {
 
             treasury: self.instruction.treasury.expect("treasury is not set"),
 
+            token_recipient: self
+                .instruction
+                .token_recipient
+                .expect("token_recipient is not set"),
+
             rent_recipient: self
                 .instruction
                 .rent_recipient
@@ -568,6 +656,7 @@ struct CloseMarketTreasuryCpiBuilderInstruction<'a, 'b> {
     mint: Option<&'b solana_account_info::AccountInfo<'a>>,
     token_program: Option<&'b solana_account_info::AccountInfo<'a>>,
     treasury: Option<&'b solana_account_info::AccountInfo<'a>>,
+    token_recipient: Option<&'b solana_account_info::AccountInfo<'a>>,
     rent_recipient: Option<&'b solana_account_info::AccountInfo<'a>>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
     __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,

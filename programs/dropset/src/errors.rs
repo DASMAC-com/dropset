@@ -89,8 +89,8 @@ pub enum DropsetError {
     InvalidLimitPrice,
     #[msg("vault is already on the tombstone list")]
     VaultAlreadyTombstoned,
-    #[msg("token account must be drained to zero before it can be closed")]
-    TokenAccountNotEmpty,
+    #[msg("market vaults still hold inventory for this leg — force-withdraw every depositor and leader first")]
+    MarketVaultsNotDrained,
     #[msg("market treasury must be closed before the market can be closed")]
     MarketTreasuryNotClosed,
     #[msg("market still has outstanding VaultDepositor PDAs")]

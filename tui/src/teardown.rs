@@ -61,13 +61,24 @@ pub fn run(client: &RpcClient, wallet: &Keypair, log: &Logger) -> Result<String>
         None => log.log("No registry to tear down."),
         Some(registry) => {
             log.log("close_registry_fee_vault");
+            // Collected market-creation fees are drained to the operator's fee
+            // ATA on the way out — nothing else can move them, so skipping this
+            // would strand them and block the close. Same one-transaction
+            // create-then-close shape as the treasuries above.
+            let (token_recipient, create_ata) = chain::ata_with_create_ix(
+                &admin,
+                &admin,
+                &registry.fee_mint,
+                &registry.fee_token_program,
+            );
             let ix = chain::build_close_registry_fee_vault_ix(
                 &admin,
                 &registry.fee_mint,
                 &registry.fee_token_program,
+                &token_recipient,
                 &sink_key,
             );
-            let sig = chain::send(client, wallet, &[wallet], &[ix])
+            let sig = chain::send(client, wallet, &[wallet], &[create_ata, ix])
                 .context("close_registry_fee_vault")?;
             log.log(format!("  {sig}"));
 
@@ -151,19 +162,29 @@ fn teardown_market(
         log.accounts_changed();
     }
 
+    // Each treasury is drained before it is closed, so each leg needs a
+    // destination token account for its mint. That is the operator's own ATA:
+    // whatever is left is the protocol's — the leg's accrued taker fee (no
+    // harvest instruction exists to have paid it out earlier) plus any
+    // unsolicited transfer — and the operator is who is winding the market
+    // down. The idempotent create rides in the same transaction, so a wallet
+    // that never held the leg still tears down in one pass.
     for (leg, mint, treasury) in [
         ("base", market.base_mint, market.base_treasury),
         ("quote", market.quote_mint, market.quote_treasury),
     ] {
         log.log(format!("close_market_treasury ({leg})"));
+        let (token_recipient, create_ata) =
+            chain::ata_with_create_ix(&admin, &admin, &mint, &chain::SPL_TOKEN_PROGRAM_ID);
         let ix = chain::build_close_market_treasury_ix(
             &admin,
             &market.address,
             &mint,
             &treasury,
+            &token_recipient,
             rent_recipient,
         );
-        let sig = chain::send(client, wallet, &[wallet], &[ix])
+        let sig = chain::send(client, wallet, &[wallet], &[create_ata, ix])
             .with_context(|| format!("close_market_treasury {leg}"))?;
         log.log(format!("  {sig}"));
     }

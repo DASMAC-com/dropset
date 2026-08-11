@@ -121,9 +121,9 @@ pub enum DropsetError {
     /// 6036 - vault is already on the tombstone list
     #[error("vault is already on the tombstone list")]
     VaultAlreadyTombstoned = 0x1794,
-    /// 6037 - token account must be drained to zero before it can be closed
-    #[error("token account must be drained to zero before it can be closed")]
-    TokenAccountNotEmpty = 0x1795,
+    /// 6037 - market vaults still hold inventory for this leg — force-withdraw every depositor and leader first
+    #[error("market vaults still hold inventory for this leg — force-withdraw every depositor and leader first")]
+    MarketVaultsNotDrained = 0x1795,
     /// 6038 - market treasury must be closed before the market can be closed
     #[error("market treasury must be closed before the market can be closed")]
     MarketTreasuryNotClosed = 0x1796,

@@ -369,13 +369,16 @@ pub fn build_force_withdraw_leader_ix(
     .instruction(ForceWithdrawLeaderInstructionArgs { vault_idx })
 }
 
-/// `close_market_treasury` — close one leg's treasury ATA, refunding its
-/// rent to `rent_recipient`.
+/// `close_market_treasury` — drain the leg's treasury ATA to
+/// `token_recipient` (the accrued taker fee and any unsolicited transfer),
+/// then close it, refunding its rent to `rent_recipient`. `token_recipient`
+/// must be a token account for `mint`; the rent recipient is any address.
 pub fn build_close_market_treasury_ix(
     admin: &Pubkey,
     market: &Pubkey,
     mint: &Pubkey,
     treasury: &Pubkey,
+    token_recipient: &Pubkey,
     rent_recipient: &Pubkey,
 ) -> Instruction {
     CloseMarketTreasury {
@@ -385,6 +388,7 @@ pub fn build_close_market_treasury_ix(
         mint: *mint,
         token_program: SPL_TOKEN_PROGRAM_ID,
         treasury: *treasury,
+        token_recipient: *token_recipient,
         rent_recipient: *rent_recipient,
     }
     .instruction()
@@ -410,12 +414,14 @@ pub fn build_close_market_ix(
     .instruction()
 }
 
-/// `close_registry_fee_vault` — close the registry's fee ATA for
-/// `(fee_mint, token_program)`, refunding rent to `rent_recipient`.
+/// `close_registry_fee_vault` — drain the registry's fee ATA for
+/// `(fee_mint, token_program)` to `token_recipient` (the collected
+/// market-creation fees), then close it, refunding rent to `rent_recipient`.
 pub fn build_close_registry_fee_vault_ix(
     admin: &Pubkey,
     fee_mint: &Pubkey,
     fee_token_program: &Pubkey,
+    token_recipient: &Pubkey,
     rent_recipient: &Pubkey,
 ) -> Instruction {
     let registry = registry_pda();
@@ -425,6 +431,7 @@ pub fn build_close_registry_fee_vault_ix(
         fee_mint: *fee_mint,
         token_program: *fee_token_program,
         fee_vault: associated_token_address(&registry, fee_mint, fee_token_program),
+        token_recipient: *token_recipient,
         rent_recipient: *rent_recipient,
     }
     .instruction()
@@ -537,6 +544,29 @@ pub fn create_ata_idempotent(
     let ix = create_ata_idempotent_ix(&payer.pubkey(), wallet, mint, &SPL_TOKEN_PROGRAM_ID);
     send(client, payer, &[payer], &[ix]).context("create ATA")?;
     Ok(ata)
+}
+
+/// The `(ata, create_ix)` pair for `(wallet, mint, token_program)` — the same
+/// idempotent `CreateIdempotent` as [`create_ata_idempotent`], but returned
+/// rather than sent, for a caller that wants the create bundled into a larger
+/// transaction. Teardown uses it to guarantee its drain destination exists in
+/// the very transaction that drains to it, so the close can't fail on a
+/// missing ATA and can't leave a stray one behind if it does fail.
+///
+/// The token program is explicit rather than assumed to be SPL Token: the
+/// registry's fee mint carries its own (`registry.fee_token_program`), and
+/// deriving the address under the wrong one yields an account the drain's
+/// `transfer_checked` would reject.
+pub fn ata_with_create_ix(
+    payer: &Pubkey,
+    wallet: &Pubkey,
+    mint: &Pubkey,
+    token_program: &Pubkey,
+) -> (Pubkey, Instruction) {
+    (
+        associated_token_address(wallet, mint, token_program),
+        create_ata_idempotent_ix(payer, wallet, mint, token_program),
+    )
 }
 
 /// A System-program `transfer` of `lamports` from `from` (signer) to `to`.

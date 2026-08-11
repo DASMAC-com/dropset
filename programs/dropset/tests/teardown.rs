@@ -1,3 +1,4 @@
+// cspell:word undrained
 //! Teardown / rent-reclamation integration tests (the `admin-teardown`
 //! feature surface).
 //!
@@ -19,6 +20,13 @@
 //! market / registry rent → the admin's `rent_recipient`), and every
 //! account ends up closed. Two ordering guards confirm the
 //! pre-conditions reject out-of-order calls rather than corrupting state.
+//!
+//! The `close_*` steps drain any remaining token balance to a supplied
+//! `token_recipient` before closing, so three further tests cover what
+//! that reaches which the headline zero-balance run cannot: a market that
+//! charged a taker fee, a treasury holding an unsolicited transfer, and a
+//! registry fee vault holding collected market-creation fees. Each of
+//! those balances would otherwise block its close permanently.
 
 #![cfg(feature = "admin-teardown")]
 
@@ -140,9 +148,11 @@ fn full_buildup_teardown_reclaims_all_rent() {
     assert!(f.token_balance(&lead_q) > lead_quote_before);
 
     // ── Step 3: close both treasuries ────────────────────────────────
-    // Both treasuries are now drained, so they close cleanly. The
-    // rejection of a still-funded treasury is covered separately by
-    // `close_treasury_rejects_nonempty`.
+    // Both treasuries are now drained, so they close cleanly with nothing
+    // to pay out. The rejection of a treasury whose vaults still hold
+    // inventory is covered separately by
+    // `close_treasury_rejects_undrained_vaults`, and the non-zero drain
+    // paths by the three tests that follow it.
     let (base_mint, quote_mint) = (f.base_mint, f.quote_mint);
     let (base_treasury, quote_treasury) = (f.base_treasury, f.quote_treasury);
     let rr_before_treasuries = lamports(&f.svm, &rr);
@@ -228,8 +238,9 @@ fn teardown_sweeps_every_historical_fee_mint() {
     );
 
     // No market activity ran against either fee mint — no `create_vault`
-    // ever charged a fee — so both fee vaults are empty and the close
-    // pre-condition (`amount == 0`) holds for each.
+    // ever charged a fee — so both fee vaults are empty and each close is
+    // the zero-balance path, with nothing to drain. The collected-fee case
+    // is `close_registry_fee_vault_drains_collected_fees`.
     assert_eq!(f.token_balance(&default_fee_vault), 0);
     assert_eq!(f.token_balance(&new_fee_vault), 0);
 
@@ -262,20 +273,185 @@ fn teardown_sweeps_every_historical_fee_mint() {
     );
 }
 
-/// A non-empty treasury cannot be closed — the rent reclamation order
-/// requires draining (force-withdraw) first.
+/// A treasury whose vaults still hold inventory cannot be closed — the
+/// rent reclamation order requires draining (force-withdraw) first.
+///
+/// This is the guard that keeps drain-on-close honest: the close pays the
+/// treasury's remaining balance out to `token_recipient`, so without it an
+/// operator could skip the force-withdraws and route depositor principal
+/// to themselves. It rejects on the *vaults'* claim rather than on the
+/// token balance, which is what lets the accrued protocol fee through.
 #[test]
-fn close_treasury_rejects_nonempty() {
+fn close_treasury_rejects_undrained_vaults() {
     let mut f = Fixture::seeded(1_000_000, 1_085_000);
     let admin = f.authority.insecure_clone();
     let rr = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS).pubkey();
-    // The seed left both treasuries holding inventory.
+    // The seed left both treasuries holding inventory, claimed by the vault.
     assert!(f.token_balance(&f.base_treasury) > 0);
+    assert!(f.vault(0).base_atoms.get() > 0);
     let (base_mint, base_treasury) = (f.base_mint, f.base_treasury);
     let err = f
         .close_market_treasury(&admin, &base_mint, &base_treasury, &rr)
-        .expect_err("treasury with a balance must not close");
-    common::assert_program_error(&err, dropset::DropsetError::TokenAccountNotEmpty);
+        .expect_err("treasury whose vaults hold inventory must not close");
+    common::assert_program_error(&err, dropset::DropsetError::MarketVaultsNotDrained);
+}
+
+/// The headline case for drain-on-close: a market that ever charged a
+/// taker fee must still tear down end to end, with the accrued atoms
+/// landing in the operator's token account.
+///
+/// Before the drain, this market was **impossible to close**. The fee is
+/// booked to `accrued_<leg>_fee_atoms` and stays in the treasury; no
+/// harvest instruction exists, and `sweep_residual` deliberately
+/// subtracts the accrued counter rather than paying it out — so after
+/// every depositor and leader is force-withdrawn the treasury still held a
+/// balance, and the close's old empty-account requirement hard-rejected
+/// forever. Localnet teardown only ever worked because
+/// `DEFAULT_TAKER_FEE` is zero.
+#[test]
+fn fee_charging_market_tears_down_and_drains_the_accrued_fee() {
+    let mut f = Fixture::bootstrap();
+    let (leader, alice) = f.with_outside_depositor();
+    let admin = f.authority.insecure_clone();
+    f.set_taker_fee(&admin, 10_000).expect("1% taker fee");
+
+    // A fee'd Buy: the fee slice is withheld from the taker's proceeds and
+    // booked to the market's base-leg accumulator, claimed by no vault.
+    let taker = f.funded_depositor(0, 200_000);
+    f.swap(&taker, 0, 100_000, Price::INFINITY.as_u32(), 1)
+        .expect("fee-bearing swap");
+    let accrued = f.market_header().accrued_base_fee_atoms.get();
+    assert!(accrued > 0, "the fill accrued a protocol fee");
+
+    // Pay out every party's claim, in the documented order.
+    f.force_withdraw_depositor(&admin, 0, &alice.pubkey())
+        .expect("force_withdraw_depositor");
+    f.force_withdraw_leader(&admin, 0, &leader.pubkey())
+        .expect("force_withdraw_leader");
+
+    // The vaults are empty, yet the treasury is *not* — it holds exactly
+    // the accrued fee. This is the state that used to be terminal.
+    let (base_mint, quote_mint) = (f.base_mint, f.quote_mint);
+    let (base_treasury, quote_treasury) = (f.base_treasury, f.quote_treasury);
+    assert_eq!(f.vault(0).base_atoms.get(), 0, "no vault claim remains");
+    assert_eq!(
+        f.token_balance(&base_treasury),
+        accrued,
+        "treasury still holds the accrued fee and nothing else"
+    );
+
+    // Drain-on-close hands it to the operator's token account.
+    let harvest = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
+    let (harvest_base, harvest_quote) = f.create_atas(&harvest.pubkey());
+    let rr = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS).pubkey();
+    f.close_market_treasury_to(&admin, &base_mint, &base_treasury, &harvest_base, &rr)
+        .expect("base treasury closes despite holding the accrued fee");
+    assert_eq!(
+        f.token_balance(&harvest_base),
+        accrued,
+        "the accrued fee was paid to the drain recipient"
+    );
+    assert_eq!(
+        f.market_header().accrued_base_fee_atoms.get(),
+        0,
+        "the counter is zeroed with the atoms it claimed"
+    );
+    assert!(!exists(&f.svm, &base_treasury), "base treasury closed");
+
+    // The quote leg accrued nothing (a Buy fees the base leg), so its
+    // close is the zero-balance path — no token CPI, nothing paid out.
+    f.close_market_treasury_to(&admin, &quote_mint, &quote_treasury, &harvest_quote, &rr)
+        .expect("quote treasury closes");
+    assert_eq!(
+        f.token_balance(&harvest_quote),
+        0,
+        "a Buy accrues no quote-leg fee"
+    );
+    assert!(!exists(&f.svm, &quote_treasury), "quote treasury closed");
+
+    // …and the market itself now closes. That is the unblock.
+    let market = f.market;
+    f.close_market(&admin, &rr)
+        .expect("a fee-charging market can be closed");
+    assert!(!exists(&f.svm, &market), "market account closed");
+    assert_eq!(f.registry_market_count(), 0);
+}
+
+/// Drain-on-close also recovers an **unsolicited transfer**. Anyone can
+/// send tokens straight to a treasury ATA, and on the old empty-account
+/// rule a single atom of dust from a stranger was enough to block the
+/// close — and with it the whole teardown run. No vault is even open here,
+/// so the balance is unambiguously nobody's claim.
+#[test]
+fn close_treasury_recovers_an_unsolicited_transfer() {
+    let mut f = Fixture::bootstrap();
+    let admin = f.authority.insecure_clone();
+    let rr = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS).pubkey();
+
+    // A stranger's dust lands in the market's base treasury.
+    const DUST: u64 = 12_345;
+    let (base_mint, base_treasury) = (f.base_mint, f.base_treasury);
+    common::mint_to(&mut f.svm, &admin, &base_mint, &base_treasury, DUST);
+    assert_eq!(f.token_balance(&base_treasury), DUST);
+    assert_eq!(
+        f.market_header().accrued_base_fee_atoms.get(),
+        0,
+        "no fee was ever charged — the balance is purely unsolicited"
+    );
+
+    let recipient = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
+    let (recipient_base, _) = f.create_atas(&recipient.pubkey());
+    f.close_market_treasury_to(&admin, &base_mint, &base_treasury, &recipient_base, &rr)
+        .expect("dust must not block the close");
+    assert_eq!(
+        f.token_balance(&recipient_base),
+        DUST,
+        "the unsolicited atoms were recovered rather than stranded"
+    );
+    assert!(!exists(&f.svm, &base_treasury), "base treasury closed");
+}
+
+/// The registry fee vault has the same disease as a market treasury, and
+/// the same cure. `create_vault` on the non-admin path charges the open
+/// fee into the registry's fee ATA, and **no** instruction moves tokens
+/// out of it — so a single collected fee used to leave the fee vault, and
+/// therefore the registry, permanently impossible to close (blocking the
+/// redeploy).
+#[test]
+fn close_registry_fee_vault_drains_collected_fees() {
+    let mut f = Fixture::bootstrap();
+    let admin = f.authority.insecure_clone();
+    let rr = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS).pubkey();
+
+    // A non-admin opens a vault and pays the fee — the only way tokens
+    // ever enter this account.
+    let bob = f.funded_keypair(10 * common::SIGNER_FUNDING_LAMPORTS);
+    f.create_vault_as(&bob, 0, bob.pubkey(), false, Pubkey::default())
+        .expect("non-admin opens a vault and pays the fee");
+    let fee_vault = f.registry_fee_treasury;
+    assert_eq!(
+        f.token_balance(&fee_vault),
+        common::CREATE_MARKET_FEE_ATOMS,
+        "the open fee was collected"
+    );
+
+    let fee_mint = f.fee_mint;
+    let collector = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
+    let collector_ata = f.create_ata_for(&collector.pubkey(), &fee_mint);
+    f.close_registry_fee_vault_to(
+        &admin,
+        &fee_mint,
+        &common::SPL_TOKEN_PROGRAM_ID,
+        &collector_ata,
+        &rr,
+    )
+    .expect("a fee vault holding collected fees still closes");
+    assert_eq!(
+        f.token_balance(&collector_ata),
+        common::CREATE_MARKET_FEE_ATOMS,
+        "the collected fees were paid out, not stranded"
+    );
+    assert!(!exists(&f.svm, &fee_vault), "registry fee vault closed");
 }
 
 /// Only a registry admin may drive the teardown surface.

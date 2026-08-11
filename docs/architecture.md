@@ -306,12 +306,23 @@ error restore both accumulators to their pre-swap values along with
 vault inventory and level sizes (see **Minimum-output guard**). A swap
 that does not commit accrues nothing.
 
-**Harvest — deferred.** There is no instruction that moves accrued fee
-out of the treasury yet. Fees accrue safely and stay fully recoverable,
-so nothing is lost by waiting on the destination decision (an
-admin-supplied token account versus a fixed protocol PDA; the latter is
-only worth the machinery once a token or a defined treasury policy
+**Harvest — deferred, except at teardown.** No instruction moves accrued
+fee out of a **live** market. Fees accrue safely and stay fully
+recoverable, so nothing is lost by waiting on the destination decision
+(an admin-supplied token account versus a fixed protocol PDA; the latter
+is only worth the machinery once a token or a defined treasury policy
 exists).
+
+The one path that does pay accrued fee out is
+`close_market_treasury`, which drains the treasury to a supplied
+`token_recipient` immediately before closing it (see **Account lifecycle
+and rent reclamation → Teardown ordering**). That is not the steady-state
+harvest arriving early — it fires only on a market being destroyed, on a
+feature-gated instruction absent from the final immutable build — it is
+what makes teardown *possible*: with no harvest and a `SweepResidual`
+that subtracts the accrued counters by design, a market that ever charged
+a fee would otherwise hold a treasury balance no instruction could clear,
+and an empty-account close requirement would reject it forever.
 
 #### Residual sweep
 
@@ -379,10 +390,12 @@ on-chain pre-conditions:
   to clear stragglers — see **Depositor positions and cost basis →
   Admin force-withdraw**). Counter enforcement is required because
   the program cannot iterate all `VaultDepositor` PDAs on-chain.
-- `base_treasury` and `quote_treasury` are both closed — which
-  requires both to be drained to zero, which by the treasury
-  invariants above requires `vault.base_atoms == 0` and
-  `vault.quote_atoms == 0` on every vault on the market.
+- `base_treasury` and `quote_treasury` are both closed — and
+  `close_market_treasury` in turn requires `vault.base_atoms == 0` /
+  `vault.quote_atoms == 0` on every vault on the market, so every
+  depositor and leader is necessarily paid out first. It checks the
+  vaults' claim rather than the ATA balance, which is what lets the
+  accrued protocol fee through to the drain.
 
 Once those hold, the market's lamports are transferred to a
 `rent_recipient` account and the account data is zeroed and
@@ -2399,15 +2412,15 @@ SOL lamports that come back on close — accounts inlined into a
 parent (vault sectors inside a market slab) do not hold separate
 rent and close with their parent.
 
-| #   | Account                                                                        | Owner program          | Holds rent?                                  | Close path                                                                                                                                                                                                                            | Rent recipient                            |
-| --- | ------------------------------------------------------------------------------ | ---------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| 1   | **Registry** PDA, seeds `[b"registry"]`                                        | dropset                | yes (variable: 8 + header + admin slab tail) | `close_registry` (admin, feature-gated). Pre-condition: `market_count == 0`, zero admins beyond the caller, fee vault closed.                                                                                                         | passed-in `rent_recipient`                |
-| 2   | **Registry fee vault** ATA, `ata(registry, fee_mint, tp)`                      | SPL Token / Token-2022 | yes (~165–170 B)                             | `close_registry_fee_vault` (admin, feature-gated). Pre-condition: `amount == 0` (drain via existing admin fee sweep). CPI `CloseAccount` signed by Registry PDA.                                                                      | passed-in `rent_recipient`                |
-| 3   | **Market** PDA (`MarketHeader` + vault slab inline)                            | dropset                | yes (large; grows with vault count)          | `close_market` (admin, feature-gated). Pre-conditions: `outstanding_vault_depositors == 0`, both treasuries closed.                                                                                                                   | passed-in `rent_recipient`                |
-| 4   | **Vault** sectors inside the market slab                                       | n/a (inline)           | **no separate rent** — covered by Market's   | closed implicitly by `close_market`; there is no per-vault close instruction. Reclaim (to the free DLL) does not refund any rent.                                                                                                     | n/a                                       |
-| 5   | **Base treasury** ATA, derived from market PDA                                 | SPL Token / Token-2022 | yes                                          | `close_market_treasury` (admin, feature-gated). Pre-condition: `amount == 0`. CPI `CloseAccount` signed by market PDA.                                                                                                                | passed-in `rent_recipient`                |
-| 6   | **Quote treasury** ATA, derived from market PDA                                | SPL Token / Token-2022 | yes                                          | same instruction, run for the quote leg.                                                                                                                                                                                              | passed-in `rent_recipient`                |
-| 7   | **VaultDepositor** PDA, seeds `("vault_depositor", market, sector_idx, owner)` | dropset                | yes                                          | (a) existing close-on-empty in `Withdraw` when `shares == 0`; (b) `force_withdraw_depositor` (see **Depositor positions and cost basis → Admin force-withdraw**). Either path decrements `MarketHeader.outstanding_vault_depositors`. | depositor `owner` — their PDA, their rent |
+| #   | Account                                                                        | Owner program          | Holds rent?                                  | Close path                                                                                                                                                                                                                                                           | Rent recipient                            |
+| --- | ------------------------------------------------------------------------------ | ---------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| 1   | **Registry** PDA, seeds `[b"registry"]`                                        | dropset                | yes (variable: 8 + header + admin slab tail) | `close_registry` (admin, feature-gated). Pre-condition: `market_count == 0`, zero admins beyond the caller, fee vault closed.                                                                                                                                        | passed-in `rent_recipient`                |
+| 2   | **Registry fee vault** ATA, `ata(registry, fee_mint, tp)`                      | SPL Token / Token-2022 | yes (~165–170 B)                             | `close_registry_fee_vault` (admin, feature-gated). No balance pre-condition: collected fees are drained to a passed-in `token_recipient` first, then CPI `CloseAccount` signed by Registry PDA.                                                                      | passed-in `rent_recipient`                |
+| 3   | **Market** PDA (`MarketHeader` + vault slab inline)                            | dropset                | yes (large; grows with vault count)          | `close_market` (admin, feature-gated). Pre-conditions: `outstanding_vault_depositors == 0`, both treasuries closed.                                                                                                                                                  | passed-in `rent_recipient`                |
+| 4   | **Vault** sectors inside the market slab                                       | n/a (inline)           | **no separate rent** — covered by Market's   | closed implicitly by `close_market`; there is no per-vault close instruction. Reclaim (to the free DLL) does not refund any rent.                                                                                                                                    | n/a                                       |
+| 5   | **Base treasury** ATA, derived from market PDA                                 | SPL Token / Token-2022 | yes                                          | `close_market_treasury` (admin, feature-gated). Pre-condition: no vault claims the leg (`Σ vault.base_atoms == 0`). Remaining balance — accrued fee, unsolicited transfers — drained to a passed-in `token_recipient`, then CPI `CloseAccount` signed by market PDA. | passed-in `rent_recipient`                |
+| 6   | **Quote treasury** ATA, derived from market PDA                                | SPL Token / Token-2022 | yes                                          | same instruction, run for the quote leg.                                                                                                                                                                                                                             | passed-in `rent_recipient`                |
+| 7   | **VaultDepositor** PDA, seeds `("vault_depositor", market, sector_idx, owner)` | dropset                | yes                                          | (a) existing close-on-empty in `Withdraw` when `shares == 0`; (b) `force_withdraw_depositor` (see **Depositor positions and cost basis → Admin force-withdraw**). Either path decrements `MarketHeader.outstanding_vault_depositors`.                                | depositor `owner` — their PDA, their rent |
 
 Everything outside this table (`system_program`, `token_program`,
 `ProgramData`, the program executable itself) is not program state
@@ -2428,6 +2441,7 @@ Per market, in order:
    (rent to the depositor), and decrements
    `MarketHeader.outstanding_vault_depositors`. The market is
    ready for step 4 only when this counter reads zero.
+
 1. **Force-withdraw every leader.** Admin runs
    `force_withdraw_leader` against each vault. The leader's stake
    lives in `vault.leader_shares` (no separate PDA), so this is the
@@ -2442,16 +2456,25 @@ Per market, in order:
    `base_treasury.amount == accrued_base_fee_atoms` and
    `quote_treasury.amount == accrued_quote_fee_atoms` — zero on a market that
    never charged a taker fee.
+
 1. **Close both treasuries.** `close_market_treasury` for the
-   base leg, again for the quote leg. **Known limitation:** each
-   requires its treasury drained to zero, so a market with a non-zero
-   `accrued_<leg>_fee_atoms` cannot be closed until the accrued revenue can
-   leave the treasury — and the harvest instruction is deliberately
-   deferred (see **MarketHeader → Fee model**). `SweepResidual` does
-   *not* unblock this: it subtracts the accrued counter rather than
-   paying it out. Teardown of a fee-charging market therefore waits on
-   the harvest; markets whose `taker_fee` stayed zero (every
-   localnet / testnet market today) tear down unchanged.
+   base leg, again for the quote leg. Each call requires that no vault
+   still claims the leg (`Σ vault.<leg>_atoms == 0`, which step 2 is what
+   establishes), transfers whatever the treasury still holds to a
+   passed-in `token_recipient`, zeros that leg's
+   `accrued_<leg>_fee_atoms`, and then closes the ATA.
+
+   Draining rather than demanding an empty account is what makes this
+   step reachable at all. Two balances legitimately survive steps 1–2 and
+   no other instruction can move either: the leg's
+   `accrued_<leg>_fee_atoms` (the harvest is deferred, and
+   `SweepResidual` subtracts the counter rather than paying it out) and
+   any **unsolicited transfer** to the ATA — which, since anyone can send
+   one, would otherwise be a teardown griefing vector. The ordering
+   guarantee is preserved by checking the vaults' claim instead of the
+   balance, so depositor principal can never be routed to
+   `token_recipient`.
+
 1. **Close the market.** `close_market` reclaims the entire
    `MarketHeader` + vault slab rent in one shot, and decrements
    `registry.market_count` by one.
@@ -2459,24 +2482,31 @@ Per market, in order:
 Repeat 1–4 for every market on the registry. Then, once every
 market is gone:
 
-1. **Drain the fee vault.** Existing admin fee sweep moves
-   accumulated fees out of the Registry fee ATA. If a market's
-   `fee_config.mint` or the registry's `default_fee_config.mint`
-   changed during the program's life, more than one fee ATA may
-   exist; sweep each. The set of historical fee mints is **not
-   enumerated on-chain** — the admin maintains it off-chain from
-   `SetMarketFeeConfig` and `SetDefaultFeeConfig` events (both
-   create a registry fee ATA for the new mint).
-1. **Close fee vault(s).** `close_registry_fee_vault` per fee ATA.
+1. **Close fee vault(s).** `close_registry_fee_vault` per fee ATA. Each
+   call drains the vault's collected market-creation fees to a passed-in
+   `token_recipient` and then closes it — the same drain-then-close shape
+   as the treasuries, and for the same reason: **no** instruction moves
+   tokens out of a registry fee ATA, so a single collected fee under an
+   empty-account rule would strand the balance and block the close (and
+   with it the redeploy) permanently.
+
+   If a market's `fee_config.mint` or the registry's
+   `default_fee_config.mint` changed during the program's life, more than
+   one fee ATA may exist; close each. The set of historical fee mints is
+   **not enumerated on-chain** — the admin maintains it off-chain from
+   `SetMarketFeeConfig` and `SetDefaultFeeConfig` events (both create a
+   registry fee ATA for the new mint).
+
 1. **Remove all but one admin.** Existing `remove_admin` enforces
    "never empty" — `close_registry` is the only path that drops
    the last admin.
+
 1. **Close the registry.** `close_registry` requires
    `registry.market_count == 0` (witness that step 4 ran for
    every market), zeros the slab, and refunds the Registry PDA's
    lamports to `rent_recipient`.
 
-After step 8 the program has zero on-chain state and the upgrade
+After the last step the program has zero on-chain state and the upgrade
 authority can redeploy a fresh binary at the same program id.
 
 ### Feature gating

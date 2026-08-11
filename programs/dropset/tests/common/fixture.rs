@@ -478,6 +478,26 @@ impl Fixture {
         associated_token_address(owner, &self.quote_mint, &SPL_TOKEN_PROGRAM_ID)
     }
 
+    /// Create (idempotently) `owner`'s ATA for an arbitrary `mint`, paid
+    /// by `authority`, and return its address. The any-mint sibling of
+    /// [`Self::create_atas`], which is fixed to the market's two legs —
+    /// used where a destination token account is needed for a mint the
+    /// fixture doesn't track, such as a teardown drain recipient.
+    pub fn create_ata_for(&mut self, owner: &Pubkey, mint: &Pubkey) -> Pubkey {
+        let auth = self.authority.insecure_clone();
+        let ata = associated_token_address(owner, mint, &SPL_TOKEN_PROGRAM_ID);
+        if self.svm.get_account(&ata).is_none() {
+            create_associated_token_account(
+                &mut self.svm,
+                &auth,
+                owner,
+                mint,
+                &SPL_TOKEN_PROGRAM_ID,
+            );
+        }
+        ata
+    }
+
     // ── instruction senders ──────────────────────────────────────────
 
     /// `create_vault` via the admin path (payer = `authority`, fee
@@ -1673,14 +1693,36 @@ impl Fixture {
         send_ixn(&mut self.svm, admin, ix)
     }
 
-    /// `close_market_treasury` — close one market treasury ATA, sending
-    /// its rent to `rent_recipient`. `mint` selects the leg; `treasury`
-    /// is that leg's treasury ATA.
+    /// `close_market_treasury` — close one market treasury ATA, draining
+    /// any remaining tokens to the **admin's own ATA** for `mint` (created
+    /// on demand) and sending the rent to `rent_recipient`. `mint` selects
+    /// the leg; `treasury` is that leg's treasury ATA.
+    ///
+    /// The implicit destination keeps the zero-balance teardown cases —
+    /// the majority — free of a recipient they don't care about. Use
+    /// [`Self::close_market_treasury_to`] where the drain itself is what's
+    /// under test.
     pub fn close_market_treasury(
         &mut self,
         admin: &Keypair,
         mint: &Pubkey,
         treasury: &Pubkey,
+        rent_recipient: &Pubkey,
+    ) -> Result<(), String> {
+        let token_recipient = self.create_ata_for(&admin.pubkey(), mint);
+        self.close_market_treasury_to(admin, mint, treasury, &token_recipient, rent_recipient)
+    }
+
+    /// Like [`Self::close_market_treasury`] but with an explicit
+    /// `token_recipient` — the token account the treasury's remaining
+    /// balance (accrued taker fee, unsolicited transfers) is drained to
+    /// immediately before the close.
+    pub fn close_market_treasury_to(
+        &mut self,
+        admin: &Keypair,
+        mint: &Pubkey,
+        treasury: &Pubkey,
+        token_recipient: &Pubkey,
         rent_recipient: &Pubkey,
     ) -> Result<(), String> {
         let ix = Instruction::new_with_bytes(
@@ -1689,10 +1731,11 @@ impl Fixture {
             vec![
                 AccountMeta::new_readonly(admin.pubkey(), true),
                 AccountMeta::new_readonly(self.registry, false),
-                AccountMeta::new_readonly(self.market, false),
+                AccountMeta::new(self.market, false),
                 AccountMeta::new_readonly(*mint, false),
                 AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
                 AccountMeta::new(*treasury, false),
+                AccountMeta::new(*token_recipient, false),
                 AccountMeta::new(*rent_recipient, false),
             ],
         );
@@ -1739,6 +1782,27 @@ impl Fixture {
         fee_token_program: &Pubkey,
         rent_recipient: &Pubkey,
     ) -> Result<(), String> {
+        let token_recipient = self.create_ata_for(&admin.pubkey(), fee_mint);
+        self.close_registry_fee_vault_to(
+            admin,
+            fee_mint,
+            fee_token_program,
+            &token_recipient,
+            rent_recipient,
+        )
+    }
+
+    /// Like [`Self::close_registry_fee_vault_for`] but with an explicit
+    /// `token_recipient` — the token account the vault's collected
+    /// market-creation fees are drained to immediately before the close.
+    pub fn close_registry_fee_vault_to(
+        &mut self,
+        admin: &Keypair,
+        fee_mint: &Pubkey,
+        fee_token_program: &Pubkey,
+        token_recipient: &Pubkey,
+        rent_recipient: &Pubkey,
+    ) -> Result<(), String> {
         let fee_vault = associated_token_address(&self.registry, fee_mint, fee_token_program);
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
@@ -1749,6 +1813,7 @@ impl Fixture {
                 AccountMeta::new_readonly(*fee_mint, false),
                 AccountMeta::new_readonly(*fee_token_program, false),
                 AccountMeta::new(fee_vault, false),
+                AccountMeta::new(*token_recipient, false),
                 AccountMeta::new(*rent_recipient, false),
             ],
         );
