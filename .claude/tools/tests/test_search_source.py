@@ -224,6 +224,88 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(out["files"], [])
 
 
+class GlobFilterTests(unittest.TestCase):
+    """``--glob`` picks *files*, where ``--dir`` picks subtrees.
+
+    The measured gap: a section map of three named docs cost 3.0k because
+    ``--dir docs --ext md`` returned ~200 headings across 18 files.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def write(self, rel, text):
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_an_exact_path_selects_only_that_file(self):
+        self.write("docs/fx-survey.md", "# Wanted\n")
+        self.write("docs/architecture.md", "# Unwanted\n")
+        out = ss.search("^# ", self.root, globs=("docs/fx-survey.md",))
+        self.assertEqual(out["files"], ["docs/fx-survey.md"])
+
+    def test_several_named_paths_select_exactly_those(self):
+        self.write("docs/a.md", "# A\n")
+        self.write("docs/b.md", "# B\n")
+        self.write("docs/c.md", "# C\n")
+        out = ss.search("^# ", self.root, globs=("docs/a.md", "docs/b.md"))
+        self.assertEqual(out["files"], ["docs/a.md", "docs/b.md"])
+
+    def test_a_single_star_does_not_cross_a_separator(self):
+        """`fnmatch` maps `*` to `.*`, which would wrongly match the nested file."""
+        self.write("docs/top.md", "# Top\n")
+        self.write("docs/deep/nested.md", "# Nested\n")
+        out = ss.search("^# ", self.root, globs=("docs/*.md",))
+        self.assertEqual(out["files"], ["docs/top.md"])
+
+    def test_a_double_star_spans_depth(self):
+        self.write("programs/a/state.rs", "struct S;\n")
+        self.write("programs/a/b/state.rs", "struct S;\n")
+        self.write("programs/a/swap.rs", "struct S;\n")
+        out = ss.search("struct S", self.root, globs=("programs/**/state.rs",))
+        self.assertEqual(out["files"], ["programs/a/b/state.rs", "programs/a/state.rs"])
+
+    def test_a_double_star_also_matches_at_zero_depth(self):
+        """`a/**/b` should match `a/b`, not only `a/x/b`."""
+        self.write("programs/state.rs", "struct S;\n")
+        out = ss.search("struct S", self.root, globs=("programs/**/state.rs",))
+        self.assertEqual(out["files"], ["programs/state.rs"])
+
+    def test_a_separator_free_pattern_matches_on_basename(self):
+        self.write("a/Cargo.toml", "[package]\n")
+        self.write("b/deep/Cargo.toml", "[package]\n")
+        out = ss.search(r"\[package\]", self.root, globs=("*.toml",))
+        self.assertEqual(out["files"], ["a/Cargo.toml", "b/deep/Cargo.toml"])
+
+    def test_a_glob_cannot_reach_into_a_pruned_tree(self):
+        """The exclude lists still win: a glob is a narrowing, not an override."""
+        self.write("target/debug/notes.md", "# Generated\n")
+        out = ss.search("^# ", self.root, globs=("target/**/notes.md",))
+        self.assertEqual(out["files"], [])
+
+    def test_scanned_reports_zero_when_the_glob_named_nothing(self):
+        """ "Glob matched no files" and "its files held no match" both total 0."""
+        self.write("docs/real.md", "# Real\n")
+        out = ss.search("^# ", self.root, globs=("docs/typo.md",))
+        self.assertEqual(out["total"], 0)
+        self.assertEqual(out["scanned"], 0)
+        self.assertTrue(out["globbed"])
+
+        found = ss.search("absent", self.root, globs=("docs/real.md",))
+        self.assertEqual(found["total"], 0)
+        self.assertEqual(found["scanned"], 1)
+
+    def test_globs_compose_with_dirs(self):
+        self.write("docs/a.md", "# A\n")
+        self.write("spec/a.md", "# A\n")
+        out = ss.search("^# ", self.root, dirs=["docs"], globs=("*.md",))
+        self.assertEqual(out["files"], ["docs/a.md"])
+
+
 class CliTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -257,6 +339,58 @@ class CliTests(unittest.TestCase):
         )
         self.assertEqual(code, 1)
         self.assertEqual(out.strip(), "")
+
+    def test_glob_searches_every_extension_by_default(self):
+        """A named `.md` must not be dropped by the source-extension heuristic —
+        that is the silent under-report the tool exists to avoid."""
+        (self.root / "notes.md").write_text("# needle\n", encoding="utf-8")
+        code, out, _ = self._capture(
+            [
+                "search_source.py",
+                "needle",
+                "--root",
+                str(self.root),
+                "--glob",
+                "notes.md",
+            ]
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(out.strip(), "notes.md:1:# needle")
+
+    def test_an_explicit_ext_still_wins_over_the_glob_default(self):
+        (self.root / "notes.md").write_text("needle\n", encoding="utf-8")
+        code, _, _ = self._capture(
+            [
+                "search_source.py",
+                "needle",
+                "--root",
+                str(self.root),
+                "--glob",
+                "*.md",
+                "--ext",
+                "rs",
+            ]
+        )
+        self.assertEqual(code, 1)
+
+    def test_a_glob_matching_nothing_warns_rather_than_reading_as_a_negative(self):
+        _, _, err = self._capture(
+            [
+                "search_source.py",
+                "needle",
+                "--root",
+                str(self.root),
+                "--glob",
+                "does/not/exist.rs",
+            ]
+        )
+        self.assertIn("--glob matched no files", err)
+
+    def test_an_empty_glob_is_refused(self):
+        with self.assertRaises(ss.SearchSourceError):
+            self._capture(
+                ["search_source.py", "needle", "--root", str(self.root), "--glob", ","]
+            )
 
     def test_truncation_is_announced_on_stderr(self):
         (self.root / "many.rs").write_text("needle\n" * 5, encoding="utf-8")

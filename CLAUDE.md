@@ -155,16 +155,22 @@ for `/session-metrics`. Full detail:
 no `$(…)` / backticks, no redirects or heredocs, no `cd`. Prefer the
 Read / Grep / Glob tools over `cat` / `grep` / `find`; never
 `git grep` — and when the Grep tool is absent (it isn't always
-present), the fallback is a bare, single `grep`, on the **main-loop**
-path too, not only in the sub-agent brief, and a recursive one is
-**scoped to source directories** (it doesn't honor gitignore). Keep a
+present), the fallback is
+`python3 .claude/tools/search_source.py '<pattern>'`, which already
+prunes the generated families and the never-search trees, or failing
+that a bare, single `grep`, on the **main-loop** path too, not only in
+the sub-agent brief, and a recursive one is **scoped to source
+directories** (it doesn't honor gitignore). Ask for a search's
+narrowest form — `-l` / `-c` when the question is existence — since
+hoisting a verbose sweep only relocates the sink. Keep a
 stable command + subcommand prefix and let only the args vary.
 This holds for shell you **author** in skills, scripts, and Makefile
 targets too, and for work you hand a sub-agent. Two opt-in `PreToolUse`
 guard hooks mechanically enforce these rules:
 `.claude/hooks/no_compound_bash.py` blocks compounds (escape marker
 `#compound-ok`), and `.claude/hooks/no_git_grep.py` blocks `git grep`
-(no escape hatch — use the Grep tool). Each script is committed but its
+(no escape hatch, deliberately — use the Grep tool). Each script is
+committed but its
 `settings.json` wiring is **user-local, not committed**. The rules and
 the always-re-prompt patterns are in
 `docs/conventions/shell-commands.md`; the guards' `settings.json`
@@ -176,8 +182,10 @@ integrations and guard hooks" below.
 The **user-local Claude Code configuration** the repo documents but
 does **not** commit: the compound-shell guard hook, the **git-grep
 guard** (blocks `git grep` in Bash calls, nudging to the Grep tool —
-no escape hatch, since Grep or a bare `grep` covers every legitimate
-search), the **worktree edit-path guard** (blocks a file-mutating tool
+no escape hatch, kept absolute on purpose: the one capability it costs
+is revision-scoped search, which has adequate workarounds and no
+guard-safe carve-out), the **worktree edit-path guard** (blocks a
+file-mutating tool
 that targets a base-repo absolute path from a worktree session —
 editing the base copy the worktree build never sees is a recurring,
 expensive slip), the iTerm2 tab-color integration, and the `~/.zshrc`

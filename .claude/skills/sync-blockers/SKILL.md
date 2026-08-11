@@ -1,6 +1,6 @@
 ---
 name: sync-blockers
-description: Keep the Dropset Linear Backlog's file-overlap links in sync with `**Touches**:`. The whole job is deterministic and lives in a committed, dependency-free Python tool (`.claude/tools/sync_blockers.py`, run directly with `python3`): read the open Backlog, find every `**Touches**:` file-overlap collision with no relation yet, and file a real `related` relation naming the paths the pair collides on. It files no blocking edge — blocking is human-curated, so an agent may only suggest one with its evidence. Two write modes — `--for ENG-###` (incremental, file-time: just the named issue vs. the backlog) and a bare full sweep (reconciliation) whose report adds collision clusters, human-declared semantic blocks, and the two scheduling smells — plus a read-only `--report-todo-blocks` JSON scan and a one-time propose-then-confirm `--demote` migration that converts pre-existing auto-filed `blocks` edges to `related`. It never renders or writes a document, and never merges or closes issues. The filing skills call `--for` after `save_issue`; run the full sweep by hand to reconcile after backfilling a `**Touches**:` line on an older issue.
+description: Keep the Dropset Linear Backlog's file-overlap links in sync with `**Touches**:`. The whole job is deterministic and lives in a committed, dependency-free Python tool (`.claude/tools/sync_blockers.py`, run directly with `python3`): read the open Backlog, find every `**Touches**:` file-overlap collision with no relation yet, and file a real `related` relation naming the paths the pair collides on. It files no blocking edge — blocking is human-curated, so an agent may only suggest one with its evidence. Two write modes — `--for ENG-###` (incremental, file-time: just the named issue vs. the backlog) and a bare full sweep (reconciliation) whose report adds collision clusters, human-declared semantic blocks, and the two scheduling smells — plus a read-only `--report-todo-blocks` JSON scan. It never renders or writes a document, never merges or closes issues, and never deletes a relation. The filing skills call `--for` after `save_issue`; run the full sweep by hand to reconcile after backfilling a `**Touches**:` line on an older issue.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -52,8 +52,8 @@ So an agent may **suggest** a blocking edge — naming the
 candidate blocker and the concrete evidence — and a human
 approves it or places it by hand. Edges a human placed are
 **authoritative**: the automation never rewrites,
-redirects, or removes one, the sole exception being the
-explicitly-confirmed `--demote` migration below. See
+redirects, or removes one, with no exception (there was one
+— see "The retired `--demote` migration" below). See
 `CLAUDE.md` → "Blocking relations" and
 `docs/conventions/linear-automation.md` for the rule as it
 binds every filing skill.
@@ -112,9 +112,8 @@ line on an *older* issue, or as an occasional catch-up:
 python3 .claude/tools/sync_blockers.py
 ```
 
-Add `--dry-run` (either **sweep** mode — it is refused with
-`--demote`, see below) to print the links it *would* file and
-write nothing:
+Add `--dry-run` (either **sweep** mode) to print the links it
+*would* file and write nothing:
 
 ```sh
 python3 .claude/tools/sync_blockers.py --dry-run
@@ -138,68 +137,34 @@ python3 .claude/tools/sync_blockers.py --report-todo-blocks
 }
 ```
 
-**Migration — `--demote` (one-time,
-propose-then-confirm).** Lists every `blocks` edge between
-two open Backlog issues as a demotion candidate, and
-writes nothing:
+### The retired `--demote` migration
 
-```sh
-python3 .claude/tools/sync_blockers.py --demote
-```
+There was a fourth mode. `--demote` was a one-time,
+propose-then-confirm migration that listed every `blocks`
+edge between two open Backlog issues and, under `--apply`,
+converted them to `related` — the cleanup for edges the
+automation had filed before blocking became human-curated.
 
-Each candidate says whether the pair **currently** collides
-on files. A candidate with a collision is one the old sweep
-would re-derive from `**Touches**` overlap today, so it is a
-strong demotion candidate; one without is more likely
-hand-placed, or its globs have since changed.
+**It ran on 2026-08-10, and it has been removed.** It is not
+deprecated, hidden, or guarded — the flags are gone and a
+stale invocation now fails as an unknown argument.
 
-The candidate set is deliberately **every** edge the
-automation could have authored, not just the overlap-derived
-ones — Linear records no author on a relation, so a
-hand-placed edge is not reliably distinguishable. Convert
-only after a human has approved, optionally restricting to
-the approved subset:
+The reason it could not simply be left in place: it is now
+**spent**, and every candidate it can still find is a false
+positive. Linear records no author on a relation, so the tool
+never could distinguish a hand-placed edge from an auto-filed
+one — it relied entirely on the human confirm gate for that.
+The six legitimate hand-placed edges that remain all collide
+on files, which is exactly the signature the tool reads as
+"the sweep would re-derive this". So a second
+`--demote --apply` would delete the intended blocking graph
+in a single command, with the confirm gate showing a list
+that looks correct.
 
-```sh
-python3 .claude/tools/sync_blockers.py --demote --apply
-python3 .claude/tools/sync_blockers.py --demote --apply --only ENG-1:ENG-2
-```
-
-**A candidate with no current collision is held back.** The
-automation could not have derived such an edge, so it is more
-likely hand-placed — and for it the conversion is **not
-recoverable**: the ordinary sweep only links pairs that
-currently collide, so if the delete lands and the re-link
-fails, nothing restores it. Those edges need an explicit
-`--include-hand-placed`. The tool says how many it held back.
-
-Three flag rules, each a refusal rather than a silent
-default, because every one of them would otherwise misreport
-what happened:
-
-- **`--apply` and `--only` are refused outside `--demote`.**
-  A silently-dropped `--apply` would read as a completed
-  migration; a silently-dropped `--only` would widen a
-  confirmed subset to every candidate.
-- **`--dry-run` is refused *with* `--demote`.** They both
-  mean "write nothing", but they are not the same lever:
-  `--demote --apply` branches on `--apply` alone, so the
-  combination would have deleted relations while `--dry-run`
-  promised otherwise. Bare `--demote` **is** the dry run.
-- **`--include-hand-placed` is refused outside `--demote`.**
-
-### Sequence the migration last
-
-**Do not run `--demote --apply` until this rework has
-landed on `main` and the in-flight PRs opened against the
-*old* skill version have drained.** A worktree started
-before this change still runs the old `sync_blockers.py`
-and the old filing skills, so a session that lands
-mid-migration will cheerfully re-file the edges just
-demoted — the cleanup silently undoes itself. Until then
-the existing auto-filed edges are best left alone: they are
-noise, not corruption, and can be cleared by hand as
-needed.
+That made it dead code *and* a live foot-gun, so removing it
+beat guarding it. Blocking-edge changes now happen only where
+they belong: in a planning session, human-directed, one edge
+at a time.
 
 ### The full sweep's three report sections
 
@@ -308,10 +273,9 @@ source edit.
 ## Read-only with respect to source
 
 This skill **never authors source edits** and never commits
-or pushes. Its only writes are to Linear: the `related`
-links the tool materializes, plus — under an explicit
-human confirmation — the `--demote` migration's
-conversions. It produces no source diff of its own.
+or pushes. Its only writes to Linear are the `related` links
+the tool materializes — it deletes nothing and files no
+blocking edge. It produces no source diff of its own.
 
 ## Steps
 

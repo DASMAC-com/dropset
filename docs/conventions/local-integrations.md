@@ -1,3 +1,7 @@
+<!-- cspell:word cdds -->
+
+<!-- cspell:word rnaps -->
+
 <!-- cspell:word zshrc -->
 
 <!-- cspell:word reorderer -->
@@ -105,7 +109,16 @@ harness's per-subcommand `|` guard so it **can't be firmed at all** —
 allow-listing would leave the alternation broken and might *increase*
 `git grep` use. The Grep tool sidesteps both (real regex, cross-path,
 zero prompts), so — unlike the compound guard — this hook has **no
-escape hatch**: there is no legitimate `git grep` worth letting through.
+escape hatch**.
+
+That is deliberate, not an oversight, but it does cost one real
+capability: **revision-scoped** content search, which the Grep tool
+structurally cannot do. The full adjudication — why a rev-vs-pathspec
+carve-out can't be made guard-safe, the indirect workarounds
+(`git log -S` / `-G`, `git show <rev>:<path>`, a throwaway
+`git worktree add --detach` plus the Grep tool), and the pre-registered
+trigger for building a tool instead of a carve-out — is in
+[shell-commands](shell-commands.md#why-the-git-grep-ban-stays-absolute).
 
 ### Wiring the git-grep guard
 
@@ -391,6 +404,41 @@ automation needs its ids in the environment. Put all of it in one place:
 
 - **`DISABLE_AUTO_TITLE=true`** — stops the shell from re-titling the
   tab out from under the integration.
+
+### Session helpers (`~/.zshrc`)
+
+The same file carries the small function family that starts and resumes
+Claude Code sessions. They're referenced by the zshrc's own comments and
+by the skills (`init-pr` names `aps` when it explains why a branch
+arrives as `worktree-eng-###`), so they're documented here so the setup
+can be rebuilt from version control. One line each:
+
+- **`cdds`** — `cd` to the base repo checkout. The starting point for
+  anything that must not run inside a worktree (`housekeeping`, a
+  planning session).
+
+- **`aps <tag>`** — start a **worktree** session: `claude -w <tag>`. This
+  is what creates the `eng-###` worktree directory whose branch arrives
+  named `worktree-eng-###`; there is no CLI flag to drop the prefix, so
+  `init-pr` renames it. This is the implementation-session entry point.
+
+- **`raps <n>`** — resume a worktree session by number: takes a bare
+  `<n>`, resolves it to the `eng-<n>` worktree, and resumes that
+  session's most recent conversation there. The number-to-worktree
+  resolution is the whole point — you resume `raps 814`, not a UUID.
+
+- **`naps <name>`** — start a **named** session in the current directory
+  (no worktree). Planning sessions use this from the base repo:
+  `naps planning-<day>`.
+
+- **`rnaps <name>`** — resume a named session by the same name. The
+  counterpart to `naps`, as `raps` is to `aps`; added so a planning
+  session survives a closed terminal.
+
+The split is deliberate and matches the two session kinds: worktree
+sessions (`aps` / `raps`) run one deterministic spec to completion and
+are addressed by their Linear number; planning sessions (`naps` /
+`rnaps`) run in the base repo, span days, and are addressed by name.
 
 ### iTerm2 manual setup (can't be committed)
 

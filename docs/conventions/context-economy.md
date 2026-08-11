@@ -44,6 +44,13 @@ into the transcript**:
     for a few helpers. Grep to the helpers you need (the `poke_*`
     builders, a specific `fn`) and slice-read those, rather than
     paginating the whole fixture.
+  - **A sibling skill or convention doc.** This rule reads as being about
+    large *source* files, but the files a mid-session handoff actually
+    reaches for are skill and convention docs — several of which run past
+    1800 lines. One two-line copy PR spent ~93% of its whole Read cost on
+    two `SKILL.md` files, one of them read whole, when all it needed was
+    the title/description format section. Grep the doc's headings
+    (`^#`), then slice-read the step you want.
 
   Three refinements, because the flat rule "never read whole" mis-scores
   two real situations and misses a third:
@@ -69,6 +76,27 @@ into the transcript**:
     signatures were needed. Before any `Read` over ~300 lines, Grep for
     the structure (`^fn |^impl |^pub`, or the language's equivalent);
     the map tells you which slice you actually want.
+
+- **Don't read a file you are about to delete, or one you just
+  authored.** Two cases adjacent to "never re-fetch what's already in
+  context" — the existing rule warns against re-reading a file to
+  *verify an edit*; these are the two neighbors it doesn't name:
+
+  - **The file is being deleted.** A whole-file `Read` (≈2.8k) of a hook
+    the diff removes outright bought a body no one would edit. What a
+    deletion needs is the *exported symbol names* other modules import,
+    so the callers can be found — Grep for those and skip the body.
+  - **The file was just authored in this session.** Re-reading a file you
+    wrote a few turns ago, to recover exact strings for `Edit` anchors,
+    re-buys content already in context (one run spent two calls and ~110
+    lines doing exactly that). Anchor from what you wrote; if the stored
+    text is genuinely uncertain, slice the one region.
+
+- **When the question is "what top-level things exist", list one level.**
+  `ls -1R sdk/` returned every generated client file (≈1.4k) to settle
+  whether `sdk/rs` was a plausible home for one function — a question the
+  top level alone answered. Reach for `ls -1` (or a depth-bounded Glob)
+  and recurse only into the one subtree that turns out to matter.
 
 - **Reach for the Grep tool first, and hoist a repeated sweep into one
   call.** `grep` has been the single most-repeated Bash shape in four
@@ -104,6 +132,43 @@ into the transcript**:
   the bare-`grep` fallback. The wrapper also **states its truncation**
   when a cap trims the output — a silent cap reads as "searched
   everything", which is worse than no search.
+
+  **Ask for a sweep's narrowest form, too.** Scoping bounds *where* a
+  search looks; narrowness bounds *what it hands back*. A correctly
+  hoisted "are each of these 7 moved symbols still referenced?" sweep
+  came back as ~130 full match lines (≈4.2k, that session's single
+  largest result), most of them one file repeating one constant 40 times
+  — for a question that is one bit per symbol. Use `-l` (files) or `-c`
+  (counts) when the question is existence, and full `-n` lines only when
+  the surrounding code actually has to be read. Hoisting a *verbose*
+  sweep merely relocates the sink from a sub-agent into the main loop,
+  where it is replayed on every later turn.
+
+- **Query an indexing MCP before grepping a vendored dependency
+  checkout — and never with a wide `-A` window.** Answering "does this
+  framework support optional accounts, and how is `None` encoded" cost
+  ≈6.2k + ≈2.9k across two context-padded sweeps of
+  `~/.cargo/git/checkouts`, the larger being that session's single
+  biggest result — while four `search_code_advanced` calls against the
+  same dependency's MCP answered adjacent questions for **1.3k total**.
+  Where an MCP indexes the dependency, it is the cheaper transport by an
+  order of magnitude.
+
+- **Once you know the page, read it rather than searching for it.** The
+  same principle inside an MCP: one broad documentation `search` returned
+  ~89k characters (large enough to be persisted to disk) and another
+  ≈5.6k, for facts that amounted to two table rows. A `search` is for
+  *locating* a page; a targeted read (`query_docs_filesystem`,
+  `read_documentation`, `read_sections`) is for taking what is on it.
+
+- **A `list_issues`-style call is a titles-only call, and you will pay
+  twice.** Listing 9 children of a parent cost 3.3k and returned every
+  description **truncated anyway**, after which the one body actually
+  needed still took its own `get_issue`. When the target id is already
+  known, skip the list entirely; when genuinely scanning, budget for the
+  follow-up fetch rather than hoping the rows will suffice. Each Linear
+  echo is a fixed cost per call, and the budget it belongs to is stated
+  in `docs/conventions/linear-automation.md`.
 
 - **Route verbose build logs away from context.** Prefer `-q` /
   `--quiet` so a `cargo` / `make` "Compiling …" cascade doesn't land
@@ -198,8 +263,30 @@ into the transcript**:
   *prompt*; the probe was the *evidence*. So when a screenshot shows
   on-chain state — balances, a transaction, an account — ask for the
   signature or address and decode that: cheaper, and strictly more
-  precise. Downscaling remains the rule for layout screenshots, where
-  there's no cheaper source of truth to reach for.
+  precise. Downscaling remains the rule for layout screenshots, except
+  where the next rule finds a cheaper source of truth.
+
+- **When the question is geometry, measure the screenshot — don't read
+  it.** The rules above govern *resolution* and *evidence*; this one
+  governs **repetition across rounds**, which "never re-`Read` an image
+  already in context" does not catch: each round of a debugging loop
+  supplies a **fresh** capture, so that rule never fires. One centring
+  bug ran four such rounds, and their Reads (≈36.5k / 34.8k / 29.4k /
+  21.8k ≈ 122k) were ~73% of the entire session's Read cost. The first
+  Read earned its keep — orienting, and catching a vertical-misalignment
+  regression that only reads visually. Rounds 2–4 were pure geometry, and
+  paid in pixels for an answer that is a number.
+
+  **So: orient once, then measure.** Re-reading pixels is warranted only
+  when the *content* is in doubt. For "did the crop land where I meant",
+  image dimensions settle it outright — a one-line `file` call, against
+  the ≈247k one run spent re-`Read`ing the same scratchpad crop twice for
+  exactly that question. For "is this centred" or "did the layout shift",
+  the answer is an ink-band measurement: find the horizontal bands of
+  non-background pixels and compare the element's ink centre against a
+  known block-centred reference to recover the midline. One session
+  rebuilt that measurement three separate times from scratch; a committed
+  helper for it is filed separately.
 
 - **Route Docker image operations away from context too.** A
   `docker compose pull` / `up` / `build` dumps a per-layer
