@@ -24,14 +24,21 @@ import JSZip from "jszip";
 const EMU_PER_INCH = 914400;
 
 /**
- * Widescreen 16:9 at PowerPoint's standard 13.333in × 7.5in.
+ * Widescreen 16:9 at 10in × 5.625in — **Google Slides' own** widescreen page,
+ * not PowerPoint's 13.333in × 7.5in.
  *
- * Matching the deck's own 16:9 `DECK_SIZE` is what keeps the import from
- * letterboxing: Slides fits an imported deck to its page, and a page with the
- * same aspect ratio as the image needs no fitting at all.
+ * Both are 16:9, so either avoids letterboxing, and PowerPoint's is the more
+ * conventional choice. Slides is the destination that matters here, though, and
+ * it resizes an imported deck to the page its own presentation uses. Declaring
+ * that page exactly means the slides arrive at 1:1 and are placed rather than
+ * rescaled — one fewer resample of an image whose whole content is text and
+ * screenshots, which is what resampling damages most.
+ *
+ * 10 × 5.625 is also exactly 16:9, where 13.333 is a rounding of 40/3 and lands
+ * a few EMU off, leaving a sliver of letterboxing that has to go somewhere.
  */
-const SLIDE_W = Math.round(13.333 * EMU_PER_INCH);
-const SLIDE_H = Math.round(7.5 * EMU_PER_INCH);
+const SLIDE_W = Math.round(10 * EMU_PER_INCH);
+const SLIDE_H = Math.round(5.625 * EMU_PER_INCH);
 
 const XML_DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
 

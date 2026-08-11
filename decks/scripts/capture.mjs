@@ -32,7 +32,7 @@ import puppeteer from "puppeteer-core";
 export const CAPTURE_SIZE = { width: 1920, height: 1080 };
 
 /**
- * Device pixel ratio for the capture, so the PNGs come out at 3840×2160 while
+ * Device pixel ratio for the capture, so the PNGs come out at 5760×3240 while
  * the page still lays out in its 1920×1080 design space.
  *
  * Both halves of that matter. Raising the *viewport* instead would give
@@ -40,9 +40,10 @@ export const CAPTURE_SIZE = { width: 1920, height: 1080 };
  * renders the same layout with more samples, which is what makes text and the
  * screenshot artwork crisp rather than resampled. Projectors and Google Slides
  * both scale the image down from here, and downscaling is what keeps edges
- * clean — 1× looked visibly grainy once Slides had rescaled it.
+ * clean — 1× was visibly grainy once Slides had rescaled it, and 2× still read
+ * soft against the same page viewed live.
  */
-const CAPTURE_SCALE = 2;
+const CAPTURE_SCALE = 3;
 
 /**
  * Locally-installed Chromium builds, most-preferred first. Any Chromium works;

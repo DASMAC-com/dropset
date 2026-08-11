@@ -180,11 +180,22 @@ Vercel plan allows, which is comfortable for ten pages but is the number to
 raise if a deck grows much larger.
 
 Pages lay out in the deck's own 1920×1080 space but are captured at a device
-pixel ratio of 2, so the images are **3840×2160**. Raising the pixel ratio
-rather than the viewport is deliberate: a bigger viewport would give
-Spectacle a bigger box and change the layout, while a higher ratio renders
-the same layout with more samples. At 1× the result looked grainy once
-Google Slides had rescaled it.
+pixel ratio of 3, so the images are **5760×3240** — 576 dpi against the page
+they land on. Raising the pixel ratio rather than the viewport is deliberate:
+a bigger viewport would give Spectacle a bigger box and change the layout,
+while a higher ratio renders the same layout with more samples. 1× was
+grainy after Google Slides rescaled it and 2× still read soft.
+
+The `.pptx` page is **Google Slides' own** 10in × 5.625in widescreen, not
+PowerPoint's 13.333 × 7.5. Both are 16:9, but Slides resizes an imported deck
+to the page its presentation uses, so declaring that page means the slides
+are placed rather than rescaled — one fewer resample of an image made
+entirely of text and screenshots.
+
+If exports still look soft in Slides after that, the remaining suspect is
+Slides' own import re-encoding, which no change on this side reaches. The
+fallback is to skip `Import slides` and place the images directly
+(`Insert ▸ Image ▸ Upload`) on blank 16:9 pages.
 
 Screenshots, rather than Spectacle's own export mode plus print-to-PDF,
 because that route is broken here and dead-ends anyway. `⌘⇧R` print mode

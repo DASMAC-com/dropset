@@ -256,6 +256,40 @@ const SlideBody = ({
 );
 
 /**
+ * Takes whatever height is left under a page's header and centres its child in
+ * it.
+ *
+ * Top-anchoring lines every page's eyebrow up, which is what it is for, but it
+ * also drops the page's content directly under the sentence and leaves the
+ * remainder as one band at the bottom. On a page whose content is a single
+ * compact figure that reads as a slab pushed to the top of a half-empty slide.
+ *
+ * Centring the *content* while the header stays anchored gets both: the kicker
+ * and sentence still land where they do on every other page, and the figure
+ * sits in the middle of the room it actually has. Only pages with one
+ * self-contained block below the sentence want this — a page whose content is
+ * a list or a column of its own reads better hanging from the sentence.
+ */
+const SlideFill = ({ children }: { children: React.ReactNode }) => (
+  <div
+    style={{
+      alignItems: "center",
+      display: "flex",
+      flex: "1 1 auto",
+      flexDirection: "column",
+      justifyContent: "center",
+      // A flex child's `min-height` is `auto`, so a block taller than the space
+      // left would refuse to shrink and push past the footer rather than
+      // centring. Zero lets the box resolve to the room it actually has.
+      minHeight: 0,
+      width: "100%",
+    }}
+  >
+    {children}
+  </div>
+);
+
+/**
  * Small monospace kicker that labels each content slide. Uppercase, letterspaced
  * Space Mono — the exact treatment the company's own tag carries ("DISTRIBUTED
  * ATOMIC STATE MACHINE ALGORITHMS CORPORATION"), so the deck's kickers and the
@@ -1503,7 +1537,9 @@ export default function DemoDeck() {
           <Statement fontSize="68px">
             FX vaults bootstrap a public liquidity flywheel
           </Statement>
-          <Flywheel />
+          <SlideFill>
+            <Flywheel />
+          </SlideFill>
         </SlideBody>
         <Notes>
           We seed the markets ourselves the way Hyperliquid did — our vaults
@@ -1540,7 +1576,9 @@ export default function DemoDeck() {
               ("our path runs to…") all read as a hedge about the destination
               rather than as the destination. */}
           <Statement fontSize="68px">The path to 24/7/365 FX and beyond</Statement>
-          <Roadmap />
+          <SlideFill>
+            <Roadmap />
+          </SlideFill>
         </SlideBody>
         <Notes>
           This is the path to 24/7/365 FX, and beyond it. Now, we onboard
