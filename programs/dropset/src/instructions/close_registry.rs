@@ -79,6 +79,20 @@ impl CloseRegistryFeeVault {
         // Admin-only — gated at the dispatcher's feature-on arm via
         // `require_registry_admin` (`lib.rs`), so the caller is already a
         // known admin here.
+        // End-of-life pre-condition, the registry-side counterpart to
+        // `close_market_treasury`'s empty active list: this ATA may only
+        // go once every market is closed. `create_vault` and
+        // `create_market` both take it as a plain constrained account, so
+        // destroying it while a market is live breaks vault creation
+        // outright — and the balance a live registry holds is collected
+        // fee revenue, which this instruction now pays out. Draining
+        // replaced the old empty-account requirement, so without this the
+        // handler would carry no state pre-condition at all.
+        require!(
+            self.registry.market_count.get() == 0,
+            DropsetError::RegistryHasMarkets
+        );
+
         let bump_arr = [self.registry.bump];
         let registry_seed: &[u8] = b"registry";
         let bump_seed: &[u8] = &bump_arr;

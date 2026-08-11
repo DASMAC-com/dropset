@@ -3539,7 +3539,7 @@
     {
       "code": 6037,
       "name": "MarketVaultsNotDrained",
-      "msg": "market vaults still hold inventory for this leg (force_withdraw_* first)"
+      "msg": "market vaults still hold inventory for this leg"
     },
     {
       "code": 6038,
@@ -3594,7 +3594,7 @@
     {
       "code": 6048,
       "name": "MarketHasActiveVaults",
-      "msg": "market still has vaults on the active list (reclaim every sector first)"
+      "msg": "market still has vaults on the active list"
     }
   ],
   "types": [

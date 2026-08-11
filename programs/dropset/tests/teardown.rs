@@ -244,6 +244,17 @@ fn teardown_sweeps_every_historical_fee_mint() {
     assert_eq!(f.token_balance(&default_fee_vault), 0);
     assert_eq!(f.token_balance(&new_fee_vault), 0);
 
+    // Close the market first — a fee vault may only go once every market
+    // is closed, since `create_vault` and `create_market` both take it as
+    // a plain constrained account.
+    let (base_mint, quote_mint) = (f.base_mint, f.quote_mint);
+    let (base_treasury, quote_treasury) = (f.base_treasury, f.quote_treasury);
+    f.close_market_treasury(&admin, &base_mint, &base_treasury, &rr)
+        .expect("close base treasury");
+    f.close_market_treasury(&admin, &quote_mint, &quote_treasury, &rr)
+        .expect("close quote treasury");
+    f.close_market(&admin, &rr).expect("close market");
+
     // ── The sweep: close *both* historical fee ATAs ──────────────────
     // Close each in turn, asserting the operator's balance climbs on
     // *each* close — so both ATAs' rent is individually accounted for,
@@ -700,6 +711,19 @@ fn close_registry_fee_vault_drains_collected_fees() {
         "the open fee was collected"
     );
 
+    // Wind the market down first — the fee vault may only close once
+    // every market is gone. Bob's vault was never seeded, so the leader
+    // force-withdraw is the empty-vault reclaim path.
+    f.force_withdraw_leader(&admin, 0, &bob.pubkey())
+        .expect("reclaim bob's empty vault");
+    let (base_mint, quote_mint) = (f.base_mint, f.quote_mint);
+    let (base_treasury, quote_treasury) = (f.base_treasury, f.quote_treasury);
+    f.close_market_treasury(&admin, &base_mint, &base_treasury, &rr)
+        .expect("close base treasury");
+    f.close_market_treasury(&admin, &quote_mint, &quote_treasury, &rr)
+        .expect("close quote treasury");
+    f.close_market(&admin, &rr).expect("close market");
+
     let fee_mint = f.fee_mint;
     let collector = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
     let collector_ata = f.create_ata_for(&collector.pubkey(), &fee_mint);
@@ -911,6 +935,30 @@ fn close_market_rejects_non_admin() {
         .close_market(&stranger, &rr)
         .expect_err("non-admin cannot close the market");
     common::assert_program_error(&err, dropset::DropsetError::Unauthorized);
+}
+
+/// The registry fee vault may not be closed while a market is live — the
+/// registry-side counterpart to `close_market_treasury`'s active-list
+/// guard, and the ordering the spec prescribes ("once every market is
+/// gone").
+///
+/// It matters for the same two reasons: the balance a live registry holds
+/// is collected fee revenue that the drain now pays out, and `create_vault`
+/// / `create_market` both take the fee ATA as a plain constrained account,
+/// so destroying it under a live market breaks vault creation outright.
+#[test]
+fn close_registry_fee_vault_rejects_live_markets() {
+    let mut f = Fixture::bootstrap();
+    let admin = f.authority.insecure_clone();
+    let rr = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS).pubkey();
+    assert_eq!(f.registry_market_count(), 1, "the market is live");
+
+    let fee_vault = f.registry_fee_treasury;
+    let err = f
+        .close_registry_fee_vault(&admin, &rr)
+        .expect_err("the fee vault must not close while a market is live");
+    common::assert_program_error(&err, dropset::DropsetError::RegistryHasMarkets);
+    assert!(exists(&f.svm, &fee_vault), "the fee vault survives");
 }
 
 /// Only a registry admin may close the registry fee vault.

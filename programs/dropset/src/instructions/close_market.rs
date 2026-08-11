@@ -128,7 +128,7 @@ impl CloseMarketTreasury {
         // destroy the ATA under it, bricking the leg — nothing re-creates
         // a treasury for a market that already exists. An empty active
         // list is the witness that every sector has been reclaimed, which
-        // only the force-withdraws do.
+        // the drain paths do on `total_shares == 0`.
         require!(
             self.market.active_count.get() == 0,
             DropsetError::MarketHasActiveVaults

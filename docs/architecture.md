@@ -2416,7 +2416,7 @@ rent and close with their parent.
 | #   | Account                                                                        | Owner program          | Holds rent?                                  | Close path                                                                                                                                                                                                                                                                                                           | Rent recipient                            |
 | --- | ------------------------------------------------------------------------------ | ---------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
 | 1   | **Registry** PDA, seeds `[b"registry"]`                                        | dropset                | yes (variable: 8 + header + admin slab tail) | `close_registry` (admin, feature-gated). Pre-condition: `market_count == 0`, zero admins beyond the caller, fee vault closed.                                                                                                                                                                                        | passed-in `rent_recipient`                |
-| 2   | **Registry fee vault** ATA, `ata(registry, fee_mint, tp)`                      | SPL Token / Token-2022 | yes (~165–170 B)                             | `close_registry_fee_vault` (admin, feature-gated). No balance pre-condition: collected fees are drained to a passed-in `token_recipient` first, then CPI `CloseAccount` signed by Registry PDA.                                                                                                                      | passed-in `rent_recipient`                |
+| 2   | **Registry fee vault** ATA, `ata(registry, fee_mint, tp)`                      | SPL Token / Token-2022 | yes (~165–170 B)                             | `close_registry_fee_vault` (admin, feature-gated). Pre-condition: no live markets (`market_count == 0`). Collected fees are drained to a passed-in `token_recipient` first, then CPI `CloseAccount` signed by Registry PDA.                                                                                          | passed-in `rent_recipient`                |
 | 3   | **Market** PDA (`MarketHeader` + vault slab inline)                            | dropset                | yes (large; grows with vault count)          | `close_market` (admin, feature-gated). Pre-conditions: `outstanding_vault_depositors == 0`, both treasuries closed.                                                                                                                                                                                                  | passed-in `rent_recipient`                |
 | 4   | **Vault** sectors inside the market slab                                       | n/a (inline)           | **no separate rent** — covered by Market's   | closed implicitly by `close_market`; there is no per-vault close instruction. Reclaim (to the free DLL) does not refund any rent.                                                                                                                                                                                    | n/a                                       |
 | 5   | **Base treasury** ATA, derived from market PDA                                 | SPL Token / Token-2022 | yes                                          | `close_market_treasury` (admin, feature-gated). Pre-conditions: no vault claims the leg (`Σ vault.base_atoms == 0`) **and** no vault is live (`active_count == 0`). Remaining balance — accrued fee, unsolicited transfers — drained to a passed-in `token_recipient`, then CPI `CloseAccount` signed by market PDA. | passed-in `rent_recipient`                |
@@ -2493,12 +2493,20 @@ Repeat 1–4 for every market on the registry. Then, once every
 market is gone:
 
 1. **Close fee vault(s).** `close_registry_fee_vault` per fee ATA. Each
-   call drains the vault's collected market-creation fees to a passed-in
-   `token_recipient` and then closes it — the same drain-then-close shape
-   as the treasuries, and for the same reason: **no** instruction moves
-   tokens out of a registry fee ATA, so a single collected fee under an
-   empty-account rule would strand the balance and block the close (and
-   with it the redeploy) permanently.
+   call requires `market_count == 0` — the step ordering above already
+   establishes it — then drains the vault's collected market-creation
+   fees to a passed-in `token_recipient` and closes it. The drain is the
+   same shape as the treasuries', and for the same reason: **no**
+   instruction moves tokens out of a registry fee ATA, so a single
+   collected fee under an empty-account rule would strand the balance and
+   block the close (and with it the redeploy) permanently.
+
+   The market-count gate is what draining costs. It replaces the
+   empty-account requirement as the handler's state pre-condition, and it
+   is load-bearing in both directions: the balance a live registry holds
+   is fee revenue this instruction now pays out, and `create_vault` and
+   `create_market` both take the fee ATA as a plain constrained account,
+   so destroying it under a live market breaks vault creation outright.
 
    If a market's `fee_config.mint` or the registry's
    `default_fee_config.mint` changed during the program's life, more than

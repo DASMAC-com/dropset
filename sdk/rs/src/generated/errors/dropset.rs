@@ -121,8 +121,8 @@ pub enum DropsetError {
     /// 6036 - vault is already on the tombstone list
     #[error("vault is already on the tombstone list")]
     VaultAlreadyTombstoned = 0x1794,
-    /// 6037 - market vaults still hold inventory for this leg (force_withdraw_* first)
-    #[error("market vaults still hold inventory for this leg (force_withdraw_* first)")]
+    /// 6037 - market vaults still hold inventory for this leg
+    #[error("market vaults still hold inventory for this leg")]
     MarketVaultsNotDrained = 0x1795,
     /// 6038 - market treasury must be closed before the market can be closed
     #[error("market treasury must be closed before the market can be closed")]
@@ -156,8 +156,8 @@ pub enum DropsetError {
         "a non-zero platform_fee_bps requires both the fee authority and its fee token account"
     )]
     MissingPlatformFeeAccounts = 0x179F,
-    /// 6048 - market still has vaults on the active list (reclaim every sector first)
-    #[error("market still has vaults on the active list (reclaim every sector first)")]
+    /// 6048 - market still has vaults on the active list
+    #[error("market still has vaults on the active list")]
     MarketHasActiveVaults = 0x17A0,
 }
 

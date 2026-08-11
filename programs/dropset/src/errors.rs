@@ -89,7 +89,7 @@ pub enum DropsetError {
     InvalidLimitPrice,
     #[msg("vault is already on the tombstone list")]
     VaultAlreadyTombstoned,
-    #[msg("market vaults still hold inventory for this leg (force_withdraw_* first)")]
+    #[msg("market vaults still hold inventory for this leg")]
     MarketVaultsNotDrained,
     #[msg("market treasury must be closed before the market can be closed")]
     MarketTreasuryNotClosed,
@@ -111,6 +111,6 @@ pub enum DropsetError {
     PlatformFeeTooHigh,
     #[msg("a non-zero platform_fee_bps requires both the fee authority and its fee token account")]
     MissingPlatformFeeAccounts,
-    #[msg("market still has vaults on the active list (reclaim every sector first)")]
+    #[msg("market still has vaults on the active list")]
     MarketHasActiveVaults,
 }
