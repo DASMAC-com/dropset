@@ -21,6 +21,7 @@ bpf
 brale
 bytemuck
 cadc
+cagr
 cargobill
 cdylib
 cfgs
@@ -92,6 +93,7 @@ localnet
 localtime
 macropod
 memcpy
+memecoins
 metas
 meteora
 moneyness
