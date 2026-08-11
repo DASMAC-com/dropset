@@ -1,4 +1,4 @@
-//! Off-chain FX-anchor × basis fair-value engine (docs/market-making-mvp.md
+//! Off-chain FX-anchor × basis fair-value engine (docs/market-making.md
 //! §1).
 //!
 //! Fair value is a **fast, deep, exogenous FX driver corrected by a slow, thin

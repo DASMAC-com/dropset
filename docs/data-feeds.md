@@ -26,7 +26,7 @@ by the off-chain event indexer ([`indexer.md`](indexer.md)), the
 market-data collectors, and the maker / taker bots. They define *how*
 data is sourced and delivered, never *what* a consumer does with it —
 the indexer's `/v1` and the bots' quoting logic
-([`market-making-mvp.md`](market-making-mvp.md)) stay with the
+([`market-making.md`](market-making.md)) stay with the
 consumers. Sections 7–12 are market-data collection: what is collected,
 where it lands, and what is computed over it. Section 13 carries the
 open questions of both.
@@ -267,7 +267,7 @@ What it is for:
 - **Calibrating the maker's slow variables.** The basis EMA half-life,
   the realized-σ inputs to the quote ladder, and the per-market sane
   bands are *estimated from history*, not guessed
-  ([`market-making-mvp.md`](market-making-mvp.md) §1 and §4 both defer
+  ([`market-making.md`](market-making.md) §1 and §4 both defer
   to this doc for exactly those numbers — see §11).
 - **Currency-entry evidence.** Before quoting a new FX stablecoin, its
   own history has to say whether its basis reverts at all. Reversion is
@@ -339,7 +339,7 @@ Fair value is **`fx_rate × basis`** — a deep, exogenous FX anchor
 corrected by a slow, thin stablecoin basis, decomposed across both pegs
 (`basis = (token / fiat) ÷ (USDC / USD)`). The model itself, its
 regimes, and its failure modes belong to
-[`market-making-mvp.md`](market-making-mvp.md) §1; what follows is which
+[`market-making.md`](market-making.md) §1; what follows is which
 sources feed each leg and on what terms.
 
 | Role                             | Source                                                                                |
@@ -418,7 +418,7 @@ its own. These are the numbers the maker spec defers to:
   half-life of reversion, stationarity (whether it mean-reverts or
   random-walks), and jump / tail frequency. This sets the basis EMA
   smoothing half-life and the per-market sane band that
-  [`market-making-mvp.md`](market-making-mvp.md) §1 and §4 leave TBD.
+  [`market-making.md`](market-making.md) §1 and §4 leave TBD.
   Whether a basis mean-reverts at all is the assumption the maker rests
   on: strong for tokens with live redemption arbitrage, weak or absent
   for thin exotics, and never assumed across the roster.
@@ -435,7 +435,7 @@ its own. These are the numbers the maker spec defers to:
 - **Lead-lag** — cross-correlation of FX spot against the CEX token
   print and the issuer rate, to settle which signal leads. This sets the
   staleness thresholds, and the session boundaries the weekend anchor
-  switch fires on, that [`market-making-mvp.md`](market-making-mvp.md)
+  switch fires on, that [`market-making.md`](market-making.md)
   §1 leaves TBD.
 - **Observability — realized-vs-modeled basis error.** The gap between
   the live basis and the engine's EMA estimate of it is the standing

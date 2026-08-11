@@ -1,6 +1,6 @@
 # Localnet market-maker bot for the FX-stablecoin demo markets. A supervisor
 # over many <token>/USDC markets quoting on the eCLOB per
-# docs/market-making-mvp.md: poll a batched tiered price feed, compose a
+# docs/market-making.md: poll a batched tiered price feed, compose a
 # per-market fair mid, and drive the relative-quoting hot path
 # (set_reference_price) and cold path (set_liquidity_profile) with an inventory
 # skew and kill-switch policy. Rust-only, not published. No tokio: a
@@ -28,7 +28,7 @@ bs58 = "0.5"
 bytemuck = "1"
 # The shared off-chain fair-value engine: `fair = fx × basis` with the two-peg
 # basis decomposition, the basis EMA, the composition regimes, and the
-# basis-band / USDC common-mode guard signals (docs/market-making-mvp.md §1).
+# basis-band / USDC common-mode guard signals (docs/market-making.md §1).
 # The bot owns the feed transport and hands the engine `Reading`s.
 dropset-fair-value = { path = "../../fair-value" }
 # The shared ingestion framework: the price sources poll over its async
@@ -56,7 +56,7 @@ solana-client = "~3.1"
 solana-commitment-config = "3"
 # `ComputeBudgetInstruction::set_compute_unit_price` — the priority fee on the
 # stale-quote kill stamp, which has to outrace takers in the first blocks after
-# the bot comes back (docs/market-making-mvp.md §4).
+# the bot comes back (docs/market-making.md §4).
 solana-compute-budget-interface = "3"
 solana-instruction = "3"
 solana-keypair = "3"

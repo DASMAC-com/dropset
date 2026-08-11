@@ -1,7 +1,7 @@
 //! `dropset-maker-bot` — the localnet FX-stablecoin market-maker.
 //!
 //! A supervisor over many `<token>/USDC` markets ([`config::MARKETS`]) quoting
-//! on the eCLOB per `docs/market-making-mvp.md`. One shared leader quotes every
+//! on the eCLOB per `docs/market-making.md`. One shared leader quotes every
 //! market; each cycle the bot refreshes a batched, tiered price feed
 //! (CoinGecko → CoinMarketCap → ECB/Frankfurter FX-rate → static), composes a
 //! per-market fair mid, and drives the program's relative-quoting hot path
