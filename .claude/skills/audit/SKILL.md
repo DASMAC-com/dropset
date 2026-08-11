@@ -271,7 +271,7 @@ system-wide lenses:
 - **Spec health** of `docs/` — sections over-specified,
   under-specified, in the wrong document, or that should be split /
   merged. Read the specs (`architecture.md`, `interface.md`,
-  `market-making-mvp.md`) as **subject matter, not just ground
+  `market-making.md`) as **subject matter, not just ground
   truth** — the specs are themselves in scope.
 
 The agent returns findings with `path:line` anchors, severity,

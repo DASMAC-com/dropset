@@ -35,7 +35,7 @@ semantics, and an arbitrary lower-number-blocks-higher
 orientation produced giant serial chains: a day-1 mainnet
 param-channel issue sat behind **eight** overlap blockers,
 and a docs-only pair was block-linked because both touched
-`docs/market-making-mvp.md` in unrelated sections.
+`docs/market-making.md` in unrelated sections.
 
 The deeper reason **no automated writer may file a
 blocking edge — not this tool, not a filing skill, not an

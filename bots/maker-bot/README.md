@@ -3,7 +3,7 @@
 The localnet market-maker for the FX-stablecoin demo. A supervisor over
 many `<token>/USDC` markets — the seven non-USD FX stablecoins in
 `config::MARKETS` (EURC, VCHF, TGBP, ZARP, MXNe, XSGD, IDRX) — quoting on
-the eCLOB per [`docs/market-making-mvp.md`](../../docs/market-making-mvp.md).
+the eCLOB per [`docs/market-making.md`](../../docs/market-making.md).
 One shared leader quotes every market; each cycle the bot refreshes a
 batched, tiered price feed, composes a per-market fair mid, and drives
 the program's relative-quoting hot path (`set_reference_price`, with an
@@ -34,7 +34,7 @@ against the FX rate.
 
 - `config` — the spec's knobs and the `MARKETS` roster (each market's
   CoinGecko id, optional CoinMarketCap numeric id, FX currency, mock
-  mint, decimals, and static peg), with defaults encoding the MVP.
+  mint, decimals, and static peg), with defaults encoding the spec.
 - `model` — the pure, unit-tested quoting logic: tiered feed parsing
   (`feeds`), per-market reference composition (`fair_mid`), the ladder
   builder, inventory valuation and skew, the update-cadence triggers,

@@ -5,7 +5,7 @@
 //! `SetLiquidityProfile` is the cold path that rewrites the whole ladder,
 //! fired on a large imbalance, a vol-regime change, or a daily heartbeat —
 //! expected 1–3×/day. The vol-regime trigger needs a realized-σ estimator the
-//! MVP doesn't keep yet, so it is deferred; the imbalance trigger is driven by
+//! bot doesn't keep yet, so it is deferred; the imbalance trigger is driven by
 //! the kill-switch action, leaving the daily heartbeat here.
 
 use crate::config::StrategyConfig;
