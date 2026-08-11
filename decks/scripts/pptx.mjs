@@ -50,8 +50,8 @@ import PptxGenJS from "pptxgenjs";
  * rescaled — one fewer resample of an image whose whole content is text and
  * screenshots, which is what resampling damages most.
  *
- * 10 × 5.625 is also exactly 16:9, where 13.333 is a rounding of 40/3 and lands
- * a few EMU off, leaving a sliver of letterboxing that has to go somewhere.
+ * 10 × 5.625 is also exactly 16:9, where 13.333 is a rounding of 40/3 and so
+ * lands fractionally off, leaving a sliver of letterboxing to go somewhere.
  */
 const SLIDE_W_IN = 10;
 const SLIDE_H_IN = 5.625;

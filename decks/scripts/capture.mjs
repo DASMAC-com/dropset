@@ -68,9 +68,18 @@ const DEFAULT_CAPTURE_SCALE = 2;
  */
 const CAPTURE_SCALE = Number(process.env.DECK_CAPTURE_SCALE ?? DEFAULT_CAPTURE_SCALE);
 
-if (!Number.isFinite(CAPTURE_SCALE) || CAPTURE_SCALE <= 0) {
+/**
+ * Chromium caps a capture surface at 16384px on a side, and it does not report
+ * crossing that — it returns a clipped or blank shot, so the export "succeeds"
+ * with broken pages. Against the fixed 1920×1080 viewport the limit lands at
+ * 8.5×, so the bound sits at 8× (15360×8640) and the failure is loud.
+ */
+const MAX_CAPTURE_SCALE = 8;
+
+if (!Number.isFinite(CAPTURE_SCALE) || CAPTURE_SCALE <= 0 || CAPTURE_SCALE > MAX_CAPTURE_SCALE) {
   throw new Error(
-    `DECK_CAPTURE_SCALE must be a positive number, got ${process.env.DECK_CAPTURE_SCALE}`,
+    `DECK_CAPTURE_SCALE must be a number in (0, ${MAX_CAPTURE_SCALE}], ` +
+      `got ${JSON.stringify(process.env.DECK_CAPTURE_SCALE)}`,
   );
 }
 
