@@ -43,7 +43,8 @@ Usage::
 
 Options: exactly one of ``--pr`` / ``--run``, ``--repo`` (default
 ``DASMAC-com/dropset``),
-``--interval`` (seconds between gh's own refreshes, default 30), ``--timeout``
+``--interval`` (seconds between gh's own refreshes, default 30; honored in
+**both** modes), ``--timeout``
 (seconds before giving up on the watch, default 3600), ``--no-watch`` (skip the
 watch and just read the current state once — a resumed session where the
 background task is gone; checks mode only).
@@ -213,7 +214,9 @@ def watch_checks(pr: int, repo: str, interval: int, timeout: int, log: Path) -> 
     return True
 
 
-def watch_run(run_id: str, repo: str, timeout: int, log: Path) -> tuple[bool, int]:
+def watch_run(
+    run_id: str, repo: str, timeout: int, log: Path, interval: int = DEFAULT_INTERVAL
+) -> tuple[bool, int]:
     """Block until one workflow run settles. Returns ``(settled, exit_code)``.
 
     The merge-queue sibling of :func:`watch_checks`, and it exists for the same
@@ -226,8 +229,22 @@ def watch_run(run_id: str, repo: str, timeout: int, log: Path) -> tuple[bool, in
     ``--exit-status`` makes a failed run a non-zero exit, so a dequeue can never
     read as a merge. On timeout the child is killed and ``settled`` is ``False``;
     the exit code is then meaningless and reported as ``-1``.
+
+    ``interval`` is passed through to ``gh run watch -i``. It has to be: gh's
+    own default is **3 seconds**, so a caller throttling a long merge-queue wait
+    would otherwise get 3s polling and no diagnostic — the silently-ignored-flag
+    failure this module rejects elsewhere by construction.
     """
-    args = ["run", "watch", run_id, "--repo", repo, "--exit-status"]
+    args = [
+        "run",
+        "watch",
+        run_id,
+        "--repo",
+        repo,
+        "--exit-status",
+        "--interval",
+        str(interval),
+    ]
     try:
         fd = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     except OSError as exc:
@@ -248,15 +265,27 @@ def watch_run(run_id: str, repo: str, timeout: int, log: Path) -> tuple[bool, in
     return True, proc.returncode
 
 
-def wait_run(run_id: str, repo: str = DEFAULT_REPO, timeout: int = DEFAULT_TIMEOUT):
-    """Watch one workflow run and return the same verdict shape as :func:`wait`.
+def wait_run(
+    run_id: str,
+    repo: str = DEFAULT_REPO,
+    timeout: int = DEFAULT_TIMEOUT,
+    interval: int = DEFAULT_INTERVAL,
+):
+    """Watch one workflow run and return the same ``conclusion`` contract as
+    :func:`wait` — **not** the same verdict shape.
+
+    Only ``conclusion`` / ``settled`` / ``elapsed_seconds`` / ``log_path`` are
+    common. This returns ``run_id`` and ``exit_code``; :func:`wait` returns
+    ``pr``, ``counts``, ``failing``, and ``unresolved_buckets``. A caller that
+    reads ``verdict["failing"]`` off this one gets a ``KeyError``, so branch on
+    ``conclusion`` and nothing else if you handle both.
 
     ``conclusion`` is ``pass`` / ``fail`` / ``timeout`` — there is no ``pending``,
     because the watch only returns once the run is terminal.
     """
     log = run_log_path_for(run_id)
     started = time.monotonic()
-    settled, code = watch_run(run_id, repo, timeout, log)
+    settled, code = watch_run(run_id, repo, timeout, log, interval)
     elapsed = int(time.monotonic() - started)
 
     if not settled:
@@ -456,7 +485,12 @@ def run(argv: list[str]) -> int:
     if args.run_id is not None:
         if args.no_watch:
             raise WaitForChecksError("--no-watch is meaningless with --run")
-        verdict = wait_run(args.run_id, repo=args.repo, timeout=args.timeout)
+        verdict = wait_run(
+            args.run_id,
+            repo=args.repo,
+            timeout=args.timeout,
+            interval=args.interval,
+        )
     else:
         verdict = wait(
             args.pr,

@@ -408,6 +408,13 @@ class WatchRunTests(unittest.TestCase):
     def test_run_log_path_is_per_run(self):
         self.assertNotEqual(wfc.run_log_path_for("1"), wfc.run_log_path_for("2"))
 
+    def test_the_interval_is_passed_through_to_gh(self):
+        """gh run watch defaults to 3s; a caller throttling a long queue wait
+        must not be silently ignored."""
+        self._shim('echo "$@"')
+        wfc.watch_run("99", "o/r", 30, self.log, interval=45)
+        self.assertIn("--interval 45", self.log.read_text(encoding="utf-8"))
+
 
 class ModeSelectionTests(unittest.TestCase):
     """``--pr`` and ``--run`` are alternatives, and exactly one is required."""
@@ -431,7 +438,7 @@ class ModeSelectionTests(unittest.TestCase):
 
     def test_run_mode_reaches_wait_run(self):
         real = wfc.wait_run
-        wfc.wait_run = lambda rid, repo="r", timeout=0: {
+        wfc.wait_run = lambda rid, repo="r", timeout=0, interval=0: {
             "conclusion": "pass",
             "run_id": rid,
         }

@@ -478,7 +478,7 @@ query Backlog($projectId: ID!, $first: Int!) {
       identifier
       description
       priority
-      relations { nodes { id type relatedIssue { identifier } } }
+      relations { nodes { type relatedIssue { identifier } } }
       inverseRelations {
         nodes { id type issue { identifier priority state { name type } } }
       }

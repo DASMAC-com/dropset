@@ -4,6 +4,8 @@ description: Run a planning session — the complement to a worktree implementat
 user-invocable: true
 ---
 
+<!-- cspell:word startable -->
+
 # `plan`
 
 The working split is two session kinds. **Implementation**
@@ -113,18 +115,45 @@ does a lot of writing, and every rule that binds a filing
 skill binds it too:
 
 - **Dedup first** — search the open Backlog before filing.
+
 - **Amend with `patch` ops**, never by re-sending a body;
   anchor on **plain prose**, never on a line carrying an
   `ENG-###` (Linear stores it as a mention node) or heavy
   bold / code spans.
+
 - **Fewest coherent PRs** — fold coupled findings, but never
   across separate apps, languages, or deploy units.
+
 - **Todo / Backlog split** — initiatives and meta work in
   **Todo**; pullable work items in **Backlog**, which is what
   the operator pulls from.
+
 - **`Claude:` prefix** on meta-work titles (anything whose
   `**Touches**:` sit entirely under `.claude/**`,
-  `CLAUDE.md`, or `docs/conventions/**`).
+  `CLAUDE.md`, or `docs/conventions/**`). A planning session
+  is where most meta-work gets filed, so this is the skill
+  that emits the prefix most often.
+
+- **The structured filing fields are mandatory**, exactly as
+  for every other filing skill — a `**Fingerprint**:` line
+  (the dedup key) and a `**Touches**:` line (the path globs)
+  on every issue. See `CLAUDE.md` →
+  "Structured filing fields" for their exact shape.
+
+- **Record file collisions after each `save_issue`.** The
+  incremental sweep is what turns a new issue's
+  `**Touches**:` into `related` links against the open
+  Backlog, and it is the step that silently doesn't happen
+  if nobody states it:
+
+  ```sh
+  python3 .claude/tools/sync_blockers.py --for <ENG-###>
+  ```
+
+  Best-effort — it needs `LINEAR_API_KEY` and
+  `LINEAR_PROJECT_ID`; note it and continue if either is
+  unset. It files **no** blocking edge; those are step 3's
+  job and yours alone.
 
 **5. Coordinate with in-flight sessions.** A planning
 decision can invalidate the ground truth an implementation

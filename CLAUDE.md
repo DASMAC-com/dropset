@@ -50,7 +50,8 @@ session. It runs in the base repo (`naps planning-<day>` /
 `rnaps planning-<day>`, never a worktree), bootstraps from the
 "Planning" Linear document (`LINEAR_PLANNING_DOC_ID`), and writes its
 decisions back there. The `plan` skill is its method; the document is
-the state.
+the state. Detail — the env var, and why blocking edges are placed
+only here: `docs/conventions/linear-automation.md`.
 
 ### Structured filing fields
 
@@ -70,7 +71,8 @@ separate apps / languages / deploy units (the coherence floor). Detail:
 `.claude/**`, `CLAUDE.md`, or `docs/conventions/**` — carry
 a leading **`Claude:`** token on their **Linear issue title** (capital
 C, colon, space) so agent-infra work batches apart from product code.
-Filing skills (`linear-task`, `audit`, `audit-scope`, `housekeeping`)
+Filing skills (`linear-task`, `audit`, `audit-scope`, `housekeeping`,
+`plan`)
 emit it at filing time, so the prefix and the touched paths stay
 consistent by construction; a human filters the Linear board by it. It
 is a **Linear-title signal only — never a PR title** (PR titles keep

@@ -90,6 +90,15 @@ class AnalyzeTests(unittest.TestCase):
         self.assertIn("old..new", seen)
         self.assertIn("MB..eng-814", seen)
 
+    def test_rename_detection_is_disabled_on_the_diff(self):
+        """With renames detected, git prints only the destination path — so a
+        base that renamed a file the branch still edits reports NO overlap, on
+        the one delta shape most likely to have dropped the branch's edits."""
+        seen = []
+        with mock.patch.object(ro, "_git", side_effect=lambda a: seen.append(a) or ""):
+            ro.changed_files("a..b")
+        self.assertIn("--no-renames", seen[0])
+
     def test_commit_count_comes_from_the_log(self):
         result = self._analyze(
             base_files=["a.md"],

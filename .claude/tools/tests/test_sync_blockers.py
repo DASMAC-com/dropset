@@ -543,7 +543,7 @@ class RawToIssueTests(unittest.TestCase):
         raw["priority"] = "High"
         self.assertIsNone(_raw_to_issue(raw).priority)
 
-    def test_collects_outgoing_block_edges(self):
+    def test_collects_outgoing_blocks(self):
         raw = raw_issue("ENG-10", outgoing=[("rel-9", "blocks", "ENG-20")])
         got = _raw_to_issue(raw)
         self.assertEqual(got.blocks, ["ENG-20"])

@@ -166,8 +166,13 @@ Batch these, each **only when non-empty**:
   question harder to answer;
 - the **allowlist cruft** approved for removal in step 7;
 - the **stale memories** approved for purge in step 8;
-- the **inbox size** when `trim-context` reports the body
-  getting long.
+- the **inbox size** only when `trim-context` reports the
+  body still growing *despite* draining on file — which
+  should be impossible, so it means something is wrong with
+  the drain rather than that a clear is owed. (Do **not**
+  batch a "clear the inbox?" question: `trim-context` now
+  drains every consumed entry unconditionally, so there is
+  no such decision left for a human to authorize.)
 
 Three constraints on it:
 
@@ -742,10 +747,11 @@ python3 .claude/tools/memory_scan_gate.py record <memory_dir>
 the recommended default **first**, to run `/session-metrics`
 for the **current** session so this pass also appends a
 fresh measured entry (the producer side of the loop).
-Run it only on an explicit yes. Because a `session-metrics`
-run **appends** a new unprocessed entry, this offer comes
-*after* step 4's mine-and-clear, so the clear in step 4 is
-evaluated against the inbox state before this append. (In
+Run it only on an explicit yes. It comes *after* step 4 so
+the entry it appends is next pass's work rather than this
+one's — but nothing depends on that ordering any more: step
+4 drains exactly the entries it read, and `patch`'s
+exactly-once anchors make a concurrent append safe. (In
 an unattended pass with no one to answer, skip the offer.)
 
 **10. Offer a purge-conversations run.** Local transcripts

@@ -144,6 +144,9 @@ def iter_files(
     roots: list[Path],
     extensions: tuple[str, ...] | None,
     oversized: list[Path] | None = None,
+    globs: tuple[str, ...] | None = None,
+    base: Path | None = None,
+    stats: dict | None = None,
 ):
     """Yield searchable files under ``roots``, pruning excluded trees.
 
@@ -154,10 +157,31 @@ def iter_files(
     Files over :data:`MAX_FILE_BYTES` are skipped and appended to ``oversized``
     when a list is given, so the caller can *say* it skipped them rather than
     silently under-reporting.
+
+    **Filter order is load-bearing**, which is why ``globs`` is applied here
+    rather than by the caller. It runs *before* the extension and size checks so
+    that:
+
+    * ``oversized`` only ever names a file the glob actually selected — a
+      ``--glob docs/*.md`` run must not report skipping some huge ``.wasm`` it
+      never intended to read; and
+    * ``stats["glob_hits"]`` counts files the **glob** matched, independently of
+      how many survived ``extensions``. Without that split, "the glob matched
+      nothing" and "``--ext`` filtered out everything the glob matched" are
+      indistinguishable, and the caller blames a path typo for an extension
+      mismatch.
     """
     skip_dirs = excluded_dir_names()
     skip_files = excluded_file_names()
     suffixes = {f".{e.lower().lstrip('.')}" for e in extensions} if extensions else None
+
+    def relative(path: Path) -> str:
+        if base is None:
+            return path.name
+        try:
+            return str(path.relative_to(base))
+        except ValueError:
+            return str(path)
 
     stack = list(roots)
     while stack:
@@ -177,6 +201,10 @@ def iter_files(
                 continue
             if entry.name in skip_files:
                 continue
+            if globs is not None and not path_matches_globs(relative(entry), globs):
+                continue
+            if stats is not None:
+                stats["glob_hits"] = stats.get("glob_hits", 0) + 1
             if suffixes is not None and entry.suffix.lower() not in suffixes:
                 continue
             try:
@@ -219,8 +247,20 @@ def _glob_to_regex(pattern: str) -> str:
     """Translate a path glob to a regex where ``*`` stops at a separator.
 
     ``fnmatch`` maps ``*`` to ``.*``, which crosses ``/`` — so ``docs/*.md``
-    would match ``docs/a/b.md``. Here ``*`` is ``[^/]*``, ``**`` spans
-    separators, and ``?`` is a single non-separator character.
+    would match ``docs/a/b.md``. Here ``*`` is ``[^/]*``, ``?`` is a single
+    non-separator character, and ``**`` spans separators **only when it is a
+    whole path segment** (``a/**/b``, a leading ``**/``, a trailing ``/**``).
+
+    That last condition matters: a mid-segment ``docs/fx**.md`` is *not* a
+    globstar, and treating it as one would make it match ``docs/fx/a/b.md`` —
+    silently contradicting the "stops at a separator" promise above. Bash's
+    ``globstar``, gitignore, and ``pathlib`` all degrade a non-boundary ``**``
+    to a single ``*``, so this does too.
+
+    Character classes (``[ab]``) and brace expansion (``{ts,tsx}``) are **not**
+    supported — their characters are escaped literally. A pattern using them
+    matches nothing, which the caller surfaces as "matched no files" rather
+    than silently returning an empty result.
     """
     out: list[str] = []
     i = 0
@@ -228,13 +268,23 @@ def _glob_to_regex(pattern: str) -> str:
         char = pattern[i]
         if char == "*":
             if pattern[i : i + 2] == "**":
-                # `a/**/b` should also match `a/b`, so swallow a trailing slash
-                # into the optional group rather than requiring an empty segment.
-                if pattern[i : i + 3] == "**/":
-                    out.append("(?:.*/)?")
-                    i += 3
+                at_segment_start = i == 0 or pattern[i - 1] == "/"
+                after = pattern[i + 2 : i + 3]
+                at_segment_end = after in ("", "/")
+                if at_segment_start and at_segment_end:
+                    # `a/**/b` should also match `a/b`, so swallow the trailing
+                    # slash into the optional group rather than requiring an
+                    # empty segment.
+                    if after == "/":
+                        out.append("(?:.*/)?")
+                        i += 3
+                    else:
+                        out.append(".*")
+                        i += 2
                     continue
-                out.append(".*")
+                # Not a whole segment: degrade to a single `*`, consuming both
+                # stars so the second isn't re-read as another wildcard.
+                out.append("[^/]*")
                 i += 2
                 continue
             out.append("[^/]*")
@@ -336,9 +386,8 @@ def search(
     total = 0
     scanned = 0
     oversized: list[Path] = []
-    for path in iter_files(roots, extensions, oversized):
-        if globs and not path_matches_globs(relative(path), globs):
-            continue
+    stats: dict = {"glob_hits": 0}
+    for path in iter_files(roots, extensions, oversized, globs, base, stats):
         scanned += 1
         try:
             lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -371,13 +420,16 @@ def search(
         # The size cap is the tool's *other* cap, and the same rule applies: a cap
         # nobody is told about reads as "searched everything".
         "skipped_oversized": sorted(relative(p) for p in oversized),
-        # How many files the pattern was actually run against. Only interesting
-        # when it is zero under a `--glob`: "no file matched the glob" and "the
-        # glob's files held no match" both print `0 match(es)`, and conflating a
-        # typo'd path with a real negative is the under-report this tool exists
-        # to avoid.
+        # How many files the pattern was actually run against, and how many the
+        # glob alone selected. Both are needed because three different failures
+        # otherwise print an identical `0 match(es)`: the glob named nothing
+        # (usually a typo'd path), the glob matched but `--ext` filtered every
+        # hit out, or the files were searched and genuinely held no match. Only
+        # the third is a real negative, and conflating them is exactly the
+        # under-report this tool exists to avoid.
         "scanned": scanned,
-        "globbed": bool(globs),
+        "glob_hits": stats["glob_hits"],
+        "globbed": globs is not None,
     }
 
 
@@ -411,9 +463,15 @@ def print_result(result: dict, files_only: bool, context: int) -> None:
             f" | {len(skipped)} file(s) skipped as oversized: {', '.join(skipped)}"
         )
     if result.get("globbed") and not result.get("scanned"):
-        # Distinguish "the glob named nothing" from "its files held no match" —
-        # both otherwise print `0 match(es)`, and the first is usually a typo.
-        summary += " | WARNING: --glob matched no files, so nothing was searched"
+        # Distinguish the two ways a globbed run can search nothing. Blaming a
+        # path typo for an extension mismatch sends the reader to the wrong fix.
+        if not result.get("glob_hits"):
+            summary += " | WARNING: --glob matched no files, so nothing was searched"
+        else:
+            summary += (
+                f" | WARNING: --glob matched {result['glob_hits']} file(s), but "
+                f"--ext excluded all of them — nothing was searched"
+            )
     print(summary, file=sys.stderr)
 
 
@@ -425,7 +483,8 @@ def run(argv: list[str]) -> int:
     parser.add_argument(
         "--glob",
         default=None,
-        help="comma-separated path globs a file must match (implies --all-text)",
+        help="comma-separated path globs a file must match (implies --all-text); "
+        "supports * ? and segment-wise **, but not [classes] or {braces}",
     )
     parser.add_argument(
         "--ext", default=None, help="comma-separated extensions, no dot"
@@ -450,13 +509,15 @@ def run(argv: list[str]) -> int:
     if args.ext and args.all_text:
         raise SearchSourceError("--ext and --all-text are alternatives")
 
-    globs = (
-        tuple(g.strip() for g in args.glob.split(",") if g.strip())
-        if args.glob
-        else None
-    )
-    if args.glob and not globs:
-        raise SearchSourceError("--glob was given no patterns")
+    # Key on `is not None`, NOT on truthiness: `--glob ''` is falsy, so a
+    # truthiness test would skip both this parse and the guard below, silently
+    # dropping the filter and sweeping the whole tree — the broad, noisy result
+    # `--glob` exists to prevent, delivered without a word of warning.
+    globs = None
+    if args.glob is not None:
+        globs = tuple(g.strip() for g in args.glob.split(",") if g.strip())
+        if not globs:
+            raise SearchSourceError("--glob was given no patterns")
 
     if args.all_text:
         extensions = None

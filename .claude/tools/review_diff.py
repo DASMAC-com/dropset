@@ -192,6 +192,29 @@ class ReviewDiffError(Exception):
     """A user-facing failure: surfaced to stderr, exits non-zero."""
 
 
+def touches_generation_input(paths) -> bool:
+    """Whether any path is a source a committed generated artifact is built from.
+
+    Exported because ``rebase_overlap.py`` asks the same question of a *base
+    delta* rather than a review diff. Sharing the **predicate**, not just
+    :data:`GENERATION_INPUTS`, is the point: two copies of the ``any(...)`` can
+    drift the moment either grows a qualifying clause, and both callers use the
+    answer to license skipping an expensive regeneration gate.
+    """
+    return any(matches_any(p, GENERATION_INPUTS) for p in paths)
+
+
+def touches_ci_code(paths) -> bool:
+    """Whether any path falls outside CI's ``code`` path filter.
+
+    The companion to :func:`touches_generation_input`, shared for the same
+    reason — note the inverted sense (a path is relevant when it does *not*
+    match an exclude), which is exactly the kind of detail a second copy gets
+    wrong.
+    """
+    return any(not matches_any(p, CODE_FILTER_EXCLUDES) for p in paths)
+
+
 def matches(path: str, pattern: str) -> bool:
     """Whether ``path`` matches one path-filter pattern.
 
@@ -509,8 +532,8 @@ def gate(base: str, out: Path, fetch: bool = True, split: bool = False) -> dict:
     files = parse_numstat_z(_git(["diff", "--numstat", "-z", f"{base_ref}..HEAD"]))
 
     paths = [f["path"] for f in files]
-    runs_rust_suites = any(not matches_any(p, CODE_FILTER_EXCLUDES) for p in paths)
-    runs_artifact_gates = any(matches_any(p, GENERATION_INPUTS) for p in paths)
+    runs_rust_suites = touches_ci_code(paths)
+    runs_artifact_gates = touches_generation_input(paths)
 
     base_fresh = not base_ahead
     diff_empty = diff_lines == 0

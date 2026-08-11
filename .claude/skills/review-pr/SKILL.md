@@ -165,16 +165,32 @@ PR-authoring **writes** (`create_pull_request`,
      this with `--force-with-lease`.
 
    **Triage what the base actually gained.** Capture the
-   base tip **before** the fetch, then hand both ends to
-   the committed reporter:
+   base this branch is *currently on* — its **merge-base** —
+   **before** the fetch and rebase above, then hand both ends
+   to the committed reporter:
 
    ```sh
-   git rev-parse origin/<base>
+   git merge-base HEAD origin/<base>
    ```
 
    ```sh
-   python3 .claude/tools/rebase_overlap.py --from <prev> --to origin/<base>
+   python3 .claude/tools/rebase_overlap.py --from <mb> --to origin/<base>
    ```
+
+   **The merge-base, not `git rev-parse origin/<base>`.**
+   That distinction is the whole point and it is easy to get
+   wrong — this step got it wrong on its own first run.
+   `origin/<base>` is a **shared** ref: worktrees have one
+   `.git`, so a sibling session's fetch (or this session's
+   own `init-pr` fetch, hours earlier) can advance it long
+   before this step executes. Reading it "before the fetch"
+   therefore captures a tip the branch may never have been
+   based on, and the tool then reports a **0-commit delta for
+   a base that demonstrably moved** — a false all-clear, in
+   the exact place a false all-clear licenses skipping the
+   gates. The merge-base is what the branch is actually
+   sitting on, and it is correct regardless of who fetched
+   what when.
 
    It prints the commits the base gained, the files they
    touched, the files this branch's own commits touch

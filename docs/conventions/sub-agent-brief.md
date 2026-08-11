@@ -45,11 +45,13 @@ copy, so the wording stays in one place.
 > - **Ask a search for its narrowest form.** Scoping bounds *where* it
 >   looks; narrowness bounds *what it returns*. When the question is
 >   existence — "is this symbol still referenced anywhere?" — ask for
->   files or counts (`--files`, `--count`, or `grep -l` / `-c`), not full
->   match lines: one such sweep came back as ~130 lines, most of them one
->   file repeating one constant 40 times, for an answer that was one bit
->   per symbol. Take full lines only when you must read the surrounding
->   code.
+>   paths, not full match lines: `search_source.py --files-only`, or a
+>   bare `grep -l` / `-c`. (`search_source.py` prints the match and file
+>   counts on its summary line in **every** mode, so `--files-only`
+>   already answers "how many?" too.) One such sweep came back as ~130
+>   lines, most of them one file repeating one constant 40 times, for an
+>   answer that was one bit per symbol. Take full lines only when you
+>   must read the surrounding code.
 > - **Reading large files — Grep to the relevant section, then `Read`
 >   with `offset`/`limit`.** Don't pull a whole `CLAUDE.md`, doc, or
 >   SKILL.md into context to use a fraction of it; a whole-file Read of

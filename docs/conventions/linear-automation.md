@@ -187,9 +187,12 @@ batches together and can be filtered, staged, and reviewed apart from
 product code on the board.
 
 - **Filing skills emit it.** `linear-task`, `audit`, `audit-scope`,
-  and `housekeeping` prepend `Claude:` to a title when the issue's
+  `housekeeping`, and `plan` prepend `Claude:` to a title when the
+  issue's
   `**Touches**:` globs are all on the meta surface above. `/merge-tasks`
-  applies it when every issue it consolidates is meta.
+  applies it when every issue it consolidates is meta. (`plan` matters
+  here in particular: a planning session is where most meta-work issues
+  are actually filed.)
 - **It batches meta-work on the board.** The prefix is the signal a
   human filters and groups by in Linear to see all agent-infra work at
   once, apart from product code. It is applied at **filing time** — the
@@ -349,8 +352,8 @@ edit.
 
 **No automated writer files a blocking edge — ever.** Not
 `sync_blockers.py`, not a filing skill (`linear-task`, `audit`,
-`audit-scope`, `trim-context`, `housekeeping`, `merge-tasks`), not an
-autonomous audit rotation. This holds for edges an agent believes are
+`audit-scope`, `trim-context`, `housekeeping`, `merge-tasks`, `plan`),
+not an autonomous audit rotation. This holds for edges an agent believes are
 genuinely semantic, not just for file-overlap ones.
 
 **Where they *are* placed: a planning session.** A blocking edge

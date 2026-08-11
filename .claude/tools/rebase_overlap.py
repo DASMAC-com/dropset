@@ -31,15 +31,26 @@ Plus the two predicates that say whether a gate can be skipped, delegated to
 
 Usage::
 
-    # Capture the base tip BEFORE fetching, then compare after:
-    git rev-parse origin/main                  # -> <prev>
+    # Capture the base the branch is CURRENTLY on, before fetching/rebasing:
+    git merge-base HEAD origin/main            # -> <prev>
     git fetch origin main
+    git rebase origin/main
     python3 .claude/tools/rebase_overlap.py --from <prev> --to origin/main
 
-``--from`` is required and deliberately so: the pre-fetch base tip is the one
-value that cannot be recovered afterwards, and guessing it (``ORIG_HEAD`` is the
-pre-rebase *branch* head, not the old base) would silently compare the wrong
-range. ``--to`` defaults to ``origin/main``; ``--branch`` defaults to ``HEAD``.
+**Pass the merge-base, not** ``git rev-parse origin/main``. ``origin/main`` is a
+*shared* ref — worktrees have one ``.git``, so a sibling session's fetch can
+advance it long before this runs. Reading it "before the fetch" can therefore
+capture a tip this branch was never based on, and the comparison then reports a
+0-commit delta for a base that demonstrably moved: a false all-clear, in exactly
+the place a false all-clear licenses skipping a gate. (This is not hypothetical
+— it happened on the tool's first real invocation.) The merge-base is what the
+branch actually sits on, whoever fetched what.
+
+``--from`` is required and deliberately so: once the rebase lands, the old
+merge-base is no longer derivable from the branch, and guessing it (``ORIG_HEAD``
+is the pre-rebase *branch* head, not the old base) would silently compare the
+wrong range. ``--to`` defaults to ``origin/main``; ``--branch`` defaults to
+``HEAD``.
 
 Prints JSON on stdout and a one-line human summary on stderr. Read-only: it runs
 only ``git merge-base``, ``git log`` and ``git diff --name-only``, and writes
@@ -58,21 +69,26 @@ import json
 import sys
 
 from review_diff import (
-    CODE_FILTER_EXCLUDES,
-    GENERATION_INPUTS,
     ReviewDiffError,
     _git,
-    matches_any,
+    touches_ci_code,
+    touches_generation_input,
 )
 
 
-class RebaseOverlapError(Exception):
-    """A user-facing failure: surfaced to stderr, exits non-zero."""
-
-
 def changed_files(rev_range: str) -> list[str]:
-    """``git diff --name-only <range>``, as a sorted list of repo-relative paths."""
-    out = _git(["diff", "--name-only", rev_range])
+    """``git diff --name-only <range>``, as a sorted list of repo-relative paths.
+
+    ``--no-renames`` is not optional here. Rename detection is **on by default**
+    and reports only the destination path, so a base delta that renamed
+    ``sdk/a.rs`` to ``sdk/b.rs`` would yield ``base_files = {sdk/b.rs}`` while a
+    branch still editing ``sdk/a.rs`` yields ``{sdk/a.rs}`` — an empty
+    intersection, and :func:`summarize` cheerfully printing "no overlap" for the
+    single delta shape most likely to have silently dropped the branch's edits.
+    Disabling detection surfaces both sides of a rename as changed paths, which
+    is what an overlap question actually wants.
+    """
+    out = _git(["diff", "--no-renames", "--name-only", rev_range])
     return sorted({line.strip() for line in out.splitlines() if line.strip()})
 
 
@@ -111,13 +127,11 @@ def analyze(previous_base: str, new_base: str, branch: str = "HEAD") -> dict:
         "overlap": overlap,
         # Predicates over the BASE DELTA only — the question is whether the
         # base's movement could have staled an artifact this branch already
-        # regenerated, not whether this branch touched one.
-        "runs_artifact_gates": any(
-            matches_any(p, GENERATION_INPUTS) for p in base_files
-        ),
-        "runs_rust_suites": any(
-            not matches_any(p, CODE_FILTER_EXCLUDES) for p in base_files
-        ),
+        # regenerated, not whether this branch touched one. Both are `review_diff`
+        # functions, not re-implementations, so the logic has one owner as well
+        # as the exclude lists.
+        "runs_artifact_gates": touches_generation_input(base_files),
+        "runs_rust_suites": touches_ci_code(base_files),
     }
 
 
@@ -155,7 +169,8 @@ def run(argv: list[str]) -> int:
         "--from",
         dest="previous_base",
         required=True,
-        help="the base tip BEFORE the fetch (capture with git rev-parse)",
+        help="the base the branch was on: git merge-base HEAD <base>, "
+        "captured before the fetch/rebase (NOT git rev-parse origin/<base>)",
     )
     parser.add_argument(
         "--to", dest="new_base", default="origin/main", help="the base tip after"
@@ -171,9 +186,13 @@ def run(argv: list[str]) -> int:
 
 
 def main() -> int:
+    # Every failure path here originates in `review_diff._git`, so
+    # `ReviewDiffError` is the only exception this module can surface. It
+    # deliberately defines no error type of its own: an unraised, unreachable
+    # one would just be dead code with a matching dead `except` arm.
     try:
         return run(sys.argv)
-    except (RebaseOverlapError, ReviewDiffError) as exc:
+    except ReviewDiffError as exc:
         print(f"rebase-overlap: {exc}", file=sys.stderr)
         return 1
 

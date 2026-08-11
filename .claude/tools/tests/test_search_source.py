@@ -281,6 +281,58 @@ class GlobFilterTests(unittest.TestCase):
         out = ss.search(r"\[package\]", self.root, globs=("*.toml",))
         self.assertEqual(out["files"], ["a/Cargo.toml", "b/deep/Cargo.toml"])
 
+    def test_a_mid_segment_double_star_does_not_span_separators(self):
+        """`docs/fx**.md` is not a globstar — treating it as one would
+        contradict the "stops at a separator" promise. Bash, gitignore and
+        pathlib all degrade a non-boundary `**` to a single `*`."""
+        self.write("docs/fx.md", "# Flat\n")
+        self.write("docs/fx/deep/notes.md", "# Nested\n")
+        out = ss.search("^# ", self.root, globs=("docs/fx**.md",))
+        self.assertEqual(out["files"], ["docs/fx.md"])
+
+    def test_a_trailing_double_star_still_spans(self):
+        self.write("docs/a.md", "# A\n")
+        self.write("docs/deep/b.md", "# B\n")
+        out = ss.search("^# ", self.root, globs=("docs/**",))
+        self.assertEqual(out["files"], ["docs/a.md", "docs/deep/b.md"])
+
+    def test_a_leading_double_star_spans(self):
+        self.write("state.rs", "struct S;\n")
+        self.write("a/b/state.rs", "struct S;\n")
+        out = ss.search("struct S", self.root, globs=("**/state.rs",))
+        self.assertEqual(out["files"], ["a/b/state.rs", "state.rs"])
+
+    def test_regex_metacharacters_in_a_pattern_are_literal(self):
+        """Unescaped, `a+b` is a regex quantifier that would also match `ab.rs`."""
+        self.write("a+b.rs", "fn x() {}\n")
+        self.write("ab.rs", "fn x() {}\n")
+        out = ss.search("fn x", self.root, globs=("a+b.rs",))
+        self.assertEqual(out["files"], ["a+b.rs"])
+
+    def test_oversized_skips_are_scoped_to_the_glob(self):
+        """A `--glob docs/*.md` run must not report skipping a huge binary it
+        never intended to search — the glob filter runs before the size check."""
+        self.write("docs/small.md", "# ok\n")
+        big = self.root / "huge.bin"
+        big.write_text("x" * (ss.MAX_FILE_BYTES + 10), encoding="utf-8")
+        out = ss.search("ok", self.root, globs=("docs/*.md",))
+        self.assertEqual(out["skipped_oversized"], [])
+
+    def test_an_ext_drop_is_distinguished_from_a_glob_miss(self):
+        """Both search zero files, but they need different fixes — one is a
+        typo'd path, the other an extension filter."""
+        self.write("docs/real.md", "# Real\n")
+
+        missed = ss.search("^# ", self.root, globs=("docs/typo.md",))
+        self.assertEqual(missed["glob_hits"], 0)
+        self.assertEqual(missed["scanned"], 0)
+
+        filtered = ss.search(
+            "^# ", self.root, globs=("docs/real.md",), extensions=("rs",)
+        )
+        self.assertEqual(filtered["glob_hits"], 1)
+        self.assertEqual(filtered["scanned"], 0)
+
     def test_a_glob_cannot_reach_into_a_pruned_tree(self):
         """The exclude lists still win: a glob is a narrowing, not an override."""
         self.write("target/debug/notes.md", "# Generated\n")
@@ -391,6 +443,31 @@ class CliTests(unittest.TestCase):
             self._capture(
                 ["search_source.py", "needle", "--root", str(self.root), "--glob", ","]
             )
+
+    def test_an_empty_string_glob_is_refused_not_silently_dropped(self):
+        """`--glob ''` is falsy, so a truthiness test would skip the filter
+        entirely and sweep the whole tree — the broad result --glob prevents."""
+        with self.assertRaises(ss.SearchSourceError):
+            self._capture(
+                ["search_source.py", "needle", "--root", str(self.root), "--glob", ""]
+            )
+
+    def test_an_ext_drop_under_a_glob_says_so_rather_than_blaming_the_path(self):
+        (self.root / "notes.md").write_text("needle\n", encoding="utf-8")
+        _, _, err = self._capture(
+            [
+                "search_source.py",
+                "needle",
+                "--root",
+                str(self.root),
+                "--glob",
+                "*.md",
+                "--ext",
+                "rs",
+            ]
+        )
+        self.assertIn("--ext excluded all of them", err)
+        self.assertNotIn("--glob matched no files", err)
 
     def test_truncation_is_announced_on_stderr(self):
         (self.root / "many.rs").write_text("needle\n" * 5, encoding="utf-8")
