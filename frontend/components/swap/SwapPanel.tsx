@@ -63,12 +63,19 @@ export function SwapPanel() {
     useBestRoute,
     eclobAvailable,
   );
+  // Gated on availability as well as the selected mode. Route mode alone would
+  // let the eCLOB quote fire against a pair we have no market for: the toggle's
+  // auto-revert-to-best only lands after its own availability check resolves, so
+  // switching to an unsupported pair while eCLOB is selected briefly quoted and
+  // flashed "No Dropset market for this pair" before the revert. Both quote
+  // hooks now see the same resolved availability, and it costs no extra read —
+  // the probe is shared and the resolved route is memoized.
   const eclobQuote = useEclobQuote(
     fromMint,
     toMint,
     fromDecimals,
     amount,
-    !useBestRoute,
+    !useBestRoute && eclobAvailable,
   );
   const quote = useBestRoute ? routerQuote : eclobQuote;
 
