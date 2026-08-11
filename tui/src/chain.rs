@@ -553,10 +553,12 @@ pub fn create_ata_idempotent(
 /// the very transaction that drains to it, so the close can't fail on a
 /// missing ATA and can't leave a stray one behind if it does fail.
 ///
-/// The token program is explicit rather than assumed to be SPL Token: the
-/// registry's fee mint carries its own (`registry.fee_token_program`), and
-/// deriving the address under the wrong one yields an account the drain's
-/// `transfer_checked` would reject.
+/// The token program is a parameter because the registry's fee mint
+/// carries its own (`registry.fee_token_program`) and deriving the address
+/// under the wrong one yields an account the drain's `transfer_checked`
+/// would reject. The market-leg callers pass SPL Token, matching the
+/// hard-coded `token_program` in `build_close_market_treasury_ix` — the
+/// TUI's market path is SPL-Token-only throughout, not program-agnostic.
 pub fn ata_with_create_ix(
     payer: &Pubkey,
     wallet: &Pubkey,

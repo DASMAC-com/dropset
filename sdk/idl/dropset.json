@@ -3539,7 +3539,7 @@
     {
       "code": 6037,
       "name": "MarketVaultsNotDrained",
-      "msg": "market vaults still hold inventory for this leg — force-withdraw every depositor and leader first"
+      "msg": "market vaults still hold inventory for this leg (force_withdraw_* first)"
     },
     {
       "code": 6038,
@@ -3590,6 +3590,11 @@
       "code": 6047,
       "name": "MissingPlatformFeeAccounts",
       "msg": "a non-zero platform_fee_bps requires both the fee authority and its fee token account"
+    },
+    {
+      "code": 6048,
+      "name": "MarketHasActiveVaults",
+      "msg": "market still has vaults on the active list (reclaim every sector first)"
     }
   ],
   "types": [

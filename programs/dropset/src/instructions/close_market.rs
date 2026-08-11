@@ -35,7 +35,8 @@ use anchor_spl_v2::{
 
 use crate::{errors::DropsetError, state::Market, Registry};
 
-use super::{leg_vault_sum, transfer_out_leg};
+use super::transfer_out_leg;
+use crate::VaultAccess;
 
 // ── close_market_treasury ─────────────────────────────────────────────
 
@@ -108,20 +109,29 @@ impl CloseMarketTreasury {
             is_base || address_eq(&mint_addr, &self.market.quote_mint),
             DropsetError::NotAMarketTreasury
         );
-        // Ordering pre-condition, and the reason this instruction can
-        // drain at all: nobody but the protocol may still have a claim on
-        // this leg. Every depositor and leader must already be paid out
-        // (`force_withdraw_*`), which is what drives the slab's per-leg
-        // inventory to zero. Draining without this check would let a
-        // teardown run skip the force-withdraws and pay depositor
-        // principal to `token_recipient` — so the balance guard this
-        // replaces is narrowed to the claim it was really protecting, not
-        // dropped. Whatever remains once the claim is zero is the accrued
-        // taker fee plus unsolicited transfers, and both are the
-        // protocol's to move.
+        // Two pre-conditions, and together they are what make draining
+        // safe (see this module's header for why draining at all is
+        // necessary).
+        //
+        // First: no vault may still claim this leg, or the drain would
+        // pay depositor principal to `token_recipient`.
         require!(
-            leg_vault_sum(&self.market, is_base) == 0,
+            self.market.leg_vault_sum(is_base) == 0,
             DropsetError::MarketVaultsNotDrained
+        );
+        // Second: the market must be at end of life. The claim check
+        // alone does **not** imply that — a live market's leg sits at
+        // zero whenever its vaults are one-sided, or once a vault has
+        // been bought out of that leg entirely, both ordinary states. A
+        // per-leg claim check on its own would therefore let an admin
+        // harvest `accrued_<leg>_fee_atoms` from a *trading* market and
+        // destroy the ATA under it, bricking the leg — nothing re-creates
+        // a treasury for a market that already exists. An empty active
+        // list is the witness that every sector has been reclaimed, which
+        // only the force-withdraws do.
+        require!(
+            self.market.active_count.get() == 0,
+            DropsetError::MarketHasActiveVaults
         );
 
         let (mint_seeds, bump_arr) = self.market.signer_seed_parts();

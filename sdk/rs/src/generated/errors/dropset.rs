@@ -121,8 +121,8 @@ pub enum DropsetError {
     /// 6036 - vault is already on the tombstone list
     #[error("vault is already on the tombstone list")]
     VaultAlreadyTombstoned = 0x1794,
-    /// 6037 - market vaults still hold inventory for this leg — force-withdraw every depositor and leader first
-    #[error("market vaults still hold inventory for this leg — force-withdraw every depositor and leader first")]
+    /// 6037 - market vaults still hold inventory for this leg (force_withdraw_* first)
+    #[error("market vaults still hold inventory for this leg (force_withdraw_* first)")]
     MarketVaultsNotDrained = 0x1795,
     /// 6038 - market treasury must be closed before the market can be closed
     #[error("market treasury must be closed before the market can be closed")]
@@ -156,6 +156,9 @@ pub enum DropsetError {
         "a non-zero platform_fee_bps requires both the fee authority and its fee token account"
     )]
     MissingPlatformFeeAccounts = 0x179F,
+    /// 6048 - market still has vaults on the active list (reclaim every sector first)
+    #[error("market still has vaults on the active list (reclaim every sector first)")]
+    MarketHasActiveVaults = 0x17A0,
 }
 
 impl From<DropsetError> for solana_program_error::ProgramError {

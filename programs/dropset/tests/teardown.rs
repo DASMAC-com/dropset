@@ -296,6 +296,50 @@ fn close_treasury_rejects_undrained_vaults() {
     common::assert_program_error(&err, dropset::DropsetError::MarketVaultsNotDrained);
 }
 
+/// A treasury may not be closed out from under a **live** market, even
+/// when that leg's vaults happen to hold none of it.
+///
+/// This is the case the per-leg claim check alone does not cover, and the
+/// reason `close_market_treasury` also requires an empty active list. A
+/// vault bought out of its base entirely sits at `Σ base_atoms == 0`
+/// while trading normally — an ordinary end state, not a contrived one.
+/// Without the second guard an admin could harvest that leg's accrued
+/// fees and destroy the ATA under a live market, and nothing re-creates a
+/// treasury for a market that already exists, so the leg would be bricked
+/// permanently.
+#[test]
+fn close_treasury_rejects_a_live_market_with_an_empty_leg() {
+    let mut f = Fixture::seeded(1_000_000, 1_085_000);
+    let admin = f.authority.insecure_clone();
+    let rr = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS).pubkey();
+    f.set_taker_fee(&admin, 10_000).expect("1% taker fee");
+
+    // Buy the vault out of its base entirely. The vault stays live and on
+    // the active list — it still quotes, and still holds quote inventory.
+    let taker = f.funded_depositor(0, 10_000_000);
+    f.swap(&taker, 0, 5_000_000, Price::INFINITY.as_u32(), 1)
+        .expect("taker sweeps the ask side");
+
+    // The claim check passes — there is genuinely no base claim left —
+    // and the leg holds accrued protocol fees, so a drain would pay out.
+    assert_eq!(f.vault(0).base_atoms.get(), 0, "base fully bought out");
+    assert!(
+        f.market_header().accrued_base_fee_atoms.get() > 0,
+        "the fills accrued a base-leg fee worth harvesting"
+    );
+    assert_eq!(f.market_header().active_count.get(), 1, "market is live");
+
+    let (base_mint, base_treasury) = (f.base_mint, f.base_treasury);
+    let err = f
+        .close_market_treasury(&admin, &base_mint, &base_treasury, &rr)
+        .expect_err("a live market's treasury must not be closeable");
+    common::assert_program_error(&err, dropset::DropsetError::MarketHasActiveVaults);
+    assert!(
+        exists(&f.svm, &base_treasury),
+        "the treasury survives the rejected close"
+    );
+}
+
 /// The headline case for drain-on-close: a market that ever charged a
 /// taker fee must still tear down end to end, with the accrued atoms
 /// landing in the operator's token account.
@@ -531,6 +575,13 @@ fn full_lifecycle_teardown_then_bootstrap_again_at_the_same_addresses() {
         accrued_quote,
         "the quote-leg accrued fee was harvested on the way out"
     );
+    // Both counters, not just the base one: the handler's leg select is a
+    // hand-written `if is_base { … } else { … }`, so without the quote
+    // assertion a handler that zeroed the base counter in both arms would
+    // pass the whole suite.
+    let h = f.market_header();
+    assert_eq!(h.accrued_base_fee_atoms.get(), 0, "base counter zeroed");
+    assert_eq!(h.accrued_quote_fee_atoms.get(), 0, "quote counter zeroed");
     let market = f.market;
     let registry = f.registry;
     let fee_vault = f.registry_fee_treasury;

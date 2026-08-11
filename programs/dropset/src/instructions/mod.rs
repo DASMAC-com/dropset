@@ -95,15 +95,9 @@ pub fn transfer_in_leg<'a>(
 /// `signer_seeds`).
 ///
 /// The **outbound** sibling of [`transfer_in_leg`] — shared by every
-/// payout out of program custody (both `withdraw` legs, both
-/// `withdraw_leader` legs, all four `force_withdraw` legs,
-/// `sweep_residual`, and the drain-before-close in both
-/// `close_market_treasury` and `close_registry_fee_vault`) so the
-/// zero-skip and CPI shape stay identical; only the source, destination
-/// and signing PDA differ per call. Nearly every caller passes a market
-/// treasury signed by the market PDA; `close_registry_fee_vault` passes
-/// the registry fee ATA signed by the registry PDA, which is why
-/// `authority` is not market-specific.
+/// payout out of program custody, with the owning PDA as the signing
+/// authority, so the zero-skip and CPI shape stay identical; only the
+/// source, destination and signing PDA differ per call.
 /// `transfer_checked` rejects zero amounts on classic SPL Token, so a
 /// zero leg is skipped here rather than at each call site.
 #[allow(clippy::too_many_arguments)]
@@ -131,37 +125,6 @@ pub fn transfer_out_leg<'a>(
         signer_seeds,
     );
     transfer_checked(cpi, amount, decimals)
-}
-
-/// Sum one leg's vault inventory across the market's **whole slab** —
-/// the atoms the treasury holds that some depositor or leader still has a
-/// claim on. `is_base` selects the leg.
-///
-/// Every sector is counted, not just the active DLL: a tombstoned vault
-/// still holds depositor claims, and a reclaimed (free-list) sector could
-/// in principle carry rounding dust. Counting every sector can only
-/// *overstate* the claim, which errs toward leaving atoms in custody.
-/// Cheap enough for the cold admin paths that use it —
-/// `max_vaults_per_market` is a `u8`, so this is at most 255 iterations
-/// (default 10).
-///
-/// Shared by `sweep_residual` (which subtracts it, plus the accrued fee,
-/// to find the unclaimed residual) and `close_market_treasury` (which
-/// requires it zero before draining the rest), so the whole-slab rule
-/// can't drift between the instruction that measures a claim and the one
-/// that acts on its absence. Saturating, and `u128` so a corrupt slab
-/// claiming more than `u64::MAX` can't wrap into a small number.
-pub fn leg_vault_sum(market: &Market, is_base: bool) -> u128 {
-    let mut sum: u128 = 0;
-    for v in market.as_slice() {
-        let leg = if is_base {
-            v.base_atoms.get()
-        } else {
-            v.quote_atoms.get()
-        };
-        sum = sum.saturating_add(leg as u128);
-    }
-    sum
 }
 
 /// Close a `VaultDepositor` PDA and decrement the market's

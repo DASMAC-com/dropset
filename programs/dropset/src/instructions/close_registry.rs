@@ -86,8 +86,8 @@ impl CloseRegistryFeeVault {
         let signer_seeds: [&[&[u8]]; 1] = [&signer_seeds_inner];
 
         // Drain the collected fees to `token_recipient`, then close.
-        // `transfer_out_leg` is the market treasury's outbound helper
-        // reused with the registry PDA as the signing authority — the same
+        // `transfer_out_leg` is the shared outbound payout helper, here
+        // with the registry PDA as the signing authority — the same
         // zero-skip and `transfer_checked` shape, so a never-used fee
         // vault closes without a token CPI at all. No empty-account
         // assertion: `CloseAccount` below enforces that itself.

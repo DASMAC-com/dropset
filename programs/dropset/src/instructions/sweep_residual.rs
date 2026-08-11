@@ -32,7 +32,8 @@ use anchor_spl_v2::token_interface::{Mint, TokenAccount, TokenInterface};
 
 use crate::{errors::DropsetError, events::SweepResidualEvent, state::Market, Registry};
 
-use super::{leg_vault_sum, transfer_out_leg};
+use super::transfer_out_leg;
+use crate::VaultAccess;
 
 #[event_cpi]
 #[derive(Accounts)]
@@ -96,7 +97,7 @@ impl SweepResidual {
         // whole slab — see `leg_vault_sum` for why every sector counts.
         // Counting them all can only *understate* the residual here, which
         // errs toward leaving atoms in custody.
-        let vault_sum = leg_vault_sum(&self.market, is_base);
+        let vault_sum = self.market.leg_vault_sum(is_base);
         let accrued = if is_base {
             self.market.accrued_base_fee_atoms.get()
         } else {
