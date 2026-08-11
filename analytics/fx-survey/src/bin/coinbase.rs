@@ -1,6 +1,6 @@
 //! The Coinbase EURC/USDC reference feed process: resume from the saved cursor,
 //! backfill then poll the Coinbase candles endpoint, and persist closed buckets
-//! into `cex_prices` through the framework store sink (docs/fx-survey.md §4).
+//! into `cex_prices` through the framework store sink (docs/data-feeds.md §9).
 //! Long-lived; resumes from its cursor on restart.
 
 use dropset_feeds::{
@@ -21,6 +21,11 @@ async fn main() -> anyhow::Result<()> {
 
     let cfg = Config::from_env()?;
     let pool = connect(&cfg.database_url).await?;
+    // A collector is DB-primary: without `cex_prices` and `feed_cursors` there
+    // is nothing for it to do, so assert the schema up front rather than
+    // failing on the first committed batch. `dropset-migrate` owns creating
+    // them (docs/data-feeds.md §8).
+    dropset_db_schema::require_schema(&pool).await?;
     let feed = cfg.feed_name();
 
     // Bridge the store's saved position into the source at startup: the store

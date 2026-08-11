@@ -1,5 +1,5 @@
-//! The Coinbase EURC/USDC reference feed (docs/fx-survey.md §4) — the survey's
-//! CEX reference price and the gate's first, framework-proving source.
+//! The Coinbase EURC/USDC reference feed (docs/data-feeds.md §9) — the CEX
+//! reference price and the first, framework-proving source.
 //!
 //! It polls the Coinbase Exchange public REST candles endpoint (keyless), which
 //! returns `[time, low, high, open, close, volume]` arrays, newest-first, ≤ 300

@@ -6,11 +6,11 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Coinbase's per-request candle cap: a range wider than this many buckets is
-/// rejected, so the backfill pages in windows no larger (docs/fx-survey.md §4).
+/// rejected, so the backfill pages in windows no larger (docs/data-feeds.md §4).
 const COINBASE_MAX_CANDLES: usize = 300;
 
 /// Default backfill depth — long enough to span the weekend and macro-event
-/// regimes with enough repeats to matter (docs/fx-survey.md §8).
+/// regimes with enough repeats to matter (docs/data-feeds.md §11).
 const DEFAULT_BACKFILL_DAYS: u64 = 60;
 
 #[derive(Clone, Debug)]

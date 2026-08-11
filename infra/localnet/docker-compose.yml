@@ -14,6 +14,20 @@
 # the api serves /v1 on http://localhost:8080. Bring it up with
 # `make indexer-up`.
 #
+# There is exactly ONE Postgres here, the shared `dropset` database
+# (docs/data-feeds.md §8) — on-chain indexer tables, external market-data
+# price tables, and the maker go-between tables as they land. The market-data
+# collectors used to run their own Postgres in a second compose file; that
+# split is gone, because the joins that matter cross it (attributing realized
+# PnL means joining indexer fills against external price history at fill
+# time). Bring the collectors up with `make collectors-up`.
+#
+# `migrate` is the one-shot schema gate: `dropset-migrate` owns all DDL and
+# every database-writing service waits for it to exit successfully. It is
+# idempotent, so it re-runs harmlessly whenever the stack restarts, and
+# pointing it at a fresh volume replays the whole history — which is also the
+# local reset story.
+#
 # The maker + taker bots join too (`make bots-up`): both sign with the repo
 # `keys/` keypairs bind-mounted in, reach the host-run validator at
 # host.docker.internal:8899, and refuse any non-localnet genesis. The host
@@ -25,6 +39,26 @@
 # `make explorer` / `make explorer-down` drive it by hand.
 name: 'dropset-localnet'
 services:
+  coinbase:
+    # The Coinbase reference-price collector: resume from the saved cursor,
+    # backfill then poll the candles endpoint, and persist closed buckets into
+    # `cex_prices`. Keyless — the Coinbase Exchange public REST API needs no
+    # credentials — and unrelated to the validator, so it is the one service
+    # here that runs happily with no localnet up at all.
+    build:
+      context: '../..'
+      dockerfile: 'analytics/fx-survey/Dockerfile'
+    command:
+    - 'fx-survey-coinbase'
+    depends_on:
+      migrate:
+        condition: 'service_completed_successfully'
+    environment:
+      BACKFILL_DAYS: '${BACKFILL_DAYS:-60}'
+      DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
+      PRODUCT_ID: '${PRODUCT_ID:-EURC-USDC}'
+      RUST_LOG: 'info'
+    restart: 'unless-stopped'
   explorer:
     # `.github/workflows/explorer-image.yml` builds this image (multi-arch) and
     # pushes it to the `image:` tag below; `pull` / `up` prefer that prebuilt
@@ -61,10 +95,10 @@ services:
     command:
     - 'dropset-indexer'
     depends_on:
-      postgres:
-        condition: 'service_healthy'
+      migrate:
+        condition: 'service_completed_successfully'
     environment:
-      DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset_indexer'
+      DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
       RPC_URL: 'http://host.docker.internal:8899'
       RUST_LOG: 'info'
     extra_hosts:
@@ -78,11 +112,11 @@ services:
     command:
     - 'dropset-indexer-api'
     depends_on:
-      postgres:
-        condition: 'service_healthy'
+      migrate:
+        condition: 'service_completed_successfully'
     environment:
       API_BIND: '0.0.0.0:8080'
-      DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset_indexer'
+      DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
       RUST_LOG: 'info'
     ports:
     - '127.0.0.1:8080:8080'
@@ -108,11 +142,38 @@ services:
     restart: 'unless-stopped'
     volumes:
     - '../../keys:/app/keys:ro'
-  postgres:
-    # Prototype: data is ephemeral (no named volume) — the indexer re-syncs
-    # from chain via its watermark, so a fresh container just re-indexes.
+  migrate:
+    # The single schema owner (docs/data-feeds.md §8). Run-once, idempotent, and
+    # the only thing in the stack that issues DDL: every database-writing
+    # service gates on it via `service_completed_successfully`, so no app can
+    # start against a schema that does not exist yet.
+    build:
+      context: '../..'
+      dockerfile: 'infra/localnet/migrate.Dockerfile'
+    command:
+    - 'dropset-migrate'
+    depends_on:
+      postgres:
+        condition: 'service_healthy'
     environment:
-      POSTGRES_DB: 'dropset_indexer'
+      DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
+      RUST_LOG: 'info'
+    restart: 'no'
+  postgres:
+    # The one shared `dropset` database: indexer tables, market-data price
+    # tables, and the maker go-between tables as they land (docs/data-feeds.md
+    # §8).
+    #
+    # Data is durable, on a named volume. The indexer could always re-sync from
+    # chain via its watermark, but the market-data history cannot be
+    # reconstructed — a CEX backfill window is finite, so anything that scrolls
+    # out of it is gone for good. Recording price history from now on is the
+    # point of the collectors, so the volume is what makes a restart cost
+    # nothing. `make indexer-down` keeps it; removing it is deliberate
+    # (`docker compose down -v`), and re-running `migrate` against the fresh
+    # volume replays the whole history.
+    environment:
+      POSTGRES_DB: 'dropset'
       POSTGRES_PASSWORD: 'dropset'
       POSTGRES_USER: 'dropset'
     healthcheck:
@@ -120,11 +181,13 @@ services:
       retries: 10
       test:
       - 'CMD-SHELL'
-      - 'pg_isready -U dropset -d dropset_indexer'
+      - 'pg_isready -U dropset -d dropset'
     image: 'postgres:16-alpine'
     ports:
     - '127.0.0.1:5432:5432'
     restart: 'unless-stopped'
+    volumes:
+    - 'postgres-data:/var/lib/postgresql/data'
   taker-bot:
     # The benign flow taker: stochastic swaps so the book moves and the maker
     # takes fills. Signs swaps with keys/FFFF.json and mints itself back up to
@@ -152,4 +215,11 @@ services:
     restart: 'unless-stopped'
     volumes:
     - '../../keys:/app/keys:ro'
+volumes:
+  # The shared database's durable storage. Named, so recorded market-data
+  # history survives a stack restart (see the `postgres` service). `local` is
+  # the default driver, stated explicitly because the lint forbids both an
+  # empty value and a flow mapping here.
+  postgres-data:
+    driver: 'local'
 ...

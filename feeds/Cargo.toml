@@ -36,29 +36,33 @@ solana-commitment-config = { version = "3", optional = true }
 solana-pubkey = { version = "3", optional = true }
 solana-signature = { version = "3", optional = true }
 solana-transaction-status = { version = "~3", optional = true }
-# String-typed runtime queries (no compile-time `DATABASE_URL`); `migrate`
-# embeds `./migrations`.
+# String-typed runtime queries (no compile-time `DATABASE_URL`, and no
+# `migrate`: the framework no longer creates `feed_cursors` — DDL belongs to
+# `dropset-db-schema`, the single schema owner).
 sqlx = { version = "0.8", default-features = false, features = [
   "runtime-tokio",
   "tls-rustls",
   "postgres",
   "macros",
-  "migrate",
   "json",
 ], optional = true }
 
 [dev-dependencies]
-# The store path is exercised against a real Postgres in a throwaway
-# container (feeds/tests/store_postgres.rs), so the migration, the
-# `feed_cursors` upsert, and the store sink's cursor-advance are covered end
-# to end. Those tests are `#[ignore]`d — they need a Docker daemon; run them
-# with `cargo test -p dropset-feeds --features store -- --ignored`.
+# The store path is exercised against a real Postgres in a throwaway container
+# (feeds/tests/store_postgres.rs), so the `feed_cursors` upsert and the store
+# sink's cursor-advance are covered end to end. Those tests are `#[ignore]`d —
+# they need a Docker daemon; run them with
+# `cargo test -p dropset-feeds --features store -- --ignored`.
+#
+# The schema owner is a dev-dependency only: the framework depends on the
+# `feed_cursors` table existing, never on who created it, so nothing but the
+# test needs this edge.
+dropset-db-schema = { path = "../db-schema" }
 sqlx = { version = "0.8", default-features = false, features = [
   "runtime-tokio",
   "tls-rustls",
   "postgres",
   "macros",
-  "migrate",
   "json",
 ] }
 testcontainers-modules = { version = "0.11", features = ["postgres"] }

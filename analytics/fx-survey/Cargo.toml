@@ -1,15 +1,12 @@
 # cspell:word rustls
-# The FX-stablecoin liquidity survey app (docs/fx-survey.md), and the first
-# consumer of the shared `feeds` framework (docs/data-feeds.md) — so it proves
-# the source → store-sink path end to end. Two binaries built from one image:
-# `fx-survey-migrate` (run-once schema + framework cursor table) and
-# `fx-survey-coinbase` (the Coinbase EURC/USDC reference feed, §4). HTTP-only:
-# it enables `feeds`' `http` + `store` features and never compiles the Solana
-# or streaming transports.
-
-[[bin]]
-name = "fx-survey-migrate"
-path = "src/bin/migrate.rs"
+# The market-data collection app (docs/data-feeds.md §7), and the first
+# consumer of the shared `feeds` framework — so it proves the source →
+# store-sink path end to end. One binary,
+# `fx-survey-coinbase` (the Coinbase EURC/USDC reference feed, §9); schema
+# provisioning belongs to `dropset-migrate`, the single schema owner (§8), so
+# this crate no longer ships a migrate runner. HTTP-only: it enables `feeds`'
+# `http` + `store` features and never compiles the Solana or streaming
+# transports.
 
 [[bin]]
 name = "fx-survey-coinbase"
@@ -25,11 +22,14 @@ async-trait = "0.1"
 # `StoreSink`. Only the poll-into-store path is needed, so just `http` + `store`
 # — no `rpc`/`stream`, so no Solana tree.
 dropset-feeds = { path = "../../feeds", features = ["http", "store"] }
+# The single schema owner. This crate issues no DDL; it depends on the owner
+# only to assert at startup that the tables it writes already exist.
+dropset-db-schema = { path = "../../db-schema" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# Runtime (string-typed) queries and the app schema DDL; no compile-time
-# `DATABASE_URL`, so no `macros`/`migrate` feature. `rustls` matches the store
-# sink's TLS backend so nothing pulls in openssl.
+# Runtime (string-typed) queries; no compile-time `DATABASE_URL`, so no
+# `macros`/`migrate` feature. `rustls` matches the store sink's TLS backend so
+# nothing pulls in openssl.
 sqlx = { version = "0.8", default-features = false, features = [
   "runtime-tokio",
   "tls-rustls",

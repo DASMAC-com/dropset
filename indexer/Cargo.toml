@@ -25,6 +25,10 @@ bs58 = "0.5"
 # behind `fetch`, polled from a `spawn_blocking` task. Same 3.x solana line as
 # the maker-bot so there is one `Pubkey` type across decode and RPC.
 dropset-sdk = { path = "../sdk/rs", features = ["fetch"] }
+# The single schema owner. The indexer's tables moved into its migrations, so
+# this dependency is what lets `Store::connect` assert the schema instead of
+# creating it.
+dropset-db-schema = { path = "../db-schema" }
 rust_decimal = { version = "1", features = ["db-postgres", "serde-str"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -33,15 +37,14 @@ solana-commitment-config = "3"
 solana-pubkey = "3"
 solana-signature = "3"
 solana-transaction-status = "~3"
-# String-typed runtime queries (no compile-time `DATABASE_URL`); `migrate`
-# embeds `./migrations`; `rust_decimal` maps u64 atoms onto Postgres NUMERIC
-# without the i64 truncation a BIGINT bind would risk.
+# String-typed runtime queries (no compile-time `DATABASE_URL`, and no
+# `migrate`: DDL belongs to `dropset-db-schema`); `rust_decimal` maps u64 atoms
+# onto Postgres NUMERIC without the i64 truncation a BIGINT bind would risk.
 sqlx = { version = "0.8", default-features = false, features = [
   "runtime-tokio",
   "tls-rustls",
   "postgres",
   "macros",
-  "migrate",
   "rust_decimal",
   "json",
 ] }

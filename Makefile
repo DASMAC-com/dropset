@@ -15,6 +15,8 @@
 .PHONY: debugger
 .PHONY: decks
 .PHONY: decks-build
+.PHONY: collectors-down
+.PHONY: collectors-up
 .PHONY: demo
 .PHONY: explorer
 .PHONY: explorer-down
@@ -363,9 +365,17 @@ explorer-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml down
 
 # Nuke the localnet Docker state for a fully cold start: stop and remove every
-# stack container (explorer, indexer, bots, postgres — the `taker` profile
-# included), drop its volumes and any orphans, remove the untagged images
-# compose built locally (indexer + bots), and prune the build cache. The
+# stack container (explorer, migrate, indexer, collectors, bots, postgres —
+# the `taker` profile included), drop its volumes and any orphans, remove the
+# untagged images compose built locally (migrate + indexer + collectors +
+# bots), and prune the build cache.
+#
+# The `-v` DESTROYS the shared database's named volume, and with it every
+# recorded market-data candle. That used to be free — the stack had no named
+# volume, so `-v` was a no-op — and now it is not: a CEX backfill window is
+# finite, so history that has scrolled out of it cannot be re-fetched. This
+# target is the deliberate full reset; use `make indexer-down` /
+# `make collectors-down` to stop services and keep the data. The
 # container removal takes each container's logs with it. `--rmi local` removes
 # only untagged local builds, so the tagged explorer image
 # (dasmac/dropset-localnet-explorer, pulled or built) and pulled base images
@@ -378,17 +388,36 @@ clean-docker: check-docker
 		--profile taker down --rmi local -v --remove-orphans
 	docker builder prune -f
 
-# Localnet indexer stack: Postgres + the event indexer worker + the /v1 API
-# (infra/localnet, docs/indexer.md §8). Needs a running validator (the tui or
-# a host-run solana-test-validator) as the live event source. First run builds
-# the Rust image (slow); later runs reuse the cargo-chef dependency cache. The
-# /v1 surface comes up on http://localhost:8080.
+# Localnet indexer stack: the shared Postgres + the one-shot schema migration
+# + the event indexer worker + the /v1 API (infra/localnet, docs/indexer.md
+# §8). Needs a running validator (the tui or a host-run
+# solana-test-validator) as the live event source. First run builds the Rust
+# images (slow); later runs reuse the cargo-chef dependency cache. The /v1
+# surface comes up on http://localhost:8080.
+#
+# `migrate` is named explicitly even though compose would pull it in as a
+# dependency, so `up` reports its result rather than hiding a failed schema
+# step behind a service that then cannot start. `indexer-down` leaves the
+# Postgres volume in place — recorded market-data history is not disposable;
+# drop it deliberately with `docker compose ... down -v`.
 indexer-up: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
-		up -d --quiet-pull postgres indexer indexer-api
+		up -d --quiet-pull postgres migrate indexer indexer-api
 indexer-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		rm -sf postgres indexer indexer-api
+
+# Market-data collectors: the shared Postgres + the schema migration + the
+# Coinbase reference-price feed (docs/data-feeds.md §5, §8). Independent of
+# the validator — these poll public exchange REST APIs — so they run with or
+# without a localnet up, and they share the one `dropset` database with the
+# indexer. Stopping them leaves the recorded history on the volume.
+collectors-up: check-docker
+	docker compose -f infra/localnet/docker-compose.yml \
+		up -d --quiet-pull postgres migrate coinbase
+collectors-down: check-docker
+	docker compose -f infra/localnet/docker-compose.yml \
+		rm -sf coinbase
 
 # Localnet bot stack: the maker bot (infra/localnet). It signs with the repo
 # keys/ keypairs and reaches the host-run validator at
