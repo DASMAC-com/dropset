@@ -391,11 +391,12 @@ on-chain pre-conditions:
   Admin force-withdraw**). Counter enforcement is required because
   the program cannot iterate all `VaultDepositor` PDAs on-chain.
 - `base_treasury` and `quote_treasury` are both closed — and
-  `close_market_treasury` in turn requires `vault.base_atoms == 0` /
-  `vault.quote_atoms == 0` on every vault on the market, so every
-  depositor and leader is necessarily paid out first. It checks the
-  vaults' claim rather than the ATA balance, which is what lets the
-  accrued protocol fee through to the drain.
+  `close_market_treasury` in turn requires both `vault.base_atoms == 0` /
+  `vault.quote_atoms == 0` on every vault on the market **and**
+  `active_count == 0`, so every depositor and leader is necessarily paid
+  out first and every sector reclaimed. It checks the vaults' claim
+  rather than the ATA balance, which is what lets the accrued protocol
+  fee through to the drain.
 
 Once those hold, the market's lamports are transferred to a
 `rent_recipient` account and the account data is zeroed and
@@ -2412,15 +2413,15 @@ SOL lamports that come back on close — accounts inlined into a
 parent (vault sectors inside a market slab) do not hold separate
 rent and close with their parent.
 
-| #   | Account                                                                        | Owner program          | Holds rent?                                  | Close path                                                                                                                                                                                                                                                           | Rent recipient                            |
-| --- | ------------------------------------------------------------------------------ | ---------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| 1   | **Registry** PDA, seeds `[b"registry"]`                                        | dropset                | yes (variable: 8 + header + admin slab tail) | `close_registry` (admin, feature-gated). Pre-condition: `market_count == 0`, zero admins beyond the caller, fee vault closed.                                                                                                                                        | passed-in `rent_recipient`                |
-| 2   | **Registry fee vault** ATA, `ata(registry, fee_mint, tp)`                      | SPL Token / Token-2022 | yes (~165–170 B)                             | `close_registry_fee_vault` (admin, feature-gated). No balance pre-condition: collected fees are drained to a passed-in `token_recipient` first, then CPI `CloseAccount` signed by Registry PDA.                                                                      | passed-in `rent_recipient`                |
-| 3   | **Market** PDA (`MarketHeader` + vault slab inline)                            | dropset                | yes (large; grows with vault count)          | `close_market` (admin, feature-gated). Pre-conditions: `outstanding_vault_depositors == 0`, both treasuries closed.                                                                                                                                                  | passed-in `rent_recipient`                |
-| 4   | **Vault** sectors inside the market slab                                       | n/a (inline)           | **no separate rent** — covered by Market's   | closed implicitly by `close_market`; there is no per-vault close instruction. Reclaim (to the free DLL) does not refund any rent.                                                                                                                                    | n/a                                       |
-| 5   | **Base treasury** ATA, derived from market PDA                                 | SPL Token / Token-2022 | yes                                          | `close_market_treasury` (admin, feature-gated). Pre-condition: no vault claims the leg (`Σ vault.base_atoms == 0`). Remaining balance — accrued fee, unsolicited transfers — drained to a passed-in `token_recipient`, then CPI `CloseAccount` signed by market PDA. | passed-in `rent_recipient`                |
-| 6   | **Quote treasury** ATA, derived from market PDA                                | SPL Token / Token-2022 | yes                                          | same instruction, run for the quote leg.                                                                                                                                                                                                                             | passed-in `rent_recipient`                |
-| 7   | **VaultDepositor** PDA, seeds `("vault_depositor", market, sector_idx, owner)` | dropset                | yes                                          | (a) existing close-on-empty in `Withdraw` when `shares == 0`; (b) `force_withdraw_depositor` (see **Depositor positions and cost basis → Admin force-withdraw**). Either path decrements `MarketHeader.outstanding_vault_depositors`.                                | depositor `owner` — their PDA, their rent |
+| #   | Account                                                                        | Owner program          | Holds rent?                                  | Close path                                                                                                                                                                                                                                                                                                           | Rent recipient                            |
+| --- | ------------------------------------------------------------------------------ | ---------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| 1   | **Registry** PDA, seeds `[b"registry"]`                                        | dropset                | yes (variable: 8 + header + admin slab tail) | `close_registry` (admin, feature-gated). Pre-condition: `market_count == 0`, zero admins beyond the caller, fee vault closed.                                                                                                                                                                                        | passed-in `rent_recipient`                |
+| 2   | **Registry fee vault** ATA, `ata(registry, fee_mint, tp)`                      | SPL Token / Token-2022 | yes (~165–170 B)                             | `close_registry_fee_vault` (admin, feature-gated). No balance pre-condition: collected fees are drained to a passed-in `token_recipient` first, then CPI `CloseAccount` signed by Registry PDA.                                                                                                                      | passed-in `rent_recipient`                |
+| 3   | **Market** PDA (`MarketHeader` + vault slab inline)                            | dropset                | yes (large; grows with vault count)          | `close_market` (admin, feature-gated). Pre-conditions: `outstanding_vault_depositors == 0`, both treasuries closed.                                                                                                                                                                                                  | passed-in `rent_recipient`                |
+| 4   | **Vault** sectors inside the market slab                                       | n/a (inline)           | **no separate rent** — covered by Market's   | closed implicitly by `close_market`; there is no per-vault close instruction. Reclaim (to the free DLL) does not refund any rent.                                                                                                                                                                                    | n/a                                       |
+| 5   | **Base treasury** ATA, derived from market PDA                                 | SPL Token / Token-2022 | yes                                          | `close_market_treasury` (admin, feature-gated). Pre-conditions: no vault claims the leg (`Σ vault.base_atoms == 0`) **and** no vault is live (`active_count == 0`). Remaining balance — accrued fee, unsolicited transfers — drained to a passed-in `token_recipient`, then CPI `CloseAccount` signed by market PDA. | passed-in `rent_recipient`                |
+| 6   | **Quote treasury** ATA, derived from market PDA                                | SPL Token / Token-2022 | yes                                          | same instruction, run for the quote leg.                                                                                                                                                                                                                                                                             | passed-in `rent_recipient`                |
+| 7   | **VaultDepositor** PDA, seeds `("vault_depositor", market, sector_idx, owner)` | dropset                | yes                                          | (a) existing close-on-empty in `Withdraw` when `shares == 0`; (b) `force_withdraw_depositor` (see **Depositor positions and cost basis → Admin force-withdraw**). Either path decrements `MarketHeader.outstanding_vault_depositors`.                                                                                | depositor `owner` — their PDA, their rent |
 
 Everything outside this table (`system_program`, `token_program`,
 `ProgramData`, the program executable itself) is not program state
@@ -2458,11 +2459,23 @@ Per market, in order:
    never charged a taker fee.
 
 1. **Close both treasuries.** `close_market_treasury` for the
-   base leg, again for the quote leg. Each call requires that no vault
-   still claims the leg (`Σ vault.<leg>_atoms == 0`, which step 2 is what
-   establishes), transfers whatever the treasury still holds to a
+   base leg, again for the quote leg. Each call requires **two**
+   pre-conditions, transfers whatever the treasury still holds to a
    passed-in `token_recipient`, zeros that leg's
-   `accrued_<leg>_fee_atoms`, and then closes the ATA.
+   `accrued_<leg>_fee_atoms`, and then closes the ATA:
+
+   - **No vault claims the leg** (`Σ vault.<leg>_atoms == 0`) — so
+     depositor principal can never be routed to `token_recipient`.
+   - **No vault is live** (`active_count == 0`) — the witness that the
+     market is actually at end of life, which step 2 establishes by
+     reclaiming every sector.
+
+   The second is not redundant. A leg's claim reaches zero during
+   ordinary trading — a vault bought out of its base entirely sits at
+   `Σ base_atoms == 0` while still quoting — so the claim check alone
+   would let an admin harvest that leg's accrued fees and destroy the ATA
+   under a live market, bricking the leg (nothing re-creates a treasury
+   for a market that already exists).
 
    Draining rather than demanding an empty account is what makes this
    step reachable at all. Two balances legitimately survive steps 1–2 and
@@ -2470,10 +2483,7 @@ Per market, in order:
    `accrued_<leg>_fee_atoms` (the harvest is deferred, and
    `SweepResidual` subtracts the counter rather than paying it out) and
    any **unsolicited transfer** to the ATA — which, since anyone can send
-   one, would otherwise be a teardown griefing vector. The ordering
-   guarantee is preserved by checking the vaults' claim instead of the
-   balance, so depositor principal can never be routed to
-   `token_recipient`.
+   one, would otherwise be a teardown griefing vector.
 
 1. **Close the market.** `close_market` reclaims the entire
    `MarketHeader` + vault slab rent in one shot, and decrements
