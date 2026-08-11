@@ -18,10 +18,13 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * A capture run is ten sequential headless page loads; the platform default of
- * ten seconds is not enough for that on a cold start.
+ * A capture run is ten sequential headless page loads, plus unpacking Chromium
+ * on a cold start — far past the platform's ten-second default.
+ *
+ * 60s is the ceiling every Vercel plan allows; raise it toward 300 on a plan
+ * that permits it if a deck ever grows enough to need it.
  */
-export const maxDuration = 300;
+export const maxDuration = 60;
 
 /** `Colosseum Cohort 5 Demo Day` → `colosseum-cohort-5-demo-day`. */
 const slugify = (title: string) =>

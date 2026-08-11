@@ -161,9 +161,23 @@ destination that matters, and it needs the `.pptx` anyway.
 
 The exporter loads each page in a headless Chromium — `?slideIndex=N`, one
 page per shot — and packs the screenshots into a `.pptx` as one full-bleed
-picture per slide (`scripts/capture.mjs` and `scripts/pptx.mjs`). It finds
-Brave, Chrome, Chromium or Edge automatically;
-`DECK_BROWSER=/path/to/browser` overrides that.
+picture per slide (`scripts/capture.mjs` and `scripts/pptx.mjs`). One browser
+serves the whole run, driven over the DevTools protocol by `puppeteer-core`.
+
+**It works on the deployed site as well as locally**, which is the point of
+that arrangement: a serverless host has no browser to find, so the route
+launches `@sparticuz/chromium` — a Chromium that ships as a dependency and is
+unpacked per cold start — while a local run uses whatever is installed,
+preferring Brave, then Chrome, Chromium or Edge. `DECK_BROWSER=/path/to/bin`
+overrides the local search. Both packages are marked external in
+`next.config.mjs`; bundling them rewrites paths they resolve at runtime, and
+the route then fails only once deployed.
+
+Two consequences worth knowing about the deployed route. The first export
+after a while pays a cold start while Chromium unpacks, so it is slower than
+the rest; and the function is capped at `maxDuration = 60`, the ceiling every
+Vercel plan allows, which is comfortable for ten pages but is the number to
+raise if a deck grows much larger.
 
 Pages lay out in the deck's own 1920×1080 space but are captured at a device
 pixel ratio of 2, so the images are **3840×2160**. Raising the pixel ratio

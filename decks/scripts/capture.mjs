@@ -1,11 +1,5 @@
-import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { promisify } from "node:util";
-
-const execFileAsync = promisify(execFile);
+import puppeteer from "puppeteer-core";
 
 /**
  * Screenshot a deck's pages with a headless Chromium.
@@ -22,6 +16,12 @@ const execFileAsync = promisify(execFile);
  * Screenshotting the live page instead takes its pixels from the same renderer
  * the deck is reviewed in, so what exports is by construction what was
  * approved, and it produces the PNGs the `.pptx` needs directly.
+ *
+ * The browser is driven over the DevTools protocol rather than by spawning
+ * `--screenshot` per page. That is what lets one browser serve all ten pages —
+ * an order of magnitude less overhead — and, more importantly, it is the only
+ * form that works on a serverless host, where there is no browser to spawn and
+ * the binary has to be unpacked and launched explicitly.
  */
 
 /**
@@ -32,8 +32,8 @@ const execFileAsync = promisify(execFile);
 export const CAPTURE_SIZE = { width: 1920, height: 1080 };
 
 /**
- * Device pixel ratio for the capture, so the PNGs come out at
- * 3840×2160 while the page still lays out in its 1920×1080 design space.
+ * Device pixel ratio for the capture, so the PNGs come out at 3840×2160 while
+ * the page still lays out in its 1920×1080 design space.
  *
  * Both halves of that matter. Raising the *viewport* instead would give
  * Spectacle a bigger box to fit and change the layout; raising the pixel ratio
@@ -45,9 +45,9 @@ export const CAPTURE_SIZE = { width: 1920, height: 1080 };
 const CAPTURE_SCALE = 2;
 
 /**
- * Chromium builds that ship a compatible headless mode, most-preferred first.
- * Any Chromium works; this is only about finding one already installed.
- * `DECK_BROWSER` overrides the search for anything not on the list.
+ * Locally-installed Chromium builds, most-preferred first. Any Chromium works;
+ * this is only about finding one already on the machine. `DECK_BROWSER`
+ * overrides the search for anything not on the list.
  */
 const BROWSER_CANDIDATES = [
   "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
@@ -59,85 +59,84 @@ const BROWSER_CANDIDATES = [
   "/usr/bin/chromium-browser",
 ];
 
-/** Locate a usable Chromium, or explain how to point the export at one. */
-export function resolveBrowser() {
-  const override = process.env.DECK_BROWSER;
-  if (override) {
-    if (!existsSync(override)) {
-      throw new Error(`DECK_BROWSER is set to a path that does not exist: ${override}`);
-    }
-    return override;
+/**
+ * True when running on Vercel's serverless runtime, which has no browser
+ * installed — the binary ships as a dependency and is unpacked per cold start.
+ */
+const isServerless = () =>
+  Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.VERCEL);
+
+/**
+ * Launch a browser, wherever this is running.
+ *
+ * The serverless branch is imported lazily rather than at module scope: the
+ * package unpacks a ~50MB brotli-compressed Chromium on load, which is pure
+ * cost for every local run and every request that never exports.
+ */
+async function launch() {
+  if (isServerless()) {
+    const { default: chromium } = await import("@sparticuz/chromium");
+    return puppeteer.launch({
+      args: chromium.args,
+      executablePath: await chromium.executablePath(),
+      headless: true,
+    });
   }
 
-  const found = BROWSER_CANDIDATES.find((path) => existsSync(path));
-  if (!found) {
+  const override = process.env.DECK_BROWSER;
+  if (override && !existsSync(override)) {
+    throw new Error(`DECK_BROWSER is set to a path that does not exist: ${override}`);
+  }
+
+  const executablePath = override ?? BROWSER_CANDIDATES.find((path) => existsSync(path));
+  if (!executablePath) {
     throw new Error(
       "No Chromium-based browser found. Install Brave or Chrome, or set " +
         "DECK_BROWSER to a browser binary.",
     );
   }
-  return found;
+
+  return puppeteer.launch({ executablePath, headless: true });
 }
 
 /**
- * How long a page gets to settle before the shot is taken.
- *
- * `--virtual-time-budget` is not a sleep: Chromium runs timers and animations
- * at maximum speed and captures once the budget of *virtual* time is spent, so
- * this is generous without being slow. It has to cover the deck's own fade-in
- * and, on a cold dev server, the route's first compile.
+ * How long a page gets to finish loading and settle before the shot is taken.
+ * It has to cover the deck's fade-in and, on a cold dev server, the route's
+ * first compile.
  */
-const VIRTUAL_TIME_MS = 10000;
-
-/**
- * Capture one page and return its PNG bytes.
- *
- * A fresh process per page is deliberate rather than wasteful: Chromium's
- * `--screenshot` captures once and exits, and driving one long-lived instance
- * across pages would mean speaking the DevTools protocol — a dependency, and a
- * moving target — to do what a URL parameter already does.
- */
-async function capturePage(browser, baseUrl, route, index, dir) {
-  const out = join(dir, `page${index + 1}.png`);
-  const url = `${baseUrl}${route}?slideIndex=${index}&stepIndex=0`;
-
-  await execFileAsync(browser, [
-    "--headless",
-    "--disable-gpu",
-    // Without this a scrollbar can steal a strip of the right edge, which on a
-    // full-bleed page is a visible seam in the exported slide.
-    "--hide-scrollbars",
-    // Pin the ratio rather than inheriting the display's, so the output size
-    // is the same on any machine.
-    `--force-device-scale-factor=${CAPTURE_SCALE}`,
-    `--window-size=${CAPTURE_SIZE.width},${CAPTURE_SIZE.height}`,
-    `--virtual-time-budget=${VIRTUAL_TIME_MS}`,
-    `--screenshot=${out}`,
-    url,
-  ]);
-
-  return readFile(out);
-}
+const NAVIGATION_TIMEOUT_MS = 60000;
+const SETTLE_MS = 600;
 
 /**
  * Capture every page of a deck in order, returning one PNG buffer per page.
  *
- * Pages are captured sequentially. They could run concurrently, but ten
- * headless Chromium processes against one dev server is how you get a timeout
- * on the slowest page, and the whole run is seconds either way.
+ * One browser and one tab throughout: each page is a navigation, which is
+ * cheap, and running ten tabs at once against a single dev server is how the
+ * slowest of them ends up timing out.
  */
 export async function captureDeck({ baseUrl, route, pages, onPage = undefined }) {
-  const browser = resolveBrowser();
-  const dir = await mkdtemp(join(tmpdir(), "dropset-deck-"));
+  const browser = await launch();
 
   try {
+    const page = await browser.newPage();
+    await page.setViewport({ ...CAPTURE_SIZE, deviceScaleFactor: CAPTURE_SCALE });
+
     const shots = [];
     for (let i = 0; i < pages; i += 1) {
-      shots.push(await capturePage(browser, baseUrl, route, i, dir));
+      await page.goto(`${baseUrl}${route}?slideIndex=${i}&stepIndex=0`, {
+        waitUntil: "networkidle0",
+        timeout: NAVIGATION_TIMEOUT_MS,
+      });
+      // `networkidle0` means the requests stopped, not that the deck has
+      // finished its entrance transition.
+      await new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
+
+      shots.push(await page.screenshot({ type: "png" }));
       onPage?.(i + 1, pages);
     }
+
     return shots;
   } finally {
-    await rm(dir, { force: true, recursive: true });
+    await browser.close();
   }
 }
