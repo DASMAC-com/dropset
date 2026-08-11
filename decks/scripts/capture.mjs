@@ -1,5 +1,6 @@
 // cspell:word screenshotting
 // cspell:word networkidle
+// cspell:word downsamples
 
 import { existsSync } from "node:fs";
 import puppeteer from "puppeteer-core";
@@ -35,18 +36,43 @@ import puppeteer from "puppeteer-core";
 const CAPTURE_SIZE = { width: 1920, height: 1080 };
 
 /**
- * Device pixel ratio for the capture, so the PNGs come out at 5760×3240 while
+ * Device pixel ratio for the capture, so the PNGs come out at 3840×2160 while
  * the page still lays out in its 1920×1080 design space.
  *
  * Both halves of that matter. Raising the *viewport* instead would give
  * Spectacle a bigger box to fit and change the layout; raising the pixel ratio
  * renders the same layout with more samples, which is what makes text and the
- * screenshot artwork crisp rather than resampled. Projectors and Google Slides
- * both scale the image down from here, and downscaling is what keeps edges
- * clean — 1× was visibly grainy once Slides had rescaled it, and 2× still read
- * soft against the same page viewed live.
+ * screenshot artwork crisp rather than resampled.
+ *
+ * 2× is the ratio the destination actually justifies: 3840×2160 is exactly a 4K
+ * projector, so the deck arrives at 1:1 on the best screen it will meet and is
+ * cleanly downscaled on any lesser one.
+ *
+ * This was 3× for a while, on the reasoning that Google Slides degraded the
+ * import and more samples would survive it. That reasoning was wrong, and the
+ * measurement that settled it is worth not repeating: exporting a deck,
+ * importing it to Slides, downloading it back as `.pptx`, and comparing the
+ * embedded images found all ten pages **byte-identical** — same dimensions,
+ * same PNG, same checksum. Slides neither re-encodes nor downsamples what it
+ * stores. The softness is in how Slides *renders* a slide (in the editor canvas
+ * and in Present mode alike), which no amount of source resolution reaches. So
+ * the ratio is set by the projector, and 3× was 4.7MB of pixels nothing
+ * downstream could ever show.
  */
-const CAPTURE_SCALE = 3;
+const DEFAULT_CAPTURE_SCALE = 2;
+
+/**
+ * `DECK_CAPTURE_SCALE` overrides the ratio, so the same deck can be exported at
+ * several resolutions and the results compared side by side — which is how the
+ * default above was chosen, and the only honest way to revisit it.
+ */
+const CAPTURE_SCALE = Number(process.env.DECK_CAPTURE_SCALE ?? DEFAULT_CAPTURE_SCALE);
+
+if (!Number.isFinite(CAPTURE_SCALE) || CAPTURE_SCALE <= 0) {
+  throw new Error(
+    `DECK_CAPTURE_SCALE must be a positive number, got ${process.env.DECK_CAPTURE_SCALE}`,
+  );
+}
 
 /**
  * Locally-installed Chromium builds, most-preferred first. Any Chromium works;
