@@ -68,8 +68,7 @@ export function SwapPanel() {
   // auto-revert-to-best only lands after its own availability check resolves, so
   // switching to an unsupported pair while eCLOB is selected briefly quoted and
   // flashed "No Dropset market for this pair" before the revert. Both quote
-  // hooks now see the same resolved availability, and it costs no extra read —
-  // the probe is shared and the resolved route is memoized.
+  // hooks read the same shared probe, so this costs no extra RPC.
   const eclobQuote = useEclobQuote(
     fromMint,
     toMint,

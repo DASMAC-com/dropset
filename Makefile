@@ -1,3 +1,5 @@
+# cspell:word SIGTTIN
+
 .PHONY: all
 .PHONY: bots-down
 .PHONY: bots-up
@@ -341,6 +343,12 @@ decks-build: check-pnpm
 # (`set +m`) once that id is captured, so the foreground TUI keeps the
 # terminal and signal handling it would have had without it.
 #
+# Job control is also why the background job's stdin is closed
+# (`</dev/null`): it is no longer in the terminal's foreground process group,
+# so any tty read would raise SIGTTIN and *stop* it — silently, since its
+# output already goes to the log. A background dev server wants no stdin
+# anyway; neither `pnpm` nor `next dev` needs it.
+#
 # The TUI runs on the alternate screen, so the background frontend's stdout
 # would paint over it — `next dev`'s output is redirected to a log file, and
 # the browser-opener job is silenced, so only the TUI draws to the terminal.
@@ -354,7 +362,7 @@ FRONTEND_LOG ?= /tmp/dropset-frontend.log
 demo:
 	@echo "frontend logs → $(FRONTEND_LOG) (kept off the TUI screen)"
 	@set -m; $(MAKE) --no-print-directory frontend-localnet \
-		>$(FRONTEND_LOG) 2>&1 & \
+		>$(FRONTEND_LOG) 2>&1 </dev/null & \
 	group=$$!; set +m; trap 'kill -TERM -$$group 2>/dev/null' INT TERM EXIT; \
 	$(MAKE) --no-print-directory tui
 
