@@ -59,7 +59,9 @@ export async function GET(request: NextRequest) {
     const pptx = await buildPptx(pages);
 
     // `Response` takes a Uint8Array; a Node Buffer is one at runtime but is
-    // not assignable to `BodyInit`, and the view shares the same memory.
+    // not assignable to `BodyInit`. This copies rather than aliases — a
+    // Buffer can be a slice of a shared pool, so viewing its `buffer`
+    // directly would risk handing back neighboring bytes.
     return new Response(new Uint8Array(pptx), {
       headers: {
         "Content-Type":

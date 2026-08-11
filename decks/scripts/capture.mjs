@@ -32,7 +32,7 @@ import puppeteer from "puppeteer-core";
  * with `DECK_SIZE` in `theme/tokens.ts` — capturing at the size the deck is
  * laid out for means no scaling, so text is rendered rather than resampled.
  */
-export const CAPTURE_SIZE = { width: 1920, height: 1080 };
+const CAPTURE_SIZE = { width: 1920, height: 1080 };
 
 /**
  * Device pixel ratio for the capture, so the PNGs come out at 5760×3240 while
