@@ -241,65 +241,105 @@ impl Fixture {
 
     fn bootstrap_on(mut svm: LiteSVM, authority: Keypair) -> Self {
         let fee_mint = create_mock_usdc_mint(&mut svm, &authority);
-        let registry = registry_pda();
-        let registry_fee_treasury =
-            associated_token_address(&registry, &fee_mint, &SPL_TOKEN_PROGRAM_ID);
-
-        // init.
-        let init_ix = canonical_init_ixn(
-            authority.pubkey(),
-            authority.pubkey(),
-            fee_mint,
-            CREATE_MARKET_FEE_ATOMS,
-            SPL_TOKEN_PROGRAM_ID,
-        );
-        send_ixn(&mut svm, &authority, init_ix).expect("init");
-
-        // create_market.
         let base_mint = create_spl_mint(&mut svm, &authority);
         let quote_mint = create_spl_mint(&mut svm, &authority);
+        let registry = registry_pda();
         let market = market_pda(&base_mint, &quote_mint);
-        let base_treasury = associated_token_address(&market, &base_mint, &SPL_TOKEN_PROGRAM_ID);
-        let quote_treasury = associated_token_address(&market, &quote_mint, &SPL_TOKEN_PROGRAM_ID);
         let dummy = Keypair::new();
         svm.airdrop(&dummy.pubkey(), SIGNER_FUNDING_LAMPORTS)
             .unwrap();
+
+        // Every address here is a pure function of its seeds, so they are
+        // known before the accounts exist — which is what lets
+        // `init_and_create_market` be re-run later against the same
+        // addresses.
+        let mut f = Fixture {
+            svm,
+            authority,
+            registry,
+            fee_mint,
+            registry_fee_treasury: associated_token_address(
+                &registry,
+                &fee_mint,
+                &SPL_TOKEN_PROGRAM_ID,
+            ),
+            dummy,
+            base_mint,
+            quote_mint,
+            market,
+            base_treasury: associated_token_address(&market, &base_mint, &SPL_TOKEN_PROGRAM_ID),
+            quote_treasury: associated_token_address(&market, &quote_mint, &SPL_TOKEN_PROGRAM_ID),
+        };
+        f.init_and_create_market();
+        f
+    }
+
+    /// Send `init` then `create_market` for this fixture's already-created
+    /// mints, bringing the registry, its fee vault, the market and both
+    /// treasuries into existence at their canonical addresses.
+    ///
+    /// Split out of [`Self::bootstrap_on`] so the teardown suite can run it
+    /// a **second** time on the same deployed program after a full
+    /// teardown — the redeploy-at-the-same-program-id rehearsal. Since
+    /// every address is derived from seeds the program already knows, the
+    /// rebuilt accounts land exactly where the closed ones were.
+    ///
+    /// The blockhash bump makes the re-run's transactions distinct from the
+    /// first run's, which are otherwise byte-identical (same signer, same
+    /// mints, same arguments) and would be rejected as `AlreadyProcessed`
+    /// before the program ran.
+    pub fn init_and_create_market(&mut self) {
+        self.svm.expire_blockhash();
+        let authority = self.authority.insecure_clone();
+
+        let init_ix = canonical_init_ixn(
+            authority.pubkey(),
+            authority.pubkey(),
+            self.fee_mint,
+            CREATE_MARKET_FEE_ATOMS,
+            SPL_TOKEN_PROGRAM_ID,
+        );
+        send_ixn(&mut self.svm, &authority, init_ix).expect("init");
+        self.send_create_market().expect("create_market");
+    }
+
+    /// Send just `create_market` for this fixture's mints, returning the
+    /// program's rejection instead of panicking on it. Split out of
+    /// [`Self::init_and_create_market`] for the tests that need the error —
+    /// notably the pre-created-treasury-ATA probe, where the whole question
+    /// is *whether* it is rejected.
+    pub fn send_create_market(&mut self) -> Result<(), String> {
+        let authority = self.authority.insecure_clone();
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
             &CreateMarketIx {}.data(),
             vec![
                 AccountMeta::new(authority.pubkey(), true),
-                AccountMeta::new(registry, false),
-                AccountMeta::new_readonly(base_mint, false),
-                AccountMeta::new_readonly(quote_mint, false),
+                AccountMeta::new(self.registry, false),
+                AccountMeta::new_readonly(self.base_mint, false),
+                AccountMeta::new_readonly(self.quote_mint, false),
                 AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
                 AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
-                AccountMeta::new(market, false),
-                AccountMeta::new(base_treasury, false),
-                AccountMeta::new(quote_treasury, false),
-                AccountMeta::new_readonly(fee_mint, false),
+                AccountMeta::new(self.market, false),
+                AccountMeta::new(self.base_treasury, false),
+                AccountMeta::new(self.quote_treasury, false),
+                AccountMeta::new_readonly(self.fee_mint, false),
                 AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
-                AccountMeta::new(dummy.pubkey(), false),
-                AccountMeta::new(registry_fee_treasury, false),
+                AccountMeta::new(self.dummy.pubkey(), false),
+                AccountMeta::new(self.registry_fee_treasury, false),
                 AccountMeta::new_readonly(System::id(), false),
                 AccountMeta::new_readonly(ATA_PROGRAM_ID, false),
             ],
         );
-        send_ixn(&mut svm, &authority, ix).expect("create_market");
+        send_ixn(&mut self.svm, &authority, ix)
+    }
 
-        Fixture {
-            svm,
-            authority,
-            registry,
-            fee_mint,
-            registry_fee_treasury,
-            dummy,
-            base_mint,
-            quote_mint,
-            market,
-            base_treasury,
-            quote_treasury,
-        }
+    /// The `owner` field of an SPL token account (bytes 32..64) — for
+    /// asserting a re-created treasury ATA is still owned by the PDA it
+    /// belongs to, not merely present at the right address.
+    pub fn token_account_owner(&self, ata: &Pubkey) -> Pubkey {
+        let acct = self.svm.get_account(ata).expect("token account exists");
+        Pubkey::new_from_array(acct.data[32..64].try_into().unwrap())
     }
 
     /// Bootstrap + open one admin vault (sector 0) + set a 1.0850

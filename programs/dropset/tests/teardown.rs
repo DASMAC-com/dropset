@@ -377,6 +377,220 @@ fn fee_charging_market_tears_down_and_drains_the_accrued_fee() {
     assert_eq!(f.registry_market_count(), 0);
 }
 
+/// The operational question teardown exists to answer: can a market that
+/// **actually ran** be wound down completely and then stood back up at the
+/// same addresses — the state-layer half of "redeploy the program at the
+/// same id"?
+///
+/// So this drives every value-bearing path a live market accumulates, then
+/// reclaims all of it and rebuilds:
+///
+/// 1. a vault with an outside depositor, quoting a ladder;
+/// 1. a fee'd fill — protocol revenue into `accrued_base_fee_atoms`, and
+///    spread capture that lifts value-per-share above the HWM;
+/// 1. a **realized perf fee** — the leader's slice minted as shares on the
+///    next touch of the vault;
+/// 1. an **unsolicited transfer**, recovered with `sweep_residual` while
+///    the market is still live;
+/// 1. the full teardown, including the accrued fee leaving via the
+///    treasury drain;
+/// 1. `init` + `create_market` **again**, on the same still-deployed
+///    program and the same mints — so the registry, market and both
+///    treasury ATAs are re-created at the exact addresses just closed,
+///    owned by the same PDAs, and usable (a fresh vault seeds into them).
+#[test]
+fn full_lifecycle_teardown_then_bootstrap_again_at_the_same_addresses() {
+    let mut f = Fixture::bootstrap();
+    let admin = f.authority.insecure_clone();
+
+    // ── A vault that trades ──────────────────────────────────────────
+    // 10% perf fee, so the realize below mints a visible leader slice.
+    let leader = f.funded_keypair(10 * common::SIGNER_FUNDING_LAMPORTS);
+    f.create_vault(100_000, leader.pubkey(), true, leader.pubkey())
+        .expect("admin opens the leader's vault");
+    let px = Price::encode(10_850_000, 0).unwrap();
+    f.set_reference_price(&leader, 0, px.as_u32(), 0)
+        .expect("leader quotes");
+    f.set_liquidity_profile(&leader, 0, simple_profile(5_000, 10_000, u32::MAX))
+        .expect("leader sets a ladder");
+    f.deposit_leader_as(&leader, 0, 1_000_000, 1_085_000, 1_000_000, 1_085_000)
+        .expect("leader seeds");
+    f.set_outside_deposits_approved(&admin, 0, true)
+        .expect("admin approves outside deposits");
+    let alice = f.funded_depositor(200_000, 200_000);
+    f.deposit(&alice, 0, 50_000, 0, 200_000, 200_000)
+        .expect("outside deposit");
+
+    // ── Fee'd fills: protocol revenue + spread capture ───────────────
+    // A **round trip**, not a single fill. One-way flow profits the vault
+    // in value terms but leaves it lopsided, and value-per-share is
+    // measured by `isqrt(base·quote)`, which penalizes imbalance — a lone
+    // Buy actually drives that number *down*. Selling the base straight
+    // back returns the vault near its starting ratio while it keeps the
+    // half-spread off both legs, which is what lifts VPS above the HWM and
+    // gives the realize below a real gain to work with.
+    f.set_taker_fee(&admin, 10_000).expect("1% taker fee");
+    let taker = f.funded_depositor(0, 400_000);
+    f.swap(&taker, 0, 200_000, Price::INFINITY.as_u32(), 1)
+        .expect("fee-bearing Buy");
+    let taker_base = f.token_balance(&f.base_ata(&taker.pubkey()));
+    assert!(taker_base > 0, "the Buy filled");
+    f.swap(&taker, 1, taker_base, Price::ZERO.as_u32(), 1)
+        .expect("fee-bearing Sell closing the round trip");
+
+    // Both legs accrued: the Buy paid the taker in base, the Sell in quote.
+    let h = f.market_header();
+    let (accrued_base, accrued_quote) = (
+        h.accrued_base_fee_atoms.get(),
+        h.accrued_quote_fee_atoms.get(),
+    );
+    assert!(
+        accrued_base > 0 && accrued_quote > 0,
+        "the round trip accrued protocol revenue on both legs"
+    );
+    f.assert_treasury_invariant();
+
+    // ── Realized P&L: the leader's perf fee, minted as shares ────────
+    // The round trip left value-per-share above the HWM stamped at seed
+    // time, and the next touch of the vault realizes that gain. Alice
+    // trimming her stake is that touch, so this also exercises a depositor
+    // exiting a vault that owes its leader a fee.
+    let hwm_before = f.vault(0).hwm.get();
+    let leader_shares_before = f.vault(0).leader_shares.get();
+    f.svm.expire_blockhash();
+    f.withdraw(&alice, 0, 10_000, 0, 0)
+        .expect("depositor trims her stake, realizing the perf fee");
+    let v = f.vault(0);
+    assert!(
+        v.hwm.get() > hwm_before,
+        "HWM advanced — the gain was realized, not carried"
+    );
+    assert!(
+        v.leader_shares.get() > leader_shares_before,
+        "perf-fee shares were minted to the leader ({} → {})",
+        leader_shares_before,
+        v.leader_shares.get()
+    );
+
+    // ── An unsolicited transfer, swept while the market is live ──────
+    // The pre-teardown recovery path: atoms nobody has a claim on, which
+    // no `Withdraw` could ever pay out.
+    const STRAY: u64 = 7_777;
+    let (base_mint, quote_mint) = (f.base_mint, f.quote_mint);
+    let (base_treasury, quote_treasury) = (f.base_treasury, f.quote_treasury);
+    common::mint_to(&mut f.svm, &admin, &base_mint, &base_treasury, STRAY);
+    let sweeper = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
+    let (sweep_dest, _) = f.create_atas(&sweeper.pubkey());
+    let meta = f
+        .sweep_residual_meta(&admin, &base_mint, &base_treasury, &sweep_dest)
+        .expect("sweep the stray transfer");
+    let ev = common::events::sweep_residual(&meta);
+    assert_eq!(ev.swept, STRAY, "exactly the stray atoms were swept");
+    assert_eq!(
+        ev.accrued_fee, accrued_base,
+        "the accrued fee was left behind"
+    );
+    assert_eq!(f.token_balance(&sweep_dest), STRAY);
+    f.assert_treasury_invariant();
+
+    // ── Teardown: every claim paid, every account closed ─────────────
+    let rr = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS).pubkey();
+    f.force_withdraw_depositor(&admin, 0, &alice.pubkey())
+        .expect("force_withdraw_depositor");
+    f.force_withdraw_leader(&admin, 0, &leader.pubkey())
+        .expect("force_withdraw_leader");
+    assert_eq!(f.vault(0).total_shares.get(), 0, "vault fully drained");
+
+    // What is left in each treasury is exactly that leg's accrued fee —
+    // the realized perf fee was paid in *shares*, so it left with the
+    // leader's force-withdraw rather than sitting here.
+    assert_eq!(
+        f.token_balance(&base_treasury),
+        accrued_base,
+        "only protocol revenue remains in base custody"
+    );
+    assert_eq!(
+        f.token_balance(&quote_treasury),
+        accrued_quote,
+        "only protocol revenue remains in quote custody"
+    );
+
+    let harvest = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
+    let (harvest_base, harvest_quote) = f.create_atas(&harvest.pubkey());
+    f.close_market_treasury_to(&admin, &base_mint, &base_treasury, &harvest_base, &rr)
+        .expect("close base treasury");
+    f.close_market_treasury_to(&admin, &quote_mint, &quote_treasury, &harvest_quote, &rr)
+        .expect("close quote treasury");
+    assert_eq!(
+        f.token_balance(&harvest_base),
+        accrued_base,
+        "the base-leg accrued fee was harvested on the way out"
+    );
+    assert_eq!(
+        f.token_balance(&harvest_quote),
+        accrued_quote,
+        "the quote-leg accrued fee was harvested on the way out"
+    );
+    let market = f.market;
+    let registry = f.registry;
+    let fee_vault = f.registry_fee_treasury;
+    f.close_market(&admin, &rr).expect("close market");
+    f.close_registry_fee_vault(&admin, &rr)
+        .expect("close fee vault");
+    f.close_registry(&admin, &rr).expect("close registry");
+
+    // Zero on-chain state: this is the point at which a real operator
+    // would `solana program deploy` a new binary at the same id.
+    for closed in [market, registry, fee_vault, base_treasury, quote_treasury] {
+        assert!(!exists(&f.svm, &closed), "{closed} closed");
+    }
+
+    // ── Stand it back up, same program, same addresses ───────────────
+    f.init_and_create_market();
+
+    assert!(exists(&f.svm, &registry), "registry re-created");
+    assert!(exists(&f.svm, &fee_vault), "registry fee vault re-created");
+    assert_eq!(
+        f.market, market,
+        "the market PDA is seed-derived, so it returns to the same address"
+    );
+    assert!(
+        exists(&f.svm, &market),
+        "market re-created at the same address"
+    );
+    assert_eq!(f.registry_market_count(), 1, "one live market again");
+
+    // The treasuries are back at the same addresses *and* still owned by
+    // the market PDA — the ownership half of the question, which a mere
+    // existence check would miss.
+    for (leg, treasury) in [("base", base_treasury), ("quote", quote_treasury)] {
+        assert!(exists(&f.svm, &treasury), "{leg} treasury re-created");
+        assert_eq!(
+            f.token_account_owner(&treasury),
+            market,
+            "{leg} treasury is owned by the market PDA"
+        );
+        assert_eq!(f.token_balance(&treasury), 0, "{leg} treasury starts empty");
+    }
+
+    // And they work: a fresh vault seeds real inventory into them.
+    let leader2 = f.funded_keypair(10 * common::SIGNER_FUNDING_LAMPORTS);
+    f.create_vault(0, leader2.pubkey(), false, leader2.pubkey())
+        .expect("a vault opens on the rebuilt market");
+    f.set_reference_price(&leader2, 0, px.as_u32(), 0)
+        .expect("leader quotes on the rebuilt market");
+    f.set_liquidity_profile(&leader2, 0, simple_profile(5_000, 10_000, u32::MAX))
+        .expect("ladder on the rebuilt market");
+    f.deposit_leader_as(&leader2, 0, 500_000, 542_500, 500_000, 542_500)
+        .expect("seed the rebuilt market");
+    assert_eq!(
+        f.token_balance(&base_treasury),
+        500_000,
+        "the re-created treasury takes custody exactly as before"
+    );
+    f.assert_treasury_invariant();
+}
+
 /// Drain-on-close also recovers an **unsolicited transfer**. Anyone can
 /// send tokens straight to a treasury ATA, and on the old empty-account
 /// rule a single atom of dust from a stranger was enough to block the
