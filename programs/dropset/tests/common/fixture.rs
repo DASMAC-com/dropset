@@ -1157,6 +1157,37 @@ impl Fixture {
         send_ixn(&mut self.svm, &admin, ix).map(|_| market)
     }
 
+    /// `create_market` again for **this fixture's existing** base/quote
+    /// pair — the redeploy path. Unlike
+    /// [`Self::create_market_with_default_fee`] it mints nothing fresh, so
+    /// the market PDA and both treasury ATAs land at the very addresses
+    /// the torn-down market occupied. Fee waived (admin payer).
+    pub fn recreate_market(&mut self) -> Result<(), String> {
+        let admin = self.authority.insecure_clone();
+        let ix = Instruction::new_with_bytes(
+            PROGRAM_ID,
+            &CreateMarketIx {}.data(),
+            vec![
+                AccountMeta::new(admin.pubkey(), true),
+                AccountMeta::new(self.registry, false),
+                AccountMeta::new_readonly(self.base_mint, false),
+                AccountMeta::new_readonly(self.quote_mint, false),
+                AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
+                AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
+                AccountMeta::new(self.market, false),
+                AccountMeta::new(self.base_treasury, false),
+                AccountMeta::new(self.quote_treasury, false),
+                AccountMeta::new_readonly(self.fee_mint, false),
+                AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
+                AccountMeta::new(self.dummy.pubkey(), false),
+                AccountMeta::new(self.registry_fee_treasury, false),
+                AccountMeta::new_readonly(System::id(), false),
+                AccountMeta::new_readonly(ATA_PROGRAM_ID, false),
+            ],
+        );
+        send_ixn(&mut self.svm, &admin, ix)
+    }
+
     /// Leader seed / top-up. Creates + funds the leader's ATAs for the
     /// requested legs first, then sends `deposit_leader` as `authority`.
     pub fn deposit_leader(

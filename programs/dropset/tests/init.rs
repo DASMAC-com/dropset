@@ -4,9 +4,10 @@ use anchor_lang_v2::{programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, Signer};
 use common::fixture::{canonical_init_ixn, init_ixn, registry_pda};
 use common::{
-    assert_instruction_error, assert_program_error, associated_token_address, create_spl_mint,
-    create_token2022_mint, create_token2022_token_account, decode_slab, deploy_with_authority,
-    send_ixn, ATA_PROGRAM_ID, PROGRAM_ID, SIGNER_FUNDING_LAMPORTS, SPL_TOKEN_PROGRAM_ID,
+    assert_instruction_error, assert_program_error, associated_token_address,
+    create_associated_token_account, create_spl_mint, create_token2022_mint,
+    create_token2022_token_account, decode_slab, deploy_with_authority, mint_to, send_ixn,
+    ATA_PROGRAM_ID, PROGRAM_ID, SIGNER_FUNDING_LAMPORTS, SPL_TOKEN_PROGRAM_ID,
     TOKEN_2022_PROGRAM_ID,
 };
 use dropset::{
@@ -335,4 +336,110 @@ fn init_rejects_second_init() {
         ),
     )
     .expect_err("registry can only be initialized once");
+}
+
+/// The registry PDA is the fixed `[b"registry"]`, so its fee ATA for any
+/// given mint is computable before the program is ever initialized — and
+/// ATAs are permissionlessly creatable. Under plain `init` a stranger
+/// could create it for the cost of rent and block bootstrap against that
+/// fee mint forever, including the re-`init` after a teardown.
+#[test]
+fn init_adopts_squatted_fee_vault() {
+    let authority = Keypair::new();
+    let mut svm = deploy_with_authority(&authority);
+    let genesis_admin = Pubkey::new_unique();
+    let fee_mint = create_spl_mint(&mut svm, &authority);
+
+    // A stranger — not the upgrade authority, not an admin — creates the
+    // fee vault at its canonical address before `init` runs.
+    let squatter = Keypair::new();
+    svm.airdrop(&squatter.pubkey(), SIGNER_FUNDING_LAMPORTS)
+        .unwrap();
+    let squatted_vault = create_associated_token_account(
+        &mut svm,
+        &squatter,
+        &registry_pda(),
+        &fee_mint,
+        &SPL_TOKEN_PROGRAM_ID,
+    );
+    assert_eq!(
+        squatted_vault,
+        associated_token_address(&registry_pda(), &fee_mint, &SPL_TOKEN_PROGRAM_ID)
+    );
+
+    send_ixn(
+        &mut svm,
+        &authority,
+        canonical_init_ixn(
+            authority.pubkey(),
+            genesis_admin,
+            fee_mint,
+            TEST_FEE_ATOMS,
+            SPL_TOKEN_PROGRAM_ID,
+        ),
+    )
+    .expect("init must adopt a pre-existing fee vault ATA");
+
+    // Registry came up normally, and the adopted vault is the canonical
+    // ATA owned by the registry PDA — the squatter kept no control.
+    let account = svm.get_account(&registry_pda()).expect("registry created");
+    let (header, admins) = decode_slab::<RegistryHeader, [u8; 32]>(&account.data);
+    assert_eq!(header.default_fee_config.mint, fee_mint.to_bytes().into());
+    assert_eq!(header.default_fee_config.atoms.get(), TEST_FEE_ATOMS);
+    assert_eq!(admins, &[genesis_admin.to_bytes()][..]);
+    assert_fee_vault_created(&svm, fee_mint, SPL_TOKEN_PROGRAM_ID);
+}
+
+/// The pre-funded variant: a squatter can seed the vault with atoms
+/// before `init`. They survive adoption as unclaimed residual — the
+/// registry's fee accounting starts from zero regardless, so nothing
+/// mistakes them for collected fees.
+#[test]
+fn init_adopts_prefunded_squatted_fee_vault() {
+    let authority = Keypair::new();
+    let mut svm = deploy_with_authority(&authority);
+    let fee_mint = create_spl_mint(&mut svm, &authority);
+
+    let squatter = Keypair::new();
+    svm.airdrop(&squatter.pubkey(), SIGNER_FUNDING_LAMPORTS)
+        .unwrap();
+    let squatted_vault = create_associated_token_account(
+        &mut svm,
+        &squatter,
+        &registry_pda(),
+        &fee_mint,
+        &SPL_TOKEN_PROGRAM_ID,
+    );
+    const SQUATTED_ATOMS: u64 = 31_337;
+    mint_to(
+        &mut svm,
+        &authority,
+        &fee_mint,
+        &squatted_vault,
+        SQUATTED_ATOMS,
+    );
+
+    send_ixn(
+        &mut svm,
+        &authority,
+        canonical_init_ixn(
+            authority.pubkey(),
+            Pubkey::new_unique(),
+            fee_mint,
+            TEST_FEE_ATOMS,
+            SPL_TOKEN_PROGRAM_ID,
+        ),
+    )
+    .expect("init must adopt a pre-funded fee vault ATA");
+
+    // The atoms are still there — untouched, not burned, not credited.
+    let vault = svm.get_account(&squatted_vault).expect("fee vault exists");
+    let balance = u64::from_le_bytes(vault.data[64..72].try_into().unwrap());
+    assert_eq!(balance, SQUATTED_ATOMS);
+    // And `init` seeded no market, so no fee has been collected: the
+    // whole balance is residual the admin can recover.
+    let account = svm.get_account(&registry_pda()).expect("registry created");
+    let (header, _) = decode_slab::<RegistryHeader, [u8; 32]>(&account.data);
+    assert_eq!(header.market_count.get(), 0);
+    assert_fee_vault_created(&svm, fee_mint, SPL_TOKEN_PROGRAM_ID);
 }

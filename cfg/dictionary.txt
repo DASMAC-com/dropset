@@ -64,6 +64,7 @@ frontmatter
 getpid
 gifs
 globbable
+griefer
 gyen
 générale
 headshot
@@ -112,6 +113,7 @@ pdftoppm
 permissioned
 permissioning
 permissionless
+permissionlessly
 pgrep
 pkill
 poppler

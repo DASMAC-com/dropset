@@ -144,6 +144,15 @@ fn token_balance(svm: &anchor_v2_testing::LiteSVM, ata: &Pubkey) -> u64 {
     u64::from_le_bytes(bytes)
 }
 
+/// Authority of an SPL Token account: the SPL layout puts the owner at
+/// offset 32..64. Used to prove an adopted ATA is still owned by the
+/// PDA the program expects, not by whoever created it.
+fn token_account_authority(svm: &anchor_v2_testing::LiteSVM, ata: &Pubkey) -> Pubkey {
+    let account = svm.get_account(ata).expect("token account exists");
+    let bytes: [u8; 32] = account.data[32..64].try_into().unwrap();
+    Pubkey::new_from_array(bytes)
+}
+
 // ── Happy paths ─────────────────────────────────────────────────────
 
 #[test]
@@ -503,4 +512,140 @@ fn rejects_non_mint_as_base() {
         payer_ata,
     );
     send_ixn(&mut svm, &payer, ix).expect_err("token account passed as mint must be rejected");
+}
+
+// ── Squatted treasury ATAs ──────────────────────────────────────────
+
+#[test]
+fn create_market_adopts_squatted_treasuries() {
+    // A market's treasury addresses are pure functions of the announced
+    // `(base_mint, quote_mint)` pair, and ATAs are permissionlessly
+    // creatable — so a stranger can create both before the market
+    // exists. Under plain `init` that bricked the pair forever; with
+    // `init_if_needed` the treasuries are adopted.
+    let (mut svm, authority, fee_mint) = bootstrap();
+    let payer = fresh_payer(&mut svm);
+    let payer_ata = fund_with_fee(&mut svm, &authority, &fee_mint, &payer);
+    let base_mint = create_spl_mint(&mut svm, &authority);
+    let quote_mint = create_spl_mint(&mut svm, &authority);
+
+    // The squatter is an unrelated wallet with no role in the protocol.
+    let squatter = fresh_payer(&mut svm);
+    let (market, _) = market_pda(&base_mint, &quote_mint);
+    let squatted_base = create_associated_token_account(
+        &mut svm,
+        &squatter,
+        &market,
+        &base_mint,
+        &SPL_TOKEN_PROGRAM_ID,
+    );
+    let squatted_quote = create_associated_token_account(
+        &mut svm,
+        &squatter,
+        &market,
+        &quote_mint,
+        &SPL_TOKEN_PROGRAM_ID,
+    );
+    // Both are the very addresses the instruction will pass in.
+    assert_eq!(
+        squatted_base,
+        associated_token_address(&market, &base_mint, &SPL_TOKEN_PROGRAM_ID)
+    );
+    assert_eq!(
+        squatted_quote,
+        associated_token_address(&market, &quote_mint, &SPL_TOKEN_PROGRAM_ID)
+    );
+
+    let ix = create_market_ixn(
+        payer.pubkey(),
+        base_mint,
+        quote_mint,
+        SPL_TOKEN_PROGRAM_ID,
+        SPL_TOKEN_PROGRAM_ID,
+        fee_mint,
+        SPL_TOKEN_PROGRAM_ID,
+        payer_ata,
+    );
+    send_ixn(&mut svm, &payer, ix).expect("create_market must adopt pre-existing treasury ATAs");
+
+    // Creating them bought the squatter nothing: the ATA address commits
+    // to `(mint, authority, token_program)`, so both accounts are owned
+    // by the market PDA and stamped onto the header as usual.
+    assert_eq!(token_account_authority(&svm, &squatted_base), market);
+    assert_eq!(token_account_authority(&svm, &squatted_quote), market);
+    let header = read_market_header(&svm, &market);
+    assert_eq!(header.base_treasury, squatted_base.to_bytes().into());
+    assert_eq!(header.quote_treasury, squatted_quote.to_bytes().into());
+}
+
+#[test]
+fn create_market_adopts_prefunded_squatted_treasuries() {
+    // The one behavioral difference from a fresh treasury: an adopted
+    // ATA can arrive with a balance. Those atoms are unclaimed residual
+    // — belonging to no vault and to no fee accrual — which
+    // `sweep_residual` and `close_market_treasury` recover.
+    let (mut svm, authority, fee_mint) = bootstrap();
+    let payer = fresh_payer(&mut svm);
+    let payer_ata = fund_with_fee(&mut svm, &authority, &fee_mint, &payer);
+    let base_mint = create_spl_mint(&mut svm, &authority);
+    let quote_mint = create_spl_mint(&mut svm, &authority);
+
+    let squatter = fresh_payer(&mut svm);
+    let (market, _) = market_pda(&base_mint, &quote_mint);
+    let squatted_base = create_associated_token_account(
+        &mut svm,
+        &squatter,
+        &market,
+        &base_mint,
+        &SPL_TOKEN_PROGRAM_ID,
+    );
+    let squatted_quote = create_associated_token_account(
+        &mut svm,
+        &squatter,
+        &market,
+        &quote_mint,
+        &SPL_TOKEN_PROGRAM_ID,
+    );
+    const SQUATTED_BASE_ATOMS: u64 = 7_777;
+    const SQUATTED_QUOTE_ATOMS: u64 = 4_242;
+    mint_to(
+        &mut svm,
+        &authority,
+        &base_mint,
+        &squatted_base,
+        SQUATTED_BASE_ATOMS,
+    );
+    mint_to(
+        &mut svm,
+        &authority,
+        &quote_mint,
+        &squatted_quote,
+        SQUATTED_QUOTE_ATOMS,
+    );
+
+    let ix = create_market_ixn(
+        payer.pubkey(),
+        base_mint,
+        quote_mint,
+        SPL_TOKEN_PROGRAM_ID,
+        SPL_TOKEN_PROGRAM_ID,
+        fee_mint,
+        SPL_TOKEN_PROGRAM_ID,
+        payer_ata,
+    );
+    send_ixn(&mut svm, &payer, ix).expect("create_market must adopt pre-funded treasury ATAs");
+
+    // The atoms survive the adoption — nothing burns or reassigns them.
+    assert_eq!(token_balance(&svm, &squatted_base), SQUATTED_BASE_ATOMS);
+    assert_eq!(token_balance(&svm, &squatted_quote), SQUATTED_QUOTE_ATOMS);
+
+    // And they are credited to nobody. The custody invariant is
+    // `treasury.amount == Σ vault.*_atoms + accrued_*_fee_atoms`; a fresh
+    // market has no vaults and no accrued fees, so both sides of that sum
+    // are zero and the entire balance is residual `sweep_residual` pays out.
+    let header = read_market_header(&svm, &market);
+    assert_eq!(header.active_count.get(), 0);
+    assert_eq!(header.head.get(), NULL_SECTOR);
+    assert_eq!(header.accrued_base_fee_atoms.get(), 0);
+    assert_eq!(header.accrued_quote_fee_atoms.get(), 0);
 }
