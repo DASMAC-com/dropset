@@ -33,10 +33,9 @@
 mod common;
 
 use anchor_v2_testing::{Keypair, LiteSVM, Signer};
-use common::fixture::{canonical_init_ixn, simple_profile, Fixture};
+use common::fixture::{simple_profile, Fixture};
 use common::{
-    create_associated_token_account, send_ixn, CREATE_MARKET_FEE_ATOMS, SIGNER_FUNDING_LAMPORTS,
-    SPL_TOKEN_PROGRAM_ID,
+    create_associated_token_account, SIGNER_FUNDING_LAMPORTS, SPL_TOKEN_PROGRAM_ID,
 };
 use dropset::Price;
 use solana_pubkey::Pubkey;
@@ -269,21 +268,13 @@ fn squatted_atas_do_not_block_bootstrap_after_teardown() {
     assert!(exists(&f.svm, &quote_treasury), "quote treasury squatted");
 
     // ── Bootstrap again anyway ───────────────────────────────────────
-    // The redeploy's `init` / `create_market` are byte-identical to the
-    // pair `Fixture::bootstrap` already sent, so without a fresh
-    // blockhash LiteSVM dedups them as `AlreadyProcessed` before the
-    // program runs.
-    f.svm.expire_blockhash();
-    let init_ix = canonical_init_ixn(
-        admin.pubkey(),
-        admin.pubkey(),
-        fee_mint,
-        CREATE_MARKET_FEE_ATOMS,
-        SPL_TOKEN_PROGRAM_ID,
-    );
-    send_ixn(&mut f.svm, &admin, init_ix).expect("re-init must adopt the squatted fee vault");
-    f.recreate_market()
-        .expect("re-create_market must adopt the squatted treasuries");
+    // Same re-bootstrap `full_lifecycle_teardown_then_bootstrap_again_at_
+    // the_same_addresses` runs on a clean slate; the squat above is the
+    // only difference. It expires the blockhash first, because the
+    // redeploy's two instructions are byte-identical to the pair
+    // `Fixture::bootstrap` already sent and LiteSVM would otherwise dedup
+    // them as `AlreadyProcessed` before the program ran.
+    f.init_and_create_market();
 
     // Everything is back at the same addresses, and the squatter owns
     // none of it — the ATA derivation pins each authority.
@@ -295,18 +286,18 @@ fn squatted_atas_do_not_block_bootstrap_after_teardown() {
     assert_eq!(header.quote_treasury, quote_treasury.to_bytes().into());
     assert_eq!(header.base_mint, base_mint.to_bytes().into());
     assert_eq!(header.quote_mint, quote_mint.to_bytes().into());
-    // Both treasuries answer to the market PDA, not the squatter.
+    // Every adopted ATA answers to its PDA, not to the squatter.
     for treasury in [base_treasury, quote_treasury] {
-        let account = f.svm.get_account(&treasury).expect("treasury exists");
-        let owner: [u8; 32] = account.data[32..64].try_into().unwrap();
-        assert_eq!(owner, market.to_bytes(), "treasury authority is the market");
+        assert_eq!(
+            f.token_account_owner(&treasury),
+            market,
+            "treasury authority is the market"
+        );
     }
-    let vault = f.svm.get_account(&fee_vault).expect("fee vault exists");
-    let owner: [u8; 32] = vault.data[32..64].try_into().unwrap();
     assert_eq!(
-        owner,
-        registry.to_bytes(),
-        "fee vault authority is registry"
+        f.token_account_owner(&fee_vault),
+        registry,
+        "fee vault authority is the registry"
     );
 }
 
