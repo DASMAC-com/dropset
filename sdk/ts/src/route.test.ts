@@ -252,7 +252,7 @@ test('reads each token program from its mint when not supplied', async () => {
 test('a missing mint account is an error, not a silent null route', async () => {
   // Distinct from "no market for this pair": a mint that doesn't exist means the
   // caller is quoting against the wrong cluster, which should surface loudly
-  // rather than look like an undeployed pair.
+  // rather than look like a pair we never deployed.
   await assert.rejects(
     () =>
       resolveEclobRoute(rpcWith(new Map()), {
