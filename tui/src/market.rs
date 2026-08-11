@@ -6,15 +6,20 @@
 //! target (a market-making bot, the explorer). This module generalizes it:
 //! a [`PairConfig`] names two **fixed, checked-in** mint keypairs (so the
 //! market PDA, seeded on `[base, quote]`, is the same address every run), a
-//! leader role key, and the reference price / quote ladder / seed deposit
-//! that bring the vault up fully quotable and seeded. Drop in another pair
-//! by adding another `PairConfig`; nothing else changes.
+//! leader role key, and the quote ladder / seed deposit that bring the vault
+//! up shaped and funded. Drop in another pair by adding another `PairConfig`;
+//! nothing else changes.
+//!
+//! Markets deliberately open **dark**: no reference price is stamped, so
+//! nothing matches until a maker bot quotes the market. [`seed_vault`] has
+//! the reasoning.
 //!
 //! The localnet keys live under `keys/` (see `keys/README.md`); their paths
 //! resolve against the repo root the TUI already locates. The admin wallet
 //! is the fee payer and mint authority for every transaction here; the
-//! leader co-signs only the vault-gated instructions (`set_reference_price`,
-//! `set_liquidity_profile`, `deposit_leader`), so it needs no SOL balance.
+//! leader co-signs only the vault-gated instructions (`set_liquidity_profile`
+//! and `deposit_leader` here, `set_reference_price` once a maker bot or the
+//! eCLOB controls quote), so it needs no SOL balance.
 
 // cspell:word keypairs
 
@@ -24,8 +29,7 @@ use crate::job::Logger;
 use anyhow::{Context, Result};
 use bytemuck::Zeroable;
 use dropset_sdk::layout::LiquidityProfile;
-use dropset_sdk::price::Price;
-use dropset_sdk::quoting::{profile_bytes, set_liquidity_profile_ix, set_reference_price_ix};
+use dropset_sdk::quoting::{profile_bytes, set_liquidity_profile_ix};
 use solana_client::rpc_client::RpcClient;
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
@@ -47,10 +51,11 @@ pub struct MintSpec {
 pub const SEED_USD_PER_SIDE: f64 = 100.0;
 
 /// A localnet market pair plus everything the bootstrap needs to bring it
-/// up quotable and seeded: the two mints, the leader role key that quotes
-/// and seeds the vault, the seed reference price, and a symmetric quote
-/// ladder. The opening deposit is derived from the price + decimals so each
-/// side opens at [`SEED_USD_PER_SIDE`]. One per tradeable pair.
+/// up shaped and seeded: the two mints, the leader role key that quotes
+/// and seeds the vault, the reference price the deposit is balanced at, and
+/// a symmetric quote ladder. The opening deposit is derived from the price +
+/// decimals so each side opens at [`SEED_USD_PER_SIDE`]. One per tradeable
+/// pair.
 pub struct PairConfig {
     pub base: MintSpec,
     pub quote: MintSpec,
@@ -58,11 +63,14 @@ pub struct PairConfig {
     /// the admin wallet — anchor-v2 rejects the same key in the admin and
     /// leader slots of `create_vault`.
     pub leader_keypair_file: &'static str,
-    /// Seed (quote-per-base) price in human units, e.g. `1.14` USDC per EURC.
-    /// Just the opening anchor — the maker bot rediscovers the live price from
-    /// its feeds and re-stamps it. Tokens span orders of magnitude (EURC
-    /// ~$1.14 … IDRX ~$0.000056), so this is converted to the on-chain
-    /// atoms-ratio per [`reference_atoms_ratio`] before encoding.
+    /// Expected (quote-per-base) price in human units, e.g. `1.14` USDC per
+    /// EURC. Nothing stamps it on chain — the maker bot discovers the live
+    /// price from its feeds and stamps that — so it serves only to balance the
+    /// opening deposit at [`SEED_USD_PER_SIDE`] a side (see [`seed_deposit`]),
+    /// and to check the pair is quotable at all: tokens span orders of
+    /// magnitude (EURC ~$1.14 … IDRX ~$0.000056), and the price the maker will
+    /// stamp has to survive the conversion to the on-chain atoms-ratio (see
+    /// [`reference_atoms_ratio`]).
     pub reference_price: f64,
     /// How many slots after the quote each ladder rung expires. The bootstrap
     /// stamps this on the seeded profile; `u32::MAX` means never (the maker
@@ -155,6 +163,13 @@ pub fn ladder_at_spread_bps(spread_bps: u32) -> [(u32, u16); 4] {
 /// on-chain `Price` encodes — `quote_atoms` per `base_atoms`. They coincide
 /// only when both legs share decimals; a token with more decimals than USDC
 /// scales the ratio down, fewer scales it up.
+///
+/// The bootstrap no longer stamps a reference (markets open dark, see
+/// [`seed_vault`]), so nothing converts a price at bring-up time any more.
+/// What the conversion still serves is the config range check in this
+/// module's tests: a pair whose declared price can't encode as a `Price`
+/// would be unquotable once a maker did stamp it. That is now caught by
+/// `cargo test`, not by a bootstrap that refuses to bring the market up.
 pub fn reference_atoms_ratio(config: &PairConfig) -> f64 {
     config.reference_price * 10f64.powi(config.quote.decimals as i32 - config.base.decimals as i32)
 }
@@ -331,11 +346,27 @@ pub fn prefund_leader_quotes(
     Ok(())
 }
 
-/// Bring the market's freshly-created vault up live: stamp the reference
-/// price, set the quote ladder, then fund the leader's ATAs (from the admin
-/// mint authority) and seed the vault with `deposit_leader`. The `leader`
-/// must be `config`'s leader key — it co-signs each instruction as the
-/// vault's quote authority / leader, while `wallet` (admin) pays the fees.
+/// Bring the market's freshly-created vault up: set the quote ladder, then
+/// fund the leader's ATAs (from the admin mint authority) and seed the vault
+/// with `deposit_leader`. The `leader` must be `config`'s leader key — it
+/// co-signs each instruction as the vault's quote authority / leader, while
+/// `wallet` (admin) pays the fees.
+///
+/// No reference price is stamped here, so the market opens **dark**: the
+/// ladder and the inventory are in place, but the vault fails the program's
+/// `has_valid_reference_price` gate, so matching skips it and the book is
+/// empty until a maker bot stands behind it and stamps the first live quote.
+///
+/// That is deliberate, not an omission. A resting, matchable book with no
+/// process refreshing it is exactly the state the maker's stale-quote
+/// invalidation exists to destroy: on startup the bot compares its per-market
+/// quote-state record against the staleness window, finds no age it can vouch
+/// for, and stamps `price = 0`. A reference stamped here therefore made the
+/// whole book vanish the moment that market's bot arrived — and again on
+/// every return to a demo left sitting longer than the window. Opening dark
+/// aligns the bootstrap with that invariant rather than defeating it, and
+/// restores the demo's intended arc: an FX pair with no liquidity, filling in
+/// live as the maker starts quoting.
 ///
 /// `prefunded_quote` skips the per-market quote (USDC) top-up: when the caller
 /// has already funded the shared leader quote ATA with the whole deposit total
@@ -356,35 +387,11 @@ pub fn seed_vault(
     prefunded_quote: bool,
     log: &Logger,
 ) -> Result<()> {
-    // 1. Reference price. The engine stores the atoms-ratio, so scale the
-    //    human price by the decimal gap before encoding. Anchored at the
-    //    current slot so the relative `expiry_offset` is measured from now.
-    let ratio = reference_atoms_ratio(config);
-    let price = Price::from_value(ratio).with_context(|| {
-        format!(
-            "encode reference price {} (atoms-ratio {ratio})",
-            config.reference_price
-        )
-    })?;
-    let slot = client.get_slot().context("current slot")?;
-    log.log(format!(
-        "set_reference_price {} (slot {slot})",
-        config.reference_price
-    ));
-    let ix = set_reference_price_ix(leader.pubkey(), market.address, VAULT_IDX, price, slot);
-    chain::send_logged(
-        client,
-        wallet,
-        &[wallet, leader],
-        &[ix],
-        "set_reference_price",
-        log,
-    )
-    .context("set_reference_price")?;
-
-    // 2. Quote ladder — a multi-rung symmetric ladder at the default spread, so
-    //    the book opens with depth across several price levels (not a single
-    //    rung the maker only later fans out) and at the tighter default spread.
+    // 1. Quote ladder — a multi-rung symmetric ladder at the default spread, so
+    //    the maker's first quote fans the book out across several price levels
+    //    (not the single rung it would otherwise start from) at the tighter
+    //    default spread. Shape only: it rests inert, pricing nothing, until a
+    //    reference price is stamped.
     log.log("set_liquidity_profile");
     let bytes = ladder_profile_bytes(
         &ladder_at_spread_bps(DEFAULT_SPREAD_BPS),
@@ -401,7 +408,7 @@ pub fn seed_vault(
     )
     .context("set_liquidity_profile")?;
 
-    // 3. Fund the leader's ATAs (admin is the mint authority), then seed. The
+    // 2. Fund the leader's ATAs (admin is the mint authority), then seed. The
     //    base leg is always funded here — each market's base mint / amount is
     //    unique, so it can't collide across parallel workers. The quote leg is
     //    funded here only when it wasn't pre-funded up front: see
@@ -503,10 +510,13 @@ pub fn seed_ladder_scaled_offsets(scale: f64) -> [(u32, u16); 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dropset_sdk::price::Price;
 
     /// Every market's reference price must encode as a `Price` once scaled to
     /// the atoms-ratio — the wide unit-price spread (EURC ~$1.14 down to IDRX
     /// ~$0.000056) plus mixed decimals all has to land inside the codec range.
+    /// The bootstrap doesn't stamp it, but the maker bot stamps ≈ this ratio,
+    /// so a pair that fell outside the range would be permanently unquotable.
     #[test]
     fn every_market_reference_encodes() {
         for c in PAIRS {
