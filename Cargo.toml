@@ -15,7 +15,6 @@ overflow-checks = true
 [workspace]
 members = [
   "analytics/fx-survey",
-  "bots/localnet-support",
   "bots/maker-bot",
   "bots/taker-bot",
   "fair-value",
@@ -26,6 +25,7 @@ members = [
   "sdk/interface",
   "sdk/rs",
   "tui",
+  "util",
 ]
 resolver = "2"
 

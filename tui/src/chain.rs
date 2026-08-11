@@ -12,7 +12,6 @@
 
 use crate::job::Logger;
 use anyhow::{Context, Result};
-use dropset_localnet_support::{create_ata_idempotent_ix, mint_to_ix};
 use dropset_sdk::instructions::{
     CloseMarket, CloseMarketTreasury, CloseRegistry, CloseRegistryFeeVault, CreateMarket,
     CreateVault, CreateVaultInstructionArgs, DepositLeader, DepositLeaderInstructionArgs,
@@ -20,6 +19,7 @@ use dropset_sdk::instructions::{
     ForceWithdrawLeaderInstructionArgs, Init, InitInstructionArgs, Swap, SwapInstructionArgs,
 };
 use dropset_sdk::DROPSET_ID;
+use dropset_util::localnet::{create_ata_idempotent_ix, mint_to_ix};
 use solana_client::rpc_client::RpcClient;
 use solana_commitment_config::CommitmentConfig;
 use solana_instruction::{AccountMeta, Instruction};
@@ -33,7 +33,7 @@ use solana_transaction::Transaction;
 // shared localnet-host plumbing; re-exported so `chain::SPL_TOKEN_PROGRAM_ID`
 // (etc.) and `chain::associated_token_address` keep resolving for the callers
 // in this crate (e.g. `accounts.rs`).
-pub use dropset_localnet_support::{
+pub use dropset_util::localnet::{
     associated_token_address, ATA_PROGRAM_ID, SPL_TOKEN_PROGRAM_ID, SYSTEM_PROGRAM_ID,
 };
 

@@ -14,15 +14,15 @@
 //! [`SwapBuilder`] and signed by the taker.
 
 use anyhow::{anyhow, Context as _, Result};
-use dropset_localnet_support::{
-    associated_token_address, create_ata_idempotent_ix, mint_to_ix, SPL_TOKEN_PROGRAM_ID,
-};
 use dropset_sdk::accounts::MARKET_HEADER_DISCRIMINATOR;
 use dropset_sdk::instructions::SwapBuilder;
 use dropset_sdk::layout::MarketView;
 use dropset_sdk::matching::{simulate_swap, SwapSide};
 use dropset_sdk::price::Price;
 use dropset_sdk::DROPSET_ID;
+use dropset_util::localnet::{
+    associated_token_address, create_ata_idempotent_ix, mint_to_ix, SPL_TOKEN_PROGRAM_ID,
+};
 use solana_client::rpc_client::RpcClient;
 use solana_commitment_config::CommitmentConfig;
 use solana_instruction::Instruction;

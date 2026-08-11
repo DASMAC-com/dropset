@@ -26,7 +26,7 @@ ci-infra (ci, low): .github/**, brand-assets/**, cfg/**, infra/**,
   keys/**, Makefile, Anchor.toml
 maker-bot (rust-tool, low): bots/maker-bot/**
 taker-bot (rust-tool, low): bots/taker-bot/**
-localnet-support (rust-lib, low): bots/localnet-support/**
+util (rust-lib, low): util/**
 indexer (rust-tool, low): indexer/**
 feeds (rust-lib, low): feeds/**
 fair-value (rust-lib, med): fair-value/**

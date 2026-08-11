@@ -17,10 +17,10 @@
 
 use crate::job::JobEvent;
 use anyhow::{anyhow, Context, Result};
-use dropset_localnet_support::ws_url_from_rpc;
 use dropset_sdk::events::{decode_event_payload, strip_event_tag, DropsetEvent};
 use dropset_sdk::types::FillEvent;
 use dropset_sdk::DROPSET_ID;
+use dropset_util::rpc::ws_url_from_rpc;
 use solana_client::pubsub_client::PubsubClient;
 use solana_client::rpc_client::RpcClient;
 use solana_client::rpc_config::{

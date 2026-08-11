@@ -1,18 +1,10 @@
-//! Shared localnet-host plumbing for the demo crates (the TUI and the
-//! maker / taker bots).
+//! SPL plumbing for seeding a local validator's mock mints.
 //!
-//! Three parallel copies of this code had drifted across `tui/`,
-//! `bots/maker-bot/`, and `bots/taker-bot/`; hoisting it here means a fix
-//! lands once. Two groups:
-//!
-//! * **SPL plumbing** — the SPL Token / Associated-Token-Account / System
-//!   program ids, the canonical ATA derivation, and the raw byte-instruction
-//!   builders for `CreateIdempotent` and `MintTo`. These are *pure*: they
-//!   return an [`Instruction`] (or a [`Pubkey`]) and take no `RpcClient` or
-//!   `Keypair`, so each consumer keeps its own sign-and-send path — the TUI's
-//!   carries compute-unit measurement the bots don't need.
-//! * **[`ws_url_from_rpc`]** — the Agave `http`→`ws` PubSub-endpoint
-//!   derivation the fill subscriptions share.
+//! The program-id consts, the canonical associated-token-account derivation,
+//! and the raw byte-instruction builders for the ATA program's
+//! `CreateIdempotent` and SPL Token's `MintTo`. Pure: every function returns
+//! an [`Instruction`] or a [`Pubkey`] and touches neither `RpcClient` nor
+//! `Keypair`, so each consumer keeps its own sign-and-send path.
 
 use solana_instruction::{AccountMeta, Instruction};
 use solana_pubkey::{pubkey, Pubkey};
@@ -76,31 +68,6 @@ pub fn mint_to_ix(authority: &Pubkey, mint: &Pubkey, ata: &Pubkey, amount: u64) 
             AccountMeta::new_readonly(*authority, true),
         ],
     )
-}
-
-/// Derive the PubSub websocket endpoint from an RPC URL, matching the Agave
-/// convention: swap the scheme (`http`→`ws`, `https`→`wss`) and use the RPC
-/// port + 1 (the validator serves logs/account subscriptions there, so
-/// `8899` → `8900`). Returns the input unchanged for an unrecognized scheme
-/// (assume it is already a ws endpoint) or a non-numeric port.
-pub fn ws_url_from_rpc(rpc_url: &str) -> String {
-    let (scheme, rest) = if let Some(rest) = rpc_url.strip_prefix("https://") {
-        ("wss://", rest)
-    } else if let Some(rest) = rpc_url.strip_prefix("http://") {
-        ("ws://", rest)
-    } else {
-        return rpc_url.to_string();
-    };
-    // PubSub lives at the root, so drop any path and bump the port.
-    let authority = rest.split('/').next().unwrap_or(rest);
-    let ws_authority = match authority.rsplit_once(':') {
-        Some((host, port)) => match port.parse::<u16>() {
-            Ok(port) => format!("{host}:{}", port.saturating_add(1)),
-            Err(_) => authority.to_string(),
-        },
-        None => authority.to_string(),
-    };
-    format!("{scheme}{ws_authority}")
 }
 
 #[cfg(test)]
@@ -169,20 +136,5 @@ mod tests {
         assert_eq!(ix.data, expected);
         assert_eq!(ix.accounts[2].pubkey, authority);
         assert!(ix.accounts[2].is_signer);
-    }
-
-    /// The websocket endpoint swaps the scheme and uses the RPC port + 1.
-    #[test]
-    fn ws_url_follows_the_agave_convention() {
-        assert_eq!(
-            ws_url_from_rpc("http://127.0.0.1:8899"),
-            "ws://127.0.0.1:8900"
-        );
-        assert_eq!(
-            ws_url_from_rpc("https://api.example.com:443/rpc"),
-            "wss://api.example.com:444"
-        );
-        // Unrecognized scheme is assumed to already be a ws endpoint.
-        assert_eq!(ws_url_from_rpc("ws://host:9000"), "ws://host:9000");
     }
 }
