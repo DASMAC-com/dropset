@@ -1,9 +1,10 @@
 //! `dropset-maker-bot` — the localnet FX-stablecoin market-maker.
 //!
 //! A supervisor over many `<token>/USDC` markets ([`config::MARKETS`]) quoting
-//! on the eCLOB per `docs/market-making-mvp.md`. One shared leader quotes every
-//! market; each cycle the bot refreshes a batched, tiered price feed
-//! (CoinGecko → CoinMarketCap → ECB/Frankfurter FX-rate → static), composes a
+//! on the eCLOB per `docs/market-making.md`. One shared leader quotes every
+//! market; each cycle the bot refreshes a batched price feed (the Frankfurter
+//! FX anchor, the CoinGecko / CoinMarketCap crypto basis leg, and a static peg
+//! of last resort), composes a
 //! per-market fair mid, and drives the program's relative-quoting hot path
 //! (`set_reference_price`, with an inventory skew) and cold path
 //! (`set_liquidity_profile`), under the spec's inventory / peg / staleness
@@ -11,7 +12,7 @@
 //!
 //! The crate splits into the dropset-alpha shape:
 //!
-//! - [`config`] — the spec's knobs, with defaults encoding the MVP verbatim.
+//! - [`config`] — the spec's knobs, with defaults encoding it verbatim.
 //! - [`model`] — the pure quoting logic (feeds, fair mid, ladder, skew,
 //!   triggers, kill switches), deterministic and unit tested.
 //!

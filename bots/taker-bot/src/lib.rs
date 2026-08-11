@@ -1,7 +1,7 @@
 //! `dropset-taker-bot` — the localnet FX-stablecoin flow-generation taker.
 //!
 //! A single taker bot that submits stochastic `swap`s against a mock
-//! `<token>/USDC` demo market (`docs/market-making-mvp.md`) so the book
+//! `<token>/USDC` demo market (`docs/market-making.md`) so the book
 //! actually moves and the maker takes fills on localnet. It is the **benign**
 //! flow taker —
 //! distinct from the adversarial strategy-hardening taker, which is a

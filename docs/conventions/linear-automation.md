@@ -134,7 +134,7 @@ the orientation was arbitrary (lower number blocks higher), and block
 semantics are binary, the board grew giant serial chains — a day-1
 mainnet param-channel issue sat behind **eight** overlap blockers, and
 a docs-only pair was block-linked because both touched
-`docs/market-making-mvp.md` in unrelated sections. A cluster carries the
+`docs/market-making.md` in unrelated sections. A cluster carries the
 same information without asserting an order nobody decided.
 
 ### Fold coupled findings into one issue

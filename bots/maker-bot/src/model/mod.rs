@@ -1,5 +1,5 @@
 //! The bot's quoting model — the pure decision logic of
-//! `docs/market-making-mvp.md`, independent of the chain and the network.
+//! `docs/market-making.md`, independent of the chain and the network.
 //!
 //! A tick flows through these in order: poll [`feeds`] → compose [`fair_mid`]
 //! → value [`inventory`] → compute the [`skew`] → decide the [`killswitch`]

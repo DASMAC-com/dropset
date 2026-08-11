@@ -1,6 +1,6 @@
-//! Bot configuration — the knobs `docs/market-making-mvp.md` pins down.
+//! Bot configuration — the knobs `docs/market-making.md` pins down.
 //!
-//! Defaults encode the MVP spec verbatim: the tiered price feed and poll
+//! Defaults encode the spec verbatim: the tiered price feed and poll
 //! cadences (§1), the 50/100/200/500 bps ladder (§2), the `SetReferencePrice`
 //! / `SetLiquidityProfile` triggers (§3), the linear inventory skew (§2), and
 //! the inventory / peg / staleness kill-switch bounds (§4). Secrets (the

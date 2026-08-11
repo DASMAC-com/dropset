@@ -5,7 +5,7 @@
 A single **benign, flow-generation** taker for the localnet FX-stablecoin
 demo. It submits stochastic `swap`s against one seeded market's vault so
 the book actually moves and the maker (`bots/maker-bot`) takes fills — the
-demand side of the localnet MVP described in `docs/market-making-mvp.md`.
+demand side of the localnet demo described in `docs/market-making.md`.
 
 This is the benign flow taker. The **adversarial** strategy-hardening taker
 is a separate, deferred effort; this bot is not it.

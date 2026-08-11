@@ -2,6 +2,8 @@
 
 <!-- cspell:word illiquidity -->
 
+<!-- cspell:word intraday -->
+
 <!-- cspell:word lehalle -->
 
 <!-- cspell:word parameterizes -->
@@ -12,7 +14,7 @@
 
 <!-- cspell:word tapia -->
 
-# Market Making MVP — multi-market FX stablecoins
+# Market Making — multi-market FX stablecoins
 
 The **operating spec** for Dropset's market-making vaults: how a single
 leader bot quotes a roster of non-USD FX stablecoins against USDC on the
@@ -24,19 +26,59 @@ Avellaneda–Stoikov but the ladder is hand-shaped: stable-pair σ is too
 small for the formal A-S skew to matter at this size, so the bot uses A-S
 as a sanity check and a linear override for inventory.
 
-**Doc boundary.** Dependency flows one way: **`market-making-mvp.md` →
+## Status
+
+**The localnet milestone is met.** `make demo` stands the whole roster up
+end to end: the TUI control plane brings up the validator, the explorer
+stack, and the markets, then launches a leader that quotes every FX pair
+on the eCLOB with a benign flow taker moving the books — with the
+frontend routing against the same chain. What this document specifies is
+therefore no longer a design to be proven; it is the **operating spec of
+a running maker**, and the work in front of it is hardening that same
+maker toward production rather than building a second one.
+
+What production requires **on top** of the demonstrated behavior, each
+tracked as its own effort under the maker-hardening umbrella:
+
+- **Intraday feeds** — the standing market-data store behind the FX and
+  basis legs (`data-feeds.md`), so fair value is driven by a recorded,
+  queryable history rather than whatever a process happened to poll.
+- **Telemetry** — per-feed health and quote/fill observability surfaced
+  where an operator sees it, not only in log lines.
+- **Parameter channel** — changing a live bot's knobs (bands, floors,
+  ladder shape) without a redeploy.
+- **Volatility-driven ladder** — σ and per-level TIF derived from
+  measured volatility instead of the hand-tuned constants in §2.
+- **Deploy apparatus** — the devnet/mainnet promotion path, delegated
+  `quote_authority` hot keys, and secret handling.
+
+Three principles hold across all of it, and any change to this spec is
+read against them:
+
+1. **One maker crate.** There is no demo fork and no demo-only code path.
+   The bot that quotes on localnet is the bot that quotes on mainnet;
+   environments differ by configuration, not by build.
+1. **The demo flies the production stack.** `make demo` exercises the
+   real components in the real arrangement — test like you fly, fly like
+   you test. A thing that only works under `make demo` is not done.
+1. **Quoting never depends on Postgres.** The store is where market data
+   accumulates, not a link in the quoting loop: the maker must keep
+   quoting, or halt deliberately per §4, when the database is unreachable.
+   Postgres is a soft dependency of the bot, always.
+
+**Doc boundary.** Dependency flows one way: **`market-making.md` →
 `architecture.md`**. This document references *down* into the protocol
 spec (`LiquidityProfile`, `SetReferencePrice`, `SetLiquidityProfile`,
 `FreezeVault`, flush math) and never the other way around. Nothing in
 the protocol depends on this strategy — a different leader can run a
 different shape against the same instructions.
 
-**Objective.** Breadth, not yield. The demo flashes credible top-of-book
-across many FX stablecoins at once, all routed through one SDK — the
-illiquidity story is that these markets have no liquid home on Solana,
-and Dropset's maker stack can stand one up on demand. The MVP exercises
-the leader interfaces end to end (price/profile cadence, inventory drift,
-peg-deviation alarms) across the whole roster.
+**Objective.** Breadth, not yield. The maker flashes credible
+top-of-book across many FX stablecoins at once, all routed through one
+SDK — the illiquidity story is that these markets have no liquid home on
+Solana, and Dropset's maker stack can stand one up on demand. The roster
+exercises the leader interfaces end to end (price/profile cadence,
+inventory drift, peg-deviation alarms) across every market at once.
 
 **Scope.**
 
@@ -52,9 +94,9 @@ peg-deviation alarms) across the whole roster.
   Per-market TVL-floor / skew calibration is coordinated separately.
 - Spread target: **100 bps quoted** at top of book (50 bps each side of
   mid). Holds for ~\$20 of one-sided trade; wider beyond.
-- Single leader across all markets on localnet. No hedging, no shorting,
-  no leverage. The delegated per-market `quote_authority` model is the
-  devnet/mainnet promotion's concern.
+- Single leader across all markets. No hedging, no shorting, no leverage.
+  The delegated per-market `quote_authority` model is the devnet/mainnet
+  promotion's concern.
 
 **Per-market decimals.** The feeds report a **human** quote-per-base
 price (USD per token); the engine stores the **atoms-ratio**
@@ -279,8 +321,8 @@ expected fill rate per level roughly flat. A crisper derivation of
 optimal per-level offsets and sizes for finite inventory `Q` lives in
 [Guéant, Lehalle & Fernandez-Tapia 2011, *Dealing with the inventory
 risk*][gueant2011] and [Guéant 2017, *Optimal market
-making*][gueant2017] — deferred to a follow-up. For the MVP the hand
-ladder is good enough.
+making*][gueant2017] — deferred to a follow-up. The hand ladder is the
+shipped shape until the volatility-driven ladder replaces it.
 
 dropset-alpha already implements the A-S formulae in
 [`calculate_spreads.rs`][alpha-spreads] and
@@ -479,24 +521,24 @@ ______________________________________________________________________
 
 ## 5. Explicitly deferred
 
-- Full A-S optimization for finite `Q` ([Guéant 2017][gueant2017]) —
-  hand-tuned ladder for MVP.
+- Full A-S optimization for finite `Q` ([Guéant 2017][gueant2017]) — the
+  shipped ladder is hand-tuned (§2).
 - Weighted multi-oracle fusion — a Kalman filter blending several basis
   sources (and driving spread width from the basis variance), or fusing
   many simultaneous venues (Jupiter, Raydium, Orca, Manifest, DFlow, …).
-  The MVP smooths **one** source per leg with an EMA (§1) and fails over
+  The bot smooths **one** source per leg with an EMA (§1) and fails over
   rather than blending.
-- Adversarial taker bot for hardening — separate effort. The localnet MVP
-  does ship a *benign* stochastic flow taker (a quiet/burst Markov arrival
-  process with LogNormal order sizes) to move the book and exercise the
-  maker; the adversarial strategy-hardening taker remains deferred.
+- Adversarial taker bot for hardening — separate effort. A *benign*
+  stochastic flow taker does ship (a quiet/burst Markov arrival process
+  with LogNormal order sizes) to move the book and exercise the maker;
+  the adversarial strategy-hardening taker remains deferred.
 - Hedging / shorting for market-neutrality — separate effort, requires
   venue research.
-- Performance fee / outside-depositor flow — comes with vault maturity,
-  not MVP.
-- Delegated per-market `quote_authority` hot keys and the
-  devnet/mainnet promotion — tracked separately; this spec is the
-  localnet plumbing.
+- Performance fee / outside-depositor flow — comes with vault maturity.
+- Delegated per-market `quote_authority` hot keys and the devnet/mainnet
+  promotion — tracked separately under the hardening umbrella (see
+  **Status**); this spec stops at the strategy the leader runs, whatever
+  network it runs against.
 
 [alpha-params]: https://github.com/DASMAC-com/dropset-alpha/blob/fd16be56a72adf2e501b1310d85eb6519a10df5d/services/maker-bot/src/model/parameters.rs#L11
 [alpha-spreads]: https://github.com/DASMAC-com/dropset-alpha/blob/fd16be56a72adf2e501b1310d85eb6519a10df5d/services/maker-bot/src/model/calculate_spreads.rs#L41
