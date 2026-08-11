@@ -1,7 +1,6 @@
 // cspell:word OOXML
 // cspell:word nodebuffer
 // cspell:word letterboxing
-// cspell:word pptxgenjs
 
 import PptxGenJS from "pptxgenjs";
 

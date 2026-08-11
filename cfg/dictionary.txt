@@ -115,6 +115,7 @@ permissionless
 pgrep
 pkill
 poppler
+pptxgenjs
 prebuild
 predev
 prefs
