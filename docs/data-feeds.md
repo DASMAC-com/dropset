@@ -101,8 +101,9 @@ framework lifts the common shape out of them:
   (`indexer/src/ingest.rs`) polls `getSignaturesForAddress` +
   `getTransaction` at `finalized` and returns base58-decoded
   inner-instruction blobs; `Store` (`indexer/src/store.rs`) is the
-  `sqlx` pool + `sqlx::migrate!` runner + idempotent `ON CONFLICT`
-  writers; `Cursor` is a typed watermark. Its own comment names the
+  `sqlx` pool + idempotent `ON CONFLICT` writers (it ran its own
+  `sqlx::migrate!` until §8's single schema owner took that over);
+  `Cursor` is a typed watermark. Its own comment names the
   seam: *"the geyser path would implement the same `poll` shape behind
   the same decode + store seam."* That is the poll source + store sink.
 - **Maker bot — a live price source and a live fill source.** The
@@ -171,6 +172,10 @@ Each source serializes its own opaque cursor shape (a CEX feed stores
 `{ "next_start": <epoch> }`, an RPC feed a signature or slot), so the
 framework never knows the shape.
 
+The framework *defines* this table but does not *create* it: like every
+other table, it is created by the migration runner of §8. `PgCursorStore`
+reads and upserts rows and nothing more.
+
 **Delivery semantics — at-least-once (store sink).** The cursor is saved
 *after* the batch commits. A crash between commit and cursor-save
 re-fetches the last window on restart, and the idempotent upsert absorbs
@@ -215,11 +220,14 @@ Two deployment shapes, because the two sink kinds live in different
 processes:
 
 - **Store-sink feeds run as their own processes / containers.**
-  Separate binaries per feed plus a migrate runner; one versioned Docker
-  image builds all of them, and the compose `command` selects the
-  process — the same mechanism locally and on the deployed host (§12).
-  A run-once migration task precedes one long-lived service per feed
-  against the same database. Every feed is idempotent and
+  Separate binaries per feed; one versioned Docker image builds a family
+  of them, and the compose `command` selects the process — the same
+  mechanism locally and on the deployed host (§12). The migration runner
+  is its own image, because the schema owner is a separate deploy unit
+  that runs to completion before any consumer starts and must not be
+  versioned with one. A run-once migration task precedes one long-lived
+  service per feed against the same database; every dependent service
+  gates on it exiting successfully. Every feed is idempotent and
   cursor-resumable, so a restarted task just resumes.
 - **Live-sink feeds run in the consumer's process.** A bot links
   `feeds`, constructs a source, wires it to a live sink, and reads the
@@ -302,6 +310,36 @@ migrations are versioned and additive-only. No app creates its own
 tables at startup; a collector that finds its table missing fails loudly
 rather than conjuring one, so the schema has exactly one source of
 truth.
+
+That owner is the **`db-schema/`** crate (`dropset-db-schema`): one
+ordered migration directory, and the **`dropset-migrate`** binary that
+applies it. Three regimes preceded it — the framework migrated
+`feed_cursors`, the indexer ran a second `sqlx::migrate!` from inside
+`Store::connect`, and the collector applied idempotent
+`CREATE TABLE IF NOT EXISTS` startup DDL precisely to avoid colliding
+with that second migrator on the shared `_sqlx_migrations` table. They
+coexisted only because each pointed at a different database; one instance
+is what forced the consolidation.
+
+Two properties are load-bearing:
+
+- **Additive-only, enforced by a `>=` fence.** DB-primary apps (the
+  indexer, the collectors) call `require_schema` at startup, which
+  asserts the database's applied history *covers* the version the binary
+  was compiled against. The comparison is `>=`, never `==`: during a
+  deploy an old binary may briefly run against a newer schema, and that
+  window is supported by design. Only a database *behind* the binary is
+  an error, and it names the fix.
+- **The fence is for DB-primary apps only.** The maker's quote path and
+  the TUI go-between keep the opposite contract: Postgres there is a soft
+  dependency, so a database that is unreachable, or behind on its
+  migrations, means degraded operation surfaced in telemetry, never a
+  refusal to start. Wiring the fence into them would convert a tolerated
+  condition into an outage.
+
+The runner doubles as the local reset story — point it at a fresh
+database and the full history replays — and, because it is idempotent, as
+a compose init step that re-runs harmlessly on every restart.
 
 **Table ownership — one writer, unrestricted readers.** Every table has
 exactly one writer app. Reads are deliberately unrestricted; that is the
@@ -452,6 +490,15 @@ maker, the collectors, the shared database, the dashboards, and the TUI,
 from the same compose file and the same images the cloud host runs. Test
 like you fly: there is no demo-only feed tier and no demo-only bot code,
 so the thing demoed is the thing deployed.
+
+That compose file is `infra/localnet/docker-compose.yml`, and it holds
+exactly one Postgres. The collectors used to run a second one in their own
+compose file; consolidating them is what makes a cross-boundary join a
+query rather than an export. Its data sits on a **named volume**: the
+indexer could always re-sync from chain, but a CEX backfill window is
+finite, so collected price history that scrolls out of it is
+unrecoverable. Stopping services keeps the volume; only an explicit
+`down -v` (`make clean-docker`) discards it.
 
 **AWS is ephemeral by default.** Every stack proves the full
 deploy → verify → teardown cycle and is torn down after; nothing is left

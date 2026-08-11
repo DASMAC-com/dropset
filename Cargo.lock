@@ -1729,6 +1729,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "dropset-db-schema"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "sqlx",
+ "testcontainers-modules",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "dropset-fair-value"
 version = "0.1.0"
 
@@ -1739,6 +1751,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bs58",
+ "dropset-db-schema",
  "reqwest",
  "serde",
  "serde_json",
@@ -1759,6 +1772,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "dropset-db-schema",
  "dropset-feeds",
  "serde",
  "serde_json",
@@ -1776,6 +1790,7 @@ dependencies = [
  "axum",
  "borsh",
  "bs58",
+ "dropset-db-schema",
  "dropset-sdk",
  "rust_decimal",
  "serde",

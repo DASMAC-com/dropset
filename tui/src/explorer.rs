@@ -175,19 +175,24 @@ pub fn ensure_running(log: &Logger, repo_root: &Path) -> Result<()> {
 
 /// Stop and remove the explorer container. Best-effort: called on quit, so it
 /// silences output and only reports a non-zero exit.
+///
+/// Scoped to the explorer service, **not** a project-wide `docker compose
+/// down`. The compose project now holds the shared `dropset` Postgres and the
+/// market-data collectors, so tearing the whole project down on quit would stop
+/// a collector mid-backfill — and it is quit, so nothing would explain why.
 pub fn stop(repo_root: &Path) -> Result<()> {
     let compose = repo_root.join(COMPOSE_REL);
     let status = Command::new("docker")
         .args(["compose", "-f"])
         .arg(&compose)
-        .arg("down")
+        .args(["rm", "-sf", SERVICE])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .context("run `docker compose down`")?;
+        .context("run `docker compose rm -sf explorer`")?;
     if !status.success() {
-        bail!("`docker compose down` exited with {status}");
+        bail!("`docker compose rm -sf explorer` exited with {status}");
     }
     Ok(())
 }

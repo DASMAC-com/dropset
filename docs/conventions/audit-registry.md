@@ -31,6 +31,7 @@ indexer (rust-tool, low): indexer/**
 feeds (rust-lib, low): feeds/**
 fair-value (rust-lib, med): fair-value/**
 fx-survey (rust-tool, low): analytics/fx-survey/**
+db-schema (rust-lib, med): db-schema/**
 ```
 
 **Inter-subsystem interfaces** — the seams where contract drift
@@ -104,8 +105,11 @@ fx-survey <-> feeds: the survey app is the first consumer of the feeds
   and StoreWriter (analytics/fx-survey/src/store.rs) and composes
   HttpClient / PgCursorStore / StoreSink / run — so the trait signatures,
   the Batch/Cursor/caught_up contract, and the store sink's
-  cursor-after-commit ordering must track the framework. The schema split
-  is part of the seam: feeds owns feed_cursors, the app owns cex_prices.
+  cursor-after-commit ordering must track the framework. Neither side owns
+  DDL any more: feed_cursors and cex_prices are both defined in
+  db-schema/migrations, so the seam is row types + queries against that
+  migration. require_schema gates only the migration VERSION, so a
+  column-shape mismatch inside a version still surfaces at query time.
 maker-bot <-> feeds: the maker bot is the first consumer of the feeds
   live (forward) sink — it implements Source for the price tiers
   (bots/maker-bot/src/model/feeds.rs) and bridges the logs-subscription
@@ -128,6 +132,26 @@ frontend <-> sdk-clients: the trades tape decodes emit_cpi FillEvents
   envelope drift. The tag, the discriminators, and the trust guards (the
   emitting-program check and the failed-transaction refusal) must track
   the Rust original and the IDL.
+db-schema <-> feeds: db-schema/migrations defines feed_cursors; the
+  framework's PgCursorStore (feeds/src/store.rs) reads and upserts it
+  without creating it, since feeds no longer runs sqlx::migrate!. The
+  column set and the cursor-after-commit idempotent write must track the
+  migration — a column the framework expects and the migration lacks
+  fails at query time, not at startup. db-schema is a feeds
+  dev-dependency, so feeds/tests/store_postgres.rs provisions the real
+  migration rather than a copy of the table beside it — which is what
+  makes this seam testable.
+db-schema <-> indexer: db-schema/migrations defines the indexer's tables
+  and the shared _sqlx_migrations state; indexer/src/store.rs holds the
+  row types, reads, and ON CONFLICT writers against them and carries no
+  migrator of its own. Its decoded-event columns must track both the
+  migration and the event codec, and any migration it depends on has to
+  land before the build that assumes it (Store::connect gates on
+  require_schema).
+db-schema <-> fx-survey: db-schema/migrations defines cex_prices, which
+  the app's StoreWriter (analytics/fx-survey/src/store.rs) writes
+  idempotently; the candle field set and the closed-bucket primary key
+  must track the migration.
 ```
 
 **Skip-globs** — generated / vendored / binary paths the file audit

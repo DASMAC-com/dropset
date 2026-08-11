@@ -176,7 +176,9 @@ the contract needs (incremental upserts, optional materialized views,
 a PostgREST shortcut) all assume it, and an AWS deploy maps it to RDS.
 SQLite would force a rewrite at the AWS boundary and can't host the
 rollup idioms. Use **`sqlx`** (compile-checked queries, async, light
-migration runner) over diesel for the prototype's smaller surface.
+migration runner) over diesel for the prototype's smaller surface. The
+migration runner is driven from one place for the whole shared database,
+not per app — see `data-feeds.md` §8.
 
 ### 4.4 API — hand-written `/v1` (Axum)
 
@@ -296,19 +298,24 @@ stage — split into a workspace only if a stage grows independently:
 ```text
 indexer/
   Cargo.toml
-  migrations/      # sqlx SQL migrations (0001_init.sql)
   queries/         # externalized .sql, loaded via include_str!
   src/
     config.rs      # env-driven config (db / rpc / program id)
     model.rs       # row types, /v1 wire shape, event → JSON / columns
     decode.rs      # dropset_sdk::events walk, on live tx meta
     ingest.rs      # RpcPollSource (geyser is the next step)
-    store.rs       # sqlx pool, migrations, ON CONFLICT writers + reads
+    store.rs       # sqlx pool, schema fence, ON CONFLICT writers + reads
     aggregate.rs   # watermarked legs→takes + market rollups
     api.rs         # Axum /v1 router
     bin/indexer.rs # ingest + decode + store + aggregate worker
     bin/api.rs     # the /v1 service
 ```
+
+The indexer no longer carries a `migrations/` directory. Its tables live in
+the shared `dropset` database, whose single schema owner is the `db-schema/`
+crate (`data-feeds.md` §8); `Store::connect` asserts that schema is present
+instead of creating it, and `dropset-migrate` is the only thing that issues
+DDL.
 
 The wire-format extractor is **shared, not forked**: it lives in
 `dropset_sdk::events`, and `decode.rs` is a thin adapter that assigns
@@ -319,11 +326,17 @@ wire-format pin" property keeps covering the indexer's decode too.
 
 ### Localnet
 
-A new service in [`infra/localnet/`](../infra/localnet/): a Postgres
-container + the indexer + the `/v1` API, wired to the seeded validator.
-A `make indexer-up` target brings the stack up; a `cargo-chef`
-multi-stage Dockerfile keeps the image lean. The maker-bot seeding the
-market gives the indexer a live event source on localnet.
+A new service in [`infra/localnet/`](../infra/localnet/): the shared
+Postgres container + a run-once schema migration + the indexer + the `/v1`
+API, wired to the seeded validator. A `make indexer-up` target brings the
+stack up; a `cargo-chef` multi-stage Dockerfile keeps each image lean. The
+maker-bot seeding the market gives the indexer a live event source on
+localnet.
+
+That Postgres is shared with the market-data collectors rather than
+indexer-private, and the indexer waits on the `migrate` service exiting
+successfully before it starts (`data-feeds.md` §8, §12). Its volume is
+named, so `make indexer-down` stops the services and keeps the data.
 
 ### AWS
 

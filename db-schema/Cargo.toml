@@ -1,0 +1,48 @@
+# cspell:word rustls
+# The single schema owner for the shared `dropset` database
+# (docs/data-feeds.md §8). Every table in that instance — the framework's
+# cursor store, the indexer's event and rollup tables, the market-data price
+# tables, and the maker go-between tables as they land — is created by the
+# ordered migrations in `./migrations` and by nothing else. No app issues DDL.
+#
+# The crate is deliberately dependency-light (sqlx and a runtime, no `feeds`,
+# no Solana tree): every DB-primary app depends on it to assert the schema it
+# was compiled against, so it sits below all of them in the graph.
+
+[[bin]]
+name = "dropset-migrate"
+path = "src/bin/migrate.rs"
+
+[dependencies]
+anyhow = "1"
+# `migrate` embeds `./migrations` and provides the `sqlx::migrate!` macro;
+# the version fence reads `_sqlx_migrations` with string-typed runtime
+# queries, so no compile-time `DATABASE_URL` is needed. `rustls` matches the
+# store sink's TLS backend so nothing pulls in openssl.
+sqlx = { version = "0.8", default-features = false, features = [
+  "runtime-tokio",
+  "tls-rustls",
+  "postgres",
+  "macros",
+  "migrate",
+] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+# The migration and the startup fence are exercised against a real Postgres in
+# a throwaway container (tests/schema_fence.rs) — the only way to cover the
+# additive-only `>=` window, where a database ahead of the binary must still
+# pass. Those tests are `#[ignore]`d — they need a Docker daemon; run them with
+# `cargo test -p dropset-db-schema -- --ignored`.
+testcontainers-modules = { version = "0.11", features = ["postgres"] }
+
+[package]
+description = "Versioned schema and migration runner for the shared Dropset database."
+name = "dropset-db-schema"
+publish = false
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true

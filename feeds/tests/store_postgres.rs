@@ -1,6 +1,11 @@
-//! End-to-end tests for the store (warehouse) path against a real Postgres in
-//! a throwaway container: the embedded migration, the `feed_cursors` upsert,
-//! and the store sink's write + cursor-advance, including idempotency.
+//! End-to-end tests for the store path against a real Postgres in a
+//! throwaway container: the `feed_cursors` upsert and the store sink's write +
+//! cursor-advance, including idempotency.
+//!
+//! The framework no longer migrates anything, so these provision the schema
+//! the way a deployment does — through `dropset-db-schema`, the single schema
+//! owner (docs/data-feeds.md §8). That makes the test exercise the real
+//! `feed_cursors` definition rather than a copy maintained beside it.
 //!
 //! These need a Docker daemon, so they are `#[ignore]`d and skipped by the
 //! default test run. Run them with:
@@ -33,6 +38,9 @@ async fn start_pg() -> (ContainerAsync<Postgres>, PgPool) {
         .expect("resolve mapped port");
     let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
     let pool = connect(&url).await.expect("connect pool");
+    dropset_db_schema::migrate(&pool)
+        .await
+        .expect("apply shared schema");
     (container, pool)
 }
 
@@ -41,7 +49,6 @@ async fn start_pg() -> (ContainerAsync<Postgres>, PgPool) {
 async fn cursor_store_round_trips_and_overwrites() {
     let (_pg, pool) = start_pg().await;
     let cursors = PgCursorStore::new(pool.clone());
-    cursors.migrate().await.unwrap();
 
     let feed = "cex:coinbase:EURC-USDC";
     // A feed that has never run has no cursor.
@@ -86,7 +93,6 @@ impl StoreWriter for PingWriter {
 async fn store_sink_persists_batch_and_advances_cursor_idempotently() {
     let (_pg, pool) = start_pg().await;
     let cursors = PgCursorStore::new(pool.clone());
-    cursors.migrate().await.unwrap();
     sqlx::query("CREATE TABLE test_pings (id BIGINT PRIMARY KEY)")
         .execute(&pool)
         .await

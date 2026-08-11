@@ -38,10 +38,18 @@ pub struct Store {
 }
 
 impl Store {
-    /// Connect and run embedded migrations.
+    /// Connect, and assert the shared schema this build expects is already
+    /// present.
+    ///
+    /// The indexer does **not** create its own tables: `dropset-db-schema` is
+    /// the single schema owner and `dropset-migrate` is the only thing that
+    /// issues DDL (docs/data-feeds.md §8). The indexer is DB-primary — it has
+    /// nothing to do without its tables — so a database that has not been
+    /// migrated is a startup failure here, with an error naming the fix,
+    /// rather than a bare `relation … does not exist` on the first write.
     pub async fn connect(url: &str) -> anyhow::Result<Self> {
         let pool = PgPoolOptions::new().max_connections(8).connect(url).await?;
-        sqlx::migrate!("./migrations").run(&pool).await?;
+        dropset_db_schema::require_schema(&pool).await?;
         Ok(Self { pool })
     }
 

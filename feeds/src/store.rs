@@ -87,18 +87,16 @@ pub struct PgCursorStore {
 }
 
 impl PgCursorStore {
-    /// A cursor store over the given pool. Call [`Self::migrate`] once before
-    /// use to ensure the `feed_cursors` table exists.
+    /// A cursor store over the given pool.
+    ///
+    /// The `feed_cursors` table must already exist: the framework no longer
+    /// migrates it. It is defined in `dropset-db-schema` and created by
+    /// `dropset-migrate`, the single schema owner (docs/data-feeds.md §8) —
+    /// this type only reads and upserts rows. `feed_cursors` is §8's one
+    /// ownership carve-out: several apps write it, partitioned by feed name,
+    /// and the framework rather than any app defines its shape.
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
-    }
-
-    /// Create the `feed_cursors` table if absent (the embedded migration). A
-    /// feed process runs this once at startup, or a shared migrate task runs it
-    /// ahead of the feeds (docs/data-feeds.md §5).
-    pub async fn migrate(&self) -> Result<()> {
-        sqlx::migrate!("./migrations").run(&self.pool).await?;
-        Ok(())
     }
 }
 

@@ -1,29 +1,18 @@
-//! Postgres persistence for the survey: schema provisioning plus the
-//! [`StoreWriter`] that maps [`Candle`] records onto `cex_prices`.
+//! Postgres persistence for the collector: the [`StoreWriter`] that maps
+//! [`Candle`] records onto `cex_prices`.
 //!
-//! The framework owns the `feed_cursors` table and its migration; this module
-//! owns `cex_prices`. Rather than run a second `sqlx::migrate!` migrator — which
-//! would collide with the framework's on the shared `_sqlx_migrations` table —
-//! the schema is applied as idempotent `CREATE TABLE IF NOT EXISTS` DDL, the
-//! pattern `feeds/tests/store_postgres.rs` sets (framework migrates its cursor
-//! table; the consumer creates its own).
+//! This module issues **no DDL**. Both tables it touches — the framework's
+//! `feed_cursors` and this app's `cex_prices` — are defined in
+//! `dropset-db-schema` and created by `dropset-migrate`, the single schema
+//! owner (docs/data-feeds.md §8). The idempotent `CREATE TABLE IF NOT EXISTS`
+//! this module used to run existed only to dodge a collision between two
+//! `sqlx::migrate!` migrators on the shared `_sqlx_migrations` table; with one
+//! owner there is nothing to dodge, and `cex_prices` is versioned like
+//! everything else.
 
 use crate::coinbase::Candle;
-use anyhow::Result;
 use async_trait::async_trait;
-use dropset_feeds::{PgCursorStore, StoreWriter};
-use sqlx::PgPool;
-
-/// Provision every table the survey app needs: the framework's `feed_cursors`
-/// (via its own migrator) and this app's `cex_prices` (idempotent DDL). Run
-/// once by `fx-survey-migrate` before any feed starts (docs/data-feeds.md §5).
-pub async fn migrate(pool: &PgPool) -> Result<()> {
-    PgCursorStore::new(pool.clone()).migrate().await?;
-    sqlx::raw_sql(include_str!("../schema/cex_prices.sql"))
-        .execute(pool)
-        .await?;
-    Ok(())
-}
+use dropset_feeds::StoreWriter;
 
 /// Writes [`Candle`] records for one feed into `cex_prices`. The exchange,
 /// pair, and granularity are constant per feed, so they live here and the
@@ -56,7 +45,7 @@ impl StoreWriter for CexWriter {
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         records: &[Candle],
-    ) -> Result<u64> {
+    ) -> anyhow::Result<u64> {
         let mut written = 0;
         for c in records {
             let res = sqlx::query(include_str!("../queries/cex_price_insert.sql"))
