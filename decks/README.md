@@ -180,11 +180,12 @@ Vercel plan allows, which is comfortable for ten pages but is the number to
 raise if a deck grows much larger.
 
 Pages lay out in the deck's own 1920×1080 space but are captured at a device
-pixel ratio of 3, so the images are **5760×3240** — 576 dpi against the page
-they land on. Raising the pixel ratio rather than the viewport is deliberate:
-a bigger viewport would give Spectacle a bigger box and change the layout,
-while a higher ratio renders the same layout with more samples. 1× was
-grainy after Google Slides rescaled it and 2× still read soft.
+pixel ratio of 2, so the images are **3840×2160** — exactly a 4K projector,
+the best screen the deck will meet. Raising the pixel ratio rather than the
+viewport is deliberate: a bigger viewport would give Spectacle a bigger box
+and change the layout, while a higher ratio renders the same layout with more
+samples. `DECK_CAPTURE_SCALE` overrides the ratio for a side-by-side
+comparison.
 
 The `.pptx` page is **Google Slides' own** 10in × 5.625in widescreen, not
 PowerPoint's 13.333 × 7.5. Both are 16:9, but Slides resizes an imported deck
@@ -192,10 +193,23 @@ to the page its presentation uses, so declaring that page means the slides
 are placed rather than rescaled — one fewer resample of an image made
 entirely of text and screenshots.
 
-If exports still look soft in Slides after that, the remaining suspect is
-Slides' own import re-encoding, which no change on this side reaches. The
-fallback is to skip `Import slides` and place the images directly
-(`Insert ▸ Image ▸ Upload`) on blank 16:9 pages.
+### Slides renders imports softly, and that is not fixable here
+
+An imported deck looks visibly softer in Google Slides than the same page on
+this site, in Present mode as much as in the editor. **This is not a defect in
+the export, and raising the capture ratio does not help.**
+
+The measurement that settles it, worth not repeating: export a deck, import it
+to Slides, download it back with `File ▸ Download ▸ Microsoft PowerPoint`, and
+compare the embedded images. All ten pages come back **byte-identical** — same
+dimensions, same PNG encoding, same checksum. Slides stores exactly what it is
+given; the softness is in how it *renders* a slide, which nothing on this side
+reaches. The ratio was 3× for a while on the opposite assumption, which cost
+4.7MB per export and bought nothing.
+
+So the `.pptx` is the deliverable, and it is correct. When fidelity has to be
+exact — a screenshot audience reads pixel-for-pixel — present from this site or
+from PowerPoint rather than from Slides.
 
 Screenshots, rather than Spectacle's own export mode plus print-to-PDF,
 because that route is broken here and dead-ends anyway. `⌘⇧R` print mode
