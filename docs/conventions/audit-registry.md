@@ -113,23 +113,30 @@ feeds <-> indexer: the feeds RPC-poll source and store sink
   the getSignaturesForAddress + getTransaction poll window, and the
   idempotent ON CONFLICT write must track the indexer's originals.
 fx-survey <-> feeds: the survey app is the first consumer of the feeds
-  framework — it implements Source (analytics/fx-survey/src/coinbase.rs)
-  and StoreWriter (analytics/fx-survey/src/store.rs) and composes
-  HttpClient / PgCursorStore / StoreSink / run — so the trait signatures,
-  the Batch/Cursor/caught_up contract, and the store sink's
-  cursor-after-commit ordering must track the framework. Neither side owns
+  framework — it now implements only StoreWriter
+  (analytics/fx-survey/src/store.rs) and composes HttpClient /
+  PgCursorStore / StoreSink / run around the shared Coinbase venue
+  adapter (feeds/src/venues/coinbase.rs), which it no longer owns — so
+  the trait signatures, the Batch/Cursor/caught_up contract, and the
+  store sink's cursor-after-commit ordering must track the framework.
+  That adapter is shared with maker-bot, so a change to it moves two
+  consumers at once. Neither side owns
   DDL any more: feed_cursors and cex_prices are both defined in
   db-schema/migrations, so the seam is row types + queries against that
   migration. require_schema gates only the migration VERSION, so a
   column-shape mismatch inside a version still surfaces at query time.
 maker-bot <-> feeds: the maker bot is the first consumer of the feeds
-  live (forward) sink — it implements Source for the price tiers
-  (bots/maker-bot/src/model/feeds.rs) and bridges the logs-subscription
-  fill socket through ChannelSource (bots/maker-bot/src/fills.rs), driving
-  both with run_until onto a ForwardSink its synchronous tick loop drains
-  through the broadcast receiver (bots/maker-bot/src/tasks.rs) — so the
-  Source/Sink signatures, the Batch/caught_up contract, and the forward
-  sink's bounded drop-to-latest policy must track the framework.
+  live (forward) sink — its price Sources are now the shared venue
+  adapters (feeds/src/venues/coingecko.rs, coinmarketcap.rs,
+  frankfurter.rs) behind the BatchQuotes contract, and it implements
+  Source itself only for the logs-subscription fill socket bridged
+  through ChannelSource (bots/maker-bot/src/fills.rs), driving both with
+  run_until onto a ForwardSink its synchronous tick loop drains through
+  the broadcast receiver (bots/maker-bot/src/tasks.rs) — so the
+  Source/Sink signatures, the BatchQuotes contract, the Batch/caught_up
+  contract, and the forward sink's bounded drop-to-latest policy must
+  track the framework. The venue adapters are shared with fx-survey, so
+  a change to one moves both consumers.
 sdk-clients <-> sdk-math: the TS market reader (sdk/ts/src/market.ts)
   hand-decodes the opaque Vault slab and reconstructs the resting book,
   mirroring the on-chain byte layout (sdk/interface/src/layout.rs) and the

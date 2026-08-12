@@ -11,9 +11,12 @@
 //!   co-located consumer reads with minimal latency and no persistence (the
 //!   bot path).
 //!
-//! Source adapters are feature-gated ([`HttpClient`] behind `http`,
+//! Transports are feature-gated ([`HttpClient`] behind `http`,
 //! [`RpcPollSource`] behind `rpc`, [`ChannelSource`] behind `stream`) so a
-//! consumer compiles only the transport it uses. The design is
+//! consumer compiles only the transport it uses. The concrete venue adapters
+//! built on them live in [`venues`] — written once here rather than stranded
+//! in whichever app needed one first, so a collector and a bot share the same
+//! source and differ only in which sink they wire it to. The design is
 //! `docs/data-feeds.md`.
 
 mod cursor;
@@ -22,6 +25,7 @@ mod record;
 mod runner;
 mod sink;
 mod source;
+mod time;
 
 pub use cursor::{Cursor, CursorStore};
 pub use forward::{forward_channel, ForwardSink};
@@ -29,6 +33,7 @@ pub use record::Batch;
 pub use runner::{run, run_until, RunConfig};
 pub use sink::Sink;
 pub use source::Source;
+pub use time::now_secs;
 
 #[cfg(feature = "store")]
 mod store;
@@ -39,6 +44,12 @@ pub use store::{connect, PgCursorStore, StoreSink, StoreWriter};
 mod http;
 #[cfg(feature = "http")]
 pub use http::HttpClient;
+
+// Not gated, on purpose: the `BatchQuotes` contract needs no transport, so a
+// streaming venue can implement it without pulling in `http`. Each venue
+// submodule carries its own transport's gate instead — every adapter shipped
+// today polls REST, so today they all ride `http`.
+pub mod venues;
 
 #[cfg(feature = "rpc")]
 mod rpc;
