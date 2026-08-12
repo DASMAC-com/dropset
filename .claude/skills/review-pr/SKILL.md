@@ -2154,23 +2154,27 @@ PR-authoring **writes** (`create_pull_request`,
      "conclusion": "pass",    // pass | fail | pending | none | timeout
      "settled": true,
      "elapsed_seconds": 127,
+     "watch_rounds": 1,       // >1 means a check registered late
      "counts": {"pass": 12, "fail": 0, "skipping": 3},
      "failing": [{"name": "…", "workflow": "…", "link": "…", "run_id": "…"}],
+     "pending_checks": [],    // names still outstanding, when any are
      "log_path": "…/wait-for-checks-<number>.log"
    }
    ```
 
-   Internally it is two `gh` calls and **no loop**:
-   `gh pr checks --watch --interval 30` (gh does the pacing and
-   exits when the checks settle; its live-updating table goes to
-   `log_path`, never into context) followed by one
-   `gh pr checks --json` read that *is* the verdict. That JSON
-   read, not gh's exit code, is the authority — `gh` overloads
-   non-zero across "a check failed", "checks still pending", and
-   "there are no checks at all", and a review has to tell those
-   apart. `failing` already carries each failed check's
-   `run_id`, so the failure branch below needs no URL parsing.
-   The tool exits 0 only on `pass`.
+   Internally it is a **bounded** pair of `gh` calls — and no
+   model-driven loop: `gh pr checks --watch --interval 30` (gh
+   does the pacing and exits when the checks settle; its
+   live-updating table goes to `log_path`, never into context)
+   followed by one `gh pr checks --json` read that *is* the
+   verdict. That JSON read, not gh's exit code, is the authority
+   — `gh` overloads non-zero across "a check failed", "checks
+   still pending", and "there are no checks at all", and a review
+   has to tell those apart. When that read still says pending,
+   the pair repeats (see `watch_rounds` below) rather than
+   reporting a settled pending. `failing` already carries each
+   failed check's `run_id`, so the failure branch below needs no
+   URL parsing. The tool exits 0 only on `pass`.
 
    **Correction to an earlier version of this step, which
    asserted "there's no streaming `--watch`, so poll".** That

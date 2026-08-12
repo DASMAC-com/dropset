@@ -256,13 +256,17 @@ class WaitTests(unittest.TestCase):
         self.assertEqual(v["conclusion"], "pending")
         self.assertTrue(v["settled"])
 
-    def _stub_rounds(self, reads, settled=True):
+    def _stub_rounds(self, reads, settled=True, clock=None):
         """Stub both gh calls with a *sequence* of reads — one per watch round.
 
         The final entry repeats, so a test wanting "pending forever" passes a
         single read. `time.sleep` is neutralized because the pacing between
         rounds is real seconds in production and would make this suite crawl.
-        Returns the list of timeouts handed to each `watch_checks` call.
+        Pass `clock` (a one-element list standing in for the monotonic clock)
+        to have the stubbed sleep advance it instead of discarding the delay —
+        without that, wall time never moves and a test cannot observe the
+        remaining budget shrink. Returns the timeouts handed to each
+        `watch_checks` call.
         """
         queue = list(reads)
         real_watch = wfc.watch_checks
@@ -277,13 +281,25 @@ class WaitTests(unittest.TestCase):
         def fake_read(pr, repo):
             return queue.pop(0) if len(queue) > 1 else queue[0]
 
+        def fake_sleep(seconds):
+            if clock is not None:
+                clock[0] += seconds
+
         wfc.watch_checks = fake_watch
         wfc.read_checks = fake_read
-        wfc.time.sleep = lambda seconds: None
+        wfc.time.sleep = fake_sleep
         self.addCleanup(setattr, wfc, "watch_checks", real_watch)
         self.addCleanup(setattr, wfc, "read_checks", real_read)
         self.addCleanup(setattr, wfc.time, "sleep", real_sleep)
         return timeouts
+
+    def _fake_clock(self):
+        """Freeze `time.monotonic` onto a list the stubbed sleep advances."""
+        clock = [0.0]
+        real_monotonic = wfc.time.monotonic
+        wfc.time.monotonic = lambda: clock[0]
+        self.addCleanup(setattr, wfc.time, "monotonic", real_monotonic)
+        return clock
 
     def test_a_late_registering_check_re_enters_the_watch(self):
         """gh's --watch settles on its *own* census of the check set, so a
@@ -316,11 +332,19 @@ class WaitTests(unittest.TestCase):
         self.assertFalse(v["settled"] and v["conclusion"] == "pending")
 
     def test_each_round_gets_only_the_remaining_budget(self):
-        """The retry must not outlive the timeout the caller set."""
-        timeouts = self._stub_rounds([[check("a", "pending")]])
+        """The retry must not outlive the timeout the caller set: each round
+        is handed what is *left*, not the original budget.
+
+        The fake clock is what gives this test teeth — with wall time frozen,
+        handing every round the full timeout would look identical to handing
+        it the remainder, which is the bug being pinned.
+        """
+        clock = self._fake_clock()
+        timeouts = self._stub_rounds([[check("a", "pending")]], clock=clock)
         wfc.wait(285, repo="o/r", timeout=600)
         self.assertGreater(len(timeouts), 1)
-        self.assertLessEqual(timeouts[1], timeouts[0])
+        self.assertLess(timeouts[1], timeouts[0])
+        self.assertEqual(timeouts[0], 600)
 
     def test_an_exhausted_budget_never_watches_at_all(self):
         timeouts = self._stub_rounds([[check("a", "pass")]])
