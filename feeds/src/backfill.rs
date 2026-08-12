@@ -34,6 +34,8 @@
 //! Re-requesting the page from its key at emission time costs one cheap
 //! call against the many per-record fetches emitting it already implies.
 
+// cspell:word unemitted
+
 /// What a source should do next, from [`Backfill::step`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Step<K> {
