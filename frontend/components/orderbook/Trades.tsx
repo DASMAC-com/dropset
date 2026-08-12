@@ -12,6 +12,7 @@ import {
   formatAmount,
   formatClockTime,
   formatPrice,
+  humanPrice,
   priceFractionDigits,
 } from "./format";
 import { ROW_H } from "./layout";
@@ -36,11 +37,15 @@ const sideTone = (side: RecentFill["side"]) => (side === "buy" ? GREEN : RED);
 
 function TradeRow({
   fill,
+  price,
   fractionDigits,
   decimals,
   isNewest,
 }: {
   fill: RecentFill;
+  // Scaled by the caller, which holds the pair's decimals — the fill itself
+  // carries only the raw on-chain `Price`.
+  price: number;
   fractionDigits: number;
   decimals: number;
   isNewest: boolean;
@@ -76,7 +81,7 @@ function TradeRow({
         />
       )}
       <span className="z-10 font-mono" style={{ color: sideTone(fill.side) }}>
-        {formatPrice(fill.price, fractionDigits)}
+        {formatPrice(price, fractionDigits)}
       </span>
       <span className="z-10 text-right font-mono text-foreground">
         {formatAmount(fill.size, decimals, sizeFractionDigits)}
@@ -115,16 +120,24 @@ function TradeRow({
 export function Trades({
   market,
   base,
+  quote,
   enabled,
 }: {
   market: Address | null;
   base: BookToken;
+  quote: BookToken;
   enabled: boolean;
 }) {
   const fills = useRecentFills(market, enabled);
 
   const [newest] = fills;
   if (!newest) return null;
+
+  // Scale here rather than in the hook: the tape is shared across markets and
+  // holds raw `Price` bits, and this pane is where the pair's decimals are
+  // known. The ladder above does the same, through the same helper.
+  const priceOf = (fill: RecentFill) =>
+    humanPrice(fill.priceBits, base.decimals, quote.decimals);
 
   // One digit count for the whole price column, from the newest fill. Unlike
   // the per-row size count, price digits come from magnitude *buckets*, and a
@@ -133,7 +146,7 @@ export function Trades({
   // right at a bucket edge (a 1.0-ish pair straddling the `>= 1` boundary)
   // would flip the column; the ladder above derives its count the same way and
   // has the same caveat.
-  const fractionDigits = priceFractionDigits(newest.price);
+  const fractionDigits = priceFractionDigits(priceOf(newest));
 
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-background">
@@ -159,6 +172,7 @@ export function Trades({
           <TradeRow
             key={fill.id}
             fill={fill}
+            price={priceOf(fill)}
             fractionDigits={fractionDigits}
             decimals={base.decimals}
             isNewest={index === 0}
