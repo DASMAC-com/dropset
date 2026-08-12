@@ -2527,6 +2527,51 @@ market is gone:
 After the last step the program has zero on-chain state and the upgrade
 authority can redeploy a fresh binary at the same program id.
 
+### Bootstrap tolerates pre-existing treasury ATAs
+
+Three accounts the bootstrap path creates are associated token
+accounts: the registry fee vault (`ata(registry, fee_mint, tp)`) and
+a market's two treasuries (`ata(market, base_mint, tp)` and the quote
+leg). All three are created with `init_if_needed`, not `init`, and
+adopting a pre-existing account there is deliberate.
+
+ATAs are **permissionlessly creatable by anyone**, and each of these
+addresses is a pure function of seeds the program publishes — the
+registry is the fixed `[b"registry"]`, and a market PDA is derived
+from `(base_mint, quote_mint)`. So every one of them is computable
+*before the account exists*, and a stranger can create it for the
+cost of rent. Under a plain `init` constraint that permanently
+bricked the instruction: an announced-but-uncreated pair could never
+be opened, and after a teardown the re-`init` above became a race a
+griefer wins — defeating the redeploy-at-the-same-id workflow this
+whole section exists to support.
+
+Adoption is safe because the ATA address itself commits to
+`(mint, authority, token_program)`. An account at that address is
+either the canonical ATA owned by the expected PDA, or it fails the
+derivation check — there is no variant where the program adopts an
+account a third party still controls. The single-shot guarantees are
+unaffected: they rest on the **Registry** and **Market** PDAs, which
+are program-owned and so creatable only by this program signing
+their seeds. A second `init` or a duplicate `create_market` is still
+rejected.
+
+The one behavioral difference is that an adopted ATA may arrive
+holding a balance, since a squatter can pre-fund it. Those atoms are
+credited to no vault and to no fee accrual, and the recovery path
+differs by leg:
+
+- a **market treasury**'s balance is unclaimed residual, recovered by
+  `sweep_residual` while the market is live and by
+  `close_market_treasury`'s drain at teardown;
+- the **registry fee vault**'s balance is *not* reachable by
+  `sweep_residual`, which is market-scoped — it pins
+  `associated_token::authority = market` and rejects any mint that is
+  not one of that market's legs. It rides along with the collected
+  create-vault fees and leaves via `close_registry_fee_vault`, on the
+  `admin-teardown` surface, which counts it in the `collected` total
+  that close reports.
+
 ### Feature gating
 
 Every instruction introduced above (`close_registry`,

@@ -69,6 +69,11 @@ quoteTokenProgram: Address<TAccountQuoteTokenProgram>;
  * let `CreateVault` grow it. The `init` constraint enforces
  * single-shot creation — a second `create_market` against the
  * same pair is rejected by the runtime before our handler runs.
+ * It is the *only* constraint doing so: the treasuries below adopt
+ * a pre-existing account rather than rejecting it. Plain `init` is
+ * right here — a PDA owned by this program can be created solely by
+ * this program signing its seeds, so no stranger can front-run it,
+ * unlike the permissionlessly-creatable ATAs below.
  */
 market?: Address<TAccountMarket>;
 /**
@@ -76,6 +81,17 @@ market?: Address<TAccountMarket>;
  * program is the only path that creates it, and its
  * `InitializeAccount3` CPI to the token program is what enforces
  * `base_mint` is a real mint under the supplied token program.
+ *
+ * `init_if_needed` rather than `init` because this address is
+ * computable before the market exists — it is the canonical ATA over
+ * a market PDA seeded by the announced `(base_mint, quote_mint)` pair
+ * — and ATAs are permissionlessly creatable. Under plain `init` a
+ * stranger could create it for the cost of rent and block this pair's
+ * `create_market` permanently. Adopting one is safe: the ATA address
+ * commits to `(mint, authority, token_program)`, so the account here
+ * is either the canonical market-owned ATA or fails the derivation
+ * check. A squatter-funded balance lands as unclaimed residual, which
+ * `sweep_residual` and `close_market_treasury` recover.
  */
 baseTreasury: Address<TAccountBaseTreasury>;
 /** Pooled quote inventory. See `base_treasury`. */
@@ -180,6 +196,11 @@ quoteTokenProgram: Address<TAccountQuoteTokenProgram>;
  * let `CreateVault` grow it. The `init` constraint enforces
  * single-shot creation — a second `create_market` against the
  * same pair is rejected by the runtime before our handler runs.
+ * It is the *only* constraint doing so: the treasuries below adopt
+ * a pre-existing account rather than rejecting it. Plain `init` is
+ * right here — a PDA owned by this program can be created solely by
+ * this program signing its seeds, so no stranger can front-run it,
+ * unlike the permissionlessly-creatable ATAs below.
  */
 market: Address<TAccountMarket>;
 /**
@@ -187,6 +208,17 @@ market: Address<TAccountMarket>;
  * program is the only path that creates it, and its
  * `InitializeAccount3` CPI to the token program is what enforces
  * `base_mint` is a real mint under the supplied token program.
+ *
+ * `init_if_needed` rather than `init` because this address is
+ * computable before the market exists — it is the canonical ATA over
+ * a market PDA seeded by the announced `(base_mint, quote_mint)` pair
+ * — and ATAs are permissionlessly creatable. Under plain `init` a
+ * stranger could create it for the cost of rent and block this pair's
+ * `create_market` permanently. Adopting one is safe: the ATA address
+ * commits to `(mint, authority, token_program)`, so the account here
+ * is either the canonical market-owned ATA or fails the derivation
+ * check. A squatter-funded balance lands as unclaimed residual, which
+ * `sweep_residual` and `close_market_treasury` recover.
  */
 baseTreasury: Address<TAccountBaseTreasury>;
 /** Pooled quote inventory. See `base_treasury`. */
@@ -286,6 +318,11 @@ quoteTokenProgram: TAccountMetas[5];
  * let `CreateVault` grow it. The `init` constraint enforces
  * single-shot creation — a second `create_market` against the
  * same pair is rejected by the runtime before our handler runs.
+ * It is the *only* constraint doing so: the treasuries below adopt
+ * a pre-existing account rather than rejecting it. Plain `init` is
+ * right here — a PDA owned by this program can be created solely by
+ * this program signing its seeds, so no stranger can front-run it,
+ * unlike the permissionlessly-creatable ATAs below.
  */
 market: TAccountMetas[6];
 /**
@@ -293,6 +330,17 @@ market: TAccountMetas[6];
  * program is the only path that creates it, and its
  * `InitializeAccount3` CPI to the token program is what enforces
  * `base_mint` is a real mint under the supplied token program.
+ *
+ * `init_if_needed` rather than `init` because this address is
+ * computable before the market exists — it is the canonical ATA over
+ * a market PDA seeded by the announced `(base_mint, quote_mint)` pair
+ * — and ATAs are permissionlessly creatable. Under plain `init` a
+ * stranger could create it for the cost of rent and block this pair's
+ * `create_market` permanently. Adopting one is safe: the ATA address
+ * commits to `(mint, authority, token_program)`, so the account here
+ * is either the canonical market-owned ATA or fails the derivation
+ * check. A squatter-funded balance lands as unclaimed residual, which
+ * `sweep_residual` and `close_market_treasury` recover.
  */
 baseTreasury: TAccountMetas[7];
 /** Pooled quote inventory. See `base_treasury`. */
