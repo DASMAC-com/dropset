@@ -4,8 +4,11 @@
 //! a watermark that lands mid-take and a replayed slot both converge to the
 //! same row (docs/indexer.md §6).
 
+use crate::decode::RawTx;
 use crate::model::{FillRow, Take};
 use crate::store::{Cursor, Store};
+use async_trait::async_trait;
+use dropset_feeds::{Batch, Sink};
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use std::collections::{BTreeMap, BTreeSet};
@@ -87,6 +90,41 @@ pub async fn run_once(store: &Store, batch_limit: i64) -> anyhow::Result<usize> 
         })
         .await?;
     Ok(new_fills.len())
+}
+
+/// A second sink that runs one [`run_once`] pass after each ingested batch.
+///
+/// Folding is a *post-commit* step, not part of the write: it reads the legs
+/// the store sink has already committed and works from its own watermark, so
+/// it must run after the store sink in the runner's sink order. Keeping it a
+/// sink rather than a separate loop means one batch's ingest and fold stay in
+/// step, exactly as the pre-migration worker had them.
+///
+/// It runs on empty batches too. A previous run that crashed between writing
+/// legs and folding them leaves a backlog only this pass clears, and its two
+/// idle queries are the same cost the pre-migration loop paid each tick.
+pub struct AggregateSink {
+    store: Store,
+    batch_limit: i64,
+}
+
+impl AggregateSink {
+    /// Fold at most `batch_limit` new legs per pass, matching the ingest
+    /// batch size so a busy tick cannot outrun the aggregator.
+    pub fn new(store: Store, batch_limit: i64) -> Self {
+        Self { store, batch_limit }
+    }
+}
+
+#[async_trait]
+impl Sink<RawTx> for AggregateSink {
+    async fn handle(&mut self, _batch: &Batch<RawTx>) -> anyhow::Result<()> {
+        let folded = run_once(&self.store, self.batch_limit).await?;
+        if folded > 0 {
+            tracing::debug!(folded, "folded fill legs into takes");
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

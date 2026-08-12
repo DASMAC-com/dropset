@@ -1,8 +1,11 @@
 //! Postgres persistence: idempotent raw-event writes keyed on the event
 //! PK, the aggregator's watermark + reads, and the `/v1` read queries.
 
+use crate::decode::{decode_tx, RawTx};
 use crate::model::{event_market, event_to_json, FillRow, MarketStatsRow, Take};
 use crate::model::{DecodedEvent, EventCoords};
+use async_trait::async_trait;
+use dropset_feeds::StoreWriter;
 use dropset_sdk::events::DropsetEvent;
 use serde::Serialize;
 use sqlx::postgres::PgPoolOptions;
@@ -51,26 +54,6 @@ impl Store {
         let pool = PgPoolOptions::new().max_connections(8).connect(url).await?;
         dropset_db_schema::require_schema(&pool).await?;
         Ok(Self { pool })
-    }
-
-    /// Persist a transaction's decoded events in one transaction. Fills go
-    /// to the typed table; everything else to the JSONB fidelity table.
-    /// Idempotent — `ON CONFLICT DO NOTHING` on the event PK.
-    pub async fn write_events(&self, events: &[DecodedEvent]) -> anyhow::Result<u64> {
-        let mut written = 0u64;
-        let mut tx = self.pool.begin().await?;
-        for de in events {
-            match &de.event {
-                DropsetEvent::Fill(f) => {
-                    written += write_fill(&mut tx, &FillRow::from_event(&de.coords, f)).await?;
-                }
-                other => {
-                    written += write_envelope(&mut tx, &de.coords, other).await?;
-                }
-            }
-        }
-        tx.commit().await?;
-        Ok(written)
     }
 
     pub async fn cursor(&self) -> anyhow::Result<Cursor> {
@@ -190,6 +173,49 @@ impl Store {
             .fetch_all(&self.pool)
             .await?;
         Ok(rows)
+    }
+}
+
+/// The indexer's half of the framework store sink: decode each fetched
+/// transaction and write its events as rows.
+///
+/// The framework owns the batch transaction and the resume cursor
+/// (docs/data-feeds.md §3); this owns the record → table mapping, and writes
+/// idempotently on the event PK so a re-delivered batch is absorbed rather
+/// than duplicated. Decode happens here rather than in a separate stage
+/// because a transaction carrying no Dropset events should cost no rows and
+/// no extra pass.
+pub struct EventWriter;
+
+#[async_trait]
+impl StoreWriter for EventWriter {
+    type Record = RawTx;
+
+    async fn write_batch(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        records: &[RawTx],
+    ) -> anyhow::Result<u64> {
+        let mut written = 0u64;
+        for raw in records {
+            for de in decode_tx(raw) {
+                written += write_event(tx, &de).await?;
+            }
+        }
+        Ok(written)
+    }
+}
+
+/// Write one decoded event: fills go to the typed table, everything else to
+/// the JSONB fidelity table. Returns rows actually written, which is `0` for
+/// an event already stored.
+async fn write_event(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    de: &DecodedEvent,
+) -> anyhow::Result<u64> {
+    match &de.event {
+        DropsetEvent::Fill(f) => write_fill(tx, &FillRow::from_event(&de.coords, f)).await,
+        other => write_envelope(tx, &de.coords, other).await,
     }
 }
 

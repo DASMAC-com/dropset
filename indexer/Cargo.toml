@@ -17,26 +17,25 @@ path = "src/bin/api.rs"
 
 [dependencies]
 anyhow = "1"
+async-trait = "0.1"
 axum = "0.7"
-# Inner-instruction `data` arrives base58-encoded in the RPC `getTransaction`
-# response; decode it before the event-tag walk.
-bs58 = "0.5"
-# The shared event decoder (`dropset_sdk::events`) + the blocking `RpcClient`
-# behind `fetch`, polled from a `spawn_blocking` task. Same 3.x solana line as
-# the maker-bot so there is one `Pubkey` type across decode and RPC.
 # The single schema owner. The indexer's tables moved into its migrations, so
 # this dependency is what lets `Store::connect` assert the schema instead of
 # creating it.
 dropset-db-schema = { path = "../db-schema" }
+# The shared ingestion framework (docs/data-feeds.md §6): the indexer runs on
+# its RPC poll source, store sink, and `feed_cursors` resume cursor, and keeps
+# only its own writers, aggregator, and `/v1`. The RPC transport lives there
+# now, which is why this crate no longer depends on solana-client, bs58, or
+# the transaction-status types directly.
+dropset-feeds = { path = "../feeds", features = ["rpc", "store"] }
+# The shared event decoder (`dropset_sdk::events`). Same 3.x solana line as
+# the maker-bot so there is one `Pubkey` type across decode and RPC.
 dropset-sdk = { path = "../sdk/rs", features = ["fetch"] }
 rust_decimal = { version = "1", features = ["db-postgres", "serde-str"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-solana-client = "~3.1"
-solana-commitment-config = "3"
 solana-pubkey = "3"
-solana-signature = "3"
-solana-transaction-status = "~3"
 # String-typed runtime queries (no compile-time `DATABASE_URL`, and no
 # `migrate`: DDL belongs to `dropset-db-schema`); `rust_decimal` maps u64 atoms
 # onto Postgres NUMERIC without the i64 truncation a BIGINT bind would risk.
@@ -58,8 +57,15 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
-# Build tagged event bytes in the decode unit test.
+# Build tagged event bytes in the decode unit test and the store tests.
 borsh = { version = "1", features = ["derive"] }
+# The store path is exercised against a real Postgres in a throwaway
+# container (indexer/tests/store_postgres.rs), provisioned through
+# `dropset-db-schema` the way a deployment is. Those tests need a Docker
+# daemon, so they are `#[ignore]`d; the `Postgres` CI job runs them with
+# `--run-ignored all`.
+testcontainers-modules = { version = "0.11", features = ["postgres"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [package]
 description = "Prototype event indexer for the Dropset eCLOB program."

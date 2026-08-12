@@ -14,7 +14,10 @@
 //! cargo test -p dropset-feeds --features store -- --ignored
 //! ```
 //!
-//! Wiring them into CI behind a Postgres service is a tracked follow-up.
+//! CI runs them in the `Tests (Postgres)` job, which reaches the runner's
+//! own Docker daemon rather than a `services:` Postgres — each test starts
+//! and disposes of its own database, so they stay independent under
+//! nextest's process-per-test parallelism.
 
 #![cfg(feature = "store")]
 

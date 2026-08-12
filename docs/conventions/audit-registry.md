@@ -106,12 +106,13 @@ indexer <-> sdk-clients: the indexer extracts and decodes emit_cpi
   events through the shared dropset_sdk::events codec; its decoded event
   layouts and the 8-byte discriminators must track the IDL
   (sdk/idl/dropset.json).
-feeds <-> indexer: the feeds RPC-poll source and store sink
-  (feeds/src/rpc.rs, feeds/src/store.rs) are extracted from the indexer's
-  ingest/store (indexer/src/ingest.rs, indexer/src/store.rs) and held at
-  parity until the indexer migrates onto the framework — the RawTx layout,
-  the getSignaturesForAddress + getTransaction poll window, and the
-  idempotent ON CONFLICT write must track the indexer's originals.
+feeds <-> indexer: the indexer runs on the feeds RPC-poll source and
+  store sink (feeds/src/rpc.rs, feeds/src/store.rs), so the parity that
+  used to be asserted between two copies is now a live dependency — the
+  RawTx layout, the backfill walk's cursor discipline, and the
+  StoreWriter contract (indexer/src/store.rs EventWriter, and the
+  AggregateSink ordered after the store sink) must stay consistent, and
+  the indexer's resume position lives in the framework's feed_cursors.
 fx-survey <-> feeds: the survey app is the first consumer of the feeds
   framework — it now implements only StoreWriter
   (analytics/fx-survey/src/store.rs) and composes HttpClient /
