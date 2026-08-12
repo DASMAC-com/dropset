@@ -1165,9 +1165,10 @@ const FLIP_TILE_WIDTH = 500;
  *
  * The three-part split (label / value / unit) exists so the tiles stay the same
  * height without any of them being padded to match. Written as one string per
- * tile, "11.9M tokens minted" and "96% of onchain volume" wrapped to two lines
- * while "Next" took one, and the row went ragged; split, the big line is always
- * one word-ish and the small line always one line.
+ * tile, the two data beats ran long enough to wrap to two lines while "Next"
+ * took one, and the row went ragged; split, the big line is always one
+ * word-ish and the small line always one line. That headroom is what let the
+ * units later grow to carry "on Solana" without the row going uneven again.
  */
 const FlipTile = ({ label, value, unit, claim }: FlipBeat) => (
   <Box

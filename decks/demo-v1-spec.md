@@ -6,13 +6,13 @@
 
 <!-- cspell:word cryptobriefing -->
 
-<!-- cspell:word Cryptonews -->
-
 <!-- cspell:word Dragonfly -->
 
 <!-- cspell:word emojicoin -->
 
 <!-- cspell:word fundraise -->
+
+<!-- cspell:word Genfinity -->
 
 <!-- cspell:word Mert -->
 
@@ -163,7 +163,8 @@ pages:
 
 #### Page 2 — A huge market · ~7s
 
-- **On-slide:** Foreign exchange is the biggest market on earth. Then one
+- **On-slide:** Eyebrow "The market", then "Foreign exchange is the biggest
+  market on earth". Then one
   figure, very large: **\$9T+**, labeled "traded every day". Nothing else.
 - **Visual:** The figure *is* the visual. No meter, no capture, no facts.
 - **Spoken:** "Foreign exchange is the biggest market on earth — over nine
@@ -192,8 +193,14 @@ pages:
 
 #### Page 3 — No penetration · ~10s
 
-- **On-slide:** But it barely trades onchain. Then the meter and its
+- **On-slide:** Eyebrow "The gap", then "But it barely trades onchain".
+  Then the meter and its
   citation, and nothing else.
+  Note these two pages are the only ones whose eyebrow differs from this
+  doc's page title — every other page uses its title verbatim as the
+  eyebrow. "A huge market" / "No penetration" name what the pages *do* in
+  the argument, which is what a spec heading is for; "The market" / "The
+  gap" are what the audience should read, which is what an eyebrow is for.
 - **Note on the headline — it is half a sentence, deliberately.** Read in
   sequence, pages 2 and 3 are **one sentence split across two slides**:
   "Foreign exchange is the biggest market on earth" / "but it barely trades
@@ -864,8 +871,15 @@ the deck:
 
 Every number on page 10 traces to a citable source, so a "where's that
 from?" is answered with a link rather than a shrug. Researched
-**2026-08-11** — **re-check before presenting**, since three of these are
-current-state figures that move.
+**2026-08-11**, corroborated independently by a second pass the same day.
+
+Two standing caveats, and they apply to **every** entry below:
+
+- These were gathered from **search results, not by reading each page end
+  to end**. Open the source and confirm the exact figure before it is
+  spoken to investors.
+- Several are **current-state** numbers that move (share percentages,
+  rankings, holder counts). **Re-check before presenting.**
 
 **Tokenized equities — 96% of onchain volume on Solana.** Reported at
 95–97% depending on the window; 96 is the conservative round number, and
@@ -873,9 +887,21 @@ June 2026 is the citable month (\$3.47B that month; \$5.77B across Q2, a
 quarterly high; ~\$4.9B across H1).
 
 - <https://cryptobriefing.com/solana-tokenized-stocks-volume-surges-h1-2026/>
-- Cryptonews, "Solana Q2 2026: \$5.77B Tokenized Asset Volume Record"
 - Cryptobriefing, "Solana hits \$3B in tokenized equities volume for June
-  2026, leads market"
+  2026, leads market" — the ">96% of that month's global onchain
+  tokenized-equity activity" phrasing, and the best single citation for the
+  headline number
+- Yahoo Finance / Genfinity, "Solana hits \$5.77B tokenized asset volume in
+  Q2 2026" — the quarterly ATH
+- xStocks specifically, if a conversation goes there:
+  <https://solana.com/news/case-study-xstocks> (Solana's own case study),
+  plus Kraken's "\$25 billion in total transaction volume" xStocks post
+
+**Do not cite the per-chain split** (Solana ~95.6% / Gnosis ~2% /
+Ethereum ~1.8%). The only source found for those exact decimals was a
+low-quality aggregator. Either trace it to its upstream (a Dune or
+`rwa.xyz` dashboard) or drop the decimals and lean on the ">96% of June
+volume" phrasing above, which is properly sourced.
 
 **Memecoins — 12M+ tokens launched on Solana.** The underlying figure is
 one launchpad's 11.9M cumulative launches since January 2024, which is
@@ -893,6 +919,15 @@ rule 5.
 
 - <https://cryptobriefing.com/pumpfun-top-dex-surpasses-uniswap/>
 
+**This pair is the weakest-sourced claim in the deck** — a single
+secondary article, and a second research pass found no corroboration for
+either figure. Both have checkable homes: DeFiLlama
+(<https://defillama.com/protocol/pump>) for cumulative volume and revenue,
+and the launchpad's Dune dashboards for the DEX ranking. **Confirm both
+there before saying them out loud**, and drop the claim rather than soften
+it if either fails to check out — the training-wheels beat still works
+without it, on the token-launch floor alone.
+
 **RWA momentum** — spoken only, and worded as *growth* rather than size:
 ~\$1.4B → ~\$3.6B in six months, highest 30-day net inflows of any chain
 (~\$967M), most RWA holders (300k+). Solana is **third by total RWA
@@ -904,8 +939,19 @@ value**, so never claim it leads on size.
 
 **Not sourced, and therefore not used:** a cross-chain launch comparison
 ("more token launches than any other chain"). Widely repeated, probably
-true, and five searches found only qualitative assertions — no citable
-dashboard. It is on neither the slide nor the talk track.
+true, and two independent research passes found no current citable
+dashboard — only qualitative assertions and aggregator copies. It is on
+neither the slide nor the talk track.
+
+The closest real citation is The Block, "Solana saw nearly half a million
+tokens launched last month" — **455k on Solana vs 177k on Base and 39k on
+BNB**. Two problems, both fatal for a slide: it is **May 2024**, two years
+stale, and those three figures do not establish "more than every other
+chain combined" without the rest of the tail. Recorded here so the next
+person does not re-run the same five searches, and does not mistake it for
+a usable citation. The daily-launch figures floating around
+("25k+/day on Solana launchpads") appear only in low-quality aggregators —
+talk-track color at best, never a slide.
 
 ______________________________________________________________________
 
@@ -915,20 +961,24 @@ ______________________________________________________________________
 
 - **One page = one slide.** Twelve pages (see "Format rules" for why the
   ten-page cap moved, and what it costs).
+
 - Each page gives: the **on-slide line** (what the audience reads), the
   **visual** (the one big image), the **spoken copy** (what the
   presenter says — this is the real script), and a **time** budget.
-- Total spoken time targets **~120 seconds**. With the demo videos gone,
-  the budget is spread across the pages rather than concentrated in two
-  of them. The per-page budgets sum to exactly that, and the v3 split
-  **found** its two new pages' time rather than adding to the total:
-  the two gap pages together (7 + 10) cost less than v2's single gap page
-  plus its six facts (15) once the facts became spoken lines, the roadmap
-  dropped from 15 to 12 with its paragraphs off the slide, the flip page
-  from 12 to 11, and the eCLOB from 18 to 16. That paid for the closing
-  page's 4 seconds with the total unchanged. **If a page grows, take the
-  time from another page** — the two-minute cap is the accelerator's, not
-  ours.
+
+- Total spoken time targets **~120 seconds**, and the per-page budgets sum
+  to exactly that. The v3 changes **fund each other** — the two new pages
+  buy their seconds from pages that got shorter, so the total is unchanged:
+
+  - the gap split **costs** +2 (v2's single 15s gap page becomes 7 + 10);
+  - the closing page **costs** +4 (new);
+  - the roadmap **saves** 3 (15 → 12) with its paragraphs off the slide;
+  - the eCLOB **saves** 2 (18 → 16);
+  - the flip page **saves** 1 (12 → 11) over the open-venue page.
+
+  That is +6 against −6. **If a page grows, take the time from another
+  page** — the two-minute cap is the accelerator's, not ours.
+
 - Every page carries the same footer: the Dropset wordmark at the left,
   the "Built by DASMAC" credit in the middle, and progress dots at the
   right. It isn't page content — don't budget words or space for it; the
@@ -952,7 +1002,9 @@ ______________________________________________________________________
   comment records those numbers, the constant's usable range, and the two
   traps met along the way (a theme-scale margin, and losing flex centering by
   positioning the label out of flow).
+
 - Presenter mode is **`⌘⇧P`** (`Ctrl⇧P` off macOS), not a bare `p`.
+
 - Anything nuanced — the fuller competitor answers, the investor
   grilling, the numbers behind a claim — is **not on a slide**. It lives
   in the appendices (section 2) and only comes out if a conversation goes
@@ -979,7 +1031,14 @@ disagree:
      issuers" and its two siblings — imperatives, where the timeline's
      `Now / Next / Later` already carries the subject and the tense.
      This exception is new in v3 and it is *why* the beats are short
-     enough to have replaced three body paragraphs.
+     enough to have replaced three body paragraphs;
+   - the **flip tiles** (page 10) — a label, a figure, and its unit
+     ("Memecoins / 12M+ / tokens launched on Solana"). These are
+     **measurements, not claims**: the sentence that reads them is the
+     accent line under the row, and the headline above it is the argument.
+     Writing them as sentences ("Twelve million tokens have launched on
+     Solana") would turn three data points a room can take in at a glance
+     back into the prose block this rework removed.
 1. **No terminal period on a headline — on any page, at any level.** At
    display size a full stop is a visible mark that earns nothing: there is
    no following sentence for it to separate. Sentence *structure* still
