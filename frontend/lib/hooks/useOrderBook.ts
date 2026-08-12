@@ -22,9 +22,10 @@ export type OrderBookState = {
   // market from a different transport (the recent-fills subscription) can
   // filter on it without re-resolving the route itself.
   market: Address | null;
-  // The market's base/quote in display terms, oriented by the resolved
-  // take side (a from→to sell makes `from` the base; a buy makes `to` the
-  // base). Null until the market resolves.
+  // The market's own base/quote in display terms. Orientation is a property
+  // of the market, not of the direction being traded: the resolve runs against
+  // the canonical pair (see below), so these are invariant under a from/to
+  // flip. Null until the market resolves.
   base: BookToken | null;
   quote: BookToken | null;
 };
@@ -92,8 +93,11 @@ export function useOrderBook(
     // running alongside the fresh one.
     let generation = 0;
     const rpc = client.runtime.rpc;
-    const fromMint = stablecoinMint(pairA);
-    const toMint = stablecoinMint(pairB);
+    // Named for the canonical pair, not for from/to: the resolver takes them
+    // positionally and reports `side` relative to that ordering, so calling
+    // them from/to here would read as the user's direction when it isn't.
+    const mintA = stablecoinMint(pairA);
+    const mintB = stablecoinMint(pairB);
 
     // Resolved once the market is found: its address plus the base/quote
     // tokens oriented by the take side. Cached so each poll tick is a single
@@ -118,7 +122,7 @@ export function useOrderBook(
 
       try {
         if (market === null) {
-          const route = await resolveEclobRoute(rpc, fromMint, toMint);
+          const route = await resolveEclobRoute(rpc, mintA, mintB);
           if (cancelled || gen !== generation) return;
           if (!route) {
             // No market for this pair *yet* — on localnet the bootstrap may

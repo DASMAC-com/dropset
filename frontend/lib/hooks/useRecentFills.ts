@@ -55,10 +55,12 @@ const EMPTY: RecentFill[] = [];
 // screen moments earlier, and even though the subscription below never stopped
 // receiving them.
 //
-// Keyed by market address; each value is capped at MAX_ROWS, so the whole store
-// is bounded by (markets visited x MAX_ROWS). Page-lifetime only — a reload
-// starts empty, since nothing here is persisted and history before the socket
-// opened is not recoverable from a live subscription (see the hook doc).
+// Keyed by market address; each value is capped at MAX_ROWS, so the whole
+// store is bounded by (markets that traded this page-load x MAX_ROWS) — every
+// market the program fills, not only the ones the user opened, since one
+// socket feeds them all. Page-lifetime only: a reload starts empty, because
+// nothing here is persisted and history from before the socket opened is not
+// recoverable from a live subscription (see the hook doc).
 const tapes = new Map<Address, RecentFill[]>();
 
 // Signatures already ingested, so a re-subscribe (or a duplicate notification)
@@ -72,7 +74,7 @@ const tapeListeners = new Set<() => void>();
 // Prepend to a market's tape. Replaces the array rather than mutating it: the
 // snapshot below hands the stored reference straight to React, which compares
 // by identity to decide whether to re-render.
-function appendTape(market: Address, rows: RecentFill[]): void {
+function prependTape(market: Address, rows: RecentFill[]): void {
   const prev = tapes.get(market) ?? EMPTY;
   tapes.set(market, [...rows, ...prev].slice(0, MAX_ROWS));
 }
@@ -127,10 +129,17 @@ const sleep = (ms: number, signal: AbortSignal): Promise<void> =>
  * It is deliberately **not** keyed on the selected market. `logsSubscribe`
  * takes a single `mentions` address, so one program-wide socket already
  * carries every market's fills; the pane only ever needed to choose which of
- * them to render. Keeping the socket up across market switches means the tapes
- * for the markets you are not looking at keep filling, so switching back shows
- * what traded while you were away rather than restarting from empty. It also
- * spares a teardown and re-subscribe on every switch.
+ * them to render. So while this hook is mounted every market's tape fills,
+ * not just the visible one's — switch away and back and the tape shows what
+ * traded while you were gone, rather than restarting from empty.
+ *
+ * Two limits on that, both worth knowing before relying on it. The tapes
+ * survive because they live in the module-level store below, **not** because
+ * the socket is continuous: `useOrderBook` resets to `idle` on a pair change,
+ * which unmounts the whole panel and with it this hook, so a market switch
+ * does still tear the socket down and re-subscribe. Fills landing inside that
+ * resolve-and-first-fetch window are missed. A direction flip is the case that
+ * no longer remounts, and there the socket genuinely is continuous.
  *
  * What this still cannot show is history from before the socket opened: a live
  * subscription has no past, so a fresh page load starts every tape empty and
@@ -199,13 +208,29 @@ export function useRecentFills(
       //
       // Failures are swallowed here rather than thrown: one unreadable
       // transaction must not tear down the subscription that reads the rest.
+      // Release the claim on any path that ends without the fill reaching a
+      // tape. The claim is taken before the round-trip so two concurrent
+      // chains can't both ingest one signature — but `seen` now outlives the
+      // effect, so a claim abandoned mid-flight would suppress that signature
+      // for the life of the page rather than just the life of the chain. The
+      // pane unmounts on every market switch (see the doc above), which is
+      // exactly when an in-flight fetch gets aborted, so this is reachable
+      // traffic and not a theoretical race.
       let tx: Awaited<ReturnType<typeof fetchTransaction>>;
       try {
         tx = await fetchTransaction(signature);
       } catch {
+        seen.delete(signature);
         return;
       }
-      if (!tx || abort.signal.aborted) return;
+      if (abort.signal.aborted) {
+        seen.delete(signature);
+        return;
+      }
+      // A null transaction is a node that has nothing for this signature, not
+      // an interrupted read — it stays claimed, since re-fetching would return
+      // null again.
+      if (!tx) return;
 
       // `blockTime` is the fill's real timestamp; fall back to now only when
       // the node hasn't recorded one.
@@ -235,14 +260,21 @@ export function useRecentFills(
         if (bucket) bucket.push(row);
         else byMarket.set(event.market, [row]);
       });
-      if (byMarket.size === 0 || abort.signal.aborted) return;
+      if (abort.signal.aborted) {
+        seen.delete(signature);
+        return;
+      }
+      // Nothing to post — a reprice or a non-fill touch of the program. It
+      // stays claimed: it was read in full, and re-reading it would find the
+      // same absence.
+      if (byMarket.size === 0) return;
 
       // Newest transaction on top, and within it the legs stay in emission
       // order (best price first) — the order they came off the book. The legs
       // of one swap are simultaneous, so there's no newer/older among them to
       // preserve.
       byMarket.forEach((rows, filled) => {
-        appendTape(filled, rows);
+        prependTape(filled, rows);
       });
       notifyTapes();
     };

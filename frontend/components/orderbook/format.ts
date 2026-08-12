@@ -1,5 +1,7 @@
-// Number formatting shared by the depth ladder and the trades tape, so a price
-// or a size is written the same way in both panes.
+// Display conversion and number formatting shared by the depth ladder and the
+// trades tape, so a price or a size is written the same way in both panes.
+// Both steps live here: turning a chain-native value (raw `Price` bits, atom
+// counts) into a human one, and then rendering that number as text.
 
 import { type PriceBits, quoteForBase } from "@dropset/sdk";
 
