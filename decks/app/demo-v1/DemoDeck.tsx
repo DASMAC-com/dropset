@@ -1120,8 +1120,29 @@ const Roadmap = () => (
 type FlipBeat = { label: string; value: string; unit: string; claim?: boolean };
 
 const FLIP_BEATS: FlipBeat[] = [
-  { label: "Memecoins", value: "11.9M", unit: "tokens minted" },
-  { label: "Tokenized equities", value: "96%", unit: "of onchain volume" },
+  // **"12M+", not "11.9M", and the `+` is the whole point.** The precise
+  // figure is one launchpad's 11.9M cumulative launches since January 2024 —
+  // but that launchpad is only ~71% of Solana's daily token creation, and
+  // other launchpads exist, so the chain's real total is *above* it. Printing
+  // "11.9M" would state a one-platform number as though it were the chain's,
+  // which is precise and wrong; "over 12M" states a **floor**, which is
+  // imprecise and true. A skeptic can only discover the real figure is
+  // larger, which is the safe direction to be wrong in.
+  //
+  // What is deliberately NOT here is a cross-chain comparison ("more token
+  // launches than any other chain"). It is widely repeated and probably true,
+  // and it could not be sourced to a current, citable dashboard — so it stays
+  // off the slide *and* out of the talk track.
+  { label: "Memecoins", value: "12M+", unit: "tokens launched on Solana" },
+  // "on Solana" is load-bearing here too: 96% of onchain tokenized-equity
+  // volume being *on Solana* is the claim, and the page never names Solana
+  // anywhere else — not in the headline, not in the accent line — so without
+  // it this tile reads as "96% of some unspecified whole".
+  {
+    label: "Tokenized equities",
+    value: "96%",
+    unit: "of onchain volume on Solana",
+  },
   {
     label: "Foreign exchange",
     value: "Next",
@@ -1375,9 +1396,17 @@ export default function DemoDeck() {
       <Slide>
         <SlideBody>
           <Eyebrow>The gap</Eyebrow>
-          <Statement fontSize="72px">
-            Blockchains have almost none of it
-          </Statement>
+          {/* Deliberately opens on "But", because this headline is the second
+              half of page 2's. Read in sequence the two pages are one sentence
+              — "Foreign exchange is the biggest market on earth" / "but it
+              barely trades onchain" — which is what makes the split read as one
+              open with momentum rather than as two market-size slides. It also
+              beats the alternatives on precision: "blockchains have almost none
+              of it" needs the audience to carry "it" across a slide boundary,
+              and names the wrong subject (the page is about FX, not about
+              blockchains). Keep the lowercase-after-"But" reading in mind if
+              this is ever reworded — the pages only work as a pair. */}
+          <Statement fontSize="72px">But it barely trades onchain</Statement>
           {/* The statement carries what used to be the fifth chevron fact, so
               this page needs no fact list at all: the meter shows the ratio,
               the screenshot cites it, and the sentence says what it means.
@@ -1692,21 +1721,40 @@ export default function DemoDeck() {
       <Slide>
         <SlideBody>
           <Eyebrow>Why FX is next</Eyebrow>
-          {/* The claim and its mechanism in one line: asset classes consolidate,
-              and what they consolidate *toward* is public liquidity. Saying it
-              this way is what lets the row below be three tiles of evidence
-              rather than an argument — the sentence has already made the
-              argument, and the tiles only have to be true. */}
-          <Statement fontSize="64px">
-            New asset classes consolidate where liquidity is public
+          {/* The deck's thesis line, kept from v2 — it is the sentence the
+              whole argument has been walking toward, and the continuous read
+              closes on it. An intermediate v3 draft replaced it with "New asset
+              classes consolidate where liquidity is public", which states the
+              *pattern* instead; that claim is real but it belongs under the
+              row, as the reading of the evidence. The headline should be the
+              conviction, not the observation.
+
+              Pinned to one line at 60, exactly as v2 had it: it fits the
+              measure, and the row below leaves nothing to spend on a second. */}
+          <Statement fontSize="60px" nowrap>
+            Public liquidity is what blockchains were built for
           </Statement>
           <SlideFill>
             <Box>
               <Flip />
-              {/* The page's whole spend on mechanism, and it has to stay one
-                  line. The tiles are evidence that a pattern exists; this is
-                  the reason the pattern extends to FX. A second line turns the
-                  flip back into the wind-up it replaced. */}
+              {/* The page's whole spend on the argument, and it has to stay one
+                  line. It carries the claim the headline gave up when that went
+                  back to the thesis line: the tiles are three facts, and this is
+                  what reading them together means.
+
+                  **"Bootstrap", not "consolidate".** An earlier draft read
+                  "Each new asset class consolidates where anyone can quote",
+                  which describes where the asset classes ended up — a
+                  restatement of the row directly above it. This says what the
+                  environment *did*: an open venue is what lets a new asset
+                  class get started at all, which is the training-wheels
+                  argument the first tile makes and the reason the third one
+                  follows. It also puts the environment in the subject
+                  position, so the sentence is about the property rather than
+                  about the assets.
+
+                  A second line turns the flip back into the wind-up it
+                  replaced. */}
               <div
                 style={{
                   color: colors.accent,
@@ -1716,7 +1764,7 @@ export default function DemoDeck() {
                   textAlign: "center",
                 }}
               >
-                Open access compounds liquidity into a flywheel
+                Open environments bootstrap new asset classes
               </div>
             </Box>
           </SlideFill>
@@ -1745,14 +1793,20 @@ export default function DemoDeck() {
             investor a free correction. */}
         <Notes>
           So why does FX land here, and why now? Because every new asset class
-          has already consolidated on Solana, in order. First tokens — millions
-          of them, and yes, mostly memecoins, but that’s what proved the chain
-          could mint and trade anything at scale. Then tokenized equities, and
-          that one is a big deal: ninety-six percent of onchain tokenized-equity
+          has already consolidated on Solana, in order. First memecoins — over
+          twelve million tokens launched. Call that the training wheels: it
+          looks unserious, and it was the proving ground. It established that
+          anyone could launch a market on this chain and anyone could trade
+          against it, at a scale nothing else came close to. And it is a real
+          business — one launchpad alone became the number-one
+          DEX by daily volume across every chain, on a billion dollars of
+          cumulative revenue. Then tokenized equities, and that one is a big
+          deal: ninety-six percent of onchain tokenized-equity
           volume is on Solana, and effectively nowhere else. Real-world assets
           are going the same way — Solana added more of them in the last six
           months than in its whole history before that, and it has more holders
-          of them than any other chain. FX is next, and it’s the biggest of
+          of them than any other chain. So the training wheels came off. FX is
+          next, and it’s the biggest of
           them. It lands here for the same reason the others did: public
           liquidity. Anyone can quote, anyone can trade against it, and it
           composes with everything else onchain — so depth compounds instead of

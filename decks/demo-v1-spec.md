@@ -6,6 +6,8 @@
 
 <!-- cspell:word cryptobriefing -->
 
+<!-- cspell:word Cryptonews -->
+
 <!-- cspell:word Dragonfly -->
 
 <!-- cspell:word emojicoin -->
@@ -90,8 +92,8 @@ pages:
 > Dropset is the 24/7/365 currency translation layer. Anyone with a phone
 > can buy tokenized Tesla stock today, from almost any country — and nobody
 > can do that with a euro. Foreign exchange is the biggest market on earth:
-> over nine trillion dollars a day. And blockchains have almost none of it —
-> less than ten percent of the world's currencies are on Solana, the fastest
+> over nine trillion dollars a day. But it barely trades onchain — less than
+> ten percent of the world's currencies are on Solana, the fastest
 > and cheapest chain, and our goal is 24/7/365 coverage of every FX spot
 > pair. This already works: Dropset already processes Solana mainnet FX
 > trades — you open the picker, select your currency, and the swap settles
@@ -109,9 +111,11 @@ pages:
 > 24/7/365 FX and beyond: we onboard emerging stablecoin issuers, protocol
 > fees accrue value, and the product expands beyond spot. And FX is next,
 > because every new asset class has consolidated here already. First
-> tokens — millions of them, minted on Solana faster than anywhere else.
-> Then tokenized equities, and that one is a big deal: ninety-six percent of
-> that volume onchain is here, and effectively nowhere else. FX is next,
+> memecoins — over twelve million tokens launched, the training wheels, and
+> the proving ground that anyone could launch a market here and anyone could
+> trade against it. Then tokenized equities, and that one is a big deal:
+> ninety-six percent of that volume onchain is on Solana, and effectively
+> nowhere else. FX is next,
 > because it needs exactly what this chain has — public liquidity, where
 > anyone can quote and anyone can trade against it, so depth compounds
 > instead of sitting still. Permissioned rails gate that access, and gated
@@ -188,8 +192,19 @@ pages:
 
 #### Page 3 — No penetration · ~10s
 
-- **On-slide:** Blockchains have almost none of it. Then the meter and its
+- **On-slide:** But it barely trades onchain. Then the meter and its
   citation, and nothing else.
+- **Note on the headline — it is half a sentence, deliberately.** Read in
+  sequence, pages 2 and 3 are **one sentence split across two slides**:
+  "Foreign exchange is the biggest market on earth" / "but it barely trades
+  onchain". That is what makes the split read as one open with momentum
+  rather than as two market-size slides, and it is why this line opens on a
+  conjunction. Reword the pair together or not at all.
+  Two rejected drafts and why: "Blockchains have almost none of it" asks the
+  audience to carry "it" across a slide boundary and makes *blockchains* the
+  subject, where the page is about FX; "But almost none of it settles
+  onchain" narrows the claim to settlement, when the gap is that FX barely
+  trades there at all.
 - **Visual:** A **progress bar** — 8.6% of currencies available on Solana —
   over the currencies count from our own site, captioned
   `dropset.io/currencies`.
@@ -486,27 +501,51 @@ pages:
 
 #### Page 10 — Why FX is next · ~11s
 
-- **On-slide:** New asset classes consolidate where liquidity is public.
-  Then three beats left to right, separated by the deck's chevron, each a
-  label over one figure:
-  1. **Memecoins** — 11.9M tokens minted
-  1. **Tokenized equities** — 96% of onchain volume
-  1. **Foreign exchange** — Next
-     The third beat is set in the **accent color**, tile and all: the first two
-     are things that already happened, and it is the claim. Then one accent line
-     beneath the row: "Open access compounds liquidity into a flywheel".
+- **On-slide:** Public liquidity is what blockchains were built for. Then
+  three beats left to right, separated by the deck's chevron, each a label
+  over one figure — **Memecoins**, 12M+ tokens launched on Solana ›
+  **Tokenized equities**, 96% of onchain volume on Solana › **Foreign
+  exchange**, Next, \$9T+ a day. The third beat is set in the **accent
+  color**, tile and all: the first two are things that already happened, and
+  it is the claim. Then one accent line beneath the row: "Open environments
+  bootstrap new asset classes".
+- **Note on the accent line:** "**bootstrap**", not "consolidate". An earlier
+  draft read "Each new asset class consolidates where anyone can quote",
+  which describes where the asset classes ended up — a restatement of the row
+  directly above it. This says what the environment *did*: an open venue is
+  what lets a new asset class get started at all, which is the training-wheels
+  argument the first tile makes and the reason the third one follows. It also
+  puts the environment in the subject position, so the sentence is about the
+  property rather than about the assets.
+- **Note on "on Solana", twice:** the page names Solana **nowhere else** —
+  not in the headline, not in the accent line — so both data tiles carry it
+  in their own unit line. Without it the equities tile reads as "96% of some
+  unspecified whole", which is the one figure on this page an investor is
+  most likely to check.
+- **Note on the headline:** this is v2's thesis line, **kept**. An
+  intermediate v3 draft replaced it with "New asset classes consolidate where
+  liquidity is public" — which states the *pattern* rather than the
+  conviction. The pattern belongs under the row, as the reading of the
+  evidence, and it is now the accent line; the headline is the sentence the
+  whole deck has been walking toward, and the continuous read closes on it.
 - **Visual:** The three-beat row **is** the visual — a flip, in the reviewer's
   word: three frames of the same story, and the audience arrives at the third
   before the presenter says it.
 - **Spoken:** "So why does FX land here, and why now? Because every new asset
-  class has already consolidated on Solana, in order. First tokens —
-  millions of them, and yes, mostly memecoins, but that's what proved the
-  chain could mint and trade anything at scale. Then tokenized equities, and
+  class has already consolidated on Solana, in order. First memecoins — over
+  twelve million tokens launched. Call that the training wheels: it looks
+  unserious, and it was the proving ground. It established that anyone could
+  launch a market on this chain and anyone could trade against it, at a scale
+  nothing else came close to. And it is a real business — one launchpad alone
+  became the number-one DEX by daily volume across every
+  chain, on a billion dollars of cumulative revenue. Then tokenized equities,
+  and
   that one is a big deal: ninety-six percent of onchain tokenized-equity
   volume is on Solana, and effectively nowhere else. Real-world assets are
   going the same way — Solana added more of them in the last six months than
   in its whole history before that, and it has more holders of them than any
-  other chain. FX is next, and it's the biggest of them. It lands here for the
+  other chain. So the training wheels came off. FX is next, and it's the
+  biggest of them. It lands here for the
   same reason the others did: public liquidity. Anyone can quote, anyone can
   trade against it, and it composes with everything else onchain — so depth
   compounds instead of sitting still. Solana is the most money-like onchain
@@ -533,17 +572,33 @@ pages:
   slide.
 - **Note on the beats:** the order is **not** chronological trivia, it is an
   escalation in seriousness — memecoins, then equities, then FX — and it has
-  to stay that way. Opening on memecoins is deliberate and slightly risky:
-  it is the beat an investor might read as unserious, which is exactly why
-  the presenter names it plainly and moves on ("mostly memecoins, but that's
-  what proved the chain could mint and trade anything at scale"). Ducking it
-  would cost the page its first data point and its credibility; a deck that
-  says "token launches" when everyone knows it means memecoins is being
-  evasive about something it doesn't need to be evasive about. Equities is
-  the **pivot** — a real, regulated, trillion-dollar asset class that went
-  almost entirely to one chain — and it is the beat that earns FX. Do not add
-  a fourth beat; three is what a room can take in one glance, and RWAs
-  (the obvious candidate) are stronger spoken, where their caveat fits.
+  to stay that way. Equities is the **pivot** — a real, regulated,
+  trillion-dollar asset class that went almost entirely to one chain — and it
+  is the beat that earns FX. Do not add a fourth beat; three is what a room
+  can take in one glance, and RWAs (the obvious candidate) are stronger
+  spoken, where their caveat fits.
+- **Note on the first beat — "training wheels".** Opening on memecoins is
+  deliberate and slightly risky: it is the beat an investor might read as
+  unserious. The talk track therefore **names that reading and turns it**,
+  in three moves, and all three have to survive editing:
+  1. **Concede it.** "Call that the training wheels: it looks unserious." An
+     audience is already thinking it; saying it first costs nothing and buys
+     the next two sentences.
+  1. **Say what it proved.** It is the **proving ground** for the page's
+     actual thesis — that anyone could launch a market here and anyone could
+     trade against it, at a scale nothing else came close to. That is
+     *public liquidity working*, which is exactly what the headline claims
+     blockchains were built for, and it is why this beat belongs on a page
+     about FX at all.
+  1. **Establish it is a real business.** The launchpad passed Uniswap to
+     become the #1 DEX by daily volume across every chain, on \$1B+ of
+     cumulative revenue. Without this, "training wheels" reads as an apology;
+     with it, the beat is serious money that happened to look silly.
+     Then "the training wheels came off" hands off to equities. Ducking this
+     framing altogether — saying "token launches" when everyone knows
+     what it means — is the one thing to avoid: it is evasive about something
+     that needs no evasion, and it forfeits the strongest available evidence
+     that this chain's public liquidity works.
 - **Note on the figures — verify before presenting.** Every number here is
   checkable, which is the standard this page is held to, and each has a
   known failure mode. Researched 2026-08-11:
@@ -552,10 +607,32 @@ pages:
     ATH). Reported variously as 95–97% depending on window; **96 is the
     conservative round number** and June is the citable month. Source:
     `cryptobriefing.com` / `solanafloor.com` June 2026 roundups.
-  - **11.9M tokens minted** — cumulative launches on Solana's dominant
-    launchpad since January 2024. Deliberately a **one-platform** figure, so
-    it understates the chain total: it is a floor, and a floor is the
-    defensible direction. Source: launchpad's own reported total, June 2026.
+  - **12M+ tokens launched on Solana** — and both the "over" and the "on
+    Solana" are load-bearing. The precise underlying figure is **one
+    launchpad's** 11.9M cumulative launches since January 2024, not a
+    chain-wide count. Printing "11.9M" would state a one-platform number as
+    though it were the chain's — precise, and wrong. That launchpad is only
+    ~71% of Solana's daily token creation and other launchpads exist, so the
+    chain's real total sits *above* it: "over 12M" is a **floor**, which is
+    imprecise and true, and a skeptic can only discover the real figure is
+    larger. Being wrong in that direction is the point. Source: launchpad's
+    own reported total, June 2026.
+  - **Cut, and worth knowing why:** a **cross-chain launch comparison**
+    ("more token launches than any other chain"). It is widely repeated and
+    probably true, and five searches could not source it to a current,
+    citable dashboard — only qualitative assertions. It is therefore on
+    **neither** the slide nor the talk track. The cross-chain point is made
+    instead by a fact that *is* verified: the launchpad became the **#1 DEX
+    by 24h volume across all chains** (~\$1.77B, July 2026, overtaking the
+    largest Ethereum-based venue), on **\$1B+ cumulative revenue** (March
+    2026). That carries the "Solana beat everyone else at this" work without
+    a superlative nobody can source — and it is a *trading* fact, which is
+    better evidence for a page arguing about liquidity than a creation count.
+    Note the spoken line says "**that one launchpad**" and names neither it
+    nor the venue it overtook: both are DEXes the appendix files under
+    competitors, and global rule 5 admits no sympathetic exceptions (the same
+    call that took Hyperliquid out of page 8). "#1 across every chain" makes
+    the point without a name, since overtaking everyone includes them.
   - **RWA momentum** — spoken only, and worded as *growth*, never as size.
     Solana added ~\$2B of tokenized RWAs in six months (~\$1.4B → ~\$3.6B at
     the early-July ATH), took the highest 30-day net inflows of any chain
@@ -782,6 +859,53 @@ the deck:
 - "Why hasn't a big DEX just done FX?" → The DEX answer above, said out
   loud: their customer is the retail speculator, the volume today is too
   small to move a giant, and we'll be here for the next 10x.
+
+### Figure sources
+
+Every number on page 10 traces to a citable source, so a "where's that
+from?" is answered with a link rather than a shrug. Researched
+**2026-08-11** — **re-check before presenting**, since three of these are
+current-state figures that move.
+
+**Tokenized equities — 96% of onchain volume on Solana.** Reported at
+95–97% depending on the window; 96 is the conservative round number, and
+June 2026 is the citable month (\$3.47B that month; \$5.77B across Q2, a
+quarterly high; ~\$4.9B across H1).
+
+- <https://cryptobriefing.com/solana-tokenized-stocks-volume-surges-h1-2026/>
+- Cryptonews, "Solana Q2 2026: \$5.77B Tokenized Asset Volume Record"
+- Cryptobriefing, "Solana hits \$3B in tokenized equities volume for June
+  2026, leads market"
+
+**Memecoins — 12M+ tokens launched on Solana.** The underlying figure is
+one launchpad's 11.9M cumulative launches since January 2024, which is
+~71% of Solana's daily token creation — hence the deliberate "over 12M"
+floor (see the page-10 figures note).
+
+- <https://en.cryptonomist.ch/2026/06/10/pump-fun-solana-token-launches/>
+- <https://cryptobriefing.com/solana-42000-tokens-pumpfun-launch/>
+- <https://defillama.com/protocol/pump>
+
+**The launchpad as a real business** — #1 DEX by 24h volume across all
+chains (~\$1.77B, July 2026), \$1B+ cumulative revenue (March 2026). Spoken
+only, and **named neither on the slide nor in the talk track** per global
+rule 5.
+
+- <https://cryptobriefing.com/pumpfun-top-dex-surpasses-uniswap/>
+
+**RWA momentum** — spoken only, and worded as *growth* rather than size:
+~\$1.4B → ~\$3.6B in six months, highest 30-day net inflows of any chain
+(~\$967M), most RWA holders (300k+). Solana is **third by total RWA
+value**, so never claim it leads on size.
+
+- <https://solanafloor.com/news/solanas-rwa-market-hits-record-3-62-b>
+- <https://cryptobriefing.com/solana-rwa-market-4-billion-growth/>
+- <https://app.rwa.xyz/networks/solana>
+
+**Not sourced, and therefore not used:** a cross-chain launch comparison
+("more token launches than any other chain"). Widely repeated, probably
+true, and five searches found only qualitative assertions — no citable
+dashboard. It is on neither the slide nor the talk track.
 
 ______________________________________________________________________
 
