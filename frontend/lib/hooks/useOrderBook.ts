@@ -61,12 +61,28 @@ export function useOrderBook(
   const client = useSolanaClient();
   const [state, setState] = useState<OrderBookState>(INITIAL);
 
+  // The book belongs to the market, not to the direction it is being traded
+  // in, so the poll is keyed on the *unordered* pair. Flipping from/to
+  // resolves the same market account (the route search covers both
+  // orientations) and the take-side compensation below lands on the same
+  // base/quote, so a flip has nothing to re-fetch and nothing to redraw.
+  //
+  // Keying on the ordered pair instead made the swap-arrow button tear the
+  // whole panel down: the effect re-ran, reset to "idle", and the panel
+  // un-hid only after a fresh resolve plus first fetch — blanking the ladder
+  // and the trades tape, and letting the swap card reflow into the column
+  // they had vacated.
+  const inOrder = fromStablecoin <= toStablecoin;
+  const pairA = inOrder ? fromStablecoin : toStablecoin;
+  const pairB = inOrder ? toStablecoin : fromStablecoin;
+
   useEffect(() => {
     // Clear any prior pair's book on every (re)run. Without this, a pair
     // switch leaves the previous market's ladder and symbols on screen (status
     // stays "ready") through the whole resolve + first-fetch round-trip —
     // showing the wrong pair's book beside the swap panel. Resetting hides the
-    // panel until the new market's first poll lands.
+    // panel until the new market's first poll lands. A direction flip is not a
+    // pair switch, and by the keying above never re-runs this effect at all.
     setState(INITIAL);
     if (!enabled) return;
     let timer: number | undefined;
@@ -76,8 +92,8 @@ export function useOrderBook(
     // running alongside the fresh one.
     let generation = 0;
     const rpc = client.runtime.rpc;
-    const fromMint = stablecoinMint(fromStablecoin);
-    const toMint = stablecoinMint(toStablecoin);
+    const fromMint = stablecoinMint(pairA);
+    const toMint = stablecoinMint(pairB);
 
     // Resolved once the market is found: its address plus the base/quote
     // tokens oriented by the take side. Cached so each poll tick is a single
@@ -115,13 +131,11 @@ export function useOrderBook(
             return;
           }
           market = route.market;
-          // sell ⇒ base=from, quote=to; buy ⇒ base=to, quote=from.
-          base = tokenFor(
-            route.side === "sell" ? fromStablecoin : toStablecoin,
-          );
-          quote = tokenFor(
-            route.side === "sell" ? toStablecoin : fromStablecoin,
-          );
+          // sell ⇒ base=pairA, quote=pairB; buy ⇒ base=pairB, quote=pairA.
+          // Resolved against the canonical ordering, so this lands on the
+          // market's own base/quote whichever way the user is trading it.
+          base = tokenFor(route.side === "sell" ? pairA : pairB);
+          quote = tokenFor(route.side === "sell" ? pairB : pairA);
         }
 
         const view = await fetchDropsetMarketView(rpc, market, {
@@ -153,7 +167,7 @@ export function useOrderBook(
       if (timer !== undefined) window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [fromStablecoin, toStablecoin, enabled, client]);
+  }, [pairA, pairB, enabled, client]);
 
   return state;
 }
