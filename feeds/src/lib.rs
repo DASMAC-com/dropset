@@ -18,7 +18,14 @@
 //! in whichever app needed one first, so a collector and a bot share the same
 //! source and differ only in which sink they wire it to. The design is
 //! `docs/data-feeds.md`.
+//!
+//! Two facilities cut across every poll source: [`Backfill`] keeps a
+//! newest-first transport's backlog draining oldest-first so a resume cursor
+//! never skips the middle of it, and [`FeedMetrics`] is the seam the runner
+//! reports batches and errors through, so a deployed feed is observable
+//! without per-feed wiring.
 
+mod backfill;
 mod cursor;
 mod forward;
 mod record;
@@ -27,10 +34,14 @@ mod sink;
 mod source;
 mod time;
 
+pub use backfill::{Backfill, Step};
 pub use cursor::{Cursor, CursorStore};
 pub use forward::{forward_channel, ForwardSink};
 pub use record::Batch;
-pub use runner::{run, run_until, RunConfig};
+pub use runner::{
+    run, run_until, run_until_with_metrics, run_with_metrics, BatchStats, FeedMetrics, NoopMetrics,
+    RunConfig,
+};
 pub use sink::Sink;
 pub use source::Source;
 pub use time::now_secs;
