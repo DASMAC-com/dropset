@@ -19,6 +19,11 @@
 //!   [`coinbase`]'s candles endpoint is the case; it pages its own backfill
 //!   instead, and deliberately does **not** implement [`BatchQuotes`].
 //!
+//! Each adapter splits its decode out into free `parse_*` functions, which need
+//! no network: they are unit tested against captured responses, so a venue's
+//! JSON shape stays covered without anything reaching the venue itself. Only
+//! the transport half needs a network, and nothing here tests that.
+//!
 //! **Credentials arrive by injection, never by an environment read in here.**
 //! A keyed adapter takes its key as a constructor argument
 //! ([`coinmarketcap::CmcSource::new`]) so the caller decides where the secret
@@ -30,14 +35,24 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::hash::Hash;
 
+// Each venue rides its own transport's gate, not the module's — the contract
+// below is transport-free, so a future streaming venue lands here too.
+#[cfg(feature = "http")]
 pub mod coinbase;
+#[cfg(feature = "http")]
 pub mod coingecko;
+#[cfg(feature = "http")]
 pub mod coinmarketcap;
+#[cfg(feature = "http")]
 pub mod frankfurter;
 
+#[cfg(feature = "http")]
 pub use coinbase::{Candle, CoinbaseCandles};
+#[cfg(feature = "http")]
 pub use coingecko::CoinGeckoSource;
+#[cfg(feature = "http")]
 pub use coinmarketcap::CmcSource;
+#[cfg(feature = "http")]
 pub use frankfurter::FrankfurterSource;
 
 /// One batched reading: the venue's own symbol key → USD price. The key type

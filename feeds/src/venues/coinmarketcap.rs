@@ -111,9 +111,11 @@ mod tests {
     }
 
     #[test]
-    fn an_injected_key_becomes_the_auth_header() {
-        // The key reaches the transport as a header at build time, so a
-        // malformed one fails here rather than on the first poll.
+    fn a_malformed_key_is_rejected_at_build_time() {
+        // The injected key reaches the transport as a header during
+        // construction, so a malformed one fails here rather than on the first
+        // poll. This asserts only the accept/reject split — the header's name
+        // and value aren't observable from outside `crate::http`.
         assert!(CmcSource::new("https://example.test", vec![20641], "secret").is_ok());
         assert!(CmcSource::new("https://example.test", vec![20641], "bad\nvalue").is_err());
     }

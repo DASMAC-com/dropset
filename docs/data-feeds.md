@@ -44,9 +44,12 @@ Coinbase candle collector on the store sink, and the maker bot's price
 and fill transports on the live sink — the latter carrying the first
 streaming source, an RPC `logsSubscribe` socket bridged through the
 stream seam (§4). The venue adapters have been relocated into
-`feeds/venues/` (§4), so the collector and the maker now share one
-Coinbase, CoinGecko, CoinMarketCap, and ECB/Frankfurter source apiece.
-The collector crate still sits at its original path under `analytics/`;
+`feeds/src/venues/` (§4): there is now one implementation of each venue —
+Coinbase, CoinGecko, CoinMarketCap, ECB/Frankfurter — available to both
+sink paths, rather than one per app. The collector polls Coinbase and the
+maker polls the other three today; what changed is that either could use
+any of them. The collector crate still sits at its original path under
+`analytics/`;
 its move to `market-data/` and the indexer's migration onto the
 framework are separate tracked tasks.
 
