@@ -675,12 +675,29 @@ pages:
   framing has no referent, and the term properly describes poaching an
   incumbent's liquidity providers with incentives, which is a different
   mechanic.
-- **Note on the mechanism line:** the accent line under the row ("Open access
-  compounds liquidity into a flywheel") is what keeps the page from being
-  three statistics and a hope. The beats are evidence of a pattern; this is
-  the reason the pattern extends to FX. Keep it to **one line** — it is the
-  page's whole spend on mechanism, and a second line turns the flip back
-  into a wind-up.
+- **Note on the mechanism line:** the accent line under the row ("Open
+  environments bootstrap new asset classes") is what keeps the page from
+  being three statistics and a hope. The beats are evidence of a pattern;
+  this is the reason the pattern extends to FX. Keep it to **one line** — it
+  is the page's whole spend on mechanism, and a second line turns the flip
+  back into a wind-up.
+- **Note — the flywheel graphic is a deliberate won't-do.** The filed task
+  asked this page to carry "a graphic around the flywheel of permissionless
+  open liquidity", riffing on page 8's SVG. Three treatments were put up
+  (the chevron row; a flywheel ring as the hero image with the asset classes
+  feeding it; both stacked) and the **chevron row was chosen**, in session,
+  on 2026-08-11. Two reasons it wins: a cycle diagram and a three-beat
+  progression compete for the same attention, and the review's primary
+  complaint about this page was that it was *too long a wind-up* — a second
+  visual is the one thing guaranteed to make that worse. The flywheel
+  language survives where it is already earning its keep, on page 8. Revisit
+  only if this page ever loses the row.
+- **Note on the subtext line's polarity.** The filed task asked for
+  "permissioned falls short" as the one subtext line. It is **positive**
+  instead — the accent line says what open environments *do*, and the
+  permissioned-rails point is spoken. Naming the shortfall on-slide would
+  have reintroduced the argue-against-them framing the same task was
+  removing, and global rule 5 leaves it nothing to name.
 
 #### Page 11 — Team · ~8s
 
