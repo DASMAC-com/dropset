@@ -14,6 +14,16 @@ blocks lint-clean (MD013 80-col, mdformat).
 **Subsystems** — `name (kind, risk): roots`. `kind` selects the
 per-platform audit checklist; `risk` weights selection.
 
+Where roots overlap, the **more specific** root wins:
+`docs/conventions/**` belongs to `agent-infra`, not to the broader
+`docs`. A convention doc's failure modes are about the skills that
+implement it — a rule nothing implements, a step naming a flag its
+tool lacks — not about code it describes, which is what the `specs`
+lens asks. `agent-infra` is weighted `med` despite a small blast
+radius: a wrong instruction breaks no build, but it silently degrades
+every session that reads it, which is an unusually wide failure mode
+for a low-risk surface.
+
 ```txt
 program (solana-program, high): programs/dropset/src/**
 sdk-math (rust-lib, high): sdk/math-core/src/**, sdk/interface/src/**
@@ -22,6 +32,8 @@ frontend (web-app, med): frontend/**
 decks (web-app, low): decks/**
 tui (rust-lib, low): tui/**
 docs (specs, med): docs/**
+agent-infra (agent-infra, med): .claude/**, CLAUDE.md,
+  docs/conventions/**
 ci-infra (ci, low): .github/**, brand-assets/**, cfg/**, infra/**,
   keys/**, Makefile, Anchor.toml
 maker-bot (rust-tool, low): bots/maker-bot/**

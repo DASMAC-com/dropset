@@ -2154,23 +2154,27 @@ PR-authoring **writes** (`create_pull_request`,
      "conclusion": "pass",    // pass | fail | pending | none | timeout
      "settled": true,
      "elapsed_seconds": 127,
+     "watch_rounds": 1,       // >1 means a check registered late
      "counts": {"pass": 12, "fail": 0, "skipping": 3},
      "failing": [{"name": "…", "workflow": "…", "link": "…", "run_id": "…"}],
+     "pending_checks": [],    // names still outstanding, when any are
      "log_path": "…/wait-for-checks-<number>.log"
    }
    ```
 
-   Internally it is two `gh` calls and **no loop**:
-   `gh pr checks --watch --interval 30` (gh does the pacing and
-   exits when the checks settle; its live-updating table goes to
-   `log_path`, never into context) followed by one
-   `gh pr checks --json` read that *is* the verdict. That JSON
-   read, not gh's exit code, is the authority — `gh` overloads
-   non-zero across "a check failed", "checks still pending", and
-   "there are no checks at all", and a review has to tell those
-   apart. `failing` already carries each failed check's
-   `run_id`, so the failure branch below needs no URL parsing.
-   The tool exits 0 only on `pass`.
+   Internally it is a **bounded** pair of `gh` calls — and no
+   model-driven loop: `gh pr checks --watch --interval 30` (gh
+   does the pacing and exits when the checks settle; its
+   live-updating table goes to `log_path`, never into context)
+   followed by one `gh pr checks --json` read that *is* the
+   verdict. That JSON read, not gh's exit code, is the authority
+   — `gh` overloads non-zero across "a check failed", "checks
+   still pending", and "there are no checks at all", and a review
+   has to tell those apart. When that read still says pending,
+   the pair repeats (see `watch_rounds` below) rather than
+   reporting a settled pending. `failing` already carries each
+   failed check's `run_id`, so the failure branch below needs no
+   URL parsing. The tool exits 0 only on `pass`.
 
    **Correction to an earlier version of this step, which
    asserted "there's no streaming `--watch`, so poll".** That
@@ -2220,16 +2224,30 @@ PR-authoring **writes** (`create_pull_request`,
      checks at all — nothing to wait on. Note it in the report
      and treat it as green rather than waiting forever.
    - **`conclusion: "timeout"`** means the watch hit its bound
-     (default one hour) without settling. It reports the counts
-     it observed but deliberately never claims `pass` off a
+     (default one hour), or exhausted its re-watch rounds, with
+     the checks still unsettled. It reports the counts it
+     observed but deliberately never claims `pass` off a
      snapshot it stopped waiting on — treat it as unverified,
-     not green.
+     not green. Its `pending_checks` names what was still out.
+   - **`watch_rounds` > 1** means a check registered *after* gh
+     had taken its census — routine on a PR touching a path some
+     workflow watches with its own trigger set, and not a
+     problem in itself. It is worth knowing because it used to
+     be the failure this step could not see: gh's `--watch`
+     exits on its own view of the check set, so a single
+     post-watch read once reported `settled: true` alongside
+     `conclusion: "pending"` twice in a row, ~14 minutes of dead
+     wall-clock on a PR where nothing was wrong. The tool now
+     re-enters the watch instead of believing that read.
 
    Then branch on `conclusion` — it is exhaustive, so there is
    no unhandled case: `pass` and `fail` below, plus `none` and
-   `timeout` per the notes above, and `pending`, which can only
-   arise under `--no-watch` (re-run the tool plain to wait it
-   out).
+   `timeout` per the notes above, and `pending`. Under `--watch`
+   the tool will not return `pending`: a read that still says
+   pending re-enters the watch, and exhausting that bound
+   reports `timeout` instead. So a `pending` verdict means the
+   read was taken with `--no-watch` — re-run the tool plain to
+   wait it out.
 
    - **`pass`** → the PR is now ready **and** CI-green. Leave
      the Linear issue **In Progress** (it moves to In Review at
@@ -2558,6 +2576,29 @@ PR-authoring **writes** (`create_pull_request`,
      tighten the brief so the pattern stops recurring, rather
      than allow-listing it.
 
+   **A source edit this step produces cannot land on this
+   branch — route it to the batch issue.** `firm-perms` may
+   conclude that a pattern traces to a committed skill,
+   script, or Makefile target and belongs fixed at the source
+   rather than allow-listed. By the time this step runs the
+   branch is pushed and usually enqueued, so such an edit has
+   nowhere to go: committing it means a second PR, and
+   leaving it in the worktree loses it when the worktree is
+   pruned. Not hypothetical — a nine-line fix was stranded
+   exactly this way and survived only because someone ran
+   `git status` before deleting the worktree.
+
+   So **write the edit verbatim into the open `Claude:` batch
+   issue** — the standing accumulator for agent-infra work,
+   found as the open Backlog issue whose title carries the
+   `Claude:` prefix — never into the merged branch, and never
+   left dirty in the worktree. Then **say so out loud in the
+   report**, naming the issue, so the handoff is visible
+   rather than assumed. The step ordering stays as it is:
+   moving the source-edit half before the ready gate would
+   miss exactly the approvals granted during the CI wait,
+   which are most of them.
+
    **The one residual gap.** The `gh api graphql` merge-queue
    probe in the outcome-watch step below runs *after* this
    sweep — unattended, during the queue wait — so its
@@ -2882,6 +2923,24 @@ PR-authoring **writes** (`create_pull_request`,
    - [ ] **`firm-perms`** run — the last interactive step.
    - [ ] **Post-merge tidy**, on a merge: the notification
      dismissed `state: "done"`, and `make clean` run.
+   - [ ] **Working tree clean** — `git status --short` is
+     empty. Anything still modified is work the merge did not
+     carry, and the worktree is about to be pruned. Surface
+     it and decide where it goes; never report the run
+     complete with a dirty tree.
+
+   **That last item is detection, and it goes last on
+   purpose.** The step above names one *cause* of a late edit
+   (a `firm-perms` source edit produced after the push), but
+   a stray change can come from anywhere — a fix made during
+   the session-metrics step, a partially applied edit, a
+   scratch file written into the repo instead of the
+   scratchpad. Nothing else at the end of a review looks at
+   tree state: `git status` is read at step 2 and never
+   again, so the blast radius is total and the evidence is
+   deleted with the worktree. It runs after the post-merge
+   tidy because both `make clean` and `firm-perms` can
+   themselves touch the tree.
 
    **A diversion does not discharge them.** Another skill, a
    message from a peer session, a fresh user request, or a
