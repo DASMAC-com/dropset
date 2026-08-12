@@ -34,12 +34,18 @@ import { colors, deckTheme } from "@/theme/tokens";
  * - **Dropset is the brand; DASMAC recedes.** The company is the boring DevCo
  *   in the background, and the deck names it exactly once — the footer credit.
  *   Not on the title slide, not in the roadmap's beats, not in a team role.
+ * - **No competitor is named or shown, anywhere** — not on a slide and not in
+ *   a `Notes` track. A two-minute pitch cannot afford to give competitors free
+ *   press, and naming them invites the room to evaluate them instead of us.
+ *   Page 10 makes the argument as a property of public liquidity instead. The
+ *   fuller answers live in the spec's appendix, for questions only.
  *
- * Ten pages, and pages 3–6 are one argument in sequence: the swap flow
- * works today, we curate the data for every currency, most of them have no
- * liquidity at all, and the eCLOB is what we're building to fix that. Then how
- * we grow, the roadmap, why an open venue wins, and the team — which is last
- * and stays up after the talk.
+ * Twelve pages. Pages 2–3 are the open, split into two beats so the pitch
+ * starts with momentum: a huge market, and no penetration of it. Pages 4–7 are
+ * one argument in sequence: the swap flow works today, we curate the data for
+ * every currency, most of them have no liquidity at all, and the eCLOB is what
+ * we're building to fix that. Then how we grow, the roadmap, why FX is next,
+ * the team, and a close that replays the title and stays up after the talk.
  */
 
 /**
@@ -369,70 +375,6 @@ const Statement = ({
 );
 
 /**
- * The six supporting facts on the gap page.
- *
- * `justifyContent` is the load-bearing prop here, and it must stay explicit:
- * Spectacle's `FlexBox` **defaults to `center`**, which centred each row
- * independently — so the short one-line fact sat visibly inset from the wrapped
- * two-line ones, reading as a stray indent rather than a list.
- *
- * The marker is a chevron rather than a disc: a row of discs is what makes a
- * slide read as a corporate template. It's the angular "greater-than" shape the
- * review asked for, but deliberately *not* a literal `≥` — that glyph makes a
- * numeric claim, and it would flatly contradict the coverage fact — the fifth
- * of the six — which is a *less-than*.
- *
- * The row spacing is the page's give, and it moves in both directions. It
- * started at 26 units for three facts and came down when six of them overran
- * the meter column beside it; it went back up once the page stopped centring
- * its content, which freed the slack that had been sitting above the eyebrow
- * and left the list looking cramped against a half-empty page. If the page ever
- * overflows, this number is still the first place to take it from.
- *
- * `accent` is for the **last** fact, the ambition. It is the one row that isn't
- * a fact about the world as it is, and in one flat color it read as a trailing
- * qualifier on the statistic above it rather than as the thing the deck is
- * actually going after. The accent lifts it out with no size change and no
- * layout of its own, and it's the color the meter's fill and every chevron on
- * the page already carry — so it reads as emphasis, not as a new kind of thing.
- */
-const Fact = ({
-  accent = false,
-  children,
-}: {
-  accent?: boolean;
-  children: React.ReactNode;
-}) => (
-  <FlexBox
-    alignItems="flex-start"
-    justifyContent="flex-start"
-    margin="0 0 42px 0"
-  >
-    <div
-      style={{
-        color: colors.accent,
-        flex: "0 0 auto",
-        fontFamily: deckTheme.fonts.monospace,
-        fontSize: "34px",
-        lineHeight: 1.25,
-        marginRight: "20px",
-      }}
-    >
-      ›
-    </div>
-    <div
-      style={{
-        color: accent ? colors.accent : colors.foreground,
-        fontSize: "34px",
-        lineHeight: 1.25,
-      }}
-    >
-      {children}
-    </div>
-  </FlexBox>
-);
-
-/**
  * How much of the world's money actually trades on Solana, as a progress bar.
  *
  * A **meter**, not a pie of two slices: the data is a single ratio against a
@@ -448,7 +390,33 @@ const Fact = ({
  */
 const LISTED_CURRENCIES = 14;
 const TOTAL_CURRENCIES = 162;
-const METER_WIDTH = 760;
+/**
+ * 900, up from the 760 this carried through v2 — and **capped by the
+ * screenshot, not by the page**.
+ *
+ * 760 was sized for a page this block shared: the v2 gap page ran a column of
+ * six facts down the left and the meter plus its citation down the right, so
+ * it got a little under half the slide. Splitting the gap page in two gave
+ * page 3 the whole width, and at 760 the block sat as a small island in a
+ * mostly empty slide — sparse in the wrong way, with the screenshot's own
+ * figures too small to read from the back of a room, which defeats the point
+ * of citing them.
+ *
+ * The obvious fix — take the full measure, ~1180 — **does not work**, and the
+ * reason is worth keeping. `currencies-listed.png` is **876 px wide**, the
+ * smallest capture in the deck by some way (the others run 820–1500). The
+ * `Screenshot` frame renders its image at `width - 2 * SCREENSHOT_INSET`, so
+ * at 1180 the image is asked for 1142 units against 876 native — a 1.3×
+ * upscale, and it visibly blurs in the export while every other capture on
+ * neighboring pages stays crisp. At 900 the image lands at 862, just inside
+ * native, so it is still being *down*scaled and stays sharp.
+ *
+ * **So this cannot grow without a new capture.** Re-shoot
+ * `currencies-listed.png` at a higher device pixel ratio first; until then 900
+ * is the ceiling, and the page's remaining slack is deliberate white space
+ * rather than room this block should take.
+ */
+const METER_WIDTH = 900;
 const LISTED_SHARE = (LISTED_CURRENCIES / TOTAL_CURRENCIES) * 100;
 
 const CurrencyMeter = () => (
@@ -458,14 +426,14 @@ const CurrencyMeter = () => (
   // are a padding-width out of true with each other.
   <Box width={`${METER_WIDTH}px`} margin={`0 ${SCREENSHOT_INSET}px`}>
     <FlexBox justifyContent="space-between" alignItems="flex-end">
-      <div style={{ color: colors.mutedFg, fontSize: "26px" }}>
+      <div style={{ color: colors.mutedFg, fontSize: "30px" }}>
         Currencies available on Solana
       </div>
       <div
         style={{
           color: colors.accent,
           fontFamily: deckTheme.fonts.monospace,
-          fontSize: "30px",
+          fontSize: "36px",
         }}
       >
         {LISTED_SHARE.toFixed(1)}%
@@ -475,8 +443,8 @@ const CurrencyMeter = () => (
       style={{
         backgroundColor: colors.meterTrack,
         borderRadius: "16px",
-        height: "32px",
-        marginTop: "14px",
+        height: "36px",
+        marginTop: "16px",
         overflow: "hidden",
         width: "100%",
       }}
@@ -497,9 +465,66 @@ const CurrencyMeter = () => (
 );
 
 /**
+ * One very large number over a small label — the entirety of page 2's content.
+ *
+ * The figure is the visual, which is the page's whole design: the first content
+ * page of a two-minute pitch has about seven seconds, and a number this size is
+ * read in one. It is set in the mono face rather than Inter because the deck
+ * already treats mono as its data voice (the meter's percentage, the roadmap's
+ * `Now / Next / Later`, every capture caption), so a figure at display size
+ * reads as a measurement rather than as a headline that happens to be numeric.
+ *
+ * Accent-colored, and that is the whole reason page 2 needs no other emphasis:
+ * the deck's accent has appeared only on the wordmark's chevrons up to here, so
+ * this is the first time the audience sees it carry meaning.
+ *
+ * **Keep the caption to two or three words.** It labels the figure; it does not
+ * qualify it. A caption that grows into a sentence is the first sign this page
+ * is turning back into a market-opportunity slide, which the format rules
+ * forbid — no breakdown, no CAGR, no TAM ring.
+ */
+const HeroFigure = ({
+  figure,
+  caption,
+}: {
+  figure: string;
+  caption: string;
+}) => (
+  <Box>
+    <div
+      style={{
+        color: colors.accent,
+        fontFamily: deckTheme.fonts.monospace,
+        fontSize: "300px",
+        // Explicit, because `normal` would hang ~60 units of leading around a
+        // cap this size and the page's whole layout is this one block.
+        lineHeight: 1,
+        textAlign: "center",
+      }}
+    >
+      {figure}
+    </div>
+    <div
+      style={{
+        color: colors.mutedFg,
+        fontFamily: deckTheme.fonts.monospace,
+        fontSize: "34px",
+        letterSpacing: "0.14em",
+        lineHeight: 1.2,
+        marginTop: "26px",
+        textAlign: "center",
+        textTransform: "uppercase",
+      }}
+    >
+      {caption}
+    </div>
+  </Box>
+);
+
+/**
  * A screenshot frame's chrome, named because anything stacked above or below a
  * capture has to inset by the same amount to line up with the image rather than
- * with the frame's outer edge — see `SCREENSHOT_INSET` and the gap page's meter.
+ * with the frame's outer edge — see `SCREENSHOT_INSET` and page 3's meter.
  */
 const SCREENSHOT_BORDER = 1;
 const SCREENSHOT_PAD_X = 18;
@@ -565,8 +590,12 @@ const Screenshot = ({
   </Box>
 );
 
-// The chevron between steps of the swap flow. Space Mono, matching the same
-// glyph used as the `Fact` marker — one mark, one face.
+// The chevron that means "and then". Space Mono, one mark and one face, and
+// it is deliberately shared: page 4's swap flow uses it between steps, and
+// page 10's flip reuses it between asset classes precisely because page 4 has
+// already taught the audience what it means. It used to be the gap page's
+// `Fact` bullet marker too; that list is gone, and the glyph now only ever
+// marks a sequence.
 const SequenceArrow = () => (
   <Box margin="0 16px">
     <div
@@ -585,7 +614,7 @@ const SequenceArrow = () => (
 /**
  * Column width for a swap-flow step.
  *
- * This is the number that keeps page 3 inside its slide, so it is a named
+ * This is the number that keeps page 4 inside its slide, so it is a named
  * constant rather than repeated at three call sites. The third capture is very
  * tall (820×1371), so it sets the row's height, and the row's height is most of
  * the page: at 410 — with a two-line statement and the URL below the row — the
@@ -698,14 +727,12 @@ const LogoRow = ({
   height = 54,
   tint,
   margin = "34px 0 0 0",
-  showNames = true,
 }: {
   logos: Logo[];
   width?: number;
   height?: number;
   tint?: string;
   margin?: string;
-  showNames?: boolean;
 }) => (
   <FlexBox margin={margin} justifyContent="center" alignItems="flex-start">
     {logos.map(({ name, src, note }) => (
@@ -749,40 +776,25 @@ const LogoRow = ({
             larger than either margin asks for, and on the flywheel that pushed
             the last line into the footer.
 
-            `showNames` is off only where **every mark in the row is its own
-            wordmark**, as on the open-venue page — a name under a logotype that
-            already says the name is just the word twice. Keep it on wherever a
-            mark is an icon rather than a wordmark (the flywheel's are), since
-            those say nothing on their own. The `name` still does real work when
-            hidden: it is the `alt` text and the row's key.
-
-            It pairs with a **`note`-less** row, and the two options aren't
-            independent: the column reserves `LOGO_CAPTION_ROOM` for a `note`,
-            and the note's own top margin is sized to sit as the *second* line
-            under a name. Hide the names on a row that has notes and each note
-            lands tight under its tile with caption room it no longer needs. No
-            caller does that today — `PERMISSIONED` is the only `showNames={false}`
-            row and carries no notes — but give the note the name's spacing
-            before adding one that does.
-
-            The one thing this loses: `PERMISSIONED`'s first mark is **Circle's**,
-            because Arc is Circle's chain, so that chip now reads as Circle while
-            the spoken track says Arc. Accepted deliberately — Circle is the
-            entity an audience recognizes, and the page's argument is about
-            private ledgers generally rather than about Arc in particular. */}
-        {showNames ? (
-          <div
-            style={{
-              color: colors.foreground,
-              fontFamily: deckTheme.fonts.monospace,
-              fontSize: "22px",
-              lineHeight: 1.2,
-              marginTop: "14px",
-            }}
-          >
-            {name}
-          </div>
-        ) : null}
+            Names are **always shown**, because every mark left in the deck is
+            an icon rather than a wordmark, and an icon says nothing on its own.
+            There used to be a `showNames` opt-out for the open-venue page's
+            competitor row, where each mark was a logotype and a caption under
+            it printed the word twice; that page and those marks are gone, so
+            the option went with them rather than sitting here as a switch with
+            no caller. The rule it encoded still holds if a wordmark ever
+            returns: name an icon, don't name a wordmark. */}
+        <div
+          style={{
+            color: colors.foreground,
+            fontFamily: deckTheme.fonts.monospace,
+            fontSize: "22px",
+            lineHeight: 1.2,
+            marginTop: "14px",
+          }}
+        >
+          {name}
+        </div>
         {note ? (
           <div
             style={{
@@ -816,26 +828,6 @@ const UPSTREAM: Logo[] = [
 const DOWNSTREAM: Logo[] = [
   { name: "Altitude", src: "/remote/logo-altitude.png", note: "Banking" },
   { name: "CargoBill", src: "/remote/logo-cargobill.png", note: "Supply chain" },
-];
-
-/**
- * The permissioned rails, on the open-venue page. Alphabetical, so the row
- * implies no ranking among them, and tinted with the sell color — these are
- * the unfavorable case the page argues against.
- *
- * These render **uncaptioned** (`showNames={false}`), because each mark is a
- * wordmark that already says the company. The `name` here is still the `alt`
- * text and the key, and it is the name the *presenter* says — which isn't always
- * what the mark says, since Arc is Circle's chain and Circle's logo is the one
- * an audience recognizes. So this row reads Circle / Canton / Tempo on-slide
- * against "Arc and Tempo" spoken, which is fine: the argument is about private
- * ledgers as a class, not about Arc specifically. Restore the captions if the
- * page ever needs to name one in particular.
- */
-const PERMISSIONED: Logo[] = [
-  { name: "Arc", src: "/remote/logo-circle.svg" },
-  { name: "Canton", src: "/remote/logo-canton.svg" },
-  { name: "Tempo", src: "/remote/logo-tempo.svg" },
 ];
 
 // Square: every mark on the flywheel is a pure icon, so `TILE` matches the
@@ -935,44 +927,49 @@ const Flywheel = () => (
  * path. The dot sits on the rule so the eye takes the order before it reads any
  * of the copy.
  */
-type Beat = { when: string; headline: string; body: string };
+/**
+ * A beat is a label and an action, and **no body**.
+ *
+ * Each used to carry a two-line paragraph under its headline, and cutting them
+ * was the sign-off review's single most concrete note. Three headlines plus
+ * three paragraphs is six things to read on a page whose job is to be taken in
+ * at a glance — and the paragraphs were exactly what the presenter was *saying*
+ * at that moment, so printing them had the audience reading ahead of the talk.
+ * They moved into this slide's `Notes` intact; nothing was lost, and the page
+ * now reads in about a second.
+ */
+type Beat = { when: string; headline: string };
 
 const BEATS: Beat[] = [
+  // Imperatives, not "We onboard…": the `when` label above each headline
+  // already supplies the subject and the tense, so a pronoun in each one is
+  // three words of scaffolding restating what the rule beneath them says. This
+  // page is the deck's one sanctioned place for the imperative mood — every
+  // other line is a full sentence.
+  //
   // Plain-spoken customer development, and it **names no company**: an earlier
   // draft read "DASMAC bootstraps liquidity", which put the DevCo back on a
   // slide it has receded from and made the first beat about us rather than
-  // about the issuers. Both sides of the two-sided market belong here — the
-  // issuers upstream and the pipeline of companies that consume the liquidity
-  // downstream (the page-7 names) — because seeding one side is a liquidity
-  // operation, and seeding both is a market.
-  {
-    when: "Now",
-    headline: "We onboard emerging stablecoin issuers",
-    body: "We lead the vaults that give an emerging issuer day-one liquidity, and we develop the downstream pipeline of companies and users who need liquid currency swaps.",
-  },
-  // Other market makers entering is the load-bearing half, and it is what says
-  // this **isn't a prop AMM**: anyone can quote here, so quotes compete tighter
-  // rather than being set by whoever owns the venue. That competition is the
-  // mechanism the compounding runs on — spreads tighten, volume follows,
-  // liquidity deepens — and only then do fees mean anything. The fee clause
-  // stays in abstracted language; naming the switch turns a growth beat into a
-  // token-design question.
-  {
-    when: "Next",
-    headline: "Protocol fees accrue value",
-    body: "As additional market makers enter, quotes get tighter, and protocol fees accrue value as volume and liquidity compound.",
-  },
-  // The headline stays broad on purpose — "beyond spot" lets a reader fill in
-  // their own derivatives thesis, where naming one hands them ours to argue
-  // with. Hedging is the through-line, and deliberately not only a market
-  // maker's tool: the two named business cases are what says so, and they are
-  // examples rather than a list — the beat is that derivatives buy both a
-  // better market structure and downstream uses of it.
-  {
-    when: "Later",
-    headline: "Product expansion beyond spot",
-    body: "Derivatives enable more efficient markets and business use cases, including treasury management and hedging B2B payment flows.",
-  },
+  // about the issuers. Both sides of the two-sided market are in the talk
+  // track — the issuers upstream and the pipeline of companies that consume the
+  // liquidity downstream (the page-8 names) — because seeding one side is a
+  // liquidity operation, and seeding both is a market.
+  { when: "Now", headline: "Onboard emerging stablecoin issuers" },
+  // Two words on the slide, so the load-bearing half of this beat is now
+  // **entirely spoken**: that *other* market makers enter is what says this
+  // isn't a prop AMM — anyone can quote here, so quotes compete tighter rather
+  // than being set by whoever owns the venue, and that competition is the
+  // mechanism the compounding runs on. Fees only mean something after it. If
+  // the talk track is ever trimmed, protect that sentence: "Accrue protocol
+  // fees" standing alone is the one line on this page that can be misread as a
+  // rent-extraction plan.
+  { when: "Next", headline: "Accrue protocol fees" },
+  // Left broad on purpose — "beyond spot" lets a reader fill in their own
+  // derivatives thesis, where naming one hands them ours to argue with. The
+  // business cases (treasury management, hedging B2B payment flows) are in the
+  // talk track, as examples rather than a list: the beat is that derivatives
+  // buy both a better market structure and downstream uses of it.
+  { when: "Later", headline: "Expand beyond spot" },
 ];
 
 /**
@@ -1036,7 +1033,7 @@ const Roadmap = () => (
       ))}
     </div>
     <FlexBox justifyContent="space-between" alignItems="flex-start">
-      {BEATS.map(({ when, headline, body }) => (
+      {BEATS.map(({ when, headline }) => (
         <Box key={when} width={`${ROADMAP_COLUMN}px`} margin="26px 0 0 0">
           <div
             style={{
@@ -1050,25 +1047,22 @@ const Roadmap = () => (
           >
             {when}
           </div>
+          {/* 42px, up from the 34 this carried while a body paragraph sat
+              under it. The headline is now the column's only content, and at
+              the old size three short action phrases read as captions floating
+              on a mostly empty page rather than as the page's substance —
+              cutting the bodies freed ~120 units per column, and giving a
+              third of it back to the type is what keeps the page from looking
+              like something went missing. */}
           <div
             style={{
               color: colors.foreground,
-              fontSize: "34px",
+              fontSize: "42px",
               lineHeight: 1.25,
-              marginTop: "14px",
+              marginTop: "16px",
             }}
           >
             {headline}
-          </div>
-          <div
-            style={{
-              color: colors.mutedFg,
-              fontSize: "24px",
-              lineHeight: 1.4,
-              marginTop: "14px",
-            }}
-          >
-            {body}
           </div>
         </Box>
       ))}
@@ -1077,95 +1071,160 @@ const Roadmap = () => (
 );
 
 /**
- * One claim under an open-venue panel.
+ * The page-10 flip: three asset classes in the order they came onchain, the
+ * third being ours.
  *
- * The panel captions are **bullets, not prose blocks** — the page's second
- * sanctioned break from "no bullet lists", after the gap page's facts. Two
- * paragraphs of small text under two badges read as fine print nobody finishes;
- * two short columns of peer claims read as an argument against an argument,
- * which is what this page is.
+ * This **replaces** v2's two-panel open-venue comparison — three
+ * permissioned-rail logos red-outlined against the Dropset wordmark in green,
+ * with three and four bullets under them. The sign-off review's objection was
+ * structural: in a two-minute pitch that is a long wind-up to a contrast, and
+ * it spends its seconds defining the other side's position before arguing with
+ * it. The flip makes the same point forward — the pattern already happened
+ * twice, so the third is the audience's own inference — at three words a beat
+ * instead of seven bullets.
  *
- * The chevron takes its **panel's own tint** rather than the deck accent, so a
- * claim belongs visibly to its side of the comparison — the two columns are read
- * across as often as down, and the marker is what keeps a red claim from being
- * skimmed as one of ours.
+ * The order is an **escalation in seriousness**, not chronology for its own
+ * sake, and it has to stay this way. Opening on memecoins is deliberate and
+ * slightly risky: it is the beat an investor might read as unserious, which is
+ * exactly why the presenter names it plainly and moves on. Ducking it would
+ * cost the page its first data point and its credibility — a deck that says
+ * "token launches" when everyone knows it means memecoins is being evasive
+ * about something it has no need to be evasive about. Tokenized equities is
+ * the **pivot**: a real, regulated, trillion-dollar asset class that went
+ * almost entirely to one chain, and the beat that earns FX.
+ *
+ * **Three, never four.** RWAs are the obvious fourth and they are deliberately
+ * spoken instead — Solana is third by total RWA value behind Ethereum and BNB,
+ * so the honest claim is about *momentum* (fastest growth, most holders,
+ * highest 30-day inflows) and that needs a sentence, not a tile.
+ *
+ * Every figure here is checkable, which is the standard this page is held to.
+ * Verified 2026-08-11, and **re-verify before presenting**:
+ *
+ * - **96%** — Solana took >96% of onchain tokenized-equity volume in June 2026
+ *   ($3.47B that month, $5.77B across Q2, a quarterly ATH). Reported at 95–97%
+ *   depending on the window; 96 is the conservative round number.
+ * - **11.9M** — cumulative token launches on Solana's dominant launchpad since
+ *   January 2024. Deliberately a *one-platform* figure, so it understates the
+ *   chain total: it is a floor, and a floor is the defensible direction.
+ * - **$9T+** — the same figure page 2 opens on, deliberately repeated. It is
+ *   what makes the third tile land as a bigger prize than the two before it
+ *   rather than as a promise, and it closes the loop the open started.
+ *
+ * The review's suggested "99% of tokens are created on Solana" framing is
+ * **cut**: no source supports it, and the weaker "more new tokens than every
+ * other chain combined" could not be verified against a current dashboard
+ * either. An unverifiable number beside two verified ones is what makes an
+ * audience doubt all three.
  */
-const VenueBullet = ({
-  tint,
-  children,
-}: {
-  tint: string;
-  children: React.ReactNode;
-}) => (
-  <FlexBox
-    alignItems="flex-start"
-    justifyContent="flex-start"
-    margin="0 0 14px 0"
+type FlipBeat = { label: string; value: string; unit: string; claim?: boolean };
+
+const FLIP_BEATS: FlipBeat[] = [
+  // **"12M+", not "11.9M", and the `+` is the whole point.** The precise
+  // figure is one launchpad's 11.9M cumulative launches since January 2024 —
+  // but that launchpad is only ~71% of Solana's daily token creation, and
+  // other launchpads exist, so the chain's real total is *above* it. Printing
+  // "11.9M" would state a one-platform number as though it were the chain's,
+  // which is precise and wrong; "over 12M" states a **floor**, which is
+  // imprecise and true. A skeptic can only discover the real figure is
+  // larger, which is the safe direction to be wrong in.
+  //
+  // What is deliberately NOT here is a cross-chain comparison ("more token
+  // launches than any other chain"). It is widely repeated and probably true,
+  // and it could not be sourced to a current, citable dashboard — so it stays
+  // off the slide *and* out of the talk track.
+  { label: "Memecoins", value: "12M+", unit: "tokens launched on Solana" },
+  // "on Solana" is load-bearing here too: 96% of onchain tokenized-equity
+  // volume being *on Solana* is the claim, and the page never names Solana
+  // anywhere else — not in the headline, not in the accent line — so without
+  // it this tile reads as "96% of some unspecified whole".
+  {
+    label: "Tokenized equities",
+    value: "96%",
+    unit: "of onchain volume on Solana",
+  },
+  {
+    label: "Foreign exchange",
+    value: "Next",
+    unit: "$9T+ a day",
+    claim: true,
+  },
+];
+
+const FLIP_TILE_WIDTH = 500;
+
+/**
+ * One beat of the flip: a label, a figure, and its unit, in a bordered tile.
+ *
+ * `claim` tints the whole tile with the deck accent, and exactly one beat gets
+ * it. The first two are things that already happened and are therefore
+ * evidence; the third is the argument, and it is the only element on the page
+ * that isn't a fact about the world as it is. Tinting the tile rather than just
+ * its text is what makes the row read left-to-right as *arriving* somewhere —
+ * two in the deck's neutral border, then one lit up.
+ *
+ * The three-part split (label / value / unit) exists so the tiles stay the same
+ * height without any of them being padded to match. Written as one string per
+ * tile, the two data beats ran long enough to wrap to two lines while "Next"
+ * took one, and the row went ragged; split, the big line is always one
+ * word-ish and the small line always one line. That headroom is what let the
+ * units later grow to carry "on Solana" without the row going uneven again.
+ */
+const FlipTile = ({ label, value, unit, claim }: FlipBeat) => (
+  <Box
+    width={`${FLIP_TILE_WIDTH}px`}
+    border={`2px solid ${claim ? colors.accent : colors.border}`}
+    borderRadius="16px"
+    padding="40px 30px"
   >
     <div
       style={{
-        color: tint,
-        flex: "0 0 auto",
+        color: claim ? colors.accent : colors.mutedFg,
         fontFamily: deckTheme.fonts.monospace,
-        fontSize: "27px",
-        lineHeight: 1.35,
-        marginRight: "14px",
+        fontSize: "24px",
+        letterSpacing: "0.12em",
+        lineHeight: 1.2,
+        textTransform: "uppercase",
       }}
     >
-      ›
+      {label}
     </div>
-    <div style={{ color: colors.foreground, fontSize: "27px", lineHeight: 1.35 }}>
-      {children}
+    <div
+      style={{
+        color: claim ? colors.accent : colors.foreground,
+        fontSize: "64px",
+        lineHeight: 1.2,
+        marginTop: "16px",
+      }}
+    >
+      {value}
     </div>
-  </FlexBox>
+    <div
+      style={{ color: colors.mutedFg, fontSize: "26px", lineHeight: 1.3 }}
+    >
+      {unit}
+    </div>
+  </Box>
 );
 
 /**
- * One side of the open-venue comparison: a bordered panel with its claims under
- * it. The border color is the whole argument — the permissioned side is tinted
- * with the sell red, the Dropset side with the buy green — so the page reads
- * before any of its copy does.
+ * The flip row: the three beats with the deck's chevron between them.
  *
- * Claims come in as **strings, not markup**, so the panel applies its own tint
- * to every one of its bullets. Passing rendered bullets instead would mean
- * repeating the tint at each call site, where one stale value would put a green
- * chevron in the red column and quietly reverse which side the reader thinks a
- * claim belongs to.
- *
- * Four fits, but only just, and only since the footer reserve was split and the
- * headline's phantom margin removed — together those gave this page back ~85
- * units, where a fourth two-line bullet costs ~85. At four green and three red
- * the page lands near 735 of its ~910. A fifth needs height found elsewhere
- * first, and the columns are already visibly uneven, which is the real limit:
- * the panels read as a comparison only while both sides look like sides.
+ * The chevron is `SequenceArrow`, the same mark page 4's swap flow uses, and
+ * reusing it is the point — that page already taught the audience that this
+ * glyph means "and then". It is also what keeps the row from reading as a
+ * bullet list: global rule 8 allows no lists at all now, and these are peers in
+ * a sequence rather than enumerated items.
  */
-const VenuePanel = ({
-  tint,
-  claims,
-  children,
-}: {
-  tint: string;
-  claims: string[];
-  children: React.ReactNode;
-}) => (
-  <Box width="700px" margin="0 26px">
-    <FlexBox
-      alignItems="center"
-      justifyContent="center"
-      border={`2px solid ${tint}`}
-      borderRadius="16px"
-      height="210px"
-    >
-      {children}
-    </FlexBox>
-    <Box margin="20px 0 0 0">
-      {claims.map((claim) => (
-        <VenueBullet key={claim} tint={tint}>
-          {claim}
-        </VenueBullet>
-      ))}
-    </Box>
-  </Box>
+const Flip = () => (
+  <FlexBox justifyContent="center" alignItems="stretch">
+    {FLIP_BEATS.map((beat, index) => (
+      <FlexBox key={beat.label} alignItems="center">
+        {index > 0 ? <SequenceArrow /> : null}
+        <FlipTile {...beat} />
+      </FlexBox>
+    ))}
+  </FlexBox>
 );
 
 /**
@@ -1232,76 +1291,138 @@ const Portrait = ({
   </Box>
 );
 
+/**
+ * The tagline — the deck's one-liner, and the only line on pages 1 and 12.
+ *
+ * It replaced "Where currency trades onchain", which described the product
+ * accurately and then asked the audience to care on its own. This says what
+ * Dropset is *for* in words that land on someone who has never traded FX,
+ * which is the job of the one line an investor might read before scrolling
+ * past. **"24/7/365" is load-bearing** — it carries the ambition and pays off
+ * the 24/5 fact on page 2 — so the shorter "onchain currency translation
+ * layer" is a downgrade rather than a trim.
+ *
+ * A noun phrase, and one of global rule 1's three sanctioned fragments: a
+ * tagline names the company, and every sentence form ("Dropset is the…") puts
+ * a subject on a page whose subject is the wordmark directly above it.
+ */
+const TAGLINE = "The 24/7/365 currency translation layer";
+
+/**
+ * The title page's body: the wordmark over the tagline, centred, nothing else.
+ *
+ * **Rendered twice** — page 1 opens on it and page 12 closes on it — which is
+ * the whole reason it is a component. The close only works if the page is
+ * *identical* to the opener, and two hand-built copies drift the moment either
+ * is edited; sharing the body makes that structural rather than a promise.
+ * Only the `Notes` differ, which is the point: the same picture carries the
+ * one-liner at the start and the why-me at the end.
+ *
+ * The page used to carry a "Built by DASMAC" line and the wide company banner
+ * beneath it; both are gone. DASMAC is the boring DevCo in the background —
+ * someone finds it when they sign a document — so a title slide that argues
+ * for it argues for the wrong thing. The footer credit is the deck's one
+ * mention, and it is enough.
+ *
+ * The type is smaller than the 88px the old tagline carried, because this one
+ * is half again as long and has to hold **one line**: `nowrap` is deliberately
+ * *not* used here, since a horizontal overflow on the widest line in the deck
+ * clips at the slide edge rather than showing up as the vertical crowding the
+ * other pages fail with. The `maxWidth` leaves ~120 units of slack against the
+ * ~1856 a slide has, so the line has somewhere to grow if the font ever
+ * changes metrics.
+ */
+const TitlePage = () => (
+  <SlideBody centered>
+    <Box margin="0 0 40px 0">
+      <Wordmark width={860} />
+    </Box>
+    <Statement fontSize="76px" maxWidth="1730px">
+      {TAGLINE}
+    </Statement>
+  </SlideBody>
+);
+
 export default function DemoDeck() {
   return (
     <Deck theme={deckTheme} template={template}>
       {/* 1 — Title */}
       <Slide>
-        <SlideBody centered>
-          <Box margin="0 0 40px 0">
-            <Wordmark width={860} />
-          </Box>
-          {/* The wordmark and one sentence, and nothing else. This page used to
-              carry a "Built by DASMAC" line and the wide company banner beneath
-              it; both are gone. DASMAC is the boring DevCo in the background —
-              someone finds it when they sign a document — so a title slide that
-              argues for it argues for the wrong thing. The footer credit is the
-              deck's one mention, and it is enough. */}
-          <Statement fontSize="88px">Where currency trades onchain</Statement>
-        </SlideBody>
-        <Notes>Dropset is where currency trades onchain.</Notes>
+        <TitlePage />
+        {/* The tokenized-equity analogy is **spoken, never printed**. It is the
+            sit-up moment — a VC who knows nothing about FX instantly gets that
+            one asset class crossed onchain and the other didn't — and it plants
+            page 10, which returns to tokenized equities with the number
+            attached. On the slide it would be a second sentence competing with
+            the tagline; said out loud over a bare wordmark, it lands. */}
+        <Notes>
+          Dropset is the 24/7/365 currency translation layer. Here’s what I
+          mean. Anyone with a phone can buy tokenized Tesla stock today, from
+          almost any country — and nobody can do that with a euro. That’s the
+          hole we’re filling.
+        </Notes>
       </Slide>
 
-      {/* 2 — The gap */}
+      {/* 2 — A huge market. The first half of the open: one number, and out. */}
       <Slide>
         <SlideBody>
-          <Eyebrow>The gap</Eyebrow>
+          <Eyebrow>The market</Eyebrow>
           <Statement fontSize="72px">
             Foreign exchange is the biggest market on earth
           </Statement>
-          <FlexBox
-            margin="44px 0 0 0"
-            alignItems="flex-start"
-            justifyContent="flex-start"
-          >
-            {/* Six facts, and the order is the page's argument: a huge market,
-                two structural problems with it, the environment that fixes
-                exactly those, the gap that's still left, and what we're going
-                after. Fact 3 says the closing hours plainly and does not absorb
-                the OTC desks — fragmentation is fact 2's job, and folding them
-                together loses one of the two problems. Fact 4 is the thesis the
-                rest of the deck answers to, and it names public blockchains
-                rather than Solana, because the claim is about the class of
-                environment; "especially Solana" is a spoken line.
+          {/* One figure, and deliberately nothing else. The v2 gap page carried
+              this sentence plus six chevron-marked facts plus the meter plus a
+              screenshot — accurate, and the densest thing in a deck that is
+              otherwise concise. A pitch's first content page sets the pace for
+              every page after it, so this one is a single number: huge market
+              here, no penetration on page 3.
 
-                The gap and the goal are **two rows, not one**. Joined by a dash
-                they read as one sentence whose second half qualifies the first,
-                which is exactly backwards: the goal is the bigger claim, and it
-                has to be able to be read on its own. */}
-            {/* 880, up from 800. The row is centred as a block and the meter
-                column beside it is ~798 wide, so at a 60-unit gutter this still
-                totals ~1738 of the ~1856 a slide has — the widening is free, and
-                a wider measure is what keeps six facts from each taking a line
-                more than they need. */}
-            <Box width="880px" margin="0 60px 0 0">
-              <Fact>Daily volumes exceed $9 trillion</Fact>
-              <Fact>Banks and OTC desks fragment liquidity</Fact>
-              <Fact>FX markets only trade 24/5</Fact>
-              <Fact>
-                Public blockchains are the most money-like digital environment
-                available today
-              </Fact>
-              {/* "are on", not "are available on": this row has to land in two
-                  lines. It is the longest fact on the page now that it names
-                  what Solana is best at, and at three lines it reads as a
-                  paragraph among statements. Trim this clause first if it ever
-                  grows again — the Solana qualifier is the part doing new work. */}
-              <Fact>
-                Less than 10% of the world’s currencies are on Solana, the
-                fastest and cheapest chain
-              </Fact>
-              <Fact accent>Our goal is 24/7/365 coverage of every FX spot pair</Fact>
-            </Box>
+              Fragmentation and the 24/5 closing hours were two of those six
+              facts and are now **spoken only**. Both are real and neither is
+              the beat — the beat is the size of the prize — and as printed rows
+              they had the audience reading a list while the presenter talked. */}
+          <SlideFill>
+            <HeroFigure figure="$9T+" caption="Traded every day" />
+          </SlideFill>
+        </SlideBody>
+        <Notes>
+          Foreign exchange is the biggest market on earth — over nine trillion
+          dollars a day. It’s also structurally old: banks and over-the-counter
+          desks fragment the liquidity, and it only trades 24/5 — it closes on
+          Friday afternoon and it doesn’t open again until Sunday night.
+        </Notes>
+      </Slide>
+
+      {/* 3 — No penetration. The second half of the open. */}
+      <Slide>
+        <SlideBody>
+          <Eyebrow>The gap</Eyebrow>
+          {/* Deliberately opens on "But", because this headline is the second
+              half of page 2's. Read in sequence the two pages are one sentence
+              — "Foreign exchange is the biggest market on earth" / "but it
+              barely trades onchain" — which is what makes the split read as one
+              open with momentum rather than as two market-size slides. It also
+              beats the alternatives on precision: "blockchains have almost none
+              of it" needs the audience to carry "it" across a slide boundary,
+              and names the wrong subject (the page is about FX, not about
+              blockchains). Keep the lowercase-after-"But" reading in mind if
+              this is ever reworded — the pages only work as a pair. */}
+          <Statement fontSize="72px">But it barely trades onchain</Statement>
+          {/* The statement carries what used to be the fifth chevron fact, so
+              this page needs no fact list at all: the meter shows the ratio,
+              the screenshot cites it, and the sentence says what it means.
+              That is what keeps this page as sparse as page 2 while still
+              carrying the deck's most checkable number.
+
+              Two claims that used to print here are now spoken. The 24/7/365
+              goal was v2's one accent row, and the title page now *opens* with
+              24/7/365 in the tagline — printing it again three pages later
+              reads as the deck repeating itself rather than escalating. And
+              the money-ness thesis ("public blockchains are the most money-like
+              digital environment available today") was the abstract sentence on
+              a page whose job is a concrete ratio; it is still the claim the
+              deck answers to, and page 10 is its payoff. */}
+          <SlideFill>
             <Box>
               <CurrencyMeter />
               <Screenshot
@@ -1312,25 +1433,26 @@ export default function DemoDeck() {
                 margin="30px 0 0 0"
               />
             </Box>
-          </FlexBox>
+          </SlideFill>
         </SlideBody>
+        {/* `LISTED_CURRENCIES` / `TOTAL_CURRENCIES` drive both the meter and the
+            spoken figure below, and they are live numbers from our own site —
+            check them before presenting. A stale slide beside a corrected
+            number read aloud is worse than either alone. */}
         <Notes>
-          Foreign exchange is the biggest market on earth — over nine trillion
-          dollars a day. But banks and over-the-counter desks fragment its
-          liquidity, and it only trades 24/5 — it closes on Friday. Public
-          blockchains are the most money-like digital environment we have, and
-          Solana most of all — it is the fastest and the cheapest. And yet less
-          than ten percent of the world’s currencies are available there: fourteen
-          out of a hundred and sixty-two,
-          and that count is live on our own site, which is where this is from. Our
-          goal is 24/7/365 coverage of every FX spot pair — every currency
-          connectable to every other one, and that’s what we’re building. To be
-          precise: we don’t issue currencies — issuers create them, and Dropset is
-          where they trade.
+          And blockchains have almost none of it. Less than ten percent of the
+          world’s currencies are on Solana — fourteen out of a hundred and
+          sixty-two — and that count is live on our own site, which is where
+          this is from. Public blockchains are the most money-like digital
+          environment we have, and Solana most of all: it’s the fastest and the
+          cheapest. So the gap is the whole opportunity. Our goal is 24/7/365
+          coverage of every FX spot pair — every currency connectable to every
+          other one. To be precise: we don’t issue currencies — issuers create
+          them, and Dropset is where they trade.
         </Notes>
       </Slide>
 
-      {/* 3 — Live today */}
+      {/* 4 — Live today */}
       <Slide>
         <SlideBody>
           <Eyebrow>Live today</Eyebrow>
@@ -1412,7 +1534,7 @@ export default function DemoDeck() {
         </Notes>
       </Slide>
 
-      {/* 4 — Currency curation. A continuation of "live today". */}
+      {/* 5 — Currency curation. A continuation of "live today". */}
       <Slide>
         <SlideBody>
           <Eyebrow>Currency curation</Eyebrow>
@@ -1439,7 +1561,7 @@ export default function DemoDeck() {
         </Notes>
       </Slide>
 
-      {/* 5 — The illiquid tail. The problem the eCLOB answers. */}
+      {/* 6 — The illiquid tail. The problem the eCLOB answers. */}
       <Slide>
         <SlideBody>
           <Eyebrow>The long tail</Eyebrow>
@@ -1462,7 +1584,7 @@ export default function DemoDeck() {
         </Notes>
       </Slide>
 
-      {/* 6 — The eCLOB */}
+      {/* 7 — The eCLOB */}
       <Slide>
         <SlideBody>
           <Eyebrow>The eCLOB</Eyebrow>
@@ -1530,7 +1652,7 @@ export default function DemoDeck() {
         </Notes>
       </Slide>
 
-      {/* 7 — How we grow */}
+      {/* 8 — How we grow */}
       <Slide>
         <SlideBody>
           <Eyebrow>How we grow</Eyebrow>
@@ -1542,8 +1664,9 @@ export default function DemoDeck() {
           </SlideFill>
         </SlideBody>
         <Notes>
-          We seed the markets ourselves the way Hyperliquid did — our vaults
-          bootstrap each book, and anyone can top them off, so the flywheel is
+          We seed the markets ourselves, the way every venue that ever
+          bootstrapped its own liquidity did — our vaults bootstrap each book,
+          and anyone can top them off, so the flywheel is
           public rather than ours alone. The wedge is that long tail of
           currencies: spreads are wide there, and an issuer arriving with no
           depth of their own needs a day-one liquidity partner. And it’s a
@@ -1555,7 +1678,7 @@ export default function DemoDeck() {
         </Notes>
       </Slide>
 
-      {/* 8 — Growth roadmap */}
+      {/* 9 — Growth roadmap */}
       <Slide>
         <SlideBody>
           <Eyebrow>Growth roadmap</Eyebrow>
@@ -1595,167 +1718,124 @@ export default function DemoDeck() {
         </Notes>
       </Slide>
 
-      {/* 9 — Why the open venue wins */}
+      {/* 10 — Why FX is next */}
       <Slide>
         <SlideBody>
-          <Eyebrow>Why the open venue wins</Eyebrow>
-          {/* The page is **the long-term question** — public or private onchain
-              liquidity — and this states our side of it rather than the other
-              side's problem. It replaced "permissioned onchain liquidity has an
-              adoption ceiling", which made the page about them; the rails are
-              context for the question now, not targets. Pinned to one line:
-              at 60 it fits the measure, and the panels below leave nothing to
-              spend on a second. */}
+          <Eyebrow>Why FX is next</Eyebrow>
+          {/* The deck's thesis line, kept from v2 — it is the sentence the
+              whole argument has been walking toward, and the continuous read
+              closes on it. An intermediate v3 draft replaced it with "New asset
+              classes consolidate where liquidity is public", which states the
+              *pattern* instead; that claim is real but it belongs under the
+              row, as the reading of the evidence. The headline should be the
+              conviction, not the observation.
+
+              Pinned to one line at 60, exactly as v2 had it: it fits the
+              measure, and the row below leaves nothing to spend on a second. */}
           <Statement fontSize="60px" nowrap>
             Public liquidity is what blockchains were built for
           </Statement>
-          {/* `alignItems` must stay explicit. Spectacle's `FlexBox` defaults to
-              `center`, which vertically centred each panel *including its
-              caption* — so the panel with the longer caption was the taller
-              column, and its badge rode up relative to the other one. Aligning
-              to the top puts both badges on the same line, which is what makes
-              the pair read as a comparison. */}
-          <FlexBox
-            margin="46px 0 0 0"
-            justifyContent="center"
-            alignItems="flex-start"
-          >
-            {/* What these claims do **not** say is the point of the sharpening:
-                not that an issuer would never go to a private rail — it gets
-                real distribution there — and not that no fintech will ever
-                settle on a competitor's ledger, which overstates a real effect
-                into something an investor can simply counterexample. The claim
-                is **friction**, on two axes: a ledger owned by a competitor is
-                an awkward place to settle, and market making on it isn't
-                permissionless, so the team most likely to try something new
-                meets an account-opening process before it meets any liquidity.
+          <SlideFill>
+            <Box>
+              <Flip />
+              {/* The page's whole spend on the argument, and it has to stay one
+                  line. It carries the claim the headline gave up when that went
+                  back to the thesis line: the tiles are three facts, and this is
+                  what reading them together means.
 
-                "Multiple" private ledgers, not "competing" ones — "competing
-                private ledgers introduce competitive friction" says the same
-                word twice in one breath, and it's the *plurality* that is the
-                condition being described. */}
-            <VenuePanel
-              tint={colors.sell}
-              claims={[
-                "Multiple private ledgers introduce competitive friction",
-                "Liquidity is gated, and market making isn’t permissionless",
-                "Early-stage teams face hurdles just to experiment",
-              ]}
-            >
-              {/* No names under these three: each mark is a wordmark that
-                  already says the company, so a caption repeats the word
-                  directly under itself. Compare the flywheel, whose marks are
-                  icons and do need naming. */}
-              <LogoRow
-                logos={PERMISSIONED}
-                width={180}
-                height={40}
-                tint={colors.sell}
-                margin="0px"
-                showNames={false}
-              />
-            </VenuePanel>
-            {/* Our side names the **ambition**, not just the contrast: public
-                money infrastructure, a flywheel that exists nowhere else, and
-                every currency onchain. That is the thing an investor is being
-                asked to buy into, and it has to be said here rather than left
-                as the implication of the other panel being wrong.
+                  **"Bootstrap", not "consolidate".** An earlier draft read
+                  "Each new asset class consolidates where anyone can quote",
+                  which describes where the asset classes ended up — a
+                  restatement of the row directly above it. This says what the
+                  environment *did*: an open venue is what lets a new asset
+                  class get started at all, which is the training-wheels
+                  argument the first tile makes and the reason the third one
+                  follows. It also puts the environment in the subject
+                  position, so the sentence is about the property rather than
+                  about the assets.
 
-                "…environment **today**" is load-bearing, not filler. It marks
-                Solana as the current best choice rather than a permanent
-                commitment, which is the answer to the reasonable investor
-                question of what happens if a better settlement layer arrives:
-                nothing here is bound to this one. Same reason the gap page names
-                what Solana is best *at* rather than treating it as given.
-
-                These read as a mechanism rather than as virtues: the environment
-                makes transmission and composition cheap, that is what lets
-                liquidity compound instead of sitting still, and the compounding
-                is what makes every currency reachable — one market at a time,
-                which is the honest form of "every currency onchain". A route
-                that exists and gets walked, rather than a state we assert. That
-                we have already started walking it belongs in the spoken track,
-                with the issuers named — a slide saying "we've begun" invites
-                "begun with whom?", a question to answer out loud rather than in
-                six words under a logo.
-
-                The **absorption** claim is the strongest thing on the page, and
-                it is what turns the comparison from a matter of taste into one of
-                dominance. A maker who already holds an account on a gated venue
-                can quote here and hedge there, so this book can carry that depth
-                — and nothing carries it the other way, because no permissioned
-                venue can take in a public book's liquidity. Public liquidity is
-                therefore a *superset* of private liquidity rather than an
-                alternative to it. It also repairs a soft spot elsewhere: page 7
-                otherwise leaves our own vaults as the only answer to where depth
-                for a thin pair comes from.
-
-                Like the path claim, it is a **capability** and not something
-                running today — it depends on how a given maker is integrated.
-                The aggressive version (that this is a vampire attack on private
-                liquidity, and that it only runs in one direction) is spoken, not
-                printed: the page argues about private ledgers as a class rather
-                than attacking anyone, and the term properly describes poaching an
-                incumbent's liquidity providers with incentives, which is a
-                different mechanic. */}
-            <VenuePanel
-              tint={colors.buy}
-              claims={[
-                "Dropset is open and composable on Solana, the most money-like onchain environment today",
-                "Ease of transmission and open access compound liquidity into a flywheel",
-                "Every currency and FX pair has a path to onchain liquidity, one market at a time",
-                "Public liquidity absorbs private liquidity through market makers who already have gated access",
-              ]}
-            >
-              <Wordmark width={420} />
-            </VenuePanel>
-          </FlexBox>
+                  A second line turns the flip back into the wind-up it
+                  replaced. */}
+              <div
+                style={{
+                  color: colors.accent,
+                  fontSize: "34px",
+                  lineHeight: 1.3,
+                  marginTop: "44px",
+                  textAlign: "center",
+                }}
+              >
+                Open environments bootstrap new asset classes
+              </div>
+            </Box>
+          </SlideFill>
         </SlideBody>
+        {/* **No competitor is named here, and none may be added.** The spoken
+            track says "permissioned rails" and nothing more specific. The
+            argument is unchanged from v2 but is made as a *property* claim —
+            gated access can't compound liquidity — which is stronger than an
+            attack because it is about a mechanism rather than about a company.
+
+            Two things survive here from the page this replaced. The **"today"**
+            qualifier on Solana is now spoken only, and it still has to be said:
+            it is the answer to what happens if a better settlement layer
+            arrives. And the **absorption** claim — a maker with gated access
+            can quote here and hedge there, and nothing carries depth back —
+            repairs a soft spot on page 8, which otherwise leaves our own vaults
+            as the only answer to where depth for a thin pair comes from. Say it
+            as a capability, not as something running today. The old "vampire
+            attack" phrasing is retired: with no competitor named it has no
+            referent, and the term properly describes poaching an incumbent's
+            liquidity providers with incentives, which is a different mechanic.
+
+            The RWA figures are spoken because their honest form is about
+            *growth*, not size — Solana is third by total RWA value behind
+            Ethereum and BNB, so any "Solana leads RWAs" claim hands a listening
+            investor a free correction. */}
         <Notes>
-          The long-term question is whether onchain liquidity is public or
-          private, and this is the one to make up your mind about. Arc and Tempo
-          are building payment-and-settlement rails, and Canton is doing
-          regulated onchain markets — and an issuer that goes there gets real
-          distribution, so the argument isn’t that Circle would never use one.
-          It’s friction. Once there are several of these ledgers, settling on one
-          your competitor owns is an awkward place to be — a bank that competes
-          with Circle is not enthusiastic about building on Arc — and market
-          making on them isn’t permissionless: the liquidity is gated, so you
-          quote only if they let you. An early-stage team hits those hurdles
-          before it can even experiment. Dropset is open and composable on
-          Solana, the most money-like onchain environment today — and I say today
-          deliberately: Solana is where this belongs right now because it’s the
-          fastest and the cheapest, not a commitment we’re locked into if
-          something better shows up. What we’re building is public liquidity, and
-          that’s portable. Ease of transmission and composability let liquidity
-          compound into a flywheel instead of sitting still. That’s the public money infrastructure we’re
-          building — a flywheel around public currency liquidity that exists
-          nowhere else. Every currency and FX pair has a path to onchain
-          liquidity here, one market at a time — and we’ve already started
-          walking it: we’re in detailed conversations with AUDD, and we’ve spoken
-          with the CADC issuer. And here’s the part that matters most: this
-          absorbs their liquidity. A market maker who already has an account on
-          one of those rails can quote here and hedge there, so their depth shows
-          up in a public book that anyone can trade against — and it doesn’t run
-          the other way, because a permissioned venue can’t take in a public
-          book’s liquidity. Public liquidity is a superset of private liquidity,
-          and the makers who already hold that gated access are the pipe.
-          [Optional, if the room is technical: it’s a vampire attack on private
-          liquidity, and it only works in this direction.] Public liquidity is
-          what
+          So why does FX land here, and why now? Because every new asset class
+          has already consolidated on Solana, in order. First memecoins — over
+          twelve million tokens launched. Call that the training wheels: it
+          looks unserious, and it was the proving ground. It established that
+          anyone could launch a market on this chain and anyone could trade
+          against it, at a scale nothing else came close to. And it is a real
+          business — one launchpad alone became the number-one
+          DEX by daily volume across every chain, on a billion dollars of
+          cumulative revenue. Then tokenized equities, and that one is a big
+          deal: ninety-six percent of onchain tokenized-equity
+          volume is on Solana, and effectively nowhere else. Real-world assets
+          are going the same way — Solana added more of them in the last six
+          months than in its whole history before that, and it has more holders
+          of them than any other chain. So the training wheels came off. FX is
+          next, and it’s the biggest of
+          them. It lands here for the same reason the others did: public
+          liquidity. Anyone can quote, anyone can trade against it, and it
+          composes with everything else onchain — so depth compounds instead of
+          sitting still. Solana is the most money-like onchain environment
+          today, and I say today deliberately: it’s where this belongs right now
+          because it’s the fastest and the cheapest, not a commitment we’re
+          locked into if something better shows up. What we’re building is
+          public liquidity, and that’s portable. That’s the part the
+          permissioned rails structurally can’t have: gate who gets to make a
+          market and liquidity never compounds, it just sits where you put it.
+          And it runs one way — a maker who already has access to one of those
+          venues can quote here and hedge there, so their depth reaches a public
+          book, and nothing carries it back. Public liquidity is what
           blockchains were built for — moving money is the problem they were
           supposed to solve, and this is that.
         </Notes>
       </Slide>
 
-      {/* 10 — Team & close. The last page, and it stays up. */}
+      {/* 11 — Team. No longer the last page: the close (12) replays the title
+          and is what stays up, so the mirror-the-title line and the
+          "leave this page up" direction both moved there. */}
       <Slide>
         <SlideBody>
           <Eyebrow>The team</Eyebrow>
           <Statement fontSize="64px">
             Dropset is built by people who have built exchanges
           </Statement>
-          {/* 32, down from this page's own 46, for the same reason page 3 came
+          {/* 32, down from this page's own 46, for the same reason page 4 came
               down to 16: with two five-line bios under two headshots, this is
               the second densest page, and the gap above the portraits is what
               was pushing the eyebrow into the top edge. */}
@@ -1795,9 +1875,38 @@ export default function DemoDeck() {
           quoting on the eCLOB cost double-digit compute units. Judy owns the
           whole operational stack, and works directly with banks, stablecoin
           providers, onramps and service providers, on an extensive background in
-          logistical coordination and partner relationship management. Dropset —
-          where currency
-          trades onchain. [Leave this page up.]
+          logistical coordination and partner relationship management.
+        </Notes>
+      </Slide>
+
+      {/* 12 — Close. A replay of page 1, and the page that stays up. */}
+      <Slide>
+        <TitlePage />
+        {/* This page exists because the sign-off review was left **wondering
+            why we care about this**, and observed that people invest in a
+            founder at least as much as in a problem. v2 ended on the team page,
+            which states credentials — it answers "can they build it", not "why
+            are they the ones who will". Putting the why-me over a replay of the
+            title lands it on the deck's own thesis rather than over two
+            headshots, and it gives the talk a bookend: the tagline is the first
+            thing said and the last.
+
+            The personal why below is a **scaffold, not finished copy**, and it
+            should be rewritten in the founder's own voice before it is
+            delivered — it is the one block in this deck written to be replaced.
+            Keep it to two or three sentences out loud. The failure mode is a
+            biography; the target is the single sentence that makes a listener
+            believe this person would still be working on this in five years. */}
+        <Notes>
+          Dropset — the 24/7/365 currency translation layer. [Personal why —
+          rewrite in your own voice, two or three sentences: Fifteen years in
+          this industry, and money still doesn’t actually move onchain.
+          Everything else did — trading, collectibles, now equities — and the
+          thing blockchains were *for* is the thing still waiting. I’ve spent
+          that time building exchange technology across the whole stack on more
+          than one chain, so the unsolved market I’d pick was always going to be
+          an exchange problem. FX is the biggest one left and the least touched,
+          and being early to it compounds.] [Leave this page up.]
         </Notes>
       </Slide>
     </Deck>
