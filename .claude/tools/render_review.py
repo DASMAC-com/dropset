@@ -66,6 +66,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import re
 import sys
 import tempfile
@@ -105,9 +106,10 @@ def _require_pillow():
         from PIL import Image, ImageChops, ImageDraw
     except ImportError as e:  # pragma: no cover - depends on the host
         raise RenderReviewError(
-            "this mode needs Pillow, which is not installed here "
-            "(`python3 -m pip install Pillow`). `--measure` of page count and "
-            "duplicates works without it."
+            "every mode of this tool needs Pillow, which is not installed "
+            "here — `python3 -m pip install Pillow`. (The page-ordering and "
+            "duplicate-detection logic is dependency-free and unit-tested "
+            "without it, but no CLI mode stops short of touching pixels.)"
         ) from e
     return Image, ImageChops, ImageDraw
 
@@ -248,8 +250,6 @@ def measure_page(data: bytes) -> dict:
     anything" — for a few hundred tokens rather than a full-page read.
     """
     Image, ImageChops, _ = _require_pillow()
-    import io
-
     with Image.open(io.BytesIO(data)) as img:
         rgb = img.convert("RGB")
         width, height = rgb.size
@@ -308,8 +308,6 @@ def duplicate_groups(pages: list[tuple[str, bytes]]) -> list[list[int]]:
 def _downscaled(data: bytes, width: int):
     """One page as a Pillow image, no wider than ``width``."""
     Image, _, _ = _require_pillow()
-    import io
-
     img = Image.open(io.BytesIO(data))
     img = img.convert("RGB")
     if img.width > width:

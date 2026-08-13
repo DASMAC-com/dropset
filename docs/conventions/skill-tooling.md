@@ -18,19 +18,35 @@ coupling skill tooling to the program's toolchain.
   `.claude/hooks/no_compound_bash.py` is Python, and the repo already
   lints Python with `ruff-check` / `ruff-format` in
   `cfg/pre-commit-lint.yml` — so no new toolchain is needed.
+
 - **They live in `.claude/tools/`**, co-located with `.claude/hooks/`
   and `.claude/skills/` because they exist specifically for Claude, and
   explicitly **outside** the Cargo workspace — **never** a member of
   `Cargo.toml`. The `ruff` pre-commit hook has no `files` filter, so it
   already covers `.claude/tools/**` by default.
+
 - **Stdlib only** where practical (JSON + filesystem), so a tool runs
   with a bare `python3` and needs no install step.
+
+  Where a tool genuinely needs a third-party package — `render_review.py`
+  needs Pillow to touch pixels at all — **import it lazily, at the use
+  site**, so the module still imports without it. Three things follow,
+  and they are what keep the exception from eroding the rule: the
+  dependency-free paths (argument parsing, path/ordering logic) keep
+  working and stay testable; the tests that *do* need it are guarded
+  with `unittest.skipUnless` so `make tools-tests` passes either way;
+  and the failure, when it comes, is one clear line naming the install
+  rather than an `ImportError` traceback. CI's lint job installs
+  `pre-commit` and nothing else, so a hard import would make the whole
+  suite un-runnable there.
+
 - **Cover them with stdlib `unittest`** in `.claude/tools/tests/`
   (one `test_<tool>.py` per tool), run via `make tools-tests` (no
   pytest dependency). The tests `import <tool>` bare, so discovery uses
   the tests dir as start and `.claude/tools` as the top-level
   (`-t .claude/tools`) to keep those imports resolving — an empty
   `tests/__init__.py` marks the package.
+
 - A skill drives its tool through a stable interface — usually a
   `make` target (e.g. `make session-metrics`) so the skill's
   allow-rule (`Bash(make session-metrics:*)`) is unchanged if the tool
@@ -45,9 +61,16 @@ output to a log and surfaces only a summary — see
 [context economy](context-economy.md)), `review_diff.py` (`review-pr`
 step 5's diff-and-freshness gate, which also **owns** the three path
 lists that decide the review's excludes and which CI-mirroring gates
-run), and `sync_blockers.py` (the deterministic core of the
-`sync-blockers` skill), alongside the `firm-perms` / `housekeeping` /
-`cspell-audit` glue.
+run), `sync_blockers.py` (the deterministic core of the
+`sync-blockers` skill), `search_source.py` (the one scoped-search
+shape, which takes its exclude lists from `review_diff.py`),
+`lens_preamble.py` (composes the standing half of a lens brief from the
+[sub-agent brief](sub-agent-brief.md) plus a skill's own committed
+section, so a skill never reads either to quote it), and
+`render_review.py` (measures or contact-sheets rendered deck pages
+instead of reading them at print resolution — the one tool with an
+optional dependency, per the lazy-import rule above), alongside the
+`firm-perms` / `housekeeping` / `cspell-audit` glue.
 `.claude/tools/` is the single home for skill glue: there is **no**
 top-level `tools/` tree.
 

@@ -116,6 +116,27 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(verdict[0], "machine-path")
         self.assertIn("doubled slash", verdict[1])
 
+    def test_a_doubled_slash_mid_path_is_also_malformed(self):
+        """Not just a doubled *leading* slash — `/a/b//c` can never match
+        either, and the first lookbehind was narrow enough to miss it."""
+        rule = "Read(/Users/me/repos//dropset/**)"
+        verdict = classify(rule, 0, [rule], machine_local=True)
+        self.assertEqual(verdict[0], "machine-path")
+        self.assertIn("doubled slash", verdict[1])
+
+    def test_a_url_scheme_is_not_read_as_a_doubled_slash(self):
+        """`https://` must stay clean — it is the reason the check needs a
+        lookbehind at all."""
+        rule = "Bash(curl https://example.com/x:*)"
+        self.assertIsNone(classify(rule, 0, [rule], machine_local=True))
+
+    def test_a_trailing_arg_separator_is_not_part_of_the_path(self):
+        """`Bash(python3 /abs/tool.py:*)` must resolve `/abs/tool.py`, not
+        `/abs/tool.py:` — otherwise every absolute Bash rule reads as stale."""
+        real = Path(__file__).resolve()
+        rule = f"Bash(python3 {real}:*)"
+        self.assertIsNone(classify(rule, 0, [rule], machine_local=True))
+
     def test_a_stale_path_is_flagged_when_machine_local(self):
         """Where absolute paths are legitimate, a path that no longer resolves
         is the check with real value — worktree rules decay this way."""

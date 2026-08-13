@@ -86,14 +86,21 @@ _MACHINE_PATH_RE = re.compile(r"/(Users|home)/[^/*]+/")
 
 # A doubled slash can never match — this is the one true positive that pass
 # found (`Read(//Users/<name>/.cargo/**)`), and it is malformed regardless of
-# which settings file it sits in.
-_MALFORMED_PATH_RE = re.compile(r"(?<![:a-z])//")
+# which settings file it sits in. The lookbehind exempts a URL scheme
+# (`https://`, `file://`) and nothing else: a doubled slash *mid*-path is just
+# as unmatchable as a leading one, so it must not be exempted too.
+_MALFORMED_PATH_RE = re.compile(r"(?<!:)//")
 
 # A path prefix worth resolving on disk. Anchored at the rule's first absolute
 # path and stopped before any glob, so `Read(/Users/x/repo/**)` resolves
 # `/Users/x/repo`. Worktree rules accumulate as worktrees come and go, so a
 # no-longer-resolving path is the version of this check with real value.
-_ABS_PATH_RE = re.compile(r"(/(?:Users|home)/[^/*\s]+/[^*\s()]*)")
+#
+# `:` is excluded from the path body because in a `Bash(...)` rule it is the
+# argument separator, not part of the filename — capturing it turned
+# `Bash(python3 /abs/tool.py:*)` into a lookup for `/abs/tool.py:`, which never
+# resolves, so every absolute Bash rule would have read as stale.
+_ABS_PATH_RE = re.compile(r"(/(?:Users|home)/[^/*\s:]+/[^*\s():]*)")
 
 # Machine-local settings files: absolute home paths are expected here.
 _LOCAL_SETTINGS_NAMES = ("settings.local.json",)
