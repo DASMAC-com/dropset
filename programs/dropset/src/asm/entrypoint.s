@@ -21,8 +21,8 @@
 # Both discriminators share one preamble (layout integrity, sector bounds,
 # the `quote_authority` compare, the nonce bump and flush arm) exactly as
 # the Rust kernels share `quote_write.rs`, and diverge only at the payload:
-# `set_reference_price` stores two u32s, `set_liquidity_profile` copies the
-# 160-byte profile blob with `sol_memcpy_`. Neither validates its payload —
+# `set_reference_price` stores three u32s, `set_liquidity_profile` copies the
+# 224-byte profile blob with `sol_memcpy_`. Neither validates its payload —
 # matching skips an invalid price, and an over-cap ladder side is dropped at
 # flush time.
 #
@@ -53,8 +53,9 @@
 # set_reference_price payload
 .equ IX_PRICE_BITS_OFF, 5         # u32
 .equ IX_QUOTE_SLOT_OFF, 9         # u32
+.equ IX_QUOTE_UNIX_OFF, 13        # u32
 # set_liquidity_profile payload
-.equ IX_PROFILE_OFF, 5            # [u8; 160], past disc(1) + vault_idx(4)
+.equ IX_PROFILE_OFF, 5            # [u8; 224], past disc(1) + vault_idx(4)
 
 # --- account 0: signer ---
 .equ SIGNER_IS_SIGNER_OFF, 9      # acct0_base(8) + header is_signer(1)
@@ -75,15 +76,16 @@
 .equ MARKET_NONCE_OFF, MARKET_DATA_OFF + 8       # MarketHeader.nonce (u64)
 .equ MARKET_LEN_OFF, MARKET_DATA_OFF + 261       # slab len (u32)
 .equ SLAB_ITEMS_OFF, 268                         # first Vault, within data
-.equ VAULT_SIZE, 560
-.equ PROFILE_SIZE, 160                           # size_of::<LiquidityProfile>()
+.equ VAULT_SIZE, 692
+.equ PROFILE_SIZE, 224                           # size_of::<LiquidityProfile>()
 
 # --- Vault field offsets ---
 .equ VAULT_QUOTE_AUTHORITY_OFF, 40
 .equ RP_STAMP_OFF, 72             # reference_price.stamp (u64)
 .equ RP_PRICE_OFF, 80             # reference_price.price (u32)
 .equ RP_QUOTE_SLOT_OFF, 84        # reference_price.quote_slot (u32)
-.equ VAULT_PROFILE_OFF, 144       # profile (LiquidityProfile, PROFILE_SIZE B)
+.equ RP_QUOTE_UNIX_OFF, 88        # reference_price.quote_unix (u32)
+.equ VAULT_PROFILE_OFF, 148       # profile (LiquidityProfile, PROFILE_SIZE B)
 
 # --- constants ---
 .equ FLUSH_BIT, 0x8000000000000000
@@ -107,17 +109,32 @@
 #
 # SURPLUS ix data is a non-event: every read is a fixed width at a fixed
 # offset, so nothing scans and no read is length-derived. The shared
-# preamble takes vault_idx at +1; disc 5 then reads two more u32s (max
-# extent ix_data + 13) and disc 6 the 160-byte blob at +5 (max extent
-# ix_data + 165). Bytes past that are simply never read.
+# preamble takes vault_idx at +1; disc 5 then reads three more u32s (max
+# extent ix_data + 17) and disc 6 the 224-byte blob at +5 (max extent
+# ix_data + 229). Bytes past that are simply never read.
 #
-# A TRUNCATED payload only ever harms its own caller. The reference build
+# A TRUNCATED payload only ever harms its own caller, but the two
+# discriminators fail differently and disc 5 is the quieter of the two.
+# Its three reads sit at ix_data+5..17, and the input region always runs to
+# ix_data + len + program_id(32), so even a pre-upgrade 13-byte disc-5
+# payload stays in bounds: it does not fault, it silently stamps
+# quote_unix from the leading program-id bytes. The reach is bounded to
+# ONE VAULT — not to the signer alone: that vault pools the leader's own
+# inventory with its outside depositors', so a garbage datum above ~1.7e9
+# extends every one of its levels toward 2106 and disables the wall bound
+# a third-party depositor is also relying on. No trust boundary moves (the
+# leader could already choose arbitrarily long offsets), which is why this
+# is not gated — but it is silent, where the reference build rejects the
+# same payload loudly at deserialization. Every SDK builder emits the
+# full 17 bytes.
+#
+# Disc 6 is the noisy case. The reference build
 # rejects one at anchor deserialization; here a short disc-6 call makes the
-# 160-byte copy read past the ix-data region. The input region ends at
-# ix_data + len + program_id(32), so a length under 133 faults
-# (AccessViolation, the caller's own tx fails) while 133-164 copies the
+# 224-byte copy read past the ix-data region. The input region ends at
+# ix_data + len + program_id(32), so a length under 197 faults
+# (AccessViolation, the caller's own tx fails) while 197-228 copies the
 # trailing program-id bytes — public data — into the caller's own ladder
-# and succeeds silently. Every SDK builder emits the full 165 bytes.
+# and succeeds silently. Every SDK builder emits the full 229 bytes.
 #
 # Neither case can be turned into an injection. The copy length is the
 # PROFILE_SIZE constant, never payload-derived. The destination is the
@@ -214,18 +231,24 @@ quote_write:
     jeq r6, DISCRIM_SET_LIQUIDITY_PROFILE, write_profile
 
 # --- set_reference_price payload (mirrors reference_price.rs) ---
-    # Store the raw price and quote_slot (two adjacent u32s).
+    # Store the raw price, quote_slot and quote_unix (three adjacent
+    # u32s). `quote_unix` is the wall-clock datum every level's
+    # expiry_offset is measured from; it is leader-supplied precisely so
+    # this path stays syscall-free — reading the Clock sysvar here would
+    # cost ~100+ CU on a path that otherwise runs in tens.
     ldxw r3, [r2 + IX_PRICE_BITS_OFF]
     stxw [r9 + RP_PRICE_OFF], r3
     ldxw r3, [r2 + IX_QUOTE_SLOT_OFF]
     stxw [r9 + RP_QUOTE_SLOT_OFF], r3
+    ldxw r3, [r2 + IX_QUOTE_UNIX_OFF]
+    stxw [r9 + RP_QUOTE_UNIX_OFF], r3
 
     mov64 r0, 0
     exit
 
 # --- set_liquidity_profile payload (mirrors liquidity_profile.rs) ---
 write_profile:
-    # One `sol_memcpy_` of the whole 160-byte blob: the syscall is metered
+    # One `sol_memcpy_` of the whole 224-byte blob: the syscall is metered
     # at max(10, len / 250) CU, so ~10 CU against ~40 for the 20 hand-rolled
     # ldxdw/stxdw pairs a chunked copy would need. dst is the program-owned
     # writable market data, src the readable instruction-data region — the

@@ -39,7 +39,8 @@ type SwapCase = {
   side: number;
   amount_in: number;
   limit_price_bits: number;
-  current_slot: number;
+  now_slot: number;
+  now_unix: number;
   platform_fee_bps: number;
   expected: ExpectedQuote;
 };
@@ -74,7 +75,8 @@ test('the wrapper marshals every conformance vector out unchanged', () => {
       side,
       BigInt(c.amount_in),
       c.limit_price_bits,
-      c.current_slot,
+      c.now_slot,
+      c.now_unix,
       c.platform_fee_bps,
     );
     assert.equal(q.inAmount, BigInt(c.expected.in_amount), `${c.name}: inAmount`);
@@ -111,7 +113,8 @@ test('the taker fee and the platform fee are not transposed', () => {
     'buy',
     BigInt(c.amount_in),
     c.limit_price_bits,
-    c.current_slot,
+    c.now_slot,
+    c.now_unix,
     c.platform_fee_bps,
   );
   assert.equal(q.feeAmount, 1_800n);
@@ -131,6 +134,7 @@ test("side names map onto the binding's discriminants", () => {
       1_000_000n,
       limitPriceBits,
       1,
+      1,
       0,
     );
     const viaWrapper = simulateSwap(
@@ -138,6 +142,7 @@ test("side names map onto the binding's discriminants", () => {
       side,
       1_000_000n,
       limitPriceBits,
+      1,
       1,
       0,
     );

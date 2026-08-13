@@ -326,13 +326,14 @@ fn takeable_depth_atoms(
     view: &MarketView<'_>,
     side: SwapSide,
     limit_price: Price,
-    slot: u32,
+    now_slot: u32,
+    now_unix: u32,
 ) -> u64 {
     // No platform fee, matching the take this depth measurement sizes. The
     // fee comes off the *output* leg and never changes `in_amount`, so it
     // could not move this number either way — passing 0 keeps the probe and
     // the swap it sizes on identical terms rather than relying on that.
-    simulate_swap(view, side, u64::MAX, limit_price, slot, 0).in_amount
+    simulate_swap(view, side, u64::MAX, limit_price, now_slot, now_unix, 0).in_amount
 }
 
 /// The input-atom ceiling for one take: `fraction` of the book's
@@ -369,7 +370,7 @@ fn depth_cap_atoms(depth_atoms: u64, fraction: f64) -> u64 {
 /// quoting $100 or $1M, and shrinks takes automatically as its inventory
 /// drains mid-run.
 ///
-/// Pure: the book snapshot, slot, and market metadata are all passed in, so the
+/// Pure: the book snapshot, wall clock, and market metadata are all passed in, so the
 /// whole sizing decision is testable without a validator. Returns `None` when
 /// the order can't be priced or wouldn't fill — no quoting vault, a zero-atom
 /// size, an out-of-range limit price, or no liquidity inside the bound — so the
@@ -380,7 +381,8 @@ pub fn size_against_book(
     order: &Order,
     slippage: f64,
     max_depth_fraction: f64,
-    slot: u32,
+    now_slot: u32,
+    now_unix: u32,
 ) -> Option<SizedSwap> {
     let price = market_reference_price(view)?;
 
@@ -401,7 +403,7 @@ pub fn size_against_book(
     let limit_price = Price::from_value(limit_value)?;
 
     // Clamp to a fraction of the depth inside that limit — see above.
-    let depth = takeable_depth_atoms(view, order.side, limit_price, slot);
+    let depth = takeable_depth_atoms(view, order.side, limit_price, now_slot, now_unix);
     let amount_in = requested_in.min(depth_cap_atoms(depth, max_depth_fraction));
     if amount_in == 0 {
         return None;
@@ -411,7 +413,15 @@ pub fn size_against_book(
     // integrator routing someone else's, so there is nobody to pay. Quoting
     // and executing at 0 also keeps the bot's fills a clean read on the
     // book's own pricing.
-    let quote = simulate_swap(view, order.side, amount_in, limit_price, slot, 0);
+    let quote = simulate_swap(
+        view,
+        order.side,
+        amount_in,
+        limit_price,
+        now_slot,
+        now_unix,
+        0,
+    );
     if quote.out_amount == 0 {
         return None;
     }
@@ -431,7 +441,7 @@ pub fn size_against_book(
     })
 }
 
-/// Read the live book and slot, then size `order` against them with
+/// Read the live book and wall clock, then size `order` against them with
 /// [`size_against_book`]. The IO half of the sizing step.
 pub fn size_order(
     client: &RpcClient,
@@ -444,14 +454,18 @@ pub fn size_order(
         .get_account(&market.market)
         .context("get market account")?;
     let view = MarketView::load(&account.data).map_err(|e| anyhow!("decode market: {e:?}"))?;
-    let slot = client.get_slot().context("get_slot")? as u32;
+    // Expiry is dual-domain, so the book filter needs both clocks — the
+    // chain's slot and the host's wall clock (see `dropset_sdk::time`).
+    let now_slot = client.get_slot().context("get_slot")? as u32;
+    let now_unix = dropset_sdk::time::now_unix_u32();
     Ok(size_against_book(
         &view,
         market,
         order,
         slippage,
         max_depth_fraction,
-        slot,
+        now_slot,
+        now_unix,
     ))
 }
 
@@ -534,9 +548,11 @@ mod tests {
     /// price of 1.0 is also an atoms-ratio of 1.0 and the arithmetic below
     /// reads directly.
     const DECIMALS: u8 = 6;
-    /// The slot every sizing test prices at — before the fixture's level
-    /// expiry, so its levels are live.
-    const SLOT: u32 = 10;
+    /// The instant every sizing test prices at, in each expiry domain —
+    /// both comfortably before the fixture's level deadlines, so its
+    /// levels are live.
+    const NOW_SLOT: u32 = 10;
+    const NOW_UNIX: u32 = 1_700_000_000;
     /// Per-leg vault inventory ample enough that a fixture's depth is set by
     /// its level sizes — unless a test deliberately starves it, which is what
     /// distinguishes the depth probe from a sum over the resting levels.
@@ -589,12 +605,14 @@ mod tests {
         for (i, &(price, size)) in asks.iter().enumerate() {
             v.remaining.asks[i].price = price.as_u32().into();
             v.remaining.asks[i].size = size.into();
-            v.remaining.asks[i].expires_at = 1_000u32.into();
+            v.remaining.asks[i].expires_at_unix = (NOW_UNIX + 600).into();
+            v.remaining.asks[i].expires_at_slot = (NOW_SLOT + 100).into();
         }
         for (i, &(price, size)) in bids.iter().enumerate() {
             v.remaining.bids[i].price = price.as_u32().into();
             v.remaining.bids[i].size = size.into();
-            v.remaining.bids[i].expires_at = 1_000u32.into();
+            v.remaining.bids[i].expires_at_unix = (NOW_UNIX + 600).into();
+            v.remaining.bids[i].expires_at_slot = (NOW_SLOT + 100).into();
         }
 
         let mut buf = vec![0u8; 8]; // discriminator (unchecked by `load`)
@@ -621,7 +639,7 @@ mod tests {
         let data = market_bytes(asks, bids, inventory_atoms);
         let view = MarketView::load(&data).expect("synthetic market decodes");
         let order = Order { side, notional };
-        size_against_book(&view, &addrs(), &order, 0.01, fraction, SLOT)
+        size_against_book(&view, &addrs(), &order, 0.01, fraction, NOW_SLOT, NOW_UNIX)
     }
 
     /// The common case: one level per side at the reference price, with ample

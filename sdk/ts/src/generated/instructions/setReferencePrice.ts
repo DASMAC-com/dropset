@@ -17,16 +17,16 @@ export function getSetReferencePriceDiscriminatorBytes() { return fixEncoderSize
 export type SetReferencePriceInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountSigner extends string | AccountMeta<string> = string, TAccountMarket extends string | AccountMeta<string> = string, TRemainingAccounts extends readonly AccountMeta<string>[] = []> =
 Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array> & InstructionWithAccounts<[TAccountSigner extends string ? ReadonlySignerAccount<TAccountSigner> & AccountSignerMeta<TAccountSigner> : TAccountSigner, TAccountMarket extends string ? WritableAccount<TAccountMarket> : TAccountMarket, ...TRemainingAccounts]>;
 
-export type SetReferencePriceInstructionData = { discriminator: ReadonlyUint8Array; vaultIdx: number; priceBits: number; quoteSlot: number;  };
+export type SetReferencePriceInstructionData = { discriminator: ReadonlyUint8Array; vaultIdx: number; priceBits: number; quoteSlot: number; quoteUnix: number;  };
 
-export type SetReferencePriceInstructionDataArgs = { vaultIdx: number; priceBits: number; quoteSlot: number;  };
+export type SetReferencePriceInstructionDataArgs = { vaultIdx: number; priceBits: number; quoteSlot: number; quoteUnix: number;  };
 
 export function getSetReferencePriceInstructionDataEncoder(): FixedSizeEncoder<SetReferencePriceInstructionDataArgs> {
-    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 1)], ['vaultIdx', getU32Encoder()], ['priceBits', getU32Encoder()], ['quoteSlot', getU32Encoder()]]), (value) => ({ ...value, discriminator: SET_REFERENCE_PRICE_DISCRIMINATOR }));
+    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 1)], ['vaultIdx', getU32Encoder()], ['priceBits', getU32Encoder()], ['quoteSlot', getU32Encoder()], ['quoteUnix', getU32Encoder()]]), (value) => ({ ...value, discriminator: SET_REFERENCE_PRICE_DISCRIMINATOR }));
 }
 
 export function getSetReferencePriceInstructionDataDecoder(): FixedSizeDecoder<SetReferencePriceInstructionData> {
-    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 1)], ['vaultIdx', getU32Decoder()], ['priceBits', getU32Decoder()], ['quoteSlot', getU32Decoder()]]);
+    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 1)], ['vaultIdx', getU32Decoder()], ['priceBits', getU32Decoder()], ['quoteSlot', getU32Decoder()], ['quoteUnix', getU32Decoder()]]);
 }
 
 export function getSetReferencePriceInstructionDataCodec(): FixedSizeCodec<SetReferencePriceInstructionDataArgs, SetReferencePriceInstructionData> {
@@ -52,6 +52,7 @@ market: Address<TAccountMarket>;
 vaultIdx: SetReferencePriceInstructionDataArgs["vaultIdx"];
 priceBits: SetReferencePriceInstructionDataArgs["priceBits"];
 quoteSlot: SetReferencePriceInstructionDataArgs["quoteSlot"];
+quoteUnix: SetReferencePriceInstructionDataArgs["quoteUnix"];
 }
 
 export function getSetReferencePriceInstruction<TAccountSigner extends string, TAccountMarket extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SetReferencePriceInput<TAccountSigner, TAccountMarket>, config?: { programAddress?: TProgramAddress } ): SetReferencePriceInstruction<TProgramAddress, TAccountSigner, TAccountMarket> {

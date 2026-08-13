@@ -8,7 +8,7 @@ mod common;
 
 use anchor_lang_v2::bytemuck;
 use anchor_v2_testing::Signer;
-use common::fixture::{simple_profile, Fixture};
+use common::fixture::{dual_profile, simple_profile, Fixture};
 use dropset::{Price, FLUSH_BIT};
 use solana_pubkey::Pubkey;
 
@@ -737,8 +737,11 @@ fn flush_re_materializes_after_reference_price_change() {
 
 #[test]
 fn expired_levels_are_skipped() {
-    // Re-profile the seeded vault with a 1-slot expiry, warp well past
-    // it, then Buy: every level has expired, so nothing fills.
+    // Re-profile the seeded vault with a 1-second expiry, advance wall
+    // time well past it, then Buy: every level has expired, so nothing
+    // fills. The reshape leaves `reference_price` — datum included —
+    // alone, so the levels materialize against the seeded quote's
+    // `quote_unix`.
     let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
     f.set_liquidity_profile(
         &f.authority.insecure_clone(),
@@ -746,7 +749,7 @@ fn expired_levels_are_skipped() {
         simple_profile(5_000, 10_000, 1),
     )
     .expect("short-expiry profile");
-    f.svm.warp_to_slot(100);
+    f.warp_unix(100);
 
     let taker = f.funded_depositor(0, 200_000);
     let q_before = f.token_balance(&f.quote_ata(&taker.pubkey()));
@@ -762,6 +765,170 @@ fn expired_levels_are_skipped() {
         f.vault(0).base_atoms.get(),
         SEED_BASE,
         "inventory untouched"
+    );
+}
+
+/// The gate is `<=` dead, pinned **engine-side** at the exact boundary.
+///
+/// The conformance vectors already pin `<=` for the *simulator*, and
+/// `sdk_conformance` pins simulator == engine — but only at live clocks,
+/// so a `<` vs `<=` slip in the engine alone would ship as a one-second
+/// SDK-vs-engine divergence: the book shows a level the engine drops, and
+/// the taker eats a `min_out` revert. Sit exactly on the deadline here so
+/// the engine owns its own boundary.
+#[test]
+fn a_level_is_dead_at_exactly_its_wall_deadline() {
+    const TIF: u32 = 60;
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+    f.set_liquidity_profile(
+        &f.authority.insecure_clone(),
+        0,
+        simple_profile(5_000, 10_000, TIF),
+    )
+    .expect("bounded-TIF profile");
+
+    // Re-stamp the same price at a known datum, so the level's deadline
+    // is exactly `datum + TIF` rather than whatever the seed stamped.
+    let price_bits = f.vault(0).reference_price.price.as_u32();
+    let datum = f.now_unix();
+    f.svm.expire_blockhash();
+    f.set_reference_price_at(&f.authority.insecure_clone(), 0, price_bits, 0, datum)
+        .expect("fresh quote at a known datum");
+
+    // One second short of the deadline: still live.
+    f.warp_unix((TIF - 1) as i64);
+    let taker = f.funded_depositor(0, 400_000);
+    let before = f.token_balance(&f.base_ata(&taker.pubkey()));
+    f.swap(&taker, 0, 50_000, Price::INFINITY.as_u32(), 1)
+        .expect("a level one second inside its deadline still fills");
+    assert!(
+        f.token_balance(&f.base_ata(&taker.pubkey())) > before,
+        "the level is live at deadline - 1"
+    );
+
+    // Exactly on the deadline: dead. `expires_at <= now`, not `<`.
+    f.warp_unix(1);
+    let q_before = f.token_balance(&f.quote_ata(&taker.pubkey()));
+    f.swap(&taker, 0, 50_000, Price::INFINITY.as_u32(), 0)
+        .expect("ok, the level expired");
+    assert_eq!(
+        f.token_balance(&f.quote_ata(&taker.pubkey())),
+        q_before,
+        "no quote spent: the deadline second itself is dead"
+    );
+}
+
+/// Expiry skips the *vault*, it does not abort the *take*. The cheaper
+/// vault — the one that would otherwise absorb the whole fill — is aged
+/// out, and the buy must still fill against its pricier, live sibling.
+///
+/// This is the property that makes stratified expiry safe to rely on: one
+/// leader letting its book go stale degrades the book by its own depth
+/// rather than taking the market down with it.
+#[test]
+fn an_expired_vault_is_skipped_while_its_live_sibling_still_fills() {
+    let hi = Price::encode(10_900_000, 0).unwrap().as_u32();
+    let lo = Price::encode(10_800_000, 0).unwrap().as_u32();
+    let mut f = Fixture::seeded_two_vaults(hi, lo);
+
+    // Sector 1 quotes the better price, so it has price priority. Give it
+    // a 1-second wall TIF and age it out; sector 0 keeps the
+    // never-expiring ladder it was seeded with.
+    f.set_liquidity_profile(
+        &f.authority.insecure_clone(),
+        1,
+        simple_profile(5_000, 10_000, 1),
+    )
+    .expect("short-expiry profile on the cheaper vault");
+    f.warp_unix(100);
+
+    let taker = f.funded_depositor(0, 200_000);
+    let base_before = f.token_balance(&f.base_ata(&taker.pubkey()));
+    let expired_base_before = f.vault(1).base_atoms.get();
+    let live_base_before = f.vault(0).base_atoms.get();
+
+    f.swap(&taker, 0, 50_000, Price::INFINITY.as_u32(), 1)
+        .expect("the take still fills against the live sibling");
+
+    assert!(
+        f.token_balance(&f.base_ata(&taker.pubkey())) > base_before,
+        "the taker received base: an expired vault must not abort the take"
+    );
+    assert_eq!(
+        f.vault(1).base_atoms.get(),
+        expired_base_before,
+        "the expired vault is skipped, not filled"
+    );
+    assert!(
+        f.vault(0).base_atoms.get() < live_base_before,
+        "the live sibling is what filled, despite its worse price"
+    );
+}
+
+/// Expiry is the **min of two bounds**, so each domain has to kill a level
+/// on its own. Here the wall bound is wide open and only the slot bound has
+/// passed — the level must still be dead. The mirror case (wall dead, slot
+/// open) is `expired_levels_are_skipped` above, which leaves the slot side
+/// unbounded.
+///
+/// Together the two pin that neither conjunct was dropped: removing the
+/// slot compare turns this test green-to-red, removing the wall compare
+/// does the same to its sibling.
+#[test]
+fn a_passed_slot_bound_kills_a_level_whose_wall_bound_is_still_open() {
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+    // Hours of wall life, but only two slots of it.
+    f.set_liquidity_profile(
+        &f.authority.insecure_clone(),
+        0,
+        dual_profile(5_000, 10_000, 86_400, 2),
+    )
+    .expect("slot-bounded profile");
+    // Advance slots past the bound while wall time barely moves, which is
+    // the ordinary case: slots tick ~2.5x a second.
+    f.warp_slots(50);
+
+    let taker = f.funded_depositor(0, 200_000);
+    let q_before = f.token_balance(&f.quote_ata(&taker.pubkey()));
+    f.swap(&taker, 0, 50_000, Price::INFINITY.as_u32(), 0)
+        .expect("ok, the slot bound expired every level");
+
+    assert_eq!(
+        f.token_balance(&f.quote_ata(&taker.pubkey())),
+        q_before,
+        "no quote spent: the slot bound passed even though the wall bound holds"
+    );
+    assert_eq!(
+        f.vault(0).base_atoms.get(),
+        SEED_BASE,
+        "inventory untouched"
+    );
+}
+
+/// A zero offset is dead **in either domain**, whatever the datum says —
+/// materialization encodes it as the zero deadline rather than letting the
+/// bare datum stand in. Pinned here on the slot axis with a live wall TIF,
+/// so a regression that dropped the zero encoding would leave the level
+/// matchable.
+#[test]
+fn a_zero_slot_offset_is_dead_even_with_wall_life_remaining() {
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+    f.set_liquidity_profile(
+        &f.authority.insecure_clone(),
+        0,
+        dual_profile(5_000, 10_000, 86_400, 0),
+    )
+    .expect("zero slot-offset profile");
+
+    let taker = f.funded_depositor(0, 200_000);
+    let q_before = f.token_balance(&f.quote_ata(&taker.pubkey()));
+    f.swap(&taker, 0, 50_000, Price::INFINITY.as_u32(), 0)
+        .expect("ok, a zero offset is dead");
+
+    assert_eq!(
+        f.token_balance(&f.quote_ata(&taker.pubkey())),
+        q_before,
+        "a zero slot offset never matches, however long the wall TIF"
     );
 }
 

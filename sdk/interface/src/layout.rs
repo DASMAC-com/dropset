@@ -83,7 +83,12 @@ pub struct FeeConfig {
 pub struct ReferencePrice {
     pub stamp: LeU64,
     pub price: LeU32,
+    /// Slot the quote was "as of" — the datum every
+    /// [`Level::expiry_offset_slots`] is measured from.
     pub quote_slot: LeU32,
+    /// Wall-clock "as of" time in unix seconds — the datum every
+    /// [`Level::expiry_offset_secs`] is measured from.
+    pub quote_unix: LeU32,
 }
 
 #[repr(C)]
@@ -91,7 +96,13 @@ pub struct ReferencePrice {
 pub struct Level {
     pub price_offset: LeU32,
     pub size_bps: LeU16,
-    pub expiry_offset: LeU32,
+    /// Seconds after `reference_price.quote_unix` that this level dies.
+    /// Zero is dead.
+    pub expiry_offset_secs: LeU32,
+    /// Slots after `reference_price.quote_slot` that this level dies —
+    /// the second, independent bound. Zero is dead; "no slot bound" is
+    /// the maximum offset, not a sentinel.
+    pub expiry_offset_slots: LeU32,
 }
 
 #[repr(C)]
@@ -138,7 +149,15 @@ impl LiquidityProfile {
 pub struct Position {
     pub price: LeU32,
     pub size: LeU64,
-    pub expires_at: LeU32,
+    /// Absolute unix second this level dies
+    /// (`reference_price.quote_unix + Level::expiry_offset_secs`), or
+    /// zero when the level has no life in this domain.
+    pub expires_at_unix: LeU32,
+    /// Absolute slot this level dies
+    /// (`reference_price.quote_slot + Level::expiry_offset_slots`), or
+    /// zero when the level has no life in this domain. A level matches
+    /// only while **both** deadlines are in the future.
+    pub expires_at_slot: LeU32,
 }
 
 #[repr(C)]
@@ -206,12 +225,12 @@ pub struct Vault {
 // this mirror) breaks the SDK build here rather than silently
 // misdecoding the slab.
 const _: () = assert!(core::mem::size_of::<MarketHeader>() == 253);
-const _: () = assert!(core::mem::size_of::<Vault>() == 560);
+const _: () = assert!(core::mem::size_of::<Vault>() == 692);
 // Sectors stay aligned across the slab: stride must be a multiple of the
 // on-chain Vault alignment (see VAULT_ALIGN / MarketView::load).
 const _: () = assert!(core::mem::size_of::<Vault>().is_multiple_of(VAULT_ALIGN));
-const _: () = assert!(core::mem::size_of::<LiquidityProfile>() == 2 * N_LEVELS * 10);
-const _: () = assert!(core::mem::size_of::<Remaining>() == 2 * N_LEVELS * 16);
+const _: () = assert!(core::mem::size_of::<LiquidityProfile>() == 2 * N_LEVELS * 14);
+const _: () = assert!(core::mem::size_of::<Remaining>() == 2 * N_LEVELS * 20);
 
 impl ReferencePrice {
     /// Decoded reference price (raw bits -> `Price`).

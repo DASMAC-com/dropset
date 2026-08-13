@@ -11,7 +11,7 @@ use crate::config::LadderLevel;
 use anyhow::Result;
 use bytemuck::Zeroable;
 use dropset_sdk::layout::{LiquidityProfile, BPS, N_LEVELS};
-use dropset_sdk::quoting::profile_bytes;
+use dropset_sdk::quoting::{profile_bytes, PROFILE_BYTES};
 
 /// Which side of the book a reshape targets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,7 +29,8 @@ pub fn build_profile(ladder: &[LadderLevel]) -> LiquidityProfile {
         for side in [&mut profile.bids, &mut profile.asks] {
             side[i].price_offset = lvl.offset_ppm.into();
             side[i].size_bps = lvl.size_bps.into();
-            side[i].expiry_offset = lvl.expiry_offset.into();
+            side[i].expiry_offset_secs = lvl.expiry_offset_secs.into();
+            side[i].expiry_offset_slots = lvl.expiry_offset_slots.into();
         }
     }
     profile
@@ -88,8 +89,8 @@ pub fn scale_side(profile: &mut LiquidityProfile, side: Side, scale: f64) {
     );
 }
 
-/// Serialize a profile to the `[u8; 160]` `set_liquidity_profile` argument.
-pub fn to_bytes(profile: &LiquidityProfile) -> [u8; 160] {
+/// Serialize a profile to the `[u8; PROFILE_BYTES]` `set_liquidity_profile` argument.
+pub fn to_bytes(profile: &LiquidityProfile) -> [u8; PROFILE_BYTES] {
     profile_bytes(profile)
 }
 
@@ -98,7 +99,7 @@ pub fn to_bytes(profile: &LiquidityProfile) -> [u8; 160] {
 /// silently skipped by the matcher (a no-fill), so an honest bot treats it as
 /// the sizing bug it is and refuses to arm a dark side rather than submit it.
 /// Every `set_liquidity_profile` send routes through here.
-pub fn checked_bytes(profile: &LiquidityProfile) -> Result<[u8; 160]> {
+pub fn checked_bytes(profile: &LiquidityProfile) -> Result<[u8; PROFILE_BYTES]> {
     if let Err(v) = profile.validate_size_sums() {
         anyhow::bail!(
             "liquidity profile Σ size_bps exceeds {BPS} (bids={}, asks={}) — sizing bug",
@@ -120,7 +121,8 @@ mod tests {
         for (i, lvl) in DEFAULT_LADDER.iter().enumerate() {
             assert_eq!(p.bids[i].price_offset.get(), lvl.offset_ppm);
             assert_eq!(p.bids[i].size_bps.get(), lvl.size_bps);
-            assert_eq!(p.bids[i].expiry_offset.get(), lvl.expiry_offset);
+            assert_eq!(p.bids[i].expiry_offset_secs.get(), lvl.expiry_offset_secs);
+            assert_eq!(p.bids[i].expiry_offset_slots.get(), lvl.expiry_offset_slots);
             assert_eq!(p.asks[i].price_offset.get(), lvl.offset_ppm);
             assert_eq!(p.asks[i].size_bps.get(), lvl.size_bps);
         }
@@ -172,10 +174,14 @@ mod tests {
         }
     }
 
+    /// The serialized ladder is exactly the width the instruction arg
+    /// declares — 2 sides × 8 levels × a 14-byte `Level` (`price_offset`
+    /// u32, `size_bps` u16, and one u32 expiry offset per domain).
     #[test]
-    fn serializes_to_160_bytes() {
+    fn serializes_to_the_profile_width() {
         let p = build_profile(&DEFAULT_LADDER);
-        assert_eq!(to_bytes(&p).len(), 160);
+        assert_eq!(to_bytes(&p).len(), PROFILE_BYTES);
+        assert_eq!(PROFILE_BYTES, 2 * N_LEVELS * 14);
     }
 
     #[test]

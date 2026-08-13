@@ -138,16 +138,6 @@ export const useRouterQuote = (
               }
             : null;
 
-        // Only our own book needs a slot (it scopes flush-level expiry), so an
-        // aggregator-only tick doesn't read one — which on mainnet today, where
-        // we have no market yet, is every tick.
-        let currentSlot: number | undefined;
-        if (eclobLeg) {
-          const slot = await rpc.getSlot({ commitment: "confirmed" }).send();
-          if (cancelled || gen !== generation) return;
-          currentSlot = Number(slot);
-        }
-
         // Resolve the platform fee through the app's own per-mint cache rather
         // than letting the router re-derive it: handing the router the raw
         // config would cost a mint read plus an ATA read on *every* tick, and
@@ -160,9 +150,19 @@ export const useRouterQuote = (
           : null;
         if (cancelled || gen !== generation) return;
 
+        // Only our own book needs the slot (the wall clock comes from the
+        // browser), so an aggregator-only tick doesn't read one — which on
+        // mainnet today, where we have no market yet, is every tick.
+        let nowSlot: number | undefined;
+        if (eclobLeg) {
+          const slot = await rpc.getSlot({ commitment: "confirmed" }).send();
+          if (cancelled || gen !== generation) return;
+          nowSlot = Number(slot);
+        }
+
         const { best, aggregator } = await quoteBestRoute(rpc, {
           amount: atomic,
-          currentSlot,
+          nowSlot,
           signal: controller.signal,
           eclob: eclobLeg,
           // Our own leg declares the fee on the `swap` instruction, clamped by

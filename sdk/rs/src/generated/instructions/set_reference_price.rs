@@ -89,6 +89,7 @@ pub struct SetReferencePriceInstructionArgs {
     pub vault_idx: u32,
     pub price_bits: u32,
     pub quote_slot: u32,
+    pub quote_unix: u32,
 }
 
 impl SetReferencePriceInstructionArgs {
@@ -110,6 +111,7 @@ pub struct SetReferencePriceBuilder {
     vault_idx: Option<u32>,
     price_bits: Option<u32>,
     quote_slot: Option<u32>,
+    quote_unix: Option<u32>,
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
 
@@ -151,6 +153,11 @@ impl SetReferencePriceBuilder {
         self.quote_slot = Some(quote_slot);
         self
     }
+    #[inline(always)]
+    pub fn quote_unix(&mut self, quote_unix: u32) -> &mut Self {
+        self.quote_unix = Some(quote_unix);
+        self
+    }
     /// Add an additional account to the instruction.
     #[inline(always)]
     pub fn add_remaining_account(&mut self, account: solana_instruction::AccountMeta) -> &mut Self {
@@ -176,6 +183,7 @@ impl SetReferencePriceBuilder {
             vault_idx: self.vault_idx.clone().expect("vault_idx is not set"),
             price_bits: self.price_bits.clone().expect("price_bits is not set"),
             quote_slot: self.quote_slot.clone().expect("quote_slot is not set"),
+            quote_unix: self.quote_unix.clone().expect("quote_unix is not set"),
         };
 
         accounts.instruction_with_remaining_accounts(args, &self.__remaining_accounts)
@@ -315,6 +323,7 @@ impl<'a, 'b> SetReferencePriceCpiBuilder<'a, 'b> {
             vault_idx: None,
             price_bits: None,
             quote_slot: None,
+            quote_unix: None,
             __remaining_accounts: Vec::new(),
         });
         Self { instruction }
@@ -351,6 +360,11 @@ impl<'a, 'b> SetReferencePriceCpiBuilder<'a, 'b> {
     #[inline(always)]
     pub fn quote_slot(&mut self, quote_slot: u32) -> &mut Self {
         self.instruction.quote_slot = Some(quote_slot);
+        self
+    }
+    #[inline(always)]
+    pub fn quote_unix(&mut self, quote_unix: u32) -> &mut Self {
+        self.instruction.quote_unix = Some(quote_unix);
         self
     }
     /// Add an additional account to the instruction.
@@ -403,6 +417,11 @@ impl<'a, 'b> SetReferencePriceCpiBuilder<'a, 'b> {
                 .quote_slot
                 .clone()
                 .expect("quote_slot is not set"),
+            quote_unix: self
+                .instruction
+                .quote_unix
+                .clone()
+                .expect("quote_unix is not set"),
         };
         let instruction = SetReferencePriceCpi {
             __program: self.instruction.__program,
@@ -427,6 +446,7 @@ struct SetReferencePriceCpiBuilderInstruction<'a, 'b> {
     vault_idx: Option<u32>,
     price_bits: Option<u32>,
     quote_slot: Option<u32>,
+    quote_unix: Option<u32>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
     __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,
 }

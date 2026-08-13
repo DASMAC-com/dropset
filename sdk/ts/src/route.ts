@@ -31,16 +31,6 @@ import type { SwapSide } from './simulate';
 export type AccountRpc = Parameters<typeof fetchEncodedAccount>[0];
 
 /**
- * Minimal `getSlot` shape — the current slot scopes flush-level expiry. Kept
- * argument-less for structural compatibility with any kit RPC; a caller that
- * needs a commitment other than the client's default should read the slot
- * itself and pass it in.
- */
-export type SlotRpc = {
-  getSlot: (...args: never[]) => { send: () => Promise<bigint> };
-};
-
-/**
  * A resolved route against a market that actually exists on the current
  * cluster: the market PDA and its raw bytes, the take side, the no-bound limit
  * price, and the base/quote mints + token programs the swap instruction needs.

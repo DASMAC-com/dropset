@@ -24,8 +24,17 @@ const PPM = 1_000_000n;
 const BPS = 10_000n;
 /** Common scale for the integer price ratio — mirrors Rust's `SCALE`. */
 const SCALE = 1_000_000_000n;
-/** Serialized `LiquidityProfile` length: 2 sides × 8 levels × 10 bytes. */
-export const PROFILE_BYTES = 2 * N_LEVELS * 10;
+/**
+ * On-wire width of one `Level`: `price_offset` u32, `size_bps` u16, and
+ * one u32 expiry offset per domain (wall and slot). Every field is
+ * alignment-1, so the struct is byte-packed.
+ */
+export const LEVEL_BYTES = 14;
+/** The `expiryOffsetSlots` value meaning "no slot bound" — see the Rust
+ * `NO_SLOT_BOUND`. The max offset, not a reserved sentinel. */
+export const NO_SLOT_BOUND = 0xffff_ffff;
+/** Serialized `LiquidityProfile` length: both sides' level arrays. */
+export const PROFILE_BYTES = 2 * N_LEVELS * LEVEL_BYTES;
 
 /** One level of a native (absolute-price) book. */
 export type NativeLevel = {
@@ -33,8 +42,12 @@ export type NativeLevel = {
   price: PriceBits;
   /** Allowance in atoms: base atoms for asks, quote atoms for bids. */
   size: bigint;
-  /** Per-level expiry, in slots after the reference's `quote_slot`. */
-  expiryOffset: number;
+  /** Per-level expiry, in seconds after the reference's `quote_unix`. */
+  expiryOffsetSecs: number;
+  /** Per-level expiry, in slots after the reference's `quote_slot` — the
+   * second, independent bound. {@link NO_SLOT_BOUND} leaves a level
+   * bounded only in wall time. */
+  expiryOffsetSlots: number;
 };
 
 /** A native book: absolute-price ladders, top-of-book first, ≤ 8 per side. */
@@ -45,7 +58,12 @@ export type NativeBook = {
 
 export class QuotingError extends Error {}
 
-type RelLevel = { priceOffset: number; sizeBps: number; expiryOffset: number };
+type RelLevel = {
+  priceOffset: number;
+  sizeBps: number;
+  expiryOffsetSecs: number;
+  expiryOffsetSlots: number;
+};
 
 function levelToRelative(
   lvl: NativeLevel,
@@ -75,17 +93,23 @@ function levelToRelative(
   if (legAtoms <= 0n) throw new QuotingError('inventory leg is zero');
   const sizeBps = (lvl.size * BPS) / legAtoms;
   if (sizeBps > BPS) throw new QuotingError('level size exceeds inventory leg');
-  return { priceOffset: Number(offset), sizeBps: Number(sizeBps), expiryOffset: lvl.expiryOffset };
+  return {
+    priceOffset: Number(offset),
+    sizeBps: Number(sizeBps),
+    expiryOffsetSecs: lvl.expiryOffsetSecs,
+    expiryOffsetSlots: lvl.expiryOffsetSlots,
+  };
 }
 
 function writeLevel(view: DataView, offset: number, l: RelLevel): void {
   view.setUint32(offset, l.priceOffset, true);
   view.setUint16(offset + 4, l.sizeBps, true);
-  view.setUint32(offset + 6, l.expiryOffset, true);
+  view.setUint32(offset + 6, l.expiryOffsetSecs, true);
+  view.setUint32(offset + 10, l.expiryOffsetSlots, true);
 }
 
 /**
- * Translate a native book into the `[u8; 160]` `profile_bytes` arg for
+ * Translate a native book into the `profile_bytes` arg for
  * `set_liquidity_profile`, anchored to `reference` and sized against the
  * vault's current `(baseAtoms, quoteAtoms)`. Ask sizes are fractions of
  * `baseAtoms`, bid sizes fractions of `quoteAtoms`.
@@ -101,7 +125,7 @@ export function nativeBookToProfileBytes(
   }
   const bytes = new Uint8Array(PROFILE_BYTES);
   const view = new DataView(bytes.buffer);
-  const levelBytes = 10;
+  const levelBytes = LEVEL_BYTES;
 
   // Layout: bids[0..8] then asks[0..8].
   let bidBps = 0;

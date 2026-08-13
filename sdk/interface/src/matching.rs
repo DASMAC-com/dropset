@@ -16,7 +16,7 @@
 //! distinct here. That residual seam is pinned to the engine by the
 //! shared conformance vectors (see `sdk/conformance`).
 
-use crate::layout::{MarketView, Vault, BPS, N_LEVELS};
+use crate::layout::{Level, MarketView, Vault, BPS, N_LEVELS};
 use crate::matching_math::{
     flush_level_price, level_fill_atoms, platform_fee_atoms, sort_key, taker_fee_atoms,
 };
@@ -83,8 +83,13 @@ pub struct BookLevel {
 }
 
 /// Simulate a take. Returns the achievable [`Quote`] against the book in
-/// `market` at `current_slot`, capping the consumed input when the book
-/// cannot fully absorb `amount_in`.
+/// `market` at `(now_slot, now_unix)`, capping the consumed input when the
+/// book cannot fully absorb `amount_in`.
+///
+/// Level expiry is **dual-domain** — each level carries a slot deadline
+/// and a wall-clock deadline and rests only inside both — so both clocks
+/// are required, `now_unix` in unix seconds. Passing one where the other
+/// belongs silently shows depth the engine will not fill.
 ///
 /// `taker_fee_ppm` is read from the market header; `limit_price` is the
 /// worst acceptable fill (use [`Price::INFINITY`] for a Buy / [`Price::ZERO`]
@@ -107,7 +112,8 @@ pub fn simulate_swap(
     side: SwapSide,
     amount_in: u64,
     limit_price: Price,
-    current_slot: u32,
+    now_slot: u32,
+    now_unix: u32,
     platform_fee_bps: u16,
 ) -> Quote {
     let taker_fee_ppm = market.header.taker_fee.get() as u128;
@@ -121,7 +127,7 @@ pub fn simulate_swap(
     // active DLL) — refuse to quote, matching `swap.rs`. An oversized flush
     // side is not a hard reject: it's skipped per-vault inside
     // [`collect_side_levels`], mirroring the engine zeroing that side.
-    let Some(mut levels) = collect_side_levels(market, is_buy, current_slot) else {
+    let Some(mut levels) = collect_side_levels(market, is_buy, now_slot, now_unix) else {
         return Quote::default();
     };
 
@@ -262,7 +268,8 @@ pub fn simulate_swap(
     }
 }
 
-/// Reconstruct the **resting book** on one `side` at `current_slot`: the
+/// Reconstruct the **resting book** on one `side` at `(now_slot,
+/// now_unix)`: the
 /// live, matchable levels across every active vault, in cross-vault
 /// price-time priority (best price first). This is the same book
 /// [`simulate_swap`] fills against, exposed for depth / order-book views;
@@ -276,10 +283,11 @@ pub fn simulate_swap(
 pub fn resting_levels(
     market: &MarketView<'_>,
     side: SwapSide,
-    current_slot: u32,
+    now_slot: u32,
+    now_unix: u32,
 ) -> Vec<BookLevel> {
     let is_buy = side == SwapSide::Buy;
-    let Some(levels) = collect_side_levels(market, is_buy, current_slot) else {
+    let Some(levels) = collect_side_levels(market, is_buy, now_slot, now_unix) else {
         return Vec::new();
     };
     levels
@@ -328,7 +336,8 @@ pub fn resting_levels(
 fn collect_side_levels(
     market: &MarketView<'_>,
     is_buy: bool,
-    current_slot: u32,
+    now_slot: u32,
+    now_unix: u32,
 ) -> Option<Vec<Lvl>> {
     if market.active_dll_is_corrupt() {
         return None;
@@ -356,23 +365,28 @@ fn collect_side_levels(
         if flush && flush_side_sum_exceeds_bps(v, is_buy) {
             continue;
         }
+        let ref_unix = v.reference_price.quote_unix.get();
         let ref_slot = v.reference_price.quote_slot.get();
         let base_atoms = v.base_atoms.get();
         let quote_atoms = v.quote_atoms.get();
 
         for i in 0..N_LEVELS {
-            let (price, size, expires_at) = level_state(
+            let (price, size, expires_at_unix, expires_at_slot) = level_state(
                 v,
                 i,
                 is_buy,
                 flush,
                 reference,
                 ref_slot,
+                ref_unix,
                 base_atoms,
                 quote_atoms,
             );
+            // Both conjuncts, exactly as `swap.rs` gates them: a level is
+            // live only inside its wall deadline AND its slot deadline.
             if size == 0
-                || expires_at <= current_slot
+                || expires_at_unix <= now_unix
+                || expires_at_slot <= now_slot
                 || price.is_zero()
                 || price.is_infinity()
                 || !price.is_valid()
@@ -414,7 +428,8 @@ fn flush_side_sum_exceeds_bps(v: &Vault, is_buy: bool) -> bool {
     sum > BPS as u32
 }
 
-/// Resolve a single level's `(price, size, expires_at)` for the chosen
+/// Resolve a single level's `(price, size, expires_at_unix,
+/// expires_at_slot)` for the chosen
 /// side: materialize from the `LiquidityProfile` if a flush is armed
 /// (mirroring `swap.rs`), else read the stored `remaining` state.
 #[allow(clippy::too_many_arguments)]
@@ -425,9 +440,10 @@ fn level_state(
     flush: bool,
     reference: Price,
     ref_slot: u32,
+    ref_unix: u32,
     base_atoms: u64,
     quote_atoms: u64,
-) -> (Price, u64, u32) {
+) -> (Price, u64, u32, u32) {
     if flush {
         if is_buy {
             let a = v.profile.asks[i];
@@ -438,14 +454,14 @@ fn level_state(
             // `≤ Σ ≤ BPS` and `unwrap_or(0)` is an unreachable total-function
             // fallback, not a silent level drop.
             let size = level_fill_atoms(a.size_bps.get(), base_atoms).unwrap_or(0);
-            let expires_at = ref_slot.saturating_add(a.expiry_offset.get());
-            (price, size, expires_at)
+            let (secs, slots) = deadlines(a, ref_unix, ref_slot);
+            (price, size, secs, slots)
         } else {
             let b = v.profile.bids[i];
             let price = flush_level_price(reference, b.price_offset.get(), false);
             let size = level_fill_atoms(b.size_bps.get(), quote_atoms).unwrap_or(0);
-            let expires_at = ref_slot.saturating_add(b.expiry_offset.get());
-            (price, size, expires_at)
+            let (secs, slots) = deadlines(b, ref_unix, ref_slot);
+            (price, size, secs, slots)
         }
     } else {
         let p = if is_buy {
@@ -456,9 +472,29 @@ fn level_state(
         (
             Price::from_bits(p.price.get()),
             p.size.get(),
-            p.expires_at.get(),
+            p.expires_at_unix.get(),
+            p.expires_at_slot.get(),
         )
     }
+}
+
+/// A level's `(wall, slot)` absolute deadlines, mirroring the on-chain
+/// `Vault::deadline`: saturating adds, and a **zero offset yields zero**
+/// — the dead sentinel — so "no life in this domain" survives the
+/// addition instead of collapsing onto the bare datum.
+#[inline]
+fn deadlines(l: Level, ref_unix: u32, ref_slot: u32) -> (u32, u32) {
+    let one = |datum: u32, offset: u32| {
+        if offset == 0 {
+            0
+        } else {
+            datum.saturating_add(offset)
+        }
+    };
+    (
+        one(ref_unix, l.expiry_offset_secs.get()),
+        one(ref_slot, l.expiry_offset_slots.get()),
+    )
 }
 
 #[cfg(test)]
@@ -482,7 +518,8 @@ mod tests {
                 .as_u32()
                 .into(),
             size: size.into(),
-            expires_at: u32::MAX.into(),
+            expires_at_unix: u32::MAX.into(),
+            expires_at_slot: u32::MAX.into(),
         }
     }
 
@@ -511,7 +548,12 @@ mod tests {
         v.reference_price = ReferencePrice {
             stamp: 1u64.into(),
             price: Price::encode(10_850_000, 0).unwrap().as_u32().into(),
-            quote_slot: 0u32.into(),
+            // Deliberately DISTINCT and nonzero, mirroring the on-chain
+            // `materialize_remaining` test: with both at zero a
+            // datum transposition in `deadlines` would pass every
+            // assertion in this module.
+            quote_slot: FIX_QUOTE_SLOT.into(),
+            quote_unix: FIX_QUOTE_UNIX.into(),
         };
         v.base_atoms = 10_000_000u64.into();
         v.quote_atoms = 10_000_000u64.into();
@@ -538,7 +580,7 @@ mod tests {
     fn resting_asks_are_best_first_and_base_sized() {
         let data = market_data();
         let view = MarketView::load(&data).unwrap();
-        let asks = resting_levels(&view, SwapSide::Buy, 1);
+        let asks = resting_levels(&view, SwapSide::Buy, 1, 1);
         assert_eq!(
             asks,
             vec![
@@ -560,7 +602,7 @@ mod tests {
     fn resting_bids_are_best_first_and_normalized_to_base() {
         let data = market_data();
         let view = MarketView::load(&data).unwrap();
-        let bids = resting_levels(&view, SwapSide::Sell, 1);
+        let bids = resting_levels(&view, SwapSide::Sell, 1, 1);
         let best = Price::encode(10_796_000, 0).unwrap();
         let next = Price::encode(10_416_000, 0).unwrap();
         assert_eq!(
@@ -584,11 +626,11 @@ mod tests {
     fn resting_ask_depth_matches_a_clearing_buy() {
         let data = market_data();
         let view = MarketView::load(&data).unwrap();
-        let asks = resting_levels(&view, SwapSide::Buy, 1);
+        let asks = resting_levels(&view, SwapSide::Buy, 1, 1);
         let total_base: u64 = asks.iter().map(|l| l.size).sum();
         assert_eq!(total_base, 1_800_000);
 
-        let q = simulate_swap(&view, SwapSide::Buy, 10_000_000, Price::INFINITY, 1, 0);
+        let q = simulate_swap(&view, SwapSide::Buy, 10_000_000, Price::INFINITY, 1, 1, 0);
         assert_eq!(q.out_amount + q.fee_amount, total_base);
     }
 
@@ -613,7 +655,12 @@ mod tests {
         v.reference_price = ReferencePrice {
             stamp: 1u64.into(),
             price: Price::encode(60_000_000, -5).unwrap().as_u32().into(),
-            quote_slot: 0u32.into(),
+            // Deliberately DISTINCT and nonzero, mirroring the on-chain
+            // `materialize_remaining` test: with both at zero a
+            // datum transposition in `deadlines` would pass every
+            // assertion in this module.
+            quote_slot: FIX_QUOTE_SLOT.into(),
+            quote_unix: FIX_QUOTE_UNIX.into(),
         };
         // Deep enough that the level cap never binds before the price
         // truncation does.
@@ -648,7 +695,7 @@ mod tests {
         assert_eq!(ask.base_for_quote(1), 16_583);
         assert_eq!(ask.quote_for_base(16_583), 0);
 
-        let q = simulate_swap(&view, SwapSide::Buy, 1, Price::INFINITY, 1, 0);
+        let q = simulate_swap(&view, SwapSide::Buy, 1, Price::INFINITY, 1, 1, 0);
         assert_eq!(
             q,
             Quote::default(),
@@ -656,7 +703,7 @@ mod tests {
         );
 
         // Dust-only, as on the Sell arm: a normally-sized Buy still fills.
-        let q = simulate_swap(&view, SwapSide::Buy, 1_000_000, Price::INFINITY, 1, 0);
+        let q = simulate_swap(&view, SwapSide::Buy, 1_000_000, Price::INFINITY, 1, 1, 0);
         assert!(q.in_amount > 0 && q.out_amount > 0 && q.legs > 0);
     }
 
@@ -675,7 +722,7 @@ mod tests {
         assert_eq!(best_bid.quote_for_base(1), 1);
         assert_eq!(best_bid.base_for_quote(1), 0);
 
-        let q = simulate_swap(&view, SwapSide::Sell, 1, Price::ZERO, 1, 0);
+        let q = simulate_swap(&view, SwapSide::Sell, 1, Price::ZERO, 1, 1, 0);
         assert_eq!(
             q,
             Quote::default(),
@@ -684,27 +731,35 @@ mod tests {
 
         // The guard is dust-only — a normally-sized take still fills, and
         // consumes input for the output it promises.
-        let q = simulate_swap(&view, SwapSide::Sell, 1_000_000, Price::ZERO, 1, 0);
+        let q = simulate_swap(&view, SwapSide::Sell, 1_000_000, Price::ZERO, 1, 1, 0);
         assert!(q.in_amount > 0 && q.out_amount > 0 && q.legs > 0);
     }
 
-    /// Levels expired at `current_slot` are dropped — past every level's
-    /// `expires_at` (here `u32::MAX`), the book is empty on both sides.
+    /// Levels expired in *either* domain are dropped — past every level's
+    /// `expires_at_unix` / `expires_at_slot` (both `u32::MAX` here), the book
+    /// is empty on both sides.
     #[test]
     fn expired_levels_are_excluded() {
         let data = market_data();
         let view = MarketView::load(&data).unwrap();
-        assert!(resting_levels(&view, SwapSide::Buy, u32::MAX).is_empty());
-        assert!(resting_levels(&view, SwapSide::Sell, u32::MAX).is_empty());
+        assert!(resting_levels(&view, SwapSide::Buy, u32::MAX, u32::MAX).is_empty());
+        assert!(resting_levels(&view, SwapSide::Sell, u32::MAX, u32::MAX).is_empty());
     }
 
-    fn level(offset_ppm: u32, size_bps: u16) -> Level {
+    fn level_bounded(offset_ppm: u32, size_bps: u16, secs: u32, slots: u32) -> Level {
         Level {
             price_offset: offset_ppm.into(),
             size_bps: size_bps.into(),
-            expiry_offset: u32::MAX.into(),
+            expiry_offset_secs: secs.into(),
+            expiry_offset_slots: slots.into(),
         }
     }
+
+    /// The fixture vaults' two expiry datums. Deliberately far apart so a
+    /// transposition moves a materialized deadline by ~1.7e9 rather than
+    /// by a few units — see [`each_expiry_conjunct_is_independently_live`].
+    const FIX_QUOTE_SLOT: u32 = 7;
+    const FIX_QUOTE_UNIX: u32 = 1_700_000_000;
 
     /// A one-vault market with `FLUSH_BIT` armed and a single-level profile a
     /// side (`ask_bps` / `bid_bps` set on level 0, ±500 ppm off a 1.0850
@@ -712,6 +767,14 @@ mod tests {
     /// `remaining` from this profile — the path the per-side size gate lives
     /// on.
     fn market_data_flush(ask_bps: u16, bid_bps: u16) -> Vec<u8> {
+        market_data_flush_at(ask_bps, bid_bps, u32::MAX, u32::MAX)
+    }
+
+    /// [`market_data_flush`] with explicit per-domain expiry offsets, so a
+    /// test can put the two deadlines at different, *finite* places. With
+    /// the `u32::MAX` offsets of the plain builder both domains saturate,
+    /// which hides exactly the datum mix-up this fixture exists to catch.
+    fn market_data_flush_at(ask_bps: u16, bid_bps: u16, secs: u32, slots: u32) -> Vec<u8> {
         let mut header = MarketHeader::zeroed();
         header.head = 0u32.into();
         header.tombstone_head = NULL_SECTOR.into();
@@ -727,12 +790,17 @@ mod tests {
         v.reference_price = ReferencePrice {
             stamp: (FLUSH_BIT | 1).into(),
             price: Price::encode(10_850_000, 0).unwrap().as_u32().into(),
-            quote_slot: 0u32.into(),
+            // Deliberately DISTINCT and nonzero, mirroring the on-chain
+            // `materialize_remaining` test: with both at zero a
+            // datum transposition in `deadlines` would pass every
+            // assertion in this module.
+            quote_slot: FIX_QUOTE_SLOT.into(),
+            quote_unix: FIX_QUOTE_UNIX.into(),
         };
         v.base_atoms = 1_000_000u64.into();
         v.quote_atoms = 1_000_000u64.into();
-        v.profile.asks[0] = level(5_000, ask_bps);
-        v.profile.bids[0] = level(5_000, bid_bps);
+        v.profile.asks[0] = level_bounded(5_000, ask_bps, secs, slots);
+        v.profile.bids[0] = level_bounded(5_000, bid_bps, secs, slots);
 
         let vaults = [v];
         let mut buf = Vec::new();
@@ -746,6 +814,65 @@ mod tests {
         buf
     }
 
+    /// Each expiry conjunct kills a level **on its own**, and each is
+    /// measured off **its own** datum.
+    ///
+    /// The two saturating `u32::MAX` offsets every other fixture uses make
+    /// both deadlines `u32::MAX` regardless of datum, so those tests would
+    /// stay green if `deadlines` read the datums in the wrong order — the
+    /// mirrors take them as two same-typed `u32`s, so nothing else would
+    /// catch it either. Here the offsets are finite and the datums are far
+    /// apart (`7` slots vs `1_700_000_000` seconds), which puts the two
+    /// materialized deadlines at `57` and `1_700_000_600`. Swapping them
+    /// moves each by ~1.7e9 and fails the live case immediately.
+    #[test]
+    fn each_expiry_conjunct_is_independently_live() {
+        const SECS_OFF: u32 = 600;
+        const SLOT_OFF: u32 = 50;
+        let wall_deadline = FIX_QUOTE_UNIX + SECS_OFF;
+        let slot_deadline = FIX_QUOTE_SLOT + SLOT_OFF;
+
+        let data = market_data_flush_at(5_000, 5_000, SECS_OFF, SLOT_OFF);
+        let view = MarketView::load(&data).unwrap();
+
+        // Inside both bounds: the book is there.
+        assert!(
+            !resting_levels(&view, SwapSide::Buy, slot_deadline - 1, wall_deadline - 1).is_empty(),
+            "a level inside both deadlines must rest"
+        );
+        // Slot bound passed, wall bound still open.
+        assert!(
+            resting_levels(&view, SwapSide::Buy, slot_deadline, wall_deadline - 1).is_empty(),
+            "the slot conjunct must kill the level on its own"
+        );
+        // Wall bound passed, slot bound still open.
+        assert!(
+            resting_levels(&view, SwapSide::Buy, slot_deadline - 1, wall_deadline).is_empty(),
+            "the wall conjunct must kill the level on its own"
+        );
+    }
+
+    /// A zero offset is dead in either domain whatever the datum says —
+    /// materialization encodes it as the zero deadline rather than letting
+    /// the bare datum stand in. Pinned here on the slot axis against a live
+    /// wall TIF, the fail-open direction for a quoter.
+    #[test]
+    fn a_zero_offset_is_dead_in_either_domain() {
+        let data = market_data_flush_at(5_000, 5_000, 600, 0);
+        let view = MarketView::load(&data).unwrap();
+        assert!(
+            resting_levels(&view, SwapSide::Buy, 1, FIX_QUOTE_UNIX).is_empty(),
+            "a zero slot offset never rests, however long the wall TIF"
+        );
+
+        let data = market_data_flush_at(5_000, 5_000, 0, 600);
+        let view = MarketView::load(&data).unwrap();
+        assert!(
+            resting_levels(&view, SwapSide::Buy, FIX_QUOTE_SLOT, 1).is_empty(),
+            "a zero wall offset never rests, however long the slot bound"
+        );
+    }
+
     /// A flush side whose `Σ size_bps > BPS` is thrown out of matching whole —
     /// its levels don't appear — while the other side still reconstructs and
     /// fills, mirroring the engine zeroing only the offending side rather than
@@ -755,20 +882,20 @@ mod tests {
         let data = market_data_flush(20_000, 5_000); // asks 200% of leg, bids 50%
         let view = MarketView::load(&data).unwrap();
         assert!(
-            resting_levels(&view, SwapSide::Buy, 1).is_empty(),
+            resting_levels(&view, SwapSide::Buy, 1, 1).is_empty(),
             "oversized ask side contributes no depth"
         );
         assert!(
-            !resting_levels(&view, SwapSide::Sell, 1).is_empty(),
+            !resting_levels(&view, SwapSide::Sell, 1, 1).is_empty(),
             "healthy bid side still reconstructs"
         );
         assert_eq!(
-            simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1, 0),
+            simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1, 1, 0),
             Quote::default(),
             "a Buy against the oversized ask side no-fills, it does not abort"
         );
         assert!(
-            simulate_swap(&view, SwapSide::Sell, 500_000, Price::ZERO, 1, 0).out_amount > 0,
+            simulate_swap(&view, SwapSide::Sell, 500_000, Price::ZERO, 1, 1, 0).out_amount > 0,
             "the healthy bid side still fills a Sell"
         );
     }
@@ -779,8 +906,10 @@ mod tests {
     fn flush_side_sum_at_bps_is_accepted() {
         let data = market_data_flush(10_000, 10_000);
         let view = MarketView::load(&data).unwrap();
-        assert!(!resting_levels(&view, SwapSide::Buy, 1).is_empty());
-        assert!(simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1, 0).out_amount > 0);
+        assert!(!resting_levels(&view, SwapSide::Buy, 1, 1).is_empty());
+        assert!(
+            simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1, 1, 0).out_amount > 0
+        );
     }
 
     /// A market whose `max_platform_fee` is zero (every fixture here, since
@@ -792,9 +921,11 @@ mod tests {
     fn platform_fee_above_market_ceiling_refuses_to_quote() {
         let data = market_data();
         let view = MarketView::load(&data).unwrap();
-        assert!(simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1, 0).out_amount > 0);
+        assert!(
+            simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1, 1, 0).out_amount > 0
+        );
         assert_eq!(
-            simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1, 1),
+            simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1, 1, 1),
             Quote::default(),
             "1 bps declared against a 0 bps ceiling must refuse, not clamp to 0"
         );
@@ -817,8 +948,8 @@ mod tests {
             .copy_from_slice(bytes_of(&header));
         let view = MarketView::load(&data).unwrap();
 
-        let free = simulate_swap(&view, SwapSide::Buy, 1_000_000, Price::INFINITY, 1, 0);
-        let paid = simulate_swap(&view, SwapSide::Buy, 1_000_000, Price::INFINITY, 1, 100);
+        let free = simulate_swap(&view, SwapSide::Buy, 1_000_000, Price::INFINITY, 1, 1, 0);
+        let paid = simulate_swap(&view, SwapSide::Buy, 1_000_000, Price::INFINITY, 1, 1, 100);
         assert_eq!(free.platform_fee_amount, 0);
 
         // Same book, same input, same gross fill and same taker fee — the

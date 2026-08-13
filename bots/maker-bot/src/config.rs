@@ -16,6 +16,7 @@
 //! decimals the localnet bootstrap and inventory valuation need.
 
 use dropset_fair_value::FairValueConfig;
+use dropset_sdk::quoting::NO_SLOT_BOUND;
 use std::time::Duration;
 
 /// Default localnet RPC endpoint (the `solana-test-validator` the TUI spawns).
@@ -205,40 +206,83 @@ pub const MARKETS: [MarketConfig; 7] = [
 ];
 
 /// One rung of the quote ladder: a ppm offset from the reference price, a
-/// fraction of the inventory leg in bps, and a per-level expiry in slots.
+/// fraction of the inventory leg in bps, and a per-level expiry in each
+/// of the two domains the engine gates on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LadderLevel {
     /// Offset from `reference_price`, in ppm (bids subtract, asks add).
     pub offset_ppm: u32,
     /// Fraction of the inventory leg, in bps (10000 = 100%).
     pub size_bps: u16,
-    /// Slots after the quote's `quote_slot` at which this level expires.
-    pub expiry_offset: u32,
+    /// Seconds after the quote's `quote_unix` wall-clock datum at which
+    /// this level expires.
+    pub expiry_offset_secs: u32,
+    /// Slots after the quote's `quote_slot` datum at which this level
+    /// expires — the second, independent bound. [`NO_SLOT_BOUND`] leaves
+    /// a level bounded only in wall time.
+    pub expiry_offset_slots: u32,
 }
 
 /// The spec's hand-shaped ladder (§2 + the §3 expiry table): top-of-book at
 /// 50 bps taking 40% of the leg and expiring fastest, widening and shrinking
-/// to a 500 bps tail that lives ~50 min. `Σ size_bps = 10000` per side.
+/// to a 500 bps tail that lives ~48 min. `Σ size_bps = 10000` per side.
+///
+/// Wall expiries carry over from the table's former slot denomination at
+/// the mainnet ~0.4 s/slot pace it assumed (90 / 300 / 1200 / 7200 slots
+/// → 36 s / 2 min / 8 min / 48 min), so the nominal lives are unchanged;
+/// what changed is that they now hold through a halt, where slots stop
+/// ticking but wall time does not.
+///
+/// The **slot** bound sits deliberately *above* each tier's wall life
+/// (~1.25x at the ~0.4 s/slot pace). The wall bound is this bot's actual
+/// policy — it is the §3 tier table — and the slot bound exists for the
+/// regime where the cluster clock misbehaves, so it must never be the
+/// conjunct that governs a healthy book. The deepest tier goes
+/// [`NO_SLOT_BOUND`], leaving its stratified wall decay to govern it.
+///
+/// **Why not a sub-second slot bound.** The protocol supports one, and
+/// against a prop-cadence quoter that re-stamps every block or two a
+/// 2-slot tail is exactly the right dead-man switch — that is the case
+/// the dual gate was designed around, and it is what makes the slot
+/// conjunct worth having at all (the cluster clock is second-denominated
+/// and accurate to only a few seconds, flooring any wall TIF at ~15 s).
+///
+/// This bot is not that quoter. It re-stamps on a 5 s tick and, on a
+/// quiet book, only on the 30 s [`StrategyConfig::ref_heartbeat`] — and
+/// its `quote_slot` comes from `get_slot()` at *confirmed* commitment,
+/// which already lags the leader slot before the stamp transaction
+/// lands. A 2-slot bound would be past before a taker could match it:
+/// the slot conjunct would kill a level the wall conjunct was still
+/// holding open, taking the 40%-of-leg top tier dark on arrival. So the
+/// bound has to clear this bot's own re-stamp cadence, which is what
+/// [`tests::slot_bound_clears_the_heartbeat`] pins.
+///
+/// These values are the shape of the policy, not a calibration — the
+/// vol-ladder retune owns the tuning.
 pub const DEFAULT_LADDER: [LadderLevel; 4] = [
     LadderLevel {
         offset_ppm: 5_000,
         size_bps: 4_000,
-        expiry_offset: 90,
+        expiry_offset_secs: 36,
+        expiry_offset_slots: 120,
     },
     LadderLevel {
         offset_ppm: 10_000,
         size_bps: 3_000,
-        expiry_offset: 300,
+        expiry_offset_secs: 120,
+        expiry_offset_slots: 375,
     },
     LadderLevel {
         offset_ppm: 20_000,
         size_bps: 2_000,
-        expiry_offset: 1_200,
+        expiry_offset_secs: 480,
+        expiry_offset_slots: 1_500,
     },
     LadderLevel {
         offset_ppm: 50_000,
         size_bps: 1_000,
-        expiry_offset: 7_200,
+        expiry_offset_secs: 2_880,
+        expiry_offset_slots: NO_SLOT_BOUND,
     },
 ];
 
@@ -344,9 +388,12 @@ pub struct KillSwitchConfig {
 
 /// Stale-quote invalidation (the bot half of the halt / pick-off mitigation).
 ///
-/// A resting quote stays matchable until its level's `expiry_offset` passes —
-/// up to ~50 min of live chain on the deepest tier — and slots don't tick at all
-/// while the chain is halted, so that life has no wall-clock bound. When the bot
+/// A resting quote stays matchable until a level deadline passes —
+/// up to ~48 min on the deepest tier. That life is now wall-clock bounded
+/// (levels are measured from the quote's `quote_unix` datum, so a halt no
+/// longer freezes the countdown), but a staleness *cap* is not the same as
+/// an unattended-book policy: 48 min of drift is still far more than the
+/// bot intends to leave resting. When the bot
 /// stops refreshing the reference (a restart, a chain halt, feeds gone dark),
 /// these knobs govern the kill stamp that takes the book dark instead of leaving
 /// it to expire. See [`crate::model::invalidate`].
@@ -357,7 +404,7 @@ pub struct InvalidateConfig {
     /// Twice the `SetReferencePrice` heartbeat (30 s), so a healthy bot's own
     /// last stamp is always comfortably inside the bound and an ordinary restart
     /// doesn't churn the book — while still being ~2% of the deepest ladder
-    /// tier's ~50 min wall-clock life, so no level ever rests unattended for
+    /// tier's ~48 min wall-clock life, so no level ever rests unattended for
     /// more than about a minute.
     pub stale_after: Duration,
     /// Priority fee for the kill stamp, in micro-lamports per compute unit.
@@ -532,7 +579,8 @@ mod tests {
         for w in DEFAULT_LADDER.windows(2) {
             assert!(w[1].offset_ppm > w[0].offset_ppm);
             assert!(w[1].size_bps < w[0].size_bps);
-            assert!(w[1].expiry_offset > w[0].expiry_offset);
+            assert!(w[1].expiry_offset_secs > w[0].expiry_offset_secs);
+            assert!(w[1].expiry_offset_slots > w[0].expiry_offset_slots);
         }
     }
 
@@ -564,12 +612,84 @@ mod tests {
         // level can never outlive the bound and expire on its own instead.
         let deepest = DEFAULT_LADDER
             .iter()
-            .map(|l| l.expiry_offset)
+            .map(|l| l.expiry_offset_secs)
             .max()
             .expect("ladder is non-empty");
-        // Mainnet slots run ~0.4 s (§3 expiry table).
-        let deepest_wall = Duration::from_millis(deepest as u64 * 400);
+        // `expiry_offset_secs` is wall-clock seconds, so the tier's life
+        // needs no slot-pace conversion — the point of the datum model.
+        let deepest_wall = Duration::from_secs(deepest as u64);
         assert!(cfg.invalidate.stale_after * 10 < deepest_wall);
+    }
+
+    /// The **slot** conjunct must clear this bot's own re-stamp cadence,
+    /// or it kills levels the wall conjunct is still holding open.
+    ///
+    /// Expiry is the min of two bounds, so the *tighter* one governs — a
+    /// slot bound under the heartbeat takes top-of-book dark between
+    /// re-quotes even though its wall TIF has minutes left. The wall
+    /// domain has had this invariant since the ladder was written
+    /// (`Level 1 expiry must exceed the SetReferencePrice heartbeat`);
+    /// the slot domain needs the same one, expressed at the slot pace.
+    ///
+    /// The worst-case gap is the heartbeat **plus** a tick, not the
+    /// heartbeat alone: the heartbeat is only *sampled* on the tick, so a
+    /// stamp due at t=30 s is not issued until the next tick notices it.
+    #[test]
+    fn slot_bound_clears_the_heartbeat() {
+        let cfg = BotConfig::default();
+        // The pace the tier equivalence is written against. NOT a
+        // protocol constant, and NOT the safe direction to assume: a
+        // faster pace (SIMD-0525 stages 200 ms) means more slots elapse
+        // per heartbeat *and* buys less wall life per slot, so both
+        // effects erode the margin below. Re-derive the tiers if the
+        // cluster pace changes rather than trusting this number.
+        const SLOT_MS: u64 = 400;
+        // `quote_slot` is read at *confirmed* commitment and the stamp
+        // then needs a slot or two to land, so the datum is already
+        // behind the leader slot when it is written.
+        const LAG_SLOTS: u64 = 8;
+
+        // A stamp is only issued on a tick, so the longest a level can go
+        // un-refreshed is one heartbeat plus one tick.
+        let worst_gap = cfg.strategy.ref_heartbeat + cfg.tick;
+        let required = (worst_gap.as_millis() as u64) / SLOT_MS + LAG_SLOTS;
+
+        let tightest = DEFAULT_LADDER
+            .iter()
+            .map(|l| l.expiry_offset_slots)
+            .min()
+            .expect("ladder is non-empty");
+        assert!(
+            (tightest as u64) > required,
+            "tightest slot bound ({tightest} slots) must exceed the \
+             {required}-slot worst case (heartbeat + tick + commitment \
+             lag), or top-of-book goes dark between re-quotes"
+        );
+
+        // The slot conjunct must never be the one that *governs*. Expiry
+        // is the min of two bounds, and for this bot the wall bound is the
+        // policy (the §3 tier table); the slot bound exists for the regime
+        // where the cluster clock misbehaves. So every tier's slot life
+        // must be at least its wall life — otherwise the slot domain
+        // silently shortens a documented TIF.
+        //
+        // This subsumes the domain-confusion check a tolerance band was
+        // reaching for, and unlike a band it actually catches it: a
+        // seconds value left in a slots field is a 2.5x *shortening* at
+        // 400 ms/slot, which lands under the wall bound and fails here.
+        for l in DEFAULT_LADDER.iter() {
+            if l.expiry_offset_slots == NO_SLOT_BOUND {
+                continue;
+            }
+            let slot_life_secs = (l.expiry_offset_slots as u64) * SLOT_MS / 1_000;
+            let wall = l.expiry_offset_secs as u64;
+            assert!(
+                slot_life_secs >= wall,
+                "tier {}bps: slot bound ~{slot_life_secs}s is under its \
+                 {wall}s wall TIF, so the slot conjunct would govern",
+                l.offset_ppm / 100
+            );
+        }
     }
 
     /// Every demo market names a base mint, a CoinGecko id, a tracked

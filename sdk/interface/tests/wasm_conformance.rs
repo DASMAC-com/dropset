@@ -51,11 +51,22 @@ fn wasm_simulate_swap_matches_vectors() {
         let side = c["side"].as_u64().unwrap() as u8;
         let amount_in = c["amount_in"].as_u64().unwrap();
         let limit_bits = c["limit_price_bits"].as_u64().unwrap() as u32;
-        let slot = c["current_slot"].as_u64().unwrap() as u32;
+        // Expiry is dual-domain, so each case carries both clocks; the
+        // `expiry_*` cases are the ones that pin each conjunct.
+        let now_slot = c["now_slot"].as_u64().unwrap() as u32;
+        let now_unix = c["now_unix"].as_u64().unwrap() as u32;
         let platform_fee_bps = c["platform_fee_bps"].as_u64().unwrap() as u16;
 
-        let q = simulate_swap(&data, side, amount_in, limit_bits, slot, platform_fee_bps)
-            .unwrap_or_else(|_| panic!("{name}: binding returned an error"));
+        let q = simulate_swap(
+            &data,
+            side,
+            amount_in,
+            limit_bits,
+            now_slot,
+            now_unix,
+            platform_fee_bps,
+        )
+        .unwrap_or_else(|_| panic!("{name}: binding returned an error"));
         let e = &c["expected"];
         assert_eq!(
             q.in_amount(),
@@ -92,7 +103,7 @@ fn wasm_simulate_swap_matches_vectors() {
 fn wasm_simulate_swap_rejects_invalid_side() {
     let data = market_data(&vectors());
     assert!(
-        simulate_swap(&data, 2, 1_000_000, u32::MAX, 1, 0).is_err(),
+        simulate_swap(&data, 2, 1_000_000, u32::MAX, 1, 1, 0).is_err(),
         "side=2 must be rejected"
     );
 }
@@ -103,7 +114,7 @@ fn wasm_simulate_swap_rejects_invalid_side() {
 #[wasm_bindgen_test]
 fn wasm_simulate_swap_rejects_undersized_buffer() {
     assert!(
-        simulate_swap(&[0u8; 4], 0, 1_000_000, u32::MAX, 1, 0).is_err(),
+        simulate_swap(&[0u8; 4], 0, 1_000_000, u32::MAX, 1, 1, 0).is_err(),
         "undersized market data must be rejected"
     );
 }

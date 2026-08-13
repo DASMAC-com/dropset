@@ -12,7 +12,7 @@ use anyhow::{anyhow, Context as _, Result};
 use dropset_sdk::accounts::MARKET_HEADER_DISCRIMINATOR;
 use dropset_sdk::layout::MarketView as SlabView;
 use dropset_sdk::price::Price;
-use dropset_sdk::quoting::{set_liquidity_profile_ix, set_reference_price_ix};
+use dropset_sdk::quoting::{set_liquidity_profile_ix, set_reference_price_ix, PROFILE_BYTES};
 use dropset_sdk::DROPSET_ID;
 use solana_client::rpc_client::RpcClient;
 use solana_commitment_config::CommitmentConfig;
@@ -231,7 +231,18 @@ pub fn set_reference_price(
     let ratio = human_to_atoms_ratio(price, base_decimals, quote_decimals);
     let reference = Price::from_value(ratio)
         .ok_or_else(|| anyhow!("price {price} (ratio {ratio}) out of range"))?;
-    let ix = set_reference_price_ix(leader.pubkey(), *market, vault_idx, reference, slot);
+    // Stamp the wall-clock datum every level's TIF is measured from. Host
+    // clock (see `dropset_sdk::time`): a fresh quote must reset the whole
+    // ladder's life, and paying an RPC for it on every tick of the
+    // re-quote hot path buys accuracy the sysvar itself does not have.
+    let ix = set_reference_price_ix(
+        leader.pubkey(),
+        *market,
+        vault_idx,
+        reference,
+        slot,
+        dropset_sdk::time::now_unix(),
+    );
     send(client, leader, &[ix])
 }
 
@@ -255,7 +266,18 @@ pub fn invalidate_reference_price(
     slot: u64,
     micro_lamports: u64,
 ) -> Result<String> {
-    let ix = set_reference_price_ix(leader.pubkey(), *market, vault_idx, Price::ZERO, slot);
+    // The datum is immaterial on this path — a zero reference price fails
+    // `has_valid_reference_price()`, so matching skips the vault before any
+    // level expiry is consulted — but stamp the real one anyway so the
+    // stored record stays honest about when the kill was issued.
+    let ix = set_reference_price_ix(
+        leader.pubkey(),
+        *market,
+        vault_idx,
+        Price::ZERO,
+        slot,
+        dropset_sdk::time::now_unix(),
+    );
     let fee = ComputeBudgetInstruction::set_compute_unit_price(micro_lamports);
     send(client, leader, &[fee, ix])
 }
@@ -266,7 +288,7 @@ pub fn set_liquidity_profile(
     leader: &Keypair,
     market: &Pubkey,
     vault_idx: u32,
-    profile_bytes: [u8; 160],
+    profile_bytes: [u8; PROFILE_BYTES],
 ) -> Result<String> {
     let ix = set_liquidity_profile_ix(leader.pubkey(), *market, vault_idx, profile_bytes);
     send(client, leader, &[ix])

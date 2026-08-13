@@ -29,6 +29,17 @@ const idlPath = join(repoRoot, 'sdk', 'idl', 'dropset.json');
 const idl = JSON.parse(readFileSync(idlPath, 'utf8'));
 const codama = createFromRoot(rootNodeFromAnchor(idl));
 
+/** Levels per side of a `LiquidityProfile` — the program's `N_LEVELS`. */
+const N_LEVELS = 8;
+/**
+ * On-wire width of one `Level`: `price_offset` u32, `size_bps` u16, and a
+ * per-domain expiry offset each (`expiry_offset_secs` / `_slots`, u32).
+ * Every field is alignment-1, so the struct is byte-packed.
+ */
+const LEVEL_BYTES = 4 + 2 + 4 + 4;
+/** Serialized `LiquidityProfile`: both sides' level arrays, back to back. */
+const PROFILE_BYTES = 2 * N_LEVELS * LEVEL_BYTES;
+
 // The renderers emit codecs for `definedTypes` but not for `program.events`,
 // so the 5 `#[event]` structs (Deposit/Withdraw/CreateVault/Realize/Fill)
 // don't get codecs. interface.md §1/§2 puts event decoding in the SDK's
@@ -68,13 +79,20 @@ codama.update(
     {
       // `set_liquidity_profile`'s `profile_bytes: [u8; PROFILE_BYTES]`
       // surfaces as a zero-length array — anchor-next can't const-eval
-      // `PROFILE_BYTES` (= size_of::<LiquidityProfile>() = 160). Restore
-      // the real length so the generated arg is `[u8; 160]`, matching the
-      // serialized LiquidityProfile the instruction expects.
+      // `PROFILE_BYTES` (= size_of::<LiquidityProfile>()). Restore the
+      // real length so the generated arg matches the serialized
+      // LiquidityProfile the instruction expects.
+      //
+      // Derived here rather than written as a literal, because the value
+      // moved once already (160 → 224, when per-level expiry gained its
+      // second domain) and a stale literal here is a silent wire-format
+      // mismatch rather than a build break: 2 sides × 8 levels × a
+      // 14-byte Level (price_offset u32, size_bps u16, expiry_offset_secs
+      // u32, expiry_offset_slots u32).
       select: '[instructionArgumentNode]profileBytes',
       transform: (node) => ({
         ...node,
-        type: arrayTypeNode(numberTypeNode('u8'), fixedCountNode(160)),
+        type: arrayTypeNode(numberTypeNode('u8'), fixedCountNode(PROFILE_BYTES)),
       }),
     },
   ]),

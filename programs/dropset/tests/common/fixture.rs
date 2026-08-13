@@ -47,10 +47,15 @@ use dropset::{
         WithdrawLeader as WithdrawLeaderIx,
     },
     Level, LiquidityProfile, MarketHeader, Price, RegistryHeader, Vault, VaultDepositorHeader,
-    N_LEVELS,
 };
 use litesvm::types::TransactionMetadata;
 use solana_instruction::{AccountMeta, Instruction};
+// The *sysvar-serializable* `Clock`, which is what litesvm's `get_sysvar`
+// / `set_sysvar` are bounded on — distinct from
+// `anchor_lang_v2::prelude::Clock`, the account-wrapper type the program's
+// own `Sysvar<Clock>` field uses.
+use dropset_sdk::quoting::NO_SLOT_BOUND;
+use solana_clock::Clock;
 use solana_loader_v3_interface::get_program_data_address;
 use solana_pubkey::Pubkey;
 
@@ -58,7 +63,11 @@ pub const SYSVAR_CLOCK_ID: Pubkey =
     Pubkey::from_str_const("SysvarC1ock11111111111111111111111111111111");
 
 /// On-wire size of a serialized [`LiquidityProfile`] (alignment-1 Pod).
-pub const PROFILE_BYTES: usize = 2 * N_LEVELS * 10;
+///
+/// Derived from the type rather than written as `2 * N_LEVELS * <width>`,
+/// so widening a `Level` field moves it in step instead of failing as a
+/// mismatched array length at every call site.
+pub const PROFILE_BYTES: usize = core::mem::size_of::<LiquidityProfile>();
 
 // ── PDA derivations ──────────────────────────────────────────────────
 
@@ -102,37 +111,54 @@ pub fn vault_byte_offset(sector_idx: u32) -> usize {
 }
 
 /// Build a one-bid/one-ask profile: symmetric `offset_ppm` spread,
-/// `size_bps` of each leg, never-expiring. The default ladder seeded
-/// vaults quote with.
-pub fn simple_profile(offset_ppm: u32, size_bps: u16, expiry_offset: u32) -> [u8; PROFILE_BYTES] {
+/// `size_bps` of each leg, and `expiry_secs` of wall life. The default
+/// ladder seeded vaults quote with.
+///
+/// Left **slot-unbounded**, so the level's life is governed purely by the
+/// wall bound — the shape most matcher tests want. Tests exercising the
+/// slot conjunct use [`dual_profile`].
+pub fn simple_profile(offset_ppm: u32, size_bps: u16, expiry_secs: u32) -> [u8; PROFILE_BYTES] {
+    dual_profile(offset_ppm, size_bps, expiry_secs, NO_SLOT_BOUND)
+}
+
+/// [`simple_profile`] with both expiry domains set explicitly — for the
+/// dual-gate scenarios (one bound live while the other has passed).
+pub fn dual_profile(
+    offset_ppm: u32,
+    size_bps: u16,
+    expiry_secs: u32,
+    expiry_slots: u32,
+) -> [u8; PROFILE_BYTES] {
     let mut profile: LiquidityProfile = bytemuck::Zeroable::zeroed();
-    profile.bids[0].price_offset = offset_ppm.into();
-    profile.bids[0].size_bps = size_bps.into();
-    profile.bids[0].expiry_offset = expiry_offset.into();
-    profile.asks[0].price_offset = offset_ppm.into();
-    profile.asks[0].size_bps = size_bps.into();
-    profile.asks[0].expiry_offset = expiry_offset.into();
+    for side in [&mut profile.bids, &mut profile.asks] {
+        side[0].price_offset = offset_ppm.into();
+        side[0].size_bps = size_bps.into();
+        side[0].expiry_offset_secs = expiry_secs.into();
+        side[0].expiry_offset_slots = expiry_slots.into();
+    }
     let mut bytes = [0u8; PROFILE_BYTES];
     bytes.copy_from_slice(bytemuck::bytes_of(&profile));
     bytes
 }
 
 /// Build a multi-level profile from explicit per-level
-/// `(offset_ppm, size_bps, expiry_offset)` tuples — asks and bids fill from
+/// `(offset_ppm, size_bps, expiry_secs)` tuples — asks and bids fill from
 /// level 0, unused slots stay zeroed. The ladder generalization of
 /// [`simple_profile`], for matcher scenarios that need more than one live
-/// level a side.
+/// level a side. Slot-unbounded, as [`simple_profile`] is.
 pub fn ladder_profile(asks: &[(u32, u16, u32)], bids: &[(u32, u16, u32)]) -> [u8; PROFILE_BYTES] {
     let mut profile: LiquidityProfile = bytemuck::Zeroable::zeroed();
-    for (i, &(offset_ppm, size_bps, expiry_offset)) in asks.iter().enumerate() {
+    for (i, &(offset_ppm, size_bps, expiry_secs)) in asks.iter().enumerate() {
         profile.asks[i].price_offset = offset_ppm.into();
         profile.asks[i].size_bps = size_bps.into();
-        profile.asks[i].expiry_offset = expiry_offset.into();
+        profile.asks[i].expiry_offset_secs = expiry_secs.into();
+        profile.asks[i].expiry_offset_slots = NO_SLOT_BOUND.into();
     }
-    for (i, &(offset_ppm, size_bps, expiry_offset)) in bids.iter().enumerate() {
+    for (i, &(offset_ppm, size_bps, expiry_secs)) in bids.iter().enumerate() {
         profile.bids[i].price_offset = offset_ppm.into();
         profile.bids[i].size_bps = size_bps.into();
-        profile.bids[i].expiry_offset = expiry_offset.into();
+        profile.bids[i].expiry_offset_secs = expiry_secs.into();
+        profile.bids[i].expiry_offset_slots = NO_SLOT_BOUND.into();
     }
     let mut bytes = [0u8; PROFILE_BYTES];
     bytes.copy_from_slice(bytemuck::bytes_of(&profile));
@@ -696,6 +722,50 @@ impl Fixture {
         associated_token_address(owner, &self.fee_mint, &SPL_TOKEN_PROGRAM_ID)
     }
 
+    /// The bank's current wall-clock time, in the `u32` unix seconds the
+    /// `quote_unix` datum and `Position.expires_at_unix` are denominated in.
+    pub fn now_unix(&self) -> u32 {
+        self.svm
+            .get_sysvar::<Clock>()
+            .unix_timestamp
+            .clamp(0, u32::MAX as i64) as u32
+    }
+
+    /// The bank's current slot, narrowed to the `u32` the expiry fields
+    /// are denominated in.
+    pub fn now_slot(&self) -> u32 {
+        self.svm.get_sysvar::<Clock>().slot.min(u32::MAX as u64) as u32
+    }
+
+    /// Advance the bank's slot by `slots` without touching the wall clock.
+    ///
+    /// The dual counterpart of [`Self::warp_unix`]: expiry is the min of a
+    /// slot bound and a wall bound, so a test that means to age a level out
+    /// in one domain must leave the other where it is, or it cannot tell
+    /// which conjunct did the killing.
+    pub fn warp_slots(&mut self, slots: u64) {
+        let mut clock = self.svm.get_sysvar::<Clock>();
+        clock.slot += slots;
+        self.svm.set_sysvar::<Clock>(&clock);
+    }
+
+    /// Advance the bank's wall clock by `secs` without touching the slot.
+    ///
+    /// Level expiry is wall-denominated, so this — not `warp_to_slot` —
+    /// is what ages a quote out. Keeping the two independent is also what
+    /// lets a test model the halt case the wall-clock datum exists for: a
+    /// cluster restart resumes near the pre-halt *slot* while wall time
+    /// has moved hours.
+    pub fn warp_unix(&mut self, secs: i64) {
+        let mut clock = self.svm.get_sysvar::<Clock>();
+        clock.unix_timestamp += secs;
+        self.svm.set_sysvar::<Clock>(&clock);
+    }
+
+    /// Stamp a **fresh** quote: `quote_unix` is the bank's current time,
+    /// so every level is live for its own `expiry_offset_secs`. This
+    /// is what a healthy leader does on every tick; tests that need to
+    /// control the datum itself use [`Self::set_reference_price_at`].
     pub fn set_reference_price(
         &mut self,
         signer: &Keypair,
@@ -703,11 +773,26 @@ impl Fixture {
         price_bits: u32,
         quote_slot: u32,
     ) -> Result<(), String> {
-        self.set_reference_price_meta(signer, vault_idx, price_bits, quote_slot)
+        let quote_unix = self.now_unix();
+        self.set_reference_price_at(signer, vault_idx, price_bits, quote_slot, quote_unix)
+    }
+
+    /// [`Self::set_reference_price`] with an explicit wall-clock datum —
+    /// for staleness scenarios (a pre-halt quote, a zero datum, a
+    /// far-future one).
+    pub fn set_reference_price_at(
+        &mut self,
+        signer: &Keypair,
+        vault_idx: u32,
+        price_bits: u32,
+        quote_slot: u32,
+        quote_unix: u32,
+    ) -> Result<(), String> {
+        self.set_reference_price_meta(signer, vault_idx, price_bits, quote_slot, quote_unix)
             .map(|_| ())
     }
 
-    /// Like [`Self::set_reference_price`] but yields the
+    /// Like [`Self::set_reference_price_at`] but yields the
     /// [`TransactionMetadata`], whose `compute_units_consumed` the CU
     /// report reads to compare the asm fast path against the reference.
     pub fn set_reference_price_meta(
@@ -716,6 +801,7 @@ impl Fixture {
         vault_idx: u32,
         price_bits: u32,
         quote_slot: u32,
+        quote_unix: u32,
     ) -> Result<TransactionMetadata, String> {
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
@@ -723,6 +809,7 @@ impl Fixture {
                 vault_idx,
                 price_bits,
                 quote_slot,
+                quote_unix,
             }
             .data(),
             // Just [signer, market]: the clock sysvar was dropped with the

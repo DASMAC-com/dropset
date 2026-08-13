@@ -2321,6 +2321,10 @@
         {
           "name": "quote_slot",
           "type": "u32"
+        },
+        {
+          "name": "quote_unix",
+          "type": "u32"
         }
       ]
     },

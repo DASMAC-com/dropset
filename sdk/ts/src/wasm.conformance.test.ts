@@ -53,7 +53,8 @@ type SwapCase = {
   side: number;
   amount_in: number;
   limit_price_bits: number;
-  current_slot: number;
+  now_slot: number;
+  now_unix: number;
   platform_fee_bps: number;
   expected: ExpectedQuote;
 };
@@ -78,7 +79,8 @@ test('committed wasm simulate_swap matches the conformance vectors', () => {
       c.side,
       BigInt(c.amount_in),
       c.limit_price_bits,
-      c.current_slot,
+      c.now_slot,
+      c.now_unix,
       c.platform_fee_bps,
     );
     assert.equal(q.in_amount, BigInt(c.expected.in_amount), `${c.name}: in_amount`);
@@ -103,7 +105,7 @@ test('committed wasm simulate_swap matches the conformance vectors', () => {
 // green while proving nothing.
 test('committed wasm simulate_swap rejects an undersized buffer', () => {
   assert.throws(
-    () => simulate_swap(new Uint8Array(4), 0, 1_000_000n, 0xffffffff, 1, 0),
+    () => simulate_swap(new Uint8Array(4), 0, 1_000_000n, 0xffffffff, 1, 1, 0),
     /TooSmall/,
   );
 });
@@ -113,7 +115,7 @@ test('committed wasm simulate_swap rejects an undersized buffer', () => {
 // picking a side.
 test('committed wasm simulate_swap rejects an invalid side', () => {
   assert.throws(
-    () => simulate_swap(marketData, 2, 1_000_000n, 0xffffffff, 1, 0),
+    () => simulate_swap(marketData, 2, 1_000_000n, 0xffffffff, 1, 1, 0),
     /side/i,
   );
 });

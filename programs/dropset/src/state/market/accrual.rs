@@ -119,6 +119,11 @@ impl Vault {
     #[inline(always)]
     pub fn materialize_remaining(&mut self) {
         let ref_price = self.reference_price.price;
+        // Both expiry datums come from the **stored quote**, never from
+        // the live clock: this flush runs lazily inside the first taker's
+        // swap, so a clock read here would be attacker-scheduled — in the
+        // halt scenario that first taker is the pick-off flow itself.
+        let ref_unix = self.reference_price.quote_unix.get();
         let ref_slot = self.reference_price.quote_slot.get();
         let stamp = self.reference_price.stamp.get();
         let base_atoms = self.base_atoms.get();
@@ -138,8 +143,10 @@ impl Vault {
                 0
             }
             .into();
-            self.remaining.bids[i].expires_at =
-                ref_slot.saturating_add(bid.expiry_offset.get()).into();
+            self.remaining.bids[i].expires_at_unix =
+                Self::deadline(ref_unix, bid.expiry_offset_secs.get());
+            self.remaining.bids[i].expires_at_slot =
+                Self::deadline(ref_slot, bid.expiry_offset_slots.get());
             self.remaining.asks[i].price =
                 flush_level_price(ref_price, ask.price_offset.get(), true);
             self.remaining.asks[i].size = if asks_ok {
@@ -148,10 +155,31 @@ impl Vault {
                 0
             }
             .into();
-            self.remaining.asks[i].expires_at =
-                ref_slot.saturating_add(ask.expiry_offset.get()).into();
+            self.remaining.asks[i].expires_at_unix =
+                Self::deadline(ref_unix, ask.expiry_offset_secs.get());
+            self.remaining.asks[i].expires_at_slot =
+                Self::deadline(ref_slot, ask.expiry_offset_slots.get());
         }
         self.reference_price.stamp = (stamp & !FLUSH_BIT).into();
+    }
+
+    /// One domain's absolute deadline: `datum + offset`, saturating —
+    /// except that a **zero offset materializes to zero**, the dead
+    /// sentinel, rather than to the bare datum.
+    ///
+    /// That special case is what makes "zero in either domain is dead"
+    /// true independently of the datum. Without it, a leader stamping a
+    /// future datum would give a zero-life level a deadline still ahead
+    /// of the clock and it would match. Folding the check in here — at
+    /// flush time, which runs once per quote — also keeps the taker's
+    /// per-level gate a single unconditional compare per domain rather
+    /// than a compare plus a zero test.
+    #[inline(always)]
+    fn deadline(datum: u32, offset: u32) -> PodU32 {
+        if offset == 0 {
+            return 0u32.into();
+        }
+        datum.saturating_add(offset).into()
     }
 }
 
@@ -306,7 +334,8 @@ mod tests {
     // `level_fill_atoms`) is tested in `dropset_math_core::matching_math`.
     // These exercise the program's `&mut Vault` wrapper specifically: the
     // profile→remaining wiring (correct leg per side, offset direction,
-    // absolute expiry), the per-side `Σ size_bps > BPS` zeroing gate, and
+    // absolute expiry in both domains), the per-side `Σ size_bps > BPS`
+    // zeroing gate, and
     // the `FLUSH_BIT` clear. They run on a stack-allocated `Vault` — no
     // slab, no AccountBuffer, no SVM.
 
@@ -315,7 +344,12 @@ mod tests {
         let reference = Price::from_value(2.0).unwrap();
         let mut v = Vault::zeroed();
         v.reference_price.price = reference;
-        v.reference_price.quote_slot = 1_000u32.into();
+        // `quote_slot` is deliberately set to a *different* value than
+        // `quote_unix` here: expiry must anchor on the wall-clock datum,
+        // so a regression that re-anchors on the slot shows up as a
+        // wrong `expires_at_unix` rather than passing by coincidence.
+        v.reference_price.quote_slot = 77u32.into();
+        v.reference_price.quote_unix = 1_000u32.into();
         // Arm the flush: nonce 5 with FLUSH_BIT set.
         v.reference_price.stamp = (5u64 | FLUSH_BIT).into();
         v.quote_atoms = 2_000_000u64.into();
@@ -323,10 +357,12 @@ mod tests {
         // Top-of-book bid (50% of quote) and ask (25% of base).
         v.profile.bids[0].price_offset = 500u32.into();
         v.profile.bids[0].size_bps = 5_000u16.into();
-        v.profile.bids[0].expiry_offset = 50u32.into();
+        v.profile.bids[0].expiry_offset_secs = 50u32.into();
+        v.profile.bids[0].expiry_offset_slots = 5u32.into();
         v.profile.asks[0].price_offset = 500u32.into();
         v.profile.asks[0].size_bps = 2_500u16.into();
-        v.profile.asks[0].expiry_offset = 60u32.into();
+        v.profile.asks[0].expiry_offset_secs = 60u32.into();
+        v.profile.asks[0].expiry_offset_slots = 6u32.into();
 
         v.materialize_remaining();
 
@@ -345,9 +381,13 @@ mod tests {
         // asks).
         assert_eq!(v.remaining.bids[0].size.get(), 1_000_000);
         assert_eq!(v.remaining.asks[0].size.get(), 250_000);
-        // Expiry is absolute: `quote_slot + expiry_offset`.
-        assert_eq!(v.remaining.bids[0].expires_at.get(), 1_050);
-        assert_eq!(v.remaining.asks[0].expires_at.get(), 1_060);
+        // Expiry is absolute in both domains, each off its own datum:
+        // wall = `quote_unix + secs`, slot = `quote_slot + slots`. The
+        // two datums differ, so a domain mix-up shows up here.
+        assert_eq!(v.remaining.bids[0].expires_at_unix.get(), 1_050);
+        assert_eq!(v.remaining.asks[0].expires_at_unix.get(), 1_060);
+        assert_eq!(v.remaining.bids[0].expires_at_slot.get(), 82);
+        assert_eq!(v.remaining.asks[0].expires_at_slot.get(), 83);
         // Empty levels flush to zero size.
         assert_eq!(v.remaining.bids[1].size.get(), 0);
         assert_eq!(v.remaining.asks[1].size.get(), 0);

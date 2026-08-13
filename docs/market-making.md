@@ -274,12 +274,22 @@ Relevant protocol facts (see **architecture.md → LiquidityProfile** and
 **→ Flush**):
 
 - `N_LEVELS = 8` bids + 8 asks per vault.
-- Each `Level = { price_offset: Ppm32, size_bps: u16, expiry_offset: u32 }`.
+
+- Each `Level` is:
+
+  ```text
+  { price_offset: Ppm32, size_bps: u16,
+    expiry_offset_secs: u32, expiry_offset_slots: u32 }
+  ```
+
 - `price_offset` is ppm from `reference_price.price` — bids subtract,
   asks add.
+
 - `size_bps` is fraction of the **inventory leg**: `quote_atoms` for
   bids (USDC), `base_atoms` for asks (the token).
+
 - **Invariant:** `Σ size_bps ≤ 10000` per side.
+
 - Sizes auto-rescale to current inventory on each flush; the leader
   doesn't manage absolute atoms.
 
@@ -406,14 +416,21 @@ next take. Call when **any** of:
 
 Expected: **1–3 calls per day** per market.
 
-### Per-level `expiry_offset` (slots ≈ 0.4 s each on mainnet)
+### Per-level expiry — two offsets
 
-| Level | offset (slots) | wall-clock |
-| ----- | -------------- | ---------- |
-| 1     | 90             | ~36 s      |
-| 2     | 300            | ~2 min     |
-| 3     | 1_200          | ~8 min     |
-| 4     | 7_200          | ~50 min    |
+Expiry is **dual-domain** (architecture.md → **Expiry — the dual gate**):
+each level carries a wall offset and a slot offset, and rests only while
+it is inside both. The wall column is the policy that used to be
+expressed in slots at the ~0.4 s/slot pace mainnet then ran at; the
+nominal lives are unchanged, but they now hold **through a halt**, where
+slots stop ticking and wall time does not.
+
+| Level | secs  | wall-clock | slots    |
+| ----- | ----- | ---------- | -------- |
+| 1     | 36    | ~36 s      | 2        |
+| 2     | 120   | ~2 min     | 30       |
+| 3     | 480   | ~8 min     | 300      |
+| 4     | 2_880 | ~48 min    | no bound |
 
 Top-of-book expires fast so a dead bot doesn't bleed against stale
 prices; deep levels live longer because they rarely fill and we don't
@@ -421,14 +438,24 @@ want to churn `SetReferencePrice` just to keep them alive. Per-level
 expiry stratification is an explicit feature of the protocol (see
 **architecture.md → LiquidityProfile → Flush**).
 
-Expiry alone is not the answer to a dead bot, though: these offsets are
-in *slots*, and slots stop ticking while the chain is halted, so the
-wall-clock life of a resting level has no bound. The bot kills its own
-book instead of waiting for expiry — see **§4 → Stale-quote
-invalidation**.
+**Why the slot column exists.** The cluster clock is second-denominated
+and accurate to only a few seconds, which floors any wall TIF at ~15 s —
+a ~37-slot dead-man tail behind a prop-cadence quoter. The slot bound is
+where top-of-book gets a *sub-second* deadline instead: 2 slots means
+the level dies almost immediately unless the next tick re-stamps it. It
+widens with depth, and the deepest tier is left slot-unbounded (the max
+offset, not a sentinel) so its stratified wall decay governs it. These
+are the shape of the policy, not a calibration — the vol-ladder retune
+owns the tuning.
 
-**Invariant:** Level 1 expiry must exceed the `SetReferencePrice`
-heartbeat (30 s here, 90 slots ≈ 36 s gives ~6 s safety margin),
+Expiry still isn't the whole answer to a dead bot: the wall bound now
+caps a resting level's life through a halt, but 48 minutes of unattended
+drift on the deepest tier is far longer than the bot means to rest a
+book it is no longer refreshing. It kills its own book rather than
+waiting for expiry — see **§4 → Stale-quote invalidation**.
+
+**Invariant:** Level 1 wall expiry must exceed the `SetReferencePrice`
+heartbeat (30 s here; 36 s gives ~6 s safety margin),
 otherwise top-of-book goes dark in the gap between expiry and the
 next forced refresh. `quote_slot` backdating (up to
 `MAX_BACKDATE = 50 slots ≈ 20 s`) shifts every level's absolute
@@ -478,11 +505,13 @@ is coordinated separately.
 ### Stale-quote invalidation
 
 Zeroing the profile stops the *next* flush from materializing levels; it
-does not touch the levels already resting, which stay matchable until
-their `expiry_offset` passes — up to ~50 min of live chain on the deepest
-tier. Slot expiry is not a mitigation for an outage, either: **slots stop
-ticking while the chain is halted**, so a resting level's wall-clock life
-is unbounded. Any gap in which nobody refreshes the reference — a bot
+does not touch the levels already resting, which stay matchable until a
+deadline passes — up to ~48 min on the deepest tier. Expiry now *does*
+bound that in wall-clock terms (the wall conjunct is measured from the
+quote's `quote_unix` datum, so a halt no longer freezes the countdown the
+way slot-only expiry did), but a cap is not a policy: 48 minutes is far
+longer than the bot means to leave a book unattended. Any gap in which
+nobody refreshes the reference — a bot
 restart, a chain halt, feeds gone dark — is a window in which takers can
 fill against a price the bot no longer stands behind.
 
@@ -527,7 +556,10 @@ stale: every failure mode lands on the safe side.
 
 This is the unconditional half of the halt / pick-off mitigation — it
 holds regardless of the runtime's `Clock` behavior, so it stays required
-even alongside a program-side wall-clock quote expiry.
+alongside the program-side dual expiry gate. That matters more than it
+sounds: which conjunct binds after a restart depends on the cluster's
+clock design (architecture.md → **Expiry — the dual gate**), and this
+mitigation depends on neither.
 
 ______________________________________________________________________
 

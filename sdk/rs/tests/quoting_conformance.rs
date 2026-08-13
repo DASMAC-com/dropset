@@ -7,7 +7,7 @@
 //! generator (`sdk/math-core/examples/gen_quoting.rs`).
 
 use dropset_sdk::price::Price;
-use dropset_sdk::quoting::{NativeBook, NativeLevel};
+use dropset_sdk::quoting::{NativeBook, NativeLevel, NO_SLOT_BOUND};
 use serde_json::Value;
 
 fn vectors() -> Value {
@@ -27,7 +27,12 @@ fn native_level(v: &Value) -> NativeLevel {
     NativeLevel {
         price: Price::from_bits(u32_of(v, "price_bits")),
         size: v["size"].as_u64().unwrap(),
-        expiry_offset: u32_of(v, "expiry_offset"),
+        // These vectors pin the native→relative *translation* (ppm offsets
+        // and bps sizes), not expiry policy, so the single `expiry_offset`
+        // they carry maps to the wall domain and the slot bound is left
+        // open. Both are copied through `to_profile` untouched.
+        expiry_offset_secs: u32_of(v, "expiry_offset"),
+        expiry_offset_slots: NO_SLOT_BOUND,
     }
 }
 
@@ -63,7 +68,7 @@ fn quoting_vectors() {
                 "ask[{i}] size_bps"
             );
             assert_eq!(
-                lvl.expiry_offset.get(),
+                lvl.expiry_offset_secs.get(),
                 u32_of(v, "expiry_offset"),
                 "ask[{i}] expiry"
             );
@@ -81,7 +86,7 @@ fn quoting_vectors() {
                 "bid[{i}] size_bps"
             );
             assert_eq!(
-                lvl.expiry_offset.get(),
+                lvl.expiry_offset_secs.get(),
                 u32_of(v, "expiry_offset"),
                 "bid[{i}] expiry"
             );

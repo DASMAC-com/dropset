@@ -33,6 +33,22 @@ use crate::price::Price;
 /// ratios — `value × 10^9`, matching `Price::weighted_average`.
 const SCALE: u64 = 1_000_000_000;
 
+/// On-wire width of the serialized profile blob. Derived from the layout
+/// mirror rather than written as a literal, so a `Level` widening moves
+/// it in step.
+pub const PROFILE_BYTES: usize = core::mem::size_of::<LiquidityProfile>();
+
+/// The `expiry_offset_slots` value meaning **no slot bound** — a level
+/// bounded only by its wall TIF.
+///
+/// Expressed as the maximum offset rather than a reserved sentinel, so
+/// the match gate stays one unconditional compare per domain. The `u32`
+/// ceiling is ~4.3e9 slots, decades of chain time even at the fastest
+/// proposed slot durations, so it clears the longest wall TIF any tier
+/// policy would set by a wide margin — "unbounded" really is unbounded
+/// in every reachable regime.
+pub const NO_SLOT_BOUND: u32 = u32::MAX;
+
 /// One level of a native (absolute-price) book.
 #[derive(Clone, Copy, Debug)]
 pub struct NativeLevel {
@@ -41,8 +57,13 @@ pub struct NativeLevel {
     /// Allowance in atoms: **base** atoms for asks, **quote** atoms for
     /// bids (matching the on-chain materialized `Position.size`).
     pub size: u64,
-    /// Per-level expiry, in slots after the reference's `quote_slot`.
-    pub expiry_offset: u32,
+    /// Per-level expiry, in **seconds** after the reference's
+    /// `quote_unix` wall-clock datum. Zero is dead.
+    pub expiry_offset_secs: u32,
+    /// Per-level expiry, in **slots** after the reference's `quote_slot`
+    /// datum — the second, independent bound. Zero is dead; use
+    /// [`NO_SLOT_BOUND`] to leave a level bounded only in wall time.
+    pub expiry_offset_slots: u32,
 }
 
 /// A native book: absolute-price bid/ask ladders, top-of-book first. At
@@ -108,7 +129,8 @@ fn level_to_relative(
     Ok(Level {
         price_offset: (offset as u32).into(),
         size_bps: (size_bps as u16).into(),
-        expiry_offset: lvl.expiry_offset.into(),
+        expiry_offset_secs: lvl.expiry_offset_secs.into(),
+        expiry_offset_slots: lvl.expiry_offset_slots.into(),
     })
 }
 
@@ -146,14 +168,14 @@ impl NativeBook {
         Ok(profile)
     }
 
-    /// Translate and serialize to the `[u8; 160]` `profile_bytes` arg for
+    /// Translate and serialize to the `profile_bytes` arg for
     /// `set_liquidity_profile`.
     pub fn to_profile_bytes(
         &self,
         reference: Price,
         base_atoms: u64,
         quote_atoms: u64,
-    ) -> Result<[u8; 160], QuotingError> {
+    ) -> Result<[u8; PROFILE_BYTES], QuotingError> {
         Ok(profile_bytes(&self.to_profile(
             reference,
             base_atoms,
@@ -162,9 +184,9 @@ impl NativeBook {
     }
 }
 
-/// Serialize a [`LiquidityProfile`] to the `[u8; 160]` instruction arg.
-pub fn profile_bytes(profile: &LiquidityProfile) -> [u8; 160] {
-    let mut out = [0u8; 160];
+/// Serialize a [`LiquidityProfile`] to the instruction arg.
+pub fn profile_bytes(profile: &LiquidityProfile) -> [u8; PROFILE_BYTES] {
+    let mut out = [0u8; PROFILE_BYTES];
     out.copy_from_slice(bytemuck::bytes_of(profile));
     out
 }
@@ -175,17 +197,26 @@ pub fn profile_bytes(profile: &LiquidityProfile) -> [u8; 160] {
 /// on-chain `u32` field here — the single truncation boundary. The
 /// horizon before a live slot exceeds `u32::MAX` is ~a decade (tracked as
 /// a follow-up to widen the field); until then the cast is lossless.
+///
+/// `quote_unix` is the wall-clock datum every level's
+/// `expiry_offset_secs` is measured from — an `i64` (the shape of both `Clock.unix_timestamp` and
+/// a `SystemTime` epoch delta), clamped into the on-chain `u32` here so a
+/// pre-epoch or post-2106 value can never wrap into a live-looking one.
+/// A caller wanting a fresh quote passes [`now_unix`]; a stale or zero
+/// value is stored raw and simply kills the leader's own levels.
 pub fn set_reference_price_ix(
     signer: Pubkey,
     market: Pubkey,
     vault_idx: u32,
     reference: Price,
     quote_slot: u64,
+    quote_unix: i64,
 ) -> Instruction {
     SetReferencePrice { signer, market }.instruction(SetReferencePriceInstructionArgs {
         vault_idx,
         price_bits: reference.as_u32(),
         quote_slot: quote_slot as u32,
+        quote_unix: quote_unix.clamp(0, u32::MAX as i64) as u32,
     })
 }
 
@@ -194,7 +225,7 @@ pub fn set_liquidity_profile_ix(
     signer: Pubkey,
     market: Pubkey,
     vault_idx: u32,
-    profile_bytes: [u8; 160],
+    profile_bytes: [u8; PROFILE_BYTES],
 ) -> Instruction {
     SetLiquidityProfile { signer, market }.instruction(SetLiquidityProfileInstructionArgs {
         vault_idx,
@@ -213,28 +244,31 @@ mod tests {
             asks: vec![NativeLevel {
                 price: Price::encode(10_100_000, 0).unwrap(), // 1.01 -> +10000 ppm
                 size: 100_000,                                // of 1_000_000 base -> 1000 bps
-                expiry_offset: 150,
+                expiry_offset_secs: 150,
+                expiry_offset_slots: NO_SLOT_BOUND,
             }],
             bids: vec![NativeLevel {
                 price: Price::encode(99_000_000, -1).unwrap(), // 0.99 -> -10000 ppm
                 size: 200_000,                                 // of 1_000_000 quote -> 2000 bps
-                expiry_offset: 150,
+                expiry_offset_secs: 150,
+                expiry_offset_slots: NO_SLOT_BOUND,
             }],
         };
         let p = book.to_profile(reference, 1_000_000, 1_000_000).unwrap();
         assert_eq!(p.asks[0].price_offset.get(), 10_000);
         assert_eq!(p.asks[0].size_bps.get(), 1_000);
-        assert_eq!(p.asks[0].expiry_offset.get(), 150);
+        assert_eq!(p.asks[0].expiry_offset_secs.get(), 150);
+        assert_eq!(p.asks[0].expiry_offset_slots.get(), NO_SLOT_BOUND);
         assert_eq!(p.bids[0].price_offset.get(), 10_000);
         assert_eq!(p.bids[0].size_bps.get(), 2_000);
         // Unused level slots stay zeroed.
         assert_eq!(p.asks[1].size_bps.get(), 0);
 
-        // Serializes to the 160-byte instruction arg.
+        // Serializes to the full-width instruction arg.
         let bytes = book
             .to_profile_bytes(reference, 1_000_000, 1_000_000)
             .unwrap();
-        assert_eq!(bytes.len(), 160);
+        assert_eq!(bytes.len(), PROFILE_BYTES);
     }
 
     #[test]
@@ -244,7 +278,8 @@ mod tests {
             asks: vec![NativeLevel {
                 price: Price::encode(99_000_000, -1).unwrap(), // 0.99 < ref
                 size: 1,
-                expiry_offset: 0,
+                expiry_offset_secs: 0,
+                expiry_offset_slots: 0,
             }],
             ..Default::default()
         };
@@ -262,7 +297,8 @@ mod tests {
         let lvl = |price| NativeLevel {
             price,
             size: 600_000,
-            expiry_offset: 0,
+            expiry_offset_secs: 0,
+            expiry_offset_slots: 0,
         };
         let book = NativeBook {
             asks: vec![
@@ -289,12 +325,14 @@ mod tests {
                 NativeLevel {
                     price: Price::encode(10_100_000, 0).unwrap(),
                     size: 600_000,
-                    expiry_offset: 0,
+                    expiry_offset_secs: 0,
+                    expiry_offset_slots: 0,
                 },
                 NativeLevel {
                     price: Price::encode(10_200_000, 0).unwrap(),
                     size: 400_000,
-                    expiry_offset: 0,
+                    expiry_offset_secs: 0,
+                    expiry_offset_slots: 0,
                 },
             ],
             ..Default::default()
@@ -314,7 +352,8 @@ mod tests {
             asks: vec![NativeLevel {
                 price: Price::encode(10_100_000, 0).unwrap(),
                 size: 999_999,
-                expiry_offset: 0,
+                expiry_offset_secs: 0,
+                expiry_offset_slots: 0,
             }],
             ..Default::default()
         };
@@ -330,7 +369,8 @@ mod tests {
                 .map(|_| NativeLevel {
                     price: Price::encode(10_100_000, 0).unwrap(),
                     size: 1,
-                    expiry_offset: 0,
+                    expiry_offset_secs: 0,
+                    expiry_offset_slots: 0,
                 })
                 .collect(),
             ..Default::default()
