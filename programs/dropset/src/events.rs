@@ -148,7 +148,10 @@ pub struct CloseMarketTreasuryEvent {
     /// because the market account is closed moments later, so a consumer
     /// cannot re-derive the leg from chain state afterwards.
     pub is_base: bool,
-    /// Token account the drained balance was paid to.
+    /// Token account the drain was aimed at. What it *received* is
+    /// `drained` less any transfer fee the mint withheld in transit, so on
+    /// a Token-2022 transfer-fee mint the credit is smaller than the debit
+    /// recorded below.
     pub token_recipient: Address,
     /// Address the treasury's rent lamports were paid to.
     pub rent_recipient: Address,
@@ -156,11 +159,18 @@ pub struct CloseMarketTreasuryEvent {
     /// that left, protocol revenue and residual alike.
     pub drained: u64,
     /// The leg's `accrued_<leg>_fee_atoms` at close, zeroed by this
-    /// instruction: the protocol-revenue share of `drained`. The remainder
-    /// (`drained − accrued_fee`) is residual that no counter claimed —
-    /// normally an unsolicited transfer that arrived after the last sweep.
-    /// It can exceed `drained` only on a transfer-fee mint, the same
-    /// pre-existing shortfall `sweep_residual` saturates against.
+    /// instruction: the protocol-revenue share of `drained`. The rest,
+    /// `drained.saturating_sub(accrued_fee)`, is residual that no counter
+    /// claimed — normally an unsolicited transfer that arrived after the
+    /// last sweep, or a balance adopted with a squatted ATA at market
+    /// birth.
+    ///
+    /// **Saturate that subtraction.** `accrued_fee` can exceed `drained`
+    /// on a transfer-fee mint, where atoms were booked to the counter but
+    /// withheld in transit — the same pre-existing shortfall
+    /// `sweep_residual` saturates against. Both terms are reported raw so
+    /// the shortfall stays visible; it is the consumer that must not
+    /// underflow.
     pub accrued_fee: u64,
 }
 
@@ -178,7 +188,9 @@ pub struct CloseRegistryFeeVaultEvent {
     /// Mint of the fee vault closed — the discriminator across a
     /// registry's several historical fee ATAs.
     pub fee_mint: Address,
-    /// Token account the collected fees were paid to.
+    /// Token account the drain was aimed at. As on the market-treasury
+    /// event, what it received is `collected` less any transfer fee the
+    /// mint withheld in transit.
     pub token_recipient: Address,
     /// Address the fee vault's rent lamports were paid to.
     pub rent_recipient: Address,

@@ -194,8 +194,12 @@ impl CloseMarketTreasury {
             accrued
         };
 
-        // Capture the read-out's addresses while the accounts are still
-        // live — `close_account` below deallocates `treasury`.
+        // Assemble the read-out from values already in hand. Placement is
+        // free — nothing here touches `treasury`, so this would compile
+        // just as well below the close; it sits with the counter read
+        // because that is where the two amount terms are established. The
+        // ordering that *is* load-bearing happened earlier: `remainder`
+        // had to be read before the transfer, not before the close.
         let event = CloseMarketTreasuryEvent {
             market: *self.market.address(),
             mint: mint_addr,

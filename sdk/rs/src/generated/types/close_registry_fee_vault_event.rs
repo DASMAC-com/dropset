@@ -19,7 +19,9 @@ pub struct CloseRegistryFeeVaultEvent {
         serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
     )]
     pub fee_mint: Pubkey,
-    /// Token account the collected fees were paid to.
+    /// Token account the drain was aimed at. As on the market-treasury
+    /// event, what it received is `collected` less any transfer fee the
+    /// mint withheld in transit.
     #[cfg_attr(
         feature = "serde",
         serde(with = "serde_with::As::<serde_with::DisplayFromStr>")

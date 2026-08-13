@@ -14,7 +14,11 @@ export type CloseRegistryFeeVaultEvent = {
  * registry's several historical fee ATAs.
  */
 feeMint: Address; 
-/** Token account the collected fees were paid to. */
+/**
+ * Token account the drain was aimed at. As on the market-treasury
+ * event, what it received is `collected` less any transfer fee the
+ * mint withheld in transit.
+ */
 tokenRecipient: Address; 
 /** Address the fee vault's rent lamports were paid to. */
 rentRecipient: Address; 
@@ -33,7 +37,11 @@ export type CloseRegistryFeeVaultEventArgs = {
  * registry's several historical fee ATAs.
  */
 feeMint: Address; 
-/** Token account the collected fees were paid to. */
+/**
+ * Token account the drain was aimed at. As on the market-treasury
+ * event, what it received is `collected` less any transfer fee the
+ * mint withheld in transit.
+ */
 tokenRecipient: Address; 
 /** Address the fee vault's rent lamports were paid to. */
 rentRecipient: Address; 

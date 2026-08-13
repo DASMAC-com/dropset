@@ -494,13 +494,22 @@ fn fee_charging_market_tears_down_and_drains_the_accrued_fee() {
     let harvest = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
     let (harvest_base, harvest_quote) = f.create_atas(&harvest.pubkey());
     let rr = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS).pubkey();
+
+    // Add unsolicited dust on top of the accrued fee, so the treasury holds
+    // strictly more than the counter claims. Without it `drained` and
+    // `accrued_fee` are equal on every path the suite exercises, and an
+    // implementation that simply reported `drained` twice — the split
+    // carrying no information at all — would pass.
+    const DUST: u64 = 4_321;
+    common::mint_to(&mut f.svm, &admin, &base_mint, &base_treasury, DUST);
+
     let meta = f
         .close_market_treasury_meta(&admin, &base_mint, &base_treasury, &harvest_base, &rr)
         .expect("base treasury closes despite holding the accrued fee");
     assert_eq!(
         f.token_balance(&harvest_base),
-        accrued,
-        "the accrued fee was paid to the drain recipient"
+        accrued + DUST,
+        "the accrued fee and the dust both left with the close"
     );
 
     // The harvest read-out. This is the only on-chain record of where the
@@ -513,10 +522,22 @@ fn fee_charging_market_tears_down_and_drains_the_accrued_fee() {
     assert!(ev.is_base, "a Buy fees the base leg");
     assert_eq!(ev.token_recipient, harvest_base.to_bytes());
     assert_eq!(ev.rent_recipient, rr.to_bytes());
-    assert_eq!(ev.drained, accrued, "every atom that left is accounted for");
+    // The split, observed: everything that left, versus the protocol's
+    // share of it. These two must NOT be equal here, or the second field
+    // is not carrying independent information.
+    assert_eq!(
+        ev.drained,
+        accrued + DUST,
+        "every atom that left is accounted for"
+    );
     assert_eq!(
         ev.accrued_fee, accrued,
-        "and all of it was protocol revenue — no residual on this path"
+        "…of which only the counter's worth was protocol revenue"
+    );
+    assert_eq!(
+        ev.drained - ev.accrued_fee,
+        DUST,
+        "the remainder is the unclaimed residual, not revenue"
     );
     assert_eq!(
         f.market_header().accrued_base_fee_atoms.get(),
@@ -711,7 +732,8 @@ fn full_lifecycle_teardown_then_bootstrap_again_at_the_same_addresses() {
     let (harvest_base, harvest_quote) = f.create_atas(&harvest.pubkey());
     f.close_market_treasury_to(&admin, &base_mint, &base_treasury, &harvest_base, &rr)
         .expect("close base treasury");
-    f.close_market_treasury_to(&admin, &quote_mint, &quote_treasury, &harvest_quote, &rr)
+    let quote_meta = f
+        .close_market_treasury_meta(&admin, &quote_mint, &quote_treasury, &harvest_quote, &rr)
         .expect("close quote treasury");
     assert_eq!(
         f.token_balance(&harvest_base),
@@ -723,6 +745,23 @@ fn full_lifecycle_teardown_then_bootstrap_again_at_the_same_addresses() {
         accrued_quote + 1,
         "the quote-leg accrued fee and its residue were harvested on the way out"
     );
+    // The event's own leg select, on the arm the rest of the suite never
+    // reaches: every other decoded `CloseMarketTreasuryEvent` is a base
+    // close, so without this a handler whose `else` branch reported
+    // `is_base: true` — or read the *base* counter for a quote close —
+    // would pass. This leg's accrued fee is non-zero, so the counter it
+    // reports is load-bearing too, not just the flag.
+    let qev = common::events::close_market_treasury(&quote_meta);
+    assert!(
+        !qev.is_base,
+        "the quote leg reports itself as the quote leg"
+    );
+    assert_eq!(qev.mint, quote_mint.to_bytes());
+    assert_eq!(
+        qev.accrued_fee, accrued_quote,
+        "and reports the quote counter, not the base one"
+    );
+    assert_eq!(qev.drained, accrued_quote);
     // Both counters, not just the base one: the handler's leg select is a
     // hand-written `if is_base { … } else { … }`, so without the quote
     // assertion a handler that zeroed the base counter in both arms would
@@ -868,20 +907,34 @@ fn close_registry_fee_vault_drains_collected_fees() {
         &fee_mint,
         &common::SPL_TOKEN_PROGRAM_ID,
     );
-    f.close_registry_fee_vault_to(
-        &admin,
-        &fee_mint,
-        &common::SPL_TOKEN_PROGRAM_ID,
-        &collector_ata,
-        &rr,
-    )
-    .expect("a fee vault holding collected fees still closes");
+    let meta = f
+        .close_registry_fee_vault_meta(
+            &admin,
+            &fee_mint,
+            &common::SPL_TOKEN_PROGRAM_ID,
+            &collector_ata,
+            &rr,
+        )
+        .expect("a fee vault holding collected fees still closes");
     assert_eq!(
         f.token_balance(&collector_ata),
         common::CREATE_MARKET_FEE_ATOMS,
         "the collected fees were paid out, not stranded"
     );
     assert!(!exists(&f.svm, &fee_vault), "registry fee vault closed");
+
+    // The harvest read-out: once the vault is gone this event is the only
+    // record that the collected revenue was paid out at all, so assert it
+    // against the same figure the balance check just proved.
+    let ev = common::events::close_registry_fee_vault(&meta);
+    assert_eq!(ev.fee_mint, fee_mint.to_bytes());
+    assert_eq!(ev.token_recipient, collector_ata.to_bytes());
+    assert_eq!(ev.rent_recipient, rr.to_bytes());
+    assert_eq!(
+        ev.collected,
+        common::CREATE_MARKET_FEE_ATOMS,
+        "the read-out matches what was actually paid out"
+    );
 }
 
 /// Only a registry admin may drive the teardown surface.
@@ -1317,52 +1370,4 @@ fn close_registry_fee_vault_drains_a_token_2022_vault() {
     assert_eq!(ev.token_recipient, collector_ata.to_bytes());
     assert_eq!(ev.rent_recipient, rr.to_bytes());
     assert_eq!(ev.collected, COLLECTED);
-}
-
-/// The registry-side close emits its harvest read-out on the classic-SPL
-/// path too, carrying the collected market-creation fees off-chain before
-/// the account that held them is destroyed.
-#[test]
-fn close_registry_fee_vault_emits_the_harvest_read_out() {
-    let mut f = Fixture::bootstrap();
-    let admin = f.authority.insecure_clone();
-    let rr = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS).pubkey();
-
-    // A non-admin opens a vault and pays the fee — real collected revenue.
-    let bob = f.funded_keypair(10 * common::SIGNER_FUNDING_LAMPORTS);
-    f.create_vault_as(&bob, 0, bob.pubkey(), false, Pubkey::default())
-        .expect("non-admin opens a vault and pays the fee");
-    f.force_withdraw_leader(&admin, 0, &bob.pubkey())
-        .expect("reclaim bob's empty vault");
-
-    let (base_mint, quote_mint) = (f.base_mint, f.quote_mint);
-    let (base_treasury, quote_treasury) = (f.base_treasury, f.quote_treasury);
-    f.close_market_treasury(&admin, &base_mint, &base_treasury, &rr)
-        .expect("close base treasury");
-    f.close_market_treasury(&admin, &quote_mint, &quote_treasury, &rr)
-        .expect("close quote treasury");
-    f.close_market(&admin, &rr).expect("close market");
-
-    let fee_mint = f.fee_mint;
-    let collector = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
-    let collector_ata = f.create_ata_for(&collector.pubkey(), &fee_mint, &SPL_TOKEN_PROGRAM_ID);
-    let meta = f
-        .close_registry_fee_vault_meta(
-            &admin,
-            &fee_mint,
-            &SPL_TOKEN_PROGRAM_ID,
-            &collector_ata,
-            &rr,
-        )
-        .expect("close the fee vault");
-
-    let ev = common::events::close_registry_fee_vault(&meta);
-    assert_eq!(ev.fee_mint, fee_mint.to_bytes());
-    assert_eq!(ev.token_recipient, collector_ata.to_bytes());
-    assert_eq!(ev.rent_recipient, rr.to_bytes());
-    assert_eq!(
-        ev.collected,
-        common::CREATE_MARKET_FEE_ATOMS,
-        "the read-out matches what was actually paid out"
-    );
 }

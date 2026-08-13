@@ -17,7 +17,12 @@ mint: Address;
  * cannot re-derive the leg from chain state afterwards.
  */
 isBase: boolean; 
-/** Token account the drained balance was paid to. */
+/**
+ * Token account the drain was aimed at. What it *received* is
+ * `drained` less any transfer fee the mint withheld in transit, so on
+ * a Token-2022 transfer-fee mint the credit is smaller than the debit
+ * recorded below.
+ */
 tokenRecipient: Address; 
 /** Address the treasury's rent lamports were paid to. */
 rentRecipient: Address; 
@@ -28,11 +33,18 @@ rentRecipient: Address;
 drained: bigint; 
 /**
  * The leg's `accrued_<leg>_fee_atoms` at close, zeroed by this
- * instruction: the protocol-revenue share of `drained`. The remainder
- * (`drained − accrued_fee`) is residual that no counter claimed —
- * normally an unsolicited transfer that arrived after the last sweep.
- * It can exceed `drained` only on a transfer-fee mint, the same
- * pre-existing shortfall `sweep_residual` saturates against.
+ * instruction: the protocol-revenue share of `drained`. The rest,
+ * `drained.saturating_sub(accrued_fee)`, is residual that no counter
+ * claimed — normally an unsolicited transfer that arrived after the
+ * last sweep, or a balance adopted with a squatted ATA at market
+ * birth.
+ *
+ * **Saturate that subtraction.** `accrued_fee` can exceed `drained`
+ * on a transfer-fee mint, where atoms were booked to the counter but
+ * withheld in transit — the same pre-existing shortfall
+ * `sweep_residual` saturates against. Both terms are reported raw so
+ * the shortfall stays visible; it is the consumer that must not
+ * underflow.
  */
 accruedFee: bigint;  };
 
@@ -45,7 +57,12 @@ mint: Address;
  * cannot re-derive the leg from chain state afterwards.
  */
 isBase: boolean; 
-/** Token account the drained balance was paid to. */
+/**
+ * Token account the drain was aimed at. What it *received* is
+ * `drained` less any transfer fee the mint withheld in transit, so on
+ * a Token-2022 transfer-fee mint the credit is smaller than the debit
+ * recorded below.
+ */
 tokenRecipient: Address; 
 /** Address the treasury's rent lamports were paid to. */
 rentRecipient: Address; 
@@ -56,11 +73,18 @@ rentRecipient: Address;
 drained: number | bigint; 
 /**
  * The leg's `accrued_<leg>_fee_atoms` at close, zeroed by this
- * instruction: the protocol-revenue share of `drained`. The remainder
- * (`drained − accrued_fee`) is residual that no counter claimed —
- * normally an unsolicited transfer that arrived after the last sweep.
- * It can exceed `drained` only on a transfer-fee mint, the same
- * pre-existing shortfall `sweep_residual` saturates against.
+ * instruction: the protocol-revenue share of `drained`. The rest,
+ * `drained.saturating_sub(accrued_fee)`, is residual that no counter
+ * claimed — normally an unsolicited transfer that arrived after the
+ * last sweep, or a balance adopted with a squatted ATA at market
+ * birth.
+ *
+ * **Saturate that subtraction.** `accrued_fee` can exceed `drained`
+ * on a transfer-fee mint, where atoms were booked to the counter but
+ * withheld in transit — the same pre-existing shortfall
+ * `sweep_residual` saturates against. Both terms are reported raw so
+ * the shortfall stays visible; it is the consumer that must not
+ * underflow.
  */
 accruedFee: number | bigint;  };
 

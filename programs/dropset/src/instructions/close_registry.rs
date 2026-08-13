@@ -125,8 +125,10 @@ impl CloseRegistryFeeVault {
             &signer_seeds,
         )?;
 
-        // Capture the read-out while the accounts are still live —
-        // `close_account` below deallocates `fee_vault`.
+        // Assembled from values already in hand; nothing here reads
+        // `fee_vault`, so the placement is free (see the same note in
+        // `close_market.rs`). `collected` is the term that had to be read
+        // before the transfer.
         let event = CloseRegistryFeeVaultEvent {
             fee_mint: *self.fee_mint.address(),
             token_recipient: *self.token_recipient.address(),
