@@ -87,7 +87,12 @@ fn drain_into<K: Eq + Hash + Clone, V: Clone>(
 
 /// Drain a stream of `(key, value)` singletons — the shape a per-product source
 /// yields — into `cache`. The batched-map counterpart is [`drain_into`].
-fn drain_pairs_into(
+///
+/// Named "entries" rather than "pairs" deliberately: in this module a *pair* is
+/// a Kraken trading pair ([`USDC_KRAKEN_PAIR`], `MarketConfig::kraken_pair`),
+/// and reusing the word for a key/value tuple reads as the wrong thing three
+/// lines from where the other sense is used.
+fn drain_entries_into(
     rx: &mut broadcast::Receiver<(String, f64)>,
     cache: &mut HashMap<String, (f64, Instant)>,
     now: Instant,
@@ -108,16 +113,8 @@ fn drain_pairs_into(
 /// per-tier caches below, and `legs()` composes each market's legs by walking
 /// the tiers in preference order and taking the first that answers.
 ///
-/// Every leg is tiered primary → fallback (§1 sources-by-leg):
-///
-/// | Leg           | Primary            | Then                | Last resort   |
-/// | ------------- | ------------------ | ------------------- | ------------- |
-/// | `fx`          | Pyth Hermes        | ECB/Frankfurter     | —             |
-/// | `crypto_usdc` | Coinbase `/USDC`   | Kraken `/USD`       | CoinGecko/CMC |
-/// | `usdc_usd`    | Kraken `USDCUSD`   | CoinGecko `usd-coin`| —             |
-///
-/// The fallbacks are not vestigial: only EURC is listed on Coinbase or Kraken,
-/// so for the other six markets the CoinGecko / CMC tier *is* the basis leg.
+/// The tier table itself lives with the legs it feeds, in
+/// [`crate::model::fair_mid`] — this walks it, it does not define it.
 struct FeedHub {
     /// `currency → (USD per unit + confidence + publish time, when read)`.
     pyth: HashMap<String, (FxQuote, Instant)>,
@@ -151,7 +148,7 @@ impl FeedHub {
         drain_into(&mut rx.pyth, &mut self.pyth, now);
         drain_into(&mut rx.kraken, &mut self.kraken, now);
         for product in &mut rx.coinbase {
-            drain_pairs_into(product, &mut self.coinbase, now);
+            drain_entries_into(product, &mut self.coinbase, now);
         }
         drain_into(&mut rx.coingecko, &mut self.cg, now);
         if let Some(cmc) = rx.coinmarketcap.as_mut() {
@@ -161,31 +158,68 @@ impl FeedHub {
     }
 
     /// This market's cached readings, aged to `now`, mapped onto the engine's
-    /// [`Legs`] (§1) by walking each leg's tiers in the order tabled above.
-    fn legs(&self, now: Instant, market: &MarketConfig, now_unix: i64) -> Legs {
+    /// [`Legs`] (§1) by walking each leg's tiers in the order
+    /// [`crate::model::fair_mid`] tables.
+    fn legs(&self, market: &MarketConfig, tick: &TickCtx) -> Legs {
+        let now = tick.now;
         let aged =
             |o: Option<&(f64, Instant)>| o.map(|(v, t)| Reading::new(*v, now.duration_since(*t)));
 
         // FX anchor. Pyth is preferred for two reasons: it publishes a
         // confidence half-width (the fresh-but-uncertain regime, §1 fm6, is
         // unobservable without one), and it is aged from the publisher's own
-        // clock — see `pyth_reading`. Frankfurter carries the leg when Hermes
-        // has not answered.
-        let fx = self
+        // clock — see `pyth_reading`.
+        //
+        // The hand-off to Frankfurter is gated on the **engine's own**
+        // staleness bound, not on some looser ceiling: a Pyth reading the
+        // engine would reject as stale must not sit in the slot and mask a
+        // live fallback, or a 20-minute Hermes outage would dark the anchor
+        // while a perfectly good ECB rate went unread.
+        let fx_pyth = self
             .pyth
             .get(market.currency)
-            .map(|(q, t)| pyth_reading(q, *t, now, now_unix))
-            .filter(|r| r.age < MAX_PYTH_AGE)
-            .or_else(|| aged(self.fx.get(market.currency)));
+            .map(|(q, t)| pyth_reading(q, *t, now, tick.now_unix))
+            .filter(|r| r.fresh(tick.leg_stale));
 
-        // Crypto basis leg, in USDC per token. Coinbase quotes that directly;
-        // Kraken quotes the token in USD, which is the same thing to within the
-        // USDC peg the `usdc_usd` guard below is watching; CoinGecko and CMC
-        // are the reflexive last resort (§1 fm5).
+        // …and the fallback is suppressed while the FX session is closed.
+        // Frankfurter is aged from *receipt*, so it reads fresh all weekend
+        // even though ECB published its last rate on Friday. Letting it stand
+        // in would keep the engine in the Normal regime on a dead market —
+        // precisely the "fall back to a stale peg" behavior §1 fm2 rejects in
+        // favor of switching the anchor to the crypto reference.
+        let fx = match (fx_pyth, tick.weekend) {
+            (Some(r), _) => Some(r),
+            (None, true) => None,
+            (None, false) => aged(self.fx.get(market.currency)),
+        };
+
+        // USDC/USD common-mode leg, shared across every market.
+        let usdc_usd = aged(self.kraken.get(USDC_KRAKEN_PAIR))
+            .or_else(|| aged(self.cg.get(USDC_COINGECKO_ID)));
+
+        // Crypto basis leg, in **USDC per token**. Coinbase quotes that
+        // directly. Kraken quotes the token in *USD*, so it is converted with
+        // the peg leg above rather than assumed equal: the `usdc_usd` guard
+        // only *alarms* at a 3% deviation, it does not correct one, and
+        // leaving it uncorrected would make the basis jump whenever the tier
+        // flipped between Coinbase and Kraken. CoinGecko and CMC are the
+        // reflexive last resort (§1 fm5) and carry the same USD-for-USDC
+        // approximation as before — untouched here.
+        let usdc_per_usd = usdc_usd.map(|r| r.value).filter(|v| *v > 0.0);
         let crypto_usdc = market
             .coinbase_product
             .and_then(|p| aged(self.coinbase.get(p)))
-            .or_else(|| market.kraken_pair.and_then(|p| aged(self.kraken.get(p))))
+            .or_else(|| {
+                market.kraken_pair.and_then(|p| {
+                    aged(self.kraken.get(p)).map(|r| match usdc_per_usd {
+                        Some(peg) => Reading {
+                            value: r.value / peg,
+                            ..r
+                        },
+                        None => r,
+                    })
+                })
+            })
             .or_else(|| aged(self.cg.get(market.coingecko_id)))
             .or_else(|| {
                 market
@@ -193,18 +227,35 @@ impl FeedHub {
                     .and_then(|id| aged(self.cmc.get(&id)))
             });
 
-        // USDC/USD common-mode leg, shared across every market.
-        let usdc_usd = aged(self.kraken.get(USDC_KRAKEN_PAIR))
-            .or_else(|| aged(self.cg.get(USDC_COINGECKO_ID)));
-
         build_legs(fx, crypto_usdc, usdc_usd, market.static_usd)
     }
+}
+
+/// The per-tick inputs [`FeedHub::legs`] needs beyond the cache itself,
+/// bundled so the tiering reads the same clock and the same bounds the engine
+/// will apply a moment later.
+struct TickCtx {
+    /// Monotonic read time every cached reading is aged against.
+    now: Instant,
+    /// The same instant on the wall clock, for `publish_time` arithmetic.
+    now_unix: i64,
+    /// The engine's per-leg staleness bound. The tiering needs it so a stale
+    /// primary hands off instead of masking its fallback.
+    leg_stale: Duration,
+    /// Whether the FX session is closed (§1 fm2) — suppresses the receipt-aged
+    /// FX fallback so the crypto-only regime can engage.
+    weekend: bool,
 }
 
 /// A ceiling on the age [`pyth_reading`] will report, so a wildly skewed clock
 /// or a bogus `publish_time` degrades to "stale" rather than to a negative or
 /// absurd duration. Well past `leg_stale`, so it only ever bites on nonsense.
 const MAX_PYTH_AGE: Duration = Duration::from_secs(24 * 3600);
+
+/// How far ahead of this host's clock a `publish_time` may sit before it is
+/// treated as bogus rather than as "just published". Ordinary NTP skew between
+/// the publishers and us is sub-second; a minute is generous.
+const MAX_PYTH_CLOCK_SKEW: Duration = Duration::from_secs(60);
 
 /// Turn a cached Pyth quote into a [`Reading`], aged from the **publisher's**
 /// clock rather than from when this process received it.
@@ -215,10 +266,27 @@ const MAX_PYTH_AGE: Duration = Duration::from_secs(24 * 3600);
 /// perpetually fresh and the weekend crypto-only regime (§1 fm2) would never
 /// engage. The receipt age is still taken as a floor: if the poller itself dies
 /// the leg has to go stale even if the last `publish_time` looked recent.
+///
+/// **A `publish_time` in the future is bogus, not fresh.** It is venue-supplied
+/// data being used as a clock, so the forward direction has to be bounded too —
+/// otherwise a stamp an hour (or a century) ahead pins the age at zero and a
+/// frozen rate reads as perpetually fresh, which is the exact failure this
+/// function exists to prevent. Past a minute of tolerated skew the stamp is
+/// discarded in favor of the receipt age.
 fn pyth_reading(q: &FxQuote, read_at: Instant, now: Instant, now_unix: i64) -> Reading {
-    let published = Duration::from_secs(now_unix.saturating_sub(q.publish_time).max(0) as u64);
-    let age = published.max(now.duration_since(read_at)).min(MAX_PYTH_AGE);
-    Reading::with_confidence(q.value, age, q.confidence)
+    let delta = now_unix.saturating_sub(q.publish_time);
+    let received = now.duration_since(read_at);
+    let published = if delta < -(MAX_PYTH_CLOCK_SKEW.as_secs() as i64) {
+        // Implausibly far ahead of us — trust nothing it says about its age.
+        MAX_PYTH_AGE
+    } else {
+        Duration::from_secs(delta.max(0) as u64)
+    };
+    let age = published.max(received).min(MAX_PYTH_AGE);
+    match q.confidence {
+        Some(conf) => Reading::with_confidence(q.value, age, conf),
+        None => Reading::new(q.value, age),
+    }
 }
 
 /// Whether the Unix timestamp `secs` falls in the FX-closed weekend window.
@@ -297,9 +365,14 @@ pub fn run_supervisor(
         // and the same second dates every Pyth reading this cycle.
         let wall = SystemTime::now();
         let weekend = is_weekend(wall);
-        let now_unix = unix_secs(wall) as i64;
+        let tick = TickCtx {
+            now,
+            now_unix: unix_secs(wall) as i64,
+            leg_stale: cfg.fair_value.leg_stale,
+            weekend,
+        };
         for ctx in &mut markets {
-            let legs = hub.legs(now, &ctx.cfg, now_unix);
+            let legs = hub.legs(&ctx.cfg, &tick);
             let dt = ctx
                 .last_compose
                 .map_or(Duration::ZERO, |t| now.duration_since(t));
@@ -1096,6 +1169,17 @@ mod tests {
             .expect("EURC is on the roster")
     }
 
+    /// The tick context the tiering reads, with the engine's real default
+    /// staleness bound and a weekday session unless a test says otherwise.
+    fn tick_at(now: Instant, now_unix: i64) -> TickCtx {
+        TickCtx {
+            now,
+            now_unix,
+            leg_stale: BotConfig::default().fair_value.leg_stale,
+            weekend: false,
+        }
+    }
+
     /// A hub with one reading in every tier, each at a distinguishable value so
     /// a test can tell which one the cascade picked.
     fn full_hub(now: Instant, now_unix: i64) -> FeedHub {
@@ -1106,7 +1190,7 @@ mod tests {
             (
                 FxQuote {
                     value: 1.1500,
-                    confidence: 0.0001,
+                    confidence: Some(0.0001),
                     publish_time: now_unix,
                 },
                 now,
@@ -1128,7 +1212,7 @@ mod tests {
     #[test]
     fn every_leg_prefers_its_primary_tier() {
         let (now, now_unix) = (Instant::now(), 1_786_579_250);
-        let legs = full_hub(now, now_unix).legs(now, &eurc(), now_unix);
+        let legs = full_hub(now, now_unix).legs(&eurc(), &tick_at(now, now_unix));
         // Pyth over Frankfurter, and it carries the half-width Frankfurter
         // cannot publish.
         assert_eq!(legs.fx.unwrap().value, 1.1500);
@@ -1142,29 +1226,74 @@ mod tests {
     #[test]
     fn each_leg_falls_through_to_the_next_tier_when_its_primary_is_absent() {
         let (now, now_unix) = (Instant::now(), 1_786_579_250);
+        let tick = tick_at(now, now_unix);
         let m = eurc();
         let mut hub = full_hub(now, now_unix);
         hub.pyth.clear();
         hub.coinbase.clear();
         hub.kraken.remove(USDC_KRAKEN_PAIR);
-        let legs = hub.legs(now, &m, now_unix);
+        let legs = hub.legs(&m, &tick);
         assert_eq!(legs.fx.unwrap().value, 1.1400); // Frankfurter
         assert_eq!(legs.fx.unwrap().confidence, None); // and no half-width
-        assert_eq!(legs.crypto_usdc.unwrap().value, 1.1520); // Kraken
         assert_eq!(legs.usdc_usd.unwrap().value, 1.0000); // CoinGecko index
+                                                          // Kraken quotes token/USD, so the peg leg converts it to token/USDC —
+                                                          // it is not the raw 1.1520 sitting in the cache.
+        assert_eq!(legs.crypto_usdc.unwrap().value, 1.1520 / 1.0000);
 
         // Drop the CEX tier entirely: the indices carry the basis, which is the
         // permanent state for the six markets no CEX lists.
         hub.kraken.clear();
-        assert_eq!(
-            hub.legs(now, &m, now_unix).crypto_usdc.unwrap().value,
-            1.1510
-        );
+        assert_eq!(hub.legs(&m, &tick).crypto_usdc.unwrap().value, 1.1510);
         hub.cg.remove(m.coingecko_id);
-        assert_eq!(
-            hub.legs(now, &m, now_unix).crypto_usdc.unwrap().value,
-            1.1490
+        assert_eq!(hub.legs(&m, &tick).crypto_usdc.unwrap().value, 1.1490);
+    }
+
+    /// The regression the review caught: a Pyth reading too stale for the
+    /// engine must hand the anchor to Frankfurter, not sit in the slot masking
+    /// it. The hand-off used to wait on a 24 h ceiling, so a 20-minute Hermes
+    /// outage darkened the anchor for the rest of the day while a healthy ECB
+    /// rate went unread.
+    #[test]
+    fn a_stale_pyth_reading_hands_the_anchor_over_instead_of_masking_it() {
+        let (now, now_unix) = (Instant::now(), 1_786_579_250);
+        let m = eurc();
+        let mut hub = full_hub(now, now_unix);
+        let (q, t) = hub.pyth[m.currency];
+        // 20 minutes old: inside the old 24 h ceiling, past the 15-minute bound.
+        hub.pyth.insert(
+            m.currency.to_string(),
+            (
+                FxQuote {
+                    publish_time: now_unix - 20 * 60,
+                    ..q
+                },
+                t,
+            ),
         );
+        let legs = hub.legs(&m, &tick_at(now, now_unix));
+        assert_eq!(
+            legs.fx.unwrap().value,
+            1.1400,
+            "Frankfurter should carry it"
+        );
+    }
+
+    /// …but not while the FX session is shut. Frankfurter is aged from receipt,
+    /// so it reads fresh all weekend off a Friday close; standing it up would
+    /// hold the engine in the Normal regime on a closed market instead of
+    /// flipping the anchor to the crypto reference (§1 fm2).
+    #[test]
+    fn the_fx_fallback_is_suppressed_while_the_session_is_closed() {
+        let (now, now_unix) = (Instant::now(), 1_786_579_250);
+        let m = eurc();
+        let mut hub = full_hub(now, now_unix);
+        hub.pyth.clear();
+        let mut tick = tick_at(now, now_unix);
+        tick.weekend = true;
+        assert!(hub.legs(&m, &tick).fx.is_none());
+        // The basis leg is untouched by the session — it is what anchors the
+        // crypto-only regime.
+        assert!(hub.legs(&m, &tick).crypto_usdc.is_some());
     }
 
     /// A market with no CEX listing must never pick up another market's pair
@@ -1180,13 +1309,13 @@ mod tests {
             (
                 FxQuote {
                     value: 0.0600,
-                    confidence: 0.0,
+                    confidence: None,
                     publish_time: now_unix,
                 },
                 now,
             ),
         );
-        let legs = hub.legs(now, &zarp, now_unix);
+        let legs = hub.legs(&zarp, &tick_at(now, now_unix));
         assert!(zarp.coinbase_product.is_none() && zarp.kraken_pair.is_none());
         assert_eq!(legs.crypto_usdc.unwrap().value, 0.0605);
     }
@@ -1199,7 +1328,7 @@ mod tests {
         let now = Instant::now();
         let q = FxQuote {
             value: 1.15,
-            confidence: 0.0001,
+            confidence: Some(0.0001),
             publish_time: 1_786_579_250,
         };
         let r = pyth_reading(&q, now, now, 1_786_579_250 + 7_200);
@@ -1215,7 +1344,7 @@ mod tests {
         let read_at = now - Duration::from_secs(3_600);
         let q = FxQuote {
             value: 1.15,
-            confidence: 0.0001,
+            confidence: Some(0.0001),
             publish_time: 1_786_579_250,
         };
         let r = pyth_reading(&q, read_at, now, 1_786_579_250);
@@ -1229,16 +1358,35 @@ mod tests {
         let now = Instant::now();
         let q = FxQuote {
             value: 1.15,
-            confidence: 0.0,
+            confidence: None,
             publish_time: 1_786_579_250,
         };
-        // Clock behind the publisher: age floors at the receipt age (zero).
-        let ahead = pyth_reading(&q, now, now, 1_786_579_250 - 600);
-        assert_eq!(ahead.age, Duration::ZERO);
+        // Ordinary sub-minute skew is tolerated: age floors at the receipt age.
+        let skewed = pyth_reading(&q, now, now, 1_786_579_250 - 30);
+        assert_eq!(skewed.age, Duration::ZERO);
         // Clock absurdly ahead: clamped, and the cascade drops it for the
         // Frankfurter tier rather than quoting off it.
         let stale = pyth_reading(&q, now, now, 1_786_579_250 + 10_000_000);
         assert_eq!(stale.age, MAX_PYTH_AGE);
+    }
+
+    /// The security lens's finding: `publish_time` is venue-supplied data used
+    /// as a clock, so a stamp far in the *future* must not pin the age at zero.
+    /// Left unbounded, a frozen rate re-served with a forward-dated stamp reads
+    /// as perpetually fresh — exactly what publish-time ageing exists to stop.
+    #[test]
+    fn a_far_future_publish_time_is_bogus_rather_than_freshest_possible() {
+        let now = Instant::now();
+        let q = FxQuote {
+            value: 1.15,
+            confidence: Some(0.0001),
+            publish_time: 1_786_579_250,
+        };
+        for ahead in [3_600i64, 86_400, 31_536_000] {
+            let r = pyth_reading(&q, now, now, 1_786_579_250 - ahead);
+            assert_eq!(r.age, MAX_PYTH_AGE, "{ahead}s ahead should read as bogus");
+            assert!(!r.fresh(Duration::from_secs(15 * 60)));
+        }
     }
 
     #[test]
@@ -1259,6 +1407,23 @@ mod tests {
                 t,
             ),
         );
-        assert_eq!(hub.legs(now, &m, now_unix).fx.unwrap().value, 1.1400);
+        assert_eq!(
+            hub.legs(&m, &tick_at(now, now_unix)).fx.unwrap().value,
+            1.1400
+        );
+    }
+
+    #[test]
+    fn drain_entries_into_caches_the_latest_per_product() {
+        let (tx, mut rx) = broadcast::channel::<(String, f64)>(8);
+        tx.send(("EURC-USDC".to_string(), 1.1520)).unwrap();
+        tx.send(("EURC-USDC".to_string(), 1.1530)).unwrap();
+        let mut cache: HashMap<String, (f64, Instant)> = HashMap::new();
+        let now = Instant::now();
+        drain_entries_into(&mut rx, &mut cache, now);
+        assert_eq!(cache["EURC-USDC"].0, 1.1530);
+        // Drained dry — a second pass is a no-op, not a re-read.
+        drain_entries_into(&mut rx, &mut cache, now);
+        assert_eq!(cache.len(), 1);
     }
 }

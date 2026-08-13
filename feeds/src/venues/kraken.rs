@@ -13,11 +13,13 @@
 //!   the venue that actually quotes it: Coinbase Exchange lists no `USDC-USD`
 //!   product, and Binance.US quotes an administered flat `1.00000000`. It
 //!   replaces the CoinGecko `usd-coin` proxy the maker used before.
-//! - **`EURC/EUR` — token against its own fiat**, which is the cross that
-//!   redemption arbitrage enforces directly. It is the closest *live* stand-in
-//!   for the issuer redemption rate: Circle publishes no keyless rate endpoint
-//!   (`/v1/exchange/rates` is credentialed), so peg truth is observed at the
-//!   venue rather than read from the issuer.
+//! - **`EURC/EUR` — token against its own fiat**, the cross redemption
+//!   arbitrage enforces directly, and the closest *live* stand-in for an
+//!   issuer redemption rate (Circle publishes no keyless one —
+//!   `/v1/exchange/rates` is credentialed). **This adapter can decode it, but
+//!   no consumer subscribes to it yet**: the maker's roster asks only for
+//!   `<token>/USD` plus the shared `USDC/USD`. It is listed here as the
+//!   venue's capability, not as a wired leg.
 //!
 //! **Pairs are Kraken's own names, not ours.** Kraken keys its response by its
 //! canonical pair name, which for legacy assets carries the `X`/`Z` prefixes
@@ -123,7 +125,14 @@ fn mid_or_last(entry: &Value) -> Option<f64> {
             .filter(|v| v.is_finite() && *v > 0.0)
     };
     match (level("b"), level("a")) {
-        (Some(bid), Some(ask)) => Some((bid + ask) / 2.0),
+        // Both sides are finite and positive, but their mid still has to be
+        // re-checked: two ~1e308 quotes sum to infinity. Fall through to the
+        // last trade rather than emitting a non-finite "price", so the
+        // function delivers the invariant its doc comment claims.
+        (Some(bid), Some(ask)) => match (bid + ask) / 2.0 {
+            mid if mid.is_finite() && mid > 0.0 => Some(mid),
+            _ => level("c"),
+        },
         _ => level("c"),
     }
 }

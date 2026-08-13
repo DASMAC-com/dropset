@@ -132,7 +132,14 @@ fx-survey <-> feeds: the survey app is the first consumer of the feeds
 maker-bot <-> feeds: the maker bot is the first consumer of the feeds
   live (forward) sink — its price Sources are now the shared venue
   adapters (feeds/src/venues/coingecko.rs, coinmarketcap.rs,
-  frankfurter.rs) behind the BatchQuotes contract, and it implements
+  frankfurter.rs, kraken.rs) behind the BatchQuotes contract, plus two
+  that deliberately sit OUTSIDE it: pyth.rs (whose FxQuote record
+  carries a confidence half-width and a publish_time that BatchQuotes'
+  bare f64 cannot express) and coinbase.rs's CoinbaseTicker (keyed by a
+  single product, so there is nothing to batch). Those two are the
+  reason "every price Source is a BatchQuotes venue" is NOT an
+  invariant of this seam — a change to BatchQuotes does not reach them,
+  and a change to Source reaches all six. It implements
   Source itself only for the logs-subscription fill socket bridged
   through ChannelSource (bots/maker-bot/src/fills.rs), driving both with
   run_until onto a ForwardSink its synchronous tick loop drains through
@@ -141,6 +148,10 @@ maker-bot <-> feeds: the maker bot is the first consumer of the feeds
   contract, and the forward sink's bounded drop-to-latest policy must
   track the framework. The venue adapters are shared with fx-survey, so
   a change to one moves both consumers.
+  The maker's leg tiering (FeedHub::legs) additionally couples adapter
+  record SHAPE to fair-value semantics: pyth.rs's publish_time is what
+  ages the FX anchor (not receipt time), so a change to that field's
+  meaning silently changes when the weekend crypto-only regime engages.
 sdk-clients <-> sdk-math: the TS market reader (sdk/ts/src/market.ts)
   hand-decodes the opaque Vault slab and reconstructs the resting book,
   mirroring the on-chain byte layout (sdk/interface/src/layout.rs) and the

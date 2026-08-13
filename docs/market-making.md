@@ -153,10 +153,10 @@ The two legs draw from **different** feeds — the anchor from real FX, the
 basis from crypto venues. The token's crypto/USD price (CoinGecko / CMC)
 is **demoted to a last-resort fallback** for the reasons above.
 
-| Leg                              | Primary                                       | Peg-truth / cross-check       | Fallback                          |
-| -------------------------------- | --------------------------------------------- | ----------------------------- | --------------------------------- |
-| FX anchor (`fiat/USD`)           | Pyth Hermes FX                                | OANDA / CME 6E in session     | ECB / Frankfurter daily reference |
-| Basis (`token/fiat`, `USDC/USD`) | Coinbase `<token>/USDC`, Kraken `<token>/USD` | Kraken `USDC/USD`, `EURC/EUR` | CoinGecko / CMC token/USD         |
+| Leg                              | Primary                                       | Peg-truth / cross-check   | Fallback                          |
+| -------------------------------- | --------------------------------------------- | ------------------------- | --------------------------------- |
+| FX anchor (`fiat/USD`)           | Pyth Hermes FX                                | OANDA / CME 6E in session | ECB / Frankfurter daily reference |
+| Basis (`token/fiat`, `USDC/USD`) | Coinbase `<token>/USDC`, Kraken `<token>/USD` | Kraken `USDC/USD`         | CoinGecko / CMC token/USD         |
 
 The bot surfaces which source is live per leg, per market.
 

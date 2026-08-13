@@ -427,7 +427,7 @@ sources feed each leg and on what terms.
 | -------------------------------- | ----------------------------------------------------------------------------------- |
 | FX anchor (`fiat/USD`)           | Pyth Hermes FX (wired); OANDA / CME 6E in session; ECB / Frankfurter daily fallback |
 | Basis (`token/fiat`, `USDC/USD`) | Coinbase `<token>/USDC` (wired), Kraken `<token>/USD` (wired)                       |
-| Peg truth                        | Kraken `USDC/USD` + `EURC/EUR` (wired); Circle / issuer redemption rate             |
+| Peg truth                        | Kraken `USDC/USD` (wired); Circle / issuer redemption rate                          |
 | Token/USD, last resort           | CoinGecko / CoinMarketCap — reflexive, never the anchor                             |
 | Macro overlay                    | Econ-calendar loader (ECB / FOMC / CPI / NFP times)                                 |
 
@@ -447,8 +447,11 @@ was probed and ruled out on evidence:
   credentialed (`401`); the only public endpoint returns circulating supply
   per chain, not a rate. Peg truth is therefore *observed at a venue* rather
   than read from the issuer: Kraken's `USDC/USD` is a real market print of
-  the peg, and `EURC/EUR` is the cross redemption arbitrage enforces
-  directly. A credentialed Circle Mint feed supersedes both when keys exist.
+  the peg, and it is the leg that is **wired**. Kraken also lists `EURC/EUR`
+  — the cross redemption arbitrage enforces directly, and the natural
+  issuer-rate proxy — but nothing subscribes to it yet: the maker's roster
+  asks only for `<token>/USD` plus the shared `USDC/USD`. A credentialed
+  Circle Mint feed supersedes both when keys exist.
 - **OANDA is the same story** — credentialed, and Pyth Hermes already covers
   every roster currency for free, with a confidence half-width OANDA would
   have to be asked for separately.

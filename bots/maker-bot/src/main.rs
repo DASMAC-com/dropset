@@ -293,7 +293,11 @@ struct FeedRoster {
     coinbase: Vec<String>,
     /// CoinGecko ids, including the USDC common-mode fallback.
     coingecko: Vec<String>,
+    /// CoinMarketCap numeric ids — only the markets that name one.
     coinmarketcap: Vec<u32>,
+    /// ISO codes for the Frankfurter batch, deduped **across** markets: two
+    /// tokens tracking one fiat share a currency, so this is not one per
+    /// market.
     currencies: Vec<String>,
 }
 
@@ -341,12 +345,17 @@ impl FeedRoster {
         coingecko.sort_unstable();
         coingecko.dedup();
 
+        let mut coinmarketcap: Vec<u32> =
+            markets.iter().filter_map(|m| m.coinmarketcap_id).collect();
+        coinmarketcap.sort_unstable();
+        coinmarketcap.dedup();
+
         Self {
             pyth,
             kraken,
             coinbase,
             coingecko,
-            coinmarketcap: markets.iter().filter_map(|m| m.coinmarketcap_id).collect(),
+            coinmarketcap,
             currencies,
         }
     }
@@ -451,8 +460,10 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
     let drop = |tier: &str| args.drop.iter().any(|d| d == tier);
     let cmc_key = cmc_api_key();
 
-    let roster = args.selected();
-    let feeds = FeedRoster::for_markets(&roster);
+    // Named to match `run_live`, where `markets` is the selection and `roster`
+    // is the derived per-venue symbol sets — the two paths should read alike.
+    let markets = args.selected();
+    let roster = FeedRoster::for_markets(&markets);
 
     // Each tier is polled once, and a failed poll is indistinguishable from a
     // suppressed one here on purpose: both leave the tier empty and let the
@@ -460,18 +471,18 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
     let pyth = if drop("pyth") {
         Default::default()
     } else {
-        rt.block_on(PythHermesSource::new(&cfg.feeds.pyth_base_url, feeds.pyth)?.poll())
+        rt.block_on(PythHermesSource::new(&cfg.feeds.pyth_base_url, roster.pyth)?.poll())
             .unwrap_or_default()
     };
     let kraken = if drop("kraken") {
         Default::default()
     } else {
-        rt.block_on(KrakenSource::new(&cfg.feeds.kraken_base_url, feeds.kraken)?.poll())
+        rt.block_on(KrakenSource::new(&cfg.feeds.kraken_base_url, roster.kraken)?.poll())
             .unwrap_or_default()
     };
     let mut coinbase: HashMap<String, f64> = HashMap::new();
     if !drop("coinbase") {
-        for product in &feeds.coinbase {
+        for product in &roster.coinbase {
             let ticker = CoinbaseTicker::new(&cfg.feeds.coinbase_base_url, product.clone())?;
             if let Ok(Some(price)) = rt.block_on(ticker.poll()) {
                 coinbase.insert(product.clone(), price);
@@ -481,13 +492,14 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
     let cg = if drop("coingecko") {
         Default::default()
     } else {
-        rt.block_on(CoinGeckoSource::new(&cfg.feeds.coingecko_base_url, feeds.coingecko)?.poll())
+        rt.block_on(CoinGeckoSource::new(&cfg.feeds.coingecko_base_url, roster.coingecko)?.poll())
             .unwrap_or_default()
     };
     let cmc = match &cmc_key {
-        Some(key) if !drop("cmc") && !feeds.coinmarketcap.is_empty() => rt
+        Some(key) if !drop("cmc") && !roster.coinmarketcap.is_empty() => rt
             .block_on(
-                CmcSource::new(&cfg.feeds.coinmarketcap_base_url, feeds.coinmarketcap, key)?.poll(),
+                CmcSource::new(&cfg.feeds.coinmarketcap_base_url, roster.coinmarketcap, key)?
+                    .poll(),
             )
             .unwrap_or_default(),
         _ => Default::default(),
@@ -496,7 +508,7 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
         Default::default()
     } else {
         rt.block_on(
-            FrankfurterSource::new(&cfg.feeds.frankfurter_base_url, feeds.currencies)?.poll(),
+            FrankfurterSource::new(&cfg.feeds.frankfurter_base_url, roster.currencies)?.poll(),
         )
         .unwrap_or_default()
     };
@@ -527,27 +539,41 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
     // falling back to the CoinGecko index.
     let usdc_q =
         q(kraken.get(USDC_KRAKEN_PAIR).copied()).or_else(|| q(cg.get(USDC_COINGECKO_ID).copied()));
-    for &m in &roster {
+    for &m in &markets {
         // FX anchor: Pyth (with its confidence half-width) over Frankfurter.
         // A dry run has no wall-clock history, so every reading is age zero and
         // `pyth_reading`'s publish-time ageing has nothing to bite on — the
         // point here is which tier answered, not staleness.
         let (fx_q, fx_src) = match pyth.get(m.currency) {
-            Some(p) => (
-                Some(Reading::with_confidence(p.value, now, p.confidence)),
-                "pyth",
-            ),
+            Some(p) => {
+                let reading = match p.confidence {
+                    Some(conf) => Reading::with_confidence(p.value, now, conf),
+                    None => Reading::new(p.value, now),
+                };
+                (Some(reading), "pyth")
+            }
             None => match q(fx.get(m.currency).copied()) {
                 Some(r) => (Some(r), "frankfurter"),
                 None => (None, "—"),
             },
         };
         // Basis leg, in preference order: Coinbase token/USDC, Kraken
-        // token/USD, then the reflexive CoinGecko / CMC index.
+        // token/USD, then the reflexive CoinGecko / CMC index. Kraken's USD
+        // quote is converted with the peg leg, exactly as `FeedHub::legs`
+        // does — the two walks must agree or a dry run stops predicting the
+        // live mid.
+        let usdc_per_usd = usdc_q.map(|r| r.value).filter(|v| *v > 0.0);
         let basis_q = m
             .coinbase_product
             .and_then(|p| q(coinbase.get(p).copied()))
-            .or_else(|| m.kraken_pair.and_then(|p| q(kraken.get(p).copied())))
+            .or_else(|| {
+                m.kraken_pair.and_then(|p| {
+                    q(kraken.get(p).copied()).map(|r| match usdc_per_usd {
+                        Some(peg) => Reading::new(r.value / peg, now),
+                        None => r,
+                    })
+                })
+            })
             .or_else(|| q(cg.get(m.coingecko_id).copied()))
             .or_else(|| q(m.coinmarketcap_id.and_then(|id| cmc.get(&id)).copied()));
         // A fresh engine per row — no history, so no smoothing.
@@ -604,5 +630,101 @@ mod tests {
     #[test]
     fn an_unknown_market_symbol_selects_nothing() {
         assert!(args(&["nope"]).selected().is_empty());
+    }
+
+    /// The shared USDC legs must survive a single-`--market` run. The TUI
+    /// starts one bot per market, so this is the *normal* case, not an edge —
+    /// and dropping either leg silently disables the portfolio-wide
+    /// common-mode guard (§1 fm1) rather than failing loudly.
+    #[test]
+    fn the_shared_usdc_legs_ride_every_roster_however_narrow() {
+        for selection in [vec![], vec!["EURC"], vec!["IDRX"]] {
+            let markets = args(&selection).selected();
+            let roster = FeedRoster::for_markets(&markets);
+            assert!(
+                roster.kraken.iter().any(|p| p == USDC_KRAKEN_PAIR),
+                "{selection:?} lost the Kraken peg pair"
+            );
+            assert!(
+                roster.coingecko.iter().any(|i| i == USDC_COINGECKO_ID),
+                "{selection:?} lost the CoinGecko peg fallback"
+            );
+        }
+    }
+
+    /// One Pyth feed per *currency*, not per market — and every venue roster
+    /// deduped, so no batch asks a venue for the same symbol twice.
+    #[test]
+    fn feed_roster_batches_each_symbol_exactly_once() {
+        let markets = args(&[]).selected();
+        let roster = FeedRoster::for_markets(&markets);
+
+        let currencies: Vec<&str> = roster.pyth.iter().map(|f| f.key.as_str()).collect();
+        let mut deduped = currencies.clone();
+        deduped.sort_unstable();
+        deduped.dedup();
+        assert_eq!(currencies.len(), deduped.len(), "duplicate Pyth currency");
+
+        for (label, len, deduped_len) in [
+            ("kraken", roster.kraken.len(), dedup_len(&roster.kraken)),
+            (
+                "coinbase",
+                roster.coinbase.len(),
+                dedup_len(&roster.coinbase),
+            ),
+            (
+                "coingecko",
+                roster.coingecko.len(),
+                dedup_len(&roster.coingecko),
+            ),
+            (
+                "currencies",
+                roster.currencies.len(),
+                dedup_len(&roster.currencies),
+            ),
+        ] {
+            assert_eq!(len, deduped_len, "{label} roster has duplicates");
+        }
+        let mut cmc = roster.coinmarketcap.clone();
+        cmc.dedup();
+        assert_eq!(cmc.len(), roster.coinmarketcap.len(), "cmc has duplicates");
+    }
+
+    fn dedup_len(v: &[String]) -> usize {
+        let mut c = v.to_vec();
+        c.sort_unstable();
+        c.dedup();
+        c.len()
+    }
+
+    /// Only the markets a venue actually lists reach that venue's batch — the
+    /// counterpart to the config-side test that no market claims a listing it
+    /// does not have.
+    #[test]
+    fn a_venue_batch_carries_only_the_markets_it_lists() {
+        let markets = args(&["IDRX", "ZARP"]).selected();
+        let roster = FeedRoster::for_markets(&markets);
+        // Neither is on Coinbase, so that tier spawns no source at all.
+        assert!(roster.coinbase.is_empty());
+        // Neither is on Kraken either — only the shared peg pair remains.
+        assert_eq!(roster.kraken, vec![USDC_KRAKEN_PAIR.to_string()]);
+        // But both still get an FX anchor and an index fallback.
+        assert_eq!(roster.pyth.len(), 2);
+        assert_eq!(
+            roster.currencies,
+            vec!["IDR".to_string(), "ZAR".to_string()]
+        );
+    }
+
+    /// The inversion flag has to travel with the feed id, not be re-derived —
+    /// five of the seven roster currencies are published as `USD/<ccy>`.
+    #[test]
+    fn pyth_feeds_carry_each_markets_own_direction() {
+        let markets = args(&["EURC", "ZARP"]).selected();
+        let roster = FeedRoster::for_markets(&markets);
+        let eur = roster.pyth.iter().find(|f| f.key == "EUR").unwrap();
+        let zar = roster.pyth.iter().find(|f| f.key == "ZAR").unwrap();
+        assert!(!eur.invert, "EUR/USD is published direct");
+        assert!(zar.invert, "ZAR is published as USD/ZAR");
     }
 }

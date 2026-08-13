@@ -1,3 +1,4 @@
+// cspell:word denormal
 //! The Pyth Hermes FX adapter (docs/data-feeds.md §9) — the **primary** FX
 //! anchor, batched across currencies.
 //!
@@ -37,8 +38,17 @@ use std::collections::HashMap;
 pub struct FxQuote {
     /// USD per one unit of the currency, after any [`PythFeed::invert`].
     pub value: f64,
-    /// Symmetric confidence half-width, in the same units as `value`.
-    pub confidence: f64,
+    /// Symmetric confidence half-width, in the same units as `value`, when the
+    /// venue published a usable one.
+    ///
+    /// `None` means "no confidence notion this tick" — **not** "zero
+    /// half-width". The distinction matters because a zero would read as
+    /// *perfect certainty* and silently disable the fresh-but-uncertain gate
+    /// (§1 fm6) that is this venue's whole reason for outranking the daily
+    /// ECB fallback. Hermes does not publish `conf: 0` on a live FX feed, so a
+    /// zero (or a negative, or a non-finite) is a malformed field, and the
+    /// honest reading of a malformed field is "unknown".
+    pub confidence: Option<f64>,
     /// Epoch second the price was published — the staleness clock (see the
     /// module header).
     pub publish_time: i64,
@@ -176,7 +186,12 @@ pub fn parse_pyth(body: &Value, feeds: &[PythFeed]) -> HashMap<String, FxQuote> 
             .and_then(Value::as_i64)
             .unwrap_or_default();
 
-        let scale = 10f64.powi(expo as i32);
+        // `expo` is decoded as i64 but scales as i32; reject an out-of-range
+        // one rather than letting the cast wrap it into a plausible exponent.
+        let Ok(expo) = i32::try_from(expo) else {
+            continue;
+        };
+        let scale = 10f64.powi(expo);
         let (mut value, mut confidence) = (raw * scale, conf * scale);
         if feed.invert {
             // USD/<ccy> → USD per <ccy>. The half-width transforms with the
@@ -184,15 +199,28 @@ pub fn parse_pyth(body: &Value, feeds: &[PythFeed]) -> HashMap<String, FxQuote> 
             if !(value.is_finite() && value > 0.0) {
                 continue;
             }
-            confidence /= value * value;
+            // `value²` overflows to infinity for a rate past ~1e154, which
+            // would drive the half-width to a *zero* that reads as perfect
+            // certainty while the reciprocal lands on a denormal — a garbage
+            // rate wearing maximum confidence, and one that every guard below
+            // would wave through. A single corrupt `expo` reaches it
+            // (`price: "1", expo: 300`), so it is rejected here rather than
+            // left to a downstream band check.
+            let squared = value * value;
+            if !squared.is_finite() {
+                continue;
+            }
+            confidence /= squared;
             value = 1.0 / value;
         }
-        if value.is_finite() && value > 0.0 && confidence.is_finite() && confidence >= 0.0 {
+        if value.is_finite() && value > 0.0 {
             out.insert(
                 feed.key.clone(),
                 FxQuote {
                     value,
-                    confidence,
+                    // A non-positive or non-finite half-width is malformed, not
+                    // "certain" — see the field's docs.
+                    confidence: (confidence.is_finite() && confidence > 0.0).then_some(confidence),
                     publish_time,
                 },
             );
@@ -255,7 +283,7 @@ mod tests {
         let eur = out["EUR"];
         // 115290 × 10⁻⁵ = 1.15290 USD per EUR, ± 12 × 10⁻⁵.
         assert!((eur.value - 1.152_90).abs() < 1e-12);
-        assert!((eur.confidence - 0.000_12).abs() < 1e-15);
+        assert!((eur.confidence.unwrap() - 0.000_12).abs() < 1e-15);
         assert_eq!(eur.publish_time, 1_786_579_250);
     }
 
@@ -272,11 +300,12 @@ mod tests {
         );
         let zar = out["ZAR"];
         assert!((zar.value - 1.0 / 17.5).abs() < 1e-12);
-        assert!((zar.confidence - 0.005 / (17.5 * 17.5)).abs() < 1e-15);
+        let conf = zar.confidence.unwrap();
+        assert!((conf - 0.005 / (17.5 * 17.5)).abs() < 1e-15);
         // Inversion keeps the fractional half-width invariant to first order,
         // which is what the engine's fx_max_confidence_frac gate compares.
         let direct_frac = 0.005 / 17.5;
-        assert!((zar.confidence / zar.value - direct_frac).abs() < 1e-12);
+        assert!((conf / zar.value - direct_frac).abs() < 1e-12);
     }
 
     #[test]
@@ -336,5 +365,56 @@ mod tests {
         });
         let out = parse_pyth(&body, &[PythFeed::direct("EUR", "aa")]);
         assert!((out["EUR"].value - 1.152_90).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_zero_or_negative_half_width_reads_as_unknown_not_certain() {
+        // A zero would make `Reading::uncertain` unconditionally false — i.e.
+        // the venue could switch off the only gate that widens the spread —
+        // so it is carried as "no confidence", which is what it means.
+        for conf in ["0", "-1"] {
+            let body = json!({
+                "parsed": [{
+                    "id": "aa",
+                    "price": { "price": "115290", "conf": conf, "expo": -5, "publish_time": 7 }
+                }]
+            });
+            let out = parse_pyth(&body, &[PythFeed::direct("EUR", "aa")]);
+            // The price still stands — a malformed half-width is not a
+            // malformed rate.
+            assert!((out["EUR"].value - 1.152_90).abs() < 1e-12);
+            assert_eq!(out["EUR"].confidence, None, "conf {conf}");
+        }
+    }
+
+    #[test]
+    fn an_inversion_that_would_overflow_is_rejected_outright() {
+        // `price: 1, expo: 300` scales to 1e300; squaring it for the
+        // half-width transform overflows to infinity, which would leave a
+        // denormal rate carrying a zero (= "perfectly certain") half-width.
+        // Both the rate and the confidence are garbage, so the reading goes.
+        let body = json!({
+            "parsed": [{
+                "id": "aa",
+                "price": { "price": "1", "conf": "1", "expo": 300, "publish_time": 7 }
+            }]
+        });
+        assert!(parse_pyth(&body, &[PythFeed::inverted("ZAR", "aa")]).is_empty());
+    }
+
+    #[test]
+    fn an_out_of_range_exponent_is_rejected_rather_than_wrapped() {
+        // `expo` decodes as i64 but scales as i32: 4294967291 truncates to -5,
+        // which would silently produce a plausible-looking rate.
+        let body = json!({
+            "parsed": [{
+                "id": "aa",
+                "price": {
+                    "price": "115290", "conf": "12",
+                    "expo": 4_294_967_291i64, "publish_time": 7
+                }
+            }]
+        });
+        assert!(parse_pyth(&body, &[PythFeed::direct("EUR", "aa")]).is_empty());
     }
 }
