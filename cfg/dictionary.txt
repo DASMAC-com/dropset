@@ -37,6 +37,7 @@ coprocess
 cpis
 creat
 crossterm
+crowdsource
 dasmac
 dedup
 dedups

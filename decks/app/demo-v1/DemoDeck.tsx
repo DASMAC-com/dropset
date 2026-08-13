@@ -955,14 +955,14 @@ const BEATS: Beat[] = [
   // liquidity downstream (the page-8 names) — because seeding one side is a
   // liquidity operation, and seeding both is a market.
   { when: "Now", headline: "Onboard emerging stablecoin issuers" },
-  // Two words on the slide, so the load-bearing half of this beat is now
-  // **entirely spoken**: that *other* market makers enter is what says this
-  // isn't a prop AMM — anyone can quote here, so quotes compete tighter rather
-  // than being set by whoever owns the venue, and that competition is the
-  // mechanism the compounding runs on. Fees only mean something after it. If
-  // the talk track is ever trimmed, protect that sentence: "Accrue protocol
-  // fees" standing alone is the one line on this page that can be misread as a
-  // rent-extraction plan.
+  // Two words on the slide, and the talk track no longer expands them. The
+  // prop-AMM argument — that *other* market makers enter, so quotes compete
+  // tighter rather than being set by whoever owns the venue, which is the
+  // mechanism the compounding runs on — was cut for time and is held under
+  // "Optional backup beats" in the spec. Know what that buys and what it
+  // costs: "Accrue protocol fees" standing alone is the one line on this page
+  // that can be misread as a rent-extraction plan, so if a room reacts to it,
+  // that is the beat to reach for.
   { when: "Next", headline: "Accrue protocol fees" },
   // Left broad on purpose — "beyond spot" lets a reader fill in their own
   // derivatives thesis, where naming one hands them ours to argue with. The
@@ -1368,17 +1368,15 @@ export default function DemoDeck() {
       {/* 1 — Title */}
       <Slide>
         <TitlePage />
-        {/* The tokenized-equity analogy is **spoken, never printed**. It is the
-            sit-up moment — a VC who knows nothing about FX instantly gets that
-            one asset class crossed onchain and the other didn't — and it plants
-            page 10, which returns to tokenized equities with the number
-            attached. On the slide it would be a second sentence competing with
-            the tagline; said out loud over a bare wordmark, it lands. */}
+        {/* The opener introduces the speaker, then states the thesis, and
+            stops. The tokenized-equity analogy that used to carry this beat is
+            held in reserve under "Optional backup beats" in the spec: it was
+            the sit-up moment and it planted page 10, but it made the opener
+            long. If it returns it is spoken over the bare wordmark and never
+            printed — on the slide it competes with the tagline. */}
         <Notes>
-          Dropset is the liquidity layer for every national currency — all of
-          them, for anyone, 24/7/365. Here’s what I mean. Anyone with a phone
-          can buy tokenized Tesla stock today, from almost any country — and
-          nobody can do that with a euro. That’s the hole we’re filling.
+          Hey everyone, I’m Alex. I’m building Dropset, the liquidity layer
+          for every national currency.
         </Notes>
       </Slide>
 
@@ -1405,10 +1403,10 @@ export default function DemoDeck() {
           </SlideFill>
         </SlideBody>
         <Notes>
-          Foreign exchange is the biggest market on earth — over nine trillion
-          dollars a day. It’s also structurally old: banks and over-the-counter
-          desks fragment the liquidity, and it only trades 24/5 — it closes on
-          Friday afternoon and it doesn’t open again until Sunday night.
+          Foreign exchange is the biggest market on earth, with over nine
+          trillion dollars in daily volume. Yet that liquidity is fragmented
+          and obfuscated by a patchwork of banks and OTC desks, and FX
+          exchanges only trade five days a week.
         </Notes>
       </Slide>
 
@@ -1454,20 +1452,20 @@ export default function DemoDeck() {
             </Box>
           </SlideFill>
         </SlideBody>
-        {/* `LISTED_CURRENCIES` / `TOTAL_CURRENCIES` drive both the meter and the
-            spoken figure below, and they are live numbers from our own site —
-            check them before presenting. A stale slide beside a corrected
-            number read aloud is worse than either alone. */}
+        {/* `LISTED_CURRENCIES` / `TOTAL_CURRENCIES` drive the meter, and the
+            raw count appears only in the capture beneath it. The spoken track
+            deliberately states the percentage and not the count, so there is
+            no hand-copied number in the notes to fall out of step with these.
+            They are live numbers from our own site — check them before
+            presenting. */}
         <Notes>
-          And blockchains have almost none of it. Less than ten percent of the
-          world’s currencies are on Solana — fourteen out of a hundred and
-          sixty-two — and that count is live on our own site, which is where
-          this is from. Public blockchains are the most money-like digital
-          environment we have, and Solana most of all: it’s the fastest and the
-          cheapest. So the gap is the whole opportunity. Our goal is 24/7/365
-          coverage of every FX spot pair — every currency connectable to every
-          other one. To be precise: we don’t issue currencies — issuers create
-          them, and Dropset is where they trade.
+          Blockchains are a perfect remedy for this situation — they’re the
+          most money-like digital environment possible, offering permissionless
+          access and ease of transmission, especially Solana, the fastest and
+          most inexpensive public blockchain. Yet less than ten percent of the
+          world’s currencies are represented by a stablecoin on Solana. So
+          we’re building Dropset to provide 24/7/365 coverage for every
+          national currency.
         </Notes>
       </Slide>
 
@@ -1542,14 +1540,8 @@ export default function DemoDeck() {
           </FlexBox>
         </SlideBody>
         <Notes>
-          This already works. Dropset already processes Solana mainnet FX
-          trades: you open the picker, select your currency, and the swap settles
-          atomically. The ramps are near instant and the venue never
-          closes. Solana is the start, not the end — it’s the most
-          moneyness-conducive environment onchain. And it’s on dropset.io/swap
-          right now, so you can go and do this yourself. [Today we clear by
-          routing through aggregators and sourcing existing liquidity; don’t
-          claim “most liquid”.]
+          The production Dropset frontend already processes Solana mainnet FX
+          swaps, sourcing liquidity from existing onchain exchanges.
         </Notes>
       </Slide>
 
@@ -1572,11 +1564,7 @@ export default function DemoDeck() {
           />
         </SlideBody>
         <Notes>
-          And alongside the swap itself, Dropset curates the market data for
-          every Solana-based currency: price, twenty-four-hour change and volume,
-          market
-          cap, liquidity, holders — grouped by country, or sorted however you
-          want. This is sorted by liquidity, deepest first.
+          Dropset also curates market data for every Solana-based stablecoin.
         </Notes>
       </Slide>
 
@@ -1595,11 +1583,7 @@ export default function DemoDeck() {
           />
         </SlideBody>
         <Notes>
-          Scroll to the bottom of that same list and the story tells itself. The
-          Australian dollar, the Canadian dollar, the yen, the naira, the lira —
-          all sitting there with no price, no volume, and no liquidity at all.
-          These are real currencies with real economies behind them, and onchain
-          they have no market whatsoever.
+          However, many of these currencies still have no liquidity whatsoever.
         </Notes>
       </Slide>
 
@@ -1656,18 +1640,11 @@ export default function DemoDeck() {
           </FlexBox>
         </SlideBody>
         <Notes>
-          So we’re building the exchange those markets need. Making a market
-          onchain used to be prohibitively expensive — gas made continuous
-          quoting impossible, so everything before this was a band-aid. We’ve
-          built order books before, so we built one that fits: the eCLOB gives
-          you the transparency of a central limit order book with quote updates
-          as cheap as a propAMM. Repricing the whole book costs forty-seven
-          compute units and reshaping the ladder fifty-nine, on a chain that
-          gives you two hundred thousand per instruction. Left to right: that’s
-          what a quote costs, that’s our own maker paying it to quote a live
-          market, and that’s the same liquidity arriving on the frontend with the
-          book, the trades tape and a priced swap. We’re building this out so
-          anyone can quote onchain with a vault-style approach.
+          Which is why we’re building a DEX specifically tailored to
+          bootstrapping stablecoin liquidity: the ephemeral central limit order
+          book, or eCLOB, which delivers propAMM efficiency while providing
+          CLOB transparency. It’s built around vaults, so anyone can become a
+          vault leader and crowdsource their market-making inventory.
         </Notes>
       </Slide>
 
@@ -1683,17 +1660,14 @@ export default function DemoDeck() {
           </SlideFill>
         </SlideBody>
         <Notes>
-          We seed the markets ourselves, the way every venue that ever
-          bootstrapped its own liquidity did — our vaults bootstrap each book,
-          and anyone can top them off, so the flywheel is
-          public rather than ours alone. The wedge is that long tail of
-          currencies: spreads are wide there, and an issuer arriving with no
-          depth of their own needs a day-one liquidity partner. And it’s a
-          two-sided market we’re already doing the customer development on.
-          Upstream are the stablecoin issuers — AUDD Digital, and Loon, who
-          issues CADC — who mint a currency and need it to trade. Downstream is
-          the demand: Altitude in banking, CargoBill in supply chain, who need to
-          buy FX to settle. Connect the two ends and the depth compounds.
+          We bootstrap the vaults for this two-sided market ourselves, kicking
+          off a public liquidity flywheel that matches upstream stablecoin
+          issuers with downstream liquidity consumers. We’re already working
+          with early-stage stablecoin issuers on a liquidity pilot program.
+          We’ve validated demand from onchain banking and supply chain
+          management teams who source existing liquidity onchain but suffer
+          wide spreads when clearing FX swaps off-chain through their banking
+          solutions.
         </Notes>
       </Slide>
 
@@ -1723,17 +1697,11 @@ export default function DemoDeck() {
           </SlideFill>
         </SlideBody>
         <Notes>
-          This is the path to 24/7/365 FX, and beyond it. Now, we onboard
-          emerging stablecoin issuers: we lead the vaults that give them day-one
-          liquidity, and at the same time we develop the downstream pipeline of
-          the companies and users who need liquid currency swaps — those are the
-          two sides of the market. Next, protocol fees accrue value: this isn’t a
-          prop AMM, so as additional market makers come in, quotes get tighter,
-          volume follows the tighter spreads, liquidity compounds, and protocol
-          fees accrue value off it. Later, the product expands
-          beyond spot — derivatives make the markets themselves more efficient,
-          and they open up business use cases too: treasury management, hedging
-          B2B payment flows. Hedging isn’t just for market makers.
+          By connecting emerging stablecoin issuers and demand-side customers,
+          we can create a comprehensive FX liquidity network that accrues
+          protocol fees. As markets mature, we have access to product
+          opportunities beyond spot, like derivatives, for business use cases
+          including treasury management, B2B payment flow, hedging, and beyond.
         </Notes>
       </Slide>
 
@@ -1812,36 +1780,12 @@ export default function DemoDeck() {
             Ethereum and BNB, so any "Solana leads RWAs" claim hands a listening
             investor a free correction. */}
         <Notes>
-          So why does FX land here, and why now? Because every new asset class
-          has already consolidated on Solana, in order. First memecoins — over
-          twelve million tokens launched. Call that the training wheels: it
-          looks unserious, and it was the proving ground. It established that
-          anyone could launch a market on this chain and anyone could trade
-          against it, at a scale nothing else came close to. And it is a real
-          business — one launchpad alone became the number-one
-          DEX by daily volume across every chain, on a billion dollars of
-          cumulative revenue. Then tokenized equities, and that one is a big
-          deal: ninety-six percent of onchain tokenized-equity
-          volume is on Solana, and effectively nowhere else. Real-world assets
-          are going the same way — Solana added more of them in the last six
-          months than in its whole history before that, and it has more holders
-          of them than any other chain. So the training wheels came off. FX is
-          next, and it’s the biggest of
-          them. It lands here for the same reason the others did: public
-          liquidity. Anyone can quote, anyone can trade against it, and it
-          composes with everything else onchain — so depth compounds instead of
-          sitting still. Solana is the most money-like onchain environment
-          today, and I say today deliberately: it’s where this belongs right now
-          because it’s the fastest and the cheapest, not a commitment we’re
-          locked into if something better shows up. What we’re building is
-          public liquidity, and that’s portable. That’s the part the
-          permissioned rails structurally can’t have: gate who gets to make a
-          market and liquidity never compounds, it just sits where you put it.
-          And it runs one way — a maker who already has access to one of those
-          venues can quote here and hedge there, so their depth reaches a public
-          book, and nothing carries it back. Public liquidity is what
-          blockchains were built for — moving money is the problem they were
-          supposed to solve, and this is that.
+          Solana is where tokens get launched, and more recently it commands a
+          near monopoly on tokenized equity volume. It’s basically
+          the perfect place for moving tokens — which are the vehicle for
+          stablecoins, and by extension for public FX markets, because it
+          facilitates permissionless liquidity flywheels that take off in a
+          positive feedback loop.
         </Notes>
       </Slide>
 
@@ -1886,15 +1830,10 @@ export default function DemoDeck() {
           </FlexBox>
         </SlideBody>
         <Notes>
-          Dropset is built by people who have built exchanges. I’ve authored
-          exchange technology across the entire stack, on more than one
-          blockchain — the Econia order book on Aptos, five hundred million
-          dollars of lifetime volume, and the Solana Opcode Guide, a key resource
-          for optimizing Solana program efficiency, which is what makes
-          quoting on the eCLOB cost double-digit compute units. Judy owns the
-          whole operational stack, and works directly with banks, stablecoin
-          providers, onramps and service providers, on an extensive background in
-          logistical coordination and partner relationship management.
+          We’re the people to build it. The team has already worked on multiple
+          exchanges. We’re already operationally integrated with existing
+          stablecoin issuers, and I’ve personally authored or co-authored
+          three onchain exchanges.
         </Notes>
       </Slide>
 
@@ -1919,15 +1858,11 @@ export default function DemoDeck() {
             believe this person would still be working on this in five years. */}
         <Notes>
           Dropset — the liquidity layer for every national currency. This
-          industry is seventeen years old now, and we can send money around
-          the world just fine — what we still can’t do is get in and out of
-          currencies. There’s no shortage of ways to speculate onchain and no
-          shortage of alternative stores of value, but the currencies people
-          actually earn and spend in don’t flow on a decentralized ledger the
-          way it promised they would. A large part of why is that there’s no
-          FX liquidity onchain — and Solana is a deeply money-like
-          environment, which is why this is where it gets fixed. [Leave this
-          page up.]
+          industry is seventeen years old, and we can finally send money
+          anywhere in the world. Yet we still can’t get in and out of any
+          currency. Money onchain still doesn’t really work, even in deeply
+          money-like environments like Solana. Through Dropset, we’re going to
+          solve this issue once and for all.
         </Notes>
       </Slide>
     </Deck>
