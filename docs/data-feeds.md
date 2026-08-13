@@ -394,6 +394,17 @@ a compose init step that re-runs harmlessly on every restart.
 exactly one writer app. Reads are deliberately unrestricted; that is the
 point of sharing an instance.
 
+Unrestricted, but not anonymous: `dropset_ro` is a **read-only login**
+(`db-schema/migrations/0002_reader_role.sql`) holding `SELECT` on every
+table and nothing else, including on tables a later migration adds. A
+consumer that only reads connects as that role rather than as the
+`dropset` owner, which turns the one-writer rule from an honor system
+into a privilege — a dashboard cannot write a table by accident. Grafana
+(`market-data/grafana/`) is the first such consumer. It is one shared
+reader rather than a role per consumer on purpose: every reader needs
+exactly the same grants, so splitting them would multiply bookkeeping
+without buying isolation.
+
 | Table                                                              | Writer             | Contents                                            |
 | ------------------------------------------------------------------ | ------------------ | --------------------------------------------------- |
 | `feed_cursors`                                                     | `feeds` store sink | Resumable per-feed position (JSONB)                 |
@@ -587,6 +598,16 @@ indexer could always re-sync from chain, but a CEX backfill window is
 finite, so collected price history that scrolls out of it is
 unrecoverable. Stopping services keeps the volume; only an explicit
 `down -v` (`make clean-docker`) discards it.
+
+**The dashboards are configuration, not a service to write.** Grafana
+OSS joins the same compose file (`market-data/grafana/`), provisioned
+entirely from the repo — datasource, dashboard loader, and the dashboard
+JSON — and mounted read-only, with no volume of its own. So there is no
+Grafana state to deploy or back up: the tree that renders the local
+ingestion dashboard is the tree that renders the cloud one, and every
+value that differs between them is an environment variable. Which makes
+the stage-1 EC2 box below a credentials change, exactly like the store
+sink's move to Aurora.
 
 **AWS is ephemeral by default.** Every stack proves the full
 deploy → verify → teardown cycle and is torn down after; nothing is left

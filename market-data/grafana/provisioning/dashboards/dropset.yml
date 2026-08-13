@@ -1,0 +1,29 @@
+---
+# The dashboard loader: read every dashboard JSON out of the repo tree that
+# infra/localnet/docker-compose.yml bind-mounts read-only.
+#
+# `allowUiUpdates: true` because the intended loop runs through the browser:
+# tweak a panel until it reads well, export the JSON, commit it here. The
+# obvious objection is that saving from the UI lets Grafana's own store
+# diverge from the repo — and what answers it is that the `grafana` service
+# deliberately has no volume. Its store is ephemeral, so an uncommitted UI
+# edit survives exactly until the next `up`, and the repo becomes the source
+# of truth by construction rather than by discipline. Setting this to `false`
+# would look stricter and be worse: it drops `canEdit` as well as `canSave`,
+# so there would be no way to tweak a panel visually at all.
+#
+# `updateIntervalSeconds` is short because the mount is live: editing the
+# committed JSON on the host shows up in the browser within the interval, with
+# no container restart.
+apiVersion: 1
+providers:
+- allowUiUpdates: true
+  disableDeletion: false
+  name: 'dropset'
+  options:
+    foldersFromFilesStructure: false
+    path: '/var/lib/grafana/dashboards'
+  orgId: 1
+  type: 'file'
+  updateIntervalSeconds: 30
+...

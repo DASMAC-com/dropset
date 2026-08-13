@@ -74,6 +74,23 @@ http://localhost:3100/address/<PUBKEY>
     ?cluster=custom&customUrl=http://127.0.0.1:8899
 ```
 
+## Grafana
+
+Grafana OSS serves the provisioned market-data ingestion dashboard on
+host port **3200** (the container serves `3000` internally), clear of
+the frontend on 3000 and the explorer on 3100. It rides along with
+`make collectors-up`, because a collector you cannot see is a collector
+you cannot verify, and runs standalone with `make grafana` against
+whatever history is already on the volume.
+
+It is a pure **reader**: it logs in as `dropset_ro`, the read-only role
+`db-schema/migrations/0002_reader_role.sql` creates, so the one-writer-
+per-table rule of `docs/data-feeds.md` §8 holds by privilege rather than
+by convention. The dashboards and the datasource are declarative,
+bind-mounted read-only out of `market-data/grafana/`, and the service has
+no volume — see that directory's `README.md` for the edit-and-export
+loop, kiosk mode, and how to read the panels.
+
 ## The bots
 
 The maker and taker bots run from a single shared image

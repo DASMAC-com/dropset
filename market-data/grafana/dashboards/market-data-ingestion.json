@@ -1,0 +1,643 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Live view of what the market-data collectors are writing into the shared `dropset` database: candles, cross-source agreement, throughput, freshness, and coverage. Read top-down \u2014 the freshness tiles answer 'is ingestion alive right now', everything below answers 'and is it any good'.",
+  "editable": true,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "Wall-clock seconds since each feed last committed a batch, straight off `feed_cursors.updated_at`. This is the only true wall-clock liveness signal in the schema \u2014 every other panel measures candle-bucket time, which a backfill can advance without the feed being currently healthy. A wall of green is the end-to-end proof that a feeds change works.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 90
+              },
+              {
+                "color": "red",
+                "value": 300
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  feed,\n  extract(epoch FROM now() - updated_at) AS age_secs\nFROM feed_cursors\nORDER BY feed",
+          "refId": "A"
+        }
+      ],
+      "title": "Feed cursor age (wall clock)",
+      "transformations": [
+        {
+          "id": "rowsToFields",
+          "options": {}
+        }
+      ],
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "Seconds since the newest candle bucket each source/product has on record. The floor is one granularity by construction \u2014 the collector persists only closed buckets, so a perfectly healthy 60s feed reads 60-120s and never 0. The thresholds are set above that floor accordingly; treat this as 'how stale is the data I would quote from', and the cursor-age tile beside it as 'is the process alive'.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 240
+              },
+              {
+                "color": "red",
+                "value": 600
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  source || ' ' || product_id AS feed,\n  extract(epoch FROM now()) - max(bucket_start) AS age_secs\nFROM cex_prices\nWHERE source IN (${source:sqlstring})\n  AND product_id IN (${product_id:sqlstring})\n  AND granularity_secs = $granularity\nGROUP BY 1\nORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "title": "Last candle age",
+      "transformations": [
+        {
+          "id": "rowsToFields",
+          "options": {}
+        }
+      ],
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "OHLC candles as recorded, one panel per selected product. This is the 'real chart' view and the screenshot artifact. It reads a single source ($candle_source) on purpose: candles from two venues share a bucket key but are different series, so overlaying them would interleave bars rather than compare them. Use the overlay panel below to compare sources.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never"
+          },
+          "decimals": 5,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 4
+      },
+      "id": 3,
+      "options": {
+        "candleStyle": "candles",
+        "colorStrategy": "open-close",
+        "colors": {
+          "down": "red",
+          "flat": "gray",
+          "up": "green"
+        },
+        "fields": {},
+        "includeAllFields": false,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "mode": "candles"
+      },
+      "repeat": "product_id",
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  to_timestamp(bucket_start) AS \"time\",\n  \"open\",\n  \"high\",\n  \"low\",\n  \"close\",\n  \"volume\"\nFROM cex_prices\nWHERE $__unixEpochFilter(bucket_start)\n  AND source = '$candle_source'\n  AND product_id = '$product_id'\n  AND granularity_secs = $granularity\nORDER BY bucket_start",
+          "refId": "A"
+        }
+      ],
+      "title": "OHLC $product_id ($candle_source, ${granularity}s buckets)",
+      "type": "candlestick"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "Every selected source's closing print for every selected product, overlaid on one axis. Relative-value divergence is visible as separating lines: two venues quoting the same pair should track within basis, and a mispriced or mis-mapped source shows up on sight as a line at the wrong level. With one collector running this is a single series \u2014 it populates as sources land, with no dashboard edit.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 5,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  to_timestamp(bucket_start) AS \"time\",\n  source || ' ' || product_id AS metric,\n  \"close\" AS value\nFROM cex_prices\nWHERE $__unixEpochFilter(bucket_start)\n  AND source IN (${source:sqlstring})\n  AND product_id IN (${product_id:sqlstring})\n  AND granularity_secs = $granularity\nORDER BY bucket_start",
+          "refId": "A"
+        }
+      ],
+      "title": "Price by source",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "Rows landed per minute, per source. Note the axis is candle-bucket time, not insert time: the schema records no insert timestamp, so this counts buckets by the minute they cover. For a live 60s feed that is a flat line at one row per product per minute, and a collector that dies mid-window drops visibly to zero. A collector dead for the whole window contributes no series at all rather than a zero line - that case is what the freshness tiles above are for. The bucket is a fixed one minute rather than the dashboard interval, so the number means the same thing at every zoom level; the cost is that a multi-day range returns a point per minute.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "rows/min",
+            "axisPlacement": "auto",
+            "axisSoftMin": 0,
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      },
+      "id": 5,
+      "options": {
+        "legend": {
+          "calcs": [
+            "sum"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "-- The CTE is load-bearing, not style. Grafana captures macro\n-- arguments with a regex that stops at the first closing paren, so\n-- wrapping the epoch column in a to_timestamp call inside the\n-- time-group macro leaves it one truncated argument and the query\n-- fails to interpolate. Converting the column in a CTE first hands\n-- the macro a bare column name, which is all it can parse. For the\n-- same reason, do not name a macro in a comment here: the scanner\n-- does not skip comments and will try to interpolate the example.\nWITH bucketed AS (\n  SELECT\n    to_timestamp(bucket_start) AS bucket_ts,\n    source\n  FROM cex_prices\n  WHERE $__unixEpochFilter(bucket_start)\n    AND source IN (${source:sqlstring})\n    AND product_id IN (${product_id:sqlstring})\n)\nSELECT\n  $__timeGroupAlias(bucket_ts, '1m', 0),\n  source AS metric,\n  count(*) AS value\nFROM bucketed\nGROUP BY 1, 2\nORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "title": "Rows per minute by source",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "Which source covers which product, over the last $coverage_mins minutes. This is the panel that answers 'do we want another collector here' - a product with one source has no cross-check, and a product with none is a gap. Deliberately NOT filtered by the source/product variables: its job is to show everything arriving, including series the current selection hides.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "age_secs"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "mode": "basic",
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 240
+                    },
+                    {
+                      "color": "red",
+                      "value": 600
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 22
+      },
+      "id": 6,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  source,\n  product_id,\n  granularity_secs,\n  count(*) AS buckets,\n  to_timestamp(max(bucket_start)) AS latest_bucket,\n  (extract(epoch FROM now()) - max(bucket_start))::bigint AS age_secs\nFROM cex_prices\nWHERE bucket_start >= extract(epoch FROM now()) - ($coverage_mins * 60)\nGROUP BY 1, 2, 3\nORDER BY 1, 2, 3",
+          "refId": "A"
+        }
+      ],
+      "title": "Source x product coverage (last $coverage_mins min)",
+      "type": "table"
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "tags": [
+    "market-data",
+    "ingestion"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "datasource": {
+          "type": "postgres",
+          "uid": "dropset-postgres"
+        },
+        "definition": "SELECT DISTINCT product_id FROM cex_prices ORDER BY 1",
+        "includeAll": true,
+        "label": "Product",
+        "multi": true,
+        "name": "product_id",
+        "options": [],
+        "query": {
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT DISTINCT product_id FROM cex_prices ORDER BY 1",
+          "refId": "product_id"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {},
+        "datasource": {
+          "type": "postgres",
+          "uid": "dropset-postgres"
+        },
+        "definition": "SELECT DISTINCT source FROM cex_prices ORDER BY 1",
+        "includeAll": true,
+        "label": "Source",
+        "multi": true,
+        "name": "source",
+        "options": [],
+        "query": {
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT DISTINCT source FROM cex_prices ORDER BY 1",
+          "refId": "source"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {},
+        "datasource": {
+          "type": "postgres",
+          "uid": "dropset-postgres"
+        },
+        "definition": "SELECT DISTINCT source FROM cex_prices ORDER BY 1",
+        "description": "The single source the candlestick panel draws. Candles from two venues cannot share one set of bars.",
+        "includeAll": false,
+        "label": "Candle source",
+        "multi": false,
+        "name": "candle_source",
+        "options": [],
+        "query": {
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT DISTINCT source FROM cex_prices ORDER BY 1",
+          "refId": "candle_source"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "60",
+          "value": "60"
+        },
+        "description": "Bucket size to chart, in seconds. A fixed list rather than a query on the data, so it is never empty on a cold database - an empty value would make every query that filters on it a syntax error instead of a 'no data' panel. 60 is the collector's GRANULARITY_SECS default.",
+        "label": "Granularity",
+        "name": "granularity",
+        "options": [],
+        "query": "60,300,900,3600,21600,86400",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "15",
+          "value": "15"
+        },
+        "description": "The coverage table's window, in minutes. Independent of the dashboard time range on purpose: 'what is arriving now' should not change when you pan back to look at history.",
+        "label": "Coverage window (min)",
+        "name": "coverage_mins",
+        "options": [],
+        "query": "5,15,60,360,1440",
+        "skipUrlSync": false,
+        "type": "custom"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "utc",
+  "title": "Market-data ingestion",
+  "uid": "market-data-ingestion",
+  "version": 1,
+  "weekStart": ""
+}
