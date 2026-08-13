@@ -122,7 +122,10 @@ impl HttpClient {
     }
 
     /// Hold every later request off for `wait`, never pulling in a cooldown
-    /// another caller has already set further out.
+    /// another caller has already set further out. A slot another caller
+    /// reserved before the 429 landed still goes out — the runner polls a
+    /// source sequentially, so that window is theoretical, and the cost if it
+    /// opens is one extra request, not a lost cooldown.
     fn cool_down(&self, wait: Duration) {
         let resume = Instant::now() + wait;
         let mut gate = self
@@ -184,6 +187,11 @@ impl HttpClient {
                 bail!("{url} declared a {len}-byte body, over the {cap}-byte cap");
             }
         }
+        // The running total is what covers a venue that under-declares its
+        // length or omits it entirely. It has no unit test: a `reqwest::Response`
+        // built in-process always reports a truthful `content_length`, so the
+        // check above fires first and this branch is only reachable against a
+        // real streaming venue.
         let mut body: Vec<u8> = Vec::new();
         while let Some(chunk) = response
             .chunk()
@@ -304,6 +312,37 @@ mod tests {
         // The clone is the same source, so its slot queues behind the original's
         // rather than opening a second budget.
         assert_eq!(clone.reserve() - first, Duration::from_millis(200));
+    }
+
+    /// A response built in-process, so the body cap is exercised without a live
+    /// venue or a mock server.
+    fn response_with_body(body: Vec<u8>) -> reqwest::Response {
+        let builder = http::Response::builder().header(http::header::CONTENT_LENGTH, body.len());
+        reqwest::Response::from(builder.body(body).unwrap())
+    }
+
+    #[tokio::test]
+    async fn read_capped_refuses_an_oversized_body() {
+        let client = HttpClient::new("https://example.test")
+            .unwrap()
+            .with_max_response_bytes(16);
+        // A venue that answers with far more than the consumer will hold is
+        // refused rather than allocated for.
+        let err = client
+            .read_capped(response_with_body(vec![b'x'; 64]), "url")
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("declared a 64-byte body"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn read_capped_returns_a_body_within_the_cap() {
+        let client = HttpClient::new("https://example.test").unwrap();
+        let body = client
+            .read_capped(response_with_body(b"{\"ok\":true}".to_vec()), "url")
+            .await
+            .unwrap();
+        assert_eq!(body, b"{\"ok\":true}");
     }
 
     #[tokio::test(start_paused = true)]
