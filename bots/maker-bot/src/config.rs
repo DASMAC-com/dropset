@@ -393,7 +393,7 @@ pub struct BotConfig {
     pub kill: KillSwitchConfig,
     pub invalidate: InvalidateConfig,
     /// The fair-value engine's calibration (`fair = fx × basis`, §1). Almost
-    /// every value is a survey-set placeholder — see [`FairValueConfig`].
+    /// every value is an analytics-set placeholder — see [`FairValueConfig`].
     pub fair_value: FairValueConfig,
 }
 
@@ -503,8 +503,8 @@ impl Default for BotConfig {
                 // its own; in practice the weekend flip is what this governs,
                 // and Pyth ages from its `publish_time` (not from receipt), so
                 // a frozen FX session does go stale here rather than reading as
-                // perpetually fresh. TBD(survey): split per leg, which is the
-                // real fix and is the survey's to make.
+                // perpetually fresh. TBD(analytics): split per leg, which is
+                // the real fix and belongs to the analytics.
                 leg_stale: Duration::from_secs(15 * 60),
                 ..FairValueConfig::default()
             },

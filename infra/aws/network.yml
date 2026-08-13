@@ -7,7 +7,7 @@ Conditions:
 Description: >-
   Dropset AWS network baseline: a VPC with public and private subnets across
   two Availability Zones, an internet gateway, NAT gateways, and routing. This
-  is the foundation the survey application stack (RDS, Fargate) attaches to.
+  is the foundation the market-data warehouse stack (RDS, Fargate) attaches to.
 Outputs:
   IntraVpcSecurityGroupId:
     Description: 'Baseline security group id allowing intra-VPC traffic.'

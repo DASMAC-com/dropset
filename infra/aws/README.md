@@ -1,8 +1,8 @@
 # AWS infrastructure (CloudFormation)
 
-Account foundation for the EURC-liquidity survey and any later AWS
+Account foundation for the market-data warehouse and any later AWS
 work. These templates stand up the network and identity baseline that
-the survey application stack (S3 + RDS + Fargate collectors, authored
+the warehouse stack (S3 + RDS + Fargate collectors, authored
 separately) attaches to.
 
 Templates are CloudFormation YAML. They are deliberately plain and
@@ -71,7 +71,7 @@ create IAM roles, and it cannot pass a role to CloudFormation
    ```
 
 To let a *restricted* identity provision stacks that do create IAM (the
-survey app stack's task roles), pass the deployment role so
+warehouse stack's task roles), pass the deployment role so
 CloudFormation — not the caller — holds the permissions, with
 `--role-arn`. The passing identity needs `iam:PassRole` on that role;
 the `*-agent-provisioning` role grants it (gated to the MCP server),

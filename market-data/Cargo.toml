@@ -2,20 +2,14 @@
 # The market-data collection app (docs/data-feeds.md §7), and the first
 # consumer of the shared `feeds` framework — so it proves the source →
 # store-sink path end to end. One binary,
-# `fx-survey-coinbase` (the Coinbase EURC/USDC reference feed, §9); schema
+# `market-data-coinbase` (the Coinbase EURC/USDC reference feed, §9); schema
 # provisioning belongs to `dropset-migrate`, the single schema owner (§8), so
 # this crate no longer ships a migrate runner. HTTP-only: it enables `feeds`'
 # `http` + `store` features and never compiles the Solana or streaming
 # transports.
-#
-# Note the vocabulary mismatch: the collection capability is now "market data"
-# everywhere it is described, but this crate's name, its directory, and its
-# binary still carry the older `fx-survey` spelling. Renaming all three is a
-# separate mechanical change, so until then `fx-survey-*` and "market-data
-# collection" name the same thing.
 
 [[bin]]
-name = "fx-survey-coinbase"
+name = "market-data-coinbase"
 path = "src/bin/coinbase.rs"
 
 [dependencies]
@@ -25,12 +19,12 @@ anyhow = "1"
 async-trait = "0.1"
 # The single schema owner. This crate issues no DDL; it depends on the owner
 # only to assert at startup that the tables it writes already exist.
-dropset-db-schema = { path = "../../db-schema" }
+dropset-db-schema = { path = "../db-schema" }
 # The shared ingestion framework: the Coinbase source composes its `HttpClient`
 # and its `PgCursorStore`, and the collector binary the `run` runner +
 # `StoreSink`. Only the poll-into-store path is needed, so just `http` + `store`
 # — no `rpc`/`stream`, so no Solana tree.
-dropset-feeds = { path = "../../feeds", features = ["http", "store"] }
+dropset-feeds = { path = "../feeds", features = ["http", "store"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Runtime (string-typed) queries; no compile-time `DATABASE_URL`, so no
@@ -51,8 +45,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [package]
-description = "FX-stablecoin liquidity survey app and its Coinbase reference feed."
-name = "dropset-fx-survey"
+description = "Market-data collection app and its Coinbase reference feed."
+name = "dropset-market-data"
 publish = false
 edition.workspace = true
 license.workspace = true

@@ -292,7 +292,7 @@ fn pyth_reading(q: &FxQuote, read_at: Instant, now: Instant, now_unix: i64) -> R
 /// Whether the Unix timestamp `secs` falls in the FX-closed weekend window.
 /// Interbank FX and CME 6E are shut Fri ~17:00 → Sun ~17:00 ET (§1 fm2);
 /// approximated here in UTC as Fri 21:00 → Sun 22:00 (≈ 17:00 ET, ignoring
-/// DST). The exact session thresholds are TBD(survey). Inside this window a
+/// DST). The exact session thresholds are TBD(analytics). Inside this window a
 /// missing FX anchor is the normal crypto-only regime, not a fault.
 fn weekend_from_unix(secs: u64) -> bool {
     let days = secs / 86_400; // whole days since 1970-01-01 (a Thursday)

@@ -42,7 +42,7 @@ util (rust-lib, low): util/**
 indexer (rust-tool, low): indexer/**
 feeds (rust-lib, low): feeds/**
 fair-value (rust-lib, med): fair-value/**
-fx-survey (rust-tool, low): analytics/fx-survey/**
+market-data (rust-tool, low): market-data/**
 db-schema (rust-lib, med): db-schema/**
 ```
 
@@ -116,9 +116,9 @@ feeds <-> indexer: the indexer runs on the feeds RPC-poll source and
   (indexer/src/aggregate.rs) reads legs the store sink has already
   committed, and the two are ordered in indexer/src/bin/indexer.rs, so a
   reordering there silently stops takes being folded.
-fx-survey <-> feeds: the survey app is the first consumer of the feeds
-  framework — it now implements only StoreWriter
-  (analytics/fx-survey/src/store.rs) and composes HttpClient /
+market-data <-> feeds: the collector app is the first consumer of the
+  feeds framework — it now implements only StoreWriter
+  (market-data/src/store.rs) and composes HttpClient /
   PgCursorStore / StoreSink / run around the shared Coinbase venue
   adapter (feeds/src/venues/coinbase.rs), which it no longer owns — so
   the trait signatures, the Batch/Cursor/caught_up contract, and the
@@ -146,8 +146,8 @@ maker-bot <-> feeds: the maker bot is the first consumer of the feeds
   the broadcast receiver (bots/maker-bot/src/tasks.rs) — so the
   Source/Sink signatures, the BatchQuotes contract, the Batch/caught_up
   contract, and the forward sink's bounded drop-to-latest policy must
-  track the framework. The venue adapters are shared with fx-survey, so
-  a change to one moves both consumers.
+  track the framework. The venue adapters are shared with market-data,
+  so a change to one moves both consumers.
   The maker's leg tiering (FeedHub::legs) additionally couples adapter
   record SHAPE to fair-value semantics: pyth.rs's publish_time is what
   ages the FX anchor (not receipt time), so a change to that field's
@@ -182,8 +182,8 @@ db-schema <-> indexer: db-schema/migrations defines the indexer's tables
   migration and the event codec, and any migration it depends on has to
   land before the build that assumes it (Store::connect gates on
   require_schema).
-db-schema <-> fx-survey: db-schema/migrations defines cex_prices, which
-  the app's StoreWriter (analytics/fx-survey/src/store.rs) writes
+db-schema <-> market-data: db-schema/migrations defines cex_prices,
+  which the app's StoreWriter (market-data/src/store.rs) writes
   idempotently; the candle field set and the closed-bucket primary key
   must track the migration.
 ```

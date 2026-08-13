@@ -47,9 +47,9 @@ services:
     # here that runs happily with no localnet up at all.
     build:
       context: '../..'
-      dockerfile: 'analytics/fx-survey/Dockerfile'
+      dockerfile: 'market-data/Dockerfile'
     command:
-    - 'fx-survey-coinbase'
+    - 'market-data-coinbase'
     depends_on:
       migrate:
         condition: 'service_completed_successfully'

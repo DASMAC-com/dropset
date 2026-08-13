@@ -19,7 +19,7 @@ use std::time::Duration;
 pub struct BasisEma {
     /// Current smoothed basis; `None` until the first observation seeds it.
     value: Option<f64>,
-    /// Smoothing half-life (survey-set — see [`crate::FairValueConfig`]).
+    /// Smoothing half-life (analytics-set — see [`crate::FairValueConfig`]).
     half_life: Duration,
 }
 

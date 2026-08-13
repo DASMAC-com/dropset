@@ -53,8 +53,7 @@ The FX-anchor and basis **primaries** (§9) are now among them, so the
 maker no longer quotes off the fallback tier alone. The eCLOB indexer has
 since migrated onto the framework
 too (§6), so every ingestion path in the repo now runs on one drive
-loop. The collector crate still sits at its original path under
-`analytics/`; its move to `market-data/` is a separate tracked task.
+loop. The collector crate now lives at `market-data/`.
 
 ______________________________________________________________________
 

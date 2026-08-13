@@ -4,7 +4,7 @@
 # NOT in `sdk/math-core`, which is the audit-pinned, integer, on-chain
 # consensus math. Keeping this off-chain model out of math-core keeps that
 # audit surface minimal. The maker bot consumes it today; the fair-value taker
-# and the pricing-survey harness (separate follow-ups) exercise the same code.
+# (a separate follow-up) exercises the same code.
 #
 # The core is `std`-only on purpose: the model (compose, basis EMA, regime,
 # guards) is the shared, unit-tested edge, while each consumer owns its own

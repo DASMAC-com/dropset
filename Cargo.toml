@@ -14,13 +14,13 @@ overflow-checks = true
 
 [workspace]
 members = [
-  "analytics/fx-survey",
   "bots/maker-bot",
   "bots/taker-bot",
   "db-schema",
   "fair-value",
   "feeds",
   "indexer",
+  "market-data",
   "programs/dropset",
   "sdk/math-core",
   "sdk/interface",
