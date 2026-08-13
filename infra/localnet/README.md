@@ -76,7 +76,7 @@ http://localhost:3100/address/<PUBKEY>
 
 ## Grafana
 
-Grafana OSS serves the provisioned market-data ingestion dashboard on
+Grafana OSS serves the provisioned `market-data` dashboard on
 host port **3200** (the container serves `3000` internally), clear of
 the frontend on 3000 and the explorer on 3100. It rides along with
 `make collectors-up`, because a collector you cannot see is a collector

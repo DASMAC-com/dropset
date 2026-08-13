@@ -148,7 +148,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT\n  source || ' ' || product_id AS feed,\n  extract(epoch FROM now()) - max(bucket_start) AS age_secs\nFROM cex_prices\nWHERE source IN (${source:sqlstring})\n  AND product_id IN (${product_id:sqlstring})\n  AND granularity_secs = $granularity\nGROUP BY 1\nORDER BY 1",
+          "rawSql": "SELECT\n  source || ' ' || product_id AS feed,\n  extract(epoch FROM now()) - max(bucket_start) AS age_secs\nFROM cex_prices\nWHERE source ~ '^${source:regex}$'\n  AND product_id ~ '^${product_id:regex}$'\n  AND granularity_secs = $granularity\nGROUP BY 1\nORDER BY 1",
           "refId": "A"
         }
       ],
@@ -320,7 +320,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT\n  to_timestamp(bucket_start) AS \"time\",\n  source || ' ' || product_id AS metric,\n  \"close\" AS value\nFROM cex_prices\nWHERE $__unixEpochFilter(bucket_start)\n  AND source IN (${source:sqlstring})\n  AND product_id IN (${product_id:sqlstring})\n  AND granularity_secs = $granularity\nORDER BY bucket_start",
+          "rawSql": "SELECT\n  to_timestamp(bucket_start) AS \"time\",\n  source || ' ' || product_id AS metric,\n  \"close\" AS value\nFROM cex_prices\nWHERE $__unixEpochFilter(bucket_start)\n  AND source ~ '^${source:regex}$'\n  AND product_id ~ '^${product_id:regex}$'\n  AND granularity_secs = $granularity\nORDER BY bucket_start",
           "refId": "A"
         }
       ],
@@ -408,7 +408,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "-- The CTE is load-bearing, not style. Grafana captures macro\n-- arguments with a regex that stops at the first closing paren, so\n-- wrapping the epoch column in a to_timestamp call inside the\n-- time-group macro leaves it one truncated argument and the query\n-- fails to interpolate. Converting the column in a CTE first hands\n-- the macro a bare column name, which is all it can parse. For the\n-- same reason, do not name a macro in a comment here: the scanner\n-- does not skip comments and will try to interpolate the example.\nWITH bucketed AS (\n  SELECT\n    to_timestamp(bucket_start) AS bucket_ts,\n    source\n  FROM cex_prices\n  WHERE $__unixEpochFilter(bucket_start)\n    AND source IN (${source:sqlstring})\n    AND product_id IN (${product_id:sqlstring})\n)\nSELECT\n  $__timeGroupAlias(bucket_ts, '1m', 0),\n  source AS metric,\n  count(*) AS value\nFROM bucketed\nGROUP BY 1, 2\nORDER BY 1",
+          "rawSql": "-- The CTE is load-bearing, not style. Grafana captures macro\n-- arguments with a regex that stops at the first closing paren, so\n-- wrapping the epoch column in a to_timestamp call inside the\n-- time-group macro leaves it one truncated argument and the query\n-- fails to interpolate. Converting the column in a CTE first hands\n-- the macro a bare column name, which is all it can parse. For the\n-- same reason, do not name a macro in a comment here: the scanner\n-- does not skip comments and will try to interpolate the example.\nWITH bucketed AS (\n  SELECT\n    to_timestamp(bucket_start) AS bucket_ts,\n    source\n  FROM cex_prices\n  WHERE $__unixEpochFilter(bucket_start)\n    AND source ~ '^${source:regex}$'\n    AND product_id ~ '^${product_id:regex}$'\n)\nSELECT\n  $__timeGroupAlias(bucket_ts, '1m', 0),\n  source AS metric,\n  count(*) AS value\nFROM bucketed\nGROUP BY 1, 2\nORDER BY 1",
           "refId": "A"
         }
       ],
@@ -528,7 +528,16 @@
   "templating": {
     "list": [
       {
-        "current": {},
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
         "datasource": {
           "type": "postgres",
           "uid": "dropset-postgres"
@@ -539,20 +548,24 @@
         "multi": true,
         "name": "product_id",
         "options": [],
-        "query": {
-          "editorMode": "code",
-          "format": "table",
-          "rawSql": "SELECT DISTINCT product_id FROM cex_prices ORDER BY 1",
-          "refId": "product_id"
-        },
-        "refresh": 2,
+        "query": "SELECT DISTINCT product_id FROM cex_prices ORDER BY 1",
+        "refresh": 1,
         "regex": "",
         "skipUrlSync": false,
         "sort": 1,
         "type": "query"
       },
       {
-        "current": {},
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
         "datasource": {
           "type": "postgres",
           "uid": "dropset-postgres"
@@ -563,38 +576,32 @@
         "multi": true,
         "name": "source",
         "options": [],
-        "query": {
-          "editorMode": "code",
-          "format": "table",
-          "rawSql": "SELECT DISTINCT source FROM cex_prices ORDER BY 1",
-          "refId": "source"
-        },
-        "refresh": 2,
+        "query": "SELECT DISTINCT source FROM cex_prices ORDER BY 1",
+        "refresh": 1,
         "regex": "",
         "skipUrlSync": false,
         "sort": 1,
         "type": "query"
       },
       {
-        "current": {},
+        "current": {
+          "selected": true,
+          "text": "coinbase",
+          "value": "coinbase"
+        },
         "datasource": {
           "type": "postgres",
           "uid": "dropset-postgres"
         },
         "definition": "SELECT DISTINCT source FROM cex_prices ORDER BY 1",
-        "description": "The single source the candlestick panel draws. Candles from two venues cannot share one set of bars.",
+        "description": "The single source the candlestick panel draws. Candles from two venues cannot share one set of bars. The committed default is the only source that exists today, so the panel paints on first load without waiting on this query.",
         "includeAll": false,
         "label": "Candle source",
         "multi": false,
         "name": "candle_source",
         "options": [],
-        "query": {
-          "editorMode": "code",
-          "format": "table",
-          "rawSql": "SELECT DISTINCT source FROM cex_prices ORDER BY 1",
-          "refId": "candle_source"
-        },
-        "refresh": 2,
+        "query": "SELECT DISTINCT source FROM cex_prices ORDER BY 1",
+        "refresh": 1,
         "regex": "",
         "skipUrlSync": false,
         "sort": 1,
@@ -636,8 +643,8 @@
   },
   "timepicker": {},
   "timezone": "utc",
-  "title": "Market-data ingestion",
-  "uid": "market-data-ingestion",
+  "title": "Market-data",
+  "uid": "market-data",
   "version": 1,
   "weekStart": ""
 }

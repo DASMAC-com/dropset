@@ -23,7 +23,7 @@
 # time). Bring the collectors up with `make collectors-up`.
 #
 # Grafana rides along with the collectors, serving the provisioned
-# market-data ingestion dashboard on http://localhost:3200 — the operator's
+# market-data dashboard on http://localhost:3200 — the operator's
 # view of what the feeds are actually producing (docs/data-feeds.md §8).
 # It is a pure reader: it logs in as `dropset_ro` and owns no table.
 #
@@ -94,7 +94,7 @@ services:
     restart: 'unless-stopped'
   grafana:
     # Data observability over the shared database: the provisioned
-    # market-data ingestion dashboard (docs/data-feeds.md §8, §12). No
+    # market-data dashboard (docs/data-feeds.md §8, §12). No
     # producer code — the collectors already write the tables, and this is
     # Grafana OSS as configuration, mounted read-only out of
     # market-data/grafana/ so the repo is the source of truth.
@@ -137,10 +137,10 @@ services:
       GF_AUTH_ANONYMOUS_ORG_ROLE: 'Editor'
       GF_AUTH_BASIC_ENABLED: 'false'
       GF_AUTH_DISABLE_LOGIN_FORM: 'true'
-      # Land on the ingestion dashboard rather than an empty home page, so
+      # Land on the market-data dashboard rather than an empty home page, so
       # `make grafana` opens straight onto the data.
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: >-
-        /var/lib/grafana/dashboards/market-data-ingestion.json
+        /var/lib/grafana/dashboards/market-data.json
       GF_USERS_DEFAULT_THEME: 'dark'
     image: 'grafana/grafana-oss:11.6.0'
     # Loopback only, like the explorer. Host port 3200 keeps clear of the

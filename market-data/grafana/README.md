@@ -1,4 +1,4 @@
-# Grafana: the market-data ingestion dashboard
+# Grafana: the market-data dashboard
 
 Data observability over the shared `dropset` database
 (`docs/data-feeds.md` §8). This directory is **configuration only** —
@@ -13,9 +13,13 @@ make collectors-up  # the Coinbase feed + Grafana together
 make grafana-down   # stop it; leaves postgres and the data alone
 ```
 
-It serves on **<http://localhost:3200>** and opens on the ingestion
+It serves on **<http://localhost:3200>** and opens on the `market-data`
 dashboard. Append `?kiosk` to the URL for a chrome-free view — no nav,
 no side menu — which is what you want on a screenshare or a screenshot.
+
+The dashboard is deliberately named just `market-data`, not something
+narrower: its panels are ingestion-focused today, but maker telemetry
+and the analytics panels land in this same tree later.
 
 ## The tree
 
@@ -45,8 +49,41 @@ access is `Editor` for exactly this reason, so:
 
 1. Edit the panel, `Save` (it lands in Grafana's ephemeral store).
 1. `Export` → `Export as JSON` → save over the file in `dashboards/`.
+1. **Check the template variables** — see the trap below.
 1. Commit it. If you skip this step the next `up` discards the change,
    which is the intended failure direction.
+
+### The export trap: variable queries must stay plain strings
+
+A query-backed template variable has to carry its SQL as a **plain
+string**:
+
+```json
+"query": "SELECT DISTINCT source FROM cex_prices ORDER BY 1"
+```
+
+Grafana's UI exports it as an **object** instead
+(`{"rawSql": …, "refId": …, …}`), and in that form the variable query is
+**never executed at all** — verified against the Postgres statement log,
+holding `refresh` constant, with and without the object. So after any UI
+export, convert each `templating.list[].query` back to a string.
+
+The failure is nasty because it is silent and looks like something else:
+the dropdowns simply never populate, every variable interpolates empty,
+and the panels fail with `syntax error at or near ")"` — which reads as
+broken SQL in the panels, not as a variable that never resolved. If you
+see that, check the variables before touching any query.
+
+Two deliberate safeguards are already in place, and are worth keeping:
+
+- Each multi-select variable sets `allValue` to the literal `.*` and the
+  panels match with an anchored regex (`source ~ '^${source:regex}$'`)
+  rather than `IN (…)`. An `IN ()` on an empty variable is a syntax
+  error; the regex form degrades to "match everything" and keeps
+  painting. This is what kept the panels alive while the bug above was
+  being tracked down.
+- `candle_source` commits a concrete default, so the candlestick paints
+  on first load without waiting on its query.
 
 ## Reading the dashboard
 
