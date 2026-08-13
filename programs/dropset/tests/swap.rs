@@ -768,6 +768,53 @@ fn expired_levels_are_skipped() {
     );
 }
 
+/// Expiry skips the *vault*, it does not abort the *take*. The cheaper
+/// vault — the one that would otherwise absorb the whole fill — is aged
+/// out, and the buy must still fill against its pricier, live sibling.
+///
+/// This is the property that makes stratified expiry safe to rely on: one
+/// leader letting its book go stale degrades the book by its own depth
+/// rather than taking the market down with it.
+#[test]
+fn an_expired_vault_is_skipped_while_its_live_sibling_still_fills() {
+    let hi = Price::encode(10_900_000, 0).unwrap().as_u32();
+    let lo = Price::encode(10_800_000, 0).unwrap().as_u32();
+    let mut f = Fixture::seeded_two_vaults(hi, lo);
+
+    // Sector 1 quotes the better price, so it has price priority. Give it
+    // a 1-second wall TIF and age it out; sector 0 keeps the
+    // never-expiring ladder it was seeded with.
+    f.set_liquidity_profile(
+        &f.authority.insecure_clone(),
+        1,
+        simple_profile(5_000, 10_000, 1),
+    )
+    .expect("short-expiry profile on the cheaper vault");
+    f.warp_unix(100);
+
+    let taker = f.funded_depositor(0, 200_000);
+    let base_before = f.token_balance(&f.base_ata(&taker.pubkey()));
+    let expired_base_before = f.vault(1).base_atoms.get();
+    let live_base_before = f.vault(0).base_atoms.get();
+
+    f.swap(&taker, 0, 50_000, Price::INFINITY.as_u32(), 1)
+        .expect("the take still fills against the live sibling");
+
+    assert!(
+        f.token_balance(&f.base_ata(&taker.pubkey())) > base_before,
+        "the taker received base: an expired vault must not abort the take"
+    );
+    assert_eq!(
+        f.vault(1).base_atoms.get(),
+        expired_base_before,
+        "the expired vault is skipped, not filled"
+    );
+    assert!(
+        f.vault(0).base_atoms.get() < live_base_before,
+        "the live sibling is what filled, despite its worse price"
+    );
+}
+
 /// Expiry is the **min of two bounds**, so each domain has to kill a level
 /// on its own. Here the wall bound is wide open and only the slot bound has
 /// passed — the level must still be dead. The mirror case (wall dead, slot
