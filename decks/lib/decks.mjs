@@ -1,3 +1,5 @@
+// @ts-check
+
 /**
  * The deck registry. Each deck is a route under `decks.dropset.io/`; the
  * landing page renders this list. Route names are public-facing (e.g.
