@@ -34,9 +34,9 @@
 //!
 //! Almost every constant the engine reads is **TBD — set by the analytics over
 //! collected market-data history** (`docs/data-feeds.md` §11). The
-//! [`FairValueConfig`] defaults are marked, demo-safe
-//! placeholders, not calibrated values; recalibration is a data edit to that
-//! one surface. See its module docs.
+//! [`FairValueConfig`] defaults are marked, demo-safe placeholders, not
+//! calibrated values; recalibration is a data edit to that one surface. See
+//! its module docs.
 //!
 //! # Usage
 //!

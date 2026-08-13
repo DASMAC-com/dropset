@@ -2,9 +2,9 @@
 //! consumes, in one place (§1, §4).
 //!
 //! **Almost every value here is TBD — set by the analytics over collected
-//! market-data history (`docs/data-feeds.md` §11).** Until those analytics run,
-//! the defaults are *marked placeholders*: chosen wide and
-//! demo-safe. The localnet demo runs the full `fair = fx × basis` model live
+//! market-data history (`docs/data-feeds.md` §11).** Until those analytics
+//! run, the defaults are *marked placeholders*: chosen wide and demo-safe.
+//! The localnet demo runs the full `fair = fx × basis` model live
 //! (a Frankfurter FX anchor and a CoinGecko basis leg), so it *does* form a
 //! basis — the placeholder bands are set loose enough that a pegged demo token
 //! (basis ≈ 1) never trips them, but they are explicitly **not** calibrated

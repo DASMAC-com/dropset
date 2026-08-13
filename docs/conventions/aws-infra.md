@@ -5,8 +5,7 @@
 AWS resources are defined as **CloudFormation YAML** under `infra/aws/`.
 The account foundation (network, IAM, audit) lives there; the
 market-data warehouse stack is authored on top of it. The template
-layout, the
-deploy order, and the secrets pattern are documented in
+layout, the deploy order, and the secrets pattern are documented in
 `infra/aws/README.md` — this file covers the two things that are
 project *conventions* rather than per-template detail: how CloudFormation
 conforms to the repo's linters, and the rules for the agent-assisted

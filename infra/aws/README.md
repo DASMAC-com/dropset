@@ -2,8 +2,8 @@
 
 Account foundation for the market-data warehouse and any later AWS
 work. These templates stand up the network and identity baseline that
-the warehouse stack (S3 + RDS + Fargate collectors, authored
-separately) attaches to.
+the warehouse stack (S3 + RDS + Fargate collectors, authored separately)
+attaches to.
 
 Templates are CloudFormation YAML. They are deliberately plain and
 parameterized — no CDK, no hard-coded account ids, regions, or CIDRs.
