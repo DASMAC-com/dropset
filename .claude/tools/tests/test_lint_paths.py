@@ -9,10 +9,12 @@ directory and reads the resolved list back.
 
 from __future__ import annotations
 
+import io
 import os
 import subprocess
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 
 import lint_paths as lp
 
@@ -70,6 +72,22 @@ class Existing(unittest.TestCase):
             self.assertEqual(lp.existing([], root), [])
 
 
+class PreCommitCmd(unittest.TestCase):
+    def test_files_come_last(self):
+        self.assertEqual(
+            lp.pre_commit_cmd("cfg/x.yml", [], ["a.md", "b.md"]),
+            ["pre-commit", "run", "--config", "cfg/x.yml", "--files", "a.md", "b.md"],
+        )
+
+    def test_hook_id_precedes_files(self):
+        # A hook id is positional, so it must land before `--files` starts
+        # consuming paths.
+        self.assertEqual(
+            lp.pre_commit_cmd("cfg/x.yml", ["cspell"], ["a.md"]),
+            ["pre-commit", "run", "--config", "cfg/x.yml", "cspell", "--files", "a.md"],
+        )
+
+
 class UntrackedFilesAreIncluded(unittest.TestCase):
     """The regression this tool exists for: `--all-files` would miss `new.md`."""
 
@@ -102,6 +120,22 @@ class UntrackedFilesAreIncluded(unittest.TestCase):
     def test_deleted_tracked_file_filtered_out(self):
         os.remove(os.path.join(self.root, "tracked.md"))
         self.assertEqual(lp.lint_files(self.root), [".gitignore"])
+
+    def test_empty_file_set_exits_non_zero(self):
+        # A green verdict for a run that opened no files is the failure this
+        # tool exists to remove, so an empty resolve must not report success.
+        # `main` returns before ever invoking pre-commit here.
+        for rel in ("tracked.md", ".gitignore"):
+            os.remove(os.path.join(self.root, rel))
+        _git("rm", "-q", "--cached", "tracked.md", ".gitignore", cwd=self.root)
+        cwd = os.getcwd()
+        os.chdir(self.root)
+        try:
+            with redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(lp.main([]), 1)
+        finally:
+            os.chdir(cwd)
+        self.assertIn("refusing to report success", err.getvalue())
 
     def test_clean_tree_matches_tracked_set(self):
         # With nothing untracked, the resolved set is exactly what `--all-files`

@@ -108,6 +108,17 @@ def existing(paths: list[str], root: str) -> list[str]:
     return [p for p in paths if os.path.lexists(os.path.join(root, p))]
 
 
+def pre_commit_cmd(config: str, hook_args: list[str], files: list[str]) -> list[str]:
+    """Build the ``pre-commit run`` argv.
+
+    Order matters and is easy to get subtly wrong: a hook id is a **positional**
+    argument, so anything forwarded by the caller has to land before the
+    ``--files`` list — once ``--files`` starts consuming, every remaining token
+    is a path.
+    """
+    return ["pre-commit", "run", "--config", config, *hook_args, "--files", *files]
+
+
 def lint_files(root: str) -> list[str]:
     """Resolve the full set of files ``make lint`` should check, under ``root``."""
     raw = subprocess.run(
@@ -156,20 +167,21 @@ def main(argv: list[str] | None = None) -> int:
             print(path)
         return 0
 
+    # Deliberately non-zero. An empty set means the resolver found nothing to
+    # check, and reporting success for a run that opened no files is the exact
+    # failure this tool exists to remove — just arrived at from the other end.
+    # A working tree always has files, so this fires only when something is
+    # wrong (a bad cwd, a future refactor of the resolver), and it should fire
+    # loudly rather than hand back a green lint.
     if not files:
-        print("lint-paths: no files to lint", file=sys.stderr)
-        return 0
+        print(
+            "lint-paths: resolved zero files to lint — refusing to report success",
+            file=sys.stderr,
+        )
+        return 1
 
     return subprocess.run(
-        [
-            "pre-commit",
-            "run",
-            "--config",
-            args.config,
-            *args.hook_args,
-            "--files",
-            *files,
-        ],
+        pre_commit_cmd(args.config, args.hook_args, files),
         cwd=root,
     ).returncode
 
