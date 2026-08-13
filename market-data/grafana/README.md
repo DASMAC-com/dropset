@@ -34,8 +34,15 @@ is the source of truth and the container cannot edit its way out of it.
 
 Nothing here is Grafana-instance state: the `grafana` service has **no
 volume**. That is what keeps the arrangement honest — an uncommitted UI
-edit survives until the next `up` and no further, so the committed JSON
-and what you are looking at cannot quietly diverge for long.
+edit lives in the container's writable layer and dies with the
+container, so the committed JSON and what you are looking at cannot
+quietly diverge for long.
+
+Be precise about when that happens, because the safety net is narrower
+than "restart it": a plain `make grafana` re-runs `up -d`, which leaves
+an already-running container **alone**, so it discards nothing. What
+clears the edit is **recreating** the container — `make grafana-down`
+(`rm -sf`) then `make grafana`, or `make clean-docker`.
 
 ## Changing a dashboard
 
@@ -50,8 +57,9 @@ access is `Editor` for exactly this reason, so:
 1. Edit the panel, `Save` (it lands in Grafana's ephemeral store).
 1. `Export` → `Export as JSON` → save over the file in `dashboards/`.
 1. **Check the template variables** — see the trap below.
-1. Commit it. If you skip this step the next `up` discards the change,
-   which is the intended failure direction.
+1. Commit it. If you skip this step the change dies the next time the
+   container is recreated (`make grafana-down && make grafana`), which
+   is the intended failure direction.
 
 ### The export trap: variable queries must stay plain strings
 
@@ -68,11 +76,17 @@ Grafana's UI exports it as an **object** instead
 holding `refresh` constant, with and without the object. So after any UI
 export, convert each `templating.list[].query` back to a string.
 
-The failure is nasty because it is silent and looks like something else:
-the dropdowns simply never populate, every variable interpolates empty,
-and the panels fail with `syntax error at or near ")"` — which reads as
-broken SQL in the panels, not as a variable that never resolved. If you
-see that, check the variables before touching any query.
+The failure is nasty because it is quiet. **What you will see today** is
+the dropdowns never populating, while the panels keep painting normally
+— because the two multi-selects fall back to their literal `.*`
+allValue, which needs no query. So the dashboard looks fine and has
+merely lost its filters. Check the dropdowns, not the panels.
+
+Historically it was louder and more confusing: before the panels used
+the regex form below, an unresolved variable produced `IN ()` and every
+panel failed with `syntax error at or near ")"`, which reads as broken
+panel SQL rather than as a variable that never resolved. That symptom
+can no longer occur, and the safeguards below are why.
 
 Two deliberate safeguards are already in place, and are worth keeping:
 
@@ -87,8 +101,8 @@ Two deliberate safeguards are already in place, and are worth keeping:
 
 ## Reading the dashboard
 
-Top-down: the two stat rows answer *is ingestion alive right now*, and
-everything below answers *is it any good*.
+Top-down: the two stat tiles across the top answer *is ingestion alive
+right now*, and everything below answers *is it any good*.
 
 The two freshness tiles look redundant and are not, which matters most
 on first contact:
@@ -136,18 +150,31 @@ an environment variable (`DROPSET_DB_HOST`, `DROPSET_DB_NAME`,
 the local defaults set on the `grafana` service rather than in the
 provisioning files — Grafana expands `$VAR` in those files but has no
 default syntax of its own. So the identical tree ships unchanged to the
-EC2 compute box of `docs/data-feeds.md` §12, where only the host and the
-credentials change.
+EC2 compute box of `docs/data-feeds.md` §12, where only those five
+values change — the host, the credentials, and `DROPSET_DB_SSLMODE`,
+which defaults to `disable` and has to become `require` the moment the
+database stops sitting on loopback beside it.
 
 Two things a real deployment needs that are **not** solved here, since
 this stack is loopback-only:
 
 - **A password that is not in the repo.** The `dropset_ro` password is a
-  throwaway matching the hardcoded superuser password beside it in
-  `infra/localnet/docker-compose.yml`. Rotate it out of band
+  throwaway, like the hardcoded superuser password beside it in
+  `infra/localnet/docker-compose.yml`. Note the compose default is a
+  **soft** one (`${DROPSET_DB_PASSWORD:-dropset_ro}`), so a host that
+  forgets to export the variable silently falls back to the committed
+  throwaway rather than failing to start — on a real deployment, set it
+  explicitly. Rotate it out of band
   (`ALTER ROLE dropset_ro PASSWORD …` from the secret store), not by
   editing the migration — migrations are additive-only and that one has
   already been applied, so an edit there only changes what a *fresh*
   database gets.
 - **Authentication in front of Grafana.** Anonymous `Editor` is right
-  for a loopback dev tool and wrong for anything reachable.
+  for a loopback dev tool and wrong for anything reachable. Three
+  settings have to travel together for that to stay true —
+  `GF_AUTH_ANONYMOUS_ENABLED`, `GF_AUTH_BASIC_ENABLED: 'false'`, and
+  `GF_AUTH_DISABLE_LOGIN_FORM: 'true'` — because `admin`'s default
+  password is unset and is unreachable only while the latter two hold.
+  An anonymous Editor can also author alert rules and contact points,
+  so read *egress* is bounded by the loopback bind, not by the
+  read-only role.

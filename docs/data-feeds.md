@@ -396,7 +396,12 @@ point of sharing an instance.
 
 Unrestricted, but not anonymous: `dropset_ro` is a **read-only login**
 (`db-schema/migrations/0002_reader_role.sql`) holding `SELECT` on every
-table and nothing else, including on tables a later migration adds. A
+table — plus `CONNECT` and schema `USAGE`, and no write privilege of any
+kind. Tables a later migration adds are covered too, by
+`ALTER DEFAULT PRIVILEGES`, though only while migrations keep being
+applied by the same role that ran `0002`; one run as a different role
+would create tables the reader cannot see, which surfaces as an empty
+panel. A
 consumer that only reads connects as that role rather than as the
 `dropset` owner, which turns the one-writer rule from an honor system
 into a privilege — a dashboard cannot write a table by accident. Grafana

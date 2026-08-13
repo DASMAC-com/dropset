@@ -126,7 +126,14 @@ services:
     # else quoting this pair" question the coverage panel raises. What bounds
     # the blast radius is not the Grafana role: it is the loopback binding,
     # the `dropset_ro` credentials (an editor still cannot write a table), and
-    # the volume-less store that discards an uncommitted edit on restart.
+    # the volume-less store, which discards an uncommitted edit when the
+    # container is recreated (not on a plain `up`, which leaves a running
+    # container alone). Read egress is bounded by the loopback bind rather
+    # than by the role: an editor can author an alerting contact point.
+    #
+    # These three auth settings travel together. `admin`'s password is left
+    # at Grafana's default, which is unreachable only while basic auth and
+    # the login form are both off — turning either back on exposes it.
     environment:
       DROPSET_DB_HOST: '${DROPSET_DB_HOST:-postgres:5432}'
       DROPSET_DB_NAME: '${DROPSET_DB_NAME:-dropset}'
@@ -162,8 +169,9 @@ services:
     # whose whole purpose is that the operator trusts what they see cannot
     # afford to open with two errors that do not matter.
     #
-    # Long-form syntax because the short `src:dst:ro` form of these two paths
-    # exceeds the repo's 80-column yamllint limit.
+    # Long-form syntax because the short `src:dst:ro` form of the two
+    # provisioning paths exceeds the repo's 80-column yamllint limit; the
+    # dashboards mount would fit, and uses it too so the three read alike.
     volumes:
     - read_only: true
       source: '../../market-data/grafana/dashboards'

@@ -388,9 +388,8 @@ explorer-down: check-docker
 # Nuke the localnet Docker state for a fully cold start: stop and remove every
 # stack container (explorer, migrate, indexer, collectors, grafana, bots,
 # postgres — the `taker` profile included), drop its volumes and any
-# orphans, remove the
-# untagged images compose built locally (migrate + indexer + collectors +
-# bots), and prune the build cache.
+# orphans, remove the untagged images compose built locally (migrate +
+# indexer + collectors + bots), and prune the build cache.
 #
 # The `-v` DESTROYS the shared database's named volume, and with it every
 # recorded market-data candle. That used to be free — the stack had no named

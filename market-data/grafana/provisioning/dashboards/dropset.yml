@@ -6,9 +6,12 @@
 # tweak a panel until it reads well, export the JSON, commit it here. The
 # obvious objection is that saving from the UI lets Grafana's own store
 # diverge from the repo — and what answers it is that the `grafana` service
-# deliberately has no volume. Its store is ephemeral, so an uncommitted UI
-# edit survives exactly until the next `up`, and the repo becomes the source
-# of truth by construction rather than by discipline. Setting this to `false`
+# deliberately has no volume. Its store lives in the container's writable
+# layer, so an uncommitted UI edit survives exactly until that container is
+# recreated (`make grafana-down` then `make grafana`) — note a plain `up -d`
+# leaves a running container alone and discards nothing — and the repo
+# becomes the source of truth by construction rather than by discipline.
+# Setting this to `false`
 # would look stricter and be worse: it drops `canEdit` as well as `canSave`,
 # so there would be no way to tweak a panel visually at all.
 #

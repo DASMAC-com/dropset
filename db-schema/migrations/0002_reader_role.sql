@@ -1,3 +1,6 @@
+-- cspell:word bypassrls
+-- cspell:word nobypassrls
+-- cspell:word noreplication
 -- cspell:word rolname
 -- The shared read-only role for the `dropset` database
 -- (docs/data-feeds.md §8).
@@ -25,17 +28,29 @@
 -- object it is perfectly happy to share. Table DDL has no equivalent case,
 -- so 0001's reasoning is untouched.
 --
--- The password is a throwaway for the local compose stack, matching the
+-- The password is a throwaway for the local compose stack, like the
 -- hardcoded `dropset` superuser password beside it in
 -- infra/localnet/docker-compose.yml. A real deployment rotates it out of
 -- band (`ALTER ROLE dropset_ro PASSWORD …`, from the secret store) rather
 -- than by editing this file: migrations are additive-only and this one has
 -- already been applied, so an edit here would only change what a *fresh*
 -- database gets.
+-- The attributes are spelled out rather than left to defaults, and the
+-- adopted branch floors them, because the guard above means this migration
+-- may be handing `SELECT` to a role it did **not** create. A `dropset_ro`
+-- provisioned by whoever set up that other database could carry
+-- SUPERUSER or BYPASSRLS, and Grafana then logs in as it — so the ELSE
+-- re-asserts the ceiling instead of trusting the name. It deliberately
+-- does not touch the password: rotation is an out-of-band concern and
+-- resetting it here would break whatever is already using the role.
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'dropset_ro') THEN
-        CREATE ROLE dropset_ro LOGIN PASSWORD 'dropset_ro';
+        CREATE ROLE dropset_ro LOGIN PASSWORD 'dropset_ro'
+            NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+    ELSE
+        ALTER ROLE dropset_ro
+            NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
     END IF;
 END
 $$;
@@ -64,6 +79,13 @@ GRANT USAGE ON SCHEMA public TO dropset_ro;
 -- being applied by this same role — which the one-schema-owner rule
 -- already requires. A migration run as some other role would create tables
 -- the reader cannot see, and that would surface as an empty panel.
+--
+-- Note what the blanket grant implies: every table a later migration puts
+-- in `public` becomes readable by whatever holds these credentials, with no
+-- per-table decision. That is right for market data and wrong for secrets,
+-- so a table holding an API key, a feed credential, or position data does
+-- not belong in `public` — give it its own schema, or revoke `SELECT` on it
+-- from `dropset_ro` in the same migration that creates it.
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO dropset_ro;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
     GRANT SELECT ON TABLES TO dropset_ro;

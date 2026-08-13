@@ -169,7 +169,6 @@ solscan
 soulbound
 sparticuz
 sqlfluff
-sqlstring
 sqlx
 sslmode
 stablecoins

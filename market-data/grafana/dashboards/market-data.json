@@ -12,7 +12,7 @@
         "type": "postgres",
         "uid": "dropset-postgres"
       },
-      "description": "Wall-clock seconds since each feed last committed a batch, straight off `feed_cursors.updated_at`. This is the only true wall-clock liveness signal in the schema \u2014 every other panel measures candle-bucket time, which a backfill can advance without the feed being currently healthy. A wall of green is the end-to-end proof that a feeds change works.",
+      "description": "Wall-clock seconds since each feed last committed a batch, straight off `feed_cursors.updated_at`. This is the only true wall-clock liveness signal in the schema \u2014 every other panel measures candle-bucket time, which a backfill can advance without the feed being currently healthy. A wall of green is the end-to-end proof that a feeds change works. Deliberately NOT filtered by the Source picker, unlike the candle-age tile beside it: feed_cursors is keyed by the framework's feed id (`cex:coinbase:EURC-USDC`), not by the `source` column, so the picker's values do not apply here.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -89,7 +89,7 @@
         "type": "postgres",
         "uid": "dropset-postgres"
       },
-      "description": "Seconds since the newest candle bucket each source/product has on record. The floor is one granularity by construction \u2014 the collector persists only closed buckets, so a perfectly healthy 60s feed reads 60-120s and never 0. The thresholds are set above that floor accordingly; treat this as 'how stale is the data I would quote from', and the cursor-age tile beside it as 'is the process alive'.",
+      "description": "Seconds since the newest candle bucket each source/product has on record. The floor is one granularity by construction \u2014 the collector persists only closed buckets, so a perfectly healthy 60s feed reads 60-120s and never 0. The thresholds are set above that floor accordingly; treat this as 'how stale is the data I would quote from', and the cursor-age tile beside it as 'is the process alive'. The thresholds are absolute and calibrated for 60s buckets, which is the only granularity any collector writes today; selecting a coarser Granularity raises the floor above them and the tile reads permanently amber or red.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -408,7 +408,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "-- The CTE is load-bearing, not style. Grafana captures macro\n-- arguments with a regex that stops at the first closing paren, so\n-- wrapping the epoch column in a to_timestamp call inside the\n-- time-group macro leaves it one truncated argument and the query\n-- fails to interpolate. Converting the column in a CTE first hands\n-- the macro a bare column name, which is all it can parse. For the\n-- same reason, do not name a macro in a comment here: the scanner\n-- does not skip comments and will try to interpolate the example.\nWITH bucketed AS (\n  SELECT\n    to_timestamp(bucket_start) AS bucket_ts,\n    source\n  FROM cex_prices\n  WHERE $__unixEpochFilter(bucket_start)\n    AND source ~ '^${source:regex}$'\n    AND product_id ~ '^${product_id:regex}$'\n)\nSELECT\n  $__timeGroupAlias(bucket_ts, '1m', 0),\n  source AS metric,\n  count(*) AS value\nFROM bucketed\nGROUP BY 1, 2\nORDER BY 1",
+          "rawSql": "-- The CTE is load-bearing, not style. Grafana captures macro\n-- arguments with a regex that stops at the first closing paren, so\n-- wrapping the epoch column in a to_timestamp call inside the\n-- time-group macro leaves it one truncated argument and the query\n-- fails to interpolate. Converting the column in a CTE first hands\n-- the macro a bare column name, which is all it can parse. For the\n-- same reason, do not name a macro in a comment here: the scanner\n-- does not skip comments and will try to interpolate the example.\nWITH bucketed AS (\n  SELECT\n    to_timestamp(bucket_start) AS bucket_ts,\n    source\n  FROM cex_prices\n  WHERE $__unixEpochFilter(bucket_start)\n    AND source ~ '^${source:regex}$'\n    AND product_id ~ '^${product_id:regex}$'\n    AND granularity_secs = $granularity\n)\nSELECT\n  $__timeGroupAlias(bucket_ts, '1m', 0),\n  source AS metric,\n  count(*) AS value\nFROM bucketed\nGROUP BY 1, 2\nORDER BY 1",
           "refId": "A"
         }
       ],
@@ -613,7 +613,7 @@
           "text": "60",
           "value": "60"
         },
-        "description": "Bucket size to chart, in seconds. A fixed list rather than a query on the data, so it is never empty on a cold database - an empty value would make every query that filters on it a syntax error instead of a 'no data' panel. 60 is the collector's GRANULARITY_SECS default.",
+        "description": "Bucket size to chart, in seconds. A fixed list rather than a query on the data, so it is never empty on a cold database - an empty value would make every query that filters on it a syntax error instead of a 'no data' panel. 60 is the collector's GRANULARITY_SECS default, and today the only value any collector writes \u2014 selecting a coarser one blanks every panel until some collector is configured to record it.",
         "label": "Granularity",
         "name": "granularity",
         "options": [],
