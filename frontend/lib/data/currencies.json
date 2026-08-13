@@ -288,6 +288,24 @@
       }
     ]
   },
+  "MYR": {
+    "stablecoins": [
+      {
+        "symbol": "MYRC",
+        "name": "MYRC",
+        "mint": "myrcAs6bpP2g5oGHZ3qpgrfZQAFkbo9KUHdqYDXMjGv",
+        "mintSourceUrl": "https://www.blox.my/myrc",
+        "decimals": 6,
+        "tokenProgram": "classic",
+        "icon": "https://coin-images.coingecko.com/coins/images/38632/large/myrc-token-trans-200x200.png",
+        "issuer": {
+          "name": ["Blox"],
+          "url": "https://www.blox.my/",
+          "socials": { "x": "blox_malaysia" }
+        }
+      }
+    ]
+  },
   "NGN": {
     "stablecoins": [
       {

@@ -16,6 +16,7 @@ bareverb
 bindgen
 birdeye
 blockhash
+blox
 borsh
 bpf
 brale
@@ -100,6 +101,7 @@ moneyness
 mpsc
 multisigs
 mxne
+myrc
 nextest
 nohup
 numstat
