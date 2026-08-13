@@ -53,12 +53,12 @@ function writePosition(
   offset: number,
   price: number,
   size: bigint,
-  expiresAt = NULL_SECTOR,
+  expiresAtUnix = NULL_SECTOR,
   expiresAtSlot = NULL_SECTOR,
 ): void {
   dv.setUint32(offset, price, true);
   dv.setBigUint64(offset + 4, size, true);
-  dv.setUint32(offset + 12, expiresAt, true);
+  dv.setUint32(offset + 12, expiresAtUnix, true);
   dv.setUint32(offset + 16, expiresAtSlot, true);
 }
 
@@ -150,6 +150,73 @@ test('flush-armed vault materializes levels from its profile', () => {
   assert.deepEqual(view.asks, [{ price: enc(10_855_425), size: 1_000_000n }]);
   const bidPrice = enc(10_844_575);
   assert.deepEqual(view.bids, [{ price: bidPrice, size: baseForQuote(bidPrice, 1_000_000n) }]);
+});
+
+// The two datums, deliberately far apart, so a transposition in `levelState`
+// moves a materialized deadline by ~1.7e9 rather than by a few units. The
+// other fixtures set both to 0, which would let a swap pass unnoticed — both
+// are plain `number`s, so nothing else would catch it.
+const FIX_QUOTE_SLOT = 7;
+const FIX_QUOTE_UNIX = 1_700_000_000;
+
+/** A flush-armed vault with finite, per-domain expiry offsets. */
+function boundedFlushMarket(secs: number, slots: number): Uint8Array {
+  return buildMarket((dv, b) => {
+    dv.setBigUint64(b + V_REF_STAMP, (1n << 63n) | 1n, true); // flush armed
+    dv.setUint32(b + V_REF_PRICE, enc(10_850_000), true);
+    dv.setUint32(b + V_REF_QUOTE_SLOT, FIX_QUOTE_SLOT, true);
+    dv.setUint32(b + V_REF_QUOTE_UNIX, FIX_QUOTE_UNIX, true);
+    dv.setBigUint64(b + V_BASE_ATOMS, 1_000_000n, true);
+    dv.setBigUint64(b + V_QUOTE_ATOMS, 1_000_000n, true);
+    writeProfileLevel(dv, b + V_PROFILE_ASKS, 500, 10_000, secs, slots);
+    writeProfileLevel(dv, b + V_PROFILE_BIDS, 500, 10_000, secs, slots);
+  });
+}
+
+// Mirrors the Rust `each_expiry_conjunct_is_independently_live`. Without it,
+// deleting either conjunct from `collectSideLevels` leaves the whole TS suite
+// green — every other fixture pushes both clocks past both deadlines at once,
+// and `writePosition` defaults the slot bound wide open.
+test('each expiry conjunct kills a level on its own', () => {
+  const SECS_OFF = 600;
+  const SLOT_OFF = 50;
+  const wallDeadline = FIX_QUOTE_UNIX + SECS_OFF;
+  const slotDeadline = FIX_QUOTE_SLOT + SLOT_OFF;
+  const slab = decodeMarketSlab(boundedFlushMarket(SECS_OFF, SLOT_OFF));
+
+  // Inside both bounds.
+  assert.equal(
+    marketViewFromSlab(slab, slotDeadline - 1, wallDeadline - 1).asks.length,
+    1,
+    'a level inside both deadlines must rest',
+  );
+  // Slot bound passed, wall bound still open.
+  assert.equal(
+    marketViewFromSlab(slab, slotDeadline, wallDeadline - 1).asks.length,
+    0,
+    'the slot conjunct must kill the level on its own',
+  );
+  // Wall bound passed, slot bound still open.
+  assert.equal(
+    marketViewFromSlab(slab, slotDeadline - 1, wallDeadline).asks.length,
+    0,
+    'the wall conjunct must kill the level on its own',
+  );
+});
+
+test('a zero offset is dead in either domain, whatever the datum', () => {
+  // Zero slot offset against a live wall TIF, then the mirror. Materialization
+  // encodes zero as the dead sentinel rather than letting the datum stand in.
+  assert.equal(
+    marketViewFromSlab(decodeMarketSlab(boundedFlushMarket(600, 0)), 1, FIX_QUOTE_UNIX).asks.length,
+    0,
+    'a zero slot offset never rests, however long the wall TIF',
+  );
+  assert.equal(
+    marketViewFromSlab(decodeMarketSlab(boundedFlushMarket(0, 600)), FIX_QUOTE_SLOT, 1).asks.length,
+    0,
+    'a zero wall offset never rests, however long the slot bound',
+  );
 });
 
 test('oversized flush side is skipped, the healthy side still materializes', () => {

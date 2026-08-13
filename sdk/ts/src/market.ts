@@ -75,7 +75,7 @@ const V_REMAINING = 372; // Remaining: bids[N] then asks[N]
 // Level: price_offset u32, size_bps u16, expiry_offset_secs u32,
 // expiry_offset_slots u32 — all alignment-1, so byte-packed.
 const LEVEL_SIZE = 14;
-// Position: price u32, size u64, expires_at u32, expires_at_slot u32.
+// Position: price u32, size u64, expires_at_unix u32, expires_at_slot u32.
 const POSITION_SIZE = 20;
 const SIDE_LEVELS_BYTES = N_LEVELS * LEVEL_SIZE;
 const SIDE_POSITIONS_BYTES = N_LEVELS * POSITION_SIZE;
@@ -92,7 +92,7 @@ type ProfileLevel = {
 type RemainingPosition = {
   price: PriceBits;
   size: bigint;
-  expiresAt: number;
+  expiresAtUnix: number;
   expiresAtSlot: number;
 };
 
@@ -157,7 +157,7 @@ function readRemainingPositions(dv: DataView, base: number): RemainingPosition[]
     out.push({
       price: dv.getUint32(o, true),
       size: dv.getBigUint64(o + 4, true),
-      expiresAt: dv.getUint32(o + 12, true),
+      expiresAtUnix: dv.getUint32(o + 12, true),
       expiresAtSlot: dv.getUint32(o + 16, true),
     });
   }
@@ -278,7 +278,7 @@ type Lvl = {
 };
 
 /**
- * Resolve one level's `(price, size, expiresAt)`: materialize from the
+ * Resolve one level's `(price, size, expiresAtUnix)`: materialize from the
  * `LiquidityProfile` when a flush is armed, else read stored `remaining`
  * state. Mirrors `matching::level_state`.
  */
@@ -288,9 +288,9 @@ function levelState(
   isAsk: boolean,
   flush: boolean,
   reference: PriceBits,
-  refUnix: number,
   refSlot: number,
-): { price: PriceBits; size: bigint; expiresAt: number; expiresAtSlot: number } {
+  refUnix: number,
+): { price: PriceBits; size: bigint; expiresAtUnix: number; expiresAtSlot: number } {
   if (flush) {
     const lvl = (isAsk ? v.profileAsks[i] : v.profileBids[i])!;
     const price = flushLevelPrice(reference, lvl.priceOffset, isAsk);
@@ -303,7 +303,7 @@ function levelState(
     return {
       price,
       size,
-      expiresAt: deadline(refUnix, lvl.expiryOffsetSecs),
+      expiresAtUnix: deadline(refUnix, lvl.expiryOffsetSecs),
       expiresAtSlot: deadline(refSlot, lvl.expiryOffsetSlots),
     };
   }
@@ -311,7 +311,7 @@ function levelState(
   return {
     price: p.price,
     size: p.size,
-    expiresAt: p.expiresAt,
+    expiresAtUnix: p.expiresAtUnix,
     expiresAtSlot: p.expiresAtSlot,
   };
 }
@@ -394,19 +394,19 @@ function collectSideLevels(
     const refSlot = v.quoteSlot;
 
     for (let i = 0; i < N_LEVELS; i++) {
-      const { price, size, expiresAt, expiresAtSlot } = levelState(
+      const { price, size, expiresAtUnix, expiresAtSlot } = levelState(
         v,
         i,
         isAsk,
         flush,
         reference,
-        refUnix,
         refSlot,
+        refUnix,
       );
       // Both conjuncts, exactly as the engine gates them.
       if (
         size === 0n ||
-        expiresAt <= nowUnix ||
+        expiresAtUnix <= nowUnix ||
         expiresAtSlot <= nowSlot ||
         isZeroPrice(price) ||
         isInfinityPrice(price) ||

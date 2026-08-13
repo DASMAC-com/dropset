@@ -25,14 +25,15 @@ const BPS = 10_000n;
 /** Common scale for the integer price ratio — mirrors Rust's `SCALE`. */
 const SCALE = 1_000_000_000n;
 /**
- * Serialized `LiquidityProfile` length: 2 sides × 8 levels × a 14-byte
- * `Level` (`price_offset` u32, `size_bps` u16, and one u32 expiry offset
- * per domain — wall and slot).
+ * On-wire width of one `Level`: `price_offset` u32, `size_bps` u16, and
+ * one u32 expiry offset per domain (wall and slot). Every field is
+ * alignment-1, so the struct is byte-packed.
  */
 export const LEVEL_BYTES = 14;
 /** The `expiryOffsetSlots` value meaning "no slot bound" — see the Rust
  * `NO_SLOT_BOUND`. The max offset, not a reserved sentinel. */
 export const NO_SLOT_BOUND = 0xffff_ffff;
+/** Serialized `LiquidityProfile` length: both sides' level arrays. */
 export const PROFILE_BYTES = 2 * N_LEVELS * LEVEL_BYTES;
 
 /** One level of a native (absolute-price) book. */

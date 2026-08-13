@@ -233,14 +233,28 @@ pub struct LadderLevel {
 /// what changed is that they now hold through a halt, where slots stop
 /// ticking but wall time does not.
 ///
-/// The **slot** bound is the other half of the dual gate, and it is where
-/// the tight tiers get a deadline the wall domain cannot express. The
-/// cluster clock is second-denominated and accurate only to a few
-/// seconds, which floors any wall TIF at ~15 s — a ~37-slot dead-man tail
-/// behind a prop-cadence quoter. Top-of-book therefore takes a **2-slot**
-/// bound (sub-second: the level dies almost immediately unless the next
-/// tick re-stamps it), widening with depth, and the deepest tier goes
-/// [`NO_SLOT_BOUND`] so its stratified wall decay is what governs it.
+/// The **slot** bound mirrors each tier's wall life at that same
+/// ~0.4 s/slot pace, so the two conjuncts express the *same* intended TIF
+/// and whichever clock is trustworthy in a given regime is the one that
+/// binds. The deepest tier goes [`NO_SLOT_BOUND`], leaving its stratified
+/// wall decay to govern it.
+///
+/// **Why not a sub-second slot bound.** The protocol supports one, and
+/// against a prop-cadence quoter that re-stamps every block or two a
+/// 2-slot tail is exactly the right dead-man switch — that is the case
+/// the dual gate was designed around, and it is what makes the slot
+/// conjunct worth having at all (the cluster clock is second-denominated
+/// and accurate to only a few seconds, flooring any wall TIF at ~15 s).
+///
+/// This bot is not that quoter. It re-stamps on a 5 s tick and, on a
+/// quiet book, only on the 30 s [`StrategyConfig::ref_heartbeat`] — and
+/// its `quote_slot` comes from `get_slot()` at *confirmed* commitment,
+/// which already lags the leader slot before the stamp transaction
+/// lands. A 2-slot bound would be past before a taker could match it:
+/// the slot conjunct would kill a level the wall conjunct was still
+/// holding open, taking the 40%-of-leg top tier dark on arrival. So the
+/// bound has to clear this bot's own re-stamp cadence, which is what
+/// [`tests::slot_bound_clears_the_heartbeat`] pins.
 ///
 /// These values are the shape of the policy, not a calibration — the
 /// vol-ladder retune owns the tuning.
@@ -249,19 +263,19 @@ pub const DEFAULT_LADDER: [LadderLevel; 4] = [
         offset_ppm: 5_000,
         size_bps: 4_000,
         expiry_offset_secs: 36,
-        expiry_offset_slots: 2,
+        expiry_offset_slots: 90,
     },
     LadderLevel {
         offset_ppm: 10_000,
         size_bps: 3_000,
         expiry_offset_secs: 120,
-        expiry_offset_slots: 30,
+        expiry_offset_slots: 300,
     },
     LadderLevel {
         offset_ppm: 20_000,
         size_bps: 2_000,
         expiry_offset_secs: 480,
-        expiry_offset_slots: 300,
+        expiry_offset_slots: 1_200,
     },
     LadderLevel {
         offset_ppm: 50_000,
@@ -604,6 +618,59 @@ mod tests {
         // needs no slot-pace conversion — the point of the datum model.
         let deepest_wall = Duration::from_secs(deepest as u64);
         assert!(cfg.invalidate.stale_after * 10 < deepest_wall);
+    }
+
+    /// The **slot** conjunct must clear this bot's own re-stamp cadence,
+    /// or it kills levels the wall conjunct is still holding open.
+    ///
+    /// Expiry is the min of two bounds, so the *tighter* one governs — a
+    /// slot bound under the heartbeat takes top-of-book dark between
+    /// re-quotes even though its wall TIF has minutes left. The wall
+    /// domain has had this invariant since the ladder was written
+    /// (`Level 1 expiry must exceed the SetReferencePrice heartbeat`);
+    /// the slot domain needs the same one, expressed at the slot pace.
+    ///
+    /// Deliberately keyed to the heartbeat rather than the 5 s tick: the
+    /// tick is the *opportunity* to re-stamp, the heartbeat is the
+    /// guarantee, and on a quiet book only the guarantee fires.
+    #[test]
+    fn slot_bound_clears_the_heartbeat() {
+        let cfg = BotConfig::default();
+        // The pace the wall/slot tier equivalence is written against. Not
+        // a protocol constant — SIMD-0525 stages slots faster — so this is
+        // the conservative direction: a faster pace only buys more margin.
+        const SLOT_MS: u64 = 400;
+        let heartbeat_slots = (cfg.strategy.ref_heartbeat.as_millis() as u64) / SLOT_MS;
+
+        let tightest = DEFAULT_LADDER
+            .iter()
+            .map(|l| l.expiry_offset_slots)
+            .min()
+            .expect("ladder is non-empty");
+        assert!(
+            (tightest as u64) > heartbeat_slots,
+            "tightest slot bound ({tightest} slots) must exceed the \
+             {heartbeat_slots}-slot heartbeat, or top-of-book goes dark \
+             between re-quotes"
+        );
+
+        // And each tier's two bounds should express the same intended TIF,
+        // so neither domain silently governs the other. Allow a generous
+        // factor — this catches a domain confusion (a seconds value left
+        // in a slots field), not a calibration choice.
+        for l in DEFAULT_LADDER.iter() {
+            if l.expiry_offset_slots == NO_SLOT_BOUND {
+                continue;
+            }
+            let slot_life_secs = (l.expiry_offset_slots as u64) * SLOT_MS / 1_000;
+            let wall = l.expiry_offset_secs as u64;
+            assert!(
+                slot_life_secs * 4 > wall && wall * 4 > slot_life_secs,
+                "tier {}bps: slot bound ~{slot_life_secs}s vs wall {wall}s — \
+                 the two domains have drifted apart",
+                l.offset_ppm / 100
+            );
+        }
     }
 
     /// Every demo market names a base mint, a CoinGecko id, a tracked

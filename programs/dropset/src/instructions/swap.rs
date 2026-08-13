@@ -455,7 +455,7 @@ impl Swap {
         // `unix_timestamp` is an `i64`: clamp below at 0 (a negative
         // sysvar value would wrap into the far future and resurrect every
         // expired level) and above at `u32::MAX`, the width
-        // `Position.expires_at` stores.
+        // `Position.expires_at_unix` stores.
         let now_unix = self.clock.unix_timestamp.clamp(0, u32::MAX as i64) as u32;
         let now_slot = self.clock.slot as u32;
         let head = self.market.head.get();
@@ -507,7 +507,7 @@ impl Swap {
                 let v = self.market.read_vault(cur)?;
                 // Spec § Vault → Frozen and tombstoned vaults: frozen
                 // vaults stay on the active DLL but their levels die
-                // off as `expires_at` passes. Implement that
+                // off as `expires_at_unix` passes. Implement that
                 // semantically here by skipping frozen vaults
                 // entirely from the matching set, so the leader's
                 // freeze is enforced from the first instruction
@@ -550,7 +550,7 @@ impl Swap {
                     // dead, which materialization already encoded as a
                     // zero deadline, so each domain is one compare.
                     if size == 0
-                        || lvl.expires_at.get() <= now_unix
+                        || lvl.expires_at_unix.get() <= now_unix
                         || lvl.expires_at_slot.get() <= now_slot
                         || price.is_zero()
                         || price.is_infinity()

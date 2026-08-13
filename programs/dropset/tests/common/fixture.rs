@@ -723,7 +723,7 @@ impl Fixture {
     }
 
     /// The bank's current wall-clock time, in the `u32` unix seconds the
-    /// `quote_unix` datum and `Position.expires_at` are denominated in.
+    /// `quote_unix` datum and `Position.expires_at_unix` are denominated in.
     pub fn now_unix(&self) -> u32 {
         self.svm
             .get_sysvar::<Clock>()

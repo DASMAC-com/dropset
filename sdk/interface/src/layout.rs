@@ -152,7 +152,7 @@ pub struct Position {
     /// Absolute unix second this level dies
     /// (`reference_price.quote_unix + Level::expiry_offset_secs`), or
     /// zero when the level has no life in this domain.
-    pub expires_at: LeU32,
+    pub expires_at_unix: LeU32,
     /// Absolute slot this level dies
     /// (`reference_price.quote_slot + Level::expiry_offset_slots`), or
     /// zero when the level has no life in this domain. A level matches

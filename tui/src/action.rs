@@ -637,7 +637,7 @@ fn do_reshape(
         Action::ResetLadder => (
             market::ladder_profile_bytes(
                 &market::ladder_at_spread_bps(market::DEFAULT_SPREAD_BPS),
-                config.expiry_secs,
+                config.expiry_offset_secs,
             ),
             format!(
                 "Reset to the default {}-bps multi-level ladder",

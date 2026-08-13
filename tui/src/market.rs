@@ -79,7 +79,7 @@ pub struct PairConfig {
     /// introduces per-tier slot bounds. The rung geometry (offsets and
     /// per-side depth) lives in [`SEED_LADDER`] / [`ladder_at_spread_bps`],
     /// not here — every market opens with the same shape.
-    pub expiry_secs: u32,
+    pub expiry_offset_secs: u32,
 }
 
 /// The seven FX-stablecoin markets the localnet bootstrap brings up, each a
@@ -108,7 +108,7 @@ const fn fx_market(
         },
         leader_keypair_file: "keys/EEEE.json",
         reference_price,
-        expiry_secs: u32::MAX, // never expires (re-armed by the maker bot)
+        expiry_offset_secs: u32::MAX, // never expires (re-armed by the maker bot)
     }
 }
 
@@ -397,7 +397,7 @@ pub fn seed_vault(
     log.log("set_liquidity_profile");
     let bytes = ladder_profile_bytes(
         &ladder_at_spread_bps(DEFAULT_SPREAD_BPS),
-        config.expiry_secs,
+        config.expiry_offset_secs,
     );
     let ix = set_liquidity_profile_ix(leader.pubkey(), market.address, VAULT_IDX, bytes);
     chain::send_logged(

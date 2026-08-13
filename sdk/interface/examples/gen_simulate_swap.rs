@@ -70,7 +70,7 @@ fn position(significand: u32, exp: i8, size: u64) -> Position {
     Position {
         price: Price::encode(significand, exp).unwrap().as_u32().into(),
         size: size.into(),
-        expires_at: WALL_DEADLINE.into(),
+        expires_at_unix: WALL_DEADLINE.into(),
         expires_at_slot: SLOT_DEADLINE.into(),
     }
 }
@@ -294,7 +294,7 @@ fn main() {
             now_unix: WALL_DEADLINE,
             platform_fee_bps: 0,
         },
-        // Boundary, slot domain. The gate is `expires_at <= now`, so the
+        // Boundary, slot domain. The gate is `expires_at_unix <= now`, so the
         // deadline slot itself is dead and the slot before it is live —
         // pinned as a pair so an off-by-one moves exactly one of them.
         Case {

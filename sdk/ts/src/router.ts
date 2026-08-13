@@ -52,7 +52,7 @@ import {
   platformFeeBpsFor,
   resolveEclobRoute,
 } from './route';
-import { nowUnix as nowUnixSeconds, type SlotRpc } from './market';
+import { nowUnix, type SlotRpc } from './market';
 import { initSimulator, simulateSwap } from './simulate';
 
 /** Which venue a quote came from. */
@@ -226,16 +226,16 @@ export async function quoteEclob(
   if (!route) return null;
 
   const platformFeeBps = platformFeeBpsFor(route, input.platformFeeBps ?? 0);
-  const nowSlot = input.nowSlot ?? Number(await rpc.getSlot().send());
-  const nowUnix = input.nowUnix ?? nowUnixSeconds();
+  const resolvedNowSlot = input.nowSlot ?? Number(await rpc.getSlot().send());
+  const resolvedNowUnix = input.nowUnix ?? nowUnix();
   await initSimulator();
   const q = simulateSwap(
     route.marketData,
     route.side,
     input.amount,
     route.limitPriceBits,
-    nowSlot,
-    nowUnix,
+    resolvedNowSlot,
+    resolvedNowUnix,
     platformFeeBps,
   );
   return {
@@ -326,7 +326,7 @@ async function eclobCandidate(
 
 /** Price the aggregator, resolving the fee guard first. */
 async function aggregatorCandidate(
-  rpc: AccountRpc & SlotRpc,
+  rpc: AccountRpc,
   leg: AggregatorLeg | null,
   amount: bigint,
   signal: AbortSignal | undefined,

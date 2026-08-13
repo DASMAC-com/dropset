@@ -605,13 +605,13 @@ mod tests {
         for (i, &(price, size)) in asks.iter().enumerate() {
             v.remaining.asks[i].price = price.as_u32().into();
             v.remaining.asks[i].size = size.into();
-            v.remaining.asks[i].expires_at = (NOW_UNIX + 600).into();
+            v.remaining.asks[i].expires_at_unix = (NOW_UNIX + 600).into();
             v.remaining.asks[i].expires_at_slot = (NOW_SLOT + 100).into();
         }
         for (i, &(price, size)) in bids.iter().enumerate() {
             v.remaining.bids[i].price = price.as_u32().into();
             v.remaining.bids[i].size = size.into();
-            v.remaining.bids[i].expires_at = (NOW_UNIX + 600).into();
+            v.remaining.bids[i].expires_at_unix = (NOW_UNIX + 600).into();
             v.remaining.bids[i].expires_at_slot = (NOW_SLOT + 100).into();
         }
 

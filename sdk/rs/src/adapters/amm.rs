@@ -359,7 +359,7 @@ mod tests {
         v.remaining.asks[0].size = ask_size.into();
         // Both deadlines comfortably past the `(now_slot, now_unix)` the
         // quote tests pass — a level rests only inside both.
-        v.remaining.asks[0].expires_at = 1_700_001_000u32.into();
+        v.remaining.asks[0].expires_at_unix = 1_700_001_000u32.into();
         v.remaining.asks[0].expires_at_slot = 1_000u32.into();
         build_market(header, &[v])
     }

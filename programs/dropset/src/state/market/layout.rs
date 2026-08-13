@@ -5,6 +5,40 @@
 //! of them. The asserts are kept here, beside the structs they guard, so
 //! the IDL-canonical layout lives in one auditable place: any accidental
 //! field reorder or `Pod*`-width change breaks the build at this file.
+//!
+//! # Expiry is dual-domain
+//!
+//! A level is live only while it is inside *both* its slot bound and its
+//! wall bound ([`Level`] carries one offset per domain, [`Position`] one
+//! materialized deadline per domain). The two answer different failure
+//! modes and neither subsumes the other.
+//!
+//! - The **wall** bound is what survives a halt. Slots stop ticking while
+//!   the cluster is down, so a slot-only ladder returns at restart with
+//!   its full budget intact, anchored to a pre-halt price — hours of
+//!   price movement delivered into one block, against spreads that assume
+//!   price continuity.
+//! - The **slot** bound is what gives a tight level a *fast* deadline.
+//!   `Clock.unix_timestamp` is a stake-weighted median of vote timestamps
+//!   and accurate only to a few seconds, which floors any wall TIF at
+//!   ~15 s. A top-of-book level wants a sub-second dead-man tail behind
+//!   the quoter's latest stamp; two slots expresses that, 15 seconds
+//!   cannot.
+//!
+//! Taking the **min of two leader-supplied bounds** is never worse than
+//! either alone, and it is robust across clock regimes: under today's
+//! median-and-clamp clock the wall bound kills across a halt, and under a
+//! leader-stamped clock (SIMD-0363 direction, unratified) where cluster
+//! time recovers an outage at ~2x pace rather than jumping, the slot
+//! conjunct is the fast protection instead.
+//!
+//! Both datums are stamped at **quote-write time** and never derived at
+//! materialize time. Materialization runs lazily inside the first taker's
+//! swap after `FLUSH_BIT` arms, so a materialize-time stamp would be
+//! attacker-scheduled — in the halt scenario the first post-restart taker
+//! *is* the pick-off flow, and its own transaction would refresh the very
+//! quote it is picking off. This constraint applies to both domains; see
+//! the spec's **SetReferencePrice**.
 
 use anchor_lang_v2::{
     address_eq,
@@ -36,37 +70,6 @@ pub struct ReferencePrice {
     pub quote_unix: PodU32,
 }
 
-// Expiry is **dual-domain**: a level is live only while it is inside
-// *both* its slot bound and its wall bound (see [`Level`]). The two
-// answer different failure modes and neither subsumes the other.
-//
-// - The **wall** bound is what survives a halt. Slots stop ticking while
-//   the cluster is down, so a slot-only ladder returns at restart with
-//   its full budget intact, anchored to a pre-halt price — hours of
-//   price movement delivered into one block, against spreads that assume
-//   price continuity.
-// - The **slot** bound is what gives a tight level a *fast* deadline.
-//   `Clock.unix_timestamp` is a stake-weighted median of vote timestamps
-//   and accurate only to a few seconds, which floors any wall TIF at
-//   ~15 s. A top-of-book level wants a sub-second dead-man tail behind
-//   the quoter's latest stamp; two slots expresses that, 15 seconds
-//   cannot.
-//
-// Taking the **min of two leader-supplied bounds** is never worse than
-// either alone, and it is robust across clock regimes: under today's
-// median-and-clamp clock the wall bound kills across a halt, and under a
-// leader-stamped clock (SIMD-0363 direction, unratified) where cluster
-// time recovers an outage at ~2x pace rather than jumping, the slot
-// conjunct is the fast protection instead.
-//
-// Both datums are stamped at **quote-write time** and never derived at
-// materialize time. Materialization runs lazily inside the first taker's
-// swap after `FLUSH_BIT` arms, so a materialize-time stamp would be
-// attacker-scheduled — in the halt scenario the first post-restart taker
-// *is* the pick-off flow, and its own transaction would refresh the very
-// quote it is picking off. This constraint applies to both domains; see
-// the spec's **SetReferencePrice**.
-
 /// One level in a [`LiquidityProfile`]. All fields are alignment-1 so the
 /// containing array is byte-packed.
 #[repr(C)]
@@ -85,9 +88,10 @@ pub struct Level {
     /// minutes, so a dead leader's book decays level by level in wall
     /// terms instead of sharing one quote-wide deadline.
     ///
-    /// **Zero is dead.** A level with no life in either domain never
+    /// **Zero is dead.** A level with no life in *this* domain never
     /// matches, whatever its datum — materialization encodes that as the
-    /// zero sentinel in [`Position::expires_at`].
+    /// zero sentinel in [`Position::expires_at_unix`] (and the slot
+    /// offset likewise in [`Position::expires_at_slot`]).
     pub expiry_offset_secs: PodU32,
     /// Per-level expiry in **slots** after `reference_price.quote_slot`
     /// — the second, independent bound (see the note under
@@ -134,11 +138,11 @@ pub struct Position {
     /// the addition, and the match gate stays one unconditional compare.
     /// A ladder armed before any reference price is all-zero and dead by
     /// the same encoding.
-    pub expires_at: PodU32,
+    pub expires_at_unix: PodU32,
     /// Absolute slot this level expires at
     /// (`reference_price.quote_slot + Level::expiry_offset_slots`,
     /// saturating). Same zero-is-dead encoding as
-    /// [`Position::expires_at`]; the level matches only while **both**
+    /// [`Position::expires_at_unix`]; the level matches only while **both**
     /// deadlines are in the future.
     pub expires_at_slot: PodU32,
 }
@@ -381,8 +385,14 @@ impl MarketHeader {
 // padding, but it can't catch a field reorder that lands at the same
 // total size by accident, nor a silent bump to a `Pod*` wrapper width.
 // These const asserts pin the on-chain layout — any change must be a
-// deliberate update here, paired with the matching account-data
-// migration story.
+// deliberate update here, paired with an account-data answer. While the
+// program is pre-launch that answer is **re-create, not migrate**: a
+// layout change shifts every field above it, so a market account written
+// by an older build decodes as garbage rather than failing loudly, and
+// the only safe response is to tear the market down and bootstrap it
+// again (localnet does this on every run). A deploy that must preserve
+// live accounts needs a real migration or a version gate before it
+// changes anything below.
 const _: () = assert!(core::mem::size_of::<Vault>() == 692);
 const _: () = assert!(core::mem::size_of::<MarketHeader>() == 253);
 const _: () = assert!(core::mem::size_of::<LiquidityProfile>() == 2 * N_LEVELS * 14);

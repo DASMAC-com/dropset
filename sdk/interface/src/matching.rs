@@ -370,7 +370,7 @@ fn collect_side_levels(
         let quote_atoms = v.quote_atoms.get();
 
         for i in 0..N_LEVELS {
-            let (price, size, expires_at, expires_at_slot) = level_state(
+            let (price, size, expires_at_unix, expires_at_slot) = level_state(
                 v,
                 i,
                 is_buy,
@@ -384,7 +384,7 @@ fn collect_side_levels(
             // Both conjuncts, exactly as `swap.rs` gates them: a level is
             // live only inside its wall deadline AND its slot deadline.
             if size == 0
-                || expires_at <= now_unix
+                || expires_at_unix <= now_unix
                 || expires_at_slot <= now_slot
                 || price.is_zero()
                 || price.is_infinity()
@@ -427,7 +427,7 @@ fn flush_side_sum_exceeds_bps(v: &Vault, is_buy: bool) -> bool {
     sum > BPS as u32
 }
 
-/// Resolve a single level's `(price, size, expires_at)` for the chosen
+/// Resolve a single level's `(price, size, expires_at_unix)` for the chosen
 /// side: materialize from the `LiquidityProfile` if a flush is armed
 /// (mirroring `swap.rs`), else read the stored `remaining` state.
 #[allow(clippy::too_many_arguments)]
@@ -470,7 +470,7 @@ fn level_state(
         (
             Price::from_bits(p.price.get()),
             p.size.get(),
-            p.expires_at.get(),
+            p.expires_at_unix.get(),
             p.expires_at_slot.get(),
         )
     }
@@ -516,7 +516,7 @@ mod tests {
                 .as_u32()
                 .into(),
             size: size.into(),
-            expires_at: u32::MAX.into(),
+            expires_at_unix: u32::MAX.into(),
             expires_at_slot: u32::MAX.into(),
         }
     }
@@ -546,8 +546,12 @@ mod tests {
         v.reference_price = ReferencePrice {
             stamp: 1u64.into(),
             price: Price::encode(10_850_000, 0).unwrap().as_u32().into(),
-            quote_slot: 0u32.into(),
-            quote_unix: 0u32.into(),
+            // Deliberately DISTINCT and nonzero, mirroring the on-chain
+            // `materialize_remaining` test: with both at zero a
+            // datum transposition in `deadlines` would pass every
+            // assertion in this module.
+            quote_slot: FIX_QUOTE_SLOT.into(),
+            quote_unix: FIX_QUOTE_UNIX.into(),
         };
         v.base_atoms = 10_000_000u64.into();
         v.quote_atoms = 10_000_000u64.into();
@@ -649,8 +653,12 @@ mod tests {
         v.reference_price = ReferencePrice {
             stamp: 1u64.into(),
             price: Price::encode(60_000_000, -5).unwrap().as_u32().into(),
-            quote_slot: 0u32.into(),
-            quote_unix: 0u32.into(),
+            // Deliberately DISTINCT and nonzero, mirroring the on-chain
+            // `materialize_remaining` test: with both at zero a
+            // datum transposition in `deadlines` would pass every
+            // assertion in this module.
+            quote_slot: FIX_QUOTE_SLOT.into(),
+            quote_unix: FIX_QUOTE_UNIX.into(),
         };
         // Deep enough that the level cap never binds before the price
         // truncation does.
@@ -726,7 +734,7 @@ mod tests {
     }
 
     /// Levels expired in *either* domain are dropped — past every level's
-    /// `expires_at` / `expires_at_slot` (both `u32::MAX` here), the book
+    /// `expires_at_unix` / `expires_at_slot` (both `u32::MAX` here), the book
     /// is empty on both sides.
     #[test]
     fn expired_levels_are_excluded() {
@@ -736,14 +744,20 @@ mod tests {
         assert!(resting_levels(&view, SwapSide::Sell, u32::MAX, u32::MAX).is_empty());
     }
 
-    fn level(offset_ppm: u32, size_bps: u16) -> Level {
+    fn level_bounded(offset_ppm: u32, size_bps: u16, secs: u32, slots: u32) -> Level {
         Level {
             price_offset: offset_ppm.into(),
             size_bps: size_bps.into(),
-            expiry_offset_secs: u32::MAX.into(),
-            expiry_offset_slots: u32::MAX.into(),
+            expiry_offset_secs: secs.into(),
+            expiry_offset_slots: slots.into(),
         }
     }
+
+    /// The fixture vaults' two expiry datums. Deliberately far apart so a
+    /// transposition moves a materialized deadline by ~1.7e9 rather than
+    /// by a few units — see [`each_expiry_conjunct_is_independently_live`].
+    const FIX_QUOTE_SLOT: u32 = 7;
+    const FIX_QUOTE_UNIX: u32 = 1_700_000_000;
 
     /// A one-vault market with `FLUSH_BIT` armed and a single-level profile a
     /// side (`ask_bps` / `bid_bps` set on level 0, ±500 ppm off a 1.0850
@@ -751,6 +765,14 @@ mod tests {
     /// `remaining` from this profile — the path the per-side size gate lives
     /// on.
     fn market_data_flush(ask_bps: u16, bid_bps: u16) -> Vec<u8> {
+        market_data_flush_at(ask_bps, bid_bps, u32::MAX, u32::MAX)
+    }
+
+    /// [`market_data_flush`] with explicit per-domain expiry offsets, so a
+    /// test can put the two deadlines at different, *finite* places. With
+    /// the `u32::MAX` offsets of the plain builder both domains saturate,
+    /// which hides exactly the datum mix-up this fixture exists to catch.
+    fn market_data_flush_at(ask_bps: u16, bid_bps: u16, secs: u32, slots: u32) -> Vec<u8> {
         let mut header = MarketHeader::zeroed();
         header.head = 0u32.into();
         header.tombstone_head = NULL_SECTOR.into();
@@ -766,13 +788,17 @@ mod tests {
         v.reference_price = ReferencePrice {
             stamp: (FLUSH_BIT | 1).into(),
             price: Price::encode(10_850_000, 0).unwrap().as_u32().into(),
-            quote_slot: 0u32.into(),
-            quote_unix: 0u32.into(),
+            // Deliberately DISTINCT and nonzero, mirroring the on-chain
+            // `materialize_remaining` test: with both at zero a
+            // datum transposition in `deadlines` would pass every
+            // assertion in this module.
+            quote_slot: FIX_QUOTE_SLOT.into(),
+            quote_unix: FIX_QUOTE_UNIX.into(),
         };
         v.base_atoms = 1_000_000u64.into();
         v.quote_atoms = 1_000_000u64.into();
-        v.profile.asks[0] = level(5_000, ask_bps);
-        v.profile.bids[0] = level(5_000, bid_bps);
+        v.profile.asks[0] = level_bounded(5_000, ask_bps, secs, slots);
+        v.profile.bids[0] = level_bounded(5_000, bid_bps, secs, slots);
 
         let vaults = [v];
         let mut buf = Vec::new();
@@ -784,6 +810,65 @@ mod tests {
         }
         buf.extend_from_slice(cast_slice(&vaults));
         buf
+    }
+
+    /// Each expiry conjunct kills a level **on its own**, and each is
+    /// measured off **its own** datum.
+    ///
+    /// The two saturating `u32::MAX` offsets every other fixture uses make
+    /// both deadlines `u32::MAX` regardless of datum, so those tests would
+    /// stay green if `deadlines` read the datums in the wrong order — the
+    /// mirrors take them as two same-typed `u32`s, so nothing else would
+    /// catch it either. Here the offsets are finite and the datums are far
+    /// apart (`7` slots vs `1_700_000_000` seconds), which puts the two
+    /// materialized deadlines at `57` and `1_700_000_600`. Swapping them
+    /// moves each by ~1.7e9 and fails the live case immediately.
+    #[test]
+    fn each_expiry_conjunct_is_independently_live() {
+        const SECS_OFF: u32 = 600;
+        const SLOT_OFF: u32 = 50;
+        let wall_deadline = FIX_QUOTE_UNIX + SECS_OFF;
+        let slot_deadline = FIX_QUOTE_SLOT + SLOT_OFF;
+
+        let data = market_data_flush_at(5_000, 5_000, SECS_OFF, SLOT_OFF);
+        let view = MarketView::load(&data).unwrap();
+
+        // Inside both bounds: the book is there.
+        assert!(
+            !resting_levels(&view, SwapSide::Buy, slot_deadline - 1, wall_deadline - 1).is_empty(),
+            "a level inside both deadlines must rest"
+        );
+        // Slot bound passed, wall bound still open.
+        assert!(
+            resting_levels(&view, SwapSide::Buy, slot_deadline, wall_deadline - 1).is_empty(),
+            "the slot conjunct must kill the level on its own"
+        );
+        // Wall bound passed, slot bound still open.
+        assert!(
+            resting_levels(&view, SwapSide::Buy, slot_deadline - 1, wall_deadline).is_empty(),
+            "the wall conjunct must kill the level on its own"
+        );
+    }
+
+    /// A zero offset is dead in either domain whatever the datum says —
+    /// materialization encodes it as the zero deadline rather than letting
+    /// the bare datum stand in. Pinned here on the slot axis against a live
+    /// wall TIF, the fail-open direction for a quoter.
+    #[test]
+    fn a_zero_offset_is_dead_in_either_domain() {
+        let data = market_data_flush_at(5_000, 5_000, 600, 0);
+        let view = MarketView::load(&data).unwrap();
+        assert!(
+            resting_levels(&view, SwapSide::Buy, 1, FIX_QUOTE_UNIX).is_empty(),
+            "a zero slot offset never rests, however long the wall TIF"
+        );
+
+        let data = market_data_flush_at(5_000, 5_000, 0, 600);
+        let view = MarketView::load(&data).unwrap();
+        assert!(
+            resting_levels(&view, SwapSide::Buy, FIX_QUOTE_SLOT, 1).is_empty(),
+            "a zero wall offset never rests, however long the slot bound"
+        );
     }
 
     /// A flush side whose `Σ size_bps > BPS` is thrown out of matching whole —

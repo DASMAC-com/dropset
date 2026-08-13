@@ -143,7 +143,7 @@ impl Vault {
                 0
             }
             .into();
-            self.remaining.bids[i].expires_at =
+            self.remaining.bids[i].expires_at_unix =
                 Self::deadline(ref_unix, bid.expiry_offset_secs.get());
             self.remaining.bids[i].expires_at_slot =
                 Self::deadline(ref_slot, bid.expiry_offset_slots.get());
@@ -155,7 +155,7 @@ impl Vault {
                 0
             }
             .into();
-            self.remaining.asks[i].expires_at =
+            self.remaining.asks[i].expires_at_unix =
                 Self::deadline(ref_unix, ask.expiry_offset_secs.get());
             self.remaining.asks[i].expires_at_slot =
                 Self::deadline(ref_slot, ask.expiry_offset_slots.get());
@@ -346,7 +346,7 @@ mod tests {
         // `quote_slot` is deliberately set to a *different* value than
         // `quote_unix` here: expiry must anchor on the wall-clock datum,
         // so a regression that re-anchors on the slot shows up as a
-        // wrong `expires_at` rather than passing by coincidence.
+        // wrong `expires_at_unix` rather than passing by coincidence.
         v.reference_price.quote_slot = 77u32.into();
         v.reference_price.quote_unix = 1_000u32.into();
         // Arm the flush: nonce 5 with FLUSH_BIT set.
@@ -383,8 +383,8 @@ mod tests {
         // Expiry is absolute in both domains, each off its own datum:
         // wall = `quote_unix + secs`, slot = `quote_slot + slots`. The
         // two datums differ, so a domain mix-up shows up here.
-        assert_eq!(v.remaining.bids[0].expires_at.get(), 1_050);
-        assert_eq!(v.remaining.asks[0].expires_at.get(), 1_060);
+        assert_eq!(v.remaining.bids[0].expires_at_unix.get(), 1_050);
+        assert_eq!(v.remaining.asks[0].expires_at_unix.get(), 1_060);
         assert_eq!(v.remaining.bids[0].expires_at_slot.get(), 82);
         assert_eq!(v.remaining.asks[0].expires_at_slot.get(), 83);
         // Empty levels flush to zero size.

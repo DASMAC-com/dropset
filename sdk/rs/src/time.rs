@@ -2,7 +2,7 @@
 //!
 //! Level expiry is wall-denominated: a leader stamps
 //! `reference_price.quote_unix` when it quotes, each level dies
-//! `expiry_offset` **seconds** later, and the engine gates on the
+//! `expiry_offset_secs` later, and the engine gates on the
 //! validator's `Clock.unix_timestamp`. Every off-chain consumer therefore
 //! needs a "now" in the same units — the maker to stamp the datum, the
 //! taker / TUI / router adapters to filter the book the way the engine
@@ -22,6 +22,16 @@
 //!   chain's future, lengthening every level's effective life by the
 //!   skew; one *behind* shortens it. Self-inflicted either way — the
 //!   leader can only affect its own quotes.
+//! - The **taker** side is not symmetric with that, and is worth stating
+//!   plainly because the maker-side argument does not cover it. A quoting
+//!   client filters the book by *its own* clock while the engine gates on
+//!   the cluster's, so a client running behind sizes `min_out` against
+//!   levels the engine will drop (the swap reverts on `min_out`, fees
+//!   paid), and one running ahead reports "no liquidity" against a
+//!   healthy book. Both failures are visible rather than silent, and both
+//!   need a skew larger than the tier's whole wall TIF — but a consumer
+//!   that cannot bound its own clock should quote against a chain-read
+//!   time rather than this helper.
 //! - Chain time can lag real time under congestion (the sysvar is clamped
 //!   relative to slot pace), so a level's *real-world* life can exceed
 //!   its nominal TIF. This is a staleness cap, not a hard deadline.

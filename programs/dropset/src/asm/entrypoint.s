@@ -113,7 +113,18 @@
 # extent ix_data + 17) and disc 6 the 224-byte blob at +5 (max extent
 # ix_data + 229). Bytes past that are simply never read.
 #
-# A TRUNCATED payload only ever harms its own caller. The reference build
+# A TRUNCATED payload only ever harms its own caller, but the two
+# discriminators fail differently and disc 5 is the quieter of the two.
+# Its three reads sit at ix_data+5..17, and the input region always runs to
+# ix_data + len + program_id(32), so even a pre-upgrade 13-byte disc-5
+# payload stays in bounds: it does not fault, it silently stamps
+# quote_unix from the leading program-id bytes. That is self-harm-only —
+# the datum governs only the signing vault's own levels, and a wrong one
+# either disables that vault's wall bound or kills it outright — but it is
+# silent, where the reference build rejects the same payload loudly at
+# deserialization. Every SDK builder emits the full 17 bytes.
+#
+# Disc 6 is the noisy case. The reference build
 # rejects one at anchor deserialization; here a short disc-6 call makes the
 # 224-byte copy read past the ix-data region. The input region ends at
 # ix_data + len + program_id(32), so a length under 197 faults
