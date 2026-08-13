@@ -1,3 +1,7 @@
+// cspell:word altname
+// cspell:word EURCEUR
+// cspell:word USDTZUSD
+// cspell:word ZARPUSD
 //! The Kraken public-ticker adapter (docs/data-feeds.md §9) — the batched
 //! basis and **peg-truth** venue.
 //!
@@ -185,7 +189,7 @@ mod tests {
     }
 
     #[test]
-    fn drops_a_non_positive_or_unparseable_price() {
+    fn drops_a_non_positive_or_malformed_price() {
         let body = json!({
             "result": {
                 "AAA": { "c": ["0"] },
