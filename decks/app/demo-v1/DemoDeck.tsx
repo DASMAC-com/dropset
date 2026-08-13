@@ -1306,8 +1306,10 @@ const Portrait = ({
  * **"national" is load-bearing.** To a crypto-native audience "every
  * currency" reads as every *token* — "you're making my token liquid?" — and
  * the one word that disambiguates is worth the extra width. The always-on
- * claim moved out of the line and into the page-1 and page-12 spoken openers,
- * which is what keeps page 2's 24/5 fact a payoff rather than an orphan.
+ * claim moved out of the line and into **page 1's spoken opener**, which is
+ * what keeps page 2's 24/5 fact a payoff rather than an orphan. Page 12's
+ * opener stays bare on purpose — it hands straight off to the personal why,
+ * and the close should land on the problem rather than re-pitch a feature.
  *
  * A noun phrase, and one of global rule 1's three sanctioned fragments: a
  * tagline names the company, and every sentence form ("Dropset is the…") puts
@@ -1340,14 +1342,14 @@ const TAGLINE = "The liquidity layer for every national currency";
  * changes metrics.
  *
  * **The size is measured, not estimated.** At 72px this line renders 1598
- * units wide — one line, with ~130 units of slack against the `maxWidth` and
- * 145 units of clear space each side. It also holds one line at 76px (1687
- * units), which is what the tagline shipped at first; that runs the deck's
- * opening and closing headline nearly edge-to-edge, and 4px of type is the
- * cheaper thing to give up. Re-measure rather than re-estimate if the line
- * changes: load the page and read the rendered text width, because a character
- * count predicts this badly — the line that wrapped before was only ~8
- * characters longer than one that fits.
+ * units wide — one line, with ~130 units of slack against the `maxWidth`, and
+ * 145 units of clear space each side of the full 1920-unit slide box. It also
+ * holds one line at 76px (1687 units), which is where this line was first
+ * set; that runs the deck's opening and closing headline nearly edge-to-edge,
+ * and 4px of type is the cheaper thing to give up. Re-measure rather than
+ * re-estimate if the line changes: load the page and read the rendered text
+ * width, because a character count predicts this badly — the retired tagline
+ * wrapped at ~8 characters **shorter** than the line that now holds.
  */
 const TitlePage = () => (
   <SlideBody centered>
@@ -1923,9 +1925,9 @@ export default function DemoDeck() {
           shortage of alternative stores of value, but the currencies people
           actually earn and spend in don’t flow on a decentralized ledger the
           way it promised they would. A large part of why is that there’s no
-          FX liquidity onchain — and Solana is the most money-like environment
-          we’ve ever had, which is why this is where it gets fixed. [Leave
-          this page up.]
+          FX liquidity onchain — and Solana is a deeply money-like
+          environment, which is why this is where it gets fixed. [Leave this
+          page up.]
         </Notes>
       </Slide>
     </Deck>

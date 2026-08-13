@@ -144,9 +144,11 @@ pages:
   stablecoins and the platforms holding them. "national" is load-bearing —
   to a crypto-native audience "every currency" reads as every *token* ("you're
   making my token liquid?"), and the one word that disambiguates is worth the
-  extra width. The always-on claim moved into the spoken opener on this page
-  and page 12, which is what keeps page 2's 24/5 fact a payoff rather than an
-  orphan. Candidates that lost: "Fiat's final frontier" (evocative, says
+  extra width. The always-on claim moved into **this page's spoken opener**,
+  which is what keeps page 2's 24/5 fact a payoff rather than an orphan; page
+  12's opener stays bare, since it hands straight off to the personal why and
+  the close should land on the problem rather than re-pitch a feature.
+  Candidates that lost: "Fiat's final frontier" (evocative, says
   nothing about what we do) and "Babelfish for fiat currency" (the analogy is
   right and the reference dates the speaker).
 - **Note on the analogy:** the tokenized-equity comparison is **spoken, never
@@ -241,10 +243,10 @@ pages:
   again three pages later reads as a deck repeating itself rather than as an
   escalation. This note used to say "restore the accent row only if the
   tagline ever loses the number" — the tagline has since lost it, and the row
-  stays retired anyway: the always-on claim moved into the page-1 and page-12
-  spoken openers rather than off the deck, so the payoff this page needs is
-  still set up, and page 3's sparseness is worth more than a second printing
-  of a number the room has already heard.
+  stays retired anyway: the always-on claim moved into page 1's spoken opener
+  rather than off the deck, so the payoff this page needs is still set up, and
+  page 3's sparseness is worth more than a second printing of a number the
+  room has already heard.
 - **Note on the money-ness fact:** "public blockchains are the most
   money-like digital environment available today" was v2's **thesis fact**
   and it is now spoken. It is still the claim the rest of the deck answers
