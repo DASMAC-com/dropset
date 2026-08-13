@@ -1294,19 +1294,28 @@ const Portrait = ({
 /**
  * The tagline — the deck's one-liner, and the only line on pages 1 and 12.
  *
- * It replaced "Where currency trades onchain", which described the product
- * accurately and then asked the audience to care on its own. This says what
- * Dropset is *for* in words that land on someone who has never traded FX,
+ * It replaced "Where currency trades onchain" (accurate, and it asked the
+ * audience to care on its own), and then "The 24/7/365 currency translation
+ * layer", which wrapped badly enough on the slide to read as "The Currency
+ * Translation Layer 24…". This one says the actual business: Dropset is a
+ * **liquidity** platform, and the promise is that every currency is liquid,
+ * for everyone, always — words that land on someone who has never traded FX,
  * which is the job of the one line an investor might read before scrolling
- * past. **"24/7/365" is load-bearing** — it carries the ambition and pays off
- * the 24/5 fact on page 2 — so the shorter "onchain currency translation
- * layer" is a downgrade rather than a trim.
+ * past.
+ *
+ * **"national" is load-bearing.** To a crypto-native audience "every
+ * currency" reads as every *token* — "you're making my token liquid?" — and
+ * the one word that disambiguates is worth the extra width. The always-on
+ * claim moved out of the line and into **page 1's spoken opener**, which is
+ * what keeps page 2's 24/5 fact a payoff rather than an orphan. Page 12's
+ * opener stays bare on purpose — it hands straight off to the personal why,
+ * and the close should land on the problem rather than re-pitch a feature.
  *
  * A noun phrase, and one of global rule 1's three sanctioned fragments: a
  * tagline names the company, and every sentence form ("Dropset is the…") puts
  * a subject on a page whose subject is the wordmark directly above it.
  */
-const TAGLINE = "The 24/7/365 currency translation layer";
+const TAGLINE = "The liquidity layer for every national currency";
 
 /**
  * The title page's body: the wordmark over the tagline, centred, nothing else.
@@ -1331,13 +1340,23 @@ const TAGLINE = "The 24/7/365 currency translation layer";
  * other pages fail with. The `maxWidth` leaves ~120 units of slack against the
  * ~1856 a slide has, so the line has somewhere to grow if the font ever
  * changes metrics.
+ *
+ * **The size is measured, not estimated.** At 72px this line renders 1598
+ * units wide — one line, with ~130 units of slack against the `maxWidth`, and
+ * 145 units of clear space each side of the full 1920-unit slide box. It also
+ * holds one line at 76px (1687 units), which is where this line was first
+ * set; that runs the deck's opening and closing headline nearly edge-to-edge,
+ * and 4px of type is the cheaper thing to give up. Re-measure rather than
+ * re-estimate if the line changes: load the page and read the rendered text
+ * width, because a character count predicts this badly — the retired tagline
+ * wrapped at ~8 characters **shorter** than the line that now holds.
  */
 const TitlePage = () => (
   <SlideBody centered>
     <Box margin="0 0 40px 0">
       <Wordmark width={860} />
     </Box>
-    <Statement fontSize="76px" maxWidth="1730px">
+    <Statement fontSize="72px" maxWidth="1730px">
       {TAGLINE}
     </Statement>
   </SlideBody>
@@ -1356,10 +1375,10 @@ export default function DemoDeck() {
             attached. On the slide it would be a second sentence competing with
             the tagline; said out loud over a bare wordmark, it lands. */}
         <Notes>
-          Dropset is the 24/7/365 currency translation layer. Here’s what I
-          mean. Anyone with a phone can buy tokenized Tesla stock today, from
-          almost any country — and nobody can do that with a euro. That’s the
-          hole we’re filling.
+          Dropset is the liquidity layer for every national currency — all of
+          them, for anyone, 24/7/365. Here’s what I mean. Anyone with a phone
+          can buy tokenized Tesla stock today, from almost any country — and
+          nobody can do that with a euro. That’s the hole we’re filling.
         </Notes>
       </Slide>
 
@@ -1415,8 +1434,8 @@ export default function DemoDeck() {
               carrying the deck's most checkable number.
 
               Two claims that used to print here are now spoken. The 24/7/365
-              goal was v2's one accent row, and the title page now *opens* with
-              24/7/365 in the tagline — printing it again three pages later
+              goal was v2's one accent row, and the title page's spoken open
+              still carries 24/7/365 — printing it again three pages later
               reads as the deck repeating itself rather than escalating. And
               the money-ness thesis ("public blockchains are the most money-like
               digital environment available today") was the abstract sentence on
@@ -1891,22 +1910,24 @@ export default function DemoDeck() {
             headshots, and it gives the talk a bookend: the tagline is the first
             thing said and the last.
 
-            The personal why below is a **scaffold, not finished copy**, and it
-            should be rewritten in the founder's own voice before it is
-            delivered — it is the one block in this deck written to be replaced.
-            Keep it to two or three sentences out loud. The failure mode is a
+            The personal why below is the founder's own argument, written down
+            as a **rehearsal draft** rather than as copy to be read out — it is
+            the one block in this deck meant to be iterated on out loud, and
+            the wording that lands will be whatever it becomes on the third
+            pass. Keep it to two or three sentences. The failure mode is a
             biography; the target is the single sentence that makes a listener
             believe this person would still be working on this in five years. */}
         <Notes>
-          Dropset — the 24/7/365 currency translation layer. [Personal why —
-          rewrite in your own voice, two or three sentences: Fifteen years in
-          this industry, and money still doesn’t actually move onchain.
-          Everything else did — trading, collectibles, now equities — and the
-          thing blockchains were *for* is the thing still waiting. I’ve spent
-          that time building exchange technology across the whole stack on more
-          than one chain, so the unsolved market I’d pick was always going to be
-          an exchange problem. FX is the biggest one left and the least touched,
-          and being early to it compounds.] [Leave this page up.]
+          Dropset — the liquidity layer for every national currency. This
+          industry is seventeen years old now, and we can send money around
+          the world just fine — what we still can’t do is get in and out of
+          currencies. There’s no shortage of ways to speculate onchain and no
+          shortage of alternative stores of value, but the currencies people
+          actually earn and spend in don’t flow on a decentralized ledger the
+          way it promised they would. A large part of why is that there’s no
+          FX liquidity onchain — and Solana is a deeply money-like
+          environment, which is why this is where it gets fixed. [Leave this
+          page up.]
         </Notes>
       </Slide>
     </Deck>
