@@ -62,29 +62,6 @@
       ]
     },
     {
-      "marketPubkey": "Mkt3VEURUSDCp5nRvYx2hJmGcQsXk9PqVtZ7rWmEURb",
-      "base": "VEUR",
-      "quote": "USDC",
-      "fxMove24h": 0.003,
-      "vaults": [
-        {
-          "vaultPubkey": "VautVEC1dAsmAcBootStrapXk9PqVtZ7rWmYhJ2nGcQ",
-          "leader": "DASMACbootStrap1Lead3rXk9PqVtZ7rWmYhJ2nGcQs",
-          "volume24h": 358000,
-          "fees24h": 179,
-          "tvl": 1480000,
-          "baseReserve": 730000,
-          "quoteReserve": 750000,
-          "totalShares": 1000000,
-          "leaderShares": 250000,
-          "vps": 1.009,
-          "minLeaderSharePpm": 50000,
-          "frozen": false,
-          "outsideDepositsApproved": true
-        }
-      ]
-    },
-    {
       "marketPubkey": "Mkt4USDJPYw9TnF8xpR2vJ4hYzAe5KdLbcgUvN3sPq9",
       "base": "USDC",
       "quote": "GYEN",

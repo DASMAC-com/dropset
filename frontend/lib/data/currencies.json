@@ -91,19 +91,6 @@
         }
       },
       {
-        "symbol": "VEUR",
-        "name": "VNX Euro",
-        "mint": "C4Kkr9NZU3VbyedcgutU6LKmi6MKz81sx6gRmk5pX519",
-        "decimals": 9,
-        "tokenProgram": "classic",
-        "icon": "https://vnx.li/wp-content/uploads/2025/04/VEUR-256x256-1.png",
-        "issuer": {
-          "name": ["VNX Commodities AG"],
-          "url": "https://vnx.li/",
-          "socials": { "x": "VNX_Platform" }
-        }
-      },
-      {
         "symbol": "EURCV",
         "name": "EUR CoinVertible",
         "mint": "DghpMkatCiUsofbTmid3M3kAbDTPqDwKiYHnudXeGG52",
@@ -204,12 +191,13 @@
         "symbol": "VCHF",
         "name": "VNX Swiss Franc",
         "mint": "AhhdRu5YZdjVkKR3wbnUDaymVQL2ucjMQ63sZ3LFHsch",
+        "mintSourceUrl": "https://vnx.io/transparency",
         "decimals": 9,
         "tokenProgram": "classic",
-        "icon": "https://vnx.li/wp-content/uploads/2025/04/VCHF-256x256-1.png",
+        "icon": "https://coin-images.coingecko.com/coins/images/29547/large/VNXCHF_%282%29.png?1696528488",
         "issuer": {
-          "name": ["VNX Commodities AG"],
-          "url": "https://vnx.li/",
+          "name": ["VNX Global Ltd."],
+          "url": "https://vnx.io/",
           "socials": { "x": "VNX_Platform" }
         }
       }
@@ -234,12 +222,13 @@
         "symbol": "VGBP",
         "name": "VNX British Pound",
         "mint": "5H4voZhzySsVvwVYDAKku8MZGuYBC7cXaBKDPW4YHWW1",
+        "mintSourceUrl": "https://vnx.io/transparency",
         "decimals": 9,
         "tokenProgram": "classic",
-        "icon": "https://vnx.li/wp-content/uploads/2025/04/VGBP-256x256-1.png",
+        "icon": "https://coin-images.coingecko.com/coins/images/55301/large/VGBP_2.png?1747482092",
         "issuer": {
-          "name": ["VNX Commodities AG"],
-          "url": "https://vnx.li/",
+          "name": ["VNX Global Ltd."],
+          "url": "https://vnx.io/",
           "socials": { "x": "VNX_Platform" }
         }
       }

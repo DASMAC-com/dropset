@@ -126,7 +126,6 @@ const TOKEN_USD: Record<string, number> = {
   USDC: 1,
   USDT: 1,
   EURC: 1.08,
-  VEUR: 1.08,
   GYEN: 0.0067,
   TGBP: 1.27,
   VGBP: 1.27,
