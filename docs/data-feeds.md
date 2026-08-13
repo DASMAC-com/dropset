@@ -45,10 +45,13 @@ and fill transports on the live sink — the latter carrying the first
 streaming source, an RPC `logsSubscribe` socket bridged through the
 stream seam (§4). The venue adapters have been relocated into
 `feeds/src/venues/` (§4): there is now one implementation of each venue —
-Coinbase, CoinGecko, CoinMarketCap, ECB/Frankfurter — available to both
-sink paths, rather than one per app. The collector polls Coinbase and the
-maker polls the other three today; what changed is that either could use
-any of them. The eCLOB indexer has since migrated onto the framework
+Pyth Hermes, Coinbase (candles *and* spot ticker), Kraken, CoinGecko,
+CoinMarketCap, ECB/Frankfurter — available to both sink paths, rather
+than one per app. The collector polls Coinbase candles and the maker
+polls the rest today; what changed is that either could use any of them.
+The FX-anchor and basis **primaries** (§9) are now among them, so the
+maker no longer quotes off the fallback tier alone. The eCLOB indexer has
+since migrated onto the framework
 too (§6), so every ingestion path in the repo now runs on one drive
 loop. The collector crate still sits at its original path under
 `analytics/`; its move to `market-data/` is a separate tracked task.
@@ -283,12 +286,16 @@ ______________________________________________________________________
   sources on this crate into a store sink: an HTTP Coinbase reference
   feed first (the proof feed), then the FX, issuer-rate, and
   econ-calendar feeds. See §7 onward.
-- **Maker bot (live sink, landed).** The maker-bot's price cascade and
-  `logsSubscribe` fill walk run on `feeds`: three HTTP price sources
-  (CoinGecko, CoinMarketCap, ECB/Frankfurter) and the fill `logsSubscribe`
+- **Maker bot (live sink, landed).** The maker-bot's tiered price legs and
+  `logsSubscribe` fill walk run on `feeds`: the HTTP price sources — Pyth
+  Hermes and ECB/Frankfurter for the FX anchor, Coinbase and Kraken for
+  the basis and the USDC peg, CoinGecko / CoinMarketCap behind them — and
+  the fill `logsSubscribe`
   socket — bridged through the stream seam (§4) — fan onto in-process
   forward (live) sinks its synchronous tick loop drains with `try_recv`, on
-  a small background runtime. The taker bot has no bespoke price or fill
+  a small background runtime. Coinbase's ticker is keyed by one product,
+  so that tier is one source per listed market rather than one batched
+  poll. The taker bot has no bespoke price or fill
   feed to migrate: it is a stochastic flow generator sizing orders against
   the live on-chain book, so it stays as the *producer* of the fills the
   maker now consumes.
