@@ -13,7 +13,7 @@ import type { QuoteState } from "@/lib/quote";
 //   1. Amount-too-large — the pair is fine, the requested size exceeds what
 //      DFlow's routers can fill in one transaction (e.g., 10M USDC→USDT).
 //   2. Pair un-routable — one or both tokens lack the liquidity to be routed
-//      at any amount (e.g., VEUR → EURCV).
+//      at any amount (e.g., VCHF → EURCV).
 // We disambiguate using Jupiter's per-token data: if both tokens have a
 // usable USD reference price (`useLiquidityLookup` → "liquid"), DFlow's
 // rejection is almost certainly size-related. Otherwise, default to the

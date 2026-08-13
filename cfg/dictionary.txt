@@ -201,7 +201,6 @@ usdg
 usize
 vchf
 vertible
-veur
 vgbp
 vwap
 wakeup
