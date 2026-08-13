@@ -381,10 +381,12 @@ start a fresh Claude Code session to pick them up.
 The attend toggle needs a stable session→tty map, and the Linear
 automation needs its ids in the environment. Put all of it in one place:
 
-- **Linear MCP ids** — `LINEAR_TEAM_ID`, `LINEAR_PROJECT_ID`,
-  `LINEAR_ASSIGNEE_ID`, and `LINEAR_API_KEY` (see
-  [linear-automation](linear-automation.md) for what reads them). The
-  API key is a secret; keep real values out of any committed file.
+- **Linear MCP ids** — `LINEAR_TEAM_ID`, `LINEAR_PROJECT_ID`, and
+  `LINEAR_ASSIGNEE_ID` (see
+  [linear-automation](linear-automation.md) for what reads them).
+  These are plain identifiers, so they sit in the file directly.
+  `LINEAR_API_KEY` is a secret and is resolved separately — see
+  "Session secrets" below.
 
 - **Session→tty registration**, keyed by the *stable* session UUID:
 
@@ -402,6 +404,59 @@ automation needs its ids in the environment. Put all of it in one place:
 
 - **`DISABLE_AUTO_TITLE=true`** — stops the shell from re-titling the
   tab out from under the integration.
+
+### Session secrets (`~/.zshrc`)
+
+`LINEAR_API_KEY` and `GITHUB_MCP_PAT` are secrets, so unlike the ids
+above they are never written into the shell file. A `_ds_secrets`
+helper resolves them from 1Password, and every session-*starting*
+helper below calls it before launching Claude Code (`cdds` does not —
+it only changes directory):
+
+```sh
+_ds_secrets() {
+  local account='<account>.1password.com'
+  export LINEAR_API_KEY="${LINEAR_API_KEY:-$(op read --account "$account" \
+    'op://<vault>/<linear-item>/credential')}"
+  export GITHUB_MCP_PAT="${GITHUB_MCP_PAT:-$(op read --account "$account" \
+    'op://<vault>/<github-item>/credential')}"
+
+  [[ -z "$LINEAR_API_KEY" ]] &&
+    print -u2 '_ds_secrets: LINEAR_API_KEY unresolved'
+  [[ -z "$GITHUB_MCP_PAT" ]] &&
+    print -u2 '_ds_secrets: GITHUB_MCP_PAT unresolved'
+  return 0
+}
+```
+
+Four things about that shape are load-bearing:
+
+- **Resolution is lazy — at session launch, not at shell init.**
+  `op read` costs a round trip and can raise a Touch ID prompt, and
+  every plain terminal tab would otherwise pay both for secrets it will
+  never use. Only the session helpers call `_ds_secrets`, so opening an
+  ordinary tab stays instant.
+
+- **The `${VAR:-…}` guard makes it at most one fetch per shell.** A
+  second call in the same shell is a no-op, so helpers that chain into
+  one another don't re-prompt. It also lets an already-exported value
+  win, which is the override path when a key has to be pinned by hand.
+
+- **`--account` is explicit** because the laptop is signed into more
+  than one 1Password account, and a bare `op read` cannot disambiguate
+  between them.
+
+- **An unresolved secret warns rather than failing the launch.** An
+  empty key otherwise surfaces much later as an opaque MCP error
+  mid-session, which is far worse to debug than one warning line at
+  startup.
+
+The coordinates above are placeholders. The real account domain, vault
+name, and item titles appear only in `~/.zshrc` — a plain untracked
+file, not a symlink into a tracked config repo — so substitute your
+own. Naming the real ones here would buy a reader nothing (they have
+to substitute regardless) and would publish the layout of a personal
+secret store.
 
 ### Session helpers (`~/.zshrc`)
 
