@@ -76,9 +76,10 @@ default = []
 # store (the `feed_cursors` table).
 store = ["dep:sqlx"]
 # The HTTP-REST poll transport, and with it every REST venue adapter in
-# `venues` (Coinbase candles, CoinGecko, CoinMarketCap, ECB/Frankfurter).
+# `venues` (Pyth Hermes, Coinbase candles + ticker, Kraken, CoinGecko,
+# CoinMarketCap, ECB/Frankfurter).
 http = ["dep:reqwest"]
-# The RPC-poll transport (the eCLOB indexer, the Orca swap feed).
+# The RPC-poll transport (the eCLOB indexer).
 rpc = [
   "dep:solana-client",
   "dep:solana-commitment-config",

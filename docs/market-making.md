@@ -153,12 +153,24 @@ The two legs draw from **different** feeds — the anchor from real FX, the
 basis from crypto venues. The token's crypto/USD price (CoinGecko / CMC)
 is **demoted to a last-resort fallback** for the reasons above.
 
-| Leg                              | Primary                                     | Peg-truth / cross-check         | Fallback                          |
-| -------------------------------- | ------------------------------------------- | ------------------------------- | --------------------------------- |
-| FX anchor (`fiat/USD`)           | Pyth Hermes FX / OANDA, streaming           | CME 6E during session hours     | ECB / Frankfurter daily reference |
-| Basis (`token/fiat`, `USDC/USD`) | Coinbase `<token>/USDC`, Binance `EUR/USDT` | Circle / issuer redemption rate | CoinGecko / CMC token/USD         |
+| Leg                              | Primary                                       | Peg-truth / cross-check       | Fallback                          |
+| -------------------------------- | --------------------------------------------- | ----------------------------- | --------------------------------- |
+| FX anchor (`fiat/USD`)           | Pyth Hermes FX                                | OANDA / CME 6E in session     | ECB / Frankfurter daily reference |
+| Basis (`token/fiat`, `USDC/USD`) | Coinbase `<token>/USDC`, Kraken `<token>/USD` | Kraken `USDC/USD`, `EURC/EUR` | CoinGecko / CMC token/USD         |
 
 The bot surfaces which source is live per leg, per market.
+
+Kraken stands where the spec first named Binance and Circle, because neither
+can serve: Binance answers `HTTP 451` from the deploy region and Binance.US
+lists no EUR pair, while Circle's rate API is credentialed. See
+[`data-feeds.md`](data-feeds.md) §9 for the evidence and the supersession
+path. Only EURC of the seven demo markets reaches any CEX at all, so for the
+other six the CoinGecko / CMC fallback *is* the basis leg — demoted in
+priority (fm5 below), not optional.
+
+Pyth is what makes fm6 observable: it publishes a **confidence half-width**,
+which the ECB/Frankfurter fallback does not, so on the fallback tier the
+anchor can only ever read as fresh or stale, never fresh-but-uncertain.
 
 ### Basis estimation
 

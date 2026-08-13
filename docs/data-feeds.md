@@ -423,13 +423,49 @@ regimes, and its failure modes belong to
 [`market-making.md`](market-making.md) §1; what follows is which
 sources feed each leg and on what terms.
 
-| Role                             | Source                                                                                |
-| -------------------------------- | ------------------------------------------------------------------------------------- |
-| FX anchor (`fiat/USD`)           | Pyth Hermes FX / OANDA streaming; CME 6E in session; ECB / Frankfurter daily fallback |
-| Basis (`token/fiat`, `USDC/USD`) | Coinbase `<token>/USDC`, Binance `EUR/USDT`                                           |
-| Peg truth                        | Circle / issuer redemption rate                                                       |
-| Token/USD, last resort           | CoinGecko / CoinMarketCap — reflexive, never the anchor                               |
-| Macro overlay                    | Econ-calendar loader (ECB / FOMC / CPI / NFP times)                                   |
+| Role                             | Source                                                                              |
+| -------------------------------- | ----------------------------------------------------------------------------------- |
+| FX anchor (`fiat/USD`)           | Pyth Hermes FX (wired); OANDA / CME 6E in session; ECB / Frankfurter daily fallback |
+| Basis (`token/fiat`, `USDC/USD`) | Coinbase `<token>/USDC` (wired), Kraken `<token>/USD` (wired)                       |
+| Peg truth                        | Kraken `USDC/USD` + `EURC/EUR` (wired); Circle / issuer redemption rate             |
+| Token/USD, last resort           | CoinGecko / CoinMarketCap — reflexive, never the anchor                             |
+| Macro overlay                    | Econ-calendar loader (ECB / FOMC / CPI / NFP times)                                 |
+
+### What is wired, and why the rest is not
+
+The primaries above are keyless and live. The gaps are not oversights — each
+was probed and ruled out on evidence:
+
+- **Binance is unusable from the deploy region.** `api.binance.com` answers
+  `HTTP 451` from both a developer machine and `us-west-2`, so the spec's
+  `EUR/USDT` basis leg would be dead code in the deployment rather than
+  merely untested. `api.binance.us` is reachable but lists **no EUR pair at
+  all**, and its one relevant symbol, `USDCUSD`, prints an administered flat
+  `1.00000000` — a feed that would report a depeg as perfect health. Kraken
+  takes that slot instead.
+- **Circle publishes no keyless redemption rate.** `/v1/exchange/rates` is
+  credentialed (`401`); the only public endpoint returns circulating supply
+  per chain, not a rate. Peg truth is therefore *observed at a venue* rather
+  than read from the issuer: Kraken's `USDC/USD` is a real market print of
+  the peg, and `EURC/EUR` is the cross redemption arbitrage enforces
+  directly. A credentialed Circle Mint feed supersedes both when keys exist.
+- **OANDA is the same story** — credentialed, and Pyth Hermes already covers
+  every roster currency for free, with a confidence half-width OANDA would
+  have to be asked for separately.
+
+**Coverage is asymmetric, permanently.** Of the seven demo tokens only EURC
+reaches a CEX (Coinbase `EURC-USDC`, Kraken `EURC/USD`). The other six trade
+on neither, so their basis leg has no primary tier and the CoinGecko /
+CoinMarketCap indices carry it — the fallbacks are load-bearing, not vestigial.
+
+Two decode details Pyth forces, both handled in the adapter. It publishes each
+cross **one way only**, and for five of the seven roster currencies that is
+`USD/<ccy>`, so those are reciprocated — with the confidence half-width
+transformed as `δ(1/p) ≈ δp / p²`, since a half-width does not survive
+inversion unchanged. And its FX feeds follow the interbank schedule, so
+readings are aged from the publisher's `publish_time` rather than from
+receipt: a consumer ageing from receipt would see a frozen weekend rate as
+perpetually fresh and never engage the crypto-only regime.
 
 **Coinbase is the proof feed and the first adapter.** The Exchange
 public REST API is keyless and reachable; its candles endpoint returns
