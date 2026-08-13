@@ -1,11 +1,11 @@
 //! Postgres persistence: idempotent raw-event writes keyed on the event
 //! PK, the aggregator's watermark + reads, and the `/v1` read queries.
 
-use crate::decode::{decode_tx, RawTx};
+use crate::decode::decode_tx;
 use crate::model::{event_market, event_to_json, FillRow, MarketStatsRow, Take};
 use crate::model::{DecodedEvent, EventCoords};
 use async_trait::async_trait;
-use dropset_feeds::StoreWriter;
+use dropset_feeds::{RawTx, StoreWriter};
 use dropset_sdk::events::DropsetEvent;
 use serde::Serialize;
 use sqlx::postgres::PgPoolOptions;

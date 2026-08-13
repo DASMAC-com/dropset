@@ -111,8 +111,8 @@ framework lifts the common shape out of them:
   the seam: *"the geyser path would implement the same `poll` shape
   behind the same decode + store seam."* That is the poll source + store
   sink — and the migration in §6 has since landed, so the transport now
-  lives in `feeds/src/rpc.rs` and the indexer keeps only the writers,
-  aggregator, and `/v1`.
+  lives in `feeds/src/rpc.rs` and the indexer keeps only its event
+  decode, the row writers, the aggregator, and `/v1`.
 - **Maker bot — a live price source and a live fill source.** The
   maker bot already composes a price feed (a CoinGecko → FX-rate →
   static cascade) to build a fair mid, and subscribes to fills via a
@@ -211,10 +211,13 @@ same source to a forward sink and quotes off it.
   client: a base URL, a shared client, and `get_json(path, query)`.
   Consumers: the Coinbase reference feed, the FX and issuer-rate feeds,
   and the maker's own price polls.
-- **RPC-poll** (`feature = "rpc"`, the solana 3.x client tree) — the
-  indexer's `RpcPollSource`, generalized over program id: poll
-  signatures newest-first, fetch each transaction at `finalized`,
-  flatten inner instructions into ordered, decoded blobs. Consumer: the
+- **RPC-poll** (`feature = "rpc"`, the solana 3.x client tree) —
+  `RpcPollSource`, generalized over program id from the indexer's
+  original poll source: enumerate signatures backwards to the resume
+  cursor, then emit oldest-first, fetching each transaction at
+  `finalized` and flattening inner instructions into ordered, decoded
+  blobs. It is generic over an `RpcTransport` seam — the shape a geyser
+  transport would implement. Consumer: the
   eCLOB indexer.
 - **Streaming / WebSocket** (`feature = "stream"`) — a subscribe source
   for the low-latency bot path (a CEX ticker socket, an RPC
@@ -571,17 +574,25 @@ ______________________________________________________________________
   the basis leg follows when polling it at the §10 cadence proves too
   slow for quoting — not before.
 - **Backfill windowing.** *Resolved — the framework owns a paged
-  backfill (`feeds/src/backfill.rs`), and every poll source inherits
-  it.* The correction that matters is directional: a resume cursor is an
-  exclusive *lower* bound, so advancing it to a mid-backlog position
-  discards everything older rather than deferring it. The pager
-  therefore withholds every page until the backward walk has reached the
-  bound, then emits oldest-first. To make a walk that must finish
-  affordable it stores one **page key** per page rather than the
-  records — for the RPC source, the `before` marker — so enumerating a
-  deep backlog costs a signature per page, and the per-poll page cap
-  bounds how long one `next()` runs rather than how deep the walk may
-  go: an unfinished walk resumes where it stopped.
+  backfill (`feeds/src/backfill.rs`) that any poll source can adopt; the
+  RPC source is the first.* (It is a helper a source drives, not
+  behavior a source inherits: the HTTP venue adapters page their own
+  backfill and are unchanged.) The correction that matters is
+  directional: a resume cursor is an exclusive *lower* bound, so
+  advancing it to a mid-backlog position discards everything older
+  rather than deferring it. The pager therefore withholds every page
+  until the backward walk has reached the bound, then emits
+  oldest-first. To make a walk that must finish affordable it stores a
+  **page key** per page rather than the records — for the RPC source,
+  the `before` marker *and* the newest signature the page held when it
+  was enumerated. Both ends are needed: a window bounded only from below
+  is open at the tip, so it can grow between enumeration and emission,
+  and the cursor must land on the recorded newest rather than on
+  whatever is newest by then. The per-poll page cap bounds how long one
+  `next()` runs, not how deep the walk may go: an unfinished walk
+  resumes where it stopped. Emission is two-phase for the same reason a
+  cursor is conservative — the page stays queued until the batch is
+  built, so a source error retries it instead of skipping it.
 - **Observability hook.** *Resolved — `FeedMetrics`, a two-callback
   trait (`on_batch` / `on_error`) with no-op defaults that the runner
   emits through; `run_with_metrics` / `run_until_with_metrics` carry a

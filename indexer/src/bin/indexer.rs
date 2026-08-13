@@ -7,7 +7,11 @@ use dropset_feeds::{
     connect, run_with_metrics, BatchStats, CursorStore, FeedMetrics, PgCursorStore, RawTx,
     RpcPollSource, RunConfig, Sink, Source, StoreSink,
 };
-use dropset_indexer::{aggregate::AggregateSink, config::Config, store::EventWriter, store::Store};
+use dropset_indexer::{
+    aggregate::AggregateSink,
+    config::Config,
+    store::{EventWriter, Store},
+};
 use std::time::Duration;
 
 #[tokio::main]
@@ -58,9 +62,15 @@ async fn main() -> anyhow::Result<()> {
     run_with_metrics(source, sinks, run_cfg, IngestLog).await
 }
 
-/// Log what the old hand-rolled loop logged — how much each tick ingested —
-/// now through the framework's observability seam rather than inline in the
-/// loop. Silent while idle, so a quiet cluster does not fill the log.
+/// Log how much each tick ingested, through the framework's observability
+/// seam rather than inline in the loop. Silent while idle, so a quiet cluster
+/// does not fill the log.
+///
+/// This reports what the runner can see — transactions in the batch, whether
+/// the source is still draining a backlog, and how long the fetch took. The
+/// two figures the pre-migration loop also printed now sit with the code that
+/// owns them: rows written is a `StoreSink` debug line, and legs folded an
+/// `AggregateSink` one.
 struct IngestLog;
 
 impl FeedMetrics for IngestLog {

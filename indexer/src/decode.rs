@@ -2,13 +2,15 @@
 //! at their on-chain coordinates, reusing the shared
 //! `dropset_sdk::events` codec.
 //!
-//! The fetched-transaction type is the framework's [`RawTx`]
-//! (`dropset_feeds`), re-exported here: the ingestion framework flattens and
-//! base58-decodes a transaction's inner instructions, and decoding what is
-//! inside those blobs is the part that stays Dropset-specific.
+//! The fetched-transaction type is the framework's [`dropset_feeds::RawTx`]:
+//! the ingestion framework flattens and base58-decodes a transaction's inner
+//! instructions, and decoding what is inside those blobs is the part that
+//! stays Dropset-specific. It is referred to by its framework path
+//! throughout this crate rather than re-exported here, so there is one name
+//! for one type.
 
 use crate::model::{DecodedEvent, EventCoords};
-pub use dropset_feeds::RawTx;
+use dropset_feeds::RawTx;
 use dropset_sdk::events::{decode_event_payload, strip_event_tag};
 
 /// Decode every Dropset event-CPI from a transaction, assigning each its

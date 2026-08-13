@@ -34,7 +34,7 @@ mod sink;
 mod source;
 mod time;
 
-pub use backfill::{Backfill, Step};
+pub use backfill::{Backfill, BackfillStep};
 pub use cursor::{Cursor, CursorStore};
 pub use forward::{forward_channel, ForwardSink};
 pub use record::Batch;
@@ -65,7 +65,7 @@ pub mod venues;
 #[cfg(feature = "rpc")]
 mod rpc;
 #[cfg(feature = "rpc")]
-pub use rpc::{RawTx, RpcPollSource};
+pub use rpc::{RawTx, RpcPollSource, RpcTransport};
 
 #[cfg(feature = "stream")]
 mod stream;

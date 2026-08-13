@@ -4,11 +4,10 @@
 //! a watermark that lands mid-take and a replayed slot both converge to the
 //! same row (docs/indexer.md §6).
 
-use crate::decode::RawTx;
 use crate::model::{FillRow, Take};
 use crate::store::{Cursor, Store};
 use async_trait::async_trait;
-use dropset_feeds::{Batch, Sink};
+use dropset_feeds::{Batch, RawTx, Sink};
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use std::collections::{BTreeMap, BTreeSet};

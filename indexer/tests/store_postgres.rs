@@ -166,20 +166,51 @@ async fn re_delivering_a_batch_writes_no_duplicate_rows() {
     let market = Pubkey::new_unique();
     let mut sink = StoreSink::new(pool.clone(), "rpc:test", EventWriter);
 
-    // Two legs of one take, so the event PK has to separate them by ordinal.
+    // Two legs of one take, so the event PK has to separate them by ordinal,
+    // plus a non-fill so the JSONB table's ON CONFLICT is re-delivered too.
     let batch = Batch::new(vec![raw_tx(
         11,
         "sig-b",
-        vec![fill(market, 100, 200, 3), fill(market, 50, 100, 1)],
+        vec![
+            fill(market, 100, 200, 3),
+            fill(market, 50, 100, 1),
+            deposit(market),
+        ],
     )]);
 
     sink.handle(&batch).await.unwrap();
     assert_eq!(count(&pool, "fill_events").await, 2);
+    assert_eq!(count(&pool, "events").await, 1);
 
     // A crash between the commit and the cursor save re-delivers the batch;
     // the writer's ON CONFLICT absorbs it (docs/data-feeds.md §3).
     sink.handle(&batch).await.unwrap();
     assert_eq!(count(&pool, "fill_events").await, 2);
+    assert_eq!(count(&pool, "events").await, 1);
+}
+
+/// Sink order is load-bearing, not stylistic: the aggregator folds legs the
+/// store sink has already committed, so running it first folds nothing. The
+/// binary wires them in this order and a comment says why — this is what
+/// fails if someone swaps them.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn folding_before_the_store_sink_commits_finds_nothing_to_fold() {
+    let (_pg, pool, store) = start_pg().await;
+    let market = Pubkey::new_unique();
+    let mut store_sink = StoreSink::new(pool.clone(), "rpc:test", EventWriter);
+    let mut aggregate_sink = AggregateSink::new(store.clone(), 100);
+
+    let batch = Batch::new(vec![raw_tx(13, "sig-e", vec![fill(market, 10, 20, 1)])]);
+
+    // The wrong order: nothing is committed yet, so there is nothing to fold.
+    aggregate_sink.handle(&batch).await.unwrap();
+    assert!(store.list_takes(None, 10).await.unwrap().is_empty());
+
+    // The runner's order: persist, then fold.
+    store_sink.handle(&batch).await.unwrap();
+    aggregate_sink.handle(&batch).await.unwrap();
+    assert_eq!(store.list_takes(None, 10).await.unwrap().len(), 1);
 }
 
 #[tokio::test]

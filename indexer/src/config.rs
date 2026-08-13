@@ -33,9 +33,14 @@ impl Config {
             program_id,
             poll_interval_ms: env_or("POLL_INTERVAL_MS", "1000").parse().unwrap_or(1000),
             api_bind: env_or("API_BIND", "0.0.0.0:8080"),
+            // Floored here rather than at each use site: this one value sizes
+            // both the ingest page and the aggregator's fold batch, and a `0`
+            // is silently fatal to the latter — `run_once` would fold nothing,
+            // forever, while ingest kept writing legs that never became takes.
             signature_batch_limit: env_or("SIGNATURE_BATCH_LIMIT", "200")
                 .parse()
-                .unwrap_or(200),
+                .unwrap_or(200)
+                .max(1),
         })
     }
 }

@@ -4,7 +4,7 @@
 
 // cspell:word nonblocking
 
-use crate::backfill::{Backfill, Step};
+use crate::backfill::{Backfill, BackfillStep};
 use crate::cursor::Cursor;
 use crate::record::Batch;
 use crate::source::Source;
@@ -30,42 +30,84 @@ use std::str::FromStr;
 /// deep backlog is enumerated across several polls rather than one long one.
 const DEFAULT_MAX_PAGES_PER_POLL: usize = 16;
 
+/// `getSignaturesForAddress`'s documented maximum `limit`. Requesting more is
+/// not a bigger page — a node either rejects the request or silently clamps
+/// it, and a silent clamp is the dangerous one: every page would come back
+/// short, so the walk would read "reached the bound" after a single page and
+/// advance the cursor over the entire remaining backlog. Clamping here makes
+/// the saturation test mean what it says.
+const MAX_SIGNATURES_PER_PAGE: usize = 1000;
+
 /// One page of the backward walk: signature summaries, newest-first, as the
 /// RPC returns them.
-type SigPage = Vec<RpcConfirmedTransactionStatusWithSignature>;
+type SignaturePage = Vec<RpcConfirmedTransactionStatusWithSignature>;
 
-/// The single RPC call the backward walk makes, behind a seam so the walk's
-/// paging — the `before` chaining, the saturation test, the page cap — is
-/// unit-testable without a validator. The production implementation is the
-/// one below, on the real client.
+/// The address of one enumerated page — **both** ends of its window.
+///
+/// The `before` marker alone is not an address. A window bounded only from
+/// below by the resume cursor is open at the tip, so between enumeration and
+/// emission it can *grow*: the re-request would return the newest
+/// `batch_limit` of a larger window, dropping the page's own oldest records
+/// while the cursor advanced to the ledger's newest. Recording the page's
+/// newest signature closes the window, and it is that recorded value — never
+/// whatever is newest at emission time — the cursor advances to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PageKey {
+    /// The `before` bound this page was fetched with; `None` is the tip.
+    before: Option<Signature>,
+    /// The page's newest signature when the walk saw it.
+    newest: Signature,
+}
+
+/// The two RPC calls this source makes, behind a seam so the whole drive
+/// loop — the `before` chaining, the saturation test, the page cap, the
+/// emission and cursor advance — is exercisable without a validator. The
+/// production implementation is the one below, on the real client.
+///
+/// It is public because [`RpcPollSource`] is generic over it, and because it
+/// is the shape a geyser transport would implement: same `before`-chained
+/// signature walk and per-signature fetch, different wire.
 #[async_trait]
-trait SignaturePager: Send + Sync {
+pub trait RpcTransport: Send + Sync {
     async fn page(
         &self,
         program_id: &Pubkey,
         config: GetConfirmedSignaturesForAddress2Config,
-    ) -> Result<SigPage>;
+    ) -> Result<SignaturePage>;
+
+    async fn transaction(
+        &self,
+        signature: &Signature,
+        config: RpcTransactionConfig,
+    ) -> Result<EncodedConfirmedTransactionWithStatusMeta>;
 }
 
 #[async_trait]
-impl SignaturePager for RpcClient {
+impl RpcTransport for RpcClient {
     async fn page(
         &self,
         program_id: &Pubkey,
         config: GetConfirmedSignaturesForAddress2Config,
-    ) -> Result<SigPage> {
+    ) -> Result<SignaturePage> {
         Ok(self
             .get_signatures_for_address_with_config(program_id, config)
             .await?)
+    }
+
+    async fn transaction(
+        &self,
+        signature: &Signature,
+        config: RpcTransactionConfig,
+    ) -> Result<EncodedConfirmedTransactionWithStatusMeta> {
+        Ok(self.get_transaction_with_config(signature, config).await?)
     }
 }
 
 /// One segment of the backward walk: what it found, where to resume, and
 /// whether it got to the bound.
 struct WalkSegment {
-    /// The `before` marker each discovered page was fetched with, in walk
-    /// order (newest page first). `None` is the first page — the present.
-    markers: Vec<Option<Signature>>,
+    /// The pages discovered, in walk order (newest page first).
+    keys: Vec<PageKey>,
     /// The `before` to continue from, if the walk stopped at `max_pages`.
     resume: Option<Signature>,
     /// Whether the walk reached the resume cursor (or the start of history).
@@ -76,11 +118,11 @@ struct WalkSegment {
 /// `max_pages` pages.
 ///
 /// Signature summaries only — no transaction is fetched — and only each
-/// page's `before` marker is kept, so enumerating a deep backlog costs one
-/// signature per page rather than per record. That is what lets the walk run
-/// all the way to the bound, which [`Backfill`] requires before anything may
-/// be emitted.
-async fn enumerate_pages<P: SignaturePager + ?Sized>(
+/// page's two bounds are kept, so enumerating a deep backlog costs two
+/// signatures per page rather than one per record. That is what lets the walk
+/// run all the way to the bound, which [`Backfill`] requires before anything
+/// may be emitted.
+async fn enumerate_pages<P: RpcTransport>(
     client: &P,
     program_id: &Pubkey,
     until: Option<Signature>,
@@ -88,7 +130,7 @@ async fn enumerate_pages<P: SignaturePager + ?Sized>(
     batch_limit: usize,
     max_pages: usize,
 ) -> Result<WalkSegment> {
-    let mut markers = Vec::new();
+    let mut keys = Vec::new();
     let mut before = start_before;
     for _ in 0..max_pages {
         let config = GetConfirmedSignaturesForAddress2Config {
@@ -100,12 +142,15 @@ async fn enumerate_pages<P: SignaturePager + ?Sized>(
         let page = client.page(program_id, config).await?;
         if page.is_empty() {
             return Ok(WalkSegment {
-                markers,
+                keys,
                 resume: before,
                 reached_bound: true,
             });
         }
-        markers.push(before);
+        keys.push(PageKey {
+            before,
+            newest: Signature::from_str(&page[0].signature)?,
+        });
         // A short page means the window between `before` and the cursor is
         // exhausted: the walk has reached the bound (or the start of the
         // program's history).
@@ -113,14 +158,14 @@ async fn enumerate_pages<P: SignaturePager + ?Sized>(
         before = Some(Signature::from_str(&page[page.len() - 1].signature)?);
         if !saturated {
             return Ok(WalkSegment {
-                markers,
+                keys,
                 resume: before,
                 reached_bound: true,
             });
         }
     }
     Ok(WalkSegment {
-        markers,
+        keys,
         resume: before,
         reached_bound: false,
     })
@@ -158,18 +203,20 @@ struct RpcCursor {
 /// bound — advancing it mid-backlog discards everything older rather than
 /// deferring it. The source therefore runs in two phases behind a
 /// [`Backfill`] pager: it *enumerates* backwards with `before`, keeping only
-/// each page's marker, until it reaches the resume cursor; then it
+/// each page's two bounds, until it reaches the resume cursor; then it
 /// *hydrates* one page per [`Source::next`], oldest page first, advancing
-/// the cursor to each emitted page's newest signature. Because emission runs
-/// oldest → newest, nothing is ever left behind the cursor.
+/// the cursor to the newest signature that page held **when it was
+/// enumerated**. Because emission runs oldest → newest and the cursor lands
+/// on a recorded bound rather than on whatever is newest at emission time,
+/// nothing is ever left behind the cursor.
 ///
 /// Enumeration is bounded per poll, not in total: a walk that hits
 /// [`DEFAULT_MAX_PAGES_PER_POLL`] resumes where it stopped on the next poll
 /// (reporting a backlog, so the runner loops straight back) rather than
 /// emitting from an unknown position.
-pub struct RpcPollSource {
+pub struct RpcPollSource<T = RpcClient> {
     name: String,
-    client: RpcClient,
+    client: T,
     program_id: Pubkey,
     batch_limit: usize,
     max_pages_per_poll: usize,
@@ -178,23 +225,34 @@ pub struct RpcPollSource {
     last_signature: Option<Signature>,
     /// Where an unfinished backward walk resumes from.
     walk_before: Option<Signature>,
-    /// Markers for pages enumerated but not yet emitted, drained
-    /// oldest-first.
-    pager: Backfill<Option<Signature>>,
+    /// Pages enumerated but not yet emitted, drained oldest-first.
+    pager: Backfill<PageKey>,
 }
 
-impl RpcPollSource {
+impl RpcPollSource<RpcClient> {
     /// A source polling `program_id` at `rpc_url`, up to `batch_limit`
     /// signatures per page. Starts from the present; use [`Self::resume_from`]
     /// to continue from a saved cursor.
     pub fn new(rpc_url: String, program_id: Pubkey, batch_limit: usize) -> Self {
+        let client = RpcClient::new_with_commitment(rpc_url, CommitmentConfig::finalized());
+        Self::with_transport(client, program_id, batch_limit)
+    }
+}
+
+impl<T: RpcTransport> RpcPollSource<T> {
+    /// A source over an arbitrary transport. [`Self::new`] is this with the
+    /// real client; the seam exists so the drive loop can be tested without a
+    /// validator.
+    fn with_transport(client: T, program_id: Pubkey, batch_limit: usize) -> Self {
         Self {
             name: format!("rpc:{program_id}"),
-            client: RpcClient::new_with_commitment(rpc_url, CommitmentConfig::finalized()),
+            client,
             program_id,
             // A zero page would make every page look saturated and the walk
-            // never reach the bound; one signature per page is the floor.
-            batch_limit: batch_limit.max(1),
+            // never reach the bound; asking for more than the RPC's maximum
+            // risks a silent clamp, which has the same effect in reverse —
+            // every page short, so the walk stops after one.
+            batch_limit: batch_limit.clamp(1, MAX_SIGNATURES_PER_PAGE),
             max_pages_per_poll: DEFAULT_MAX_PAGES_PER_POLL,
             last_signature: None,
             walk_before: None,
@@ -217,25 +275,38 @@ impl RpcPollSource {
         Ok(self)
     }
 
-    /// Re-request one enumerated page from its `before` marker. The current
-    /// resume cursor bounds it from below, so the window is exactly the page
-    /// the walk saw — a page that has since grown is still capped at
-    /// `batch_limit`, and anything that falls outside is picked up by the
-    /// walk that follows.
-    async fn fetch_page(&self, before: Option<Signature>) -> Result<SigPage> {
+    /// Re-request one enumerated page and trim it back to what the walk saw.
+    ///
+    /// The current resume cursor bounds the window from below, but the tip
+    /// page's window is open above, so records that landed since enumeration
+    /// appear at its head. Those belong to a later walk — the cursor is about
+    /// to stop at this page's recorded `newest`, which leaves them above it —
+    /// so they are dropped here rather than emitted.
+    ///
+    /// `Ok(None)` means the page could not be reproduced: its recorded newest
+    /// is no longer inside the window (more than `batch_limit` arrivals since
+    /// enumeration), or the window came back empty (a pooled endpoint with
+    /// shallower history). Neither is safe to emit from, and neither may
+    /// advance the cursor — the caller re-enumerates instead.
+    async fn fetch_page(&self, key: &PageKey) -> Result<Option<SignaturePage>> {
         let config = GetConfirmedSignaturesForAddress2Config {
-            before,
+            before: key.before,
             until: self.last_signature,
             limit: Some(self.batch_limit),
             commitment: Some(CommitmentConfig::finalized()),
         };
-        self.client.page(&self.program_id, config).await
+        let page = self.client.page(&self.program_id, config).await?;
+        let recorded = key.newest.to_string();
+        match page.iter().position(|s| s.signature == recorded) {
+            Some(head) => Ok(Some(page[head..].to_vec())),
+            None => Ok(None),
+        }
     }
 
     /// Fetch each transaction in `page` and flatten it, oldest-first.
     /// Transactions that failed on-chain carry no events worth storing and
     /// are skipped.
-    async fn hydrate(&self, page: &SigPage) -> Result<Vec<RawTx>> {
+    async fn hydrate(&self, page: &SignaturePage) -> Result<Vec<RawTx>> {
         let tx_config = RpcTransactionConfig {
             encoding: Some(UiTransactionEncoding::Base64),
             commitment: Some(CommitmentConfig::finalized()),
@@ -248,20 +319,25 @@ impl RpcPollSource {
                 continue;
             }
             let signature = Signature::from_str(&s.signature)?;
-            let tx = self
-                .client
-                .get_transaction_with_config(&signature, tx_config)
-                .await?;
+            let tx = self.client.transaction(&signature, tx_config).await?;
             if let Some(raw) = to_raw_tx(&s.signature, tx) {
                 out.push(raw);
             }
         }
         Ok(out)
     }
+
+    /// Abandon the current walk and enumerate again from the present. The
+    /// cursor is untouched, so nothing already emitted is re-emitted and
+    /// nothing pending is skipped.
+    fn restart_walk(&mut self) {
+        self.pager.restart();
+        self.walk_before = None;
+    }
 }
 
 #[async_trait]
-impl Source for RpcPollSource {
+impl<T: RpcTransport> Source for RpcPollSource<T> {
     type Record = RawTx;
 
     fn name(&self) -> &str {
@@ -271,7 +347,7 @@ impl Source for RpcPollSource {
     async fn next(&mut self) -> Result<Batch<RawTx>> {
         loop {
             match self.pager.step() {
-                Step::Enumerate => {
+                BackfillStep::Enumerate => {
                     let segment = enumerate_pages(
                         &self.client,
                         &self.program_id,
@@ -282,7 +358,7 @@ impl Source for RpcPollSource {
                     )
                     .await?;
                     self.walk_before = segment.resume;
-                    self.pager.extend(segment.markers, segment.reached_bound);
+                    self.pager.extend(segment.keys, segment.reached_bound);
                     if !segment.reached_bound {
                         // Still enumerating, so nothing may be emitted yet.
                         // Report a backlog and let the runner loop straight
@@ -290,33 +366,38 @@ impl Source for RpcPollSource {
                         return Ok(Batch::new(vec![]).with_caught_up(false));
                     }
                 }
-                Step::Emit(before) => {
-                    let page = self.fetch_page(before).await?;
-                    if page.is_empty() {
-                        // The window emptied between enumeration and here —
-                        // nothing to emit, and the cursor must not move.
-                        continue;
-                    }
-                    // The page's newest signature becomes the cursor. Taking
-                    // it before hydration is safe: the batch is only durable
-                    // once the sink commits it, and a crash in between
-                    // re-fetches this page (the at-least-once contract,
-                    // docs/data-feeds.md §3).
-                    let newest = Signature::from_str(&page[0].signature)?;
+                BackfillStep::Emit(key) => {
+                    let Some(page) = self.fetch_page(&key).await? else {
+                        // The page could not be reproduced from its window.
+                        // Emitting a different page under its cursor would
+                        // advance over the difference, so drop the walk and
+                        // enumerate again from the present instead. The
+                        // cursor has not moved, so nothing is lost.
+                        self.restart_walk();
+                        return Ok(Batch::new(vec![]).with_caught_up(false));
+                    };
                     let out = self.hydrate(&page).await?;
 
-                    self.last_signature = Some(newest);
+                    // Everything above is fallible, and the runner keeps this
+                    // source alive across an error — so the page stays queued
+                    // until here. Committing after the batch is built is what
+                    // makes a failed emission a retry rather than a skip.
+                    self.pager.commit();
+                    // The cursor advances to the newest signature the page
+                    // held *when it was enumerated*, never to whatever is
+                    // newest now: anything that landed since is above it and
+                    // belongs to the next walk.
+                    self.last_signature = Some(key.newest);
                     let cursor = Cursor::new(&RpcCursor {
-                        last_signature: newest.to_string(),
+                        last_signature: key.newest.to_string(),
                     })?;
                     return Ok(Batch::new(out)
                         .with_cursor(cursor)
                         .with_caught_up(self.pager.caught_up()));
                 }
-                Step::Done => {
+                BackfillStep::Done => {
                     // Backlog drained; the next poll walks from the present.
-                    self.pager.restart();
-                    self.walk_before = None;
+                    self.restart_walk();
                     return Ok(Batch::new(vec![]));
                 }
             }
@@ -358,6 +439,7 @@ mod tests {
     use solana_transaction_status::{
         EncodedTransaction, EncodedTransactionWithStatusMeta, UiTransactionStatusMeta,
     };
+    use std::sync::Mutex;
 
     /// A fetched transaction carrying `meta`, whose `innerInstructions` come
     /// from the JSON `getTransaction` returns.
@@ -462,33 +544,101 @@ mod tests {
         assert!(to_raw_tx("sig-4", with_meta(1, None, None)).is_none());
     }
 
-    /// A stand-in ledger: signatures newest-first, paged exactly as
+    /// A stand-in cluster: signatures newest-first, paged exactly as
     /// `getSignaturesForAddress` does — `before` excludes everything at or
-    /// newer than it, `until` excludes everything at or older than it, and
-    /// at most `limit` come back.
-    struct FakeLedger {
+    /// newer than it, `until` excludes everything at or older than it, and at
+    /// most `limit` come back, **taken from the newest end**. That last
+    /// detail is the one the backfill design turns on, so the fake models it
+    /// explicitly.
+    ///
+    /// It is deliberately mutable and fallible: the two failures this
+    /// transport must survive — a page that errors mid-drain, and records
+    /// landing while a backlog drains — are invisible to a fixed, infallible
+    /// fake.
+    #[derive(Default)]
+    struct FakeRpc {
+        state: Mutex<FakeState>,
+    }
+
+    #[derive(Default)]
+    struct FakeState {
         /// Every signature the program has, newest-first.
         signatures: Vec<String>,
+        /// How many `page` calls have been made.
+        page_calls: usize,
+        /// The `page` call index that returns an error instead of a page.
+        fail_page_call: Option<usize>,
+        /// After this `page` call index, append `grow_count` fresh
+        /// signatures at the tip — a burst arriving mid-drain.
+        grow_after_page_call: Option<usize>,
+        grow_count: usize,
+        /// Distinguishes minted signatures from the seeded ones.
+        minted: u64,
+    }
+
+    /// A distinct, valid signature for index `i`.
+    fn sig_at(i: u64) -> String {
+        let mut bytes = [0u8; 64];
+        bytes[..8].copy_from_slice(&i.to_be_bytes());
+        Signature::from(bytes).to_string()
+    }
+
+    impl FakeRpc {
+        /// `n` signatures, newest-first — index 0 is the newest.
+        fn with_signatures(n: usize) -> Self {
+            let fake = Self::default();
+            fake.state.lock().unwrap().signatures = (0..n as u64).map(sig_at).collect();
+            fake
+        }
+
+        fn fail_page_call(self, call: usize) -> Self {
+            self.state.lock().unwrap().fail_page_call = Some(call);
+            self
+        }
+
+        fn grow_after_page_call(self, call: usize, count: usize) -> Self {
+            let mut state = self.state.lock().unwrap();
+            state.grow_after_page_call = Some(call);
+            state.grow_count = count;
+            drop(state);
+            self
+        }
+
+        /// The signatures present at construction, oldest-first — what a
+        /// correct drain must emit, in order.
+        fn seeded_oldest_first(&self, n: usize) -> Vec<String> {
+            (0..n as u64).map(sig_at).rev().collect()
+        }
     }
 
     #[async_trait]
-    impl SignaturePager for FakeLedger {
+    impl RpcTransport for FakeRpc {
         async fn page(
             &self,
             _program_id: &Pubkey,
             config: GetConfirmedSignaturesForAddress2Config,
-        ) -> Result<SigPage> {
-            let position = |sig: Signature| {
+        ) -> Result<SignaturePage> {
+            let mut state = self.state.lock().unwrap();
+            let call = state.page_calls;
+            state.page_calls += 1;
+            if state.fail_page_call == Some(call) {
+                anyhow::bail!("scripted page failure on call {call}");
+            }
+
+            let position = |sig: Signature, haystack: &[String]| {
                 let s = sig.to_string();
-                self.signatures.iter().position(|have| *have == s)
+                haystack.iter().position(|have| *have == s)
             };
-            let start = config.before.and_then(position).map_or(0, |i| i + 1);
+            let start = config
+                .before
+                .and_then(|b| position(b, &state.signatures))
+                .map_or(0, |i| i + 1);
             let end = config
                 .until
-                .and_then(position)
-                .unwrap_or(self.signatures.len());
-            let limit = config.limit.unwrap_or(self.signatures.len());
-            Ok(self.signatures[start.min(end)..end]
+                .and_then(|u| position(u, &state.signatures))
+                .unwrap_or(state.signatures.len());
+            let limit = config.limit.unwrap_or(state.signatures.len());
+            let page: SignaturePage = state.signatures[start.min(end)..end]
                 .iter()
                 .take(limit)
                 .map(|signature| RpcConfirmedTransactionStatusWithSignature {
@@ -499,128 +649,114 @@ mod tests {
                     block_time: None,
                     confirmation_status: None,
                 })
-                .collect())
+                .collect();
+
+            if state.grow_after_page_call == Some(call) {
+                for _ in 0..state.grow_count {
+                    state.minted += 1;
+                    let fresh = sig_at(1_000 + state.minted);
+                    state.signatures.insert(0, fresh);
+                }
+            }
+            Ok(page)
+        }
+
+        async fn transaction(
+            &self,
+            _signature: &Signature,
+            _config: RpcTransactionConfig,
+        ) -> Result<EncodedConfirmedTransactionWithStatusMeta> {
+            Ok(encoded_tx(1, None, json!([])))
         }
     }
 
-    /// `n` distinct valid signatures, newest-first — index 0 is the newest.
-    fn ledger(n: usize) -> FakeLedger {
-        FakeLedger {
-            signatures: (0..n)
-                .map(|i| {
-                    let mut bytes = [0u8; 64];
-                    bytes[..8].copy_from_slice(&(i as u64).to_be_bytes());
-                    Signature::from(bytes).to_string()
-                })
-                .collect(),
-        }
+    fn source_over(fake: FakeRpc, batch_limit: usize) -> RpcPollSource<FakeRpc> {
+        RpcPollSource::with_transport(fake, Pubkey::new_unique(), batch_limit)
     }
 
-    /// Drive the source's own `next()` logic against a fake ledger, without
-    /// the transaction hydration that would need a validator: enumerate,
-    /// then emit page by page, collecting every signature in emission order.
-    /// This is the shape [`Source::next`] runs; keeping it in one place lets
-    /// each test vary the page size and per-poll cap.
-    async fn drain(
-        led: &FakeLedger,
-        batch_limit: usize,
-        max_pages_per_poll: usize,
-    ) -> (Vec<String>, usize) {
-        let program = Pubkey::new_unique();
-        let mut pager: Backfill<Option<Signature>> = Backfill::new();
-        let mut cursor: Option<Signature> = None;
-        let mut walk_before: Option<Signature> = None;
+    /// Drive the **real** [`Source::next`] to exhaustion, collecting the
+    /// signature of every record it emits, in emission order.
+    ///
+    /// It mirrors the runner's error handling deliberately: a `next()` that
+    /// errors is logged and retried against the *same* source, which is what
+    /// makes a dropped page observable here rather than only in production.
+    async fn drain_source(source: &mut RpcPollSource<FakeRpc>, max_polls: usize) -> Vec<String> {
         let mut emitted = Vec::new();
-        let mut polls = 0;
-
-        // A generous bound: the loop must terminate on its own well inside it.
-        for _ in 0..256 {
-            match pager.step() {
-                Step::Enumerate => {
-                    let segment = enumerate_pages(
-                        led,
-                        &program,
-                        cursor,
-                        walk_before,
-                        batch_limit,
-                        max_pages_per_poll,
-                    )
-                    .await
-                    .unwrap();
-                    walk_before = segment.resume;
-                    pager.extend(segment.markers, segment.reached_bound);
-                    if !segment.reached_bound {
-                        polls += 1;
-                    }
-                }
-                Step::Emit(before) => {
-                    let config = GetConfirmedSignaturesForAddress2Config {
-                        before,
-                        until: cursor,
-                        limit: Some(batch_limit),
-                        commitment: Some(CommitmentConfig::finalized()),
-                    };
-                    let page = led.page(&program, config).await.unwrap();
-                    if page.is_empty() {
-                        continue;
-                    }
-                    cursor = Some(Signature::from_str(&page[0].signature).unwrap());
-                    emitted.extend(page.iter().rev().map(|s| s.signature.clone()));
-                    polls += 1;
-                }
-                Step::Done => return (emitted, polls),
+        for _ in 0..max_polls {
+            let batch = match source.next().await {
+                Ok(batch) => batch,
+                // What `run_until` does: warn, back off, poll again.
+                Err(_) => continue,
+            };
+            emitted.extend(batch.records.iter().map(|r| r.signature.clone()));
+            if batch.caught_up && batch.is_empty() {
+                return emitted;
             }
         }
-        panic!("the drive loop did not terminate");
-    }
-
-    /// Every signature the ledger holds, oldest-first — what a correct drain
-    /// must produce.
-    fn oldest_first(led: &FakeLedger) -> Vec<String> {
-        led.signatures.iter().rev().cloned().collect()
+        emitted
     }
 
     /// A backlog that fits in one page needs one call and reaches the bound.
     #[tokio::test]
     async fn a_short_page_ends_the_walk_at_the_bound() {
-        let led = ledger(3);
-        let segment = enumerate_pages(&led, &Pubkey::new_unique(), None, None, 10, 16)
+        let fake = FakeRpc::with_signatures(3);
+        let segment = enumerate_pages(&fake, &Pubkey::new_unique(), None, None, 10, 16)
             .await
             .unwrap();
 
         assert!(segment.reached_bound);
-        assert_eq!(segment.markers, vec![None]);
+        assert_eq!(segment.keys.len(), 1);
+        assert_eq!(segment.keys[0].before, None);
+        // The key pins the page's newest signature, not just its lower bound.
+        assert_eq!(segment.keys[0].newest.to_string(), sig_at(0));
     }
 
-    /// The walk chains `before` from each page's oldest signature, so the
-    /// markers address consecutive, non-overlapping windows.
+    /// The walk chains `before` from each page's oldest signature, so the keys
+    /// address consecutive, non-overlapping windows — each pinned at both ends.
     #[tokio::test]
-    async fn the_walk_chains_before_markers_across_pages() {
-        let led = ledger(7);
-        let segment = enumerate_pages(&led, &Pubkey::new_unique(), None, None, 3, 16)
+    async fn the_walk_chains_page_keys_across_pages() {
+        let fake = FakeRpc::with_signatures(7);
+        let segment = enumerate_pages(&fake, &Pubkey::new_unique(), None, None, 3, 16)
             .await
             .unwrap();
 
         assert!(segment.reached_bound);
         // 3 + 3 + 1: the short last page is what ends the walk.
-        let sig = |i: usize| Signature::from_str(&led.signatures[i]).unwrap();
-        assert_eq!(segment.markers, vec![None, Some(sig(2)), Some(sig(5))]);
+        let sig = |i: u64| Signature::from_str(&sig_at(i)).unwrap();
+        let expected = vec![
+            PageKey {
+                before: None,
+                newest: sig(0),
+            },
+            PageKey {
+                before: Some(sig(2)),
+                newest: sig(3),
+            },
+            PageKey {
+                before: Some(sig(5)),
+                newest: sig(6),
+            },
+        ];
+        assert_eq!(segment.keys, expected);
     }
 
     /// A walk stops at the resume cursor: signatures at or older than it were
     /// already emitted and must not be enumerated again.
     #[tokio::test]
     async fn the_walk_stops_at_the_resume_cursor() {
-        let led = ledger(6);
+        let fake = FakeRpc::with_signatures(6);
         // Resume just below the three newest.
-        let until = Signature::from_str(&led.signatures[3]).unwrap();
-        let segment = enumerate_pages(&led, &Pubkey::new_unique(), Some(until), None, 2, 16)
+        let until = Signature::from_str(&sig_at(3)).unwrap();
+        let segment = enumerate_pages(&fake, &Pubkey::new_unique(), Some(until), None, 2, 16)
             .await
             .unwrap();
 
         assert!(segment.reached_bound);
-        let sig = |i: usize| Signature::from_str(&led.signatures[i]).unwrap();
-        assert_eq!(segment.markers, vec![None, Some(sig(1))]);
+        let bounds: Vec<_> = segment.keys.iter().map(|k| k.before).collect();
+        assert_eq!(
+            bounds,
+            vec![None, Some(Signature::from_str(&sig_at(1)).unwrap())]
+        );
     }
 
     /// Hitting the per-poll cap reports an unreached bound and where to
@@ -628,17 +764,17 @@ mod tests {
     /// restarting or emitting from an unknown position.
     #[tokio::test]
     async fn hitting_the_per_poll_cap_reports_where_to_resume() {
-        let led = ledger(100);
-        let segment = enumerate_pages(&led, &Pubkey::new_unique(), None, None, 5, 3)
+        let fake = FakeRpc::with_signatures(100);
+        let segment = enumerate_pages(&fake, &Pubkey::new_unique(), None, None, 5, 3)
             .await
             .unwrap();
 
         assert!(!segment.reached_bound);
-        assert_eq!(segment.markers.len(), 3);
+        assert_eq!(segment.keys.len(), 3);
         // Three pages of five consumed the fifteen newest signatures.
         assert_eq!(
             segment.resume,
-            Some(Signature::from_str(&led.signatures[14]).unwrap())
+            Some(Signature::from_str(&sig_at(14)).unwrap())
         );
     }
 
@@ -648,9 +784,9 @@ mod tests {
     /// signature, losing every record below it.
     #[tokio::test]
     async fn a_deep_backlog_drains_completely_and_in_order() {
-        let led = ledger(9);
-        let (emitted, _) = drain(&led, 2, 16).await;
-        assert_eq!(emitted, oldest_first(&led));
+        let mut source = source_over(FakeRpc::with_signatures(9), 2);
+        let emitted = drain_source(&mut source, 64).await;
+        assert_eq!(emitted, source.client.seeded_oldest_first(9));
     }
 
     /// The same guarantee when the per-poll cap splits the walk across
@@ -658,21 +794,134 @@ mod tests {
     /// still begins at the true oldest record.
     #[tokio::test]
     async fn a_walk_split_across_polls_still_drains_in_order() {
-        let led = ledger(9);
         // Page size 2 with a 2-page cap: the walk needs three segments.
-        let (emitted, polls) = drain(&led, 2, 2).await;
-        assert_eq!(emitted, oldest_first(&led));
-        // Enumeration cost real polls, so the split is genuinely exercised.
-        assert!(polls > 5, "expected a multi-poll drain, got {polls}");
+        let mut source = source_over(FakeRpc::with_signatures(9), 2).with_max_pages_per_poll(2);
+        let emitted = drain_source(&mut source, 64).await;
+        assert_eq!(emitted, source.client.seeded_oldest_first(9));
+    }
+
+    /// Records landing while a backlog drains must not displace it.
+    ///
+    /// The tip page's window is the one bounded only from below, and it is
+    /// emitted last — so on a deep backlog it is re-requested minutes after it
+    /// was enumerated. If the cursor were taken from whatever is newest at
+    /// that moment, the arrivals would push the page's own oldest records
+    /// below it and they would never be enumerated again. The page key pins
+    /// the newest signature the walk actually saw, so the cursor stops there
+    /// and the arrivals stay above it for the following walk.
+    #[tokio::test]
+    async fn records_landing_during_a_drain_do_not_displace_the_backlog() {
+        // 9 signatures at 2 per page: 5 enumeration calls (the last short),
+        // then emission re-requests each page. Grow the tip right after
+        // enumeration finishes, while the oldest pages are still draining.
+        let fake = FakeRpc::with_signatures(9).grow_after_page_call(5, 3);
+        let mut source = source_over(fake, 2);
+
+        let emitted = drain_source(&mut source, 64).await;
+
+        // Every seeded record is emitted, in order, before any new arrival.
+        let seeded = source.client.seeded_oldest_first(9);
+        assert!(
+            emitted.len() >= seeded.len(),
+            "expected at least the seeded backlog, got {} records",
+            emitted.len()
+        );
+        assert_eq!(&emitted[..seeded.len()], &seeded[..]);
+    }
+
+    /// An error partway through emitting a page must retry that page, not
+    /// skip it.
+    ///
+    /// The runner keeps the source alive across a source error, so a page
+    /// discarded on the way out is never revisited — and the cursor, which
+    /// only moves on success, would later advance straight over it. The
+    /// pager therefore holds the page until the batch is built.
+    #[tokio::test]
+    async fn a_failed_emission_retries_the_same_page() {
+        // Fail the first emission fetch (call 5 — calls 0-4 enumerate).
+        let fake = FakeRpc::with_signatures(9).fail_page_call(5);
+        let mut source = source_over(fake, 2);
+
+        let emitted = drain_source(&mut source, 64).await;
+
+        assert_eq!(emitted, source.client.seeded_oldest_first(9));
+    }
+
+    /// A drained backlog leaves the source able to find the next one.
+    ///
+    /// `Done` resets the walk's resume marker as well as the pager. Without
+    /// that reset the next walk would run `before` = an old signature against
+    /// `until` = a newer one — a window empty by construction — so the source
+    /// would report itself current forever and silently stop indexing.
+    #[tokio::test]
+    async fn a_second_walk_picks_up_records_that_arrive_after_a_drain() {
+        let mut source = source_over(FakeRpc::with_signatures(4), 2);
+        let first = drain_source(&mut source, 64).await;
+        assert_eq!(first, source.client.seeded_oldest_first(4));
+
+        // Two more transactions land after the source went idle.
+        {
+            let mut state = source.client.state.lock().unwrap();
+            state.signatures.insert(0, sig_at(2_001));
+            state.signatures.insert(0, sig_at(2_002));
+        }
+
+        let second = drain_source(&mut source, 64).await;
+        assert_eq!(second, vec![sig_at(2_001), sig_at(2_002)]);
     }
 
     /// A ledger with nothing newer than the cursor emits nothing and reports
     /// the source current.
     #[tokio::test]
     async fn an_empty_window_emits_nothing() {
-        let led = ledger(0);
-        let (emitted, _) = drain(&led, 5, 16).await;
-        assert!(emitted.is_empty());
+        let mut source = source_over(FakeRpc::with_signatures(0), 5);
+        assert!(drain_source(&mut source, 16).await.is_empty());
+    }
+
+    /// A page size above the RPC's documented maximum is clamped rather than
+    /// sent as-is: a node that silently clamps instead of rejecting would
+    /// return every page short, and the walk would read that as "reached the
+    /// bound" after one page and advance over the rest of the backlog.
+    #[test]
+    fn an_oversized_page_request_is_clamped_to_the_rpc_maximum() {
+        let source = source_over(FakeRpc::default(), 100_000);
+        assert_eq!(source.batch_limit, MAX_SIGNATURES_PER_PAGE);
+
+        let source = source_over(FakeRpc::default(), 0);
+        assert_eq!(source.batch_limit, 1);
+    }
+
+    /// The cursor this source writes is the cursor it can resume from.
+    ///
+    /// The two halves are written apart — `next` serializes an `RpcCursor`,
+    /// `resume_from` deserializes one — so nothing but this test stops a
+    /// rename of that struct's field from turning every restart into a
+    /// startup failure, or worse, a silent restart from the present.
+    #[tokio::test]
+    async fn a_cursor_this_source_wrote_resumes_this_source() {
+        let mut source = source_over(FakeRpc::with_signatures(4), 2);
+        drain_source(&mut source, 64).await;
+        let emitted_cursor = source
+            .last_signature
+            .expect("the drain advanced the cursor");
+
+        // Round-trip through the opaque form the store persists.
+        let batch = Batch::new(Vec::<RawTx>::new()).with_cursor(
+            Cursor::new(&RpcCursor {
+                last_signature: emitted_cursor.to_string(),
+            })
+            .unwrap(),
+        );
+        let stored = batch.cursor.expect("cursor attached");
+
+        let resumed = source_over(FakeRpc::with_signatures(4), 2)
+            .resume_from(&stored)
+            .expect("a cursor this source wrote must load");
+        assert_eq!(resumed.last_signature, Some(emitted_cursor));
+
+        // And a resumed source is genuinely current — it re-emits nothing.
+        let mut resumed = resumed;
+        assert!(drain_source(&mut resumed, 16).await.is_empty());
     }
 
     /// Undecodable base58 in one instruction skips that blob without
