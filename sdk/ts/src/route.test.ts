@@ -48,6 +48,12 @@ const MARKET_BASE64 = Buffer.from(MARKET_BYTES).toString('base64');
 // it at 100.
 const MARKET_MAX_PLATFORM_FEE_BPS = 100;
 
+// Stand-in market addresses for the fee-clamp tests, which never resolve a
+// route and so need no real PDA — only two addresses that differ from each
+// other, since the clamp warning dedups per market across the whole file.
+const MARKET_A = address('So11111111111111111111111111111111111111112');
+const MARKET_B = address('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
+
 type StubAccount = { data: string; owner: Address };
 
 /**
@@ -263,15 +269,82 @@ test('a missing mint account is an error, not a silent null route', async () => 
   );
 });
 
+/**
+ * A route stub carrying only what the fee clamp reads. The market address is a
+ * dedup key for the clamp warning and nothing else, so any distinct address
+ * serves — but it must differ between tests, since the "warn once" set is
+ * module-level and outlives a single test.
+ */
+const feeRoute = (market: Address, maxPlatformFeeBps: number) =>
+  ({ market, maxPlatformFeeBps }) as Parameters<typeof platformFeeBpsFor>[0];
+
+/** Run `fn` with `console.warn` captured, and return what it emitted. */
+function captureWarnings(fn: () => void): string[] {
+  const emitted: string[] = [];
+  const original = console.warn;
+  console.warn = (...args: unknown[]) => {
+    emitted.push(args.join(' '));
+  };
+  try {
+    fn();
+  } finally {
+    console.warn = original;
+  }
+  return emitted;
+}
+
 test('the platform fee is clamped to the market ceiling', () => {
-  const route = { maxPlatformFeeBps: 100 } as Parameters<
-    typeof platformFeeBpsFor
-  >[0];
-  // Under the ceiling the configured rate is honoured.
-  assert.equal(platformFeeBpsFor(route, 50), 50);
-  // At it, unchanged.
-  assert.equal(platformFeeBpsFor(route, 100), 100);
-  // Above it, clamped rather than rejected — under-charging is the safe
-  // direction, and refusing would surface as a broken quote.
-  assert.equal(platformFeeBpsFor(route, 250), 100);
+  const route = feeRoute(MARKET_A, 100);
+  captureWarnings(() => {
+    // Under the ceiling the configured rate is honoured.
+    assert.equal(platformFeeBpsFor(route, 50), 50);
+    // At it, unchanged.
+    assert.equal(platformFeeBpsFor(route, 100), 100);
+    // Above it, clamped rather than rejected — under-charging is the safe
+    // direction, and refusing would surface as a broken quote.
+    assert.equal(platformFeeBpsFor(route, 250), 100);
+  });
+});
+
+test('a clamp warns once per market, naming both rates', () => {
+  const route = feeRoute(MARKET_B, 10);
+
+  // Nothing to report while the configured rate fits under the ceiling: the
+  // clamp is a no-op there, and warning would cry wolf on a correct config.
+  assert.deepEqual(
+    captureWarnings(() => {
+      assert.equal(platformFeeBpsFor(route, 10), 10);
+    }),
+    [],
+  );
+
+  // The first clamp reports it, naming the ceiling, the configured rate, and
+  // the market — the three facts needed to tell which knob is wrong.
+  const first = captureWarnings(() => {
+    assert.equal(platformFeeBpsFor(route, 50), 10);
+  });
+  assert.equal(first.length, 1);
+  assert.match(first[0] ?? '', /50 bps is\s+configured/);
+  assert.match(first[0] ?? '', /max_platform_fee is 10 bps/);
+  assert.ok(first[0]?.includes(MARKET_B));
+
+  // Repeats stay silent. The quote loop re-clamps every few seconds for as
+  // long as the pair is on screen, so warning each time would bury the console
+  // — and a config fact only needs saying once.
+  assert.deepEqual(
+    captureWarnings(() => {
+      assert.equal(platformFeeBpsFor(route, 50), 10);
+      assert.equal(platformFeeBpsFor(route, 50), 10);
+    }),
+    [],
+  );
+
+  // A *different* configured rate is a different fact, so it is reported even
+  // though this market has already warned once — an operator editing the rate
+  // mid-session should hear about the new value.
+  const afterEdit = captureWarnings(() => {
+    assert.equal(platformFeeBpsFor(route, 75), 10);
+  });
+  assert.equal(afterEdit.length, 1);
+  assert.match(afterEdit[0] ?? '', /75 bps is\s+configured/);
 });
