@@ -141,17 +141,22 @@ Google Slides file. Slides' `File ▸ Import slides` accepts only `.pptx` /
 `.ppt` / an existing Slides deck — it **cannot import a PDF at all** — so
 `.pptx` is the deliverable, not a convenience.
 
-Two ways to get one, both the same code path:
+Build one from a checkout:
 
 ```sh
 pnpm run export              # the first deck in the registry
 pnpm run export -- /demo-v1  # a specific deck route
 ```
 
-writes `out/<deck-title>.pptx`, or click **Export .pptx** on the landing
-page, which hits `GET /api/export?deck=/demo-v1`. The command is a thin
-client of that route, so a download and a command-line export are the same
-bytes.
+writes `out/<deck-title>.pptx`.
+
+This is the only way to build one. The landing page used to carry an
+**Export .pptx** button backed by a `GET /api/export` route, and the command
+was a thin client of it. An export is a headless browser run, though, which
+is a poor fit for a serverless function and broke outright for a visitor
+exporting from the deployed site. Nobody needs a deck built from the site —
+whoever wants one has the checkout — so the route and the button are gone and
+the pipeline lives in `scripts/export-deck.mjs`.
 
 For a **PDF**, import the `.pptx` into Slides and use `File ▸ Download`.
 Going straight to PDF is not worth a separate path: Slides is the only
@@ -164,20 +169,15 @@ page per shot — and packs the screenshots into a `.pptx` as one full-bleed
 picture per slide (`scripts/capture.mjs` and `scripts/pptx.mjs`). One browser
 serves the whole run, driven over the DevTools protocol by `puppeteer-core`.
 
-**It works on the deployed site as well as locally**, which is the point of
-that arrangement: a serverless host has no browser to find, so the route
-launches `@sparticuz/chromium` — a Chromium that ships as a dependency and is
-unpacked per cold start — while a local run uses whatever is installed,
-preferring Brave, then Chrome, Chromium or Edge. `DECK_BROWSER=/path/to/bin`
-overrides the local search. Both packages are marked external in
-`next.config.mjs`; bundling them rewrites paths they resolve at runtime, and
-the route then fails only once deployed.
+The browser is whichever Chromium the machine already has, preferring Brave,
+then Chrome, Chromium or Edge; `DECK_BROWSER=/path/to/bin` overrides the
+search. There is no bundled fallback — `@sparticuz/chromium` used to supply
+one for the serverless route, and both went when the route did.
 
-Two consequences worth knowing about the deployed route. The first export
-after a while pays a cold start while Chromium unpacks, so it is slower than
-the rest; and the function is capped at `maxDuration = 60`, the ceiling every
-Vercel plan allows, which is comfortable for ten pages but is the number to
-raise if a deck grows much larger.
+The capture needs a running deck server, since it screenshots real pages. The
+command finds one on port 3310 or starts its own `next dev` there — a
+dedicated port, so exporting never collides with a `pnpm dev` someone is
+working in — and shuts down whatever it started.
 
 Pages lay out in the deck's own 1920×1080 space but are captured at a device
 pixel ratio of 2, so the images are **3840×2160** — exactly a 4K projector,

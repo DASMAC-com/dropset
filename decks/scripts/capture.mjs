@@ -22,10 +22,13 @@ import puppeteer from "puppeteer-core";
  * approved, and it produces the PNGs the `.pptx` needs directly.
  *
  * The browser is driven over the DevTools protocol rather than by spawning
- * `--screenshot` per page. That is what lets one browser serve all ten pages —
- * an order of magnitude less overhead — and, more importantly, it is the only
- * form that works on a serverless host, where there is no browser to spawn and
- * the binary has to be unpacked and launched explicitly.
+ * `--screenshot` per page, which lets one browser serve all ten pages — an
+ * order of magnitude less overhead than a process per shot.
+ *
+ * This runs from a checkout only. It used to have a second launch path for
+ * Vercel's serverless runtime, which has no browser installed and needed a
+ * Chromium shipped as a dependency and unpacked per cold start; that existed
+ * for the export route the site offered, and went with it.
  */
 
 /**
@@ -98,30 +101,8 @@ const BROWSER_CANDIDATES = [
   "/usr/bin/chromium-browser",
 ];
 
-/**
- * True when running on Vercel's serverless runtime, which has no browser
- * installed — the binary ships as a dependency and is unpacked per cold start.
- */
-const isServerless = () =>
-  Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.VERCEL);
-
-/**
- * Launch a browser, wherever this is running.
- *
- * The serverless branch is imported lazily rather than at module scope: the
- * package unpacks a ~50MB brotli-compressed Chromium on load, which is pure
- * cost for every local run and every request that never exports.
- */
+/** Launch whichever Chromium this machine already has. */
 async function launch() {
-  if (isServerless()) {
-    const { default: chromium } = await import("@sparticuz/chromium");
-    return puppeteer.launch({
-      args: chromium.args,
-      executablePath: await chromium.executablePath(),
-      headless: true,
-    });
-  }
-
   const override = process.env.DECK_BROWSER;
   if (override && !existsSync(override)) {
     throw new Error(`DECK_BROWSER is set to a path that does not exist: ${override}`);
