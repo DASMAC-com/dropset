@@ -24,6 +24,8 @@
 .PHONY: explorer-down
 .PHONY: frontend
 .PHONY: frontend-localnet
+.PHONY: grafana
+.PHONY: grafana-down
 .PHONY: idl
 .PHONY: indexer-down
 .PHONY: indexer-up
@@ -384,10 +386,10 @@ explorer-down: check-docker
 		rm -sf explorer
 
 # Nuke the localnet Docker state for a fully cold start: stop and remove every
-# stack container (explorer, migrate, indexer, collectors, bots, postgres —
-# the `taker` profile included), drop its volumes and any orphans, remove the
-# untagged images compose built locally (migrate + indexer + collectors +
-# bots), and prune the build cache.
+# stack container (explorer, migrate, indexer, collectors, grafana, bots,
+# postgres — the `taker` profile included), drop its volumes and any
+# orphans, remove the untagged images compose built locally (migrate +
+# indexer + collectors + bots), and prune the build cache.
 #
 # The `-v` DESTROYS the shared database's named volume, and with it every
 # recorded market-data candle. That used to be free — the stack had no named
@@ -445,12 +447,35 @@ indexer-down: check-docker
 # the validator — these poll public exchange REST APIs — so they run with or
 # without a localnet up, and they share the one `dropset` database with the
 # indexer. Stopping them leaves the recorded history on the volume.
+#
+# Grafana comes up with them, because a collector you cannot see is a
+# collector you cannot verify: the point of starting a feed is watching what
+# it writes. `collectors-down` stops it too — it has nothing to show once the
+# feeds are gone — while `make grafana` runs it against the history already
+# on the volume with no collector at all.
 collectors-up: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
-		up -d --quiet-pull postgres migrate coinbase
+		up -d --quiet-pull postgres migrate coinbase grafana
 collectors-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
-		rm -sf coinbase
+		rm -sf coinbase grafana
+
+# Grafana alone, on http://localhost:3200, serving the provisioned
+# market-data ingestion dashboard (market-data/grafana/, docs/data-feeds.md
+# §8). Useful without any collector running: the dashboards read whatever
+# history is on the volume, so this is also how you look at yesterday's
+# candles. Add `?kiosk` to the URL for a chrome-free screenshare.
+#
+# The dashboard JSON and the provisioning tree are bind-mounted, so editing
+# a committed dashboard shows up in the browser within the provider's refresh
+# interval — no restart, no rebuild. `grafana-down` leaves `postgres` alone,
+# like every other per-app target here.
+grafana: check-docker
+	docker compose -f infra/localnet/docker-compose.yml \
+		up -d --quiet-pull postgres migrate grafana
+grafana-down: check-docker
+	docker compose -f infra/localnet/docker-compose.yml \
+		rm -sf grafana
 
 # Localnet bot stack: the maker bot (infra/localnet). It signs with the repo
 # keys/ keypairs and reaches the host-run validator at

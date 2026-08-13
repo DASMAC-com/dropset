@@ -1,0 +1,37 @@
+---
+# The shared `dropset` Postgres, as Grafana's only datasource
+# (docs/data-feeds.md §8, §12).
+#
+# Every value that differs between the local compose stack and a cloud host
+# is an environment variable, and that is the whole portability story: the
+# same provisioning tree ships unchanged to the EC2 compute box, where only
+# the host and the credentials change. Grafana expands `$VAR` in provisioning
+# files but supports no default syntax, so the defaults live beside the
+# `grafana` service in infra/localnet/docker-compose.yml.
+#
+# `user` is `dropset_ro`, the read-only role
+# db-schema/migrations/0002_reader_role.sql creates — not the `dropset` owner.
+# §8's rule is one writer per table, and a dashboard is a reader; connecting
+# as the owner would leave that as an honor system.
+#
+# `editable: false` keeps the datasource out of the UI's reach, so its
+# definition cannot drift away from this file.
+apiVersion: 1
+datasources:
+- database: '$DROPSET_DB_NAME'
+  editable: false
+  isDefault: true
+  jsonData:
+    sslmode: '$DROPSET_DB_SSLMODE'
+  name: 'dropset'
+  secureJsonData:
+    password: '$DROPSET_DB_PASSWORD'
+  # A stable `uid`, because every panel and template variable in the
+  # committed dashboard JSON references the datasource by it. Grafana would
+  # otherwise mint a random one per install and the dashboards would
+  # provision with dangling datasource references.
+  type: 'postgres'
+  uid: 'dropset-postgres'
+  url: '$DROPSET_DB_HOST'
+  user: '$DROPSET_DB_USER'
+...

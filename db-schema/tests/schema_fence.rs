@@ -1,4 +1,6 @@
 // cspell:word bytea
+// cspell:word schemaname
+// cspell:word tablename
 // cspell:word unprovisioned
 //! End-to-end tests for the startup fence against a real Postgres in a
 //! throwaway container.
@@ -220,6 +222,91 @@ async fn migrate_creates_every_expected_table() {
     assert_eq!(
         cursors, 1,
         "indexer_cursor must be seeded with exactly one row"
+    );
+}
+
+/// The shared reader role can read every table and cannot write any of them.
+///
+/// This is the only test in the suite that connects as a role other than the
+/// owner, and it has to: `dropset_ro`'s value is entirely in what it is
+/// *unable* to do, and every privilege here — the role's own existence, schema
+/// `USAGE`, table `SELECT`, and the absence of `INSERT` — is invisible to a
+/// connection that holds them all implicitly. Granting one grant too many
+/// would leave every other test passing.
+///
+/// The write probe targets `market_stats` because every column but its primary
+/// key carries a default or is nullable, so a one-column `INSERT` is valid SQL
+/// for a role that *is* allowed to write — which is what makes a rejection
+/// attributable to privileges rather than to a malformed statement.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn reader_role_can_read_everything_and_write_nothing() {
+    let (pg, pool) = start_pg().await;
+    migrate(&pool).await.expect("apply migrations");
+
+    let port = pg
+        .get_host_port_ipv4(5432)
+        .await
+        .expect("resolve mapped port");
+    let url = format!("postgres://dropset_ro:dropset_ro@127.0.0.1:{port}/postgres");
+    let reader = connect(&url)
+        .await
+        .expect("the reader role must exist and be able to log in");
+
+    // Derived from the catalog rather than hardcoded. The expected-table
+    // list belongs in `migrate_creates_every_expected_table`, where it *is*
+    // the assertion; here it would only be a fixture, and a stale one — a
+    // table added by a later migration would silently never be probed
+    // while this test kept passing.
+    let tables: Vec<String> =
+        sqlx::query_scalar("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
+            .fetch_all(&pool)
+            .await
+            .expect("list public tables");
+    assert!(
+        !tables.is_empty(),
+        "no tables in `public` — the probe below would vacuously pass"
+    );
+
+    for table in &tables {
+        sqlx::query(&format!("SELECT count(*) FROM {table}"))
+            .fetch_one(&reader)
+            .await
+            .unwrap_or_else(|e| panic!("reader cannot SELECT from `{table}`: {e}"));
+    }
+
+    // The `ALTER DEFAULT PRIVILEGES` clause is the one grant nothing above
+    // exercises: every table that exists was already covered by the blanket
+    // `GRANT SELECT ON ALL TABLES`, so a migration that dropped the default
+    // privileges would still pass. It is also the clause the migration's
+    // comment leans on hardest, and the one a future change is most likely
+    // to break. Create a table as the owner *after* migrating and confirm
+    // the reader can read it without any further grant.
+    sqlx::query("CREATE TABLE later_migration_table (id INT PRIMARY KEY)")
+        .execute(&pool)
+        .await
+        .expect("create a table as the owner");
+    sqlx::query("SELECT count(*) FROM later_migration_table")
+        .fetch_one(&reader)
+        .await
+        .expect("default privileges must cover a table created after 0002");
+
+    let err = sqlx::query("INSERT INTO market_stats (market) VALUES ('probe')")
+        .execute(&reader)
+        .await
+        .expect_err("the reader role must not be able to write");
+
+    // 42501 is `insufficient_privilege`. Asserting the code rather than the
+    // message keeps this from passing on some unrelated failure — a syntax
+    // error or a dropped table would also be an `Err`.
+    let code = err
+        .as_database_error()
+        .and_then(|e| e.code())
+        .map(|c| c.to_string());
+    assert_eq!(
+        code.as_deref(),
+        Some("42501"),
+        "expected a privilege rejection, got: {err}"
     );
 }
 

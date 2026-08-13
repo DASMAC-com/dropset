@@ -186,6 +186,13 @@ db-schema <-> market-data: db-schema/migrations defines cex_prices,
   which the app's StoreWriter (market-data/src/store.rs) writes
   idempotently; the candle field set and the closed-bucket primary key
   must track the migration.
+db-schema <-> grafana dashboards: db-schema/migrations owns the
+  dropset_ro reader role and the SELECT grants behind it, which the
+  provisioned datasource
+  (market-data/grafana/provisioning/datasources) logs in as; the panel
+  SQL in market-data/grafana/dashboards reads cex_prices and
+  feed_cursors by column name, so a renamed or dropped column breaks a
+  dashboard silently — nothing compiles this SQL.
 ```
 
 **Skip-globs** — generated / vendored / binary paths the file audit

@@ -22,6 +22,11 @@
 # PnL means joining indexer fills against external price history at fill
 # time). Bring the collectors up with `make collectors-up`.
 #
+# Grafana rides along with the collectors, serving the provisioned
+# market-data dashboard on http://localhost:3200 — the operator's
+# view of what the feeds are actually producing (docs/data-feeds.md §8).
+# It is a pure reader: it logs in as `dropset_ro` and owns no table.
+#
 # `migrate` is the one-shot schema gate: `dropset-migrate` owns all DDL and
 # every database-writing service waits for it to exit successfully. It is
 # idempotent, so it re-runs harmlessly whenever the stack restarts, and
@@ -87,6 +92,99 @@ services:
     # falls in only when that pull is unavailable.
     pull_policy: 'missing'
     restart: 'unless-stopped'
+  grafana:
+    # Data observability over the shared database: the provisioned
+    # market-data dashboard (docs/data-feeds.md §8, §12). No
+    # producer code — the collectors already write the tables, and this is
+    # Grafana OSS as configuration, mounted read-only out of
+    # market-data/grafana/ so the repo is the source of truth.
+    #
+    # Gated on `migrate` for a reason beyond the tables: migration 0002
+    # creates the `dropset_ro` role this service logs in as, so starting
+    # before it completes would be an authentication failure rather than an
+    # empty dashboard.
+    depends_on:
+      migrate:
+        condition: 'service_completed_successfully'
+    # Every DROPSET_DB_* value is what the provisioning tree interpolates, so
+    # the identical tree runs against the cloud host by overriding these and
+    # nothing else (§12's stage-1 EC2 box runs this same compose file). The
+    # defaults are the local stack. Grafana expands `$VAR` in provisioning
+    # files but has no default syntax of its own, which is why the defaults
+    # live here rather than there.
+    #
+    # Anonymous access with the login form off: this is bound to loopback,
+    # there is nothing to authorize, and a login prompt in front of a
+    # dashboard on a screenshare is pure friction.
+    #
+    # The anonymous role is `Editor`, not `Viewer`, and that is deliberate.
+    # Grafana decides whether a dashboard can be edited from the *requesting*
+    # role, so under `Viewer` nobody can tweak a panel — and with the login
+    # form off there is no admin to switch to, which would make the intended
+    # tweak-then-export loop impossible rather than merely awkward. It also
+    # unlocks Explore, which is the natural tool for the ad-hoc "is anyone
+    # else quoting this pair" question the coverage panel raises. What bounds
+    # the blast radius is not the Grafana role: it is the loopback binding,
+    # the `dropset_ro` credentials (an editor still cannot write a table), and
+    # the volume-less store, which discards an uncommitted edit when the
+    # container is recreated (not on a plain `up`, which leaves a running
+    # container alone). Read egress is bounded by the loopback bind rather
+    # than by the role: an editor can author an alerting contact point.
+    #
+    # These three auth settings travel together. `admin`'s password is left
+    # at Grafana's default, which is unreachable only while basic auth and
+    # the login form are both off — turning either back on exposes it.
+    environment:
+      DROPSET_DB_HOST: '${DROPSET_DB_HOST:-postgres:5432}'
+      DROPSET_DB_NAME: '${DROPSET_DB_NAME:-dropset}'
+      DROPSET_DB_PASSWORD: '${DROPSET_DB_PASSWORD:-dropset_ro}'
+      DROPSET_DB_SSLMODE: '${DROPSET_DB_SSLMODE:-disable}'
+      DROPSET_DB_USER: '${DROPSET_DB_USER:-dropset_ro}'
+      GF_AUTH_ANONYMOUS_ENABLED: 'true'
+      GF_AUTH_ANONYMOUS_ORG_ROLE: 'Editor'
+      GF_AUTH_BASIC_ENABLED: 'false'
+      GF_AUTH_DISABLE_LOGIN_FORM: 'true'
+      # Land on the market-data dashboard rather than an empty home page, so
+      # `make grafana` opens straight onto the data.
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: >-
+        /var/lib/grafana/dashboards/market-data.json
+      GF_USERS_DEFAULT_THEME: 'dark'
+    image: 'grafana/grafana-oss:11.6.0'
+    # Loopback only, like the explorer. Host port 3200 keeps clear of the
+    # frontend (3000), the explorer (3100), and the indexer API (8080).
+    ports:
+    - '127.0.0.1:3200:3000'
+    restart: 'unless-stopped'
+    # No named volume: with the datasource and the dashboards both
+    # provisioned, Grafana's own store holds nothing worth keeping, and
+    # leaving it ephemeral means a restart can never serve a stale copy of a
+    # dashboard the repo has since changed. Every mount is read-only, so a
+    # container cannot edit its way out of what is committed.
+    #
+    # The two provisioning mounts name their own subdirectories rather than
+    # the `provisioning/` tree above them, which is deliberate: mounting the
+    # parent shadows the image's own `plugins/` and `alerting/` provisioning
+    # directories, and Grafana logs a `level=error` line per missing one on
+    # every boot. It starts and provisions correctly either way, but a stack
+    # whose whole purpose is that the operator trusts what they see cannot
+    # afford to open with two errors that do not matter.
+    #
+    # Long-form syntax because the short `src:dst:ro` form of the two
+    # provisioning paths exceeds the repo's 80-column yamllint limit; the
+    # dashboards mount would fit, and uses it too so the three read alike.
+    volumes:
+    - read_only: true
+      source: '../../market-data/grafana/dashboards'
+      target: '/var/lib/grafana/dashboards'
+      type: 'bind'
+    - read_only: true
+      source: '../../market-data/grafana/provisioning/dashboards'
+      target: '/etc/grafana/provisioning/dashboards'
+      type: 'bind'
+    - read_only: true
+      source: '../../market-data/grafana/provisioning/datasources'
+      target: '/etc/grafana/provisioning/datasources'
+      type: 'bind'
   indexer:
     # Decode + persist + aggregate. Polls the host-run validator's events.
     build:
