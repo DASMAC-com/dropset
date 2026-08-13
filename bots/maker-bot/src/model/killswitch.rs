@@ -80,7 +80,7 @@ pub enum Action {
 /// ([`FairValue::degraded`]) rather than passed in, so it cannot disagree with
 /// the reference the same call is evaluating. The basis and common-mode bands
 /// are not scaled here — they are absolute peg events the engine already
-/// evaluated against its (survey-set) bands.
+/// evaluated against its (analytics-set) bands.
 pub fn evaluate(
     fair: &FairValue,
     inv: &Inventory,

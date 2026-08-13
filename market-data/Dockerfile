@@ -1,4 +1,4 @@
-# Multi-stage build for the collector binary (`fx-survey-coinbase`), using
+# Multi-stage build for the collector binary (`market-data-coinbase`), using
 # cargo-chef to cache the dependency graph so only first-time and
 # source-changing builds pay the full compile. The app depends on
 # `dropset-feeds` with only its `http` + `store` features — not the Solana
@@ -24,9 +24,9 @@ RUN cargo chef prepare --recipe-path recipe.json
 FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json \
-    --bin fx-survey-coinbase
+    --bin market-data-coinbase
 COPY . .
-RUN cargo build --release -p dropset-fx-survey --bin fx-survey-coinbase
+RUN cargo build --release -p dropset-market-data --bin market-data-coinbase
 
 FROM debian:bookworm-slim AS runtime
 # ca-certificates only (for the Coinbase HTTPS + Postgres TLS). Intentionally
@@ -36,6 +36,6 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/target/release/fx-survey-coinbase \
-    /usr/local/bin/fx-survey-coinbase
-CMD ["fx-survey-coinbase"]
+COPY --from=builder /app/target/release/market-data-coinbase \
+    /usr/local/bin/market-data-coinbase
+CMD ["market-data-coinbase"]

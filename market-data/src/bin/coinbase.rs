@@ -12,7 +12,7 @@ use dropset_feeds::{
     venues::{Candle, CoinbaseCandles},
     CursorStore, HttpClient, PgCursorStore, RunConfig, Sink, StoreSink,
 };
-use dropset_fx_survey::{config::Config, store::CexWriter};
+use dropset_market_data::{config::Config, store::CexWriter};
 use std::time::Duration;
 
 #[tokio::main]

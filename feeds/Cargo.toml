@@ -4,9 +4,9 @@
 # each batch to one or more `Sink`s — a durable Postgres store sink behind a
 # resumable JSONB cursor, and/or an in-process forward sink a co-located
 # consumer reads. Transports are feature-gated so a consumer compiles only the
-# one it uses; the whole survey gate is `http` + `store`. The concrete venue
-# adapters (`src/venues/`) live here too, so a venue is written once and shared
-# by the collectors and the bots instead of stranded in one app.
+# one it uses; the whole market-data gate is `http` + `store`. The concrete
+# venue adapters (`src/venues/`) live here too, so a venue is written once and
+# shared by the collectors and the bots instead of stranded in one app.
 
 [dependencies]
 anyhow = "1"
@@ -94,7 +94,7 @@ rpc = [
 stream = []
 
 [package]
-description = "Shared data-ingestion framework for the Dropset survey, indexer, and bots."
+description = "Shared data-ingestion framework for Dropset market data, the indexer, and bots."
 name = "dropset-feeds"
 publish = false
 edition.workspace = true

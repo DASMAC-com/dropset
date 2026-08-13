@@ -28,15 +28,15 @@
 //! Circle / CoinGecko) is *not* here — each consumer owns its own thin
 //! transport and hands the engine [`Reading`]s. The valuable shared thing is
 //! the model, not the I/O. The maker bot consumes the engine today; the
-//! fair-value taker and the pricing-survey harness are separate follow-ups that
-//! exercise the same code.
+//! fair-value taker is a separate follow-up that exercises the same code.
 //!
 //! # Calibration
 //!
-//! Almost every constant the engine reads is **TBD — set by the pricing-model
-//! survey**. The [`FairValueConfig`] defaults are marked, demo-safe
-//! placeholders, not calibrated values; recalibration is a data edit to that
-//! one surface. See its module docs.
+//! Almost every constant the engine reads is **TBD — set by the analytics over
+//! collected market-data history** (`docs/data-feeds.md` §11). The
+//! [`FairValueConfig`] defaults are marked, demo-safe placeholders, not
+//! calibrated values; recalibration is a data edit to that one surface. See
+//! its module docs.
 //!
 //! # Usage
 //!

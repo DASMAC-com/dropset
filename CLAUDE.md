@@ -128,10 +128,11 @@ in `docs/conventions/github-mcp.md`.
 ## AWS infrastructure
 
 AWS resources are **CloudFormation YAML** under `infra/aws/` (network,
-IAM, and audit baseline; the survey app stack builds on top). Templates
-pass **both** `cfn-lint` (scoped hook) and the repo's strict `yamllint`,
-so they are written to fit the latter — alphabetical keys, single-quoted
-strings, block style, folded block scalars for long ARNs. Authoring is
+IAM, and audit baseline; the market-data warehouse stack builds on
+top). Templates pass **both** `cfn-lint` (scoped hook) and the repo's
+strict `yamllint`, so they are written to fit the latter — alphabetical
+keys, single-quoted strings, block style, folded block scalars for long
+ARNs. Authoring is
 agent-assisted through **two** MCP servers: documentation lookups go to
 the credential-free `aws-docs` server; account actions (deploy /
 inspect / CLI, skill retrieval) go to the SigV4 `aws-mcp` server. Search

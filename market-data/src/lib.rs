@@ -11,7 +11,7 @@
 //!
 //! The first feed is the shared Coinbase EURC/USDC reference price
 //! (`data-feeds.md` §9); the [`store`] module maps its candles onto the
-//! `cex_prices` table. One binary drives it — `fx-survey-coinbase`, the
+//! `cex_prices` table. One binary drives it — `market-data-coinbase`, the
 //! long-lived feed — and it asserts the shared schema at startup instead of
 //! provisioning one (`data-feeds.md` §8).
 
