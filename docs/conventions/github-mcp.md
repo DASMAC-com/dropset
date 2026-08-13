@@ -23,6 +23,21 @@ read used by `housekeeping`:
   so the probe must read `mergeQueueEntry` (non-null while queued)
   over GraphQL to tell a still-queued PR from one that was dequeued.
 
+  **The enqueue prints nothing under this harness.** `gh` emits its
+  "Merge when ready" confirmation only to a TTY, and stdout here is
+  not one, so a successful `gh pr merge --auto` returns exit 0 and no
+  output whatsoever. Confirm from the exit status; there is no reply
+  text to read, and a run has misread the silence as a failure.
+
+  **An all-null probe is ambiguous, and `gh run list` disambiguates
+  it.** `mergeQueueEntry` and `autoMergeRequest` are *both* null during
+  the registration window **and** after a dequeue, so the probe alone
+  cannot tell a PR that has not registered yet from one that was kicked
+  out. The queue branch settles it: a completed run set on
+  `pr-<number>-…` proves the entry existed. Check that **before**
+  concluding, not after — the ordering is spelled out in `review-pr`'s
+  merge-queue outcome step.
+
 - **The CI-wait and PR-state reads** — `gh pr checks <number>` for the
   CI-wait poll, and `gh pr view <number> --json <fields>` for the
   one-shot `mergeable` / PR-lookup reads. These reads are **polled

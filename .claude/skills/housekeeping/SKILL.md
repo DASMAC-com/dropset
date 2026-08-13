@@ -655,11 +655,29 @@ It prints `{count, flagged: [{index, rule, category, reason}]}`
   bare-verb wildcard that subsumes many narrower rules;
 - **dangerous one-offs** (`category: dangerous`) — `rm -rf`,
   `curl … | sh`, `git push --force`;
-- **machine paths** (`category: machine-path`) — an absolute
-  home path that leaked into a rule;
+- **machine paths** (`category: machine-path`) — a malformed
+  path (a doubled slash, so the rule can never match), or an
+  absolute home path in a settings file where one does not
+  belong;
+- **stale machine paths** (`category: machine-path-stale`) —
+  an absolute path that no longer resolves on disk, which is
+  what worktree rules decay into as worktrees are pruned;
 - **stale single-use commands** (`category: subsumed`) — a
   narrower rule an earlier one already covers (the dead weight
   `firm-perms` never removes).
+
+**Don't expect `machine-path` on this repo's own allowlist.**
+The audited file is `settings.local.json` — git-ignored and
+machine-local by design — so an absolute `/Users/<name>/…` is
+the *correct* form there, and the check knows it (the response
+carries `machine_local_settings: true`). It used to flag them
+regardless, which returned **40 entries of which 39 were false
+positives**, nearly all load-bearing: the
+`git -C <base>/.claude/worktrees/*` rules the worktree flow
+needs, the `~/.zshrc` reads `local-integrations.md` prescribes,
+and the `python3 <base>/.claude/tools/*` entry point. If you
+see a wall of `machine-path` here, suspect the check before the
+allowlist.
 
 The helper is deterministic and pattern-based, so also skim
 its `flagged` list for a **secret** that leaked into a rule

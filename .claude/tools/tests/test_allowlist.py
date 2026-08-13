@@ -95,6 +95,47 @@ class ClassifyTests(unittest.TestCase):
             self._solo("Read(/Users/someone/secrets/**)")[0], "machine-path"
         )
 
+    def test_a_machine_local_file_does_not_flag_absolute_paths(self):
+        """The false-positive fix: `settings.local.json` is git-ignored and
+        machine-local by design, so an absolute home path is the correct form
+        there. Flagging it made 39 of 40 shortlist entries noise, nearly all of
+        them load-bearing worktree and skill-tooling rules.
+
+        The path has to be a real one — an absolute path that resolves is the
+        clean case; one that doesn't is `machine-path-stale`, tested below.
+        """
+        home = Path.home()
+        rule = f"Bash(git -C {home}/* status:*)"
+        self.assertIsNone(classify(rule, 0, [rule], machine_local=True))
+
+    def test_a_malformed_path_is_flagged_even_when_machine_local(self):
+        """The one true positive that pass found: a doubled leading slash means
+        the rule can never match, in any settings file."""
+        rule = "Read(//Users/me/.cargo/**)"
+        verdict = classify(rule, 0, [rule], machine_local=True)
+        self.assertEqual(verdict[0], "machine-path")
+        self.assertIn("doubled slash", verdict[1])
+
+    def test_a_stale_path_is_flagged_when_machine_local(self):
+        """Where absolute paths are legitimate, a path that no longer resolves
+        is the check with real value — worktree rules decay this way."""
+        rule = "Bash(python3 /Users/nobody/definitely-not-here/tool.py:*)"
+        verdict = classify(rule, 0, [rule], machine_local=True)
+        self.assertEqual(verdict[0], "machine-path-stale")
+        self.assertIn("no longer exists", verdict[1])
+
+    def test_a_resolving_path_is_clean_when_machine_local(self):
+        rule = f"Read({Path(__file__).parent}/**)"
+        self.assertIsNone(classify(rule, 0, [rule], machine_local=True))
+
+    def test_a_shared_file_reports_the_absolute_path_not_its_staleness(self):
+        """In a shared settings file the absolute path is itself the defect, so
+        whether it resolves is beside the point."""
+        rule = "Bash(python3 /Users/nobody/definitely-not-here/tool.py:*)"
+        self.assertEqual(
+            classify(rule, 0, [rule], machine_local=False)[0], "machine-path"
+        )
+
     def test_subsumed_broad_before_narrow(self):
         allow = ["Bash(git status:*)", "Bash(git status --short:*)"]
         self.assertEqual(classify(allow[1], 1, allow)[0], "subsumed")
@@ -124,6 +165,30 @@ class ClassifyTests(unittest.TestCase):
         self.assertIsNone(classify(allow[1], 1, allow))
 
 
+class CruftFileAwarenessTests(unittest.TestCase):
+    def test_a_local_settings_path_suppresses_absolute_path_flags(self):
+        allow = [
+            "Bash(git -C /Users/me/repo/.claude/worktrees/*/ status:*)",
+            "Read(/Users/me/.zshrc)",
+        ]
+        out = cruft(allow, Path("/Users/me/repo/.claude/settings.local.json"))
+        self.assertTrue(out["machine_local_settings"])
+        self.assertEqual(
+            [f["category"] for f in out["flagged"]], ["machine-path-stale"] * 2
+        )
+
+    def test_a_shared_settings_path_still_flags_them(self):
+        allow = ["Read(/Users/me/.zshrc)"]
+        out = cruft(allow, Path("/repo/.claude/settings.json"))
+        self.assertFalse(out["machine_local_settings"])
+        self.assertEqual(out["flagged"][0]["category"], "machine-path")
+
+    def test_no_settings_path_defaults_to_the_strict_reading(self):
+        out = cruft(["Read(/Users/me/.zshrc)"])
+        self.assertFalse(out["machine_local_settings"])
+        self.assertEqual(out["flagged"][0]["category"], "machine-path")
+
+
 class CruftTests(unittest.TestCase):
     def test_flags_only_suspicious_and_keeps_count(self):
         allow = [
@@ -135,6 +200,7 @@ class CruftTests(unittest.TestCase):
         ]
         out = cruft(allow)
         self.assertEqual(out["count"], 5)
+        self.assertFalse(out["machine_local_settings"])
         cats = {f["index"]: f["category"] for f in out["flagged"]}
         self.assertEqual(cats[1], "over-broad")
         self.assertEqual(cats[2], "subsumed")
@@ -293,8 +359,13 @@ class CliTests(unittest.TestCase):
             rc, out = self._run_capture(["allowlist.py", "--settings", p, "cruft"])
         self.assertEqual(rc, 0)
         self.assertEqual(out["count"], 2)
+        # The settings file is a `settings.local.json`, where an absolute home
+        # path is expected — so the actionable signal is that it no longer
+        # resolves, not that it is absolute.
+        self.assertTrue(out["machine_local_settings"])
         self.assertEqual(
-            {f["category"] for f in out["flagged"]}, {"over-broad", "machine-path"}
+            {f["category"] for f in out["flagged"]},
+            {"over-broad", "machine-path-stale"},
         )
 
     def test_add_dispatch_writes_the_rule(self):

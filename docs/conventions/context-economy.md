@@ -18,6 +18,14 @@ into the transcript**:
   allows it (`gh … --json <fields>`, a GraphQL projection), paginate
   instead of dumping, and **never re-fetch what's already in context**.
 
+  This binds the **main loop's own discovery greps**, not just the
+  sweeps it hoists for sub-agents — the rule is usually read as being
+  about material handed onward, so it gets skipped for a search you run
+  for yourself. When the question is *which files* reference a symbol,
+  ask `--files-only` (or `grep -l`) and stop: one consumer-discovery
+  sweep returned 39 full match lines for a question that was one bit per
+  file. Take full lines only once you need to read the surrounding code.
+
 - **Read large known files by slice.** Grep to locate, then `Read`
   with `offset`/`limit`; don't pull a 1000-line file to use 80 lines
   of it. This is **main-loop** discipline during a study phase too, not
@@ -170,6 +178,23 @@ into the transcript**:
   echo is a fixed cost per call, and the budget it belongs to is stated
   in `docs/conventions/linear-automation.md`.
 
+- **Never `Read` a harness-persisted tool result whole — extract the one
+  field.** When a result exceeds the inline cap the harness writes it to
+  disk and shows a preview, which is a *saving*; reading that file back
+  whole re-buys everything the spill saved, envelope and metadata
+  included. One session's single largest result (≈13.7k) was exactly
+  this: a `Read` of the JSON the Linear MCP had spilled, when only the
+  `description` field was wanted out of a 53KB envelope. Grep the file
+  for the field, or slice-`Read` to it. This is the same "never re-fetch
+  what's already in context" rule as above, applied to a payload the
+  *session itself* produced — which is why it gets missed.
+
+- **Take a file's structure map once, then keep it.** A section map
+  (`grep -n '^fn \|^impl '`, or `^#` for a doc) is cheap, but re-deriving
+  it on every edit is not: one session re-grepped the same file's map
+  several times as editing moved through it. When a file will be edited
+  in more than two places, map it once up front and work from that map.
+
 - **Route verbose build logs away from context.** Prefer `-q` /
   `--quiet` so a `cargo` / `make` "Compiling …" cascade doesn't land
   inline. For a noisy target with no quiet flag, run it through the
@@ -287,6 +312,41 @@ into the transcript**:
   known block-centred reference to recover the midline. One session
   rebuilt that measurement three separate times from scratch; a committed
   helper for it is filed separately.
+
+- **Inspecting rendered output — contact-sheet first, and never at
+  native resolution.** The rules above cover screenshots you *take* and
+  screenshots you are *handed*. A third class is output your own build
+  renders — deck pages, exported frames, generated diagrams — and it is
+  the most expensive of the three, because it arrives many-at-once and at
+  print resolution. Two measured sessions were **882.7k of `Read` (≈98%
+  of all tool-result cost)** and **≈1.1M (≈97%)**, every top result a
+  5760×3240 deck page, one of them re-read four times for ≈321k combined.
+  Both followed every other rule on this page.
+
+  Capture resolution is a *product* decision — 3× is right for the
+  deliverable. The copy you **look at** is the thing to shrink. So:
+
+  - **Contact-sheet the recurring question.** "Did any page clip?" is one
+    thumbnail-grid read, not N full-page reads. Use
+    `python3 .claude/tools/render_review.py --montage`, which extracts
+    the page images, scales them down, and writes one grid — collapsing
+    a 12-read sweep to 1.
+  - **Read a single page downscaled** (`--page N`), never the native
+    render. Every judgment these sessions actually made — does the page
+    overflow, does the headline wrap, is the footer crowded — is
+    identical at ~1200px and costs roughly a tenth.
+  - **Re-read only the page a change can touch.** After editing one
+    slide, re-render and re-read *that* slide; a fresh full-deck sweep
+    per round is what turned one page into ≈321k.
+  - **Measure before you look.** If the question can be stated as a
+    number — content bounding box, footer clearance, distinct-image
+    count, whether two exports are byte-identical — the tool's
+    `--measure` mode answers it for a few hundred tokens. In one session
+    the cheap checks did the real work and *disproved* two hypotheses
+    eyeballing had suggested; that same session then paid ≈284k
+    re-reading a frame to confirm a spacing change the bounding-box
+    measurement had already reported. **Never re-`Read` a frame to
+    confirm an effect you have already measured.**
 
 - **Route Docker image operations away from context too.** A
   `docker compose pull` / `up` / `build` dumps a per-layer

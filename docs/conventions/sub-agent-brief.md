@@ -41,7 +41,21 @@ copy, so the wording stays in one place.
 >   tool that already does that scoping and reduces to one allow-rule:
 >   `python3 .claude/tools/search_source.py 'PATTERN'` (add `--context N`,
 >   `--ext rs,ts`, `--dir programs,sdk`, `--glob <path-or-glob>` as
->   needed).
+>   needed). **Searching prose needs `--ext md`** — the default set is
+>   source extensions only, so a string that lives in a skill or
+>   convention doc comes back as `0 match(es)` without it. The tool
+>   flags that case on its summary line; heed the note rather than
+>   reading the zero as absence.
+> - **A `--context N` window is for *adjudicating*, not *enumerating*.**
+>   Context lines multiply the payload by `N`, so ask for them only once
+>   you are weighing a specific hit. To find out *where* something is,
+>   anchor on the thing you are enumerating and take no context: one
+>   `--context 8` sweep returned 65.8KB, overflowed the result cap, and
+>   answered nothing, while the re-ask returned 11 lines and settled it.
+> - **One question per sweep.** Alternating several unrelated patterns
+>   into a single regex multiplies the payload by the number of things
+>   asked at once — three such sweeps were the largest results of one
+>   run. Ask them separately, or ask for `--files-only` first.
 > - **Ask a search for its narrowest form.** Scoping bounds *where* it
 >   looks; narrowness bounds *what it returns*. When the question is
 >   existence — "is this symbol still referenced anywhere?" — ask for

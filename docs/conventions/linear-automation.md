@@ -249,10 +249,21 @@ aborts the whole save), up to 50 per call. `patch` is **update-only**
 and mutually exclusive with the full-content field — pass one or the
 other, never both.
 
-Each op carries `op` plus its own fields: `append` / `prepend` take
-just `text`; `insert_before` / `insert_after` take `anchor` + `text`;
-`replace` takes `old_string` + `new_string` (and an optional
-`replace_all`); `replace_range` takes `from` + `to` + `new_string`.
+Each op carries `op` plus its own fields. The literal argument names
+matter and are easy to guess wrong — only the `replace` shape is
+memorable, so `append` gets handed an `old_string` and is rejected.
+That cost three wasted round trips across two sessions, each one
+paying the fixed full-body echo for nothing:
+
+| `op`            | arguments                                          |
+| --------------- | -------------------------------------------------- |
+| `append`        | `text`                                             |
+| `prepend`       | `text`                                             |
+| `insert_before` | `anchor`, `text`                                   |
+| `insert_after`  | `anchor`, `text`                                   |
+| `replace`       | `old_string`, `new_string`, optional `replace_all` |
+| `replace_range` | `from`, `to`, `new_string`                         |
+
 Every one of those strings takes **literal newlines**, never the
 escape sequence `\n`.
 
@@ -325,6 +336,30 @@ Two concrete call sites the rule above catches, both measured:
 survivor body a `/merge-tasks` consolidation produced, the more *every*
 later transition on that issue costs — so a heavily-folded issue is
 exactly where re-reading its body is least affordable.
+
+Two generalizations of the checklist rule, both measured:
+
+- **Accumulate a session's `patch` ops for one issue and issue them
+  together.** The batching rule above reads as being about repeated
+  *ticks*, so it gets skipped for writes of different kinds — but the
+  echo does not care what an op says. One run made a mid-session
+  narrative append and a later set of box-ticks as two separate `patch`
+  calls on the same issue, ≈3.9k avoidable and about a quarter of that
+  session's largest sink. A `patch` array takes up to 50 ops; hold them
+  until you have them all. The genuine exception is a write **gated on a
+  different event** — In Review is gated on CI going green, so it cannot
+  fold backwards into a write made before that was known.
+- **One call carries priority, body and relations together.** A
+  priority-only `save_issue` echoes the whole body for a one-field write,
+  and one planning run made ~17 of them, several on issues that took a
+  second save within the hour. When a filing decision sets more than one
+  thing, set them in a single call rather than one call per field.
+
+**The worst measured case was a planning session: 97 `save_issue` calls,
+≈164k.** Its top five results were all late folds onto the same
+aggregated survivor body. A burst of peer folds is the shape to watch —
+several handoffs for one issue arriving within minutes, each taking its
+own echo. Buffer them and write once.
 
 ### Anchors must match the *stored* text
 

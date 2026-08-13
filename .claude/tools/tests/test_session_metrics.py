@@ -227,6 +227,38 @@ class BashSignatures(unittest.TestCase):
             sm.bash_signature("git -C /Users/a/repo pull --ff-only"), "git pull"
         )
 
+    def test_signature_unwraps_the_quiet_runner(self):
+        """It used to fuse the wrapper with its payload — `python3 make lint` —
+        which is unreadable and risks nominating the wrapper as a candidate."""
+        self.assertEqual(
+            sm.bash_signature("python3 .claude/tools/run_quiet.py -- make lint"),
+            "make lint",
+        )
+        self.assertEqual(
+            sm.bash_signature(
+                "python3 .claude/tools/run_quiet.py -- pnpm --dir frontend build"
+            ),
+            "pnpm frontend build",
+        )
+
+    def test_unwrapping_survives_a_leading_env_assignment(self):
+        self.assertEqual(
+            sm.bash_signature(
+                "FOO=bar python3 .claude/tools/run_quiet.py -- make test"
+            ),
+            "make test",
+        )
+
+    def test_the_runner_as_a_bare_argument_is_not_unwrapped(self):
+        """No `--` separator means it is not a wrapper invocation — staging or
+        reading the tool must keep its own shape."""
+        self.assertEqual(
+            sm.bash_signature("git add .claude/tools/run_quiet.py"), "git add"
+        )
+
+    def test_an_unwrapped_command_still_normalizes(self):
+        self.assertEqual(sm.bash_signature("make lint"), "make lint")
+
     def test_deterministic_classification(self):
         self.assertTrue(sm.is_deterministic_shape("git worktree list"))
         self.assertTrue(sm.is_deterministic_shape("git branch"))
@@ -364,11 +396,18 @@ class HardeningRanking(unittest.TestCase):
 
     def test_run_quiet_flag_is_sticky_across_a_shape(self):
         """One unwrapped call among wrapped ones is a slip, not a
-        re-classification — the bytes check still catches a real payload."""
+        re-classification — the bytes check still catches a real payload.
+
+        Unwrapping is what makes this test meaningful: a wrapped and a bare
+        invocation of the same command now share one signature, so the sticky
+        flag has a shape to be sticky *across*. Before, they grouped under
+        `python3 make lint` and `make lint` separately.
+        """
         quiet = "python3 .claude/tools/run_quiet.py -- make lint"
-        report = self._run([(quiet, "OK\n"), ("python3 make lint", "OK\n")])
+        report = self._run([(quiet, "OK\n"), ("make lint", "OK\n")])
         candidate = report["hardening_candidates"][0]
-        self.assertEqual(candidate.signature, "python3 make lint")
+        self.assertEqual(candidate.signature, "make lint")
+        self.assertEqual(candidate.count, 2)
         self.assertTrue(candidate.via_run_quiet)
 
     def test_determinism_is_still_reported(self):

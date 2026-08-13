@@ -400,9 +400,15 @@ def collision_clusters(issues: list[Issue]) -> list[tuple[list[str], list[str]]]
     component spans separate apps and languages.
 
     Keying on the path instead yields small, actionable groups: *these three
-    issues all touch ``bots/maker-bot/src/model/feeds.rs``*. Paths whose member
-    set is identical are merged into one entry listing both paths, so the same
-    group isn't proposed twice under two names.
+    issues all touch ``<crate>/src/<module>.rs``*. Paths whose member set is
+    identical are merged into one entry listing both paths, so the same group
+    isn't proposed twice under two names.
+
+    (That example is a deliberate placeholder rather than a real path. It named
+    a live source file until a relocation deleted it, leaving a docstring that
+    cited something no reader could find — nothing broken, but the explanation
+    stopped being checkable. A docstring citing a live path as a worked example
+    goes stale **silently**, because nothing links the two.)
 
     One consequence worth stating: an issue appears in **every** cluster whose
     path it touches, so the clusters overlap. That is correct for a proposal —
