@@ -158,6 +158,10 @@ test('flush-armed vault materializes levels from its profile', () => {
 // are plain `number`s, so nothing else would catch it.
 const FIX_QUOTE_SLOT = 7;
 const FIX_QUOTE_UNIX = 1_700_000_000;
+/** Absolute deadlines for the stored-`remaining` fixture, far apart so a
+ * transposed decode offset moves one by ~1.7e9. */
+const SLOT_DEADLINE = 1_000;
+const WALL_DEADLINE = 1_700_000_600;
 
 /** A flush-armed vault with finite, per-domain expiry offsets. */
 function boundedFlushMarket(secs: number, slots: number): Uint8Array {
@@ -177,6 +181,42 @@ function boundedFlushMarket(secs: number, slots: number): Uint8Array {
 // deleting either conjunct from `collectSideLevels` leaves the whole TS suite
 // green — every other fixture pushes both clocks past both deadlines at once,
 // and `writePosition` defaults the slot bound wide open.
+/** A `remaining`-path vault (no flush) with distinct finite deadlines. */
+function boundedRemainingMarket(): Uint8Array {
+  return buildMarket((dv, b) => {
+    dv.setBigUint64(b + V_REF_STAMP, 1n, true); // flush bit clear
+    dv.setUint32(b + V_REF_PRICE, enc(10_850_000), true);
+    dv.setBigUint64(b + V_BASE_ATOMS, 10_000_000n, true);
+    dv.setBigUint64(b + V_QUOTE_ATOMS, 10_000_000n, true);
+    writePosition(dv, b + V_REMAINING_ASKS, enc(10_904_000), 1_000_000n, WALL_DEADLINE, SLOT_DEADLINE);
+  });
+}
+
+// The flush path has its own coverage below, but the stored-`remaining`
+// path is read by a *different* branch of `levelState` and decoded by
+// `readRemainingPositions` at two adjacent u32 offsets. Every other
+// non-flush fixture writes both deadlines to the same value, so swapping
+// `o + 12` / `o + 16` — or the two fields in the non-flush return — leaves
+// the suite green. Distinct deadlines here make that a red test.
+test('the stored remaining path reads each deadline from its own field', () => {
+  const slab = decodeMarketSlab(boundedRemainingMarket());
+  assert.equal(
+    marketViewFromSlab(slab, SLOT_DEADLINE - 1, WALL_DEADLINE - 1).asks.length,
+    1,
+    'inside both stored deadlines the level rests',
+  );
+  assert.equal(
+    marketViewFromSlab(slab, SLOT_DEADLINE, WALL_DEADLINE - 1).asks.length,
+    0,
+    'the stored slot deadline must kill it on its own',
+  );
+  assert.equal(
+    marketViewFromSlab(slab, SLOT_DEADLINE - 1, WALL_DEADLINE).asks.length,
+    0,
+    'the stored wall deadline must kill it on its own',
+  );
+});
+
 test('each expiry conjunct kills a level on its own', () => {
   const SECS_OFF = 600;
   const SLOT_OFF = 50;

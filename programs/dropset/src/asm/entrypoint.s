@@ -118,11 +118,15 @@
 # Its three reads sit at ix_data+5..17, and the input region always runs to
 # ix_data + len + program_id(32), so even a pre-upgrade 13-byte disc-5
 # payload stays in bounds: it does not fault, it silently stamps
-# quote_unix from the leading program-id bytes. That is self-harm-only —
-# the datum governs only the signing vault's own levels, and a wrong one
-# either disables that vault's wall bound or kills it outright — but it is
-# silent, where the reference build rejects the same payload loudly at
-# deserialization. Every SDK builder emits the full 17 bytes.
+# quote_unix from the leading program-id bytes. The reach is bounded to
+# ONE VAULT — not to the signer alone: that vault pools the leader's own
+# inventory with its outside depositors', so a garbage datum above ~1.7e9
+# extends every one of its levels toward 2106 and disables the wall bound
+# a third-party depositor is also relying on. No trust boundary moves (the
+# leader could already choose arbitrarily long offsets), which is why this
+# is not gated — but it is silent, where the reference build rejects the
+# same payload loudly at deserialization. Every SDK builder emits the
+# full 17 bytes.
 #
 # Disc 6 is the noisy case. The reference build
 # rejects one at anchor deserialization; here a short disc-6 call makes the

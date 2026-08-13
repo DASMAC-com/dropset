@@ -233,11 +233,12 @@ pub struct LadderLevel {
 /// what changed is that they now hold through a halt, where slots stop
 /// ticking but wall time does not.
 ///
-/// The **slot** bound mirrors each tier's wall life at that same
-/// ~0.4 s/slot pace, so the two conjuncts express the *same* intended TIF
-/// and whichever clock is trustworthy in a given regime is the one that
-/// binds. The deepest tier goes [`NO_SLOT_BOUND`], leaving its stratified
-/// wall decay to govern it.
+/// The **slot** bound sits deliberately *above* each tier's wall life
+/// (~1.25x at the ~0.4 s/slot pace). The wall bound is this bot's actual
+/// policy — it is the §3 tier table — and the slot bound exists for the
+/// regime where the cluster clock misbehaves, so it must never be the
+/// conjunct that governs a healthy book. The deepest tier goes
+/// [`NO_SLOT_BOUND`], leaving its stratified wall decay to govern it.
 ///
 /// **Why not a sub-second slot bound.** The protocol supports one, and
 /// against a prop-cadence quoter that re-stamps every block or two a
@@ -263,19 +264,19 @@ pub const DEFAULT_LADDER: [LadderLevel; 4] = [
         offset_ppm: 5_000,
         size_bps: 4_000,
         expiry_offset_secs: 36,
-        expiry_offset_slots: 90,
+        expiry_offset_slots: 120,
     },
     LadderLevel {
         offset_ppm: 10_000,
         size_bps: 3_000,
         expiry_offset_secs: 120,
-        expiry_offset_slots: 300,
+        expiry_offset_slots: 375,
     },
     LadderLevel {
         offset_ppm: 20_000,
         size_bps: 2_000,
         expiry_offset_secs: 480,
-        expiry_offset_slots: 1_200,
+        expiry_offset_slots: 1_500,
     },
     LadderLevel {
         offset_ppm: 50_000,
@@ -630,17 +631,28 @@ mod tests {
     /// (`Level 1 expiry must exceed the SetReferencePrice heartbeat`);
     /// the slot domain needs the same one, expressed at the slot pace.
     ///
-    /// Deliberately keyed to the heartbeat rather than the 5 s tick: the
-    /// tick is the *opportunity* to re-stamp, the heartbeat is the
-    /// guarantee, and on a quiet book only the guarantee fires.
+    /// The worst-case gap is the heartbeat **plus** a tick, not the
+    /// heartbeat alone: the heartbeat is only *sampled* on the tick, so a
+    /// stamp due at t=30 s is not issued until the next tick notices it.
     #[test]
     fn slot_bound_clears_the_heartbeat() {
         let cfg = BotConfig::default();
-        // The pace the wall/slot tier equivalence is written against. Not
-        // a protocol constant — SIMD-0525 stages slots faster — so this is
-        // the conservative direction: a faster pace only buys more margin.
+        // The pace the tier equivalence is written against. NOT a
+        // protocol constant, and NOT the safe direction to assume: a
+        // faster pace (SIMD-0525 stages 200 ms) means more slots elapse
+        // per heartbeat *and* buys less wall life per slot, so both
+        // effects erode the margin below. Re-derive the tiers if the
+        // cluster pace changes rather than trusting this number.
         const SLOT_MS: u64 = 400;
-        let heartbeat_slots = (cfg.strategy.ref_heartbeat.as_millis() as u64) / SLOT_MS;
+        // `quote_slot` is read at *confirmed* commitment and the stamp
+        // then needs a slot or two to land, so the datum is already
+        // behind the leader slot when it is written.
+        const LAG_SLOTS: u64 = 8;
+
+        // A stamp is only issued on a tick, so the longest a level can go
+        // un-refreshed is one heartbeat plus one tick.
+        let worst_gap = cfg.strategy.ref_heartbeat + cfg.tick;
+        let required = (worst_gap.as_millis() as u64) / SLOT_MS + LAG_SLOTS;
 
         let tightest = DEFAULT_LADDER
             .iter()
@@ -648,16 +660,23 @@ mod tests {
             .min()
             .expect("ladder is non-empty");
         assert!(
-            (tightest as u64) > heartbeat_slots,
+            (tightest as u64) > required,
             "tightest slot bound ({tightest} slots) must exceed the \
-             {heartbeat_slots}-slot heartbeat, or top-of-book goes dark \
-             between re-quotes"
+             {required}-slot worst case (heartbeat + tick + commitment \
+             lag), or top-of-book goes dark between re-quotes"
         );
 
-        // And each tier's two bounds should express the same intended TIF,
-        // so neither domain silently governs the other. Allow a generous
-        // factor — this catches a domain confusion (a seconds value left
-        // in a slots field), not a calibration choice.
+        // The slot conjunct must never be the one that *governs*. Expiry
+        // is the min of two bounds, and for this bot the wall bound is the
+        // policy (the §3 tier table); the slot bound exists for the regime
+        // where the cluster clock misbehaves. So every tier's slot life
+        // must be at least its wall life — otherwise the slot domain
+        // silently shortens a documented TIF.
+        //
+        // This subsumes the domain-confusion check a tolerance band was
+        // reaching for, and unlike a band it actually catches it: a
+        // seconds value left in a slots field is a 2.5x *shortening* at
+        // 400 ms/slot, which lands under the wall bound and fails here.
         for l in DEFAULT_LADDER.iter() {
             if l.expiry_offset_slots == NO_SLOT_BOUND {
                 continue;
@@ -665,9 +684,9 @@ mod tests {
             let slot_life_secs = (l.expiry_offset_slots as u64) * SLOT_MS / 1_000;
             let wall = l.expiry_offset_secs as u64;
             assert!(
-                slot_life_secs * 4 > wall && wall * 4 > slot_life_secs,
-                "tier {}bps: slot bound ~{slot_life_secs}s vs wall {wall}s — \
-                 the two domains have drifted apart",
+                slot_life_secs >= wall,
+                "tier {}bps: slot bound ~{slot_life_secs}s is under its \
+                 {wall}s wall TIF, so the slot conjunct would govern",
                 l.offset_ppm / 100
             );
         }

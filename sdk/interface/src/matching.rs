@@ -268,7 +268,8 @@ pub fn simulate_swap(
     }
 }
 
-/// Reconstruct the **resting book** on one `side` at `now_unix`: the
+/// Reconstruct the **resting book** on one `side` at `(now_slot,
+/// now_unix)`: the
 /// live, matchable levels across every active vault, in cross-vault
 /// price-time priority (best price first). This is the same book
 /// [`simulate_swap`] fills against, exposed for depth / order-book views;
@@ -427,7 +428,8 @@ fn flush_side_sum_exceeds_bps(v: &Vault, is_buy: bool) -> bool {
     sum > BPS as u32
 }
 
-/// Resolve a single level's `(price, size, expires_at_unix)` for the chosen
+/// Resolve a single level's `(price, size, expires_at_unix,
+/// expires_at_slot)` for the chosen
 /// side: materialize from the `LiquidityProfile` if a flush is armed
 /// (mirroring `swap.rs`), else read the stored `remaining` state.
 #[allow(clippy::too_many_arguments)]

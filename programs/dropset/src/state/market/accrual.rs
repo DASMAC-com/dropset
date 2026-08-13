@@ -334,7 +334,8 @@ mod tests {
     // `level_fill_atoms`) is tested in `dropset_math_core::matching_math`.
     // These exercise the program's `&mut Vault` wrapper specifically: the
     // profile→remaining wiring (correct leg per side, offset direction,
-    // absolute wall-clock expiry), the per-side `Σ size_bps > BPS` gate, and
+    // absolute expiry in both domains), the per-side `Σ size_bps > BPS`
+    // zeroing gate, and
     // the `FLUSH_BIT` clear. They run on a stack-allocated `Vault` — no
     // slab, no AccountBuffer, no SVM.
 

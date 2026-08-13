@@ -457,7 +457,11 @@ impl Swap {
         // expired level) and above at `u32::MAX`, the width
         // `Position.expires_at_unix` stores.
         let now_unix = self.clock.unix_timestamp.clamp(0, u32::MAX as i64) as u32;
-        let now_slot = self.clock.slot as u32;
+        // Saturate rather than truncate, for the same reason the clamp
+        // above exists: a bare `as u32` past 2^32 wraps to a small value
+        // and resurrects every expired level. ~54 years out at today's
+        // pace, but the two casts should not disagree on the point.
+        let now_slot = self.clock.slot.min(u32::MAX as u64) as u32;
         let head = self.market.head.get();
 
         // Walk the active DLL from `market.head` via `Vault.next`.

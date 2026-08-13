@@ -111,9 +111,12 @@ cargo run -p dropset-maker-bot
 
 - **Stale quotes are killed, not left to expire.** Zeroing the profile
   stops the next flush; it doesn't touch levels already resting, which
-  stay matchable until their `expiry_offset` passes — and those offsets
-  are in *slots*, which stop ticking during a chain halt, so their
-  wall-clock life is unbounded. Whenever nobody is refreshing the
+  stay matchable until one of their two deadlines passes. Expiry is now
+  dual-domain — a wall bound measured from the quote's `quote_unix`
+  datum, and a slot bound from its `quote_slot` — so a halt no longer
+  freezes the countdown the way slot-only expiry did. But a cap is not a
+  policy: the deepest tier still runs ~48 min. Whenever nobody is
+  refreshing the
   reference — a restart, a halted chain, dead feeds, a kill-switch halt —
   the bot stamps `price = 0` through the ordinary hot path. Matching
   skips a vault whose reference fails `has_valid_reference_price()`, so

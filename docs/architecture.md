@@ -556,7 +556,7 @@ dual gate** below.
 
 **`Remaining` / `Position` — materialized levels.** Per-side arrays of
 `N_LEVELS` `Position`s (absolute `price`, atom-sized `size`, and one
-absolute deadline per expiry domain — `expires_at` in unix seconds,
+absolute deadline per expiry domain — `expires_at_unix` in unix seconds,
 `expires_at_slot` in slots), computed from `profile` + inventory by
 the first taker after a flush (see **LiquidityProfile → Flush** for the
 formulas); subsequent takers read them directly and decrement `size` on
@@ -875,14 +875,14 @@ one-time materialization across all levels into `Vault.remaining`:
 
 asks_remaining[i].size       = base_atoms × a.size_bps / 10000  // base
 asks_remaining[i].price      = ref.price × (PPM + a.price_offset) / PPM
-asks_remaining[i].expires_at      = deadline(ref.quote_unix,
+asks_remaining[i].expires_at_unix = deadline(ref.quote_unix,
                                              a.expiry_offset_secs)
 asks_remaining[i].expires_at_slot = deadline(ref.quote_slot,
                                              a.expiry_offset_slots)
 
 bids_remaining[i].size       = quote_atoms × b.size_bps / 10000  // quote
 bids_remaining[i].price      = ref.price × (PPM −sat b.price_offset) / PPM
-bids_remaining[i].expires_at      = deadline(ref.quote_unix,
+bids_remaining[i].expires_at_unix = deadline(ref.quote_unix,
                                              b.expiry_offset_secs)
 bids_remaining[i].expires_at_slot = deadline(ref.quote_slot,
                                              b.expiry_offset_slots)
@@ -1582,7 +1582,7 @@ relayed at slot M > N, with on-chain expiry math anchored to N.
 A level rests only while it is inside **both** of its deadlines:
 
 ```text
-live  ⇔  now_slot < expires_at_slot  ∧  now_unix < expires_at
+live  ⇔  now_slot < expires_at_slot  ∧  now_unix < expires_at_unix
 ```
 
 with `now_slot = Clock.slot` and `now_unix = Clock.unix_timestamp`
@@ -2069,7 +2069,7 @@ On every taker instruction:
    entry, pushing it onto a `Vec` allocated on the program heap and
    skipping levels where `remaining.size == 0`, either deadline has
    passed (`now_slot >= remaining.expires_at_slot` or
-   `now_unix >= remaining.expires_at`), or the price is a sentinel
+   `now_unix >= remaining.expires_at_unix`), or the price is a sentinel
    (`ZERO` / `INFINITY` / invalid). `price_key` is the `u32` sort key:
    `price.as_u32()` for asks (lowest price is best) and
    `price.bid_key()` for bids (which maps the highest price to the

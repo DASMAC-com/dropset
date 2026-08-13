@@ -294,7 +294,7 @@ fn main() {
             now_unix: WALL_DEADLINE,
             platform_fee_bps: 0,
         },
-        // Boundary, slot domain. The gate is `expires_at_unix <= now`, so the
+        // Boundary, slot domain. The gate is `expires_at_slot <= now`, so the
         // deadline slot itself is dead and the slot before it is live —
         // pinned as a pair so an off-by-one moves exactly one of them.
         Case {

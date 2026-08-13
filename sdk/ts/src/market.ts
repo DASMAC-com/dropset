@@ -278,7 +278,8 @@ type Lvl = {
 };
 
 /**
- * Resolve one level's `(price, size, expiresAtUnix)`: materialize from the
+ * Resolve one level's `(price, size, expiresAtUnix, expiresAtSlot)`:
+ * materialize from the
  * `LiquidityProfile` when a flush is armed, else read stored `remaining`
  * state. Mirrors `matching::level_state`.
  */

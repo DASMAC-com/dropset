@@ -768,6 +768,56 @@ fn expired_levels_are_skipped() {
     );
 }
 
+/// The gate is `<=` dead, pinned **engine-side** at the exact boundary.
+///
+/// The conformance vectors already pin `<=` for the *simulator*, and
+/// `sdk_conformance` pins simulator == engine — but only at live clocks,
+/// so a `<` vs `<=` slip in the engine alone would ship as a one-second
+/// SDK-vs-engine divergence: the book shows a level the engine drops, and
+/// the taker eats a `min_out` revert. Sit exactly on the deadline here so
+/// the engine owns its own boundary.
+#[test]
+fn a_level_is_dead_at_exactly_its_wall_deadline() {
+    const TIF: u32 = 60;
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+    f.set_liquidity_profile(
+        &f.authority.insecure_clone(),
+        0,
+        simple_profile(5_000, 10_000, TIF),
+    )
+    .expect("bounded-TIF profile");
+
+    // Re-stamp the same price at a known datum, so the level's deadline
+    // is exactly `datum + TIF` rather than whatever the seed stamped.
+    let price_bits = f.vault(0).reference_price.price.as_u32();
+    let datum = f.now_unix();
+    f.svm.expire_blockhash();
+    f.set_reference_price_at(&f.authority.insecure_clone(), 0, price_bits, 0, datum)
+        .expect("fresh quote at a known datum");
+
+    // One second short of the deadline: still live.
+    f.warp_unix((TIF - 1) as i64);
+    let taker = f.funded_depositor(0, 400_000);
+    let before = f.token_balance(&f.base_ata(&taker.pubkey()));
+    f.swap(&taker, 0, 50_000, Price::INFINITY.as_u32(), 1)
+        .expect("a level one second inside its deadline still fills");
+    assert!(
+        f.token_balance(&f.base_ata(&taker.pubkey())) > before,
+        "the level is live at deadline - 1"
+    );
+
+    // Exactly on the deadline: dead. `expires_at <= now`, not `<`.
+    f.warp_unix(1);
+    let q_before = f.token_balance(&f.quote_ata(&taker.pubkey()));
+    f.swap(&taker, 0, 50_000, Price::INFINITY.as_u32(), 0)
+        .expect("ok, the level expired");
+    assert_eq!(
+        f.token_balance(&f.quote_ata(&taker.pubkey())),
+        q_before,
+        "no quote spent: the deadline second itself is dead"
+    );
+}
+
 /// Expiry skips the *vault*, it does not abort the *take*. The cheaper
 /// vault — the one that would otherwise absorb the whole fill — is aged
 /// out, and the buy must still fill against its pricier, live sibling.
