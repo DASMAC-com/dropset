@@ -775,13 +775,14 @@ pages:
   argument.** This is the one block in the spec that is **not** finished copy:
   the beats are the real ones, and the wording is meant to be iterated on out
   loud rather than read out. The beats, in order:
-  1. **The seventeen-year frame.** Seventeen years in this industry, and we
-     still haven't solved the problem of money — sending it around
-     permissionlessly.
+  1. **The seventeen-year frame — the industry's age, not the speaker's
+     tenure.** This industry is seventeen years old, and sending money around
+     the world is the part that works. Getting in and out of currencies is
+     the part that doesn't.
   1. **What did get solved, as the contrast.** There is no shortage of ways
      to speculate onchain and no shortage of alternative stores of value; but
-     as far as greasing the wheels of global commerce, money still doesn't
-     function the way we'd hope it could.
+     the currencies people actually earn and spend in don't flow on a
+     decentralized ledger the way it promised they would.
   1. **Why FX specifically, and why here.** A large part of why is that there
      is no FX liquidity onchain — specifically on Solana, which is a deeply
      money-like environment, and so the place this gets fixed.

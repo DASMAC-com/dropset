@@ -1916,15 +1916,16 @@ export default function DemoDeck() {
             biography; the target is the single sentence that makes a listener
             believe this person would still be working on this in five years. */}
         <Notes>
-          Dropset — the liquidity layer for every national currency. Seventeen
-          years I’ve been in this industry, and we still haven’t solved the
-          problem of money — just sending it around, permissionlessly. There’s
-          no shortage of ways to speculate onchain and no shortage of
-          alternative stores of value, but as far as greasing the wheels of
-          global commerce, money still doesn’t work the way we all hoped it
-          would. A large part of why is that there’s no FX liquidity onchain —
-          and Solana is the most money-like environment we’ve ever had, which
-          is why this is where it gets fixed. [Leave this page up.]
+          Dropset — the liquidity layer for every national currency. This
+          industry is seventeen years old now, and we can send money around
+          the world just fine — what we still can’t do is get in and out of
+          currencies. There’s no shortage of ways to speculate onchain and no
+          shortage of alternative stores of value, but the currencies people
+          actually earn and spend in don’t flow on a decentralized ledger the
+          way it promised they would. A large part of why is that there’s no
+          FX liquidity onchain — and Solana is the most money-like environment
+          we’ve ever had, which is why this is where it gets fixed. [Leave
+          this page up.]
         </Notes>
       </Slide>
     </Deck>
