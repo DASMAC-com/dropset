@@ -65,6 +65,49 @@ export type EclobRoute = {
 };
 
 /**
+ * Markets already reported as clamping, keyed by market and the rate that was
+ * configured at the time.
+ *
+ * A clamp is a *configuration* fact, not a per-quote event: the quote loop
+ * re-runs every few seconds for as long as a pair is on screen, so warning at
+ * every call would bury the console in one repeated line. Keying on the
+ * configured rate as well as the market — rather than the market alone — costs
+ * nothing in the steady state (the rate is a build-time constant, so the key
+ * degenerates to one entry per market) but means an operator who edits the rate
+ * mid-session is told about the new value instead of being silenced by the
+ * warning the old one already emitted.
+ */
+const warnedClamps = new Set<string>();
+
+/**
+ * Report a clamp once, to the console.
+ *
+ * The clamp itself is safe and deliberate, so this is the only signal that a
+ * config/ceiling mismatch exists at all — without it the operator sees a
+ * working app charging a rate they never asked for, indefinitely. Console
+ * rather than a thrown error or a UI surface because the audience is whoever
+ * set the rate, not the trader: the trader is already shown the true charged
+ * fee, since quotes report the clamped rate rather than the configured one.
+ */
+function warnClamped(
+  market: Address,
+  configuredBps: number,
+  ceilingBps: number,
+): void {
+  const key = `${market}:${configuredBps}`;
+  if (warnedClamps.has(key)) return;
+  warnedClamps.add(key);
+  console.warn(
+    `[dropset] platform fee clamped on market ${market}: its on-chain ` +
+      `max_platform_fee is ${ceilingBps} bps but ${configuredBps} bps is ` +
+      `configured, so swaps on this market are quoted and charged at ` +
+      `${ceilingBps} bps. Lower the configured rate or raise the market's ` +
+      `ceiling to make the two agree. Note that an aggregator route for the ` +
+      `same pair has no such ceiling and still charges ${configuredBps} bps.`,
+  );
+}
+
+/**
  * The platform fee a route may actually declare: the configured rate, clamped
  * to the market's own ceiling.
  *
@@ -76,11 +119,20 @@ export type EclobRoute = {
  * report as "no liquidity" — a misleading diagnosis of what is really a
  * config/ceiling mismatch). Under-charging is the safe direction for a knob that
  * only sets our own revenue.
+ *
+ * Safe, though, is not the same as intended, and the fallback works well enough
+ * that the mismatch leaves no other trace — so a clamp is announced once per
+ * market via {@link warnClamped}. The clamp is not a failure and never blocks
+ * the swap; the warning exists so the misconfiguration is fixable rather than
+ * invisible.
  */
 export function platformFeeBpsFor(
   route: EclobRoute,
   configuredBps: number,
 ): number {
+  if (configuredBps > route.maxPlatformFeeBps) {
+    warnClamped(route.market, configuredBps, route.maxPlatformFeeBps);
+  }
   return Math.min(configuredBps, route.maxPlatformFeeBps);
 }
 
